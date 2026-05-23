@@ -7,6 +7,7 @@
 pub mod client;
 pub mod daemon;
 pub mod down;
+pub mod log_buffer;
 pub mod nodes;
 pub mod process_manager;
 pub mod ps;

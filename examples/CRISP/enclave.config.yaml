@@ -4,22 +4,22 @@ chains:
     contracts:
       e3_program:
         address: "0x9d4454B023096f34B160D6B654540c56A1F81688"
-        deploy_block: 27
+        deploy_block: 28
       enclave:
         address: "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
-        deploy_block: 14
+        deploy_block: 15
       ciphernode_registry:
         address: "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
-        deploy_block: 9
+        deploy_block: 10
       bonding_registry:
         address: "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318"
-        deploy_block: 10
+        deploy_block: 11
       slashing_manager:
         address: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
-        deploy_block: 8
+        deploy_block: 9
       fee_token:
         address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
-        deploy_block: 4
+        deploy_block: 5
   - name: "sepolia"
     enabled: false
     # Public Sepolia WebSocket endpoint (see repo docs for the recommended default).

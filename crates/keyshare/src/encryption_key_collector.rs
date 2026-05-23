@@ -108,8 +108,11 @@ impl Actor for EncryptionKeyCollector {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
         info!(
             e3_id = %self.e3_id,
-            "EncryptionKeyCollector started, scheduling timeout in {:?}",
-            self.timeout
+            expected_parties = ?self.todo,
+            expected_count = self.todo.len(),
+            timeout = ?self.timeout,
+            "EncryptionKeyCollector started — expecting BFV public keys from {} parties",
+            self.todo.len()
         );
 
         let handle = ctx.notify_later(EncryptionKeyCollectionTimeout, self.timeout);
@@ -126,40 +129,58 @@ impl Handler<TypedEvent<EncryptionKeyCreated>> for EncryptionKeyCollector {
     ) -> Self::Result {
         let (msg, ec) = msg.into_components();
         let start = Instant::now();
-        info!("EncryptionKeyCollector: EncryptionKeyCreated received");
+        let pid = msg.key.party_id;
+        info!(
+            e3_id = %self.e3_id,
+            party_id = pid,
+            "EncryptionKeyCollector: EncryptionKeyCreated received"
+        );
 
         // Ignore if already finished or timed out
         if !matches!(self.state, CollectorState::Collecting) {
-            info!(
-                "EncryptionKeyCollector is not collecting (state: {:?}), ignoring",
-                match self.state {
+            warn!(
+                e3_id = %self.e3_id,
+                party_id = pid,
+                state = match self.state {
                     CollectorState::Collecting => "Collecting",
                     CollectorState::Finished => "Finished",
                     CollectorState::TimedOut => "TimedOut",
-                }
+                },
+                "EncryptionKeyCollector: not collecting, ignoring late EncryptionKeyCreated"
             );
             return;
         }
 
-        let pid = msg.key.party_id;
-        info!("EncryptionKeyCollector: party_id = {}", pid);
-
         let Some(_) = self.todo.take(&pid) else {
-            info!(
-                "Error: {} was not in encryption key collector's ID list",
-                pid
+            warn!(
+                e3_id = %self.e3_id,
+                party_id = pid,
+                expected_parties = ?self.todo,
+                "EncryptionKeyCollector: received key from unexpected party — not in expected set"
             );
             return;
         };
 
+        let collected = self.keys.len() + 1;
+        let total = collected + self.todo.len();
         info!(
-            "Inserting encryption key... waiting on: {}",
+            e3_id = %self.e3_id,
+            party_id = pid,
+            collected,
+            total,
+            remaining_parties = ?self.todo,
+            "EncryptionKeyCollector: key received ({collected}/{total}), still waiting on {} parties",
             self.todo.len()
         );
         self.keys.insert(pid, msg.key);
 
         if self.todo.is_empty() {
-            info!("All encryption keys collected!");
+            info!(
+                e3_id = %self.e3_id,
+                total,
+                "EncryptionKeyCollector: all {} encryption keys collected",
+                total
+            );
             self.state = CollectorState::Finished;
 
             // Cancel the timeout since we're done

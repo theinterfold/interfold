@@ -180,19 +180,19 @@ impl PublicKeyAggregator {
             keyshares.insert(keyshare.clone());
             c1_proofs.push(c1_proof);
             nodes.insert(node.clone());
-            info!(
-                "add_keyshare: node={} party_id={} (arrival slot={})",
-                node,
-                party_id,
-                submission_order.len()
-            );
-            submission_order.push((party_id, node, keyshare));
+            submission_order.push((party_id, node.clone(), keyshare));
             let n = *threshold_n;
             let m = *threshold_m;
+            let collected = keyshares.len();
             info!(
-                "PublicKeyAggregator got keyshares {}/{}",
-                keyshares.len(),
-                n
+                party_id,
+                node = %node,
+                arrival_slot = submission_order.len() - 1,
+                collected,
+                expected = n,
+                remaining = n.saturating_sub(collected),
+                "PublicKeyAggregator: keyshare received from party {party_id} ({collected}/{n}), {} still needed",
+                n.saturating_sub(collected)
             );
             if keyshares.len() == n {
                 info!("All keyshares collected, transitioning to VerifyingC1...");

@@ -51,7 +51,24 @@ async fn query_events(
     limit: Option<u64>,
 ) -> Result<()> {
     let eventstore = get_eventstore_reader(config)?;
-    let (events, next) = fetch_events(eventstore, aggregate, since, limit).await?;
+    let since_seq = since.unwrap_or(0);
+
+    // Build per-aggregate cursor map. When no specific aggregate is requested,
+    // query all configured chain stores so E3 events (stored under chain_id aggregate)
+    // are included alongside system events stored under AggregateId(0).
+    let aggregate_map: HashMap<AggregateId, u64> = if let Some(agg) = aggregate {
+        HashMap::from([(AggregateId::new(agg), since_seq)])
+    } else {
+        let mut map = HashMap::from([(AggregateId::new(0), since_seq)]);
+        for chain in config.chains() {
+            if let Some(chain_id) = chain.chain_id {
+                map.insert(AggregateId::new(chain_id as usize), since_seq);
+            }
+        }
+        map
+    };
+
+    let (events, next) = fetch_events(eventstore, aggregate_map, limit).await?;
     print_events(out.clone(), events)?;
     log!(out, "{}", serde_json::to_string(&next)?);
     Ok(())
@@ -59,21 +76,14 @@ async fn query_events(
 
 async fn fetch_events(
     eventstore: EventStoreReader,
-    aggregate: Option<usize>,
-    since: Option<u64>,
+    aggregate_map: HashMap<AggregateId, u64>,
     limit: Option<u64>,
 ) -> Result<(Vec<EnclaveEvent>, SeqCursor)> {
-    let aggregate = aggregate.unwrap_or(0);
-    let since = since.unwrap_or(0);
     let limit = limit.unwrap_or(10);
     let (addr, rx) = actix_toolbox::oneshot::<EventStoreQueryResponse>();
 
-    let msg = EventStoreQueryBy::<SeqAgg>::new(
-        CorrelationId::new(),
-        HashMap::from([(AggregateId::new(aggregate), since)]),
-        addr,
-    )
-    .with_limit(limit);
+    let msg = EventStoreQueryBy::<SeqAgg>::new(CorrelationId::new(), aggregate_map, addr)
+        .with_limit(limit);
 
     eventstore.seq().do_send(msg);
     let events = rx.await?.into_events();

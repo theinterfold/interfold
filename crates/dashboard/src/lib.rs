@@ -19,16 +19,25 @@ pub async fn start_dashboard(
     node_name: String,
     config_path: Option<String>,
 ) {
-    let addr = format!("0.0.0.0:{}", dashboard_port);
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            error!("Failed to bind dashboard socket on {}: {}", addr, e);
-            return;
+    let mut port = dashboard_port;
+    let listener = loop {
+        let addr = format!("0.0.0.0:{}", port);
+        match tokio::net::TcpListener::bind(&addr).await {
+            Ok(l) => break l,
+            Err(_) if port < dashboard_port + 10 => {
+                port += 1;
+            }
+            Err(e) => {
+                error!(
+                    "Failed to bind dashboard socket (tried ports {}–{}): {}",
+                    dashboard_port, port, e
+                );
+                return;
+            }
         }
     };
 
-    info!("Dashboard listening on http://{}", addr);
+    info!("Dashboard listening on http://0.0.0.0:{}", port);
 
     loop {
         match listener.accept().await {

@@ -140,9 +140,10 @@ pub async fn execute(
     process_manager.lock().await.start_all().await?;
 
     let manager = process_manager.clone();
+    let log_buffer = process_manager.lock().await.log_buffer();
 
     tokio::select! {
-        res = server(manager.clone()) => {
+        res = server(manager.clone(), log_buffer) => {
             if let Err(e) = res { error!(%e, "Signal server errored"); }
         }
         _ = tokio::signal::ctrl_c() => {

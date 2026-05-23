@@ -19,12 +19,13 @@ use tokio::{
 };
 use tracing::{error, info, warn};
 
+use super::log_buffer::LogBuffer;
 use super::nodes::{
     spawn_process, CommandMap, ProcessMap, ProcessRecord, ProcessStatus, SwarmStatus,
 };
 
-/// Forward stdout from child process to parent's stdout
-fn forward_stdout(id: &str, stdout: ChildStdout) -> JoinHandle<()> {
+/// Forward stdout from child process to parent's stdout and the shared log buffer.
+fn forward_stdout(id: &str, stdout: ChildStdout, buf: Arc<LogBuffer>) -> JoinHandle<()> {
     let id = id.to_owned();
     tokio::spawn(async move {
         let mut reader = tokio::io::BufReader::new(stdout);
@@ -36,8 +37,10 @@ fn forward_stdout(id: &str, stdout: ChildStdout) -> JoinHandle<()> {
             if n == 0 {
                 break;
             }
+            let line = String::from_utf8_lossy(&buffer);
+            buf.push(&id, &line).await;
             if let Err(e) = tokio::io::stdout()
-                .write_all(format!("[{}] {}", id, String::from_utf8_lossy(&buffer)).as_bytes())
+                .write_all(format!("[{}] {}", id, line).as_bytes())
                 .await
             {
                 error!("Failed to write child stdout: {}", e);
@@ -46,8 +49,8 @@ fn forward_stdout(id: &str, stdout: ChildStdout) -> JoinHandle<()> {
     })
 }
 
-/// Forward stderr from child process to parent's stderr
-fn forward_stderr(id: &str, stderr: ChildStderr) -> JoinHandle<()> {
+/// Forward stderr from child process to parent's stderr and the shared log buffer.
+fn forward_stderr(id: &str, stderr: ChildStderr, buf: Arc<LogBuffer>) -> JoinHandle<()> {
     let id = id.to_owned();
     tokio::spawn(async move {
         let mut reader = tokio::io::BufReader::new(stderr);
@@ -59,37 +62,48 @@ fn forward_stderr(id: &str, stderr: ChildStderr) -> JoinHandle<()> {
             if n == 0 {
                 break;
             }
+            let line = String::from_utf8_lossy(&buffer);
+            buf.push(&id, &line).await;
             if let Err(e) = tokio::io::stderr()
-                .write_all(format!("[{}] {}", id, String::from_utf8_lossy(&buffer)).as_bytes())
+                .write_all(format!("[{}] {}", id, line).as_bytes())
                 .await
             {
-                error!("Failed to write child stdout: {}", e);
+                error!("Failed to write child stderr: {}", e);
             }
         }
     })
 }
 
-/// Run a single command
-async fn run_command(id: &str, program: &str, args: Vec<String>) -> Result<ProcessRecord> {
+/// Run a single command, forwarding its output to stdout/stderr and the log buffer.
+async fn run_command(
+    id: &str,
+    program: &str,
+    args: Vec<String>,
+    log_buffer: Arc<LogBuffer>,
+) -> Result<ProcessRecord> {
     let mut handles = vec![];
     let mut child = spawn_process(program, args).await?;
 
     if let Some(stdout) = child.stdout.take() {
-        handles.push(forward_stdout(id, stdout));
+        handles.push(forward_stdout(id, stdout, log_buffer.clone()));
     }
 
     if let Some(stderr) = child.stderr.take() {
-        handles.push(forward_stderr(id, stderr));
+        handles.push(forward_stderr(id, stderr, log_buffer.clone()));
     }
 
     Ok((child, handles))
 }
 
-/// Run commands as child processes and set up output forwarding
-async fn run_commands(commands: &CommandMap, processes: &ProcessMap) -> Result<()> {
+/// Run commands as child processes and set up output forwarding.
+async fn run_commands(
+    commands: &CommandMap,
+    processes: &ProcessMap,
+    log_buffer: Arc<LogBuffer>,
+) -> Result<()> {
     let commands = commands.clone();
     for (id, (program, args)) in commands {
-        let record = run_command(&id, &program, args).await?;
+        let record = run_command(&id, &program, args, log_buffer.clone()).await?;
 
         // Store the process
         let mut processes_guard = processes.lock().await;
@@ -98,8 +112,13 @@ async fn run_commands(commands: &CommandMap, processes: &ProcessMap) -> Result<(
     Ok(())
 }
 
-/// Start a process
-async fn start(id: &str, commands: &CommandMap, processes: &ProcessMap) -> Result<()> {
+/// Start a process.
+async fn start(
+    id: &str,
+    commands: &CommandMap,
+    processes: &ProcessMap,
+    log_buffer: Arc<LogBuffer>,
+) -> Result<()> {
     if processes.lock().await.contains_key(id) {
         bail!("Process {} already running!", id);
     }
@@ -108,7 +127,7 @@ async fn start(id: &str, commands: &CommandMap, processes: &ProcessMap) -> Resul
     };
 
     let (program, args) = command.clone();
-    let record = run_command(id, &program, args).await?;
+    let record = run_command(id, &program, args, log_buffer).await?;
     let mut processes_guard = processes.lock().await;
     processes_guard.insert(id.to_owned(), record);
 
@@ -203,16 +222,22 @@ fn setup_signal_handlers(manager: &ProcessManager) -> JoinHandle<()> {
 pub struct ProcessManager {
     commands: CommandMap,
     processes: ProcessMap,
+    log_buffer: Arc<LogBuffer>,
 }
 
 impl ProcessManager {
+    /// Access the shared log buffer (cheap Arc clone).
+    pub fn log_buffer(&self) -> Arc<LogBuffer> {
+        self.log_buffer.clone()
+    }
+
     pub async fn start_all(&self) -> Result<()> {
-        run_commands(&self.commands, &self.processes).await?;
+        run_commands(&self.commands, &self.processes, self.log_buffer.clone()).await?;
         Ok(())
     }
 
     pub async fn start(&self, id: &str) -> Result<()> {
-        start(id, &self.commands, &self.processes).await?;
+        start(id, &self.commands, &self.processes, self.log_buffer.clone()).await?;
         Ok(())
     }
 
@@ -223,7 +248,7 @@ impl ProcessManager {
 
     pub async fn restart(&self, id: &str) -> Result<()> {
         stop(id, &self.processes).await?;
-        start(id, &self.commands, &self.processes).await?;
+        start(id, &self.commands, &self.processes, self.log_buffer.clone()).await?;
         Ok(())
     }
 
@@ -263,6 +288,7 @@ impl From<CommandMap> for ProcessManager {
         let manager = Self {
             commands: value,
             processes,
+            log_buffer: Arc::new(LogBuffer::new()),
         };
 
         setup_signal_handlers(&manager);

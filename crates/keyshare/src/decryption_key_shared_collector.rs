@@ -94,9 +94,11 @@ impl Actor for DecryptionKeySharedCollector {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
         info!(
             e3_id = %self.e3_id,
-            "DecryptionKeySharedCollector started, expecting {} parties, timeout {:?}",
-            self.expected.len(),
-            self.timeout
+            expected_parties = ?self.expected,
+            expected_count = self.expected.len(),
+            timeout = ?self.timeout,
+            "DecryptionKeySharedCollector started — expecting decryption key shares from {} parties",
+            self.expected.len()
         );
         let handle = ctx.notify_later(DecryptionKeySharedCollectionTimeout, self.timeout);
         self.timeout_handle = Some(handle);
@@ -119,22 +121,35 @@ impl Handler<TypedEvent<DecryptionKeyShared>> for DecryptionKeySharedCollector {
 
         let pid = msg.party_id;
         if !self.expected.remove(&pid) {
-            info!(
-                "DecryptionKeySharedCollector: party {} not in expected set, ignoring",
-                pid
+            warn!(
+                e3_id = %self.e3_id,
+                party_id = pid,
+                expected_parties = ?self.expected,
+                "DecryptionKeySharedCollector: received share from unexpected party — not in expected set"
             );
             return;
         }
 
+        let collected = self.shares.len() + 1;
+        let total = collected + self.expected.len();
         info!(
-            "DecryptionKeySharedCollector: received from party {}, waiting on {}",
-            pid,
+            e3_id = %self.e3_id,
+            party_id = pid,
+            collected,
+            total,
+            remaining_parties = ?self.expected,
+            "DecryptionKeySharedCollector: share received ({collected}/{total}), still waiting on {} parties",
             self.expected.len()
         );
         self.shares.insert(pid, msg);
 
         if self.expected.is_empty() {
-            info!("All DecryptionKeyShared events collected");
+            info!(
+                e3_id = %self.e3_id,
+                total,
+                "DecryptionKeySharedCollector: all {} decryption key shares collected",
+                total
+            );
             self.state = CollectorState::Finished;
 
             if let Some(handle) = self.timeout_handle.take() {

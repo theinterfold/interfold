@@ -848,7 +848,15 @@ impl ThresholdKeyshare {
             return Ok(());
         }
 
-        info!("CiphernodeSelected received.");
+        info!(
+            e3_id = %state.e3_id,
+            party_id = state.party_id,
+            threshold_m = state.threshold_m,
+            threshold_n = state.threshold_n,
+            "CiphernodeSelected: node is party {}/{} for E3 {} (m={} of n={})",
+            state.party_id, state.threshold_n,
+            state.e3_id, state.threshold_m, state.threshold_n
+        );
         // Ensure the collectors are created
         let _ = self.ensure_collector(address.clone());
         let _ = self.ensure_encryption_key_collector(address.clone());
@@ -892,13 +900,10 @@ impl ThresholdKeyshare {
         msg: TypedEvent<AllEncryptionKeysCollected>,
     ) -> Result<()> {
         let (msg, ec) = msg.into_components();
-        info!(
-            "AllEncryptionKeysCollected - {} keys received",
-            msg.keys.len()
-        );
+        let total_keys = msg.keys.len();
 
         let state = self.state.try_get()?;
-        let current: CollectingEncryptionKeysData = state.clone().try_into()?;
+        let expelled_count = if state.expelled_parties.is_empty() { 0 } else { state.expelled_parties.len() };
 
         // Filter out any keys from parties expelled after collection started
         let filtered_keys: Vec<_> = if state.expelled_parties.is_empty() {
@@ -909,6 +914,17 @@ impl ThresholdKeyshare {
                 .filter(|k| !state.expelled_parties.contains(&k.party_id))
                 .collect()
         };
+
+        info!(
+            e3_id = %state.e3_id,
+            received = total_keys,
+            expelled = expelled_count,
+            proceeding_with = filtered_keys.len(),
+            "AllEncryptionKeysCollected: {} keys received, {} expelled, proceeding with {}",
+            total_keys, expelled_count, filtered_keys.len()
+        );
+
+        let current: CollectingEncryptionKeysData = state.clone().try_into()?;
 
         self.state.try_mutate(&ec, |s| {
             s.new_state(KeyshareState::GeneratingThresholdShare(
@@ -1402,10 +1418,16 @@ impl ThresholdKeyshare {
         msg: TypedEvent<AllThresholdSharesCollected>,
     ) -> Result<()> {
         let (msg, ec) = msg.into_components();
-        info!("AllThresholdSharesCollected");
         let state = self.state.try_get()?;
         let e3_id = state.get_e3_id();
         let own_party_id = state.party_id;
+        info!(
+            e3_id = %e3_id,
+            party_id = own_party_id,
+            share_count = msg.shares.len(),
+            "AllThresholdSharesCollected: {} shares received for E3 {}",
+            msg.shares.len(), e3_id
+        );
 
         // Filter out expelled parties before any processing. The collector may
         // have accepted shares before the expulsion arrived, so we scrub here.

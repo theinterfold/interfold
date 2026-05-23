@@ -244,7 +244,17 @@ impl ThresholdPlaintextAggregator {
             shares.insert(party_id, share);
             c6_proofs.insert(party_id, signed_decryption_proofs);
 
-            if (shares.len() as u64) < threshold_n {
+            let collected = shares.len() as u64;
+            info!(
+                party_id,
+                collected,
+                threshold_n,
+                remaining = threshold_n.saturating_sub(collected),
+                "ThresholdPlaintextAggregator: decryption share received ({collected}/{threshold_n}), {} still needed",
+                threshold_n.saturating_sub(collected)
+            );
+
+            if collected < threshold_n {
                 return Ok(ThresholdPlaintextAggregatorState::Collecting(Collecting {
                     params,
                     threshold_n,

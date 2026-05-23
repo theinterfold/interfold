@@ -9,7 +9,7 @@ use actix::prelude::*;
 use e3_events::{prelude::*, AggregatorChanged, Die, EnclaveEvent, EnclaveEventData};
 use e3_utils::MAILBOX_LIMIT;
 use std::collections::HashSet;
-use tracing::info;
+use tracing::{info, warn};
 
 use crate::PublicKeyAggregator;
 
@@ -39,23 +39,35 @@ impl KeyshareCreatedFilterBuffer {
         }
 
         if let Some(ref committee) = self.committee {
+            let before = self.buffer.len();
+            let mut forwarded = 0usize;
+            let mut dropped = 0usize;
             for event in self.buffer.drain(..) {
                 match event.get_data() {
                     EnclaveEventData::KeyshareCreated(data)
                         if committee.contains(&data.node)
                             && !self.expelled_nodes.contains(&data.node) =>
                     {
+                        forwarded += 1;
                         self.dest.do_send(event);
                     }
                     EnclaveEventData::CommitteeMemberExpelled(data) if data.party_id.is_none() => {
+                        forwarded += 1;
                         self.dest.do_send(event);
                     }
                     EnclaveEventData::E3RequestComplete(_) | EnclaveEventData::Shutdown(_) => {
+                        forwarded += 1;
                         self.dest.do_send(event);
                     }
-                    _ => {}
+                    _ => {
+                        dropped += 1;
+                    }
                 }
             }
+            info!(
+                before,
+                forwarded, dropped, "KeyshareCreatedFilterBuffer: flushed buffer"
+            );
         }
     }
 }
@@ -81,18 +93,42 @@ impl Handler<EnclaveEvent> for KeyshareCreatedFilterBuffer {
                     self.dest.do_send(msg);
                 }
                 None => {
+                    info!(
+                        node = %data.node,
+                        "KeyshareCreatedFilterBuffer: buffering KeyshareCreated — committee not yet known"
+                    );
                     self.buffer.push(msg);
                 }
                 Some(committee)
                     if committee.contains(&data.node)
                         && !self.expelled_nodes.contains(&data.node) =>
                 {
+                    info!(
+                        node = %data.node,
+                        "KeyshareCreatedFilterBuffer: buffering KeyshareCreated — not yet aggregator"
+                    );
                     self.buffer.push(msg);
+                }
+                Some(committee) if !committee.contains(&data.node) => {
+                    warn!(
+                        node = %data.node,
+                        committee = ?committee,
+                        "KeyshareCreatedFilterBuffer: dropping KeyshareCreated — node not in committee"
+                    );
                 }
                 _ => {}
             },
             EnclaveEventData::CommitteeFinalized(data) => {
-                self.committee = Some(data.committee.iter().cloned().collect());
+                let members: HashSet<String> = data.committee.iter().cloned().collect();
+                info!(
+                    e3_id = %data.e3_id,
+                    committee_size = members.len(),
+                    committee = ?members,
+                    is_aggregator = self.is_aggregator,
+                    buffered_events = self.buffer.len(),
+                    "KeyshareCreatedFilterBuffer: CommitteeFinalized received"
+                );
+                self.committee = Some(members);
                 self.process_buffered_events();
             }
             EnclaveEventData::CommitteeMemberExpelled(data) => {
@@ -124,6 +160,12 @@ impl Handler<EnclaveEvent> for KeyshareCreatedFilterBuffer {
                 }
             }
             EnclaveEventData::AggregatorChanged(AggregatorChanged { is_aggregator, .. }) => {
+                info!(
+                    is_aggregator,
+                    buffered_events = self.buffer.len(),
+                    "KeyshareCreatedFilterBuffer: AggregatorChanged — is_aggregator={is_aggregator}, buffered={}",
+                    self.buffer.len()
+                );
                 self.is_aggregator = *is_aggregator;
                 self.process_buffered_events();
             }
