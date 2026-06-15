@@ -9,18 +9,18 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
     (
         40u8,
         &[
-            "0x0000008000020001",
+            "0x0000008000034001",
             "0x00000080004a0001",
             "0x0000008000fa0001",
             "0x0000008001ae0001",
             "0x0000008001b20001",
             "0x0000008001ee0001",
             "0x0000008001f60001",
-            "0x0000008002220001",
-            "0x0000008002420001",
-            "0x00000080028a0001",
-            "0x00000080029a0001",
-            "0x00000080031e0001",
+            "0x0000008002228001",
+            "0x0000008002438001",
+            "0x00000080028a8001",
+            "0x00000080029c0001",
+            "0x000000800320c001",
         ],
     ),
     (
@@ -32,12 +32,12 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
             "0x0000010000ce0001",
             "0x0000010000de0001",
             "0x00000100010a0001",
-            "0x0000010001120001",
-            "0x0000010001620001",
-            "0x00000100019a0001",
-            "0x00000100021a0001",
+            "0x0000010001128001",
+            "0x0000010001680001",
+            "0x00000100019b0001",
+            "0x0000010002238001",
             "0x0000010002520001",
-            "0x0000010002620001",
+            "0x000001000266c001",
         ],
     ),
     (
@@ -49,12 +49,12 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
             "0x0000020000aa0001",
             "0x0000020001360001",
             "0x00000200015a0001",
-            "0x00000200017a0001",
-            "0x0000020001e60001",
-            "0x0000020002260001",
-            "0x0000020002a60001",
-            "0x0000020002c20001",
-            "0x0000020003160001",
+            "0x00000200017c0001",
+            "0x0000020001e74001",
+            "0x000002000227c001",
+            "0x0000020002a68001",
+            "0x0000020002c54001",
+            "0x00000200031ac001",
         ],
     ),
     (
@@ -66,12 +66,12 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
             "0x0000040000fe0001",
             "0x0000040001760001",
             "0x00000400017a0001",
-            "0x00000400019a0001",
-            "0x0000040001b20001",
-            "0x0000040001e20001",
-            "0x0000040002360001",
-            "0x0000040002a60001",
-            "0x0000040002fe0001",
+            "0x00000400019bc001",
+            "0x0000040001b60001",
+            "0x0000040001e24001",
+            "0x000004000236c001",
+            "0x0000040002a8c001",
+            "0x0000040003038001",
         ],
     ),
     (
@@ -83,12 +83,12 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
             "0x0000080001160001",
             "0x00000800012e0001",
             "0x0000080001420001",
-            "0x0000080001720001",
-            "0x0000080001a60001",
-            "0x0000080001c20001",
-            "0x00000800020e0001",
-            "0x0000080002360001",
-            "0x00000800025e0001",
+            "0x000008000173c001",
+            "0x0000080001a6c001",
+            "0x0000080001c40001",
+            "0x00000800020ec001",
+            "0x000008000236c001",
+            "0x000008000265c001",
         ],
     ),
     (
@@ -100,12 +100,12 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
             "0x00001000006e0001",
             "0x0000100000ba0001",
             "0x0000100000ce0001",
-            "0x0000100000ea0001",
-            "0x0000100001220001",
+            "0x0000100000eac001",
+            "0x000010000122c001",
             "0x0000100001560001",
             "0x0000100001860001",
-            "0x0000100001a20001",
-            "0x0000100001da0001",
+            "0x0000100001a58001",
+            "0x0000100001f10001",
         ],
     ),
     (
@@ -117,12 +117,12 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
             "0x00002000006a0001",
             "0x0000200000860001",
             "0x0000200000a60001",
-            "0x0000200000c20001",
-            "0x0000200000ee0001",
-            "0x0000200001320001",
-            "0x0000200001860001",
-            "0x0000200001a20001",
-            "0x0000200001c60001",
+            "0x0000200000c80001",
+            "0x0000200000f14001",
+            "0x0000200001328001",
+            "0x00002000018ac001",
+            "0x0000200001ab4001",
+            "0x0000200001c94001",
         ],
     ),
     (
@@ -134,12 +134,12 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
             "0x0000400000920001",
             "0x00004000009e0001",
             "0x0000400000b60001",
-            "0x0000400000d20001",
-            "0x0000400000f20001",
-            "0x0000400001260001",
-            "0x0000400001620001",
-            "0x00000400001920001",
-            "0x0000400001c20001",
+            "0x0000400000d58001",
+            "0x0000400000f5c001",
+            "0x0000400001290001",
+            "0x000040000164c001",
+            "0x0000400001938001",
+            "0x0000400001c4c001",
         ],
     ),
     (
@@ -151,12 +151,12 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
             "0x0000800001360001",
             "0x0000800001420001",
             "0x0000800002060001",
-            "0x0000800002120001",
-            "0x00008000023e0001",
-            "0x0000800002620001",
-            "0x0000800002a60001",
-            "0x0000800002d60001",
-            "0x0000800003020001",
+            "0x000080000214c001",
+            "0x00008000023f8001",
+            "0x0000800002624001",
+            "0x0000800002af8001",
+            "0x0000800002d70001",
+            "0x000080000307c001",
         ],
     ),
     (
@@ -463,6 +463,87 @@ pub const NTT_PRIMES_BY_BITS: &[(u8, &[&str])] = &[
         ],
     ),
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::NTT_PRIMES_BY_BITS;
+    use std::collections::HashSet;
+
+    /// NTT compatibility modulus: primes must satisfy p ≡ 1 (mod 2*RING_DIM),
+    /// i.e. p % 16384 == 1 for the 8192-degree ring used by the search.
+    const NTT_MODULUS: u64 = 16384;
+
+    /// Deterministic Miller-Rabin primality test, exact for all u64.
+    fn is_prime(n: u64) -> bool {
+        if n < 2 {
+            return false;
+        }
+        for p in [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37] {
+            if n % p == 0 {
+                return n == p;
+            }
+        }
+        let mut d = n - 1;
+        let mut r = 0;
+        while d % 2 == 0 {
+            d /= 2;
+            r += 1;
+        }
+        let mulmod = |a: u64, b: u64| -> u64 { ((a as u128 * b as u128) % n as u128) as u64 };
+        let powmod = |mut base: u64, mut exp: u64| -> u64 {
+            let mut acc = 1u64;
+            base %= n;
+            while exp > 0 {
+                if exp & 1 == 1 {
+                    acc = mulmod(acc, base);
+                }
+                base = mulmod(base, base);
+                exp >>= 1;
+            }
+            acc
+        };
+        'witness: for a in [2u64, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37] {
+            let mut x = powmod(a, d);
+            if x == 1 || x == n - 1 {
+                continue;
+            }
+            for _ in 0..r - 1 {
+                x = mulmod(x, x);
+                if x == n - 1 {
+                    continue 'witness;
+                }
+            }
+            return false;
+        }
+        true
+    }
+
+    /// Guard: every hardcoded NTT prime must be an actual prime, NTT-compatible,
+    /// match its declared bit-length, and be globally unique. Prevents composite
+    /// or mislabelled entries from silently re-entering the table.
+    #[test]
+    fn ntt_primes_table_is_valid() {
+        let mut seen: HashSet<u64> = HashSet::new();
+        for (bits, primes) in NTT_PRIMES_BY_BITS {
+            for hex in *primes {
+                let v = u64::from_str_radix(hex.trim_start_matches("0x"), 16)
+                    .unwrap_or_else(|_| panic!("invalid hex literal {hex}"));
+                assert!(is_prime(v), "{hex} ({bits}-bit) is not prime");
+                assert_eq!(
+                    v % NTT_MODULUS,
+                    1,
+                    "{hex} is not NTT-compatible (p % 16384 != 1)"
+                );
+                assert_eq!(
+                    v.checked_ilog2().unwrap() + 1,
+                    *bits as u32,
+                    "{hex} bit-length does not match declared {bits} bits"
+                );
+                assert!(seen.insert(v), "{hex} is a duplicate entry");
+            }
+        }
+    }
+}
 
 /// Starting polynomial degree (power of 2) for parameter search
 pub const D_POW2_START: u64 = 256;

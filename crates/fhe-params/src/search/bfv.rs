@@ -11,7 +11,7 @@
 //! and parameter validation.
 use std::collections::BTreeMap;
 
-use crate::search::constants::K_MAX;
+use crate::search::constants::{D_POW2_MAX, K_MAX};
 use crate::search::errors::{BfvParamsResult, SearchError, ValidationError};
 use crate::search::prime::PrimeItem;
 use crate::search::prime::{
@@ -117,25 +117,13 @@ pub fn bfv_search(bfv_search_config: &BfvSearchConfig) -> BfvParamsResult<BfvSea
 
     let verbose = bfv_search_config.verbose;
     let prime_items = build_prime_items();
-    let d = RING_DIM;
-
-    // Minimum log2(q) required for correctness (Eq1). The exact margin check is
-    // performed in finalize_bfv_candidate.
-    let min_log2_q = calculate_min_q_bits(bfv_search_config, d);
-
-    if verbose {
-        let log2_b = (bfv_search_config.b as f64).log2();
-        let log2_q_limit = log2_b + ((d as f64) - 75.0) / 37.5;
-        println!("\n[BFV-1st] Fixed d={d}");
-        println!("  Security limit: log2(q) <= {log2_q_limit:.1}");
-        println!("  Correctness requires: log2(q) >= {min_log2_q:.1}");
-    }
+    let log2_b = (bfv_search_config.b as f64).log2();
 
     // Buckets sorted DESCENDING within each bit-length (largest prime first), so
     // taking the first `num_primes` of a bucket maximises q for that prime size.
     let by_bits = group_by_bits_desc(&prime_items);
 
-    // Show available buckets.
+    // Show available buckets (pool is independent of d, so print once).
     if verbose {
         for bb in FIRST_MIN_PRIME_BITS..=FIRST_MAX_PRIME_BITS {
             if let Some(bucket) = by_bits.get(&bb) {
@@ -152,63 +140,97 @@ pub fn bfv_search(bfv_search_config: &BfvSearchConfig) -> BfvParamsResult<BfvSea
         }
     }
 
-    // Try the fewest primes first, then the smallest prime bit-size that meets
-    // the correctness bound. This mirrors the reference bucket-scan search.
-    for num_primes in FIRST_TARGET_NUM_PRIMES..=FIRST_MAX_NUM_PRIMES {
+    // Search increasing ring dimensions: start at RING_DIM and only step up when
+    // no q satisfies both correctness (lower) and Eq4 security (upper) bounds at
+    // the current d. A larger d raises the security limit far faster than the
+    // correctness requirement, so high-λ requests resolve at a bigger ring.
+    let mut d = RING_DIM;
+    while d <= D_POW2_MAX {
+        // Minimum log2(q) for correctness (Eq1); exact margin check is in finalize.
+        let min_log2_q = calculate_min_q_bits(bfv_search_config, d);
+        // Eq4 security upper bound: log2(q) <= log2(B) + (d-75)/37.5.
+        let log2_q_limit = log2_b + ((d as f64) - 75.0) / 37.5;
+
         if verbose {
-            println!("\n  === Trying {num_primes} primes ===");
+            println!("\n[BFV-1st] d={d}");
+            println!("  Security limit: log2(q) <= {log2_q_limit:.1}");
+            println!("  Correctness requires: log2(q) >= {min_log2_q:.1}");
         }
 
-        for bb in FIRST_MIN_PRIME_BITS..=FIRST_MAX_PRIME_BITS {
-            let bucket = match by_bits.get(&bb) {
-                Some(b) => b,
-                None => continue,
-            };
-
-            if bucket.len() < num_primes {
-                if verbose {
-                    println!(
-                        "  {} × {}-bit: only {} primes available (need {})",
-                        num_primes,
-                        bb,
-                        bucket.len(),
-                        num_primes
-                    );
-                }
-                continue;
+        // Try the fewest primes first, then the smallest prime bit-size that
+        // meets the correctness bound. This mirrors the reference bucket scan.
+        for num_primes in FIRST_TARGET_NUM_PRIMES..=FIRST_MAX_NUM_PRIMES {
+            if verbose {
+                println!("\n  === Trying {num_primes} primes ===");
             }
 
-            // Take the largest `num_primes` primes in this bucket to maximise q.
-            let sel: Vec<PrimeItem> = bucket.iter().take(num_primes).cloned().collect();
-            let q = product(sel.iter().map(|pi| pi.value.clone()));
-            let q_bits = log2_big(&q);
-            let max_qi_log2 = sel.iter().map(|p| p.log2).fold(0.0_f64, f64::max);
+            for bb in FIRST_MIN_PRIME_BITS..=FIRST_MAX_PRIME_BITS {
+                let bucket = match by_bits.get(&bb) {
+                    Some(b) => b,
+                    None => continue,
+                };
 
-            if q_bits < min_log2_q {
-                if verbose {
+                if bucket.len() < num_primes {
+                    if verbose {
+                        println!(
+                            "  {} × {}-bit: only {} primes available (need {})",
+                            num_primes,
+                            bb,
+                            bucket.len(),
+                            num_primes
+                        );
+                    }
+                    continue;
+                }
+
+                // Take the largest `num_primes` primes in this bucket to maximise q.
+                let sel: Vec<PrimeItem> = bucket.iter().take(num_primes).cloned().collect();
+                let q = product(sel.iter().map(|pi| pi.value.clone()));
+                let q_bits = log2_big(&q);
+                let max_qi_log2 = sel.iter().map(|p| p.log2).fold(0.0_f64, f64::max);
+
+                if q_bits < min_log2_q {
+                    if verbose {
+                        println!(
+                            "  {} × {}-bit: log2(q)={:.2} < {:.1} needed, skipping",
+                            num_primes, bb, q_bits, min_log2_q
+                        );
+                    }
+                    continue;
+                }
+
+                // Eq4 security upper bound: reject any q exceeding the security limit.
+                if q_bits > log2_q_limit {
+                    if verbose {
+                        println!(
+                            "  {} × {}-bit: log2(q)={:.2} > {:.1} security limit, skipping",
+                            num_primes, bb, q_bits, log2_q_limit
+                        );
+                    }
+                    continue;
+                }
+
+                if let Some(res) = finalize_bfv_candidate(bfv_search_config, d, sel) {
+                    if verbose {
+                        println!(
+                            "\n✓ Found first set: {} × {}-bit primes, d={}, log2(q)={:.2}, max_qi={:.2} bits",
+                            num_primes, bb, d, q_bits, max_qi_log2
+                        );
+                    }
+                    return Ok(res);
+                } else if verbose {
                     println!(
-                        "  {} × {}-bit: log2(q)={:.2} < {:.1} needed, skipping",
-                        num_primes, bb, q_bits, min_log2_q
+                        "  {} × {}-bit: log2(q)={:.2} ❌ fails correctness or margin < {:.1} bits",
+                        num_primes, bb, q_bits, bfv_search_config.min_margin
                     );
                 }
-                continue;
-            }
-
-            if let Some(res) = finalize_bfv_candidate(bfv_search_config, d, sel) {
-                if verbose {
-                    println!(
-                        "\n✓ Found first set: {} × {}-bit primes, log2(q)={:.2}, max_qi={:.2} bits",
-                        num_primes, bb, q_bits, max_qi_log2
-                    );
-                }
-                return Ok(res);
-            } else if verbose {
-                println!(
-                    "  {} × {}-bit: log2(q)={:.2} ❌ fails correctness or margin < {:.1} bits",
-                    num_primes, bb, q_bits, bfv_search_config.min_margin
-                );
             }
         }
+
+        if verbose {
+            println!("\n  no feasible set at d={d}; increasing ring dimension…");
+        }
+        d <<= 1;
     }
 
     if verbose {
@@ -496,9 +518,11 @@ pub fn bfv_search_second_param(
     // Centered-RNS gap rule: qi > 2*k.
     let min_qi_second = &max_qi_first << 1;
 
+    // Eq4 security upper bound: log2(q) <= log2(B) + (d-75)/37.5.
+    let log2_b = (bfv_search_config.b as f64).log2();
+    let log2_q_limit = log2_b + ((d as f64) - 75.0) / 37.5;
+
     if verbose {
-        let log2_b = (bfv_search_config.b as f64).log2();
-        let log2_q_limit = log2_b + ((d as f64) - 75.0) / 37.5;
         println!(
             "\n[BFV-2nd] Fixed d={d}, k = max_qi_first = {k_second} ({:.2} bits)",
             log2_big(&max_qi_first)
@@ -584,30 +608,48 @@ pub fn bfv_search_second_param(
                 continue;
             }
 
-            // Take the smallest valid primes to minimise prime size.
-            let sel: Vec<PrimeItem> = valid.into_iter().take(num_primes).collect();
-            let q = product(sel.iter().map(|pi| pi.value.clone()));
-            let q_bits = log2_big(&q);
-            let min_selected = sel.iter().map(|p| &p.value).min().unwrap();
-            let gap_bits = log2_big(&(min_selected - &max_qi_first));
+            // Slide a window of `num_primes` over the ascending valid primes,
+            // starting from the smallest (to minimise prime size). If the
+            // smallest window fails the correctness/margin check, larger primes
+            // in the same bucket give a larger Δ and may still pass with the
+            // same CRT count, so keep trying before abandoning the bucket.
+            for start in 0..=(valid.len() - num_primes) {
+                let sel: Vec<PrimeItem> = valid[start..start + num_primes].to_vec();
+                let q = product(sel.iter().map(|pi| pi.value.clone()));
+                let q_bits = log2_big(&q);
+                let min_selected = sel.iter().map(|p| &p.value).min().unwrap();
+                let gap_bits = log2_big(&(min_selected - &max_qi_first));
 
-            if verbose {
-                println!(
-                    "  {} × {}-bit: log2(q) = {:.2}, min gap = 2^{:.1}",
-                    num_primes, bb, q_bits, gap_bits
-                );
-            }
-
-            if let Some(res) = finalize_second_param(bfv_search_config, d, sel, k_second) {
                 if verbose {
                     println!(
-                        "\n✓ Found second set: {} × {}-bit, log2(q)={:.2}, gap=2^{:.1}",
+                        "  {} × {}-bit: log2(q) = {:.2}, min gap = 2^{:.1}",
                         num_primes, bb, q_bits, gap_bits
                     );
                 }
-                return Some(res);
-            } else if verbose {
-                println!("    ❌ Fails correctness check");
+
+                // Eq4 security upper bound: q grows monotonically with `start`,
+                // so once it exceeds the security limit no later window can pass.
+                if q_bits > log2_q_limit {
+                    if verbose {
+                        println!(
+                            "    log2(q)={:.2} > {:.1} security limit, abandoning bucket",
+                            q_bits, log2_q_limit
+                        );
+                    }
+                    break;
+                }
+
+                if let Some(res) = finalize_second_param(bfv_search_config, d, sel, k_second) {
+                    if verbose {
+                        println!(
+                            "\n✓ Found second set: {} × {}-bit, log2(q)={:.2}, gap=2^{:.1}",
+                            num_primes, bb, q_bits, gap_bits
+                        );
+                    }
+                    return Some(res);
+                } else if verbose {
+                    println!("    ❌ Fails correctness check");
+                }
             }
         }
     }

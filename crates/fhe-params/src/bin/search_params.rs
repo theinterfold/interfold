@@ -201,6 +201,11 @@ fn main() {
         std::process::exit(1);
     }
 
+    if !args.min_margin.is_finite() || args.min_margin < 0.0 {
+        eprintln!("ERROR: --min-margin must be a finite, non-negative number.");
+        std::process::exit(1);
+    }
+
     let config = BfvSearchConfig {
         n: args.n,
         z: args.z,
@@ -233,7 +238,7 @@ fn main() {
 
     let Ok(bfv) = bfv_search(&config) else {
         eprintln!("\nERROR: No feasible first parameter set found.");
-        eprintln!("Try increasing d, or reducing n, z, λ, or B.");
+        eprintln!("Try reducing n, z, k, λ, B, B_χ or min_margin.");
         std::process::exit(1);
     };
 
