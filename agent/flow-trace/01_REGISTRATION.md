@@ -188,7 +188,7 @@ User runs: interfold ciphernode status
    Active:           true
    Exit Pending:     false
    Ticket Balance:   100 (available: 95)
-   License Bond:     50000 INTF
+   License Bond:     50000 FOLD
    Pending Exits:    tickets=0, license=0
    Requirements:     minTickets=10, ticketPrice=1000000, licenseBond=50000
 ```

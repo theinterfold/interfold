@@ -80,7 +80,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       ciphernodeRegistry: registry,
       slashingManager,
       usdcToken,
-      licenseToken: intfToken,
+      licenseToken: foldToken,
       mocks: {
         e3Program,
         decryptionVerifier,
@@ -146,14 +146,14 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const ticketTokenAddress = await bondingRegistry.ticketToken();
       const ticketAmount = ethers.parseUnits("100", 6);
 
-      await intfToken.mint(
+      await foldToken.mint(
         operatorAddress,
         ethers.parseEther("10000"),
         ethers.encodeBytes32String("Test allocation"),
       );
       await usdcToken.mint(operatorAddress, ethers.parseUnits("100000", 6));
 
-      await intfToken
+      await foldToken
         .connect(operator)
         .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
       await bondingRegistry
@@ -175,7 +175,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       slashingManager,
       _circuitVerifier,
       usdcToken,
-      intfToken,
+      foldToken,
       e3Program,
       decryptionVerifier,
       owner,

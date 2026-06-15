@@ -22,9 +22,9 @@ User runs: interfold ciphernode deactivate --tickets 50
     │  ┌─── ON-CHAIN (BondingRegistry.sol) ─────────────────────┐
     │  │                                                         │
     │  │  removeTicketBalance(50):                               │
-    │  │    1. require(amount != 0, registered, sufficient ITK)  │
+    │  │    1. require(amount != 0, registered, sufficient tFOLD)  │
     │  │    2. ticketToken.burnTickets(operator, amount)         │
-    │  │       → ITK destroyed, underlying becomes claimable      │
+    │  │       → tFOLD destroyed, underlying becomes claimable      │
     │  │    3. _exits.queueTicketsForExit(                       │
     │  │         operator, exitDelay, amount                      │
     │  │       )                                                  │
@@ -51,10 +51,10 @@ User runs: interfold ciphernode deactivate --license 20000
     │  ┌─── ON-CHAIN ───────────────────────────────────────────┐
     │  │                                                         │
     │  │  unbondLicense(20000):                                  │
-    │  │    1. require(amount != 0, sufficient bonded INTF)      │
+    │  │    1. require(amount != 0, sufficient bonded FOLD)      │
     │  │    2. operators[op].licenseBond -= 20000                │
     │  │    3. _exits.queueLicensesForExit(op, exitDelay, 20000)│
-    │  │       → Pending INTF remains in totalBonded(op) for     │
+    │  │       → Pending FOLD remains in totalBonded(op) for     │
     │  │         token-level locked-floor accounting             │
     │  │    4. _updateOperatorStatus(operator)                   │
     │  │       → If licenseBond <                                │
@@ -75,7 +75,7 @@ User runs: interfold ciphernode deactivate --tickets 50 --license 20000
 ├─ Calls removeTicketBalance(50) first
 └─ Then calls unbondLicense(20000)
   → Tickets are queued in ExitQueueLib
-  → INTF is queued in ExitQueueLib pending license exits and remains counted in totalBonded()
+  → FOLD is queued in ExitQueueLib pending license exits and remains counted in totalBonded()
 ```
 
 ---
@@ -279,8 +279,8 @@ Time ─────────────────────────
 │ or deactivate()  │   EXIT DELAY       │                  │
 │                  │  (configured)       │                  │
 │ Assets queued    │                    │ Assets claimable │
-│ ITK burned       │  Cannot cancel     │ USDC returned    │
-│ INTF locked      │  Can be slashed!   │ INTF returned to │
+│ tFOLD burned       │  Cannot cancel     │ USDC returned    │
+│ FOLD locked      │  Can be slashed!   │ FOLD returned to │
 │                  │                    │ withdrawal addr  │
 │                  │                    │                  │
 

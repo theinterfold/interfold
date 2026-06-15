@@ -214,9 +214,9 @@ export const deployInterfold = async (
   const ciphernodeRegistryAddress = await ciphernodeRegistry.getAddress();
   console.log("CiphernodeRegistry deployed to:", ciphernodeRegistryAddress);
 
-  // BondingRegistry is deployed before INTF so its address can be passed to
+  // BondingRegistry is deployed before FOLD so its address can be passed to
   // the token constructor.  The license token is set to address(0) temporarily
-  // and fixed after INTF is deployed via setLicenseToken().
+  // and fixed after FOLD is deployed via setLicenseToken().
   console.log("Deploying BondingRegistry...");
   const { bondingRegistry } = await deployAndSaveBondingRegistry({
     owner: ownerAddress,
@@ -233,11 +233,11 @@ export const deployInterfold = async (
   const bondingRegistryAddress = await bondingRegistry.getAddress();
   console.log("BondingRegistry deployed to:", bondingRegistryAddress);
 
-  // INTF is deployed with BondingRegistry's real address.  claimSource uses
+  // FOLD is deployed with BondingRegistry's real address.  claimSource uses
   // the deployer as a placeholder; the actual Interfold protocol contract is
   // deployed later (its address is not known at this point).  CLAIM_SOURCE is
   // immutable, so local deployments use the deployer as the claim source.
-  console.log("Deploying INTF token...");
+  console.log("Deploying FOLD token...");
   const { interfoldToken } = await deployAndSaveInterfoldToken({
     owner: ownerAddress,
     ccaStart,
@@ -250,7 +250,7 @@ export const deployInterfold = async (
   const interfoldTokenAddress = await interfoldToken.getAddress();
   console.log("InterfoldToken deployed to:", interfoldTokenAddress);
 
-  // Fix up BondingRegistry's license token now that INTF exists.
+  // Fix up BondingRegistry's license token now that FOLD exists.
   console.log("Setting license token in BondingRegistry...");
   await (await bondingRegistry.setLicenseToken(interfoldTokenAddress)).wait();
 
@@ -263,7 +263,7 @@ export const deployInterfold = async (
   }
 
   // Whitelist BondingRegistry so bonded transfers work pre-TGE.
-  console.log("Whitelisting BondingRegistry in INTF...");
+  console.log("Whitelisting BondingRegistry in FOLD...");
   await (
     await interfoldToken.setTransferWhitelisted(bondingRegistryAddress, true)
   ).wait();
@@ -463,7 +463,7 @@ export const deployInterfold = async (
       }
     }
 
-    const tx = await interfold.enableE3Program(e3ProgramAddress);
+    const tx = await interfold.registerE3Program(e3ProgramAddress);
     await tx.wait();
     console.log(`Successfully enabled E3 Program in Interfold contract`);
   }
@@ -560,7 +560,7 @@ export const deployInterfold = async (
     Deployment Complete!
     ============================================
     MockFeeToken: ${feeTokenAddress}
-    InterfoldToken (INTF): ${interfoldTokenAddress}
+    InterfoldToken (FOLD): ${interfoldTokenAddress}
     InterfoldTicketToken: ${interfoldTicketTokenAddress}
     SlashingManager: ${slashingManagerAddress}
     BondingRegistry: ${bondingRegistryAddress}

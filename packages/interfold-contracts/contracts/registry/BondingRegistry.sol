@@ -61,10 +61,10 @@ contract BondingRegistry is
     // Storage
     // ======================
 
-    /// @notice Ticket token (ITK with underlying USDC) used for collateral
+    /// @notice Ticket token (tFOLD with underlying USDC) used for collateral
     InterfoldTicketToken public ticketToken;
 
-    /// @notice License token (INTF) required for operator registration
+    /// @notice License token (FOLD) required for operator registration
     IERC20 public licenseToken;
 
     /// @notice Registry contract for managing committee membership

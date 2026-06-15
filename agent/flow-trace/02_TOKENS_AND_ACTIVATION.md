@@ -4,8 +4,8 @@
 
 Before a node can register, it must stake two types of collateral:
 
-1. **INTF tokens** (license bond) — governance/utility token, staked directly
-2. **Stablecoin via ITK tickets** (ticket collateral) — USDC wrapped into non-transferable
+1. **FOLD tokens** (license bond) — governance/utility token, staked directly
+2. **Stablecoin via tFOLD tickets** (ticket collateral) — USDC wrapped into non-transferable
    InterfoldTicketToken
 
 ---
@@ -14,7 +14,7 @@ Before a node can register, it must stake two types of collateral:
 
 ```
 ┌───────────────────────────────────────────────────────────┐
-│                    InterfoldToken (INTF)                     │
+│                    InterfoldToken (FOLD)                     │
 │  ERC20 + ERC20Permit + ERC20Votes + AccessControl         │
 │  + Ownable2Step                                            │
 │                                                           │
@@ -74,7 +74,7 @@ Before a node can register, it must stake two types of collateral:
 └───────────────────────────────────────────────────────────┘
 
 ┌───────────────────────────────────────────────────────────┐
-│              InterfoldTicketToken (ITK)                      │
+│              InterfoldTicketToken (tFOLD)                      │
 │  ERC20Wrapper over stablecoin (e.g. USDC)                 │
 │                                                           │
 │  NON-TRANSFERABLE: _update() reverts on transfer          │
@@ -82,10 +82,10 @@ Before a node can register, it must stake two types of collateral:
 │  NO APPROVALS: approve() reverts                          │
 │                                                           │
 │  Only BondingRegistry (registry role) can:                │
-│    depositFor()  → wrap USDC, mint ITK to operator        │
-│    depositFrom() → pull USDC from X, mint ITK to Y       │
-│    burnTickets() → burn ITK, NO underlying returned       │
-│    withdrawTo()  → burn ITK, return underlying USDC       │
+│    depositFor()  → wrap USDC, mint tFOLD to operator        │
+│    depositFrom() → pull USDC from X, mint tFOLD to Y       │
+│    burnTickets() → burn tFOLD, NO underlying returned       │
+│    withdrawTo()  → burn tFOLD, return underlying USDC       │
 │    payout()      → send underlying from payableBalance    │
 │                                                           │
 │  Used as: TICKET COLLATERAL token                         │
@@ -104,9 +104,9 @@ User runs: interfold ciphernode license bond --amount 50000
 ├─ 1. ChainContext::new()
 │     └─ Loads config, decrypts wallet, connects to BondingRegistry
 │
-├─ 2. Approve INTF spend:
+├─ 2. Approve FOLD spend:
 │     └─ InterfoldToken.approve(bondingRegistry, 50000)
-│        → Allows BondingRegistry to pull INTF tokens
+│        → Allows BondingRegistry to pull FOLD tokens
 │
 ├─ 3. BondingRegistryContract.bondLicense(50000).send().await
 │     │
@@ -121,9 +121,9 @@ User runs: interfold ciphernode license bond --amount 50000
 │     │  │         address(this), // to BondingRegistry         │
 │     │  │         amount                                       │
 │     │  │       )                                              │
-│     │  │       → INTF _update can see the pre-recorded bond   │
+│     │  │       → FOLD _update can see the pre-recorded bond   │
 │     │  │         and enforce locked-floor accounting          │
-│     │  │       → INTF tokens move from operator → contract    │
+│     │  │       → FOLD tokens move from operator → contract    │
 │     │  │    4. _updateOperatorStatus(msg.sender)              │
 │     │  │       → May activate if all conditions now met       │
 │     │  │    5. Emit LicenseBondUpdated(msg.sender, newBond)   │
@@ -133,11 +133,11 @@ User runs: interfold ciphernode license bond --amount 50000
 └─ OUTPUT: "Transaction hash: 0x..."
 ```
 
-### Locked INTF bonding
+### Locked FOLD bonding
 
-`BondingRegistry.totalBonded(account)` returns active INTF license bond plus pending INTF exits that
+`BondingRegistry.totalBonded(account)` returns active FOLD license bond plus pending FOLD exits that
 remain slashable/not returned. `InterfoldToken` uses this view for pooled wallet-level locks, so
-locked INTF can be self-bonded by the same account without becoming transferable. Delegated
+locked FOLD can be self-bonded by the same account without becoming transferable. Delegated
 source-aware bonding is not part of the pooled-lock model; license bonds are credited to
 `msg.sender` through `bondLicense(amount)`.
 
@@ -151,7 +151,7 @@ _updateOperatorStatus(operator):
     operators[operator].registered == true
     AND operators[operator].licenseBond >= (licenseRequiredBond * licenseActiveBps / 10000)
         // Default: licenseActiveBps = 8000 (80%)
-        // So if licenseRequiredBond = 50000, need >= 40000 INTF
+        // So if licenseRequiredBond = 50000, need >= 40000 FOLD
     AND ticketToken.balanceOf(operator) / ticketPrice >= minTicketBalance
   )
 
@@ -201,16 +201,16 @@ User runs: interfold ciphernode tickets buy --amount 100
 │     │  │    3. modifier: require(!exitInProgress(msg.sender)) │
 │     │  │    4. ticketToken.depositFrom(                       │
 │     │  │         msg.sender,  // pull USDC from operator      │
-│     │  │         msg.sender,  // mint ITK to operator         │
+│     │  │         msg.sender,  // mint tFOLD to operator         │
 │     │  │         amount       // RAW stablecoin units         │
 │     │  │       )              // NO ticketPrice multiplication│
 │     │  │       │                                              │
 │     │  │       │  ┌─ InterfoldTicketToken.depositFrom() ────┐  │
 │     │  │       │  │  1. underlying.transferFrom(           │  │
 │     │  │       │  │       from, address(this), amount)     │  │
-│     │  │       │  │     → USDC moves: operator → ITK       │  │
+│     │  │       │  │     → USDC moves: operator → tFOLD       │  │
 │     │  │       │  │  2. _mint(to, amount)                  │  │
-│     │  │       │  │     → ITK minted 1:1 with USDC         │  │
+│     │  │       │  │     → tFOLD minted 1:1 with USDC         │  │
 │     │  │       │  │  3. Auto-delegate to self on first     │  │
 │     │  │       │  │     deposit (for voting power tracking)│  │
 │     │  │       │  └────────────────────────────────────────┘  │
@@ -225,7 +225,7 @@ User runs: interfold ciphernode tickets buy --amount 100
 
 ### Why tickets are non-transferable:
 
-ITK tokens cannot be transferred between addresses. This ensures:
+tFOLD tokens cannot be transferred between addresses. This ensures:
 
 - An operator's collateral can't be moved to avoid slashing
 - The ticket balance is always attributable to the specific operator
@@ -250,7 +250,7 @@ User runs: interfold ciphernode license unbond --amount 10000
 │     │  │    4. _exits.queueLicensesForExit(                   │
 │     │  │         msg.sender, exitDelay, amount                 │
 │     │  │       )                                               │
-│     │  │       → Pending INTF still counts in totalBonded()    │
+│     │  │       → Pending FOLD still counts in totalBonded()    │
 │     │  │         until claimed or slashed                      │
 │     │  │    5. _updateOperatorStatus(msg.sender)               │
 │     │  │       → May DEACTIVATE if bond drops below threshold  │
@@ -265,9 +265,9 @@ User runs: interfold ciphernode license unbond --amount 10000
 
 ## Step 4: Burn Tickets (`interfold ciphernode tickets burn`)
 
-> **IMPORTANT:** Like `addTicketBalance`, the `amount` here is in **raw stablecoin base units** (ITK
-> units, which are 1:1 with underlying). There is NO `ticketPrice` multiplication. The CLI parses
-> the user's amount using the ticket token's decimals.
+> **IMPORTANT:** Like `addTicketBalance`, the `amount` here is in **raw stablecoin base units**
+> (tFOLD units, which are 1:1 with underlying). There is NO `ticketPrice` multiplication. The CLI
+> parses the user's amount using the ticket token's decimals.
 
 ```
 User runs: interfold ciphernode tickets burn --amount 50
@@ -290,7 +290,7 @@ User runs: interfold ciphernode tickets burn --amount 50
 │     │  │       │  │  burnTickets(operator, amount):        │  │
 │     │  │       │  │    payableBalance += amount             │  │
 │     │  │       │  │    _burn(operator, amount)             │  │
-│     │  │       │  │    → ITK destroyed                     │  │
+│     │  │       │  │    → tFOLD destroyed                     │  │
 │     │  │       │  │    → Underlying USDC NOT returned yet  │  │
 │     │  │       │  │    → Tracked in payableBalance for     │  │
 │     │  │       │  │      later payout()                    │  │
@@ -348,15 +348,15 @@ User runs: interfold ciphernode license claim [--max-ticket 50] [--max-license 1
 │     │  │    3. licenseAmount = _claimLicenseExits(             │
 │     │  │         msg.sender, maxLicense                        │
 │     │  │       )                                               │
-│     │  │       → Each INTF source pays its withdrawalAddress   │
+│     │  │       → Each FOLD source pays its withdrawalAddress   │
 │     │  │       → Receiver callback gets (operator, amount,     │
 │     │  │         sourceId) when supported                      │
-│     │  │       → Pending INTF is removed from totalBonded()    │
-│     │  │         as returned INTF reaches the wallet           │
+│     │  │       → Pending FOLD is removed from totalBonded()    │
+│     │  │         as returned FOLD reaches the wallet           │
 │     │  │  }                                                    │
 │     │  └───────────────────────────────────────────────────────┘
 │
-└─ Operator receives back USDC; INTF goes to each source's withdrawal address
+└─ Operator receives back USDC; FOLD goes to each source's withdrawal address
 ```
 
 ---
@@ -365,7 +365,7 @@ User runs: interfold ciphernode license claim [--max-ticket 50] [--max-license 1
 
 | Requirement           | Default             | Description                                |
 | --------------------- | ------------------- | ------------------------------------------ |
-| `licenseRequiredBond` | Configured by owner | Min INTF to register                       |
+| `licenseRequiredBond` | Configured by owner | Min FOLD to register                       |
 | `licenseActiveBps`    | 8000 (80%)          | % of required bond to stay active          |
 | `minTicketBalance`    | Configured by owner | Min tickets for active status              |
 | `ticketPrice`         | Configured by owner | Stablecoin cost per ticket (in base units) |
@@ -387,21 +387,21 @@ active = registered
                 BOND LICENSE                          BUY TICKETS
                 ────────────                          ───────────
   Operator                                 Operator
-  INTF wallet ──→ BondingRegistry          USDC wallet ──→ InterfoldTicketToken
-                  (licenseBond++)                          (wraps USDC → mints ITK)
-                                                           ITK → Operator balance
+  FOLD wallet ──→ BondingRegistry          USDC wallet ──→ InterfoldTicketToken
+                  (licenseBond++)                          (wraps USDC → mints tFOLD)
+                                                           tFOLD → Operator balance
 
                UNBOND LICENSE                         BURN TICKETS
                ──────────────                         ────────────
-  licenseBond -= amount                    ITK burned from operator
-  amount → ExitQueue (locked)              USDC stays in ITK contract (payableBalance)
+  licenseBond -= amount                    tFOLD burned from operator
+  amount → ExitQueue (locked)              USDC stays in tFOLD contract (payableBalance)
                                            amount → ExitQueue (locked)
 
                               CLAIM EXITS
                               ───────────
                    After exitDelay seconds:
-                   INTF → returned to source withdrawal address
-                   USDC → paid out from ITK.payableBalance
+                   FOLD → returned to source withdrawal address
+                   USDC → paid out from tFOLD.payableBalance
 ```
 
 ---
@@ -411,7 +411,7 @@ active = registered
 The token contracts were hardened against the following audit findings. All changes are covered by
 `packages/interfold-contracts/test/Token/` and have no runtime impact outside the touched contracts.
 
-### InterfoldTicketToken (ITK)
+### InterfoldTicketToken (tFOLD)
 
 - **H-02 — registry initialization.** The constructor now takes
   `(IERC20 baseToken, address registry_, address initialOwner_)` and assigns `registry = registry_`
@@ -434,9 +434,9 @@ The token contracts were hardened against the following audit findings. All chan
 - **M-29 — EIP-6372 timestamp clock.** `clock() = uint48(block.timestamp)`,
   `CLOCK_MODE() = "mode=timestamp"`.
 
-### InterfoldToken (INTF) — Complete Rewrite
+### InterfoldToken (FOLD) — Complete Rewrite
 
-The INTF token was rewritten to implement a CCA-auction-aligned lifecycle with wallet-level lock
+The FOLD token was rewritten to implement a CCA-auction-aligned lifecycle with wallet-level lock
 enforcement based on immutable policy curves. Key changes:
 
 - **Phase-based lifecycle.** The token derives its phase from immutable `CCA_START` / `CCA_END` and
@@ -472,4 +472,4 @@ enforcement based on immutable policy curves. Key changes:
   field names are preserved for backwards compatibility). All callers — including
   `BondingRegistry.getTicketBalanceAtBlock(node, c.requestBlock - 1)` — pass the value through
   unchanged; the parameter is now a timepoint per EIP-6372 rather than a block number, which is
-  required for the ITK timestamp clock to be valid.
+  required for the tFOLD timestamp clock to be valid.

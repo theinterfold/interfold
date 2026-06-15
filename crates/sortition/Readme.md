@@ -36,7 +36,7 @@ sequenceDiagram
     Note over Operator,BondingRegistry: Phase 1: Operator Setup & Registration
 
     Operator->>BondingRegistry: bondLicense(amount)
-    BondingRegistry->>BondingRegistry: Transfer INTF tokens
+    BondingRegistry->>BondingRegistry: Transfer FOLD tokens
     BondingRegistry->>EventBus: LicenseBondUpdated
 
     Operator->>BondingRegistry: registerOperator()

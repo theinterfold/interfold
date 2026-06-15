@@ -10,8 +10,7 @@ export enum InterfoldEventType {
   E3_REQUESTED = 'E3Requested',
   CIPHERTEXT_OUTPUT_PUBLISHED = 'CiphertextOutputPublished',
   PLAINTEXT_OUTPUT_PUBLISHED = 'PlaintextOutputPublished',
-  E3_PROGRAM_ENABLED = 'E3ProgramEnabled',
-  E3_PROGRAM_DISABLED = 'E3ProgramDisabled',
+  E3_PROGRAM_REGISTERED = 'E3ProgramRegistered',
   ENCRYPTION_SCHEME_ENABLED = 'EncryptionSchemeEnabled',
   ENCRYPTION_SCHEME_DISABLED = 'EncryptionSchemeDisabled',
   CIPHERNODE_REGISTRY_SET = 'CiphernodeRegistrySet',
@@ -107,8 +106,7 @@ export interface InterfoldEventData {
   [InterfoldEventType.E3_REQUESTED]: E3RequestedData
   [InterfoldEventType.CIPHERTEXT_OUTPUT_PUBLISHED]: CiphertextOutputPublishedData
   [InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED]: PlaintextOutputPublishedData
-  [InterfoldEventType.E3_PROGRAM_ENABLED]: { e3Program: string }
-  [InterfoldEventType.E3_PROGRAM_DISABLED]: { e3Program: string }
+  [InterfoldEventType.E3_PROGRAM_REGISTERED]: { e3Program: string }
   [InterfoldEventType.ENCRYPTION_SCHEME_ENABLED]: { encryptionSchemeId: string }
   [InterfoldEventType.ENCRYPTION_SCHEME_DISABLED]: { encryptionSchemeId: string }
   [InterfoldEventType.CIPHERNODE_REGISTRY_SET]: { ciphernodeRegistry: string }

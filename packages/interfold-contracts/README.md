@@ -6,8 +6,8 @@
 | ------------------------------- | ------------------------------------------------------------------------------------------------ |
 | `Interfold.sol`                 | Main protocol coordinator — handles E3 requests, param sets, fee routing, and output publication |
 | `CiphernodeRegistryOwnable.sol` | Ciphernode registration and committee selection                                                  |
-| `BondingRegistry.sol`           | INTF token bonding for ciphernodes; tracks bond amounts and manages bond lifecycle               |
-| `InterfoldToken.sol`            | INTF governance/utility token                                                                    |
+| `BondingRegistry.sol`           | FOLD token bonding for ciphernodes; tracks bond amounts and manages bond lifecycle               |
+| `InterfoldToken.sol`            | FOLD governance/utility token                                                                    |
 | `InterfoldTicketToken.sol`      | USDC-backed tickets used by ciphernodes for sortition entry                                      |
 | `SlashingManager.sol`           | Fault attribution and slashing for dishonest ciphernodes (accusation → quorum → slash)           |
 | `E3RefundManager.sol`           | Issues refunds to requesters when an E3 fails                                                    |
@@ -56,7 +56,7 @@ directory, as well as to the `deployed_contracts.json` file.
 Be sure to configure your desired network in `hardhat.config.ts` before
 deploying.
 
-For non-local networks, set `INTERFOLD_TGE_TIMESTAMP` to the agreed INTF TGE
+For non-local networks, set `INTERFOLD_TGE_TIMESTAMP` to the agreed FOLD TGE
 Unix timestamp before deploying. The deployment script configures this on
 `InterfoldToken` for token-level lock schedules. Local mock deployments default
 this timestamp to the latest local block timestamp.
@@ -117,7 +117,7 @@ pnpm ciphernode:add --network [network]
 
 Options:
 
-- `--license-bond-amount`: Amount of INTF to bond (default: 1000 INTF)
+- `--license-bond-amount`: Amount of FOLD to bond (default: 1000 FOLD)
 - `--ticket-amount`: Amount of USDC for tickets (default: 1000 USDC)
 
 For testing/development, you can also use the admin task to register any
