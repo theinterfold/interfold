@@ -528,6 +528,74 @@ describe("InterfoldToken", function () {
         ]),
       ).to.be.revertedWithCustomError(token, "MintingClosed");
     });
+
+    it("handles mixed recipients and mixed policies in one batch", async function () {
+      const { token, admin, alice, bob } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const bobAddress = await bob.getAddress();
+
+      const saftPolicy = await createLinearPolicy(token, admin, "SAFT_BATCH", {
+        vestDuration: 2n * YEAR,
+      });
+      const teamPolicy = await createLinearPolicy(token, admin, "TEAM_BATCH", {
+        vestDuration: 3n * YEAR,
+      });
+      const ccaPolicy = await createLinearPolicy(token, admin, "CCA_BATCH", {
+        vestDuration: 1n * YEAR,
+      });
+
+      // One batch: Alice gets SAFT + TEAM, Bob gets CCA.
+      const saftAmount = ethers.parseEther("1000");
+      const teamAmount = ethers.parseEther("500");
+      const ccaAmount = ethers.parseEther("700");
+
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount: saftAmount,
+          policyId: saftPolicy,
+          label: ethers.encodeBytes32String("saft"),
+        },
+        {
+          recipient: aliceAddress,
+          amount: teamAmount,
+          policyId: teamPolicy,
+          label: ethers.encodeBytes32String("team"),
+        },
+        {
+          recipient: bobAddress,
+          amount: ccaAmount,
+          policyId: ccaPolicy,
+          label: ethers.encodeBytes32String("cca"),
+        },
+      ]);
+
+      // Alice: 2 locks, 1500 total.
+      expect(await token.lockCount(aliceAddress)).to.equal(2n);
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(
+        saftAmount + teamAmount,
+      );
+      expect(await token.balanceOf(aliceAddress)).to.equal(
+        saftAmount + teamAmount,
+      );
+
+      // Bob: 1 lock, 700 total.
+      expect(await token.lockCount(bobAddress)).to.equal(1n);
+      expect(await token.lockedBalanceOf(bobAddress)).to.equal(ccaAmount);
+      expect(await token.balanceOf(bobAddress)).to.equal(ccaAmount);
+
+      // Verify Alice's locks have the correct policies.
+      const aliceLock0 = await token.locks(aliceAddress, 0);
+      const aliceLock1 = await token.locks(aliceAddress, 1);
+      const alicePolicies = new Set([aliceLock0.policyId, aliceLock1.policyId]);
+      expect(alicePolicies.has(saftPolicy)).to.be.true;
+      expect(alicePolicies.has(teamPolicy)).to.be.true;
+
+      // Bob's lock is CCA.
+      const bobLock = await token.locks(bobAddress, 0);
+      expect(bobLock.policyId).to.equal(ccaPolicy);
+      expect(bobLock.amount).to.equal(ccaAmount);
+    });
   });
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -964,7 +1032,7 @@ describe("InterfoldToken", function () {
       );
     });
 
-    it("holdUntil keeps everything locked regardless of curve", async function () {
+    it("lockedBalanceAt follows the TGE-linear curve over time", async function () {
       // Use deployWithLockAndTge which creates a Tge-anchored lock with holdUntil=0.
       // Then verify lockedBalanceAt at various timestamps.
       const { token, alice, amount, tgeTimestamp } = await deployWithLockAndTge(
@@ -986,6 +1054,88 @@ describe("InterfoldToken", function () {
       expect(
         await token.lockedBalanceAt(aliceAddress, tgeTimestamp + 2n * YEAR),
       ).to.equal(0n);
+    });
+
+    it("sums multiple active locks with different curves correctly over time", async function () {
+      const { token, admin, alice, ccaEnd } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+
+      // Alice receives three locks with different vesting curves.
+      const policy24m = await createLinearPolicy(token, admin, "VEST_24M", {
+        vestDuration: 2n * YEAR,
+      });
+      const policy12m = await createLinearPolicy(token, admin, "VEST_12M", {
+        vestDuration: 1n * YEAR,
+      });
+      // Absolute policy: unlocks at a specific timestamp (ccaEnd + 180 days).
+      // Use cliffDuration=1 (1 second) — zero cliff+vest together is invalid.
+      const policyAbs = await createLinearPolicy(token, admin, "VEST_ABS", {
+        anchor: 0,
+        start: ccaEnd + 180n * DAY,
+        cliffDuration: 1n,
+        vestDuration: 0n,
+      });
+
+      const amount24m = ethers.parseEther("1000");
+      const amount12m = ethers.parseEther("600");
+      const amountAbs = ethers.parseEther("400");
+      const total = amount24m + amount12m + amountAbs;
+
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount: amount24m,
+          policyId: policy24m,
+          label: ethers.encodeBytes32String("v24"),
+        },
+        {
+          recipient: aliceAddress,
+          amount: amount12m,
+          policyId: policy12m,
+          label: ethers.encodeBytes32String("v12"),
+        },
+        {
+          recipient: aliceAddress,
+          amount: amountAbs,
+          policyId: policyAbs,
+          label: ethers.encodeBytes32String("abs"),
+        },
+      ]);
+
+      // Fire TGE.
+      const TGE_COOLDOWN = 45n * DAY;
+      await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
+      const tgeTx = await token.tge();
+      const receipt = await tgeTx.wait();
+      const tgeBlock = await ethers.provider.getBlock(receipt!.blockNumber);
+      const tgeTimestamp = BigInt(tgeBlock!.timestamp);
+
+      // At TGE: everything fully locked (all Tge-anchored + absolute cliff not yet).
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(total);
+
+      // TGE + 6 months:
+      //   24m policy: 6/24 = 25% unlocked → 750 locked
+      //   12m policy: 6/12 = 50% unlocked → 300 locked
+      //   Absolute: start=ccaEnd+180d, TGE+6m past that → 0 locked
+      //   Total locked ≈ 750 + 300 + 0 = 1050
+      await time.increaseTo(tgeTimestamp + YEAR / 2n);
+      let locked = await token.lockedBalanceOf(aliceAddress);
+      expect(locked).to.be.closeTo(
+        ethers.parseEther("1050"),
+        ethers.parseEther("0.02"),
+      );
+
+      // TGE + 12 months:
+      //   24m policy: 12/24 = 50% unlocked → 500 locked
+      //   12m policy: 100% unlocked → 0 locked
+      //   Absolute: unlocked → 0 locked
+      //   Total locked ≈ 500
+      await time.increaseTo(tgeTimestamp + YEAR);
+      locked = await token.lockedBalanceOf(aliceAddress);
+      expect(locked).to.be.closeTo(
+        ethers.parseEther("500"),
+        ethers.parseEther("0.02"),
+      );
     });
 
     it("transferableBalanceOf returns full balance when nothing locked", async function () {
@@ -1732,6 +1882,141 @@ describe("InterfoldToken", function () {
         ethers.parseEther("0.01"),
       );
     });
+
+    it("links CCA claim without disturbing existing non-CCA locks", async function () {
+      const fixture = await loadFixture(deploy);
+      const { token, admin, alice, claimSource, ccaEnd } = fixture;
+      const aliceAddress = await alice.getAddress();
+
+      // Alice already has a Legion/SAFT lock — mint BEFORE TGE.
+      const legionPolicy = await createLinearPolicy(token, admin, "LEGION", {
+        vestDuration: 2n * YEAR,
+      });
+      const legionAmount = ethers.parseEther("1000");
+
+      // Mint extra unlocked tokens to fund the claim transfer.
+      const claimAmount = ethers.parseEther("500");
+      await token
+        .connect(admin)
+        .mint(aliceAddress, claimAmount, ethers.ZeroHash);
+
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount: legionAmount,
+          policyId: legionPolicy,
+          label: ethers.encodeBytes32String("legion"),
+        },
+      ]);
+
+      // Fire TGE.
+      const TGE_COOLDOWN = 45n * DAY;
+      await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
+      await token.tge();
+
+      // Now CLAIM_SOURCE sends tokens — becomes PENDING.
+      await token
+        .connect(alice)
+        .transfer(await claimSource.getAddress(), claimAmount);
+      await token.connect(claimSource).transfer(aliceAddress, claimAmount);
+
+      // Lock before link: LEGION active + PENDING.
+      expect(await token.lockCount(aliceAddress)).to.equal(2n);
+
+      // linkClaim the PENDING to CCA_POLICY.
+      const ccaPolicy = await createLinearPolicy(token, admin, "CCA", {
+        vestDuration: 1n * YEAR,
+      });
+      await token
+        .connect(admin)
+        .linkClaim(aliceAddress, claimAmount, ccaPolicy);
+
+      // LEGION still has 1,000; CCA now has 500; no PENDING remains.
+      expect(await token.lockCount(aliceAddress)).to.equal(2n);
+      const locks = [
+        await token.locks(aliceAddress, 0),
+        await token.locks(aliceAddress, 1),
+      ];
+      const byPolicy = new Map(
+        locks.map((l: { policyId: string; amount: bigint }) => [
+          l.policyId,
+          l.amount,
+        ]),
+      );
+      expect(byPolicy.get(legionPolicy)).to.equal(legionAmount);
+      expect(byPolicy.get(ccaPolicy)).to.equal(claimAmount);
+
+      // lockedBalanceOf equals sum of both (allow tiny vesting rounding).
+      const lb = await token.lockedBalanceOf(aliceAddress);
+      expect(lb).to.be.closeTo(
+        legionAmount + claimAmount,
+        ethers.parseEther("0.02"),
+      );
+    });
+
+    it("supports mixed allocation types for one wallet: unlocked grant + vested allocation + CCA claim", async function () {
+      const fixture = await loadFixture(deploy);
+      const { token, admin, alice, claimSource, ccaEnd } = fixture;
+      const aliceAddress = await alice.getAddress();
+
+      // 1. Unlocked grant.
+      const grantAmount = ethers.parseEther("100");
+      await token
+        .connect(admin)
+        .mint(aliceAddress, grantAmount, ethers.ZeroHash);
+
+      // 2. Legion/SAFT vested allocation.
+      const legionPolicy = await createLinearPolicy(token, admin, "SAFT", {
+        vestDuration: 2n * YEAR,
+      });
+      const legionAmount = ethers.parseEther("1000");
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount: legionAmount,
+          policyId: legionPolicy,
+          label: ethers.encodeBytes32String("saft"),
+        },
+      ]);
+
+      // 3. CCA claim tokens: mint to claimSource, then later transfer back.
+      const ccaAmount = ethers.parseEther("500");
+      await token
+        .connect(admin)
+        .mint(await claimSource.getAddress(), ccaAmount, ethers.ZeroHash);
+
+      // Fire TGE.
+      const TGE_COOLDOWN = 45n * DAY;
+      await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
+      await token.tge();
+
+      // Now CLAIM_SOURCE sends tokens — becomes PENDING.
+      await token.connect(claimSource).transfer(aliceAddress, ccaAmount);
+
+      // Link CCA PENDING to a CCA policy.
+      const ccaPolicy = await createLinearPolicy(token, admin, "CCA_VEST", {
+        vestDuration: 1n * YEAR,
+      });
+      await token.connect(admin).linkClaim(aliceAddress, ccaAmount, ccaPolicy);
+
+      // Assertions after all allocations are in place.
+      const totalBalance = grantAmount + legionAmount + ccaAmount;
+      expect(await token.balanceOf(aliceAddress)).to.equal(totalBalance);
+      expect(await token.lockCount(aliceAddress)).to.equal(2n);
+
+      // Sum of locked: SAFT locked + CCA locked (grant is unlocked).
+      const lb = await token.lockedBalanceOf(aliceAddress);
+      expect(lb).to.be.closeTo(
+        legionAmount + ccaAmount,
+        ethers.parseEther("0.02"),
+      );
+
+      // Grant portion (100) is unlocked and transferable subject to floor.
+      // With no bond, floor = lockedBalance ≈ 1500. Wallet = 1600.
+      // transferable ≈ 1600 - 1500 = 100 (the grant portion).
+      const tb = await token.transferableBalanceOf(aliceAddress);
+      expect(tb).to.be.closeTo(grantAmount, ethers.parseEther("0.02"));
+    });
   });
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -1954,6 +2239,104 @@ describe("InterfoldToken", function () {
   // ═════════════════════════════════════════════════════════════════════════
 
   describe("BondingRegistry integration", function () {
+    it("bonded balance covers aggregate mixed locks without affecting grant accounting", async function () {
+      const signers = await ethers.getSigners();
+      const [, beneficiary, slasher] = signers;
+      const beneficiaryAddress = await beneficiary.getAddress();
+      const slasherAddress = await slasher.getAddress();
+      const sys = await deployInterfoldSystem({
+        useMockCiphernodeRegistry: true,
+        setupOperators: 0,
+        wireSlashingManager: false,
+        mintUsdcTo: [],
+      });
+      const { bondingRegistry, licenseToken } = sys;
+      const bondingRegistryAddress = await bondingRegistry.getAddress();
+
+      await bondingRegistry.setSlashingManager(slasherAddress);
+
+      // Alice has a mixed allocation: 200 unlocked grant + 1000 SAFT + 500 CCA.
+      const grantAmount = ethers.parseEther("200");
+      const saftAmount = ethers.parseEther("1000");
+      const ccaAmount = ethers.parseEther("500");
+      const totalTokens = grantAmount + saftAmount + ccaAmount;
+
+      // Mint unlocked grant (NOT locked).
+      await licenseToken.mint(
+        beneficiaryAddress,
+        grantAmount,
+        ethers.encodeBytes32String("grant"),
+      );
+
+      // SAFT vested allocation: mintAllocations creates AND locks tokens.
+      const saftPolicy = ethers.encodeBytes32String("SAFT_MIX");
+      await licenseToken.createLockPolicy(saftPolicy, {
+        holdUntil: 0n,
+        unlock: {
+          anchor: 1,
+          start: 0n,
+          cliffDuration: 0n,
+          vestDuration: 2n * YEAR,
+        },
+      });
+      await licenseToken.mintAllocations([
+        {
+          recipient: beneficiaryAddress,
+          amount: saftAmount,
+          policyId: saftPolicy,
+          label: ethers.encodeBytes32String("saft"),
+        },
+      ]);
+
+      // CCA vested allocation.
+      const ccaPolicy = ethers.encodeBytes32String("CCA_MIX");
+      await licenseToken.createLockPolicy(ccaPolicy, {
+        holdUntil: 0n,
+        unlock: {
+          anchor: 1,
+          start: 0n,
+          cliffDuration: 0n,
+          vestDuration: 1n * YEAR,
+        },
+      });
+      await licenseToken.mintAllocations([
+        {
+          recipient: beneficiaryAddress,
+          amount: ccaAmount,
+          policyId: ccaPolicy,
+          label: ethers.encodeBytes32String("cca"),
+        },
+      ]);
+
+      // Total tokens: grant(200) + SAFT(1000) + CCA(500) = 1700.
+
+      // Bond 1000.
+      const bondAmount = ethers.parseEther("1000");
+      await licenseToken
+        .connect(beneficiary)
+        .approve(bondingRegistryAddress, bondAmount);
+      await bondingRegistry.connect(beneficiary).bondLicense(bondAmount);
+
+      // Wallet = totalTokens - bondAmount = 1700 - 1000 = 700.
+      expect(await licenseToken.balanceOf(beneficiaryAddress)).to.equal(
+        totalTokens - bondAmount,
+      );
+
+      // Locked ≈ SAFT locked + CCA locked ≈ 1500 (Tge-anchored, no time passed).
+      const locked = await licenseToken.lockedBalanceOf(beneficiaryAddress);
+      expect(locked).to.be.closeTo(
+        saftAmount + ccaAmount,
+        ethers.parseEther("0.01"),
+      );
+
+      // Bonded = 1000 covers 1000 / 1500 of the lock floor.
+      // mustRetain = max(0, locked - bonded) ≈ 500.
+      // transferable = max(0, wallet - mustRetain) = 700 - 500 = 200.
+      // The grant portion (200) is transferable.
+      const tb = await licenseToken.transferableBalanceOf(beneficiaryAddress);
+      expect(tb).to.be.closeTo(grantAmount, ethers.parseEther("0.02"));
+    });
+
     it("transferableBalanceOf counts bonded INTF toward the locked floor", async function () {
       const signers = await ethers.getSigners();
       const [, beneficiary, slasher] = signers;
