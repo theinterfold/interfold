@@ -378,6 +378,43 @@ jobs:
             echo "found=false" >> $GITHUB_OUTPUT
           fi
 
+      # Guard against shipping stale or wrong-layout artifacts. The `circuit-artifacts`
+      # branch is populated out-of-band (`pnpm build:circuits --committee all --preset
+      # insecure-512` followed by `scripts/circuit-artifacts.ts push`). If it lags the
+      # circuit source, its SOURCE_HASH won't match the source we're releasing and its
+      # on-disk layout may predate the `{preset}/{committee}/{variant}` scheme that
+      # consumers (e3-zk-prover) resolve against. Fail loudly here rather than publishing
+      # a tarball that downstreams can't use — regenerate and re-push the branch.
+      - name: Verify circuit artifacts match source
+        if: steps.pull.outputs.found == 'true'
+        run: |
+          PULLED_HASH=$(cat dist/circuits/SOURCE_HASH 2>/dev/null || true)
+          EXPECTED_HASH="${{ steps.pull.outputs.source_hash }}"
+          if [[ -z "$PULLED_HASH" ]]; then
+            echo "::error::circuit-artifacts branch is missing SOURCE_HASH; cannot verify it matches the released source."
+            exit 1
+          fi
+          if [[ "$PULLED_HASH" != "$EXPECTED_HASH" ]]; then
+            echo "::error::circuit-artifacts is stale (SOURCE_HASH=$PULLED_HASH, expected $EXPECTED_HASH)."
+            echo "::error::Rebuild and re-push: pnpm build:circuits --committee all --preset insecure-512 && pnpm tsx scripts/circuit-artifacts.ts push"
+            exit 1
+          fi
+          # Assert the per-committee layout that `--committee all` produces is present, so an
+          # old flat (committee-less) build can never slip through even if the hash lined up.
+          missing=0
+          for committee in minimum micro small; do
+            marker="dist/circuits/insecure-512/${committee}/default/dkg/pk/pk.json"
+            if [[ ! -f "$marker" ]]; then
+              echo "::error::Expected circuit artifact missing: ${marker#dist/circuits/}"
+              missing=1
+            fi
+          done
+          if [[ "$missing" != "0" ]]; then
+            echo "::error::circuit-artifacts was not built with --committee all; regenerate as above."
+            exit 1
+          fi
+          echo "✅ circuit-artifacts verified (SOURCE_HASH=$PULLED_HASH, per-committee layout present)"
+
       - name: Create release archive
         if: steps.pull.outputs.found == 'true'
         run: |
