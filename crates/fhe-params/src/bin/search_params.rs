@@ -13,7 +13,8 @@ use e3_fhe_params::search::bfv::{
     bfv_search, bfv_search_second_param, BfvSearchConfig, BfvSearchResult,
 };
 use e3_fhe_params::search::constants::K_MAX;
-use e3_fhe_params::search::utils::{approx_bits_from_log2, fmt_big_summary, log2_big};
+use e3_fhe_params::search::prime::{build_prime_items, build_prime_items_for_second};
+use e3_fhe_params::search::utils::{approx_bits_from_log2, fmt_big_summary};
 use num_bigint::BigUint;
 
 #[derive(Parser, Debug, Clone)]
@@ -48,6 +49,10 @@ struct Args {
     #[arg(long, default_value_t = 1u128)]
     b_chi: u128,
 
+    /// Min margin.
+    #[arg(long, default_value_t = 1f64)]
+    min_margin: f64,
+
     /// Verbose per-candidate logging
     #[arg(long, default_value_t = false)]
     verbose: bool,
@@ -68,8 +73,8 @@ fn variance_uniform_str(b: u128) -> String {
 }
 
 fn variance_uniform_big_str(b: &BigUint) -> String {
-    let b_plus_one = b + BigUint::from(1u32);
-    let var = (b * &b_plus_one) / 3u32;
+    // Variance for Uniform(-B..B): Var = B^2 / 3
+    let var = (b * b) / 3u32;
     var.to_str_radix(10)
 }
 
@@ -80,87 +85,104 @@ fn print_param_set(
     result: &BfvSearchResult,
     dist_b: &str,
     var_b: &str,
-    dist_b_chi: &str,
     var_chi: &str,
-    dist_benc: Option<(&str, &str)>,
+    var_enc: Option<&str>,
     show_common: bool,
 ) {
-    println!("\n=== {} ===", title);
+    println!();
+    println!("=== {} ===", title);
+    println!();
     if show_common {
-        println!("n (number of ciphernodes)                = {}", config.n);
-        println!("z (number of votes)                      = {}", config.z);
+        println!("  n (ciphernodes)       = {}", config.n);
+        println!("  z (votes)             = {}", config.z);
     }
     println!(
-        "k (plaintext space)                      = {} ({} bits)",
+        "  k (plaintext space)   = {} ({} bits)",
         result.k_plain_eff,
         approx_bits_from_log2((result.k_plain_eff as f64).log2())
     );
-    if show_common {
-        println!(
-            "λ (Statistical security parameter)       = {}",
-            config.lambda
-        );
-        println!(
-            "B (bound on e2)     = {}   [Dist: {}, Var = {}]",
-            config.b, dist_b, var_b
-        );
-        println!(
-            "B_chi (bound on sk) = {}   [Dist: {}, Var = {}]",
-            config.b_chi, dist_b_chi, var_chi
-        );
-    }
-    println!("d (LWE dimension)               = {}", result.d);
-    println!("q_BFV (decimal)  = {}", result.q_bfv.to_str_radix(10));
-    println!("|q_BFV|          = {}", fmt_big_summary(&result.q_bfv));
-    println!("Δ (decimal)      = {}", result.delta.to_str_radix(10));
-    println!("r_k(q)           = {}", result.rkq);
-    if let Some((dist, var)) = dist_benc {
-        println!(
-            "BEnc (bound on e1)  = {}   [Dist: {}, Var = {}]",
-            result.benc_min.to_str_radix(10),
-            dist,
-            var
-        );
-    } else {
-        println!(
-            "BEnc (bound on e1, taken as B)  = {}   [Dist: {}, Var = {}]",
-            config.b, dist_b, var_b
-        );
-    }
-    println!("B_fresh          = {}", result.b_fresh.to_str_radix(10));
-    println!("B_C              = {}", result.b_c.to_str_radix(10));
-    if show_common {
-        println!("B_sm         = {}", result.b_sm_min.to_str_radix(10));
-        println!("log2(LHS)        = {:.6}", result.lhs_log2);
-    } else {
-        println!("log2(2*B_C)      = {:.6}", log2_big(&(&result.b_c << 1)));
-    }
-    println!("log2(Δ)          = {:.6}", result.rhs_log2);
+    println!("  λ (statistical sec)   = {}", config.lambda);
     println!(
-        "q_i used ({}): {}",
-        result.selected_primes.len(),
-        result
-            .selected_primes
-            .iter()
-            .map(|p| format!("{} ({} bits)", p.hex, p.bitlen))
-            .collect::<Vec<_>>()
-            .join(", ")
+        "  B (error bound)       = {}  [Dist: {}, Var = {}]",
+        config.b, dist_b, var_b
     );
+    println!(
+        "  B_χ (secret bound)    = {}  [Dist: CBD, Var = {}]",
+        config.b_chi, var_chi
+    );
+    println!();
+    println!("  d (ring dimension)    = {}", result.d);
+    println!(
+        "  q (ciphertext mod)    = {}",
+        result.q_bfv.to_str_radix(10)
+    );
+    println!(
+        "  |q|                   = {}",
+        fmt_big_summary(&result.q_bfv)
+    );
+    println!(
+        "  Δ = ⌊q/k⌋             = {}",
+        result.delta.to_str_radix(10)
+    );
+    println!("  r_k(q) = q mod k      = {}", result.rkq);
+    println!();
+    if let Some(var) = var_enc {
+        println!(
+            "  B_Enc                 = {}",
+            result.benc_min.to_str_radix(10)
+        );
+        println!("  Var(e_1)              = {}", var);
+        println!(
+            "  B_fresh               = {}",
+            result.b_fresh.to_str_radix(10)
+        );
+        println!("  B_C                   = {}", result.b_c.to_str_radix(10));
+        println!(
+            "  B_sm                  = {}",
+            result.b_sm_min.to_str_radix(10)
+        );
+        println!();
+        println!("  log₂(LHS)             = {:.6}", result.lhs_log2);
+    } else {
+        println!(
+            "  B_Enc (= B)           = {}",
+            result.benc_min.to_str_radix(10)
+        );
+        println!(
+            "  B_fresh               = {}",
+            result.b_fresh.to_str_radix(10)
+        );
+        println!("  B_C (= B_fresh)       = {}", result.b_c.to_str_radix(10));
+        println!();
+        println!("  log₂(2·B_C)           = {:.6}", result.lhs_log2);
+    }
+    println!("  log₂(Δ)               = {:.6}", result.rhs_log2);
+    println!(
+        "  Correctness check     = {} < {} ✓",
+        result.lhs_log2, result.rhs_log2
+    );
+    println!();
+    println!("  q_i ({} primes):", result.selected_primes.len());
+    for (i, p) in result.selected_primes.iter().enumerate() {
+        println!("    [{}] {} ({} bits)", i + 1, p.hex, p.bitlen);
+    }
 }
 
 fn main() {
     let args = Args::parse();
 
-    if args.verbose {
-        println!(
-            "== BFV parameter search (NTT-friendly primes 40..60 bits; 61-, 62- and 63-bit primes are excluded) =="
-        );
-        println!(
-            "Inputs: n={}  z={} k(user)={}  λ={}  B={} B_chi={}",
-            args.n, args.z, args.k, args.lambda, args.b, args.b_chi
-        );
-        println!("Constraint: z ≤ k(effective) and z ≤ 2^25 (≈33.5M)\n");
-    }
+    println!("================================================================================");
+    println!("                    BFV Parameter Search (NTT-friendly primes)");
+    println!("================================================================================");
+    println!();
+    println!("Inputs:");
+    println!("  n (ciphernodes)     = {}", args.n);
+    println!("  z (votes)           = {}", args.z);
+    println!("  k (plaintext space) = {}", args.k);
+    println!("  λ (statistical sec) = {}", args.lambda);
+    println!("  B (error bound)     = {}", args.b);
+    println!("  B_χ (secret bound)  = {}", args.b_chi);
+    println!();
 
     // Enforce constraints on z and k
     if args.z == 0 {
@@ -186,8 +208,16 @@ fn main() {
         lambda: args.lambda,
         b: args.b,
         b_chi: args.b_chi,
+        min_margin: args.min_margin,
         verbose: args.verbose,
     };
+
+    println!("Prime pools:");
+    println!("  First set:  {} primes", build_prime_items().len());
+    println!(
+        "  Second set: {} primes",
+        build_prime_items_for_second().len()
+    );
 
     // Search across all powers of two; stop at the first feasible candidate
     let Ok(bfv) = bfv_search(&config) else {
@@ -205,14 +235,15 @@ fn main() {
         ("Uniform", variance_uniform_str(args.b))
     };
 
-    let (dist_b_chi, var_chi) = ("CBD", variance_cbd_str(args.b_chi));
-    let (dist_benc, var_benc) = ("Uniform", variance_uniform_big_str(&bfv.benc_min));
+    let var_chi = variance_cbd_str(args.b_chi);
+    let var_enc = variance_uniform_big_str(&bfv.benc_min);
 
     let bfv2_opt = bfv_search_second_param(&config, &bfv);
 
-    println!("\n\n");
+    println!();
+    println!();
     println!("================================================================================");
-    println!("                         FINAL BFV PARAMETER SETS");
+    println!("                            FINAL PARAMETER SETS");
     println!("================================================================================");
 
     print_param_set(
@@ -221,9 +252,8 @@ fn main() {
         &bfv,
         dist_b,
         &var_b,
-        dist_b_chi,
         &var_chi,
-        Some((dist_benc, &var_benc)),
+        Some(&var_enc),
         true,
     );
 
@@ -234,7 +264,6 @@ fn main() {
             bfv2,
             dist_b,
             &var_b,
-            dist_b_chi,
             &var_chi,
             None,
             false,
@@ -244,5 +273,6 @@ fn main() {
         println!("No second BFV parameter set found.");
     }
 
-    println!("\n================================================================================");
+    println!();
+    println!("================================================================================");
 }

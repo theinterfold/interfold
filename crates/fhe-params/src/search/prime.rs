@@ -34,7 +34,7 @@ fn build_prime_items_with_filter(filter: BitFilter) -> Vec<PrimeItem> {
         if filter(*bits) {
             continue;
         }
-        for &phex in arr {
+        for &phex in arr.into_iter() {
             let v = parse_hex_big(phex);
             vec.push(PrimeItem {
                 bitlen: *bits,
@@ -47,10 +47,12 @@ fn build_prime_items_with_filter(filter: BitFilter) -> Vec<PrimeItem> {
     vec
 }
 
-/// Build a flat list of all primes with precomputed log2 and hex strings.
-/// Excludes 61, 62, and 63-bit primes.
+/// Build the prime pool for the first parameter set.
+/// Restricted to 50..=60 bit primes: the floor of 50 bits avoids the <0.2-bit
+/// correctness margin of 49-bit primes for worst-case inputs, and 61/62/63-bit
+/// primes are reserved for the second set (centered-RNS gap requirement).
 pub fn build_prime_items() -> Vec<PrimeItem> {
-    build_prime_items_with_filter(|bits| bits == 63 || bits == 62 || bits == 61)
+    build_prime_items_with_filter(|bits| bits < 50 || bits == 61 || bits == 62 || bits == 63)
 }
 
 /// Build prime items for second parameter set (includes 62-bit primes, excludes 61 and 63-bit)

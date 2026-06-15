@@ -28,19 +28,18 @@ pub fn log2_big(x: &BigUint) -> f64 {
         return f64::NEG_INFINITY;
     }
     let bytes = x.to_bytes_be();
-    let leading = bytes[0];
-    let lead_bits = 8 - leading.leading_zeros() as usize;
-    let bits = (bytes.len() - 1) * 8 + lead_bits;
 
-    // refine with up to 8 bytes
+    // Take up to 8 bytes for f64 precision (53 mantissa bits)
     let take = bytes.len().min(8);
     let mut top: u64 = 0;
     for &byte in bytes.iter().take(take) {
         top = (top << 8) | byte as u64;
     }
-    let frac = (top as f64).log2();
-    let adjust = (take * 8) as f64;
-    (bits as f64 - adjust) + frac
+
+    // log2(x) = log2(top * 2^((bytes.len() - take) * 8))
+    //         = log2(top) + (bytes.len() - take) * 8
+    let shift = ((bytes.len() - take) * 8) as f64;
+    (top as f64).log2() + shift
 }
 
 pub fn approx_bits_from_log2(log2x: f64) -> u64 {
