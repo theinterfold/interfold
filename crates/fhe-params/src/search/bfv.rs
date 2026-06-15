@@ -17,9 +17,7 @@ use crate::search::prime::PrimeItem;
 use crate::search::prime::{
     build_prime_items, build_prime_items_for_second, select_max_q_under_cap,
 };
-use crate::search::utils::{
-    approx_bits_from_log2, big_shift_pow2, fmt_big_summary, log2_big, product,
-};
+use crate::search::utils::{approx_bits_from_log2, big_shift_pow2, log2_big, product};
 use num_bigint::BigUint;
 use num_traits::ToPrimitive;
 use num_traits::Zero;
@@ -117,6 +115,7 @@ pub fn bfv_search(bfv_search_config: &BfvSearchConfig) -> BfvParamsResult<BfvSea
         .into());
     }
 
+    let verbose = bfv_search_config.verbose;
     let prime_items = build_prime_items();
     let d = RING_DIM;
 
@@ -124,7 +123,7 @@ pub fn bfv_search(bfv_search_config: &BfvSearchConfig) -> BfvParamsResult<BfvSea
     // performed in finalize_bfv_candidate.
     let min_log2_q = calculate_min_q_bits(bfv_search_config, d);
 
-    if bfv_search_config.verbose {
+    if verbose {
         let log2_b = (bfv_search_config.b as f64).log2();
         let log2_q_limit = log2_b + ((d as f64) - 75.0) / 37.5;
         println!("\n[BFV-1st] Fixed d={d}");
@@ -136,28 +135,85 @@ pub fn bfv_search(bfv_search_config: &BfvSearchConfig) -> BfvParamsResult<BfvSea
     // taking the first `num_primes` of a bucket maximises q for that prime size.
     let by_bits = group_by_bits_desc(&prime_items);
 
-    // Try the fewest primes first, then the smallest prime bit-size that meets
-    // the correctness bound. This mirrors the reference bucket-scan search.
-    for num_primes in FIRST_TARGET_NUM_PRIMES..=FIRST_MAX_NUM_PRIMES {
+    // Show available buckets.
+    if verbose {
         for bb in FIRST_MIN_PRIME_BITS..=FIRST_MAX_PRIME_BITS {
-            let bucket = match by_bits.get(&bb) {
-                Some(b) if b.len() >= num_primes => b,
-                _ => continue,
-            };
-
-            // Take the largest `num_primes` primes in this bucket to maximise q.
-            let sel: Vec<PrimeItem> = bucket.iter().take(num_primes).cloned().collect();
-            let q = product(sel.iter().map(|pi| pi.value.clone()));
-            if log2_big(&q) < min_log2_q {
-                continue;
-            }
-
-            if let Some(res) = finalize_bfv_candidate(bfv_search_config, d, sel) {
-                return Ok(res);
+            if let Some(bucket) = by_bits.get(&bb) {
+                let max_log2 = bucket.first().map(|p| p.log2).unwrap_or(0.0);
+                let min_log2 = bucket.last().map(|p| p.log2).unwrap_or(0.0);
+                println!(
+                    "  {}-bit bucket: {} primes, log2 range [{:.2}, {:.2}]",
+                    bb,
+                    bucket.len(),
+                    min_log2,
+                    max_log2
+                );
             }
         }
     }
 
+    // Try the fewest primes first, then the smallest prime bit-size that meets
+    // the correctness bound. This mirrors the reference bucket-scan search.
+    for num_primes in FIRST_TARGET_NUM_PRIMES..=FIRST_MAX_NUM_PRIMES {
+        if verbose {
+            println!("\n  === Trying {num_primes} primes ===");
+        }
+
+        for bb in FIRST_MIN_PRIME_BITS..=FIRST_MAX_PRIME_BITS {
+            let bucket = match by_bits.get(&bb) {
+                Some(b) => b,
+                None => continue,
+            };
+
+            if bucket.len() < num_primes {
+                if verbose {
+                    println!(
+                        "  {} × {}-bit: only {} primes available (need {})",
+                        num_primes,
+                        bb,
+                        bucket.len(),
+                        num_primes
+                    );
+                }
+                continue;
+            }
+
+            // Take the largest `num_primes` primes in this bucket to maximise q.
+            let sel: Vec<PrimeItem> = bucket.iter().take(num_primes).cloned().collect();
+            let q = product(sel.iter().map(|pi| pi.value.clone()));
+            let q_bits = log2_big(&q);
+            let max_qi_log2 = sel.iter().map(|p| p.log2).fold(0.0_f64, f64::max);
+
+            if q_bits < min_log2_q {
+                if verbose {
+                    println!(
+                        "  {} × {}-bit: log2(q)={:.2} < {:.1} needed, skipping",
+                        num_primes, bb, q_bits, min_log2_q
+                    );
+                }
+                continue;
+            }
+
+            if let Some(res) = finalize_bfv_candidate(bfv_search_config, d, sel) {
+                if verbose {
+                    println!(
+                        "\n✓ Found first set: {} × {}-bit primes, log2(q)={:.2}, max_qi={:.2} bits",
+                        num_primes, bb, q_bits, max_qi_log2
+                    );
+                }
+                return Ok(res);
+            } else if verbose {
+                println!(
+                    "  {} × {}-bit: log2(q)={:.2} ❌ fails correctness or margin < {:.1} bits",
+                    num_primes, bb, q_bits, bfv_search_config.min_margin
+                );
+            }
+        }
+    }
+
+    if verbose {
+        eprintln!("\nERROR: No valid first parameter set found");
+    }
     Err(SearchError::NoFeasibleParameters.into())
 }
 
@@ -254,42 +310,6 @@ pub fn finalize_bfv_candidate(
     let lhs_log2 = log2_big(&lhs);
     let rhs_log2 = log2_big(&delta);
     let margin = rhs_log2 - lhs_log2;
-
-    let benc_bits = approx_bits_from_log2(log2_big(&benc_min));
-    let bfresh_bits = approx_bits_from_log2(log2_big(&b_fresh));
-    let bc_bits = approx_bits_from_log2(log2_big(&b_c));
-    let bsm_bits = approx_bits_from_log2(log2_big(&b_sm_min));
-
-    if bfv_search_config.verbose {
-        println!("\n[BFV] d={d} candidate:");
-        println!(
-            "  CRT primes ({}): {}",
-            chosen.len(),
-            chosen
-                .iter()
-                .map(|p| p.hex.clone())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        println!("  |q_BFV| {}", fmt_big_summary(&q_bfv));
-        println!(
-            "  r_k(q)={}   k={}   Δ={}",
-            rkq,
-            bfv_search_config.z,
-            delta.to_str_radix(10)
-        );
-
-        println!("  negl(λ)=2^-{} (exact pow2)", bfv_search_config.lambda);
-        println!("  BEnc ≈ 2^{benc_bits}   B_fresh ≈ 2^{bfresh_bits}");
-        println!("  B_C      ≈ 2^{bc_bits}   B_sm ≈ 2^{bsm_bits}");
-        println!("  eq1 logs: log2(LHS)≈{lhs_log2:.3}   log2(Δ)≈{rhs_log2:.3}");
-
-        println!(
-            "  eq1: 2*(B_C + n*B_sm) {} Δ   => {}",
-            if lhs < delta { "<" } else { "≥" },
-            if lhs < delta { "PASS ✅" } else { "fail ❌" }
-        );
-    }
 
     if lhs >= delta || margin < bfv_search_config.min_margin {
         return None;
@@ -471,10 +491,14 @@ pub fn bfv_search_second_param(
         .expect("first set has at least one prime");
     let k_second: u128 = max_qi_first.to_u128().unwrap_or(u128::MAX);
 
+    let verbose = bfv_search_config.verbose;
+
     // Centered-RNS gap rule: qi > 2*k.
     let min_qi_second = &max_qi_first << 1;
 
-    if bfv_search_config.verbose {
+    if verbose {
+        let log2_b = (bfv_search_config.b as f64).log2();
+        let log2_q_limit = log2_b + ((d as f64) - 75.0) / 37.5;
         println!(
             "\n[BFV-2nd] Fixed d={d}, k = max_qi_first = {k_second} ({:.2} bits)",
             log2_big(&max_qi_first)
@@ -483,6 +507,7 @@ pub fn bfv_search_second_param(
             "  Minimum qi required: {:.2} bits (fhe.rs centered RNS: qi > 2*k)",
             log2_big(&min_qi_second)
         );
+        println!("  Security limit: log2(q) <= {log2_q_limit:.1}");
     }
 
     let prime_items = build_prime_items_for_second();
@@ -504,8 +529,35 @@ pub fn bfv_search_second_param(
         v.sort_by(|a, b| a.value.cmp(&b.value));
     }
 
+    // Show available primes per bit-length (gap rule applied, first-set excluded).
+    if verbose {
+        for bb in SECOND_MIN_PRIME_BITS..=SECOND_MAX_PRIME_BITS {
+            if let Some(bucket) = by_bits.get(&bb) {
+                let available: Vec<&PrimeItem> = bucket
+                    .iter()
+                    .filter(|p| p.value > min_qi_second && !first_set_primes.contains(&p.hex))
+                    .collect();
+                if !available.is_empty() {
+                    let min_log2 = available.first().map(|p| p.log2).unwrap_or(0.0);
+                    let max_log2 = available.last().map(|p| p.log2).unwrap_or(0.0);
+                    println!(
+                        "  {}-bit bucket: {} primes with qi > 2k, log2 range [{:.2}, {:.2}]",
+                        bb,
+                        available.len(),
+                        min_log2,
+                        max_log2
+                    );
+                }
+            }
+        }
+    }
+
     // Fewest primes first, then smallest prime bit-size.
     for num_primes in SECOND_TARGET_NUM_PRIMES..=SECOND_MAX_NUM_PRIMES {
+        if verbose {
+            println!("\n  === Trying {num_primes} primes ===");
+        }
+
         for bb in SECOND_MIN_PRIME_BITS..=SECOND_MAX_PRIME_BITS {
             let bucket = match by_bits.get(&bb) {
                 Some(b) => b,
@@ -520,17 +572,49 @@ pub fn bfv_search_second_param(
                 .collect();
 
             if valid.len() < num_primes {
+                if verbose {
+                    println!(
+                        "  {} × {}-bit: only {} valid primes with large gap (need {})",
+                        num_primes,
+                        bb,
+                        valid.len(),
+                        num_primes
+                    );
+                }
                 continue;
             }
 
             // Take the smallest valid primes to minimise prime size.
             let sel: Vec<PrimeItem> = valid.into_iter().take(num_primes).collect();
+            let q = product(sel.iter().map(|pi| pi.value.clone()));
+            let q_bits = log2_big(&q);
+            let min_selected = sel.iter().map(|p| &p.value).min().unwrap();
+            let gap_bits = log2_big(&(min_selected - &max_qi_first));
+
+            if verbose {
+                println!(
+                    "  {} × {}-bit: log2(q) = {:.2}, min gap = 2^{:.1}",
+                    num_primes, bb, q_bits, gap_bits
+                );
+            }
+
             if let Some(res) = finalize_second_param(bfv_search_config, d, sel, k_second) {
+                if verbose {
+                    println!(
+                        "\n✓ Found second set: {} × {}-bit, log2(q)={:.2}, gap=2^{:.1}",
+                        num_primes, bb, q_bits, gap_bits
+                    );
+                }
                 return Some(res);
+            } else if verbose {
+                println!("    ❌ Fails correctness check");
             }
         }
     }
 
+    if verbose {
+        eprintln!("\nWARNING: No valid second parameter set found");
+    }
     None
 }
 
@@ -693,12 +777,6 @@ pub fn finalize_second_param(
 
     for pi in &chosen {
         if pi.value <= min_qi_threshold {
-            if bfv_search_config.verbose {
-                println!(
-                    "[BFV-2nd] d={d} candidate rejected: qi {} does not satisfy the large-gap rule qi > 2*k (k={k_plain}).",
-                    pi.value,
-                );
-            }
             return None;
         }
     }
@@ -721,46 +799,8 @@ pub fn finalize_second_param(
     let rhs_log2 = log2_big(&delta);
 
     let margin = rhs_log2 - lhs_log2;
-    let ok = lhs < delta && margin >= bfv_search_config.min_margin;
-    if !ok {
+    if lhs >= delta || margin < bfv_search_config.min_margin {
         return None;
-    }
-
-    if bfv_search_config.verbose {
-        println!("\n[BFV-2nd] d={d} candidate:");
-        println!(
-            "  CRT primes ({}): {}",
-            chosen.len(),
-            chosen
-                .iter()
-                .map(|p| p.hex.clone())
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
-        println!("  |q_BFV| {}", fmt_big_summary(&q_bfv));
-        println!(
-            "  k(plaintext_space)={} Δ={}",
-            k_plain,
-            delta.to_str_radix(10)
-        );
-        println!(
-            "  BEnc(taken as B) = {}   B_fresh = {}",
-            bfv_search_config.b,
-            b_fresh.to_str_radix(10)
-        );
-        println!("  B_C = B_fresh = {}", b_c.to_str_radix(10));
-        println!(
-            "  log2(2*B_C)≈{:.3}   log2(Δ)≈{:.3}   margin={:.3} bits",
-            lhs_log2, rhs_log2, margin
-        );
-
-        println!(
-            "  2*B_C {} Δ   => {}",
-            if ok { "<" } else { "≥" },
-            if ok { "PASS ✅" } else { "fail ❌" }
-        );
-
-        println!("\n*** BFV-2nd FEASIBLE at d={} ***", d);
     }
 
     Some(BfvSearchResult {

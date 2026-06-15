@@ -219,11 +219,20 @@ fn main() {
         build_prime_items_for_second().len()
     );
 
-    // Search across all powers of two; stop at the first feasible candidate
-    let Ok(bfv) = bfv_search(&config) else {
-        eprintln!(
-            "\nNo feasible BFV parameter set found across d∈{{256, 512, 1024,2048,4096,8192,16384,32768}}."
+    // Search for first parameter set
+    if args.verbose {
+        println!();
+        println!(
+            "================================================================================"
         );
+        println!("                         Searching First Parameter Set");
+        println!(
+            "================================================================================"
+        );
+    }
+
+    let Ok(bfv) = bfv_search(&config) else {
+        eprintln!("\nERROR: No feasible first parameter set found.");
         eprintln!("Try increasing d, or reducing n, z, λ, or B.");
         std::process::exit(1);
     };
@@ -237,6 +246,18 @@ fn main() {
 
     let var_chi = variance_cbd_str(args.b_chi);
     let var_enc = variance_uniform_big_str(&bfv.benc_min);
+
+    // Search for second parameter set
+    if args.verbose {
+        println!();
+        println!(
+            "================================================================================"
+        );
+        println!("                         Searching Second Parameter Set");
+        println!(
+            "================================================================================"
+        );
+    }
 
     let bfv2_opt = bfv_search_second_param(&config, &bfv);
 
