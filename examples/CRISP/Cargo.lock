@@ -832,7 +832,7 @@ dependencies = [
  "alloy-rlp",
  "alloy-serde",
  "alloy-sol-types",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "serde",
  "serde_json",
  "serde_with",
@@ -1136,7 +1136,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1147,7 +1147,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2784,7 +2784,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2852,8 +2852,8 @@ dependencies = [
 
 [[package]]
 name = "fhe"
-version = "0.2.0"
-source = "git+https://github.com/gnosisguild/fhe.rs#a92478b39625f4c18b91a5033928b35d8a0090cf"
+version = "0.2.1"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
 dependencies = [
  "bincode",
  "doc-comment",
@@ -2878,8 +2878,8 @@ dependencies = [
 
 [[package]]
 name = "fhe-math"
-version = "0.2.0"
-source = "git+https://github.com/gnosisguild/fhe.rs#a92478b39625f4c18b91a5033928b35d8a0090cf"
+version = "0.2.1"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
 dependencies = [
  "ethnum",
  "fhe-traits",
@@ -2903,16 +2903,16 @@ dependencies = [
 
 [[package]]
 name = "fhe-traits"
-version = "0.1.1"
-source = "git+https://github.com/gnosisguild/fhe.rs#a92478b39625f4c18b91a5033928b35d8a0090cf"
+version = "0.2.1"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
 dependencies = [
  "rand 0.9.2",
 ]
 
 [[package]]
 name = "fhe-util"
-version = "0.1.1"
-source = "git+https://github.com/gnosisguild/fhe.rs#a92478b39625f4c18b91a5033928b35d8a0090cf"
+version = "0.2.1"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
 dependencies = [
  "num-bigint-dig",
  "num-traits",
@@ -4655,7 +4655,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "343d3bd7056eda839b03204e68deff7d1b13aba7af2b2fd16890697274262ee7"
 dependencies = [
  "heck",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "log",
  "multimap",
  "petgraph",
@@ -4674,7 +4674,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "27c6023962132f4b30eb4c172c91ce92d933da334c59c23cddee82358ddafb0b"
 dependencies = [
  "anyhow",
- "itertools 0.14.0",
+ "itertools 0.13.0",
  "proc-macro2 1.0.106",
  "quote 1.0.44",
  "syn 2.0.116",
@@ -5207,7 +5207,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -5658,7 +5658,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "52d1cfed4120b4d927bf7c0f86d2087a4a7d6027c906d9f9d525a80573b9be51"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -5820,7 +5820,7 @@ dependencies = [
  "getrandom 0.4.2",
  "once_cell",
  "rustix",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]

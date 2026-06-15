@@ -696,7 +696,7 @@ impl ThresholdKeyshare {
             TrBFVRequest::GenPkShareAndSkSss(GenPkShareAndSkSssRequest {
                 trbfv_config,
                 crp,
-                lambda: defaults.lambda as usize,
+                lambda: threshold_preset.lambda_config(),
                 num_ciphertexts: defaults.z as usize,
             }),
             CorrelationId::new(),

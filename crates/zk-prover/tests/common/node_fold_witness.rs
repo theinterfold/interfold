@@ -62,19 +62,23 @@ pub fn pk_generation_sample_with_esi(
 
     let num_parties = committee.n;
     let threshold = committee.threshold;
-    let preset_metadata = preset.metadata();
 
     let defaults = preset
         .search_defaults()
         .ok_or_else(|| CircuitsErrors::Sample("missing search defaults".to_string()))?;
     let num_ciphertexts = defaults.z;
+    // Lambda is secure or insecure depending on the preset's security tier.
+    let lambda = preset
+        .lambda()
+        .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
     let trbfv = TRBFV::new(num_parties, threshold, threshold_params.clone())
         .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
-    let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone());
+    let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+        .map_err(|e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
 
     let esi_coeffs: Vec<BigInt> = trbfv
-        .generate_smudging_error(num_ciphertexts as usize, preset_metadata.lambda, &mut rng)
+        .generate_smudging_error(num_ciphertexts as usize, lambda, &mut rng)
         .map_err(|e| {
             CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e))
         })?;
@@ -113,7 +117,9 @@ pub fn share_computation_sk_from_pk(
             .map_err(CircuitsErrors::Sample)?;
 
     let mut share_manager =
-        ShareManager::new(committee.n, committee.threshold, threshold_params.clone());
+        ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
+            |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
+        )?;
 
     let sk_poly = share_manager
         .coeffs_to_poly_level0(secret_key.coeffs.clone().as_ref())
@@ -154,7 +160,9 @@ pub fn share_computation_esm_from_esi(
             .map_err(CircuitsErrors::Sample)?;
 
     let mut share_manager =
-        ShareManager::new(committee.n, committee.threshold, threshold_params.clone());
+        ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
+            |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
+        )?;
 
     let esi_poly = share_manager
         .bigints_to_poly(esi_coeffs)

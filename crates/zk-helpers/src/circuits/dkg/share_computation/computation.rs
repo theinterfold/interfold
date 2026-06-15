@@ -157,7 +157,10 @@ impl Computation for Bounds {
             .search_defaults()
             .ok_or_else(|| CircuitsErrors::Sample("missing search defaults".to_string()))?;
         let num_ciphertexts = defaults.z;
-        let lambda = defaults.lambda;
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = preset
+            .lambda()
+            .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
         // Use the same committee size as C1 (pk_generation) so smudging bounds and
         // bit widths match PK_GENERATION_BIT_E_SM / SHARE_COMPUTATION_E_SM_BIT_SECRET.
@@ -165,7 +168,7 @@ impl Computation for Bounds {
             threshold_params,
             data.n_parties as usize,
             num_ciphertexts as usize,
-            lambda as usize,
+            lambda,
         );
 
         let e_sm_calculator = SmudgingBoundCalculator::new(e_sm_config);

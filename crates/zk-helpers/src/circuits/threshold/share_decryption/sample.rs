@@ -42,7 +42,10 @@ impl ShareDecryptionCircuitData {
         let num_parties = committee.n;
         let threshold = committee.threshold;
         let num_ciphertexts = sd.z as usize;
-        let lambda = preset.metadata().lambda;
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = preset
+            .lambda()
+            .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
         // Create TRBFV instance for share generation
         let trbfv = TRBFV::new(num_parties, threshold, threshold_params.clone())
@@ -82,7 +85,10 @@ impl ShareDecryptionCircuitData {
         // - Party 0 collects shares from other parties (including themselves)
         // - When party 0 computes a decryption share, they aggregate all collected shares
 
-        let mut share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone());
+        let mut share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+            .map_err(|e| {
+                CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e))
+            })?;
 
         // Generate shares for each party's secret key
         // In reality, each party would do this independently

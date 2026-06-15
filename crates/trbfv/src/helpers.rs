@@ -10,7 +10,7 @@ use e3_crypto::{Cipher, SensitiveBytes};
 use fhe::mbfv::PublicKeyShare;
 use fhe::{
     bfv::{self, BfvParameters, SecretKey},
-    trbfv::{SmudgingBoundCalculator, SmudgingBoundCalculatorConfig},
+    trbfv::{Lambda, SmudgingBoundCalculator, SmudgingBoundCalculatorConfig},
 };
 use fhe_math::rq::{Ntt, Poly, PowerBasis, RepresentationTag};
 use fhe_traits::DeserializeWithContext;
@@ -77,7 +77,7 @@ pub fn calculate_error_size(
     params: Arc<bfv::BfvParameters>,
     n: usize,
     num_ciphertexts: usize,
-    lambda: usize,
+    lambda: Lambda,
 ) -> Result<BigUint> {
     let config = SmudgingBoundCalculatorConfig::new(params, n, num_ciphertexts, lambda);
     let calculator = SmudgingBoundCalculator::new(config);

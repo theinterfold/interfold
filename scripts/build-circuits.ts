@@ -329,7 +329,9 @@ class NoirCircuitBuilder {
   private writeActiveBinPresetStamp(preset: string, sourceHash: string): void {
     const stamp: PresetBuildStamp = {
       preset,
-      committee: this.options.committee,
+      // Narrow out 'all': this runs per resolved preset/committee, so 'all' is meaningless here
+      // and must never be persisted into the stamp that --skip-if-built later compares against.
+      committee: this.options.committee === 'all' ? undefined : this.options.committee,
       sourceHash,
       builtAt: new Date().toISOString(),
     }
@@ -957,7 +959,13 @@ class NoirCircuitBuilder {
     const hash = createHash('sha256')
     if (preset !== undefined) {
       hash.update(`preset:${preset}\n`)
-      hash.update(`noir_config:${PRESET_NOIR_CONFIG[preset]}\n`)
+      const tier = PRESET_NOIR_CONFIG[preset]
+      hash.update(`noir_config:${tier}\n`)
+      // Hash the contents of the preset's Noir config, not just its name: the baked crypto
+      // constants (e.g. PK_GENERATION_E_SM_BOUND) live here and must invalidate --skip-if-built
+      // when they change. Otherwise a bound update silently reuses a stale compiled circuit.
+      const tierConfigDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', tier)
+      if (existsSync(tierConfigDir)) this.hashDir(tierConfigDir, hash)
     }
     if (this.options.committee) {
       hash.update(`committee:${this.options.committee}\n`)

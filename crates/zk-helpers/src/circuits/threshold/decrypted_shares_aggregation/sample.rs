@@ -52,6 +52,10 @@ impl DecryptedSharesAggregationCircuitData {
         let sd = preset
             .search_defaults()
             .ok_or_else(|| CircuitsErrors::Sample("Preset has no search defaults".into()))?;
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = preset
+            .lambda()
+            .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
         let num_parties = committee.n;
         let threshold = committee.threshold;
@@ -77,8 +81,14 @@ impl DecryptedSharesAggregationCircuitData {
                         ))
                     })?;
 
-                let mut share_manager =
-                    ShareManager::new(num_parties, threshold, threshold_params.clone());
+                let mut share_manager = ShareManager::new(
+                    num_parties,
+                    threshold,
+                    threshold_params.clone(),
+                )
+                .map_err(|e| {
+                    CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e))
+                })?;
                 let sk_poly = share_manager
                     .coeffs_to_poly_level0(sk_share.coeffs.as_ref())
                     .map_err(|e| {
@@ -95,7 +105,7 @@ impl DecryptedSharesAggregationCircuitData {
                     })?;
 
                 let esi_coeffs = trbfv
-                    .generate_smudging_error(sd.z as usize, sd.lambda as usize, &mut rng)
+                    .generate_smudging_error(sd.z as usize, lambda, &mut rng)
                     .map_err(|e| {
                         CircuitsErrors::Sample(format!(
                             "Failed to generate smudging error: {:?}",
@@ -173,7 +183,10 @@ impl DecryptedSharesAggregationCircuitData {
 
         // Aggregate collected shares to get sk_poly_sum and es_poly_sum per party
         for party in parties.iter_mut() {
-            let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone());
+            let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+                .map_err(|e| {
+                    CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e))
+                })?;
             party.sk_poly_sum = share_manager
                 .aggregate_collected_shares(&party.sk_sss_collected)
                 .map_err(|e| {
@@ -221,7 +234,10 @@ impl DecryptedSharesAggregationCircuitData {
         let mut d_share_polys: Vec<Poly<PowerBasis>> = Vec::with_capacity(honest_parties);
 
         for party in parties.iter().take(honest_parties) {
-            let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone());
+            let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+                .map_err(|e| {
+                    CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e))
+                })?;
             // For a single ciphertext, es_poly_sum is one Poly per party
             let d_share = share_manager
                 .decryption_share(
@@ -238,7 +254,10 @@ impl DecryptedSharesAggregationCircuitData {
         let reconstructing_parties: Vec<usize> = (1..=honest_parties).collect();
 
         // Threshold decrypt to obtain message (verify)
-        let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone());
+        let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+            .map_err(|e| {
+                CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e))
+            })?;
         let plaintext = share_manager
             .decrypt_from_shares(
                 d_share_polys.clone(),

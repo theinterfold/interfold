@@ -84,7 +84,7 @@ pub fn gen_esi_sss<R: RngCore + CryptoRng>(
 
     info!("gen_esi_sss:mapping...");
     let e_sm_poly = try_poly_pb_from_bytes(&e_sm_raw, &params)?;
-    let mut share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone());
+    let mut share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
 
     info!("gen_esi_sss:generate_secret_shares_from_poly...");
 

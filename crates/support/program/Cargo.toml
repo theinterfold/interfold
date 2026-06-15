@@ -6,5 +6,5 @@ edition = "2024"
 [dependencies]
 fhe = { workspace = true }
 fhe-traits = { workspace = true }
-e3-compute-provider = { git = "https://github.com/gnosisguild/enclave", rev = "632766e4ed1ceeccdeb023a56f16413a33be6f46" }
-e3-fhe-params = { git = "https://github.com/gnosisguild/enclave", rev = "dbdaaee1db9d868adacc03f75bb2ac85024359ae", features = ["abi-encoding"] }
+e3-compute-provider = { git = "https://github.com/gnosisguild/interfold", tag = "v0.2.0" }
+e3-fhe-params = { git = "https://github.com/gnosisguild/interfold", tag = "v0.2.0", features = ["abi-encoding"] }

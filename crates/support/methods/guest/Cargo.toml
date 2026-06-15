@@ -13,7 +13,7 @@ path = "src/bin/program.rs"
 
 [dependencies]
 risc0-zkvm = { version = "=3.0.3", default-features = false, features = ['std'] }
-e3-compute-provider = { git = "https://github.com/gnosisguild/enclave", rev = "632766e4ed1ceeccdeb023a56f16413a33be6f46" }
+e3-compute-provider = { git = "https://github.com/gnosisguild/interfold", tag = "v0.2.0" }
 e3-user-program = { path = "../../program" }
 bincode = "=1.3.3"
 anyhow = "=1.0.98"

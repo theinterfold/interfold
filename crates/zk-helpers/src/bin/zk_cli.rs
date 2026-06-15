@@ -322,7 +322,6 @@ fn main() -> Result<()> {
                     committee,
                     dkg_input_type,
                     sd.z,
-                    sd.lambda,
                 )?;
 
                 let circuit = ShareEncryptionCircuit;

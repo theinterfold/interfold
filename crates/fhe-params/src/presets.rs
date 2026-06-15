@@ -22,6 +22,7 @@ use std::sync::Arc;
 use thiserror::Error as ThisError;
 
 use fhe::bfv::BfvParameters;
+use fhe::trbfv::Lambda;
 
 /// BFV preset configurations for PVSS (Public Verifiable Secret Sharing)
 ///
@@ -208,6 +209,36 @@ pub enum PresetError {
     UnknownPreset(String),
     #[error("Preset does not define a Threshold (trBFV) / DKG (BFV) pair: {0}")]
     MissingPair(&'static str),
+    #[error("Preset lambda is not secure: {0}")]
+    InsecureLambda(String),
+}
+
+/// Serializable smudging security level, mirroring [`fhe::trbfv::Lambda`].
+///
+/// `Lambda` is a foreign type without `serde` support, so requests that travel over the
+/// wire (e.g. `GenPkShareAndSkSssRequest`) carry this instead and reconstruct the real
+/// [`Lambda`] at the point of use via [`LambdaConfig::into_lambda`]. The `Secure`/`Insecure`
+/// distinction is preserved across (de)serialization so the security tier chosen upstream
+/// from a [`BfvPreset`] is faithfully enforced downstream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LambdaConfig {
+    /// Production security level; validated against `MIN_SECURE_LAMBDA` by [`Lambda::secure`].
+    Secure(usize),
+    /// Deliberately weak level for fast testing; see [`Lambda::insecure`].
+    Insecure(usize),
+}
+
+impl LambdaConfig {
+    /// Reconstruct the real [`Lambda`]. `Secure` variants fail if the value is below the
+    /// library's secure minimum.
+    pub fn into_lambda(self) -> Result<Lambda, PresetError> {
+        match self {
+            LambdaConfig::Secure(lambda) => {
+                Lambda::secure(lambda).map_err(|e| PresetError::InsecureLambda(e.to_string()))
+            }
+            LambdaConfig::Insecure(lambda) => Ok(Lambda::insecure(lambda)),
+        }
+    }
 }
 
 /// A complete BFV parameter set definition
@@ -384,6 +415,28 @@ impl BfvPreset {
     /// Returns the security tier for this preset.
     pub fn security_tier(&self) -> SecurityTier {
         self.metadata().security
+    }
+
+    /// Returns the serializable smudging security level for this preset.
+    ///
+    /// Maps the preset's [`SecurityTier`] onto [`LambdaConfig`]: secure presets become
+    /// `LambdaConfig::Secure`, insecure presets `LambdaConfig::Insecure`. Use this when the
+    /// level must cross a serialization boundary; otherwise prefer [`BfvPreset::lambda`].
+    pub fn lambda_config(&self) -> LambdaConfig {
+        let meta = self.metadata();
+        match meta.security {
+            SecurityTier::SECURE => LambdaConfig::Secure(meta.lambda),
+            SecurityTier::INSECURE => LambdaConfig::Insecure(meta.lambda),
+        }
+    }
+
+    /// Builds the smudging security level ([`Lambda`]) for this preset.
+    ///
+    /// Secure presets validate that lambda meets the library's secure minimum; insecure
+    /// presets opt into a deliberately weak lambda for fast testing. Mirrors the preset's
+    /// [`SecurityTier`].
+    pub fn lambda(&self) -> Result<Lambda, PresetError> {
+        self.lambda_config().into_lambda()
     }
 
     /// Returns the base directory name for circuit artifacts (e.g. `"insecure-512"`, `"secure-8192"`).

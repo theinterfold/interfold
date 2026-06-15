@@ -319,7 +319,6 @@ async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
         committee.clone(),
         DkgInputType::SecretKey,
         sd.z,
-        sd.lambda,
     )
     .ok()?;
     let sample_b = ShareEncryptionCircuitData::generate_sample(
@@ -327,7 +326,6 @@ async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
         committee,
         DkgInputType::SecretKey,
         sd.z,
-        sd.lambda,
     )
     .ok()?;
     let prover = ZkProver::new(&backend);
