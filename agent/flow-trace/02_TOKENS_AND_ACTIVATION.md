@@ -56,7 +56,14 @@ Before a node can register, it must stake two types of collateral:
 │      BONDING_REGISTRY.totalBonded(account))                │
 │    Transfer reverts with InsufficientUnlockedBalance       │
 │    if value > transferable                                 │
-│                                                           │
+│                                                            │
+│  Lock sunset (NO_MORE_LOCKS, immutable):                   │
+│    - Absolute timestamp set at deployment                  │
+│    - createLockPolicy rejects any policy that could        │
+│      outlast the sunset (curves and holdUntil)             │
+│    - From NO_MORE_LOCKS on, _update skips all lock         │
+│      accounting (vanilla ERC20); PENDING locks die too     │
+│                                                            │
 │  Whitelisting:                                             │
 │    - setTransferWhitelisted(addr, bool)                    │
 │      WHITELIST_ROLE — pre-TGE transfer gate                │

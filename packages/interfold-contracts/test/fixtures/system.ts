@@ -363,6 +363,8 @@ export async function deployInterfoldSystem(
   const ccaStart = deployTime + 1000n; // keep Virtual phase during setup
   const ccaEnd = ccaStart + 7n * 24n * 60n * 60n; // 7-day CCA window
   const claimSource = ownerAddress; // owner as placeholder claim source
+  const noMoreLocks =
+    ccaEnd + 45n * 24n * 60n * 60n + 4n * 365n * 24n * 60n * 60n;
   const { interfoldToken } = await ignition.deploy(InterfoldTokenModule, {
     parameters: {
       InterfoldToken: {
@@ -371,6 +373,7 @@ export async function deployInterfoldSystem(
         ccaEnd,
         claimSource,
         bondingRegistry: bondingRegistryAddress,
+        noMoreLocks,
       },
     },
   });

@@ -15,6 +15,12 @@ const { loadFixture, time } = networkHelpers;
 
 const DAY = 24n * 60n * 60n;
 const YEAR = 365n * DAY;
+const NO_MORE_LOCKS_DELAY = 4n * YEAR;
+const TGE_COOLDOWN = 45n * DAY;
+
+function noMoreLocksFor(ccaEnd: bigint) {
+  return ccaEnd + TGE_COOLDOWN + NO_MORE_LOCKS_DELAY;
+}
 
 describe("InterfoldToken", function () {
   // ── Helpers ─────────────────────────────────────────────────────────────
@@ -43,11 +49,13 @@ describe("InterfoldToken", function () {
     const now = BigInt(await time.latest());
     const ccaStart = now + 10n * DAY; // far future — Virtual phase
     const ccaEnd = ccaStart + 7n * DAY;
+    const noMoreLocks = noMoreLocksFor(ccaEnd);
 
     const token = await new InterfoldTokenFactory(deployer).deploy(
       await admin.getAddress(),
       ccaStart,
       ccaEnd,
+      noMoreLocks,
       await claimSource.getAddress(),
       await mockRegistry.getAddress(),
     );
@@ -65,6 +73,7 @@ describe("InterfoldToken", function () {
       mockRegistry,
       ccaStart,
       ccaEnd,
+      noMoreLocks,
     };
   }
 
@@ -173,12 +182,14 @@ describe("InterfoldToken", function () {
       const now = BigInt(await time.latest());
       const ccaStart = now + DAY;
       const ccaEnd = ccaStart + 7n * DAY;
+      const noMoreLocks = noMoreLocksFor(ccaEnd);
 
       await expect(
         new InterfoldTokenFactory(deployer).deploy(
           await deployer.getAddress(),
           ccaStart,
           ccaEnd,
+          noMoreLocks,
           ethers.ZeroAddress,
           await mockRegistry.getAddress(),
         ),
@@ -193,12 +204,14 @@ describe("InterfoldToken", function () {
       const now = BigInt(await time.latest());
       const ccaStart = now + DAY;
       const ccaEnd = ccaStart + 7n * DAY;
+      const noMoreLocks = noMoreLocksFor(ccaEnd);
 
       await expect(
         new InterfoldTokenFactory(deployer).deploy(
           await deployer.getAddress(),
           ccaStart,
           ccaEnd,
+          noMoreLocks,
           await deployer.getAddress(),
           ethers.ZeroAddress,
         ),
@@ -213,12 +226,14 @@ describe("InterfoldToken", function () {
       const now = BigInt(await time.latest());
       const ccaStart = now + DAY;
       const ccaEnd = ccaStart + 7n * DAY;
+      const noMoreLocks = noMoreLocksFor(ccaEnd);
 
       await expect(
         new InterfoldTokenFactory(deployer).deploy(
           await admin.getAddress(),
           ccaStart,
           ccaEnd,
+          noMoreLocks,
           await deployer.getAddress(),
           await admin.getAddress(), // EOA, not a contract
         ),
@@ -241,6 +256,7 @@ describe("InterfoldToken", function () {
           await deployer.getAddress(),
           now, // in the past (or now)
           now + 7n * DAY,
+          noMoreLocksFor(now + 7n * DAY),
           await deployer.getAddress(),
           await mockRegistry.getAddress(),
         ),
@@ -259,18 +275,71 @@ describe("InterfoldToken", function () {
       const now = BigInt(await time.latest());
       const ccaStart = now + DAY;
       const ccaEnd = ccaStart; // equal, not greater
+      const noMoreLocks = noMoreLocksFor(ccaEnd);
 
       await expect(
         new InterfoldTokenFactory(deployer).deploy(
           await deployer.getAddress(),
           ccaStart,
           ccaEnd,
+          noMoreLocks,
           await deployer.getAddress(),
           await mockRegistry.getAddress(),
         ),
       ).to.be.revertedWithCustomError(
         { interface: InterfoldTokenFactory.createInterface() },
         "InvalidCcaWindow",
+      );
+    });
+
+    it("reverts when noMoreLocks is zero", async function () {
+      const [deployer] = await ethers.getSigners();
+      const mockRegistry = await new MockBondingRegistryFactory(
+        deployer,
+      ).deploy();
+      await mockRegistry.waitForDeployment();
+      const now = BigInt(await time.latest());
+      const ccaStart = now + DAY;
+      const ccaEnd = ccaStart + 7n * DAY;
+
+      await expect(
+        new InterfoldTokenFactory(deployer).deploy(
+          await deployer.getAddress(),
+          ccaStart,
+          ccaEnd,
+          0n,
+          await deployer.getAddress(),
+          await mockRegistry.getAddress(),
+        ),
+      ).to.be.revertedWithCustomError(
+        { interface: InterfoldTokenFactory.createInterface() },
+        "ZeroAmount",
+      );
+    });
+
+    it("reverts when noMoreLocks is not after the earliest TGE", async function () {
+      const [deployer] = await ethers.getSigners();
+      const mockRegistry = await new MockBondingRegistryFactory(
+        deployer,
+      ).deploy();
+      await mockRegistry.waitForDeployment();
+      const now = BigInt(await time.latest());
+      const ccaStart = now + DAY;
+      const ccaEnd = ccaStart + 7n * DAY;
+      const earliestTge = ccaEnd + TGE_COOLDOWN;
+
+      await expect(
+        new InterfoldTokenFactory(deployer).deploy(
+          await deployer.getAddress(),
+          ccaStart,
+          ccaEnd,
+          earliestTge, // must be strictly after
+          await deployer.getAddress(),
+          await mockRegistry.getAddress(),
+        ),
+      ).to.be.revertedWithCustomError(
+        { interface: InterfoldTokenFactory.createInterface() },
+        "InvalidNoMoreLocks",
       );
     });
 
@@ -720,6 +789,93 @@ describe("InterfoldToken", function () {
         "AccessControlUnauthorizedAccount",
       );
     });
+
+    it("reverts when Tge-anchored vest outlasts noMoreLocks", async function () {
+      const { token, admin } = await loadFixture(deploy);
+      await expect(
+        token
+          .connect(admin)
+          .createLockPolicy(ethers.encodeBytes32String("TOO_LONG"), {
+            holdUntil: 0n,
+            unlock: {
+              anchor: 1,
+              start: 0n,
+              cliffDuration: 0n,
+              vestDuration: NO_MORE_LOCKS_DELAY + 1n,
+            },
+          }),
+      ).to.be.revertedWithCustomError(token, "InvalidPolicy");
+    });
+
+    it("reverts when Tge-anchored cliff-only release outlasts noMoreLocks", async function () {
+      const { token, admin } = await loadFixture(deploy);
+      await expect(
+        token
+          .connect(admin)
+          .createLockPolicy(ethers.encodeBytes32String("TOO_LONG"), {
+            holdUntil: 0n,
+            unlock: {
+              anchor: 1,
+              start: 0n,
+              cliffDuration: NO_MORE_LOCKS_DELAY + 1n,
+              vestDuration: 0n,
+            },
+          }),
+      ).to.be.revertedWithCustomError(token, "InvalidPolicy");
+    });
+
+    it("accepts Tge-anchored vest of exactly noMoreLocks", async function () {
+      const { token, admin } = await loadFixture(deploy);
+      await expect(
+        token
+          .connect(admin)
+          .createLockPolicy(ethers.encodeBytes32String("FULL_TAIL"), {
+            holdUntil: 0n,
+            unlock: {
+              anchor: 1,
+              start: 0n,
+              cliffDuration: 0n,
+              vestDuration: NO_MORE_LOCKS_DELAY,
+            },
+          }),
+      ).to.emit(token, "PolicyDefined");
+    });
+
+    it("reverts when Absolute curve ends past the earliest sunset", async function () {
+      const { token, admin, ccaEnd } = await loadFixture(deploy);
+      const earliestMaturity = noMoreLocksFor(ccaEnd);
+      await expect(
+        token
+          .connect(admin)
+          .createLockPolicy(ethers.encodeBytes32String("TOO_LONG"), {
+            holdUntil: 0n,
+            unlock: {
+              anchor: 0,
+              start: earliestMaturity - YEAR,
+              cliffDuration: 0n,
+              vestDuration: YEAR + 1n,
+            },
+          }),
+      ).to.be.revertedWithCustomError(token, "InvalidPolicy");
+    });
+
+    it("reverts when holdUntil is past the earliest sunset", async function () {
+      const { token, admin, ccaEnd } = await loadFixture(deploy);
+      const earliestMaturity = noMoreLocksFor(ccaEnd);
+      await expect(
+        token
+          .connect(admin)
+          .createLockPolicy(ethers.encodeBytes32String("TOO_LONG"), {
+            holdUntil: earliestMaturity + 1n,
+            unlock: {
+              anchor: 1,
+              start: 0n,
+              cliffDuration: 0n,
+              vestDuration: YEAR,
+            },
+          }),
+      ).to.be.revertedWithCustomError(token, "InvalidPolicy");
+    });
   });
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -842,7 +998,7 @@ describe("InterfoldToken", function () {
     });
 
     it("transferableBalanceOf = 0 when fully locked and no bond", async function () {
-      const { token, alice, amount } = await deployWithLockAndTge({
+      const { token, alice } = await deployWithLockAndTge({
         mintAmount: ethers.parseEther("1000"),
       });
       expect(
@@ -941,6 +1097,79 @@ describe("InterfoldToken", function () {
       await expect(
         token.connect(alice).transfer(await bob.getAddress(), amount),
       ).to.be.revertedWithCustomError(token, "TransferRestricted");
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // Lock sunset
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe("lock sunset", function () {
+    it("NO_MORE_LOCKS is fixed at deployment", async function () {
+      const { token, noMoreLocks } = await loadFixture(deploy);
+      expect(await token.NO_MORE_LOCKS()).to.equal(noMoreLocks);
+    });
+
+    it("locked balance becomes fully transferable at the sunset", async function () {
+      const { token, alice, bob, amount, noMoreLocks } =
+        await deployWithLockAndTge({ mintAmount: ethers.parseEther("1000") });
+      const aliceAddress = await alice.getAddress();
+
+      await time.increaseTo(noMoreLocks);
+
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(0n);
+      expect(await token.transferableBalanceOf(aliceAddress)).to.equal(amount);
+      await token.connect(alice).transfer(await bob.getAddress(), amount);
+    });
+
+    it("unlinked PENDING locks sunset too", async function () {
+      const { token, alice, bob, claimSource, amount } =
+        await deployWithUnlockedAndTge(ethers.parseEther("500"));
+      const aliceAddress = await alice.getAddress();
+
+      await token
+        .connect(alice)
+        .transfer(await claimSource.getAddress(), amount);
+      await token.connect(claimSource).transfer(aliceAddress, amount);
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(amount);
+
+      await time.increaseTo(await token.NO_MORE_LOCKS());
+
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(0n);
+      await token.connect(alice).transfer(await bob.getAddress(), amount);
+    });
+
+    it("lockedBalanceAt reports 0 from the sunset onwards", async function () {
+      const { token, alice, claimSource, amount } =
+        await deployWithUnlockedAndTge(ethers.parseEther("500"));
+      const aliceAddress = await alice.getAddress();
+
+      await token
+        .connect(alice)
+        .transfer(await claimSource.getAddress(), amount);
+      await token.connect(claimSource).transfer(aliceAddress, amount);
+
+      const maturity = await token.NO_MORE_LOCKS();
+      expect(await token.lockedBalanceAt(aliceAddress, maturity - 1n)).to.equal(
+        amount,
+      );
+      expect(await token.lockedBalanceAt(aliceAddress, maturity)).to.equal(0n);
+    });
+
+    it("CLAIM_SOURCE transfers past the sunset create no locks", async function () {
+      const { token, alice, claimSource, amount } =
+        await deployWithUnlockedAndTge(ethers.parseEther("500"));
+      const aliceAddress = await alice.getAddress();
+
+      await token
+        .connect(alice)
+        .transfer(await claimSource.getAddress(), amount);
+
+      await time.increaseTo(await token.NO_MORE_LOCKS());
+
+      await token.connect(claimSource).transfer(aliceAddress, amount);
+      expect(await token.lockCount(aliceAddress)).to.equal(0n);
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(0n);
     });
   });
 
@@ -1055,6 +1284,106 @@ describe("InterfoldToken", function () {
       // rounding from vesting elapsed seconds).
       const lb2 = await token.lockedBalanceOf(await alice.getAddress());
       expect(lb2).to.be.closeTo(linkAmount, ethers.parseEther("0.01"));
+    });
+
+    it("linkClaim partly consumes PENDING and queues the remainder", async function () {
+      const { token, admin, alice, claimSource, amount } =
+        await deployWithUnlockedAndTge(ethers.parseEther("300"));
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "PART_QUEUE", {
+        vestDuration: 2n * YEAR,
+      });
+
+      await token
+        .connect(alice)
+        .transfer(await claimSource.getAddress(), amount);
+
+      expect(await token.lockCount(aliceAddress)).to.equal(0n);
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(0n);
+
+      await token.connect(claimSource).transfer(aliceAddress, amount);
+
+      const linkAmount = ethers.parseEther("1000");
+      await token.connect(admin).linkClaim(aliceAddress, linkAmount, policyId);
+
+      expect(await token.lockCount(aliceAddress)).to.equal(1n);
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(1n);
+
+      const activeLock = await token.locks(aliceAddress, 0);
+      expect(activeLock.policyId).to.equal(policyId);
+      expect(activeLock.amount).to.equal(amount);
+
+      const queuedLock = await token.queuedLocks(aliceAddress, 0);
+      expect(queuedLock.policyId).to.equal(policyId);
+      expect(queuedLock.amount).to.equal(linkAmount - amount);
+    });
+
+    it("claim after link consumes the queued link", async function () {
+      const fixture = await loadFixture(deploy);
+      const { token, admin, alice, claimSource, ccaEnd } = fixture;
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "CLAIM_LINK", {
+        vestDuration: 2n * YEAR,
+      });
+      const linkAmount = ethers.parseEther("500");
+
+      await token.connect(admin).linkClaim(aliceAddress, linkAmount, policyId);
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(1n);
+
+      await token
+        .connect(admin)
+        .mint(await claimSource.getAddress(), linkAmount, ethers.ZeroHash);
+
+      const TGE_COOLDOWN = 45n * DAY;
+      await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
+      await token.tge();
+
+      await token.connect(claimSource).transfer(aliceAddress, linkAmount);
+
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(0n);
+      expect(await token.lockCount(aliceAddress)).to.equal(1n);
+
+      const activeLock = await token.locks(aliceAddress, 0);
+      expect(activeLock.policyId).to.equal(policyId);
+      expect(activeLock.amount).to.equal(linkAmount);
+    });
+
+    it("claim after link fully consumes queued link and adds excess as PENDING", async function () {
+      const fixture = await loadFixture(deploy);
+      const { token, admin, alice, claimSource, ccaEnd } = fixture;
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "LINK_PENDING", {
+        vestDuration: 2n * YEAR,
+      });
+      const linkAmount = ethers.parseEther("500");
+      const claimAmount = ethers.parseEther("700");
+      const pendingPolicyId = await token.PENDING_LOCK_POLICY_ID();
+
+      await token.connect(admin).linkClaim(aliceAddress, linkAmount, policyId);
+      await token
+        .connect(admin)
+        .mint(await claimSource.getAddress(), claimAmount, ethers.ZeroHash);
+
+      const TGE_COOLDOWN = 45n * DAY;
+      await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
+      await token.tge();
+
+      await token.connect(claimSource).transfer(aliceAddress, claimAmount);
+
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(0n);
+      expect(await token.lockCount(aliceAddress)).to.equal(2n);
+
+      const firstLock = await token.locks(aliceAddress, 0);
+      const secondLock = await token.locks(aliceAddress, 1);
+      const locksByPolicy = new Map([
+        [firstLock.policyId, firstLock.amount],
+        [secondLock.policyId, secondLock.amount],
+      ]);
+
+      expect(locksByPolicy.get(policyId)).to.equal(linkAmount);
+      expect(locksByPolicy.get(pendingPolicyId)).to.equal(
+        claimAmount - linkAmount,
+      );
     });
 
     it("linkClaim reverts with undefined policy", async function () {

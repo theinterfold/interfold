@@ -126,8 +126,12 @@ contract InterfoldToken is
     ///         future.
     error InvalidCcaWindow(uint64 ccaStart, uint64 ccaEnd);
 
-    /// @notice Policy parameters are internally inconsistent.
+    /// @notice Policy parameters are internally inconsistent, or the policy
+    ///         could keep tokens locked past the lock sunset.
     error InvalidPolicy();
+
+    /// @notice The lock sunset timestamp must be after the earliest TGE.
+    error InvalidNoMoreLocks(uint256 noMoreLocks, uint256 minimum);
 
     /// @notice The requested relink amount exceeds the amount available under
     ///         the source policy.
@@ -197,6 +201,9 @@ contract InterfoldToken is
 
     /// @notice End of the CCA auction window, fixed at deployment
     uint64 public immutable CCA_END;
+
+    /// @notice Absolute timestamp after which token locks no longer apply.
+    uint64 public immutable NO_MORE_LOCKS;
 
     /// @notice The CCA auction contract
     address public immutable CLAIM_SOURCE;
@@ -288,6 +295,7 @@ contract InterfoldToken is
      * @param initialOwner_ Initial owner; receives all roles.
      * @param ccaStart_ CCA auction window start;
      * @param ccaEnd_ CCA auction window end; after `ccaStart_`.
+     * @param noMoreLocks_ Absolute timestamp after which token locks no longer apply.
      * @param claimSource_ The CCA auction contract
      * @param bondingRegistry_ Registry whose bonded INTF
      */
@@ -295,6 +303,7 @@ contract InterfoldToken is
         address initialOwner_,
         uint64 ccaStart_,
         uint64 ccaEnd_,
+        uint64 noMoreLocks_,
         address claimSource_,
         IBondingRegistry bondingRegistry_
     )
@@ -312,8 +321,14 @@ contract InterfoldToken is
         if (registry.code.length == 0) {
             revert InvalidBondingRegistry(registry);
         }
+        if (noMoreLocks_ == 0) revert ZeroAmount();
+        uint256 earliestTge = uint256(ccaEnd_) + TGE_COOLDOWN;
+        if (noMoreLocks_ <= earliestTge) {
+            revert InvalidNoMoreLocks(noMoreLocks_, earliestTge + 1);
+        }
         CCA_START = ccaStart_;
         CCA_END = ccaEnd_;
+        NO_MORE_LOCKS = noMoreLocks_;
         CLAIM_SOURCE = claimSource_;
         BONDING_REGISTRY = bondingRegistry_;
     }
@@ -428,6 +443,7 @@ contract InterfoldToken is
             revert PolicyAlreadyDefined(policyId);
         }
         _validateCurve(policy.unlock);
+        _validatePolicyMaturity(policy);
 
         lockPolicies[policyId] = policy;
         emit PolicyDefined(policyId, policy);
@@ -510,11 +526,16 @@ contract InterfoldToken is
 
     /// @notice Locked balance of `account` at `timestamp`, evaluated against the
     ///         current configuration (an unset TGE keeps {Anchor.Tge} policies
-    ///         fully locked for any timestamp).
+    ///         fully locked for any timestamp). Always zero from the lock
+    ///         sunset onwards.
     function lockedBalanceAt(
         address account,
         uint64 timestamp
     ) public view returns (uint256 lockedBalance) {
+        if (timestamp >= NO_MORE_LOCKS) {
+            return 0;
+        }
+
         Lock[] storage accountLocks = locks[account];
         for (uint256 i = 0; i < accountLocks.length; i++) {
             Lock storage accountLock = accountLocks[i];
@@ -575,17 +596,23 @@ contract InterfoldToken is
 
     /**
      * @dev Applies, in order:
-     *      1. The pre-TGE transfer gate (_isTransferRestricted)
-     *      2. The lock check, the sender can move at most its transferable
+     *      1. The lock sunset short-circuit.
+     *      2. The pre-TGE transfer gate (_isTransferRestricted)
+     *      3. The lock check, the sender can move at most its transferable
      *         balance
-     *      3. The transfer itself, via parent contract
-     *      4. Claim-lock creation, unless the recipient is claim-lock exempt.
+     *      4. The transfer itself, via parent contract
+     *      5. Claim-lock creation, unless the recipient is claim-lock exempt.
      */
     function _update(
         address from,
         address to,
         uint256 value
     ) internal override(ERC20, ERC20Votes) {
+        if (block.timestamp >= NO_MORE_LOCKS) {
+            super._update(from, to, value);
+            return;
+        }
+
         bool isMint = from == address(0);
         bool isBurn = to == address(0);
 
@@ -892,6 +919,30 @@ contract InterfoldToken is
             }
         }
         return 0;
+    }
+
+    /// @dev Ensures the policy cannot keep anything locked past the lock
+    ///      sunset. Ending exactly at the sunset is allowed: the curve has
+    ///      fully released and the hold has lapsed at that moment, which is
+    ///      also when the sunset takes effect.
+    function _validatePolicyMaturity(LockPolicy calldata policy) internal view {
+        Curve calldata curve = policy.unlock;
+        // The curve validation guarantees cliff <= vest when vest != 0, so
+        // the curve fully releases at cliff (vest == 0) or at vest end.
+        uint256 curveEnd = curve.vestDuration == 0
+            ? curve.cliffDuration
+            : curve.vestDuration;
+
+        uint256 policyEnd = curve.anchor == Anchor.Tge
+            ? uint256(CCA_END) + TGE_COOLDOWN + curveEnd
+            : curve.start + curveEnd;
+
+        if (policyEnd > NO_MORE_LOCKS) {
+            revert InvalidPolicy();
+        }
+        if (policy.holdUntil > NO_MORE_LOCKS) {
+            revert InvalidPolicy();
+        }
     }
 
     /// @dev Validates the unlock curve: it must lock something and be

@@ -24,6 +24,7 @@ export interface InterfoldTokenArgs {
   ccaEnd?: bigint;
   claimSource?: string;
   bondingRegistry?: string;
+  noMoreLocks?: bigint;
   hre: HardhatRuntimeEnvironment;
 }
 
@@ -61,6 +62,7 @@ export const deployAndSaveInterfoldToken = async ({
   ccaEnd,
   claimSource,
   bondingRegistry,
+  noMoreLocks,
   hre,
 }: InterfoldTokenArgs): Promise<{
   interfoldToken: InterfoldToken;
@@ -77,6 +79,7 @@ export const deployAndSaveInterfoldToken = async ({
     ccaEnd === undefined ||
     !claimSource ||
     !bondingRegistry ||
+    noMoreLocks === undefined ||
     preDeployedArgs?.constructorArgs?.owner === owner
   ) {
     if (!preDeployedArgs?.address) {
@@ -100,6 +103,7 @@ export const deployAndSaveInterfoldToken = async ({
     owner,
     ccaStart,
     ccaEnd,
+    noMoreLocks,
     claimSource,
     bondingRegistry,
   );
@@ -118,6 +122,7 @@ export const deployAndSaveInterfoldToken = async ({
         ccaEnd: ccaEnd.toString(),
         claimSource,
         bondingRegistry,
+        noMoreLocks: noMoreLocks.toString(),
       },
       blockNumber,
       address: interfoldTokenAddress,

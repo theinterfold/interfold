@@ -11,11 +11,13 @@ export default buildModule("InterfoldToken", (m) => {
   const ccaEnd = m.getParameter("ccaEnd");
   const claimSource = m.getParameter("claimSource");
   const bondingRegistry = m.getParameter("bondingRegistry");
+  const noMoreLocks = m.getParameter("noMoreLocks");
 
   const interfoldToken = m.contract("InterfoldToken", [
     owner,
     ccaStart,
     ccaEnd,
+    noMoreLocks,
     claimSource,
     bondingRegistry,
   ]);
