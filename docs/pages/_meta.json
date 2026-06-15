@@ -119,5 +119,15 @@
   },
   "whitepaper": {
     "title": "Whitepaper"
+  },
+  "-- FOLD Token": {
+    "type": "separator",
+    "title": "FOLD Token"
+  },
+  "tokenomics": {
+    "title": "Tokenomics"
+  },
+  "faq": {
+    "title": "Frequently Asked Questions"
   }
 }
