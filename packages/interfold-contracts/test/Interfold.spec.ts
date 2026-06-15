@@ -360,12 +360,9 @@ describe("Interfold", function () {
         .withArgs(e3Program);
     });
     it("registers E3 Program correctly", async function () {
-      const {
-        interfold,
-        mocks: { e3Program },
-      } = await loadFixture(setup);
-      const enabled = await interfold.e3Programs(e3Program);
-      expect(enabled).to.be.true;
+      const { interfold } = await loadFixture(setup);
+      await interfold.registerE3Program(AddressTwo);
+      expect(await interfold.e3Programs(AddressTwo)).to.be.true;
     });
     it("emits E3ProgramRegistered event", async function () {
       const { interfold } = await loadFixture(setup);

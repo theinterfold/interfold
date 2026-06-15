@@ -106,8 +106,7 @@ export interface InterfoldEventData {
   [InterfoldEventType.E3_REQUESTED]: E3RequestedData
   [InterfoldEventType.CIPHERTEXT_OUTPUT_PUBLISHED]: CiphertextOutputPublishedData
   [InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED]: PlaintextOutputPublishedData
-  [InterfoldEventType.E3_PROGRAM_ENABLED]: { e3Program: string }
-  [InterfoldEventType.E3_PROGRAM_DISABLED]: { e3Program: string }
+  [InterfoldEventType.E3_PROGRAM_REGISTERED]: { e3Program: string }
   [InterfoldEventType.ENCRYPTION_SCHEME_ENABLED]: { encryptionSchemeId: string }
   [InterfoldEventType.ENCRYPTION_SCHEME_DISABLED]: { encryptionSchemeId: string }
   [InterfoldEventType.CIPHERNODE_REGISTRY_SET]: { ciphernodeRegistry: string }
