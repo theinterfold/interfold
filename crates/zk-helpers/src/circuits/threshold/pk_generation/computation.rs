@@ -190,11 +190,15 @@ impl Computation for Bounds {
             .search_defaults()
             .ok_or_else(|| CircuitsErrors::Other("missing search defaults".to_string()))?;
 
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = preset
+            .lambda()
+            .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
         let smudging_config = SmudgingBoundCalculatorConfig::new(
             threshold_params.clone(),
             committee_n,
             sd.z as usize,
-            preset.metadata().lambda,
+            lambda,
         );
         let smudging_calculator = SmudgingBoundCalculator::new(smudging_config);
         let e_sm_bound = smudging_calculator.calculate_sm_bound().map_err(|e| {

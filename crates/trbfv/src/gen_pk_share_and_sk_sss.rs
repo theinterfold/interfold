@@ -12,6 +12,7 @@ use crate::{
 };
 use anyhow::Result;
 use e3_crypto::{Cipher, SensitiveBytes};
+use e3_fhe_params::LambdaConfig;
 use e3_utils::utility_types::ArcBytes;
 use fhe::{
     bfv::SecretKey,
@@ -30,8 +31,9 @@ pub struct GenPkShareAndSkSssRequest {
     pub trbfv_config: TrBFVConfig,
     /// Crp
     pub crp: ArcBytes,
-    /// Statistical security parameter λ for smudging noise generation.
-    pub lambda: usize,
+    /// Statistical security level λ for smudging noise generation. Carries the
+    /// secure/insecure tier chosen from the preset so it survives serialization.
+    pub lambda: LambdaConfig,
     /// Number of ciphertexts (z) for smudging noise generation.
     pub num_ciphertexts: usize,
 }
@@ -39,7 +41,7 @@ pub struct GenPkShareAndSkSssRequest {
 struct InnerRequest {
     pub trbfv_config: TrBFVConfig,
     pub crp: CommonRandomPoly,
-    pub lambda: usize,
+    pub lambda: LambdaConfig,
     pub num_ciphertexts: usize,
 }
 
@@ -131,8 +133,9 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
     // Generate smudging noise
     let trbfv = TRBFV::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
     let share_manager_for_esm =
-        ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone());
-    let esi_coeffs = trbfv.generate_smudging_error(req.num_ciphertexts, req.lambda, rng)?;
+        ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
+    let lambda = req.lambda.into_lambda()?;
+    let esi_coeffs = trbfv.generate_smudging_error(req.num_ciphertexts, lambda, rng)?;
     let e_sm_rns = share_manager_for_esm.bigints_to_poly(&esi_coeffs)?;
     let e_sm_raw = ArcBytes::from_bytes(&e_sm_rns.deref().to_bytes());
 
@@ -140,7 +143,7 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
     let eek_raw = ArcBytes::from_bytes(&eek.to_bytes());
 
     let mut share_manager =
-        ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone());
+        ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
 
     let sk_poly = share_manager.coeffs_to_poly_level0(sk_share.coeffs.clone().as_ref())?;
     let sk_raw = ArcBytes::from_bytes(&sk_poly.to_bytes());

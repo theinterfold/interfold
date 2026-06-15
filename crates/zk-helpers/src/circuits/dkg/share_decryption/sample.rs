@@ -42,7 +42,13 @@ impl ShareDecryptionCircuitData {
         let trbfv = TRBFV::new(committee.n, committee.threshold, threshold_params.clone())
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
         let mut share_manager =
-            ShareManager::new(committee.n, committee.threshold, threshold_params.clone());
+            ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
+                |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
+            )?;
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = preset
+            .lambda()
+            .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
         let mut honest_ciphertexts: Vec<Option<Vec<Ciphertext>>> = Vec::new();
         let num_honest = committee.h;
@@ -81,7 +87,7 @@ impl ShareDecryptionCircuitData {
                     }
                     DkgInputType::SmudgingNoise => {
                         let esi_coeffs = trbfv
-                            .generate_smudging_error(sd.z as usize, sd.lambda as usize, &mut rng)
+                            .generate_smudging_error(sd.z as usize, lambda, &mut rng)
                             .map_err(|e| {
                                 CircuitsErrors::Sample(format!(
                                     "Failed to generate smudging error: {:?}",

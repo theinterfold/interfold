@@ -1067,7 +1067,7 @@ pub global PK_GENERATION_BIT_PK: u32 = 35;
 
 pub global PK_GENERATION_EEK_BOUND: Field = 20;
 pub global PK_GENERATION_SK_BOUND: Field = 1;
-pub global PK_GENERATION_E_SM_BOUND: Field = 206867200;
+pub global PK_GENERATION_E_SM_BOUND: Field = 252051456;
 pub global PK_GENERATION_R1_BOUNDS: [Field; L] = [256, 256];
 pub global PK_GENERATION_R2_BOUNDS: [Field; L] = [34359701504, 34359615488];
 

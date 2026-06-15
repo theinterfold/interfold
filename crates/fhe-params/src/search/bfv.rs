@@ -194,15 +194,12 @@ pub fn finalize_bfv_candidate(
         * BigUint::from(bfv_search_config.b_chi))
         * &two_pow_lambda;
 
-    // B_fresh ≤ B_Enc + d B B_chi+ d B B_chi n
-    let term_d_b_chi = BigUint::from(d)
-        * BigUint::from(bfv_search_config.b)
-        * BigUint::from(bfv_search_config.b_chi);
+    // B_fresh ≤ B_Enc + d B B_chi n+ d B B_chi n
     let term_d_b_b_chi_n = BigUint::from(d)
         * BigUint::from(bfv_search_config.b)
         * BigUint::from(bfv_search_config.b_chi)
         * BigUint::from(bfv_search_config.n);
-    let b_fresh = &benc_min + &term_d_b_chi + &term_d_b_b_chi_n;
+    let b_fresh = &benc_min + &term_d_b_b_chi_n + &term_d_b_b_chi_n;
 
     // B_C = z (B_fresh + r_k(q))
     let b_c = BigUint::from(bfv_search_config.z) * (&b_fresh + BigUint::from(rkq));

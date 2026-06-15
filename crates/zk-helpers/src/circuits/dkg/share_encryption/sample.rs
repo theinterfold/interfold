@@ -26,7 +26,6 @@ impl ShareEncryptionCircuitData {
         committee: CiphernodesCommittee,
         dkg_input_type: DkgInputType,
         num_ciphertexts: u128, // z in the search defaults
-        lambda: u32,
     ) -> Result<Self, CircuitsErrors> {
         let (threshold_params, dkg_params) = build_pair_for_preset(preset).map_err(|e| {
             CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e))
@@ -34,13 +33,20 @@ impl ShareEncryptionCircuitData {
 
         let mut rng = rand::rng();
 
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = preset
+            .lambda()
+            .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
+
         let dkg_secret_key = SecretKey::random(&dkg_params, &mut rng);
         let dkg_public_key = PublicKey::new(&dkg_secret_key, &mut rng);
 
         let trbfv = TRBFV::new(committee.n, committee.threshold, threshold_params.clone())
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
         let mut share_manager =
-            ShareManager::new(committee.n, committee.threshold, threshold_params.clone());
+            ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
+                |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
+            )?;
 
         let share_row = match dkg_input_type {
             DkgInputType::SecretKey => {
@@ -65,7 +71,7 @@ impl ShareEncryptionCircuitData {
             }
             DkgInputType::SmudgingNoise => {
                 let esi_coeffs = trbfv
-                    .generate_smudging_error(num_ciphertexts as usize, lambda as usize, &mut rng)
+                    .generate_smudging_error(num_ciphertexts as usize, lambda, &mut rng)
                     .map_err(|e| {
                         CircuitsErrors::Sample(format!(
                             "Failed to generate smudging error: {:?}",
@@ -126,7 +132,6 @@ mod tests {
             committee.clone(),
             DkgInputType::SecretKey,
             sd.z,
-            sd.lambda,
         )
         .unwrap();
 
@@ -161,7 +166,6 @@ mod tests {
             committee,
             DkgInputType::SmudgingNoise,
             sd.z,
-            sd.lambda,
         )
         .unwrap();
 

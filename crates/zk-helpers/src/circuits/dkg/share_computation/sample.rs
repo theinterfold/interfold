@@ -32,15 +32,14 @@ impl ShareComputationCircuitData {
         let (threshold_params, _) = build_pair_for_preset(preset).map_err(|e| {
             CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e))
         })?;
-        let sd = preset
-            .search_defaults()
-            .ok_or_else(|| CircuitsErrors::Sample("Preset has no search defaults".into()))?;
         let mut rng = rand::rng();
 
         let trbfv = TRBFV::new(committee.n, committee.threshold, threshold_params.clone())
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
         let mut share_manager =
-            ShareManager::new(committee.n, committee.threshold, threshold_params.clone());
+            ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
+                |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
+            )?;
 
         let parity_matrix =
             compute_parity_matrix(threshold_params.moduli(), committee.n, committee.threshold)
@@ -86,8 +85,11 @@ impl ShareComputationCircuitData {
                 (secret_crt, secret_sss)
             }
             DkgInputType::SmudgingNoise => {
+                let lambda = preset
+                    .lambda()
+                    .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
                 let esi_coeffs = trbfv
-                    .generate_smudging_error(committee.n, sd.lambda as usize, &mut rng)
+                    .generate_smudging_error(committee.n, lambda, &mut rng)
                     .map_err(|e| {
                         CircuitsErrors::Sample(format!(
                             "Failed to generate smudging error: {:?}",

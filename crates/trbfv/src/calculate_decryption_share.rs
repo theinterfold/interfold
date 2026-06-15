@@ -118,7 +118,7 @@ pub fn calculate_decryption_share(
         .into_iter()
         .enumerate()
         .map(|(index, ciphertext)| {
-            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone());
+            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
             info!("Create decryption share for ct index {}...", index);
             // Currently there is a single smudging noise polynomial shared across all
             // ciphertexts. When multiple per-ciphertext noises are supported, the

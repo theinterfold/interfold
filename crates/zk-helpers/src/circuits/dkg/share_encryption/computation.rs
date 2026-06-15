@@ -597,7 +597,6 @@ mod tests {
             committee,
             DkgInputType::SecretKey,
             sd.z,
-            sd.lambda,
         )
         .unwrap();
 
@@ -620,7 +619,6 @@ mod tests {
             committee,
             DkgInputType::SecretKey,
             sd.z,
-            sd.lambda,
         )
         .unwrap();
         let constants = Configs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
@@ -645,7 +643,6 @@ mod tests {
             committee,
             DkgInputType::SecretKey,
             sd.z,
-            sd.lambda,
         )
         .unwrap();
         let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
