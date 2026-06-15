@@ -502,7 +502,7 @@ pub fn bfv_search_second_param(
     bfv_search_config: &BfvSearchConfig,
     first: &BfvSearchResult,
 ) -> Option<BfvSearchResult> {
-    let d = RING_DIM;
+    let d = first.d;
 
     // Plaintext space for second set: k = max qi of first set (actual value).
     let max_qi_first: BigUint = first
