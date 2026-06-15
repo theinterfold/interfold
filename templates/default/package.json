@@ -9,7 +9,7 @@
     "lint": "eslint .",
     "clean:deployments": "hardhat utils:clean-deployments",
     "deploy": "pnpm clean:deployments && hardhat run scripts/deploy-local.ts --network localhost",
-    "deploy:dev": "hardhat run scripts/deploy-local.ts",
+    "deploy:dev": "hardhat run scripts/deploy-local.ts --network localhost",
     "dev:all": "./scripts/dev_all.sh",
     "dev:ciphernodes": "./scripts/dev_ciphernodes.sh",
     "dev:setup": "bash ./scripts/setup.sh",

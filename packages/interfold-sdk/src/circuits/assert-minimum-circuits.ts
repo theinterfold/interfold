@@ -14,25 +14,26 @@ import { SDKError } from '../utils'
 export const SDK_CIRCUIT_COMMITTEE = 'minimum'
 
 function findActivePath(): string | null {
-  // Walk up from the bundle file (depth varies: dist/ vs dist/crypto/ etc.)
-  // until we find the package root (directory containing package.json).
+  if (!import.meta.url) return null
+
   let dir = dirname(fileURLToPath(import.meta.url))
+
   while (true) {
     if (existsSync(resolve(dir, 'package.json'))) {
-      // Bundled preset shipped inside the package takes priority (future use).
       const bundled = resolve(dir, '.active-preset.json')
       if (existsSync(bundled)) return bundled
 
-      // When installed under node_modules the monorepo root is not available;
-      // skip the check rather than resolving into an unrelated project tree.
       if (dir.includes('node_modules')) return null
 
       return resolve(dir, '../../circuits/bin/.active-preset.json')
     }
+
     const parent = dirname(dir)
     if (parent === dir) break
+
     dir = parent
   }
+
   throw new SDKError('Could not locate SDK package root', 'SDK_CIRCUIT_STAMP_MISSING')
 }
 
@@ -47,9 +48,11 @@ let checked = false
  */
 export function assertSdkMinimumCircuits(): void {
   if (checked) return
-  checked = true
 
-  if (ACTIVE_PRESET_PATH === null) return
+  if (ACTIVE_PRESET_PATH === null) {
+    checked = true
+    return
+  }
 
   let raw: string
   try {
@@ -79,4 +82,6 @@ export function assertSdkMinimumCircuits(): void {
       'SDK_CIRCUIT_COMMITTEE_MISMATCH',
     )
   }
+
+  checked = true
 }

@@ -146,11 +146,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const ticketTokenAddress = await bondingRegistry.ticketToken();
       const ticketAmount = ethers.parseUnits("100", 6);
 
-      await intfToken.disableTransferRestrictions();
-      await intfToken.mintAllocation(
+      await intfToken.mint(
         operatorAddress,
         ethers.parseEther("10000"),
-        "Test allocation",
+        ethers.encodeBytes32String("Test allocation"),
       );
       await usdcToken.mint(operatorAddress, ethers.parseUnits("100000", 6));
 

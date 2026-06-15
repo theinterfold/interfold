@@ -56,6 +56,11 @@ directory, as well as to the `deployed_contracts.json` file.
 Be sure to configure your desired network in `hardhat.config.ts` before
 deploying.
 
+For non-local networks, set `INTERFOLD_TGE_TIMESTAMP` to the agreed INTF TGE
+Unix timestamp before deploying. The deployment script configures this on
+`InterfoldToken` for token-level lock schedules. Local mock deployments default
+this timestamp to the latest local block timestamp.
+
 ## Localhost deployment
 
 If you are running Interfold locally, you can first start a local hardhat (or

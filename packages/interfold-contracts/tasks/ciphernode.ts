@@ -276,10 +276,10 @@ export const ciphernodeMintTokens = task(
         console.log(`Minting tokens for: ${ciphernodeAddress}`);
 
         console.log(`Minting ${intfAmount} INTF...`);
-        const intfTx = await interfoldTokenContract.mintAllocation(
+        const intfTx = await interfoldTokenContract.mint(
           ciphernodeAddress,
           ethers.parseEther(intfAmount),
-          "Ciphernode allocation",
+          ethers.encodeBytes32String("cn-alloc"),
         );
         await intfTx.wait();
         console.log(`${intfAmount} INTF minted`);
@@ -300,14 +300,18 @@ export const ciphernodeMintTokens = task(
         console.log(`INTF: ${ethers.formatEther(intfBalance)}`);
         console.log(`USDC: ${ethers.formatUnits(usdcBalance, 6)}`);
 
-        const transfersRestricted =
-          await interfoldTokenContract.transfersRestricted();
-        if (transfersRestricted) {
-          console.log("Allowing InterfoldToken to be transferrable...");
-          const transferEnabledTx =
-            await interfoldTokenContract.disableTransferRestrictions();
-          await transferEnabledTx.wait();
-          console.log("InterfoldToken transfers are now enabled");
+        const tgeTs = await interfoldTokenContract.tgeTimestamp();
+        if (tgeTs === 0n) {
+          console.log("Firing TGE to enable transfers...");
+          try {
+            await (await interfoldTokenContract.tge()).wait();
+            console.log("InterfoldToken TGE fired, transfers enabled");
+          } catch (e: any) {
+            console.warn(
+              "TGE not yet available (CCA cooldown may not have passed):",
+              e.reason ?? e.message ?? e,
+            );
+          }
         }
       } catch (error) {
         console.error("Token minting failed:", error);
@@ -415,10 +419,10 @@ export const ciphernodeAdminAdd = task(
 
         console.log("Step 1: Minting and transferring INTF to ciphernode...");
 
-        const intfTx = await interfoldTokenConnected.mintAllocation(
+        const intfTx = await interfoldTokenConnected.mint(
           adminWallet.address,
           licenseBondWei,
-          "Admin allocation for ciphernode registration",
+          ethers.encodeBytes32String("admin-cn-reg"),
         );
         await intfTx.wait();
 

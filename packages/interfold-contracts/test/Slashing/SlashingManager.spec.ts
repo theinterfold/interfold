@@ -139,10 +139,10 @@ describe("SlashingManager", function () {
     const mockCiphernodeRegistryAddress =
       await mockCiphernodeRegistry.getAddress();
 
-    await interfoldToken.mintAllocation(
+    await interfoldToken.mint(
       operatorAddress,
       ethers.parseEther("2000"),
-      "Test allocation",
+      ethers.encodeBytes32String("Test allocation"),
     );
     await slashingManager.addSlasher(await slasher.getAddress());
     await slashingManager.setCiphernodeRegistry(mockCiphernodeRegistryAddress);

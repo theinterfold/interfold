@@ -54,6 +54,8 @@ User runs: interfold ciphernode deactivate --license 20000
     │  │    1. require(amount != 0, sufficient bonded INTF)      │
     │  │    2. operators[op].licenseBond -= 20000                │
     │  │    3. _exits.queueLicensesForExit(op, exitDelay, 20000)│
+    │  │       → Pending INTF remains in totalBonded(op) for     │
+    │  │         token-level locked-floor accounting             │
     │  │    4. _updateOperatorStatus(operator)                   │
     │  │       → If licenseBond <                                │
     │  │         (licenseRequiredBond * licenseActiveBps / 10000)│
@@ -72,8 +74,8 @@ User runs: interfold ciphernode deactivate --tickets 50 --license 20000
 │
 ├─ Calls removeTicketBalance(50) first
 └─ Then calls unbondLicense(20000)
-   → Both queued in ExitQueue with same exitDelay
-   → May merge into single tranche if same unlock time
+  → Tickets are queued in ExitQueueLib
+  → INTF is queued in ExitQueueLib pending license exits and remains counted in totalBonded()
 ```
 
 ---
@@ -109,8 +111,9 @@ User runs: interfold ciphernode deregister
     │  │       _exits.queueAssetsForExit(                        │
     │  │         op, exitDelay,                                   │
     │  │         fullTicketBalance,  // tickets                   │
-    │  │         licenseBondAmount   // license                   │
+    │  │         0                   // license handled below     │
     │  │       )                                                  │
+    │  │       _queueLicenseExitFromSources(op, licenseBondAmount)│
     │  │                                                         │
     │  │    8. Remove from Merkle tree:                          │
     │  │       registry.removeCiphernode(msg.sender)             │
@@ -277,7 +280,8 @@ Time ─────────────────────────
 │                  │  (configured)       │                  │
 │ Assets queued    │                    │ Assets claimable │
 │ ITK burned       │  Cannot cancel     │ USDC returned    │
-│ INTF locked      │  Can be slashed!   │ INTF returned    │
+│ INTF locked      │  Can be slashed!   │ INTF returned to │
+│                  │                    │ withdrawal addr  │
 │                  │                    │                  │
 
 IMPORTANT: Even during the exit delay, slashing can still

@@ -107,10 +107,10 @@ describe("Committee Expulsion & Fault Tolerance", function () {
     async function setupOperator(operator: Signer) {
       const operatorAddress = await operator.getAddress();
 
-      await intfToken.mintAllocation(
+      await intfToken.mint(
         operatorAddress,
         ethers.parseEther("10000"),
-        "Test allocation",
+        ethers.encodeBytes32String("Test allocation"),
       );
       await usdcToken.mint(operatorAddress, ethers.parseUnits("100000", 6));
 

@@ -56,10 +56,10 @@ describe("BondingRegistry", function () {
 
     for (const address of [ownerAddress, operator1Address, operator2Address]) {
       await usdcToken.mint(address, USDC_AMOUNT);
-      await licenseToken.mintAllocation(
+      await licenseToken.mint(
         address,
         LICENSE_AMOUNT,
-        "Test allocation",
+        ethers.encodeBytes32String("Test allocation"),
       );
     }
 
@@ -128,6 +128,9 @@ describe("BondingRegistry", function () {
 
       expect(
         await bondingRegistry.getLicenseBond(await operator1.getAddress()),
+      ).to.equal(bondAmount);
+      expect(
+        await bondingRegistry.totalBonded(await operator1.getAddress()),
       ).to.equal(bondAmount);
     });
 
@@ -249,6 +252,43 @@ describe("BondingRegistry", function () {
         await operator1.getAddress(),
       );
       expect(licensePending).to.equal(unbondAmount);
+      expect(
+        await bondingRegistry.totalBonded(await operator1.getAddress()),
+      ).to.equal(bondAmount);
+    });
+
+    it("slashes active and pending license bond from totalBonded", async function () {
+      const { bondingRegistry, licenseToken, operator1, notTheOwner } =
+        await loadFixture(setup);
+      const operatorAddress = await operator1.getAddress();
+      const slashReason = ethers.encodeBytes32String("TEST_SLASH");
+
+      const bondAmount = ethers.parseEther("1000");
+      const unbondAmount = ethers.parseEther("300");
+      const slashAmount = ethers.parseEther("800");
+
+      await bondingRegistry.setSlashingManager(await notTheOwner.getAddress());
+      await licenseToken
+        .connect(operator1)
+        .approve(await bondingRegistry.getAddress(), bondAmount);
+      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
+      await bondingRegistry.connect(operator1).unbondLicense(unbondAmount);
+
+      await expect(
+        bondingRegistry
+          .connect(notTheOwner)
+          .slashLicenseBond(operatorAddress, slashAmount, slashReason),
+      )
+        .to.emit(bondingRegistry, "LicenseBondUpdated")
+        .withArgs(operatorAddress, -slashAmount, 0, slashReason);
+
+      const [, pendingLicense] =
+        await bondingRegistry.pendingExits(operatorAddress);
+      expect(pendingLicense).to.equal(bondAmount - slashAmount);
+      expect(await bondingRegistry.totalBonded(operatorAddress)).to.equal(
+        bondAmount - slashAmount,
+      );
+      expect(await bondingRegistry.slashedLicenseBond()).to.equal(slashAmount);
     });
   });
 
@@ -1179,28 +1219,40 @@ describe("BondingRegistry", function () {
      * `_takeAssetsFromQueue` during a slash.
      */
     it("H-21: queueAssetsForExit reverts after MAX_ACTIVE_TRANCHES live tranches", async function () {
-      const { bondingRegistry, licenseToken, operator1 } =
-        await loadFixture(setup);
+      const {
+        bondingRegistry,
+        licenseToken,
+        ticketToken,
+        usdcToken,
+        operator1,
+      } = await loadFixture(setup);
 
-      // Bond a large enough amount to do many tiny unbonds.
-      const big = ethers.parseEther("10000");
+      // Register and fund tickets so the generic ExitQueueLib ticket path is
+      // exercised directly alongside INTF exits.
+      const bondAmount = LICENSE_REQUIRED_BOND;
       await licenseToken
         .connect(operator1)
-        .approve(await bondingRegistry.getAddress(), big);
-      await bondingRegistry.connect(operator1).bondLicense(big);
+        .approve(await bondingRegistry.getAddress(), bondAmount);
+      await bondingRegistry.connect(operator1).bondLicense(bondAmount);
       await bondingRegistry.connect(operator1).registerOperator();
 
+      const ticketAmount = ethers.parseUnits("10000", 6);
+      await usdcToken
+        .connect(operator1)
+        .approve(await ticketToken.getAddress(), ticketAmount);
+      await bondingRegistry.connect(operator1).addTicketBalance(ticketAmount);
+
       // Fill the queue with 64 distinct-timestamp tranches.
-      const step = ethers.parseEther("1");
+      const step = ethers.parseUnits("1", 6);
       for (let i = 0; i < 64; i++) {
-        await bondingRegistry.connect(operator1).unbondLicense(step);
+        await bondingRegistry.connect(operator1).removeTicketBalance(step);
         // Ensure next unlock timestamp differs (no merge).
         await time.increase(1);
       }
 
       // The 65th must revert.
       await expect(
-        bondingRegistry.connect(operator1).unbondLicense(step),
+        bondingRegistry.connect(operator1).removeTicketBalance(step),
       ).to.be.revertedWithCustomError(bondingRegistry, "TooManyTranches");
     });
 

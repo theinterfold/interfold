@@ -249,6 +249,12 @@ contract BondingRegistry is
     }
 
     /// @inheritdoc IBondingRegistry
+    function totalBonded(address account) external view returns (uint256) {
+        (, uint256 pendingLicense) = _exits.getPendingAmounts(account);
+        return operators[account].licenseBond + pendingLicense;
+    }
+
+    /// @inheritdoc IBondingRegistry
     function availableTickets(
         address operator
     ) external view returns (uint256) {
@@ -276,7 +282,7 @@ contract BondingRegistry is
     function pendingExits(
         address operator
     ) external view returns (uint256 ticket, uint256 license) {
-        return _exits.getPendingAmounts(operator);
+        (ticket, license) = _exits.getPendingAmounts(operator);
     }
 
     /// @notice Preview how much an operator can currently claim
@@ -286,7 +292,7 @@ contract BondingRegistry is
     function previewClaimable(
         address operator
     ) external view returns (uint256 ticket, uint256 license) {
-        return _exits.previewClaimableAmounts(operator);
+        (ticket, license) = _exits.previewClaimableAmounts(operator);
     }
 
     /// @inheritdoc IBondingRegistry
@@ -444,29 +450,13 @@ contract BondingRegistry is
     function bondLicense(
         uint256 amount
     ) external nonReentrant noExitInProgress(msg.sender) {
-        require(amount != 0, ZeroAmount());
-
-        uint256 balanceBefore = licenseToken.balanceOf(address(this));
-        licenseToken.safeTransferFrom(msg.sender, address(this), amount);
-        uint256 actualReceived = licenseToken.balanceOf(address(this)) -
-            balanceBefore;
-
-        operators[msg.sender].licenseBond += actualReceived;
-
-        emit LicenseBondUpdated(
-            msg.sender,
-            int256(actualReceived),
-            operators[msg.sender].licenseBond,
-            REASON_BOND
-        );
-
-        _updateOperatorStatus(msg.sender);
+        _bondLicense(msg.sender, amount);
     }
 
     /// @inheritdoc IBondingRegistry
     function unbondLicense(
         uint256 amount
-    ) external noExitInProgress(msg.sender) {
+    ) external nonReentrant noExitInProgress(msg.sender) {
         require(amount != 0, ZeroAmount());
         require(
             operators[msg.sender].licenseBond >= amount,
@@ -494,7 +484,7 @@ contract BondingRegistry is
     function claimExits(
         uint256 maxTicketAmount,
         uint256 maxLicenseAmount
-    ) external {
+    ) external nonReentrant {
         (uint256 ticketClaim, uint256 licenseClaim) = _exits.claimAssets(
             msg.sender,
             maxTicketAmount,
@@ -571,7 +561,7 @@ contract BondingRegistry is
         address operator,
         uint256 requestedSlashAmount,
         bytes32 slashReason
-    ) external onlySlashingManager {
+    ) external onlySlashingManager nonReentrant {
         require(requestedSlashAmount != 0, ZeroAmount());
 
         Operator storage operatorData = operators[operator];
@@ -585,23 +575,25 @@ contract BondingRegistry is
 
         if (actualSlashAmount == 0) return;
 
-        // Slash from active balance first
-        uint256 slashedFromActiveBalance = Math.min(
+        uint256 activeSlashAmount = Math.min(
             actualSlashAmount,
             operatorData.licenseBond
         );
-        if (slashedFromActiveBalance > 0) {
-            operatorData.licenseBond -= slashedFromActiveBalance;
+        if (activeSlashAmount != 0) {
+            operatorData.licenseBond -= activeSlashAmount;
         }
 
-        // Slash remaining amount from pending queue
-        uint256 remainingToSlash = actualSlashAmount - slashedFromActiveBalance;
-        if (remainingToSlash > 0) {
-            _exits.slashPendingAssets(
+        uint256 remainingSlashAmount = actualSlashAmount - activeSlashAmount;
+        if (remainingSlashAmount != 0) {
+            (, uint256 pendingSlashed) = _exits.slashPendingAssets(
                 operator,
-                0, // ticketAmount
-                remainingToSlash,
+                0,
+                remainingSlashAmount,
                 true
+            );
+            require(
+                pendingSlashed == remainingSlashAmount,
+                InsufficientBalance()
             );
         }
 
@@ -826,6 +818,28 @@ contract BondingRegistry is
     // ======================
     // Internal Functions
     // ======================
+
+    function _bondLicense(address operator, uint256 amount) internal {
+        require(operator != address(0), ZeroAddress());
+        require(amount != 0, ZeroAmount());
+
+        operators[operator].licenseBond += amount;
+
+        uint256 balanceBefore = licenseToken.balanceOf(address(this));
+        licenseToken.safeTransferFrom(operator, address(this), amount);
+        uint256 actualReceived = licenseToken.balanceOf(address(this)) -
+            balanceBefore;
+        require(actualReceived == amount, InvalidAmount());
+
+        emit LicenseBondUpdated(
+            operator,
+            int256(amount),
+            operators[operator].licenseBond,
+            REASON_BOND
+        );
+
+        _updateOperatorStatus(operator);
+    }
 
     /// @dev Updates operator's active status based on current conditions
     /// @dev Operator is active if: registered, has minimum license bond, and has minimum tickets

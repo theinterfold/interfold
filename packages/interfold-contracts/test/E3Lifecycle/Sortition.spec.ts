@@ -33,10 +33,10 @@ async function fundOperator(
   ticketAmount: bigint,
 ) {
   const operatorAddress = await operator.getAddress();
-  await licenseToken.mintAllocation(
+  await licenseToken.mint(
     operatorAddress,
     ethers.parseEther("10000"),
-    "Test allocation",
+    ethers.encodeBytes32String("Test allocation"),
   );
   await feeToken.mint(operatorAddress, ethers.parseUnits("1000000", 6));
   await licenseToken
