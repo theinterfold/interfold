@@ -349,18 +349,17 @@ describe("Interfold", function () {
     });
   });
 
-  describe("enableE3Program()", function () {
-    it("reverts if E3 Program is already enabled", async function () {
+  describe("registerE3Program()", function () {
+    it("reverts if E3 Program is already registered", async function () {
       const {
         interfold,
         mocks: { e3Program },
       } = await loadFixture(setup);
-
-      await expect(interfold.enableE3Program(e3Program))
+      await expect(interfold.registerE3Program(e3Program))
         .to.be.revertedWithCustomError(interfold, "ModuleAlreadyEnabled")
         .withArgs(e3Program);
     });
-    it("enables E3 Program correctly", async function () {
+    it("registers E3 Program correctly", async function () {
       const {
         interfold,
         mocks: { e3Program },
@@ -368,49 +367,11 @@ describe("Interfold", function () {
       const enabled = await interfold.e3Programs(e3Program);
       expect(enabled).to.be.true;
     });
-    it("emits E3ProgramEnabled event", async function () {
+    it("emits E3ProgramRegistered event", async function () {
       const { interfold } = await loadFixture(setup);
-      await expect(interfold.enableE3Program(AddressTwo))
-        .to.emit(interfold, "E3ProgramEnabled")
+      await expect(interfold.registerE3Program(AddressTwo))
+        .to.emit(interfold, "E3ProgramRegistered")
         .withArgs(AddressTwo);
-    });
-  });
-
-  describe("disableE3Program()", function () {
-    it("reverts if not called by owner", async function () {
-      const {
-        interfold,
-        mocks: { e3Program },
-        notTheOwner,
-      } = await loadFixture(setup);
-      await expect(interfold.connect(notTheOwner).disableE3Program(e3Program))
-        .to.be.revertedWithCustomError(interfold, "OwnableUnauthorizedAccount")
-        .withArgs(notTheOwner);
-    });
-    it("reverts if E3 Program is not enabled", async function () {
-      const { interfold } = await loadFixture(setup);
-      await expect(interfold.disableE3Program(AddressTwo))
-        .to.be.revertedWithCustomError(interfold, "ModuleNotEnabled")
-        .withArgs(AddressTwo);
-    });
-    it("disables E3 Program correctly", async function () {
-      const {
-        interfold,
-        mocks: { e3Program },
-      } = await loadFixture(setup);
-      await interfold.disableE3Program(e3Program);
-
-      const enabled = await interfold.e3Programs(e3Program);
-      expect(enabled).to.be.false;
-    });
-    it("emits E3ProgramDisabled event", async function () {
-      const {
-        interfold,
-        mocks: { e3Program },
-      } = await loadFixture(setup);
-      await expect(interfold.disableE3Program(e3Program))
-        .to.emit(interfold, "E3ProgramDisabled")
-        .withArgs(e3Program);
     });
   });
 

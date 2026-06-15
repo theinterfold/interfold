@@ -124,7 +124,7 @@ sol! {
         uint256 public nexte3Id = 0;
         mapping(address e3Program => bool allowed) public e3Programs;
         function request(E3RequestParams calldata requestParams) external returns (uint256 e3Id, E3 memory e3);
-        function enableE3Program(address e3Program) public returns (bool success);
+        function registerE3Program(address e3Program) public;
         function publishCiphertextOutput(uint256 e3Id, bytes calldata ciphertextOutput, bytes calldata proof) external returns (bool success);
         function publishPlaintextOutput(uint256 e3Id, bytes calldata data, bytes calldata proof) external returns (bool success);
         function getE3(uint256 e3Id) external view returns (E3 memory e3);
@@ -195,7 +195,7 @@ pub trait InterfoldWrite {
     ) -> Result<(TransactionReceipt, U256)>;
 
     /// Enable an E3 program
-    async fn enable_e3_program(&self, e3_program: Address) -> Result<TransactionReceipt>;
+    async fn register_e3_program(&self, e3_program: Address) -> Result<TransactionReceipt>;
 
     /// Publish ciphertext output with proof
     async fn publish_ciphertext_output(
@@ -469,7 +469,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         Ok((receipt, e3_id))
     }
 
-    async fn enable_e3_program(&self, e3_program: Address) -> Result<TransactionReceipt> {
+    async fn register_e3_program(&self, e3_program: Address) -> Result<TransactionReceipt> {
         let _guard = NONCE_LOCK.lock().await;
         let wallet_addr = self
             .wallet_address
@@ -477,7 +477,7 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         let nonce = get_next_nonce(&*self.provider, wallet_addr).await?;
 
         let contract = Interfold::new(self.contract_address, &self.provider);
-        let builder = contract.enableE3Program(e3_program).nonce(nonce);
+        let builder = contract.registerE3Program(e3_program).nonce(nonce);
         let receipt = builder.send().await?.get_receipt().await?;
 
         Ok(receipt)

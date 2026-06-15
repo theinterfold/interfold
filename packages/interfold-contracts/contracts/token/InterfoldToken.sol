@@ -208,7 +208,7 @@ contract InterfoldToken is
     /// @notice The CCA auction contract
     address public immutable CLAIM_SOURCE;
 
-    /// @notice Registry whose bonded INTF counts toward locked balances.
+    /// @notice Registry whose bonded FOLD counts toward locked balances.
     IBondingRegistry public immutable BONDING_REGISTRY;
 
     // ─────────────────────────────────────────────────────────────────────────
@@ -288,7 +288,7 @@ contract InterfoldToken is
     // ─────────────────────────────────────────────────────────────────────────
 
     /**
-     * @notice Deploys INTF with no TGE set.
+     * @notice Deploys FOLD with no TGE set.
      * @dev The initial owner receives every role via the {_transferOwnership}
      *      sync. Operational roles can additionally be granted to dedicated
      *      keys post-deployment.
@@ -297,7 +297,7 @@ contract InterfoldToken is
      * @param ccaEnd_ CCA auction window end; after `ccaStart_`.
      * @param noMoreLocks_ Absolute timestamp after which token locks no longer apply.
      * @param claimSource_ The CCA auction contract
-     * @param bondingRegistry_ Registry whose bonded INTF
+     * @param bondingRegistry_ Registry whose bonded FOLD
      */
     constructor(
         address initialOwner_,
@@ -307,7 +307,7 @@ contract InterfoldToken is
         address claimSource_,
         IBondingRegistry bondingRegistry_
     )
-        ERC20("Interfold", "INTF")
+        ERC20("Interfold", "FOLD")
         ERC20Permit("Interfold")
         Ownable(initialOwner_)
     {
@@ -337,7 +337,7 @@ contract InterfoldToken is
     // Minting
     // ─────────────────────────────────────────────────────────────────────────
 
-    /// @notice Plain vanilla admin mint: INTF with no lock attached. Only
+    /// @notice Plain vanilla admin mint: FOLD with no lock attached. Only
     ///         allowed during the Virtual phase.
     function mint(
         address recipient,

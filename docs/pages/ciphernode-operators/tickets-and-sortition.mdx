@@ -10,13 +10,13 @@ ticket system and sortition algorithm.
 
 ## Ticket Overview
 
-| Token    | Purpose                                            | Transferable |
-| -------- | -------------------------------------------------- | ------------ |
-| **INTF** | License bond - required to register                | Yes          |
-| **ITK**  | Ticket token - determines committee selection odds | No           |
-| **USDC** | Underlying asset for tickets (fee token)           | Yes          |
+| Token     | Purpose                                            | Transferable |
+| --------- | -------------------------------------------------- | ------------ |
+| **FOLD**  | License bond - required to register                | Yes          |
+| **tFOLD** | Ticket token - determines committee selection odds | No           |
+| **USDC**  | Underlying asset for tickets (fee token)           | Yes          |
 
-Tickets are priced in stablecoins and minted into non-transferable ITK balances:
+Tickets are priced in stablecoins and minted into non-transferable tFOLD balances:
 
 ```
 availableTickets = floor(ticketTokenBalance / ticketPrice)
@@ -37,7 +37,7 @@ This:
 
 1. Approves the ticket contract to spend your USDC (if needed)
 2. Deposits the stablecoin
-3. Mints equivalent ITK to your balance
+3. Mints equivalent tFOLD to your balance
 
 ### Burn Tickets
 

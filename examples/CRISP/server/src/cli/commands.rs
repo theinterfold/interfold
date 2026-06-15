@@ -200,7 +200,7 @@ pub async fn initialize_crisp_round(
             info!("Debug - E3 Program enabled status: {}", enabled);
             if !enabled {
                 info!("E3 Program not enabled, attempting to enable...");
-                match contract.enable_e3_program(e3_program).await {
+                match contract.register_e3_program(e3_program).await {
                     Ok(res) => info!("E3 Program enabled. TxHash: {:?}", res.transaction_hash),
                     Err(e) => info!("Error enabling E3 Program: {:?}", e),
                 }

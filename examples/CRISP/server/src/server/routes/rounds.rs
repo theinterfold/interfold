@@ -187,7 +187,7 @@ pub async fn initialize_crisp_round(
     match contract.is_e3_program_enabled(e3_program).await {
         Ok(enabled) => {
             if !enabled {
-                match contract.enable_e3_program(e3_program).await {
+                match contract.register_e3_program(e3_program).await {
                     Ok(res) => println!("E3 Program enabled. TxHash: {:?}", res.transaction_hash),
                     Err(e) => println!("Error enabling E3 Program: {:?}", e),
                 }

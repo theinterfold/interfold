@@ -89,7 +89,7 @@ export const deployCRISPContracts = async () => {
   )
 
   // enable the program on Interfold
-  const tx = await interfold.enableE3Program(crispAddress)
+  const tx = await interfold.registerE3Program(crispAddress)
   await tx.wait()
 
   let tokenAddress

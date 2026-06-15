@@ -2337,7 +2337,7 @@ describe("InterfoldToken", function () {
       expect(tb).to.be.closeTo(grantAmount, ethers.parseEther("0.02"));
     });
 
-    it("transferableBalanceOf counts bonded INTF toward the locked floor", async function () {
+    it("transferableBalanceOf counts bonded FOLD toward the locked floor", async function () {
       const signers = await ethers.getSigners();
       const [, beneficiary, slasher] = signers;
       const beneficiaryAddress = await beneficiary.getAddress();

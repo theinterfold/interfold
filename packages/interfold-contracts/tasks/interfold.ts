@@ -292,7 +292,7 @@ export const enableE3 = task("interfold:enableE3", "Enable an E3 program")
         hre,
       });
 
-      const tx = await interfold.enableE3Program(e3Address);
+      const tx = await interfold.registerE3Program(e3Address);
 
       console.log("Enabling E3 program... ", tx.hash);
       await tx.wait();

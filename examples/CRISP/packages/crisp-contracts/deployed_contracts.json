@@ -1,25 +1,15 @@
 {
   "localhost": {
     "PoseidonT3": {
-      "blockNumber": 3,
-      "blockNumber": 3,
+      "blockNumber": 4,
       "address": "0x3333333C0A88F9BE4fd23ed0536F9B6c427e3B93"
     },
     "MockUSDC": {
       "constructorArgs": {
         "initialSupply": "1000000"
       },
-      "blockNumber": 4,
-      "blockNumber": 4,
+      "blockNumber": 5,
       "address": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
-    },
-    "InterfoldToken": {
-      "constructorArgs": {
-        "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
-      },
-      "blockNumber": 5,
-      "blockNumber": 5,
-      "address": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
     },
     "InterfoldTicketToken": {
       "constructorArgs": {
@@ -27,18 +17,16 @@
         "registry": "0x0000000000000000000000000000000000000001",
         "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
       },
-      "blockNumber": 7,
-      "blockNumber": 7,
-      "address": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
+      "blockNumber": 6,
+      "address": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
     },
     "SlashingManager": {
       "constructorArgs": {
         "initialDelay": "172800",
         "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
       },
-      "blockNumber": 8,
-      "blockNumber": 8,
-      "address": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
+      "blockNumber": 7,
+      "address": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
     },
     "CiphernodeRegistryOwnable": {
       "constructorArgs": {
@@ -52,9 +40,8 @@
         "proxyAdminAddress": "0x61c36a8d610163660E21a8b7359e1Cac0C9133e1",
         "implementationAddress": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
       },
-      "blockNumber": 9,
-      "blockNumber": 9,
-      "address": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
+      "blockNumber": 8,
+      "address": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
     },
     "BondingRegistry": {
       "constructorArgs": {
@@ -81,14 +68,14 @@
     "InterfoldToken": {
       "constructorArgs": {
         "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        "ccaStart": "1781296729",
-        "ccaEnd": "1781901529",
+        "ccaStart": "1781542027",
+        "ccaEnd": "1782146827",
         "claimSource": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
-        "bondingRegistry": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
+        "bondingRegistry": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+        "noMoreLocks": "1912178827"
       },
-      "blockNumber": 10,
-      "blockNumber": 10,
-      "address": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318"
+      "blockNumber": 12,
+      "address": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6"
     },
     "Interfold": {
       "constructorArgs": {
@@ -107,9 +94,8 @@
         "proxyAdminAddress": "0x32467b43BFa67273FC7dDda0999Ee9A12F2AaA08",
         "implementationAddress": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
       },
-      "blockNumber": 14,
-      "blockNumber": 14,
-      "address": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
+      "blockNumber": 16,
+      "address": "0x0DCd1Bf9A1b36cE34237eEaFef220932846BCD82"
     },
     "E3RefundManager": {
       "constructorArgs": {
@@ -124,65 +110,46 @@
         "proxyAdminAddress": "0x524F04724632eED237cbA3c37272e018b3A7967e",
         "implementationAddress": "0x9A676e781A523b5d0C0e43731313A708CB607508"
       },
-      "blockNumber": 16,
-      "blockNumber": 16,
-      "address": "0x9A676e781A523b5d0C0e43731313A708CB607508"
+      "blockNumber": 18,
+      "address": "0x0B306BF915C4d645ff596e518fAf3F9669b97016"
     },
     "MockComputeProvider": {
-      "blockNumber": 30,
-      "address": "0x36C02dA8a0983159322a80FFE9F24b1acfF8B570"
-      "blockNumber": 30,
-      "address": "0x36C02dA8a0983159322a80FFE9F24b1acfF8B570"
+      "blockNumber": 32,
+      "address": "0x809d550fca64d94Bd9F66E60752A544199cfAC3D"
     },
     "MockDecryptionVerifier": {
-      "blockNumber": 31,
-      "address": "0x809d550fca64d94Bd9F66E60752A544199cfAC3D"
-      "blockNumber": 31,
-      "address": "0x809d550fca64d94Bd9F66E60752A544199cfAC3D"
+      "blockNumber": 33,
+      "address": "0x4c5859f0F772848b2D91F1D83E2Fe57935348029"
     },
     "MockPkVerifier": {
-      "blockNumber": 32,
-      "address": "0x4c5859f0F772848b2D91F1D83E2Fe57935348029"
-      "blockNumber": 32,
-      "address": "0x4c5859f0F772848b2D91F1D83E2Fe57935348029"
+      "blockNumber": 34,
+      "address": "0x1291Be112d480055DaFd8a610b7d1e203891C274"
     },
     "MockE3Program": {
-      "blockNumber": 33,
-      "address": "0x1291Be112d480055DaFd8a610b7d1e203891C274"
-      "blockNumber": 33,
-      "address": "0x1291Be112d480055DaFd8a610b7d1e203891C274"
+      "blockNumber": 35,
+      "address": "0x5f3f1dBD7B74C6B46e8c44f98792A1dAf8d69154"
     },
     "MockRISC0Verifier": {
-      "address": "0x82e01223d51Eb87e16A03E24687EDF0F294da6f1",
-      "blockNumber": 37
-    },
-    "HonkVerifier": {
-      "address": "0x7969c5eD335650692Bc04293B07F5BF2e7A673C0",
-      "blockNumber": 38
+      "address": "0x2bdCC0de6bE1f7D2ee689a0342D76F52E8EFABa3",
+      "blockNumber": 39
     },
     "HonkVerifier": {
       "address": "0x7bc06c482DEAd17c0e297aFbC32f6e63d3846650",
       "blockNumber": 40
     },
     "CRISPProgram": {
-      "address": "0x7bc06c482DEAd17c0e297aFbC32f6e63d3846650",
-      "blockNumber": 38,
-      "address": "0x7bc06c482DEAd17c0e297aFbC32f6e63d3846650",
-      "blockNumber": 38,
+      "address": "0xc351628EB244ec633d5f21fBD6621e1a683B1181",
+      "blockNumber": 40,
       "constructorArgs": {
-        "interfold": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
-        "verifierAddress": "0x82e01223d51Eb87e16A03E24687EDF0F294da6f1",
-        "honkVerifierAddress": "0x7969c5eD335650692Bc04293B07F5BF2e7A673C0",
-        "verifierAddress": "0x82e01223d51Eb87e16A03E24687EDF0F294da6f1",
-        "honkVerifierAddress": "0x7969c5eD335650692Bc04293B07F5BF2e7A673C0",
+        "interfold": "0x0DCd1Bf9A1b36cE34237eEaFef220932846BCD82",
+        "verifierAddress": "0x2bdCC0de6bE1f7D2ee689a0342D76F52E8EFABa3",
+        "honkVerifierAddress": "0x7bc06c482DEAd17c0e297aFbC32f6e63d3846650",
         "imageId": "0x0ad904cfaec1eeefa9b89a11020086ec51454423db1fee3b1ab614fff97368d6"
       }
     },
     "MockVotingToken": {
-      "address": "0xFD471836031dc5108809D173A067e8486B9047A3",
-      "blockNumber": 40
-      "address": "0xFD471836031dc5108809D173A067e8486B9047A3",
-      "blockNumber": 40
+      "address": "0xcbEAF3BDe82155F56486Fb5a1072cb8baAf547cc",
+      "blockNumber": 42
     }
   }
 }

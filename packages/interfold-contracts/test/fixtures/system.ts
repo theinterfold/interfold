@@ -489,7 +489,7 @@ export async function deployInterfoldSystem(
     );
   }
 
-  await interfold.enableE3Program(await e3Program.getAddress());
+  await interfold.registerE3Program(await e3Program.getAddress());
   await interfold.setParamSet(0, bfvParams);
   await interfold.setDecryptionVerifier(
     ENCRYPTION_SCHEME_ID,

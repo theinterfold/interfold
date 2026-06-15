@@ -27,7 +27,7 @@ import {
 } from "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 
 /**
- * @title InterfoldTicketToken (ITK)
+ * @title InterfoldTicketToken (tFOLD)
  * @notice Non-transferable, non-delegatable ERC20Votes wrapper over a stablecoin for operator
  *         staking in the Interfold protocol.
  * @dev SECURITY NOTES
@@ -154,7 +154,7 @@ contract InterfoldTicketToken is
     }
 
     /**
-     * @notice Initializes the Interfold Ticket Token with name "Interfold Ticket Token" and symbol "ITK"
+     * @notice Initializes the Interfold Ticket Token with name "Interfold Ticket Token" and symbol "tFOLD"
      * @dev Sets the registry pointer directly so deployment never depends on the deployer also
      *      being {initialOwner_}. The registry can be re-pointed instantly until
      *      {lockRegistry} is called.
@@ -167,7 +167,7 @@ contract InterfoldTicketToken is
         address registry_,
         address initialOwner_
     )
-        ERC20("Interfold Ticket Token", "ITK")
+        ERC20("Interfold Ticket Token", "tFOLD")
         ERC20Permit("Interfold Ticket Token")
         ERC20Wrapper(baseToken)
         Ownable(initialOwner_)

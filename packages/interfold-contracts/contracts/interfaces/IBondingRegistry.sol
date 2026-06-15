@@ -214,9 +214,9 @@ interface IBondingRegistry {
     function getLicenseBond(address operator) external view returns (uint256);
 
     /**
-     * @notice Get INTF that still counts toward an account's locked-floor collateral.
-     * @dev Includes active license bond plus pending INTF exits that remain slashable/not returned.
-     * @param account Account/operator whose INTF bond credit is queried
+     * @notice Get FOLD that still counts toward an account's locked-floor collateral.
+     * @dev Includes active license bond plus pending FOLD exits that remain slashable/not returned.
+     * @param account Account/operator whose FOLD bond credit is queried
      * @return Active plus pending license-bond amount
      */
     function totalBonded(address account) external view returns (uint256);

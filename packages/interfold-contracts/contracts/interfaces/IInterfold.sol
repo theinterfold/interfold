@@ -228,13 +228,10 @@ interface IInterfold {
     /// @param encryptionSchemeId The ID of the encryption scheme that was disabled.
     event EncryptionSchemeDisabled(bytes32 encryptionSchemeId);
 
-    /// @notice This event MUST be emitted any time a E3 Program is enabled.
+    /// @notice This event MUST be emitted any time a E3 Program is registered.
     /// @param e3Program The address of the E3 Program.
-    event E3ProgramEnabled(IE3Program e3Program);
-
-    /// @notice This event MUST be emitted any time a E3 Program is disabled.
-    /// @param e3Program The address of the E3 Program.
-    event E3ProgramDisabled(IE3Program e3Program);
+    /// @dev Registration is append-only; programs cannot be deregistered.
+    event E3ProgramRegistered(IE3Program e3Program);
 
     /// @notice Emitted when a BFV param set is registered or updated.
     /// @param paramSet The param set index.
@@ -333,13 +330,9 @@ interface IInterfold {
     /// @param e3Id The ID of the non-existent E3.
     error E3DoesNotExist(uint256 e3Id);
 
-    /// @notice Thrown when attempting to enable a module or program that is already enabled.
-    /// @param module The address of the module that is already enabled.
+    /// @notice Thrown when attempting to register a program that is already registered.
+    /// @param module The address of the program that is already registered.
     error ModuleAlreadyEnabled(address module);
-
-    /// @notice Thrown when attempting to disable a module or program that is not enabled.
-    /// @param module The address of the module that is not enabled.
-    error ModuleNotEnabled(address module);
 
     /// @notice Thrown when an invalid or disabled encryption scheme is used.
     /// @param encryptionSchemeId The ID of the invalid encryption scheme.
@@ -589,13 +582,9 @@ interface IInterfold {
     /// @notice Returns whether a token is currently allow-listed as an E3 fee token.
     function isFeeTokenAllowed(IERC20 token) external view returns (bool);
 
-    /// @notice This function should be called to enable an E3 Program.
+    /// @notice Register an E3 Program. Append-only — programs cannot be deregistered.
     /// @param e3Program The address of the E3 Program.
-    function enableE3Program(IE3Program e3Program) external;
-
-    /// @notice This function should be called to disable an E3 Program.
-    /// @param e3Program The address of the E3 Program.
-    function disableE3Program(IE3Program e3Program) external;
+    function registerE3Program(IE3Program e3Program) external;
 
     /// @notice Sets or enables a decryption verifier for a specific encryption scheme.
     /// @dev This function MUST revert if the verifier address is zero or already set to the same value.

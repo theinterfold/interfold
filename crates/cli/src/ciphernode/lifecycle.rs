@@ -92,7 +92,7 @@ pub(crate) async fn deactivate(
             .await?;
         log!(
             out,
-            "Queued {} INTF for exit (tx: {:#x})",
+            "Queued {} FOLD for exit (tx: {:#x})",
             amount,
             receipt.transaction_hash
         );
@@ -150,7 +150,7 @@ pub(crate) async fn status(out: Console, ctx: &ChainContext) -> Result<()> {
     );
     log!(
         out,
-        "  Requirements: minTickets={}, ticketPrice={} EKT, licenseBond={} INTF",
+        "  Requirements: minTickets={}, ticketPrice={} EKT, licenseBond={} FOLD",
         format_amount(min_ticket_balance, ticket_decimals),
         format_amount(ticket_price, ticket_decimals),
         format_amount(license_required, license_decimals)

@@ -33,8 +33,6 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     ////////////////////////////////////////////////////////////
     /// @notice The Interfold contract (contains lifecycle functionality)
     IInterfold public interfold;
-    /// @notice The fee token used for payments
-    IERC20 public feeToken;
     /// @notice The bonding registry for node rewards
     IBondingRegistry public bondingRegistry;
     /// @notice Protocol treasury for protocol fee collection
@@ -104,7 +102,6 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         require(_treasury != address(0), "Invalid treasury");
 
         interfold = IInterfold(_interfold);
-        feeToken = interfold.feeToken();
         bondingRegistry = interfold.bondingRegistry();
         treasury = _treasury;
 

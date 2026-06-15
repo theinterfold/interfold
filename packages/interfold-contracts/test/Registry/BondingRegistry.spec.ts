@@ -679,7 +679,7 @@ describe("BondingRegistry", function () {
       const initialUSDCBalance = await usdcToken.balanceOf(
         await operator1.getAddress(),
       );
-      const initialINTFBalance = await licenseToken.balanceOf(
+      const initialFOLDBalance = await licenseToken.balanceOf(
         await operator1.getAddress(),
       );
 
@@ -692,7 +692,7 @@ describe("BondingRegistry", function () {
       );
       expect(
         await licenseToken.balanceOf(await operator1.getAddress()),
-      ).to.equal(initialINTFBalance + bondAmount);
+      ).to.equal(initialFOLDBalance + bondAmount);
     });
 
     it("reverts if exit not ready", async function () {
@@ -745,7 +745,7 @@ describe("BondingRegistry", function () {
       const initialUSDCBalance = await usdcToken.balanceOf(
         await operator1.getAddress(),
       );
-      const initialINTFBalance = await licenseToken.balanceOf(
+      const initialFOLDBalance = await licenseToken.balanceOf(
         await operator1.getAddress(),
       );
 
@@ -758,7 +758,7 @@ describe("BondingRegistry", function () {
       );
       expect(
         await licenseToken.balanceOf(await operator1.getAddress()),
-      ).to.equal(initialINTFBalance + partialLicense);
+      ).to.equal(initialFOLDBalance + partialLicense);
 
       const [remainingTickets, remainingLicense] =
         await bondingRegistry.pendingExits(await operator1.getAddress());
@@ -1054,7 +1054,7 @@ describe("BondingRegistry", function () {
       const initialUSDCBalance = await usdcToken.balanceOf(
         await operator1.getAddress(),
       );
-      const initialINTFBalance = await licenseToken.balanceOf(
+      const initialFOLDBalance = await licenseToken.balanceOf(
         await operator1.getAddress(),
       );
 
@@ -1067,7 +1067,7 @@ describe("BondingRegistry", function () {
       );
       expect(
         await licenseToken.balanceOf(await operator1.getAddress()),
-      ).to.equal(initialINTFBalance + bondAmount);
+      ).to.equal(initialFOLDBalance + bondAmount);
 
       await licenseToken
         .connect(operator1)
@@ -1228,7 +1228,7 @@ describe("BondingRegistry", function () {
       } = await loadFixture(setup);
 
       // Register and fund tickets so the generic ExitQueueLib ticket path is
-      // exercised directly alongside INTF exits.
+      // exercised directly alongside FOLD exits.
       const bondAmount = LICENSE_REQUIRED_BOND;
       await licenseToken
         .connect(operator1)

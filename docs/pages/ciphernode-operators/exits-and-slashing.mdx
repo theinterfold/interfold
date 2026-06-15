@@ -58,7 +58,7 @@ Each slash reason has an associated policy:
 ```solidity
 struct SlashPolicy {
   uint256 ticketPenalty; // Tickets to burn
-  uint256 licensePenalty; // INTF to confiscate
+  uint256 licensePenalty; // FOLD to confiscate
   bool requiresProof; // Whether on-chain proof verification is needed
   address proofVerifier; // ISlashVerifier contract for proof validation
   bool banNode; // Whether to permanently ban the node
@@ -86,8 +86,8 @@ struct SlashPolicy {
 
 | Penalty Type    | Effect                                           |
 | --------------- | ------------------------------------------------ |
-| Ticket penalty  | Burns ITK from your balance                      |
-| License penalty | Confiscates INTF from your bond                  |
+| Ticket penalty  | Burns tFOLD from your balance                    |
+| License penalty | Confiscates FOLD from your bond                  |
 | Ban             | Prevents re-registration until governance clears |
 
 > Some policies have an `appealWindow` of 0, meaning execution is immediate with no appeal. Always
@@ -112,7 +112,7 @@ Assets enter a queue with a delay period (7 days on Sepolia):
 | Asset   | Behavior                              |
 | ------- | ------------------------------------- |
 | Tickets | Burned immediately, USDC enters queue |
-| License | INTF enters exit queue                |
+| License | FOLD enters exit queue                |
 
 Check your exit status:
 
