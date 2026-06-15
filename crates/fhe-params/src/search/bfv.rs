@@ -15,7 +15,7 @@ use crate::search::constants::{D_POW2_MAX, K_MAX};
 use crate::search::errors::{BfvParamsResult, SearchError, ValidationError};
 use crate::search::prime::PrimeItem;
 use crate::search::prime::{
-    build_prime_items, build_prime_items_for_second, select_max_q_under_cap,
+    build_prime_items, build_prime_items_for_second, is_ntt_friendly, select_max_q_under_cap,
 };
 use crate::search::utils::{approx_bits_from_log2, big_shift_pow2, log2_big, product};
 use num_bigint::BigUint;
@@ -146,6 +146,22 @@ pub fn bfv_search(bfv_search_config: &BfvSearchConfig) -> BfvParamsResult<BfvSea
     // correctness requirement, so high-λ requests resolve at a bigger ring.
     let mut d = RING_DIM;
     while d <= D_POW2_MAX {
+        // Keep only primes that are NTT-friendly for this ring dimension
+        // (p ≡ 1 mod 2d). At d == RING_DIM every table entry already qualifies,
+        // but doubling d below can exclude primes (e.g. 60-bit) that only
+        // satisfy the smaller modulus.
+        let by_bits_d: BTreeMap<u8, Vec<PrimeItem>> = by_bits
+            .iter()
+            .filter_map(|(&bb, bucket)| {
+                let filtered: Vec<PrimeItem> = bucket
+                    .iter()
+                    .filter(|p| is_ntt_friendly(&p.value, d))
+                    .cloned()
+                    .collect();
+                (!filtered.is_empty()).then_some((bb, filtered))
+            })
+            .collect();
+
         // Minimum log2(q) for correctness (Eq1); exact margin check is in finalize.
         let min_log2_q = calculate_min_q_bits(bfv_search_config, d);
         // Eq4 security upper bound: log2(q) <= log2(B) + (d-75)/37.5.
@@ -165,7 +181,7 @@ pub fn bfv_search(bfv_search_config: &BfvSearchConfig) -> BfvParamsResult<BfvSea
             }
 
             for bb in FIRST_MIN_PRIME_BITS..=FIRST_MAX_PRIME_BITS {
-                let bucket = match by_bits.get(&bb) {
+                let bucket = match by_bits_d.get(&bb) {
                     Some(b) => b,
                     None => continue,
                 };
@@ -544,9 +560,15 @@ pub fn bfv_search_second_param(
         .collect();
 
     // Buckets sorted ASCENDING within each bit-length (smallest prime first), so
-    // taking the first valid `num_primes` minimises prime size.
+    // taking the first valid `num_primes` minimises prime size. Only primes that
+    // are NTT-friendly for this ring dimension (p ≡ 1 mod 2d) are eligible: at
+    // d == RING_DIM every entry qualifies, but a larger d (from bfv_search)
+    // excludes some 62-bit primes that only satisfy the smaller modulus.
     let mut by_bits: BTreeMap<u8, Vec<PrimeItem>> = BTreeMap::new();
     for p in &prime_items {
+        if !is_ntt_friendly(&p.value, d) {
+            continue;
+        }
         by_bits.entry(p.bitlen).or_default().push(p.clone());
     }
     for v in by_bits.values_mut() {
