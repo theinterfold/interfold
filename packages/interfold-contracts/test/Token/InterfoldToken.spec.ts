@@ -1005,6 +1005,147 @@ describe("InterfoldToken", function () {
         await token.transferableBalanceOf(await alice.getAddress()),
       ).to.equal(0n);
     });
+
+    it("holdUntil keeps everything locked regardless of curve", async function () {
+      const { token, admin, alice, ccaEnd } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+
+      // Compute the intended TGE timestamp before firing it.
+      const TGE_COOLDOWN = 45n * DAY;
+      const intendedTge = ccaEnd + TGE_COOLDOWN + 1n;
+
+      // Policy: 1-year linear vest, holdUntil = intended TGE + 2 years.
+      const policyId = await createLinearPolicy(token, admin, "HOLD_TEST", {
+        vestDuration: 1n * YEAR,
+        holdUntil: intendedTge + 2n * YEAR,
+      });
+
+      // Mint locked allocation DURING Virtual phase.
+      const amount = ethers.parseEther("1000");
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount,
+          policyId,
+          label: ethers.encodeBytes32String("hold"),
+        },
+      ]);
+
+      // Fire TGE.
+      await time.increaseTo(intendedTge);
+      const tgeTx = await token.tge();
+      const receipt = await tgeTx.wait();
+      const tgeBlock = await ethers.provider.getBlock(receipt!.blockNumber);
+      const tgeTimestamp = BigInt(tgeBlock!.timestamp);
+
+      // At TGE + 1.5 years: curve says fully unlocked (vestDuration = 1Y),
+      // but holdUntil = TGE + 2Y keeps everything locked.
+      await time.increaseTo(tgeTimestamp + (1n * YEAR + YEAR / 2n));
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(amount);
+
+      // At TGE + 2 years (holdUntil): hold lifts, curve already fully vested.
+      await time.increaseTo(tgeTimestamp + 2n * YEAR);
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(0n);
+    });
+
+    it("MAX_LOCKS_PER_ACCOUNT: 9th active policy reverts", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const maxLocks = Number(await token.MAX_LOCKS_PER_ACCOUNT());
+
+      // Create 8 distinct policies and mint 1 wei under each.
+      for (let i = 0; i < maxLocks; i++) {
+        const policyId = ethers.encodeBytes32String(`CAP_${i}`);
+        await createLinearPolicy(token, admin, `CAP_${i}`, {
+          vestDuration: 1n * YEAR,
+        });
+        await token.connect(admin).mintAllocations([
+          {
+            recipient: aliceAddress,
+            amount: 1n,
+            policyId,
+            label: ethers.encodeBytes32String(`cap${i}`),
+          },
+        ]);
+      }
+      expect(await token.lockCount(aliceAddress)).to.equal(BigInt(maxLocks));
+
+      // 9th policy should revert.
+      const ninthId = ethers.encodeBytes32String("CAP_9");
+      await createLinearPolicy(token, admin, "CAP_9", {
+        vestDuration: 1n * YEAR,
+      });
+      await expect(
+        token.connect(admin).mintAllocations([
+          {
+            recipient: aliceAddress,
+            amount: 1n,
+            policyId: ninthId,
+            label: ethers.encodeBytes32String("toomany"),
+          },
+        ]),
+      ).to.be.revertedWithCustomError(token, "TooManyLocks");
+    });
+
+    it("MAX_QUEUED_LOCKS_PER_ACCOUNT: 9th queued policy reverts", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const maxQueued = Number(await token.MAX_QUEUED_LOCKS_PER_ACCOUNT());
+
+      // Create 8 distinct policies and queue links.
+      for (let i = 0; i < maxQueued; i++) {
+        const policyId = ethers.encodeBytes32String(`QCAP_${i}`);
+        await createLinearPolicy(token, admin, `QCAP_${i}`, {
+          vestDuration: 1n * YEAR,
+        });
+        await token.connect(admin).linkClaim(aliceAddress, 1n, policyId);
+      }
+      expect(await token.queuedLockCount(aliceAddress)).to.equal(
+        BigInt(maxQueued),
+      );
+
+      // 9th queued link should revert.
+      const ninthId = ethers.encodeBytes32String("QCAP_9");
+      await createLinearPolicy(token, admin, "QCAP_9", {
+        vestDuration: 1n * YEAR,
+      });
+      await expect(
+        token.connect(admin).linkClaim(aliceAddress, 1n, ninthId),
+      ).to.be.revertedWithCustomError(token, "TooManyQueuedLocks");
+    });
+
+    it("incrementing an existing policy does not count as a new entry", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "INCREMENT", {
+        vestDuration: 1n * YEAR,
+      });
+
+      // One allocation under the policy.
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount: ethers.parseEther("100"),
+          policyId,
+          label: ethers.encodeBytes32String("first"),
+        },
+      ]);
+      expect(await token.lockCount(aliceAddress)).to.equal(1n);
+
+      // Second allocation under the SAME policy -- increments amount, not a new entry.
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount: ethers.parseEther("100"),
+          policyId,
+          label: ethers.encodeBytes32String("second"),
+        },
+      ]);
+      expect(await token.lockCount(aliceAddress)).to.equal(1n);
+
+      const lock = await token.locks(aliceAddress, 0);
+      expect(lock.amount).to.equal(ethers.parseEther("200"));
+    });
   });
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -1098,6 +1239,68 @@ describe("InterfoldToken", function () {
         token.connect(alice).transfer(await bob.getAddress(), amount),
       ).to.be.revertedWithCustomError(token, "TransferRestricted");
     });
+
+    it("pre-TGE: whitelist does NOT bypass locked-balance invariant", async function () {
+      const { token, admin, alice, bob } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(
+        token,
+        admin,
+        "WHITELIST_LOCK",
+        {
+          vestDuration: 2n * YEAR,
+        },
+      );
+      const amount = ethers.parseEther("1000");
+
+      // Mint locked allocation to Alice.
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount,
+          policyId,
+          label: ethers.encodeBytes32String("locked"),
+        },
+      ]);
+
+      // Whitelist Alice.
+      await token.connect(admin).setTransferWhitelisted(aliceAddress, true);
+
+      // Pre-TGE, whitelist bypasses the transfer gate but NOT the lock invariant.
+      // Alice has all tokens locked -> transferableBalance is 0 -> transfer reverts.
+      await expect(
+        token.connect(alice).transfer(await bob.getAddress(), amount),
+      ).to.be.revertedWithCustomError(token, "InsufficientUnlockedBalance");
+    });
+
+    it("pre-TGE: CLAIM_SOURCE transfer creates PENDING lock on recipient", async function () {
+      const { token, admin, alice, claimSource } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const amount = ethers.parseEther("500");
+
+      // Mint unlocked tokens to claimSource during Virtual phase.
+      await token
+        .connect(admin)
+        .mint(await claimSource.getAddress(), amount, ethers.ZeroHash);
+
+      // Pre-TGE claim-source transfer to Alice.
+      await token.connect(claimSource).transfer(aliceAddress, amount);
+
+      // Alice received a PENDING lock (pre-TGE, no bond, so fully locked).
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(amount);
+      expect(await token.lockCount(aliceAddress)).to.equal(1n);
+
+      const lock = await token.locks(aliceAddress, 0);
+      expect(lock.policyId).to.equal(ethers.encodeBytes32String("PENDING"));
+      expect(lock.amount).to.equal(amount);
+
+      // Pre-TGE, Alice cannot transfer it onward at all (transfer gate).
+      // The locked-balance invariant would also block it, but the pre-TGE
+      // gate catches it first. Both protections are correct.
+      await expect(
+        token.connect(alice).transfer(await claimSource.getAddress(), amount),
+      ).to.be.revertedWithCustomError(token, "TransferRestricted");
+    });
   });
 
   // ═════════════════════════════════════════════════════════════════════════
@@ -1170,6 +1373,67 @@ describe("InterfoldToken", function () {
       await token.connect(claimSource).transfer(aliceAddress, amount);
       expect(await token.lockCount(aliceAddress)).to.equal(0n);
       expect(await token.lockedBalanceOf(aliceAddress)).to.equal(0n);
+    });
+
+    it("late TGE: max-length policy tail is truncated at NO_MORE_LOCKS", async function () {
+      const { token, admin, alice, ccaEnd } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+
+      // Create a policy whose natural end lands exactly at NO_MORE_LOCKS
+      // (using the earliest possible TGE: ccaEnd + TGE_COOLDOWN).
+      const earliestTge = ccaEnd + TGE_COOLDOWN;
+      // The tail after earliestTge is NO_MORE_LOCKS_DELAY = 4 years.
+      const policyId = await createLinearPolicy(token, admin, "MAX_TAIL", {
+        vestDuration: NO_MORE_LOCKS_DELAY,
+      });
+      const amount = ethers.parseEther("1000");
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount,
+          policyId,
+          label: ethers.encodeBytes32String("tail"),
+        },
+      ]);
+
+      // Call TGE slightly late -- 1 day past the earliest possible TGE.
+      await time.increaseTo(earliestTge + 1n * DAY);
+      await token.tge();
+
+      // Advance to NO_MORE_LOCKS. The natural unlock tail would extend 1 day
+      // past NO_MORE_LOCKS (since TGE was 1 day late), but NO_MORE_LOCKS
+      // overrides -- locked balance MUST be 0.
+      await time.increaseTo(await token.NO_MORE_LOCKS());
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(0n);
+    });
+
+    it("absolute sunset without TGE: transfers succeed and no locks are created", async function () {
+      const { token, admin, alice, bob, claimSource, noMoreLocks } =
+        await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const claimSourceAddress = await claimSource.getAddress();
+      const amount = ethers.parseEther("500");
+
+      // Mint unlocked tokens during Virtual phase (before time advance).
+      await token.connect(admin).mint(aliceAddress, amount, ethers.ZeroHash);
+      await token
+        .connect(admin)
+        .mint(claimSourceAddress, amount, ethers.ZeroHash);
+
+      // Do NOT call tge(). Advance straight to NO_MORE_LOCKS.
+      await time.increaseTo(noMoreLocks);
+
+      // Regular transfer succeeds.
+      await token.connect(alice).transfer(await bob.getAddress(), amount);
+      expect(await token.balanceOf(aliceAddress)).to.equal(0n);
+
+      // lockedBalanceOf returns 0.
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(0n);
+
+      // CLAIM_SOURCE transfer creates no lock.
+      await token.connect(claimSource).transfer(aliceAddress, amount);
+      expect(await token.lockedBalanceOf(aliceAddress)).to.equal(0n);
+      expect(await token.lockCount(aliceAddress)).to.equal(0n);
     });
   });
 
@@ -1466,6 +1730,221 @@ describe("InterfoldToken", function () {
       expect(lb3).to.be.closeTo(
         partialAmount + anotherAmount,
         ethers.parseEther("0.01"),
+      );
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // relinkActiveLock
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe("relinkActiveLock", function () {
+    it("relink works before TGE", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+
+      const fromPolicy = await createLinearPolicy(token, admin, "FROM_POL", {
+        vestDuration: 1n * YEAR,
+      });
+      const toPolicy = await createLinearPolicy(token, admin, "TO_POL", {
+        vestDuration: 2n * YEAR,
+      });
+      const amount = ethers.parseEther("1000");
+
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount,
+          policyId: fromPolicy,
+          label: ethers.encodeBytes32String("src"),
+        },
+      ]);
+
+      // Relink 400 from FROM_POL to TO_POL.
+      const relinkAmount = ethers.parseEther("400");
+      await expect(
+        token
+          .connect(admin)
+          .relinkActiveLock(aliceAddress, fromPolicy, toPolicy, relinkAmount),
+      )
+        .to.emit(token, "ActiveLockRelinked")
+        .withArgs(aliceAddress, fromPolicy, toPolicy, relinkAmount);
+
+      // FROM_POL should now have 600, TO_POL should have 400.
+      const locks = [
+        await token.locks(aliceAddress, 0),
+        await token.locks(aliceAddress, 1),
+      ];
+      const byPolicy = new Map(
+        locks.map((l: { policyId: string; amount: bigint }) => [
+          l.policyId,
+          l.amount,
+        ]),
+      );
+      expect(byPolicy.get(fromPolicy)).to.equal(ethers.parseEther("600"));
+      expect(byPolicy.get(toPolicy)).to.equal(relinkAmount);
+    });
+
+    it("relink reverts after TGE", async function () {
+      const { token, admin, alice, ccaEnd } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+
+      const fromPolicy = await createLinearPolicy(token, admin, "FROM_AFTER", {
+        vestDuration: 1n * YEAR,
+      });
+      const toPolicy = await createLinearPolicy(token, admin, "TO_AFTER", {
+        vestDuration: 2n * YEAR,
+      });
+      const amount = ethers.parseEther("1000");
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount,
+          policyId: fromPolicy,
+          label: ethers.encodeBytes32String("src"),
+        },
+      ]);
+
+      // Fire TGE.
+      const TGE_COOLDOWN = 45n * DAY;
+      await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
+      await token.tge();
+
+      await expect(
+        token
+          .connect(admin)
+          .relinkActiveLock(
+            aliceAddress,
+            fromPolicy,
+            toPolicy,
+            ethers.parseEther("100"),
+          ),
+      ).to.be.revertedWithCustomError(token, "AlreadyLive");
+    });
+
+    it("relink reverts when amount exceeds source lock", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+
+      const fromPolicy = await createLinearPolicy(token, admin, "SRC_SMALL", {
+        vestDuration: 1n * YEAR,
+      });
+      const toPolicy = await createLinearPolicy(token, admin, "DST_BIG", {
+        vestDuration: 2n * YEAR,
+      });
+      const amount = ethers.parseEther("100");
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount,
+          policyId: fromPolicy,
+          label: ethers.encodeBytes32String("small"),
+        },
+      ]);
+
+      await expect(
+        token
+          .connect(admin)
+          .relinkActiveLock(
+            aliceAddress,
+            fromPolicy,
+            toPolicy,
+            ethers.parseEther("200"),
+          ),
+      ).to.be.revertedWithCustomError(token, "RelinkAmountExceeded");
+    });
+
+    it("relink from PENDING reverts", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const pendingId = ethers.encodeBytes32String("PENDING");
+      const toPolicy = await createLinearPolicy(token, admin, "TO_REAL", {
+        vestDuration: 2n * YEAR,
+      });
+
+      await expect(
+        token
+          .connect(admin)
+          .relinkActiveLock(
+            aliceAddress,
+            pendingId,
+            toPolicy,
+            ethers.parseEther("1"),
+          ),
+      ).to.be.revertedWithCustomError(token, "InvalidPolicy");
+    });
+
+    it("relink to PENDING reverts", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const pendingId = ethers.encodeBytes32String("PENDING");
+      const fromPolicy = await createLinearPolicy(token, admin, "FROM_REAL", {
+        vestDuration: 1n * YEAR,
+      });
+      const amount = ethers.parseEther("100");
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount,
+          policyId: fromPolicy,
+          label: ethers.encodeBytes32String("real"),
+        },
+      ]);
+
+      await expect(
+        token
+          .connect(admin)
+          .relinkActiveLock(
+            aliceAddress,
+            fromPolicy,
+            pendingId,
+            ethers.parseEther("50"),
+          ),
+      ).to.be.revertedWithCustomError(token, "InvalidPolicy");
+    });
+
+    it("relink source == target reverts", async function () {
+      const { token, admin, alice } = await loadFixture(deploy);
+      const aliceAddress = await alice.getAddress();
+      const policyId = await createLinearPolicy(token, admin, "SAME_POL", {
+        vestDuration: 1n * YEAR,
+      });
+      const amount = ethers.parseEther("100");
+      await token.connect(admin).mintAllocations([
+        {
+          recipient: aliceAddress,
+          amount,
+          policyId,
+          label: ethers.encodeBytes32String("same"),
+        },
+      ]);
+
+      await expect(
+        token
+          .connect(admin)
+          .relinkActiveLock(
+            aliceAddress,
+            policyId,
+            policyId,
+            ethers.parseEther("50"),
+          ),
+      ).to.be.revertedWithCustomError(token, "InvalidPolicy");
+    });
+
+    it("non-LOCK_MANAGER_ROLE cannot relink", async function () {
+      const { token, alice } = await loadFixture(deploy);
+      await expect(
+        token
+          .connect(alice)
+          .relinkActiveLock(
+            await alice.getAddress(),
+            ethers.encodeBytes32String("A"),
+            ethers.encodeBytes32String("B"),
+            ethers.parseEther("1"),
+          ),
+      ).to.be.revertedWithCustomError(
+        token,
+        "AccessControlUnauthorizedAccount",
       );
     });
   });

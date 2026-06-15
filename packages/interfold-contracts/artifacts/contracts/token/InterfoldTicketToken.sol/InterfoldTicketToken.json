@@ -1428,7 +1428,7 @@
   "linkReferences": {},
   "deployedLinkReferences": {},
   "immutableReferences": {
-    "4593": [
+    "4010": [
       {
         "length": 32,
         "start": 3120
@@ -1442,43 +1442,43 @@
         "start": 5419
       }
     ],
-    "7931": [
+    "7066": [
       {
         "length": 32,
         "start": 5651
       }
     ],
-    "7933": [
+    "7068": [
       {
         "length": 32,
         "start": 5609
       }
     ],
-    "7935": [
+    "7070": [
       {
         "length": 32,
         "start": 5567
       }
     ],
-    "7937": [
+    "7072": [
       {
         "length": 32,
         "start": 5732
       }
     ],
-    "7939": [
+    "7074": [
       {
         "length": 32,
         "start": 5772
       }
     ],
-    "7942": [
+    "7077": [
       {
         "length": 32,
         "start": 6200
       }
     ],
-    "7945": [
+    "7080": [
       {
         "length": 32,
         "start": 6245
@@ -1486,5 +1486,5 @@
     ]
   },
   "inputSourceName": "project/contracts/token/InterfoldTicketToken.sol",
-  "buildInfoId": "solc-0_8_28-8facb7e897e6b871d6535c23335b76111c7915ad"
+  "buildInfoId": "solc-0_8_28-5e064566757ed1db9a1081a58df17ab403efa32a"
 }
