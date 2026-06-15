@@ -199,46 +199,51 @@ pub fn bfv_search(bfv_search_config: &BfvSearchConfig) -> BfvParamsResult<BfvSea
                     continue;
                 }
 
-                // Take the largest `num_primes` primes in this bucket to maximise q.
-                let sel: Vec<PrimeItem> = bucket.iter().take(num_primes).cloned().collect();
-                let q = product(sel.iter().map(|pi| pi.value.clone()));
-                let q_bits = log2_big(&q);
-                let max_qi_log2 = sel.iter().map(|p| p.log2).fold(0.0_f64, f64::max);
+                // Slide a window of `num_primes` over the descending bucket. The
+                // largest window is tried first; if it exceeds the security cap,
+                // smaller windows in the same bucket may still fit
+                // [min_log2_q, log2_q_limit].
+                for start in 0..=(bucket.len() - num_primes) {
+                    let sel: Vec<PrimeItem> = bucket[start..start + num_primes].to_vec();
+                    let q = product(sel.iter().map(|pi| pi.value.clone()));
+                    let q_bits = log2_big(&q);
+                    let max_qi_log2 = sel.iter().map(|p| p.log2).fold(0.0_f64, f64::max);
 
-                if q_bits < min_log2_q {
-                    if verbose {
+                    // Because the bucket is descending, later windows only get smaller.
+                    if q_bits < min_log2_q {
+                        if verbose {
+                            println!(
+                                "  {} × {}-bit: log2(q)={:.2} < {:.1} needed, abandoning bucket",
+                                num_primes, bb, q_bits, min_log2_q
+                            );
+                        }
+                        break;
+                    }
+
+                    if q_bits > log2_q_limit {
+                        if verbose {
+                            println!(
+                                "  {} × {}-bit: log2(q)={:.2} > {:.1} security limit, trying smaller primes",
+                                num_primes, bb, q_bits, log2_q_limit
+                            );
+                        }
+                        continue;
+                    }
+
+                    if let Some(res) = finalize_bfv_candidate(bfv_search_config, d, sel) {
+                        if verbose {
+                            println!(
+                                "\n✓ Found first set: {} × {}-bit primes, d={}, log2(q)={:.2}, max_qi={:.2} bits",
+                                num_primes, bb, d, q_bits, max_qi_log2
+                            );
+                        }
+                        return Ok(res);
+                    } else if verbose {
                         println!(
-                            "  {} × {}-bit: log2(q)={:.2} < {:.1} needed, skipping",
-                            num_primes, bb, q_bits, min_log2_q
+                            "  {} × {}-bit: log2(q)={:.2} ❌ fails correctness or margin < {:.1} bits",
+                            num_primes, bb, q_bits, bfv_search_config.min_margin
                         );
                     }
-                    continue;
-                }
-
-                // Eq4 security upper bound: reject any q exceeding the security limit.
-                if q_bits > log2_q_limit {
-                    if verbose {
-                        println!(
-                            "  {} × {}-bit: log2(q)={:.2} > {:.1} security limit, skipping",
-                            num_primes, bb, q_bits, log2_q_limit
-                        );
-                    }
-                    continue;
-                }
-
-                if let Some(res) = finalize_bfv_candidate(bfv_search_config, d, sel) {
-                    if verbose {
-                        println!(
-                            "\n✓ Found first set: {} × {}-bit primes, d={}, log2(q)={:.2}, max_qi={:.2} bits",
-                            num_primes, bb, d, q_bits, max_qi_log2
-                        );
-                    }
-                    return Ok(res);
-                } else if verbose {
-                    println!(
-                        "  {} × {}-bit: log2(q)={:.2} ❌ fails correctness or margin < {:.1} bits",
-                        num_primes, bb, q_bits, bfv_search_config.min_margin
-                    );
                 }
             }
         }
