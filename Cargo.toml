@@ -71,56 +71,56 @@ push-remote = "origin"
 publish = true
 
 [workspace.package]
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 license = "LGPL-3.0-only"
 description = "E3 — Encrypted Execution Environments"
 repository = "https://github.com/gnosisguild/interfold"
 
 [workspace.dependencies]
-e3-aggregator = { version = "0.2.1", path = "./crates/aggregator" }
-e3-bfv-client = { version = "0.2.1", path = "./crates/bfv-client" }
-e3-config = { version = "0.2.1", path = "./crates/config" }
-e3-console = { version = "0.2.1", path = "./crates/console" }
-e3-dashboard = { version = "0.2.1", path = "./crates/dashboard" }
-e3-ciphernode-builder = { version = "0.2.1", path = "./crates/ciphernode-builder" }
-e3-crypto = { version = "0.2.1", path = "./crates/crypto" }
-e3-data = { version = "0.2.1", path = "./crates/data" }
-e3-hamt = { version = "0.2.1", path = "./crates/hamt" }
-e3-request = { version = "0.2.1", path = "./crates/request" }
-e3-sdk = { version = "0.2.1", path = "./crates/sdk" }
-e3-cli = { version = "0.2.1", path = "./crates/cli" }
-e3-committee-hash = { version = "0.2.1", path = "./crates/committee-hash" }
-e3-entrypoint = { version = "0.2.1", path = "./crates/entrypoint" }
-e3-init = { version = "0.2.1", path = "./crates/init" }
-e3-events = { version = "0.2.1", path = "./crates/events" }
-e3-evm = { version = "0.2.1", path = "./crates/evm" }
-e3-evm-helpers = { version = "0.2.1", path = "./crates/evm-helpers" }
-e3-fhe = { version = "0.2.1", path = "./crates/fhe" }
-e3-fhe-params = { version = "0.2.1", path = "./crates/fhe-params" }
-e3-fs = { version = "0.2.1", path = "./crates/fs" }
-e3-indexer = { version = "0.2.1", path = "./crates/indexer" }
-e3-multithread = { version = "0.2.1", path = "./crates/multithread" }
-e3-keyshare = { version = "0.2.1", path = "./crates/keyshare" }
-e3-logger = { version = "0.2.1", path = "./crates/logger" }
-e3-net = { version = "0.2.1", path = "./crates/net" }
-e3-compute-provider = { version = "0.2.1", path = "./crates/compute-provider" }
-e3-sortition = { version = "0.2.1", path = "./crates/sortition" }
-e3-daemon-server = { version = "0.2.1", path = "./crates/daemon-server" }
-e3-program-server = { version = "0.2.1", path = "./crates/program-server" }
-e3-polynomial = { version = "0.2.1", path = "./crates/polynomial" }
-e3-support-scripts = { version = "0.2.1", path = "./crates/support-scripts" }
-e3-sync = { version = "0.2.1", path = "./crates/sync" }
-e3-test-helpers = { version = "0.2.1", path = "./crates/test-helpers" }
-e3-tests = { version = "0.2.1", path = "./crates/tests" }
-e3-trbfv = { version = "0.2.1", path = "./crates/trbfv" }
-e3-utils = { version = "0.2.1", path = "./crates/utils" }
-e3-utils-derive = { version = "0.2.1", path = "./crates/utils-derive" }
-e3-safe = { version = "0.2.1", path = "./crates/safe" }
-e3-slashing = { version = "0.2.1", path = "./crates/slashing" }
-e3-zk-prover = { version = "0.2.1", path = "./crates/zk-prover" }
-e3-zk-helpers = { version = "0.2.1", path = "./crates/zk-helpers" }
-e3-parity-matrix = { version = "0.2.1", path = "./crates/parity-matrix" }
+e3-aggregator = { version = "0.2.2", path = "./crates/aggregator" }
+e3-bfv-client = { version = "0.2.2", path = "./crates/bfv-client" }
+e3-config = { version = "0.2.2", path = "./crates/config" }
+e3-console = { version = "0.2.2", path = "./crates/console" }
+e3-dashboard = { version = "0.2.2", path = "./crates/dashboard" }
+e3-ciphernode-builder = { version = "0.2.2", path = "./crates/ciphernode-builder" }
+e3-crypto = { version = "0.2.2", path = "./crates/crypto" }
+e3-data = { version = "0.2.2", path = "./crates/data" }
+e3-hamt = { version = "0.2.2", path = "./crates/hamt" }
+e3-request = { version = "0.2.2", path = "./crates/request" }
+e3-sdk = { version = "0.2.2", path = "./crates/sdk" }
+e3-cli = { version = "0.2.2", path = "./crates/cli" }
+e3-committee-hash = { version = "0.2.2", path = "./crates/committee-hash" }
+e3-entrypoint = { version = "0.2.2", path = "./crates/entrypoint" }
+e3-init = { version = "0.2.2", path = "./crates/init" }
+e3-events = { version = "0.2.2", path = "./crates/events" }
+e3-evm = { version = "0.2.2", path = "./crates/evm" }
+e3-evm-helpers = { version = "0.2.2", path = "./crates/evm-helpers" }
+e3-fhe = { version = "0.2.2", path = "./crates/fhe" }
+e3-fhe-params = { version = "0.2.2", path = "./crates/fhe-params" }
+e3-fs = { version = "0.2.2", path = "./crates/fs" }
+e3-indexer = { version = "0.2.2", path = "./crates/indexer" }
+e3-multithread = { version = "0.2.2", path = "./crates/multithread" }
+e3-keyshare = { version = "0.2.2", path = "./crates/keyshare" }
+e3-logger = { version = "0.2.2", path = "./crates/logger" }
+e3-net = { version = "0.2.2", path = "./crates/net" }
+e3-compute-provider = { version = "0.2.2", path = "./crates/compute-provider" }
+e3-sortition = { version = "0.2.2", path = "./crates/sortition" }
+e3-daemon-server = { version = "0.2.2", path = "./crates/daemon-server" }
+e3-program-server = { version = "0.2.2", path = "./crates/program-server" }
+e3-polynomial = { version = "0.2.2", path = "./crates/polynomial" }
+e3-support-scripts = { version = "0.2.2", path = "./crates/support-scripts" }
+e3-sync = { version = "0.2.2", path = "./crates/sync" }
+e3-test-helpers = { version = "0.2.2", path = "./crates/test-helpers" }
+e3-tests = { version = "0.2.2", path = "./crates/tests" }
+e3-trbfv = { version = "0.2.2", path = "./crates/trbfv" }
+e3-utils = { version = "0.2.2", path = "./crates/utils" }
+e3-utils-derive = { version = "0.2.2", path = "./crates/utils-derive" }
+e3-safe = { version = "0.2.2", path = "./crates/safe" }
+e3-slashing = { version = "0.2.2", path = "./crates/slashing" }
+e3-zk-prover = { version = "0.2.2", path = "./crates/zk-prover" }
+e3-zk-helpers = { version = "0.2.2", path = "./crates/zk-helpers" }
+e3-parity-matrix = { version = "0.2.2", path = "./crates/parity-matrix" }
 
 actix = "=0.13.5"
 actix-web = "=4.11.0"
