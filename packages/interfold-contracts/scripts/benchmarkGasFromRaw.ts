@@ -9,20 +9,20 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
-  BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS,
   BFV_DKG_H,
-  BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS,
   BFV_THRESHOLD_T,
-  REPO_ROOT,
   bfvDecCommitteeHashIndices,
   bfvDkgCommitteeHashIndices,
   committeeHashFromLimbs,
+  getBfvDecryptionSubCircuitVkHashPaths,
+  getBfvPkSubCircuitVkHashPaths,
+  getRepoRoot,
   readVkRecursiveHash,
 } from "./utils";
 
 const CANONICAL_BFV_PRESET = "insecure-512";
 const COMMITTED_HONK_DIR = path.join(
-  REPO_ROOT,
+  getRepoRoot(),
   "packages/interfold-contracts/contracts/verifiers/bfv/honk",
 );
 
@@ -57,7 +57,10 @@ function readBenchmarkPreset(foldedArtifact?: unknown): string {
 
   const fromEnv = process.env.BENCHMARK_PRESET?.trim();
   if (fromEnv) return fromEnv;
-  const activePath = path.join(REPO_ROOT, "circuits/bin/.active-preset.json");
+  const activePath = path.join(
+    getRepoRoot(),
+    "circuits/bin/.active-preset.json",
+  );
   if (!fs.existsSync(activePath)) {
     return CANONICAL_BFV_PRESET;
   }
@@ -97,11 +100,11 @@ function ensureHonkVerifierContractDir(preset: string): string {
       "--output-dir",
       benchDir,
     ],
-    { cwd: REPO_ROOT, stdio: "inherit" },
+    { cwd: getRepoRoot(), stdio: "inherit" },
   );
   // Hardhat does not pick up freshly written .sol under honk/.benchmark/ until compile.
   execFileSync("pnpm", ["hardhat", "compile"], {
-    cwd: path.join(REPO_ROOT, "packages/interfold-contracts"),
+    cwd: path.join(getRepoRoot(), "packages/interfold-contracts"),
     stdio: "inherit",
   });
   return benchDir;
@@ -110,7 +113,7 @@ function ensureHonkVerifierContractDir(preset: string): string {
 /** Hardhat `project/` source path for a generated Honk verifier file. */
 function honkContractSource(honkDir: string, name: string): string {
   const rel = path.relative(
-    path.join(REPO_ROOT, "packages/interfold-contracts"),
+    path.join(getRepoRoot(), "packages/interfold-contracts"),
     path.join(honkDir, `${name}.sol`),
   );
   return rel.split(path.sep).join("/");
@@ -293,16 +296,16 @@ async function main() {
   );
 
   const expectedNodesFoldKeyHash = readVkRecursiveHash(
-    BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS.nodesFold,
+    getBfvPkSubCircuitVkHashPaths().nodesFold,
   );
   const expectedC5KeyHash = readVkRecursiveHash(
-    BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS.c5,
+    getBfvPkSubCircuitVkHashPaths().c5,
   );
   const expectedC6FoldKeyHash = readVkRecursiveHash(
-    BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS.c6Fold,
+    getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
   );
   const expectedC7KeyHash = readVkRecursiveHash(
-    BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS.c7,
+    getBfvDecryptionSubCircuitVkHashPaths().c7,
   );
 
   if (

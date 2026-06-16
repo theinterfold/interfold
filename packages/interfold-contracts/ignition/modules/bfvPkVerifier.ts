@@ -7,7 +7,7 @@ import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
 import {
   BFV_DKG_H,
-  BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS,
+  getBfvPkSubCircuitVkHashPaths,
   readVkRecursiveHash,
 } from "../../scripts/utils";
 import dkgAggregatorVerifierModule from "./dkgAggregatorVerifier";
@@ -16,9 +16,9 @@ export default buildModule("BfvPkVerifier", (m) => {
   const { dkgAggregatorVerifier } = m.useModule(dkgAggregatorVerifierModule);
 
   const nodesFoldKeyHash = readVkRecursiveHash(
-    BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS.nodesFold,
+    getBfvPkSubCircuitVkHashPaths().nodesFold,
   );
-  const c5KeyHash = readVkRecursiveHash(BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS.c5);
+  const c5KeyHash = readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().c5);
 
   const bfvPkVerifier = m.contract("BfvPkVerifier", [
     dkgAggregatorVerifier,

@@ -77,7 +77,13 @@ function resolveRepoRoot(): string {
   );
 }
 
-export const REPO_ROOT = resolveRepoRoot();
+let _repoRoot: string | undefined;
+
+/** Lazy version of REPO_ROOT — only resolves when called, safe for import-time. */
+export function getRepoRoot(): string {
+  if (!_repoRoot) _repoRoot = resolveRepoRoot();
+  return _repoRoot;
+}
 
 /**
  * <generated-committee-doc>
@@ -113,28 +119,34 @@ export function bfvDecCommitteeHashIndices(): { hi: number; lo: number } {
 }
 
 /** Recursive VK hashes for `BfvPkVerifier` sub-circuits (from `pnpm compile:circuits`). */
-export const BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS = {
-  nodesFold: path.join(
-    REPO_ROOT,
-    "circuits/bin/recursive_aggregation/nodes_fold/target/nodes_fold.vk_recursive_hash",
-  ),
-  c5: path.join(
-    REPO_ROOT,
-    "circuits/bin/threshold/target/pk_aggregation.vk_recursive_hash",
-  ),
-} as const;
+export function getBfvPkSubCircuitVkHashPaths() {
+  const root = getRepoRoot();
+  return {
+    nodesFold: path.join(
+      root,
+      "circuits/bin/recursive_aggregation/nodes_fold/target/nodes_fold.vk_recursive_hash",
+    ),
+    c5: path.join(
+      root,
+      "circuits/bin/threshold/target/pk_aggregation.vk_recursive_hash",
+    ),
+  } as const;
+}
 
 /** Recursive VK hashes for `BfvDecryptionVerifier` sub-circuits (from `pnpm compile:circuits`). */
-export const BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS = {
-  c6Fold: path.join(
-    REPO_ROOT,
-    "circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.vk_recursive_hash",
-  ),
-  c7: path.join(
-    REPO_ROOT,
-    "circuits/bin/threshold/target/decrypted_shares_aggregation.vk_recursive_hash",
-  ),
-} as const;
+export function getBfvDecryptionSubCircuitVkHashPaths() {
+  const root = getRepoRoot();
+  return {
+    c6Fold: path.join(
+      root,
+      "circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.vk_recursive_hash",
+    ),
+    c7: path.join(
+      root,
+      "circuits/bin/threshold/target/decrypted_shares_aggregation.vk_recursive_hash",
+    ),
+  } as const;
+}
 
 /**
  * Reads a 32-byte recursive VK hash emitted by the circuit build (`*.vk_recursive_hash`).
@@ -178,9 +190,9 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
   address: string,
 ): Promise<void> {
   const expectedNodesFold = readVkRecursiveHash(
-    BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS.nodesFold,
+    getBfvPkSubCircuitVkHashPaths().nodesFold,
   );
-  const expectedC5 = readVkRecursiveHash(BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS.c5);
+  const expectedC5 = readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().c5);
   const [onChainNodesFold, onChainC5] = await Promise.all([
     verifier.expectedNodesFoldKeyHash(),
     verifier.expectedC5KeyHash(),
@@ -206,10 +218,10 @@ export async function assertBfvDecryptionVerifierSubCircuitVkHashes(
   address: string,
 ): Promise<void> {
   const expectedC6Fold = readVkRecursiveHash(
-    BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS.c6Fold,
+    getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
   );
   const expectedC7 = readVkRecursiveHash(
-    BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS.c7,
+    getBfvDecryptionSubCircuitVkHashPaths().c7,
   );
   const [onChainC6Fold, onChainC7] = await Promise.all([
     verifier.expectedC6FoldKeyHash(),
