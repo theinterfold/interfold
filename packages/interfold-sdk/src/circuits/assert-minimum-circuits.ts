@@ -4,40 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { existsSync, readFileSync } from 'node:fs'
-import { dirname, resolve } from 'node:path'
-import { fileURLToPath } from 'node:url'
-
-import { SDKError } from '../utils'
-
 /** Matches `IInterfold.CommitteeSize.Minimum` and `DEFAULT_E3_CONFIG.committeeSize`. */
 export const SDK_CIRCUIT_COMMITTEE = 'minimum'
 
-function findActivePath(): string | null {
-  if (!import.meta.url) return null
-
-  let dir = dirname(fileURLToPath(import.meta.url))
-
-  while (true) {
-    if (existsSync(resolve(dir, 'package.json'))) {
-      const bundled = resolve(dir, '.active-preset.json')
-      if (existsSync(bundled)) return bundled
-
-      if (dir.includes('node_modules')) return null
-
-      return resolve(dir, '../../circuits/bin/.active-preset.json')
-    }
-
-    const parent = dirname(dir)
-    if (parent === dir) break
-
-    dir = parent
-  }
-
-  throw new SDKError('Could not locate SDK package root', 'SDK_CIRCUIT_STAMP_MISSING')
-}
-
-const ACTIVE_PRESET_PATH = findActivePath()
+// Node-only circuit check — in the browser this is a no-op.
+const isNode = typeof window === 'undefined' && typeof import.meta.url !== 'undefined'
 
 let checked = false
 
@@ -45,22 +16,24 @@ let checked = false
  * SDK encryption artifacts are built for the minimum committee preset by default.
  * Fail fast when `circuits/bin/.active-preset.json` points at another committee
  * (e.g. after benchmark runs with `--committee small`).
+ *
+ * In browser environments this is a no-op (circuit files don't exist client-side).
  */
 export function assertSdkMinimumCircuits(): void {
-  if (checked) return
-
-  if (ACTIVE_PRESET_PATH === null) {
+  if (checked || !isNode) {
     checked = true
     return
   }
+  checked = true
 
-  let raw: string
-  try {
-    raw = readFileSync(ACTIVE_PRESET_PATH, 'utf-8')
-  } catch {
-    throw new SDKError(
-      `Missing ${ACTIVE_PRESET_PATH}. Run \`pnpm -C packages/interfold-sdk compile:circuits\` first.`,
-      'SDK_CIRCUIT_STAMP_MISSING',
+  // Dynamic import so bundlers can tree-shake Node APIs from browser bundles.
+  import('./assert-minimum-circuits-node').then(
+    (m) => m.checkSdkMinimumCircuits(),
+    (err) => {
+      throw err
+    },
+  )
+}
     )
   }
 

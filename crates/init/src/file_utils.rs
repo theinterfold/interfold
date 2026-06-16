@@ -77,3 +77,24 @@ pub async fn remove_all_files_in_dir<P: AsRef<Path> + Send>(dir_path: P) -> Resu
     }
     Ok(())
 }
+
+/// Delete all entries in `dir` except those whose names appear in `keep`.
+pub async fn remove_dir_except(dir: &Path, keep: &[&str]) -> Result<()> {
+    if !dir.exists() || !dir.is_dir() {
+        return Ok(());
+    }
+    let mut entries = fs::read_dir(dir).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+        if !keep.contains(&name_str.as_ref()) {
+            let path = entry.path();
+            if path.is_dir() {
+                fs::remove_dir_all(&path).await?;
+            } else {
+                fs::remove_file(&path).await?;
+            }
+        }
+    }
+    Ok(())
+}

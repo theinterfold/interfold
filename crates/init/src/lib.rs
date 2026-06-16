@@ -13,7 +13,9 @@ mod pkgman;
 
 use anyhow::Result;
 use copy::Filter;
-use file_utils::{chmod_recursive, delete_path, move_file, remove_all_files_in_dir};
+use file_utils::{
+    chmod_recursive, delete_path, move_file, remove_all_files_in_dir, remove_dir_except,
+};
 use git::parse_git_url;
 use package_json::DependencyType;
 use pkgman::PkgMan;
@@ -154,7 +156,7 @@ async fn install_interfold(cwd: &PathBuf, template: Option<String>, verbose: boo
 
     spinner
         .run("Resetting support folder...", || async {
-            delete_path(&cwd.join(".interfold")).await
+            remove_dir_except(&cwd.join(".interfold"), &["generated"]).await
         })
         .await?;
 
