@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use num_bigint::BigUint;
+use num_traits::One;
 use std::collections::BTreeMap;
 
 use crate::search::constants::NTT_PRIMES_BY_BITS;
@@ -34,7 +35,7 @@ fn build_prime_items_with_filter(filter: BitFilter) -> Vec<PrimeItem> {
         if filter(*bits) {
             continue;
         }
-        for &phex in arr {
+        for &phex in arr.into_iter() {
             let v = parse_hex_big(phex);
             vec.push(PrimeItem {
                 bitlen: *bits,
@@ -47,15 +48,27 @@ fn build_prime_items_with_filter(filter: BitFilter) -> Vec<PrimeItem> {
     vec
 }
 
-/// Build a flat list of all primes with precomputed log2 and hex strings.
-/// Excludes 61, 62, and 63-bit primes.
+/// Build the prime pool for the first parameter set.
+/// Restricted to 50..=60 bit primes: the floor of 50 bits avoids the <0.2-bit
+/// correctness margin of 49-bit primes for worst-case inputs, and 61/62/63-bit
+/// primes are reserved for the second set (centered-RNS gap requirement).
 pub fn build_prime_items() -> Vec<PrimeItem> {
-    build_prime_items_with_filter(|bits| bits == 63 || bits == 62 || bits == 61)
+    build_prime_items_with_filter(|bits| bits < 50 || bits == 61 || bits == 62 || bits == 63)
 }
 
 /// Build prime items for second parameter set (includes 62-bit primes, excludes 61 and 63-bit)
 pub fn build_prime_items_for_second() -> Vec<PrimeItem> {
     build_prime_items_with_filter(|bits| bits == 63 || bits == 61)
+}
+
+/// Check whether `p` is NTT-friendly for ring dimension `d`, i.e. `p ≡ 1 (mod 2d)`.
+///
+/// All primes in `NTT_PRIMES_BY_BITS` satisfy this for the base ring dimension
+/// (2*8192 = 16384), but not every prime remains NTT-friendly for the larger
+/// dimensions `bfv_search` may step up to (16384, 32768), so candidates must be
+/// re-filtered against the actual `d` before selection.
+pub fn is_ntt_friendly(p: &BigUint, d: u64) -> bool {
+    p % BigUint::from(2u64 * d) == BigUint::one()
 }
 
 /// Greedily select the maximum q under a log2 cap by taking largest primes first.
@@ -129,6 +142,49 @@ mod tests {
         for item in &items {
             assert_eq!(parse_hex_big(&item.hex), item.value);
             assert!(item.log2 > 0.0);
+        }
+    }
+
+    #[test]
+    fn test_is_ntt_friendly() {
+        let items = build_prime_items();
+
+        // Base ring dimension: every first-set prime is NTT-friendly (table-wide invariant).
+        for item in &items {
+            assert!(
+                is_ntt_friendly(&item.value, 8192),
+                "{} fails NTT check for d=8192",
+                item.hex
+            );
+        }
+
+        // 60-bit primes are only NTT-friendly for the base dimension; larger d
+        // (which bfv_search may step up to) excludes them.
+        let sixty_bit: Vec<&PrimeItem> = items.iter().filter(|p| p.bitlen == 60).collect();
+        assert!(!sixty_bit.is_empty());
+        for item in &sixty_bit {
+            assert!(
+                !is_ntt_friendly(&item.value, 16384),
+                "{} unexpectedly NTT-friendly for d=16384",
+                item.hex
+            );
+            assert!(
+                !is_ntt_friendly(&item.value, 32768),
+                "{} unexpectedly NTT-friendly for d=32768",
+                item.hex
+            );
+        }
+
+        // 50..=59-bit primes remain NTT-friendly for every dimension bfv_search may return.
+        for item in items.iter().filter(|p| p.bitlen < 60) {
+            for &d in &[8192u64, 16384, 32768] {
+                assert!(
+                    is_ntt_friendly(&item.value, d),
+                    "{} fails NTT check for d={}",
+                    item.hex,
+                    d
+                );
+            }
         }
     }
 
