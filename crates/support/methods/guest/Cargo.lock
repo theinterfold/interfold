@@ -1078,8 +1078,8 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "e3-bfv-client"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
+version = "0.2.2"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.2#799573034ece87645b6824c210506b7e17f01acb"
 dependencies = [
  "anyhow",
  "e3-fhe-params",
@@ -1093,8 +1093,8 @@ dependencies = [
 
 [[package]]
 name = "e3-compute-provider"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
+version = "0.2.2"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.2#799573034ece87645b6824c210506b7e17f01acb"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ff 0.4.2",
@@ -1113,8 +1113,8 @@ dependencies = [
 
 [[package]]
 name = "e3-fhe-params"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
+version = "0.2.2"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.2#799573034ece87645b6824c210506b7e17f01acb"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -1131,8 +1131,8 @@ dependencies = [
 
 [[package]]
 name = "e3-parity-matrix"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
+version = "0.2.2"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.2#799573034ece87645b6824c210506b7e17f01acb"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -1142,8 +1142,8 @@ dependencies = [
 
 [[package]]
 name = "e3-polynomial"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
+version = "0.2.2"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.2#799573034ece87645b6824c210506b7e17f01acb"
 dependencies = [
  "fhe-math",
  "num-bigint",
@@ -1154,8 +1154,8 @@ dependencies = [
 
 [[package]]
 name = "e3-safe"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
+version = "0.2.2"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.2#799573034ece87645b6824c210506b7e17f01acb"
 dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
@@ -1176,8 +1176,8 @@ dependencies = [
 
 [[package]]
 name = "e3-zk-helpers"
-version = "0.2.1"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
+version = "0.2.2"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.2#799573034ece87645b6824c210506b7e17f01acb"
 dependencies = [
  "anyhow",
  "ark-bn254 0.5.0",
