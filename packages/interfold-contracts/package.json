@@ -1,7 +1,7 @@
 {
   "name": "@interfold/contracts",
   "description": "Interfold is an open-source protocol for Encrypted Execution Environments (E3).",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "license": "LGPL-3.0-only",
   "type": "module",
   "author": {
