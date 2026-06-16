@@ -10,9 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  getBfvDecryptionSubCircuitVkHashPaths,
   BFV_DKG_H,
-  getBfvPkSubCircuitVkHashPaths,
   BFV_THRESHOLD_T,
   assertBfvDecryptionVerifierSubCircuitVkHashes,
   assertBfvPkVerifierSubCircuitVkHashes,
@@ -21,6 +19,8 @@ import {
   bfvDkgCommitteeHashIndices,
   bfvPkExpectedPublicInputsLen,
   committeeHashFromLimbs,
+  getBfvDecryptionSubCircuitVkHashPaths,
+  getBfvPkSubCircuitVkHashPaths,
   readVkRecursiveHash,
 } from "../scripts/utils";
 import type { BfvDecryptionVerifier, BfvPkVerifier } from "../types";

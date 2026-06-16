@@ -4,13 +4,43 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+// Top-level Node.js imports are stubbed by bundlers (Vite/esbuild) in browser
+// builds. They only execute at runtime inside the `isNode` guard below.
+import { existsSync, readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+import { SDKError } from '../utils'
+
 /** Matches `IInterfold.CommitteeSize.Minimum` and `DEFAULT_E3_CONFIG.committeeSize`. */
 export const SDK_CIRCUIT_COMMITTEE = 'minimum'
 
-// Node-only circuit check — in the browser this is a no-op.
 const isNode = typeof window === 'undefined' && typeof import.meta.url !== 'undefined'
 
 let checked = false
+
+function findActivePath(): string | null {
+  if (!import.meta.url) return null
+
+  let dir = dirname(fileURLToPath(import.meta.url))
+
+  while (true) {
+    if (existsSync(resolve(dir, 'package.json'))) {
+      const bundled = resolve(dir, '.active-preset.json')
+      if (existsSync(bundled)) return bundled
+
+      if (dir.includes('node_modules')) return null
+
+      return resolve(dir, '../../circuits/bin/.active-preset.json')
+    }
+
+    const parent = dirname(dir)
+    if (parent === dir) break
+    dir = parent
+  }
+
+  throw new SDKError('Could not locate SDK package root', 'SDK_CIRCUIT_STAMP_MISSING')
+}
 
 /**
  * SDK encryption artifacts are built for the minimum committee preset by default.
@@ -26,35 +56,34 @@ export function assertSdkMinimumCircuits(): void {
   }
   checked = true
 
-  // Dynamic import so bundlers can tree-shake Node APIs from browser bundles.
-  import('./assert-minimum-circuits-node').then(
-    (m) => m.checkSdkMinimumCircuits(),
-    (err) => {
-      throw err
-    },
-  )
-}
+  const activePresetPath = findActivePath()
+  if (activePresetPath === null) return
+
+  let raw: string
+  try {
+    raw = readFileSync(activePresetPath, 'utf-8')
+  } catch {
+    throw new SDKError(
+      `Missing ${activePresetPath}. Run \`pnpm -C packages/interfold-sdk compile:circuits\` first.`,
+      'SDK_CIRCUIT_STAMP_MISSING',
     )
   }
 
-  let committee: string | undefined
+  let active: { committee?: string }
   try {
-    committee = JSON.parse(raw)?.committee as string | undefined
+    active = JSON.parse(raw) as { committee?: string }
   } catch {
     throw new SDKError(
-      `Invalid JSON in ${ACTIVE_PRESET_PATH}. Rebuild with \`pnpm -C packages/interfold-sdk compile:circuits\`.`,
+      `Could not parse ${activePresetPath} — run \`pnpm -C packages/interfold-sdk compile:circuits\`.`,
       'SDK_CIRCUIT_STAMP_INVALID',
     )
   }
 
-  if (committee !== SDK_CIRCUIT_COMMITTEE) {
+  if (!active.committee || active.committee !== SDK_CIRCUIT_COMMITTEE) {
     throw new SDKError(
-      `SDK requires circuits built for committee "${SDK_CIRCUIT_COMMITTEE}" ` +
-        `(active preset is "${committee ?? 'unknown'}"). ` +
-        `Run: pnpm -C packages/interfold-sdk compile:circuits`,
+      `Active circuit committee is "${active.committee ?? 'unknown'}" but the SDK requires "${SDK_CIRCUIT_COMMITTEE}". ` +
+        `Run \`pnpm build:circuits --committee ${SDK_CIRCUIT_COMMITTEE}\`.`,
       'SDK_CIRCUIT_COMMITTEE_MISMATCH',
     )
   }
-
-  checked = true
 }
