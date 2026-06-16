@@ -1078,8 +1078,8 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "e3-bfv-client"
-version = "0.2.0"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.0#6d70e718d31141ad3a049ed82cea0e82bcf08681"
+version = "0.2.1"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
 dependencies = [
  "anyhow",
  "e3-fhe-params",
@@ -1093,8 +1093,8 @@ dependencies = [
 
 [[package]]
 name = "e3-compute-provider"
-version = "0.2.0"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.0#6d70e718d31141ad3a049ed82cea0e82bcf08681"
+version = "0.2.1"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ff 0.4.2",
@@ -1113,8 +1113,8 @@ dependencies = [
 
 [[package]]
 name = "e3-fhe-params"
-version = "0.2.0"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.0#6d70e718d31141ad3a049ed82cea0e82bcf08681"
+version = "0.2.1"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -1131,8 +1131,8 @@ dependencies = [
 
 [[package]]
 name = "e3-parity-matrix"
-version = "0.2.0"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.0#6d70e718d31141ad3a049ed82cea0e82bcf08681"
+version = "0.2.1"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -1142,8 +1142,8 @@ dependencies = [
 
 [[package]]
 name = "e3-polynomial"
-version = "0.2.0"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.0#6d70e718d31141ad3a049ed82cea0e82bcf08681"
+version = "0.2.1"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
 dependencies = [
  "fhe-math",
  "num-bigint",
@@ -1154,8 +1154,8 @@ dependencies = [
 
 [[package]]
 name = "e3-safe"
-version = "0.2.0"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.0#6d70e718d31141ad3a049ed82cea0e82bcf08681"
+version = "0.2.1"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
 dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
@@ -1176,8 +1176,8 @@ dependencies = [
 
 [[package]]
 name = "e3-zk-helpers"
-version = "0.2.0"
-source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.0#6d70e718d31141ad3a049ed82cea0e82bcf08681"
+version = "0.2.1"
+source = "git+https://github.com/gnosisguild/interfold?tag=v0.2.1#8adf1098989690e4d623ca4e3d768d92d227c0b8"
 dependencies = [
  "anyhow",
  "ark-bn254 0.5.0",
@@ -1376,7 +1376,7 @@ dependencies = [
 [[package]]
 name = "fhe"
 version = "0.2.1"
-source = "git+https://github.com/gnosisguild/fhe.rs#c9c052e11dc5d0b6864767c4e867c9fd779253a7"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
 dependencies = [
  "bincode",
  "doc-comment",
@@ -1402,7 +1402,7 @@ dependencies = [
 [[package]]
 name = "fhe-math"
 version = "0.2.1"
-source = "git+https://github.com/gnosisguild/fhe.rs#c9c052e11dc5d0b6864767c4e867c9fd779253a7"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
 dependencies = [
  "ethnum",
  "fhe-traits",
@@ -1427,7 +1427,7 @@ dependencies = [
 [[package]]
 name = "fhe-traits"
 version = "0.2.1"
-source = "git+https://github.com/gnosisguild/fhe.rs#c9c052e11dc5d0b6864767c4e867c9fd779253a7"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
 dependencies = [
  "rand 0.9.2",
 ]
@@ -1435,7 +1435,7 @@ dependencies = [
 [[package]]
 name = "fhe-util"
 version = "0.2.1"
-source = "git+https://github.com/gnosisguild/fhe.rs#c9c052e11dc5d0b6864767c4e867c9fd779253a7"
+source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d2258fbeef6dbdf5ade68438203fd80a648e"
 dependencies = [
  "num-bigint-dig",
  "num-traits",
