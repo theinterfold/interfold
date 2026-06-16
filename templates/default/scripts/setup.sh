@@ -12,6 +12,9 @@ cd "${TEMPLATE_ROOT}"
 echo "Installing dependencies..."
 pnpm install --frozen-lockfile
 
+echo "Installing Cargo dependencies..."
+cargo build
+
 echo "Compiling guest program..."
 if [[ ! -f './.interfold/generated/contracts/ImageID.sol' ]]; then
   interfold program compile

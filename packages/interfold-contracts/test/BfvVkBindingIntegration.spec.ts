@@ -10,9 +10,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import {
-  BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS,
   BFV_DKG_H,
-  BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS,
   BFV_THRESHOLD_T,
   assertBfvDecryptionVerifierSubCircuitVkHashes,
   assertBfvPkVerifierSubCircuitVkHashes,
@@ -21,6 +19,8 @@ import {
   bfvDkgCommitteeHashIndices,
   bfvPkExpectedPublicInputsLen,
   committeeHashFromLimbs,
+  getBfvDecryptionSubCircuitVkHashPaths,
+  getBfvPkSubCircuitVkHashPaths,
   readVkRecursiveHash,
 } from "../scripts/utils";
 import type { BfvDecryptionVerifier, BfvPkVerifier } from "../types";
@@ -92,10 +92,10 @@ const loadFoldedArtifacts = (): FoldedArtifacts | null =>
   resolveFoldedArtifacts();
 
 const hasCompiledVkArtifacts = (): boolean =>
-  Object.values(BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS).every((p) =>
+  Object.values(getBfvPkSubCircuitVkHashPaths()).every((p) =>
     fs.existsSync(p),
   ) &&
-  Object.values(BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS).every((p) =>
+  Object.values(getBfvDecryptionSubCircuitVkHashPaths()).every((p) =>
     fs.existsSync(p),
   );
 
@@ -170,16 +170,16 @@ describe("BfvVkBindingIntegration", function () {
     await decAgg.waitForDeployment();
 
     const expectedNodesFoldKeyHash = readVkRecursiveHash(
-      BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS.nodesFold,
+      getBfvPkSubCircuitVkHashPaths().nodesFold,
     );
     const expectedC5KeyHash = readVkRecursiveHash(
-      BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS.c5,
+      getBfvPkSubCircuitVkHashPaths().c5,
     );
     const expectedC6FoldKeyHash = readVkRecursiveHash(
-      BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS.c6Fold,
+      getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
     );
     const expectedC7KeyHash = readVkRecursiveHash(
-      BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS.c7,
+      getBfvDecryptionSubCircuitVkHashPaths().c7,
     );
 
     const bfvPk = await (
@@ -280,16 +280,16 @@ describe("BfvVkBindingIntegration", function () {
       );
 
       const expectedNodesFoldKeyHash = readVkRecursiveHash(
-        BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS.nodesFold,
+        getBfvPkSubCircuitVkHashPaths().nodesFold,
       );
       const expectedC5KeyHash = readVkRecursiveHash(
-        BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS.c5,
+        getBfvPkSubCircuitVkHashPaths().c5,
       );
       const expectedC6FoldKeyHash = readVkRecursiveHash(
-        BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS.c6Fold,
+        getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
       );
       const expectedC7KeyHash = readVkRecursiveHash(
-        BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS.c7,
+        getBfvDecryptionSubCircuitVkHashPaths().c7,
       );
 
       expect(dkgPublicInputs[0]).to.equal(expectedNodesFoldKeyHash);
@@ -386,7 +386,7 @@ describe("BfvVkBindingIntegration", function () {
         folded.dkg_aggregator.public_inputs_hex,
       );
       const expectedC5KeyHash = readVkRecursiveHash(
-        BFV_PK_SUB_CIRCUIT_VK_HASH_PATHS.c5,
+        getBfvPkSubCircuitVkHashPaths().c5,
       );
 
       const libFactory = await ethers.getContractFactory(

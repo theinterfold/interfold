@@ -6,8 +6,8 @@
 import { buildModule } from "@nomicfoundation/hardhat-ignition/modules";
 
 import {
-  BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS,
   BFV_THRESHOLD_T,
+  getBfvDecryptionSubCircuitVkHashPaths,
   readVkRecursiveHash,
 } from "../../scripts/utils";
 import decryptionAggregatorVerifierModule from "./decryptionAggregatorVerifier";
@@ -18,10 +18,10 @@ export default buildModule("BfvDecryptionVerifier", (m) => {
   );
 
   const c6FoldKeyHash = readVkRecursiveHash(
-    BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS.c6Fold,
+    getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
   );
   const c7KeyHash = readVkRecursiveHash(
-    BFV_DECRYPTION_SUB_CIRCUIT_VK_HASH_PATHS.c7,
+    getBfvDecryptionSubCircuitVkHashPaths().c7,
   );
 
   const bfvDecryptionVerifier = m.contract("BfvDecryptionVerifier", [
