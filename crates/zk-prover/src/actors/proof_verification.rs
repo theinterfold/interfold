@@ -15,14 +15,17 @@ use actix::{Actor, Addr, AsyncContext, Context, Handler, Message, Recipient};
 use alloy::primitives::{keccak256, Address, Bytes};
 use alloy::sol_types::SolValue;
 use e3_events::{
-    BusHandle, CiphernodeSelected, E3id, EnclaveEvent, EnclaveEventData, EncryptionKey,
-    EncryptionKeyCreated, EncryptionKeyReceived, EventContext, EventPublisher, EventSubscriber,
-    EventType, Proof, ProofType, ProofVerificationFailed, ProofVerificationPassed, Sequenced,
-    SignedProofFailed, SignedProofPayload, TypedEvent,
+    BusHandle, E3id, EncryptionKey, EncryptionKeyCreated, EncryptionKeyReceived, EventContext,
+    EventPublisher, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, Proof,
+    ProofType, ProofVerificationFailed, ProofVerificationPassed, Sequenced, SignedProofFailed,
+    SignedProofPayload, TypedEvent,
 };
 use e3_fhe_params::BfvPreset;
 use e3_utils::NotifySync;
+use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{error, info, warn};
+
+use crate::domain::proof_verification::validate_external_key;
 
 #[derive(Debug, Message)]
 #[rtype(result = "()")]
@@ -53,8 +56,8 @@ pub struct ProofVerificationActor {
     bus: BusHandle,
     verifier: Recipient<TypedEvent<ZkVerificationRequest>>,
     pending: HashMap<(E3id, u64), PendingVerification>,
-    /// Tracks `BfvPreset` per E3 so we can derive `artifacts_dir` for proof verification.
-    presets: HashMap<E3id, BfvPreset>,
+    /// Tracks preset + committee per E3 so we can derive `artifacts_dir` for proof verification.
+    presets: HashMap<E3id, (BfvPreset, CiphernodesCommitteeSize)>,
 }
 
 impl ProofVerificationActor {
@@ -83,69 +86,33 @@ impl ProofVerificationActor {
         ctx: &Context<Self>,
     ) {
         let (msg, ec) = msg.into_components();
-        let Some(ref proof) = msg.key.proof else {
-            error!(
-                "External key from party {} is missing C0 proof - rejecting",
-                msg.key.party_id
-            );
-            return;
-        };
-
-        let signed = match &msg.key.signed_payload {
-            Some(signed) => signed.clone(),
-            None => {
-                error!(
-                    "Key from party {} has no signed payload - rejecting (signed proofs are required)",
-                    msg.key.party_id
-                );
+        let validated = match validate_external_key(
+            msg.key.party_id,
+            msg.key.proof.as_ref(),
+            msg.key.signed_payload.as_ref(),
+        ) {
+            Ok(validated) => validated,
+            Err(reason) => {
+                error!("{reason}");
                 return;
             }
         };
-
-        let recovered_address = match signed.recover_address() {
-            Ok(addr) => {
-                info!(
-                    "Recovered address {} for key from party {}",
-                    addr, msg.key.party_id
-                );
-                addr
-            }
-            Err(err) => {
-                error!(
-                    "Invalid signature on key from party {} - rejecting: {err}",
-                    msg.key.party_id
-                );
-                return;
-            }
-        };
-
-        // Validate circuit name matches expected ProofType circuits
-        let expected_circuits = signed.payload.proof_type.circuit_names();
-        if !expected_circuits.contains(&signed.payload.proof.circuit) {
-            error!(
-                "Circuit name mismatch for key from party {}: expected {:?}, got {:?}",
-                msg.key.party_id, expected_circuits, signed.payload.proof.circuit
-            );
-            return;
-        }
-        if *proof != signed.payload.proof {
-            error!(
-                "Proof mismatch for key from party {}: key.proof differs from signed_payload.payload.proof — rejecting",
-                msg.key.party_id
-            );
-            return;
-        }
+        let proof = msg
+            .key
+            .proof
+            .clone()
+            .expect("proof present after validation");
 
         // Store the signed payload so we can reference it in the verification response
         self.pending.insert(
             (msg.e3_id.clone(), msg.key.party_id),
             PendingVerification {
-                signed_payload: signed,
-                recovered_signer: recovered_address,
+                signed_payload: validated.signed_payload,
+                recovered_signer: validated.recovered_signer,
             },
         );
 
-        let Some(preset) = self.presets.get(&msg.e3_id).copied() else {
+        let Some((preset, committee)) = self.presets.get(&msg.e3_id).copied() else {
             error!(
                 "No BfvPreset known for e3_id={} — cannot determine circuit artifacts directory. \
                  This can happen if CiphernodeSelected was missed (e.g. after restart). Rejecting key from party {}.",
@@ -153,7 +120,7 @@ impl ProofVerificationActor {
             );
             return;
         };
-        let artifacts_dir = preset.artifacts_dir();
+        let artifacts_dir = preset.artifacts_dir_for_committee(committee.as_str());
 
         let request = TypedEvent::new(
             ZkVerificationRequest {
@@ -192,16 +159,29 @@ impl Actor for ProofVerificationActor {
     type Context = Context<Self>;
 }
 
-impl Handler<EnclaveEvent> for ProofVerificationActor {
+impl Handler<InterfoldEvent> for ProofVerificationActor {
     type Result = ();
 
-    fn handle(&mut self, msg: EnclaveEvent, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (msg, ec) = msg.into_components();
         match msg {
-            EnclaveEventData::CiphernodeSelected(data) => {
-                self.presets.insert(data.e3_id.clone(), data.params_preset);
+            InterfoldEventData::CiphernodeSelected(data) => {
+                match CiphernodesCommitteeSize::from_threshold(data.threshold_m, data.threshold_n) {
+                    Ok(committee) => {
+                        self.presets
+                            .insert(data.e3_id.clone(), (data.params_preset, committee));
+                    }
+                    Err(e) => {
+                        error!(
+                            "ProofVerificationActor: unrecognised committee for E3 {} \
+                             (threshold_m={}, threshold_n={}): {e} — skipping preset registration, \
+                             proof verification will be rejected if a key arrives",
+                            data.e3_id, data.threshold_m, data.threshold_n
+                        );
+                    }
+                }
             }
-            EnclaveEventData::EncryptionKeyReceived(data) => {
+            InterfoldEventData::EncryptionKeyReceived(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             _ => (),
@@ -272,6 +252,7 @@ impl Handler<TypedEvent<ZkVerificationResponse>> for ProofVerificationActor {
                         proof_type: ProofType::C0PkBfv,
                         data_hash,
                         public_signals: signed_payload.payload.proof.public_signals.clone(),
+                        proof_data: signed_payload.payload.proof.data.clone(),
                     },
                     ec,
                 ) {

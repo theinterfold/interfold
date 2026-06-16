@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 pub mod bfv_encrypted;
 pub mod encrypted;
+#[allow(clippy::module_inception)]
 pub mod shares;
 pub use bfv_encrypted::*;
 pub use encrypted::*;

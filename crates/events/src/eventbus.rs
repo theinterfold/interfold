@@ -39,7 +39,7 @@ fn default_bloomfilter() -> BloomFilter {
 //////////////////////////////////////////////////////////////////////////////
 // EventBus Implementation
 //////////////////////////////////////////////////////////////////////////////
-/// Central EventBus for each node. Actors publish events to this bus by sending it EnclaveEvents.
+/// Central EventBus for each node. Actors publish events to this bus by sending it InterfoldEvents.
 /// All events sent to this bus are assumed to be published over the network via pubsub.
 /// Other actors such as the NetEventTranslator and Evm actor connect to outside services and control which events
 /// actually get published as well as ensure that local events are not rebroadcast locally after
@@ -79,7 +79,7 @@ impl<E: Event> EventBus<E> {
     pub fn error<EE: Event>(source: &Addr<EventBus<EE>>) -> Addr<HistoryCollector<EE>> {
         let addr = HistoryCollector::<EE>::new().start();
         source.do_send(Subscribe::new(
-            EventType::EnclaveError,
+            EventType::InterfoldError,
             addr.clone().recipient(),
         ));
         addr
@@ -246,6 +246,12 @@ impl<E: Event> Handler<E> for EventFilter<E> {
 #[rtype(result = "Vec<E>")]
 pub struct GetEvents<E: Event>(PhantomData<E>);
 
+impl<E: Event> Default for GetEvents<E> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<E: Event> GetEvents<E> {
     pub fn new() -> Self {
         Self(PhantomData)
@@ -291,6 +297,12 @@ pub struct ResetHistory;
 #[derive(Message)]
 #[rtype(result = "Vec<E::Data>")]
 pub struct GetErrors<E: ErrorEvent>(PhantomData<E>);
+
+impl<E: ErrorEvent> Default for GetErrors<E> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
 
 impl<E: ErrorEvent> GetErrors<E> {
     pub fn new() -> Self {
@@ -354,6 +366,12 @@ pub struct HistoryCollector<E: Event> {
     history: Vec<E>,
     tx: mpsc::UnboundedSender<E>,
     waiter: Addr<HistoryCollectorWaiter<E>>,
+}
+
+impl<E: Event> Default for HistoryCollector<E> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<E: Event> HistoryCollector<E> {

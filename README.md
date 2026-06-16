@@ -10,8 +10,8 @@
 
 # The Interfold
 
-> **Note:** The Interfold was previously known as **Enclave**.  
-> Many repositories, packages, and CLI tools still use the `enclave` name while the project
+> **Note:** The Interfold was previously known as **Interfold**.  
+> Many repositories, packages, and CLI tools still use the `interfold` name while the project
 > transitions.
 
 This is the monorepo for **The Interfold**, an open-source protocol for confidential coordination.
@@ -41,7 +41,7 @@ See [CONTRIBUTING.md][contributing].
 
 ## Development
 
-This section covers the essential commands for setting up and working with the Enclave codebase
+This section covers the essential commands for setting up and working with the Interfold codebase
 locally.
 
 ```bash
@@ -74,9 +74,9 @@ The monorepo provides several test scripts for different components:
 - **`pnpm rust:test`** - Runs all Rust crate tests in the `crates/` directory. This script runs
   tests for all crates in the workspace, not just ciphernode-related crates.
 
-- **`pnpm evm:test`** - Runs tests for the EVM smart contracts in `packages/enclave-contracts`.
+- **`pnpm evm:test`** - Runs tests for the EVM smart contracts in `packages/interfold-contracts`.
 
-- **`pnpm sdk:test`** - Runs tests for the TypeScript SDK in `packages/enclave-sdk`.
+- **`pnpm sdk:test`** - Runs tests for the TypeScript SDK in `packages/interfold-sdk`.
 
 - **`pnpm noir:test`** - Runs tests for Noir circuits in the `circuits/` directory using
   `nargo test`. Requires the
@@ -203,7 +203,7 @@ pnpm test:integration --no-prebuild
 
 ## Minimum Rust version
 
-This workspace's minimum supported rustc version is 1.86.0.
+This workspace's minimum supported rustc version is 1.91.1.
 
 ## Architecture
 
@@ -214,43 +214,43 @@ detail.
 ```mermaid
 sequenceDiagram
     participant Users
-    participant Enclave
+    participant Interfold
     participant CiphernodeRegistry
     participant E3Program
     participant ComputeProvider
     participant DecryptionVerifier
 
-    Users->>Enclave: request(parameters)
-    Enclave->>E3Program: validate(e3ProgramParams)
-    Enclave->>ComputeProvider: validate(computeProviderParams)
-    ComputeProvider-->>Enclave: decryptionVerifier
-    Enclave->>CiphernodeRegistry: requestCommittee(e3Id, seed, threshold)
-    CiphernodeRegistry-->>Enclave: success
-    Enclave-->>Users: e3Id, E3 struct
+    Users->>Interfold: request(parameters)
+    Interfold->>E3Program: validate(e3ProgramParams)
+    Interfold->>ComputeProvider: validate(computeProviderParams)
+    ComputeProvider-->>Interfold: decryptionVerifier
+    Interfold->>CiphernodeRegistry: requestCommittee(e3Id, seed, threshold)
+    CiphernodeRegistry-->>Interfold: success
+    Interfold-->>Users: e3Id, E3 struct
 
-    Users->>Enclave: activate(e3Id)
-    Enclave->>CiphernodeRegistry: committeePublicKey(e3Id)
-    CiphernodeRegistry-->>Enclave: publicKey
-    Enclave->>Enclave: Set expiration and committeePublicKey
-    Enclave-->>Users: success
+    Users->>Interfold: activate(e3Id)
+    Interfold->>CiphernodeRegistry: committeePublicKey(e3Id)
+    CiphernodeRegistry-->>Interfold: publicKey
+    Interfold->>Interfold: Set expiration and committeePublicKey
+    Interfold-->>Users: success
 
-    Users->>Enclave: publishInput(e3Id, data)
-    Enclave->>E3Program: validateInput(msg.sender, data)
-    E3Program-->>Enclave: input, success
-    Enclave->>Enclave: Store input
-    Enclave-->>Users: success
+    Users->>Interfold: publishInput(e3Id, data)
+    Interfold->>E3Program: validateInput(msg.sender, data)
+    E3Program-->>Interfold: input, success
+    Interfold->>Interfold: Store input
+    Interfold-->>Users: success
 
-    Users->>Enclave: publishCiphertextOutput(e3Id, data)
-    Enclave->>DecryptionVerifier: verify(e3Id, data)
-    DecryptionVerifier-->>Enclave: output, success
-    Enclave->>Enclave: Store ciphertextOutput
-    Enclave-->>Users: success
+    Users->>Interfold: publishCiphertextOutput(e3Id, data)
+    Interfold->>DecryptionVerifier: verify(e3Id, data)
+    DecryptionVerifier-->>Interfold: output, success
+    Interfold->>Interfold: Store ciphertextOutput
+    Interfold-->>Users: success
 
-    Users->>Enclave: publishPlaintextOutput(e3Id, data)
-    Enclave->>E3Program: verify(e3Id, data)
-    E3Program-->>Enclave: output, success
-    Enclave->>Enclave: Store plaintextOutput
-    Enclave-->>Users: success
+    Users->>Interfold: publishPlaintextOutput(e3Id, data)
+    Interfold->>E3Program: verify(e3Id, data)
+    E3Program-->>Interfold: output, success
+    Interfold->>Interfold: Store plaintextOutput
+    Interfold-->>Users: success
 ```
 
 ## 🚀 Release Process
@@ -373,8 +373,8 @@ The Interfold follows [Semantic Versioning](https://semver.org/):
 Use stable versions only:
 
 ```bash
-enclaveup install              # Latest stable
-enclaveup install v1.0.0       # Specific stable version
+interfoldup install              # Latest stable
+interfoldup install v1.0.0       # Specific stable version
 ```
 
 #### For Testing (Testnet)
@@ -382,8 +382,8 @@ enclaveup install v1.0.0       # Specific stable version
 You can use pre-release versions:
 
 ```bash
-enclaveup install --pre-release # Latest pre-release
-enclaveup install v1.0.0-beta.1 # Specific pre-release
+interfoldup install --pre-release # Latest pre-release
+interfoldup install v1.0.0-beta.1 # Specific pre-release
 ```
 
 #### For Development
@@ -391,8 +391,8 @@ enclaveup install v1.0.0-beta.1 # Specific pre-release
 Build from source:
 
 ```bash
-git clone https://github.com/gnosisguild/enclave.git
-cd enclave
+git clone https://github.com/gnosisguild/interfold.git
+cd interfold
 cargo build --release
 ```
 
@@ -409,10 +409,10 @@ cargo build --release
 
 ```bash
 # Latest stable release (recommended for production)
-curl -fsSL https://raw.githubusercontent.com/gnosisguild/enclave/stable/install | bash
+curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/stable/install | bash
 
 # Latest development version (may be unstable)
-curl -fsSL https://raw.githubusercontent.com/gnosisguild/enclave/main/install | bash
+curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
 ```
 
 ## 📋 Release Checklist
@@ -424,8 +424,8 @@ For maintainers doing a release:
 - [ ] Decide version number (major/minor/patch)
 - [ ] Run: `pnpm bump:versions X.Y.Z`
 - [ ] Monitor GitHub Actions for successful deployment
-- [ ] Verify packages on [npm](https://www.npmjs.com/org/enclave) and
-      [crates.io](https://crates.io/search?q=enclave)
+- [ ] Verify packages on [npm](https://www.npmjs.com/org/interfold) and
+      [crates.io](https://crates.io/search?q=interfold)
 - [ ] Check GitHub release page for binaries and changelog
 - [ ] Announce release (Discord/Twitter/etc)
 
@@ -457,13 +457,13 @@ If a release has issues:
 1. **Mark as deprecated on npm**:
 
    ```bash
-   npm deprecate @enclave/sdk@1.0.0 "Critical bug, use 1.0.1"
+   npm deprecate @interfold/sdk@1.0.0 "Critical bug, use 1.0.1"
    ```
 
 2. **Yank from crates.io** (if critical):
 
    ```bash
-   cargo yank --version 1.0.0 enclave
+   cargo yank --version 1.0.0 interfold
    ```
 
 3. **Fix and release patch**:
@@ -473,8 +473,8 @@ If a release has issues:
 
 ## 📊 Version History
 
-Check our [Releases page](https://github.com/gnosisguild/enclave/releases) for full version history
-and changelogs.
+Check our [Releases page](https://github.com/gnosisguild/interfold/releases) for full version
+history and changelogs.
 
 ## Security and Liability
 
@@ -485,8 +485,8 @@ FITNESS FOR A PARTICULAR PURPOSE.
 
 This repo created under the [LGPL-3.0+ license](LICENSE).
 
-[gha]: https://github.com/gnosisguild/enclave/actions
-[gha-badge]: https://github.com/gnosisguild/enclave/actions/workflows/ci.yml/badge.svg
+[gha]: https://github.com/gnosisguild/interfold/actions
+[gha-badge]: https://github.com/gnosisguild/interfold/actions/workflows/ci.yml/badge.svg
 [hardhat]: https://hardhat.org/
 [hardhat-badge]: https://img.shields.io/badge/Built%20with-Hardhat-FFDB1C.svg
 [license]: https://opensource.org/license/lgpl-3-0

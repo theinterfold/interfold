@@ -22,18 +22,18 @@ the committee's threshold public key, submitting it on-chain, and decoding the f
 
 ## Where to find contract addresses
 
-The SDK needs three contract addresses: `enclave`, `ciphernodeRegistry`, and `feeToken`.
+The SDK needs three contract addresses: `interfold`, `ciphernodeRegistry`, and `feeToken`.
 
 | Environment | Where to get them                                                                                     |
 | ----------- | ----------------------------------------------------------------------------------------------------- |
-| Local dev   | Printed by the deploy script; also in `packages/enclave-contracts/deployed_contracts.json`            |
+| Local dev   | Printed by the deploy script; also in `packages/interfold-contracts/deployed_contracts.json`          |
 | Sepolia     | [Ciphernode Operators → Sepolia Contract Addresses](/ciphernode-operators#sepolia-contract-addresses) |
 | Custom      | Wherever your deploy script wrote them — typically `.env` or a JSON artifact                          |
 
 Put them in your `.env` and read them from there rather than hard-coding in source:
 
 ```bash
-ENCLAVE_ADDRESS=0x...
+INTERFOLD_ADDRESS=0x...
 CIPHERNODE_REGISTRY_ADDRESS=0x...
 FEE_TOKEN_ADDRESS=0x...
 ```
@@ -51,13 +51,13 @@ the E3 was requested:
 | `SECURE_THRESHOLD_8192`  | `1`              | Production — full security guarantees        |
 
 ```typescript
-import { EnclaveSDK } from '@enclave-e3/sdk'
+import { InterfoldSDK } from '@interfold/sdk'
 
-const sdk = new EnclaveSDK({
+const sdk = new InterfoldSDK({
   publicClient,
   walletClient,
   contracts: {
-    enclave: ENCLAVE_ADDRESS,
+    interfold: INTERFOLD_ADDRESS,
     ciphernodeRegistry: REGISTRY_ADDRESS,
     feeToken: FEE_TOKEN_ADDRESS,
   },
@@ -125,7 +125,7 @@ multiple circuit executions (see [Custom Noir Circuits](./custom-zk-circuits)).
 If you only need encryption (not the full SDK), import directly:
 
 ```typescript
-import { generatePublicKey, encryptNumber } from '@enclave-e3/sdk/crypto'
+import { generatePublicKey, encryptNumber } from '@interfold/sdk/crypto'
 
 const pk = await generatePublicKey('SECURE_THRESHOLD_8192')
 const ct = await encryptNumber(42n, pk, 'SECURE_THRESHOLD_8192')
@@ -135,14 +135,14 @@ const ct = await encryptNumber(42n, pk, 'SECURE_THRESHOLD_8192')
 
 ## 4. Submit On-chain
 
-Submit the encrypted data to the E3 via the Enclave contract's `publishInput` function. The exact
+Submit the encrypted data to the E3 via the Interfold contract's `publishInput` function. The exact
 method depends on your application architecture:
 
 ```typescript
 // Direct contract call via viem
 const hash = await walletClient.writeContract({
-  address: ENCLAVE_ADDRESS,
-  abi: enclaveAbi,
+  address: INTERFOLD_ADDRESS,
+  abi: interfoldAbi,
   functionName: 'publishInput',
   args: [e3Id, encodedData],
 })
@@ -161,10 +161,10 @@ After the input window closes, the compute provider runs the FHE computation and
 committee decrypts the result. You can listen for the final plaintext:
 
 ```typescript
-import { EnclaveEventType } from '@enclave-e3/sdk'
+import { InterfoldEventType } from '@interfold/sdk'
 
 // Listen for the decrypted result
-sdk.onEnclaveEvent(EnclaveEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event) => {
+sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event) => {
   console.log('Result:', event.data)
 })
 
@@ -202,7 +202,7 @@ import topLevelAwait from 'vite-plugin-top-level-await'
 
 export default defineConfig({
   optimizeDeps: {
-    exclude: ['@enclave-e3/wasm'],
+    exclude: ['@interfold/wasm'],
   },
   plugins: [wasm(), topLevelAwait()],
 })

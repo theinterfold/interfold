@@ -8,3 +8,4 @@ serde.workspace = true
 serde_json.workspace = true
 anyhow.workspace = true
 hex.workspace = true
+derivative = "=2.2.0"

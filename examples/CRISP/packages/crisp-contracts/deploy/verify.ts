@@ -6,7 +6,7 @@
 
 import hre from 'hardhat'
 
-import { verifyContracts } from '@enclave-e3/contracts/scripts'
+import { verifyContracts } from '@interfold/contracts/scripts'
 
 async function main() {
   const { ethers } = await hre.network.connect()

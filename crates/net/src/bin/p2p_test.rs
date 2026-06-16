@@ -34,10 +34,7 @@ async fn test_dht(peer: &mut TestPeer) -> Result<()> {
             .await?;
         receive_until_collect(
             &mut peer.rx,
-            |e| match e {
-                NetEvent::DhtPutRecordSucceeded { .. } => true,
-                _ => false,
-            },
+            |e| matches!(e, NetEvent::DhtPutRecordSucceeded { .. }),
             Duration::from_secs(15),
         )
         .await?;
@@ -51,10 +48,7 @@ async fn test_dht(peer: &mut TestPeer) -> Result<()> {
         .await?;
     let events = receive_until_collect(
         &mut peer.rx,
-        |e| match e {
-            NetEvent::DhtGetRecordSucceeded { .. } => true,
-            _ => false,
-        },
+        |e| matches!(e, NetEvent::DhtGetRecordSucceeded { .. }),
         Duration::from_secs(15),
     )
     .await?;
@@ -120,8 +114,7 @@ async fn runner() -> Result<Vec<String>> {
 static COUNTER: AtomicU8 = AtomicU8::new(0);
 
 fn get_next_id() -> u8 {
-    let id = COUNTER.fetch_add(1, Ordering::Relaxed);
-    id
+    COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
 struct TestPeer {
@@ -182,21 +175,17 @@ impl TestPeer {
     }
 
     pub async fn wait_for_msg(&mut self, msg: &[u8]) -> Result<Vec<NetEvent>> {
-        Ok(receive_until_collect(
+        receive_until_collect(
             &mut self.rx,
             |e| match e {
                 NetEvent::GossipData(GossipData::GossipBytes(bytes)) => {
-                    if msg.to_vec() == bytes.clone() {
-                        true
-                    } else {
-                        false
-                    }
+                    msg.to_vec() == bytes.clone()
                 }
                 _ => false,
             },
             self.test_timeout.unwrap_or(Duration::from_secs(120)),
         )
-        .await?)
+        .await
     }
 
     pub fn is_lead(&self) -> bool {

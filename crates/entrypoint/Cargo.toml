@@ -4,8 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - CLI Entrypoints"
-repository = "https://github.com/gnosisguild/enclave/crates/entrypoint"
-build = "build.rs"
+repository = "https://github.com/gnosisguild/interfold/crates/entrypoint"
 
 [dependencies]
 actix = { workspace = true }
@@ -36,6 +35,8 @@ e3-request = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 e3-sortition = { workspace = true }
+e3-sync = { workspace = true }
+e3-utils = { workspace = true }
 serde_yaml = { workspace = true }
 e3-test-helpers = { workspace = true }
 e3-zk-prover = { workspace = true }
@@ -47,3 +48,6 @@ reqwest = { workspace = true }
 
 [build-dependencies]
 serde_json = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }

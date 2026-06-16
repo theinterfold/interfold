@@ -8,10 +8,10 @@ use crisp_lib::ciphertext_addition::CiphertextAddition;
 use crisp_lib::ecdsa::{address_to_field, derive_address, validate_signature};
 use crisp_lib::merkle_tree::get_merkle_root;
 use crisp_lib::utils::{check_coefficient_values_with_balance, check_coefficient_zero};
-use enclave_lib::configs::default::threshold::{
+use interfold_lib::configs::default::threshold::{
     L, N, Q_MOD_T_CENTERED, QIS, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_K,
 };
-use enclave_lib::math::{
+use interfold_lib::math::{
     commitments::{
         compute_ciphertext_commitment, compute_single_polynomial_commitment,
         DS_USER_DATA_ENCRYPTION_COMMITMENT,

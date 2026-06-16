@@ -4,11 +4,11 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::in_mem_kv_store::{DataOp, InMemKvStore};
 use actix::{Actor, Handler, Message};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use e3_events::{Flush, Get, Insert, InsertBatch, InsertSync, Remove};
 use e3_utils::MAILBOX_LIMIT;
-use std::collections::BTreeMap;
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash)]
 #[rtype(result = "Vec<DataOp>")]
@@ -18,16 +18,10 @@ pub struct GetLog;
 #[rtype(result = "anyhow::Result<Vec<u8>>")]
 pub struct GetDump;
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum DataOp {
-    Insert(Insert),
-    Remove(Remove),
-}
-
+/// Thin actix actor wrapping the pure [`InMemKvStore`]. The actor is purely
+/// responsible for message passing; all storage logic lives in the service.
 pub struct InMemStore {
-    db: BTreeMap<Vec<u8>, Vec<u8>>,
-    log: Vec<DataOp>,
-    capture: bool,
+    store: InMemKvStore,
 }
 
 impl Actor for InMemStore {
@@ -40,38 +34,27 @@ impl Actor for InMemStore {
 impl InMemStore {
     pub fn new(capture: bool) -> Self {
         Self {
-            db: BTreeMap::new(),
-            capture,
-            log: vec![],
+            store: InMemKvStore::new(capture),
         }
     }
 
     pub fn get_dump(&self) -> Result<Vec<u8>> {
-        bincode::serialize(&self.db.clone()).context("Error serializing BTreeMap")
+        self.store.dump()
     }
 
     pub fn from_dump(db: Vec<u8>, capture: bool) -> anyhow::Result<Self> {
         Ok(Self {
-            db: bincode::deserialize(&db).context("Error deserializing BTreeMap")?,
-            capture,
-            log: vec![],
+            store: InMemKvStore::from_dump(&db, capture)?,
         })
     }
 }
 
-// Add a BatchInsert event that contains multiple Insert messages
-// Use the Responder pattern to manage the response
-// Have a proxy actor hold the Inserts until the BatchInsert event is called
-
 impl Handler<Insert> for InMemStore {
     type Result = ();
     fn handle(&mut self, event: Insert, _: &mut Self::Context) {
-        // insert data into sled
-        self.db.insert(event.key().to_vec(), event.value().to_vec());
-
-        if self.capture {
-            self.log.push(DataOp::Insert(event));
-        }
+        let key = event.key().to_vec();
+        let value = event.value().to_vec();
+        self.store.insert(key, value, Some(DataOp::Insert(event)));
     }
 }
 
@@ -79,10 +62,11 @@ impl Handler<InsertBatch> for InMemStore {
     type Result = ();
     fn handle(&mut self, msg: InsertBatch, _: &mut Self::Context) -> Self::Result {
         for cmd in msg.commands() {
-            self.db.insert(cmd.key().to_owned(), cmd.value().to_owned());
-            if self.capture {
-                self.log.push(DataOp::Insert(cmd.clone()));
-            }
+            self.store.insert(
+                cmd.key().to_owned(),
+                cmd.value().to_owned(),
+                Some(DataOp::Insert(cmd.clone())),
+            );
         }
     }
 }
@@ -91,10 +75,10 @@ impl Handler<InsertSync> for InMemStore {
     type Result = Result<()>;
 
     fn handle(&mut self, event: InsertSync, _: &mut Self::Context) -> Self::Result {
-        self.db.insert(event.key().to_vec(), event.value().to_vec());
-        if self.capture {
-            self.log.push(DataOp::Insert(event.into()));
-        }
+        let key = event.key().to_vec();
+        let value = event.value().to_vec();
+        self.store
+            .insert(key, value, Some(DataOp::Insert(event.into())));
         Ok(())
     }
 }
@@ -102,21 +86,15 @@ impl Handler<InsertSync> for InMemStore {
 impl Handler<Remove> for InMemStore {
     type Result = ();
     fn handle(&mut self, event: Remove, _: &mut Self::Context) {
-        // insert data into sled
-        self.db.remove(&event.key().to_vec());
-
-        if self.capture {
-            self.log.push(DataOp::Remove(event));
-        }
+        let key = event.key().to_vec();
+        self.store.remove(&key, Some(DataOp::Remove(event)));
     }
 }
 
 impl Handler<Get> for InMemStore {
     type Result = Option<Vec<u8>>;
     fn handle(&mut self, event: Get, _: &mut Self::Context) -> Option<Vec<u8>> {
-        let key = event.key();
-        let r = self.db.get(key);
-        r.cloned()
+        self.store.get(event.key())
     }
 }
 
@@ -130,7 +108,7 @@ impl Handler<Flush> for InMemStore {
 impl Handler<GetLog> for InMemStore {
     type Result = Vec<DataOp>;
     fn handle(&mut self, _: GetLog, _: &mut Self::Context) -> Vec<DataOp> {
-        self.log.clone()
+        self.store.log()
     }
 }
 

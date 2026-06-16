@@ -21,6 +21,12 @@ pub struct Libp2pMock {
     nodes: Arc<RwLock<HashMap<PeerId, NetChannelBridge>>>,
 }
 
+impl Default for Libp2pMock {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Libp2pMock {
     pub fn new() -> Self {
         Self {
@@ -96,16 +102,14 @@ impl Libp2pMock {
                             }) {
                                 error!("Libp2pMock: failed to send DhtGetRecordSucceeded: {e}");
                             }
-                        } else {
-                            if let Err(e) = src_event_tx.send(NetEvent::DhtGetRecordError {
-                                correlation_id,
-                                error: GetRecordError::NotFound {
-                                    key: libp2p::kad::RecordKey::new(&key.into_inner()),
-                                    closest_peers: vec![],
-                                },
-                            }) {
-                                error!("Libp2pMock: failed to send DhtGetRecordError: {e}");
-                            }
+                        } else if let Err(e) = src_event_tx.send(NetEvent::DhtGetRecordError {
+                            correlation_id,
+                            error: GetRecordError::NotFound {
+                                key: libp2p::kad::RecordKey::new(&key.into_inner()),
+                                closest_peers: vec![],
+                            },
+                        }) {
+                            error!("Libp2pMock: failed to send DhtGetRecordError: {e}");
                         }
                     }
                     Ok(NetCommand::DhtRemoveRecords { keys }) => {

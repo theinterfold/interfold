@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { defineConfig, globalIgnores } from 'eslint/config'
-import config from '@enclave-e3/config/eslint.config.js'
+import config from '@interfold/config/eslint.config.js'
 
 export default defineConfig([
   globalIgnores([

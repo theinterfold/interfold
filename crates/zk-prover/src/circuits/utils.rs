@@ -16,12 +16,14 @@ use noirc_abi::{input_parser::InputValue, InputMap};
 const FIELD_SIZE: usize = 32;
 
 /// Matches `bb_proof_verification::RECURSIVE_ZK_PROOF_LENGTH` (`UltraHonkZKProof`).
+#[allow(dead_code)]
 pub const ULTRA_HONK_ZK_PROOF_FIELD_COUNT: usize = 508;
 
 /// Converts raw ZK proof bytes to field strings for `UltraHonkZKProof` witness input.
 ///
 /// Barretenberg often emits fewer than [`ULTRA_HONK_ZK_PROOF_FIELD_COUNT`] 32-byte limbs; the Noir
 /// type is a fixed-width array, so shorter proofs are zero-padded at the end.
+#[allow(dead_code)]
 pub fn zk_proof_bytes_to_field_strings(bytes: &[u8]) -> Result<Vec<String>, ZkError> {
     let need = ULTRA_HONK_ZK_PROOF_FIELD_COUNT * FIELD_SIZE;
     if bytes.len() > need {
@@ -31,7 +33,7 @@ pub fn zk_proof_bytes_to_field_strings(bytes: &[u8]) -> Result<Vec<String>, ZkEr
             need
         )));
     }
-    if bytes.len() % FIELD_SIZE != 0 {
+    if !bytes.len().is_multiple_of(FIELD_SIZE) {
         return Err(ZkError::InvalidInput(format!(
             "zk proof bytes length must be multiple of {FIELD_SIZE}, got {}",
             bytes.len()
@@ -44,7 +46,7 @@ pub fn zk_proof_bytes_to_field_strings(bytes: &[u8]) -> Result<Vec<String>, ZkEr
 
 /// Converts raw proof/public-signal bytes (32-byte big-endian chunks) to hex-encoded field strings.
 pub fn bytes_to_field_strings(bytes: &[u8]) -> Result<Vec<String>, ZkError> {
-    if bytes.len() % FIELD_SIZE != 0 {
+    if !bytes.len().is_multiple_of(FIELD_SIZE) {
         return Err(ZkError::InvalidInput(format!(
             "expected length multiple of {FIELD_SIZE}, got {}",
             bytes.len()
@@ -59,6 +61,7 @@ pub fn bytes_to_field_strings(bytes: &[u8]) -> Result<Vec<String>, ZkError> {
 /// Proves a circuit given a serializable input struct (ZK blinding enabled).
 ///
 /// Handles the common pattern: serialize → load compiled circuit → generate witness → prove.
+#[allow(dead_code)]
 pub fn prove_recursive_circuit(
     prover: &ZkProver,
     circuit_name: CircuitName,
@@ -77,6 +80,7 @@ pub fn prove_recursive_circuit(
 }
 
 /// Shared helper: load compiled circuit from Recursive dir, serialize input, generate witness.
+#[allow(dead_code)]
 fn generate_recursive_witness(
     prover: &ZkProver,
     circuit_name: CircuitName,
@@ -94,7 +98,7 @@ fn generate_recursive_witness(
     let input_map = inputs_json_to_input_map(&json)?;
 
     let witness_gen = WitnessGenerator::new();
-    Ok(witness_gen.generate_witness(&compiled, input_map)?)
+    witness_gen.generate_witness(&compiled, input_map)
 }
 
 /// Converts inputs JSON (from `Inputs::to_json()`) to `InputMap` for Noir ABI.

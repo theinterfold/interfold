@@ -1,6 +1,0 @@
-# directories
-**/artifacts
-**/node_modules
-
-# auto-generated verifier contracts (BB/Barretenberg)
-contracts/verifiers/**/*.sol

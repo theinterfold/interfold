@@ -31,7 +31,7 @@ impl IntoKey for Vec<String> {
 }
 
 /// Keys can be vectors of &str
-impl<'a> IntoKey for Vec<&'a str> {
+impl IntoKey for Vec<&str> {
     fn into_key(self) -> Vec<u8> {
         self.join("/").into_bytes()
     }
@@ -52,7 +52,7 @@ impl IntoKey for &String {
 }
 
 /// Keys can be &str
-impl<'a> IntoKey for &'a str {
+impl IntoKey for &str {
     fn into_key(self) -> Vec<u8> {
         self.as_bytes().to_vec()
     }

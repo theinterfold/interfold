@@ -6,20 +6,20 @@
 
 use crate::{
     events::{StoreEventRequested, StoreEventResponse},
-    EnclaveEvent, EventBus, Sequenced, Unsequenced,
+    EventBus, InterfoldEvent, Sequenced, Unsequenced,
 };
 use actix::{Actor, Addr, AsyncContext, Handler, Recipient};
 use e3_utils::MAILBOX_LIMIT;
 
 /// Component to sequence the storage of events
 pub struct Sequencer {
-    bus: Addr<EventBus<EnclaveEvent<Sequenced>>>,
+    bus: Addr<EventBus<InterfoldEvent<Sequenced>>>,
     eventstore: Recipient<StoreEventRequested>,
 }
 
 impl Sequencer {
     pub fn new(
-        bus: &Addr<EventBus<EnclaveEvent<Sequenced>>>,
+        bus: &Addr<EventBus<InterfoldEvent<Sequenced>>>,
         eventstore: impl Into<Recipient<StoreEventRequested>>,
     ) -> Self {
         Self {
@@ -41,9 +41,13 @@ impl Actor for Sequencer {
     }
 }
 
-impl Handler<EnclaveEvent<Unsequenced>> for Sequencer {
+impl Handler<InterfoldEvent<Unsequenced>> for Sequencer {
     type Result = ();
-    fn handle(&mut self, msg: EnclaveEvent<Unsequenced>, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(
+        &mut self,
+        msg: InterfoldEvent<Unsequenced>,
+        ctx: &mut Self::Context,
+    ) -> Self::Result {
         self.eventstore
             .do_send(StoreEventRequested::new(msg, ctx.address()));
     }
@@ -59,7 +63,7 @@ impl Handler<StoreEventResponse> for Sequencer {
 #[cfg(test)]
 mod tests {
     use e3_ciphernode_builder::EventSystem;
-    use e3_events::{EnclaveEvent, EventPublisher, GetEvents, TakeEvents, TestEvent};
+    use e3_events::{EventPublisher, GetEvents, InterfoldEvent, TakeEvents, TestEvent};
 
     #[actix::test]
     async fn it_adds_seqence_numbers_to_events() -> anyhow::Result<()> {
@@ -79,7 +83,7 @@ mod tests {
 
         let expected = event_data
             .into_iter()
-            .map(|d| EnclaveEvent::new_stored_event(d.clone().into(), 0, d.entropy))
+            .map(|d| InterfoldEvent::new_stored_event(d.clone().into(), 0, d.entropy))
             .collect::<Vec<_>>();
         let events = history.send(TakeEvents::new(3)).await?;
 
@@ -87,7 +91,7 @@ mod tests {
             events
                 .events
                 .iter()
-                .map(EnclaveEvent::strip_ts)
+                .map(InterfoldEvent::strip_ts)
                 .collect::<Vec<_>>(),
             expected
         );
@@ -109,7 +113,7 @@ mod tests {
 
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
-            let events: Vec<EnclaveEvent> = history.send(GetEvents::new()).await?;
+            let events: Vec<InterfoldEvent> = history.send(GetEvents::new()).await?;
             if events.len() >= count {
                 let elapsed = start.elapsed();
                 println!("All {count} events arrived in {elapsed:?}");

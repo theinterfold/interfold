@@ -16,8 +16,8 @@ const MAX_RETRIES: u8 = 5;
 async fn main() -> Result<(), Box<dyn Error>> {
     let client = Client::new();
     let cron_api_key = std::env::var("CRON_API_KEY").unwrap_or_else(|_| "1234567890".to_string());
-    let enclave_server_url =
-        std::env::var("ENCLAVE_SERVER_URL").unwrap_or_else(|_| "http://localhost:4000".to_string());
+    let interfold_server_url = std::env::var("INTERFOLD_SERVER_URL")
+        .unwrap_or_else(|_| "http://localhost:4000".to_string());
 
     loop {
         println!("Requesting new E3 round...");
@@ -26,7 +26,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
         while retries < MAX_RETRIES {
             let response = client
-                .post(format!("{}/rounds/request", enclave_server_url))
+                .post(format!("{}/rounds/request", interfold_server_url))
                 .json(&json!({
                     "cron_api_key": cron_api_key
                 }))

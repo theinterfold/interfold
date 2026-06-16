@@ -2,8 +2,8 @@ services:
   cn1:
     image: { { IMAGE } }
     volumes:
-      - ./cn1.yaml:/home/ciphernode/.config/enclave/config.yaml:ro
-      - cn1-data:/home/ciphernode/.local/share/enclave
+      - ./cn1.yaml:/home/ciphernode/.config/interfold/config.yaml:ro
+      - cn1-data:/home/ciphernode/.local/share/interfold
     secrets:
       - source: secrets_cn1
         target: secrets.json
@@ -20,8 +20,8 @@ services:
   cn2:
     image: { { IMAGE } }
     volumes:
-      - ./cn2.yaml:/home/ciphernode/.config/enclave/config.yaml:ro
-      - cn2-data:/home/ciphernode/.local/share/enclave
+      - ./cn2.yaml:/home/ciphernode/.config/interfold/config.yaml:ro
+      - cn2-data:/home/ciphernode/.local/share/interfold
     secrets:
       - source: secrets_cn2
         target: secrets.json
@@ -38,8 +38,8 @@ services:
   cn3:
     image: { { IMAGE } }
     volumes:
-      - ./cn3.yaml:/home/ciphernode/.config/enclave/config.yaml:ro
-      - cn3-data:/home/ciphernode/.local/share/enclave
+      - ./cn3.yaml:/home/ciphernode/.config/interfold/config.yaml:ro
+      - cn3-data:/home/ciphernode/.local/share/interfold
     secrets:
       - source: secrets_cn3
         target: secrets.json
@@ -58,8 +58,8 @@ services:
     depends_on:
       - cn1
     volumes:
-      - ./cn4.yaml:/home/ciphernode/.config/enclave/config.yaml:ro
-      - cn4-data:/home/ciphernode/.local/share/enclave
+      - ./cn4.yaml:/home/ciphernode/.config/interfold/config.yaml:ro
+      - cn4-data:/home/ciphernode/.local/share/interfold
     secrets:
       - source: secrets_cn4
         target: secrets.json

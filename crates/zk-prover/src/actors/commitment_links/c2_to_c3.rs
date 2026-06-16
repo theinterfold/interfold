@@ -130,7 +130,7 @@ fn commitment_in_c2_outputs(source_values: &[FieldValue], target_public_signals:
 /// If the signal buffer is a perfect duplication of its first half, return the
 /// first half.  Otherwise return the original slice unchanged.
 fn deduplicate(signals: &[u8]) -> &[u8] {
-    if signals.len() >= 2 * FIELD_BYTE_LEN && signals.len() % (2 * FIELD_BYTE_LEN) == 0 {
+    if signals.len() >= 2 * FIELD_BYTE_LEN && signals.len().is_multiple_of(2 * FIELD_BYTE_LEN) {
         let half = signals.len() / 2;
         if signals[..half] == signals[half..] {
             return &signals[..half];

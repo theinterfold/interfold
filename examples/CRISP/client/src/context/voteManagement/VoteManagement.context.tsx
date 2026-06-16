@@ -9,7 +9,7 @@ import { VoteManagementContextType, VoteManagementProviderProps, VoteStatus } fr
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAccount } from 'wagmi'
 import { VoteStateLite, VotingRound } from '@/model/vote.model'
-import { useEnclaveServer } from '@/hooks/enclave/useEnclaveServer'
+import { useInterfoldServer } from '@/hooks/interfold/useInterfoldServer'
 import { convertPollData, convertTimestampToDate } from '@/utils/methods'
 import { Poll, PollResult } from '@/model/poll.model'
 import { generatePoll } from '@/utils/generate-random-poll'
@@ -51,6 +51,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   const [txUrl, setTxUrl] = useState<string | undefined>(undefined)
   const [pollResult, setPollResult] = useState<PollResult | null>(null)
   const [currentRoundId, setCurrentRoundId] = useState<number | null>(null)
+  const [displayedRoundIsFallback, setDisplayedRoundIsFallback] = useState<boolean>(false)
   const [hasVotedInCurrentRound, setHasVotedInCurrentRound] = useState<boolean>(false)
   const [voteStatusLoading, setVoteStatusLoading] = useState<boolean>(false)
   const voteStatusCache = useRef<Map<string, VoteStatus>>(new Map())
@@ -59,14 +60,14 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
    * Voting Management Methods
    **/
   const {
-    isLoading: enclaveLoading,
+    isLoading: interfoldLoading,
     getRoundStateLite: getRoundStateLiteRequest,
     getWebResultByRound,
     getWebResult,
     getCurrentRound,
     broadcastVote,
     getVoteStatus,
-  } = useEnclaveServer()
+  } = useInterfoldServer()
 
   const checkVoteStatus = useCallback(
     async (roundId: number, userAddress: string, forceRefresh: boolean = false): Promise<boolean> => {
@@ -125,10 +126,35 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
 
   const initialLoad = async () => {
     const currentRound = await getCurrentRound()
-    if (currentRound) {
-      setCurrentRoundId(currentRound.id)
-      await getRoundStateLite(currentRound.id)
+    if (!currentRound) return
+    setCurrentRoundId(currentRound.id)
+
+    // If the current round has ended without a published tally, the page would
+    // otherwise sit forever in "Over · Tallying…". Fall back to the latest past
+    // round that does have a tally so the user sees something useful.
+    const fetched = await getRoundStateLiteRequest(currentRound.id)
+    if (!fetched) return
+
+    const nowSec = Math.floor(Date.now() / 1000)
+    const ended = Number(fetched.end_time) <= nowSec
+    let fallbackRoundId: number | null = null
+
+    if (ended) {
+      const currentResult = await getWebResultByRound(currentRound.id)
+      const currentHasTally = !!(currentResult && Array.isArray(currentResult.tally) && currentResult.tally.length > 0)
+      if (!currentHasTally) {
+        const all = await getWebResult()
+        const latestWithTally = (all ?? [])
+          .filter((r) => Array.isArray(r.tally) && r.tally.length > 0)
+          .sort((a, b) => b.round_id - a.round_id)[0]
+        if (latestWithTally && latestWithTally.round_id !== currentRound.id) {
+          fallbackRoundId = latestWithTally.round_id
+        }
+      }
     }
+
+    setDisplayedRoundIsFallback(fallbackRoundId !== null)
+    await getRoundStateLite(fallbackRoundId ?? currentRound.id)
   }
 
   const getRoundStateLite = async (roundCount: number) => {
@@ -136,7 +162,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
 
     if (fetchedRoundState?.committee_public_key.length === 1 && fetchedRoundState.committee_public_key[0] === 0) {
       handleGenericError('getRoundStateLite', {
-        message: 'Enclave server failed generating the necessary pk bytes',
+        message: 'Interfold server failed generating the necessary pk bytes',
         name: 'getRoundStateLite',
       })
     }
@@ -165,11 +191,11 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   }
 
   useEffect(() => {
-    if (enclaveLoading) {
+    if (interfoldLoading) {
       return setIsLoading(true)
     }
     setIsLoading(false)
-  }, [enclaveLoading])
+  }, [interfoldLoading])
 
   useEffect(() => {
     if (isConnected && address) {
@@ -212,6 +238,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
         txUrl,
         pollResult,
         currentRoundId,
+        displayedRoundIsFallback,
         hasVotedInCurrentRound,
         voteStatusLoading,
         sessionId,

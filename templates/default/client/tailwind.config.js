@@ -25,7 +25,7 @@ const config = {
         slate: {
           200: '#E3E9F5',
         },
-        enclave: {
+        interfold: {
           50: '#eff9ff',
           100: '#def2ff',
           200: '#b6e8ff',

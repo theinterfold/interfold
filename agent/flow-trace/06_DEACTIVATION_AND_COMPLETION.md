@@ -13,7 +13,7 @@ slashable until claimed.
 ### Via Ticket Withdrawal
 
 ```
-User runs: enclave ciphernode deactivate --tickets 50
+User runs: interfold ciphernode deactivate --tickets 50
 │
 ├─ ChainContext::new() → loads config, decrypts wallet
 │
@@ -22,9 +22,9 @@ User runs: enclave ciphernode deactivate --tickets 50
     │  ┌─── ON-CHAIN (BondingRegistry.sol) ─────────────────────┐
     │  │                                                         │
     │  │  removeTicketBalance(50):                               │
-    │  │    1. require(amount != 0, registered, sufficient ETK)  │
+    │  │    1. require(amount != 0, registered, sufficient tFOLD)  │
     │  │    2. ticketToken.burnTickets(operator, amount)         │
-    │  │       → ETK destroyed, underlying becomes claimable      │
+    │  │       → tFOLD destroyed, underlying becomes claimable      │
     │  │    3. _exits.queueTicketsForExit(                       │
     │  │         operator, exitDelay, amount                      │
     │  │       )                                                  │
@@ -44,16 +44,18 @@ User runs: enclave ciphernode deactivate --tickets 50
 ### Via License Withdrawal
 
 ```
-User runs: enclave ciphernode deactivate --license 20000
+User runs: interfold ciphernode deactivate --license 20000
 │
 └─ BondingRegistryContract.unbondLicense(20000).send().await
     │
     │  ┌─── ON-CHAIN ───────────────────────────────────────────┐
     │  │                                                         │
     │  │  unbondLicense(20000):                                  │
-    │  │    1. require(amount != 0, sufficient bonded ENCL)      │
+    │  │    1. require(amount != 0, sufficient bonded FOLD)      │
     │  │    2. operators[op].licenseBond -= 20000                │
     │  │    3. _exits.queueLicensesForExit(op, exitDelay, 20000)│
+    │  │       → Pending FOLD remains in totalBonded(op) for     │
+    │  │         token-level locked-floor accounting             │
     │  │    4. _updateOperatorStatus(operator)                   │
     │  │       → If licenseBond <                                │
     │  │         (licenseRequiredBond * licenseActiveBps / 10000)│
@@ -68,12 +70,12 @@ User runs: enclave ciphernode deactivate --license 20000
 ### Combined Deactivation
 
 ```
-User runs: enclave ciphernode deactivate --tickets 50 --license 20000
+User runs: interfold ciphernode deactivate --tickets 50 --license 20000
 │
 ├─ Calls removeTicketBalance(50) first
 └─ Then calls unbondLicense(20000)
-   → Both queued in ExitQueue with same exitDelay
-   → May merge into single tranche if same unlock time
+  → Tickets are queued in ExitQueueLib
+  → FOLD is queued in ExitQueueLib pending license exits and remains counted in totalBonded()
 ```
 
 ---
@@ -81,7 +83,7 @@ User runs: enclave ciphernode deactivate --tickets 50 --license 20000
 ## Full Deregistration
 
 ```
-User runs: enclave ciphernode deregister
+User runs: interfold ciphernode deregister
 │
 ├─ ChainContext::new()
 │
@@ -109,8 +111,9 @@ User runs: enclave ciphernode deregister
     │  │       _exits.queueAssetsForExit(                        │
     │  │         op, exitDelay,                                   │
     │  │         fullTicketBalance,  // tickets                   │
-    │  │         licenseBondAmount   // license                   │
+    │  │         0                   // license handled below     │
     │  │       )                                                  │
+    │  │       _queueLicenseExitFromSources(op, licenseBondAmount)│
     │  │                                                         │
     │  │    8. Remove from Merkle tree:                          │
     │  │       registry.removeCiphernode(msg.sender)             │
@@ -134,9 +137,9 @@ User runs: enclave ciphernode deregister
     │  └─────────────────────────────────────────────────────────┘
 │
 └─ After exitDelay seconds, operator can claim unlocked exits:
-    enclave ciphernode license claim
+    interfold ciphernode license claim
     # optional caps:
-    enclave ciphernode license claim --max-ticket X --max-license Y
+    interfold ciphernode license claim --max-ticket X --max-license Y
 ```
 
 ## E3 Completion (Happy Path)
@@ -196,7 +199,7 @@ publishPlaintextOutput() succeeds
 ## Rust-Side: Node Shutdown
 
 ```
-enclave start → running node
+interfold start → running node
 │
 ├─ Ctrl+C / SIGINT / SIGTERM
 │
@@ -224,6 +227,49 @@ On restart:
 
 ---
 
+## Rust-Side: E3 Lifecycle Coordinator (durable stage tracking)
+
+The node is choreographed — each subsystem reacts to bus events independently — so there is no
+single component that _drives_ the protocol. The `E3LifecycleCoordinator` (in `e3-request`) is an
+**additive, durable observer** that gives the node a single source of truth for "what stage is each
+E3 at?". It never emits protocol events and never drives subsystems; it only records stage and
+supports restart-resume and shutdown awareness.
+
+```
+E3LifecycleCoordinator::attach(bus, store)   (wired in ciphernode_builder.build())
+│
+├─ Loads persisted stage map from Repository(StoreKeys::e3_lifecycle())
+│   → on restart, every in-flight E3's last known stage is rehydrated
+│
+├─ Subscribes to lifecycle-bearing events:
+│     E3Requested              → Requested
+│     CommitteePublished       → CommitteeFinalized
+│     CommitteeFinalized       → CommitteeFinalized
+│     PublicKeyAggregated      → KeyPublished
+│     CiphertextOutputPublished→ CiphertextReady
+│     PlaintextAggregated      → Complete
+│     PlaintextOutputPublished → Complete
+│     E3RequestComplete        → Complete
+│     E3Failed                 → Failed (terminal)
+│     E3StageChanged           → new_stage (authoritative)
+│
+├─ Pure E3LifecycleService.observe(event) → LifecycleDecision:
+│     • Advance is MONOTONIC (forward-only by stage rank)
+│     • Out-of-order earlier-stage events are logged (Regressed) and ignored
+│     • Once Complete/Failed, the stage is frozen (Terminal)
+│   On Advanced/Terminal the snapshot is persisted (set on Persistable)
+│
+└─ On Shutdown event:
+      logs the set of still-active (non-terminal) E3s and their stages,
+      persists the final snapshot, then stops.
+```
+
+The coordinator is safe by construction during EventStore replay: observing a replayed lifecycle
+event simply re-derives the same monotonic stage, so the restored map is identical whether built
+live or from replay.
+
+---
+
 ## Exit Queue Timing
 
 ```
@@ -233,8 +279,9 @@ Time ─────────────────────────
 │ or deactivate()  │   EXIT DELAY       │                  │
 │                  │  (configured)       │                  │
 │ Assets queued    │                    │ Assets claimable │
-│ ETK burned       │  Cannot cancel     │ USDC returned    │
-│ ENCL locked      │  Can be slashed!   │ ENCL returned    │
+│ tFOLD burned       │  Cannot cancel     │ USDC returned    │
+│ FOLD locked      │  Can be slashed!   │ FOLD returned to │
+│                  │                    │ withdrawal addr  │
 │                  │                    │                  │
 
 IMPORTANT: Even during the exit delay, slashing can still

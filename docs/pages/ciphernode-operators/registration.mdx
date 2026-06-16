@@ -14,7 +14,7 @@ Before registering, ensure your wallet has:
 
 | Token                   | Amount Required                          | Purpose                      |
 | ----------------------- | ---------------------------------------- | ---------------------------- |
-| **ENCL**                | ≥ 100 ENCL (check `licenseRequiredBond`) | License bond collateral      |
+| **FOLD**                | ≥ 100 FOLD (check `licenseRequiredBond`) | License bond collateral      |
 | **USDC** (or fee token) | ≥ 10 USDC per ticket (minimum 1 ticket)  | Ticket balance for sortition |
 | **ETH**                 | Sufficient for gas                       | Transaction fees             |
 
@@ -25,7 +25,7 @@ Before registering, ensure your wallet has:
 First, verify your current on-chain status:
 
 ```bash
-enclave ciphernode status
+interfold ciphernode status
 ```
 
 Example output:
@@ -39,20 +39,20 @@ Ciphernode status on sepolia:
   Ticket balance: 0 (0 available)
   License bond: 0
   Pending exits: tickets=0, license=0
-  Requirements: minTickets=1, ticketPrice=10 ETK, licenseBond=100 ENCL
+  Requirements: minTickets=1, ticketPrice=10 tFOLD, licenseBond=100 FOLD
 ```
 
 ### Step 2: Bond Your License
 
-Bond ENCL tokens to meet the license requirement:
+Bond FOLD tokens to meet the license requirement:
 
 ```bash
-enclave ciphernode license bond --amount 100
+interfold ciphernode license bond --amount 100
 ```
 
 This command:
 
-- Approves the BondingRegistry to spend your ENCL (if needed)
+- Approves the BondingRegistry to spend your FOLD (if needed)
 - Calls `bondLicense(100e18)` on the BondingRegistry contract
 
 > You can bond more than the minimum for a buffer against slashing. The active license floor is 80%
@@ -63,7 +63,7 @@ This command:
 Register your address in the CiphernodeRegistry:
 
 ```bash
-enclave ciphernode register
+interfold ciphernode register
 ```
 
 After registration, your node will be added to the registry's Merkle tree and can participate in
@@ -74,11 +74,11 @@ committee formation once you have tickets.
 Purchase tickets by depositing the underlying stablecoin:
 
 ```bash
-enclave ciphernode tickets buy --amount 100
+interfold ciphernode tickets buy --amount 100
 ```
 
-This deposits 100 USDC (or fee token units) and mints the equivalent in non-transferable ETK
-(EnclaveTicketToken).
+This deposits 100 USDC (or fee token units) and mints the equivalent in non-transferable tFOLD
+(InterfoldTicketToken).
 
 The number of usable tickets is calculated as:
 
@@ -93,7 +93,7 @@ With a ticket price of 10 USDC and a 100 USDC deposit, you get 10 available tick
 Confirm your registration is complete:
 
 ```bash
-enclave ciphernode status
+interfold ciphernode status
 ```
 
 Expected output for an active operator:
@@ -107,7 +107,7 @@ Ciphernode status on sepolia:
   Ticket balance: 100 (10 available)
   License bond: 100
   Pending exits: tickets=0, license=0
-  Requirements: minTickets=1, ticketPrice=10 ETK, licenseBond=100 ENCL
+  Requirements: minTickets=1, ticketPrice=10 tFOLD, licenseBond=100 FOLD
 ```
 
 ## CLI Command Reference
@@ -115,44 +115,44 @@ Ciphernode status on sepolia:
 ### License Commands
 
 ```bash
-# Bond ENCL tokens
-enclave ciphernode license bond --amount <AMOUNT>
+# Bond FOLD tokens
+interfold ciphernode license bond --amount <AMOUNT>
 
-# Unbond ENCL (moves to exit queue)
-enclave ciphernode license unbond --amount <AMOUNT>
+# Unbond FOLD (moves to exit queue)
+interfold ciphernode license unbond --amount <AMOUNT>
 
 # Claim unlocked exits
-enclave ciphernode license claim
-enclave ciphernode license claim --max-ticket 50 --max-license 100
+interfold ciphernode license claim
+interfold ciphernode license claim --max-ticket 50 --max-license 100
 ```
 
 ### Ticket Commands
 
 ```bash
 # Buy tickets (deposit stablecoin)
-enclave ciphernode tickets buy --amount <AMOUNT>
+interfold ciphernode tickets buy --amount <AMOUNT>
 
 # Burn tickets (withdraw stablecoin)
-enclave ciphernode tickets burn --amount <AMOUNT>
+interfold ciphernode tickets burn --amount <AMOUNT>
 ```
 
 ### Lifecycle Commands
 
 ```bash
 # Register as an operator
-enclave ciphernode register
+interfold ciphernode register
 
 # Deregister (burns tickets and queues all assets for exit)
-enclave ciphernode deregister
+interfold ciphernode deregister
 
 # Re-register (also cancels a pending exit)
-enclave ciphernode activate
+interfold ciphernode activate
 
 # Deactivate by withdrawing stake (without full deregistration)
-enclave ciphernode deactivate --tickets <AMOUNT> --license <AMOUNT>
+interfold ciphernode deactivate --tickets <AMOUNT> --license <AMOUNT>
 
 # Check status
-enclave ciphernode status
+interfold ciphernode status
 ```
 
 ### Multi-Chain Support
@@ -160,8 +160,8 @@ enclave ciphernode status
 Specify a chain when operating on multiple networks:
 
 ```bash
-enclave ciphernode status --chain mainnet
-enclave ciphernode license bond --amount 100 --chain sepolia
+interfold ciphernode status --chain mainnet
+interfold ciphernode license bond --amount 100 --chain sepolia
 ```
 
 The `--chain` parameter matches the `name` field in your config's `chains` array.
@@ -173,7 +173,7 @@ Current Sepolia defaults (verify on-chain before depositing):
 | Parameter             | Value                | Description                        |
 | --------------------- | -------------------- | ---------------------------------- |
 | `ticketPrice`         | 10,000,000 (10 USDC) | Cost per ticket in fee token units |
-| `licenseRequiredBond` | 100 ENCL             | Minimum ENCL to bond               |
+| `licenseRequiredBond` | 100 FOLD             | Minimum FOLD to bond               |
 | `minTicketBalance`    | 1 ticket             | Minimum tickets to be active       |
 | `exitDelay`           | 604,800s (7 days)    | Wait time before claiming exits    |
 
@@ -212,7 +212,7 @@ status changes due to balance or bond updates.
 
 | Issue                     | Cause                                   | Solution                                             |
 | ------------------------- | --------------------------------------- | ---------------------------------------------------- |
-| `isActive` is false       | Below minimum license (80%) or tickets  | Add more ENCL or tickets                             |
+| `isActive` is false       | Below minimum license (80%) or tickets  | Add more FOLD or tickets                             |
 | Registration fails        | Already registered, banned, or unbonded | Check `isRegistered()`, ban status, and license bond |
 | Ticket purchase fails     | Insufficient stablecoin or allowance    | Ensure balance and approve spending                  |
 | "NodeNotEligible" in logs | Not registered before E3 request        | Register before requests are made                    |

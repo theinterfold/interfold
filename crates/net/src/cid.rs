@@ -18,7 +18,7 @@ pub struct ContentHash(
 impl ContentHash {
     pub fn from_content(content: &[u8]) -> Self {
         let mut hasher = Sha256::new();
-        hasher.update(&content);
+        hasher.update(content);
         let hashed = hasher.finalize();
         Self(hashed.to_vec())
     }
@@ -47,8 +47,8 @@ impl AsRef<[u8]> for ContentHash {
     }
 }
 
-impl ToString for ContentHash {
-    fn to_string(&self) -> String {
-        hex::encode(&self.0)
+impl std::fmt::Display for ContentHash {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", hex::encode(&self.0))
     }
 }

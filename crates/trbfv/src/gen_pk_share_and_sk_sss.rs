@@ -12,13 +12,15 @@ use crate::{
 };
 use anyhow::Result;
 use e3_crypto::{Cipher, SensitiveBytes};
-use e3_utils::{utility_types::ArcBytes, SharedRng};
+use e3_fhe_params::LambdaConfig;
+use e3_utils::utility_types::ArcBytes;
 use fhe::{
     bfv::SecretKey,
     mbfv::{CommonRandomPoly, PublicKeyShare},
     trbfv::{ShareManager, TRBFV},
 };
 use fhe_traits::Serialize as FheSerialize;
+use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 use tracing::info;
@@ -29,8 +31,9 @@ pub struct GenPkShareAndSkSssRequest {
     pub trbfv_config: TrBFVConfig,
     /// Crp
     pub crp: ArcBytes,
-    /// Statistical security parameter λ for smudging noise generation.
-    pub lambda: usize,
+    /// Statistical security level λ for smudging noise generation. Carries the
+    /// secure/insecure tier chosen from the preset so it survives serialization.
+    pub lambda: LambdaConfig,
     /// Number of ciphertexts (z) for smudging noise generation.
     pub num_ciphertexts: usize,
 }
@@ -38,7 +41,7 @@ pub struct GenPkShareAndSkSssRequest {
 struct InnerRequest {
     pub trbfv_config: TrBFVConfig,
     pub crp: CommonRandomPoly,
-    pub lambda: usize,
+    pub lambda: LambdaConfig,
     pub num_ciphertexts: usize,
 }
 
@@ -105,8 +108,8 @@ struct InnerResponse {
     pub e_sm_raw: ArcBytes,
 }
 
-pub fn gen_pk_share_and_sk_sss(
-    rng: &SharedRng,
+pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
+    rng: &mut R,
     cipher: &Cipher,
     req: GenPkShareAndSkSssRequest,
 ) -> Result<GenPkShareAndSkSssResponse> {
@@ -122,21 +125,17 @@ pub fn gen_pk_share_and_sk_sss(
         "gen_pk_share_and_sk_sss: n={}, t={}",
         num_ciphernodes, threshold
     );
-    let sk_share = { SecretKey::random(&params, &mut *rng.lock().unwrap()) };
-    let (pk0_share, _, _, eek) =
-        { PublicKeyShare::new_extended(&sk_share, crp.clone(), &mut *rng.lock().unwrap())? };
+    let sk_share = SecretKey::random(&params, rng);
+    let (pk0_share, _, _, eek) = PublicKeyShare::new_extended(&sk_share, crp.clone(), rng)?;
 
     let pk_share = PublicKeyShare::deserialize(&pk0_share.to_bytes(), &params, crp.clone())?;
 
     // Generate smudging noise
     let trbfv = TRBFV::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
     let share_manager_for_esm =
-        ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone());
-    let esi_coeffs = trbfv.generate_smudging_error(
-        req.num_ciphertexts,
-        req.lambda,
-        &mut *rng.lock().unwrap(),
-    )?;
+        ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
+    let lambda = req.lambda.into_lambda()?;
+    let esi_coeffs = trbfv.generate_smudging_error(req.num_ciphertexts, lambda, rng)?;
     let e_sm_rns = share_manager_for_esm.bigints_to_poly(&esi_coeffs)?;
     let e_sm_raw = ArcBytes::from_bytes(&e_sm_rns.deref().to_bytes());
 
@@ -144,15 +143,13 @@ pub fn gen_pk_share_and_sk_sss(
     let eek_raw = ArcBytes::from_bytes(&eek.to_bytes());
 
     let mut share_manager =
-        ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone());
+        ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
 
     let sk_poly = share_manager.coeffs_to_poly_level0(sk_share.coeffs.clone().as_ref())?;
     let sk_raw = ArcBytes::from_bytes(&sk_poly.to_bytes());
 
     info!("gen_pk_share_and_sk_sss:generate_secret_shares_from_poly...");
-    let sk_sss = SharedSecret::from({
-        share_manager.generate_secret_shares_from_poly(sk_poly, &mut *rng.lock().unwrap())?
-    });
+    let sk_sss = SharedSecret::from(share_manager.generate_secret_shares_from_poly(sk_poly, rng)?);
 
     (
         InnerResponse {

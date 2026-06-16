@@ -9,6 +9,7 @@
 //! The registry maps circuit names (e.g. `pk`) to [`CircuitMetadata`]. Use
 //! [`CircuitRegistry`] to register and look up circuits by name.
 
+#[allow(clippy::module_inception)]
 pub mod registry;
 
 pub use registry::*;

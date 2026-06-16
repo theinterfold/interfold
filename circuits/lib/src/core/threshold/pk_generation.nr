@@ -130,7 +130,7 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         let sk_commitment = compute_share_computation_sk_commitment::<N, BIT_SK>(self.sk);
         let e_sm_commitment =
             compute_share_computation_e_sm_commitment::<N, L, BIT_E_SM>(self.e_sm);
-        let pk_commitment = compute_threshold_pk_commitment::<N, L, BIT_PK>(self.pk0, self.a);
+        let pk_commitment = compute_threshold_pk_commitment::<N, L, BIT_PK>(self.pk0);
 
         // Step 3: Fiat-Shamir challenge and per-modulus evaluation checks.
         let gamma = self.generate_challenge(sk_commitment, pk_commitment);

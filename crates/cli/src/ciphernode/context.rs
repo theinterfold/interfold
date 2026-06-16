@@ -22,17 +22,18 @@ mod bonding_registry_contract {
     sol!(
         #[sol(rpc)]
         BondingRegistryContract,
-        "../../packages/enclave-contracts/artifacts/contracts/interfaces/IBondingRegistry.sol/IBondingRegistry.json"
+        "../../packages/interfold-contracts/artifacts/contracts/interfaces/IBondingRegistry.sol/IBondingRegistry.json"
     );
 }
 
-mod enclave_ticket_token_contract {
+#[allow(clippy::too_many_arguments)]
+mod interfold_ticket_token_contract {
     use super::sol;
 
     sol!(
         #[sol(rpc)]
-        EnclaveTicketTokenContract,
-        "../../packages/enclave-contracts/artifacts/contracts/token/EnclaveTicketToken.sol/EnclaveTicketToken.json"
+        InterfoldTicketTokenContract,
+        "../../packages/interfold-contracts/artifacts/contracts/token/InterfoldTicketToken.sol/InterfoldTicketToken.json"
     );
 }
 
@@ -53,8 +54,8 @@ mod erc20_metadata_interface {
 }
 
 use bonding_registry_contract::BondingRegistryContract;
-use enclave_ticket_token_contract::EnclaveTicketTokenContract;
 use erc20_metadata_interface::IERC20Metadata;
+use interfold_ticket_token_contract::InterfoldTicketTokenContract;
 
 pub(crate) struct ChainContext {
     chain_label: String,
@@ -120,7 +121,7 @@ impl ChainContext {
     pub(crate) async fn ticket_underlying_address(&self) -> Result<Address> {
         let ticket = self.ticket_token_address().await?;
         Ok(
-            EnclaveTicketTokenContract::new(ticket, self.provider_client())
+            InterfoldTicketTokenContract::new(ticket, self.provider_client())
                 .underlying()
                 .call()
                 .await?,
@@ -142,10 +143,9 @@ fn select_chain<'a>(config: &'a AppConfig, name: Option<&str>) -> Result<&'a Cha
             .iter()
             .find(|c| c.name == desired)
             .ok_or_else(|| anyhow!("Chain '{}' not found in configuration", desired)),
-        None => config
-            .chains()
-            .first()
-            .ok_or_else(|| anyhow!("No chains configured. Run `enclave ciphernode setup` first.")),
+        None => config.chains().first().ok_or_else(|| {
+            anyhow!("No chains configured. Run `interfold ciphernode setup` first.")
+        }),
     }
 }
 

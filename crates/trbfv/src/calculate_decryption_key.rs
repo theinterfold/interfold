@@ -13,7 +13,7 @@ use anyhow::Result;
 use anyhow::*;
 use e3_crypto::{Cipher, SensitiveBytes};
 use fhe::trbfv::ShareManager;
-use fhe_math::rq::Poly;
+use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::Serialize;
 use ndarray::Array2;
 use tracing::info;
@@ -69,8 +69,8 @@ pub struct CalculateDecryptionKeyResponse {
 }
 
 struct InnerResponse {
-    pub sk_poly_sum: Poly,
-    pub es_poly_sum: Vec<Poly>,
+    pub sk_poly_sum: Poly<PowerBasis>,
+    pub es_poly_sum: Vec<Poly<PowerBasis>>,
 }
 
 impl TryFrom<(&Cipher, InnerResponse)> for CalculateDecryptionKeyResponse {
@@ -115,7 +115,7 @@ pub fn calculate_decryption_key(
     let params = req.trbfv_config.params();
     let threshold = req.trbfv_config.threshold() as usize;
     let num_ciphernodes = req.trbfv_config.num_parties() as usize;
-    let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone());
+    let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
 
     info!("Calculating sk_poly_sum...");
     let sk_poly_sum =
@@ -126,7 +126,7 @@ pub fn calculate_decryption_key(
         .esi_sss_collected
         .into_iter()
         .map(|shares| -> Result<_> {
-            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone());
+            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
             share_manager
                 .aggregate_collected_shares(&shares.to_array_data())
                 .context("Failed to aggregate es_sss")

@@ -1,37 +1,23 @@
-# zk-helpers
+# e3-zk-helpers
 
-ZK circuit artifact generation for the Noir prover. Produces `configs.nr` and optionally
-`Prover.toml` for the Enclave circuits. The Prover.toml contains circuit inputs for Nargo, which
-executes them to produce witnesses for proof generation.
+ZK circuit helpers, artifact generation, and committee-size definitions.
 
-## zk-cli
-
-Generate `configs.nr` for a circuit; use `--toml` to also generate `Prover.toml`.
+## zk_cli
 
 ```bash
 # List circuits
 cargo run -p e3-zk-helpers --bin zk_cli -- --list_circuits
 
-# Generate configs.nr only (default)
-cargo run -p e3-zk-helpers --bin zk_cli -- --circuit pk --preset insecure
-cargo run -p e3-zk-helpers --bin zk_cli -- --circuit share-computation --preset insecure --inputs secret-key
-cargo run -p e3-zk-helpers --bin zk_cli -- --circuit share-computation --preset insecure --inputs smudging-noise
+# Generate Prover.toml + configs.nr for a circuit
+cargo run -p e3-zk-helpers --bin zk_cli -- --circuit pk-generation --preset insecure --committee minimum
 
-# Generate configs.nr and Prover.toml
-cargo run -p e3-zk-helpers --bin zk_cli -- --circuit pk --preset insecure --toml
-cargo run -p e3-zk-helpers --bin zk_cli -- --circuit share-computation --preset insecure --inputs secret-key --toml
-cargo run -p e3-zk-helpers --bin zk_cli -- --circuit share-computation --preset insecure --inputs smudging-noise --toml
-
-# Generate only Prover.toml (no configs.nr), e.g. for benchmarks where circuits use lib configs
-cargo run -p e3-zk-helpers --bin zk_cli -- --circuit pk --preset insecure --toml --no-configs
+# Micro or small committee (must match active circuits lib selection)
+cargo run -p e3-zk-helpers --bin zk_cli -- --circuit pk-generation --preset insecure --committee micro
+cargo run -p e3-zk-helpers --bin zk_cli -- --circuit pk-generation --preset insecure --committee small
 ```
 
-| Flag               | Description                                                                                      |
-| ------------------ | ------------------------------------------------------------------------------------------------ |
-| `--list_circuits`  | List circuits and exit                                                                           |
-| `--circuit <name>` | Circuit name (e.g. `pk`, `share-computation`)                                                    |
-| `--preset <name>`  | Security preset: `insecure` (512) or `secure` (8192)                                             |
-| `--inputs <type>`  | Select the witness family when sample generation depends on it: `secret-key` or `smudging-noise` |
-| `--output <path>`  | Output dir (default: `output`)                                                                   |
-| `--toml`           | Also write Prover.toml (default: configs.nr only)                                                |
-| `--no-configs`     | With `--toml`: do not write configs.nr (e.g. for circuit benchmarks)                             |
+| Flag                 | Description                                                                                           |
+| -------------------- | ----------------------------------------------------------------------------------------------------- |
+| `--circuit <name>`   | Circuit to generate artifacts for                                                                     |
+| `--preset <name>`    | BFV preset: `insecure` (512), `secure` (8192), or aliases `2` / `80`                                  |
+| `--committee <name>` | Committee size: `minimum` (default), `micro`, or `small` — must match `circuits/lib` active committee |

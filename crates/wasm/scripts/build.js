@@ -28,7 +28,7 @@ try {
     replaceInFile({
       files: './dist/web/e3_wasm.js',
       from: /module_or_path\s*=\s*new URL\(['"]e3_wasm_bg\.wasm['"],\s*import\.meta\.url\);\s*/g,
-      to: '/* wasm URL disabled: load via @enclave-e3/wasm/init */\n',
+      to: '/* wasm URL disabled: load via @interfold/wasm/init */\n',
     }),
     writeFile('./dist/web/e3_wasm_base64.js', base64Src),
   ])

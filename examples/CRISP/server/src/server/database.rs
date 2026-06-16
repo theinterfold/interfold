@@ -7,7 +7,7 @@
 use async_trait::async_trait;
 use e3_sdk::indexer::DataStore;
 use log::error;
-use rand::Rng;
+use rand::{rng, Rng};
 use serde::{de::DeserializeOwned, Serialize};
 use sled::Db;
 use std::str;
@@ -88,13 +88,13 @@ pub fn generate_emoji() -> [String; 2] {
         "🦪", "🍦", "🍧", "🍨", "🍩", "🍪", "🎂", "🍰", "🧁", "🥧", "🍫", "🍬", "🍭", "🍮", "🍯",
         "🍼", "🥛", "☕", "🍵", "🍾", "🍷", "🍸", "🍹", "🍺", "🍻", "🥂", "🥃",
     ];
-    let mut index1 = rand::thread_rng().gen_range(0..emojis.len());
-    let index2 = rand::thread_rng().gen_range(0..emojis.len());
+    let mut index1 = rng().random_range(0..emojis.len());
+    let index2 = rng().random_range(0..emojis.len());
     if index1 == index2 {
         if index1 == emojis.len() {
-            index1 = index1 - 1;
+            index1 -= 1;
         } else {
-            index1 = index1 + 1;
+            index1 += 1;
         };
     };
     [emojis[index1].to_string(), emojis[index2].to_string()]

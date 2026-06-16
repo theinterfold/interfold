@@ -5,7 +5,7 @@ services:
       context: .
       args:
         UPSTREAM_VERSION: 0.1.8
-    image: 'ciphernode.enclave-ciphernode.public.dappnode.eth:0.1.8'
+    image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.1.8'
     restart: unless-stopped
     volumes:
       - 'ciphernode_data:/data'
@@ -26,16 +26,16 @@ services:
       NETWORK_PRIVATE_KEY: ''
       PRIVATE_KEY: ''
       # Contracts (variants override these)
-      ENCLAVE_CONTRACT: ''
+      INTERFOLD_CONTRACT: ''
       CIPHERNODE_REGISTRY_CONTRACT: ''
       BONDING_REGISTRY_CONTRACT: ''
-      ENCLAVE_DEPLOY_BLOCK: '0'
+      INTERFOLD_DEPLOY_BLOCK: '0'
       CIPHERNODE_REGISTRY_DEPLOY_BLOCK: '0'
       BONDING_REGISTRY_DEPLOY_BLOCK: '0'
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ['CMD', 'pgrep', '-f', 'enclave']
+      test: ['CMD', 'pgrep', '-f', 'interfold']
       interval: 30s
       timeout: 10s
       retries: 3

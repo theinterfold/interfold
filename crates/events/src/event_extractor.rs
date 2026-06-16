@@ -4,13 +4,13 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{EffectsEnabled, EnclaveEvent, EnclaveEventData, Event, HistoricalEvmSyncStart};
+use crate::{EffectsEnabled, Event, HistoricalEvmSyncStart, InterfoldEvent, InterfoldEventData};
 use actix::{Actor, Addr, Handler, Message, Recipient};
 use e3_utils::{actix::oneshot_runner::OneShotRunner, MAILBOX_LIMIT};
 
-/// Trait for events that can be extracted from EnclaveEventData
+/// Trait for events that can be extracted from InterfoldEventData
 pub trait ExtractableEvent: Message<Result = ()> + Send + 'static {
-    fn extract_from(data: EnclaveEventData) -> Option<Self>
+    fn extract_from(data: InterfoldEventData) -> Option<Self>
     where
         Self: Sized;
 }
@@ -38,10 +38,10 @@ impl<T: ExtractableEvent> Actor for EventExtractor<T> {
     }
 }
 
-impl<T: ExtractableEvent> Handler<EnclaveEvent> for EventExtractor<T> {
+impl<T: ExtractableEvent> Handler<InterfoldEvent> for EventExtractor<T> {
     type Result = ();
 
-    fn handle(&mut self, msg: EnclaveEvent, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
         if let Some(evt) = T::extract_from(msg.into_data()) {
             self.dest.do_send(evt)
         }
@@ -49,8 +49,8 @@ impl<T: ExtractableEvent> Handler<EnclaveEvent> for EventExtractor<T> {
 }
 
 impl ExtractableEvent for EffectsEnabled {
-    fn extract_from(data: EnclaveEventData) -> Option<Self> {
-        if let EnclaveEventData::EffectsEnabled(evt) = data {
+    fn extract_from(data: InterfoldEventData) -> Option<Self> {
+        if let InterfoldEventData::EffectsEnabled(evt) = data {
             Some(evt)
         } else {
             None
@@ -59,8 +59,8 @@ impl ExtractableEvent for EffectsEnabled {
 }
 
 impl ExtractableEvent for HistoricalEvmSyncStart {
-    fn extract_from(data: EnclaveEventData) -> Option<Self> {
-        if let EnclaveEventData::HistoricalEvmSyncStart(evt) = data {
+    fn extract_from(data: InterfoldEventData) -> Option<Self> {
+        if let InterfoldEventData::HistoricalEvmSyncStart(evt) = data {
             Some(evt)
         } else {
             None

@@ -10,9 +10,8 @@ use anyhow::Context;
 use anyhow::Result;
 use e3_ciphernode_builder::CiphernodeHandle;
 use e3_events::Event;
-use e3_events::{EnclaveEvent, GetEvents, ResetHistory, TakeEvents};
+use e3_events::{GetEvents, InterfoldEvent, ResetHistory, TakeEvents};
 use std::time::Instant;
-use std::u64;
 use std::{future::Future, ops::Deref, pin::Pin, time::Duration};
 use tokio::time::timeout;
 use tracing::info;
@@ -41,6 +40,12 @@ pub struct CiphernodeSystemBuilder<'a> {
     groups: Vec<(u32, SetupFn<'a>)>,
     thens: Vec<ThenFn<'a>>,
     simulate: bool,
+}
+
+impl<'a> Default for CiphernodeSystemBuilder<'a> {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl<'a> CiphernodeSystemBuilder<'a> {
@@ -91,7 +96,7 @@ impl<'a> CiphernodeSystemBuilder<'a> {
 
         for then_fn in self.thens {
             for node in nodes.iter() {
-                then_fn(&node).await?;
+                then_fn(node).await?;
             }
         }
 
@@ -237,6 +242,51 @@ impl CiphernodeSystem {
         );
         Ok(CiphernodeHistory(history.events))
     }
+
+    /// Collect events until one whose [`InterfoldEvent::event_type`] equals `last_event_type`
+    /// (inclusive). Use when the pubkey flow ends with `PublicKeyAggregated` but a fixed
+    /// `take_history` count can stop too early while gossip duplicates inflate the multiset.
+    pub async fn take_history_until_last_event(
+        &self,
+        index: usize,
+        last_event_type: &str,
+        total_to: Option<Duration>,
+        event_to: Option<Duration>,
+    ) -> Result<CiphernodeHistory> {
+        let start = Instant::now();
+        let total_to = total_to.unwrap_or(Duration::from_secs(u64::MAX));
+        let event_to = event_to.unwrap_or(Duration::from_secs(u64::MAX));
+        let mut collected = Vec::new();
+
+        loop {
+            let remaining = total_to.saturating_sub(start.elapsed());
+            if remaining.is_zero() {
+                bail!(
+                    "take_history_until_last_event({last_event_type}) timed out after {:?}; got {} events: {:?}",
+                    start.elapsed(),
+                    collected.len(),
+                    CiphernodeHistory(collected.clone()).event_types()
+                );
+            }
+            let call_to = event_to.min(remaining);
+            let batch = self
+                .take_history_with_timeouts(index, 1, Some(call_to), Some(call_to))
+                .await?;
+            for event in batch.0 {
+                let is_last = event.event_type() == last_event_type;
+                collected.push(event);
+                if is_last {
+                    info!(
+                        "take_history_until_last_event({last_event_type}) took {:?} ({} events)",
+                        start.elapsed(),
+                        collected.len()
+                    );
+                    return Ok(CiphernodeHistory(collected));
+                }
+            }
+        }
+    }
+
     pub async fn flush_all_history(&self, millis: u64) -> Result<()> {
         let nodes = &self.0;
         for node in nodes.iter() {
@@ -276,10 +326,10 @@ impl Deref for CiphernodeSystem {
 }
 
 #[derive(Debug, Clone)]
-pub struct CiphernodeHistory(Vec<EnclaveEvent>);
+pub struct CiphernodeHistory(Vec<InterfoldEvent>);
 
 impl CiphernodeHistory {
-    pub fn filter_by_event_type(&self, event_type: String) -> Vec<EnclaveEvent> {
+    pub fn filter_by_event_type(&self, event_type: String) -> Vec<InterfoldEvent> {
         self.0
             .iter()
             .filter(|e| e.event_type() == event_type)
@@ -297,7 +347,7 @@ impl CiphernodeHistory {
 }
 
 impl Deref for CiphernodeHistory {
-    type Target = Vec<EnclaveEvent>;
+    type Target = Vec<InterfoldEvent>;
 
     fn deref(&self) -> &Self::Target {
         &self.0
@@ -308,7 +358,7 @@ impl Deref for CiphernodeHistory {
 mod tests {
     use super::*;
     use actix::prelude::*;
-    use e3_ciphernode_builder::EventSystem;
+    use e3_ciphernode_builder::{EventSystem, NetInterfaceKind};
     use e3_data::InMemStore;
     use e3_events::{EventBus, EventBusConfig};
     use libp2p::PeerId;
@@ -316,9 +366,9 @@ mod tests {
     async fn mock_setup_node(address: String) -> Result<CiphernodeHandle> {
         // Create mock actors for the test
         let store = InMemStore::new(true).start();
-        let bus = EventBus::<EnclaveEvent>::new(EventBusConfig { deduplicate: true }).start();
-        let history = EventBus::<EnclaveEvent>::history(&bus);
-        let errors = EventBus::<EnclaveEvent>::error(&bus);
+        let bus = EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
+        let history = EventBus::<InterfoldEvent>::history(&bus);
+        let errors = EventBus::<InterfoldEvent>::error(&bus);
 
         let bus = EventSystem::new()
             .with_event_bus(bus)
@@ -332,7 +382,7 @@ mod tests {
             history: Some(history),
             errors: Some(errors),
             peer_id: PeerId::random(),
-            channel_bridge: None,
+            net_interface: NetInterfaceKind::Libp2p,
         })
     }
 

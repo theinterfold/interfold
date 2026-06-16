@@ -1,0 +1,11 @@
+[package]
+name = "e3-committee-hash"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Canonical committee hash for DKG / decryption aggregator proofs"
+repository = "https://github.com/gnosisguild/interfold/crates/committee-hash"
+
+[dependencies]
+alloy = { workspace = true }
+hex = { workspace = true }

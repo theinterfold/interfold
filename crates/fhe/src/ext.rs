@@ -9,7 +9,7 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use e3_data::{FromSnapshotWithParams, Repositories, RepositoriesFactory, Repository, Snapshot};
 use e3_events::{
-    prelude::*, BusHandle, E3Requested, E3id, EType, EnclaveEvent, EnclaveEventData, StoreKeys,
+    prelude::*, BusHandle, E3Requested, E3id, EType, InterfoldEvent, InterfoldEventData, StoreKeys,
 };
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, TypedKey};
 use e3_utils::SharedRng;
@@ -47,9 +47,9 @@ const ERROR_FHE_FAILED_TO_DECODE: &str = "Failed to decode encoded FHE params";
 
 #[async_trait]
 impl E3Extension for FheExtension {
-    fn on_event(&self, ctx: &mut E3Context, evt: &EnclaveEvent) {
+    fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent) {
         // Saving the fhe on Committee Requested
-        let EnclaveEventData::E3Requested(data) = evt.get_data() else {
+        let InterfoldEventData::E3Requested(data) = evt.get_data() else {
             return;
         };
 
@@ -70,7 +70,7 @@ impl E3Extension for FheExtension {
             return;
         };
         ctx.repositories().fhe(&e3_id).write(&snapshot);
-        let _ = ctx.set_dependency(FHE_KEY, fhe);
+        ctx.set_dependency(FHE_KEY, fhe);
     }
 
     async fn hydrate(&self, ctx: &mut E3Context, snapshot: &E3ContextSnapshot) -> Result<()> {

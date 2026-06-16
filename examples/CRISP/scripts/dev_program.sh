@@ -3,4 +3,4 @@
 
 set -e
 
-enclave program start --dev true
+interfold program start --dev true

@@ -20,15 +20,15 @@ export default {
     key: 'interfold-rename',
     text: (
       <span>
-        Enclave is now <strong>The Interfold</strong>. Documentation is being updated.
+        Interfold is now <strong>The Interfold</strong>. Documentation is being updated.
       </span>
     ),
   },
 
   project: {
-    link: 'https://github.com/gnosisguild/enclave',
+    link: 'https://github.com/gnosisguild/interfold',
   },
-  docsRepositoryBase: 'https://github.com/gnosisguild/enclave-docs',
+  docsRepositoryBase: 'https://github.com/gnosisguild/interfold-docs',
   darkMode: false,
   nextThemes: {
     defaultTheme: 'light',

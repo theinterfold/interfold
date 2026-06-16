@@ -119,7 +119,7 @@ event PlaintextOutputPublished(uint256 indexed e3Id, bytes plaintextOutput, byte
 Upon successful decryption, rewards are distributed to the active committee members.
 
 **See also:** [Cryptography](/cryptography) (threshold BFV, phases P1–P4, circuit IDs) and
-[Noir Circuits](/noir-circuits) (build, lint, `enclave noir`, Rust prover integration).
+[Noir Circuits](/noir-circuits) (build, lint, `interfold noir`, Rust prover integration).
 
 ### Failure Handling
 
@@ -133,7 +133,7 @@ treasury using its configurable `WorkValueAllocation` (basis-point weights per s
 slashed funds — not a simple proportion of work remaining. The failure cause is recorded as one of
 the 13 `FailureReason` entries (`None` plus 12 concrete states such as `DKGTimeout`,
 `ComputeProviderFailed`, `DecryptionInvalidShares`, etc.; `_MAX_FAILURE_REASON` is a separate
-sentinel used for bounds-checking in `IEnclave`):
+sentinel used for bounds-checking in `IInterfold`):
 
 - The requester can claim their share via `claimRequesterRefund(e3Id)`
 - Honest committee members (non-expelled nodes) can claim compensation via
@@ -141,4 +141,4 @@ sentinel used for bounds-checking in `IEnclave`):
 - A protocol fee is retained for operational costs
 
 For the complete `FailureReason` → allocation map, see the `markE3Failed` / `claimRequesterRefund`
-flow in `IE3RefundManager` and `IEnclave`.
+flow in `IE3RefundManager` and `IInterfold`.

@@ -1,17 +1,17 @@
 #!/usr/bin/env bash
 
-GIT_SHA=$(enclave rev)
+GIT_SHA=$(interfold rev)
 CONTAINER_NAME="e3-support.1"
 IMAGE="ghcr.io/gnosisguild/e3-support:$GIT_SHA"
 CACHE_PREFIX="e3-support"
 
 # Check if the image exists locally or remotely if not bail
-# Every time we push we build support so every build of enclave should have support built too.
-# This solves the problem where a person will be using the cli with a specific `enclave rev` but our latest 
+# Every time we push we build support so every build of interfold should have support built too.
+# This solves the problem where a person will be using the cli with a specific `interfold rev` but our latest 
 # support scripts have changed which will break the support behaviour for the user.
 # The user can then upgrade their cli once they are ready and then the support image will match their version
 if ! docker image inspect "$IMAGE" >/dev/null 2>&1 && ! docker manifest inspect "$IMAGE" >/dev/null 2>&1; then
-    echo "Support scripts not found for git sha \"$GIT_SHA\" Please recompile the support scripts for this version of the enclave cli within the source repository"
+    echo "Support scripts not found for git sha \"$GIT_SHA\" Please recompile the support scripts for this version of the interfold cli within the source repository"
     exit 1
 fi
 
@@ -29,10 +29,10 @@ cleanup() {
 # Set trap for signals
 trap cleanup EXIT INT TERM
 
-mkdir -p "$(pwd)/.enclave/caches"/{target,registry,git,risc0-cache,risc0-circuits}
-mkdir -p "$(pwd)/.enclave/generated"/{contracts,tests}
-chmod -R 777 "$(pwd)/.enclave/caches"
-chmod -R 777 "$(pwd)/.enclave/generated"
+mkdir -p "$(pwd)/.interfold/caches"/{target,registry,git,risc0-cache,risc0-circuits}
+mkdir -p "$(pwd)/.interfold/generated"/{contracts,tests}
+chmod -R 777 "$(pwd)/.interfold/caches"
+chmod -R 777 "$(pwd)/.interfold/generated"
 
 if [ -t 0 ]; then
     TTY_FLAGS="-it"
@@ -56,13 +56,13 @@ else
         --platform linux/amd64 \
         --add-host=host.local:host-gateway \
         -p 13151:13151 \
-        -v "$(pwd)/.enclave/generated/contracts:/app/contracts:rw" \
+        -v "$(pwd)/.interfold/generated/contracts:/app/contracts:rw" \
         -v "$(pwd)/tests:/app/tests" \
-        -v "$(pwd)/.enclave/caches/target:/app/target" \
-        -v "$(pwd)/.enclave/caches/registry:/home/devuser/.cargo/registry" \
-        -v "$(pwd)/.enclave/caches/git:/home/devuser/.cargo/git" \
-        -v "$(pwd)/.enclave/caches/risc0-cache:/home/devuser/.risc0/cache" \
-        -v "$(pwd)/.enclave/caches/risc0-circuits:/home/devuser/.risc0/circuits" \
+        -v "$(pwd)/.interfold/caches/target:/app/target" \
+        -v "$(pwd)/.interfold/caches/registry:/home/devuser/.cargo/registry" \
+        -v "$(pwd)/.interfold/caches/git:/home/devuser/.cargo/git" \
+        -v "$(pwd)/.interfold/caches/risc0-cache:/home/devuser/.risc0/cache" \
+        -v "$(pwd)/.interfold/caches/risc0-circuits:/home/devuser/.risc0/circuits" \
         -v "${CACHE_PREFIX}-cargo-cache:/usr/local/cargo" \
         "$IMAGE" bash -c "$*"
 fi

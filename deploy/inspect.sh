@@ -21,7 +21,7 @@ echo "================================="
 echo "           CN1 "
 echo "================================="
 
-get_logs_by_version enclave_cn1
+get_logs_by_version interfold_cn1
 
 
 echo ""
@@ -29,7 +29,7 @@ echo "================================="
 echo "           CN2 "
 echo "================================="
 
-get_logs_by_version enclave_cn2
+get_logs_by_version interfold_cn2
 
 
 echo ""
@@ -37,7 +37,7 @@ echo "================================="
 echo "           CN3 "
 echo "================================="
 
-get_logs_by_version enclave_cn3
+get_logs_by_version interfold_cn3
 
 
 echo ""
@@ -45,4 +45,4 @@ echo "================================="
 echo "           CN4 "
 echo "================================="
 
-get_logs_by_version enclave_cn4
+get_logs_by_version interfold_cn4

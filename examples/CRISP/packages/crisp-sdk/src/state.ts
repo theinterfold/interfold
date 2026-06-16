@@ -27,7 +27,7 @@ export const getRoundDetails = async (serverUrl: string, e3Id: number): Promise<
     tokenAddress: data.token_address,
     balanceThreshold: BigInt(data.balance_threshold),
     chainId: BigInt(data.chain_id),
-    enclaveAddress: data.enclave_address,
+    interfoldAddress: data.interfold_address,
     status: data.status,
     voteCount: BigInt(data.vote_count),
     startTime: BigInt(data.start_time),

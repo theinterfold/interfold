@@ -34,7 +34,7 @@ pub(crate) async fn execute(
                 .await?;
             log!(
                 out,
-                "Queued {} ENCL for exit (tx: {:#x})",
+                "Queued {} FOLD for exit (tx: {:#x})",
                 amount,
                 receipt.transaction_hash
             );
@@ -93,7 +93,7 @@ async fn bond_license(out: Console, ctx: &ChainContext, amount: &str) -> Result<
         .await?;
     log!(
         out,
-        "Bonded {} ENCL (tx: {:#x})",
+        "Bonded {} FOLD (tx: {:#x})",
         amount,
         receipt.transaction_hash
     );

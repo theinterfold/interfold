@@ -20,8 +20,8 @@ const PAGES = [
     path: '/about',
   },
   {
-    label: 'Historic Polls',
-    path: '/historic',
+    label: 'All Polls',
+    path: '/all',
   },
 ]
 

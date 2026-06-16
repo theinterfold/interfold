@@ -65,7 +65,7 @@ impl ParityMatrix {
                 return Err(ParityMatrixError::dimension_mismatch(
                     cols,
                     row.len(),
-                    &format!("columns in row {}", i),
+                    format!("columns in row {}", i),
                 ));
             }
         }
@@ -216,9 +216,9 @@ pub fn build_generator_matrix(config: &ParityMatrixConfig) -> ParityMatrixResult
     let mut g = vec![vec![BigUint::zero(); config.n + 1]; num_coeffs];
 
     for (i, row) in g.iter_mut().enumerate().take(num_coeffs) {
-        for j in 0..=config.n {
+        for (j, cell) in row.iter_mut().enumerate().take(config.n + 1) {
             let j_big = BigUint::from(j);
-            row[j] = mod_pow(&j_big, i, &config.q);
+            *cell = mod_pow(&j_big, i, &config.q);
         }
     }
 
@@ -470,7 +470,7 @@ mod tests {
             (0..num_coeffs).map(|i| BigUint::from(i * 2) % &q).collect(), // [0, 2, 4, ...]
             (0..num_coeffs).map(|_| BigUint::one()).collect(),            // [1, 1, 1, ...]
             std::iter::once(BigUint::one())
-                .chain(std::iter::repeat(BigUint::zero()).take(t))
+                .chain(std::iter::repeat_n(BigUint::zero(), t))
                 .collect(), // [1, 0, 0, ...]
         ];
 

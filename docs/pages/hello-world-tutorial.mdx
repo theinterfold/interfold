@@ -32,7 +32,7 @@ Before starting, ensure you have:
 Create a new E3 project:
 
 ```bash
-enclave init hello-world-e3
+interfold init hello-world-e3
 cd hello-world-e3
 ```
 
@@ -44,7 +44,7 @@ hello-world-e3/
 ├── contracts/         # Smart contracts (Solidity)
 ├── client/           # Frontend application (React/TypeScript)
 ├── server/           # Coordination server (TypeScript)
-├── enclave.config.yaml # Interfold configuration
+├── interfold.config.yaml # Interfold configuration
 └── README.md         # Project documentation
 ```
 
@@ -116,7 +116,7 @@ pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
 
 ## Step 4: Understanding the Configuration
 
-The `enclave.config.yaml` file configures your development environment:
+The `interfold.config.yaml` file configures your development environment:
 
 ```yaml
 chains:
@@ -146,7 +146,7 @@ nodes:
 Compile your modified program:
 
 ```bash
-enclave program compile
+interfold program compile
 ```
 
 Start the development environment:

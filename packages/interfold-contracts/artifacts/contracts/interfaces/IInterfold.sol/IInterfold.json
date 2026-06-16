@@ -1,0 +1,2394 @@
+{
+  "_format": "hh3-artifact-1",
+  "contractName": "IInterfold",
+  "sourceName": "contracts/interfaces/IInterfold.sol",
+  "abi": [
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "size",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "minimum",
+          "type": "uint256"
+        }
+      ],
+      "name": "BelowMinCommitteeSize",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "threshold",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "minimum",
+          "type": "uint256"
+        }
+      ],
+      "name": "BelowMinThreshold",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "value",
+          "type": "uint256"
+        }
+      ],
+      "name": "BpsExceedsMax",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "CiphertextOutputAlreadyPublished",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "CiphertextOutputNotPublished",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "expiration",
+          "type": "uint256"
+        }
+      ],
+      "name": "CommitteeDutiesCompleted",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "CommitteeSelectionFailed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "enum IInterfold.CommitteeSize",
+          "name": "committeeSize",
+          "type": "uint8"
+        }
+      ],
+      "name": "CommitteeSizeNotConfigured",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "enum IInterfold.CommitteeSize",
+          "name": "committeeSize",
+          "type": "uint8"
+        }
+      ],
+      "name": "CommitteeSizeTooSmall",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "E3AlreadyComplete",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "E3AlreadyFailed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "E3DoesNotExist",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "E3NotFailed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IE3Program",
+          "name": "e3Program",
+          "type": "address"
+        }
+      ],
+      "name": "E3ProgramNotAllowed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "FailureConditionNotMet",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        }
+      ],
+      "name": "FeeTokenNotAllowed",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "inputDeadline",
+          "type": "uint256"
+        }
+      ],
+      "name": "InputDeadlineNotReached",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IBondingRegistry",
+          "name": "bondingRegistry",
+          "type": "address"
+        }
+      ],
+      "name": "InvalidBondingRegistry",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract ICiphernodeRegistry",
+          "name": "ciphernodeRegistry",
+          "type": "address"
+        }
+      ],
+      "name": "InvalidCiphernodeRegistry",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "duration",
+          "type": "uint256"
+        }
+      ],
+      "name": "InvalidDuration",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "InvalidEncryptionScheme",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "feeToken",
+          "type": "address"
+        }
+      ],
+      "name": "InvalidFeeToken",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "deadline",
+          "type": "uint256"
+        }
+      ],
+      "name": "InvalidInputDeadline",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "end",
+          "type": "uint256"
+        }
+      ],
+      "name": "InvalidInputDeadlineEnd",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "start",
+          "type": "uint256"
+        }
+      ],
+      "name": "InvalidInputDeadlineStart",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes",
+          "name": "output",
+          "type": "bytes"
+        }
+      ],
+      "name": "InvalidOutput",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "enum IInterfold.E3Stage",
+          "name": "expected",
+          "type": "uint8"
+        },
+        {
+          "internalType": "enum IInterfold.E3Stage",
+          "name": "actual",
+          "type": "uint8"
+        }
+      ],
+      "name": "InvalidStage",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidThresholdValues",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "InvalidTimeoutWindow",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "gracePeriodEnds",
+          "type": "uint256"
+        }
+      ],
+      "name": "MarkE3FailedInGracePeriod",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "MinSizeBelowMinThreshold",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "module",
+          "type": "address"
+        }
+      ],
+      "name": "ModuleAlreadyEnabled",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "NoPaymentToRefund",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "NothingToClaim",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "OnlyCiphernodeRegistry",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "OnlyCiphernodeRegistryOrSlashingManager",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "OnlySlashingManager",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "value",
+          "type": "uint256"
+        }
+      ],
+      "name": "PaymentRequired",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "PlaintextOutputAlreadyPublished",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "ProofRequired",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "threshold",
+          "type": "uint256"
+        }
+      ],
+      "name": "ThresholdTooSmall",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "TreasuryRequired",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "value",
+          "type": "uint256"
+        }
+      ],
+      "name": "UtilizationBpsExceedsMax",
+      "type": "error"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "bondingRegistry",
+          "type": "address"
+        }
+      ],
+      "name": "BondingRegistrySet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "ciphernodeRegistry",
+          "type": "address"
+        }
+      ],
+      "name": "CiphernodeRegistrySet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "ciphertextOutput",
+          "type": "bytes"
+        }
+      ],
+      "name": "CiphertextOutputPublished",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "CommitteeFinalized",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "CommitteeFormed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "enum IInterfold.CommitteeSize",
+          "name": "size",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint32[2]",
+          "name": "threshold",
+          "type": "uint32[2]"
+        }
+      ],
+      "name": "CommitteeThresholdsUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "enum IInterfold.E3Stage",
+          "name": "failedAtStage",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "enum IInterfold.FailureReason",
+          "name": "reason",
+          "type": "uint8"
+        }
+      ],
+      "name": "E3Failed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "paymentAmount",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "honestNodeCount",
+          "type": "uint256"
+        }
+      ],
+      "name": "E3FailureProcessed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "contract IE3Program",
+          "name": "e3Program",
+          "type": "address"
+        }
+      ],
+      "name": "E3ProgramRegistered",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "e3RefundManager",
+          "type": "address"
+        }
+      ],
+      "name": "E3RefundManagerSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "seed",
+              "type": "uint256"
+            },
+            {
+              "internalType": "enum IInterfold.CommitteeSize",
+              "name": "committeeSize",
+              "type": "uint8"
+            },
+            {
+              "internalType": "uint256",
+              "name": "requestBlock",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256[2]",
+              "name": "inputWindow",
+              "type": "uint256[2]"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "encryptionSchemeId",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "contract IE3Program",
+              "name": "e3Program",
+              "type": "address"
+            },
+            {
+              "internalType": "uint8",
+              "name": "paramSet",
+              "type": "uint8"
+            },
+            {
+              "internalType": "bytes",
+              "name": "customParams",
+              "type": "bytes"
+            },
+            {
+              "internalType": "contract IDecryptionVerifier",
+              "name": "decryptionVerifier",
+              "type": "address"
+            },
+            {
+              "internalType": "contract IPkVerifier",
+              "name": "pkVerifier",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "committeePublicKey",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "ciphertextOutput",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes",
+              "name": "plaintextOutput",
+              "type": "bytes"
+            },
+            {
+              "internalType": "address",
+              "name": "requester",
+              "type": "address"
+            },
+            {
+              "internalType": "bool",
+              "name": "proofAggregationEnabled",
+              "type": "bool"
+            }
+          ],
+          "indexed": false,
+          "internalType": "struct E3",
+          "name": "e3",
+          "type": "tuple"
+        },
+        {
+          "indexed": true,
+          "internalType": "contract IE3Program",
+          "name": "e3Program",
+          "type": "address"
+        }
+      ],
+      "name": "E3Requested",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "enum IInterfold.E3Stage",
+          "name": "previousStage",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "enum IInterfold.E3Stage",
+          "name": "newStage",
+          "type": "uint8"
+        }
+      ],
+      "name": "E3StageChanged",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "EncryptionSchemeDisabled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "EncryptionSchemeEnabled",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "bool",
+          "name": "allowed",
+          "type": "bool"
+        }
+      ],
+      "name": "FeeTokenAllowed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "address",
+          "name": "feeToken",
+          "type": "address"
+        }
+      ],
+      "name": "FeeTokenSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "data",
+          "type": "bytes"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "inputHash",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "index",
+          "type": "uint256"
+        }
+      ],
+      "name": "InputPublished",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "maxDuration",
+          "type": "uint256"
+        }
+      ],
+      "name": "MaxDurationSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint8",
+          "name": "paramSet",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "encodedParams",
+          "type": "bytes"
+        }
+      ],
+      "name": "ParamSetRegistered",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "uint8",
+          "name": "paramSet",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "previousEncodedParams",
+          "type": "bytes"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "newEncodedParams",
+          "type": "bytes"
+        }
+      ],
+      "name": "ParamSetUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        },
+        {
+          "indexed": true,
+          "internalType": "contract IPkVerifier",
+          "name": "pkVerifier",
+          "type": "address"
+        }
+      ],
+      "name": "PkVerifierSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "plaintextOutput",
+          "type": "bytes"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "proof",
+          "type": "bytes"
+        }
+      ],
+      "name": "PlaintextOutputPublished",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "keyGenFixedPerNode",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "keyGenPerEncryptionProof",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "coordinationPerPair",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "availabilityPerNodePerSec",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "decryptionPerNode",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "publicationBase",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "verificationPerProof",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "protocolTreasury",
+              "type": "address"
+            },
+            {
+              "internalType": "uint16",
+              "name": "marginBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "protocolShareBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "dkgUtilizationBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "computeUtilizationBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "decryptUtilizationBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint32",
+              "name": "minCommitteeSize",
+              "type": "uint32"
+            },
+            {
+              "internalType": "uint32",
+              "name": "minThreshold",
+              "type": "uint32"
+            }
+          ],
+          "indexed": false,
+          "internalType": "struct IInterfold.PricingConfig",
+          "name": "config",
+          "type": "tuple"
+        }
+      ],
+      "name": "PricingConfigUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "RewardClaimed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "RewardCredited",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "address[]",
+          "name": "nodes",
+          "type": "address[]"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256[]",
+          "name": "amounts",
+          "type": "uint256[]"
+        }
+      ],
+      "name": "RewardsDistributed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "SlashedFundsEscrowed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "slashingManager",
+          "type": "address"
+        }
+      ],
+      "name": "SlashingManagerSet",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "dkgWindow",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "computeWindow",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "decryptionWindow",
+              "type": "uint256"
+            }
+          ],
+          "indexed": false,
+          "internalType": "struct IInterfold.E3TimeoutConfig",
+          "name": "config",
+          "type": "tuple"
+        }
+      ],
+      "name": "TimeoutConfigUpdated",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "treasury",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "TreasuryClaimed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "treasury",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "TreasuryCredited",
+      "type": "event"
+    },
+    {
+      "inputs": [],
+      "name": "bondingRegistry",
+      "outputs": [
+        {
+          "internalType": "contract IBondingRegistry",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "checkFailureCondition",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "canFail",
+          "type": "bool"
+        },
+        {
+          "internalType": "enum IInterfold.FailureReason",
+          "name": "reason",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "claimReward",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256[]",
+          "name": "e3Ids",
+          "type": "uint256[]"
+        }
+      ],
+      "name": "claimRewards",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "disableEncryptionScheme",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "name": "escrowSlashedFunds",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "feeToken",
+      "outputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getDeadlines",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "dkgDeadline",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "computeDeadline",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "decryptionDeadline",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct IInterfold.E3Deadlines",
+          "name": "deadlines",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "getDecryptionVerifier",
+      "outputs": [
+        {
+          "internalType": "contract IDecryptionVerifier",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getE3",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "seed",
+              "type": "uint256"
+            },
+            {
+              "internalType": "enum IInterfold.CommitteeSize",
+              "name": "committeeSize",
+              "type": "uint8"
+            },
+            {
+              "internalType": "uint256",
+              "name": "requestBlock",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256[2]",
+              "name": "inputWindow",
+              "type": "uint256[2]"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "encryptionSchemeId",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "contract IE3Program",
+              "name": "e3Program",
+              "type": "address"
+            },
+            {
+              "internalType": "uint8",
+              "name": "paramSet",
+              "type": "uint8"
+            },
+            {
+              "internalType": "bytes",
+              "name": "customParams",
+              "type": "bytes"
+            },
+            {
+              "internalType": "contract IDecryptionVerifier",
+              "name": "decryptionVerifier",
+              "type": "address"
+            },
+            {
+              "internalType": "contract IPkVerifier",
+              "name": "pkVerifier",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "committeePublicKey",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "ciphertextOutput",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes",
+              "name": "plaintextOutput",
+              "type": "bytes"
+            },
+            {
+              "internalType": "address",
+              "name": "requester",
+              "type": "address"
+            },
+            {
+              "internalType": "bool",
+              "name": "proofAggregationEnabled",
+              "type": "bool"
+            }
+          ],
+          "internalType": "struct E3",
+          "name": "e3",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "enum IInterfold.CommitteeSize",
+              "name": "committeeSize",
+              "type": "uint8"
+            },
+            {
+              "internalType": "uint256[2]",
+              "name": "inputWindow",
+              "type": "uint256[2]"
+            },
+            {
+              "internalType": "contract IE3Program",
+              "name": "e3Program",
+              "type": "address"
+            },
+            {
+              "internalType": "uint8",
+              "name": "paramSet",
+              "type": "uint8"
+            },
+            {
+              "internalType": "bytes",
+              "name": "computeProviderParams",
+              "type": "bytes"
+            },
+            {
+              "internalType": "bytes",
+              "name": "customParams",
+              "type": "bytes"
+            },
+            {
+              "internalType": "bool",
+              "name": "proofAggregationEnabled",
+              "type": "bool"
+            }
+          ],
+          "internalType": "struct IInterfold.E3RequestParams",
+          "name": "e3Params",
+          "type": "tuple"
+        }
+      ],
+      "name": "getE3Quote",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "fee",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getE3Stage",
+      "outputs": [
+        {
+          "internalType": "enum IInterfold.E3Stage",
+          "name": "stage",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getFailureReason",
+      "outputs": [
+        {
+          "internalType": "enum IInterfold.FailureReason",
+          "name": "reason",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        }
+      ],
+      "name": "getPkVerifier",
+      "outputs": [
+        {
+          "internalType": "contract IPkVerifier",
+          "name": "",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getPricingConfig",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "keyGenFixedPerNode",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "keyGenPerEncryptionProof",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "coordinationPerPair",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "availabilityPerNodePerSec",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "decryptionPerNode",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "publicationBase",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "verificationPerProof",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "protocolTreasury",
+              "type": "address"
+            },
+            {
+              "internalType": "uint16",
+              "name": "marginBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "protocolShareBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "dkgUtilizationBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "computeUtilizationBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "decryptUtilizationBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint32",
+              "name": "minCommitteeSize",
+              "type": "uint32"
+            },
+            {
+              "internalType": "uint32",
+              "name": "minThreshold",
+              "type": "uint32"
+            }
+          ],
+          "internalType": "struct IInterfold.PricingConfig",
+          "name": "",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "getRequester",
+      "outputs": [
+        {
+          "internalType": "address",
+          "name": "requester",
+          "type": "address"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [],
+      "name": "getTimeoutConfig",
+      "outputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "dkgWindow",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "computeWindow",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "decryptionWindow",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct IInterfold.E3TimeoutConfig",
+          "name": "config",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        }
+      ],
+      "name": "isFeeTokenAllowed",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "markE3Failed",
+      "outputs": [
+        {
+          "internalType": "enum IInterfold.FailureReason",
+          "name": "reason",
+          "type": "uint8"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "onCommitteeFinalized",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes32",
+          "name": "committeePublicKey",
+          "type": "bytes32"
+        }
+      ],
+      "name": "onCommitteePublished",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint8",
+          "name": "reason",
+          "type": "uint8"
+        }
+      ],
+      "name": "onE3Failed",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "address",
+          "name": "account",
+          "type": "address"
+        }
+      ],
+      "name": "pendingReward",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "address",
+          "name": "treasury",
+          "type": "address"
+        },
+        {
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        }
+      ],
+      "name": "pendingTreasuryClaim",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "processE3Failure",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "ciphertextOutput",
+          "type": "bytes"
+        },
+        {
+          "internalType": "bytes",
+          "name": "proof",
+          "type": "bytes"
+        }
+      ],
+      "name": "publishCiphertextOutput",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "success",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "bytes",
+          "name": "plaintextOutput",
+          "type": "bytes"
+        },
+        {
+          "internalType": "bytes",
+          "name": "proof",
+          "type": "bytes"
+        }
+      ],
+      "name": "publishPlaintextOutput",
+      "outputs": [
+        {
+          "internalType": "bool",
+          "name": "success",
+          "type": "bool"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IE3Program",
+          "name": "e3Program",
+          "type": "address"
+        }
+      ],
+      "name": "registerE3Program",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "enum IInterfold.CommitteeSize",
+              "name": "committeeSize",
+              "type": "uint8"
+            },
+            {
+              "internalType": "uint256[2]",
+              "name": "inputWindow",
+              "type": "uint256[2]"
+            },
+            {
+              "internalType": "contract IE3Program",
+              "name": "e3Program",
+              "type": "address"
+            },
+            {
+              "internalType": "uint8",
+              "name": "paramSet",
+              "type": "uint8"
+            },
+            {
+              "internalType": "bytes",
+              "name": "computeProviderParams",
+              "type": "bytes"
+            },
+            {
+              "internalType": "bytes",
+              "name": "customParams",
+              "type": "bytes"
+            },
+            {
+              "internalType": "bool",
+              "name": "proofAggregationEnabled",
+              "type": "bool"
+            }
+          ],
+          "internalType": "struct IInterfold.E3RequestParams",
+          "name": "requestParams",
+          "type": "tuple"
+        }
+      ],
+      "name": "request",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "seed",
+              "type": "uint256"
+            },
+            {
+              "internalType": "enum IInterfold.CommitteeSize",
+              "name": "committeeSize",
+              "type": "uint8"
+            },
+            {
+              "internalType": "uint256",
+              "name": "requestBlock",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256[2]",
+              "name": "inputWindow",
+              "type": "uint256[2]"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "encryptionSchemeId",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "contract IE3Program",
+              "name": "e3Program",
+              "type": "address"
+            },
+            {
+              "internalType": "uint8",
+              "name": "paramSet",
+              "type": "uint8"
+            },
+            {
+              "internalType": "bytes",
+              "name": "customParams",
+              "type": "bytes"
+            },
+            {
+              "internalType": "contract IDecryptionVerifier",
+              "name": "decryptionVerifier",
+              "type": "address"
+            },
+            {
+              "internalType": "contract IPkVerifier",
+              "name": "pkVerifier",
+              "type": "address"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "committeePublicKey",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes32",
+              "name": "ciphertextOutput",
+              "type": "bytes32"
+            },
+            {
+              "internalType": "bytes",
+              "name": "plaintextOutput",
+              "type": "bytes"
+            },
+            {
+              "internalType": "address",
+              "name": "requester",
+              "type": "address"
+            },
+            {
+              "internalType": "bool",
+              "name": "proofAggregationEnabled",
+              "type": "bool"
+            }
+          ],
+          "internalType": "struct E3",
+          "name": "e3",
+          "type": "tuple"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IBondingRegistry",
+          "name": "_bondingRegistry",
+          "type": "address"
+        }
+      ],
+      "name": "setBondingRegistry",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract ICiphernodeRegistry",
+          "name": "_ciphernodeRegistry",
+          "type": "address"
+        }
+      ],
+      "name": "setCiphernodeRegistry",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "enum IInterfold.CommitteeSize",
+          "name": "size",
+          "type": "uint8"
+        },
+        {
+          "internalType": "uint32[2]",
+          "name": "threshold",
+          "type": "uint32[2]"
+        }
+      ],
+      "name": "setCommitteeThresholds",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "contract IDecryptionVerifier",
+          "name": "decryptionVerifier",
+          "type": "address"
+        }
+      ],
+      "name": "setDecryptionVerifier",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "_feeToken",
+          "type": "address"
+        }
+      ],
+      "name": "setFeeToken",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        },
+        {
+          "internalType": "bool",
+          "name": "allowed",
+          "type": "bool"
+        }
+      ],
+      "name": "setFeeTokenAllowed",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "_maxDuration",
+          "type": "uint256"
+        }
+      ],
+      "name": "setMaxDuration",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint8",
+          "name": "paramSet",
+          "type": "uint8"
+        },
+        {
+          "internalType": "bytes",
+          "name": "encodedParams",
+          "type": "bytes"
+        }
+      ],
+      "name": "setParamSet",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "bytes32",
+          "name": "encryptionSchemeId",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "contract IPkVerifier",
+          "name": "pkVerifier",
+          "type": "address"
+        }
+      ],
+      "name": "setPkVerifier",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "keyGenFixedPerNode",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "keyGenPerEncryptionProof",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "coordinationPerPair",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "availabilityPerNodePerSec",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "decryptionPerNode",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "publicationBase",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "verificationPerProof",
+              "type": "uint256"
+            },
+            {
+              "internalType": "address",
+              "name": "protocolTreasury",
+              "type": "address"
+            },
+            {
+              "internalType": "uint16",
+              "name": "marginBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "protocolShareBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "dkgUtilizationBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "computeUtilizationBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint16",
+              "name": "decryptUtilizationBps",
+              "type": "uint16"
+            },
+            {
+              "internalType": "uint32",
+              "name": "minCommitteeSize",
+              "type": "uint32"
+            },
+            {
+              "internalType": "uint32",
+              "name": "minThreshold",
+              "type": "uint32"
+            }
+          ],
+          "internalType": "struct IInterfold.PricingConfig",
+          "name": "config",
+          "type": "tuple"
+        }
+      ],
+      "name": "setPricingConfig",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "components": [
+            {
+              "internalType": "uint256",
+              "name": "dkgWindow",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "computeWindow",
+              "type": "uint256"
+            },
+            {
+              "internalType": "uint256",
+              "name": "decryptionWindow",
+              "type": "uint256"
+            }
+          ],
+          "internalType": "struct IInterfold.E3TimeoutConfig",
+          "name": "config",
+          "type": "tuple"
+        }
+      ],
+      "name": "setTimeoutConfig",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IERC20",
+          "name": "token",
+          "type": "address"
+        }
+      ],
+      "name": "treasuryClaim",
+      "outputs": [
+        {
+          "internalType": "uint256",
+          "name": "amount",
+          "type": "uint256"
+        }
+      ],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    }
+  ],
+  "bytecode": "0x",
+  "deployedBytecode": "0x",
+  "linkReferences": {},
+  "deployedLinkReferences": {},
+  "immutableReferences": {},
+  "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
+  "buildInfoId": "solc-0_8_28-9672985902d4f3c60307b637e6940bacad029c39"
+}

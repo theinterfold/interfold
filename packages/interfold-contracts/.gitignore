@@ -1,0 +1,60 @@
+# directories
+.coverage_artifacts
+.coverage_cache
+.coverage_contracts
+
+# Base Dirs
+
+# Base Dirs
+/artifacts/
+!/artifacts/
+/artifacts/**
+!/artifacts/contracts/
+
+# Contracts
+!/artifacts/contracts/registry/CiphernodeRegistryOwnable.sol/CiphernodeRegistryOwnable.json
+!/artifacts/contracts/Interfold.sol/Interfold.json
+
+# Interfaces
+
+# Interfaces
+!/artifacts/contracts/interfaces/
+!/artifacts/contracts/interfaces/IInterfold.sol/
+!/artifacts/contracts/interfaces/ICiphernodeRegistry.sol/
+!/artifacts/contracts/interfaces/IBondingRegistry.sol/
+!/artifacts/contracts/interfaces/ISlashingManager.sol/
+!/artifacts/contracts/interfaces/IInterfold.sol/IInterfold.json
+!/artifacts/contracts/interfaces/ICiphernodeRegistry.sol/ICiphernodeRegistry.json
+!/artifacts/contracts/interfaces/IBondingRegistry.sol/IBondingRegistry.json
+!/artifacts/contracts/interfaces/ISlashingManager.sol/ISlashingManager.json
+
+# Registry
+!/artifacts/contracts/registry/
+
+# Token
+!/artifacts/contracts/token/
+!/artifacts/contracts/token/InterfoldTicketToken.sol/
+!/artifacts/contracts/token/InterfoldTicketToken.sol/InterfoldTicketToken.json
+
+# Verifier build artifacts under artifacts/contracts/verifiers/ stay ignored (see /artifacts/**).
+
+build
+cache
+coverage
+dist
+node_modules
+types
+deployments/localhost
+ignition/deployments
+
+# files
+*.env
+*.log
+.DS_Store
+.pnp.*
+coverage.json
+package-lock.json
+pnpm-lock.yaml
+
+# Benchmark-generated Honk verifiers (secure-8192 etc.; not committed)
+contracts/verifiers/bfv/honk/.benchmark/

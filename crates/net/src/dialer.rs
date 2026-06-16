@@ -63,7 +63,7 @@ fn trace_error(r: Result<()>) {
 pub async fn dial_peers(
     cmd_tx: &mpsc::Sender<NetCommand>,
     event_tx: &broadcast::Sender<NetEvent>,
-    peers: &Vec<String>,
+    peers: &[String],
 ) -> Result<usize> {
     let futures: Vec<_> = peers
         .iter()
@@ -117,7 +117,7 @@ async fn wait_for_connection(
                         warn!("DialError!");
                         return match error.as_ref() {
                             // If we are dialing ourself then we should just fail
-                            DialError::NoAddresses { .. } => {
+                            DialError::NoAddresses => {
                                 warn!("DialError received. Returning RetryError::Failure");
                                 Err(RetryError::Failure(error.clone().into()))
                             }
@@ -131,17 +131,30 @@ async fn wait_for_connection(
                     } => {
                         trace!("OutgoingConnectionError!");
                         if connection_id == dial_connection {
-                            warn!(
-                                "Connection {} failed because of error {}. Retrying...",
-                                connection_id, error
-                            );
                             return match error.as_ref() {
                                 // If we are dialing ourself then we should just fail
-                                DialError::NoAddresses { .. } => {
+                                DialError::NoAddresses => {
+                                    Err(RetryError::Failure(error.clone().into()))
+                                }
+                                // The peer at this address has a different identity than
+                                // the /p2p/ component in the multiaddr pins — retrying the
+                                // same address can never succeed. The swarm event handler
+                                // has already re-keyed the routing entry to the new peer.
+                                DialError::WrongPeerId { .. } => {
+                                    warn!(
+                                        "Connection {} failed: {}. Not retrying stale address.",
+                                        connection_id, error
+                                    );
                                     Err(RetryError::Failure(error.clone().into()))
                                 }
                                 // Try again otherwise
-                                _ => Err(RetryError::Retry(error.clone().into())),
+                                _ => {
+                                    warn!(
+                                        "Connection {} failed because of error {}. Retrying...",
+                                        connection_id, error
+                                    );
+                                    Err(RetryError::Retry(error.clone().into()))
+                                }
                             };
                         }
                     }

@@ -4,19 +4,16 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod actors;
 mod cid;
-mod correlator;
 mod dialer;
 pub mod direct_requester;
 pub mod direct_responder;
-mod document_publisher;
+mod domain;
 pub mod events;
-mod net_event_batch;
-mod net_event_buffer;
-mod net_event_translator;
+mod keypair;
 mod net_interface;
 mod net_interface_handle;
-mod net_sync_manager;
 mod repo;
 
 use std::sync::Arc;
@@ -24,19 +21,20 @@ use std::sync::Arc;
 use actix::Recipient;
 use anyhow::bail;
 use anyhow::Result;
-pub use cid::ContentHash;
-pub use document_publisher::*;
 use e3_crypto::Cipher;
 use e3_data::Repository;
 use e3_events::{run_once, BusHandle, EffectsEnabled, EventStoreQueryBy, EventSubscriber, TsAgg};
-use net_event_buffer::NetEventBuffer;
-pub use net_event_translator::*;
-pub use net_interface::*;
-pub use net_interface_handle::*;
-use net_sync_manager::NetSyncManager;
-pub use repo::*;
 use tracing::error;
 use tracing::{info, instrument};
+
+use actors::{NetEventBuffer, NetSyncManager};
+
+pub use actors::*;
+pub use cid::ContentHash;
+pub use keypair::*;
+pub use net_interface::*;
+pub use net_interface_handle::*;
+pub use repo::*;
 
 pub async fn setup_libp2p_keypair(
     repository: Repository<Vec<u8>>,
@@ -48,7 +46,7 @@ pub async fn setup_libp2p_keypair(
                 info!("Found keypair in repository");
                 cipher.decrypt_data(&bytes)?
             }
-            None => bail!("No network keypair found in repository, please generate a new one using `enclave net generate-key`"),
+            None => bail!("No network keypair found in repository, please generate a new one using `interfold net generate-key`"),
         };
     Libp2pKeypair::try_from_bytes(&mut bytes)
 }
@@ -87,6 +85,7 @@ pub fn setup_net(
         &interface.tx(),
         &Arc::new(interface.rx()),
         eventstore.into(),
+        topic,
     );
 
     // Buffer all incoming events until SyncEnded

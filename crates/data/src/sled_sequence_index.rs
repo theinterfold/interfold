@@ -30,7 +30,7 @@ impl SledSequenceIndex {
 impl SequenceIndex for SledSequenceIndex {
     fn get(&self, key: u128) -> Result<Option<u64>> {
         self.db
-            .get(key.to_be_bytes().to_vec())
+            .get(key.to_be_bytes())
             .context(format!("Failed to fetch timestamp: {}", key))?
             .map(|v| Ok(u64::from_be_bytes(v.as_ref().try_into()?)))
             .transpose()
@@ -38,7 +38,7 @@ impl SequenceIndex for SledSequenceIndex {
 
     fn insert(&mut self, key: u128, value: u64) -> Result<()> {
         self.db
-            .insert(key.to_be_bytes().to_vec(), value.to_be_bytes().to_vec())
+            .insert(key.to_be_bytes(), value.to_be_bytes().to_vec())
             .context(format!("Failed to insert key: {}", key))?;
         Ok(())
     }

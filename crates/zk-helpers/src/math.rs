@@ -9,14 +9,31 @@
 
 use crate::CircuitsErrors;
 use e3_polynomial::center;
-use e3_polynomial::{CrtPolynomial, CrtPolynomialError, Polynomial};
-use fhe_math::rq::Poly;
+use e3_polynomial::{CrtPolynomial, CrtPolynomialError, Polynomial, ToPowerBasisPoly};
+use fhe::bfv::{Encoding, Plaintext};
 use fhe_math::zq::Modulus;
+use fhe_traits::FheDecoder;
+use ndarray::Array2;
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{ToPrimitive, Zero};
 
-// ---------- BFV / TRBFV parameter math ----------
+/// Encoded plaintext coefficients in poly encoding (u64 limb values).
+pub fn plaintext_poly_u64(pt: &Plaintext) -> Result<Vec<u64>, CircuitsErrors> {
+    Vec::<u64>::try_decode(pt, Encoding::poly()).map_err(CircuitsErrors::Fhe)
+}
+
+/// Copy an `Array2<u64>` into workspace `ndarray` with `BigInt` coefficients.
+pub fn array2_u64_to_bigint(arr: &Array2<u64>) -> Array2<BigInt> {
+    let (rows, cols) = arr.dim();
+    let mut out = Array2::<BigInt>::zeros((rows, cols));
+    for i in 0..rows {
+        for j in 0..cols {
+            out[[i, j]] = BigInt::from(arr[[i, j]]);
+        }
+    }
+    out
+}
 
 /// Product Q = q_0 * q_1 * ... * q_{L-1} of CRT moduli.
 pub fn compute_q_product(moduli: &[u64]) -> BigUint {
@@ -129,7 +146,7 @@ pub fn compute_k0is(moduli: &[u64], plaintext_modulus: u64) -> Result<Vec<u64>, 
 
 /// Converts an FHE polynomial to CRT form with reverse + center (no ZKP reduce).
 pub fn fhe_poly_to_crt_centered(
-    poly: &Poly,
+    poly: &impl ToPowerBasisPoly,
     moduli: &[u64],
 ) -> Result<CrtPolynomial, CrtPolynomialError> {
     let mut crt = CrtPolynomial::from_fhe_polynomial(poly);

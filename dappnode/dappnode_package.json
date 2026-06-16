@@ -1,28 +1,28 @@
 {
-  "name": "enclave-ciphernode.public.dappnode.eth",
+  "name": "interfold-ciphernode.public.dappnode.eth",
   "version": "0.1.8",
   "upstreamVersion": "0.1.8",
   "upstreamArg": "UPSTREAM_VERSION",
-  "upstreamRepo": "gnosisguild/enclave",
-  "shortDescription": "Enclave Ciphernode - Run a node for confidential computing",
-  "description": "Run an Enclave ciphernode to participate in the E3 (Encrypted Execution Environments) network.",
+  "upstreamRepo": "gnosisguild/interfold",
+  "shortDescription": "Interfold Ciphernode - Run a node for confidential computing",
+  "description": "Run an Interfold ciphernode to participate in the E3 (Encrypted Execution Environments) network.",
   "type": "service",
   "mainService": "ciphernode",
   "author": "Gnosis Guild <https://github.com/gnosisguild>",
   "categories": ["Blockchain", "Developer tools"],
-  "keywords": ["enclave", "fhe", "mpc", "ciphernode", "threshold", "encryption"],
+  "keywords": ["interfold", "fhe", "mpc", "ciphernode", "threshold", "encryption"],
   "links": {
-    "homepage": "https://enclave.gg",
-    "docs": "https://docs.enclave.gg",
-    "repository": "https://github.com/gnosisguild/enclave"
+    "homepage": "https://interfold.gg",
+    "docs": "https://docs.interfold.gg",
+    "repository": "https://github.com/gnosisguild/interfold"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/gnosisguild/enclave.git",
+    "url": "https://github.com/gnosisguild/interfold.git",
     "directory": "dappnode"
   },
   "bugs": {
-    "url": "https://github.com/gnosisguild/enclave/issues"
+    "url": "https://github.com/gnosisguild/interfold/issues"
   },
   "license": "LGPL-3.0-only",
   "requirements": {

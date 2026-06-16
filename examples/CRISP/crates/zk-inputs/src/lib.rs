@@ -28,7 +28,7 @@ use fhe_traits::FheDecrypter;
 use fhe_traits::{DeserializeParametrized, FheEncoder, Serialize};
 use num_bigint::BigInt;
 use num_traits::Zero;
-use rand::thread_rng;
+use rand::rng;
 use std::sync::Arc;
 mod ciphertext_addition;
 mod utils;
@@ -215,7 +215,7 @@ impl ZKInputsGenerator {
             .with_context(|| "Failed to encode plaintext")?;
 
         let (ct, _u_rns, _e0_rns, _e1_rns) = pk
-            .try_encrypt_extended(&pt, &mut thread_rng())
+            .try_encrypt_extended(&pt, &mut rng())
             .with_context(|| "Failed to encrypt plaintext")?;
 
         Ok(ct.to_bytes())
@@ -253,7 +253,7 @@ impl ZKInputsGenerator {
     /// Tuple containing the secret key bytes and public key bytes
     pub fn generate_keys(&self) -> Result<(Vec<u8>, Vec<u8>)> {
         // Generate keys.
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let sk = SecretKey::random(&self.bfv_params, &mut rng);
         let pk = PublicKey::new(&sk, &mut rng);
 

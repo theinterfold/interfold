@@ -18,4 +18,4 @@ https://docs.theinterfold.com/architecture-overview
 https://docs.theinterfold.com/use-cases
 
 Repository:
-https://github.com/gnosisguild/enclave
+https://github.com/gnosisguild/interfold

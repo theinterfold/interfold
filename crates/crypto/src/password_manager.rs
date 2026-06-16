@@ -30,6 +30,7 @@ impl InMemPasswordManager {
         Self(Some(value))
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(value: &str) -> Self {
         Self::new(Zeroizing::new(value.as_bytes().to_vec()))
     }
@@ -132,7 +133,7 @@ impl PasswordManager for FilePasswordManager {
     async fn set_key(&mut self, contents: Zeroizing<Vec<u8>>) -> Result<()> {
         let path = &self.path;
 
-        if contents.len() == 0 {
+        if contents.is_empty() {
             bail!("Password must contain data!")
         }
 

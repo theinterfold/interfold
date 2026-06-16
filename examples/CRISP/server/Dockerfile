@@ -1,5 +1,5 @@
 ############### stage 0: base-dev ###############
-ARG RUST_VERSION=1.88.0
+ARG RUST_VERSION=1.91.1
 ARG SKIP_SOLIDITY=0
 
 FROM rust:${RUST_VERSION}-slim-bullseye AS base-dev
@@ -8,7 +8,7 @@ ENV CARGO_HOME=/usr/local/cargo
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
-    jq pkg-config libssl-dev curl wget ca-certificates && \
+    jq pkg-config libssl-dev curl wget ca-certificates protobuf-compiler && \
     rm -rf /var/lib/apt/lists/*
 
 RUN wget https://github.com/argotorg/solidity/releases/download/v0.8.27/solc-static-linux \
@@ -25,7 +25,7 @@ RUN cargo install --locked cargo-chef
 FROM base-dev AS chef
 WORKDIR /app
 
-# COPY examples/CRISP/.enclave/support/dev/Cargo.toml examples/CRISP/.enclave/support/dev/
+# COPY examples/CRISP/.interfold/support/dev/Cargo.toml examples/CRISP/.interfold/support/dev/
 COPY examples/CRISP/server/Cargo.toml examples/CRISP/server/
 COPY examples/CRISP/program/Cargo.toml examples/CRISP/program/
 COPY examples/CRISP/program/client/Cargo.toml examples/CRISP/program/client/
@@ -127,7 +127,7 @@ ENV SKIP_SOLIDITY=${SKIP_SOLIDITY}
 
 WORKDIR /app
 
-COPY examples/CRISP/.enclave/   examples/CRISP/.enclave/
+COPY examples/CRISP/.interfold/   examples/CRISP/.interfold/
 COPY examples/CRISP/server/    examples/CRISP/server/
 COPY examples/CRISP/program/   examples/CRISP/program/
 COPY examples/CRISP/crates/   examples/CRISP/crates/

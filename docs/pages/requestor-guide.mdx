@@ -4,12 +4,12 @@ title: 'Requestor Guide'
 
 # Requestor Guide
 
-This page is for **anyone using an Enclave-powered application** — voting in a private DAO, joining
-a confidential auction, contributing data to a private analytics round, or anything else built on
-top of Encrypted Execution Environments (E3s).
+This page is for **anyone using an Interfold-powered application** — voting in a private DAO,
+joining a confidential auction, contributing data to a private analytics round, or anything else
+built on top of Encrypted Execution Environments (E3s).
 
-If you're a developer integrating with the Enclave contracts directly, see
-[Building with Interfold](/building-with-enclave) and the [SDK reference](/sdk). The page you're
+If you're a developer integrating with the Interfold contracts directly, see
+[Building with Interfold](/building-with-interfold) and the [SDK reference](/sdk). The page you're
 reading now is the plain-English version: what you're paying for, what to do when something goes
 wrong, and how to read the security knobs on a request.
 
@@ -50,7 +50,7 @@ From the moment you submit until the result is published, every E3 walks through
 | 5   | **Decrypt & publish** | The committee jointly decrypts the result and publishes it on-chain.                           | The plaintext result appears in the dApp. |
 
 The application you're using will surface phase changes for you. If you want to inspect them
-yourself, the Enclave contract emits an `E3StageChanged` event for every transition.
+yourself, the Interfold contract emits an `E3StageChanged` event for every transition.
 
 ## 3. When things go wrong
 
@@ -91,8 +91,8 @@ _more_ than your initial fee.
 Most failures are detected automatically by the protocol's slashing manager and mark the round
 failed in the same transaction. A few timeout-based failures (the `*Timeout` reasons in the table)
 need someone to _push_ the round across the finish line by calling `markE3Failed(e3Id)` on the
-Enclave contract. **This call is permissionless** — the application you're using will usually do it
-for you, but you can do it yourself from a block explorer if it's stalled.
+Interfold contract. **This call is permissionless** — the application you're using will usually do
+it for you, but you can do it yourself from a block explorer if it's stalled.
 
 ### Claiming your refund
 
@@ -118,7 +118,7 @@ it.
 A few practical points that catch people out:
 
 - **Approve only the exact fee.** Use the dApp's "estimate" / `getE3Quote` flow to read the exact
-  fee, and approve that amount. Don't grant unlimited approvals to the Enclave contract.
+  fee, and approve that amount. Don't grant unlimited approvals to the Interfold contract.
 - **You can't top up later.** If the protocol's pricing changes after you submit, your locked fee is
   what runs your round. Don't try to amend an in-flight request — submit a new one if needed.
 - **You can cancel before compute starts.** Cancellation routes through the protocol's standard

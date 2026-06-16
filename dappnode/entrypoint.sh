@@ -1,5 +1,5 @@
 #!/bin/bash
-# DAppNode Enclave Ciphernode Entrypoint
+# DAppNode Interfold Ciphernode Entrypoint
 set -e
 
 CONFIG_DIR="/data"
@@ -9,7 +9,7 @@ TEMPLATE_FILE="/opt/config.template.yaml"
 log() { echo "[$(date '+%H:%M:%S')] $1"; }
 
 echo "=========================================="
-echo "  Enclave Ciphernode - ${NETWORK:-sepolia}"
+echo "  Interfold Ciphernode - ${NETWORK:-sepolia}"
 echo "=========================================="
 
 # Validate RPC URL (required)
@@ -40,17 +40,17 @@ envsubst < "$TEMPLATE_FILE" > "$CONFIG_FILE"
 # Setup secrets if provided
 if [ -n "$ENCRYPTION_PASSWORD" ]; then
     log "Setting encryption password..."
-    echo "$ENCRYPTION_PASSWORD" | enclave password set --config "$CONFIG_FILE" 2>/dev/null || true
+    echo "$ENCRYPTION_PASSWORD" | interfold password set --config "$CONFIG_FILE" 2>/dev/null || true
 fi
 
 if [ -n "$NETWORK_PRIVATE_KEY" ]; then
     log "Setting network key..."
-    enclave net set-key --config "$CONFIG_FILE" --net-keypair "$NETWORK_PRIVATE_KEY" 2>/dev/null || true
+    interfold net set-key --config "$CONFIG_FILE" --net-keypair "$NETWORK_PRIVATE_KEY" 2>/dev/null || true
 fi
 
 if [ -n "$PRIVATE_KEY" ]; then
     log "Setting wallet key..."
-    enclave wallet set --config "$CONFIG_FILE" --private-key "$PRIVATE_KEY" 2>/dev/null || true
+    interfold wallet set --config "$CONFIG_FILE" --private-key "$PRIVATE_KEY" 2>/dev/null || true
 fi
 
 # Build CLI args
@@ -74,5 +74,5 @@ fi
 [ -n "$EXTRA_OPTS" ] && CLI_ARGS="$CLI_ARGS $EXTRA_OPTS"
 
 # Start
-log "Starting: enclave start $CLI_ARGS"
-exec enclave start $CLI_ARGS
+log "Starting: interfold start $CLI_ARGS"
+exec interfold start $CLI_ARGS

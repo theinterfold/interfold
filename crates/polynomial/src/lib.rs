@@ -26,9 +26,11 @@
 //! - Zero-knowledge proofs: Polynomial commitment schemes.
 
 pub mod crt_polynomial;
+mod fhe_poly;
 pub mod polynomial;
 pub mod utils;
 
 pub use crt_polynomial::{CrtPolynomial, CrtPolynomialError};
+pub use fhe_poly::ToPowerBasisPoly;
 pub use polynomial::{Polynomial, PolynomialError};
 pub use utils::*;

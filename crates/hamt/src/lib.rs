@@ -38,6 +38,25 @@ pub struct Hamt<K, V> {
     size: usize,
 }
 
+impl<K, V> Clone for Hamt<K, V> {
+    fn clone(&self) -> Self {
+        Hamt {
+            root: self.root.clone(),
+            size: self.size,
+        }
+    }
+}
+
+impl<K, V> Default for Hamt<K, V>
+where
+    K: Hash + Eq + Clone + Send + Sync,
+    V: Clone + Send + Sync,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<K, V> Hamt<K, V>
 where
     K: Hash + Eq + Clone + Send + Sync,
@@ -66,10 +85,11 @@ where
 
     pub fn insert(&self, key: K, value: V) -> Self {
         let hash = Self::hash_key(&key);
+        let is_new = Self::get_rec(&self.root, hash, &key, 0).is_none();
         let new_root = Self::insert_rec(self.root.clone(), hash, key, value, 0);
         Hamt {
             root: new_root,
-            size: self.size + 1,
+            size: if is_new { self.size + 1 } else { self.size },
         }
     }
 
@@ -212,6 +232,136 @@ where
                     entries.iter().find(|(k, _)| k == key).map(|(_, v)| v)
                 } else {
                     None
+                }
+            }
+        }
+    }
+
+    /// Returns a new HAMT with `key` removed. If the key is absent the
+    /// returned HAMT is logically identical to `self` (structure is shared).
+    pub fn remove(&self, key: &K) -> Self {
+        let hash = Self::hash_key(key);
+        match Self::remove_rec(&self.root, hash, key, 0) {
+            Some(new_root) => Hamt {
+                root: new_root,
+                size: self.size - 1,
+            },
+            None => Hamt {
+                root: self.root.clone(),
+                size: self.size,
+            },
+        }
+    }
+
+    /// Recursively removes `key`. Returns `Some(new_node)` when the key was
+    /// found and removed (the caller decrements the size), or `None` when the
+    /// key was absent (the node is left untouched so structure can be shared).
+    fn remove_rec(
+        node: &Arc<Node<K, V>>,
+        hash: u64,
+        key: &K,
+        shift: u32,
+    ) -> Option<Arc<Node<K, V>>> {
+        match node.as_ref() {
+            Node::Empty => None,
+
+            Node::Leaf {
+                hash: leaf_hash,
+                key: leaf_key,
+                ..
+            } => {
+                if *leaf_hash == hash && leaf_key == key {
+                    Some(Arc::new(Node::Empty))
+                } else {
+                    None
+                }
+            }
+
+            Node::Collision {
+                hash: collision_hash,
+                entries,
+            } => {
+                if *collision_hash != hash {
+                    return None;
+                }
+                let idx = entries.iter().position(|(k, _)| k == key)?;
+                let mut remaining: Vec<(K, V)> = entries.clone();
+                remaining.remove(idx);
+                if remaining.len() == 1 {
+                    let (k, v) = remaining.pop().unwrap();
+                    Some(Arc::new(Node::Leaf {
+                        hash: *collision_hash,
+                        key: k,
+                        value: v,
+                    }))
+                } else {
+                    Some(Arc::new(Node::Collision {
+                        hash: *collision_hash,
+                        entries: remaining,
+                    }))
+                }
+            }
+
+            Node::Internal { bitmap, children } => {
+                let chunk = Self::chunk(hash, shift);
+                let bit = 1u32 << chunk;
+                if bitmap & bit == 0 {
+                    return None;
+                }
+                let index = Self::index_from_bitmap(*bitmap, bit);
+                let new_child =
+                    Self::remove_rec(&children[index], hash, key, shift + BITS_PER_LEVEL)?;
+
+                let child_is_empty = matches!(new_child.as_ref(), Node::Empty);
+                if child_is_empty {
+                    let new_bitmap = bitmap & !bit;
+                    if new_bitmap == 0 {
+                        return Some(Arc::new(Node::Empty));
+                    }
+                    let mut new_children = children.clone();
+                    new_children.remove(index);
+                    Some(Arc::new(Node::Internal {
+                        bitmap: new_bitmap,
+                        children: new_children,
+                    }))
+                } else {
+                    let mut new_children = children.clone();
+                    new_children[index] = new_child;
+                    Some(Arc::new(Node::Internal {
+                        bitmap: *bitmap,
+                        children: new_children,
+                    }))
+                }
+            }
+        }
+    }
+
+    /// Returns true if `key` is present.
+    pub fn contains_key(&self, key: &K) -> bool {
+        self.get(key).is_some()
+    }
+
+    /// Collects all key/value pairs into a `Vec`. Iteration order is
+    /// unspecified (hash-driven), so callers that need a deterministic order
+    /// must sort the result themselves.
+    pub fn entries(&self) -> Vec<(K, V)> {
+        let mut out = Vec::with_capacity(self.size);
+        Self::collect_entries(&self.root, &mut out);
+        out
+    }
+
+    fn collect_entries(node: &Arc<Node<K, V>>, out: &mut Vec<(K, V)>) {
+        match node.as_ref() {
+            Node::Empty => {}
+            Node::Leaf { key, value, .. } => out.push((key.clone(), value.clone())),
+            Node::Internal { children, .. } => {
+                for child in children {
+                    Self::collect_entries(child, out);
+                }
+            }
+            Node::Collision { entries, .. } => {
+                for (k, v) in entries {
+                    out.push((k.clone(), v.clone()));
                 }
             }
         }
@@ -450,5 +600,93 @@ mod tests {
         // Verify original map unchanged
         assert_eq!(Some(&0), hamt.get(&0));
         assert_eq!(Some(&0), hashmap.get(&0));
+    }
+
+    #[test]
+    fn test_remove_basic() {
+        let map = Hamt::new()
+            .insert("a".to_string(), 1)
+            .insert("b".to_string(), 2)
+            .insert("c".to_string(), 3);
+        assert_eq!(3, map.len());
+
+        let removed = map.remove(&"b".to_string());
+        assert_eq!(2, removed.len());
+        assert_eq!(None, removed.get(&"b".to_string()));
+        assert_eq!(Some(&1), removed.get(&"a".to_string()));
+        assert_eq!(Some(&3), removed.get(&"c".to_string()));
+
+        // Original map is unchanged (persistence / structural sharing).
+        assert_eq!(3, map.len());
+        assert_eq!(Some(&2), map.get(&"b".to_string()));
+    }
+
+    #[test]
+    fn test_remove_absent_key_is_noop() {
+        let map = Hamt::new().insert("a".to_string(), 1);
+        let same = map.remove(&"missing".to_string());
+        assert_eq!(1, same.len());
+        assert_eq!(Some(&1), same.get(&"a".to_string()));
+    }
+
+    #[test]
+    fn test_remove_until_empty() {
+        let mut map = Hamt::new();
+        for i in 0..50 {
+            map = map.insert(i, i * 10);
+        }
+        for i in 0..50 {
+            map = map.remove(&i);
+            assert_eq!(None, map.get(&i));
+        }
+        assert!(map.is_empty());
+        assert_eq!(0, map.len());
+    }
+
+    #[test]
+    fn test_contains_key_and_entries() {
+        let map = Hamt::new().insert(1u32, 10).insert(2, 20).insert(3, 30);
+        assert!(map.contains_key(&2));
+        assert!(!map.contains_key(&99));
+
+        let mut entries = map.entries();
+        entries.sort();
+        assert_eq!(vec![(1, 10), (2, 20), (3, 30)], entries);
+    }
+
+    #[test]
+    fn test_equivalence_with_btreemap() {
+        use std::collections::BTreeMap;
+
+        // Deterministic pseudo-random sequence of insert/remove operations,
+        // checked against a BTreeMap reference oracle.
+        let mut hamt: Hamt<u32, u32> = Hamt::new();
+        let mut reference: BTreeMap<u32, u32> = BTreeMap::new();
+        let mut state: u64 = 0x9e3779b97f4a7c15;
+
+        for _ in 0..5000 {
+            state = state.wrapping_mul(6364136223846793005).wrapping_add(1);
+            let key = ((state >> 33) % 256) as u32;
+            let op = (state >> 29) & 0x3;
+            if op == 0 {
+                hamt = hamt.remove(&key);
+                reference.remove(&key);
+            } else {
+                let value = (state & 0xffff) as u32;
+                hamt = hamt.insert(key, value);
+                reference.insert(key, value);
+            }
+            assert_eq!(reference.len(), hamt.len());
+        }
+
+        // Every reference entry must be reachable with the same value.
+        for (k, v) in &reference {
+            assert_eq!(Some(v), hamt.get(k));
+        }
+        // And the full entry set must match exactly.
+        let mut hamt_entries = hamt.entries();
+        hamt_entries.sort();
+        let ref_entries: Vec<(u32, u32)> = reference.into_iter().collect();
+        assert_eq!(ref_entries, hamt_entries);
     }
 }

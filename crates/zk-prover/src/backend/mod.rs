@@ -75,7 +75,7 @@ impl ZkBackend {
         })?;
 
         let home_dir = base_dirs.home_dir();
-        let noir_dir = home_dir.join(".enclave").join("noir");
+        let noir_dir = home_dir.join(".interfold").join("noir");
         let bb_binary = BBPath::Default(noir_dir.join("bin").join("bb"));
         let circuits_dir = noir_dir.join("circuits");
         let work_dir = noir_dir.join("work").join(node_name);

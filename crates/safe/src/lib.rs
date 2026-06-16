@@ -638,11 +638,11 @@ mod tests {
         // Create pattern with 48 alternating ABSORB(1) and SQUEEZE(1) operations
         // This is the maximum supported (48 words * 4 bytes = 192 bytes, leaving 64 for domain separator)
         let mut io_pattern = [0u32; 48];
-        for i in 0..48 {
+        for (i, slot) in io_pattern.iter_mut().enumerate() {
             if i % 2 == 0 {
-                io_pattern[i] = ABSORB_FLAG | 1; // ABSORB(1)
+                *slot = ABSORB_FLAG | 1; // ABSORB(1)
             } else {
-                io_pattern[i] = SQUEEZE_FLAG | 1; // SQUEEZE(1)
+                *slot = SQUEEZE_FLAG | 1; // SQUEEZE(1)
             }
         }
 
@@ -661,11 +661,11 @@ mod tests {
 
         // Create pattern with 48 alternating operations (max supported: 192 bytes of IO pattern)
         let mut io_pattern = [0u32; 48];
-        for i in 0..48 {
+        for (i, slot) in io_pattern.iter_mut().enumerate() {
             if i % 2 == 0 {
-                io_pattern[i] = ABSORB_FLAG | 1;
+                *slot = ABSORB_FLAG | 1;
             } else {
-                io_pattern[i] = SQUEEZE_FLAG | 1;
+                *slot = SQUEEZE_FLAG | 1;
             }
         }
 

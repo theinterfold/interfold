@@ -146,8 +146,8 @@ impl Computation for Inputs {
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
         let moduli = dkg_params.moduli();
 
-        let pk0is = crate::math::fhe_poly_to_crt_centered(&data.public_key.c.c[0], moduli)?;
-        let pk1is = crate::math::fhe_poly_to_crt_centered(&data.public_key.c.c[1], moduli)?;
+        let pk0is = crate::math::fhe_poly_to_crt_centered(&data.public_key.c[0], moduli)?;
+        let pk1is = crate::math::fhe_poly_to_crt_centered(&data.public_key.c[1], moduli)?;
 
         Ok(Inputs { pk0is, pk1is })
     }

@@ -7,8 +7,7 @@
 use std::env;
 
 use super::*;
-use crate::{config::VersionInfo, error::ZkError, test_utils::get_tempdir};
-use sha2::{Digest, Sha256};
+use crate::{config::VersionInfo, test_utils::get_tempdir};
 use tokio::fs;
 
 fn test_backend(temp_path: &std::path::Path, config: ZkConfig) -> ZkBackend {
@@ -61,7 +60,7 @@ async fn test_version_info_roundtrip() {
 
 #[tokio::test]
 async fn test_check_status_full_setup_needed() {
-    if let Some(_) = env::var("E3_CUSTOM_BB").ok() {
+    if env::var("E3_CUSTOM_BB").is_ok() {
         return;
     }
 
@@ -78,7 +77,7 @@ async fn test_check_status_full_setup_needed() {
 
 #[tokio::test]
 async fn test_check_status_ready_when_installed() {
-    if let Some(_) = env::var("E3_CUSTOM_BB").ok() {
+    if env::var("E3_CUSTOM_BB").is_ok() {
         return;
     }
 
@@ -111,7 +110,7 @@ async fn test_check_status_ready_when_installed() {
 
 #[tokio::test]
 async fn test_check_status_bb_needs_update() {
-    if let Some(_) = env::var("E3_CUSTOM_BB").ok() {
+    if env::var("E3_CUSTOM_BB").is_ok() {
         return;
     }
 

@@ -11,7 +11,7 @@ deployments
 .cargo
 .next
 .cache-synpress
-.enclave
+.interfold
 
 # files
 *.env
@@ -19,7 +19,7 @@ deployments
 .DS_Store
 .pnp.*
 coverage.json
-enclave.config.yaml
+interfold.config.yaml
 
 # lock files
 package-lock.json

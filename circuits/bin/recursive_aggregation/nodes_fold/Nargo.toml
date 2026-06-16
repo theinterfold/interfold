@@ -1,7 +1,7 @@
 [package]
 name = "nodes_fold"
 type = "bin"
-authors = ["Gnosis Guild / Enclave"]
+authors = ["Gnosis Guild / Interfold"]
 
 [dependencies]
 lib = { path = "../../../lib" }

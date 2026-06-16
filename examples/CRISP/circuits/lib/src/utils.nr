@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use enclave_lib::math::polynomial::Polynomial;
+use interfold_lib::math::polynomial::Polynomial;
 
 use crate::constants::{MAX_OPTIONS, MAX_VOTE_BITS};
 

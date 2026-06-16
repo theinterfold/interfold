@@ -5,6 +5,10 @@ set -euo pipefail  # Stricter error handling
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PLAINTEXT="4,0"
+
+# Set by test.sh via export_integration_flags
+PROOF_AGGREGATION_ENABLED="${PROOF_AGGREGATION_ENABLED:-false}"
+INTEGRATION_DKG_TIMEOUT="${INTEGRATION_DKG_TIMEOUT:-1300}"
 ID=$(date +%s)
 
 if [[ "$SCRIPT_DIR" != "$(pwd)" ]]; then 
@@ -30,21 +34,21 @@ CIPHERNODE_ADDRESS_4="0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"
 CIPHERNODE_ADDRESS_5="0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc"
 
 
-if command -v enclave >/dev/null 2>&1; then
-   ENCLAVE_BIN="enclave"
-elif [[ -f "$ROOT_DIR/target/debug/enclave" ]]; then
-   ENCLAVE_BIN="$ROOT_DIR/target/debug/enclave"
+if command -v interfold >/dev/null 2>&1; then
+   INTERFOLD_BIN="interfold"
+elif [[ -f "$ROOT_DIR/target/debug/interfold" ]]; then
+   INTERFOLD_BIN="$ROOT_DIR/target/debug/interfold"
 else
-   cargo build --locked --bin enclave
-   ENCLAVE_BIN="$ROOT_DIR/target/debug/enclave"
+   cargo build --locked --bin interfold
+   INTERFOLD_BIN="$ROOT_DIR/target/debug/interfold"
 fi
-echo "Enclave binary: $ENCLAVE_BIN"
+echo "Interfold binary: $INTERFOLD_BIN"
 
 # Function to clean up background processes
 cleanup() {
     echo "Cleaning up processes..."
     jobs -p | xargs -r kill -9 2>/dev/null || true
-    pkill -9 -f "target/debug/enclave" || true
+    pkill -9 -f "target/debug/interfold" || true
     pkill -9 -f "hardhat" || true
     pkill -9 -f "anvil" || true
     exit ${1:-1}
@@ -101,7 +105,7 @@ waiton-files() {
   wait_for_committee_pubkey() {
     local e3_id="$1"
     local out_file="$2"
-    local timeout="${3:-1300}"
+    local timeout="${3:-$INTEGRATION_DKG_TIMEOUT}"
     local start_time=$(date +%s)
 
     while true; do
@@ -175,16 +179,16 @@ waiton-files() {
     esac
   }
 
-enclave_password_set() {
+interfold_password_set() {
   local name="$1"
   local password="$2"
-  $ENCLAVE_BIN password set \
+  $INTERFOLD_BIN password set \
     --name $name \
-    --config "$SCRIPT_DIR/enclave.config.yaml" \
+    --config "$SCRIPT_DIR/interfold.config.yaml" \
     --password "$password"
 }
 
-enclave_start() {
+interfold_start() {
    local name="$1"
    heading "Launch ciphernode $name"
 
@@ -194,65 +198,65 @@ enclave_start() {
       extra_args="--otel=${OTEL}"
    fi
 
-   $ENCLAVE_BIN start -v \
+   $INTERFOLD_BIN start -v \
      --name "$name" \
-     --config "$SCRIPT_DIR/enclave.config.yaml" $extra_args & 
+     --config "$SCRIPT_DIR/interfold.config.yaml" $extra_args & 
 }
 
-enclave_nodes_up() {
-   $ENCLAVE_BIN nodes up -v \
-     --config "$SCRIPT_DIR/enclave.config.yaml" & 
+interfold_nodes_up() {
+   $INTERFOLD_BIN nodes up -v \
+     --config "$SCRIPT_DIR/interfold.config.yaml" & 
 }
 
-enclave_nodes_down() {
-  $ENCLAVE_BIN nodes down  
+interfold_nodes_down() {
+  $INTERFOLD_BIN nodes down  
 }
 
-enclave_wallet_set() {
+interfold_wallet_set() {
   local name="$1"
   local private_key="$2"
 
-  $ENCLAVE_BIN wallet set \
+  $INTERFOLD_BIN wallet set \
     --name $name \
-    --config "$SCRIPT_DIR/enclave.config.yaml" \
+    --config "$SCRIPT_DIR/interfold.config.yaml" \
     --private-key "$private_key"
 }
 
-enclave_net_set_key() {
+interfold_net_set_key() {
   local name="$1"
   local private_key="$2"
 
-  $ENCLAVE_BIN net set-key \
+  $INTERFOLD_BIN net set-key \
     --name $name \
-    --config "$SCRIPT_DIR/enclave.config.yaml" \
+    --config "$SCRIPT_DIR/interfold.config.yaml" \
     --net-keypair "$private_key"
 }
 
-enclave_nodes_stop() {
+interfold_nodes_stop() {
   local name="$1"
 
-  $ENCLAVE_BIN nodes stop $name -v \
-    --config "$SCRIPT_DIR/enclave.config.yaml"
+  $INTERFOLD_BIN nodes stop $name -v \
+    --config "$SCRIPT_DIR/interfold.config.yaml"
 }
 
-enclave_nodes_start() {
+interfold_nodes_start() {
   local name="$1"
 
-  $ENCLAVE_BIN nodes start $name -v \
-    --config "$SCRIPT_DIR/enclave.config.yaml"
+  $INTERFOLD_BIN nodes start $name -v \
+    --config "$SCRIPT_DIR/interfold.config.yaml"
 }
 
 kill_proc() {
   local name=$1
-  local pid=$(ps aux | grep 'enclave' | grep "\--name $name" | awk '{ print $2 }')
+  local pid=$(ps aux | grep 'interfold' | grep "\--name $name" | awk '{ print $2 }')
   echo "Killing $pid"
   kill $pid
 }
 
 kill_em_all() {
-  echo "Killing enclave"
-  pkill -9 -f "target/debug/enclave" || true
-  pkill -9 -f "enclave start" || true
+  echo "Killing interfold"
+  pkill -9 -f "target/debug/interfold" || true
+  pkill -9 -f "interfold start" || true
   pkill -9 -f "anvil" || true
 }
 
@@ -269,10 +273,10 @@ ensure_process_count_equals() {
 }
 
 gracefull_shutdown() {
-  enclave_nodes_down
+  interfold_nodes_down
   echo "waiting 5 seconds for processes to shutdown"
   sleep 5
-  ensure_process_count_equals "target/debug/enclave" 0 || return 1
+  ensure_process_count_equals "target/debug/interfold" 0 || return 1
   kill_em_all
 }
 
@@ -280,9 +284,9 @@ daemon_query_events() {
   local name="$1"
   local output_file="${2:-$SCRIPT_DIR/output/events.txt}"
 
-  local ctrl_port=$($ENCLAVE_BIN config get ctrl_port \
+  local ctrl_port=$($INTERFOLD_BIN config get ctrl_port \
     --name $name \
-    --config "$SCRIPT_DIR/enclave.config.yaml")
+    --config "$SCRIPT_DIR/interfold.config.yaml")
 
   local json_payload='{"command":{"EventsQuery":{"since":0,"limit":10}}}'
   curl -sf -X POST "http://127.0.0.1:${ctrl_port}" \

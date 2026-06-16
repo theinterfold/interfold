@@ -101,12 +101,13 @@ We had a way to save bytes data with the `DataStore` and had a way to specify wh
 saved but actors need to be restartable and be able to be hydrated and we needed a standard way to
 accomplish this. To do this in typical Rust fashion we created a set of traits:
 
-- [`Snapshot`](https://github.com/gnosisguild/enclave/blob/main/crates/data/src/snapshot.rs) for
+- [`Snapshot`](https://github.com/gnosisguild/interfold/blob/main/crates/data/src/snapshot.rs) for
   defining how an object can create a snapshot of it's state
-- [`Checkpoint`](https://github.com/gnosisguild/enclave/blob/main/crates/data/src/snapshot.rs) for
+- [`Checkpoint`](https://github.com/gnosisguild/interfold/blob/main/crates/data/src/snapshot.rs) for
   defining how to save that snapshot to a repository
-- [`FromSnapshot`](https://github.com/gnosisguild/enclave/blob/main/crates/data/src/snapshot.rs) and
-  [`FromSnapshotWithParams`](https://github.com/gnosisguild/enclave/blob/main/crates/data/src/snapshot.rs)
+- [`FromSnapshot`](https://github.com/gnosisguild/interfold/blob/main/crates/data/src/snapshot.rs)
+  and
+  [`FromSnapshotWithParams`](https://github.com/gnosisguild/interfold/blob/main/crates/data/src/snapshot.rs)
   for defining how an object could be reconstituted from a snapshot
 
 This worked well especially for objects who's persistable state needs to be derived from a subset of
@@ -169,6 +170,6 @@ struct MyActor {
 ```
 
 We have also extracted the key calculation mechanism to a
-[`StoreKeys`](https://github.com/gnosisguild/enclave/blob/main/crates/config/src/store_keys.rs)
+[`StoreKeys`](https://github.com/gnosisguild/interfold/blob/main/crates/config/src/store_keys.rs)
 struct. This is used in various places when creating repsitory factories for example
-[here](https://github.com/gnosisguild/enclave/blob/main/crates/aggregator/src/repositories.rs)
+[here](https://github.com/gnosisguild/interfold/blob/main/crates/aggregator/src/repositories.rs)

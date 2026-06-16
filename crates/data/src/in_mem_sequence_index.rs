@@ -12,6 +12,12 @@ pub struct InMemSequenceIndex {
     index: BTreeMap<u128, u64>,
 }
 
+impl Default for InMemSequenceIndex {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl InMemSequenceIndex {
     pub fn new() -> Self {
         Self {

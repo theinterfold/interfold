@@ -18,5 +18,5 @@ pnpm concurrently \
     "anvil --host 0.0.0.0 --chain-id 31337 --block-time 1 --mnemonic 'test test test test test test test test test test test junk' --silent" \
     "pnpm dev:ciphernodes" \
     "TEST_MODE=1 pnpm dev:server" \
-    "enclave program start"
+    "interfold program start"
 

@@ -28,16 +28,16 @@ fi
 
 # Set password
 echo "Setting password"
-enclave password set --config "$CONFIG_FILE" --password "$PASSWORD"
+interfold password set --config "$CONFIG_FILE" --password "$PASSWORD"
 
 # Set network private key
 echo "Setting network private key"
-enclave net set-key --config "$CONFIG_FILE" --net-keypair "$NETWORK_PRIVATE_KEY"
+interfold net set-key --config "$CONFIG_FILE" --net-keypair "$NETWORK_PRIVATE_KEY"
 
 echo "Setting wallet key"
-enclave wallet set --config "$CONFIG_FILE" --private-key "$PRIVATE_KEY"
+interfold wallet set --config "$CONFIG_FILE" --private-key "$PRIVATE_KEY"
 
 echo "Starting ciphernode"
-exec enclave start -v --config "$CONFIG_FILE"
+exec interfold start -v --config "$CONFIG_FILE"
 
 

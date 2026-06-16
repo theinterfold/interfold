@@ -21,14 +21,14 @@ pub struct ProgramSupportDev(pub ProgramConfig);
 impl ProgramSupportApi for ProgramSupportDev {
     async fn compile(&self) -> Result<()> {
         let cwd = env::current_dir()?;
-        let script = cwd.join(".enclave/support/dev/compile");
+        let script = cwd.join(".interfold/support/dev/compile");
         ensure_script_exists(&script).await?;
         run_bash_script(&cwd, &script, &[]).await?;
         Ok(())
     }
     async fn start(&self) -> Result<()> {
         let cwd = env::current_dir()?;
-        let script = cwd.join(".enclave/support/dev/start");
+        let script = cwd.join(".interfold/support/dev/start");
         ensure_script_exists(&script).await?;
         run_bash_script(&cwd, &script, &[]).await?;
         Ok(())
@@ -36,7 +36,7 @@ impl ProgramSupportApi for ProgramSupportDev {
 
     async fn upload(&self) -> Result<()> {
         let cwd = env::current_dir()?;
-        let script = cwd.join(".enclave/support/ctl/upload");
+        let script = cwd.join(".interfold/support/ctl/upload");
         ensure_script_exists(&script).await?;
         run_bash_script(&cwd, &script, &[]).await?;
         Ok(())

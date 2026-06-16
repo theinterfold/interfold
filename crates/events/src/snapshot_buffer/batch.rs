@@ -3,7 +3,6 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
-use std::mem::replace;
 
 use actix::{Actor, ActorContext, Addr, AsyncContext, Handler, Message, Recipient};
 use e3_utils::MAILBOX_LIMIT;
@@ -48,7 +47,7 @@ impl Handler<Insert> for Batch {
 impl Handler<Flush> for Batch {
     type Result = ();
     fn handle(&mut self, _: Flush, ctx: &mut Self::Context) -> Self::Result {
-        let inserts = replace(&mut self.inserts, Vec::new());
+        let inserts = std::mem::take(&mut self.inserts);
         if !inserts.is_empty() {
             self.db.do_send(InsertBatch::new(inserts));
         }

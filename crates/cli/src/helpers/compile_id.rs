@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use petname::{Generator, Petnames};
-use rand::rngs::StdRng;
-use rand::SeedableRng;
+use rand08::rngs::StdRng;
+use rand08::SeedableRng;
 
 static COMPILE_ID: u64 = compile_time::unix!();
 

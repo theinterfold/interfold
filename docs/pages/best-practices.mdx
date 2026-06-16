@@ -41,7 +41,7 @@ Interfold.
 
 ## Key Material & Ciphernodes
 
-- **Key hygiene**: `dev:setup` wipes `.enclave` directories for you; mimic that behavior in
+- **Key hygiene**: `dev:setup` wipes `.interfold` directories for you; mimic that behavior in
   production by rotating committee keys when nodes churn.
 - **Monitoring**: Subscribe to `E3Activated` and `PlaintextOutputPublished` events to ensure the
   CiCo publishes keys and decryptions on schedule.
@@ -62,7 +62,7 @@ Interfold.
 1. Run `pnpm dev:build` to preflight the entire stack.
 2. Execute integration tests that cover `request → publishInput → publishCiphertextOutput` with mock
    proofs.
-3. Verify wallet funding for any automation (enclave CLI, Hardhat deployers).
+3. Verify wallet funding for any automation (interfold CLI, Hardhat deployers).
 4. Update onboarding docs (MetaMask, scripts) when RPC URLs or ports change.
 5. Publish a postmortem template so incidents have consistent follow-up.
 

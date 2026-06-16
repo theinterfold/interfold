@@ -1,9 +1,9 @@
-# Contributing to Enclave
+# Contributing to The Interfold
 
-Thank you for your interest in contributing to Enclave! We value your contributions in making
-Enclave better.
+Thank you for your interest in contributing to the Interfold! We value your contributions in making
+Interfold better.
 
-This guide will discuss how the Enclave team handles [Commits](#commits),
+This guide will discuss how the Interfold team handles [Commits](#commits),
 [Pull Requests](#pull-requests), [Merging](#merging), [Releases](#releases), and the
 [Changelog](#changelog).
 
@@ -22,7 +22,7 @@ Commit.
 
 ### Conventional Commits
 
-Enclave attempts to follow the
+Interfold attempts to follow the
 [Conventional Commits (v1.0.0)](https://www.conventionalcommits.org/en/v1.0.0/) specification.
 Following this convention will allow us to provide an automated release process that also generates
 a detailed Changelog.
@@ -46,7 +46,7 @@ feat(compute-provider): Add Risc Zero as a compute provider (#123)
 ```
 feat(compute-provider): Add Risc Zero as a compute provider (#123)
 
-Introduces Risc Zero as a compute provider for Enclave, enabling one to prove correct execution of an E3's Secure Process.
+Introduces Risc Zero as a compute provider for Interfold, enabling one to prove correct execution of an E3's Secure Process.
 ```
 
 ```
@@ -82,7 +82,7 @@ mark a commit as breaking, we add the `!` character after the type, but before t
 example:
 
 ```
-feat!: Rename enclave start to enclave init
+feat!: Rename interfold start to interfold init
 
 feat(cli)!: Enforce minimum rustc version
 ```
@@ -143,7 +143,7 @@ cherry-pick the smaller changes into separate branches for pull requesting.
 
 ### Reviews
 
-For any repository in the Enclave repo, we require code review & approval by **one** contributor
+For any repository in the Interfold repo, we require code review & approval by **one** contributor
 with edit access before the changes are merged, as enforced by GitHub branch protection.
 Non-breaking pull requests may be merged at any time. Breaking pull requests will only be merged
 alongside a breaking release.
@@ -180,8 +180,8 @@ commit if the change was done by multiple authors. If "Co-authored-by:" lines ap
 PR suggestions, it's good to delete them so the author gets full credit for the change.
 
 Our overall approach to squashing is to be mindful of the impact of each commit. The commits
-populate our Changelog, so it's important to properly convey to Enclave consumers what changes have
-happened. It is also a record that we and others will review in the future. Thus, we want to
+populate our Changelog, so it's important to properly convey to Interfold consumers what changes
+have happened. It is also a record that we and others will review in the future. Thus, we want to
 attribute the change to its correct authors and provide useful information that future contributors
 need.
 
@@ -235,7 +235,7 @@ Before merging, you should mentally review these questions:
 
 ## Releases
 
-Releases are managed ad-hoc by the Enclave team, we may introduce some automation at some point in
+Releases are managed ad-hoc by the Interfold team, we may introduce some automation at some point in
 future.
 
 ---

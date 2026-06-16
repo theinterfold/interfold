@@ -49,7 +49,7 @@ pub fn resolve_config_path<P: Into<PathBuf>>(
     }
 
     // search from cwd
-    if let Some(found) = find_in_parent(&cwd.into(), default_filename) {
+    if let Some(found) = find_in_parent(&cwd, default_filename) {
         return found;
     }
 
@@ -69,23 +69,23 @@ mod tests {
             None
         }
         fn found(_: &PathBuf, _: &str) -> Option<PathBuf> {
-            Some(PathBuf::from("/foo/enclave.config.yaml"))
+            Some(PathBuf::from("/foo/interfold.config.yaml"))
         }
         let path = resolve_config_path(
             not_found,
             PathBuf::from("/foo/bar"),
             PathBuf::from("/my/config"),
-            "enclave.config.yaml",
+            "interfold.config.yaml",
             None,
         );
 
-        assert_eq!(path, PathBuf::from("/my/config/enclave.config.yaml"));
+        assert_eq!(path, PathBuf::from("/my/config/interfold.config.yaml"));
 
         let path = resolve_config_path(
             found, // should be overridden by config attr
             PathBuf::from("/foo/bar"),
             PathBuf::from("/my/config"),
-            "enclave.config.yaml",
+            "interfold.config.yaml",
             Some(PathBuf::from("/my/absolute/conf.yaml")),
         );
 
@@ -95,11 +95,11 @@ mod tests {
             found, // should be overridden by config attr
             PathBuf::from("/foo/bar"),
             PathBuf::from("/my/config"),
-            "enclave.config.yaml",
+            "interfold.config.yaml",
             None,
         );
 
-        assert_eq!(path, PathBuf::from("/foo/enclave.config.yaml"));
+        assert_eq!(path, PathBuf::from("/foo/interfold.config.yaml"));
         Ok(())
     }
 }

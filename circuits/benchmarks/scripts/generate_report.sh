@@ -11,6 +11,8 @@ GAS_JSON=""
 # crisp_verify_gas.json). Used when gas JSON has null/broken integration_summary but timings exist
 # on disk (e.g. long secure run wrote /tmp/summary_secure.json separately).
 INTEGRATION_SUMMARY_FILE=""
+RUN_META_FILE=""
+BENCHMARK_MODE_OVERRIDE=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCHMARKS_DIR="$(dirname "$SCRIPT_DIR")"
 REPO_ROOT="$(cd "${BENCHMARKS_DIR}/../.." && pwd)"
@@ -23,6 +25,8 @@ while [[ $# -gt 0 ]]; do
         --git-branch) GIT_BRANCH="$2"; shift 2 ;;
         --gas-json) GAS_JSON="$2"; shift 2 ;;
         --integration-summary) INTEGRATION_SUMMARY_FILE="$2"; shift 2 ;;
+        --run-meta) RUN_META_FILE="$2"; shift 2 ;;
+        --benchmark-mode) BENCHMARK_MODE_OVERRIDE="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
@@ -258,18 +262,30 @@ sum_phase_metrics() {
     echo "$(format_s "$prove_sum") s|$(format_kb "$proof_sum") KB|$(format_kb "$bandwidth_sum") KB"
 }
 
+integration_phase_seconds() {
+    local label="$1"
+    local blob="${2:-}"
+    [ -n "$blob" ] || return 1
+    jq -r --arg label "$label" '
+      (.phase_timings // .timings_seconds // [])[]
+      | select(.label == $label)
+      | if type == "object" then .seconds else . end
+    ' <<<"$blob" 2>/dev/null | head -1
+}
+
 integration_timing_seconds() {
     local label="$1"
     local val=""
-    local f
+    local f blob
+    if [ -n "${2:-}" ]; then
+        val=$(integration_phase_seconds "$label" "$2")
+        [ -n "$val" ] && [ "$val" != "null" ] && echo "$val" && return
+    fi
     for f in "$INTEGRATION_SUMMARY_FILE" "$GAS_JSON"; do
         [ -n "$f" ] && [ -f "$f" ] || continue
-        val=$(jq -r --arg label "$label" '.integration_summary.timings_seconds[]? | select(.label == $label) | .seconds' "$f" 2>/dev/null | head -1)
-        if [ -n "$val" ] && [ "$val" != "null" ]; then
-            echo "$val"
-            return
-        fi
-        val=$(jq -r --arg label "$label" '.timings_seconds[]? | select(.label == $label) | .seconds' "$f" 2>/dev/null | head -1)
+        blob=$(jq -c 'if (.integration_summary != null) then .integration_summary elif has("integration_test") then . else empty end' "$f" 2>/dev/null || true)
+        [ -z "$blob" ] || [ "$blob" = "null" ] && continue
+        val=$(integration_phase_seconds "$label" "$blob")
         if [ -n "$val" ] && [ "$val" != "null" ]; then
             echo "$val"
             return
@@ -278,10 +294,64 @@ integration_timing_seconds() {
     echo ""
 }
 
+emit_audit_warnings() {
+    local missing=0
+    local v
+    {
+        echo "## Audit status"
+        echo ""
+    } >> "$OUTPUT_FILE"
+    for art in "Π_DKG" "Π_user" "Π_dec"; do
+        v=$(verify_gas_for_artifact "$art")
+        if [ "$v" = "N/A" ]; then
+            missing=$((missing + 1))
+        fi
+    done
+    if [ "$missing" -gt 0 ]; then
+        cat >> "$OUTPUT_FILE" <<EOF
+> **Incomplete on-chain verify gas:** $missing of 3 artifact verify-gas values are **N/A**. Re-run \`./run_benchmarks.sh\` and ensure \`extract_crisp_verify_gas.sh\` completes (CRISP test + \`test_trbfv_actor\` + EVM replay). Calldata gas alone is not sufficient for audit sign-off.
+
+EOF
+    else
+        echo "On-chain verify gas: **complete** (CRISP Π_user + Interfold Π_DKG / Π_dec replay)." >> "$OUTPUT_FILE"
+        echo "" >> "$OUTPUT_FILE"
+    fi
+    if [ -z "$INTEGRATION_BLOB" ]; then
+        cat >> "$OUTPUT_FILE" <<EOF
+> **No integration summary:** Role/phase **wall-clock** rows and multithread job tables require \`integration_summary.json\` or embedded \`integration_summary\` in \`crisp_verify_gas.json\`.
+
+EOF
+    fi
+    echo "---" >> "$OUTPUT_FILE"
+    echo "" >> "$OUTPUT_FILE"
+}
+
+emit_measurement_methodology() {
+    cat >> "$OUTPUT_FILE" <<'EOF'
+## Measurement methodology
+
+| Metric kind | Source | Meaning | Do **not** use for |
+|-------------|--------|---------|-------------------|
+| **wall_clock** | `test_trbfv_actor` phase timers / HLC event span | End-to-end wait in the in-process test harness | Production WAN latency; per-node deployment cost |
+| **isolated_nargo** | `benchmark_circuit.sh` per circuit | Single `bb prove` on oracle witness, one circuit at a time | Full protocol pipeline (different witness path) |
+| **tracked_job_wall** | `MultithreadReport` per `ComputeRequest` | Wall time of each job on the shared Rayon pool (≤ `BENCHMARK_MULTITHREAD_JOBS` concurrent) | End-to-end time — **sums exceed wall clock** when jobs overlap |
+
+**Harness limits (integration):** all ciphernodes share one process and bus (`network_model: in_process_bus`); sortition registers extra nodes; `testmode_*` enabled; proof aggregation always enabled. Compare runs only with the same `benchmark_mode`, committee, `BENCHMARK_MULTITHREAD_JOBS`, commit, and hardware.
+
+---
+EOF
+}
+
 # Normalized integration summary object: either `results_*/integration_summary.json` or
 # `crisp_verify_gas.json` → `.integration_summary` (see `BENCHMARK_SUMMARY_OUTPUT` in e3-tests).
 integration_blob_from_inputs() {
-    local f blob
+    local f blob sibling
+    if [ -z "$INTEGRATION_SUMMARY_FILE" ] && [ -n "$GAS_JSON" ] && [ -f "$GAS_JSON" ]; then
+        sibling="$(dirname "$GAS_JSON")/integration_summary.json"
+        if [ -f "$sibling" ]; then
+            INTEGRATION_SUMMARY_FILE="$sibling"
+        fi
+    fi
     for f in "$INTEGRATION_SUMMARY_FILE" "$GAS_JSON"; do
         [ -n "$f" ] && [ -f "$f" ] || continue
         blob=$(jq -c 'if (.integration_summary != null) and (.integration_summary | type == "object") then .integration_summary elif has("integration_test") then . else empty end' "$f" 2>/dev/null || true)
@@ -307,15 +377,17 @@ artifact_size_pair_from_gas() {
         fi
     fi
     # Fallback: folded hex from integration summary export (test `BENCHMARK_SUMMARY_OUTPUT`).
-    if [ -n "$INTEGRATION_SUMMARY_FILE" ] && [ -f "$INTEGRATION_SUMMARY_FILE" ]; then
+    local blob
+    blob="$(integration_blob_from_inputs 2>/dev/null || true)"
+    if [ -n "$blob" ]; then
         local pfx ph pubh
         case "$key" in
             dkg) pfx=".folded_artifacts.dkg_aggregator" ;;
             dec) pfx=".folded_artifacts.decryption_aggregator" ;;
             *) echo ""; return ;;
         esac
-        ph=$(jq -r "${pfx}.proof_hex // empty" "$INTEGRATION_SUMMARY_FILE" 2>/dev/null || true)
-        pubh=$(jq -r "${pfx}.public_inputs_hex // empty" "$INTEGRATION_SUMMARY_FILE" 2>/dev/null || true)
+        ph=$(jq -r "${pfx}.proof_hex // empty" <<<"$blob" 2>/dev/null || true)
+        pubh=$(jq -r "${pfx}.public_inputs_hex // empty" <<<"$blob" 2>/dev/null || true)
         if [ -n "$ph" ] && [ "$ph" != "null" ] && [ -n "$pubh" ] && [ "$pubh" != "null" ]; then
             proof=$(hex_len_bytes "$ph")
             public=$(hex_len_bytes "$pubh")
@@ -330,37 +402,191 @@ artifact_size_pair_from_gas() {
 }
 
 load_protocol_params() {
-    local default_mod="${REPO_ROOT}/circuits/lib/src/configs/default/mod.nr"
-    local committee_name
-    committee_name=$(python3 - "$default_mod" <<'PY'
-import re, sys
-p = sys.argv[1]
-try:
-    txt = open(p, "r", encoding="utf-8").read()
-except Exception:
-    print("")
-    raise SystemExit(0)
-m = re.search(r"committee::([a-zA-Z0-9_]+)::\{H,\s*N_PARTIES,\s*T\}", txt)
-print(m.group(1) if m else "")
-PY
-)
-    [ -z "$committee_name" ] && committee_name="micro"
-    local committee_file="${REPO_ROOT}/circuits/lib/src/configs/committee/${committee_name}.nr"
-    local n t h
-    n=$(rg -N "N_PARTIES: u32 = " "$committee_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -1)
-    t=$(rg -N "T: u32 = " "$committee_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -1)
-    h=$(rg -N "H: u32 = " "$committee_file" | sed -E 's/.*= ([0-9]+);/\1/' | head -1)
-    [ -z "$n" ] && n="N/A"
-    [ -z "$t" ] && t="N/A"
-    [ -z "$h" ] && h="N/A"
-    echo "$h|$n|$t"
+    # shellcheck source=load_default_committee.sh
+    source "${SCRIPT_DIR}/load_default_committee.sh"
+    load_default_committee "${REPO_ROOT}/circuits/lib/src/configs/default/mod.nr" "${REPO_ROOT}"
+    echo "${COMMITTEE_H}|${COMMITTEE_N}|${COMMITTEE_T}"
+}
+
+load_system_info_from_raw() {
+    local first_json
+    first_json=$(ls "$INPUT_DIR"/*.json 2>/dev/null | head -1)
+    [ -n "$first_json" ] || return 1
+    CPU_MODEL=$(jq -r '.system_info.cpu_model // "unknown"' "$first_json")
+    CPU_CORES=$(jq -r '.system_info.cpu_cores // "unknown"' "$first_json")
+    RAM_GB=$(jq -r '.system_info.ram_gb // "unknown"' "$first_json")
+    SYS_OS=$(jq -r '.system_info.os // "unknown"' "$first_json")
+    SYS_ARCH=$(jq -r '.system_info.arch // "unknown"' "$first_json")
+    NARGO_VER=$(jq -r '.system_info.nargo_version // "unknown"' "$first_json")
+    BB_VER=$(jq -r '.system_info.bb_version // "unknown"' "$first_json")
+}
+
+resolve_run_meta_file() {
+    if [ -n "$RUN_META_FILE" ] && [ -f "$RUN_META_FILE" ]; then
+        echo "$RUN_META_FILE"
+        return 0
+    fi
+    local candidate
+    for candidate in \
+        "$(dirname "$INPUT_DIR")/benchmark_run_meta.json" \
+        "$(dirname "$GAS_JSON")/benchmark_run_meta.json"; do
+        if [ -n "$candidate" ] && [ -f "$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+    done
+    return 1
+}
+
+emit_run_configuration_section() {
+    local blob="${1:-}"
+    local meta_file
+    meta_file="$(resolve_run_meta_file 2>/dev/null || true)"
+
+    local bench_mode bench_preset bench_preset_name bench_lambda
+    local proof_agg multithread_jobs rayon_threads cores_avail fold_verifier
+    local entire_test_sec verbose_flag integration_test_name
+
+    bench_mode="$BENCHMARK_MODE_OVERRIDE"
+    bench_preset=""
+    bench_preset_name=""
+    bench_lambda=""
+    proof_agg=""
+    multithread_jobs=""
+    rayon_threads=""
+    cores_avail=""
+    fold_verifier=""
+    entire_test_sec=""
+    integration_test_name="test_trbfv_actor"
+    verbose_flag=""
+
+    if [ -n "$blob" ]; then
+        bench_mode=$(jq -r '.benchmark_config.mode // empty' <<<"$blob")
+        bench_preset=$(jq -r '.benchmark_config.bfv_preset_subdir // empty' <<<"$blob")
+        bench_preset_name=$(jq -r '.benchmark_config.bfv_preset // empty' <<<"$blob")
+        bench_lambda=$(jq -r '.benchmark_config.lambda // empty' <<<"$blob")
+        # NOTE: cannot use `//` here — jq's alt-operator treats `false` as null
+        # and would fall through, dropping the legitimate `false` value.
+        proof_agg=$(jq -r '
+            if .benchmark_config.proof_aggregation_enabled != null then
+              .benchmark_config.proof_aggregation_enabled
+            elif .proof_aggregation_enabled != null then
+              .proof_aggregation_enabled
+            else
+              empty
+            end
+        ' <<<"$blob")
+        multithread_jobs=$(jq -r '.benchmark_config.multithread_concurrent_jobs // .multithread.max_simultaneous_rayon_tasks // empty' <<<"$blob")
+        rayon_threads=$(jq -r '.multithread.rayon_threads // empty' <<<"$blob")
+        cores_avail=$(jq -r '.multithread.cores_available // empty' <<<"$blob")
+        fold_verifier=$(jq -r '.dkg_fold_attestation_verifier // empty' <<<"$blob")
+        entire_test_sec=$(jq -r '.timings_seconds[]? | select(.label == "Entire Test") | .seconds' <<<"$blob" | head -1)
+        integration_test_name=$(jq -r '.integration_test // "test_trbfv_actor"' <<<"$blob")
+    fi
+
+    if [ -n "$meta_file" ]; then
+        [ -z "$bench_mode" ] || [ "$bench_mode" = "null" ] && bench_mode=$(jq -r '.benchmark_mode // empty' "$meta_file")
+        [ -z "$bench_preset" ] || [ "$bench_preset" = "null" ] && bench_preset=$(jq -r '.bfv_preset_subdir // empty' "$meta_file")
+        [ -z "$proof_agg" ] || [ "$proof_agg" = "null" ] && proof_agg=$(jq -r 'if .proof_aggregation != null then .proof_aggregation else empty end' "$meta_file")
+        [ -z "$multithread_jobs" ] || [ "$multithread_jobs" = "null" ] && multithread_jobs=$(jq -r '.multithread_jobs // empty' "$meta_file")
+        verbose_flag=$(jq -r 'if .verbose != null then .verbose else empty end' "$meta_file")
+    fi
+
+    [ -z "$bench_mode" ] || [ "$bench_mode" = "null" ] && bench_mode="unknown"
+    [ -z "$bench_preset" ] || [ "$bench_preset" = "null" ] && bench_preset="(see circuit artifacts)"
+    [ -z "$proof_agg" ] || [ "$proof_agg" = "null" ] && proof_agg="unknown"
+    [ -z "$multithread_jobs" ] || [ "$multithread_jobs" = "null" ] && multithread_jobs="1 (default)"
+    [ -z "$rayon_threads" ] || [ "$rayon_threads" = "null" ] && rayon_threads="N/A"
+    [ -z "$cores_avail" ] || [ "$cores_avail" = "null" ] && cores_avail="N/A"
+
+    load_system_info_from_raw 2>/dev/null || true
+    CPU_MODEL="${CPU_MODEL:-unknown}"
+    CPU_CORES="${CPU_CORES:-unknown}"
+    RAM_GB="${RAM_GB:-unknown}"
+    SYS_OS="${SYS_OS:-unknown}"
+    SYS_ARCH="${SYS_ARCH:-unknown}"
+    NARGO_VER="${NARGO_VER:-unknown}"
+    BB_VER="${BB_VER:-unknown}"
+
+    {
+        echo "## Run configuration"
+        echo ""
+        echo "Settings for this benchmark run (integration test + Nargo circuit benches on the same host)."
+        echo ""
+        echo "### Integration test (\`$integration_test_name\`)"
+        echo ""
+        echo "| Setting | Value |"
+        echo "|---------|-------|"
+        echo "| Benchmark mode | \`$bench_mode\` |"
+        echo "| BFV preset (artifacts) | \`$bench_preset\` |"
+        if [ -n "$bench_preset_name" ] && [ "$bench_preset_name" != "null" ]; then
+            echo "| BFV preset (enum) | \`$bench_preset_name\` |"
+        fi
+        if [ -n "$bench_lambda" ] && [ "$bench_lambda" != "null" ]; then
+            echo "| λ (smudging / error) | $bench_lambda |"
+        fi
+        local nodes_spawned network_model testmode_harness
+        nodes_spawned=$(jq -r '.benchmark_config.nodes_spawned // empty' <<<"$blob")
+        network_model=$(jq -r '.benchmark_config.network_model // empty' <<<"$blob")
+        testmode_harness=$(jq -r 'if .benchmark_config.testmode_harness != null then .benchmark_config.testmode_harness else empty end' <<<"$blob")
+        if [ -n "$nodes_spawned" ] && [ "$nodes_spawned" != "null" ]; then
+            echo "| Nodes spawned (builder) | $nodes_spawned |"
+        fi
+        if [ -n "$network_model" ] && [ "$network_model" != "null" ]; then
+            echo "| Network model | \`$network_model\` |"
+        fi
+        if [ -n "$testmode_harness" ] && [ "$testmode_harness" != "null" ]; then
+            echo "| Testmode harness | $testmode_harness |"
+        fi
+        echo "| \`proof_aggregation_enabled\` | $proof_agg |"
+        echo "| \`BENCHMARK_MULTITHREAD_JOBS\` (max concurrent ZK jobs) | $multithread_jobs |"
+        echo "| Rayon worker threads | $rayon_threads |"
+        echo "| CPU cores (host) | $cores_avail |"
+        if [ -n "$fold_verifier" ] && [ "$fold_verifier" != "null" ]; then
+            echo "| \`dkg_fold_attestation_verifier\` (EIP-712) | \`$fold_verifier\` |"
+        fi
+        if [ -n "$entire_test_sec" ] && [ "$entire_test_sec" != "null" ]; then
+            echo "| Integration wall clock (\`Entire Test\`) | $(format_s "$entire_test_sec") s |"
+        fi
+        if [ -n "$verbose_flag" ] && [ "$verbose_flag" != "null" ]; then
+            echo "| Verbose logging (\`run_benchmarks.sh --verbose\`) | $verbose_flag |"
+        fi
+        echo ""
+        echo "### Hardware & software (Nargo / Barretenberg host)"
+        echo ""
+        echo "| | |"
+        echo "|--|--|"
+        echo "| **CPU** | $CPU_MODEL |"
+        echo "| **CPU cores** | $CPU_CORES |"
+        echo "| **RAM** | ${RAM_GB} GB |"
+        echo "| **OS** | $SYS_OS |"
+        echo "| **Architecture** | $SYS_ARCH |"
+        echo "| **Nargo** | $NARGO_VER |"
+        echo "| **Barretenberg** | $BB_VER |"
+        echo ""
+        echo "---"
+        echo ""
+    } >> "$OUTPUT_FILE"
+}
+
+integration_op_total_seconds() {
+    local pattern="$1"
+    local blob="${2:-}"
+    [ -z "$blob" ] && return 1
+    jq -r --arg p "$pattern" '
+      [.operation_timings[]?
+       | select(.name | test($p))
+       | .total_seconds]
+      | add // empty
+    ' <<<"$blob" 2>/dev/null || true
 }
 
 TIMESTAMP=$(date -u "+%Y-%m-%d %H:%M:%S UTC")
 IFS='|' read -r PROTOCOL_H PROTOCOL_N PROTOCOL_T <<< "$(load_protocol_params)"
+INTEGRATION_BLOB="$(integration_blob_from_inputs || true)"
 
 cat > "$OUTPUT_FILE" <<EOF
-# Enclave ZK Circuit Benchmarks
+# Interfold ZK Circuit Benchmarks
 
 **Generated:** ${TIMESTAMP}
 
@@ -369,14 +595,31 @@ cat > "$OUTPUT_FILE" <<EOF
 
 **Committee Size:** \`H=${PROTOCOL_H}\`, \`N=${PROTOCOL_N}\`, \`T=${PROTOCOL_T}\`
 
----
+EOF
 
+emit_run_configuration_section "$INTEGRATION_BLOB"
+emit_audit_warnings
+emit_measurement_methodology
+
+if [ -f "$GAS_JSON" ]; then
+    fold_exit=$(jq -r '.test_exit_code.folded_export // empty' "$GAS_JSON" 2>/dev/null || true)
+    if [ "$fold_exit" != "" ] && [ "$fold_exit" != "null" ] && [ "$fold_exit" != "0" ]; then
+        cat >> "$OUTPUT_FILE" <<EOF
+> **Warning:** \`test_trbfv_actor\` failed during gas extraction (exit ${fold_exit}). Π_DKG / Π_dec verify gas and phase rows below may reflect **Nargo-only** estimates or stale data. Re-run \`./run_benchmarks.sh\` after a successful integration export.
+
+EOF
+    fi
+fi
+
+cat >> "$OUTPUT_FILE" <<EOF
 ## Protocol Summary
 
-### Circuit Benchmarks
+### Circuit Benchmarks (isolated Nargo + Barretenberg)
 
-| Circuit | Constraints | Prove time (s) | Verify time (ms) | Proof size (KB) |
-|---------|-------------|----------------|------------------|-----------------|
+Single-circuit \`bb prove\` on the benchmark oracle witness (not the integration actor pipeline).
+
+| Circuit | Constraints | Prove (s) | Verify (ms) | Proof (KB) |
+|---------|-------------|-----------|-------------|------------|
 EOF
 
 emit_circuit_row "C0" "/dkg/pk"
@@ -415,14 +658,42 @@ IFS='|' read -r p3t p3s p3b <<< "$p3"
 IFS='|' read -r p4nt p4ns p4nb <<< "$p4n"
 IFS='|' read -r p4at p4as p4ab <<< "$p4a"
 
-# Prefer integration-run timings for phase rows that include fold/consistency work.
-p1_integration=$(integration_timing_seconds "ThresholdShares -> PublicKeyAggregated")
+p1_metric="wall_clock"
+p2_metric="wall_clock"
+p3_metric="isolated_nargo"
+p4n_metric="isolated_nargo"
+p4a_metric="wall_clock"
+
+p1_integration=$(integration_timing_seconds "ThresholdShares -> PublicKeyAggregated" "$INTEGRATION_BLOB")
 if [ -n "$p1_integration" ] && [ "$p1_integration" != "null" ]; then
     p1t="$(format_s "$p1_integration") s"
+else
+    p1t="N/A"
+    p1_metric="—"
 fi
-p4a_integration=$(integration_timing_seconds "Ciphertext published -> PlaintextAggregated")
+
+p2_integration=$(integration_timing_seconds "Aggregator P2: PkAggregation pending -> PublicKeyAggregated (wall)" "$INTEGRATION_BLOB")
+if [ -n "$p2_integration" ] && [ "$p2_integration" != "null" ]; then
+    p2t="$(format_s "$p2_integration") s"
+else
+    p2t="N/A"
+    p2_metric="—"
+fi
+
+p4a_integration=$(integration_timing_seconds "Ciphertext published -> PlaintextAggregated" "$INTEGRATION_BLOB")
 if [ -n "$p4a_integration" ] && [ "$p4a_integration" != "null" ]; then
     p4at="$(format_s "$p4a_integration") s"
+else
+    p4at="N/A"
+    p4a_metric="—"
+fi
+
+p4_sub_integration=$(integration_timing_seconds "Aggregator P4: Aggregation pending -> PlaintextAggregated (wall)" "$INTEGRATION_BLOB")
+p4_sub_metric=""
+p4_sub_t=""
+if [ -n "$p4_sub_integration" ] && [ "$p4_sub_integration" != "null" ]; then
+    p4_sub_t="$(format_s "$p4_sub_integration") s"
+    p4_sub_metric="wall_clock"
 fi
 
 # Keep role-phase rows aligned with artifact outputs when folded artifact sizes are available.
@@ -447,52 +718,51 @@ cat >> "$OUTPUT_FILE" <<EOF
 
 ### Role / Phase / Activity
 
-| Role | Phase | Activity | Prove time | Proof size | Bandwidth |
-|------|-------|----------|------------|------------|-----------|
-| Each ciphernode | P1 | one-time DKG participation | $p1t | $p1s | $p1b |
-| Aggregator | P2 | combine folds + C5 | $p2t | $p2s | $p2b |
-| User | P3 | per user input | $p3t | $p3s | $p3b |
-| Each ciphernode | P4 | per computation output (C6) | $p4nt | $p4ns | $p4nb |
-| Aggregator | P4 | per computation output (C7+fold) | $p4at | $p4as | $p4ab |
+| Role | Phase | Activity | Metric | Duration | Proof size | Bandwidth |
+|------|-------|----------|--------|----------|------------|-----------|
+| Each ciphernode | P1 | one-time DKG participation (test harness) | $p1_metric | $p1t | $p1s | $p1b |
+| Aggregator | P2 | C5 + Π_DKG fold (aggregator span) | $p2_metric | $p2t | $p2s | $p2b |
+| User | P3 | per user input | $p3_metric | $p3t | $p3s | $p3b |
+| Each ciphernode | P4 | per computation output (C6) | $p4n_metric | $p4nt | $p4ns | $p4nb |
+| Aggregator | P4 | C7 + Π_dec fold (full publish→aggregate) | $p4a_metric | $p4at | $p4as | $p4ab |
 EOF
+if [ -n "$p4_sub_t" ]; then
+    echo "| Aggregator | P4 | C7 + fold only (pending→plaintext span) | $p4_sub_metric | $p4_sub_t | $p4as | $p4ab |" >> "$OUTPUT_FILE"
+fi
+if [ -n "$INTEGRATION_BLOB" ]; then
+    p2_tracked=$(integration_op_total_seconds "^(ZkDkgAggregation|ZkPkAggregation)" "$INTEGRATION_BLOB")
+    if [ -n "$p2_tracked" ] && [ "$p2_tracked" != "null" ]; then
+        echo "" >> "$OUTPUT_FILE"
+        echo "_P2 **tracked_job_wall** sum (ZkDkgAggregation + ZkPkAggregation, parallelizable): **$(format_s "$p2_tracked") s** — not comparable to P2 wall_clock row above._" >> "$OUTPUT_FILE"
+    fi
+fi
 
-INTEGRATION_BLOB="$(integration_blob_from_inputs || true)"
 if [ -n "$INTEGRATION_BLOB" ]; then
     it_name=$(jq -r '.integration_test // "test_trbfv_actor"' <<<"$INTEGRATION_BLOB")
     {
         echo ""
         echo "## Integration test (\`$it_name\`)"
         echo ""
-        echo "### End-to-end phase timings (wall clock)"
+        echo "### End-to-end phase timings (integration test)"
         echo ""
-        echo "| Phase | Duration (s) |"
-        echo "|-------|---------------|"
+        echo "| Phase | Metric | Duration (s) |"
+        echo "|-------|--------|---------------|"
     } >> "$OUTPUT_FILE"
-    while IFS=$'\t' read -r label sec; do
+    while IFS=$'\t' read -r label metric sec; do
         [ -z "$label" ] && continue
-        echo "| $label | $(format_s "$sec") |" >> "$OUTPUT_FILE"
-    done < <(jq -r '.timings_seconds[]? | [.label, .seconds] | @tsv' <<<"$INTEGRATION_BLOB")
-
-    if jq -e '.multithread != null' <<<"$INTEGRATION_BLOB" >/dev/null 2>&1; then
-        rt=$(jq -r '.multithread.rayon_threads' <<<"$INTEGRATION_BLOB")
-        mx=$(jq -r '.multithread.max_simultaneous_rayon_tasks' <<<"$INTEGRATION_BLOB")
-        cr=$(jq -r '.multithread.cores_available' <<<"$INTEGRATION_BLOB")
-        {
-            echo ""
-            echo "### Thread pool (same process as integration test)"
-            echo ""
-            echo "| Setting | Value |"
-            echo "|---------|-------|"
-            echo "| Rayon threads | $rt |"
-            echo "| Max simultaneous Rayon tasks | $mx |"
-            echo "| Cores available | $cr |"
-        } >> "$OUTPUT_FILE"
-    fi
+        [ -z "$metric" ] || [ "$metric" = "null" ] && metric="wall_clock"
+        echo "| $label | \`$metric\` | $(format_s "$sec") |" >> "$OUTPUT_FILE"
+    done < <(jq -r '
+      (.phase_timings // .timings_seconds // [])[]
+      | if type == "object" then [.label, (.metric // "wall_clock"), .seconds]
+        else [.label, "wall_clock", .] end
+      | @tsv
+    ' <<<"$INTEGRATION_BLOB")
 
     if jq -e '(.operation_timings | type == "array") and (.operation_timings | length > 0)' <<<"$INTEGRATION_BLOB" >/dev/null 2>&1; then
         {
             echo ""
-            echo "### CPU-bound operation timings (tracked in-process)"
+            echo "### Multithread job timings (\`tracked_job_wall\`)"
             echo ""
             echo "| Name | Avg (s) | Runs | Total (s) |"
             echo "|------|---------|------|-----------|"
@@ -504,8 +774,94 @@ if [ -n "$INTEGRATION_BLOB" ]; then
         ott=$(jq -r '.operation_timings_total_seconds // empty' <<<"$INTEGRATION_BLOB")
         if [ -n "$ott" ] && [ "$ott" != "null" ]; then
             echo "" >> "$OUTPUT_FILE"
-            echo "Sum of tracked operation wall time: **$(format_s "$ott") s** (often much larger than end-to-end wall clock because work runs in parallel)." >> "$OUTPUT_FILE"
+            echo "Sum of tracked job wall time: **$(format_s "$ott") s** — **not** end-to-end latency (jobs run in parallel up to \`BENCHMARK_MULTITHREAD_JOBS\`)." >> "$OUTPUT_FILE"
         fi
+        fold_rows=$(
+            jq -r '
+              .operation_timings[]?
+              | select(.name | startswith("NodeDkgFold/"))
+              | [.name, .avg_seconds, .runs, .total_seconds]
+              | @tsv
+            ' <<<"$INTEGRATION_BLOB"
+        )
+        if [ -n "$fold_rows" ]; then
+            {
+                echo ""
+                echo "### NodeDkgFold sub-steps (\`tracked_job_wall\`, per fold prove)"
+                echo ""
+                echo "| Step | Avg (s) | Runs | Total (s) |"
+                echo "|------|---------|------|-----------|"
+            } >> "$OUTPUT_FILE"
+            while IFS=$'\t' read -r name avgr runs tot; do
+                [ -z "$name" ] && continue
+                step="${name#NodeDkgFold/}"
+                echo "| $step | $(format_s "$avgr") | $runs | $(format_s "$tot") |" >> "$OUTPUT_FILE"
+            done <<<"$fold_rows"
+        fi
+    fi
+
+    if jq -e '(.operation_timings | type == "array") and (.operation_timings | length > 0)' <<<"$INTEGRATION_BLOB" >/dev/null 2>&1; then
+        agg_rows=$(
+            jq -r '
+              .operation_timings[]?
+              | select(
+                  .name
+                  | test("^(ZkNodeDkgFold|ZkDkgAggregation|ZkDecryptionAggregation|ZkPkAggregation|ZkDecryptedSharesAggregation|ZkNodesFold)$")
+                )
+              | [.name, .avg_seconds, .runs, .total_seconds]
+              | @tsv
+            ' <<<"$INTEGRATION_BLOB"
+        )
+        if [ -n "$agg_rows" ]; then
+            {
+                echo ""
+                echo "### Aggregation jobs (\`tracked_job_wall\`)"
+                echo ""
+                echo "| Operation | Avg (s) | Runs | Total (s) |"
+                echo "|-----------|---------|------|-----------|"
+            } >> "$OUTPUT_FILE"
+            while IFS=$'\t' read -r name avgr runs tot; do
+                [ -z "$name" ] && continue
+                echo "| $name | $(format_s "$avgr") | $runs | $(format_s "$tot") |" >> "$OUTPUT_FILE"
+            done <<<"$agg_rows"
+            agg_total=$(
+                jq -r '
+                  [.operation_timings[]?
+                   | select(
+                       .name
+                       | test("^(ZkNodeDkgFold|ZkDkgAggregation|ZkDecryptionAggregation|ZkPkAggregation|ZkDecryptedSharesAggregation|ZkNodesFold)$")
+                     )
+                   | .total_seconds]
+                  | add // 0
+                ' <<<"$INTEGRATION_BLOB"
+            )
+            if [ -n "$agg_total" ] && [ "$agg_total" != "null" ]; then
+                echo "" >> "$OUTPUT_FILE"
+                echo "Sum of aggregation job tracked time: **$(format_s "$agg_total") s** (parallel CPU work; not P1/P2 wall clock)." >> "$OUTPUT_FILE"
+            fi
+        fi
+    fi
+
+    if jq -e '.folded_artifacts != null' <<<"$INTEGRATION_BLOB" >/dev/null 2>&1; then
+        {
+            echo ""
+            echo "### Folded on-chain artifacts (exported for Π_DKG / Π_dec gas)"
+            echo ""
+            echo "| Artifact | Proof (bytes) | Public inputs (bytes) |"
+            echo "|----------|---------------|------------------------|"
+        } >> "$OUTPUT_FILE"
+        for key in dkg_aggregator decryption_aggregator; do
+            pb=$(jq -r ".folded_artifacts.${key}.proof_hex // empty" <<<"$INTEGRATION_BLOB")
+            pubb=$(jq -r ".folded_artifacts.${key}.public_inputs_hex // empty" <<<"$INTEGRATION_BLOB")
+            if [ -n "$pb" ] && [ ${#pb} -gt 2 ]; then
+                proof_bytes=$(( (${#pb} - 2) / 2 ))
+                pub_bytes=$(( (${#pubb} - 2) / 2 ))
+                echo "| $key | $proof_bytes | $pub_bytes |" >> "$OUTPUT_FILE"
+            fi
+        done
+    elif [ "$agg_enabled" = "true" ]; then
+        echo "" >> "$OUTPUT_FILE"
+        echo "_No \`folded_artifacts\` in integration summary (export failed or test exited early)._" >> "$OUTPUT_FILE"
     fi
 fi
 
@@ -528,32 +884,6 @@ else
     done
 fi
 shopt -u nullglob
-
-first_json=$(ls "$INPUT_DIR"/*.json 2>/dev/null | head -1)
-if [ -n "$first_json" ]; then
-    cpu_model=$(jq -r '.system_info.cpu_model // "unknown"' "$first_json")
-    cpu_cores=$(jq -r '.system_info.cpu_cores // "unknown"' "$first_json")
-    ram_gb=$(jq -r '.system_info.ram_gb // "unknown"' "$first_json")
-    os=$(jq -r '.system_info.os // "unknown"' "$first_json")
-    arch=$(jq -r '.system_info.arch // "unknown"' "$first_json")
-    nargo=$(jq -r '.system_info.nargo_version // "unknown"' "$first_json")
-    bb=$(jq -r '.system_info.bb_version // "unknown"' "$first_json")
-    cat >> "$OUTPUT_FILE" <<EOF
-
-## System Information
-
-### Hardware
-- **CPU:** $cpu_model
-- **CPU Cores:** $cpu_cores
-- **RAM:** ${ram_gb} GB
-- **OS:** $os
-- **Architecture:** $arch
-
-### Software
-- **Nargo Version:** $nargo
-- **Barretenberg Version:** $bb
-EOF
-fi
 
 cat >> "$OUTPUT_FILE" <<EOF
 

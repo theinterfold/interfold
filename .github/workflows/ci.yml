@@ -16,7 +16,7 @@ env:
   SUPPORT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/e3-support
   CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
   NODE_VERSION: 22
-  RUST_TOOLCHAIN: 1.86.0
+  RUST_TOOLCHAIN: 1.91.1
   NOIR_TOOLCHAIN: v1.0.0-beta.16
   BB_VERSION: 3.0.0-nightly.20260102
   HARDHAT_VAR_MNEMONIC: 'test test test test test test test test test test test junk'
@@ -49,10 +49,10 @@ jobs:
       build_circuits: ${{ steps.jobs.outputs.build_circuits }}
       integration_prebuild: ${{ steps.jobs.outputs.integration_prebuild }}
       zk_prover_integration: ${{ steps.jobs.outputs.zk_prover_integration }}
-      build_enclave_cli: ${{ steps.jobs.outputs.build_enclave_cli }}
+      build_interfold_cli: ${{ steps.jobs.outputs.build_interfold_cli }}
     steps:
-      - uses: actions/checkout@v6
-      - uses: dorny/paths-filter@v3
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
         id: filter
         with:
           filters: |
@@ -62,7 +62,7 @@ jobs:
               - 'Cargo.lock'
               - 'rust-toolchain.toml'
             contracts:
-              - 'packages/enclave-contracts/**'
+              - 'packages/interfold-contracts/**'
             circuits:
               - 'circuits/**'
               - 'scripts/*-circuits.sh'
@@ -71,9 +71,9 @@ jobs:
             templates:
               - 'templates/**'
             sdk:
-              - 'packages/enclave-sdk/**'
-              - 'packages/enclave-react/**'
-              - 'packages/enclave-config/**'
+              - 'packages/interfold-sdk/**'
+              - 'packages/interfold-react/**'
+              - 'packages/interfold-config/**'
               - 'crates/wasm/**'
             integration_tests:
               - 'tests/integration/**'
@@ -115,7 +115,7 @@ jobs:
           echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "zk_prover_integration=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
-          echo "build_enclave_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP $CI)" >> $GITHUB_OUTPUT
+          echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP $CI)" >> $GITHUB_OUTPUT
 
   rust_unit_tests:
     needs: [detect_changes]
@@ -126,31 +126,31 @@ jobs:
       contents: read
       actions: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Cache Rust dependencies
         uses: ./.github/actions/cache-dependencies
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
 
       - name: Install solc
         run: |
           sudo add-apt-repository ppa:ethereum/ethereum \
           && sudo apt-get update -y \
-          && sudo apt-get install -y solc
+          && sudo apt-get install -y solc protobuf-compiler
 
       - name: pnpm-setup
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
         # We need to setup node in order to compile the hardhat contracts to get the artifacts
       - name: 'Setup node'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -179,30 +179,30 @@ jobs:
       group: enclave-ci
       labels: [enclave-ci-runner]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Cache Rust dependencies
         uses: ./.github/actions/cache-dependencies
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
 
       - name: Install solc
         run: |
           sudo add-apt-repository ppa:ethereum/ethereum \
           && sudo apt-get update -y \
-          && sudo apt-get install -y solc
+          && sudo apt-get install -y solc protobuf-compiler
 
       - name: pnpm-setup
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
       - name: 'Setup node'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -212,6 +212,8 @@ jobs:
         run: 'pnpm install --frozen-lockfile'
 
       - name: Run Integration Tests
+        env:
+          BENCHMARK_PROOF_AGGREGATION: 'false'
         run: 'cargo test --test integration -- --nocapture'
 
   zk_prover_integration:
@@ -220,13 +222,13 @@ jobs:
     timeout-minutes: 30
     runs-on: 'ubuntu-latest'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Cache Rust dependencies
         uses: ./.github/actions/cache-dependencies
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
@@ -234,13 +236,13 @@ jobs:
         run: |
           sudo add-apt-repository ppa:ethereum/ethereum \
           && sudo apt-get update -y \
-          && sudo apt-get install -y solc
+          && sudo apt-get install -y solc protobuf-compiler
 
       - name: pnpm-setup
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
       - name: 'Setup node'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -250,7 +252,7 @@ jobs:
         run: 'pnpm install --frozen-lockfile'
 
       - name: Cache Barretenberg binary
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.bb
           key: bb-${{ env.BB_VERSION }}-${{ runner.arch }}
@@ -264,7 +266,7 @@ jobs:
     timeout-minutes: 30
     runs-on: 'ubuntu-latest'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - name: Generate tags
         id: tags
         run: |
@@ -277,17 +279,17 @@ jobs:
 
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
       - name: Set up BuildKit
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./crates/support
           file: ${{ env.SUPPORT_DOCKERFILE_PATH }}
@@ -304,7 +306,7 @@ jobs:
     timeout-minutes: 60
     runs-on: 'ubuntu-latest'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Generate tags
         id: tags
@@ -319,18 +321,18 @@ jobs:
           echo "tags=$TAGS" >> $GITHUB_OUTPUT
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GitHub Container Registry
         if: github.ref == 'refs/heads/main'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build ciphernode image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: ${{ env.CIPHERNODE_DOCKERFILE_PATH }}
@@ -351,13 +353,13 @@ jobs:
       actions: write
     steps:
       - name: 'Check out the repo'
-        uses: 'actions/checkout@v6'
+        uses: 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' # v6
 
       - name: pnpm-setup
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
       - name: 'Setup node'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -395,7 +397,7 @@ jobs:
     runs-on: 'ubuntu-latest'
     steps:
       - name: 'Check out the repo'
-        uses: 'actions/checkout@v6'
+        uses: 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' # v6
       - name: 'Run network tests'
         working-directory: tests/integration
         run: './test.sh net --no-prebuild'
@@ -411,28 +413,28 @@ jobs:
     runs-on: 'ubuntu-latest'
     steps:
       - name: 'Check out the repo'
-        uses: 'actions/checkout@v6'
+        uses: 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' # v6
 
       - name: Cache Rust dependencies
         uses: ./.github/actions/cache-dependencies
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: pnpm-setup
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
       - name: 'Setup node'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install Nargo
-        uses: noir-lang/noirup@v0.1.4
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
@@ -440,7 +442,7 @@ jobs:
         run: |
           sudo add-apt-repository ppa:ethereum/ethereum \
           && sudo apt-get update -y \
-          && sudo apt-get install -y solc
+          && sudo apt-get install -y solc protobuf-compiler
 
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
@@ -455,7 +457,7 @@ jobs:
           ls -la target/debug/pack_e3_params || echo "pack_e3_params not found"
 
       - name: 'Upload build artifacts'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: build-artifacts
           path: |
@@ -466,8 +468,8 @@ jobs:
   check-nix-flake:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
-      - uses: cachix/install-nix-action@v30
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
@@ -478,7 +480,7 @@ jobs:
       - run: bash ./scripts/nix-versions.sh # display bad versions when deps change
 
   ciphernode_integration_test:
-    needs: [detect_changes, integration_prebuild, build_enclave_cli, build_sdk]
+    needs: [detect_changes, integration_prebuild, build_interfold_cli, build_sdk]
     if: needs.detect_changes.outputs.ciphernode_e2e == 'true'
     timeout-minutes: 45
     runs-on:
@@ -490,36 +492,36 @@ jobs:
       fail-fast: true
     steps:
       - name: 'Check out the repo'
-        uses: 'actions/checkout@v6'
+        uses: 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' # v6
       - name: pnpm-setup
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - name: 'Setup node'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
       - name: 'Download build artifacts'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: build-artifacts
           path: target/debug/
-      - name: 'Download enclave binary'
-        uses: actions/download-artifact@v4
+      - name: 'Download interfold binary'
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: enclave-binary
+          name: interfold-binary
           path: ~/.cargo/bin/
       - name: 'Download SDK artifacts'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: sdk-artifacts
           path: ./
@@ -528,17 +530,17 @@ jobs:
           echo "Checking for required artifacts:"
           ls -la target/debug/fake_encrypt || echo "fake_encrypt not found"
           ls -la target/debug/pack_e3_params || echo "pack_e3_params not found"
-          ls -la ~/.cargo/bin/enclave || echo "enclave binary not found"
-          ls -la packages/enclave-contracts/dist || echo "SDK dist not found"
+          ls -la ~/.cargo/bin/interfold || echo "interfold binary not found"
+          ls -la packages/interfold-contracts/dist || echo "SDK dist not found"
           ls -la crates/wasm/dist || echo "WASM dist not found"
       - name: 'Set executable permissions'
         run: |
           chmod +x target/debug/fake_encrypt
           chmod +x target/debug/pack_e3_params
-          chmod +x ~/.cargo/bin/enclave
+          chmod +x ~/.cargo/bin/interfold
       - name: 'Setup ZK prover'
         run: |
-          enclave noir setup
+          interfold noir setup
       - name: 'Run ${{ matrix.test-suite }} tests'
         run: 'pnpm test:integration ${{ matrix.test-suite }} --no-prebuild'
       - name: 'Add test summary'
@@ -546,9 +548,9 @@ jobs:
           echo "## Test results for ${{ matrix.test-suite }}" >> $GITHUB_STEP_SUMMARY
           echo "✅ Passed" >> $GITHUB_STEP_SUMMARY
 
-  build_enclave_cli:
+  build_interfold_cli:
     needs: [detect_changes]
-    if: needs.detect_changes.outputs.build_enclave_cli == 'true'
+    if: needs.detect_changes.outputs.build_interfold_cli == 'true'
     timeout-minutes: 20
     runs-on:
       group: enclave-ci
@@ -557,7 +559,7 @@ jobs:
       contents: read
       actions: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
 
@@ -565,7 +567,7 @@ jobs:
         uses: ./.github/actions/cache-dependencies
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
@@ -573,16 +575,16 @@ jobs:
         run: |
           sudo add-apt-repository ppa:ethereum/ethereum \
           && sudo apt-get update -y \
-          && sudo apt-get install -y solc
+          && sudo apt-get install -y solc protobuf-compiler
 
-      - name: Build enclave CLI
-        run: cargo install --locked --path crates/cli --bin enclave
+      - name: Build interfold CLI
+        run: cargo install --locked --path crates/cli --bin interfold
 
-      - name: Upload enclave binary
-        uses: actions/upload-artifact@v4
+      - name: Upload interfold binary
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: enclave-binary
-          path: ~/.cargo/bin/enclave
+          name: interfold-binary
+          path: ~/.cargo/bin/interfold
           retention-days: 1
 
       - name: Cancel workflow on failure
@@ -609,7 +611,7 @@ jobs:
             command: cargo test
       fail-fast: false
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
 
@@ -622,34 +624,34 @@ jobs:
 
       - name: Install Rust
         if: matrix.test-suite == 'cargo test'
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Install Foundry
         if: matrix.test-suite == 'cargo test'
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
 
       - name: Install solc
         if: matrix.test-suite == 'cargo test'
         run: |
           sudo add-apt-repository ppa:ethereum/ethereum \
           && sudo apt-get update -y \
-          && sudo apt-get install -y solc
+          && sudo apt-get install -y solc protobuf-compiler
 
       - name: Install Nargo
         if: matrix.test-suite == 'test:circuits'
-        uses: noir-lang/noirup@v0.1.4
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
       - name: Setup pnpm
         if: matrix.test-suite != 'cargo test'
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
       - name: Setup Node.js
         if: matrix.test-suite != 'cargo test'
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -660,14 +662,14 @@ jobs:
         working-directory: .
         run: pnpm install --frozen-lockfile
 
-      - name: Compile Enclave contracts
+      - name: Compile Interfold contracts
         if: matrix.test-suite == 'test:contracts'
         working-directory: .
         run: pnpm evm:build
 
       - name: Download Crisp SDK artifacts
         if: matrix.test-suite == 'test:sdk' || matrix.test-suite == 'test:contracts'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: crisp-sdk-artifacts
           path: .
@@ -677,14 +679,14 @@ jobs:
         run: ${{ matrix.command }}
 
   crisp_e2e:
-    needs: [detect_changes, build_enclave_cli, build_crisp_sdk]
+    needs: [detect_changes, build_interfold_cli, build_crisp_sdk]
     if: needs.detect_changes.outputs.crisp == 'true'
     timeout-minutes: 45
     runs-on:
       group: enclave-ci
       labels: [enclave-ci-runner]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
 
@@ -705,13 +707,13 @@ jobs:
           sudo chmod -R 777 $GITHUB_WORKSPACE/examples/CRISP/.cache-synpress
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -721,7 +723,7 @@ jobs:
         run: |
           sudo add-apt-repository ppa:ethereum/ethereum \
           && sudo apt-get update -y \
-          && sudo apt-get install -y solc
+          && sudo apt-get install -y solc protobuf-compiler
 
       - name: Install yq
         run: |
@@ -731,7 +733,7 @@ jobs:
         working-directory: .
         run: pnpm install --frozen-lockfile
 
-      - name: Compile Enclave contracts
+      - name: Compile Interfold contracts
         working-directory: .
         run: pnpm evm:build
 
@@ -753,7 +755,7 @@ jobs:
           cargo build --locked --bin server
 
       - name: Download Crisp SDK artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: crisp-sdk-artifacts
           path: .
@@ -762,19 +764,43 @@ jobs:
         working-directory: ./examples/CRISP
         run: pnpm exec playwright install chromium
 
-      - name: Download enclave binary
-        uses: actions/download-artifact@v4
+      - name: Download interfold binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: enclave-binary
+          name: interfold-binary
           path: ~/.cargo/bin/
 
       - name: Make binaries executable
         run: |
-          chmod +x ~/.cargo/bin/enclave
+          chmod +x ~/.cargo/bin/interfold
+
+      - name: Install Nargo
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        with:
+          toolchain: ${{ env.NOIR_TOOLCHAIN }}
+
+      - name: Cache Barretenberg binary
+        id: cache-bb
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /usr/local/bin/bb
+          key: bb-bin-${{ env.BB_VERSION }}-amd64-linux
+
+      - name: Install Barretenberg (bb)
+        if: steps.cache-bb.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL "https://github.com/gnosisguild/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
+          BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
+          sudo mv "$BB_BIN" /usr/local/bin/bb
+          chmod +x /usr/local/bin/bb
+
+      - name: Build interfold circuits
+        run: pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built
 
       - name: Setup ZK prover
         run: |
-          enclave noir setup
+          interfold noir setup
 
       - name: Run Playwright tests
         working-directory: ./examples/CRISP
@@ -785,7 +811,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: playwright-report
           path: ./examples/CRISP/playwright-report/
@@ -800,18 +826,21 @@ jobs:
       contents: read
       actions: write
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
 
       - name: Install Nargo
-        uses: noir-lang/noirup@v0.1.4
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
+      - name: Install protoc
+        run: sudo apt-get update -y && sudo apt-get install -y protobuf-compiler
+
       - name: Cache Barretenberg binary
         id: cache-bb
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: /usr/local/bin/bb
           key: bb-bin-${{ env.BB_VERSION }}-amd64-linux
@@ -835,10 +864,10 @@ jobs:
         run: ./scripts/test-circuits.sh
 
       - name: pnpm-setup
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
       - name: Setup node
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
@@ -851,7 +880,7 @@ jobs:
         run: pnpm build:circuits
 
       - name: Upload compiled circuit artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: compiled-circuits
           path: |
@@ -875,19 +904,19 @@ jobs:
     timeout-minutes: 30
     runs-on: 'ubuntu-latest'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Cache Rust dependencies
         uses: ./.github/actions/cache-dependencies
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache Barretenberg binary
         id: cache-bb
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: /usr/local/bin/bb
           key: bb-bin-${{ env.BB_VERSION }}-amd64-linux
@@ -896,7 +925,7 @@ jobs:
         run: |
           sudo add-apt-repository ppa:ethereum/ethereum \
           && sudo apt-get update -y \
-          && sudo apt-get install -y solc
+          && sudo apt-get install -y solc protobuf-compiler
 
       - name: Install Barretenberg (bb)
         if: steps.cache-bb.outputs.cache-hit != 'true'
@@ -911,7 +940,7 @@ jobs:
         run: bb --version
 
       - name: Download compiled circuit artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: compiled-circuits
           path: circuits/bin/
@@ -956,7 +985,7 @@ jobs:
     timeout-minutes: 20
     runs-on: 'ubuntu-latest'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
       - name: Cache Rust dependencies
@@ -965,9 +994,11 @@ jobs:
           cargo-lock-path: templates/default/Cargo.lock
           rust-target-path: templates/default/target/
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Install protoc
+        run: sudo apt-get update -y && sudo apt-get install -y protobuf-compiler
       - name: Build support scripts
         run: cd templates/default && cargo build --locked --bin e3-support-scripts-dev
       - name: Verify build artifacts
@@ -975,7 +1006,7 @@ jobs:
           echo "Checking for support scripts binary:"
           find templates/default/target/ -name "e3-support-scripts-dev" -type f -ls || echo "Binary not found"
       - name: Upload support scripts artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: support-scripts-artifacts
           path: templates/default/target/
@@ -988,22 +1019,22 @@ jobs:
     timeout-minutes: 30
     runs-on: 'ubuntu-latest'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install Nargo
-        uses: noir-lang/noirup@v0.1.4
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
@@ -1011,10 +1042,13 @@ jobs:
         uses: ./.github/actions/cache-dependencies
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: wasm32-unknown-unknown
+
+      - name: Install protoc
+        run: sudo apt-get update -y && sudo apt-get install -y protobuf-compiler
 
       - name: Install node dependencies
         run: pnpm install --frozen-lockfile
@@ -1022,24 +1056,35 @@ jobs:
       - name: Build the sdk
         run: pnpm sdk:build
 
+      - name: Install Chrome for WASM browser smoke tests
+        uses: browser-actions/setup-chrome@19ae4b339ee18925ab85cf12c1041150ea4a44c8 # v1
+
+      - name: WASM browser smoke test (e3-wasm)
+        run: |
+          cd crates/wasm
+          pnpm build
+          pnpm test:browser
+
       - name: Run the tests
         run: pnpm sdk:test
 
       - name: Upload SDK artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sdk-artifacts
+          include-hidden-files: true
           path: |
-            packages/enclave-sdk/dist
-            packages/enclave-contracts/dist
-            packages/enclave-contracts/artifacts
-            packages/enclave-contracts/cache
-            packages/enclave-contracts/types
+            packages/interfold-sdk/dist
+            packages/interfold-contracts/dist
+            packages/interfold-contracts/artifacts
+            packages/interfold-contracts/cache
+            packages/interfold-contracts/types
             crates/wasm/dist
+            circuits/bin/.active-preset.json
             circuits/bin/recursive_aggregation/wrapper/threshold/target
             circuits/bin/threshold/target
           retention-days: 1
-          if-no-files-found: warn
+          if-no-files-found: error
 
   build_crisp_sdk:
     needs: [detect_changes]
@@ -1047,28 +1092,31 @@ jobs:
     timeout-minutes: 20
     runs-on: 'ubuntu-latest'
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Install Nargo
-        uses: noir-lang/noirup@v0.1.4
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: wasm32-unknown-unknown
+
+      - name: Install protoc
+        run: sudo apt-get update -y && sudo apt-get install -y protobuf-compiler
 
       - name: Install node dependencies
         run: pnpm install --frozen-lockfile
@@ -1077,8 +1125,17 @@ jobs:
         working-directory: ./examples/CRISP
         run: pnpm build:sdk
 
+      - name: Install Chrome for WASM browser smoke tests
+        uses: browser-actions/setup-chrome@19ae4b339ee18925ab85cf12c1041150ea4a44c8 # v1
+
+      - name: WASM browser smoke test (crisp-zk-inputs)
+        working-directory: ./examples/CRISP
+        run: |
+          pnpm -C packages/crisp-zk-inputs build
+          pnpm -C packages/crisp-zk-inputs test:browser
+
       - name: Upload SDK artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: crisp-sdk-artifacts
           path: |
@@ -1092,70 +1149,98 @@ jobs:
           if-no-files-found: warn
 
   template_integration:
-    needs: [detect_changes, build_enclave_cli, build_e3_support_dev, build_sdk]
+    needs: [detect_changes, build_interfold_cli, build_e3_support_dev, build_sdk]
     if: needs.detect_changes.outputs.templates == 'true'
     timeout-minutes: 30
     runs-on:
       group: enclave-ci
       labels: [enclave-ci-runner]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
           cache-dependency-path: pnpm-lock.yaml
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Install protoc
+        run: sudo apt-get update -y && sudo apt-get install -y protobuf-compiler
 
       - name: Install node dependencies
         run: pnpm install --frozen-lockfile
 
       - name: Install Foundry
-        uses: foundry-rs/foundry-toolchain@v1
+        uses: foundry-rs/foundry-toolchain@c7450ba673e133f5ee30098b3b54f444d3a2ca2d # v1
 
-      - name: Download enclave binary
-        uses: actions/download-artifact@v4
+      - name: Download interfold binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: enclave-binary
+          name: interfold-binary
           path: ~/.cargo/bin/
 
       - name: Download support scripts artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: support-scripts-artifacts
           path: templates/default/target/
 
       - name: Download SDK artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: sdk-artifacts
           path: ./
 
       - name: Make binaries executable
         run: |
-          chmod +x ~/.cargo/bin/enclave
+          chmod +x ~/.cargo/bin/interfold
           chmod +x templates/default/target/debug/e3-support-scripts-dev
+
+      - name: Install Nargo
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        with:
+          toolchain: ${{ env.NOIR_TOOLCHAIN }}
+
+      - name: Cache Barretenberg binary
+        id: cache-bb
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: /usr/local/bin/bb
+          key: bb-bin-${{ env.BB_VERSION }}-amd64-linux
+
+      - name: Install Barretenberg (bb)
+        if: steps.cache-bb.outputs.cache-hit != 'true'
+        run: |
+          curl -fsSL "https://github.com/gnosisguild/aztec-packages/releases/download/v${{ env.BB_VERSION }}/barretenberg-amd64-linux.tar.gz" -o bb.tar.gz
+          mkdir -p bb_extract && tar -xzf bb.tar.gz -C bb_extract
+          BB_BIN=$(find bb_extract -name bb -type f | head -n 1)
+          sudo mv "$BB_BIN" /usr/local/bin/bb
+          chmod +x /usr/local/bin/bb
+
+      - name: Build interfold circuits
+        run: pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built
 
       - name: Setup ZK prover
         run: |
-          enclave noir setup
+          interfold noir setup
 
       - name: Verify downloaded artifacts
         run: |
           echo "Checking downloaded artifacts:"
-          ls -la ~/.cargo/bin/enclave || echo "enclave binary not found"
+          ls -la ~/.cargo/bin/interfold || echo "interfold binary not found"
           ls -la templates/default/target/debug/e3-support-scripts-dev || echo "support scripts not found"
-          ls -la packages/enclave-contracts/dist || echo "SDK dist not found"
+          ls -la packages/interfold-contracts/dist || echo "SDK dist not found"
           ls -la crates/wasm/dist || echo "WASM dist not found"
+          test -f circuits/bin/.active-preset.json || (echo "ERROR: circuit preset stamp not found" && exit 1)
           echo "Support scripts permissions:"
           ls -la templates/default/target/debug/e3-support-scripts-dev
 
@@ -1163,48 +1248,48 @@ jobs:
         run: |
           cd templates/default
           pnpm compile
-          chmod 755 .enclave/generated/contracts tests
-          chmod 644 .enclave/generated/contracts/ImageID.sol
+          chmod 755 .interfold/generated/contracts tests
+          chmod 644 .interfold/generated/contracts/ImageID.sol
           pnpm test:integration
 
-  test_enclave_init:
-    needs: [detect_changes, build_enclave_cli, build_e3_support_dev]
+  test_interfold_init:
+    needs: [detect_changes, build_interfold_cli, build_e3_support_dev]
     if: needs.detect_changes.outputs.init == 'true'
     timeout-minutes: 10
     runs-on: 'ubuntu-latest'
     steps:
       - name: Install pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
         with:
           version: 10.7.1
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: ${{ env.NODE_VERSION }}
 
       - name: Setup Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
-      - name: Download enclave binary
-        uses: actions/download-artifact@v4
+      - name: Download interfold binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          name: enclave-binary
+          name: interfold-binary
           path: ~/.cargo/bin/
       - name: Make binaries executable
         run: |
-          chmod +x ~/.cargo/bin/enclave
+          chmod +x ~/.cargo/bin/interfold
       - name: Verify downloaded artifacts
         run: |
-          ls -la ~/.cargo/bin/enclave || echo "enclave binary not found"
-      - name: Enclave init
+          ls -la ~/.cargo/bin/interfold || echo "interfold binary not found"
+      - name: Interfold init
         run: |
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             BRANCH="${{ github.head_ref }}"
           else
             BRANCH="${{ github.ref_name }}"
           fi
-          enclave init mycitest --verbose --template=${{ github.server_url }}/${{ github.repository }}.git#${BRANCH}:templates/default
+          interfold init mycitest --verbose --template=${{ github.server_url }}/${{ github.repository }}.git#${BRANCH}:templates/default
 
   contrib-readme-job:
     timeout-minutes: 10
@@ -1220,13 +1305,13 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Contribute List
-        uses: akhilmhdh/contributors-readme-action@1ff4c56187458b34cd602aee93e897344ce34bfc
+        uses: akhilmhdh/contributors-readme-action@1ff4c56187458b34cd602aee93e897344ce34bfc # v1.4.0
         with:
           image_size: 100
           readme_path: README.md

@@ -3,8 +3,8 @@ name = "e3-config"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "E3 - Enclave Ciphernode Configuration"
-repository = "https://github.com/gnosisguild/enclave/crates/config"
+description = "E3 - Interfold Ciphernode Configuration"
+repository = "https://github.com/gnosisguild/interfold/crates/config"
 
 [dependencies]
 alloy-primitives = { workspace = true }

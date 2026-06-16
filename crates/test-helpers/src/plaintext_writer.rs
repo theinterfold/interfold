@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use super::write_file_with_dirs;
 use actix::{Actor, Addr, Context, Handler};
 use e3_bfv_client::decode_bytes_to_vec_u64;
-use e3_events::{prelude::*, BusHandle, EnclaveEvent, EnclaveEventData, EventType};
+use e3_events::{prelude::*, BusHandle, EventType, InterfoldEvent, InterfoldEventData};
 use e3_utils::MAILBOX_LIMIT;
 use tracing::{error, info};
 
@@ -35,21 +35,21 @@ impl Actor for PlaintextWriter {
     }
 }
 
-impl Handler<EnclaveEvent> for PlaintextWriter {
+impl Handler<InterfoldEvent> for PlaintextWriter {
     type Result = ();
-    fn handle(&mut self, msg: EnclaveEvent, _: &mut Self::Context) -> Self::Result {
-        if let EnclaveEventData::PlaintextAggregated(data) = msg.into_data() {
+    fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
+        if let InterfoldEventData::PlaintextAggregated(data) = msg.into_data() {
             let Some(decrypted) = data.decrypted_output.first() else {
                 error!("Decrypted output must not be empty!");
                 return;
             };
 
-            let output = decode_bytes_to_vec_u64(&decrypted).unwrap();
+            let output = decode_bytes_to_vec_u64(decrypted).unwrap();
 
             info!(path = ?&self.path, "Writing Plaintext To Path");
             let contents: Vec<String> = output.iter().map(|&num| num.to_string()).collect();
 
-            write_file_with_dirs(&self.path, format!("{}", contents.join(",")).as_bytes()).unwrap();
+            write_file_with_dirs(&self.path, contents.join(",").to_string().as_bytes()).unwrap();
         }
     }
 }

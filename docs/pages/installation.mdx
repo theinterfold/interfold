@@ -18,53 +18,53 @@ Before installing Interfold, make sure you have the following dependency install
 The easiest way to install the Interfold CLI is using our installer script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gnosisguild/enclave/main/install | bash
+curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
 ```
 
 Or if you prefer `wget`:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/gnosisguild/enclave/main/install | bash
+wget -qO- https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
 ```
 
-This script will download and install `enclaveup`, which is the standalone installer for the
+This script will download and install `interfoldup`, which is the standalone installer for the
 Interfold CLI.
 
-## Using enclaveup
+## Using interfoldup
 
-Once you have `enclaveup` installed, you can manage your Interfold CLI installation:
+Once you have `interfoldup` installed, you can manage your Interfold CLI installation:
 
 ### Install the Interfold CLI
 
 ```bash
 # Install to ~/.local/bin (default)
-enclaveup install
+interfoldup install
 
 # Install to /usr/local/bin (requires sudo)
-enclaveup install --system
+interfoldup install --system
 ```
 
-Running `enclaveup install` will install the latest version of the Interfold CLI. See
-`enclaveup --help` for more options.
+Running `interfoldup install` will install the latest version of the Interfold CLI. See
+`interfoldup --help` for more options.
 
-### Update the Enclave CLI
+### Update the Interfold CLI
 
 ```bash
 # Update to the latest version
-enclaveup update
+interfoldup update
 
 # Update system-wide installation
-enclaveup update --system
+interfoldup update --system
 ```
 
 ### Uninstall
 
 ```bash
-# Remove the Enclave CLI
-enclaveup uninstall
+# Remove the Interfold CLI
+interfoldup uninstall
 
 # Remove system-wide installation
-enclaveup uninstall --system
+interfoldup uninstall --system
 ```
 
 ## Install with Nix
@@ -75,17 +75,17 @@ with no additional dependencies — Nix handles everything including installing 
 Get a devshell directly without installing it:
 
 ```bash
-nix develop github:gnosisguild/enclave/{branch,tag,commit}
+nix develop github:gnosisguild/interfold/{branch,tag,commit}
 ```
 
 This will build from source using the nix package manager and provide a runtime environemnt for
-enclave. It might take some time but the result will be cached on your local nix store for future
+interfold. It might take some time but the result will be cached on your local nix store for future
 execution.
 
 ```bash
-❯ nix develop github:gnosisguild/enclave/ry/v0.1.16
-❯ enclave --version
-enclave 0.1.16
+❯ nix develop github:gnosisguild/interfold/ry/v0.1.16
+❯ interfold --version
+interfold 0.1.16
 ❯ bb --version
 3.0.0-nightly.20251104
 ❯ echo $E3_CUSTOM_BB
@@ -106,12 +106,12 @@ If you decline, everything still works — it just builds from source, which tak
 
 If you prefer to install manually:
 
-1. Visit the [releases page](https://github.com/gnosisguild/enclave/releases)
+1. Visit the [releases page](https://github.com/gnosisguild/interfold/releases)
 2. Download the appropriate release archive for your platform:
-   - Linux: `enclave-linux-x86_64.tar.gz`
-   - macOS: `enclave-macos-aarch64.tar.gz`
+   - Linux: `interfold-linux-x86_64.tar.gz`
+   - macOS: `interfold-macos-aarch64.tar.gz`
 3. Extract the binary and place it in your PATH (e.g., `~/.local/bin` or `/usr/local/bin`)
-4. Make sure the binary is executable: `chmod +x enclave`
+4. Make sure the binary is executable: `chmod +x interfold`
 
 ## Platform Support
 
@@ -125,20 +125,20 @@ _Note: Intel Macs automatically run Apple Silicon binaries through Rosetta 2 tra
 
 ### Building from Source
 
-If you need to build `enclave` from source:
+If you need to build `interfold` from source:
 
 1. Ensure you have Rust installed (using [rustup](https://rustup.rs/))
 2. Clone the repository
 
 ```bash
-git clone https://github.com/gnosisguild/enclave.git
-cd enclave
+git clone https://github.com/gnosisguild/interfold.git
+cd interfold
 ```
 
 3. Build the binary
 
 ```bash
-cargo install --locked --path ./crates/cli --bin enclave -f
+cargo install --locked --path ./crates/cli --bin interfold -f
 ```
 
 ## Verify Installation
@@ -146,7 +146,7 @@ cargo install --locked --path ./crates/cli --bin enclave -f
 After installation, verify that the Interfold CLI is working correctly:
 
 ```bash
-enclave --help
+interfold --help
 ```
 
 You should see the help information for the Interfold CLI.

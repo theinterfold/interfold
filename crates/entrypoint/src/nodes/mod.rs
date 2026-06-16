@@ -7,7 +7,7 @@
 pub mod client;
 pub mod daemon;
 pub mod down;
-pub mod log_buffer;
+#[allow(clippy::module_inception)]
 pub mod nodes;
 pub mod process_manager;
 pub mod ps;

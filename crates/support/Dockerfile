@@ -1,4 +1,4 @@
-ARG RUST_VERSION=1.86.0
+ARG RUST_VERSION=1.91.1
 ARG RISC0_VERSION=3.0.3
 ARG RISC0_TOOLCHAIN=1.88.0
 ARG SKIP_SOLIDITY=0
@@ -14,7 +14,8 @@ RUN apt-get update && \
     libssl-dev \
     curl \
     sudo \
-    ca-certificates && \
+    ca-certificates \
+    protobuf-compiler && \
     rm -rf /var/lib/apt/lists/*
     
 # Create user
@@ -37,6 +38,10 @@ RUN curl -L https://risczero.com/install | bash
 RUN rzup install rust ${RISC0_TOOLCHAIN}
 RUN rzup install r0vm ${RISC0_VERSION}
 RUN rzup install cargo-risczero ${RISC0_VERSION}
+
+RUN sudo ln -sf "$(readlink -f "$(command -v r0vm)")" /usr/local/bin/r0vm && \
+    test -x /usr/local/bin/r0vm
+ENV RISC0_SERVER_PATH=/usr/local/bin/r0vm
 
 ENV PATH="/home/${USERNAME}/.foundry/bin:${PATH}"
 RUN curl -L https://foundry.paradigm.xyz | bash

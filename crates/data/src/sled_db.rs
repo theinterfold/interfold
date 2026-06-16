@@ -53,7 +53,7 @@ impl SledDb {
 
     pub fn get(&self, event: Get) -> Result<Option<Vec<u8>>> {
         let key = event.key();
-        let str_key = String::from_utf8_lossy(&key).into_owned();
+        let str_key = String::from_utf8_lossy(key).into_owned();
         let res = self
             .db
             .get(key)

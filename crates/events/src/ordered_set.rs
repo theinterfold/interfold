@@ -41,6 +41,7 @@ impl<T: Ord> OrderedSet<T> {
         self.0.iter()
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
         let mut set = Self::new();
         set.extend(iter);

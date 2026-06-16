@@ -36,7 +36,7 @@ pub struct VoteCounts {
 /// # Arguments
 ///
 /// * `tally_bytes` - Raw bytes from the FHE decryption, encoding u64 values
-///                   in little-endian format (8 bytes per coefficient).
+///   in little-endian format (8 bytes per coefficient).
 /// * `num_choices` - Number of voting options (must match what was used to encode).
 ///
 /// # Returns

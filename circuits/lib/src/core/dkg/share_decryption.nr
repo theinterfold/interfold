@@ -7,7 +7,7 @@
 use crate::math::commitments::{
     compute_aggregated_shares_commitment, compute_share_encryption_commitment_from_message,
 };
-use crate::math::modulo::U128::ModU128;
+use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 
 /// DKG share decryption and aggregation (C4a / C4b).
@@ -152,9 +152,11 @@ fn normalize_aggregated<let N: u32, let L: u32>(
         for i in 0..N {
             // Reverse: position i gets the coefficient from N-1-i.
             let c = poly.coefficients[N - 1 - i];
-            let reduced = ModU128::new(q).reduce_mod(c);
+            // c < H*q_l (sum of H shares); quotient < H (small) -- safe for ModU64.
+            let reduced = ModU64::new(q as u64).reduce_mod(c);
             // Center: shift to [-(q-1)/2, (q-1)/2].
-            let centered = if (reduced as u128) > (half as u128) {
+            // reduced < q < 2^62 and half < 2^61: u64 cast is sufficient, saves 22 gates.
+            let centered = if (reduced as u64) > (half as u64) {
                 reduced - q
             } else {
                 reduced

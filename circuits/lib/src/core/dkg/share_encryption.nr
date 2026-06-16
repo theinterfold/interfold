@@ -10,7 +10,7 @@ use crate::math::commitments::{
 };
 use crate::math::commitments::compute_dkg_pk_commitment;
 use crate::math::helpers::flatten;
-use crate::math::modulo::U128::ModU128;
+use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 
 /// Parameters for DKG share encryption (C3).
@@ -204,19 +204,20 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// then centered to [-t/2, t/2) to produce the BFV plaintext encoding.
     fn compute_scaled_message(self) -> Polynomial<N> {
         let t = self.configs.t;
-        let t_mod = ModU128::new(t);
+        // t < 2^62 (plaintext modulus); q_mod_t, msg_i < t: all safe for ModU64.
+        let t_mod = ModU64::new(t as u64);
         let q_mod_t: Field = self.configs.q_mod_t;
         let mut k1_coeffs: [Field; N] = [0; N];
 
-        // Integer division for t_half
-        let t_half: u128 = (t as u128) / 2;
+        // Integer division for t_half; t < 2^62 so u64 is sufficient.
+        let t_half: u64 = (t as u64) / 2;
 
         for i in 0..N {
             let msg_i: Field = self.message.coefficients[i];
             let q_times_m_mod_t = t_mod.mul_mod(q_mod_t, msg_i);
 
             // Check if centering is needed (value > t/2 means negative in centered form)
-            let needs_centering = (q_times_m_mod_t as u128) > t_half;
+            let needs_centering = (q_times_m_mod_t as u64) > t_half;
 
             k1_coeffs[i] = if needs_centering {
                 // Value is in (t/2, t), negative in centered form

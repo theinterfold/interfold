@@ -1,8 +1,8 @@
 {
-  description = "Enclave";
+  description = "Interfold";
   nixConfig = {
-    extra-substituters = ["https://enclave.cachix.org"];
-    extra-trusted-public-keys = ["enclave.cachix.org-1:B5SynR85iX/TRueDpZu4dh1xVR8lNfKoAaVWZkux1ss="];
+    extra-substituters = ["https://interfold.cachix.org"];
+    extra-trusted-public-keys = ["interfold.cachix.org-1:B5SynR85iX/TRueDpZu4dh1xVR8lNfKoAaVWZkux1ss="];
   };
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -133,10 +133,10 @@
               inherit name;
               value = fheHash;
             }) [
-              "fhe-0.1.0-beta.7"
-              "fhe-math-0.1.0-beta.7"
-              "fhe-traits-0.1.0-beta.7"
-              "fhe-util-0.1.0-beta.7"
+              "fhe-0.2.0"
+              "fhe-math-0.2.0"
+              "fhe-traits-0.1.1"
+              "fhe-util-0.1.1"
             ]
             ++ map (name: {
               inherit name;

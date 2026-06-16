@@ -8,8 +8,6 @@ use alloy_primitives::utils::{parse_ether, parse_units};
 use alloy_signer_local::PrivateKeySigner;
 use anyhow::{Context, Error, Result};
 use bincode::serialize;
-use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts, VerifierContext};
-use risc0_ethereum_contracts::groth16;
 use boundless_market::{
     client::ClientError,
     contracts::{boundless_market::MarketError, FulfillmentData},
@@ -22,7 +20,10 @@ use e3_compute_provider::{
 };
 use e3_user_program::fhe_processor;
 use methods::PROGRAM_ELF;
-use std::{ops::Bound, time::{Duration, Instant}};
+use risc0_ethereum_contracts::groth16;
+use risc0_zkvm::{default_prover, ExecutorEnv, ProverOpts, VerifierContext};
+use std::error::Error as _;
+use std::time::{Duration, Instant};
 use url::Url;
 
 pub struct BoundlessProvider;
@@ -91,10 +92,74 @@ fn to_output_error<E: std::fmt::Display>(e: E) -> BoundlessOutput {
     }
 }
 
+/// Read optional environment variable as f64, returning None if unset or invalid.
+fn env_opt_f64(key: &str) -> Option<f64> {
+    std::env::var(key).ok().and_then(|v| v.parse().ok())
+}
+
+/// Read optional environment variable as u64 (seconds), returning None if unset or invalid.
+fn env_opt_secs(key: &str) -> Option<u64> {
+    std::env::var(key).ok().and_then(|v| v.parse().ok())
+}
+
+/// Build the OfferParams from environment variables, using sensible defaults.
+fn build_offer() -> Result<OfferParams> {
+    let min_price = if let Some(v) = env_opt_f64("BOUNDLESS_MIN_PRICE_ETH") {
+        if v.is_sign_negative() || v.is_nan() {
+            anyhow::bail!("BOUNDLESS_MIN_PRICE_ETH must be a non-negative number, got: {}", v);
+        }
+        parse_ether(&format!("{}", v)).context("Invalid BOUNDLESS_MIN_PRICE_ETH")?
+    } else {
+        parse_ether("0.00005").context("Invalid default min_price")?
+    };
+    let max_price = if let Some(v) = env_opt_f64("BOUNDLESS_MAX_PRICE_ETH") {
+        if v.is_sign_negative() || v.is_nan() {
+            anyhow::bail!("BOUNDLESS_MAX_PRICE_ETH must be a non-negative number, got: {}", v);
+        }
+        parse_ether(&format!("{}", v)).context("Invalid BOUNDLESS_MAX_PRICE_ETH")?
+    } else {
+        parse_ether("0.002").context("Invalid default max_price")?
+    };
+    let timeout = env_opt_secs("BOUNDLESS_TIMEOUT_SECS")
+        .map(|v| v as u32)
+        .unwrap_or(10 * 60);
+    let lock_timeout = env_opt_secs("BOUNDLESS_LOCK_TIMEOUT_SECS")
+        .map(|v| v as u32)
+        .unwrap_or(5 * 60);
+    let ramp_up = env_opt_secs("BOUNDLESS_RAMP_UP_SECS")
+        .map(|v| v as u32)
+        .unwrap_or(1 * 60);
+    let zkc = env_opt_f64("BOUNDLESS_LOCK_COLLATERAL_ZKC").unwrap_or(2.0);
+    if zkc.is_sign_negative() || zkc.is_nan() {
+        anyhow::bail!("BOUNDLESS_LOCK_COLLATERAL_ZKC must be a non-negative number, got: {}", zkc);
+    }
+    let collateral: alloy_primitives::U256 =
+        parse_units(&format!("{}", zkc), 18).context("Invalid BOUNDLESS_LOCK_COLLATERAL_ZKC")?.into();
+
+    Ok(OfferParams::builder()
+        .min_price(min_price)
+        .max_price(max_price)
+        .timeout(timeout)
+        .lock_timeout(lock_timeout)
+        .ramp_up_period(ramp_up)
+        .lock_collateral(collateral)
+        .into())
+}
+
 async fn boundless_prove(input: &ComputeInput) -> BoundlessOutput {
     match boundless_prove_inner(input).await {
         Ok(output) => output,
-        Err(e) => to_output_error(e),
+        Err(e) => {
+            // Print the full error chain so the root cause is visible in logs.
+            eprintln!("✗ Boundless proof request FAILED:");
+            eprintln!("  Error: {:#}", e);
+            let mut source = e.source();
+            while let Some(s) = source {
+                eprintln!("  Caused by: {}", s);
+                source = s.source();
+            }
+            to_output_error(e)
+        }
     }
 }
 
@@ -119,6 +184,13 @@ async fn boundless_prove_inner(input: &ComputeInput) -> Result<BoundlessOutput> 
         }
     };
 
+    // Diagnostic: log what we're connecting to (key and API path never logged).
+    println!(
+        "Boundless client: caller={}, storage_provider={}",
+        private_key.address(),
+        storage_provider.is_some(),
+    );
+
     let client = Client::builder()
         .with_rpc_url(rpc_url)
         .with_private_key(private_key)
@@ -127,34 +199,21 @@ async fn boundless_prove_inner(input: &ComputeInput) -> Result<BoundlessOutput> 
         .await
         .context("Failed to build Boundless client")?;
 
-    let input_bytes = encode_input(&serialize(input).unwrap())
-        .context("Failed to encode input")?;
-    
-    let program_url = std::env::var("PROGRAM_URL").ok();
+    let input_bytes = encode_input(&serialize(input).unwrap()).context("Failed to encode input")?;
 
-    let request = if let Some(url) = program_url {
+    let program_url = std::env::var("PROGRAM_URL").ok();
+    let stdin_size = input_bytes.len();
+
+    let request = if let Some(ref url) = program_url {
         println!("Using pre-uploaded program: {}", url);
-        let parsed_url = url.parse::<Url>()
-            .context("Failed to parse program URL")?;
-        
+        let parsed_url = url.parse::<Url>().context("Failed to parse program URL")?;
+
         client
             .new_request()
             .with_program_url(parsed_url)
             .context("Failed to create new request")?
             .with_stdin(input_bytes)
-            .with_offer(
-                // This auction begins with a flat period, allowing early bidding before the ramp-up begins.
-                // The price then increases linearly to 0.03 ETH over 2 mins.
-                // The maximum price of 0.03 ETH remains for 8 mins,
-                // after which the price drops to 0 ETH for the expiry period of 10 mins.
-                OfferParams::builder()
-                    .min_price(parse_ether("0.001").unwrap()) // Minimum price in ETH
-                    .max_price(parse_ether("0.03").unwrap()) // Maximum price in ETH
-                    .timeout(20 * 60) // Total timeout in seconds (20 minutes)
-                    .lock_timeout(10 * 60) // Lock timeout in seconds (10 minutes)
-                    .ramp_up_period(2 * 60) // Ramp up period in seconds (2 minutes)
-                    .lock_collateral(parse_units("5", 18).unwrap()), // 5 ZKC
-            )
+            .with_offer(build_offer()?)
     } else {
         println!(
             "Warning: Uploading {}MB program at runtime",
@@ -164,19 +223,73 @@ async fn boundless_prove_inner(input: &ComputeInput) -> Result<BoundlessOutput> 
             .new_request()
             .with_program(PROGRAM_ELF)
             .with_stdin(input_bytes)
+            .with_offer(build_offer()?)
     };
 
     let onchain =
         std::env::var("BOUNDLESS_ONCHAIN").unwrap_or_else(|_| "true".to_string()) == "true";
 
+    println!(
+        "Boundless submission: onchain={}, program_url={:?}, stdin_size={}",
+        onchain, program_url, stdin_size,
+    );
+
     let (request_id, expires_at) = if onchain {
-        println!("Submitting onchain...");
-        client.submit_onchain(request).await
+        println!("Building request...");
+        let proof_request = match client.build_request(request).await {
+            Ok(r) => {
+                println!("✓ Request built successfully (id: {:x})", r.id);
+                r
+            }
+            Err(e) => {
+                eprintln!("✗ Build request FAILED:");
+                eprintln!("  Debug: {:?}", e);
+                eprintln!("  Display: {:#}", e);
+                let mut source = e.source();
+                while let Some(s) = source {
+                    eprintln!("  Caused by: {}", s);
+                    source = s.source();
+                }
+                return Err(anyhow::anyhow!("Failed to build request: {:#}", e));
+            }
+        };
+
+        println!("Submitting onchain (request id: {:x})...", proof_request.id);
+        match client.submit_request_onchain(&proof_request).await {
+            Ok(result) => {
+                println!("✓ Onchain submission successful");
+                result
+            }
+            Err(e) => {
+                eprintln!("✗ Onchain submission FAILED:");
+                eprintln!("  Display: {:#}", e);
+                let mut source = e.source();
+                while let Some(s) = source {
+                    eprintln!("  Caused by: {}", s);
+                    source = s.source();
+                }
+                return Err(anyhow::anyhow!("Failed to submit onchain: {:#}", e));
+            }
+        }
     } else {
         println!("Submitting offchain...");
-        client.submit_offchain(request).await
-    }
-    .context("Failed to submit request")?;
+        match client.submit_offchain(request).await {
+            Ok(result) => {
+                println!("✓ Offchain submission successful");
+                result
+            }
+            Err(e) => {
+                eprintln!("✗ Offchain submission FAILED:");
+                eprintln!("  Error: {:#}", e);
+                let mut source = e.source();
+                while let Some(s) = source {
+                    eprintln!("  Caused by: {}", s);
+                    source = s.source();
+                }
+                return Err(anyhow::anyhow!("Failed to submit offchain: {:#}", e));
+            }
+        }
+    };
 
     println!("Request ID: {:x}, waiting for fulfillment...", request_id);
 
@@ -207,8 +320,8 @@ async fn boundless_prove_inner(input: &ComputeInput) -> Result<BoundlessOutput> 
         }
     };
 
-    let decoded_journal: ComputeResult = bincode::deserialize(&journal)
-        .context("Failed to decode journal")?;
+    let decoded_journal: ComputeResult = risc0_zkvm::serde::from_slice(&journal)
+        .map_err(|e| anyhow::anyhow!("Failed to decode journal: {}", e))?;
 
     Ok(BoundlessOutput::Success {
         result: decoded_journal,
@@ -311,15 +424,10 @@ pub fn run_risc0_compute(
 ) -> std::result::Result<(Risc0Output, Vec<u8>), ComputeError> {
     let risc0_provider = Risc0Provider;
 
-    let mut provider = ComputeManager::new(
-        risc0_provider,
-        params.clone(),
-        fhe_processor,
-        false,
-        None,
-    );
+    let mut provider =
+        ComputeManager::new(risc0_provider, params.clone(), fhe_processor, false, None);
 
     let output = provider.start();
 
-   Ok(output)
+    Ok(output)
 }

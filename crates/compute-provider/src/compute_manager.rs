@@ -120,7 +120,7 @@ where
         let fhe_inputs = FHEInputs {
             ciphertexts: tally_results
                 .iter()
-                .map(|result| (result.1.clone(), 0 as u64)) // The index is not used for the final computation in the parallel case
+                .map(|result| (result.1.clone(), 0u64)) // The index is not used for the final computation in the parallel case
                 .collect(),
             params: params.to_vec(),
         };

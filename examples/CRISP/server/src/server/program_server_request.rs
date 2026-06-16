@@ -27,7 +27,7 @@ where
     serializer.serialize_str(&hex_string)
 }
 
-fn serialize_hex_tuple<S>(tuples: &Vec<(Vec<u8>, u64)>, serializer: S) -> Result<S::Ok, S::Error>
+fn serialize_hex_tuple<S>(tuples: &[(Vec<u8>, u64)], serializer: S) -> Result<S::Ok, S::Error>
 where
     S: Serializer,
 {

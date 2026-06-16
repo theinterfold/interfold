@@ -18,25 +18,25 @@ use alloy_primitives::{Address, U256};
 use crisp_utils::decode_tally;
 use e3_sdk::{
     evm_helpers::{
-        contracts::{EnclaveRead, ReadWrite},
+        contracts::{InterfoldRead, ReadWrite},
         events::{
             CiphertextOutputPublished, CommitteePublished, E3Requested, PlaintextOutputPublished,
         },
         retry::call_with_retry,
     },
-    indexer::{DataStore, EnclaveIndexer, SharedStore},
+    indexer::{DataStore, InterfoldIndexer, SharedStore},
 };
 use evm_helpers::{CRISPContractFactory, InputPublished};
 use eyre::Context;
-use log::info;
+use log::{info, warn};
 use num_bigint::BigUint;
 use std::error::Error;
 
 type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync>>;
 
 pub async fn register_e3_requested(
-    indexer: EnclaveIndexer<impl DataStore, ReadWrite>,
-) -> Result<EnclaveIndexer<impl DataStore, ReadWrite>> {
+    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
+) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
     // E3Requested
     indexer
         .add_event_handler(move |event: E3Requested, ctx| {
@@ -162,8 +162,7 @@ pub async fn register_e3_requested(
                         "[e3_id={}] No eligible token holders found for token address {}.",
                         e3_id,
                         token_address
-                    )
-                    .into());
+                    ));
                 }
 
                 // save the e3 details
@@ -240,17 +239,37 @@ async fn handle_e3_input_deadline_expiration(
 
     repo.update_status("Expired").await?;
 
-    if repo.get_vote_count().await? > 0 {
-        info!("[e3_id={}] Starting computation for E3", e3_id);
-        repo.update_status("Computing").await?;
+    let voter_count = repo.get_vote_count().await?;
+    let votes = repo.get_ciphertext_inputs().await?;
 
-        let votes = repo.get_ciphertext_inputs().await?;
+    if voter_count > 0 && votes.is_empty() {
+        warn!(
+            "[e3_id={}] {} voter(s) recorded but no InputPublished ciphertexts indexed — \
+             skipping FHE compute (check CRISP indexer + on-chain publishInput)",
+            e3_id, voter_count
+        );
+        repo.update_status("Finished").await?;
+        info!("[e3_id={}] E3 request handled successfully.", e3_id);
+        return Ok(());
+    }
+
+    if !votes.is_empty() {
+        info!(
+            "[e3_id={}] Starting computation for E3 ({} ciphertext input(s), {} voter(s))",
+            e3_id,
+            votes.len(),
+            voter_count
+        );
+        repo.update_status("Computing").await?;
 
         let (id, status) = run_compute(
             e3_id,
             e3.e3_params,
             votes,
-            format!("{}/state/add-result", CONFIG.enclave_server_url),
+            format!(
+                "{}/state/add-result",
+                CONFIG.interfold_server_url_for_clients()
+            ),
         )
         .await
         .map_err(|e| eyre::eyre!("Error sending run compute request: {e}"))?;
@@ -260,12 +279,14 @@ async fn handle_e3_input_deadline_expiration(
                 "Computation request returned unexpected E3 ID: expected {}, got {}",
                 e3_id,
                 id
-            )
-            .into());
+            ));
         }
 
         if status != "processing" {
-            return Err(eyre::eyre!("Computation request failed with status: {}", status).into());
+            return Err(eyre::eyre!(
+                "Computation request failed with status: {}",
+                status
+            ));
         }
 
         info!("[e3_id={}] Request Computation for E3", e3_id);
@@ -284,8 +305,8 @@ async fn handle_e3_input_deadline_expiration(
 }
 
 pub async fn register_ciphertext_output_published(
-    indexer: EnclaveIndexer<impl DataStore, ReadWrite>,
-) -> Result<EnclaveIndexer<impl DataStore, ReadWrite>> {
+    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
+) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
     // CiphertextOutputPublished
     indexer
         .add_event_handler(move |event: CiphertextOutputPublished, ctx| {
@@ -303,8 +324,8 @@ pub async fn register_ciphertext_output_published(
 }
 
 pub async fn register_plaintext_output_published(
-    indexer: EnclaveIndexer<impl DataStore, ReadWrite>,
-) -> Result<EnclaveIndexer<impl DataStore, ReadWrite>> {
+    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
+) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
     // PlaintextOutputPublished
     indexer
         .add_event_handler(move |event: PlaintextOutputPublished, ctx| {
@@ -334,8 +355,8 @@ pub async fn register_plaintext_output_published(
 }
 
 pub async fn register_committee_published(
-    indexer: EnclaveIndexer<impl DataStore, ReadWrite>,
-) -> Result<EnclaveIndexer<impl DataStore, ReadWrite>> {
+    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
+) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
     // CommitteePublished
     indexer
         .add_event_handler(move |event: CommitteePublished, ctx| {
@@ -380,8 +401,8 @@ pub async fn get_current_timestamp_rpc() -> eyre::Result<u64> {
 }
 
 pub async fn register_input_published(
-    indexer: EnclaveIndexer<impl DataStore, ReadWrite>,
-) -> Result<EnclaveIndexer<impl DataStore, ReadWrite>> {
+    indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
+) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
     indexer
         .add_event_handler(move |event: InputPublished, ctx| {
             let e3_id = event.e3Id.to::<u64>();
@@ -413,7 +434,7 @@ pub async fn start_indexer(
     private_key: &str,
 ) -> Result<()> {
     info!("CRISP: Creating indexer...");
-    let crisp_indexer = EnclaveIndexer::new_with_write_contract(
+    let crisp_indexer = InterfoldIndexer::new_with_write_contract(
         url,
         &[contract_address, registry_address, crisp_address],
         store,

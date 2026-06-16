@@ -3,8 +3,8 @@ name = "e3-evm"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "E3 - Enclave Ciphernode EVM Connectors"
-repository = "https://github.com/gnosisguild/enclave/crates/evm"
+description = "E3 - Interfold Ciphernode EVM Connectors"
+repository = "https://github.com/gnosisguild/interfold/crates/evm"
 publish = false
 
 [dependencies]

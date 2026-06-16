@@ -41,11 +41,7 @@ impl HlcState {
     }
 
     pub fn is_ready(&self) -> bool {
-        if let HlcState::Init = self {
-            false
-        } else {
-            true
-        }
+        !matches!(self, HlcState::Init)
     }
 }
 
@@ -75,6 +71,12 @@ pub struct HlcFactory {
     hlc: Arc<Mutex<HlcState>>,
 }
 
+impl Default for HlcFactory {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HlcFactory {
     pub fn new() -> Self {
         Self {
@@ -91,6 +93,16 @@ impl HlcFactory {
         match self.hlc.lock() {
             Err(_) => false,
             Ok(g) => g.is_ready(),
+        }
+    }
+
+    /// Seed the underlying clock's physical-time floor (H15). No-op until the
+    /// HLC has been enabled. See `Hlc::seed_physical_floor`.
+    pub fn seed_physical_floor(&self, ts: u64) {
+        if let Ok(guard) = self.hlc.lock() {
+            if let HlcState::Ready(hlc) = &*guard {
+                hlc.seed_physical_floor(ts);
+            }
         }
     }
 }

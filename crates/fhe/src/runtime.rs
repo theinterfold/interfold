@@ -179,7 +179,7 @@ impl SecretKeySerializer {
     }
 
     pub fn deserialize(bytes: &[u8], params: Arc<BfvParameters>) -> Result<SecretKeySerializer> {
-        let SecretKeyData { coeffs } = bincode::deserialize(&bytes)?;
+        let SecretKeyData { coeffs } = bincode::deserialize(bytes)?;
         Ok(Self {
             inner: SecretKey::new(coeffs.to_vec(), &params),
         })

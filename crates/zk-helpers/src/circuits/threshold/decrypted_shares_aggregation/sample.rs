@@ -21,11 +21,10 @@ use e3_fhe_params::{build_pair_for_preset, create_deterministic_crp_from_default
 use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::mbfv::{AggregateIter, PublicKeyShare};
 use fhe::trbfv::{ShareManager, TRBFV};
-use fhe_math::rq::{Poly, Representation};
+use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::FheDecoder;
 use fhe_traits::{FheEncoder, FheEncrypter};
 use ndarray::Array2;
-use rand::rngs::OsRng;
 use std::sync::Arc;
 
 struct Party {
@@ -34,8 +33,8 @@ struct Party {
     esi_sss: Vec<Array2<u64>>,
     sk_sss_collected: Vec<Array2<u64>>,
     es_sss_collected: Vec<Array2<u64>>,
-    sk_poly_sum: Poly,
-    es_poly_sum: Poly,
+    sk_poly_sum: Poly<PowerBasis>,
+    es_poly_sum: Poly<PowerBasis>,
 }
 
 impl DecryptedSharesAggregationCircuitData {
@@ -53,6 +52,10 @@ impl DecryptedSharesAggregationCircuitData {
         let sd = preset
             .search_defaults()
             .ok_or_else(|| CircuitsErrors::Sample("Preset has no search defaults".into()))?;
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = preset
+            .lambda()
+            .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
         let num_parties = committee.n;
         let threshold = committee.threshold;
@@ -61,26 +64,31 @@ impl DecryptedSharesAggregationCircuitData {
 
         let trbfv = TRBFV::new(num_parties, threshold, threshold_params.clone())
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
-        let mut rng = OsRng;
-        let mut thread_rng = rand::thread_rng();
+        let mut rng = rand::rng();
 
         let crp = create_deterministic_crp_from_default_seed(&threshold_params);
 
-        let ctx = threshold_params.ctx_at_level(0).unwrap();
+        let ctx = threshold_params.context_at_level(0).unwrap();
 
         let mut parties: Vec<Party> = (0..num_parties)
             .map(|_| -> Result<Party, CircuitsErrors> {
                 let sk_share = SecretKey::random(&threshold_params, &mut rng);
-                let pk_share = PublicKeyShare::new(&sk_share, crp.clone(), &mut thread_rng)
-                    .map_err(|e| {
+                let pk_share =
+                    PublicKeyShare::new(&sk_share, crp.clone(), &mut rng).map_err(|e| {
                         CircuitsErrors::Sample(format!(
                             "Failed to create public key share: {:?}",
                             e
                         ))
                     })?;
 
-                let mut share_manager =
-                    ShareManager::new(num_parties, threshold, threshold_params.clone());
+                let mut share_manager = ShareManager::new(
+                    num_parties,
+                    threshold,
+                    threshold_params.clone(),
+                )
+                .map_err(|e| {
+                    CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e))
+                })?;
                 let sk_poly = share_manager
                     .coeffs_to_poly_level0(sk_share.coeffs.as_ref())
                     .map_err(|e| {
@@ -97,7 +105,7 @@ impl DecryptedSharesAggregationCircuitData {
                     })?;
 
                 let esi_coeffs = trbfv
-                    .generate_smudging_error(sd.z as usize, sd.lambda as usize, &mut rng)
+                    .generate_smudging_error(sd.z as usize, lambda, &mut rng)
                     .map_err(|e| {
                         CircuitsErrors::Sample(format!(
                             "Failed to generate smudging error: {:?}",
@@ -115,8 +123,8 @@ impl DecryptedSharesAggregationCircuitData {
 
                 let sk_sss_collected = Vec::with_capacity(num_parties);
                 let es_sss_collected = Vec::with_capacity(num_parties);
-                let sk_poly_sum = Poly::zero(&ctx, Representation::PowerBasis);
-                let es_poly_sum = Poly::zero(&ctx, Representation::PowerBasis);
+                let sk_poly_sum = Poly::<PowerBasis>::zero(ctx);
+                let es_poly_sum = Poly::<PowerBasis>::zero(ctx);
 
                 Ok(Party {
                     pk_share,
@@ -175,7 +183,10 @@ impl DecryptedSharesAggregationCircuitData {
 
         // Aggregate collected shares to get sk_poly_sum and es_poly_sum per party
         for party in parties.iter_mut() {
-            let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone());
+            let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+                .map_err(|e| {
+                    CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e))
+                })?;
             party.sk_poly_sum = share_manager
                 .aggregate_collected_shares(&party.sk_sss_collected)
                 .map_err(|e| {
@@ -213,22 +224,25 @@ impl DecryptedSharesAggregationCircuitData {
         let pt = Plaintext::try_encode(&message, Encoding::poly(), &threshold_params)
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to encode plaintext: {:?}", e)))?;
         let ciphertext = public_key
-            .try_encrypt(&pt, &mut thread_rng)
+            .try_encrypt(&pt, &mut rng)
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to encrypt: {:?}", e)))?;
 
         let ciphertext = Arc::new(ciphertext);
 
         // Decryption shares from T+1 parties (1-based party IDs)
         let honest_parties = threshold + 1;
-        let mut d_share_polys: Vec<Poly> = Vec::with_capacity(honest_parties);
+        let mut d_share_polys: Vec<Poly<PowerBasis>> = Vec::with_capacity(honest_parties);
 
         for party in parties.iter().take(honest_parties) {
-            let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone());
+            let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+                .map_err(|e| {
+                    CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e))
+                })?;
             // For a single ciphertext, es_poly_sum is one Poly per party
             let d_share = share_manager
                 .decryption_share(
                     Arc::clone(&ciphertext),
-                    party.sk_poly_sum.clone(),
+                    party.sk_poly_sum.clone().into_ntt(),
                     party.es_poly_sum.clone(),
                 )
                 .map_err(|e| {
@@ -240,7 +254,10 @@ impl DecryptedSharesAggregationCircuitData {
         let reconstructing_parties: Vec<usize> = (1..=honest_parties).collect();
 
         // Threshold decrypt to obtain message (verify)
-        let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone());
+        let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+            .map_err(|e| {
+                CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e))
+            })?;
         let plaintext = share_manager
             .decrypt_from_shares(
                 d_share_polys.clone(),

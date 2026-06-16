@@ -8,7 +8,7 @@ use crate::{E3Context, E3ContextSnapshot, E3Extension, MetaRepositoryFactory, Ty
 use anyhow::*;
 use async_trait::async_trait;
 use e3_data::RepositoriesFactory;
-use e3_events::{E3Requested, EnclaveEvent, EnclaveEventData, Event, Seed};
+use e3_events::{E3Requested, Event, InterfoldEvent, InterfoldEventData, Seed};
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
 
@@ -21,7 +21,6 @@ pub struct E3Meta {
     pub seed: Seed,
     pub params_preset: BfvPreset,
     pub params: ArcBytes,
-    pub esi_per_ct: usize,
     pub error_size: ArcBytes,
     pub proof_aggregation_enabled: bool,
 }
@@ -36,8 +35,8 @@ impl E3MetaExtension {
 
 #[async_trait]
 impl E3Extension for E3MetaExtension {
-    fn on_event(&self, ctx: &mut crate::E3Context, event: &EnclaveEvent) {
-        let EnclaveEventData::E3Requested(data) = event.get_data() else {
+    fn on_event(&self, ctx: &mut crate::E3Context, event: &InterfoldEvent) {
+        let InterfoldEventData::E3Requested(data) = event.get_data() else {
             return;
         };
         let E3Requested {
@@ -47,7 +46,6 @@ impl E3Extension for E3MetaExtension {
             e3_id,
             params_preset,
             params,
-            esi_per_ct,
             error_size,
             proof_aggregation_enabled,
             ..
@@ -60,12 +58,11 @@ impl E3Extension for E3MetaExtension {
             seed,
             params_preset,
             params,
-            esi_per_ct,
             error_size,
             proof_aggregation_enabled,
         };
         ctx.repositories().meta(&e3_id).write(&meta);
-        let _ = ctx.set_dependency(META_KEY, meta);
+        ctx.set_dependency(META_KEY, meta);
     }
 
     async fn hydrate(&self, ctx: &mut E3Context, snapshot: &E3ContextSnapshot) -> Result<()> {

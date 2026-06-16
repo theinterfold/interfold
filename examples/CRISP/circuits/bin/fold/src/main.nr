@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
-use enclave_lib::math::commitments::compute_vk_hash;
+use interfold_lib::math::commitments::compute_vk_hash;
 
 /// Binds the four inner `vk_hash` witnesses. Regenerate with `pnpm compute:vk-hash` in
 /// `examples/CRISP` after changing ct0 / ct1 / user_data_encryption / crisp (or the lib preset).

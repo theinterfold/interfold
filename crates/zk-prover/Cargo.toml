@@ -3,7 +3,7 @@ name = "e3-zk-prover"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "ZK proof generation for Enclave ciphernodes"
+description = "ZK proof generation for Interfold ciphernodes"
 repository.workspace = true
 
 [dependencies]
@@ -18,12 +18,14 @@ bincode = "1.3.3"
 bn254_blackbox_solver = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.16" }
 chrono = { workspace = true }
 directories = "5"
+e3-committee-hash.workspace = true
 e3-config.workspace = true
 e3-data.workspace = true
 e3-events.workspace = true
 e3-fhe-params.workspace = true
 e3-polynomial.workspace = true
 e3-request.workspace = true
+e3-slashing.workspace = true
 e3-utils.workspace = true
 e3-zk-helpers.workspace = true
 fhe.workspace = true
@@ -34,6 +36,7 @@ indicatif = "0.17"
 nargo = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.16" }
 noirc_abi = { git = "https://github.com/noir-lang/noir", tag = "v1.0.0-beta.16" }
 num-bigint.workspace = true
+rayon.workspace = true
 reqwest = { workspace = true, features = ["json", "stream"] }
 serde = { workspace = true, features = ["derive"] }
 serde_json.workspace = true
@@ -48,6 +51,9 @@ walkdir = "2.5"
 
 [dev-dependencies]
 e3-test-helpers = { workspace = true }
+e3-evm = { workspace = true }
+e3-crypto = { workspace = true }
+e3-trbfv = { workspace = true }
 ark-bn254 = { workspace = true }
 ark-ff = { workspace = true }
 fhe-traits = { workspace = true }

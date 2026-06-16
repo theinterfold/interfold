@@ -8,7 +8,7 @@ use super::{
     timelock_queue::{Clock, StartTimelock, SystemClock, Tick, TimelockQueue},
     AggregateConfig,
 };
-use crate::{EnclaveEvent, Insert, InsertBatch};
+use crate::{Insert, InsertBatch, InterfoldEvent};
 use actix::{Actor, Addr, Handler, Message, Recipient};
 use anyhow::Result;
 use e3_utils::MAILBOX_LIMIT;
@@ -24,10 +24,7 @@ struct SetDependencies {
 
 impl SetDependencies {
     pub fn new(router: Addr<BatchRouter>, timelock: Addr<TimelockQueue>) -> Self {
-        Self {
-            router: router.into(),
-            timelock,
-        }
+        Self { router, timelock }
     }
 }
 
@@ -48,6 +45,12 @@ pub struct SnapshotBuffer {
     router: Option<Addr<BatchRouter>>,
     timelock: Option<Recipient<StartTimelock>>,
     tickable: Option<Recipient<Tick>>,
+}
+
+impl Default for SnapshotBuffer {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SnapshotBuffer {
@@ -129,9 +132,9 @@ impl Handler<Insert> for SnapshotBuffer {
     }
 }
 
-impl Handler<EnclaveEvent> for SnapshotBuffer {
+impl Handler<InterfoldEvent> for SnapshotBuffer {
     type Result = ();
-    fn handle(&mut self, msg: EnclaveEvent, _ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: InterfoldEvent, _ctx: &mut Self::Context) -> Self::Result {
         if let Some(ref router) = self.router {
             router.do_send(msg);
         }
@@ -158,8 +161,6 @@ impl Handler<UpdateDestination> for SnapshotBuffer {
 
 #[cfg(test)]
 mod mock_store {
-    use std::mem::replace;
-
     use crate::InsertBatch;
     use actix::{Actor, Handler, Message};
 
@@ -187,7 +188,7 @@ mod mock_store {
     impl Handler<GetEvts> for MockStore {
         type Result = Vec<InsertBatch>;
         fn handle(&mut self, _: GetEvts, _: &mut Self::Context) -> Self::Result {
-            replace(&mut self.evts, Vec::new())
+            std::mem::take(&mut self.evts)
         }
     }
 }
@@ -199,8 +200,8 @@ mod tests {
     use super::{mock_store, SnapshotBuffer};
     use crate::snapshot_buffer::timelock_queue::Tick;
     use crate::{
-        AggregateConfig, AggregateId, E3id, EnclaveEvent, EventContext, EventContextAccessors,
-        EventContextSeq, EventId, EventSource, Insert, InsertBatch, Sequenced, SyncEnded,
+        AggregateConfig, AggregateId, E3id, EventContext, EventContextAccessors, EventContextSeq,
+        EventId, EventSource, Insert, InsertBatch, InterfoldEvent, Sequenced, Shutdown, SyncEnded,
         TestEvent,
     };
     use actix::Actor;
@@ -222,8 +223,8 @@ mod tests {
         .sequence(seq)
     }
 
-    fn create_event(ec: &EventContext<Sequenced>) -> EnclaveEvent {
-        EnclaveEvent::<Sequenced>::from_data_ec(
+    fn create_event(ec: &EventContext<Sequenced>) -> InterfoldEvent {
+        InterfoldEvent::<Sequenced>::from_data_ec(
             TestEvent::new("hello", ec.seq())
                 .with_e3_id(E3id::new("1", *ec.aggregate_id() as u64))
                 .into(),
@@ -247,7 +248,7 @@ mod tests {
             SnapshotBuffer::with_clock(config, store.clone(), clock.clone(), None)?;
 
         buffer
-            .send(EnclaveEvent::from_data_ec(
+            .send(InterfoldEvent::from_data_ec(
                 SyncEnded::new().into(),
                 create_ec(0, 9),
             ))
@@ -257,24 +258,26 @@ mod tests {
         timelock.send(Tick).await?;
 
         let ec = create_ec(23, 10);
-        let enclave_10 = create_event(&ec);
+        let interfold_10 = create_event(&ec);
 
-        let mut inserts_10 = vec![];
-        inserts_10.push(Insert::new_with_context("one", b"one".to_vec(), ec.clone()));
-        inserts_10.push(Insert::new_with_context("two", b"two".to_vec(), ec.clone()));
+        let inserts_10 = [
+            Insert::new_with_context("one", b"one".to_vec(), ec.clone()),
+            Insert::new_with_context("two", b"two".to_vec(), ec.clone()),
+        ];
 
         let ec = create_ec(1, 11);
-        let enclave_11 = create_event(&ec);
+        let interfold_11 = create_event(&ec);
 
-        let mut inserts_11 = vec![];
-        inserts_11.push(Insert::new_with_context("one", b"one".to_vec(), ec.clone()));
-        inserts_11.push(Insert::new_with_context("two", b"two".to_vec(), ec.clone()));
+        let inserts_11 = [
+            Insert::new_with_context("one", b"one".to_vec(), ec.clone()),
+            Insert::new_with_context("two", b"two".to_vec(), ec.clone()),
+        ];
 
         let ec = create_ec(0, 12);
-        let enclave_12 = create_event(&ec);
+        let interfold_12 = create_event(&ec);
 
         // send event 10
-        buffer.send(enclave_10).await?;
+        buffer.send(interfold_10).await?;
 
         info!("TimelockQueue should hold all seq=9 inserts");
         timelock.send(Tick).await?;
@@ -284,7 +287,7 @@ mod tests {
 
         // send event 11
         info!("Sending event seq=11 this should start the timelock for all the seq=10 inserts");
-        buffer.send(enclave_11).await?;
+        buffer.send(interfold_11).await?;
 
         // send a late insert for 10
         buffer.send(inserts_10[1].clone()).await?;
@@ -295,7 +298,7 @@ mod tests {
 
         // send event 12
         info!("Sending event seq=12 this should start the timelock for all the seq=11 inserts");
-        buffer.send(enclave_12).await?;
+        buffer.send(interfold_12).await?;
 
         // Nothing happens as there has not been enough delay
         info!("Clock=1020 : Checking for events but there should be nothing that has flushed...");
@@ -331,6 +334,60 @@ mod tests {
         assert_eq!(1, batches.len());
         let InsertBatch(inserts) = batches.first().unwrap();
         assert_eq!(5, inserts.len()); // Have 5 inserts as sequence,block and ts get written
+
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn test_shutdown_force_flushes_open_batches() -> Result<()> {
+        // An open, debounced batch whose timelock has NOT fired must still be
+        // committed when a Shutdown event arrives, instead of being lost in the
+        // durability window (H2/GF-5).
+        let mut delays = HashMap::new();
+        // Large delays so batches would never flush via the timelock here.
+        delays.insert(AggregateId::new(0), Duration::from_micros(1_000_000));
+        delays.insert(AggregateId::new(7), Duration::from_micros(1_000_000));
+
+        let config = &AggregateConfig::new(delays);
+        let store = mock_store::MockStore::default().start();
+        let clock = Arc::new(MockClock::new(1000));
+        let (buffer, timelock) =
+            SnapshotBuffer::with_clock(config, store.clone(), clock.clone(), None)?;
+
+        // Turn the buffer on (opens a batch for seq=1).
+        buffer
+            .send(InterfoldEvent::from_data_ec(
+                SyncEnded::new().into(),
+                create_ec(0, 1),
+            ))
+            .await?;
+
+        // Open another batch for aggregate 7 at seq=2 (creates seq/block/ts inserts).
+        buffer.send(create_event(&create_ec(7, 2))).await?;
+
+        // Neither timelock has expired, so a Tick flushes nothing.
+        timelock.send(Tick).await?;
+        let batches = store.send(GetEvts).await?;
+        assert_eq!(
+            0,
+            batches.len(),
+            "batches should still be open before shutdown"
+        );
+
+        // Shutdown arrives: every open batch must be force-flushed.
+        buffer
+            .send(InterfoldEvent::from_data_ec(
+                Shutdown.into(),
+                create_ec(7, 3),
+            ))
+            .await?;
+
+        let batches = store.send(GetEvts).await?;
+        assert_eq!(
+            2,
+            batches.len(),
+            "shutdown should force-flush both open batches"
+        );
 
         Ok(())
     }

@@ -1,0 +1,73 @@
+{
+  "name": "@interfold/sdk",
+  "version": "0.2.1",
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs",
+      "default": "./dist/index.js"
+    },
+    "./crypto": {
+      "types": "./dist/crypto/index.d.ts",
+      "import": "./dist/crypto/index.js",
+      "require": "./dist/crypto/index.cjs"
+    },
+    "./contracts": {
+      "types": "./dist/contracts/index.d.ts",
+      "import": "./dist/contracts/index.js",
+      "require": "./dist/contracts/index.cjs"
+    },
+    "./events": {
+      "types": "./dist/events/index.d.ts",
+      "import": "./dist/events/index.js",
+      "require": "./dist/events/index.cjs"
+    }
+  },
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gnosisguild/interfold.git",
+    "directory": "packages/interfold-sdk"
+  },
+  "scripts": {
+    "compile:circuits": "bash scripts/compile-circuits.sh",
+    "prebuild": "pnpm -C ../interfold-contracts build && pnpm -C ../../ wasm:build && pnpm compile:circuits",
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "test": "vitest --run",
+    "pretest": "pnpm compile:circuits",
+    "prerelease": "pnpm clean && pnpm build",
+    "release": "pnpm publish --access=public"
+  },
+  "devDependencies": {
+    "@interfold/config": "workspace:*",
+    "concurrently": "^9.1.2",
+    "tsup": "^8.5.0",
+    "typescript": "5.8.3",
+    "vite": "^6.2.0",
+    "vite-plugin-dts": "^4.5.3"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "3.0.0-nightly.20260102",
+    "@noir-lang/noir_js": "1.0.0-beta.16",
+    "@interfold/wasm": "workspace:*",
+    "@interfold/contracts": "workspace:*",
+    "comlink": "^4.4.2",
+    "viem": "2.30.6",
+    "vite-plugin-top-level-await": "^1.5.0",
+    "vite-plugin-wasm": "^3.4.1",
+    "vitest": "^1.6.1",
+    "web-worker": "^1.5.0"
+  }
+}

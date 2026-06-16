@@ -16,8 +16,8 @@ use EmitLogs::EmitLogsInstance;
 
 sol!(
     #[sol(rpc)]
-    Enclave,
-    "tests/fixtures/fake_enclave.json"
+    Interfold,
+    "tests/fixtures/fake_interfold.json"
 );
 
 sol!(

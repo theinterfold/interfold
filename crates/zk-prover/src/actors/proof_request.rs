@@ -16,189 +16,20 @@ use e3_events::{
     ComputeRequestError, ComputeRequestErrorKind, ComputeResponse, ComputeResponseKind,
     CorrelationId, DKGInnerProofReady, DecryptionKeyShared, DecryptionShareProofSigned,
     DecryptionShareProofsPending, DecryptionshareCreated, DkgProofSigned, E3Failed, E3Stage, E3id,
-    EnclaveEvent, EnclaveEventData, EncryptionKey, EncryptionKeyCreated, EncryptionKeyPending,
-    EventContext, EventPublisher, EventSubscriber, EventType, FailureReason,
-    PkAggregationProofPending, PkAggregationProofRequest, PkAggregationProofSigned,
-    PkBfvProofRequest, PkGenerationProofSigned, Proof, ProofPayload, ProofType,
-    ProofVerificationPassed, Sequenced, ShareDecryptionProofPending, SignedProofFailed,
-    SignedProofPayload, ThresholdShare, ThresholdShareCreated, ThresholdSharePending, TypedEvent,
-    ZkRequest, ZkResponse,
+    EncryptionKeyCreated, EncryptionKeyPending, EventContext, EventPublisher, EventSubscriber,
+    EventType, FailureReason, InterfoldEvent, InterfoldEventData, PkAggregationProofPending,
+    PkAggregationProofSigned, PkBfvProofRequest, PkGenerationProofSigned, Proof, ProofPayload,
+    ProofType, ProofVerificationPassed, Sequenced, ShareDecryptionProofPending, SignedProofPayload,
+    ThresholdShareCreated, ThresholdSharePending, TypedEvent, ZkRequest, ZkResponse,
 };
-use e3_utils::utility_types::ArcBytes;
 use e3_utils::NotifySync;
 use tracing::{error, info, trace, warn};
 
-#[derive(Clone, Debug)]
-enum ThresholdProofKind {
-    PkGeneration,
-    SkShareComputation,
-    ESmShareComputation,
-    SkShareEncryption {
-        recipient_party_id: usize,
-        row_index: usize,
-    },
-    ESmShareEncryption {
-        esi_index: usize,
-        recipient_party_id: usize,
-        row_index: usize,
-    },
-}
-
-/// Per-E3 metadata for streaming DKG inner proof aggregation.
-#[derive(Clone, Debug)]
-struct NodeAggregationMeta {
-    party_id: u64,
-    total_expected: usize,
-    /// Buffered C0 proof, if it arrived before meta was stored.
-    pending_c0: Option<Proof>,
-    /// When false, skip emitting DKGInnerProofReady (no recursive DKG aggregation).
-    proof_aggregation_enabled: bool,
-}
-
-#[derive(Clone, Debug)]
-struct PendingProofRequest {
-    e3_id: E3id,
-    key: Arc<EncryptionKey>,
-}
-
-#[derive(Clone, Debug)]
-struct PendingThresholdProofs {
-    e3_id: E3id,
-    full_share: Arc<ThresholdShare>,
-    ec: EventContext<Sequenced>,
-    pk_generation_proof: Option<Proof>,
-    sk_share_computation_proof: Option<Proof>,
-    e_sm_share_computation_proof: Option<Proof>,
-    /// C3a proofs: keyed by (recipient_party_id, row_index)
-    sk_share_encryption_proofs: HashMap<(usize, usize), Proof>,
-    expected_sk_enc_count: usize,
-    /// C3b proofs: keyed by (esi_index, recipient_party_id, row_index)
-    e_sm_share_encryption_proofs: HashMap<(usize, usize, usize), Proof>,
-    expected_e_sm_enc_count: usize,
-    /// Maps positional index to real party_id (from ThresholdSharePending).
-    recipient_party_ids: Vec<u64>,
-}
-
-impl PendingThresholdProofs {
-    fn new(
-        e3_id: E3id,
-        full_share: Arc<ThresholdShare>,
-        ec: EventContext<Sequenced>,
-        expected_sk_enc_count: usize,
-        expected_e_sm_enc_count: usize,
-        recipient_party_ids: Vec<u64>,
-    ) -> Self {
-        Self {
-            e3_id,
-            full_share,
-            ec,
-            pk_generation_proof: None,
-            sk_share_computation_proof: None,
-            e_sm_share_computation_proof: None,
-            sk_share_encryption_proofs: HashMap::new(),
-            expected_sk_enc_count,
-            e_sm_share_encryption_proofs: HashMap::new(),
-            expected_e_sm_enc_count,
-            recipient_party_ids,
-        }
-    }
-
-    fn is_complete(&self) -> bool {
-        self.pk_generation_proof.is_some()
-            && self.sk_share_computation_proof.is_some()
-            && self.e_sm_share_computation_proof.is_some()
-            && self.sk_share_encryption_proofs.len() == self.expected_sk_enc_count
-            && self.e_sm_share_encryption_proofs.len() == self.expected_e_sm_enc_count
-    }
-
-    fn store_proof(&mut self, kind: &ThresholdProofKind, proof: Proof) {
-        match kind {
-            ThresholdProofKind::PkGeneration => self.pk_generation_proof = Some(proof),
-            ThresholdProofKind::SkShareComputation => self.sk_share_computation_proof = Some(proof),
-            ThresholdProofKind::ESmShareComputation => {
-                self.e_sm_share_computation_proof = Some(proof)
-            }
-            ThresholdProofKind::SkShareEncryption {
-                recipient_party_id,
-                row_index,
-            } => {
-                self.sk_share_encryption_proofs
-                    .insert((*recipient_party_id, *row_index), proof);
-            }
-            ThresholdProofKind::ESmShareEncryption {
-                esi_index,
-                recipient_party_id,
-                row_index,
-            } => {
-                self.e_sm_share_encryption_proofs
-                    .insert((*esi_index, *recipient_party_id, *row_index), proof);
-            }
-        }
-    }
-
-    fn total_expected(&self) -> usize {
-        3 + self.expected_sk_enc_count + self.expected_e_sm_enc_count
-    }
-
-    fn total_received(&self) -> usize {
-        let base = [
-            self.pk_generation_proof.is_some(),
-            self.sk_share_computation_proof.is_some(),
-            self.e_sm_share_computation_proof.is_some(),
-        ]
-        .iter()
-        .filter(|&&v| v)
-        .count();
-        base + self.sk_share_encryption_proofs.len() + self.e_sm_share_encryption_proofs.len()
-    }
-}
-
-#[derive(Clone, Debug)]
-enum DecryptionProofKind {
-    SecretKey,
-    SmudgingNoise { esi_idx: usize },
-}
-
-/// Pending C4 (DkgShareDecryption) proof generation state.
-#[derive(Clone, Debug)]
-struct PendingDecryptionProofs {
-    party_id: u64,
-    node: String,
-    ec: EventContext<Sequenced>,
-    sk_proof: Option<Proof>,
-    esm_proofs: HashMap<usize, Proof>,
-    expected_esm_count: usize,
-}
-
-impl PendingDecryptionProofs {
-    fn is_complete(&self) -> bool {
-        self.sk_proof.is_some()
-            && self.esm_proofs.len() == self.expected_esm_count
-            && (0..self.expected_esm_count).all(|i| self.esm_proofs.contains_key(&i))
-    }
-}
-
-/// Pending C5 (PkAggregation) proof generation state.
-#[derive(Clone, Debug)]
-struct PendingPkAggregationProof {
-    ec: EventContext<Sequenced>,
-    request: PkAggregationProofRequest,
-}
-
-/// Pending C6 (ShareDecryptionProof) proof generation state.
-#[derive(Clone, Debug)]
-struct PendingShareDecryptionProof {
-    party_id: u64,
-    node: String,
-    decryption_share: Vec<ArcBytes>,
-    ec: EventContext<Sequenced>,
-}
-
-/// Pending C7 (DecryptedSharesAggregation) proof generation state.
-#[derive(Clone, Debug)]
-struct PendingAggregationProof {
-    ec: EventContext<Sequenced>,
-}
+use crate::domain::proof_request::{
+    plan_decryption_dispatch, plan_threshold_dispatch, DecryptionProofKind, NodeAggregationMeta,
+    PendingAggregationProof, PendingDecryptionProofs, PendingPkAggregationProof,
+    PendingProofRequest, PendingShareDecryptionProof, PendingThresholdProofs, ThresholdProofKind,
+};
 
 /// Core actor that handles encryption key proof requests.
 ///
@@ -279,6 +110,7 @@ impl ProofRequestActor {
             ZkRequest::PkBfv(PkBfvProofRequest::new(
                 msg.key.pk_bfv.clone(),
                 msg.params_preset,
+                msg.committee_size,
             )),
             correlation_id,
             msg.e3_id,
@@ -298,7 +130,7 @@ impl ProofRequestActor {
         let sk_enc_count = msg.sk_share_encryption_requests.len();
         let e_sm_enc_count = msg.e_sm_share_encryption_requests.len();
 
-        let total_expected = 4 + sk_enc_count + e_sm_enc_count + 2;
+        let total_expected = NodeAggregationMeta::total_expected_for(sk_enc_count, e_sm_enc_count);
         let pending_c0 = self
             .node_agg_meta
             .get(&e3_id)
@@ -341,125 +173,24 @@ impl ProofRequestActor {
             ),
         );
 
-        // C1: PkGeneration
-        let t1_corr = CorrelationId::new();
-        self.threshold_correlation.insert(
-            t1_corr,
-            (e3_id.clone(), ThresholdProofKind::PkGeneration, 1),
-        );
-        info!("Requesting C1 PkGeneration proof");
-        if let Err(err) = self.bus.publish(
-            ComputeRequest::zk(
-                ZkRequest::PkGeneration(msg.proof_request),
-                t1_corr,
-                e3_id.clone(),
-            ),
-            ec.clone(),
+        // C1/C2/C3: dispatch threshold proof requests in canonical seq order.
+        // Sequencing/kind assignment lives in the pure domain planner; the actor
+        // only allocates correlation ids, publishes, and rolls back on failure.
+        for item in plan_threshold_dispatch(
+            msg.proof_request,
+            msg.sk_share_computation_request,
+            msg.e_sm_share_computation_request,
+            msg.sk_share_encryption_requests,
+            msg.e_sm_share_encryption_requests,
         ) {
-            error!("Failed to publish C1 proof request: {err}");
-            self.threshold_correlation.remove(&t1_corr);
-            self.pending_threshold.remove(&e3_id);
-            return;
-        }
-
-        // C2a: SkShareComputation
-        let t2a_corr = CorrelationId::new();
-        self.threshold_correlation.insert(
-            t2a_corr,
-            (e3_id.clone(), ThresholdProofKind::SkShareComputation, 2),
-        );
-        info!("Requesting C2a SkShareComputation proof");
-        if let Err(err) = self.bus.publish(
-            ComputeRequest::zk(
-                ZkRequest::ShareComputation(msg.sk_share_computation_request),
-                t2a_corr,
-                e3_id.clone(),
-            ),
-            ec.clone(),
-        ) {
-            error!("Failed to publish C2a proof request: {err}");
-            self.threshold_correlation
-                .retain(|_, (eid, _, _)| *eid != e3_id);
-            self.pending_threshold.remove(&e3_id);
-            return;
-        }
-
-        // C2b: ESmShareComputation
-        let t2b_corr = CorrelationId::new();
-        self.threshold_correlation.insert(
-            t2b_corr,
-            (e3_id.clone(), ThresholdProofKind::ESmShareComputation, 3),
-        );
-        info!("Requesting C2b ESmShareComputation proof");
-        if let Err(err) = self.bus.publish(
-            ComputeRequest::zk(
-                ZkRequest::ShareComputation(msg.e_sm_share_computation_request),
-                t2b_corr,
-                e3_id.clone(),
-            ),
-            ec.clone(),
-        ) {
-            error!("Failed to publish C2b proof request: {err}");
-            self.threshold_correlation
-                .retain(|_, (eid, _, _)| *eid != e3_id);
-            self.pending_threshold.remove(&e3_id);
-            return;
-        }
-
-        // C3a: SkShareEncryption proofs
-        info!(
-            "Requesting {} C3a SkShareEncryption proofs for E3 {}",
-            sk_enc_count, e3_id
-        );
-        for (i, req) in msg.sk_share_encryption_requests.into_iter().enumerate() {
             let corr = CorrelationId::new();
-            self.threshold_correlation.insert(
-                corr,
-                (
-                    e3_id.clone(),
-                    ThresholdProofKind::SkShareEncryption {
-                        recipient_party_id: req.recipient_party_id,
-                        row_index: req.row_index,
-                    },
-                    4 + i,
-                ),
-            );
+            self.threshold_correlation
+                .insert(corr, (e3_id.clone(), item.kind, item.seq));
             if let Err(err) = self.bus.publish(
-                ComputeRequest::zk(ZkRequest::ShareEncryption(req), corr, e3_id.clone()),
+                ComputeRequest::zk(item.request, corr, e3_id.clone()),
                 ec.clone(),
             ) {
-                error!("Failed to publish C3a proof request: {err}");
-                self.threshold_correlation
-                    .retain(|_, (eid, _, _)| *eid != e3_id);
-                self.pending_threshold.remove(&e3_id);
-                return;
-            }
-        }
-
-        // C3b: ESmShareEncryption proofs
-        info!(
-            "Requesting {} C3b ESmShareEncryption proofs for E3 {}",
-            e_sm_enc_count, e3_id
-        );
-        for (j, req) in msg.e_sm_share_encryption_requests.into_iter().enumerate() {
-            let corr = CorrelationId::new();
-            self.threshold_correlation.insert(
-                corr,
-                (
-                    e3_id.clone(),
-                    ThresholdProofKind::ESmShareEncryption {
-                        esi_index: req.esi_index,
-                        recipient_party_id: req.recipient_party_id,
-                        row_index: req.row_index,
-                    },
-                    4 + sk_enc_count + j,
-                ),
-            );
-            if let Err(err) = self.bus.publish(
-                ComputeRequest::zk(ZkRequest::ShareEncryption(req), corr, e3_id.clone()),
-                ec.clone(),
-            ) {
-                error!("Failed to publish C3b proof request: {err}");
+                error!("Failed to publish threshold proof request: {err}");
                 self.threshold_correlation
                     .retain(|_, (eid, _, _)| *eid != e3_id);
                 self.pending_threshold.remove(&e3_id);
@@ -547,60 +278,23 @@ impl ProofRequestActor {
             },
         );
 
-        // C4a: SecretKey decryption proof
-        let sk_corr = CorrelationId::new();
+        // C4a/C4b: dispatch share-decryption proof requests in canonical seq
+        // order. The pure domain planner owns seq assignment; the actor only
+        // allocates correlation ids, publishes, and rolls back on failure.
         let c4_base_seq = self
             .node_agg_meta
             .get(&e3_id)
-            .map(|m| m.total_expected.saturating_sub(2))
+            .map(NodeAggregationMeta::c4_base_seq)
             .unwrap_or(0);
-        self.decryption_correlation.insert(
-            sk_corr,
-            (e3_id.clone(), DecryptionProofKind::SecretKey, c4_base_seq),
-        );
-        info!(
-            "Requesting C4a DkgShareDecryption proof (SecretKey) for E3 {}",
-            e3_id
-        );
-        if let Err(err) = self.bus.publish(
-            ComputeRequest::zk(
-                ZkRequest::DkgShareDecryption(msg.sk_request),
-                sk_corr,
-                e3_id.clone(),
-            ),
-            ec.clone(),
-        ) {
-            error!("Failed to publish C4a proof request: {err}");
+        for item in plan_decryption_dispatch(msg.sk_request, msg.esm_requests, c4_base_seq) {
+            let corr = CorrelationId::new();
             self.decryption_correlation
-                .retain(|_, (eid, _, _)| *eid != e3_id);
-            self.pending_decryption.remove(&e3_id);
-            return;
-        }
-
-        // C4b: SmudgingNoise decryption proofs
-        for (esi_idx, esm_req) in msg.esm_requests.into_iter().enumerate() {
-            let esm_corr = CorrelationId::new();
-            self.decryption_correlation.insert(
-                esm_corr,
-                (
-                    e3_id.clone(),
-                    DecryptionProofKind::SmudgingNoise { esi_idx },
-                    c4_base_seq + 1 + esi_idx,
-                ),
-            );
-            info!(
-                "Requesting C4b DkgShareDecryption proof (SmudgingNoise[{}]) for E3 {}",
-                esi_idx, e3_id
-            );
+                .insert(corr, (e3_id.clone(), item.kind, item.seq));
             if let Err(err) = self.bus.publish(
-                ComputeRequest::zk(
-                    ZkRequest::DkgShareDecryption(esm_req),
-                    esm_corr,
-                    e3_id.clone(),
-                ),
+                ComputeRequest::zk(item.request, corr, e3_id.clone()),
                 ec.clone(),
             ) {
-                error!("Failed to publish C4b proof request: {err}");
+                error!("Failed to publish C4 proof request: {err}");
                 self.decryption_correlation
                     .retain(|_, (eid, _, _)| *eid != e3_id);
                 self.pending_decryption.remove(&e3_id);
@@ -1332,7 +1026,7 @@ impl ProofRequestActor {
         proof: Proof,
         ec: &EventContext<Sequenced>,
     ) {
-        let Some(pending) = self.pending.remove(&correlation_id) else {
+        let Some(pending) = self.pending.remove(correlation_id) else {
             error!(
                 "Received PkBfv ComputeResponse with correlation_id {:?} but no matching pending request found.",
                 correlation_id
@@ -1400,6 +1094,7 @@ impl ProofRequestActor {
                     proof_type: ProofType::C0PkBfv,
                     data_hash,
                     public_signals: proof.public_signals.clone(),
+                    proof_data: proof.data.clone(),
                 },
                 ec.clone(),
             ) {
@@ -1511,136 +1206,39 @@ impl ProofRequestActor {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy::signers::local::PrivateKeySigner;
-    use anyhow::Result;
-    use e3_events::{
-        ComputeRequestErrorKind, Event, HistoryCollector, TakeEvents, Unsequenced, ZkError,
-    };
-    use e3_test_helpers::get_common_setup;
-    use e3_utils::utility_types::ArcBytes;
-
-    fn test_ctx(data: impl Into<EnclaveEventData>) -> EventContext<Sequenced> {
-        EventContext::<Unsequenced>::from(data.into()).sequence(0)
-    }
-
-    async fn next_event(history: &Addr<HistoryCollector<EnclaveEvent>>) -> Result<EnclaveEvent> {
-        let mut result = history.send(TakeEvents::<EnclaveEvent>::new(1)).await?;
-        assert!(!result.timed_out, "timed out waiting for an event");
-        Ok(result.events.pop().expect("expected one event"))
-    }
-
-    #[actix::test]
-    async fn c0_compute_error_emits_e3_failed() -> Result<()> {
-        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
-        let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random());
-        let e3_id = E3id::new("44", 1);
-        let correlation_id = CorrelationId::new();
-
-        actor.pending.insert(
-            correlation_id,
-            PendingProofRequest {
-                e3_id: e3_id.clone(),
-                key: Arc::new(EncryptionKey::new(7, ArcBytes::from_bytes(&[1]))),
-            },
-        );
-
-        actor.handle_compute_request_error(TypedEvent::new(
-            ComputeRequestError::new(
-                ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed("boom".to_string())),
-                ComputeRequest::zk(
-                    ZkRequest::PkBfv(PkBfvProofRequest::new(
-                        ArcBytes::from_bytes(&[1]),
-                        e3_fhe_params::BfvPreset::InsecureThreshold512,
-                    )),
-                    correlation_id,
-                    e3_id.clone(),
-                ),
-            ),
-            test_ctx(E3Failed {
-                e3_id: e3_id.clone(),
-                failed_at_stage: E3Stage::CommitteeFinalized,
-                reason: FailureReason::DKGInvalidShares,
-            }),
-        ));
-
-        let event = next_event(&history).await?;
-        assert!(matches!(
-            event.into_data(),
-            EnclaveEventData::E3Failed(data)
-                if data.e3_id == e3_id
-                    && data.failed_at_stage == E3Stage::CommitteeFinalized
-                    && data.reason == FailureReason::DKGInvalidShares
-        ));
-        assert!(actor.pending.is_empty());
-
-        Ok(())
-    }
-
-    #[actix::test]
-    async fn decryption_failure_helper_emits_e3_failed() -> Result<()> {
-        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
-        let actor = ProofRequestActor::new(&bus, PrivateKeySigner::random());
-        let e3_id = E3id::new("45", 1);
-
-        actor.fail_decryption_round(
-            e3_id.clone(),
-            &test_ctx(E3Failed {
-                e3_id: e3_id.clone(),
-                failed_at_stage: E3Stage::CiphertextReady,
-                reason: FailureReason::DecryptionInvalidShares,
-            }),
-            "test decryption failure",
-        );
-
-        let event = next_event(&history).await?;
-        assert!(matches!(
-            event.into_data(),
-            EnclaveEventData::E3Failed(data)
-                if data.e3_id == e3_id
-                    && data.failed_at_stage == E3Stage::CiphertextReady
-                    && data.reason == FailureReason::DecryptionInvalidShares
-        ));
-
-        Ok(())
-    }
-}
-
 impl Actor for ProofRequestActor {
     type Context = Context<Self>;
 }
 
-impl Handler<EnclaveEvent> for ProofRequestActor {
+impl Handler<InterfoldEvent> for ProofRequestActor {
     type Result = ();
 
-    fn handle(&mut self, msg: EnclaveEvent, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (msg, ec) = msg.into_components();
 
         match msg {
-            EnclaveEventData::EncryptionKeyPending(data) => {
+            InterfoldEventData::EncryptionKeyPending(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            EnclaveEventData::ThresholdSharePending(data) => {
+            InterfoldEventData::ThresholdSharePending(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            EnclaveEventData::ComputeResponse(data) => {
+            InterfoldEventData::ComputeResponse(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            EnclaveEventData::ComputeRequestError(data) => {
+            InterfoldEventData::ComputeRequestError(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            EnclaveEventData::DecryptionShareProofsPending(data) => {
+            InterfoldEventData::DecryptionShareProofsPending(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            EnclaveEventData::ShareDecryptionProofPending(data) => {
+            InterfoldEventData::ShareDecryptionProofPending(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            EnclaveEventData::PkAggregationProofPending(data) => {
+            InterfoldEventData::PkAggregationProofPending(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
-            EnclaveEventData::AggregationProofPending(data) => {
+            InterfoldEventData::AggregationProofPending(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             _ => (),
@@ -1741,5 +1339,106 @@ impl Handler<TypedEvent<AggregationProofPending>> for ProofRequestActor {
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         self.handle_aggregation_proof_pending(msg)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy::signers::local::PrivateKeySigner;
+    use anyhow::Result;
+    use e3_events::{
+        ComputeRequestErrorKind, EncryptionKey, Event, HistoryCollector, TakeEvents, Unsequenced,
+        ZkError,
+    };
+    use e3_test_helpers::get_common_setup;
+    use e3_utils::utility_types::ArcBytes;
+
+    fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
+        EventContext::<Unsequenced>::from(data.into()).sequence(0)
+    }
+
+    async fn next_event(
+        history: &Addr<HistoryCollector<InterfoldEvent>>,
+    ) -> Result<InterfoldEvent> {
+        let mut result = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
+        assert!(!result.timed_out, "timed out waiting for an event");
+        Ok(result.events.pop().expect("expected one event"))
+    }
+
+    #[actix::test]
+    async fn c0_compute_error_emits_e3_failed() -> Result<()> {
+        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+        let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random());
+        let e3_id = E3id::new("44", 1);
+        let correlation_id = CorrelationId::new();
+
+        actor.pending.insert(
+            correlation_id,
+            PendingProofRequest {
+                e3_id: e3_id.clone(),
+                key: Arc::new(EncryptionKey::new(7, ArcBytes::from_bytes(&[1]))),
+            },
+        );
+
+        actor.handle_compute_request_error(TypedEvent::new(
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed("boom".to_string())),
+                ComputeRequest::zk(
+                    ZkRequest::PkBfv(PkBfvProofRequest::new(
+                        ArcBytes::from_bytes(&[1]),
+                        e3_fhe_params::BfvPreset::InsecureThreshold512,
+                        e3_zk_helpers::CiphernodesCommitteeSize::Minimum,
+                    )),
+                    correlation_id,
+                    e3_id.clone(),
+                ),
+            ),
+            test_ctx(E3Failed {
+                e3_id: e3_id.clone(),
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: FailureReason::DKGInvalidShares,
+            }),
+        ));
+
+        let event = next_event(&history).await?;
+        assert!(matches!(
+            event.into_data(),
+            InterfoldEventData::E3Failed(data)
+                if data.e3_id == e3_id
+                    && data.failed_at_stage == E3Stage::CommitteeFinalized
+                    && data.reason == FailureReason::DKGInvalidShares
+        ));
+        assert!(actor.pending.is_empty());
+
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn decryption_failure_helper_emits_e3_failed() -> Result<()> {
+        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+        let actor = ProofRequestActor::new(&bus, PrivateKeySigner::random());
+        let e3_id = E3id::new("45", 1);
+
+        actor.fail_decryption_round(
+            e3_id.clone(),
+            &test_ctx(E3Failed {
+                e3_id: e3_id.clone(),
+                failed_at_stage: E3Stage::CiphertextReady,
+                reason: FailureReason::DecryptionInvalidShares,
+            }),
+            "test decryption failure",
+        );
+
+        let event = next_event(&history).await?;
+        assert!(matches!(
+            event.into_data(),
+            InterfoldEventData::E3Failed(data)
+                if data.e3_id == e3_id
+                    && data.failed_at_stage == E3Stage::CiphertextReady
+                    && data.reason == FailureReason::DecryptionInvalidShares
+        ));
+
+        Ok(())
     }
 }

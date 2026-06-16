@@ -1,7 +1,7 @@
 # CRISP Server
 
-This is a Rust-based server implementation for CRISP, which is built on top of the Enclave Protocol,
-which handles E3 (Encrypted Execution Environment) rounds and voting processes.
+This is a Rust-based server implementation for CRISP, which is built on top of the Interfold
+Protocol, which handles E3 (Encrypted Execution Environment) rounds and voting processes.
 
 ## Features
 
@@ -31,7 +31,7 @@ which handles E3 (Encrypted Execution Environment) rounds and voting processes.
    PRIVATE_KEY=your_private_key
    HTTP_RPC_URL=your_http_rpc_url
    WS_RPC_URL=your_websocket_rpc_url
-   ENCLAVE_ADDRESS=your_enclave_contract_address
+   INTERFOLD_ADDRESS=your_interfold_contract_address
    E3_PROGRAM_ADDRESS=your_e3_program_address
    CIPHERNODE_REGISTRY_ADDRESS=your_ciphernode_registry_address
    FEE_TOKEN_ADDRESS=free_token_address

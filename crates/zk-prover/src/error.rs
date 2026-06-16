@@ -8,10 +8,10 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum ZkError {
-    #[error("Barretenberg binary not found. Run 'enclave noir setup' first.")]
+    #[error("Barretenberg binary not found. Run 'interfold noir setup' first.")]
     BbNotInstalled,
 
-    #[error("Circuit '{0}' not found. Run 'enclave noir setup' first.")]
+    #[error("Circuit '{0}' not found. Run 'interfold noir setup' first.")]
     CircuitNotFound(String),
 
     #[error("Version mismatch: installed {installed}, required {required}")]

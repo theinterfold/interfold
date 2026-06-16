@@ -4,15 +4,19 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-mod decryption_key_shared_collector;
-mod encryption_key_collector;
+mod actors;
+mod domain;
 pub mod ext;
 mod repo;
-mod threshold_keyshare;
-mod threshold_share_collector;
-mod timeout_policy;
-pub use encryption_key_collector::{
-    AllEncryptionKeysCollected, EncryptionKeyCollector, ExpelPartyFromKeyCollection,
+
+pub use actors::{
+    AllEncryptionKeysCollected, AllThresholdSharesCollected, EncryptionKeyCollector,
+    ExpelPartyFromKeyCollection, GenEsiSss, GenPkShareAndSkSss, ThresholdKeyshare,
+    ThresholdKeyshareParams,
+};
+pub use domain::{
+    AggregatingDecryptionKey, CollectingEncryptionKeysData, Decrypting, GeneratingDecryptionProof,
+    GeneratingThresholdShareData, KeyshareState, ProofRequestData, ReadyForDecryption,
+    ThresholdKeyshareState,
 };
 pub use repo::*;
-pub use threshold_keyshare::*;

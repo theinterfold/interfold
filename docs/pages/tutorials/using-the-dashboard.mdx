@@ -24,7 +24,7 @@ lightweight HTTP server alongside your node — no external dependencies, no sep
 Add `dashboard_port` to your node configuration:
 
 ```yaml
-# enclave.config.yaml
+# interfold.config.yaml
 node:
   dashboard_port: 8080
 ```
@@ -91,7 +91,7 @@ The events tab has powerful filtering to help you focus:
 - **Source filter** — show only Local / Net / Evm events
 - **Severity filter**:
   - **All** — everything
-  - **Errors** — `EnclaveError`, `E3Failed`, `ProofVerificationFailed`, `SignedProofFailed`,
+  - **Errors** — `InterfoldError`, `E3Failed`, `ProofVerificationFailed`, `SignedProofFailed`,
     `ThresholdShareCollectionFailed`, `EncryptionKeyCollectionFailed`
   - **Warnings** — `AccusationVote`, `ProofFailureAccusation`, `CommitmentMismatch`
   - **State changes** — `E3Requested`, `CiphernodeSelected`, `CommitteePublished`,
@@ -111,7 +111,7 @@ how many events are loaded vs. how many match your current filters.
 Shows your node's operational state:
 
 - **Ciphernode status** — active/inactive, current committees, pending exits
-- **Wallet** — ETH balance, ENCL bond, ticket token balance
+- **Wallet** — ETH balance, FOLD bond, ticket token balance
 
 Use this to quickly check whether your node is in a healthy state.
 

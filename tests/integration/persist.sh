@@ -18,19 +18,26 @@ until curl -sf -X POST http://localhost:8545 -H 'Content-Type: application/json'
 done
 
 pnpm evm:clean
-pnpm evm:deploy --network localhost
 
-enclave_wallet_set cn1 "$PRIVATE_KEY_CN1"
-enclave_wallet_set cn2 "$PRIVATE_KEY_CN2"
-enclave_wallet_set cn3 "$PRIVATE_KEY_CN3"
-enclave_wallet_set cn4 "$PRIVATE_KEY_CN4"
-enclave_wallet_set cn5 "$PRIVATE_KEY_CN5"
+if [[ "${PROOF_AGGREGATION_ENABLED:-false}" == "true" ]]; then
+  ENABLE_ZK_VERIFICATION=true pnpm evm:deploy
+else
+  pnpm evm:deploy
+fi
+
+(cd "$ROOT_DIR/packages/interfold-contracts" && pnpm utils:sync-integration-config)
+
+interfold_wallet_set cn1 "$PRIVATE_KEY_CN1"
+interfold_wallet_set cn2 "$PRIVATE_KEY_CN2"
+interfold_wallet_set cn3 "$PRIVATE_KEY_CN3"
+interfold_wallet_set cn4 "$PRIVATE_KEY_CN4"
+interfold_wallet_set cn5 "$PRIVATE_KEY_CN5"
 
 heading "Setup ZK prover"
-$ENCLAVE_BIN noir setup
+$INTERFOLD_BIN noir setup
 
 # start swarm
-enclave_nodes_up
+interfold_nodes_up
 
 waiton-files "$ROOT_DIR/target/debug/fake_encrypt"
 
@@ -67,9 +74,9 @@ pnpm committee:new \
   --input-window-end "$INPUT_WINDOW_END" \
   --e3-params "$ENCODED_PARAMS" \
   --committee-size 0 \
-  --proof-aggregation-enabled false
+  --proof-aggregation-enabled "${PROOF_AGGREGATION_ENABLED:-false}"
 
-wait_for_committee_pubkey 0 "$SCRIPT_DIR/output/pubkey.bin"
+wait_for_committee_pubkey 0 "$SCRIPT_DIR/output/pubkey.bin" "${INTEGRATION_DKG_TIMEOUT:-1300}"
 
 ACTIVE_AGG_ADDRESS=$(wait_for_active_aggregator_address 0)
 if ! ACTIVE_AGG=$(node_name_for_address "$ACTIVE_AGG_ADDRESS"); then
@@ -83,17 +90,17 @@ if [[ -z "$ACTIVE_AGG" ]]; then
 fi
 
 # kill active aggregator
-enclave_nodes_stop "$ACTIVE_AGG"
+interfold_nodes_stop "$ACTIVE_AGG"
 
 sleep 15
 
 # relaunch the active aggregator
-enclave_nodes_start "$ACTIVE_AGG"
+interfold_nodes_start "$ACTIVE_AGG"
 
 sleep 5
 
 heading "Mock encrypted plaintext"
-$SCRIPT_DIR/lib/fake_encrypt.sh --input "$SCRIPT_DIR/output/pubkey.bin" --output "$SCRIPT_DIR/output/output.bin" --plaintext $PLAINTEXT --params "$ENCODED_PARAMS"
+$SCRIPT_DIR/lib/fake_encrypt.sh --input "$SCRIPT_DIR/output/pubkey.bin" --output "$SCRIPT_DIR/output/output.bin" --plaintext "$PLAINTEXT" --params "$ENCODED_PARAMS"
 
 heading "Mock publish input e3-id"
 pnpm e3-program:publishInput --network localhost  --e3-id 0 --data 0x12345678

@@ -18,7 +18,6 @@ use fhe::bfv::Plaintext;
 use fhe::bfv::{PublicKey, SecretKey};
 use fhe::trbfv::{ShareManager, TRBFV};
 use fhe_traits::FheEncoder;
-use rand::thread_rng;
 
 impl ShareEncryptionCircuitData {
     /// Generates sample data for the share-encryption circuit (encrypts a share row under DKG pk).
@@ -27,13 +26,17 @@ impl ShareEncryptionCircuitData {
         committee: CiphernodesCommittee,
         dkg_input_type: DkgInputType,
         num_ciphertexts: u128, // z in the search defaults
-        lambda: u32,
     ) -> Result<Self, CircuitsErrors> {
         let (threshold_params, dkg_params) = build_pair_for_preset(preset).map_err(|e| {
             CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e))
         })?;
 
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
+
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = preset
+            .lambda()
+            .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
         let dkg_secret_key = SecretKey::random(&dkg_params, &mut rng);
         let dkg_public_key = PublicKey::new(&dkg_secret_key, &mut rng);
@@ -41,7 +44,9 @@ impl ShareEncryptionCircuitData {
         let trbfv = TRBFV::new(committee.n, committee.threshold, threshold_params.clone())
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
         let mut share_manager =
-            ShareManager::new(committee.n, committee.threshold, threshold_params.clone());
+            ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
+                |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
+            )?;
 
         let share_row = match dkg_input_type {
             DkgInputType::SecretKey => {
@@ -66,7 +71,7 @@ impl ShareEncryptionCircuitData {
             }
             DkgInputType::SmudgingNoise => {
                 let esi_coeffs = trbfv
-                    .generate_smudging_error(num_ciphertexts as usize, lambda as usize, &mut rng)
+                    .generate_smudging_error(num_ciphertexts as usize, lambda, &mut rng)
                     .map_err(|e| {
                         CircuitsErrors::Sample(format!(
                             "Failed to generate smudging error: {:?}",
@@ -127,16 +132,17 @@ mod tests {
             committee.clone(),
             DkgInputType::SecretKey,
             sd.z,
-            sd.lambda,
         )
         .unwrap();
 
-        assert_eq!(sample.public_key.c.c.len(), 2);
+        assert_eq!(sample.public_key.c.len(), 2);
         assert_eq!(
-            sample.plaintext.value.len(),
+            crate::math::plaintext_poly_u64(&sample.plaintext)
+                .unwrap()
+                .len(),
             BfvPreset::InsecureThreshold512.metadata().degree
         );
-        assert_eq!(sample.ciphertext.c.len(), 2);
+        assert_eq!(sample.ciphertext.len(), 2);
         assert_eq!(
             sample.u_rns.coefficients().len(),
             BfvPreset::InsecureThreshold512.metadata().degree
@@ -160,12 +166,11 @@ mod tests {
             committee,
             DkgInputType::SmudgingNoise,
             sd.z,
-            sd.lambda,
         )
         .unwrap();
 
-        assert_eq!(sample.public_key.c.c.len(), 2);
-        assert_eq!(sample.ciphertext.c.len(), 2);
+        assert_eq!(sample.public_key.c.len(), 2);
+        assert_eq!(sample.ciphertext.len(), 2);
         assert_eq!(
             sample.u_rns.coefficients().len(),
             BfvPreset::InsecureThreshold512.metadata().degree

@@ -4,11 +4,13 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { deployEnclave } from '@enclave-e3/contracts/scripts'
+import { deployInterfold } from '@interfold/contracts/scripts'
 import { deployTemplate } from '../deploy/default'
+import { ensureTemplateCwd } from './template-paths'
 
 async function main() {
-  console.log('🚀 Deploying Enclave protocol locally...')
+  ensureTemplateCwd()
+  console.log('🚀 Deploying Interfold protocol locally...')
 
   // Get hardhat runtime environment
   const hre = await import('hardhat')
@@ -20,10 +22,12 @@ async function main() {
   console.log('Deploying with account:', deployer.address)
   console.log('Account balance:', ethers.formatEther(await ethers.provider.getBalance(deployer.address)))
 
-  // Execute the deployment
-  await deployEnclave(true, false)
+  // Mocks for local dev; skip on-chain ZK verifiers (needs pnpm compile:circuits).
+  await deployInterfold(true, false)
   await deployTemplate()
 }
 
-// Execute the deployment
-main().catch(console.error)
+main().catch((err) => {
+  console.error(err)
+  process.exit(1)
+})

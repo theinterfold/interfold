@@ -6,6 +6,7 @@
 mod aggregate_config;
 mod batch;
 mod batch_router;
+#[allow(clippy::module_inception)]
 mod snapshot_buffer;
 mod timelock_queue;
 

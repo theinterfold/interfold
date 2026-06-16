@@ -1,5 +1,5 @@
 services:
-  enclave-dev:
+  interfold-dev:
     platform: linux/amd64
     build:
       context: .
@@ -14,7 +14,7 @@ services:
       - cargo-registry:/home/ubuntu/.cargo/registry
       - server-target:/app/examples/CRISP/server/target
       - zk-inputs-target:/app/examples/CRISP/crates/zk-inputs/target
-      - evm-node-modules:/app/packages/enclave-contracts/node_modules
+      - evm-node-modules:/app/packages/interfold-contracts/node_modules
       - root-node-modules:/app/node_modules
       - client-node-modules:/app/examples/CRISP/client/node_modules
       - crisp-node-modules:/app/examples/CRISP/node_modules

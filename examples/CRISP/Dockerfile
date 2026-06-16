@@ -4,7 +4,7 @@
 FROM ubuntu:24.04
 
 ARG CPP_VERSION=2024.1.5
-ARG RUST_VERSION=1.86.0
+ARG RUST_VERSION=1.91.1
 
 # ────────────────────────────────────────────────────────────────────────────────
 #   OS packages

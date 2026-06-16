@@ -16,8 +16,6 @@ use e3_fhe_params::{build_pair_for_preset, create_deterministic_crp_from_default
 use e3_polynomial::CrtPolynomial;
 use fhe::bfv::{PublicKey, SecretKey};
 use fhe::mbfv::{AggregateIter, PublicKeyShare};
-use rand::rngs::OsRng;
-use rand::thread_rng;
 
 impl PkAggregationCircuitData {
     pub fn generate_sample(
@@ -28,8 +26,7 @@ impl PkAggregationCircuitData {
             CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e))
         })?;
 
-        let mut rng = OsRng;
-        let mut thread_rng = thread_rng();
+        let mut rng = rand::rng();
 
         let crp = create_deterministic_crp_from_default_seed(&threshold_params);
 
@@ -40,7 +37,7 @@ impl PkAggregationCircuitData {
         for _ in 0..committee.h {
             let sk = SecretKey::random(&threshold_params, &mut rng);
             // Create PublicKeyShare - this generates the p0_share with a specific error term
-            let pk_share = PublicKeyShare::new(&sk, crp.clone(), &mut thread_rng).map_err(|e| {
+            let pk_share = PublicKeyShare::new(&sk, crp.clone(), &mut rng).map_err(|e| {
                 CircuitsErrors::Sample(format!("Failed to create public key share: {:?}", e))
             })?;
 
@@ -87,8 +84,7 @@ mod tests {
         let inputs = Inputs::compute(preset, &sample).unwrap();
 
         assert_eq!(inputs.pk0.len(), sample.committee.h);
-        assert_eq!(inputs.pk1.len(), sample.committee.h);
         assert_eq!(inputs.pk0_agg.limbs.len(), configs.l);
-        assert_eq!(inputs.pk1_agg.limbs.len(), configs.l);
+        assert_eq!(inputs.crp.limbs.len(), configs.l);
     }
 }

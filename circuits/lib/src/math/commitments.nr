@@ -171,11 +171,8 @@ pub fn compute_dkg_pk_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
 
 pub fn compute_threshold_pk_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
     pk0: [Polynomial<N>; L],
-    pk1: [Polynomial<N>; L],
 ) -> Field {
-    let mut payload = multiple_polynomial_payload::<N, L, BIT_PK>(Vec::new(), pk0);
-    payload = multiple_polynomial_payload::<N, L, BIT_PK>(payload, pk1);
-
+    let payload = multiple_polynomial_payload::<N, L, BIT_PK>(Vec::new(), pk0);
     compute_commitment(payload, DS_PK_GENERATION)
 }
 

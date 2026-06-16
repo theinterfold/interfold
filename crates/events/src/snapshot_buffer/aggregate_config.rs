@@ -25,9 +25,9 @@ impl AggregateConfig {
     /// Create a new AggregateConfig with the specified delays
     pub fn new(mut delays: HashMap<AggregateId, Duration>) -> Self {
         // Always handle AggregatId of 0 with a delay of 0
-        if let None = delays.get(&AggregateId::new(0)) {
-            delays.insert(AggregateId::new(0), Duration::from_micros(0));
-        }
+        delays
+            .entry(AggregateId::new(0))
+            .or_insert_with(|| Duration::from_micros(0));
         Self { delays }
     }
 

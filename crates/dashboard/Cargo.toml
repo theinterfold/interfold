@@ -3,7 +3,7 @@ name = "e3-dashboard"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Lightweight node monitoring dashboard for Enclave ciphernodes"
+description = "Lightweight node monitoring dashboard for Interfold ciphernodes"
 
 [dependencies]
 anyhow.workspace = true

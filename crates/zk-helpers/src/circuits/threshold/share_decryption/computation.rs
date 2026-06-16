@@ -203,7 +203,7 @@ impl Computation for Bounds {
 
         let n = BigInt::from(threshold_params.degree());
         // Get cyclotomic degree and context at provided level
-        let ctx = threshold_params.ctx_at_level(0)?;
+        let ctx = threshold_params.context_at_level(0)?;
 
         // Calculate bounds for each CRT basis
         let mut r1_bounds: Vec<BigInt> = Vec::new();
@@ -211,10 +211,10 @@ impl Computation for Bounds {
         let mut moduli: Vec<u64> = Vec::new();
 
         for qi in ctx.moduli_operators() {
-            let qi_bigint = BigInt::from(qi.modulus());
+            let qi_bigint = BigInt::from(**qi);
             let qi_bound = (&qi_bigint - BigInt::from(1)) / BigInt::from(2);
 
-            moduli.push(qi.modulus());
+            moduli.push(**qi);
 
             // r_2j bounds: [- (q_j-1)/2 , (q_j-1)/2] (cyclotomic quotients)
             r2_bounds.push(qi_bound.clone());
@@ -261,8 +261,8 @@ impl Computation for Inputs {
         let n = threshold_params.degree() as u64;
 
         // Extract and convert ciphertext polynomials
-        let ct0 = CrtPolynomial::from_fhe_polynomial(&data.ciphertext.c[0]);
-        let ct1 = CrtPolynomial::from_fhe_polynomial(&data.ciphertext.c[1]);
+        let ct0 = CrtPolynomial::from_fhe_polynomial(&data.ciphertext[0]);
+        let ct1 = CrtPolynomial::from_fhe_polynomial(&data.ciphertext[1]);
 
         // Create cyclotomic polynomial x^N + 1
         let mut cyclo = vec![BigInt::from(0u64); (n + 1) as usize];
@@ -270,6 +270,7 @@ impl Computation for Inputs {
         cyclo[n as usize] = BigInt::from(1u64); // x^N term
 
         // Perform the main computation logic
+        #[allow(clippy::type_complexity)]
         let mut results: Vec<(
             usize,
             Polynomial,
@@ -437,7 +438,7 @@ mod tests {
         use crate::circuits::commitments::compute_threshold_decryption_share_commitment;
         use crate::threshold::share_decryption::ShareDecryptionCircuitData;
         use crate::CiphernodesCommitteeSize;
-        use fhe_math::rq::{Poly, Representation};
+        use fhe_math::rq::{Poly, PowerBasis};
         use fhe_traits::{DeserializeWithContext, Serialize as FheSer};
         use num_traits::ToPrimitive;
 
@@ -480,10 +481,10 @@ mod tests {
                 arr[[i, j]] = v;
             }
         }
-        let ctx = threshold_params.ctx_at_level(0).unwrap();
-        let mut poly = Poly::zero(&ctx, Representation::PowerBasis);
+        let ctx = threshold_params.context_at_level(0).unwrap();
+        let mut poly = Poly::<PowerBasis>::zero(ctx);
         poly.set_coefficients(arr);
-        let poly_rt = Poly::from_bytes(&poly.to_bytes(), &ctx).unwrap();
+        let poly_rt = Poly::<PowerBasis>::from_bytes(&poly.to_bytes(), ctx).unwrap();
         let crt_rt = CrtPolynomial::from_fhe_polynomial(&poly_rt);
         let from_bytes = compute_threshold_decryption_share_commitment(
             &crt_rt,

@@ -7,13 +7,13 @@
 use std::sync::Arc;
 
 /// This module defines event payloads that will dcrypt a ciphertext with a threshold quorum of decryption shares
-use crate::{helpers::try_poly_from_bytes, PartyId, TrBFVConfig};
+use crate::{helpers::try_poly_pb_from_bytes, PartyId, TrBFVConfig};
 use anyhow::*;
 use e3_bfv_client::{decode_plaintext_to_vec_u64, encode_vec_u64_to_bytes};
 use e3_utils::utility_types::ArcBytes;
 use fhe::bfv::Plaintext;
 use fhe::{bfv::Ciphertext, trbfv::ShareManager};
-use fhe_math::rq::Poly;
+use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::DeserializeParametrized;
 use tracing::info;
 
@@ -23,7 +23,7 @@ type SinglePartysDecryptionShares = Vec<ArcBytes>;
 
 /// Decoded shamir shares for decrypting a single ciphertext from all parties
 /// shares[i] is a single parties share for a single ciphertext
-type AllPartysDecodedShares = Vec<Poly>;
+type AllPartysDecodedShares = Vec<Poly<PowerBasis>>;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub struct CalculateThresholdDecryptionRequest {
@@ -74,9 +74,9 @@ impl TryFrom<CalculateThresholdDecryptionRequest> for InnerRequest {
         let mut reconstructing_parties = Vec::with_capacity(capacity);
 
         for (party_id, vec_of_bytes) in ordered_polys {
-            let polys: Vec<Poly> = vec_of_bytes
+            let polys: Vec<Poly<PowerBasis>> = vec_of_bytes
                 .iter()
-                .map(|bytes| try_poly_from_bytes(&bytes, &params))
+                .map(|bytes| try_poly_pb_from_bytes(bytes, &params))
                 .collect::<Result<Vec<_>>>()?;
 
             d_share_polys.push(polys);
@@ -148,7 +148,7 @@ pub fn calculate_threshold_decryption(
                 index
             );
 
-            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone());
+            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
             let Some(threshold_shares) = d_share_polys.get(index) else {
                 bail!("Poly not found for index {}", index)
             };

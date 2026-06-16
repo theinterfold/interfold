@@ -46,7 +46,7 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │
 │   └─ Collector timeouts are derived from the DKG stage budget:
 │         ├─ shared base window from `E3_DKG_WINDOW_SECS` (default 7200s,
-│         │  matching current production `Enclave` deployment config)
+│         │  matching current production `Interfold` deployment config)
 │         ├─ EncryptionKeyCollector cutoff at 10% of the DKG window
 │         ├─ ThresholdShareCollector cutoff at 60% of the DKG window
 │         └─ per-collector env vars still override these derived defaults
@@ -473,6 +473,13 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │  │  → Stored encrypted locally for later decryption    │
 │     │  └─────────────────────────────────────────────────────┘
 │
+├─ 2b. CANONICAL H ROSTER (when H < N):
+│     Before C4 witness layout, merge external honest party_ids with own_party_id,
+│     sort ascending, and keep the lowest H — same rule as PublicKeyAggregator C5 cap
+│     (`e3_zk_helpers::canonical_honest_party_ids_with_own`). Persisted as `honest_parties`.
+│     Parties outside the lowest H still complete KeyshareCreated but are not in the
+│     aggregator's NodeFold / `honest_committee_addresses` roster.
+│
 ├─ 3. PUBLISH C4 PROOF REQUESTS:
 │     DecryptionShareProofsPending {
 │       sk_request:   DkgShareDecryptionProofRequest (C4a),
@@ -548,31 +555,43 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │
   ├─ Only the active aggregator's buffer flushes into PublicKeyAggregator
   │
-  ├─ When threshold_n keyshares collected:
+  ├─ When N distinct keyshares collected (committee size from on-chain `threshold_n`):
 │   │
-│   ├─ 1. Aggregate public key shares:
+│   ├─ C1 verification runs over all N submitters; parties failing C1 are marked dishonest
+│   │
+│   ├─ Honest-set selection (compile-time H from `committee::active`, may be < N):
+│   │     • Require at least H parties with valid C1 proofs; otherwise E3Failed
+│   │     • If more than H parties pass C1, keep the H lowest `party_id`s as the canonical
+│   │       honest set (extras remain in the full committee roster for `committee_hash`
+│   │       binding but do not receive NodeFold / C5 inputs)
+│   │
+│   ├─ 1. Aggregate public key shares (H honest keyshares):
 │   │     aggregate_pk = Fhe::get_aggregate_public_key(
-│   │       [pk_share_1, pk_share_2, ..., pk_share_N]
+│   │       [pk_share for each of the H canonical honest parties]
 │   │     )
 │   │     → Uses PublicKeyShare::aggregate()
 │   │     → Produces the COLLECTIVE public key
 │   │     → Anyone can encrypt with this key
 │   │     → Only M+1 committee members can decrypt together
 │   │
-│   ├─ 2. Compute commitment:
-│   │     pk_hash = compute_pk_commitment(aggregate_pk)
+│   ├─ 2. Build C5 proof request (H canonical honest keyshares):
+│   │     proof_request.keyshare_bytes = [pk_share for each H party]
+│   │     proof_request.aggregated_pk_bytes = aggregate_pk
+│   │     proof_request.committee_n = committee_h = H  // C5 circuit sized for H, not N
+│   │     (per-share compute_pk_commitment already checked against C1; aggregate
+│   │      commitment is proved as a C5 public output, not pre-published here)
 │   │
 │   ├─ 3. REQUEST C5 PROOF:
 │   │     Publish PkAggregationProofPending {
-│   │       proof_request: PkAggregationProofRequest,
+│   │       proof_request,              // H keyshares + aggregate_pk (see step 2)
 │   │       public_key: aggregate_pk,
-│   │       public_key_hash: pk_hash
+│   │       nodes: honest_nodes         // H canonical subset
 │   │     }
 │   │
 │   ├─ 4. C5 PROOF GENERATION (ProofRequestActor):
 │   │     ├─ Dispatches ComputeRequest::zk(ZkRequest::PkAggregation {...})
 │   │     │   → Circuit: PkAggregation (C5)
-│   │     │   → Proves aggregate PK was correctly computed from all pk_shares
+│   │     │   → Proves aggregate PK was correctly computed from the H canonical honest keyshares
 │   │     ├─ ZkActor generates proof via bb binary
 │   │     ├─ Signs proof
 │   │     └─ Publishes PkAggregationProofSigned {
@@ -589,10 +608,12 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │   │     ├─ ComputeRequestError now emits
 │   │     │   E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGInvalidShares }
 │   │     └─ A mixed Some/None honest NodeFold-proof set is treated as the same terminal DKG
-│   │         failure instead of only surfacing as EnclaveError telemetry
+│   │         failure instead of only surfacing as InterfoldError telemetry
 │   │
 │   └─ 6. Publish PublicKeyAggregated {
 │         e3_id, pubkey: aggregate_pk, pk_commitment, nodes,
+│         committee_addresses,          // length N — full on-chain topNodes binding
+│         honest_committee_addresses,  // length H — canonical honest subset
 │         dkg_aggregator_proof
 │       }
 │
@@ -623,9 +644,9 @@ ThresholdKeyshare receives AllThresholdSharesCollected
         │  │         • M-35: revert on failure (no `bool false`) │
         │  │    5. c.publicKey = pkCommitment                    │
         │  │       publicKeyHashes[e3Id] = pkCommitment          │
-        │  │    6. enclave.onCommitteePublished(e3Id, pkCommitment) │
+        │  │    6. interfold.onCommitteePublished(e3Id, pkCommitment) │
         │  │       │                                             │
-        │  │       │  ┌─ Enclave.sol ────────────────────────┐  │
+        │  │       │  ┌─ Interfold.sol ────────────────────────┐  │
         │  │       │  │  onCommitteePublished(e3Id, pk) {   │  │
         │  │       │  │    require(stage==CommitteeFinalized) │  │
         │  │       │  │    e3.committeePublicKey = pk         │  │
@@ -667,9 +688,9 @@ Data providers submit encrypted inputs:
 ```
 Compute provider runs computation on encrypted data:
 │
-└─ Enclave.publishCiphertextOutput(e3Id, ciphertextOutput, proof)
+└─ Interfold.publishCiphertextOutput(e3Id, ciphertextOutput, proof)
     │
-    │  ┌─── ON-CHAIN (Enclave.sol) ─────────────────────────────┐
+    │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────────┐
     │  │                                                         │
     │  │  publishCiphertextOutput(e3Id, output, proof) {         │
     │  │    1. require(stage == KeyPublished)                    │
@@ -695,7 +716,7 @@ Compute provider runs computation on encrypted data:
 ## Phase 4: Decryption Share Generation (Each Committee Member, with C6 Proof)
 
 ```
-EnclaveSolReader decodes CiphertextOutputPublished event
+InterfoldSolReader decodes CiphertextOutputPublished event
 │
 └─ ThresholdKeyshare receives CiphertextOutputPublished:
     │
@@ -843,13 +864,13 @@ EnclaveSolReader decodes CiphertextOutputPublished event
 │         e3_id, decrypted_output, decryption_aggregator_proofs
 │       }
 │
-└─ EnclaveSolWriter receives PlaintextAggregated:
+└─ InterfoldSolWriter receives PlaintextAggregated:
   ├─ Requires EffectsEnabled
   ├─ Requires active_aggregators[e3_id] == true
   ├─ Reads chain state to confirm plaintextOutput is still empty
   └─ Calls contract.publishPlaintextOutput(e3Id, output, proof)
         │
-        │  ┌─── ON-CHAIN (Enclave.sol) ─────────────────────────┐
+        │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────┐
         │  │                                                     │
         │  │  publishPlaintextOutput(e3Id, output, proof) {      │
         │  │    1. require(stage == CiphertextReady)             │
@@ -900,9 +921,9 @@ EnclaveSolReader decodes CiphertextOutputPublished event
         │  │                                                     │
         │  │  // Funds are NOT pushed at publish-time.           │
         │  │  // Recipients must call:                           │
-        │  │  //   - enclave.claimReward(e3Id) or                │
-        │  │  //     enclave.claimRewards(e3Ids[])               │
-        │  │  //   - enclave.treasuryClaim(token)                │
+        │  │  //   - interfold.claimReward(e3Id) or                │
+        │  │  //     interfold.claimRewards(e3Ids[])               │
+        │  │  //   - interfold.treasuryClaim(token)                │
         │  │  // emitting RewardClaimed / TreasuryClaimed.       │
         │  └─────────────────────────────────────────────────────┘
 ```
@@ -947,7 +968,8 @@ EnclaveSolReader decodes CiphertextOutputPublished event
 │      │                            │                   │ by C6                        │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C5   │ PK Aggregation             │ Aggregation       │ Aggregate PK correctly       │
-│      │                            │                   │ computed from all pk_shares  │
+│      │                            │                   │ computed from H canonical    │
+│      │                            │                   │ honest keyshares (not all N) │
 ├──────┼────────────────────────────┼───────────────────┼──────────────────────────────┤
 │ C6   │ Threshold Share Decryption │ Decryption        │ Decryption share correctly   │
 │      │ (T5)                       │                   │ derived from sk + ciphertext;│

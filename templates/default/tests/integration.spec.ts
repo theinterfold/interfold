@@ -5,18 +5,18 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import {
-  EnclaveSDK,
+  InterfoldSDK,
   calculateInputWindow,
   DEFAULT_COMPUTE_PROVIDER_PARAMS,
   encodeComputeProviderParams,
   decodePlaintextOutput,
   CommitteeSize,
   ThresholdBfvParamsPresetNames,
-} from '@enclave-e3/sdk'
-import { EnclaveEventType, RegistryEventType } from '@enclave-e3/sdk/events'
-import type { AllEventTypes, EnclaveEvent } from '@enclave-e3/sdk/events'
-import { E3Stage } from '@enclave-e3/sdk/contracts'
-import type { E3 } from '@enclave-e3/sdk/contracts'
+} from '@interfold/sdk'
+import { InterfoldEventType, RegistryEventType } from '@interfold/sdk/events'
+import type { AllEventTypes, InterfoldEvent } from '@interfold/sdk/events'
+import { E3Stage } from '@interfold/sdk/contracts'
+import type { E3 } from '@interfold/sdk/contracts'
 import { createWalletClient, hexToBytes, http } from 'viem'
 import assert from 'assert'
 
@@ -25,9 +25,11 @@ import { publishInput } from '../server/input'
 import { privateKeyToAccount } from 'viem/accounts'
 import { anvil } from 'viem/chains'
 
+import { advanceAnvilTime, sleep } from './anvil-helpers'
+
 export function getContractAddresses() {
   return {
-    enclave: process.env.ENCLAVE_ADDRESS as `0x${string}`,
+    interfold: process.env.INTERFOLD_ADDRESS as `0x${string}`,
     ciphernodeRegistry: process.env.REGISTRY_ADDRESS as `0x${string}`,
     bondingRegistry: process.env.BONDING_REGISTRY_ADDRESS as `0x${string}`,
     e3Program: process.env.E3_PROGRAM_ADDRESS as `0x${string}`,
@@ -57,17 +59,17 @@ type E3StateOutputPublished = E3Shared & {
 
 type E3State = E3StateRequested | E3StatePublished | E3StateOutputPublished
 
-async function setupEventListeners(sdk: EnclaveSDK, store: Map<bigint, E3State>) {
+async function setupEventListeners(sdk: InterfoldSDK, store: Map<bigint, E3State>) {
   async function waitForEvent<T extends AllEventTypes>(
     type: T,
     trigger?: () => Promise<void>,
     timeoutMs?: number,
-  ): Promise<EnclaveEvent<T>> {
+  ): Promise<InterfoldEvent<T>> {
     return new Promise((resolve, reject) => {
       let settled = false
       let timer: ReturnType<typeof setTimeout> | undefined
 
-      const handler = (event: EnclaveEvent<T>) => {
+      const handler = (event: InterfoldEvent<T>) => {
         if (settled) return
         settled = true
         if (timer !== undefined) clearTimeout(timer)
@@ -83,9 +85,9 @@ async function setupEventListeners(sdk: EnclaveSDK, store: Map<bigint, E3State>)
         reject(err)
       }
 
-      // Use onEnclaveEvent so `handler` is the actual registered reference
+      // Use onInterfoldEvent so `handler` is the actual registered reference
       // (sdk.once wraps in an internal closure, making sdk.off unable to remove it)
-      sdk.onEnclaveEvent(type, handler).catch(fail)
+      sdk.onInterfoldEvent(type, handler).catch(fail)
 
       if (timeoutMs !== undefined) {
         timer = setTimeout(() => {
@@ -99,7 +101,7 @@ async function setupEventListeners(sdk: EnclaveSDK, store: Map<bigint, E3State>)
     })
   }
 
-  await sdk.onEnclaveEvent(EnclaveEventType.E3_REQUESTED, (event) => {
+  await sdk.onInterfoldEvent(InterfoldEventType.E3_REQUESTED, (event) => {
     const id = event.data.e3Id
 
     if (store.has(id)) {
@@ -112,7 +114,7 @@ async function setupEventListeners(sdk: EnclaveSDK, store: Map<bigint, E3State>)
     })
   })
 
-  await sdk.onEnclaveEvent(RegistryEventType.COMMITTEE_PUBLISHED, (event) => {
+  await sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLISHED, (event) => {
     const id = event.data.e3Id
 
     const state = store.get(id)
@@ -132,7 +134,7 @@ async function setupEventListeners(sdk: EnclaveSDK, store: Map<bigint, E3State>)
     })
   })
 
-  await sdk.onEnclaveEvent(EnclaveEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event) => {
+  await sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event) => {
     const id = event.data.e3Id
 
     const state = store.get(id)
@@ -163,9 +165,9 @@ describe('Integration', () => {
   const testPrivateKey = '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
 
   const store = new Map<bigint, E3State>()
-  const sdk = EnclaveSDK.create({
+  const sdk = InterfoldSDK.create({
     contracts: {
-      enclave: contracts.enclave,
+      interfold: contracts.interfold,
       ciphernodeRegistry: contracts.ciphernodeRegistry,
       feeToken: contracts.feeToken,
     },
@@ -188,8 +190,9 @@ describe('Integration', () => {
   it('should run an integration test', async () => {
     const { waitForEvent } = await setupEventListeners(sdk, store)
 
-    const committeeSize = CommitteeSize.Micro
-    const duration = 1000
+    const committeeSize = CommitteeSize.Minimum
+    // Input window length (seconds); also used as vitest wait budget per phase.
+    const duration = 120
     const inputWindow = await calculateInputWindow(publicClient, duration)
     const computeProviderParams = encodeComputeProviderParams(
       DEFAULT_COMPUTE_PROVIDER_PARAMS,
@@ -217,13 +220,13 @@ describe('Integration', () => {
     const hash = await sdk.approveFeeToken(quote)
     console.log('Fee token approved:', hash)
 
-    await new Promise((resolve) => setTimeout(resolve, 1000))
+    await sleep(1000)
 
     // REQUEST phase
     const timeoutMs = duration * 1000
 
     await waitForEvent(
-      EnclaveEventType.E3_REQUESTED,
+      InterfoldEventType.E3_REQUESTED,
       async () => {
         console.log('Requested E3...')
         await sdk.requestE3(requestParams)
@@ -241,7 +244,15 @@ describe('Integration', () => {
     const stageAfterRequest = await sdk.getE3Stage(state.e3Id)
     assert.strictEqual(stageAfterRequest, E3Stage.Requested, 'E3 stage should be Requested after requestE3')
 
+    // Ciphernodes submit tickets during the on-chain sortition window (10s). Anvil must mine so
+    // block.timestamp passes committeeDeadline before finalizeCommittee (see anvil-automine.mjs).
+    console.log('Waiting for ciphernode sortition tickets...')
+    await sleep(8000)
+    await advanceAnvilTime(publicClient, 15)
+    console.log('Advanced anvil past sortition deadline')
+
     // Ciphernodes will publish a public key within the COMMITTEE_PUBLISHED event
+    console.log('Waiting for committee + DKG (CommitteePublished)...')
     event = await waitForEvent(RegistryEventType.COMMITTEE_PUBLISHED, undefined, timeoutMs)
 
     const publicKeyBytes = hexToBytes(event.data.publicKey as `0x${string}`)
@@ -281,7 +292,7 @@ describe('Integration', () => {
     )
     await sdk.waitForTransaction(txHash)
 
-    const plaintextEvent = await waitForEvent(EnclaveEventType.PLAINTEXT_OUTPUT_PUBLISHED, undefined, timeoutMs)
+    const plaintextEvent = await waitForEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, undefined, timeoutMs)
 
     const result = decodePlaintextOutput(plaintextEvent.data.plaintextOutput)
     assert(result !== null, 'Failed to decode plaintext output')

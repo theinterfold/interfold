@@ -15,7 +15,7 @@ export function ensureEnv(key: string): string {
 export function getCheckedEnvVars() {
   return {
     RPC_URL: ensureEnv('RPC_URL'),
-    ENCLAVE_CONTRACT: ensureEnv('ENCLAVE_ADDRESS'),
+    INTERFOLD_CONTRACT: ensureEnv('INTERFOLD_ADDRESS'),
     CIPHERNODE_REGISTRY_CONTRACT: ensureEnv('REGISTRY_ADDRESS'),
     E3_PROGRAM_ADDRESS: ensureEnv('E3_PROGRAM_ADDRESS'),
     FEE_TOKEN_CONTRACT: ensureEnv('FEE_TOKEN_ADDRESS'),

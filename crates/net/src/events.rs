@@ -8,7 +8,7 @@ use crate::{direct_responder::DirectResponder, ContentHash};
 use actix::Message;
 use anyhow::{anyhow, bail, Context, Result};
 use e3_events::{
-    CorrelationId, DocumentMeta, EnclaveEvent, EventContextAccessors, EventSource, Sequenced,
+    CorrelationId, DocumentMeta, EventContextAccessors, EventSource, InterfoldEvent, Sequenced,
     Unsequenced,
 };
 use e3_utils::{ArcBytes, OnceTake};
@@ -39,7 +39,7 @@ pub enum PeerTarget {
 /// Incoming/Outgoing GossipData. We disambiguate on concerns relative to the net package.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum GossipData {
-    GossipBytes(Vec<u8>), // Serialized EnclaveEvent
+    GossipBytes(Vec<u8>), // Serialized InterfoldEvent
     DocumentPublishedNotification(DocumentPublishedNotification),
 }
 
@@ -53,9 +53,9 @@ impl GossipData {
     }
 }
 
-impl TryFrom<EnclaveEvent<Sequenced>> for GossipData {
+impl TryFrom<InterfoldEvent<Sequenced>> for GossipData {
     type Error = anyhow::Error;
-    fn try_from(value: EnclaveEvent<Sequenced>) -> Result<Self, Self::Error> {
+    fn try_from(value: InterfoldEvent<Sequenced>) -> Result<Self, Self::Error> {
         let bytes = value
             .clone_unsequenced() // Note serializing UNSEQUENCED
             .to_bytes()
@@ -64,14 +64,14 @@ impl TryFrom<EnclaveEvent<Sequenced>> for GossipData {
     }
 }
 
-impl TryFrom<GossipData> for EnclaveEvent<Unsequenced> {
+impl TryFrom<GossipData> for InterfoldEvent<Unsequenced> {
     type Error = anyhow::Error;
     fn try_from(value: GossipData) -> Result<Self, Self::Error> {
         let GossipData::GossipBytes(bytes) = value else {
             bail!("GossipData was not the GossipBytes variant");
         };
 
-        Ok(EnclaveEvent::from_bytes(&bytes)?.with_source(EventSource::Net))
+        Ok(InterfoldEvent::from_bytes(&bytes)?.with_source(EventSource::Net))
     }
 }
 
@@ -411,15 +411,16 @@ pub fn estimate_hashmap_size<K, V>(map: &HashMap<K, V>) -> usize {
 #[cfg(test)]
 mod tests {
     use e3_events::{
-        EnclaveEvent, EventConstructorWithTimestamp, EventSource, Sequenced, TestEvent, Unsequenced,
+        EventConstructorWithTimestamp, EventSource, InterfoldEvent, Sequenced, TestEvent,
+        Unsequenced,
     };
 
     use super::GossipData;
 
     #[test]
-    fn test_enclave_event_gossip_lifecycle() -> anyhow::Result<()> {
+    fn test_interfold_event_gossip_lifecycle() -> anyhow::Result<()> {
         // event is created locally
-        let event: EnclaveEvent<Unsequenced> = EnclaveEvent::new_with_timestamp(
+        let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
             TestEvent::new("fish", 42).into(),
             None,
             31415,
@@ -428,7 +429,7 @@ mod tests {
         );
 
         // event is sequenced after bus.publish() adds a sequence number
-        let event: EnclaveEvent<Sequenced> = event.into_sequenced(90210);
+        let event: InterfoldEvent<Sequenced> = event.into_sequenced(90210);
 
         // event is broadcast
         let gossip_data: GossipData = event.try_into()?;
@@ -438,7 +439,7 @@ mod tests {
         };
 
         // received gossip data from libp2p convert to unsequenced event
-        let event: EnclaveEvent<Unsequenced> = gossip_data.try_into()?;
+        let event: InterfoldEvent<Unsequenced> = gossip_data.try_into()?;
         let (data, ts) = event.split();
 
         assert_eq!(data, TestEvent::new("fish", 42).into());

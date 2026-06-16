@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Event management for E3 Ciphernodes"
-repository = "https://github.com/gnosisguild/enclave/crates/events"
+repository = "https://github.com/gnosisguild/interfold/crates/events"
 
 [dependencies]
 actix = { workspace = true }

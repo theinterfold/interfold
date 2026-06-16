@@ -1,0 +1,137 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "CRISP: Start All",
+      "detail": "Starts all 10 CRISP services in parallel (each in its own dedicated VS Code terminal). Terminate Task works on the compound task.",
+      "dependsOn": [
+        "CRISP: Anvil",
+        "CRISP: Deploy + Setup",
+        "CRISP: cn1",
+        "CRISP: cn2",
+        "CRISP: cn3",
+        "CRISP: cn4",
+        "CRISP: cn5",
+        "CRISP: Program Server",
+        "CRISP: Server",
+        "CRISP: Client"
+      ],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    },
+    {
+      "label": "CRISP: Anvil",
+      "type": "shell",
+      "command": "anvil",
+      "args": [
+        "--host",
+        "0.0.0.0",
+        "--chain-id",
+        "31337",
+        "--block-time",
+        "1",
+        "--mnemonic",
+        "test test test test test test test test test test test junk"
+      ],
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "crisp-anvil" },
+      "problemMatcher": {
+        "pattern": { "regexp": "^$" },
+        "background": {
+          "activeOnStart": true,
+          "beginsPattern": "^.*$",
+          "endsPattern": "^.*Listening on.*$"
+        }
+      }
+    },
+    {
+      "label": "CRISP: Deploy + Setup",
+      "type": "shell",
+      "command": "bash",
+      "args": ["${workspaceFolder}/deploy/local/run_service.sh", "deploy"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "crisp-deploy" },
+      "problemMatcher": []
+    },
+    {
+      "label": "CRISP: cn1",
+      "type": "shell",
+      "command": "bash",
+      "args": ["${workspaceFolder}/deploy/local/run_service.sh", "cn1"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "crisp-cn1", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "CRISP: cn2",
+      "type": "shell",
+      "command": "bash",
+      "args": ["${workspaceFolder}/deploy/local/run_service.sh", "cn2"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "crisp-cn2", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "CRISP: cn3",
+      "type": "shell",
+      "command": "bash",
+      "args": ["${workspaceFolder}/deploy/local/run_service.sh", "cn3"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "crisp-cn3", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "CRISP: cn4",
+      "type": "shell",
+      "command": "bash",
+      "args": ["${workspaceFolder}/deploy/local/run_service.sh", "cn4"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "crisp-cn4", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "CRISP: cn5",
+      "type": "shell",
+      "command": "bash",
+      "args": ["${workspaceFolder}/deploy/local/run_service.sh", "cn5"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "crisp-cn5", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "CRISP: Program Server",
+      "type": "shell",
+      "command": "bash",
+      "args": ["${workspaceFolder}/deploy/local/run_service.sh", "program"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "crisp-program", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "CRISP: Server",
+      "type": "shell",
+      "command": "bash",
+      "args": ["${workspaceFolder}/deploy/local/run_service.sh", "server"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "crisp-server", "clear": false },
+      "problemMatcher": []
+    },
+    {
+      "label": "CRISP: Client",
+      "type": "shell",
+      "command": "bash",
+      "args": ["${workspaceFolder}/deploy/local/run_service.sh", "client"],
+      "options": { "cwd": "${workspaceFolder}" },
+      "isBackground": true,
+      "presentation": { "reveal": "always", "panel": "dedicated", "group": "crisp-client", "clear": false },
+      "problemMatcher": []
+    }
+  ]
+}

@@ -56,3 +56,55 @@ export const PRESET_NOIR_CONFIG: Record<CircuitPreset, 'insecure' | 'secure'> = 
   [CIRCUIT_PRESETS.INSECURE_512]: 'insecure',
   [CIRCUIT_PRESETS.SECURE_8192]: 'secure',
 }
+
+/**
+ * Committee sizes (matches Rust `CiphernodesCommitteeSize`). Selects the active
+ * leaf module under `circuits/lib/src/configs/committee/{name}/` that `committee::active`
+ * re-exports from. The wrapper Solidity verifiers (`BfvPkVerifier`, `BfvDecryptionVerifier`)
+ * must be deployed with `H` and `T` matching the active selection.
+ */
+export const CIRCUIT_COMMITTEES = {
+  MINIMUM: 'minimum',
+  MICRO: 'micro',
+  SMALL: 'small',
+} as const
+
+export type CircuitCommittee = (typeof CIRCUIT_COMMITTEES)[keyof typeof CIRCUIT_COMMITTEES]
+
+export const ALL_COMMITTEES: CircuitCommittee[] = [CIRCUIT_COMMITTEES.MINIMUM, CIRCUIT_COMMITTEES.MICRO, CIRCUIT_COMMITTEES.SMALL]
+
+/**
+ * `(N, T, H)` per committee. Mirrors `circuits/lib/src/configs/committee/{name}/mod.nr`
+ * and Rust `e3_zk_helpers::CiphernodesCommitteeSize::values()`. The build script writes
+ * `H` and `T` into `packages/interfold-contracts/scripts/utils.ts` so the EVM gas benchmark
+ * deploys verifiers with the matching public-input layout.
+ */
+export interface CommitteeParams {
+  n: number
+  t: number
+  h: number
+}
+
+export const COMMITTEE_PARAMS: Record<CircuitCommittee, CommitteeParams> = {
+  [CIRCUIT_COMMITTEES.MINIMUM]: { n: 3, t: 1, h: 2 },
+  [CIRCUIT_COMMITTEES.MICRO]: { n: 9, t: 4, h: 5 },
+  [CIRCUIT_COMMITTEES.SMALL]: { n: 19, t: 9, h: 10 },
+}
+
+/**
+ * Every `(preset, committee)` pair is supported because the parity matrices are now regenerated
+ * automatically from the BFV preset's `QIS` and the committee's `(N, T)` by the
+ * `generate_parity_matrices` Rust binary, invoked from `scripts/build-circuits.ts` whenever
+ * the committee is set. The matrix files on disk are derived artifacts, not hand-tuned data.
+ *
+ * This constant is kept for future use (e.g. if a particular pair is ever known-broken at
+ * a higher level than the parity matrix) and currently returns the full Cartesian product.
+ */
+export const SUPPORTED_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
+  preset: CircuitPreset
+  committee: CircuitCommittee
+}> = ALL_PRESETS.flatMap((preset) => ALL_COMMITTEES.map((committee) => ({ preset, committee })))
+
+export function isPresetCommitteeSupported(preset: CircuitPreset, committee: CircuitCommittee): boolean {
+  return SUPPORTED_PRESET_COMMITTEE_PAIRS.some((p) => p.preset === preset && p.committee === committee)
+}

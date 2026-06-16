@@ -87,7 +87,17 @@ impl RPC {
     }
 
     pub fn host_with_port(&self) -> String {
-        format!("{}:{}", self.hostname(), self.port())
+        let host = self.hostname();
+        // `Url::host_str()` already brackets IPv6 hosts (e.g. `[::1]`), so in
+        // practice this guard is a no-op today. We keep it defensive: only add
+        // brackets when the host looks like a bare IPv6 literal that isn't
+        // already wrapped, so we never emit `::1:8545` and never double-bracket
+        // into `[[::1]]:8545`.
+        if host.contains(':') && !host.starts_with('[') {
+            format!("[{}]:{}", host, self.port())
+        } else {
+            format!("{}:{}", host, self.port())
+        }
     }
 
     pub fn as_http_url(&self) -> Result<String> {
@@ -133,7 +143,14 @@ impl RPC {
     }
 
     pub fn is_local(&self) -> bool {
-        match self.hostname() {
+        // `Url::host_str()` returns IPv6 hosts in bracketed form (`[::1]`), so
+        // strip a surrounding pair before matching loopback literals.
+        let host = self.hostname();
+        let host = host
+            .strip_prefix('[')
+            .and_then(|h| h.strip_suffix(']'))
+            .unwrap_or(host);
+        match host {
             "localhost" | "127.0.0.1" | "::1" => true,
             host => host.starts_with("127."), // 127.0.0.0/8 is all loopback
         }
@@ -142,14 +159,57 @@ impl RPC {
 
 #[derive(Debug, Hash, Eq, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(tag = "type", content = "credentials")]
+#[derive(Default)]
 pub enum RpcAuth {
+    #[default]
     None,
-    Basic { username: String, password: String },
+    Basic {
+        username: String,
+        password: String,
+    },
     Bearer(String),
 }
 
-impl Default for RpcAuth {
-    fn default() -> Self {
-        RpcAuth::None
+#[cfg(test)]
+mod tests {
+    use super::RPC;
+
+    #[test]
+    fn host_with_port_ipv4() {
+        let rpc = RPC::from_url("http://127.0.0.1:8545").unwrap();
+        assert_eq!(rpc.host_with_port(), "127.0.0.1:8545");
+    }
+
+    #[test]
+    fn host_with_port_hostname_uses_default_port() {
+        let rpc = RPC::from_url("wss://example.com").unwrap();
+        assert_eq!(rpc.host_with_port(), "example.com:443");
+    }
+
+    #[test]
+    fn host_with_port_ipv6_is_bracketed_not_doubled() {
+        // `Url::host_str()` already brackets IPv6; we must not emit `::1:8545`
+        // and must not double-bracket into `[[::1]]:8545`.
+        let rpc = RPC::from_url("http://[::1]:8545").unwrap();
+        assert_eq!(rpc.host_with_port(), "[::1]:8545");
+
+        let rpc = RPC::from_url("http://[2001:db8::1]:8545").unwrap();
+        assert_eq!(rpc.host_with_port(), "[2001:db8::1]:8545");
+    }
+
+    #[test]
+    fn ipv6_loopback_is_local() {
+        assert!(RPC::from_url("http://[::1]:8545").unwrap().is_local());
+    }
+
+    #[test]
+    fn ipv4_and_hostname_locality() {
+        assert!(RPC::from_url("http://127.0.0.1:8545").unwrap().is_local());
+        assert!(RPC::from_url("http://127.0.0.5:8545").unwrap().is_local());
+        assert!(RPC::from_url("http://localhost:8545").unwrap().is_local());
+        assert!(!RPC::from_url("https://example.com").unwrap().is_local());
+        assert!(!RPC::from_url("http://[2001:db8::1]:8545")
+            .unwrap()
+            .is_local());
     }
 }

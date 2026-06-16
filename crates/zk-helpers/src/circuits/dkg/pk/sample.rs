@@ -11,7 +11,6 @@ use crate::CircuitsErrors;
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::BfvPreset;
 use fhe::bfv::{PublicKey, SecretKey};
-use rand::thread_rng;
 
 impl PkCircuitData {
     /// Generates sample data for the pk circuit.
@@ -20,7 +19,7 @@ impl PkCircuitData {
             CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e))
         })?;
 
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         let dkg_secret_key = SecretKey::random(&dkg_params, &mut rng);
         let dkg_public_key = PublicKey::new(&dkg_secret_key, &mut rng);
 
@@ -39,6 +38,6 @@ mod tests {
     fn test_generate_pk_sample() {
         let sample = PkCircuitData::generate_sample(BfvPreset::InsecureThreshold512).unwrap();
 
-        assert_eq!(sample.public_key.c.c.len(), 2);
+        assert_eq!(sample.public_key.c.len(), 2);
     }
 }

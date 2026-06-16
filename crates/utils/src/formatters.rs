@@ -11,7 +11,7 @@ use regex::Regex;
 
 // Custom formatter function for hex display
 pub fn hexf(data: &[u8], f: &mut fmt::Formatter) -> fmt::Result {
-    let bytes: &[u8] = data.as_ref();
+    let bytes: &[u8] = data;
 
     write!(
         f,
@@ -26,7 +26,7 @@ pub fn hexf(data: &[u8], f: &mut fmt::Formatter) -> fmt::Result {
 }
 
 /// truncate a string
-pub fn truncate(s: String) -> String {
+fn truncate(s: String) -> String {
     let threshold = 100; // will leave it
     let limit = 50;
     let cutoff = limit / 2;

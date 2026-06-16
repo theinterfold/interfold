@@ -5,18 +5,19 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
-    correlator::Correlator,
-    direct_responder::{ChannelType, DirectResponder},
-    events::{IncomingResponse, OutgoingRequest, ProtocolResponse},
-    net_interface_handle::NetInterfaceHandle,
-};
-use crate::{
     dialer::dial_peers,
     events::{
         GossipData, IncomingRequest, NetCommand, NetEvent, OutgoingRequestFailed,
         OutgoingRequestSucceeded, PeerTarget, PutOrStoreError,
     },
     ContentHash,
+};
+use crate::{
+    direct_responder::{ChannelType, DirectResponder},
+    domain::{correlator::Correlator, peer_failure_tracker::PeerFailureTracker},
+    events::{IncomingResponse, OutgoingRequest, ProtocolResponse},
+    keypair::Libp2pKeypair,
+    net_interface_handle::NetInterfaceHandle,
 };
 use anyhow::{bail, Context, Result};
 use e3_events::CorrelationId;
@@ -26,7 +27,7 @@ use libp2p::{
     futures::StreamExt,
     gossipsub,
     identify::{Behaviour as IdentifyBehaviour, Config as IdentifyConfig},
-    identity::{ed25519, Keypair},
+    identity::Keypair,
     kad::{
         self,
         store::{MemoryStore, MemoryStoreConfig, RecordStore},
@@ -39,11 +40,10 @@ use libp2p::{
         ProtocolSupport,
     },
     swarm::{dial_opts::DialOpts, DialError, NetworkBehaviour, SwarmEvent},
-    Multiaddr, PeerId, StreamProtocol, Swarm,
+    Multiaddr, StreamProtocol, Swarm,
 };
 use rand::prelude::IteratorRandom;
 use std::{
-    collections::HashMap,
     io::Error,
     sync::Arc,
     time::{Duration, Instant},
@@ -54,7 +54,7 @@ use tokio::{
 };
 use tracing::{debug, error, info, trace, warn};
 
-const PROTOCOL_NAME: StreamProtocol = StreamProtocol::new("/enclave/kad/1.0.0");
+const PROTOCOL_NAME: StreamProtocol = StreamProtocol::new("/interfold/kad/1.0.0");
 const MAX_KADEMLIA_PAYLOAD_MB: usize = 100;
 const MAX_KADEMLIA_RECORD_MB: usize = 25; // Largest record: ~21MB ThresholdShare with prod params
 const DHT_MAX_RECORDS: usize = 4096;
@@ -62,7 +62,6 @@ const MAX_GOSSIP_MSG_SIZE_KB: usize = 10240; // 10MB — prod params C6 proofs a
 const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 40;
 const EVENT_CHANNEL_SIZE: usize = 1000;
 const CMD_CHANNEL_SIZE: usize = 1000;
-const PEER_FAILURE_TTL: Duration = Duration::from_secs(300);
 
 /// Returns true if the multiaddr contains a loopback IP (127.0.0.0/8 or ::1).
 /// Loopback addresses are only meaningful on the local machine and must not be
@@ -86,6 +85,17 @@ fn should_filter_loopback(swarm: &Swarm<NodeBehaviour>) -> bool {
     swarm
         .listeners()
         .any(|addr| !is_loopback_addr(addr) && !is_unspecified_addr(addr))
+}
+
+/// Strip a trailing `/p2p/<peer-id>` component from a multiaddr.
+/// Needed when re-keying a routing entry after a peer ID mismatch: the dialed
+/// address still pins the stale peer ID, and re-adding it verbatim under the
+/// new peer ID would make every subsequent dial fail with `WrongPeerId` again.
+fn strip_peer_id(mut addr: Multiaddr) -> Multiaddr {
+    if matches!(addr.iter().last(), Some(Protocol::P2p(_))) {
+        addr.pop();
+    }
+    addr
 }
 
 fn is_unspecified_addr(addr: &Multiaddr) -> bool {
@@ -140,7 +150,7 @@ impl Libp2pNetInterface {
             .with_quic()
             .with_dns()
             .map_err(|e| anyhow::anyhow!("Failed to enable DNS: {e}"))?
-            .with_behaviour(|key| create_behaviour(key))?
+            .with_behaviour(create_behaviour)?
             .build();
 
         // TODO: Use topics to manage network traffic instead of just using a single topic
@@ -167,6 +177,11 @@ impl Libp2pNetInterface {
         let cmd_rx = &mut self.cmd_rx;
         let mut correlator = Correlator::new();
         let mut peer_failures = PeerFailureTracker::new();
+        // Tracks WrongPeerId occurrences per stale peer ID, separately from
+        // generic dial failures: a node that was offline accumulates ordinary
+        // failures before coming back with new keys, and the first mismatch
+        // must still be treated as the first (triggering redial + bootstrap).
+        let mut peer_id_mismatches = PeerFailureTracker::new();
         // This is to make sure we dont spam warnings in the logs
         let mut last_backpressure_warn = Instant::now();
 
@@ -202,7 +217,7 @@ impl Libp2pNetInterface {
                 let total = peers.len();
                 let connected = dial_peers(&cmd_tx, &event_tx, &peers).await?;
                 event_tx.send(NetEvent::AllPeersDialed { connected, total })?;
-                return anyhow::Ok(());
+                anyhow::Ok(())
             }
         });
 
@@ -223,7 +238,7 @@ impl Libp2pNetInterface {
                 }
                 // Process events
                 event = self.swarm.select_next_some() =>  {
-                    match process_swarm_event(&mut self.swarm, &event_tx, &cmd_tx, &mut correlator, &mut peer_failures, event).await {
+                    match process_swarm_event(&mut self.swarm, &event_tx, &cmd_tx, &mut correlator, &mut peer_failures, &mut peer_id_mismatches, event).await {
                         Ok(_) => (),
                         Err(e) => error!("Error processing NetEvent: {e}")
                     }
@@ -244,33 +259,6 @@ impl Libp2pNetInterface {
     }
 }
 
-pub struct Libp2pKeypair {
-    keypair: libp2p::identity::Keypair,
-}
-
-impl Libp2pKeypair {
-    pub fn new(keypair: libp2p::identity::Keypair) -> Self {
-        Self { keypair }
-    }
-
-    pub fn generate() -> Self {
-        let id = libp2p::identity::Keypair::generate_ed25519();
-        Self::new(id)
-    }
-
-    pub fn try_from_bytes(bytes: &mut [u8]) -> Result<Self> {
-        let keypair: libp2p::identity::Keypair =
-            ed25519::Keypair::try_from_bytes(bytes)?.try_into()?;
-        Ok(Self { keypair })
-    }
-
-    pub fn into_keypair(self) -> libp2p::identity::Keypair {
-        self.keypair
-    }
-    pub fn peer_id(&self) -> PeerId {
-        self.keypair.public().to_peer_id()
-    }
-}
 /// Create the libp2p behaviour
 fn create_behaviour(
     key: &Keypair,
@@ -278,7 +266,7 @@ fn create_behaviour(
     let peer_id = key.public().to_peer_id();
     let connection_limits = connection_limits::Behaviour::new(ConnectionLimits::default());
     let identify = IdentifyBehaviour::new(
-        IdentifyConfig::new("/enclave/0.0.1".into(), key.public())
+        IdentifyConfig::new("/interfold/0.0.1".into(), key.public())
             .with_interval(Duration::from_secs(60)),
     );
 
@@ -287,7 +275,7 @@ fn create_behaviour(
         .max_transmit_size(MAX_GOSSIP_MSG_SIZE_KB * 1024)
         .validation_mode(gossipsub::ValidationMode::Strict)
         .build()
-        .map_err(|msg| Error::new(std::io::ErrorKind::Other, msg))?;
+        .map_err(Error::other)?;
 
     let gossipsub = gossipsub::Behaviour::new(
         gossipsub::MessageAuthenticity::Signed(key.clone()),
@@ -298,7 +286,7 @@ fn create_behaviour(
 
     let request_response = cbor::Behaviour::<Vec<u8>, ProtocolResponse>::new(
         [(
-            StreamProtocol::new("/enclave/sync/0.0.1"),
+            StreamProtocol::new("/interfold/sync/0.0.1"),
             ProtocolSupport::Full,
         )],
         request_response_config,
@@ -333,6 +321,7 @@ async fn process_swarm_event(
     cmd_tx: &mpsc::Sender<NetCommand>,
     correlator: &mut Correlator,
     peer_failures: &mut PeerFailureTracker,
+    peer_id_mismatches: &mut PeerFailureTracker,
     event: SwarmEvent<NodeBehaviourEvent>,
 ) -> Result<()> {
     match event {
@@ -343,8 +332,9 @@ async fn process_swarm_event(
             num_established,
             ..
         } => {
-            // Reset failure count on successful connection
+            // Reset failure counts on successful connection
             peer_failures.reset(&peer_id);
+            peer_id_mismatches.reset(&peer_id);
             if num_established.get() == 1 {
                 let total = swarm.connected_peers().count();
                 info!("Peer connected: {peer_id} (total: {total})");
@@ -380,28 +370,66 @@ async fn process_swarm_event(
                 {
                     // The node at this address has a new PeerId (e.g. restarted with new keys).
                     // Remove the stale entry and add the new one so we don't loop.
+                    // The stale entry can be re-learned from other peers' routing tables,
+                    // so repeats are expected: handle them quietly (debug, no bootstrap)
+                    // to avoid flooding the logs and re-fueling the dial loop.
                     let remote_addr = endpoint.get_remote_address().clone();
-                    info!(
-                        "Peer ID mismatch at {remote_addr}: expected {failed_peer}, got {obtained} — \
-                         replacing stale routing entry"
-                    );
+                    let mismatch_count = peer_id_mismatches.record_failure(failed_peer);
+                    // The stale ID is being removed from the routing table, so its
+                    // generic dial-failure history is no longer meaningful.
+                    peer_failures.reset(failed_peer);
+                    if mismatch_count == 1 {
+                        info!(
+                            "Peer ID mismatch at {remote_addr}: expected {failed_peer}, got {obtained} — \
+                             replacing stale routing entry"
+                        );
+                    } else {
+                        debug!(
+                            "Peer ID mismatch at {remote_addr}: expected {failed_peer}, got {obtained} \
+                             (seen {mismatch_count} times) — stale entry re-learned from the network"
+                        );
+                    }
                     let local_peer = *swarm.local_peer_id();
                     swarm.behaviour_mut().kademlia.remove_peer(failed_peer);
-                    if obtained != local_peer
-                        && !(should_filter_loopback(swarm) && is_loopback_addr(&remote_addr))
-                    {
-                        swarm
-                            .behaviour_mut()
-                            .kademlia
-                            .add_address(&obtained, remote_addr);
-                    }
-                    peer_failures.reset(failed_peer);
+                    if obtained != local_peer {
+                        // Strip the stale /p2p/<old-id> suffix, otherwise dials to the
+                        // new peer via this address fail with WrongPeerId forever.
+                        let corrected_addr = strip_peer_id(remote_addr.clone());
 
-                    // Trigger Kademlia bootstrap to discover peers beyond direct connections.
-                    if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
-                        debug!(
-                            "Kademlia bootstrap after peer ID replacement not possible yet: {e}"
-                        );
+                        // Only publish the address to Kademlia if it wouldn't leak a
+                        // loopback address to remote peers (see should_filter_loopback).
+                        if !(should_filter_loopback(swarm) && is_loopback_addr(&remote_addr)) {
+                            swarm
+                                .behaviour_mut()
+                                .kademlia
+                                .add_address(&obtained, corrected_addr.clone());
+                        }
+
+                        // Redial the node under its actual identity — a direct dial
+                        // doesn't propagate the address, so no loopback filtering is
+                        // needed. The default dial condition (DisconnectedAndNotDialing)
+                        // makes this a no-op while we are already connected or
+                        // connecting to the real peer, so repeated mismatches cause no
+                        // churn — while a dropped connection is re-attempted on any
+                        // later mismatch (recovery is not one-shot).
+                        let opts = DialOpts::peer_id(obtained)
+                            .addresses(vec![corrected_addr])
+                            .build();
+                        if let Err(e) = swarm.dial(opts) {
+                            debug!("Redial of {obtained} after peer ID replacement skipped: {e}");
+                        }
+                    }
+
+                    // Trigger Kademlia bootstrap to discover peers beyond direct
+                    // connections — but only on the first mismatch: bootstrapping on
+                    // every repeat re-learns the stale entry from neighbours and
+                    // redials it, creating a self-sustaining loop.
+                    if mismatch_count == 1 {
+                        if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
+                            debug!(
+                                "Kademlia bootstrap after peer ID replacement not possible yet: {e}"
+                            );
+                        }
                     }
                 } else {
                     let count = peer_failures.record_failure(failed_peer);
@@ -548,9 +576,8 @@ async fn process_swarm_event(
             },
         )) => {
             debug!("Incoming request received (id={})", request_id);
-            let responder =
-                DirectResponder::new(request_id, ChannelType::Channel(channel), &cmd_tx)
-                    .with_request(request);
+            let responder = DirectResponder::new(request_id, ChannelType::Channel(channel), cmd_tx)
+                .with_request(request);
 
             // received a request for events
             event_tx.send(NetEvent::IncomingRequest(IncomingRequest { responder }))?;
@@ -814,7 +841,7 @@ fn prune_expired_dht_records(swarm: &mut Swarm<NodeBehaviour>) {
     let now = Instant::now();
     let store = swarm.behaviour_mut().kademlia.store_mut();
     let before = store.records().count();
-    store.retain(|_, r| r.expires.map_or(true, |e| e > now));
+    store.retain(|_, r| r.expires.is_none_or(|e| e > now));
     let after = store.records().count();
     if before != after {
         info!(
@@ -936,7 +963,7 @@ fn handle_outgoing_request(
     let peer = match target {
         PeerTarget::Random => swarm
             .connected_peers()
-            .choose(&mut rand::thread_rng())
+            .choose(&mut rand::rng())
             .copied()
             .context("No connected peers available")?,
         PeerTarget::Specific(peer_id) => peer_id,
@@ -971,48 +998,29 @@ fn handle_response(swarm: &mut Swarm<NodeBehaviour>, responder: DirectResponder)
     Ok(())
 }
 
-/// Tracks consecutive connection failures per peer to detect and evict stale peers.
-/// Entries are automatically cleaned up after PEER_FAILURE_TTL to prevent unbounded growth.
-struct PeerFailureTracker {
-    failures: HashMap<PeerId, (u32, Instant)>,
-}
-
-impl PeerFailureTracker {
-    fn new() -> Self {
-        Self {
-            failures: HashMap::new(),
-        }
-    }
-
-    /// Record a failure for the given peer and return the new consecutive failure count.
-    fn record_failure(&mut self, peer_id: &PeerId) -> u32 {
-        self.cleanup_stale();
-        let now = Instant::now();
-        let entry = self.failures.entry(*peer_id).or_insert((0, now));
-        entry.0 += 1;
-        entry.1 = now;
-        entry.0
-    }
-
-    /// Reset the failure count for a peer (e.g. on successful connection or after eviction).
-    fn reset(&mut self, peer_id: &PeerId) {
-        self.failures.remove(peer_id);
-    }
-
-    /// Remove entries older than PEER_FAILURE_TTL to prevent unbounded growth
-    fn cleanup_stale(&mut self) {
-        let now = Instant::now();
-        self.failures
-            .retain(|_, (_, last_seen)| now.duration_since(*last_seen) < PEER_FAILURE_TTL);
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use libp2p::kad::store::{MemoryStore, MemoryStoreConfig, RecordStore};
     use libp2p::kad::{Record, RecordKey};
     use libp2p::PeerId;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn strip_peer_id_removes_trailing_p2p_component() {
+        let peer = PeerId::random();
+        let addr: libp2p::Multiaddr = format!("/ip4/172.20.0.1/udp/9091/quic-v1/p2p/{peer}")
+            .parse()
+            .unwrap();
+        let stripped = super::strip_peer_id(addr);
+        assert_eq!(
+            stripped,
+            "/ip4/172.20.0.1/udp/9091/quic-v1"
+                .parse::<libp2p::Multiaddr>()
+                .unwrap()
+        );
+        // Idempotent on addresses without a /p2p/ suffix
+        assert_eq!(super::strip_peer_id(stripped.clone()), stripped);
+    }
 
     #[test]
     fn expired_records_are_pruned_on_full_store() {
@@ -1049,7 +1057,7 @@ mod tests {
         );
 
         let now = Instant::now();
-        store.retain(|_, r| r.expires.map_or(true, |e| e > now));
+        store.retain(|_, r| r.expires.is_none_or(|e| e > now));
 
         assert_eq!(
             store.records().count(),
@@ -1102,7 +1110,7 @@ mod tests {
         assert_eq!(store.records().count(), 5);
 
         let now = Instant::now();
-        store.retain(|_, r| r.expires.map_or(true, |e| e > now));
+        store.retain(|_, r| r.expires.is_none_or(|e| e > now));
 
         assert_eq!(
             store.records().count(),

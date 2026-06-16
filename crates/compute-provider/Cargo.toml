@@ -3,8 +3,8 @@ name = "e3-compute-provider"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "E3 - Enclave Copmute Provider"
-repository = "https://github.com/gnosisguild/enclave/crates/compute-provider"
+description = "E3 - Interfold Copmute Provider"
+repository = "https://github.com/gnosisguild/interfold/crates/compute-provider"
 
 [dependencies]
 serde = { workspace = true, features = ["derive", "std"] }

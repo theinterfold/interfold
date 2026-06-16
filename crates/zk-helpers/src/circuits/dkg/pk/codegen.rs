@@ -38,7 +38,7 @@ impl CircuitCodegen for PkCircuit {
 
 /// Builds the Prover TOML string from the pk input (pk0is, pk1is).
 pub fn generate_toml(inputs: Inputs) -> Result<CodegenToml, CircuitsErrors> {
-    let json = inputs.to_json().map_err(|e| CircuitsErrors::SerdeJson(e))?;
+    let json = inputs.to_json().map_err(CircuitsErrors::SerdeJson)?;
 
     Ok(toml::to_string(&json)?)
 }

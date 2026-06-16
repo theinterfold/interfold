@@ -4,7 +4,7 @@ clean_folders() {
 
     # Delete output artifacts
     rm -rf "$SCRIPT_DIR/output/"*
-    rm -rf "$SCRIPT_DIR/.enclave/"
+    rm -rf "$SCRIPT_DIR/.interfold/"
 }
 
 clean_folders $1

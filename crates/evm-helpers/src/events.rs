@@ -29,10 +29,9 @@ sol! {
 
     #[derive(Debug)]
     enum CommitteeSize {
+        Minimum,
         Micro,
         Small,
-        Medium,
-        Large,
     }
 
     #[derive(Debug)]

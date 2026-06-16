@@ -1,10 +1,10 @@
 ---
-title: 'Enclave Whitepaper'
+title: 'Interfold Whitepaper'
 description:
-  'A whitepaper introducing Enclave, an open-source protocol for Encrypted Execution Environments'
+  'A whitepaper introducing Interfold, an open-source protocol for Encrypted Execution Environments'
 ---
 
-# Enclave: A Protocol for Encrypted Execution Environments (E3)
+# Interfold: A Protocol for Encrypted Execution Environments (E3)
 
 <div style={{ display: 'flex', gap: 16, marginTop: 16 }}>
   <p>[Auryn Macmillan](mailto:auryn@gnosisguild.org)</p>{' '}
@@ -12,25 +12,25 @@ description:
   <p>[Marvin Lin](mailto:marv@gnosisguild.org)</p>
 </div>
 
-> **Note:** This whitepaper describes the original Enclave protocol design.  
-> Enclave has since evolved into The Interfold. This document is preserved here as an archival
+> **Note:** This whitepaper describes the original Interfold protocol design.  
+> Interfold has since evolved into The Interfold. This document is preserved here as an archival
 > technical reference.
 
 ## Abstract
 
-This whitepaper introduces Enclave, an open-source protocol for Encrypted Execution Environments
+This whitepaper introduces Interfold, an open-source protocol for Encrypted Execution Environments
 (E3). By integrating fully homomorphic encryption (FHE) with a novel combination of zero-knowledge
-proofs (ZKPs) and distributed threshold cryptography (DTC), Enclave enables secure computations on
+proofs (ZKPs) and distributed threshold cryptography (DTC), Interfold enables secure computations on
 multiple private inputs using a decentralised network of nodes that decrypts only the verified
 outputs from the requested FHE program. This privacy-preserving framework relies on a
 stakeholder-driven consensus mechanism, providing strong economic and cryptographic guarantees
 around data privacy, data integrity, and correct execution.
 
-Enclave's trust assurances enable a new class of applications characterised by liability-free
+Interfold's trust assurances enable a new class of applications characterised by liability-free
 access, collaborative data analysis, and provably legitimate outcomes. The latter use case is
-demonstrated through Enclave’s flagship application CRISP (Coercion-Resistant Impartial Selection
+demonstrated through Interfold’s flagship application CRISP (Coercion-Resistant Impartial Selection
 Protocol), a secret ballot protocol aimed at preventing coercion and mitigating vulnerabilities in
-digital decision-making. The paper concludes by exploring how Enclave can be implemented in other
+digital decision-making. The paper concludes by exploring how Interfold can be implemented in other
 sectors, from finance and healthcare to AI and beyond.
 
 ## Introduction
@@ -44,85 +44,87 @@ trust-dependent supply chains), introducing untenable counterparty risk for many
 can force a trade-off between data utility and regulatory compliance, leaving valuable data either
 vulnerable, underutilised, or unused.
 
-Enclave addresses these challenges with Encrypted Execution Environments (E3), enabling secure
+Interfold addresses these challenges with Encrypted Execution Environments (E3), enabling secure
 computations on multiple private inputs secured by a decentralised network of nodes. By integrating
 fully homomorphic encryption (FHE) with a novel combination of zero-knowledge proofs (ZKPs) and
-distributed threshold cryptography (DTC), Enclave’s nodes are designed to decrypt only the verified
-outputs from the requested FHE program, providing strong cryptographic guarantees around data
-privacy, data integrity, and correct execution. This computational infrastructure allows
+distributed threshold cryptography (DTC), Interfold’s nodes are designed to decrypt only the
+verified outputs from the requested FHE program, providing strong cryptographic guarantees around
+data privacy, data integrity, and correct execution. This computational infrastructure allows
 organisations to both safeguard and leverage sensitive data, opening new opportunities for
 innovation that preserve privacy and ensure compliance.
 
 E3 is designed to handle any use case where it is valuable to aggregate or compute over multiple
 inputs from various sources, guaranteeing that inputs and intermediate states remain private,
-computations are secure, and outputs are verifiable. Due to Enclave's modular and composable design,
-E3 is compatible with a wide variety of encryption schemes and can securely execute arbitrary
-computations over encrypted data. The protocol's ephemeral execution further minimises risks, while
-single-use keys eliminate the underlying vulnerabilities and economic inefficiencies that exist with
-global keys controlled by a single party. While leveraging blockchain technology to inherit some of
-its desirable properties (censorship resistance, verifiability, and data availability), Enclave’s
-infrastructure is broadly applicable both within and beyond the web3 ecosystem.
+computations are secure, and outputs are verifiable. Due to Interfold's modular and composable
+design, E3 is compatible with a wide variety of encryption schemes and can securely execute
+arbitrary computations over encrypted data. The protocol's ephemeral execution further minimises
+risks, while single-use keys eliminate the underlying vulnerabilities and economic inefficiencies
+that exist with global keys controlled by a single party. While leveraging blockchain technology to
+inherit some of its desirable properties (censorship resistance, verifiability, and data
+availability), Interfold’s infrastructure is broadly applicable both within and beyond the web3
+ecosystem.
 
-Enclave’s use cases can be categorised into three main classes:
+Interfold’s use cases can be categorised into three main classes:
 
-1. Provably Legitimate Outcomes: Enclave enhances the legitimacy of outcomes by eliminating the need
-   for a trusted operator (e.g. an auctioneer) or trusted hardware (Trusted Execution Environment)
-   to compute over multiple private inputs. Examples include secret ballots and sealed-bid auctions.
+1. Provably Legitimate Outcomes: Interfold enhances the legitimacy of outcomes by eliminating the
+   need for a trusted operator (e.g. an auctioneer) or trusted hardware (Trusted Execution
+   Environment) to compute over multiple private inputs. Examples include secret ballots and
+   sealed-bid auctions.
 
-2. Liability-Free Access: Enclave facilitates secure computations over sensitive data using FHE,
+2. Liability-Free Access: Interfold facilitates secure computations over sensitive data using FHE,
    reducing liability and increasing data accessibility. This is critical for applications like
    medical research and financial data analysis, where privacy and compliance are critical.
 
-3. Collaborative Data Analysis: Enclave allows multiple entities to collectively compute on
+3. Collaborative Data Analysis: Interfold allows multiple entities to collectively compute on
    encrypted data without sharing raw datasets, preserving the privacy of sensitive or proprietary
    information. This innovation enables fields like genomics and climate science to securely
    collaborate on data while maintaining full confidentiality of their inputs.
 
-At the heart of Enclave's operational model is a decentralised network of staked nodes responsible
-for overseeing data processing. Through a multiphase process, these data-processing enclaves ensure
-the correct execution of computations and the confidentiality of private data through a consensus
-mechanism driven by stakeholder participation. The strategic use of proportional fees, punitive
-measures, and staking mechanisms increase transparency and accountability, pairing strong economic
-guarantees with cryptographic guarantees around privacy, liveness, and integrity.
+At the heart of Interfold's operational model is a decentralised network of staked nodes responsible
+for overseeing data processing. Through a multiphase process, these data-processing interfolds
+ensure the correct execution of computations and the confidentiality of private data through a
+consensus mechanism driven by stakeholder participation. The strategic use of proportional fees,
+punitive measures, and staking mechanisms increase transparency and accountability, pairing strong
+economic guarantees with cryptographic guarantees around privacy, liveness, and integrity.
 
-In this whitepaper, we delve into Enclave's core principles, technical details, and functionalities,
-highlighting flagship application CRISP (Coercion-Resistant Impartial Selection Protocol), which
-utilises E3 to enable verifiable secret ballots. By exploring the design of CRISP, we demonstrate
-how Enclave’s modular framework can be adapted to various use cases and needs, maximising the value
-of sensitive data while enhancing privacy, integrity, and trust.
+In this whitepaper, we delve into Interfold's core principles, technical details, and
+functionalities, highlighting flagship application CRISP (Coercion-Resistant Impartial Selection
+Protocol), which utilises E3 to enable verifiable secret ballots. By exploring the design of CRISP,
+we demonstrate how Interfold’s modular framework can be adapted to various use cases and needs,
+maximising the value of sensitive data while enhancing privacy, integrity, and trust.
 
 ## Overview
 
-Enclave is an open-source protocol for coordinating the various actors and composing the various
+Interfold is an open-source protocol for coordinating the various actors and composing the various
 components necessary to create Encrypted Execution Environments (E3). These novel execution
 environments secure computations using fully homomorphic encryption (FHE) and other advanced
 cryptographic techniques, like zero-knowledge proofs (ZKPs) and distributed threshold cryptography
 (DTC). Unlike Trusted Execution Environments (TEEs), which rely on trusted hardware and can be
-vulnerable to side-channel attacks and validation weaknesses, Enclave's decentralised architecture,
-advanced cryptography, and privacy-preserving mechanism design provide strong economic and
-cryptographic guarantees around data privacy, data integrity, and correct execution.
+vulnerable to side-channel attacks and validation weaknesses, Interfold's decentralised
+architecture, advanced cryptography, and privacy-preserving mechanism design provide strong economic
+and cryptographic guarantees around data privacy, data integrity, and correct execution.
 
-The efficacy of these guarantees stems largely from Enclave’s distinct modular architecture, which
+The efficacy of these guarantees stems largely from Interfold’s distinct modular architecture, which
 allows for adaptable and resilient computation across a variety of use cases. By leveraging a
-network of staked nodes that participate in a multiphase computational process, Enclave integrates a
-sophisticated economic model featuring staking mechanisms, proportional fees, and punitive measures
-to incentivize correct behaviour. This design not only mitigates the risks associated with trusted
-systems but also provides a versatile foundation for building privacy-preserving applications
-tailored to various sectors, ensuring that organisations can leverage sensitive data without
-compromising security or compliance.
+network of staked nodes that participate in a multiphase computational process, Interfold integrates
+a sophisticated economic model featuring staking mechanisms, proportional fees, and punitive
+measures to incentivize correct behaviour. This design not only mitigates the risks associated with
+trusted systems but also provides a versatile foundation for building privacy-preserving
+applications tailored to various sectors, ensuring that organisations can leverage sensitive data
+without compromising security or compliance.
 
-## Actors in Enclave
+## Actors in Interfold
 
-Enclave enables secure, privacy-preserving computations on encrypted data through the coordination
+Interfold enables secure, privacy-preserving computations on encrypted data through the coordination
 of three distinct Actors within the protocol. The following is a description of each role and its
 contribution to the process:
 
 ### 1. Requesters
 
 Requesters initiate the process and define the parameters for secure computation. Any individual or
-organisation can request an E3 from the Enclave network by calling the corresponding smart contract
-entrypoint and depositing a bond proportional to the number of nodes, threshold levels, and duration
-of the E3 requested.
+organisation can request an E3 from the Interfold network by calling the corresponding smart
+contract entrypoint and depositing a bond proportional to the number of nodes, threshold levels, and
+duration of the E3 requested.
 
 ### 2. Data Providers
 
@@ -133,7 +135,7 @@ requested E3, ensuring the data remains secure and private throughout the proces
 ### 3. Encrypted Execution Environments (E3)
 
 E3s are the core units that execute secure computations on encrypted data, requested from and
-coordinated via the Enclave protocol. E3s use a decentralised network of nodes to decrypt only the
+coordinated via the Interfold protocol. E3s use a decentralised network of nodes to decrypt only the
 verified outputs from the requested FHE program. This guarantees that computations are performed
 while keeping data private and secure.
 
@@ -176,9 +178,9 @@ guarantees of correct execution, while oracle-based providers (Multisigs, Realit
 Court[^5], API3[^6]) use consensus or economic mechanisms for validation. This modularity allows E3s
 to select the most appropriate CP based on the specific cost, security, and trust requirements.
 
-## How Enclave Operates
+## How Interfold Operates
 
-Enclave facilitates secure, decentralised computation through a structured multiphase process
+Interfold facilitates secure, decentralised computation through a structured multiphase process
 involving the various Actors and E3 components. This process guarantees correct execution while
 safeguarding privacy. Figure 1 is a visual depiction of these interactions.
 
@@ -230,7 +232,7 @@ sequenceDiagram
 
 ### Phase 1: Request
 
-Anyone can initiate a computation request from Enclave at any time. This request must specify the
+Anyone can initiate a computation request from Interfold at any time. This request must specify the
 following:
 
 1. The FHE computation to be performed.
@@ -277,16 +279,16 @@ should dispose of the keys used for this committee, treating them as toxic waste
 
 ## Incentives and Penalties
 
-To maintain integrity and encourage correct behaviour, Enclave utilises a system of incentives and
+To maintain integrity and encourage correct behaviour, Interfold utilises a system of incentives and
 penalties.
 
 ### Staking
 
-Anyone can register a new Ciphernode by staking an amount[^7] of Enclave tokens. After registration,
-new nodes must wait for a regitration delay period[^8] before they can be selected for Ciphernode
-duties. The registration delay period enables Requesters to reasonably predict the current
-Ciphernode set when requesting a computation. This economic stake aligns their interests with the
-security of the system.
+Anyone can register a new Ciphernode by staking an amount[^7] of Interfold tokens. After
+registration, new nodes must wait for a regitration delay period[^8] before they can be selected for
+Ciphernode duties. The registration delay period enables Requesters to reasonably predict the
+current Ciphernode set when requesting a computation. This economic stake aligns their interests
+with the security of the system.
 
 Nodes can request to be decommissioned at any time. Prior to being decommissioned, nodes must remain
 active for a decommission delay period[^9], after which they will no longer be selected for duties.
@@ -296,13 +298,13 @@ decommissioned, and its staking deposit will be returned.
 
 ### Fees
 
-When requesting a computation from Enclave, Requesters must deposit a fee proportional to the number
-and threshold of Ciphernodes requested, the duration for which they are required to be available,
-and any additional costs required by the selected Compute Provider. This deposit reserves the
-requested Ciphernodes, providing an economic guarantee that they will be online to decrypt the
+When requesting a computation from Interfold, Requesters must deposit a fee proportional to the
+number and threshold of Ciphernodes requested, the duration for which they are required to be
+available, and any additional costs required by the selected Compute Provider. This deposit reserves
+the requested Ciphernodes, providing an economic guarantee that they will be online to decrypt the
 output of the requested computation. However, the deposit does not pay for the computation itself.
 Different Compute Providers will have different fee structures which are levied outside of the
-Enclave protocol.
+Interfold protocol.
 
 Ciphernodes are subject to a penalty and forcefully decommissioned if they are proven to have
 provided their share of the decryption data from any input or intermediate states for a computation
@@ -338,7 +340,7 @@ compromise data security or computational integrity. The cases and penalties are
   tokens.
 
 - **Intermediate Decryption:** Maintaining the privacy of all encrypted inputs and intermediary
-  states is a critical feature of Enclave. Attempts to decrypt anything encrypted to a Ciphernode
+  states is a critical feature of Interfold. Attempts to decrypt anything encrypted to a Ciphernode
   Committee, except the agreed upon output of a requested computation, is punishable by forced
   decommissioning, along with slashing[^16] a portion of the offending node’s stake. A portion of
   the slashed stake is burned, while the remaining portion is allocated to the account that notified
@@ -350,14 +352,15 @@ compromise data security or computational integrity. The cases and penalties are
   assigned duties have been completed, a forcefully decommissioned node may claim the remainder of
   its staking deposit.
 
-## Enclave Governance
+## Interfold Governance
 
-Enclave is governed by its token holders, who serve as the top-level decision-making body. They are
-responsible for setting protocol parameters, overseeing protocol upgrades, and facilitating dispute
-resolution, among other duties. Enclave has several variables that may require periodic adjustments
-to maintain the protocol's fairness, performance, and responsiveness to evolving requirements.
+Interfold is governed by its token holders, who serve as the top-level decision-making body. They
+are responsible for setting protocol parameters, overseeing protocol upgrades, and facilitating
+dispute resolution, among other duties. Interfold has several variables that may require periodic
+adjustments to maintain the protocol's fairness, performance, and responsiveness to evolving
+requirements.
 
-The responsibilities of Enclave token holders include:
+The responsibilities of Interfold token holders include:
 
 - Protocol Management
 - Protocol Upgrades
@@ -377,19 +380,20 @@ breaches, and privacy violations. These vulnerabilities undermine the integrity 
 governance and decision-making systems, creating a need for a secure and reliable solution.
 
 The Coercion-Resistant Impartial Selection Protocol (CRISP) addresses these challenges by ensuring
-decision-making systems remain secure and equitable through Enclave’s advanced cryptography. Serving
-as a modern embodiment of the secret ballot, CRISP is a secure protocol for digital decision-making,
-leveraging FHE and threshold cryptography to enable verifiable secret ballots; a critical component
-for democracies and many other decision-making applications. This establishes a robust framework to
-safeguard decision-making processes against both external and internal threats, not only removing
-the need for trust among participants, but also preserving the confidentiality and integrity
-essential for democratic decision-making environments.
+decision-making systems remain secure and equitable through Interfold’s advanced cryptography.
+Serving as a modern embodiment of the secret ballot, CRISP is a secure protocol for digital
+decision-making, leveraging FHE and threshold cryptography to enable verifiable secret ballots; a
+critical component for democracies and many other decision-making applications. This establishes a
+robust framework to safeguard decision-making processes against both external and internal threats,
+not only removing the need for trust among participants, but also preserving the confidentiality and
+integrity essential for democratic decision-making environments.
 
 ### Structure of CRISP Secret Ballots
 
-This section details the components built atop Enclave’s general-purpose core in order to enable
+This section details the components built atop Interfold’s general-purpose core in order to enable
 modern, coercion-resistant ballots. This includes smart contracts that mediate Requester and Data
-Provider interactions with Enclave, along with a vote-tallying computation to be run via Enclave.
+Provider interactions with Interfold, along with a vote-tallying computation to be run via
+Interfold.
 
 The CRISP implementation includes a Zodiac[^17]-compatible module that can be used to control any
 contract account that conforms to the Zodiac IAvatar interface; a Safe[^18], for example.
@@ -565,7 +569,7 @@ computation.
 
 ## Exploration of Potential Use Cases
 
-The following list is an exploration of potential use cases for Enclave.
+The following list is an exploration of potential use cases for Interfold.
 
 ### Sealed-Bid Auctions
 
@@ -641,7 +645,7 @@ Federated Learning, maintains data privacy
 ## Contributors
 
 A special thank you to the following people for their early contributions to and reviews of the
-Enclave whitepaper: _Alex Espinosa, Anthony Leutenegger, Casey Gardiner, Daniel Ospina, Disruption
+Interfold whitepaper: _Alex Espinosa, Anthony Leutenegger, Casey Gardiner, Daniel Ospina, Disruption
 Joe, Gabriel Shapiro, Giacomo Corrias, Koh Wei Jie, Mike Chan, Pandy Marino, Vitalik Buterin, Yuet
 Loo Wong_
 
@@ -668,21 +672,21 @@ Loo Wong_
 
 [^6]: API3 creates decentralized APIs for web3. [Learn more](https://api3.org/)
 
-[^7]: Staking deposit amounts are set by Enclave governance.
+[^7]: Staking deposit amounts are set by Interfold governance.
 
-[^8]: Registration delay period is set by Enclave governance.
+[^8]: Registration delay period is set by Interfold governance.
 
-[^9]: Decommission delay period is set by Enclave governance.
+[^9]: Decommission delay period is set by Interfold governance.
 
-[^10]: Ciphernode cliff and vesting schedule is set by Enclave governance.
+[^10]: Ciphernode cliff and vesting schedule is set by Interfold governance.
 
-[^11]: Inactive Node penalty amounts are set by Enclave governance.
+[^11]: Inactive Node penalty amounts are set by Interfold governance.
 
 [^12]:
     Time required to provide the ciphertext output is constrained by the complexity of the
     computation, the way the computation scales, and the number of inputs.
 
-[^13]: Failure to Report percentage is set by Enclave governance.
+[^13]: Failure to Report percentage is set by Interfold governance.
 
 [^14]:
     Ciphernodes must provide the decrypted output within a fixed window of time after the output
@@ -690,7 +694,7 @@ Loo Wong_
 
 [^15]: The same inputs must always produce the same outputs.
 
-[^16]: The intermediate slashing penalty, along with its burn ratio, is set by Enclave governance.
+[^16]: The intermediate slashing penalty, along with its burn ratio, is set by Interfold governance.
 
 [^17]:
     Zodiac is a standard for modular and composable smart contract accounts, specified in

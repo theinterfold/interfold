@@ -27,28 +27,28 @@ malicious behavior.
 
 The Interfold protocol uses several contracts that work together:
 
-| Contract               | Purpose                                                                        |
-| ---------------------- | ------------------------------------------------------------------------------ |
-| **Interfold**          | Core coordinator that manages E3 requests and computation lifecycle            |
-| **CiphernodeRegistry** | Tracks registered operators and manages committee formation                    |
-| **BondingRegistry**    | Handles license bonds (ENCL) and ticket balances (ETK)                         |
-| **SlashingManager**    | Processes slashing proposals, appeals, and ban enforcement                     |
-| **E3RefundManager**    | Calculates and distributes refunds when an E3 fails                            |
-| **EnclaveToken**       | ENCL token used for license bonding                                            |
-| **EnclaveTicketToken** | Non-transferable ETK token representing ticket balances (backed by stablecoin) |
+| Contract                 | Purpose                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| **Interfold**            | Core coordinator that manages E3 requests and computation lifecycle              |
+| **CiphernodeRegistry**   | Tracks registered operators and manages committee formation                      |
+| **BondingRegistry**      | Handles license bonds (FOLD) and ticket balances (tFOLD)                         |
+| **SlashingManager**      | Processes slashing proposals, appeals, and ban enforcement                       |
+| **E3RefundManager**      | Calculates and distributes refunds when an E3 fails                              |
+| **InterfoldToken**       | FOLD token used for license bonding                                              |
+| **InterfoldTicketToken** | Non-transferable tFOLD token representing ticket balances (backed by stablecoin) |
 
 ### Sepolia Contract Addresses
 
-| Contract             | Address                                      | Deploy block |
-| -------------------- | -------------------------------------------- | ------------ |
-| Enclave              | `0xB47B267876B60a06138Bc9dfCee7aa3E26907CCB` | 10697349     |
-| CiphernodeRegistry   | `0x497Feea9abB72229aab1584c22b5416ff128926B` | 10697344     |
-| BondingRegistry      | `0x788046999530304DDe121e19eD456180Aca6B7c1` | 10697345     |
-| SlashingManager      | `0xd984728053ed3a17921fb3E27615cdcC796A8d9e` | 10697343     |
-| E3RefundManager      | `0x91eebD89bb00CBE9E5Eabf2a01a22704f88AD098` | 10697351     |
-| EnclaveTicketToken   | `0xD4BF670ABbf0849858dE08A3956B266D75aC52D5` | 10697342     |
-| EnclaveToken (ENCL)  | `0x62440E4b344D2A8aAf14c72b845F978eE615B7be` | 10697341     |
-| MockUSDC (fee token) | `0x9B1820D75bb09433D17C674A289fc6dD53e9c389` | 10697340     |
+| Contract              | Address                                      | Deploy block |
+| --------------------- | -------------------------------------------- | ------------ |
+| Interfold             | `0x670eFE043d1D340148037b4b76c4F9dfED294309` | 10939874     |
+| CiphernodeRegistry    | `0x4D707127F72a216EA116AF0B4262dD7382F84259` | 10939869     |
+| BondingRegistry       | `0xb9b64c5e0a30f38ed33760f299613087aAe87283` | 10939870     |
+| SlashingManager       | `0x0553387EE0992Fe339579728B6c777164fD1de40` | 10939868     |
+| E3RefundManager       | `0xD327ec50C7a8909f90DE15fe53872e88B4948Ee0` | 10939876     |
+| InterfoldTicketToken  | `0x2446f2AC9632f17af96053e48dEDff44b50711Ea` | 10939867     |
+| InterfoldToken (FOLD) | `0xbAb3220FD04a193a192F07879673597Cd695Cb03` | 10939866     |
+| MockUSDC (fee token)  | `0x2721Cdf281d40744aD567cBf3e7100F60bcbAE79` | 10939865     |
 
 The DKG and decryption aggregator circuits are deployed as the sole on-chain verifiers for BFV
 public-key publication and plaintext decryption respectively (each aggregator internally verifies
@@ -59,7 +59,7 @@ the underlying node-fold/C5 and C6-fold/C7 sub-proofs). See `deployed_contracts.
 | DkgAggregatorVerifier (DKG)       | See `deployed_contracts.json` after deploy |
 | DecryptionAggregatorVerifier (C7) | See `deployed_contracts.json` after deploy |
 
-> Always verify addresses from `packages/enclave-contracts/deployed_contracts.json` or your
+> Always verify addresses from `packages/interfold-contracts/deployed_contracts.json` or your
 > deployment output. Addresses differ per network.
 
 ## Operator Lifecycle
@@ -86,7 +86,7 @@ stateDiagram-v2
 | State           | Description                                                                        |
 | --------------- | ---------------------------------------------------------------------------------- |
 | **Unbonded**    | No license bond deposited; cannot register                                         |
-| **Licensed**    | ENCL bonded but not yet registered in the registry                                 |
+| **Licensed**    | FOLD bonded but not yet registered in the registry                                 |
 | **Registered**  | In the registry but lacking minimum ticket balance                                 |
 | **Active**      | Fully operational; eligible for committee selection via sortition                  |
 | **Inactive**    | Registered but below minimum requirements (tickets or license bond)                |
@@ -98,7 +98,7 @@ Before operating a ciphernode, ensure you have:
 
 | Requirement     | Details                                                                  |
 | --------------- | ------------------------------------------------------------------------ |
-| **ENCL Tokens** | At least `100 ENCL` for the license bond (check `licenseRequiredBond()`) |
+| **FOLD Tokens** | At least `100 FOLD` for the license bond (check `licenseRequiredBond()`) |
 | **Stablecoin**  | USDC (or configured fee token) for tickets; minimum 1 ticket worth       |
 | **ETH**         | Gas for transactions on your target network                              |
 | **Hardware**    | Linux/macOS, 4+ cores, 16GB+ RAM, stable internet with open UDP port     |

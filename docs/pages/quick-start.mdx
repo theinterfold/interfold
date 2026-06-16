@@ -16,8 +16,8 @@ Make sure you have the required software installed:
 # Check versions
 node --version      # Should be 22.10.0+
 pnpm --version      # Should be 10.7.1+
-rustc --version     # Should be 1.86.0+
-enclave --version   # Confirm CLI is installed
+rustc --version     # Should be 1.91.1+
+interfold --version   # Confirm CLI is installed
 ```
 
 ## 1. Create Your Project
@@ -25,7 +25,7 @@ enclave --version   # Confirm CLI is installed
 Generate a new E3 program from the default template:
 
 ```bash
-enclave init my-first-e3
+interfold init my-first-e3
 cd my-first-e3
 ```
 
@@ -35,14 +35,14 @@ This creates a complete E3 project with:
 - **Smart contracts** (`./contracts/`)
 - **Client application** (`./client/`)
 - **Coordination server** (`./server/`)
-- **Configuration** (`enclave.config.yaml`)
+- **Configuration** (`interfold.config.yaml`)
 
 ## 2. Compile Your E3 Program
 
 First, compile your E3 program to build the Risc0 zkvm image:
 
 ```bash
-enclave program compile
+interfold program compile
 ```
 
 This builds the Risc0 zkvm image that will be deployed on the blockchain and used for verification

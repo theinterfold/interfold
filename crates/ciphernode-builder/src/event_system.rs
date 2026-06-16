@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::get_enclave_event_bus;
+use crate::get_interfold_event_bus;
 use crate::global_eventstore_cache::{share_eventstore_reader, EventStoreReader};
 use crate::global_store_cache::share_store;
 use actix::{Actor, Addr, Handler, Recipient};
@@ -15,9 +15,9 @@ use e3_data::{
 };
 use e3_events::hlc_factory::HlcFactory;
 use e3_events::{
-    AggregateConfig, BusHandle, Disabled, EnclaveEvent, EventBus, EventBusConfig, EventStore,
-    EventStoreQueryBy, EventStoreRouter, EventSubscriber, EventType, InsertBatch, SeqAgg,
-    Sequencer, SnapshotBuffer, StoreEventRequested, TsAgg, UpdateDestination,
+    AggregateConfig, BusHandle, Disabled, EventBus, EventBusConfig, EventStore, EventStoreRouter,
+    EventSubscriber, EventType, InsertBatch, InterfoldEvent, Sequencer, SnapshotBuffer,
+    StoreEventRequested, UpdateDestination,
 };
 use e3_utils::enumerate_path;
 use once_cell::sync::OnceCell;
@@ -82,7 +82,7 @@ pub struct EventSystem {
     /// EventSystem Sequencer
     sequencer: OnceCell<Addr<Sequencer>>,
     /// EventSystem eventbus
-    eventbus: OnceCell<Addr<EventBus<EnclaveEvent>>>,
+    eventbus: OnceCell<Addr<EventBus<InterfoldEvent>>>,
     /// EventSystem BusHandle
     handle: OnceCell<BusHandle<Disabled>>,
     /// Central configuration for aggregates, including delays and other settings
@@ -94,6 +94,12 @@ pub struct EventSystem {
     /// Global shared eventstore. This can allow commands to access the eventstore while a node is
     /// running.
     global_shared_eventstore: bool,
+}
+
+impl Default for EventSystem {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl EventSystem {
@@ -159,7 +165,7 @@ impl EventSystem {
     }
 
     /// Pass in a specific given event bus
-    pub fn with_event_bus(self, bus: Addr<EventBus<EnclaveEvent>>) -> Self {
+    pub fn with_event_bus(self, bus: Addr<EventBus<InterfoldEvent>>) -> Self {
         let _ = self.eventbus.set(bus);
         self
     }
@@ -191,8 +197,8 @@ impl EventSystem {
     }
 
     /// Get the eventbus address
-    pub fn eventbus(&self) -> Addr<EventBus<EnclaveEvent>> {
-        self.eventbus.get_or_init(get_enclave_event_bus).clone()
+    pub fn eventbus(&self) -> Addr<EventBus<InterfoldEvent>> {
+        self.eventbus.get_or_init(get_interfold_event_bus).clone()
     }
 
     /// Get the aggregate configuration
@@ -415,8 +421,9 @@ mod tests {
 
     use e3_events::prelude::*;
     use e3_events::CorrelationId;
-    use e3_events::EnclaveEventData;
+    use e3_events::InterfoldEventData;
 
+    use e3_events::EventStoreQueryBy;
     use e3_events::EventStoreQueryResponse;
     use e3_events::EventType;
     use e3_events::TestEvent;
@@ -434,13 +441,13 @@ mod tests {
 
     struct Listener {
         logs: Vec<String>,
-        events: Vec<EnclaveEvent>,
+        events: Vec<InterfoldEvent>,
     }
 
-    impl Handler<EnclaveEvent> for Listener {
+    impl Handler<InterfoldEvent> for Listener {
         type Result = ();
-        fn handle(&mut self, msg: EnclaveEvent, _: &mut Self::Context) -> Self::Result {
-            if let EnclaveEventData::TestEvent(TestEvent { msg, .. }) = msg.into_data() {
+        fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
+            if let InterfoldEventData::TestEvent(TestEvent { msg, .. }) = msg.into_data() {
                 self.logs.push(msg);
             }
         }
@@ -459,7 +466,7 @@ mod tests {
             self.events
                 .iter()
                 .filter_map(|event| {
-                    if let EnclaveEventData::TestEvent(evt) = event.get_data() {
+                    if let InterfoldEventData::TestEvent(evt) = event.get_data() {
                         return Some(evt.msg.clone());
                     }
                     None
@@ -491,7 +498,7 @@ mod tests {
 
     #[actix::test]
     async fn test_in_mem() {
-        let eventbus = EventBus::<EnclaveEvent>::default().start();
+        let eventbus = EventBus::<InterfoldEvent>::default().start();
         let system = EventSystem::in_mem().with_event_bus(eventbus);
 
         let _handle = system.handle().expect("Failed to get handle");
@@ -619,7 +626,7 @@ mod tests {
 
         assert_eq!(
             datastore
-                .scope(&StoreKeys::aggregate_seq(AggregateId::new(0)))
+                .scope(StoreKeys::aggregate_seq(AggregateId::new(0)))
                 .read::<u64>()
                 .await?,
             Some(2)

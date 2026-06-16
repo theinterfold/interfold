@@ -1,12 +1,12 @@
 # Sortition and E3 Complete Flow
 
-This document describes the complete flow of the Enclave system, from operator registration through
-E3 computation request, sortition, committee selection, keyshare generation, public key aggregation,
-encryption, and decryption.
+This document describes the complete flow of the Interfold system, from operator registration
+through E3 computation request, sortition, committee selection, keyshare generation, public key
+aggregation, encryption, and decryption.
 
 ## Overview
 
-The Enclave system uses a score-based sortition mechanism to select a committee of ciphernodes to
+The Interfold system uses a score-based sortition mechanism to select a committee of ciphernodes to
 perform threshold homomorphic encryption operations. The flow involves:
 
 1. **Operator Setup** - Bonding license tokens and ticket balance
@@ -36,7 +36,7 @@ sequenceDiagram
     Note over Operator,BondingRegistry: Phase 1: Operator Setup & Registration
 
     Operator->>BondingRegistry: bondLicense(amount)
-    BondingRegistry->>BondingRegistry: Transfer ENCL tokens
+    BondingRegistry->>BondingRegistry: Transfer FOLD tokens
     BondingRegistry->>EventBus: LicenseBondUpdated
 
     Operator->>BondingRegistry: registerOperator()
@@ -318,7 +318,7 @@ flowchart LR
 | `CiphernodeAdded`   | address, index, numNodes, chainId | Node registration |
 | `CiphernodeRemoved` | address, index, numNodes, chainId | Node removal      |
 
-### Enclave Events
+### Interfold Events
 
 | Event                       | Parameters                                          | Purpose               |
 | --------------------------- | --------------------------------------------------- | --------------------- |

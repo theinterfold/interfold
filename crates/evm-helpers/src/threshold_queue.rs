@@ -28,6 +28,15 @@ pub trait ThresholdItem: Ord {
     fn item(&self) -> Self::Item;
 }
 
+impl<T, U> Default for ThresholdQueue<T>
+where
+    T: ThresholdItem<Item = U>,
+{
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<T, U> ThresholdQueue<T>
 where
     T: ThresholdItem<Item = U>,

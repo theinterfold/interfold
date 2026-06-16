@@ -10,6 +10,7 @@
 use crate::circuits::dkg::share_computation::utils::compute_parity_matrix;
 use crate::computation::DkgInputType;
 use crate::dkg::share_computation::ShareComputationCircuitData;
+use crate::math::array2_u64_to_bigint;
 use crate::CiphernodesCommittee;
 use crate::CircuitsErrors;
 use e3_fhe_params::build_pair_for_preset;
@@ -18,7 +19,6 @@ use e3_polynomial::CrtPolynomial;
 use fhe::bfv::SecretKey;
 use fhe::trbfv::{ShareManager, TRBFV};
 use num_bigint::BigInt;
-use rand::thread_rng;
 
 pub type SecretShares = Vec<ndarray::Array2<BigInt>>;
 
@@ -32,15 +32,14 @@ impl ShareComputationCircuitData {
         let (threshold_params, _) = build_pair_for_preset(preset).map_err(|e| {
             CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e))
         })?;
-        let sd = preset
-            .search_defaults()
-            .ok_or_else(|| CircuitsErrors::Sample("Preset has no search defaults".into()))?;
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
 
         let trbfv = TRBFV::new(committee.n, committee.threshold, threshold_params.clone())
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
         let mut share_manager =
-            ShareManager::new(committee.n, committee.threshold, threshold_params.clone());
+            ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
+                |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
+            )?;
 
         let parity_matrix =
             compute_parity_matrix(threshold_params.moduli(), committee.n, committee.threshold)
@@ -62,14 +61,14 @@ impl ShareComputationCircuitData {
                     })?;
 
                 let sk_sss_u64 = share_manager
-                    .generate_secret_shares_from_poly(sk_poly.clone(), rng)
+                    .generate_secret_shares_from_poly(sk_poly.clone(), &mut rng)
                     .map_err(|e| {
                         CircuitsErrors::Sample(format!("Failed to generate secret shares: {:?}", e))
                     })?;
 
                 let secret_sss: SecretShares = sk_sss_u64
                     .into_iter()
-                    .map(|arr| arr.mapv(BigInt::from))
+                    .map(|arr| array2_u64_to_bigint(&arr))
                     .collect();
 
                 let sk_coeffs: Vec<BigInt> = threshold_secret_key
@@ -86,8 +85,11 @@ impl ShareComputationCircuitData {
                 (secret_crt, secret_sss)
             }
             DkgInputType::SmudgingNoise => {
+                let lambda = preset
+                    .lambda()
+                    .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
                 let esi_coeffs = trbfv
-                    .generate_smudging_error(committee.n as usize, sd.lambda as usize, &mut rng)
+                    .generate_smudging_error(committee.n, lambda, &mut rng)
                     .map_err(|e| {
                         CircuitsErrors::Sample(format!(
                             "Failed to generate smudging error: {:?}",
@@ -97,14 +99,14 @@ impl ShareComputationCircuitData {
                     .unwrap();
                 let esi_poly = share_manager.bigints_to_poly(&esi_coeffs).unwrap();
                 let esi_sss_u64 = share_manager
-                    .generate_secret_shares_from_poly(esi_poly.clone(), rng)
+                    .generate_secret_shares_from_poly(esi_poly.clone(), &mut rng)
                     .map_err(|e| {
                         CircuitsErrors::Sample(format!("Failed to generate error shares: {:?}", e))
                     })
                     .unwrap();
                 let secret_sss: SecretShares = esi_sss_u64
                     .into_iter()
-                    .map(|arr| arr.mapv(BigInt::from))
+                    .map(|arr| array2_u64_to_bigint(&arr))
                     .collect();
 
                 let mut secret_crt =

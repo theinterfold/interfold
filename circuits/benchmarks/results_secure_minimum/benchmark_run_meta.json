@@ -1,0 +1,14 @@
+{
+  "benchmark_mode": "secure",
+  "bfv_preset_subdir": "secure-8192",
+  "committee": "minimum",
+  "proof_aggregation": true,
+  "multithread_jobs": 13,
+  "verbose": false,
+  "nodes_spawned": 20,
+  "committee_size_n": 3,
+  "committee_size_h": 2,
+  "committee_threshold_t": 1,
+  "network_model": "in_process_bus",
+  "testmode_harness": true
+}

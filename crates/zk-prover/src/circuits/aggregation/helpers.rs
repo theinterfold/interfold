@@ -99,7 +99,7 @@ pub fn parse_acc_public_field_strings(
         )));
     }
     let v = bytes_to_field_strings(proof.public_signals.as_ref())?;
-    if v.len() < prefix_len || (v.len() - prefix_len) % slot_width != 0 {
+    if v.len() < prefix_len || !(v.len() - prefix_len).is_multiple_of(slot_width) {
         return Err(ZkError::InvalidInput(format!(
             "unexpected {expected_circuit} public signal field count: {} (prefix={prefix_len}, slot_width={slot_width})",
             v.len()

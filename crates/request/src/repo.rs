@@ -5,8 +5,10 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use e3_data::{Repositories, Repository};
+use e3_events::E3Stage;
 use e3_events::E3id;
 use e3_events::StoreKeys;
+use std::collections::HashMap;
 
 use crate::{E3ContextSnapshot, E3Meta, E3RouterSnapshot};
 
@@ -37,5 +39,15 @@ pub trait RouterRepositoryFactory {
 impl RouterRepositoryFactory for Repositories {
     fn router(&self) -> Repository<E3RouterSnapshot> {
         Repository::new(self.store.scope(StoreKeys::router()))
+    }
+}
+
+pub trait E3LifecycleRepositoryFactory {
+    fn e3_lifecycle(&self) -> Repository<HashMap<E3id, E3Stage>>;
+}
+
+impl E3LifecycleRepositoryFactory for Repositories {
+    fn e3_lifecycle(&self) -> Repository<HashMap<E3id, E3Stage>> {
+        Repository::new(self.store.scope(StoreKeys::e3_lifecycle()))
     }
 }

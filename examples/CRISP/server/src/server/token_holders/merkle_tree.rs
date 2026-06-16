@@ -35,7 +35,7 @@ pub fn build_tree(poseidon_hashes: Vec<String>) -> Result<LeanIMT> {
         }
     }
 
-    let mut tree = LeanIMT::new(|nodes| poseidon_hash(nodes));
+    let mut tree = LeanIMT::new(poseidon_hash);
 
     // Only insert if we have hashes to avoid empty tree issues.
     if !poseidon_hashes.is_empty() {
@@ -93,8 +93,6 @@ mod tests {
         let _tree = build_tree(hashes).expect("Failed to build empty LeanIMT");
 
         // For empty tree, we expect it to be valid but may not have a root.
-        // This test just ensures it doesn't panic when creating the tree.
-        // The tree should be created successfully even with no leaves.
-        assert!(true); // Just verify the tree was created without panicking.
+        // Building with no leaves must not panic.
     }
 }

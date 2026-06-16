@@ -14,7 +14,7 @@ use anyhow::*;
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_utils::utility_types::ArcBytes;
 use fhe::{bfv::Ciphertext, trbfv::ShareManager};
-use fhe_math::rq::Poly;
+use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::DeserializeParametrized;
 use fhe_traits::Serialize;
 use tracing::info;
@@ -39,9 +39,9 @@ struct InnerRequest {
     /// One or more Ciphertexts to decrypt
     pub ciphertexts: Vec<Ciphertext>,
     /// A single summed polynomial for this nodes secret key.
-    pub sk_poly_sum: Poly,
+    pub sk_poly_sum: Poly<PowerBasis>,
     /// A vector of summed polynomials for this parties smudging noise
-    pub es_poly_sum: Vec<Poly>,
+    pub es_poly_sum: Vec<Poly<PowerBasis>>,
 }
 
 impl TryFrom<(&Cipher, CalculateDecryptionShareRequest)> for InnerRequest {
@@ -84,7 +84,7 @@ pub struct CalculateDecryptionShareResponse {
 }
 
 struct InnerResponse {
-    pub d_share_poly: Vec<Poly>,
+    pub d_share_poly: Vec<Poly<PowerBasis>>,
 }
 
 impl From<InnerResponse> for CalculateDecryptionShareResponse {
@@ -118,7 +118,7 @@ pub fn calculate_decryption_share(
         .into_iter()
         .enumerate()
         .map(|(index, ciphertext)| {
-            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone());
+            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
             info!("Create decryption share for ct index {}...", index);
             // Currently there is a single smudging noise polynomial shared across all
             // ciphertexts. When multiple per-ciphertext noises are supported, the
@@ -127,12 +127,12 @@ pub fn calculate_decryption_share(
             share_manager
                 .decryption_share(
                     Arc::new(ciphertext),
-                    sk_poly_sum.clone(),
+                    sk_poly_sum.clone().into_ntt(),
                     es_poly_sum[es_idx].clone(),
                 )
                 .context(format!("Could not decrypt ciphertext {}", index))
         })
-        .collect::<Result<Vec<Poly>>>()?;
+        .collect::<Result<Vec<Poly<PowerBasis>>>>()?;
     info!("Returning successful result...");
 
     Ok(InnerResponse { d_share_poly }.into())

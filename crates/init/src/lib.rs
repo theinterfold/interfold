@@ -25,12 +25,12 @@ use tokio::fs;
 use crate::logging::TaskSpinner;
 
 const DEFAULT_TEMPLATE_URL: &str =
-    "https://github.com/gnosisguild/enclave.git#v{{VERSION}}:templates/default";
-const TEMP_DIR: &str = "/tmp/__enclave-tmp-folder.1";
+    "https://github.com/gnosisguild/interfold.git#v{{VERSION}}:templates/default";
+const TEMP_DIR: &str = "/tmp/__interfold-tmp-folder.1";
 const DEFAULT_TEMPLATE_PATH: &str = ".";
 const DEFAULT_BRANCH: &str = "main";
 
-async fn install_enclave(cwd: &PathBuf, template: Option<String>, verbose: bool) -> Result<()> {
+async fn install_interfold(cwd: &PathBuf, template: Option<String>, verbose: bool) -> Result<()> {
     let mut spinner = TaskSpinner::new("".to_string(), verbose);
 
     spinner.update("Downloading template...".to_string()).await;
@@ -60,7 +60,7 @@ async fn install_enclave(cwd: &PathBuf, template: Option<String>, verbose: bool)
         })
         .await?;
 
-    spinner.complete_task(&format!(
+    spinner.complete_task(format!(
         "Template downloaded with commit hash '{}'\n",
         commit_hash
     ));
@@ -68,27 +68,30 @@ async fn install_enclave(cwd: &PathBuf, template: Option<String>, verbose: bool)
     spinner.update("Configuring template...".to_string()).await;
 
     let evm_version = spinner
-        .run("Getting workspace version of enclave...", || async {
+        .run("Getting workspace version of interfold...", || async {
             package_json::get_version_from_package_json(
-                &PathBuf::from(TEMP_DIR).join("packages/enclave-contracts/package.json"),
+                &PathBuf::from(TEMP_DIR).join("packages/interfold-contracts/package.json"),
             )
             .await
         })
         .await?;
 
     let react_version = spinner
-        .run("Getting workspace version of enclave-react...", || async {
-            package_json::get_version_from_package_json(
-                &PathBuf::from(TEMP_DIR).join("packages/enclave-react/package.json"),
-            )
-            .await
-        })
+        .run(
+            "Getting workspace version of interfold-react...",
+            || async {
+                package_json::get_version_from_package_json(
+                    &PathBuf::from(TEMP_DIR).join("packages/interfold-react/package.json"),
+                )
+                .await
+            },
+        )
         .await?;
 
     let sdk_version = spinner
-        .run("Getting workspace version of enclave-sdk...", || async {
+        .run("Getting workspace version of interfold-sdk...", || async {
             package_json::get_version_from_package_json(
-                &PathBuf::from(TEMP_DIR).join("packages/enclave-sdk/package.json"),
+                &PathBuf::from(TEMP_DIR).join("packages/interfold-sdk/package.json"),
             )
             .await
         })
@@ -101,41 +104,41 @@ async fn install_enclave(cwd: &PathBuf, template: Option<String>, verbose: bool)
             copy::copy_with_filters(
                 &src,
                 &cwd,
-                &vec![
+                &[
                     Filter::new(
                         "**/package.json",
-                        r#""@enclave-e3/contracts":\s*"[^"]*""#,
-                        &format!(r#""@enclave-e3/contracts": "{}""#, evm_version),
+                        r#""@interfold/contracts":\s*"[^"]*""#,
+                        &format!(r#""@interfold/contracts": "{}""#, evm_version),
                     ),
                     Filter::new(
                         "**/package.json",
-                        r#""@enclave-e3/react":\s*"[^"]*""#,
-                        &format!(r#""@enclave-e3/react": "{}""#, react_version),
+                        r#""@interfold/react":\s*"[^"]*""#,
+                        &format!(r#""@interfold/react": "{}""#, react_version),
                     ),
                     Filter::new(
                         "**/package.json",
-                        r#""@enclave-e3/sdk":\s*"[^"]*""#,
-                        &format!(r#""@enclave-e3/sdk": "{}""#, sdk_version),
+                        r#""@interfold/sdk":\s*"[^"]*""#,
+                        &format!(r#""@interfold/sdk": "{}""#, sdk_version),
                     ),
                     Filter::new(
                         "**/Cargo.toml",
                         r"(?m)^e3-program-server =.*\n?",
-                        &format!("e3-program-server = {{ git = \"https://github.com/gnosisguild/enclave\", rev = \"{}\" }}\n",commit_hash),
+                        &format!("e3-program-server = {{ git = \"https://github.com/gnosisguild/interfold\", rev = \"{}\" }}\n",commit_hash),
                     ),
                     Filter::new(
                        "**/Cargo.toml",
                        r"(?m)^e3-bfv-client =.*\n?",
-                       &format!("e3-bfv-client = {{ git = \"https://github.com/gnosisguild/enclave\", rev = \"{}\" }}\n",commit_hash),
+                       &format!("e3-bfv-client = {{ git = \"https://github.com/gnosisguild/interfold\", rev = \"{}\" }}\n",commit_hash),
                     ),
                     Filter::new(
                        "**/Cargo.toml",
                        r"(?m)^e3-fhe-params =.*\n?",
-                       &format!("e3-fhe-params = {{ git = \"https://github.com/gnosisguild/enclave\", rev = \"{}\" }}\n",commit_hash),
+                       &format!("e3-fhe-params = {{ git = \"https://github.com/gnosisguild/interfold\", rev = \"{}\" }}\n",commit_hash),
                     ),
                     Filter::new(
                        "**/Cargo.toml",
                        r"(?m)^e3-compute-provider =.*\n?",
-                       &format!("e3-compute-provider = {{ git = \"https://github.com/gnosisguild/enclave\", rev = \"{}\" }}\n",commit_hash),
+                       &format!("e3-compute-provider = {{ git = \"https://github.com/gnosisguild/interfold\", rev = \"{}\" }}\n",commit_hash),
                     ),
                 ],
             )
@@ -151,7 +154,7 @@ async fn install_enclave(cwd: &PathBuf, template: Option<String>, verbose: bool)
 
     spinner
         .run("Resetting support folder...", || async {
-            delete_path(&cwd.join(".enclave")).await
+            delete_path(&cwd.join(".interfold")).await
         })
         .await?;
 
@@ -159,15 +162,15 @@ async fn install_enclave(cwd: &PathBuf, template: Option<String>, verbose: bool)
         .run("Setting up support folders ctl and dev", || async {
             copy::copy_with_filters(
                 &PathBuf::from(TEMP_DIR).join("crates/support-scripts/ctl"),
-                &cwd.join(".enclave/support/ctl"),
-                &vec![],
+                &cwd.join(".interfold/support/ctl"),
+                &[],
             )
             .await?;
 
             copy::copy_with_filters(
                 &PathBuf::from(TEMP_DIR).join("crates/support-scripts/dev"),
-                &cwd.join(".enclave/support/dev"),
-                &vec![],
+                &cwd.join(".interfold/support/dev"),
+                &[],
             )
             .await
         })
@@ -259,7 +262,7 @@ async fn install_enclave(cwd: &PathBuf, template: Option<String>, verbose: bool)
 
     spinner
         .run("", || async {
-            let npm = PkgMan::new(pkgman::PkgManKind::PNPM)?.with_cwd(&cwd);
+            let npm = PkgMan::new(pkgman::PkgManKind::PNPM)?.with_cwd(cwd.clone());
             let mut args = vec!["install"];
             if !verbose {
                 args.push("--silent");
@@ -289,7 +292,7 @@ async fn install_enclave(cwd: &PathBuf, template: Option<String>, verbose: bool)
 
     spinner.complete_task("Git repository set up\n");
 
-    spinner.done("🎉 You can now start building on Enclave");
+    spinner.done("🎉 You can now start building on Interfold");
 
     Ok(())
 }
@@ -303,18 +306,17 @@ pub async fn execute(
 ) -> Result<()> {
     println!(
         r"
-    ░██████████                       ░██                                  
-    ░██                               ░██                                  
-    ░██         ░████████   ░███████  ░██  ░██████   ░██    ░██  ░███████  
-    ░█████████  ░██    ░██ ░██    ░██ ░██       ░██  ░██    ░██ ░██    ░██ 
-    ░██         ░██    ░██ ░██        ░██  ░███████   ░██  ░██  ░█████████ 
-    ░██         ░██    ░██ ░██    ░██ ░██ ░██   ░██    ░██░██   ░██        
-    ░██████████ ░██    ░██  ░███████  ░██  ░█████░██    ░███     ░███████                                                                                                                                                     
+    ██╗███╗   ██╗████████╗███████╗██████╗ ███████╗ ██████╗ ██╗     ██████╗ 
+    ██║████╗  ██║╚══██╔══╝██╔════╝██╔══██╗██╔════╝██╔═══██╗██║     ██╔══██╗
+    ██║██╔██╗ ██║   ██║   █████╗  ██████╔╝█████╗  ██║   ██║██║     ██║  ██║
+    ██║██║╚██╗██║   ██║   ██╔══╝  ██╔══██╗██╔══╝  ██║   ██║██║     ██║  ██║
+    ██║██║ ╚████║   ██║   ███████╗██║  ██║██║     ╚██████╔╝███████╗██████╔╝
+    ╚═╝╚═╝  ╚═══╝   ╚═╝   ╚══════╝╚═╝  ╚═╝╚═╝      ╚═════╝ ╚══════╝╚═════╝                                                                                                                                                   
     "
     );
 
     let mut task_spinner =
-        TaskSpinner::new("Setting up a new Enclave project".to_string(), verbose);
+        TaskSpinner::new("Setting up a new Interfold project".to_string(), verbose);
 
     task_spinner.update("Preparing paths...".to_string()).await;
 
@@ -354,7 +356,7 @@ pub async fn execute(
     task_spinner.complete_task("Paths prepared");
     task_spinner.done("");
 
-    match install_enclave(&cwd, template, verbose).await {
+    match install_interfold(&cwd, template, verbose).await {
         Ok(_) => Ok(()),
         Err(e) => {
             if !skip_cleanup {
@@ -367,7 +369,7 @@ pub async fn execute(
             }
             eprintln!("❌ Sorry about this but there was an error running the installer. ");
             eprintln!("❌ Error: {}\n", e);
-            eprintln!("Enclave is currently under active development please share this with our team:\n\n  https://github.com/gnosisguild/enclave/issues/new\n");
+            eprintln!("Interfold is currently under active development please share this with our team:\n\n  https://github.com/gnosisguild/interfold/issues/new\n");
             exit(1);
         }
     }

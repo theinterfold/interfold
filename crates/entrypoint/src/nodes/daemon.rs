@@ -39,7 +39,7 @@ impl LaunchCommand {
         format!("/ip4/{}/udp/{}/quic-v1", self.ip, self.quic_port)
     }
 
-    pub fn add_peers(&mut self, nodes: &Vec<LaunchCommand>) {
+    pub fn add_peers(&mut self, nodes: &[LaunchCommand]) {
         let peers: Vec<String> = nodes
             .iter()
             .filter(|n| n.name != self.name)
@@ -54,7 +54,7 @@ impl LaunchCommand {
         maybe_config_string: &Option<String>,
         maybe_otel: &Option<String>,
     ) -> Result<CommandParams> {
-        let enclave_bin = env::current_exe()?.display().to_string();
+        let interfold_bin = env::current_exe()?.display().to_string();
         let mut args = vec![];
         args.push("start".to_string());
 
@@ -80,7 +80,7 @@ impl LaunchCommand {
             args.push(peer.to_string());
         }
 
-        Ok((enclave_bin, args))
+        Ok((interfold_bin, args))
     }
 }
 

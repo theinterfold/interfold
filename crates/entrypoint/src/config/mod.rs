@@ -4,4 +4,5 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-pub mod setup;
+// config/setup.rs has been moved to crates/cli/src/config_setup.rs —
+// it is a dev-bootstrap tool, not a production entrypoint concern.

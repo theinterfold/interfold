@@ -6,11 +6,11 @@
 
 use anyhow::{bail, Result};
 use duct::cmd;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use tokio::fs;
 use tokio::signal;
 
-pub async fn run_bash_script(cwd: &PathBuf, script: &PathBuf, args: &[&str]) -> Result<()> {
+pub async fn run_bash_script(cwd: &PathBuf, script: &Path, args: &[&str]) -> Result<()> {
     let mut cmd_args = vec!["bash".to_string(), script.to_string_lossy().to_string()];
     cmd_args.extend(args.iter().map(|s| s.to_string()));
 
@@ -41,7 +41,7 @@ pub async fn run_bash_script(cwd: &PathBuf, script: &PathBuf, args: &[&str]) -> 
 
 pub async fn ensure_script_exists(script_path: &PathBuf) -> Result<()> {
     if !fs::try_exists(script_path).await? {
-        bail!("Invalid or corrupted project. This command can only be run from within a valid Enclave project.");
+        bail!("Invalid or corrupted project. This command can only be run from within a valid Interfold project.");
     }
     Ok(())
 }

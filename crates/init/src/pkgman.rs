@@ -70,6 +70,7 @@ pub struct PkgMan {
 }
 
 #[allow(dead_code)]
+#[allow(clippy::upper_case_acronyms)]
 pub enum PkgManKind {
     NPM,
     PNPM,

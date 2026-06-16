@@ -15,10 +15,10 @@ use std::collections::HashMap;
 use std::sync::Mutex;
 
 use e3_events::BusHandle;
-use e3_events::EnclaveEvent;
 use e3_events::Event;
 use e3_events::EventBus;
 use e3_events::HistoryCollector;
+use e3_events::InterfoldEvent;
 use e3_events::Subscribe;
 
 use crate::EventSystem;
@@ -92,18 +92,18 @@ impl EventBusFactory {
     }
 }
 
-pub fn get_enclave_event_bus() -> Addr<EventBus<EnclaveEvent>> {
+pub fn get_interfold_event_bus() -> Addr<EventBus<InterfoldEvent>> {
     EventBusFactory::instance().get_event_bus()
 }
 
-pub fn get_error_collector() -> Addr<HistoryCollector<EnclaveEvent>> {
+pub fn get_error_collector() -> Addr<HistoryCollector<InterfoldEvent>> {
     EventBusFactory::instance().get_error_collector()
 }
 
-pub fn get_enclave_bus_handle() -> anyhow::Result<BusHandle<Disabled>> {
-    let bus = get_enclave_event_bus();
+pub fn get_interfold_bus_handle() -> anyhow::Result<BusHandle<Disabled>> {
+    let bus = get_interfold_event_bus();
     let system = EventSystem::new().with_event_bus(bus);
     system.store()?; // Ensure store is initialized before returning to avoid potentially dropping
                      // events.
-    Ok(system.handle()?)
+    system.handle()
 }

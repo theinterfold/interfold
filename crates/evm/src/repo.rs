@@ -19,13 +19,13 @@ impl EthPrivateKeyRepositoryFactory for Repositories {
     }
 }
 
-pub trait EnclaveSolReaderRepositoryFactory {
-    fn enclave_sol_reader(&self, chain_id: u64) -> Repository<EvmReadInterfaceState>;
+pub trait InterfoldSolReaderRepositoryFactory {
+    fn interfold_sol_reader(&self, chain_id: u64) -> Repository<EvmReadInterfaceState>;
 }
 
-impl EnclaveSolReaderRepositoryFactory for Repositories {
-    fn enclave_sol_reader(&self, chain_id: u64) -> Repository<EvmReadInterfaceState> {
-        Repository::new(self.store.scope(StoreKeys::enclave_sol_reader(chain_id)))
+impl InterfoldSolReaderRepositoryFactory for Repositories {
+    fn interfold_sol_reader(&self, chain_id: u64) -> Repository<EvmReadInterfaceState> {
+        Repository::new(self.store.scope(StoreKeys::interfold_sol_reader(chain_id)))
     }
 }
 

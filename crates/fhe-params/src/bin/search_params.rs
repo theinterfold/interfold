@@ -54,7 +54,7 @@ struct Args {
 }
 
 fn variance_cbd_str(b: u128) -> String {
-    if b % 2 == 0 {
+    if b.is_multiple_of(2) {
         (b / 2).to_string()
     } else {
         format!("{}/2", b)
@@ -73,6 +73,7 @@ fn variance_uniform_big_str(b: &BigUint) -> String {
     var.to_str_radix(10)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn print_param_set(
     title: &str,
     config: &BfvSearchConfig,

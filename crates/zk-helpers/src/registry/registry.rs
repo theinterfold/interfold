@@ -66,6 +66,12 @@ pub struct CircuitRegistry {
     circuits: HashMap<String, Arc<dyn CircuitMetadata>>,
 }
 
+impl Default for CircuitRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CircuitRegistry {
     /// Build an empty registry.
     pub fn new() -> Self {

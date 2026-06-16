@@ -44,7 +44,7 @@ export interface VoteStatusResponse {
 export interface VoteStateLite {
   id: number
   chain_id: number
-  enclave_address: string
+  interfold_address: string
 
   status: string
   vote_count: number

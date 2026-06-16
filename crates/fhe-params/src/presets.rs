@@ -10,6 +10,10 @@ use crate::constants::{
     defaults::DEFAULT_INSECURE_LAMBDA,
     defaults::DEFAULT_SECURE_LAMBDA,
     insecure_512,
+    insecure_search_defaults::{
+        B as INSECURE_B, B_CHI as INSECURE_B_CHI, SEARCH_K as INSECURE_SEARCH_K,
+        SEARCH_N as INSECURE_SEARCH_N, SEARCH_Z as INSECURE_SEARCH_Z,
+    },
     search_defaults::{B, B_CHI, SEARCH_K, SEARCH_N, SEARCH_Z},
     secure_8192,
 };
@@ -18,6 +22,7 @@ use std::sync::Arc;
 use thiserror::Error as ThisError;
 
 use fhe::bfv::BfvParameters;
+use fhe::trbfv::Lambda;
 
 /// BFV preset configurations for PVSS (Public Verifiable Secret Sharing)
 ///
@@ -204,6 +209,36 @@ pub enum PresetError {
     UnknownPreset(String),
     #[error("Preset does not define a Threshold (trBFV) / DKG (BFV) pair: {0}")]
     MissingPair(&'static str),
+    #[error("Preset lambda is not secure: {0}")]
+    InsecureLambda(String),
+}
+
+/// Serializable smudging security level, mirroring [`fhe::trbfv::Lambda`].
+///
+/// `Lambda` is a foreign type without `serde` support, so requests that travel over the
+/// wire (e.g. `GenPkShareAndSkSssRequest`) carry this instead and reconstruct the real
+/// [`Lambda`] at the point of use via [`LambdaConfig::into_lambda`]. The `Secure`/`Insecure`
+/// distinction is preserved across (de)serialization so the security tier chosen upstream
+/// from a [`BfvPreset`] is faithfully enforced downstream.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum LambdaConfig {
+    /// Production security level; validated against `MIN_SECURE_LAMBDA` by [`Lambda::secure`].
+    Secure(usize),
+    /// Deliberately weak level for fast testing; see [`Lambda::insecure`].
+    Insecure(usize),
+}
+
+impl LambdaConfig {
+    /// Reconstruct the real [`Lambda`]. `Secure` variants fail if the value is below the
+    /// library's secure minimum.
+    pub fn into_lambda(self) -> Result<Lambda, PresetError> {
+        match self {
+            LambdaConfig::Secure(lambda) => {
+                Lambda::secure(lambda).map_err(|e| PresetError::InsecureLambda(e.to_string()))
+            }
+            LambdaConfig::Insecure(lambda) => Ok(Lambda::insecure(lambda)),
+        }
+    }
 }
 
 /// A complete BFV parameter set definition
@@ -382,22 +417,52 @@ impl BfvPreset {
         self.metadata().security
     }
 
-    /// Returns the directory name for circuit artifacts (e.g. `"insecure-512"`, `"secure-8192"`).
+    /// Returns the serializable smudging security level for this preset.
+    ///
+    /// Maps the preset's [`SecurityTier`] onto [`LambdaConfig`]: secure presets become
+    /// `LambdaConfig::Secure`, insecure presets `LambdaConfig::Insecure`. Use this when the
+    /// level must cross a serialization boundary; otherwise prefer [`BfvPreset::lambda`].
+    pub fn lambda_config(&self) -> LambdaConfig {
+        let meta = self.metadata();
+        match meta.security {
+            SecurityTier::SECURE => LambdaConfig::Secure(meta.lambda),
+            SecurityTier::INSECURE => LambdaConfig::Insecure(meta.lambda),
+        }
+    }
+
+    /// Builds the smudging security level ([`Lambda`]) for this preset.
+    ///
+    /// Secure presets validate that lambda meets the library's secure minimum; insecure
+    /// presets opt into a deliberately weak lambda for fast testing. Mirrors the preset's
+    /// [`SecurityTier`].
+    pub fn lambda(&self) -> Result<Lambda, PresetError> {
+        self.lambda_config().into_lambda()
+    }
+
+    /// Returns the base directory name for circuit artifacts (e.g. `"insecure-512"`, `"secure-8192"`).
     /// Threshold and DKG presets at the same degree share the same compiled circuits.
     pub fn artifacts_dir(&self) -> String {
         let meta = self.metadata();
         format!("{}-{}", meta.security.as_config_str(), meta.degree)
     }
 
+    /// Returns the per-committee artifact directory: `"{preset}/{committee}"`.
+    ///
+    /// Use this at runtime so each committee size resolves to its own compiled artifacts
+    /// (e.g. `"secure-8192/medium"`, `"insecure-512/micro"`).
+    pub fn artifacts_dir_for_committee<C: AsRef<str>>(&self, committee: C) -> String {
+        format!("{}/{}", self.artifacts_dir(), committee.as_ref())
+    }
+
     pub fn search_defaults(&self) -> Option<PresetSearchDefaults> {
         match self {
             BfvPreset::InsecureThreshold512 => Some(PresetSearchDefaults {
-                n: SEARCH_N,
-                k: SEARCH_K,
-                z: SEARCH_Z,
+                n: INSECURE_SEARCH_N,
+                k: INSECURE_SEARCH_K,
+                z: INSECURE_SEARCH_Z,
                 lambda: DEFAULT_INSECURE_LAMBDA as u32,
-                b: B,
-                b_chi: B_CHI,
+                b: INSECURE_B,
+                b_chi: INSECURE_B_CHI,
             }),
             BfvPreset::SecureThreshold8192 => Some(PresetSearchDefaults {
                 n: SEARCH_N,
@@ -533,9 +598,9 @@ mod tests {
     fn test_search_defaults() {
         let preset = BfvPreset::InsecureThreshold512;
         let defaults = preset.search_defaults().unwrap();
-        assert_eq!(defaults.n, SEARCH_N);
-        assert_eq!(defaults.k, SEARCH_K);
-        assert_eq!(defaults.z, SEARCH_Z);
+        assert_eq!(defaults.n, INSECURE_SEARCH_N);
+        assert_eq!(defaults.k, INSECURE_SEARCH_K);
+        assert_eq!(defaults.z, INSECURE_SEARCH_Z);
         assert_eq!(defaults.lambda, DEFAULT_INSECURE_LAMBDA as u32);
 
         let preset = BfvPreset::SecureThreshold8192;

@@ -73,6 +73,7 @@ pub struct VoteStatusResponse {
     pub round_status: Option<String>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize, Serialize)]
 pub struct RoundCount {
     pub round_count: u64,
@@ -160,7 +161,7 @@ pub struct WebResultRequest {
 pub struct E3StateLite {
     pub id: u64,
     pub chain_id: u64,
-    pub enclave_address: String,
+    pub interfold_address: String,
 
     pub status: String,
     pub vote_count: u64,
@@ -187,7 +188,7 @@ pub struct E3 {
     // Identifiers
     pub id: u64,
     pub chain_id: u64,
-    pub enclave_address: String,
+    pub interfold_address: String,
 
     // Status-related
     pub status: String,

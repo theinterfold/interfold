@@ -352,6 +352,7 @@ impl EtherscanClient {
     }
 
     /// Extract unique addresses from transfer logs
+    #[cfg(test)]
     fn extract_addresses(logs: &[TransferLog]) -> Vec<Address> {
         let mut addresses = HashSet::new();
 
@@ -495,8 +496,8 @@ impl EtherscanClient {
 
     /// Parse block number from hex or decimal string
     fn parse_block_number(block_number: &str) -> u64 {
-        if block_number.starts_with("0x") {
-            u64::from_str_radix(&block_number[2..], 16).unwrap_or(0)
+        if let Some(hex) = block_number.strip_prefix("0x") {
+            u64::from_str_radix(hex, 16).unwrap_or(0)
         } else {
             block_number.parse::<u64>().unwrap_or(0)
         }

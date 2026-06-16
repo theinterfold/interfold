@@ -15,7 +15,7 @@ DappNode provides a user-friendly interface for running a ciphernode with minima
 ### Installation
 
 1. Open your DappNode UI (`http://my.dappnode`)
-2. Search for **"Enclave Ciphernode"** (the current package name for the Interfold ciphernode) and
+2. Search for **"Interfold Ciphernode"** (the current package name for the Interfold ciphernode) and
    install the package
 3. The setup wizard will prompt you for:
    - `RPC_URL` - WebSocket RPC endpoint (e.g., `wss://ethereum-sepolia-rpc.publicnode.com`)
@@ -24,7 +24,7 @@ DappNode provides a user-friendly interface for running a ciphernode with minima
    - Optional: encryption password, network key, private key
 
 4. Confirm and complete the installation
-5. Check **Packages → enclave-ciphernode → Logs** to verify the node started
+5. Check **Packages → interfold-ciphernode → Logs** to verify the node started
 
 ### Configuration via Environment Variables
 
@@ -49,46 +49,46 @@ The Interfold CLI provides the most control and is recommended for production de
 
 ```bash
 # Quick install
-curl -fsSL https://raw.githubusercontent.com/gnosisguild/enclave/main/install | bash
+curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
 
 # Then install the CLI
-enclaveup install
+interfoldup install
 ```
 
 ### Initialize Configuration
 
 ```bash
-enclave ciphernode setup
+interfold ciphernode setup
 ```
 
-This creates `~/.config/enclave/enclave.config.yaml`. You'll be prompted for a password to encrypt
-sensitive data.
+This creates `~/.config/interfold/interfold.config.yaml`. You'll be prompted for a password to
+encrypt sensitive data.
 
 ### Set Up Credentials
 
 ```bash
 # Set encryption password (encrypts local keystore)
-enclave password set
+interfold password set
 
 # Generate or set network keypair (for libp2p)
-enclave net keypair generate
+interfold net keypair generate
 # Or import an existing key:
-# enclave net keypair set --net-keypair 0x...
+# interfold net keypair set --net-keypair 0x...
 
 # Set your wallet private key (for on-chain transactions)
-enclave wallet set --private-key 0xYourPrivateKey
+interfold wallet set --private-key 0xYourPrivateKey
 ```
 
 ### Configure Your Node
 
-Edit `~/.config/enclave/enclave.config.yaml`:
+Edit `~/.config/interfold/interfold.config.yaml`:
 
 ```yaml
 node:
   address: '0xYourAddress'
   quic_port: 9091
   peers:
-    - '/dnsaddr/bootstrap.enclave.gg'
+    - '/dnsaddr/bootstrap.interfold.gg'
   autonetkey: true
   autopassword: true
 
@@ -96,56 +96,62 @@ chains:
   - name: sepolia
     rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
     contracts:
-      enclave:
-        address: '0xB47B267876B60a06138Bc9dfCee7aa3E26907CCB'
-        deploy_block: 10697349
+      interfold:
+        address: '0x670eFE043d1D340148037b4b76c4F9dfED294309'
+        deploy_block: 10939874
       ciphernode_registry:
-        address: '0x497Feea9abB72229aab1584c22b5416ff128926B'
-        deploy_block: 10697344
+        address: '0x4D707127F72a216EA116AF0B4262dD7382F84259'
+        deploy_block: 10939869
       bonding_registry:
-        address: '0x788046999530304DDe121e19eD456180Aca6B7c1'
-        deploy_block: 10697345
+        address: '0xb9b64c5e0a30f38ed33760f299613087aAe87283'
+        deploy_block: 10939870
+      slashing_manager:
+        address: '0x0553387EE0992Fe339579728B6c777164fD1de40'
+        deploy_block: 10939868
+      fee_token:
+        address: '0x2721Cdf281d40744aD567cBf3e7100F60bcbAE79'
+        deploy_block: 10939865
 ```
 
 ### Start Your Node
 
 ```bash
 # Start in foreground with verbose logging
-enclave start -v
+interfold start -v
 
 # Or use the node supervisor for multiple nodes
-enclave nodes up --detach
-enclave nodes ps          # Check status
-enclave nodes logs cn1    # View logs
-enclave nodes down        # Stop all nodes
+interfold nodes up --detach
+interfold nodes ps          # Check status
+interfold nodes logs cn1    # View logs
+interfold nodes down        # Stop all nodes
 ```
 
 ### CLI Commands Reference
 
-| Command                        | Description                                         |
-| ------------------------------ | --------------------------------------------------- |
-| `enclave start`                | Start the node in foreground                        |
-| `enclave start -v`             | Start with INFO logging (`-vv`=DEBUG, `-vvv`=TRACE) |
-| `enclave nodes up`             | Start all configured nodes                          |
-| `enclave nodes up --detach`    | Start all nodes in background                       |
-| `enclave nodes up --exclude x` | Start all nodes except `x`                          |
-| `enclave nodes down`           | Stop all nodes                                      |
-| `enclave nodes ps`             | List running nodes and their status                 |
-| `enclave nodes start <name>`   | Start an individual node                            |
-| `enclave nodes stop <name>`    | Stop an individual node                             |
-| `enclave nodes status <name>`  | Check specific node status                          |
-| `enclave nodes restart <name>` | Restart a specific node                             |
-| `enclave nodes purge`          | Purge all local ciphernode data                     |
-| `enclave ciphernode status`    | Show on-chain registration status                   |
-| `enclave net get-peer-id`      | Show your libp2p peer ID                            |
-| `enclave wallet get`           | Show your wallet address                            |
-| `enclave rev`                  | Show the git SHA the CLI was built from             |
-| `enclave purge-all`            | Wipe all local data (use with caution)              |
-| `enclave print-env`            | Print contract addresses as env vars                |
-| `enclave print-env --vite`     | Print env vars with `VITE_` prefix                  |
-| `enclave print-env --chain x`  | Print env vars for chain `x`                        |
-| `enclave noir status`          | Check ZK prover status                              |
-| `enclave noir setup`           | Install/update ZK prover components                 |
+| Command                          | Description                                         |
+| -------------------------------- | --------------------------------------------------- |
+| `interfold start`                | Start the node in foreground                        |
+| `interfold start -v`             | Start with INFO logging (`-vv`=DEBUG, `-vvv`=TRACE) |
+| `interfold nodes up`             | Start all configured nodes                          |
+| `interfold nodes up --detach`    | Start all nodes in background                       |
+| `interfold nodes up --exclude x` | Start all nodes except `x`                          |
+| `interfold nodes down`           | Stop all nodes                                      |
+| `interfold nodes ps`             | List running nodes and their status                 |
+| `interfold nodes start <name>`   | Start an individual node                            |
+| `interfold nodes stop <name>`    | Stop an individual node                             |
+| `interfold nodes status <name>`  | Check specific node status                          |
+| `interfold nodes restart <name>` | Restart a specific node                             |
+| `interfold nodes purge`          | Purge all local ciphernode data                     |
+| `interfold ciphernode status`    | Show on-chain registration status                   |
+| `interfold net get-peer-id`      | Show your libp2p peer ID                            |
+| `interfold wallet get`           | Show your wallet address                            |
+| `interfold rev`                  | Show the git SHA the CLI was built from             |
+| `interfold purge-all`            | Wipe all local data (use with caution)              |
+| `interfold print-env`            | Print contract addresses as env vars                |
+| `interfold print-env --vite`     | Print env vars with `VITE_` prefix                  |
+| `interfold print-env --chain x`  | Print env vars for chain `x`                        |
+| `interfold noir status`          | Check ZK prover status                              |
+| `interfold noir setup`           | Install/update ZK prover components                 |
 
 ---
 
@@ -168,7 +174,7 @@ node:
   address: '0xYourAddress'
   quic_port: 9091
   peers:
-    - '/dnsaddr/bootstrap.enclave.gg'
+    - '/dnsaddr/bootstrap.interfold.gg'
   autonetkey: true
   autopassword: true
 
@@ -176,15 +182,21 @@ chains:
   - name: sepolia
     rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
     contracts:
-      enclave:
-        address: '0xB47B267876B60a06138Bc9dfCee7aa3E26907CCB'
-        deploy_block: 10697349
+      interfold:
+        address: '0x670eFE043d1D340148037b4b76c4F9dfED294309'
+        deploy_block: 10939874
       ciphernode_registry:
-        address: '0x497Feea9abB72229aab1584c22b5416ff128926B'
-        deploy_block: 10697344
+        address: '0x4D707127F72a216EA116AF0B4262dD7382F84259'
+        deploy_block: 10939869
       bonding_registry:
-        address: '0x788046999530304DDe121e19eD456180Aca6B7c1'
-        deploy_block: 10697345
+        address: '0xb9b64c5e0a30f38ed33760f299613087aAe87283'
+        deploy_block: 10939870
+      slashing_manager:
+        address: '0x0553387EE0992Fe339579728B6c777164fD1de40'
+        deploy_block: 10939868
+      fee_token:
+        address: '0x2721Cdf281d40744aD567cBf3e7100F60bcbAE79'
+        deploy_block: 10939865
 ```
 
 ### Run the Container
@@ -192,8 +204,8 @@ chains:
 ```bash
 docker run -d \
   --name ciphernode \
-  -v $(pwd)/config.yaml:/home/ciphernode/.config/enclave/config.yaml:ro \
-  -v ciphernode-data:/home/ciphernode/.local/share/enclave \
+  -v $(pwd)/config.yaml:/home/ciphernode/.config/interfold/config.yaml:ro \
+  -v ciphernode-data:/home/ciphernode/.local/share/interfold \
   -p 9091:9091/udp \
   -e ENCRYPTION_PASSWORD=your_password \
   -e PRIVATE_KEY=0xYourPrivateKey \
@@ -210,8 +222,8 @@ services:
     image: ghcr.io/gnosisguild/ciphernode:latest
     restart: unless-stopped
     volumes:
-      - ./config.yaml:/home/ciphernode/.config/enclave/config.yaml:ro
-      - ciphernode-data:/home/ciphernode/.local/share/enclave
+      - ./config.yaml:/home/ciphernode/.config/interfold/config.yaml:ro
+      - ciphernode-data:/home/ciphernode/.local/share/interfold
     ports:
       - '9091:9091/udp'
     environment:
@@ -234,15 +246,15 @@ docker logs -f ciphernode
 
 ### Node Configuration
 
-| Field          | Description                         | Default                  |
-| -------------- | ----------------------------------- | ------------------------ |
-| `address`      | Your Ethereum address               | Required                 |
-| `quic_port`    | UDP port for QUIC/libp2p networking | `9091`                   |
-| `peers`        | Bootstrap peer multiaddresses       | `[]`                     |
-| `autopassword` | Auto-generate password if missing   | `false`                  |
-| `autowallet`   | Auto-load wallet from environment   | `false`                  |
-| `data_dir`     | Override data directory             | `~/.local/share/enclave` |
-| `config_dir`   | Override config directory           | `~/.config/enclave`      |
+| Field          | Description                         | Default                    |
+| -------------- | ----------------------------------- | -------------------------- |
+| `address`      | Your Ethereum address               | Required                   |
+| `quic_port`    | UDP port for QUIC/libp2p networking | `9091`                     |
+| `peers`        | Bootstrap peer multiaddresses       | `[]`                       |
+| `autopassword` | Auto-generate password if missing   | `false`                    |
+| `autowallet`   | Auto-load wallet from environment   | `false`                    |
+| `data_dir`     | Override data directory             | `~/.local/share/interfold` |
+| `config_dir`   | Override config directory           | `~/.config/interfold`      |
 
 ### Chain Configuration
 
@@ -258,7 +270,7 @@ Each chain requires these contract addresses:
 
 | Contract              | Description                             | Required for ciphernode |
 | --------------------- | --------------------------------------- | ----------------------- |
-| `enclave`             | Main Interfold coordinator contract     | Yes                     |
+| `interfold`           | Main Interfold coordinator contract     | Yes                     |
 | `ciphernode_registry` | Tracks registered operators             | Yes                     |
 | `bonding_registry`    | Manages bonds and tickets               | Yes                     |
 | `slashing_manager`    | Manages slashing penalties              | Yes                     |
@@ -269,10 +281,10 @@ Each contract can be specified as a simple address string or with a deploy block
 
 ```yaml
 contracts:
-  enclave:
-    address: '0xB47B267876B60a06138Bc9dfCee7aa3E26907CCB'
-    deploy_block: 10697349
-  ciphernode_registry: '0x497Feea9abB72229aab1584c22b5416ff128926B'
+  interfold:
+    address: '0x670eFE043d1D340148037b4b76c4F9dfED294309'
+    deploy_block: 10939874
+  ciphernode_registry: '0x4D707127F72a216EA116AF0B4262dD7382F84259'
 ```
 
 ---
@@ -296,7 +308,7 @@ Connect to the Interfold bootstrap network:
 
 ```yaml
 peers:
-  - '/dnsaddr/bootstrap.enclave.gg'
+  - '/dnsaddr/bootstrap.interfold.gg'
 ```
 
 Or specify individual peers:
@@ -311,11 +323,11 @@ peers:
 
 ## Data Directories
 
-| Directory                      | Contents                          |
-| ------------------------------ | --------------------------------- |
-| `~/.config/enclave/`           | Configuration files, network keys |
-| `~/.local/share/enclave/`      | Databases, job data, keystores    |
-| `~/.local/share/enclave/jobs/` | Per-E3 secret shares and state    |
+| Directory                        | Contents                          |
+| -------------------------------- | --------------------------------- |
+| `~/.config/interfold/`           | Configuration files, network keys |
+| `~/.local/share/interfold/`      | Databases, job data, keystores    |
+| `~/.local/share/interfold/jobs/` | Per-E3 secret shares and state    |
 
 > Back up these directories regularly. The `jobs/` directory contains encrypted key shares for
 > active E3s - losing this data while participating in a committee may result in slashing.
@@ -354,5 +366,5 @@ Control verbosity with the `-v` flag:
 
 Once your node is running:
 
-1. **[Register & License](./registration)** - Bond ENCL and register as an operator
+1. **[Register & License](./registration)** - Bond FOLD and register as an operator
 2. **[Add Tickets](./tickets-and-sortition)** - Purchase tickets to participate in sortition

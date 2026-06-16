@@ -14,7 +14,7 @@ const PATTERN_GROUPS = {
   node: ['**/node_modules/**', '**/dist/**', '**/.pnpm-store/**'],
   crates: ['**/target/**', '**/crates/**/tests/fixtures/*.json'],
   contracts: ['**/artifacts/**', '**/cache/**', '**/out/**', '**/broadcast/**', '**/ignition/deployments/**', '**/*contracts/**/types/**'],
-  enclaveTemp: ['**/.enclave/data/**', '**/.enclave/config/**', '**/database/**'],
+  interfoldTemp: ['**/.interfold/data/**', '**/.interfold/config/**', '**/database/**'],
 } as const
 
 interface CleanOptions {
@@ -39,7 +39,7 @@ class Cleaner {
   private setupSkips(): void {
     // Always skip the following folders.
     this.skipPatterns.push('**/risc0-ethereum/**')
-    this.skipPatterns.push('packages/enclave-contracts/artifacts/contracts/**/*.json')
+    this.skipPatterns.push('packages/interfold-contracts/artifacts/contracts/**/*.json')
   }
 
   private getPatterns(): string[] {
@@ -47,8 +47,8 @@ class Cleaner {
     if (!this.options.skipNode) patterns.push(...PATTERN_GROUPS.node)
     if (!this.options.skipCrates) patterns.push(...PATTERN_GROUPS.crates)
     if (!this.options.skipContracts) patterns.push(...PATTERN_GROUPS.contracts)
-    // EnclaveTemp is always included.
-    patterns.push(...PATTERN_GROUPS.enclaveTemp)
+    // InterfoldTemp is always included.
+    patterns.push(...PATTERN_GROUPS.interfoldTemp)
     return patterns
   }
 

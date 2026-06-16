@@ -3,8 +3,8 @@ name = "e3-fhe-params"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "E3 - Enclave FHE Params"
-repository = "https://github.com/gnosisguild/enclave/crates/fhe-params"
+description = "E3 - Interfold FHE Params"
+repository = "https://github.com/gnosisguild/interfold/crates/fhe-params"
 
 [dependencies]
 fhe = { workspace = true }

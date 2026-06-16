@@ -15,12 +15,12 @@ use alloy::{
 };
 use eyre::Result;
 use EmitLogs::EmitLogsInstance;
-use Enclave::EnclaveInstance;
+use Interfold::InterfoldInstance;
 
 sol!(
     #[sol(rpc)]
-    Enclave,
-    "tests/fixtures/fake_enclave.json"
+    Interfold,
+    "tests/fixtures/fake_interfold.json"
 );
 
 sol!(
@@ -30,7 +30,7 @@ sol!(
 );
 
 pub async fn setup_two_contracts() -> Result<(
-    EnclaveInstance<impl Provider>,
+    InterfoldInstance<impl Provider>,
     String,
     EmitLogsInstance<impl Provider>,
     String,
@@ -39,7 +39,7 @@ pub async fn setup_two_contracts() -> Result<(
 )> {
     let (provider, endpoint, anvil) = setup_provider().await?;
     let provider = Arc::new(provider);
-    let contract1 = Enclave::deploy(provider.clone()).await?;
+    let contract1 = Interfold::deploy(provider.clone()).await?;
     let contract2 = EmitLogsInstance::deploy(provider.clone()).await?;
     let address1 = contract1.address().to_string();
     let address2 = contract2.address().to_string();

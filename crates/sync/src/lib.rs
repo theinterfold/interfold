@@ -4,8 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod actors;
+mod domain;
 mod repo;
-mod sync;
 
+pub use actors::*;
+pub use domain::*;
 pub use repo::*;
-pub use sync::*;

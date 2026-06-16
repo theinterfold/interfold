@@ -16,13 +16,12 @@ use alloy::primitives::Address;
 use anyhow::Result;
 use e3_ciphernode_builder::{CiphernodeHandle, EventSystem};
 use e3_events::{
-    BusHandle, CiphernodeAdded, Enabled, EnclaveEvent, EnclaveEventData, EventBus, EventBusConfig,
-    EventContextAccessors, EventPublisher, EventType, HistoryCollector, Seed, Sequenced, Subscribe,
+    BusHandle, CiphernodeAdded, EventBus, EventBusConfig, EventPublisher, EventType,
+    HistoryCollector, InterfoldEvent, InterfoldEventData, Seed, Subscribe,
 };
 use e3_fhe_params::BfvParamSet;
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{build_bfv_params_arc, create_deterministic_crp_from_default_seed};
-use e3_net::{DocumentPublisher, NetEventTranslator};
 use e3_utils::SharedRng;
 use fhe::bfv::{BfvParameters, Ciphertext, Encoding, Plaintext, PublicKey};
 use fhe::mbfv::CommonRandomPoly;
@@ -32,7 +31,7 @@ use libp2p_mock::Libp2pMock;
 pub use plaintext_writer::*;
 pub use public_key_writer::*;
 use rand::Rng;
-use rand_chacha::rand_core::SeedableRng;
+use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
 use std::sync::Arc;
 pub use utils::*;
@@ -65,7 +64,7 @@ pub async fn find_bb() -> Option<PathBuf> {
         for path in [
             format!("{}/.bb/bb", home),
             format!("{}/.nargo/bin/bb", home),
-            format!("{}/.enclave/noir/bin/bb", home),
+            format!("{}/.interfold/noir/bin/bb", home),
         ] {
             if std::path::Path::new(&path).exists() {
                 return Some(PathBuf::from(path));
@@ -99,6 +98,15 @@ pub fn create_shared_rng_from_u64(value: u64) -> Arc<std::sync::Mutex<ChaCha20Rn
     Arc::new(std::sync::Mutex::new(ChaCha20Rng::seed_from_u64(value)))
 }
 
+/// Derive a separate [`SharedRng`] instance (distinct mutex) for parallel harness nodes.
+///
+/// Integration tests that share one [`SharedRng`] via [`Arc::clone`] serialize all TrBFV
+/// work on a single lock. Give each ciphernode its own derived RNG so `BENCHMARK_MULTITHREAD_JOBS>1`
+/// can run `GenPkShare` / `GenEsiSss` in parallel.
+pub fn derive_shared_rng(base_seed: u64, salt: u64) -> SharedRng {
+    create_shared_rng_from_u64(base_seed.wrapping_add(salt))
+}
+
 pub fn create_seed_from_u64(value: u64) -> Seed {
     Seed(ChaCha20Rng::seed_from_u64(value).get_seed())
 }
@@ -118,6 +126,7 @@ pub fn create_crp_bytes_params(
     (crp.to_bytes(), params)
 }
 
+#[allow(clippy::type_complexity)]
 pub fn get_common_setup(
     param_set: Option<BfvParamSet>,
 ) -> Result<(
@@ -126,15 +135,15 @@ pub fn get_common_setup(
     Seed,
     Arc<BfvParameters>,
     CommonRandomPoly,
-    Addr<HistoryCollector<EnclaveEvent>>,
-    Addr<HistoryCollector<EnclaveEvent>>,
+    Addr<HistoryCollector<InterfoldEvent>>,
+    Addr<HistoryCollector<InterfoldEvent>>,
 )> {
-    let bus = EventBus::<EnclaveEvent>::new(EventBusConfig { deduplicate: true }).start();
-    let errors = HistoryCollector::<EnclaveEvent>::new().start();
-    let history = HistoryCollector::<EnclaveEvent>::new().start();
+    let bus = EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
+    let errors = HistoryCollector::<InterfoldEvent>::new().start();
+    let history = HistoryCollector::<InterfoldEvent>::new().start();
     bus.do_send(Subscribe::new(EventType::All, history.clone().recipient()));
     bus.do_send(Subscribe::new(
-        EventType::EnclaveError,
+        EventType::InterfoldError,
         errors.clone().recipient(),
     ));
 
@@ -153,38 +162,6 @@ pub fn get_common_setup(
     Ok((handle, rng, seed, params, crpoly, errors, history))
 }
 
-/// Actor that pipes events between buses, filtering for broadcastable events
-/// and transforming document-publisher events to simulate network receipt
-/// (e.g. setting `external: true` on `DecryptionKeyShared`).
-struct SimulatedNetPipe {
-    dest: BusHandle<Enabled>,
-}
-
-impl Actor for SimulatedNetPipe {
-    type Context = actix::Context<Self>;
-}
-
-impl Handler<EnclaveEvent<Sequenced>> for SimulatedNetPipe {
-    type Result = ();
-    fn handle(&mut self, msg: EnclaveEvent<Sequenced>, _: &mut Self::Context) -> Self::Result {
-        let should_forward = NetEventTranslator::is_forwardable_event(&msg)
-            || DocumentPublisher::is_document_publisher_event(&msg);
-
-        if should_forward {
-            let source = msg.source();
-            let (mut data, ts) = msg.split();
-
-            // Simulate network receive: in production, DocumentPublisher
-            // sets external=true when reconstructing events from the network.
-            if let EnclaveEventData::DecryptionKeyShared(ref mut dks) = data {
-                dks.external = true;
-            }
-
-            let _ = self.dest.publish_from_remote(data, ts, None, source);
-        }
-    }
-}
-
 /// Simulate libp2p by taking output net commands and converting them to net events sending them to
 /// the other nodes
 pub async fn simulate_libp2p_net(nodes: &[CiphernodeHandle]) {
@@ -199,7 +176,7 @@ pub async fn simulate_libp2p_net(nodes: &[CiphernodeHandle]) {
 /// NOTE: THESE ARE NOT ACTUAL ADDRESSES JUST RANDOM DATA
 pub fn create_random_eth_addrs(how_many: u32) -> Vec<String> {
     (0..how_many)
-        .map(|_| Address::from_slice(&rand::thread_rng().gen::<[u8; 20]>()).to_string())
+        .map(|_| Address::from_slice(&rand::rng().random::<[u8; 20]>()).to_string())
         .collect()
 }
 
@@ -219,7 +196,7 @@ impl AddToCommittee {
             count: 0,
         }
     }
-    pub async fn add(&mut self, address: &str) -> Result<EnclaveEventData> {
+    pub async fn add(&mut self, address: &str) -> Result<InterfoldEventData> {
         let evt = CiphernodeAdded {
             chain_id: self.chain_id,
             address: address.to_owned(),
@@ -243,14 +220,14 @@ pub fn encrypt_ciphertext(
     let mut rng = ChaCha20Rng::seed_from_u64(42);
     let plaintext: Vec<_> = raw_plaintext
         .into_iter()
-        .map(|raw| Ok(Plaintext::try_encode(&raw, Encoding::poly(), &params)?))
+        .map(|raw| Ok(Plaintext::try_encode(&raw, Encoding::poly(), params)?))
         .collect::<Result<_>>()?;
 
     let ciphertext = plaintext
         .iter()
         .map(|pt| {
             pubkey
-                .try_encrypt(&pt, &mut rng)
+                .try_encrypt(pt, &mut rng)
                 .map_err(|e| anyhow::anyhow!("{e}"))
         })
         .collect::<Result<Vec<Ciphertext>>>()?;

@@ -29,7 +29,7 @@ use fhe_traits::FheEncoder;
 use ndarray::Array2;
 use num_bigint::BigInt;
 use num_traits::{Signed, ToPrimitive};
-use rand::thread_rng;
+use rand::rng;
 use std::ops::Deref;
 
 /// Same as [`PkGenerationCircuitData::generate_sample`], plus smudging coefficients for C2b.
@@ -44,7 +44,7 @@ pub fn pk_generation_sample_with_esi(
     let (threshold_params, _) = build_pair_for_preset(preset)
         .map_err(|e| CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
 
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     let secret_key = SecretKey::random(&threshold_params, &mut rng);
     let crp = create_deterministic_crp_from_default_seed(&threshold_params);
@@ -62,19 +62,23 @@ pub fn pk_generation_sample_with_esi(
 
     let num_parties = committee.n;
     let threshold = committee.threshold;
-    let preset_metadata = preset.metadata();
 
     let defaults = preset
         .search_defaults()
         .ok_or_else(|| CircuitsErrors::Sample("missing search defaults".to_string()))?;
     let num_ciphertexts = defaults.z;
+    // Lambda is secure or insecure depending on the preset's security tier.
+    let lambda = preset
+        .lambda()
+        .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
     let trbfv = TRBFV::new(num_parties, threshold, threshold_params.clone())
         .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
-    let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone());
+    let share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+        .map_err(|e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
 
     let esi_coeffs: Vec<BigInt> = trbfv
-        .generate_smudging_error(num_ciphertexts as usize, preset_metadata.lambda, &mut rng)
+        .generate_smudging_error(num_ciphertexts as usize, lambda, &mut rng)
         .map_err(|e| {
             CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e))
         })?;
@@ -106,14 +110,16 @@ pub fn share_computation_sk_from_pk(
 ) -> Result<ShareComputationCircuitData, CircuitsErrors> {
     let (threshold_params, _) = build_pair_for_preset(preset)
         .map_err(|e| CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     let parity_matrix =
         compute_parity_matrix(threshold_params.moduli(), committee.n, committee.threshold)
-            .map_err(|e| CircuitsErrors::Sample(e))?;
+            .map_err(CircuitsErrors::Sample)?;
 
     let mut share_manager =
-        ShareManager::new(committee.n, committee.threshold, threshold_params.clone());
+        ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
+            |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
+        )?;
 
     let sk_poly = share_manager
         .coeffs_to_poly_level0(secret_key.coeffs.clone().as_ref())
@@ -147,14 +153,16 @@ pub fn share_computation_esm_from_esi(
 ) -> Result<ShareComputationCircuitData, CircuitsErrors> {
     let (threshold_params, _) = build_pair_for_preset(preset)
         .map_err(|e| CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
-    let mut rng = thread_rng();
+    let mut rng = rng();
 
     let parity_matrix =
         compute_parity_matrix(threshold_params.moduli(), committee.n, committee.threshold)
-            .map_err(|e| CircuitsErrors::Sample(e))?;
+            .map_err(CircuitsErrors::Sample)?;
 
     let mut share_manager =
-        ShareManager::new(committee.n, committee.threshold, threshold_params.clone());
+        ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
+            |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
+        )?;
 
     let esi_poly = share_manager
         .bigints_to_poly(esi_coeffs)
@@ -212,7 +220,7 @@ pub fn share_encryption_for_slot(
         share_row.push(u);
     }
 
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let pt = Plaintext::try_encode(&share_row, Encoding::poly(), &dkg_params)
         .map_err(|e| CircuitsErrors::Sample(format!("encode plaintext: {:?}", e)))?;
 

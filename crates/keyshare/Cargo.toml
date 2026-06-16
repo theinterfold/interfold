@@ -3,8 +3,8 @@ name = "e3-keyshare"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "E3 - Enclave Ciphernode Keyshare Actors"
-repository = "https://github.com/gnosisguild/enclave/crates/keyshare"
+description = "E3 - Interfold Ciphernode Keyshare Actors"
+repository = "https://github.com/gnosisguild/interfold/crates/keyshare"
 
 [dependencies]
 actix = { workspace = true }
@@ -26,6 +26,7 @@ fhe = { workspace = true }
 fhe-traits = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+rand_core = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 ndarray = { workspace = true }

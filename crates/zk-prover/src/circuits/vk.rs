@@ -58,6 +58,7 @@ pub fn load_vk_artifacts(
 }
 
 /// Loads VK artifacts for a proof being combined into a recursive aggregation circuit.
+#[allow(dead_code)]
 pub fn load_vk_for_fold_input(
     circuits_dir: &Path,
     circuit: CircuitName,

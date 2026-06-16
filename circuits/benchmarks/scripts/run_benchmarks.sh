@@ -1,20 +1,28 @@
 #!/bin/bash
 
 # run_benchmarks.sh - Main orchestration script for benchmarking circuits
-# Usage: ./run_benchmarks.sh [--config <config_file>] [--mode insecure|secure] [--circuit <path>] [--skip-compile] [--bench-compile] [--clean] [--verbose]
+# Usage: ./run_benchmarks.sh [--config <config_file>] [--mode insecure|secure]
+#   [--committee minimum|micro|small] [--circuit <path>]
+#   [--skip-compile] [--bench-compile] [--clean] [--verbose]
+#   [--multithread-jobs N]
 
 set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCHMARKS_DIR="$(dirname "$SCRIPT_DIR")"
+# shellcheck source=benchmark_output_dir.sh
+source "${SCRIPT_DIR}/benchmark_output_dir.sh"
 CONFIG_FILE="${BENCHMARKS_DIR}/config.json"
 CLEAN_ARTIFACTS=false
 MODE_OVERRIDE=""
+COMMITTEE_OVERRIDE=""
 SKIP_COMPILE=false
 BENCH_COMPILE=false
 CIRCUIT_FILTER=""
 VERBOSE=false
 PRESET_ARTIFACTS_READY=false
+MULTITHREAD_JOBS="${BENCHMARK_MULTITHREAD_JOBS:-}"
+export BENCHMARK_PROOF_AGGREGATION=true
 
 # Parse arguments
 while [[ $# -gt 0 ]]; do
@@ -29,6 +37,17 @@ while [[ $# -gt 0 ]]; do
                 echo "Error: Mode must be 'insecure' or 'secure'"
                 exit 1
             fi
+            shift 2
+            ;;
+        --committee)
+            COMMITTEE_OVERRIDE="$2"
+            case "$COMMITTEE_OVERRIDE" in
+                minimum|micro|small) ;;
+                *)
+                    echo "Error: --committee must be minimum|micro|small (got: $COMMITTEE_OVERRIDE)"
+                    exit 1
+                    ;;
+            esac
             shift 2
             ;;
         --circuit)
@@ -51,13 +70,27 @@ while [[ $# -gt 0 ]]; do
             VERBOSE=true
             shift
             ;;
+        --multithread-jobs)
+            MULTITHREAD_JOBS="$2"
+            shift 2
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--config <config_file>] [--mode insecure|secure] [--circuit <path>] [--skip-compile] [--bench-compile] [--clean] [--verbose]"
+            echo "Usage: $0 [--config <config_file>] [--mode insecure|secure] [--committee minimum|micro|small] [--circuit <path>] [--skip-compile] [--bench-compile] [--clean] [--verbose] [--multithread-jobs N]"
             exit 1
             ;;
     esac
 done
+
+if [ -n "$MULTITHREAD_JOBS" ]; then
+    if ! [[ "$MULTITHREAD_JOBS" =~ ^[1-9][0-9]*$ ]]; then
+        echo "Error: --multithread-jobs must be a positive integer (got: $MULTITHREAD_JOBS)"
+        exit 1
+    fi
+    export BENCHMARK_MULTITHREAD_JOBS="$MULTITHREAD_JOBS"
+elif [ -n "${BENCHMARK_MULTITHREAD_JOBS:-}" ]; then
+    echo "  Using BENCHMARK_MULTITHREAD_JOBS from environment: $BENCHMARK_MULTITHREAD_JOBS"
+fi
 
 if [ ! -f "$CONFIG_FILE" ]; then
     echo "Error: Config file not found: $CONFIG_FILE"
@@ -65,7 +98,7 @@ if [ ! -f "$CONFIG_FILE" ]; then
 fi
 
 echo "╔════════════════════════════════════════════════╗"
-echo "║       Enclave ZK Circuit Benchmark Suite       ║"
+echo "║       Interfold ZK Circuit Benchmark Suite       ║"
 echo "╚════════════════════════════════════════════════╝"
 echo ""
 
@@ -102,8 +135,36 @@ REPO_ROOT="$(cd "${BENCHMARKS_DIR}/../.." && pwd)"
 # Circuits live under circuits/bin (bin_dir is relative to benchmarks dir, e.g. ../bin)
 CIRCUITS_BASE_DIR="$(cd "${BENCHMARKS_DIR}/${BIN_DIR}" && pwd)"
 
-# Create mode-specific output directory
-OUTPUT_DIR="${OUTPUT_DIR_BASE}_${MODE}"
+# Resolve the committee for the output dir name. Explicit --committee wins; otherwise we
+# read what's currently on disk (the build step below will respect that selection). Sourced
+# here so OUTPUT_DIR can include the committee axis (`results_<mode>_<name>`).
+# shellcheck source=load_default_committee.sh
+source "${SCRIPT_DIR}/load_default_committee.sh"
+
+assert_skip_compile_committee_matches_disk() {
+    load_default_committee "" "$REPO_ROOT"
+    if [ "$COMMITTEE_NAME" != "$OUTPUT_COMMITTEE" ]; then
+        echo "Error: --skip-compile with --committee $OUTPUT_COMMITTEE but on-disk circuits are built for committee '$COMMITTEE_NAME'."
+        echo "  Rebuild: pnpm build:circuits --committee $OUTPUT_COMMITTEE"
+        echo "  Or omit --committee to benchmark the on-disk selection."
+        exit 1
+    fi
+}
+
+if [ -n "$COMMITTEE_OVERRIDE" ]; then
+    OUTPUT_COMMITTEE="$COMMITTEE_OVERRIDE"
+else
+    load_default_committee "" "$REPO_ROOT"
+    OUTPUT_COMMITTEE="$COMMITTEE_NAME"
+fi
+
+if [ "$SKIP_COMPILE" = true ] && [ -n "$COMMITTEE_OVERRIDE" ]; then
+    assert_skip_compile_committee_matches_disk
+fi
+
+# results_<mode>_<committee> (see benchmark_output_dir.sh)
+BENCHMARK_OUTPUT_DIR_BASE="$OUTPUT_DIR_BASE"
+OUTPUT_DIR="$(benchmark_results_dir_basename "$MODE" "$OUTPUT_COMMITTEE")"
 mkdir -p "${BENCHMARKS_DIR}/${OUTPUT_DIR}/raw"
 
 # For secure mode, patch lib to use secure configs (restored at end)
@@ -124,8 +185,11 @@ fi
 GIT_COMMIT=$(git rev-parse HEAD 2>/dev/null || echo "unknown")
 GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
 
+load_committee_by_name "$OUTPUT_COMMITTEE" "$REPO_ROOT"
+
 echo "Configuration:"
 echo "  Mode: $MODE"
+echo "  Committee: $OUTPUT_COMMITTEE (N=$COMMITTEE_N, T=$COMMITTEE_T, H=$COMMITTEE_H)"
 if [ -n "$CIRCUIT_FILTER" ]; then
     echo "  Circuit: $CIRCUIT_FILTER (single)"
 fi
@@ -138,6 +202,10 @@ elif [ "$PRESET_ARTIFACTS_READY" = true ]; then
 fi
 if [ "$VERBOSE" = true ]; then
     echo "  Verbose Logging: Yes"
+fi
+echo "  Proof aggregation (integration): enabled (always on in benchmarks)"
+if [ -n "$BENCHMARK_MULTITHREAD_JOBS" ]; then
+    echo "  Multithread concurrent jobs: $BENCHMARK_MULTITHREAD_JOBS"
 fi
 echo "  Git Branch: $GIT_BRANCH"
 echo "  Git Commit: $GIT_COMMIT"
@@ -155,12 +223,12 @@ if [ "$SKIP_COMPILE" = false ]; then
     else
         PRESET_NAME="insecure-512"
     fi
-    ENSURE_ARGS=("$PRESET_NAME")
+    ENSURE_ARGS=("$PRESET_NAME" --committee "$OUTPUT_COMMITTEE")
     if [ "$VERBOSE" = true ]; then
         ENSURE_ARGS+=(--verbose)
     fi
     "${SCRIPT_DIR}/ensure_circuit_preset_built.sh" "${ENSURE_ARGS[@]}"
-    if "${SCRIPT_DIR}/check_circuit_preset_artifacts.sh" "$PRESET_NAME"; then
+    if "${SCRIPT_DIR}/check_circuit_preset_artifacts.sh" "$PRESET_NAME" --committee "$OUTPUT_COMMITTEE"; then
         PRESET_ARTIFACTS_READY=true
     fi
     echo "Preflight build complete."
@@ -229,7 +297,7 @@ for CIRCUIT in $RUN_CIRCUITS; do
         
         # Generate Prover.toml (and configs.nr) via zk_cli so nargo execute has witness
         echo "  Generating Prover.toml..."
-        if ! "${SCRIPT_DIR}/generate_prover_toml.sh" "$CIRCUIT" "$MODE" "$REPO_ROOT" 2>&1; then
+        if ! BENCHMARK_COMMITTEE="$OUTPUT_COMMITTEE" "${SCRIPT_DIR}/generate_prover_toml.sh" "$CIRCUIT" "$MODE" "$REPO_ROOT" 2>&1; then
             echo "⚠️  Prover.toml generation failed for $CIRCUIT, skipping benchmark"
             echo ""
             continue
@@ -258,9 +326,13 @@ echo "Stage 1/3: Running gas extraction pipeline (CRISP test + integration + EVM
 GAS_JSON_FILE="${BENCHMARKS_DIR}/${OUTPUT_DIR}/crisp_verify_gas.json"
 # Remove any previous gas artifact so failures cannot leak stale values.
 rm -f "${GAS_JSON_FILE}"
-EXTRACT_ARGS=(--output "${GAS_JSON_FILE}" --mode "$MODE")
+EXTRACT_ARGS=(--output "${GAS_JSON_FILE}" --mode "$MODE" --committee "$OUTPUT_COMMITTEE")
 if [ "$VERBOSE" = true ]; then
     EXTRACT_ARGS+=(--verbose)
+fi
+# Benches already validated preset+committee artifacts; gas stage only checks + runs tests.
+if [ "$SKIP_COMPILE" = true ] || [ "$PRESET_ARTIFACTS_READY" = true ]; then
+    EXTRACT_ARGS+=(--skip-build)
 fi
 if "${SCRIPT_DIR}/extract_crisp_verify_gas.sh" "${EXTRACT_ARGS[@]}"; then
     echo "✓ CRISP verify gas extracted: ${GAS_JSON_FILE}"
@@ -268,23 +340,61 @@ else
     echo "⚠️  Could not extract CRISP verify gas; report will show N/A for verify gas"
 fi
 
-# Generate markdown report
-echo "Stage 2/3: Rendering markdown report from benchmarks + gas summary..."
-REPORT_FILE="${BENCHMARKS_DIR}/${OUTPUT_DIR}/report.md"
-"${SCRIPT_DIR}/generate_report.sh" \
-    --input-dir "${BENCHMARKS_DIR}/${OUTPUT_DIR}/raw" \
-    --output "${REPORT_FILE}" \
-    --git-commit "$GIT_COMMIT" \
-    --git-branch "$GIT_BRANCH" \
-    --gas-json "${GAS_JSON_FILE}"
+# Persist CLI flags for report regeneration (see generate_report.sh → Run configuration).
+RUN_META_FILE="${BENCHMARKS_DIR}/${OUTPUT_DIR}/benchmark_run_meta.json"
+MT_JOBS_JSON="${BENCHMARK_MULTITHREAD_JOBS:-1}"
+load_committee_by_name "$OUTPUT_COMMITTEE" "$REPO_ROOT"
+jq -n \
+    --arg mode "$MODE" \
+    --arg preset "$([ "$MODE" = "secure" ] && echo "secure-8192" || echo "insecure-512")" \
+    --arg committee "$OUTPUT_COMMITTEE" \
+    --argjson proof_agg true \
+    --argjson multithread_jobs "$MT_JOBS_JSON" \
+    --argjson verbose "$([ "$VERBOSE" = true ] && echo true || echo false)" \
+    --argjson committee_size_n "$COMMITTEE_N" \
+    --argjson committee_size_h "$COMMITTEE_H" \
+    --argjson committee_threshold_t "$COMMITTEE_T" \
+    '{
+      benchmark_mode: $mode,
+      bfv_preset_subdir: $preset,
+      committee: $committee,
+      proof_aggregation: $proof_agg,
+      multithread_jobs: $multithread_jobs,
+      verbose: $verbose,
+      nodes_spawned: 20,
+      committee_size_n: $committee_size_n,
+      committee_size_h: $committee_size_h,
+      committee_threshold_t: $committee_threshold_t,
+      network_model: "in_process_bus",
+      testmode_harness: true
+    }' > "${RUN_META_FILE}"
 
+# Extract integration summary from the fresh gas JSON before rendering the report so
+# generate_report.sh always sees up-to-date lambda / timings (not a stale on-disk snapshot).
 INTEGRATION_SNAPSHOT="${BENCHMARKS_DIR}/${OUTPUT_DIR}/integration_summary.json"
 if [ -f "${GAS_JSON_FILE}" ] && jq -e '.integration_summary != null' "${GAS_JSON_FILE}" >/dev/null 2>&1; then
     jq '.integration_summary' "${GAS_JSON_FILE}" > "${INTEGRATION_SNAPSHOT}"
     echo "✓ Wrote integration summary snapshot: ${INTEGRATION_SNAPSHOT}"
 fi
 
-if [ "${OUTPUT_DIR}" = "results_insecure" ] && [ -f "${INTEGRATION_SNAPSHOT}" ]; then
+# Generate markdown report
+echo "Stage 2/3: Rendering markdown report from benchmarks + gas summary..."
+REPORT_FILE="${BENCHMARKS_DIR}/${OUTPUT_DIR}/report.md"
+REPORT_ARGS=(
+    --input-dir "${BENCHMARKS_DIR}/${OUTPUT_DIR}/raw"
+    --output "${REPORT_FILE}"
+    --git-commit "$GIT_COMMIT"
+    --git-branch "$GIT_BRANCH"
+    --gas-json "${GAS_JSON_FILE}"
+    --benchmark-mode "$MODE"
+    --run-meta "${RUN_META_FILE}"
+)
+if [ -f "${INTEGRATION_SNAPSHOT}" ]; then
+    REPORT_ARGS+=(--integration-summary "${INTEGRATION_SNAPSHOT}")
+fi
+"${SCRIPT_DIR}/generate_report.sh" "${REPORT_ARGS[@]}"
+
+if [[ "${OUTPUT_DIR}" =~ ^results_insecure_ ]] && [ -f "${INTEGRATION_SNAPSHOT}" ]; then
     "${SCRIPT_DIR}/sync_bfv_vk_binding_fixture.sh" "${INTEGRATION_SNAPSHOT}"
 fi
 

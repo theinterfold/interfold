@@ -3,8 +3,8 @@ name = "e3-sortition"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "E3 - Enclave Ciphernode Sortition Components"
-repository = "https://github.com/gnosisguild/enclave/crates/sortition"
+description = "E3 - Interfold Ciphernode Sortition Components"
+repository = "https://github.com/gnosisguild/interfold/crates/sortition"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 

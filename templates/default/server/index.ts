@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import express, { Request, Response } from 'express'
-import { EnclaveSDK } from '@enclave-e3/sdk'
-import { RegistryEventType, type CommitteePublishedData } from '@enclave-e3/sdk/events'
+import { InterfoldSDK } from '@interfold/sdk'
+import { RegistryEventType, type CommitteePublishedData } from '@interfold/sdk/events'
 import { Log, PublicClient } from 'viem'
 import { hardhat } from 'viem/chains'
 import { handleTestInteraction } from './testHandler'
@@ -26,18 +26,18 @@ interface E3Session {
 
 const e3Sessions = new Map<string, E3Session>()
 
-let sdkInstance: EnclaveSDK | null = null
+let sdkInstance: InterfoldSDK | null = null
 
 async function createPrivateSDK() {
   if (sdkInstance) return sdkInstance
 
-  const { PRIVATE_KEY, CIPHERNODE_REGISTRY_CONTRACT, ENCLAVE_CONTRACT, FEE_TOKEN_CONTRACT, RPC_URL } = getCheckedEnvVars()
+  const { PRIVATE_KEY, CIPHERNODE_REGISTRY_CONTRACT, INTERFOLD_CONTRACT, FEE_TOKEN_CONTRACT, RPC_URL } = getCheckedEnvVars()
 
-  sdkInstance = EnclaveSDK.create({
+  sdkInstance = InterfoldSDK.create({
     rpcUrl: RPC_URL,
     privateKey: PRIVATE_KEY as `0x${string}`,
     contracts: {
-      enclave: ENCLAVE_CONTRACT as `0x${string}`,
+      interfold: INTERFOLD_CONTRACT as `0x${string}`,
       ciphernodeRegistry: CIPHERNODE_REGISTRY_CONTRACT as `0x${string}`,
       feeToken: FEE_TOKEN_CONTRACT as `0x${string}`,
     },
@@ -72,9 +72,9 @@ async function runProgram(e3Id: bigint): Promise<void> {
     const e3Details = await sdk.getE3(e3Id)
     const paramSetId = e3Details.paramSet
     const publicClient = sdk.getPublicClient()
-    const { ENCLAVE_CONTRACT } = getCheckedEnvVars()
+    const { INTERFOLD_CONTRACT } = getCheckedEnvVars()
     const e3ProgramParams = (await publicClient.readContract({
-      address: ENCLAVE_CONTRACT as `0x${string}`,
+      address: INTERFOLD_CONTRACT as `0x${string}`,
       abi: [
         {
           name: 'paramSetRegistry',
@@ -228,7 +228,7 @@ async function setupEventListeners() {
   console.log('📡 Setting up event listeners...')
 
   // we need to listen to CommitteePublished to know when an E3 is ready
-  await sdk.onEnclaveEvent(RegistryEventType.COMMITTEE_PUBLISHED, handleCommitteePublishedEvent)
+  await sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLISHED, handleCommitteePublishedEvent)
 
   await listenToInputPublishedEvents(sdk.getPublicClient(), PROGRAM_ADDRESS as `0x${string}`, 0n)
 
@@ -307,7 +307,7 @@ async function startServer() {
 
     const PORT = process.env.PORT ? parseInt(process.env.PORT) : 8080
     app.listen(PORT, '0.0.0.0', () => {
-      console.log(`🚀 Enclave Server listening on port ${PORT}`)
+      console.log(`🚀 Interfold Server listening on port ${PORT}`)
       console.log(`📡 Event listeners active`)
       console.log(`📊 Sessions: http://localhost:${PORT}/sessions`)
     })

@@ -21,7 +21,7 @@ Anyone can call `markE3Failed()` when a deadline is missed:
 > missing feature.
 
 ```
-Anyone calls: Enclave.markE3Failed(e3Id)
+Anyone calls: Interfold.markE3Failed(e3Id)
 │
 ├─ Revert if stage == None, Complete, or Failed
 │
@@ -56,7 +56,7 @@ Anyone calls: Enclave.markE3Failed(e3Id)
 
 ```
 CiphernodeRegistry or SlashingManager calls:
-  Enclave.onE3Failed(e3Id, reason)
+  Interfold.onE3Failed(e3Id, reason)
 │
 ├─ require(caller == ciphernodeRegistry || caller == slashingManager)
 ├─ _e3Stages[e3Id] = Failed
@@ -75,13 +75,13 @@ Specific triggers:
 
 ### Step 1: Process Failure
 
-Runtime note: `processE3Failure()` is a permissionless cleanup path. The Rust `EnclaveSolWriter` may
-auto-submit it from any effects-enabled node on the same chain, and it must not depend on
+Runtime note: `processE3Failure()` is a permissionless cleanup path. The Rust `InterfoldSolWriter`
+may auto-submit it from any effects-enabled node on the same chain, and it must not depend on
 active-aggregator designation because failures can happen before committee finalization or while the
 current aggregator is offline.
 
 ```
-Anyone calls: Enclave.processE3Failure(e3Id)
+Anyone calls: Interfold.processE3Failure(e3Id)
 │
 ├─ require(stage == Failed)
 ├─ require(e3Payments[e3Id] > 0) → payment exists
@@ -175,7 +175,7 @@ REQUESTER claims:
   E3RefundManager.claimRequesterRefund(e3Id)
 │
 ├─ require(distribution calculated)
-├─ require(msg.sender == requester from Enclave)
+├─ require(msg.sender == requester from Interfold)
 ├─ require(!already claimed)
 ├─ requesterAmount includes BOTH:
 │   • Base refund (from work-value BPS allocation)
@@ -331,13 +331,20 @@ ProofFailureAccusation arrives via P2P from another committee member
 │
 ├─ 1. Verify accuser is a committee member
 │
-├─ 2. Verify accuser's ECDSA signature on accusation digest
+├─ 2. Validate accusation deadline against local policy:
+│     - reject if deadline <= now (expired)
+│     - reject if deadline > now + accusationVoteValidity + skew
+│     - reject all peer accusations when accusationVoteValidity == 0
+│     - `skew` defaults to 30s and is configurable via
+│       `ACCUSATION_DEADLINE_SKEW_SECS` on the node process
 │
-├─ 3. Compute accusation_id:
+├─ 3. Verify accuser's ECDSA signature on accusation digest
+│
+├─ 4. Compute accusation_id:
 │     keccak256(abi.encodePacked(chainId, e3Id, accused, proofType))
 │     → Deterministic: all nodes compute same ID for same accusation
 │
-├─ 4. Determine own vote based on local verification cache:
+├─ 5. Determine own vote based on local verification cache:
 │     │
 │     ├─ Case A: We already FAILED verification for (accused, proof_type):
 │     │   → Vote agrees = true
@@ -351,7 +358,7 @@ ProofFailureAccusation arrives via P2P from another committee member
 │         │   → Vote after re-verification completes
 │         └─ For other proofs: vote agrees = false (no local evidence)
 │
-├─ 5. Create and SIGN vote:
+├─ 6. Create and SIGN vote:
 │     AccusationVote {
 │       e3_id, accusation_id, voter: my_address,
 │       agrees: <determined above>, data_hash,
@@ -359,7 +366,7 @@ ProofFailureAccusation arrives via P2P from another committee member
 │     }
 │     → Broadcast via P2P gossip
 │
-└─ 6. Check quorum immediately
+└─ 7. Check quorum immediately
 ```
 
 #### Step 3: Vote Digest & Accusation ID (Must Match Solidity)
@@ -413,9 +420,6 @@ check_quorum(accusation_id):
 │   │
 │   ├─ Multiple data_hashes across ALL votes?
 │   │   └─ YES → AccusationOutcome::Equivocation (SLASHABLE)
-│   │
-│   ├─ Only accuser says bad, others disagree?
-│   │   └─ AccusationOutcome::AccuserLied (NOT slashable)
 │   │
 │   └─ Otherwise → AccusationOutcome::Inconclusive (NOT slashable)
 │
@@ -631,7 +635,7 @@ _executeSlash(proposalId):
 │     │  │     activeBalance = ticketToken.balanceOf(operator)   │
 │     │  │     slashFromActive = min(amount, activeBalance)      │
 │     │  │     ticketToken.burnTickets(operator, slashFromActive)│
-│     │  │     → Burns ETK, underlying stays as payableBalance   │
+│     │  │     → Burns tFOLD, underlying stays as payableBalance   │
 │     │  │                                                       │
 │     │  │  2. Remaining from EXIT QUEUE:                        │
 │     │  │     remaining = amount - slashFromActive              │
@@ -657,15 +661,19 @@ _executeSlash(proposalId):
 │     │
 │     │  ┌─── BondingRegistry.slashLicenseBond() ───────────────┐
 │     │  │                                                       │
-│     │  │  1. Slash from ACTIVE bond first:                     │
-│     │  │     slashFromActive = min(amount, licenseBond)        │
-│     │  │     operators[op].licenseBond -= slashFromActive      │
+│     │  │  1. Compute active + pending FOLD source total        │
 │     │  │                                                       │
-│     │  │  2. Remaining from EXIT QUEUE:                        │
-│     │  │     _exits.slashPendingAssets(                        │
-│     │  │       operator, 0, remaining,                         │
-│     │  │       includeLockedAssets=true                        │
-│     │  │     )                                                 │
+│     │  │  2. _slashLicenseSourcesLifo(operator, amount):       │
+│     │  │     Compare newest active source sequence with        │
+│     │  │     newest pending-exit source sequence               │
+│     │  │     Slash the newest source first                     │
+│     │  │     → Active slash decrements operators[op].licenseBond│
+│     │  │     → Pending slash decrements pending license totals │
+│     │  │     → totalBonded(op) drops immediately; if op has   │
+│     │  │       token-level locks, same-wallet FOLD may become │
+│     │  │       encumbered until the locked floor decays/top-up │
+│     │  │     → Receiver callback gets (operator, amount,       │
+│     │  │       sourceId) when supported                        │
 │     │  │                                                       │
 │     │  │  3. slashedLicenseBond += totalSlashed                │
 │     │  │  4. _updateOperatorStatus(operator)                   │
@@ -693,7 +701,7 @@ _executeSlash(proposalId):
 │     │  └───────────────────────────────────────────────────────┘
 │     │
 │     └─ If activeCount < thresholdM AND proposal.failureReason > 0:
-│         try enclave.onE3Failed(e3Id, proposal.failureReason)
+│         try interfold.onE3Failed(e3Id, proposal.failureReason)
 │         → Committee can no longer meet threshold
 │         → E3 is irrecoverably failed
 │         catch: emit RoutingFailed (E3 may already be failed)
@@ -725,7 +733,7 @@ _executeSlash(proposalId):
 │     │  │  │         burnTickets() during slashTicketBalance     │
 │     │  │  │                                                    │
 │     │  │  │  Step B: Update escrow accounting                  │
-│     │  │  │    enclave.escrowSlashedFunds(e3Id, amount)         │
+│     │  │  │    interfold.escrowSlashedFunds(e3Id, amount)         │
 │     │  │  │    → e3RefundManager.escrowSlashedFunds(e3Id, amt)  │
 │     │  │  │      │                                             │
 │     │  │  │      ├─ If refund distribution NOT yet calculated:  │
@@ -811,7 +819,7 @@ Design rationale:
 ```
 distributeSlashedFundsOnSuccess(e3Id, activeNodes, paymentToken):
 │
-├─ Called by Enclave._distributeRewards() when E3 completes successfully
+├─ Called by Interfold._distributeRewards() when E3 completes successfully
 │
 ├─ escrowed = _pendingSlashedFunds[e3Id]
 │   if escrowed == 0: return (nothing to distribute)
@@ -890,7 +898,7 @@ Case 4: E3 completes successfully with escrowed slashed funds
 ```
 SlashPolicy {
   ticketPenalty:    uint256   // tickets to slash (in base units)
-  licensePenalty:   uint256   // ENCL to slash
+  licensePenalty:   uint256   // FOLD to slash
   requiresProof:   bool      // Lane A (true) or Lane B (false)
   proofVerifier:    address   // verifier address (Lane A: used in policy lookup)
   banNode:          bool      // permanently ban operator
@@ -1017,7 +1025,7 @@ FALLBACK: TREASURY WITHDRAWAL
     → licenseToken.safeTransfer(treasury, licenseAmount)
   Effect: slashedTicketBalance decremented
 
-License bond slashes always go to treasury (no escrow routing for ENCL).
+License bond slashes always go to treasury (no escrow routing for FOLD).
 ```
 
 ---
@@ -1055,11 +1063,17 @@ When CommitteeMemberExpelled event arrives from EVM:
 │   ├─ Only processes raw events (party_id: None)
 │   └─ Removes expelled node from committee filter set
 │
-└─ When E3Failed / E3StageChanged(Complete|Failed) arrives:
+└─ When E3Failed(timeout) / E3StageChanged(Complete) arrives:
     │
     ├─ E3Router (central cleanup orchestrator):
-    │   └─ Converts E3Failed / E3StageChanged(Complete|Failed) → E3RequestComplete
-    │       → Single cleanup signal for all per-E3 actors
+    │   ├─ E3Failed with a timeout reason (CommitteeFormationTimeout, DKGTimeout,
+    │   │   ComputeTimeout, DecryptionTimeout) → publishes E3RequestComplete
+    │   │   → Single cleanup signal for all per-E3 actors
+    │   │   NOTE: E3Failed with a misbehaviour reason (DKGInvalidShares, etc.) does
+    │   │   NOT trigger E3RequestComplete — the accusation/slashing lifecycle must
+    │   │   complete first.
+    │   └─ E3StageChanged(Failed) and E3Failed(timeout) arriving after context teardown
+    │       are silently ignored (expected on-chain lag)
     │
     ├─ CommitteeFinalizer (direct handler — semantic work):
     │   └─ Cancels any pending committee-finalization timer for this e3_id
@@ -1097,7 +1111,7 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
 
 ### EIP-712 domain (H-10, M-24)
 
-- SlashingManager declares `EIP712("EnclaveSlashing", "1")` so accusation signatures are bound to
+- SlashingManager declares `EIP712("InterfoldSlashing", "1")` so accusation signatures are bound to
   `verifyingContract` _and_ `chainId`. Signatures produced against a different deployment or chain
   are rejected with `InvalidSigner()`. Cross-deployment / cross-chain replay is blocked.
 
@@ -1138,4 +1152,4 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
 ### Upgrade posture
 
 - `SlashingManager` is **non-upgradeable** by design (transparent proxy removed). Migrations require
-  redeployment + GOVERNANCE_ROLE rotation on `BondingRegistry`/`Enclave`.
+  redeployment + GOVERNANCE_ROLE rotation on `BondingRegistry`/`Interfold`.

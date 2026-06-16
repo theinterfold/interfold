@@ -3,8 +3,8 @@ name = "e3-test-helpers"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "E3 - Enclave Ciphernode Test Helpers"
-repository = "https://github.com/gnosisguild/enclave/crates/test-helpers"
+description = "E3 - Interfold Ciphernode Test Helpers"
+repository = "https://github.com/gnosisguild/interfold/crates/test-helpers"
 
 [dependencies]
 actix = { workspace = true }

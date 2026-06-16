@@ -5,10 +5,10 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::Result;
-use e3_events::{EnclaveEvent, EventLog, Unsequenced};
+use e3_events::{EventLog, InterfoldEvent, Unsequenced};
 
 pub struct InMemEventLog {
-    log: Vec<EnclaveEvent<Unsequenced>>,
+    log: Vec<InterfoldEvent<Unsequenced>>,
 }
 
 impl InMemEventLog {
@@ -24,7 +24,7 @@ impl Default for InMemEventLog {
 }
 
 impl EventLog for InMemEventLog {
-    fn read_from(&self, from: u64) -> Box<dyn Iterator<Item = (u64, EnclaveEvent<Unsequenced>)>> {
+    fn read_from(&self, from: u64) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>> {
         // Convert 1-indexed sequence to 0-indexed array position
         let start_idx = from.saturating_sub(1) as usize;
 
@@ -37,20 +37,23 @@ impl EventLog for InMemEventLog {
             .collect();
         Box::new(events.into_iter())
     }
-    fn append(&mut self, event: &EnclaveEvent<Unsequenced>) -> Result<u64> {
+    fn append(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<u64> {
         self.log.push(event.to_owned());
         Ok(self.log.len() as u64)
+    }
+    fn head(&self) -> u64 {
+        self.log.len() as u64
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_events::{EnclaveEventData, EventConstructorWithTimestamp, EventSource, TestEvent};
+    use e3_events::{EventConstructorWithTimestamp, EventSource, InterfoldEventData, TestEvent};
 
-    fn event_from(data: impl Into<EnclaveEventData>) -> EnclaveEvent<Unsequenced> {
-        EnclaveEvent::<Unsequenced>::new_with_timestamp(
-            data.into().into(),
+    fn event_from(data: impl Into<InterfoldEventData>) -> InterfoldEvent<Unsequenced> {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            data.into(),
             None,
             123,
             None,

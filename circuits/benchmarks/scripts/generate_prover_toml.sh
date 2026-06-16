@@ -28,6 +28,23 @@ fi
 PRESET="insecure"
 [ "$MODE" = "secure" ] && PRESET="secure"
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=load_default_committee.sh
+source "${SCRIPT_DIR}/load_default_committee.sh"
+DEFAULT_MOD_NR="${REPO_ROOT}/circuits/lib/src/configs/default/mod.nr"
+# Generate Prover.toml using the benchmark run's committee (set by run_benchmarks.sh when invoked
+# from the suite; otherwise falls back to the on-disk active committee).
+if [ -z "${BENCHMARK_COMMITTEE:-}" ]; then
+    load_default_committee "$DEFAULT_MOD_NR" "$REPO_ROOT"
+else
+    load_committee_by_name "$BENCHMARK_COMMITTEE" "$REPO_ROOT"
+fi
+
+if [ -z "$COMMITTEE_NAME" ]; then
+    echo "Error: COMMITTEE_NAME not set by load_default_committee.sh"
+    exit 1
+fi
+
 OUTPUT_DIR="${REPO_ROOT}/circuits/bin/${CIRCUIT_PATH}"
 
 # Map circuit path to zk_cli --circuit and optional --inputs
@@ -105,12 +122,12 @@ if [ "$ZK_CIRCUIT" = "_no_zk_cli" ]; then
     exit 0
 fi
 
-CMD=(cargo run -p e3-zk-helpers --bin zk_cli -- --circuit "$ZK_CIRCUIT" --preset "$PRESET" --output "$OUTPUT_DIR" --toml --no-configs)
+CMD=(cargo run -p e3-zk-helpers --bin zk_cli -- --circuit "$ZK_CIRCUIT" --preset "$PRESET" --committee "$COMMITTEE_NAME" --output "$OUTPUT_DIR" --toml --no-configs)
 if [ -n "$ZK_INPUTS" ]; then
     CMD+=(--inputs "$ZK_INPUTS")
 fi
 
-echo "  Generating Prover.toml: zk_cli --circuit $ZK_CIRCUIT --preset $PRESET ${ZK_INPUTS:+--inputs $ZK_INPUTS}"
+echo "  Generating Prover.toml: zk_cli --circuit $ZK_CIRCUIT --preset $PRESET --committee $COMMITTEE_NAME ${ZK_INPUTS:+--inputs $ZK_INPUTS}"
 if ! "${CMD[@]}" 2>&1; then
     echo "Error: zk_cli failed for $CIRCUIT_PATH"
     exit 1

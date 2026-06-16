@@ -189,7 +189,7 @@ struct HlcInner {
 
 impl Default for Hlc {
     fn default() -> Self {
-        let random_id: u32 = rand::thread_rng().gen();
+        let random_id: u32 = rand::rng().random();
         Self::new(random_id)
     }
 }
@@ -215,6 +215,7 @@ impl Hlc {
         }
     }
 
+    #[allow(clippy::should_implement_trait)]
     pub fn from_str(node: &str) -> Self {
         let mut h = DefaultHasher::new();
         node.hash(&mut h);
@@ -246,6 +247,23 @@ impl Hlc {
 
     pub fn node(&self) -> u32 {
         self.node
+    }
+
+    /// Seed the clock's physical-time floor so it can never regress below an
+    /// already-emitted timestamp across a restart (H15). A node boots with a
+    /// fresh HLC at `ts: 0` and re-derives time from the system clock, so a
+    /// backward wall-clock jump would let freshly-`tick`ed events sort *before*
+    /// events already persisted before the crash. Seeding `inner.ts` to the
+    /// highest persisted timestamp makes `tick`/`receive` (which both take a
+    /// `max`) monotone with respect to durable history. Counter is reset to 0:
+    /// the very next `tick` at the same `ts` bumps it to 1, staying above the
+    /// persisted value.
+    pub fn seed_physical_floor(&self, ts: u64) {
+        let mut inner = self.inner.lock().unwrap();
+        if ts > inner.ts {
+            inner.ts = ts;
+            inner.counter = 0;
+        }
     }
 
     pub fn get(&self) -> HlcTimestamp {
@@ -419,10 +437,10 @@ mod tests {
           #[test]
           fn ordering_antisymmetric(a in arb_timestamp(), b in arb_timestamp()) {
               if a < b {
-                  prop_assert!(!(b < a));
+                  prop_assert!((b >= a));
               }
               if a > b {
-                  prop_assert!(!(b > a));
+                  prop_assert!((b <= a));
               }
           }
 
@@ -639,6 +657,28 @@ mod tests {
 
         assert_eq!(ts.counter, 0);
         assert!(ts.ts > 0);
+    }
+
+    #[test]
+    fn seed_physical_floor_prevents_regression_below_seed() {
+        // Simulate a restart where the wall clock jumped backwards: the system
+        // clock reports an earlier physical time than already-emitted history.
+        let hlc = Hlc::new(1).with_clock(|| 1_000);
+        hlc.seed_physical_floor(5_000);
+
+        let ts = hlc.tick().unwrap();
+        // Even though now_physical() == 1_000, the seed floor keeps us ahead.
+        assert_eq!(ts.ts, 5_000);
+        assert_eq!(ts.counter, 1);
+    }
+
+    #[test]
+    fn seed_physical_floor_is_noop_when_below_current() {
+        let hlc = Hlc::with_state(9_000, 4, 1);
+        hlc.seed_physical_floor(5_000);
+        let ts = hlc.get();
+        assert_eq!(ts.ts, 9_000);
+        assert_eq!(ts.counter, 4);
     }
 
     #[test]

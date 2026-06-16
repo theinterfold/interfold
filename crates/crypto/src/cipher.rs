@@ -12,7 +12,7 @@ use aes_gcm::{
 };
 use anyhow::{anyhow, Result};
 use argon2::{Algorithm, Argon2, Params, Version};
-use rand::{rngs::OsRng, RngCore};
+use rand::RngCore;
 use tracing::trace;
 use zeroize::{Zeroize, Zeroizing};
 
@@ -35,7 +35,7 @@ const ARGON2_VERSION: Version = Version::V0x13;
 const AES_NONCE_LEN: usize = 12;
 
 // TODO: Currently using a fixed salt to make encryption faster. Was ~300ms now ~30ms This should be revised.
-const APP_SALT: [u8; 32] = *b">>ENCLAVE_SYSTEMS_SALT_2025_V1<<";
+const APP_SALT: [u8; 32] = *b">>THE_INTERFOLD_SYS_SALT_2026!<<";
 
 fn argon2_derive_key(
     password_bytes: &Zeroizing<Vec<u8>>,
@@ -51,7 +51,7 @@ fn argon2_derive_key(
     )
     .map_err(|_| anyhow!("Could not create params"))?;
     Argon2::new(ARGON2_ALGORITHM, ARGON2_VERSION, params)
-        .hash_password_into(&password_bytes, &salt, &mut derived_key)
+        .hash_password_into(password_bytes, salt, &mut derived_key)
         .map_err(|_| anyhow!("Key derivation error"))?;
     Ok(derived_key)
 }
@@ -61,11 +61,11 @@ fn encrypt_data(derived_key: &Zeroizing<Vec<u8>>, data: &mut Vec<u8>) -> Result<
 
     // Generate a random nonce for AES-GCM
     let mut nonce_bytes = [0u8; AES_NONCE_LEN];
-    OsRng.fill_bytes(&mut nonce_bytes);
+    rand::rng().fill_bytes(&mut nonce_bytes);
     let nonce = Nonce::from_slice(&nonce_bytes);
 
     // Create AES-GCM cipher
-    let cipher = Aes256Gcm::new_from_slice(&derived_key)
+    let cipher = Aes256Gcm::new_from_slice(derived_key)
         .map_err(|e| anyhow!("Failed to create cipher: {:?}", e))?;
 
     // Encrypt the data
@@ -95,7 +95,7 @@ fn decrypt_data(derived_key: &Zeroizing<Vec<u8>>, encrypted_data: &[u8]) -> Resu
     let ciphertext = &encrypted_data[AES_HEADER_LEN..];
 
     // Create cipher and decrypt
-    let cipher = Aes256Gcm::new_from_slice(&derived_key)
+    let cipher = Aes256Gcm::new_from_slice(derived_key)
         .map_err(|e| anyhow!("Failed to create cipher: {:?}", e))?;
     let plaintext = cipher
         .decrypt(nonce, ciphertext)
@@ -121,15 +121,15 @@ impl Cipher {
     }
 
     pub async fn from_password(value: &str) -> Result<Self> {
-        Ok(Self::new(InMemPasswordManager::from_str(value)).await?)
+        Self::new(InMemPasswordManager::from_str(value)).await
     }
 
     pub async fn from_env(value: &str) -> Result<Self> {
-        Ok(Self::new(EnvPasswordManager::new(value)?).await?)
+        Self::new(EnvPasswordManager::new(value)?).await
     }
 
     pub async fn from_file(value: impl AsRef<Path>) -> Result<Self> {
-        Ok(Self::new(FilePasswordManager::new(value)).await?)
+        Self::new(FilePasswordManager::new(value)).await
     }
 
     /// Encrypt the given data and zeroize the data after encryption

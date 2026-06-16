@@ -158,7 +158,7 @@ impl Handler<Tick> for TimelockQueue {
                 .collect::<Vec<_>>(),
         );
 
-        while self.timelocks.len() > 0 && self.next_timelock_lt(now_time) {
+        while !self.timelocks.is_empty() && self.next_timelock_lt(now_time) {
             if let Some(tl) = self.timelocks.pop() {
                 let seq = tl.0.seq;
                 debug!("Flushing seq {}", seq);

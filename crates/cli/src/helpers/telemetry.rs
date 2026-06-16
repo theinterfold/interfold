@@ -43,7 +43,7 @@ pub fn setup_tracing(config: &AppConfig, log_level: Level) -> Result<()> {
                 .with_resource(resource)
                 .build();
 
-            let tracer = provider.tracer("enclave");
+            let tracer = provider.tracer("interfold");
             let telemetry = tracing_opentelemetry::layer().with_tracer(tracer);
 
             tracing_subscriber::registry()

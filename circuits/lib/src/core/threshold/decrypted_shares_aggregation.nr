@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::compute_threshold_decryption_share_commitment;
-use crate::math::modulo::U128::ModU128;
+use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 use dep::bignum::BigNum;
 use dep::bignum::bignum::to_field;
@@ -132,7 +132,8 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u3
             let t_bn_mod_q = t_bn.umod(q_bn);
             let t_times_u_bn_q = (t_bn_mod_q * u_bn_mod_q).umod(q_bn);
 
-            let m = ModU128::new(self.configs.plaintext_modulus);
+            // t ~ 1000; all inputs < t; quotient < t << 2^64: safe for ModU64.
+            let m = ModU64::new(self.configs.plaintext_modulus as u64);
 
             // Check if centering is needed
             let needs_centering = t_times_u_bn_q > q_half_bn;
@@ -189,7 +190,8 @@ pub fn compute_all_lagrange_coeffs<let T: u32, let L: u32>(
     // Step 3: For each CRT basis, compute Lagrange coefficients
     for basis_idx in 0..L {
         let q_l = qis[basis_idx];
-        let m = ModU128::new(q_l);
+        // party_ids are small (1-indexed, <= T+1); quotient < T+1 << 2^64: safe for ModU64.
+        let m = ModU64::new(q_l as u64);
 
         // Compute product of all party IDs: PRODUCT(j=0..T) x_j mod q_l
         let mut product_x = 1 as Field;
@@ -243,7 +245,8 @@ pub fn compute_crt_components<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let 
 
     for basis_idx in 0..L {
         let q_l = qis[basis_idx];
-        let m = ModU128::new(q_l);
+        // d_coeff < 2^59 (BIT_D_NATIVE=59), l_i_0 < q_l < 2^62; quotient < 2^59: safe for ModU64.
+        let m = ModU64::new(q_l as u64);
         let mut u_coeffs = [0 as Field; MAX_MSG_NON_ZERO_COEFFS];
 
         // For each coefficient position

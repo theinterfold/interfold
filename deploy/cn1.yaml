@@ -5,6 +5,6 @@ chains:
   - name: 'sepolia'
     rpc_url: '${RPC_URL}'
     contracts:
-      enclave: '${SEPOLIA_ENCLAVE_ADDRESS}'
+      interfold: '${SEPOLIA_INTERFOLD_ADDRESS}'
       ciphernode_registry: '${SEPOLIA_CIPHERNODE_REGISTRY_ADDRESS}'
       bonding_registry: '${SEPOLIA_BONDING_REGISTRY}'

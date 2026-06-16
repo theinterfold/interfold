@@ -9,8 +9,8 @@ use super::{
     AggregateConfig, UpdateDestination,
 };
 use crate::{
-    AggregateId, EnclaveEvent, EventContextAccessors, EventContextSeq, Insert, InsertBatch,
-    Sequenced, StoreKeys,
+    AggregateId, EventContextAccessors, EventContextSeq, EventType, Insert, InsertBatch,
+    InterfoldEvent, Sequenced, StoreKeys,
 };
 use actix::{Actor, Addr, Handler, Message, Recipient};
 use e3_utils::MAILBOX_LIMIT;
@@ -47,6 +47,7 @@ impl Actor for BatchRouter {
 }
 
 impl BatchRouter {
+    #[allow(dead_code)]
     pub fn new(
         config: &AggregateConfig,
         timelock_queue: impl Into<Recipient<StartTimelock>>,
@@ -87,6 +88,21 @@ impl BatchRouter {
         self.block_height_seen.insert(agg, highest);
         highest
     }
+
+    /// Force-flush every open batch to disk and clear routing state. Used on
+    /// shutdown so debounced batches that have not yet hit their timelock are
+    /// committed before the process exits, instead of being lost in the
+    /// ~500ms durability window (H2/GF-5).
+    fn flush_all(&mut self) {
+        if self.batches.is_empty() {
+            return;
+        }
+        debug!("Force-flushing {} open batch(es)", self.batches.len());
+        for (_, batch) in self.batches.drain() {
+            batch.do_send(Flush);
+        }
+        self.aggregates.clear();
+    }
 }
 
 impl Handler<Insert> for BatchRouter {
@@ -118,9 +134,18 @@ impl Handler<Insert> for BatchRouter {
     }
 }
 
-impl Handler<EnclaveEvent<Sequenced>> for BatchRouter {
+impl Handler<InterfoldEvent<Sequenced>> for BatchRouter {
     type Result = ();
-    fn handle(&mut self, msg: EnclaveEvent<Sequenced>, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: InterfoldEvent<Sequenced>, _: &mut Self::Context) -> Self::Result {
+        // On shutdown, force every still-open batch to disk before the process
+        // exits. The batch that carries the Shutdown event itself is committed
+        // by the normal path below; this drains any earlier debounced batches
+        // whose timelock has not yet fired (H2/GF-5).
+        if msg.event_type_enum() == EventType::Shutdown {
+            self.flush_all();
+            return;
+        }
+
         let ec = msg.get_ctx();
         let prev_seq = ec.seq() - 1;
         if self.batches.contains_key(&prev_seq) {
@@ -151,17 +176,17 @@ impl Handler<EnclaveEvent<Sequenced>> for BatchRouter {
             self.db.clone(),
             vec![
                 Insert::new_with_context(
-                    &StoreKeys::aggregate_seq(agg_id),
+                    StoreKeys::aggregate_seq(agg_id),
                     encode_u64(ec.seq()),
                     ec.clone(),
                 ),
                 Insert::new_with_context(
-                    &StoreKeys::aggregate_block(agg_id),
+                    StoreKeys::aggregate_block(agg_id),
                     encode_u64(highest_block),
                     ec.clone(),
                 ),
                 Insert::new_with_context(
-                    &StoreKeys::aggregate_ts(agg_id),
+                    StoreKeys::aggregate_ts(agg_id),
                     encode_u128(ec.ts()),
                     ec.clone(),
                 ),

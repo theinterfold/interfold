@@ -40,16 +40,17 @@ pub struct PathsEngine {
     cwd: PathBuf,
 }
 
-pub const DEFAULT_CONFIG_NAME: &str = "enclave.config.yaml";
+pub const DEFAULT_CONFIG_NAME: &str = "interfold.config.yaml";
 pub const DEFAULT_KEY_NAME: &str = "key";
 pub const DEFAULT_DB_NAME: &str = "db";
 pub const DEFAULT_LOG_NAME: &str = "log";
 
 // Find the config file is specified anywhere upstream from cwd and if found then locate the
-// data and config folders under .enclave/data and .enclave/config relative to the location of
+// data and config folders under .interfold/data and .interfold/config relative to the location of
 // the config file. Otherwise locate config in the default app configuration folder and data in
 // the default app data folder.
 impl PathsEngine {
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: &str,
         cwd: &PathBuf,
@@ -155,7 +156,7 @@ impl PathsEngine {
             return root_dir.join("config");
         }
 
-        return self.default_config_dir.clone();
+        self.default_config_dir.clone()
     }
 
     fn get_data_dir(&self) -> PathBuf {
@@ -167,13 +168,13 @@ impl PathsEngine {
             return root_dir.join("data");
         }
 
-        return self.default_data_dir.clone();
+        self.default_data_dir.clone()
     }
 
     fn get_root_dir(&self) -> Option<PathBuf> {
         if let Some(file) = self.found_config_file.clone() {
             if let Some(parent) = file.parent() {
-                return Some(PathBuf::from(parent).join(".enclave"));
+                return Some(PathBuf::from(parent).join(".interfold"));
             }
         }
         None
@@ -183,8 +184,8 @@ impl PathsEngine {
         if let Some(root_dir) = self.get_root_dir() {
             return root_dir;
         }
-        // Fallback to .enclave relative to default config dir (e.g., ~/.config/enclave/.enclave)
-        self.default_config_dir.join(".enclave")
+        // Fallback to .interfold relative to default config dir (e.g., ~/.config/interfold/.interfold)
+        self.default_config_dir.join(".interfold")
     }
 
     /// Get the noir base directory for ZK circuits and prover
@@ -348,8 +349,8 @@ mod test {
                 input: PathsInput {
                     name: "_default",
                     cwd: "/no/matter",
-                    default_data_dir: "/home/user/.local/share/enclave",
-                    default_config_dir: "/home/user/.config/enclave",
+                    default_data_dir: "/home/user/.local/share/interfold",
+                    default_config_dir: "/home/user/.config/interfold",
                     config_dir_override: None,
                     found_config_file: None,
                     data_dir_override: None,
@@ -359,14 +360,14 @@ mod test {
                     bb_file_override: None,
                 },
                 expected: PathsExpected {
-                    config_file: "/home/user/.config/enclave/enclave.config.yaml",
-                    key_file: "/home/user/.config/enclave/_default/key",
-                    db_file: "/home/user/.local/share/enclave/_default/db",
-                    log_file: "/home/user/.local/share/enclave/_default/log",
-                    bb_file: "/home/user/.config/enclave/.enclave/noir/bin/bb",
-                    noir_dir: "/home/user/.config/enclave/.enclave/noir",
-                    circuits_dir: "/home/user/.config/enclave/.enclave/noir/circuits",
-                    work_dir: "/home/user/.config/enclave/.enclave/noir/work/_default",
+                    config_file: "/home/user/.config/interfold/interfold.config.yaml",
+                    key_file: "/home/user/.config/interfold/_default/key",
+                    db_file: "/home/user/.local/share/interfold/_default/db",
+                    log_file: "/home/user/.local/share/interfold/_default/log",
+                    bb_file: "/home/user/.config/interfold/.interfold/noir/bin/bb",
+                    noir_dir: "/home/user/.config/interfold/.interfold/noir",
+                    circuits_dir: "/home/user/.config/interfold/.interfold/noir/circuits",
+                    work_dir: "/home/user/.config/interfold/.interfold/noir/work/_default",
                 },
             },
             TestCase {
@@ -374,8 +375,8 @@ mod test {
                 input: PathsInput {
                     name: "_default",
                     cwd: "/no/matter",
-                    default_data_dir: "/home/user/.local/share/enclave/data",
-                    default_config_dir: "/home/user/.config/enclave/config",
+                    default_data_dir: "/home/user/.local/share/interfold/data",
+                    default_config_dir: "/home/user/.config/interfold/config",
                     config_dir_override: None,
                     found_config_file: Some("/foo/some.config.yaml"),
                     data_dir_override: None,
@@ -386,13 +387,13 @@ mod test {
                 },
                 expected: PathsExpected {
                     config_file: "/foo/some.config.yaml",
-                    key_file: "/foo/.enclave/config/_default/key",
-                    db_file: "/foo/.enclave/data/_default/db",
-                    log_file: "/foo/.enclave/data/_default/log",
-                    bb_file: "/foo/.enclave/noir/bin/bb",
-                    noir_dir: "/foo/.enclave/noir",
-                    circuits_dir: "/foo/.enclave/noir/circuits",
-                    work_dir: "/foo/.enclave/noir/work/_default",
+                    key_file: "/foo/.interfold/config/_default/key",
+                    db_file: "/foo/.interfold/data/_default/db",
+                    log_file: "/foo/.interfold/data/_default/log",
+                    bb_file: "/foo/.interfold/noir/bin/bb",
+                    noir_dir: "/foo/.interfold/noir",
+                    circuits_dir: "/foo/.interfold/noir/circuits",
+                    work_dir: "/foo/.interfold/noir/work/_default",
                 },
             },
             TestCase {
@@ -400,8 +401,8 @@ mod test {
                 input: PathsInput {
                     name: "_default",
                     cwd: "/no/matter",
-                    default_data_dir: "/home/user/.local/share/enclave/data",
-                    default_config_dir: "/home/user/.config/enclave/config",
+                    default_data_dir: "/home/user/.local/share/interfold/data",
+                    default_config_dir: "/home/user/.config/interfold/config",
                     config_dir_override: None,
                     found_config_file: Some("/foo/some.config.yaml"),
                     data_dir_override: Some("/path/to/data"),
@@ -412,13 +413,13 @@ mod test {
                 },
                 expected: PathsExpected {
                     config_file: "/foo/some.config.yaml",
-                    key_file: "/foo/.enclave/config/_default/key",
+                    key_file: "/foo/.interfold/config/_default/key",
                     db_file: "/path/to/data/_default/db",
                     log_file: "/path/to/data/_default/log",
-                    bb_file: "/foo/.enclave/noir/bin/bb",
-                    noir_dir: "/foo/.enclave/noir",
-                    circuits_dir: "/foo/.enclave/noir/circuits",
-                    work_dir: "/foo/.enclave/noir/work/_default",
+                    bb_file: "/foo/.interfold/noir/bin/bb",
+                    noir_dir: "/foo/.interfold/noir",
+                    circuits_dir: "/foo/.interfold/noir/circuits",
+                    work_dir: "/foo/.interfold/noir/work/_default",
                 },
             },
             TestCase {
@@ -426,8 +427,8 @@ mod test {
                 input: PathsInput {
                     name: "_default",
                     cwd: "/no/matter",
-                    default_data_dir: "/home/user/.local/share/enclave/data",
-                    default_config_dir: "/home/user/.config/enclave/config",
+                    default_data_dir: "/home/user/.local/share/interfold/data",
+                    default_config_dir: "/home/user/.config/interfold/config",
                     config_dir_override: Some("/confy/stuff"),
                     found_config_file: Some("/foo/some.config.yaml"),
                     data_dir_override: Some("/path/to/data"),
@@ -441,10 +442,10 @@ mod test {
                     key_file: "/confy/stuff/_default/key",
                     db_file: "/path/to/data/_default/db",
                     log_file: "/path/to/data/_default/log",
-                    bb_file: "/foo/.enclave/noir/bin/bb",
-                    noir_dir: "/foo/.enclave/noir",
-                    circuits_dir: "/foo/.enclave/noir/circuits",
-                    work_dir: "/foo/.enclave/noir/work/_default",
+                    bb_file: "/foo/.interfold/noir/bin/bb",
+                    noir_dir: "/foo/.interfold/noir",
+                    circuits_dir: "/foo/.interfold/noir/circuits",
+                    work_dir: "/foo/.interfold/noir/work/_default",
                 },
             },
             TestCase {
@@ -452,8 +453,8 @@ mod test {
                 input: PathsInput {
                     cwd: "/no/matter",
                     name: "_default",
-                    default_data_dir: "/home/user/.local/share/enclave/data",
-                    default_config_dir: "/home/user/.config/enclave/config",
+                    default_data_dir: "/home/user/.local/share/interfold/data",
+                    default_config_dir: "/home/user/.config/interfold/config",
                     config_dir_override: Some("/confy/stuff"),
                     found_config_file: Some("/foo/some.config.yaml"),
                     data_dir_override: Some("/path/to/data"),
@@ -467,10 +468,10 @@ mod test {
                     key_file: "/ding/bat/key_file",
                     db_file: "/path/to/data/_default/db",
                     log_file: "/path/to/data/_default/log",
-                    bb_file: "/foo/.enclave/noir/bin/bb",
-                    noir_dir: "/foo/.enclave/noir",
-                    circuits_dir: "/foo/.enclave/noir/circuits",
-                    work_dir: "/foo/.enclave/noir/work/_default",
+                    bb_file: "/foo/.interfold/noir/bin/bb",
+                    noir_dir: "/foo/.interfold/noir",
+                    circuits_dir: "/foo/.interfold/noir/circuits",
+                    work_dir: "/foo/.interfold/noir/work/_default",
                 },
             },
             TestCase {
@@ -478,8 +479,8 @@ mod test {
                 input: PathsInput {
                     cwd: "/no/matter",
                     name: "_default",
-                    default_data_dir: "/home/user/.local/share/enclave/data",
-                    default_config_dir: "/home/user/.config/enclave/config",
+                    default_data_dir: "/home/user/.local/share/interfold/data",
+                    default_config_dir: "/home/user/.config/interfold/config",
                     config_dir_override: Some("/confy/stuff"),
                     found_config_file: Some("/foo/some.config.yaml"),
                     data_dir_override: Some("/path/to/data"),
@@ -494,10 +495,10 @@ mod test {
                     key_file: "/confy/stuff/bat/key_file",
                     db_file: "/path/to/data/_default/db",
                     log_file: "/path/to/data/_default/log",
-                    bb_file: "/foo/.enclave/noir/bin/bb",
-                    noir_dir: "/foo/.enclave/noir",
-                    circuits_dir: "/foo/.enclave/noir/circuits",
-                    work_dir: "/foo/.enclave/noir/work/_default",
+                    bb_file: "/foo/.interfold/noir/bin/bb",
+                    noir_dir: "/foo/.interfold/noir",
+                    circuits_dir: "/foo/.interfold/noir/circuits",
+                    work_dir: "/foo/.interfold/noir/work/_default",
                 },
             },
             TestCase {
@@ -505,8 +506,8 @@ mod test {
                 input: PathsInput {
                     cwd: "/no/matter",
                     name: "_default",
-                    default_data_dir: "/home/user/.local/share/enclave/data",
-                    default_config_dir: "/home/user/.config/enclave/config",
+                    default_data_dir: "/home/user/.local/share/interfold/data",
+                    default_config_dir: "/home/user/.config/interfold/config",
                     config_dir_override: Some("/confy/stuff"),
                     found_config_file: Some("/foo/some.config.yaml"),
                     data_dir_override: Some("/path/to/data"),
@@ -520,10 +521,10 @@ mod test {
                     key_file: "/confy/stuff/bat/key_file",
                     db_file: "/ding/blat/foo/my/data",
                     log_file: "/path/to/data/ding/loggy",
-                    bb_file: "/foo/.enclave/noir/bin/bb",
-                    noir_dir: "/foo/.enclave/noir",
-                    circuits_dir: "/foo/.enclave/noir/circuits",
-                    work_dir: "/foo/.enclave/noir/work/_default",
+                    bb_file: "/foo/.interfold/noir/bin/bb",
+                    noir_dir: "/foo/.interfold/noir",
+                    circuits_dir: "/foo/.interfold/noir/circuits",
+                    work_dir: "/foo/.interfold/noir/work/_default",
                 },
             },
             TestCase {
@@ -531,8 +532,8 @@ mod test {
                 input: PathsInput {
                     name: "_default",
                     cwd: "/no/matter",
-                    default_data_dir: "/home/user/.local/share/enclave/data",
-                    default_config_dir: "/home/user/.config/enclave/config",
+                    default_data_dir: "/home/user/.local/share/interfold/data",
+                    default_config_dir: "/home/user/.config/interfold/config",
                     config_dir_override: Some("/confy/stuff"),
                     found_config_file: Some("/foo/some.config.yaml"),
                     data_dir_override: Some("/path/to/data"),
@@ -546,10 +547,10 @@ mod test {
                     key_file: "/confy/stuff/bat/key_file",
                     db_file: "/path/to/yes",
                     log_file: "/path/to/data/_default/log",
-                    bb_file: "/foo/.enclave/noir/bin/bb",
-                    noir_dir: "/foo/.enclave/noir",
-                    circuits_dir: "/foo/.enclave/noir/circuits",
-                    work_dir: "/foo/.enclave/noir/work/_default",
+                    bb_file: "/foo/.interfold/noir/bin/bb",
+                    noir_dir: "/foo/.interfold/noir",
+                    circuits_dir: "/foo/.interfold/noir/circuits",
+                    work_dir: "/foo/.interfold/noir/work/_default",
                 },
             },
             TestCase {
@@ -557,8 +558,8 @@ mod test {
                 input: PathsInput {
                     name: "_default",
                     cwd: "/no/matter",
-                    default_data_dir: "/home/user/.local/share/enclave/data",
-                    default_config_dir: "/home/user/.config/enclave/config",
+                    default_data_dir: "/home/user/.local/share/interfold/data",
+                    default_config_dir: "/home/user/.config/interfold/config",
                     config_dir_override: None,
                     found_config_file: Some("/foo/some.config.yaml"),
                     data_dir_override: None,
@@ -569,13 +570,13 @@ mod test {
                 },
                 expected: PathsExpected {
                     config_file: "/foo/some.config.yaml",
-                    key_file: "/foo/.enclave/config/_default/key",
-                    db_file: "/foo/.enclave/data/_default/db",
-                    log_file: "/foo/.enclave/data/_default/log",
+                    key_file: "/foo/.interfold/config/_default/key",
+                    db_file: "/foo/.interfold/data/_default/db",
+                    log_file: "/foo/.interfold/data/_default/log",
                     bb_file: "/custom/bin/bb",
-                    noir_dir: "/foo/.enclave/noir",
-                    circuits_dir: "/foo/.enclave/noir/circuits",
-                    work_dir: "/foo/.enclave/noir/work/_default",
+                    noir_dir: "/foo/.interfold/noir",
+                    circuits_dir: "/foo/.interfold/noir/circuits",
+                    work_dir: "/foo/.interfold/noir/work/_default",
                 },
             },
             TestCase {
@@ -583,8 +584,8 @@ mod test {
                 input: PathsInput {
                     name: "_default",
                     cwd: "/no/matter",
-                    default_data_dir: "/home/user/.local/share/enclave/data",
-                    default_config_dir: "/home/user/.config/enclave/config",
+                    default_data_dir: "/home/user/.local/share/interfold/data",
+                    default_config_dir: "/home/user/.config/interfold/config",
                     config_dir_override: None,
                     found_config_file: Some("/foo/some.config.yaml"),
                     data_dir_override: None,
@@ -595,13 +596,13 @@ mod test {
                 },
                 expected: PathsExpected {
                     config_file: "/foo/some.config.yaml",
-                    key_file: "/foo/.enclave/config/_default/key",
-                    db_file: "/foo/.enclave/data/_default/db",
-                    log_file: "/foo/.enclave/data/_default/log",
-                    bb_file: "/foo/.enclave/bb-binary",
-                    noir_dir: "/foo/.enclave/noir",
-                    circuits_dir: "/foo/.enclave/noir/circuits",
-                    work_dir: "/foo/.enclave/noir/work/_default",
+                    key_file: "/foo/.interfold/config/_default/key",
+                    db_file: "/foo/.interfold/data/_default/db",
+                    log_file: "/foo/.interfold/data/_default/log",
+                    bb_file: "/foo/.interfold/bb-binary",
+                    noir_dir: "/foo/.interfold/noir",
+                    circuits_dir: "/foo/.interfold/noir/circuits",
+                    work_dir: "/foo/.interfold/noir/work/_default",
                 },
             },
         ]);
@@ -609,8 +610,8 @@ mod test {
 
     #[test]
     fn test_is_default_config_file() {
-        let default_data_dir = PathBuf::from("/home/user/.local/share/enclave");
-        let default_config_dir = PathBuf::from("/home/user/.config/enclave");
+        let default_data_dir = PathBuf::from("/home/user/.local/share/interfold");
+        let default_config_dir = PathBuf::from("/home/user/.config/interfold");
         let cwd = PathBuf::from("/no/matter");
 
         // Test case 1: No found_config_file - should be default
@@ -652,7 +653,7 @@ mod test {
             &default_data_dir,
             &default_config_dir,
             Some(&PathBuf::from(
-                "/home/user/.config/enclave/enclave.config.yaml",
+                "/home/user/.config/interfold/interfold.config.yaml",
             )),
             None,
             None,
@@ -670,7 +671,7 @@ mod test {
             &default_data_dir,
             &default_config_dir,
             Some(&PathBuf::from(
-                "/home/user/.config/enclave/./enclave.config.yaml",
+                "/home/user/.config/interfold/./interfold.config.yaml",
             )),
             None,
             None,

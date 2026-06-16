@@ -15,16 +15,16 @@ const Footer: React.FC = () => {
         <span>© 2026 — Crisp Protocol</span>
         <span className='muted'>Secret-ballot voting with FHE + threshold MPC</span>
         <div className='links' style={{ alignItems: 'center' }}>
-          <a href='https://github.com/gnosisguild/enclave' target='_blank' rel='noopener noreferrer' aria-label='GitHub'>
+          <a href='https://github.com/gnosisguild/interfold' target='_blank' rel='noopener noreferrer' aria-label='GitHub'>
             <GithubLogo size={18} />
           </a>
-          <a href='https://x.com/EnclaveE3' target='_blank' rel='noopener noreferrer' aria-label='X'>
+          <a href='https://x.com/InterfoldE3' target='_blank' rel='noopener noreferrer' aria-label='X'>
             <TwitterLogo size={18} />
           </a>
-          <a href='https://t.me/enclave_e3' target='_blank' rel='noopener noreferrer' aria-label='Telegram'>
+          <a href='https://t.me/interfold_e3' target='_blank' rel='noopener noreferrer' aria-label='Telegram'>
             <TelegramLogo size={18} />
           </a>
-          <a href='https://warpcast.com/enclavee3' target='_blank' rel='noopener noreferrer' aria-label='Farcaster'>
+          <a href='https://warpcast.com/interfolde3' target='_blank' rel='noopener noreferrer' aria-label='Farcaster'>
             <CastleTurret size={18} />
           </a>
           <a href='https://theinterfold.com' target='_blank' rel='noopener noreferrer'>

@@ -6,8 +6,8 @@
 
 import React, { createContext, useContext, useEffect, useMemo, useCallback, useState, ReactNode } from 'react'
 import { useAccount } from 'wagmi'
-import { useEnclaveSDK, UseEnclaveSDKReturn } from '@enclave-e3/react'
-import { getEnclaveSDKConfig } from '@/utils/sdk-config'
+import { useInterfoldSDK, UseInterfoldSDKReturn } from '@interfold/react'
+import { getInterfoldSDKConfig } from '@/utils/sdk-config'
 
 // ============================================================================
 // TYPES & ENUMS
@@ -67,7 +67,7 @@ interface WizardContextType {
   handleTryAgain: () => void
 
   // SDK
-  sdk: UseEnclaveSDKReturn
+  sdk: UseInterfoldSDKReturn
 }
 
 const WizardContext = createContext<WizardContextType | undefined>(undefined)
@@ -95,8 +95,8 @@ export const WizardProvider: React.FC<WizardProviderProps> = ({ children }) => {
   const { isConnected } = useAccount()
 
   // Memoize the SDK config to prevent unnecessary re-initializations.
-  const sdkConfig = useMemo(() => getEnclaveSDKConfig(), [])
-  const sdk = useEnclaveSDK(sdkConfig)
+  const sdkConfig = useMemo(() => getInterfoldSDKConfig(), [])
+  const sdk = useInterfoldSDK(sdkConfig)
 
   const [currentStep, setCurrentStep] = useState<WizardStep>(WizardStep.CONNECT_WALLET)
   const [submittedInputs, setSubmittedInputs] = useState<{ input1: string; input2: string } | null>(null)

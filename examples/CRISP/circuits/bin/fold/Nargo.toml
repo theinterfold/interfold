@@ -2,8 +2,8 @@
 name = "crisp_fold"
 type = "bin"
 version = "0.1.0"
-authors = ["Gnosis Guild / Enclave"]
+authors = ["Gnosis Guild / Interfold"]
 
 [dependencies]
-enclave_lib = { path = "../../../../../circuits/lib" }
+interfold_lib = { path = "../../../../../circuits/lib" }
 bb_proof_verification = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v3.0.0-nightly.20260102", directory = "barretenberg/noir/bb_proof_verification" }

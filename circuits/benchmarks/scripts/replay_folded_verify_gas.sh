@@ -6,7 +6,7 @@
 # Usage (from repo root):
 #   ./circuits/benchmarks/scripts/replay_folded_verify_gas.sh \
 #     --summary /tmp/summary_secure.json \
-#     --gas-json ./circuits/benchmarks/results_secure/crisp_verify_gas.json \
+#     --gas-json ./circuits/benchmarks/results_secure_minimum/crisp_verify_gas.json \
 #     --build secure-8192
 #
 # Use --build <preset> when Hardhat reverts with SumcheckFailed (verifier VKs must match the
@@ -17,11 +17,12 @@ set -e
 SUMMARY_JSON=""
 GAS_JSON=""
 BUILD_PRESET=""
+COMMITTEE=""
 FORCE_BUILD=false
 SKIP_BUILD=false
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../../.." && pwd)"
-ENCLAVE_CONTRACTS="${REPO_ROOT}/packages/enclave-contracts"
+INTERFOLD_CONTRACTS="${REPO_ROOT}/packages/interfold-contracts"
 
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -29,6 +30,17 @@ while [[ $# -gt 0 ]]; do
         --gas-json) GAS_JSON="$2"; shift 2 ;;
         --build)
             BUILD_PRESET="$2"
+            shift 2
+            ;;
+        --committee)
+            COMMITTEE="$2"
+            case "$COMMITTEE" in
+                minimum|micro|small) ;;
+                *)
+                    echo "Error: --committee must be minimum|micro|small (got: $COMMITTEE)"
+                    exit 1
+                    ;;
+            esac
             shift 2
             ;;
         --force-build)
@@ -83,21 +95,25 @@ if [ -n "$BUILD_PRESET" ]; then
         "${SCRIPT_DIR}/check_circuit_preset_artifacts.sh" "$BUILD_PRESET"
     else
         ENSURE_ARGS=("$BUILD_PRESET")
+        if [ -n "$COMMITTEE" ]; then
+            ENSURE_ARGS+=(--committee "$COMMITTEE")
+        fi
         if [ "$FORCE_BUILD" = true ]; then
             ENSURE_ARGS+=(--force-build)
         fi
         "${SCRIPT_DIR}/ensure_circuit_preset_built.sh" "${ENSURE_ARGS[@]}"
-        echo "  [replay-gas] Regenerating Honk Solidity verifiers (pnpm generate:verifiers --no-compile)..."
-        (cd "$REPO_ROOT" && pnpm generate:verifiers --no-compile)
+        echo "  [replay-gas] Verifying preset '${BUILD_PRESET}' (dist stamp + circuits/bin)..."
+        (cd "$REPO_ROOT" && pnpm generate:verifiers --check --no-compile --preset "$BUILD_PRESET")
     fi
 fi
 
 echo "  [replay-gas] Running Hardhat benchmarkGasFromRaw.ts (folded proofs)..."
 (
-    cd "$ENCLAVE_CONTRACTS" && \
+    cd "$INTERFOLD_CONTRACTS" && \
     BENCHMARK_RAW_DIR="$RAW_DIR" \
     BENCHMARK_GAS_OUTPUT="$TMP_GAS_PARTIAL" \
     BENCHMARK_FOLDED_JSON="$TMP_FOLDED" \
+    BENCHMARK_PRESET="${BUILD_PRESET:-insecure-512}" \
     pnpm hardhat run scripts/benchmarkGasFromRaw.ts --network hardhat
 )
 

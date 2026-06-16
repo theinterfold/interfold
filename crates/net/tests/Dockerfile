@@ -1,11 +1,11 @@
 # syntax=docker/dockerfile:1-labs
-FROM rust:1.86 AS builder
+FROM rust:1.91 AS builder
 
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
-    software-properties-common \
+    protobuf-compiler \
     && rm -rf /var/lib/apt/lists/*
 
 RUN curl -L https://github.com/ethereum/solidity/releases/download/v0.8.27/solc-static-linux -o /usr/local/bin/solc \

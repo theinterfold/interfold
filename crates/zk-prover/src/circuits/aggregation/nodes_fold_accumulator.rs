@@ -58,6 +58,31 @@ struct NodesFoldStepInput {
     slot_index: u32,
 }
 
+struct NodesFoldVks {
+    inner_vk: vk::VkArtifacts,
+    fold_vk: vk::VkArtifacts,
+    kernel_vk: vk::VkArtifacts,
+}
+
+impl NodesFoldVks {
+    fn load(prover: &ZkProver, artifacts_dir: &str) -> Result<Self, ZkError> {
+        Ok(Self {
+            inner_vk: vk::load_vk_artifacts(
+                &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+                CircuitName::NodeFold,
+            )?,
+            fold_vk: vk::load_vk_artifacts(
+                &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+                CircuitName::NodesFold,
+            )?,
+            kernel_vk: vk::load_vk_artifacts(
+                &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+                CircuitName::NodesFoldKernel,
+            )?,
+        })
+    }
+}
+
 /// Proves [`CircuitName::NodesFoldKernel`] for the same `inner` / `total_slots` / `slot_index` as the
 /// fold step.
 fn generate_nodes_fold_kernel_genesis_proof(
@@ -118,7 +143,6 @@ fn generate_nodes_fold_kernel_genesis_proof(
         job_id,
         artifacts_dir,
     )?;
-    let _ = prover.cleanup(job_id);
     Ok(proof)
 }
 
@@ -129,7 +153,8 @@ fn parse_nodes_fold_public_field_strings(proof: &Proof) -> Result<Vec<String>, Z
     parse_acc_public_field_strings_flat(proof, CircuitName::NodesFold, NODES_FOLD_PREFIX_LEN)
 }
 
-fn generate_nodes_fold_step(
+#[allow(clippy::too_many_arguments)]
+fn generate_nodes_fold_step_with_vks(
     prover: &ZkProver,
     inner: &Proof,
     prior_fold: Option<&Proof>,
@@ -137,13 +162,10 @@ fn generate_nodes_fold_step(
     total_slots: usize,
     e3_id: &str,
     artifacts_dir: &str,
+    vks: &NodesFoldVks,
 ) -> Result<Proof, ZkError> {
     let is_first_step = prior_fold.is_none();
 
-    let inner_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::NodeFold,
-    )?;
     let nf_fields = node_fold_statement_field_count(inner)?;
     let node_fold_public_inputs = bytes_to_field_strings(inner.public_signals.as_ref())?;
     if node_fold_public_inputs.len() != nf_fields {
@@ -154,11 +176,7 @@ fn generate_nodes_fold_step(
 
     let expected_acc_pub = nodes_fold_acc_public_len(nf_fields, total_slots);
 
-    let (acc_vk_art, acc_proof, acc_public_inputs) = if is_first_step {
-        let kernel_vk = vk::load_vk_artifacts(
-            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-            CircuitName::NodesFoldKernel,
-        )?;
+    let (acc_vk_fields, acc_vk_hash, acc_proof, acc_public_inputs) = if is_first_step {
         let kernel_job_id = format!("{e3_id}-nodesfold-kernel");
         let kernel_proof = generate_nodes_fold_kernel_genesis_proof(
             prover,
@@ -178,7 +196,8 @@ fn generate_nodes_fold_step(
             )));
         }
         (
-            kernel_vk,
+            vks.kernel_vk.verification_key.clone(),
+            vks.kernel_vk.key_hash.clone(),
             bytes_to_field_strings(&kernel_proof.data)?,
             acc_pi,
         )
@@ -194,24 +213,22 @@ fn generate_nodes_fold_step(
             )));
         }
         (
-            vk::load_vk_artifacts(
-                &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-                CircuitName::NodesFold,
-            )?,
+            vks.fold_vk.verification_key.clone(),
+            vks.fold_vk.key_hash.clone(),
             bytes_to_field_strings(&p.data)?,
             acc_pi,
         )
     };
 
     let full_input = NodesFoldStepInput {
-        inner_vk: inner_vk.verification_key,
+        inner_vk: vks.inner_vk.verification_key.clone(),
         inner_proof: bytes_to_field_strings(&inner.data)?,
         node_fold_public_inputs,
-        acc_vk: acc_vk_art.verification_key,
+        acc_vk: acc_vk_fields,
         acc_proof,
         acc_public_inputs,
-        inner_key_hash: inner_vk.key_hash,
-        acc_key_hash: acc_vk_art.key_hash,
+        inner_key_hash: vks.inner_vk.key_hash.clone(),
+        acc_key_hash: acc_vk_hash,
         is_first_step,
         slot_index,
     };
@@ -237,6 +254,29 @@ fn generate_nodes_fold_step(
     )
 }
 
+/// Single streaming step — loads VKs from disk on each call (suitable for async dispatch).
+pub fn generate_nodes_fold_step(
+    prover: &ZkProver,
+    inner: &Proof,
+    prior_fold: Option<&Proof>,
+    slot_index: u32,
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    let vks = NodesFoldVks::load(prover, artifacts_dir)?;
+    generate_nodes_fold_step_with_vks(
+        prover,
+        inner,
+        prior_fold,
+        slot_index,
+        total_slots,
+        e3_id,
+        artifacts_dir,
+        &vks,
+    )
+}
+
 /// Folds `inner_proofs` (one [`CircuitName::NodeFold`] per honest party) into a single
 /// [`CircuitName::NodesFold`] proof for [`CircuitName::DkgAggregator`].
 ///
@@ -250,12 +290,13 @@ pub fn generate_sequential_nodes_fold(
     e3_id: &str,
     artifacts_dir: &str,
 ) -> Result<Proof, ZkError> {
+    let vks = NodesFoldVks::load(prover, artifacts_dir)?;
     sequential_fold(
         "generate_sequential_nodes_fold",
         inner_proofs,
         slot_indices,
         |inner, prior, slot| {
-            generate_nodes_fold_step(
+            generate_nodes_fold_step_with_vks(
                 prover,
                 inner,
                 prior,
@@ -263,6 +304,7 @@ pub fn generate_sequential_nodes_fold(
                 total_slots,
                 e3_id,
                 artifacts_dir,
+                &vks,
             )
         },
     )

@@ -6,3 +6,5 @@
 
 pub mod unconstrained_U128;
 pub mod U128;
+pub mod unconstrained_U64;
+pub mod U64;

@@ -1,0 +1,23 @@
+[package]
+name = "e3-slashing"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "E3 fault attribution, accusation quorum, and commitment consistency"
+repository = "https://github.com/gnosisguild/interfold/crates/slashing"
+
+[dependencies]
+actix = { workspace = true }
+alloy = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+chrono = { workspace = true }
+e3-events = { workspace = true }
+e3-fhe-params = { workspace = true }
+e3-request = { workspace = true }
+e3-utils = { workspace = true }
+e3-zk-helpers = { workspace = true }
+hex = { workspace = true }
+serde = { workspace = true }
+sha2 = { workspace = true }
+tracing = { workspace = true }

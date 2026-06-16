@@ -20,6 +20,9 @@
     "ciphernode:mint:tokens": "pnpm -C packages/crisp-contracts ciphernode:mint:tokens",
     "ciphernode:add:self": "pnpm -C packages/crisp-contracts ciphernode:add:self",
     "deploy:contracts": "pnpm -C packages/crisp-contracts deploy:contracts",
+    "deploy:contracts:mock": "pnpm -C packages/crisp-contracts deploy:contracts:mock",
+    "deploy:contracts:full": "pnpm -C packages/crisp-contracts deploy:contracts:full",
+    "deploy:contracts:full:mock": "pnpm -C packages/crisp-contracts deploy:contracts:full:mock",
     "test": "pnpm test:e2e",
     "test:circuits": "cd circuits/lib && nargo test",
     "compile:circuits": "bash ./scripts/compile_circuits.sh",
@@ -31,7 +34,7 @@
     "setup:testnet": "bash ./scripts/setup_testnet.sh"
   },
   "devDependencies": {
-    "@enclave-e3/config": "^0",
+    "@interfold/config": "^0",
     "eslint": "^9.39.1",
     "@playwright/test": "1.52.0",
     "@synthetixio/synpress": "^4.1.0",

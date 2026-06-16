@@ -13,11 +13,12 @@ use anyhow::{anyhow, Result};
 use async_trait::async_trait;
 use e3_crypto::Cipher;
 use e3_data::{AutoPersist, RepositoriesFactory};
-use e3_events::{prelude::*, BusHandle, EType, EnclaveEvent, EnclaveEventData};
+use e3_events::{prelude::*, BusHandle, EType, InterfoldEvent, InterfoldEventData};
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
 
 use crate::KeyshareState;
 use std::sync::Arc;
+
 pub struct ThresholdKeyshareExtension {
     bus: BusHandle,
     cipher: Arc<Cipher>,
@@ -39,9 +40,9 @@ const ERROR_KEYSHARE_META_MISSING: &str =
 
 #[async_trait]
 impl E3Extension for ThresholdKeyshareExtension {
-    fn on_event(&self, ctx: &mut E3Context, evt: &EnclaveEvent) {
+    fn on_event(&self, ctx: &mut E3Context, evt: &InterfoldEvent) {
         // if this is NOT a CiphernodeSelected event then ignore
-        let EnclaveEventData::CiphernodeSelected(data) = evt.get_data() else {
+        let InterfoldEventData::CiphernodeSelected(data) = evt.get_data() else {
             return;
         };
 

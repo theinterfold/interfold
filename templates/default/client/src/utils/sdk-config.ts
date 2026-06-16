@@ -5,18 +5,18 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { getContractAddresses } from './env-config'
-import type { ThresholdBfvParamsPresetName } from '@enclave-e3/sdk'
+import type { ThresholdBfvParamsPresetName } from '@interfold/sdk'
 import { THRESHOLD_BFV_PARAMS_PRESET_NAME } from './env-config'
 
 /**
- * Get the Enclave SDK configuration.
+ * Get the Interfold SDK configuration.
  */
-export function getEnclaveSDKConfig() {
+export function getInterfoldSDKConfig() {
   const contracts = getContractAddresses()
   return {
     autoConnect: true,
     contracts: {
-      enclave: contracts.enclave,
+      interfold: contracts.interfold,
       ciphernodeRegistry: contracts.ciphernodeRegistry,
       feeToken: contracts.feeToken,
     },

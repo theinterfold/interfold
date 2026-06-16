@@ -60,10 +60,10 @@ class VersionBumper {
         console.log('   1. Update Rust workspace version in Cargo.toml')
         console.log('   2. Update NPM package versions in:')
         console.log('      - Root package.json')
-        console.log('      - packages/enclave-sdk')
-        console.log('      - packages/enclave-contracts')
-        console.log('      - packages/enclave-config')
-        console.log('      - packages/enclave-react')
+        console.log('      - packages/interfold-sdk')
+        console.log('      - packages/interfold-contracts')
+        console.log('      - packages/interfold-config')
+        console.log('      - packages/interfold-react')
         console.log('      - crates/wasm')
         console.log('   3. Update lock files (Cargo.lock, pnpm-lock.yaml)')
         console.log('   4. Generate/update CHANGELOG.md')
@@ -315,11 +315,11 @@ class VersionBumper {
         cwd: this.rootDir,
         stdio: 'pipe',
       })
-      execSync('cargo update', {
+      execSync('cargo update --workspace', {
         cwd: `${this.rootDir}/examples/CRISP`,
         stdio: 'pipe',
       })
-      execSync('cargo update', {
+      execSync('cargo update --workspace', {
         cwd: `${this.rootDir}/templates/default`,
         stdio: 'pipe',
       })
@@ -383,11 +383,11 @@ class VersionBumper {
 
     // Main packages to bump (excluding examples and templates)
     const packagesToBump = [
-      'packages/enclave-sdk',
-      'packages/enclave-contracts',
-      'packages/enclave-config',
-      'packages/enclave-react',
-      'packages/enclave-mcp',
+      'packages/interfold-sdk',
+      'packages/interfold-contracts',
+      'packages/interfold-config',
+      'packages/interfold-react',
+      'packages/interfold-mcp',
       'crates/wasm',
     ]
 
@@ -550,7 +550,7 @@ function showHelp() {
   console.log(`
 Usage: pnpm bump:versions [options] <version>
 
-Version Bump Script for Enclave Monorepo
+Version Bump Script for Interfold Monorepo
 Bumps all versions, generates changelog, commits, tags, and pushes to trigger release.
 
 Arguments:

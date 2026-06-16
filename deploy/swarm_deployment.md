@@ -56,13 +56,13 @@ sudo systemctl restart docker
 Clone the repo
 
 ```
-git clone https://github.com/gnosisguild/enclave.git
+git clone https://github.com/gnosisguild/interfold.git
 ```
 
 Move to the new folder:
 
 ```
-cd enclave/
+cd interfold/
 ```
 
 Build the app
@@ -83,7 +83,7 @@ Alter the variables to reflect the correct values required for the stack:
 
 ```
 export RPC_URL=wss://eth-sepolia.g.alchemy.com/v2/<SOME_API_KEY>
-export SEPOLIA_ENCLAVE_ADDRESS=0xCe087F31e20E2F76b6544A2E4A74D4557C8fDf77
+export SEPOLIA_INTERFOLD_ADDRESS=0xCe087F31e20E2F76b6544A2E4A74D4557C8fDf77
 export SEPOLIA_CIPHERNODE_REGISTRY_ADDRESS=0x0952388f6028a9Eda93a5041a3B216Ea331d97Ab
 export SEPOLIA_BONDING_REGISTRY=0xcBaCE7C360b606bb554345b20884A28e41436934
 ```
@@ -126,7 +126,7 @@ Remember to modify any highlighted files before use with unique secrets.
 To deploy
 
 ```
-./deploy/deploy.sh enclave ghcr.io/gnosisguild/ciphernode:latest
+./deploy/deploy.sh interfold ghcr.io/gnosisguild/ciphernode:latest
 ```
 
 This will deploy the following services:
@@ -134,10 +134,10 @@ This will deploy the following services:
 ```
 ❯ docker service ls
 ID             NAME                 MODE         REPLICAS   IMAGE                  PORTS
-tr44go8vevh1   enclave_cn4          replicated   1/1        ghcr.io/gnosisguild/ciphernode:latest
-kdqktv85xcuv   enclave_cn1          replicated   1/1        ghcr.io/gnosisguild/ciphernode:latest
-nguul381w6mu   enclave_cn2          replicated   1/1        ghcr.io/gnosisguild/ciphernode:latest
-zgmwmv7cd63j   enclave_cn3          replicated   1/1        ghcr.io/gnosisguild/ciphernode:latest
+tr44go8vevh1   interfold_cn4          replicated   1/1        ghcr.io/gnosisguild/ciphernode:latest
+kdqktv85xcuv   interfold_cn1          replicated   1/1        ghcr.io/gnosisguild/ciphernode:latest
+nguul381w6mu   interfold_cn2          replicated   1/1        ghcr.io/gnosisguild/ciphernode:latest
+zgmwmv7cd63j   interfold_cn3          replicated   1/1        ghcr.io/gnosisguild/ciphernode:latest
 ```
 
 # Get the logs
@@ -145,13 +145,13 @@ zgmwmv7cd63j   enclave_cn3          replicated   1/1        ghcr.io/gnosisguild/
 You can get the logs:
 
 ```
-docker service logs enclave_cn1
+docker service logs interfold_cn1
 ```
 
 Notice the line:
 
 ```
-enclave_cn2.1.zom4r645ophf@nixos    | 2024-12-19T23:47:08.582536Z  INFO enclave: COMPILATION ID: 'painfully_fluent_crane'
+interfold_cn2.1.zom4r645ophf@nixos    | 2024-12-19T23:47:08.582536Z  INFO interfold: COMPILATION ID: 'painfully_fluent_crane'
 ```
 
 This can help you identify which compilation you are looking at. This works by generating a unique

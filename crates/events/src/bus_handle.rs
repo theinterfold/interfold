@@ -13,21 +13,16 @@ use tracing::error;
 
 use crate::{
     event_context::EventContext,
-    hlc::{Hlc, HlcMethods},
+    hlc::{Hlc, HlcMethods, HlcTimestamp},
     hlc_factory::HlcFactory,
     sequencer::Sequencer,
     traits::{
         ErrorDispatcher, ErrorFactory, EventConstructorWithTimestamp, EventContextAccessors,
         EventFactory, EventPublisher, EventSubscriber,
     },
-    EType, EnclaveEvent, EnclaveEventData, ErrorEvent, EventBus, EventContextManager, EventSource,
-    EventType, HistoryCollector, Sequenced, Subscribe, Unsequenced, Unsubscribe,
+    EType, ErrorEvent, EventBus, EventContextManager, EventSource, EventType, HistoryCollector,
+    InterfoldEvent, InterfoldEventData, Sequenced, Subscribe, Unsequenced, Unsubscribe,
 };
-
-// TODO: this wont work with trap need to fix
-pub trait EnclaveUnsequencedErrorDispatcher {
-    fn err(&self, err_type: EType, error: anyhow::Error);
-}
 
 /// Typestate marker indicating the BusHandle has not yet been enabled with an HLC clock.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,7 +41,7 @@ pub struct Enabled;
 )]
 pub struct BusHandle<S = Enabled> {
     /// EventBus that actors can consume sequenced events from
-    event_bus: Addr<EventBus<EnclaveEvent<Sequenced>>>,
+    event_bus: Addr<EventBus<InterfoldEvent<Sequenced>>>,
     /// Sequencer that new events should be produced from
     sequencer: Addr<Sequencer>,
     /// Hlc clock used to time all events created on this BusHandle
@@ -61,7 +56,7 @@ pub struct BusHandle<S = Enabled> {
 impl BusHandle<Disabled> {
     /// Create a new disabled BusHandle. Call `enable()` or `enable_with_hlc()` to activate it.
     pub fn new(
-        event_bus: Addr<EventBus<EnclaveEvent<Sequenced>>>,
+        event_bus: Addr<EventBus<InterfoldEvent<Sequenced>>>,
         sequencer: Addr<Sequencer>,
         hlc: HlcFactory,
     ) -> Self {
@@ -102,8 +97,13 @@ impl BusHandle<Disabled> {
 
 impl BusHandle<Enabled> {
     /// Return a HistoryCollector for examining events that have passed through on the events bus
-    pub fn history(&self) -> Addr<HistoryCollector<EnclaveEvent<Sequenced>>> {
-        EventBus::<EnclaveEvent<Sequenced>>::history(&self.event_bus)
+    pub fn history(&self) -> Addr<HistoryCollector<InterfoldEvent<Sequenced>>> {
+        EventBus::<InterfoldEvent<Sequenced>>::history(&self.event_bus)
+    }
+
+    /// Return a HistoryCollector that is subscribed only to InterfoldError events.
+    pub fn errors(&self) -> Addr<HistoryCollector<InterfoldEvent<Sequenced>>> {
+        EventBus::<InterfoldEvent<Sequenced>>::error(&self.event_bus)
     }
 
     /// Access the sequencer to internally dispatch an event to
@@ -112,7 +112,7 @@ impl BusHandle<Enabled> {
     }
 
     /// Access the event_bus to internally subscribe to events
-    pub fn event_bus(&self) -> &Addr<EventBus<EnclaveEvent<Sequenced>>> {
+    pub fn event_bus(&self) -> &Addr<EventBus<InterfoldEvent<Sequenced>>> {
         &self.event_bus
     }
 
@@ -122,10 +122,19 @@ impl BusHandle<Enabled> {
         Ok(ts.into())
     }
 
+    /// Seed the HLC physical-time floor from a persisted, packed HLC timestamp
+    /// so freshly-`tick`ed events after a restart never sort before durable
+    /// history (H15). Pass the highest timestamp recovered from persisted
+    /// aggregate state; only the physical-time component is used.
+    pub fn seed_clock(&self, packed_ts: u128) {
+        let ts = HlcTimestamp::from(packed_ts);
+        self.hlc.seed_physical_floor(ts.ts);
+    }
+
     /// Pipe events from this handle to the other handle only when the predicate returns true
     pub fn pipe_to<F>(&self, other: &BusHandle<Enabled>, predicate: F)
     where
-        F: Fn(&EnclaveEvent<Sequenced>) -> bool + Unpin + 'static,
+        F: Fn(&InterfoldEvent<Sequenced>) -> bool + Unpin + 'static,
     {
         let pipe = BusHandlePipe::new(other.to_owned(), predicate).start();
         self.subscribe(EventType::All, pipe.into());
@@ -138,22 +147,22 @@ impl BusHandle<Enabled> {
     }
 }
 
-impl EventPublisher<EnclaveEvent<Unsequenced>> for BusHandle<Enabled> {
+impl EventPublisher<InterfoldEvent<Unsequenced>> for BusHandle<Enabled> {
     fn publish(
         &self,
-        data: impl Into<EnclaveEventData>,
+        data: impl Into<InterfoldEventData>,
         caused_by: impl Into<EventContext<Sequenced>>,
     ) -> Result<()> {
         self.publish_local(data, Some(caused_by.into()))
     }
 
-    fn publish_without_context(&self, data: impl Into<EnclaveEventData>) -> Result<()> {
+    fn publish_without_context(&self, data: impl Into<InterfoldEventData>) -> Result<()> {
         self.publish_local(data, None)
     }
 
     fn publish_from_remote(
         &self,
-        data: impl Into<EnclaveEventData>,
+        data: impl Into<InterfoldEventData>,
         remote_ts: u128,
         block: Option<u64>,
         source: EventSource,
@@ -163,7 +172,7 @@ impl EventPublisher<EnclaveEvent<Unsequenced>> for BusHandle<Enabled> {
 
     fn publish_from_remote_as_response(
         &self,
-        data: impl Into<EnclaveEventData>,
+        data: impl Into<InterfoldEventData>,
         remote_ts: u128,
         caused_by: impl Into<EventContext<Sequenced>>,
         block: Option<u64>,
@@ -172,19 +181,19 @@ impl EventPublisher<EnclaveEvent<Unsequenced>> for BusHandle<Enabled> {
         self.publish_from_remote_impl(data, remote_ts, Some(caused_by.into()), block, source)
     }
 
-    fn naked_dispatch(&self, event: EnclaveEvent<Unsequenced>) {
+    fn naked_dispatch(&self, event: InterfoldEvent<Unsequenced>) {
         self.sequencer.do_send(event);
     }
 }
 
 impl BusHandle<Enabled> {
-    pub async fn naked_dispatch_async(&self, event: EnclaveEvent<Unsequenced>) -> Result<()> {
+    pub async fn naked_dispatch_async(&self, event: InterfoldEvent<Unsequenced>) -> Result<()> {
         self.sequencer.send(event).await?;
         Ok(())
     }
     fn publish_from_remote_impl(
         &self,
-        data: impl Into<EnclaveEventData>,
+        data: impl Into<InterfoldEventData>,
         remote_ts: u128,
         caused_by: Option<EventContext<Sequenced>>,
         block: Option<u64>,
@@ -196,7 +205,7 @@ impl BusHandle<Enabled> {
     }
     fn publish_local(
         &self,
-        data: impl Into<EnclaveEventData>,
+        data: impl Into<InterfoldEventData>,
         caused_by: Option<EventContext<Sequenced>>,
     ) -> Result<()> {
         let evt = self.event_from(data, caused_by)?;
@@ -205,16 +214,7 @@ impl BusHandle<Enabled> {
     }
 }
 
-impl<S> ErrorDispatcher<EnclaveEvent<Unsequenced>> for BusHandle<S> {
-    fn err(&self, err_type: EType, error: impl Into<anyhow::Error>) {
-        match self.event_from_error(err_type, error, self.get_ctx()) {
-            Ok(evt) => self.sequencer.do_send(evt),
-            Err(e) => error!("{e}"),
-        }
-    }
-}
-
-impl<S> EnclaveUnsequencedErrorDispatcher for BusHandle<S> {
+impl<S> ErrorDispatcher<InterfoldEvent<Unsequenced>> for BusHandle<S> {
     fn err(&self, err_type: EType, error: anyhow::Error) {
         match self.event_from_error(err_type, error, self.get_ctx()) {
             Ok(evt) => self.sequencer.do_send(evt),
@@ -223,14 +223,14 @@ impl<S> EnclaveUnsequencedErrorDispatcher for BusHandle<S> {
     }
 }
 
-impl EventFactory<EnclaveEvent<Unsequenced>> for BusHandle<Enabled> {
+impl EventFactory<InterfoldEvent<Unsequenced>> for BusHandle<Enabled> {
     fn event_from(
         &self,
-        data: impl Into<EnclaveEventData>,
+        data: impl Into<InterfoldEventData>,
         caused_by: Option<EventContext<Sequenced>>,
-    ) -> Result<EnclaveEvent<Unsequenced>> {
+    ) -> Result<InterfoldEvent<Unsequenced>> {
         let ts = self.hlc.tick()?;
-        Ok(EnclaveEvent::<Unsequenced>::new_with_timestamp(
+        Ok(InterfoldEvent::<Unsequenced>::new_with_timestamp(
             data.into(),
             caused_by,
             ts.into(),
@@ -241,14 +241,14 @@ impl EventFactory<EnclaveEvent<Unsequenced>> for BusHandle<Enabled> {
 
     fn event_from_remote_source(
         &self,
-        data: impl Into<EnclaveEventData>,
+        data: impl Into<InterfoldEventData>,
         caused_by: Option<EventContext<Sequenced>>,
         ts: u128,
         block: Option<u64>,
         source: EventSource,
-    ) -> Result<EnclaveEvent<Unsequenced>> {
+    ) -> Result<InterfoldEvent<Unsequenced>> {
         let ts = self.hlc.receive(&ts.into())?;
-        Ok(EnclaveEvent::<Unsequenced>::new_with_timestamp(
+        Ok(InterfoldEvent::<Unsequenced>::new_with_timestamp(
             data.into(),
             caused_by,
             ts.into(),
@@ -258,20 +258,20 @@ impl EventFactory<EnclaveEvent<Unsequenced>> for BusHandle<Enabled> {
     }
 }
 
-impl<S> ErrorFactory<EnclaveEvent<Unsequenced>> for BusHandle<S> {
+impl<S> ErrorFactory<InterfoldEvent<Unsequenced>> for BusHandle<S> {
     fn event_from_error(
         &self,
         err_type: EType,
         error: impl Into<anyhow::Error>,
         caused_by: Option<EventContext<Sequenced>>,
-    ) -> Result<EnclaveEvent<Unsequenced>> {
+    ) -> Result<InterfoldEvent<Unsequenced>> {
         let ts = self.hlc.tick()?;
-        EnclaveEvent::<Unsequenced>::from_error(err_type, error, ts.into(), caused_by)
+        InterfoldEvent::<Unsequenced>::from_error(err_type, error, ts.into(), caused_by)
     }
 }
 
-impl<S> EventSubscriber<EnclaveEvent<Sequenced>> for BusHandle<S> {
-    fn subscribe(&self, event_type: EventType, recipient: Recipient<EnclaveEvent<Sequenced>>) {
+impl<S> EventSubscriber<InterfoldEvent<Sequenced>> for BusHandle<S> {
+    fn subscribe(&self, event_type: EventType, recipient: Recipient<InterfoldEvent<Sequenced>>) {
         self.event_bus
             .do_send(Subscribe::new(event_type, recipient))
     }
@@ -279,15 +279,15 @@ impl<S> EventSubscriber<EnclaveEvent<Sequenced>> for BusHandle<S> {
     fn subscribe_all(
         &self,
         event_types: &[EventType],
-        recipient: Recipient<EnclaveEvent<Sequenced>>,
+        recipient: Recipient<InterfoldEvent<Sequenced>>,
     ) {
-        for event_type in event_types.into_iter() {
+        for event_type in event_types.iter() {
             self.event_bus
                 .do_send(Subscribe::new(*event_type, recipient.clone()));
         }
     }
 
-    fn unsubscribe(&self, event_type: &str, recipient: Recipient<EnclaveEvent<Sequenced>>) {
+    fn unsubscribe(&self, event_type: &str, recipient: Recipient<InterfoldEvent<Sequenced>>) {
         self.event_bus
             .do_send(Unsubscribe::new(event_type, recipient));
     }
@@ -295,8 +295,8 @@ impl<S> EventSubscriber<EnclaveEvent<Sequenced>> for BusHandle<S> {
     fn wait_for(
         &self,
         event_type: EventType,
-    ) -> Pin<Box<dyn Future<Output = Result<EnclaveEvent<Sequenced>>> + Send>> {
-        let (addr, rx) = oneshot::<EnclaveEvent<Sequenced>>();
+    ) -> Pin<Box<dyn Future<Output = Result<InterfoldEvent<Sequenced>>> + Send>> {
+        let (addr, rx) = oneshot::<InterfoldEvent<Sequenced>>();
         self.subscribe(event_type, addr.clone());
         let bus = self.event_bus.clone();
         Box::pin(async move {
@@ -319,14 +319,61 @@ impl<S> EventContextManager for BusHandle<S> {
     }
 }
 
+/// Actor for piping between BusHandles.
+pub struct BusHandlePipe<F>
+where
+    F: Fn(&InterfoldEvent<Sequenced>) -> bool + Unpin + 'static,
+{
+    handle: BusHandle<Enabled>,
+    predicate: F,
+}
+
+impl<F> BusHandlePipe<F>
+where
+    F: Fn(&InterfoldEvent<Sequenced>) -> bool + Unpin + 'static,
+{
+    /// Create a new BusHandlePipe only forwarding events to the wrapped handle when the predicate
+    /// function returns true
+    pub fn new(handle: BusHandle<Enabled>, predicate: F) -> Self {
+        Self { handle, predicate }
+    }
+}
+
+impl<F> Actor for BusHandlePipe<F>
+where
+    F: Fn(&InterfoldEvent<Sequenced>) -> bool + Unpin + 'static,
+{
+    type Context = actix::Context<Self>;
+    fn started(&mut self, ctx: &mut Self::Context) {
+        ctx.set_mailbox_capacity(MAILBOX_LIMIT)
+    }
+}
+
+impl<F> Handler<InterfoldEvent<Sequenced>> for BusHandlePipe<F>
+where
+    F: Fn(&InterfoldEvent<Sequenced>) -> bool + Unpin + 'static,
+{
+    type Result = ();
+    fn handle(&mut self, msg: InterfoldEvent<Sequenced>, _: &mut Self::Context) -> Self::Result {
+        if (self.predicate)(&msg) {
+            let source = msg.source();
+            let block = msg.block();
+            let (data, ts) = msg.split();
+            if let Err(e) = self.handle.publish_from_remote(data, ts, block, source) {
+                error!("{e}");
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use actix::{Actor, Handler, Message};
     use e3_ciphernode_builder::EventSystem;
     // NOTE: We cannot pull from crate as the features will be missing as they are not default.
     use e3_events::{
-        hlc::Hlc, prelude::*, BusHandle, EnclaveEvent, EnclaveEventData, EventPublisher,
-        EventSource, EventType, TestEvent,
+        hlc::Hlc, prelude::*, BusHandle, EventPublisher, EventType, InterfoldEvent,
+        InterfoldEventData, TestEvent,
     };
     use std::time::{Duration, SystemTime, UNIX_EPOCH};
     use tokio::time::sleep;
@@ -341,7 +388,7 @@ mod tests {
     #[actix::test]
     async fn test_hlc_events() -> anyhow::Result<()> {
         #[derive(Message)]
-        #[rtype("Vec<EnclaveEvent>")]
+        #[rtype("Vec<InterfoldEvent>")]
         struct GetEventsOrdered;
 
         // Setup forwarder
@@ -352,34 +399,36 @@ mod tests {
             type Context = actix::Context<Self>;
         }
 
-        impl Handler<EnclaveEvent> for Forwarder {
+        impl Handler<InterfoldEvent> for Forwarder {
             type Result = ();
-            fn handle(&mut self, msg: EnclaveEvent, _: &mut Self::Context) -> Self::Result {
+            fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
                 let ts = msg.ts();
+                let block = msg.block();
+                let source = msg.source();
                 self.dest
-                    .publish_from_remote(msg.into_data(), ts, None, EventSource::Local)
+                    .publish_from_remote(msg.into_data(), ts, block, source)
                     .unwrap()
             }
         }
 
         // Setup saver
         struct Saver {
-            events: Vec<EnclaveEvent>,
+            events: Vec<InterfoldEvent>,
         }
 
         impl Actor for Saver {
             type Context = actix::Context<Self>;
         }
 
-        impl Handler<EnclaveEvent> for Saver {
+        impl Handler<InterfoldEvent> for Saver {
             type Result = ();
-            fn handle(&mut self, msg: EnclaveEvent, _: &mut Self::Context) -> Self::Result {
+            fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
                 self.events.push(msg);
             }
         }
 
         impl Handler<GetEventsOrdered> for Saver {
-            type Result = Vec<EnclaveEvent>;
+            type Result = Vec<InterfoldEvent>;
             fn handle(&mut self, _: GetEventsOrdered, _: &mut Self::Context) -> Self::Result {
                 self.events.clone()
             }
@@ -436,7 +485,7 @@ mod tests {
         let ordered_names: Vec<_> = sorted_events
             .iter()
             .filter_map(|e| match e.get_data() {
-                EnclaveEventData::TestEvent(e) => Some(e.msg.clone()),
+                InterfoldEventData::TestEvent(e) => Some(e.msg.clone()),
                 _ => None,
             })
             .collect();
@@ -468,51 +517,5 @@ mod tests {
         }
 
         Ok(())
-    }
-}
-
-/// Actor for piping between BusHandles.
-pub struct BusHandlePipe<F>
-where
-    F: Fn(&EnclaveEvent<Sequenced>) -> bool + Unpin + 'static,
-{
-    handle: BusHandle<Enabled>,
-    predicate: F,
-}
-
-impl<F> BusHandlePipe<F>
-where
-    F: Fn(&EnclaveEvent<Sequenced>) -> bool + Unpin + 'static,
-{
-    /// Create a new BusHandlePipe only forwarding events to the wrapped handle when the predicate
-    /// function returns true
-    pub fn new(handle: BusHandle<Enabled>, predicate: F) -> Self {
-        Self { handle, predicate }
-    }
-}
-
-impl<F> Actor for BusHandlePipe<F>
-where
-    F: Fn(&EnclaveEvent<Sequenced>) -> bool + Unpin + 'static,
-{
-    type Context = actix::Context<Self>;
-    fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(MAILBOX_LIMIT)
-    }
-}
-
-impl<F> Handler<EnclaveEvent<Sequenced>> for BusHandlePipe<F>
-where
-    F: Fn(&EnclaveEvent<Sequenced>) -> bool + Unpin + 'static,
-{
-    type Result = ();
-    fn handle(&mut self, msg: EnclaveEvent<Sequenced>, _: &mut Self::Context) -> Self::Result {
-        if (self.predicate)(&msg) {
-            let source = msg.source();
-            let (data, ts) = msg.split();
-            let _ = self.handle.publish_from_remote(data, ts, None, source);
-            // TODO: check if this is fine
-            // to erase block data
-        }
     }
 }

@@ -1,3 +1,4 @@
 pnpm lint
 pnpm check:pnpm
 pnpm check:license
+pnpm check:committee

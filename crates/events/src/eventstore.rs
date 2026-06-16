@@ -6,8 +6,8 @@
 
 use crate::{
     events::{StoreEventRequested, StoreEventResponse},
-    EnclaveEvent, EventContextAccessors, EventLog, EventStoreFilter, EventStoreQueryBy,
-    EventStoreQueryResponse, Seq, SequenceIndex, Sequenced, Ts, Unsequenced,
+    EventContextAccessors, EventLog, EventStoreFilter, EventStoreQueryBy, EventStoreQueryResponse,
+    InterfoldEvent, Seq, SequenceIndex, Sequenced, Ts, Unsequenced,
 };
 use actix::{Actor, Handler};
 use anyhow::{bail, Result};
@@ -26,10 +26,10 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
     /// `None` if the event was a duplicate, or an error on failure.
     pub fn store_event(
         &mut self,
-        event: EnclaveEvent<Unsequenced>,
-    ) -> Result<Option<EnclaveEvent<Sequenced>>> {
+        event: InterfoldEvent<Unsequenced>,
+    ) -> Result<Option<InterfoldEvent<Sequenced>>> {
         let ts = event.ts();
-        if let Some(_) = self.index.get(ts)? {
+        if self.index.get(ts)?.is_some() {
             warn!("Event already stored at timestamp {ts}! This might happen when recovering from a snapshot. Skipping storage");
             self.storage_errors += 1;
             if self.storage_errors > MAX_STORAGE_ERRORS {
@@ -47,10 +47,10 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
 
     fn collect_events(
         &self,
-        iter: Box<dyn Iterator<Item = (u64, EnclaveEvent<Unsequenced>)>>,
+        iter: Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>,
         filter: Option<EventStoreFilter>,
         limit: Option<u64>,
-    ) -> Vec<EnclaveEvent<Sequenced>> {
+    ) -> Vec<InterfoldEvent<Sequenced>> {
         let iter = iter.map(|(s, e)| e.into_sequenced(s));
 
         match filter {
@@ -74,7 +74,7 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         query: u128,
         filter: Option<EventStoreFilter>,
         limit: Option<u64>,
-    ) -> Result<Vec<EnclaveEvent<Sequenced>>> {
+    ) -> Result<Vec<InterfoldEvent<Sequenced>>> {
         let Some(seq) = self.index.seek(query)? else {
             return Ok(vec![]);
         };
@@ -89,17 +89,63 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         query: u64,
         filter: Option<EventStoreFilter>,
         limit: Option<u64>,
-    ) -> Vec<EnclaveEvent<Sequenced>> {
+    ) -> Vec<InterfoldEvent<Sequenced>> {
+        // H7: the replay cursor must never point past the log head. The snapshot
+        // cursor is committed atomically with its snapshot data, so a cursor ahead
+        // of the log can only happen if the two unsynchronised flush timers
+        // (Sled vs. commitlog) lost a log entry the cursor already accounted for.
+        // Replaying an empty range past the gap would be silent divergence, so we
+        // halt loudly. `query == head + 1` is the legitimate "fully caught up" case.
+        let head = self.log.head();
+        if query > head + 1 {
+            panic!(
+                "Replay cursor seq {query} is ahead of the event-log head {head}: the snapshot \
+                 cursor references events the log does not contain (lost in a crash flush window). \
+                 Halting; operator recovery required."
+            );
+        }
         self.collect_events(self.log.read_from(query), filter, limit)
     }
 }
 
 impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
     pub fn new(index: I, log: L) -> Self {
-        Self {
+        let mut store = Self {
             index,
             log,
             storage_errors: 0,
+        };
+        store.reconcile_index();
+        store
+    }
+
+    /// H5: the commitlog append and the ts→seq index insert are two non-atomic
+    /// writes against different backing stores. A crash between them leaves the
+    /// log holding an event with no index entry, so ts-keyed lookups (the net
+    /// subscriber cursor) silently miss it until reconciled. On startup we walk
+    /// the log (the source of truth) and backfill any missing index rows so the
+    /// derived index can never lag the log across a restart.
+    fn reconcile_index(&mut self) {
+        let head = self.log.head();
+        if head == 0 {
+            return;
+        }
+        let mut repaired = 0u64;
+        for (seq, event) in self.log.read_from(1) {
+            let ts = event.ts();
+            match self.index.get(ts) {
+                Ok(Some(_)) => {}
+                Ok(None) => match self.index.insert(ts, seq) {
+                    Ok(()) => repaired += 1,
+                    Err(e) => error!("Failed to backfill event index at seq {seq}: {e}"),
+                },
+                Err(e) => error!("Failed to read event index at ts {ts}: {e}"),
+            }
+        }
+        if repaired > 0 {
+            warn!(
+                "Reconciled event index on startup: backfilled {repaired} missing ts→seq entries"
+            );
         }
     }
 }
@@ -117,8 +163,19 @@ impl<I: SequenceIndex, L: EventLog> Handler<StoreEventRequested> for EventStore<
             }
             Ok(None) => {} // duplicate — already warned inside store_event
             Err(e) => {
-                error!("Event storage failed: {e}");
-                panic!("Unrecoverable event storage failure: {e}");
+                // The event log is the source of truth for crash recovery. If an event cannot be
+                // durably persisted (most commonly a full or read-only disk), continuing would let
+                // in-memory actors act on an event the durable log does not contain, causing silent
+                // divergence after a restart. We therefore fail-stop loudly rather than proceed.
+                error!(
+                    "Unrecoverable event storage failure: {e}. The most likely cause is a full or \
+                     read-only data disk. Free disk space / fix permissions, then restart the node \
+                     to resume from the durable event log."
+                );
+                panic!(
+                    "Unrecoverable event storage failure: {e} (likely disk full or read-only). \
+                     Halting to avoid silent state divergence; operator recovery required."
+                );
             }
         }
     }
@@ -195,7 +252,7 @@ mod tests {
     // ---------------------------------------------------------------------------
     // Mock EventLog backed by Vec
     // ---------------------------------------------------------------------------
-    struct MockLog(Vec<EnclaveEvent<Unsequenced>>);
+    struct MockLog(Vec<InterfoldEvent<Unsequenced>>);
 
     impl MockLog {
         fn new() -> Self {
@@ -204,7 +261,7 @@ mod tests {
     }
 
     impl EventLog for MockLog {
-        fn append(&mut self, event: &EnclaveEvent<Unsequenced>) -> Result<u64> {
+        fn append(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<u64> {
             let seq = self.0.len() as u64;
             self.0.push(event.clone());
             Ok(seq)
@@ -213,7 +270,7 @@ mod tests {
         fn read_from(
             &self,
             from: u64,
-        ) -> Box<dyn Iterator<Item = (u64, EnclaveEvent<Unsequenced>)>> {
+        ) -> Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>> {
             let items: Vec<_> = self
                 .0
                 .iter()
@@ -223,13 +280,17 @@ mod tests {
                 .collect();
             Box::new(items.into_iter())
         }
+
+        fn head(&self) -> u64 {
+            self.0.len().saturating_sub(1) as u64
+        }
     }
 
     // ---------------------------------------------------------------------------
     // Test helpers
     // ---------------------------------------------------------------------------
-    fn make_event(ts: u128, source: EventSource) -> EnclaveEvent<Unsequenced> {
-        EnclaveEvent::<Unsequenced>::new_with_timestamp(
+    fn make_event(ts: u128, source: EventSource) -> InterfoldEvent<Unsequenced> {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
             TestEvent::new("test", 1).into(),
             None,
             ts,
@@ -238,11 +299,11 @@ mod tests {
         )
     }
 
-    fn make_local_event(ts: u128) -> EnclaveEvent<Unsequenced> {
+    fn make_local_event(ts: u128) -> InterfoldEvent<Unsequenced> {
         make_event(ts, EventSource::Local)
     }
 
-    fn make_network_event(ts: u128) -> EnclaveEvent<Unsequenced> {
+    fn make_network_event(ts: u128) -> InterfoldEvent<Unsequenced> {
         make_event(ts, EventSource::Net)
     }
 
@@ -250,7 +311,7 @@ mod tests {
         EventStore::new(MockIndex::new(), MockLog::new())
     }
 
-    fn populated_store(events: &[EnclaveEvent<Unsequenced>]) -> EventStore<MockIndex, MockLog> {
+    fn populated_store(events: &[InterfoldEvent<Unsequenced>]) -> EventStore<MockIndex, MockLog> {
         let mut store = new_store();
         for event in events {
             store.store_event(event.clone()).unwrap();

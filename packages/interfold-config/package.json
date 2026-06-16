@@ -1,0 +1,42 @@
+{
+  "name": "@interfold/config",
+  "version": "0.2.1",
+  "publishConfig": {
+    "access": "public"
+  },
+  "description": "Common configuration for Interfold",
+  "module": true,
+  "main": "index.js",
+  "type": "module",
+  "exports": {
+    "./tsup": "./tsup.config.js",
+    "./tsconfig.json": "./tsconfig.json",
+    "./dom.tsconfig.json": "./dom.tsconfig.json",
+    "./eslint.config.js": "./eslint.config.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gnosisguild/interfold.git",
+    "directory": "packages/interfold-config"
+  },
+  "scripts": {
+    "release": "pnpm publish --access=public"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "LGPL-3.0-only",
+  "dependencies": {
+    "@typescript-eslint/eslint-plugin": "^8.47.0",
+    "@typescript-eslint/parser": "^8.47.0",
+    "@eslint/eslintrc": "^3.3.1",
+    "@eslint/js": "^9.39.1",
+    "eslint-config-prettier": "^10.1.8",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "globals": "^15.11.0"
+  },
+  "peerDependencies": {
+    "eslint": "^9.0.0",
+    "tsup": "^8.5.0"
+  }
+}

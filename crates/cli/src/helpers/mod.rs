@@ -18,7 +18,7 @@ pub fn parse_zeroizing(s: &str) -> Result<Zeroizing<String>> {
 
 /// Ensure hex is of the form 0x12435687abcdef...
 pub fn ensure_hex_zeroizing(s: &str) -> Result<Zeroizing<String>> {
-    Ok(parse_zeroizing(ensure_hex(s)?)?)
+    parse_zeroizing(ensure_hex(s)?)
 }
 
 /// Ensure a hexadecimal number

@@ -37,14 +37,14 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-polynomial = { git = "https://github.com/gnosisguild/enclave", path = "crates/polynomial" }
+polynomial = { git = "https://github.com/gnosisguild/interfold", path = "crates/polynomial" }
 ```
 
 For serialization support, enable the `serde` feature:
 
 ```toml
 [dependencies]
-polynomial = { git = "https://github.com/gnosisguild/enclave", path = "crates/polynomial", features = ["serde"] }
+polynomial = { git = "https://github.com/gnosisguild/interfold", path = "crates/polynomial", features = ["serde"] }
 ```
 
 ### Testing

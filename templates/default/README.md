@@ -1,9 +1,9 @@
 # Template
 
-The Enclave Protocol Template provides a complete development environment for building and testing
+The Interfold Protocol Template provides a complete development environment for building and testing
 applications with Fully Homomorphic Encryption (FHE). This template enables local deployment and
-interaction with the Enclave protocol without requiring the core contracts to be copied and avoiding
-complexities of specific programs (as zk circuits for CRISP).
+interaction with the Interfold protocol without requiring the core contracts to be copied and
+avoiding complexities of specific programs (as zk circuits for CRISP).
 
 ## Prerequisites
 
@@ -48,41 +48,41 @@ At this point, you should have all the tools required to develop and deploy an a
 You can add Metamask as an extension to your browser following the official
 [documentation](https://metamask.io).
 
-### Install the Enclave CLI
+### Install the Interfold CLI
 
-The easiest way to install the Enclave CLI is using our installer script:
-`curl -fsSL https://raw.githubusercontent.com/gnosisguild/enclave/main/install | bash`
+The easiest way to install the Interfold CLI is using our installer script:
+`curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash`
 
 Or if you prefer wget:
-`wget -qO- https://raw.githubusercontent.com/gnosisguild/enclave/main/install | bash`
+`wget -qO- https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash`
 
-This script will download and install enclaveup, which is the standalone installer for the Enclave
-CLI.
+This script will download and install interfoldup, which is the standalone installer for the
+Interfold CLI.
 
-Once you have `enclaveup` installed, you can manage your Enclave CLI installation:
+Once you have `interfoldup` installed, you can manage your Interfold CLI installation:
 
 ```bash
 # Install to ~/.local/bin (default)
-enclaveup install
+interfoldup install
 
 # Install to /usr/local/bin (requires sudo)
-enclaveup install --system
+interfoldup install --system
 ```
 
-Running `enclaveup install` will install the latest version of the Enclave CLI.
+Running `interfoldup install` will install the latest version of the Interfold CLI.
 
-After installation, verify that the Enclave CLI is working correctly:
+After installation, verify that the Interfold CLI is working correctly:
 
-`enclave --help`
+`interfold --help`
 
-You should see the help information for the Enclave CLI.
+You should see the help information for the Interfold CLI.
 
 ### Create your Project
 
 Generate a new E3 program from the default template:
 
 ```bash
-enclave init my-first-e3
+interfold init my-first-e3
 cd my-first-e3
 ```
 
@@ -92,14 +92,14 @@ This creates a complete E3 project with:
 - **Smart contracts** (`./contracts/`)
 - **Client application** (`./client/`)
 - **Coordination server** (`./server/`)
-- **Configuration** (`enclave.config.yaml`)
+- **Configuration** (`interfold.config.yaml`)
 
 ### Compile your E3 Program
 
 First, compile your E3 program to build the Risc0 zkvm image:
 
 ```bash
-enclave program compile
+interfold program compile
 ```
 
 This builds the Risc0 zkvm image that will be deployed on the blockchain and used for verification
@@ -109,7 +109,7 @@ If you want to avoid the proof or you have trouble with Risc0 zkvm installation,
 dev mode (no proof).
 
 ```bash
-enclave program start --dev true
+interfold program start --dev true
 ```
 
 ### Start the Development Environment
@@ -163,12 +163,12 @@ You successfully ran a **Fully Homomorphic Encryption** computation where:
 - Your inputs were encrypted before leaving the browser
 - The computation happened on encrypted data
 - The result was computed without exposing your private inputs
-- All coordination was handled by the Enclave protocol
+- All coordination was handled by the Interfold protocol
 
 ## Manual Start
 
-If you prefer to install the Enclave CLI manually, please visit the dedicated section in the
-[documentation](https://docs.enclave.gg/installation#manual-installation).
+If you prefer to install the Interfold CLI manually, please visit the dedicated section in the
+[documentation](https://docs.interfold.gg/installation#manual-installation).
 
 ## Next Steps
 
@@ -180,5 +180,5 @@ Now that you have a working E3 program:
 4. **Deploy**: Learn about production deployment
 
 Ready to dive deeper? Continue with our
-[Hello World Tutorial](https://docs.enclave.gg/hello-world-tutorial) for a step-by-step breakdown of
-building E3 programs from scratch.
+[Hello World Tutorial](https://docs.interfold.gg/hello-world-tutorial) for a step-by-step breakdown
+of building E3 programs from scratch.

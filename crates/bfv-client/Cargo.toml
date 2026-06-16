@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - BFV client helpers"
-repository = "https://github.com/gnosisguild/enclave/crates/bfv-client"
+repository = "https://github.com/gnosisguild/interfold/crates/bfv-client"
 
 [dependencies]
 anyhow.workspace = true

@@ -10,18 +10,18 @@ import CardContent from '../components/CardContent'
 import Spinner from '../components/Spinner'
 import ErrorDisplay from '../components/ErrorDisplay'
 import { useWizard, WizardStep } from '../../context/WizardContext'
-import { encodeComputeProviderParams, DEFAULT_COMPUTE_PROVIDER_PARAMS, DEFAULT_E3_CONFIG, calculateInputWindow } from '@enclave-e3/sdk'
+import { encodeComputeProviderParams, DEFAULT_COMPUTE_PROVIDER_PARAMS, DEFAULT_E3_CONFIG, calculateInputWindow } from '@interfold/sdk'
 import { getContractAddresses } from '@/utils/env-config'
 
 /**
- * RequestComputation component - Second step in the Enclave wizard flow
+ * RequestComputation component - Second step in the Interfold wizard flow
  *
- * This component handles the request for an E3 computation from the Enclave network.
+ * This component handles the request for an E3 computation from the Interfold network.
  * It provides feedback on the request process and displays the status of the request.
  */
 const RequestComputation: React.FC = () => {
   const { e3State, setE3State, setLastTransactionHash, setCurrentStep, sdk } = useWizard()
-  const { isInitialized, requestE3, onEnclaveEvent, off, EnclaveEventType, RegistryEventType } = sdk
+  const { isInitialized, requestE3, onInterfoldEvent, off, InterfoldEventType, RegistryEventType } = sdk
 
   const contracts = getContractAddresses()
 
@@ -59,14 +59,14 @@ const RequestComputation: React.FC = () => {
       })
     }
 
-    onEnclaveEvent(EnclaveEventType.E3_REQUESTED, handleE3Requested)
-    onEnclaveEvent(RegistryEventType.COMMITTEE_PUBLISHED, handleCommitteePublished)
+    onInterfoldEvent(InterfoldEventType.E3_REQUESTED, handleE3Requested)
+    onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLISHED, handleCommitteePublished)
 
     return () => {
-      off(EnclaveEventType.E3_REQUESTED, handleE3Requested)
+      off(InterfoldEventType.E3_REQUESTED, handleE3Requested)
       off(RegistryEventType.COMMITTEE_PUBLISHED, handleCommitteePublished)
     }
-  }, [isInitialized, onEnclaveEvent, off, EnclaveEventType, RegistryEventType, setE3State])
+  }, [isInitialized, onInterfoldEvent, off, InterfoldEventType, RegistryEventType, setE3State])
 
   // Auto-advance to next step when committee publishes
   useEffect(() => {
@@ -133,13 +133,13 @@ const RequestComputation: React.FC = () => {
     <CardContent>
       <div className='space-y-6 text-center'>
         <div className='flex justify-center'>
-          <CalculatorIcon size={48} className='text-enclave-400' />
+          <CalculatorIcon size={48} className='text-interfold-400' />
         </div>
         <p className='text-base font-extrabold uppercase text-slate-600/50'>Step 2: Request Computation</p>
         <div className='space-y-4'>
           <h3 className='text-lg font-semibold text-slate-700'>Request Encrypted Execution Environment</h3>
           <p className='leading-relaxed text-slate-600'>
-            Request an E3 computation from Enclave's decentralized network. This initiates the selection of a Ciphernode Committee through
+            Request an E3 computation from Interfold's decentralized network. This initiates the selection of a Ciphernode Committee through
             cryptographic sortition, who will generate shared keys for securing your computation without any single point of trust.
           </p>
           <div className='rounded-lg border border-blue-200 bg-blue-50 p-4'>
@@ -160,7 +160,7 @@ const RequestComputation: React.FC = () => {
               </div>
 
               {e3State.isCommitteePublished && e3State.publicKey ? (
-                <div className='rounded-lg border border-enclave-200 bg-enclave-50 p-4'>
+                <div className='rounded-lg border border-interfold-200 bg-interfold-50 p-4'>
                   <p className='text-sm text-slate-600'>
                     <strong>🔑 Committee Published Public Key!</strong>
                     <br />
@@ -212,7 +212,7 @@ const RequestComputation: React.FC = () => {
         <button
           onClick={handleRequestComputation}
           disabled={isRequesting || e3State.isRequested}
-          className='w-full rounded-lg bg-enclave-400 px-6 py-3 font-semibold text-slate-800 transition-all duration-200 hover:bg-enclave-300 hover:shadow-md disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500'
+          className='w-full rounded-lg bg-interfold-400 px-6 py-3 font-semibold text-slate-800 transition-all duration-200 hover:bg-interfold-300 hover:shadow-md disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500'
         >
           {isRequesting
             ? 'Submitting to Blockchain...'

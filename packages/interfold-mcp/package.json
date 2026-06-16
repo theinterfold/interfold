@@ -1,0 +1,39 @@
+{
+  "name": "@interfold/mcp",
+  "version": "0.2.1",
+  "description": "MCP server for Interfold documentation",
+  "type": "module",
+  "bin": {
+    "interfold-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gnosisguild/interfold.git",
+    "directory": "packages/interfold-mcp"
+  },
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "prerelease": "pnpm build",
+    "release": "pnpm publish --access=public"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.10.2",
+    "node-html-parser": "^7.0.1",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "tsup": "^8.5.0",
+    "typescript": "5.8.3"
+  },
+  "engines": {
+    "node": ">=18.20.0"
+  },
+  "license": "LGPL-3.0-only"
+}

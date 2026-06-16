@@ -31,7 +31,7 @@ impl<T> DirectRequesterInput for T where
 }
 
 pub struct WithoutPeer;
-pub struct WithPeer(PeerTarget);
+pub struct WithPeer(#[allow(dead_code)] PeerTarget);
 
 /// DirectRequester is used to send direct requests to a specific peer.
 ///
@@ -141,7 +141,6 @@ impl DirectRequester<WithPeer> {
                 let net_cmds = self.net_cmds.clone();
                 let net_events = self.net_events.clone();
                 let payload = payload.clone();
-                let request_timeout = request_timeout;
                 async move {
                     do_request(net_cmds, net_events, peer, payload, request_timeout)
                         .await
@@ -237,11 +236,13 @@ async fn do_request(
     Ok(response)
 }
 
+#[allow(dead_code)]
 struct Expectation {
     expected_request: Vec<u8>,
     response: Result<Vec<u8>, String>,
 }
 
+#[allow(dead_code)]
 pub(crate) struct DirectRequesterTester {
     net_cmds_rx: mpsc::Receiver<NetCommand>,
     net_events_tx: broadcast::Sender<NetEvent>,
@@ -252,12 +253,14 @@ pub(crate) struct DirectRequesterTester {
     num_requests: Option<usize>,
 }
 
+#[allow(dead_code)]
 pub(crate) struct ExpectationBuilder {
     tester: DirectRequesterTester,
     expected_request: Vec<u8>,
 }
 
 impl ExpectationBuilder {
+    #[allow(dead_code)]
     pub fn respond_with<T: TryInto<Vec<u8>>>(mut self, payload: T) -> DirectRequesterTester
     where
         <T as TryInto<Vec<u8>>>::Error: std::fmt::Debug,
@@ -269,6 +272,7 @@ impl ExpectationBuilder {
         self.tester
     }
 
+    #[allow(dead_code)]
     pub fn error_with(mut self, error: impl Into<String>) -> DirectRequesterTester {
         self.tester.expectations.push(Expectation {
             expected_request: self.expected_request,
@@ -278,6 +282,7 @@ impl ExpectationBuilder {
     }
 }
 
+#[allow(dead_code)]
 impl DirectRequesterTester {
     pub fn new(
         net_cmds_rx: mpsc::Receiver<NetCommand>,
@@ -337,7 +342,7 @@ impl DirectRequesterTester {
     }
 
     pub fn spawn(mut self) -> tokio::task::JoinHandle<()> {
-        let num_requests = self.num_requests.unwrap_or_else(|| {
+        let num_requests = self.num_requests.unwrap_or({
             if !self.expectations.is_empty() {
                 self.expectations.len()
             } else {

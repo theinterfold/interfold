@@ -14,9 +14,18 @@ mod common;
 use common::test_backend;
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
+use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::{test_utils::get_tempdir, BbTarget, Provable, SetupStatus, ZkConfig, ZkProver};
 use sha2::{Digest, Sha256};
 use std::env;
+use std::path::Path;
+
+/// Default committee for downloaded release artifacts (minimum matches dev/CI convention).
+const RELEASE_COMMITTEE: CiphernodesCommitteeSize = CiphernodesCommitteeSize::Minimum;
+
+fn preset_committee_dir(circuits_dir: &Path, preset: &BfvPreset) -> std::path::PathBuf {
+    circuits_dir.join(preset.artifacts_dir_for_committee(RELEASE_COMMITTEE.as_str()))
+}
 
 #[tokio::test]
 async fn test_full_flow_download_circuits_prove_and_verify() {
@@ -79,8 +88,9 @@ async fn test_full_flow_download_circuits_prove_and_verify() {
     let result = backend.download_circuits().await;
     assert!(result.is_ok(), "download_circuits failed: {:?}", result);
 
-    // Circuit artifacts are nested under the preset directory (e.g. insecure-512/)
-    let preset_dir = backend.circuits_dir.join("insecure-512");
+    // Circuit artifacts live under `{preset}/{committee}/{variant}/...` in v0.2.0+ releases.
+    let preset = BfvPreset::InsecureThreshold512;
+    let preset_dir = preset_committee_dir(&backend.circuits_dir, &preset);
     assert!(
         preset_dir
             .join("default")
@@ -121,15 +131,15 @@ async fn test_full_flow_download_circuits_prove_and_verify() {
     assert!(backend.work_dir.exists());
     assert!(backend.base_dir.join("version.json").exists());
 
-    let preset = BfvPreset::InsecureThreshold512;
     let prover = ZkProver::new(&backend);
+    let artifacts_dir = preset.artifacts_dir_for_committee(RELEASE_COMMITTEE.as_str());
 
     let sample =
         PkCircuitData::generate_sample(preset).expect("sample data generation should succeed");
 
     let e3_id = "integration-test-full-flow";
     let proof = PkCircuit
-        .prove(&prover, &preset, &sample, e3_id, &preset.artifacts_dir())
+        .prove(&prover, &preset, &sample, e3_id, &artifacts_dir)
         .expect("proof generation should succeed");
 
     assert!(!proof.data.is_empty(), "proof data should not be empty");
@@ -140,7 +150,7 @@ async fn test_full_flow_download_circuits_prove_and_verify() {
 
     let party_id = 0;
     let verified = PkCircuit
-        .verify(&prover, &proof, e3_id, party_id, &preset.artifacts_dir())
+        .verify(&prover, &proof, e3_id, party_id, &artifacts_dir)
         .expect("verification call should not error");
 
     assert!(verified, "proof should verify successfully");
@@ -204,12 +214,12 @@ async fn test_download_circuits_verifies_checksums() {
             );
 
             // Re-read the file from disk and verify the stored checksum matches.
-            let file_path = backend.circuits_dir.join(rel_path);
-            assert!(
-                file_path.exists(),
-                "circuit file should exist on disk: {}",
-                file_path.display()
-            );
+            let file_path = backend
+                .locate_manifest_artifact(rel_path, &circuit_info.checksum)
+                .await
+                .unwrap_or_else(|e| {
+                    panic!("circuit file should exist on disk for {}: {e:?}", rel_path)
+                });
 
             let data = tokio::fs::read(&file_path).await.unwrap();
             let mut hasher = Sha256::new();

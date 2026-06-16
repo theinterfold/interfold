@@ -44,9 +44,9 @@ deployments
 test-results/
 playwright-report/
 .cache-synpress/
-.enclave/data/ 
-.enclave/config/ 
-.enclave/caches/
-.enclave/ready
-.enclave/noir/
+.interfold/data/ 
+.interfold/config/ 
+.interfold/caches/
+.interfold/ready
+.interfold/noir/
 cache_hardhat/

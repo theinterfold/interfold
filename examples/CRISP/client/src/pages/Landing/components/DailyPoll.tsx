@@ -46,8 +46,17 @@ const FaceoffSlot: React.FC<{
 }
 
 const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, title = 'The Faceoff' }) => {
-  const { user, pollOptions, setPollOptions, roundState, hasVotedInCurrentRound, voteStatusLoading, isLoading, getWebResultByRound } =
-    useVoteManagementContext()
+  const {
+    user,
+    pollOptions,
+    setPollOptions,
+    roundState,
+    hasVotedInCurrentRound,
+    voteStatusLoading,
+    isLoading,
+    getWebResultByRound,
+    displayedRoundIsFallback,
+  } = useVoteManagementContext()
   const navigate = useNavigate()
   const client = usePublicClient()
   const [isEnded, setIsEnded] = useState(false)
@@ -90,29 +99,56 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
     }
   }, [roundState, client])
 
+  // Keep a stable reference so the polling effect below isn't torn down
+  // and rebuilt every time the parent context re-renders (which otherwise
+  // produced an eager `check()` call per rebuild and stacked requests).
+  const getWebResultByRoundRef = useRef(getWebResultByRound)
+  useEffect(() => {
+    getWebResultByRoundRef.current = getWebResultByRound
+  }, [getWebResultByRound])
+
   // Once the poll is over, poll the backend until the FHE tally is published.
+  // FHE decryption takes minutes, so poll slowly with exponential backoff and
+  // skip ticks while the tab is hidden to avoid bombarding the server.
   useEffect(() => {
     if (!isEnded || !roundState || tallyReady) return
 
+    const BASE_DELAY_MS = 30_000
+    const MAX_DELAY_MS = 5 * 60_000
+
     let cancelled = false
-    const check = async () => {
-      try {
-        const result = await getWebResultByRound(roundState.id)
-        if (!cancelled && result && Array.isArray(result.tally) && result.tally.length > 0) {
-          setTallyReady(true)
-        }
-      } catch {
-        // Transient failure — keep polling on the next interval tick.
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let delay = BASE_DELAY_MS
+
+    const tick = async () => {
+      if (cancelled) return
+
+      if (typeof document !== 'undefined' && document.hidden) {
+        timer = setTimeout(tick, BASE_DELAY_MS)
+        return
       }
+
+      try {
+        const result = await getWebResultByRoundRef.current(roundState.id)
+        if (cancelled) return
+        if (result && Array.isArray(result.tally) && result.tally.length > 0) {
+          setTallyReady(true)
+          return
+        }
+        delay = Math.min(delay * 2, MAX_DELAY_MS)
+      } catch {
+        delay = Math.min(delay * 2, MAX_DELAY_MS)
+      }
+
+      timer = setTimeout(tick, delay)
     }
 
-    check()
-    const interval = setInterval(check, 8000)
+    timer = setTimeout(tick, BASE_DELAY_MS)
     return () => {
       cancelled = true
-      clearInterval(interval)
+      if (timer) clearTimeout(timer)
     }
-  }, [isEnded, roundState, tallyReady, getWebResultByRound])
+  }, [isEnded, roundState, tallyReady])
 
   const handleChecked = (selectedPoll: Poll) => {
     const isAlreadySelected = pollSelected?.value === selectedPoll.value
@@ -158,6 +194,9 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
               <div className='mono muted'>{title}</div>
               {hasPoll && <h1 className='h1'>Choose your favorite</h1>}
               {!roundState && !isLoading && <p className='lede'>No active poll found. Check back when the next round opens.</p>}
+              {displayedRoundIsFallback && (
+                <p className='cap muted'>Showing the latest completed poll — the current round is still being tallied under encryption.</p>
+              )}
             </div>
 
             {roundState && (

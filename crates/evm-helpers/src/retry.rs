@@ -16,7 +16,7 @@ fn should_retry_error(error: &str, decoded_error: Option<&str>, retry_on_errors:
         return true;
     }
     retry_on_errors.iter().any(|code| {
-        error.contains(code) || decoded_error.map_or(false, |decoded| decoded.contains(code))
+        error.contains(code) || decoded_error.is_some_and(|decoded| decoded.contains(code))
     })
 }
 

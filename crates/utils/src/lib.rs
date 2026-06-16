@@ -7,7 +7,6 @@
 extern crate self as e3_utils; // need this for e3_utils_derive to reference this crate
 pub mod actix;
 pub mod alloy;
-pub mod committee_hash;
 pub mod constants;
 pub mod error;
 pub mod formatters;

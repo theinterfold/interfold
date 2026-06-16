@@ -49,7 +49,7 @@ impl CommitmentLink for C4aToC6SkCommitmentLink {
         let layout = CircuitName::ThresholdShareDecryption.input_layout();
         layout
             .extract_field(target_public_signals, "expected_sk_commitment")
-            .map_or(false, |extracted| extracted == source_values[0].as_slice())
+            .is_some_and(|extracted| extracted == source_values[0].as_slice())
     }
 }
 

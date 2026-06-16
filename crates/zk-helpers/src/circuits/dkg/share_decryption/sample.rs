@@ -19,7 +19,6 @@ use fhe::bfv::{PublicKey, SecretKey};
 use fhe::trbfv::{ShareManager, TRBFV};
 use fhe_traits::FheEncoder;
 use fhe_traits::FheEncrypter;
-use rand::thread_rng;
 
 impl ShareDecryptionCircuitData {
     /// Generates sample data for the share-decryption circuit (decrypts a sum of honest ciphertexts under DKG secret key).
@@ -35,7 +34,7 @@ impl ShareDecryptionCircuitData {
             .search_defaults()
             .ok_or_else(|| CircuitsErrors::Sample("Preset has no search defaults".into()))?;
 
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
 
         let dkg_secret_key = SecretKey::random(&dkg_params, &mut rng);
         let dkg_public_key = PublicKey::new(&dkg_secret_key, &mut rng);
@@ -43,7 +42,13 @@ impl ShareDecryptionCircuitData {
         let trbfv = TRBFV::new(committee.n, committee.threshold, threshold_params.clone())
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
         let mut share_manager =
-            ShareManager::new(committee.n, committee.threshold, threshold_params.clone());
+            ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
+                |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
+            )?;
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = preset
+            .lambda()
+            .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
         let mut honest_ciphertexts: Vec<Option<Vec<Ciphertext>>> = Vec::new();
         let num_honest = committee.h;
@@ -82,7 +87,7 @@ impl ShareDecryptionCircuitData {
                     }
                     DkgInputType::SmudgingNoise => {
                         let esi_coeffs = trbfv
-                            .generate_smudging_error(sd.z as usize, sd.lambda as usize, &mut rng)
+                            .generate_smudging_error(sd.z as usize, lambda, &mut rng)
                             .map_err(|e| {
                                 CircuitsErrors::Sample(format!(
                                     "Failed to generate smudging error: {:?}",

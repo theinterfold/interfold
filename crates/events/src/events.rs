@@ -8,8 +8,7 @@ use std::collections::HashMap;
 
 use actix::{Message, Recipient};
 
-use crate::traits::EventContextAccessors;
-use crate::{AggregateId, CorrelationId, EnclaveEvent, EventSource, Sequenced, Unsequenced};
+use crate::{AggregateId, CorrelationId, EventSource, InterfoldEvent, Sequenced, Unsequenced};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum EventStoreFilter {
@@ -20,13 +19,13 @@ pub enum EventStoreFilter {
 #[derive(Message, Debug)]
 #[rtype("()")]
 pub struct StoreEventRequested {
-    pub event: EnclaveEvent<Unsequenced>,
+    pub event: InterfoldEvent<Unsequenced>,
     pub sender: Recipient<StoreEventResponse>,
 }
 
 impl StoreEventRequested {
     pub fn new(
-        event: EnclaveEvent<Unsequenced>,
+        event: InterfoldEvent<Unsequenced>,
         sender: impl Into<Recipient<StoreEventResponse>>,
     ) -> Self {
         Self {
@@ -41,15 +40,15 @@ impl StoreEventRequested {
 #[rtype("()")]
 pub struct EventStoreQueryResponse {
     id: CorrelationId,
-    events: Vec<EnclaveEvent<Sequenced>>,
+    events: Vec<InterfoldEvent<Sequenced>>,
 }
 
 impl EventStoreQueryResponse {
-    pub fn new(id: CorrelationId, events: Vec<EnclaveEvent>) -> Self {
+    pub fn new(id: CorrelationId, events: Vec<InterfoldEvent>) -> Self {
         Self { id, events }
     }
 
-    pub fn into_events(self) -> Vec<EnclaveEvent> {
+    pub fn into_events(self) -> Vec<InterfoldEvent> {
         self.events
     }
 
@@ -61,10 +60,10 @@ impl EventStoreQueryResponse {
 /// Direct event received by the Sequencer once an event has been stored
 #[derive(Message, Debug)]
 #[rtype("()")]
-pub struct StoreEventResponse(pub EnclaveEvent<Sequenced>);
+pub struct StoreEventResponse(pub InterfoldEvent<Sequenced>);
 
 impl StoreEventResponse {
-    pub fn into_event(self) -> EnclaveEvent<Sequenced> {
+    pub fn into_event(self) -> InterfoldEvent<Sequenced> {
         self.0
     }
 }

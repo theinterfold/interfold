@@ -30,7 +30,7 @@
 //! let signer = PrivateKeySigner::random();
 //!
 //! // Setup all actors with proper separation of concerns
-//! setup_zk_actors(&bus, &backend, signer);
+//! setup_zk_actors(&bus, &backend, signer, HashMap::new());
 //! ```
 
 pub mod accusation_manager;
@@ -44,9 +44,8 @@ pub mod proof_verification;
 pub mod share_verification;
 pub mod zk_actor;
 
-pub use accusation_manager::AccusationManager;
-pub use accusation_manager_ext::AccusationManagerExtension;
-pub use commitment_consistency_checker_ext::CommitmentConsistencyCheckerExtension;
+// Re-export accusation types from their canonical home in e3-slashing.
+pub use e3_slashing::CommitmentConsistencyCheckerExtension;
 pub use node_proof_aggregator::NodeProofAggregator;
 pub use proof_request::ProofRequestActor;
 pub use proof_verification::{
@@ -56,8 +55,10 @@ pub use share_verification::ShareVerificationActor;
 pub use zk_actor::ZkActor;
 
 use actix::{Actor, Addr};
+use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
 use e3_events::BusHandle;
+use std::collections::HashMap;
 
 use crate::ZkBackend;
 
@@ -65,14 +66,23 @@ use crate::ZkBackend;
 ///
 /// Requires a `ZkBackend` for proof generation/verification and a
 /// `PrivateKeySigner` for signing proofs (fault attribution).
-pub fn setup_zk_actors(bus: &BusHandle, backend: &ZkBackend, signer: PrivateKeySigner) -> ZkActors {
+/// `dkg_fold_attestation_verifiers_by_chain` maps each enabled chain's id to
+/// `CiphernodeRegistry.dkgFoldAttestationVerifier()` (EIP-712 `verifyingContract`
+/// for fold attestations). Fetched at node startup when proof aggregation is enabled.
+pub fn setup_zk_actors(
+    bus: &BusHandle,
+    backend: &ZkBackend,
+    signer: PrivateKeySigner,
+    dkg_fold_attestation_verifiers_by_chain: HashMap<u64, Option<Address>>,
+) -> ZkActors {
     let zk_actor = ZkActor::new(backend).start();
     let verifier = zk_actor.clone().recipient();
 
-    let proof_request = ProofRequestActor::setup(bus, signer);
+    let proof_request = ProofRequestActor::setup(bus, signer.clone());
     let proof_verification = ProofVerificationActor::setup(bus, verifier);
     let share_verification = ShareVerificationActor::setup(bus);
-    let node_proof_aggregator = NodeProofAggregator::setup(bus);
+    let node_proof_aggregator =
+        NodeProofAggregator::setup(bus, signer, dkg_fold_attestation_verifiers_by_chain);
 
     ZkActors {
         zk_actor,

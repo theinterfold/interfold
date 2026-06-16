@@ -10,10 +10,10 @@ import CardContent from '../components/CardContent'
 import Spinner from '../components/Spinner'
 import ErrorDisplay from '../components/ErrorDisplay'
 import { useWizard, WizardStep } from '../../context/WizardContext'
-import { decodePlaintextOutput } from '@enclave-e3/sdk'
+import { decodePlaintextOutput } from '@interfold/sdk'
 
 /**
- * EncryptSubmit component - Fourth step in the Enclave wizard flow
+ * EncryptSubmit component - Fourth step in the Interfold wizard flow
  *
  * This component handles the encryption and submission of user inputs to the E3.
  * It provides feedback on the encryption process and displays the status of the
@@ -22,7 +22,7 @@ import { decodePlaintextOutput } from '@enclave-e3/sdk'
 const EncryptSubmit: React.FC = () => {
   const { e3State, setE3State, setResult, setCurrentStep, inputPublishError, inputPublishSuccess, handleTryAgain, handleReset, sdk } =
     useWizard()
-  const { isInitialized, onEnclaveEvent, off, EnclaveEventType } = sdk
+  const { isInitialized, onInterfoldEvent, off, InterfoldEventType } = sdk
 
   const [showErrorDetails, setShowErrorDetails] = useState(false)
   const [isExpired, setIsExpired] = useState(false)
@@ -57,14 +57,14 @@ const EncryptSubmit: React.FC = () => {
       })
     }
 
-    onEnclaveEvent(EnclaveEventType.CIPHERTEXT_OUTPUT_PUBLISHED, handleCiphertextOutput)
-    onEnclaveEvent(EnclaveEventType.PLAINTEXT_OUTPUT_PUBLISHED, handlePlaintextOutput)
+    onInterfoldEvent(InterfoldEventType.CIPHERTEXT_OUTPUT_PUBLISHED, handleCiphertextOutput)
+    onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, handlePlaintextOutput)
 
     return () => {
-      off(EnclaveEventType.CIPHERTEXT_OUTPUT_PUBLISHED, handleCiphertextOutput)
-      off(EnclaveEventType.PLAINTEXT_OUTPUT_PUBLISHED, handlePlaintextOutput)
+      off(InterfoldEventType.CIPHERTEXT_OUTPUT_PUBLISHED, handleCiphertextOutput)
+      off(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, handlePlaintextOutput)
     }
-  }, [isInitialized, onEnclaveEvent, off, EnclaveEventType, setE3State, setResult])
+  }, [isInitialized, onInterfoldEvent, off, InterfoldEventType, setE3State, setResult])
 
   // Check for E3 expiration
   useEffect(() => {
@@ -100,7 +100,7 @@ const EncryptSubmit: React.FC = () => {
     <CardContent>
       <div className='space-y-6 text-center'>
         <div className='flex justify-center'>
-          <LockIcon size={48} className='text-enclave-400' />
+          <LockIcon size={48} className='text-interfold-400' />
         </div>
         <p className='text-base font-extrabold uppercase text-slate-600/50'>Step 4: Encrypting & Submitting</p>
         <div className='space-y-4'>
@@ -121,7 +121,7 @@ const EncryptSubmit: React.FC = () => {
               </div>
               <button
                 onClick={handleReset}
-                className='w-full rounded-lg bg-enclave-400 px-6 py-3 font-semibold text-slate-800 transition-all duration-200 hover:bg-enclave-300 hover:shadow-md'
+                className='w-full rounded-lg bg-interfold-400 px-6 py-3 font-semibold text-slate-800 transition-all duration-200 hover:bg-interfold-300 hover:shadow-md'
               >
                 Start New Computation
               </button>

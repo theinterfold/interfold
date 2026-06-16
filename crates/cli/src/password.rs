@@ -27,8 +27,8 @@ pub enum PasswordCommands {
 
 pub async fn execute(out: Console, command: PasswordCommands, config: &AppConfig) -> Result<()> {
     match command {
-        PasswordCommands::Set { password } => password_set::execute(out, &config, password).await?,
-        PasswordCommands::Delete => password_delete::execute(&out, &config).await?,
+        PasswordCommands::Set { password } => password_set::execute(out, config, password).await?,
+        PasswordCommands::Delete => password_delete::execute(&out, config).await?,
     };
 
     Ok(())

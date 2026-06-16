@@ -22,6 +22,12 @@ pub struct CorrelationId {
     id: usize,
 }
 
+impl Default for CorrelationId {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CorrelationId {
     pub fn new() -> Self {
         let id = NEXT_CORRELATION_ID.fetch_add(1, Ordering::SeqCst);

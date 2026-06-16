@@ -4,12 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::config_setup as setup;
 use alloy::primitives::Address;
 use anyhow::Result;
 use dialoguer::{theme::ColorfulTheme, Input};
 use e3_config::AppConfig;
 use e3_console::{log, Console};
-use e3_entrypoint::config::setup;
 use e3_utils::{colorize, Color};
 use std::path::PathBuf;
 use tracing::instrument;
@@ -34,14 +34,14 @@ pub async fn execute(
         None => Input::<String>::with_theme(&ColorfulTheme::default())
             .with_prompt("Enter WebSocket devnet RPC URL")
             .default("wss://ethereum-sepolia-rpc.publicnode.com".to_string())
-            .validate_with(setup::validate_rpc_url)
+            .validate_with(|url: &String| setup::validate_rpc_url(url))
             .interact_text()?,
     };
 
     let private_key = ask_for_private_key(private_key)?;
     let default_config_dir = dirs::config_dir()
         .ok_or_else(|| anyhow::anyhow!("Could not determine home directory"))?
-        .join("enclave");
+        .join("interfold");
 
     let config_dir: PathBuf = Input::with_theme(&ColorfulTheme::default())
         .with_prompt("Enter config directory")
@@ -59,8 +59,12 @@ pub async fn execute(
         .interact_text()?
         .into();
 
+    // Derive the node address from the private key so it can be written into
+    // the generated config (the loader reads it from `node.address`).
+    let node_address = setup::derive_address(&private_key)?;
+
     // Execute
-    let config = setup::execute(&rpc_url, &config_dir)?;
+    let config = setup::execute(&rpc_url, &node_address, &config_dir)?;
 
     e3_entrypoint::password::set::preflight(&config).await?;
     e3_entrypoint::password::set::execute(&config, pw).await?;
@@ -79,7 +83,7 @@ fn print_info(
 ) -> Result<()> {
     let abs_config = config.config_file().canonicalize()?;
 
-    log!(out, "\nEnclave configuration successfully created!");
+    log!(out, "\nInterfold configuration successfully created!");
     log!(
         out,
         "Editable configuration has been written to:\n\n {}",
@@ -104,7 +108,7 @@ fn print_info(
     log!(
         out,
         "You can start your node using:\n `{}`\n",
-        colorize("enclave start", Color::Yellow)
+        colorize("interfold start", Color::Yellow)
     );
     Ok(())
 }

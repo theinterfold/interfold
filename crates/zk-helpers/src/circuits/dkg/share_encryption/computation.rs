@@ -13,17 +13,15 @@
 use crate::circuits::commitments::{
     compute_dkg_pk_commitment, compute_share_encryption_commitment_from_message,
 };
-use crate::{compute_q_mod_t, compute_q_product};
-use std::ops::Deref;
-
 use crate::dkg::share_encryption::ShareEncryptionCircuit;
 use crate::dkg::share_encryption::ShareEncryptionCircuitData;
-use crate::math::{compute_k0is, compute_q_mod_t_centered};
+use crate::math::{compute_k0is, compute_q_mod_t_centered, plaintext_poly_u64};
 use crate::math::{cyclotomic_polynomial, decompose_residue};
 use crate::polynomial_to_toml_json;
 use crate::utils::{compute_modulus_bit, compute_msg_bit};
 use crate::CircuitsErrors;
 use crate::{calculate_bit_width, crt_polynomial_to_toml_json};
+use crate::{compute_q_mod_t, compute_q_product};
 use crate::{CircuitComputation, Computation};
 use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::BfvPreset;
@@ -227,7 +225,7 @@ impl Computation for Bounds {
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
         let n = BigInt::from(dkg_params.degree());
-        let ctx = dkg_params.ctx_at_level(0)?;
+        let ctx = dkg_params.context_at_level(0)?;
 
         let t = BigInt::from(dkg_params.plaintext());
 
@@ -262,11 +260,7 @@ impl Computation for Bounds {
         };
 
         // Calculate bounds for each CRT basis
-        let moduli: Vec<u64> = ctx
-            .moduli_operators()
-            .into_iter()
-            .map(|q| q.modulus())
-            .collect();
+        let moduli: Vec<u64> = ctx.moduli_operators().iter().map(|q| **q).collect();
         let k0is = compute_k0is(&moduli, dkg_params.plaintext())?;
 
         let mut pk_bounds: Vec<BigInt> = Vec::new();
@@ -276,8 +270,8 @@ impl Computation for Bounds {
         let mut p1_bounds: Vec<BigInt> = Vec::new();
         let mut p2_bounds: Vec<BigInt> = Vec::new();
 
-        for (i, qi) in ctx.moduli_operators().into_iter().enumerate() {
-            let qi_bigint = BigInt::from(qi.modulus());
+        for (i, qi) in ctx.moduli_operators().iter().enumerate() {
+            let qi_bigint = BigInt::from(**qi);
             let qi_bound = (&qi_bigint - BigInt::from(1)) / BigInt::from(2);
 
             let k0qi = BigInt::from(k0is[i]);
@@ -355,7 +349,7 @@ impl Computation for Inputs {
         let e0 = &data.e0_rns;
         let e1 = &data.e1_rns;
 
-        let ctx = dkg_params.ctx_at_level(pt.level())?;
+        let ctx = dkg_params.context_at_level(pt.level())?;
         let moduli = dkg_params.moduli();
 
         #[allow(non_snake_case)]
@@ -371,7 +365,7 @@ impl Computation for Inputs {
         e0_mod_q.reverse();
         e0_mod_q.center(&modulus_q);
 
-        let mut k1_u64 = pt.value.deref().to_vec();
+        let mut k1_u64 = plaintext_poly_u64(&pt)?;
         Modulus::new(t)
             .map_err(|e| CircuitsErrors::Fhe(fhe::Error::from(e)))?
             .scalar_mul_vec(&mut k1_u64, q_mod_t);
@@ -380,7 +374,7 @@ impl Computation for Inputs {
         k1.reverse();
         k1.center(&BigInt::from(t));
 
-        let mut message = Polynomial::from_u64_vector(pt.value.deref().to_vec());
+        let mut message = Polynomial::from_u64_vector(plaintext_poly_u64(&pt)?);
         message.reverse();
 
         let mut u = CrtPolynomial::from_fhe_polynomial(u).limb(0).clone();
@@ -392,10 +386,10 @@ impl Computation for Inputs {
         e1.center(&BigInt::from(moduli[0]));
         e1.reverse();
 
-        let mut ct0 = CrtPolynomial::from_fhe_polynomial(&ct.c[0]);
-        let mut ct1 = CrtPolynomial::from_fhe_polynomial(&ct.c[1]);
-        let mut pk0 = CrtPolynomial::from_fhe_polynomial(&pk.c.c[0]);
-        let mut pk1 = CrtPolynomial::from_fhe_polynomial(&pk.c.c[1]);
+        let mut ct0 = CrtPolynomial::from_fhe_polynomial(&ct[0]);
+        let mut ct1 = CrtPolynomial::from_fhe_polynomial(&ct[1]);
+        let mut pk0 = CrtPolynomial::from_fhe_polynomial(&pk.c[0]);
+        let mut pk1 = CrtPolynomial::from_fhe_polynomial(&pk.c[1]);
         let mut e0_crt = CrtPolynomial::from_fhe_polynomial(e0);
 
         ct0.reverse();
@@ -427,7 +421,7 @@ impl Computation for Inputs {
         .enumerate()
         .par_bridge()
         .map(|(i, (qi, ct0i, ct1i, pk0i, pk1i, e0i))| {
-            let qi_bigint = BigInt::from(qi.modulus());
+            let qi_bigint = BigInt::from(**qi);
 
             let diff = e0_mod_q.sub(&e0i);
             let qi_poly = Polynomial::constant(qi_bigint.clone());
@@ -603,7 +597,6 @@ mod tests {
             committee,
             DkgInputType::SecretKey,
             sd.z,
-            sd.lambda,
         )
         .unwrap();
 
@@ -626,7 +619,6 @@ mod tests {
             committee,
             DkgInputType::SecretKey,
             sd.z,
-            sd.lambda,
         )
         .unwrap();
         let constants = Configs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
@@ -651,13 +643,13 @@ mod tests {
             committee,
             DkgInputType::SecretKey,
             sd.z,
-            sd.lambda,
         )
         .unwrap();
         let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
 
         // inputs.message is plaintext coefficients (reversed, as used in circuit)
-        let expected_message = Polynomial::from_u64_vector(sample.plaintext.value.deref().to_vec());
+        let expected_message =
+            Polynomial::from_u64_vector(plaintext_poly_u64(&sample.plaintext).unwrap());
         let mut expected = expected_message;
         expected.reverse();
 

@@ -9,6 +9,7 @@ use crate::config::{self, ConfigCommands};
 use crate::events::{self, EventsCommands};
 use crate::helpers::telemetry::{setup_simple_tracing, setup_tracing};
 use crate::net::{self, NetCommands};
+use crate::node::{self, NodeCommands as NodeStateCommands};
 use crate::nodes::{self, NodeCommands};
 use crate::noir::NoirCommands;
 use crate::password::PasswordCommands;
@@ -28,8 +29,8 @@ use std::str::FromStr;
 use tracing::{info, instrument, Level};
 
 #[derive(Parser, Clone, Debug)]
-#[command(name = "enclave")]
-#[command(about = "A CLI for interacting with Enclave the open-source protocol for Encrypted Execution Environments (E3)", long_about = None)]
+#[command(name = "interfold")]
+#[command(about = "A CLI for interacting with Interfold the open-source protocol for Encrypted Execution Environments (E3)", long_about = None)]
 #[command(version = env!("CARGO_PKG_VERSION"))]
 pub struct Cli {
     /// Path to config file
@@ -39,7 +40,7 @@ pub struct Cli {
     #[command(subcommand)]
     command: Commands,
 
-    /// Indicate error levels by adding additional `-v` arguments. Eg. `enclave -vvv` will give you
+    /// Indicate error levels by adding additional `-v` arguments. Eg. `interfold -vvv` will give you
     /// trace level output
     #[arg(
         short,
@@ -119,7 +120,7 @@ impl Cli {
                         .await?;
                     }
                     Commands::Start { .. } => {
-                        log!(out,"No configuration found. Setting up enclave configuration...");
+                        log!(out,"No configuration found. Setting up interfold configuration...");
                         ciphernode::setup::execute(
                             out,
                             None,
@@ -133,7 +134,7 @@ impl Cli {
                         noir::execute_without_config(out, command).await?
                     },
                     _ => bail!(
-                        "Configuration file not found. Run `enclave ciphernode setup` to create a configuration."
+                        "Configuration file not found. Run `interfold ciphernode setup` to create a configuration."
                     ),
                 };
                 return Ok(());
@@ -156,7 +157,7 @@ impl Cli {
         match self.command {
             Commands::Start { peers } => start::execute(config, peers).await?,
             Commands::Init { .. } => {
-                bail!("Cannot run `enclave init` when a configuration exists.");
+                bail!("Cannot run `interfold init` when a configuration exists.");
             }
             Commands::Compile { dev } => {
                 e3_support_scripts::program_compile(config.program().clone(), dev).await?
@@ -184,6 +185,7 @@ impl Cli {
             Commands::Noir { command } => noir::execute(out, command, &config).await?,
             Commands::Net { command } => net::execute(&out, command, &config).await?,
             Commands::Events { command } => events::execute(out, command, &config).await?,
+            Commands::Node { command } => node::execute(out, command, &config).await?,
             Commands::Rev => rev::execute(out).await?,
             Commands::Config { command } => config::execute(out, command, &config).await?,
         }
@@ -232,12 +234,12 @@ pub enum Commands {
         chain: String,
     },
 
-    /// Initialize an enclave project
+    /// Initialize an interfold project
     Init {
         /// Path to the location where the project should be initialized
         path: Option<PathBuf>,
 
-        /// Template repository to use. Expecting the form `git+https://github.com/gnosisguild/enclave.git#main:template/default`
+        /// Template repository to use. Expecting the form `git+https://github.com/gnosisguild/interfold.git#main:template/default`
         #[arg(long)]
         template: Option<String>,
 
@@ -247,7 +249,7 @@ pub enum Commands {
         skip_cleanup: bool,
     },
 
-    /// Compile an Enclave project
+    /// Compile an Interfold project
     Compile {
         /// Compile the program in Dev Mode.
         #[arg(long)]
@@ -294,6 +296,12 @@ pub enum Commands {
     Nodes {
         #[command(subcommand)]
         command: NodeCommands,
+    },
+
+    /// Single-node maintenance commands (validate on-disk state, etc.)
+    Node {
+        #[command(subcommand)]
+        command: NodeStateCommands,
     },
 
     /// Manage net configuration

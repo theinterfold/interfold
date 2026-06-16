@@ -123,7 +123,7 @@ impl TaskPool {
             }
         });
 
-        let output = rx.await.map_err(|r| TaskPoolError::RecvError(r))??;
+        let output = rx.await.map_err(TaskPoolError::RecvError)??;
 
         warning_handle.abort();
 

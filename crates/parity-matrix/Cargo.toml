@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Parity Matrix for the linear subspace of Z_q^{n+1}"
-repository = "https://github.com/gnosisguild/enclave/crates/parity-matrix"
+repository = "https://github.com/gnosisguild/interfold/crates/parity-matrix"
 
 [dependencies]
 num-bigint = { workspace = true, features = ["serde"] }

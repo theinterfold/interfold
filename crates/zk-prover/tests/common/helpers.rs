@@ -6,6 +6,7 @@
 
 use e3_config::BBPath;
 use e3_events::CircuitName;
+#[allow(unused_imports)]
 pub use e3_test_helpers::{find_anvil, find_bb};
 use e3_zk_prover::{ZkBackend, ZkConfig};
 use std::{env, path::PathBuf};
@@ -22,6 +23,15 @@ fn circuits_build_root() -> PathBuf {
 }
 
 pub async fn setup_compiled_circuit(backend: &ZkBackend, group: &str, circuit_name: &str) {
+    setup_compiled_circuit_for_committee(backend, group, circuit_name, "minimum").await;
+}
+
+pub async fn setup_compiled_circuit_for_committee(
+    backend: &ZkBackend,
+    group: &str,
+    circuit_name: &str,
+    committee: &str,
+) {
     let target_dir = circuits_build_root().join(group).join("target");
     let json_path = target_dir.join(format!("{circuit_name}.json"));
     let vk_evm_path = target_dir.join(format!("{circuit_name}.vk"));
@@ -42,8 +52,8 @@ pub async fn setup_compiled_circuit(backend: &ZkBackend, group: &str, circuit_na
         vk_evm_path.display()
     );
 
-    // Tests use insecure params — fixtures go under insecure-512/
-    let preset_dir = backend.circuits_dir.join("insecure-512");
+    // Tests use insecure params — fixtures go under insecure-512/{committee}/
+    let preset_dir = backend.circuits_dir.join("insecure-512").join(committee);
 
     // Set up the evm variant directory (keccak VK + hash)
     let evm_dir = preset_dir.join("evm").join(group).join(circuit_name);
@@ -152,7 +162,7 @@ pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circu
         vk_recursive_path.display()
     );
 
-    let preset_dir = backend.circuits_dir.join("insecure-512");
+    let preset_dir = backend.circuits_dir.join("insecure-512").join("minimum");
     let default_dir = preset_dir.join("default").join(circuit.group()).join(pkg);
     fs::create_dir_all(&default_dir).await.unwrap();
     fs::copy(&json_path, default_dir.join(format!("{pkg}.json")))
@@ -210,6 +220,57 @@ pub async fn setup_test_prover(bb: &PathBuf) -> (ZkBackend, TempDir) {
     std::os::unix::fs::symlink(bb, &backend.bb_binary).unwrap();
 
     (backend, temp)
+}
+
+/// Reads `circuits/bin/.active-preset.json` (written by `scripts/build-circuits.ts`) and
+/// returns the `committee` field, normalised to lower-case (e.g. `"minimum"`, `"micro"`).
+/// Returns `None` when the stamp is absent or malformed — callers must treat that as a
+/// "circuits not built yet" condition rather than as a specific committee.
+pub fn active_bin_committee() -> Option<String> {
+    let path = circuits_build_root().join(".active-preset.json");
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let v: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    v.get("committee")?.as_str().map(|s| s.to_lowercase())
+}
+
+/// Returns `true` when the compiled `pk_aggregation` (C5) circuit was built for the **minimum**
+/// committee (H=2): `expected_threshold_pk_commitments` array length == 2.
+///
+/// Tests that hard-code `CiphernodesCommitteeSize::Minimum` samples should call this and skip
+/// when it returns `false` — the Minimum samples will not satisfy the compiled circuit's ABI.
+///
+/// Prefers `.active-preset.json` (cheap stamp check) and falls back to ABI introspection of
+/// `pk_aggregation.json` for older builds that pre-date the stamp's `committee` field.
+pub fn circuits_compiled_for_minimum() -> bool {
+    if let Some(committee) = active_bin_committee() {
+        return committee == "minimum";
+    }
+
+    let path = circuits_build_root()
+        .join("threshold")
+        .join("pk_aggregation")
+        .join("target")
+        .join("pk_aggregation.json");
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return false; // artifact absent → can't tell, assume not minimum
+    };
+    let Ok(v) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    // `expected_threshold_pk_commitments` is the H-length array in C5's ABI.
+    v["abi"]["parameters"]
+        .as_array()
+        .and_then(|ps| {
+            ps.iter()
+                .find(|p| {
+                    p.get("name")
+                        == Some(&serde_json::Value::String(
+                            "expected_threshold_pk_commitments".into(),
+                        ))
+                })
+                .and_then(|p| p.get("type")?.get("length")?.as_u64())
+        })
+        .is_some_and(|len| len == 2) // minimum H == 2
 }
 
 /// Lightweight backend for tests that need to override config (e.g. inject bad checksums).

@@ -103,7 +103,7 @@ impl ComputeProvider for Risc0Provider {
 // or FITNESS FOR A PARTICULAR PURPOSE.
 pragma solidity >=0.8.27;
 
-import {IEnclave, IE3Program} from "@enclave-e3/contracts/interfaces/IEnclave.sol";
+import {IInterfold, IE3Program} from "@interfold/contracts/interfaces/IInterfold.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
 
 contract MyE3Program is IE3Program {
@@ -111,13 +111,13 @@ contract MyE3Program is IE3Program {
     bytes32 public constant ENCRYPTION_SCHEME_ID = /* Your Encryption Scheme ID */;
 
     IRiscZeroVerifier public verifier;
-    IEnclave public enclave;
+    IInterfold public interfold;
 
     constructor(
-        IEnclave _enclave,
+        IInterfold _interfold,
         IRiscZeroVerifier _verifier
     ) {
-        enclave = _enclave;
+        interfold = _interfold;
         verifier = _verifier;
     }
 
@@ -142,10 +142,10 @@ contract MyE3Program is IE3Program {
 
 ```javascript
 // First approve the fee token
-await FeeTokenContract.approve(EnclaveContract.address, computationFee)
+await FeeTokenContract.approve(InterfoldContract.address, computationFee)
 
 // Then request the E3
-await EnclaveContract.request({
+await InterfoldContract.request({
   threshold: [thresholdMin, thresholdMax],
   inputWindow: [inputWindowStart, inputWindowEnd],
   e3Program: e3ProgramAddress,
@@ -195,9 +195,9 @@ encrypted data, enabling a new class of decentralized applications.
 ## Additional Resources
 
 - **Interfold GitHub Repository**:
-  [https://github.com/gnosisguild/enclave](https://github.com/gnosisguild/enclave)
+  [https://github.com/gnosisguild/interfold](https://github.com/gnosisguild/interfold)
 - **CRISP GitHub Repository**:
-  [https://github.com/gnosisguild/enclave](https://github.com/gnosisguild/enclave/tree/main/examples/CRISP)
+  [https://github.com/gnosisguild/interfold](https://github.com/gnosisguild/interfold/tree/main/examples/CRISP)
 - **Interfold Quick Start**: [Quick Start](/quick-start)
 - **RISC Zero Documentation**: [https://www.risczero.com](https://www.risczero.com)
 - **Compute Provider Package**: Check the Interfold repository for the Compute Provider package and

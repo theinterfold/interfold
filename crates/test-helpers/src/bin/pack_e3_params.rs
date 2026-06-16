@@ -33,7 +33,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     let args = Args::parse();
     let params: std::sync::Arc<fhe::bfv::BfvParameters>;
 
-    if args.moduli.len() == 0 {
+    if args.moduli.is_empty() {
         println!("Parameter `--moduli` must include at least one value");
         process::exit(1);
     }

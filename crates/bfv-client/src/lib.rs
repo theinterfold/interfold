@@ -28,7 +28,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 /// Decode Plaintext to a Vec<u64>
 pub fn decode_plaintext_to_vec_u64(value: &Plaintext) -> Result<Vec<u64>> {
-    let decoded = Vec::<u64>::try_decode(&value, Encoding::poly())
+    let decoded = Vec::<u64>::try_decode(value, Encoding::poly())
         .map_err(|_| Error::PlaintextDecodeFailed)?;
 
     Ok(decoded)
@@ -45,7 +45,7 @@ pub fn encode_vec_u64_to_bytes(value: &[u64]) -> Vec<u8> {
 
 /// Decode bytes to Vec<u64>
 pub fn decode_bytes_to_vec_u64(bytes: &[u8]) -> Result<Vec<u64>> {
-    if bytes.len() % 8 != 0 {
+    if !bytes.len().is_multiple_of(8) {
         return Err(Error::BadEncoding);
     }
 

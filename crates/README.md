@@ -30,7 +30,7 @@ If you get an error that looks similar to the following you likely need to upgra
 version:
 
 ```
-ERROR! event=EnclaveError(EnclaveError { err_type: Evm, message: "deserialization error: duplicate field `status` at line 1 column 34542" })
+ERROR! event=InterfoldError(InterfoldError { err_type: Evm, message: "deserialization error: duplicate field `status` at line 1 column 34542" })
 ```
 
 # E3 Requested
@@ -90,23 +90,23 @@ You can debug using the `-vvv` cli arguments to alter what output is produced by
 
 ```
 # Show INFO logging
-enclave start
+interfold start
 ```
 
 ```
 # Show DEBUG logging
-enclave start -v
+interfold start -v
 ```
 
 ```
 # Show TRACE logging
-enclave start -vv
+interfold start -vv
 ```
 
 if you want to remove all output aside from errors you can use the `--quiet` argument.
 
 ```
-enclave --quiet
+interfold --quiet
 ```
 
 ## Open telemetry
@@ -120,7 +120,7 @@ docker run -e COLLECTOR_OTLP_ENABLED=true -p 16686:16686 -p 4317:4317 -p 4318:43
 ```
 
 ```
-enclave start -v --otel http://localhost:4317
+interfold start -v --otel http://localhost:4317
 ```
 
 Now you can visit your Jaeger instance at http://localhost:16686 to view the logs from your node.

@@ -97,7 +97,7 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
                 installed.as_deref().unwrap_or("not installed")
             );
             log!(out, "  Required: {}", required);
-            log!(out, "\nRun `enclave noir setup` to update");
+            log!(out, "\nRun `interfold noir setup` to update");
         }
         SetupStatus::CircuitsNeedUpdate {
             installed,
@@ -110,11 +110,11 @@ async fn execute_status(out: Console, backend: &ZkBackend) -> Result<()> {
                 installed.as_deref().unwrap_or("not installed")
             );
             log!(out, "  Required: {}", required);
-            log!(out, "\nRun `enclave noir setup` to update");
+            log!(out, "\nRun `interfold noir setup` to update");
         }
         SetupStatus::FullSetupNeeded => {
             log!(out, "Status: Setup required");
-            log!(out, "\nRun `enclave noir setup` to install");
+            log!(out, "\nRun `interfold noir setup` to install");
         }
     }
 

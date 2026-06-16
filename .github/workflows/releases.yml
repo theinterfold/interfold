@@ -16,6 +16,7 @@ env:
   SUPPORT_DOCKERFILE_PATH: crates/support/Dockerfile
   CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
   SUPPORT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/e3-support
+  NOIR_TOOLCHAIN: v1.0.0-beta.16
   MNEMONIC: 'test test test test test test test test test test test junk'
   INFURA_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
   ETHERSCAN_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
@@ -148,10 +149,9 @@ jobs:
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-            - uses: cachix/install-nix-action@v4
       - uses: cachix/cachix-action@v15
         with:
-          name: enclave
+          name: interfold
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
         # if the following fails it means some of our git dependencies or bb has updated
         # to fix this basically what you need to do here is copy the actual hashes
@@ -201,11 +201,11 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: brew install solidity
 
-      - name: Build enclave binary
-        run: cargo build --locked --release --target ${{ matrix.target }} --bin enclave
+      - name: Build interfold binary
+        run: cargo build --locked --release --target ${{ matrix.target }} --bin interfold
 
-      - name: Build enclaveup binary
-        run: cargo build --locked --release --target ${{ matrix.target }} --bin enclaveup
+      - name: Build interfoldup binary
+        run: cargo build --locked --release --target ${{ matrix.target }} --bin interfoldup
 
       - name: Create release archives
         shell: bash
@@ -219,20 +219,20 @@ jobs:
             EXT=""
           fi
 
-          # Create enclave archive
-          cp "target/${{ matrix.target }}/release/enclave${EXT}" "./enclave${EXT}"
-          tar -czf "dist/enclave-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" "enclave${EXT}"
-          rm "enclave${EXT}"
+          # Create interfold archive
+          cp "target/${{ matrix.target }}/release/interfold${EXT}" "./interfold${EXT}"
+          tar -czf "dist/interfold-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" "interfold${EXT}"
+          rm "interfold${EXT}"
 
-          # Create enclaveup archive
-          cp "target/${{ matrix.target }}/release/enclaveup${EXT}" "./enclaveup${EXT}"
-          tar -czf "dist/enclaveup-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" "enclaveup${EXT}"
-          rm "enclaveup${EXT}"
+          # Create interfoldup archive
+          cp "target/${{ matrix.target }}/release/interfoldup${EXT}" "./interfoldup${EXT}"
+          tar -czf "dist/interfoldup-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" "interfoldup${EXT}"
+          rm "interfoldup${EXT}"
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: enclave-binaries-${{ matrix.os_name }}-${{ matrix.arch }}
+          name: interfold-binaries-${{ matrix.os_name }}-${{ matrix.arch }}
           path: dist/
 
   publish-rust-crates:
@@ -292,6 +292,14 @@ jobs:
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
 
+      # `pnpm build:ts` builds the SDK, whose prebuild compiles the threshold
+      # circuits via `nargo` (packages/interfold-sdk/scripts/compile-circuits.sh).
+      # Without nargo on PATH the build fails with "nargo is not installed".
+      - name: Install Nargo
+        uses: noir-lang/noirup@v0.1.4
+        with:
+          toolchain: ${{ env.NOIR_TOOLCHAIN }}
+
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
 
@@ -312,24 +320,28 @@ jobs:
             echo "📦 Publishing with 'latest' tag for stable release"
           fi
 
-      - name: Publish @enclave-e3/config
-        working-directory: packages/enclave-config
+      - name: Publish @interfold/config
+        working-directory: packages/interfold-config
         run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
 
-      - name: Publish @enclave-e3/contracts
-        working-directory: packages/enclave-contracts
+      - name: Publish @interfold/contracts
+        working-directory: packages/interfold-contracts
         run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
 
-      - name: Publish @enclave-e3/wasm
+      - name: Publish @interfold/wasm
         working-directory: crates/wasm
         run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
 
-      - name: Publish @enclave-e3/sdk
-        working-directory: packages/enclave-sdk
+      - name: Publish @interfold/sdk
+        working-directory: packages/interfold-sdk
         run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
 
-      - name: Publish @enclave-e3/react
-        working-directory: packages/enclave-react
+      - name: Publish @interfold/react
+        working-directory: packages/interfold-react
+        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+
+      - name: Publish @interfold/mcp
+        working-directory: packages/interfold-mcp
         run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
 
   download-circuits:
@@ -366,6 +378,43 @@ jobs:
             echo "found=false" >> $GITHUB_OUTPUT
           fi
 
+      # Guard against shipping stale or wrong-layout artifacts. The `circuit-artifacts`
+      # branch is populated out-of-band (`pnpm build:circuits --committee all --preset
+      # insecure-512` followed by `scripts/circuit-artifacts.ts push`). If it lags the
+      # circuit source, its SOURCE_HASH won't match the source we're releasing and its
+      # on-disk layout may predate the `{preset}/{committee}/{variant}` scheme that
+      # consumers (e3-zk-prover) resolve against. Fail loudly here rather than publishing
+      # a tarball that downstreams can't use — regenerate and re-push the branch.
+      - name: Verify circuit artifacts match source
+        if: steps.pull.outputs.found == 'true'
+        run: |
+          PULLED_HASH=$(cat dist/circuits/SOURCE_HASH 2>/dev/null || true)
+          EXPECTED_HASH="${{ steps.pull.outputs.source_hash }}"
+          if [[ -z "$PULLED_HASH" ]]; then
+            echo "::error::circuit-artifacts branch is missing SOURCE_HASH; cannot verify it matches the released source."
+            exit 1
+          fi
+          if [[ "$PULLED_HASH" != "$EXPECTED_HASH" ]]; then
+            echo "::error::circuit-artifacts is stale (SOURCE_HASH=$PULLED_HASH, expected $EXPECTED_HASH)."
+            echo "::error::Rebuild and re-push: pnpm build:circuits --committee all --preset insecure-512 && pnpm tsx scripts/circuit-artifacts.ts push"
+            exit 1
+          fi
+          # Assert the per-committee layout that `--committee all` produces is present, so an
+          # old flat (committee-less) build can never slip through even if the hash lined up.
+          missing=0
+          for committee in minimum micro small; do
+            marker="dist/circuits/insecure-512/${committee}/default/dkg/pk/pk.json"
+            if [[ ! -f "$marker" ]]; then
+              echo "::error::Expected circuit artifact missing: ${marker#dist/circuits/}"
+              missing=1
+            fi
+          done
+          if [[ "$missing" != "0" ]]; then
+            echo "::error::circuit-artifacts was not built with --committee all; regenerate as above."
+            exit 1
+          fi
+          echo "✅ circuit-artifacts verified (SOURCE_HASH=$PULLED_HASH, per-committee layout present)"
+
       - name: Create release archive
         if: steps.pull.outputs.found == 'true'
         run: |
@@ -395,9 +444,7 @@ jobs:
         download-circuits,
         build-nix-flake,
       ]
-    if:
-      always() && needs.validate-and-prepare.result == 'success' && needs.build-binaries.result == 'success' && needs.build-nix-flake.result
-      == 'success'
+    if: always() && needs.validate-and-prepare.result == 'success' && needs.build-binaries.result == 'success'
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -457,16 +504,16 @@ jobs:
 
           ## 📦 Installation
 
-          ### Install via enclaveup (Recommended)
+          ### Install via interfoldup (Recommended)
 
           Install the installer:
           \`\`\`bash
-          curl -fsSL https://raw.githubusercontent.com/gnosisguild/enclave/main/install | bash
+          curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
           \`\`\`
 
-          Then use it to install enclave:
+          Then use it to install interfold:
           \`\`\`bash
-          enclaveup install
+          interfoldup install
           \`\`\`
 
           ### NPM Packages
@@ -477,20 +524,20 @@ jobs:
             cat >> release_notes.md << EOF
           \`\`\`bash
           # Install pre-release versions
-          npm install @enclave/sdk@next
-          npm install @enclave/contracts@next
-          npm install @enclave/config@next
-          npm install @enclave/react@next
+          npm install @interfold/sdk@next
+          npm install @interfold/contracts@next
+          npm install @interfold/config@next
+          npm install @interfold/react@next
           \`\`\`
           EOF
           else
             cat >> release_notes.md << EOF
           \`\`\`bash
           # Install stable versions
-          npm install @enclave/sdk@latest
-          npm install @enclave/contracts@latest
-          npm install @enclave/config@latest
-          npm install @enclave/react@latest
+          npm install @interfold/sdk@latest
+          npm install @interfold/contracts@latest
+          npm install @interfold/config@latest
+          npm install @interfold/react@latest
           \`\`\`
           EOF
           fi
@@ -503,7 +550,7 @@ jobs:
 
           \`\`\`toml
           [dependencies]
-          enclave = "${VERSION}"
+          interfold = "${VERSION}"
           \`\`\`
           EOF
           fi
@@ -513,8 +560,8 @@ jobs:
 
           ## 💾 Binary Assets
 
-          - \`enclave-*\`: The main Enclave CLI binary
-          - \`enclaveup-*\`: The installer/version manager binary
+          - \`interfold-*\`: The main Interfold CLI binary
+          - \`interfoldup-*\`: The installer/version manager binary
 
           ### Supported Platforms
           - Linux (x86_64)

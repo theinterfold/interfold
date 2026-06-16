@@ -15,9 +15,9 @@ use crate::server::models::{
 use actix_web::{web, HttpResponse, Responder};
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::sol_types::SolValue;
-use e3_fhe_params::default_param_set;
-use e3_fhe_params::{build_bfv_params_from_set_arc, encode_bfv_params};
-use e3_sdk::evm_helpers::contracts::{CommitteeSize, EnclaveContract, EnclaveRead, EnclaveWrite};
+use e3_sdk::evm_helpers::contracts::{
+    CommitteeSize, InterfoldContract, InterfoldRead, InterfoldWrite,
+};
 use log::{error, info};
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
@@ -83,7 +83,7 @@ async fn get_current_round(
 
     // Get the first requester if any exist
     // .get(0) returns Option<&String>, so we need to handle that
-    let result = if let Some(requester) = incoming.requesters.get(0) {
+    let result = if let Some(requester) = incoming.requesters.first() {
         // We have a requester, filter by it
         store
             .current_round()
@@ -174,10 +174,10 @@ pub async fn initialize_crisp_round(
     );
 
     // Continue with the existing E3 initialization
-    let contract = EnclaveContract::new(
+    let contract = InterfoldContract::new(
         &CONFIG.http_rpc_url,
         &CONFIG.private_key,
-        &CONFIG.enclave_address,
+        &CONFIG.interfold_address,
     )
     .await?;
     let e3_program: Address = CONFIG.e3_program_address.parse()?;
@@ -187,7 +187,7 @@ pub async fn initialize_crisp_round(
     match contract.is_e3_program_enabled(e3_program).await {
         Ok(enabled) => {
             if !enabled {
-                match contract.enable_e3_program(e3_program).await {
+                match contract.register_e3_program(e3_program).await {
                     Ok(res) => println!("E3 Program enabled. TxHash: {:?}", res.transaction_hash),
                     Err(e) => println!("Error enabling E3 Program: {:?}", e),
                 }
@@ -198,21 +198,17 @@ pub async fn initialize_crisp_round(
         Err(e) => error!("Error checking E3 Program enabled: {:?}", e),
     }
 
-    info!("Generating parameters...");
-    let params = encode_bfv_params(&build_bfv_params_from_set_arc(default_param_set()));
-
     let token_address: Address = token_address.parse()?;
-    let balance_threshold = U256::from_str_radix(&balance_threshold, 10)?;
+    let balance_threshold = U256::from_str_radix(balance_threshold, 10)?;
 
     // Serialize the custom parameters to bytes.
     let custom_params_bytes = Bytes::from((token_address, balance_threshold).abi_encode());
 
     info!("Requesting E3...");
     let committee_size = match CONFIG.e3_committee_size {
-        0 => CommitteeSize::Micro,
-        1 => CommitteeSize::Small,
-        2 => CommitteeSize::Medium,
-        3 => CommitteeSize::Large,
+        0 => CommitteeSize::Minimum,
+        1 => CommitteeSize::Micro,
+        2 => CommitteeSize::Small,
         _ => return Err(format!("Invalid committee size: {}", CONFIG.e3_committee_size).into()),
     };
 

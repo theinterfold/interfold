@@ -1,4 +1,4 @@
-# DAppNode Enclave Ciphernode Dockerfile
+# DAppNode Interfold Ciphernode Dockerfile
 # Uses official upstream image from GitHub Container Registry
 
 ARG UPSTREAM_VERSION
@@ -22,8 +22,8 @@ RUN useradd -m -u 1000 -s /bin/bash ciphernode
 RUN mkdir -p /data && chown ciphernode:ciphernode /data
 
 # Copy binary from upstream
-COPY --from=upstream /usr/local/bin/enclave /usr/local/bin/enclave
-RUN chmod +x /usr/local/bin/enclave
+COPY --from=upstream /usr/local/bin/interfold /usr/local/bin/interfold
+RUN chmod +x /usr/local/bin/interfold
 
 # Copy entrypoint and config template
 COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
@@ -31,13 +31,13 @@ COPY --chmod=644 config.template.yaml /opt/config.template.yaml
 
 # Labels
 LABEL maintainer="Gnosis Guild <https://gnosisguild.org>"
-LABEL org.opencontainers.image.source="https://github.com/gnosisguild/enclave"
-LABEL org.opencontainers.image.description="Enclave Ciphernode for DAppNode"
+LABEL org.opencontainers.image.source="https://github.com/gnosisguild/interfold"
+LABEL org.opencontainers.image.description="Interfold Ciphernode for DAppNode"
 
 USER ciphernode
 WORKDIR /data
 
 HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD pgrep -f enclave || exit 1
+    CMD pgrep -f interfold || exit 1
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

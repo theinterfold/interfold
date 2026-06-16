@@ -1,4 +1,4 @@
-# DAppNode Setup Wizard - Enclave Ciphernode
+# DAppNode Setup Wizard - Interfold Ciphernode
 version: '2'
 fields:
   - id: NETWORK
@@ -54,13 +54,13 @@ fields:
     pattern: '^(0x[a-fA-F0-9]{64})?$'
 
   # Contracts
-  - id: ENCLAVE_CONTRACT
+  - id: INTERFOLD_CONTRACT
     target:
       type: environment
-      name: ENCLAVE_CONTRACT
+      name: INTERFOLD_CONTRACT
       service: ciphernode
-    title: 'Enclave Contract Address'
-    description: 'Address of the Enclave contract on the selected network.'
+    title: 'Interfold Contract Address'
+    description: 'Address of the Interfold contract on the selected network.'
     required: true
     pattern: '^0x[a-fA-F0-9]{40}$'
     patternErrorMessage: 'Must be a valid Ethereum address (0x...)'
@@ -87,13 +87,13 @@ fields:
     pattern: '^0x[a-fA-F0-9]{40}$'
     patternErrorMessage: 'Must be a valid Ethereum address (0x...)'
 
-  - id: ENCLAVE_DEPLOY_BLOCK
+  - id: INTERFOLD_DEPLOY_BLOCK
     target:
       type: environment
-      name: ENCLAVE_DEPLOY_BLOCK
+      name: INTERFOLD_DEPLOY_BLOCK
       service: ciphernode
-    title: 'Enclave Deploy Block'
-    description: 'Block number where the Enclave contract was deployed.'
+    title: 'Interfold Deploy Block'
+    description: 'Block number where the Interfold contract was deployed.'
     required: true
     pattern: '^[0-9]+$'
     patternErrorMessage: 'Must be a block number (integer).'
@@ -174,5 +174,5 @@ fields:
       name: EXTRA_OPTS
       service: ciphernode
     title: 'Extra Options'
-    description: 'Additional CLI arguments passed to `enclave start`.'
+    description: 'Additional CLI arguments passed to `interfold start`.'
     required: false

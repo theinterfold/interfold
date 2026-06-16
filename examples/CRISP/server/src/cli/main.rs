@@ -10,7 +10,7 @@ mod commands;
 use dialoguer::{theme::ColorfulTheme, FuzzySelect, Input};
 use reqwest::Client;
 
-use commands::initialize_crisp_round;
+use commands::{default_voting_token_hint, initialize_crisp_round};
 use crisp::logger::init_logger;
 use log::info;
 
@@ -42,11 +42,8 @@ struct Cli {
 enum Commands {
     /// Initialize new E3 round
     Init {
-        #[arg(
-            short,
-            long,
-            default_value = "0x0000000000000000000000000000000000000000"
-        )]
+        /// Voting eligibility token (`MockVotingToken` on localhost). Omit or `0x0` to use deploy JSON / `CRISP_VOTING_TOKEN` in `.env`.
+        #[arg(short, long, default_value = "")]
         token_address: String,
         #[arg(short, long, default_value = "1000000000000000000")]
         balance_threshold: String,
@@ -99,10 +96,11 @@ pub async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn select_environment() -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
     let selections = &["CRISP: Voting Protocol (ETH)", "More Coming Soon!"];
     Ok(FuzzySelect::with_theme(&ColorfulTheme::default())
-        .with_prompt("Enclave (EEEE): Please choose the private execution environment you would like to run!")
+        .with_prompt("Interfold (EEEE): Please choose the private execution environment you would like to run!")
         .default(0)
         .items(&selections[..])
         .interact()?)
@@ -125,7 +123,7 @@ fn select_action() -> Result<usize, Box<dyn std::error::Error + Send + Sync>> {
 fn get_token_address() -> Result<String, Box<dyn std::error::Error + Send + Sync>> {
     Ok(Input::with_theme(&ColorfulTheme::default())
         .with_prompt("Enter the token contract address for the voting round")
-        .default("0x0000000000000000000000000000000000000000".to_string())
+        .default(default_voting_token_hint())
         .interact_text()?)
 }
 

@@ -1,8 +1,8 @@
 {
-  "name": "enclave-docs",
+  "name": "interfold-docs",
   "version": "1.0.0",
   "private": true,
-  "description": "the official documentation for Enclave.",
+  "description": "the official documentation for Interfold.",
   "main": "index.js",
   "scripts": {
     "dev": "next",

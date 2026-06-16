@@ -17,7 +17,7 @@ pub fn create_deterministic_crp_from_seed(
     params: &Arc<BfvParameters>,
     seed: [u8; 32],
 ) -> CommonRandomPoly {
-    CommonRandomPoly::new_deterministic(&params, seed).unwrap()
+    CommonRandomPoly::new_deterministic(params, seed).unwrap()
 }
 
 /// Creates a Common Random Polynomial for the given BFV parameters and default seed.

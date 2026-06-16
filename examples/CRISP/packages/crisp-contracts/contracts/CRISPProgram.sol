@@ -7,9 +7,9 @@ pragma solidity >=0.8.27;
 
 import { IRiscZeroVerifier } from "risc0/IRiscZeroVerifier.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
-import { IE3Program } from "@enclave-e3/contracts/contracts/interfaces/IE3Program.sol";
-import { IEnclave } from "@enclave-e3/contracts/contracts/interfaces/IEnclave.sol";
-import { E3 } from "@enclave-e3/contracts/contracts/interfaces/IE3.sol";
+import { IE3Program } from "@interfold/contracts/contracts/interfaces/IE3Program.sol";
+import { IInterfold } from "@interfold/contracts/contracts/interfaces/IInterfold.sol";
+import { E3 } from "@interfold/contracts/contracts/interfaces/IE3.sol";
 import { LazyIMTData, InternalLazyIMT } from "@zk-kit/lazy-imt.sol/InternalLazyIMT.sol";
 import { HonkVerifier } from "./CRISPVerifier.sol";
 
@@ -42,7 +42,7 @@ contract CRISPProgram is IE3Program, Ownable {
   /// @notice Maximum number of bits allocated for vote counts in the plaintext output per option.
   uint256 constant MAX_VOTE_BITS = 50;
   // State variables
-  IEnclave public enclave;
+  IInterfold public interfold;
   IRiscZeroVerifier public risc0Verifier;
   bytes32 public imageId;
   HonkVerifier private immutable honkVerifier;
@@ -53,7 +53,7 @@ contract CRISPProgram is IE3Program, Ownable {
   // Errors
   error CallerNotAuthorized();
   error E3AlreadyInitialized();
-  error EnclaveAddressZero();
+  error InterfoldAddressZero();
   error Risc0VerifierAddressZero();
   error InvalidHonkVerifier();
   error EmptyInputData();
@@ -72,16 +72,16 @@ contract CRISPProgram is IE3Program, Ownable {
   event InputPublished(uint256 indexed e3Id, bytes encryptedVote, uint256 index);
 
   /// @notice Initialize the contract, binding it to a specified RISC Zero verifier.
-  /// @param _enclave The enclave address
+  /// @param _interfold The interfold address
   /// @param _risc0Verifier The RISC Zero verifier address
   /// @param _honkVerifier The honk verifier address
   /// @param _imageId The image ID for the guest program
-  constructor(IEnclave _enclave, IRiscZeroVerifier _risc0Verifier, HonkVerifier _honkVerifier, bytes32 _imageId) Ownable(msg.sender) {
-    if (address(_enclave) == address(0)) revert EnclaveAddressZero();
+  constructor(IInterfold _interfold, IRiscZeroVerifier _risc0Verifier, HonkVerifier _honkVerifier, bytes32 _imageId) Ownable(msg.sender) {
+    if (address(_interfold) == address(0)) revert InterfoldAddressZero();
     if (address(_risc0Verifier) == address(0)) revert Risc0VerifierAddressZero();
     if (address(_honkVerifier) == address(0)) revert InvalidHonkVerifier();
 
-    enclave = _enclave;
+    interfold = _interfold;
     risc0Verifier = _risc0Verifier;
     honkVerifier = _honkVerifier;
     imageId = _imageId;
@@ -125,7 +125,7 @@ contract CRISPProgram is IE3Program, Ownable {
     bytes calldata,
     bytes calldata customParams
   ) external returns (bytes32) {
-    if (msg.sender != address(enclave) && msg.sender != owner()) revert CallerNotAuthorized();
+    if (msg.sender != address(interfold) && msg.sender != owner()) revert CallerNotAuthorized();
     if (e3Data[e3Id].paramsHash != bytes32(0)) revert E3AlreadyInitialized();
 
     // decode custom params to get the number of options
@@ -147,11 +147,11 @@ contract CRISPProgram is IE3Program, Ownable {
 
   /// @inheritdoc IE3Program
   function publishInput(uint256 e3Id, bytes memory data) external {
-    E3 memory e3 = enclave.getE3(e3Id);
+    E3 memory e3 = interfold.getE3(e3Id);
 
     // check that we are in the correct stage
-    IEnclave.E3Stage stage = enclave.getE3Stage(e3Id);
-    if (stage != IEnclave.E3Stage.KeyPublished) {
+    IInterfold.E3Stage stage = interfold.getE3Stage(e3Id);
+    if (stage != IInterfold.E3Stage.KeyPublished) {
       revert KeyNotPublished(e3Id);
     }
 
@@ -199,7 +199,7 @@ contract CRISPProgram is IE3Program, Ownable {
   /// @param e3Id The E3 program ID
   /// @return votes - an array of vote counts for each option
   function decodeTally(uint256 e3Id) public view returns (uint256[] memory votes) {
-    E3 memory e3 = enclave.getE3(e3Id);
+    E3 memory e3 = interfold.getE3(e3Id);
 
     uint256 numOptions = e3Data[e3Id].numOptions;
 

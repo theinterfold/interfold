@@ -4,15 +4,15 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { readDeploymentArgs, storeDeploymentArgs } from '@enclave-e3/contracts/scripts'
-import { Enclave__factory as EnclaveFactory } from '@enclave-e3/contracts/types'
+import { readDeploymentArgs, storeDeploymentArgs } from '@interfold/contracts/scripts'
+import { Interfold__factory as InterfoldFactory } from '@interfold/contracts/types'
 import { readFileSync } from 'fs'
 
 import hre from 'hardhat'
 
 import { CRISPProgram__factory as CRISPProgramFactory } from '../types'
 
-const imageIdContent = readFileSync('../../.enclave/generated/contracts/ImageID.sol', 'utf-8')
+const imageIdContent = readFileSync('../../.interfold/generated/contracts/ImageID.sol', 'utf-8')
 const match = imageIdContent.match(/bytes32 public constant PROGRAM_ID = bytes32\((0x[a-fA-F0-9]+)\)/)
 const IMAGE_ID = match ? match[1] : null
 
@@ -30,11 +30,11 @@ export const deployCRISPContracts = async () => {
 
   const verifier = await deployVerifier(useMocks)
 
-  const enclaveAddress = readDeploymentArgs('Enclave', chain)?.address
-  if (!enclaveAddress) {
-    throw new Error('Enclave address not found, it must be deployed first')
+  const interfoldAddress = readDeploymentArgs('Interfold', chain)?.address
+  if (!interfoldAddress) {
+    throw new Error('Interfold address not found, it must be deployed first')
   }
-  const enclave = EnclaveFactory.connect(enclaveAddress, owner)
+  const interfold = InterfoldFactory.connect(interfoldAddress, owner)
 
   const poseidonT3Address = readDeploymentArgs('PoseidonT3', chain)?.address
   if (!poseidonT3Address) {
@@ -70,7 +70,7 @@ export const deployCRISPContracts = async () => {
     owner,
   )
 
-  const crisp = await crispFactory.deploy(enclaveAddress, verifier, honkVerifierAddress, IMAGE_ID)
+  const crisp = await crispFactory.deploy(interfoldAddress, verifier, honkVerifierAddress, IMAGE_ID)
 
   const crispAddress = await crisp.getAddress()
   storeDeploymentArgs(
@@ -78,7 +78,7 @@ export const deployCRISPContracts = async () => {
       address: crispAddress,
       blockNumber: await ethers.provider.getBlockNumber(),
       constructorArgs: {
-        enclave: enclaveAddress,
+        interfold: interfoldAddress,
         verifierAddress: verifier,
         honkVerifierAddress,
         imageId: IMAGE_ID,
@@ -88,8 +88,8 @@ export const deployCRISPContracts = async () => {
     chain,
   )
 
-  // enable the program on Enclave
-  const tx = await enclave.enableE3Program(crispAddress)
+  // enable the program on Interfold
+  const tx = await interfold.registerE3Program(crispAddress)
   await tx.wait()
 
   let tokenAddress
@@ -111,7 +111,7 @@ export const deployCRISPContracts = async () => {
   console.log(`
       Deployments:
       ----------------------------------------------------------------------
-      Enclave: ${enclaveAddress}
+      Interfold: ${interfoldAddress}
       Risc0Verifier: ${verifier}
       HonkVerifier: ${honkVerifierAddress}
       CRISPProgram: ${crispAddress}

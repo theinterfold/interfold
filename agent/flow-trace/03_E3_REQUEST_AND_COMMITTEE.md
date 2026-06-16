@@ -2,7 +2,7 @@
 
 ## Overview
 
-An E3 (Encrypted Execution Environment) is the core unit of work in the Enclave protocol. A
+An E3 (Encrypted Execution Environment) is the core unit of work in the Interfold protocol. A
 requester pays a fee, a committee of ciphernodes is selected via sortition, and the committee
 collectively generates encryption keys through DKG.
 
@@ -21,10 +21,10 @@ Each transition has a deadline. Missing a deadline allows anyone to call `markE3
 
 ## Step 1: E3 Request (On-Chain)
 
-**Contract:** `Enclave.sol` → `request(E3RequestParams)`
+**Contract:** `Interfold.sol` → `request(E3RequestParams)`
 
 ```
-Requester calls: Enclave.request({
+Requester calls: Interfold.request({
   threshold: [M, N],        // M-of-N threshold
   inputWindow: [start, end], // when inputs are accepted
   e3Program: <address>,      // computation program contract
@@ -118,9 +118,9 @@ When the running ciphernodes detect `E3Requested` and `CommitteeRequested` event
 ### 2a. E3Requested Event Processing
 
 ```
-EnclaveSolReader decodes IEnclave::E3Requested log
+InterfoldSolReader decodes IInterfold::E3Requested log
 │
-├─ Publishes EnclaveEvent::E3Requested {
+├─ Publishes InterfoldEvent::E3Requested {
 │     e3_id, threshold_m, threshold_n,
 │     seed, params, error_size, esi_per_ct
 │   }
@@ -277,7 +277,7 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
     │  │    3. if topNodes.length < threshold[1]:                │
     │  │       → NOT ENOUGH NODES submitted tickets              │
     │  │       committees[e3Id].failed = true                    │
-    │  │       enclave.onE3Failed(e3Id,                          │
+    │  │       interfold.onE3Failed(e3Id,                          │
     │  │         FailureReason.InsufficientCommitteeMembers)     │
     │  │       Emit CommitteeFormationFailed(e3Id)               │
     │  │       RETURN                                            │
@@ -289,9 +289,9 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
     │  │       activeCount = committee.length                    │
     │  │       finalized = true                                  │
     │  │                                                         │
-    │  │    5. enclave.onCommitteeFinalized(e3Id)                │
+    │  │    5. interfold.onCommitteeFinalized(e3Id)                │
     │  │       │                                                 │
-    │  │       │  ┌─ Enclave.sol ────────────────────────────┐  │
+    │  │       │  ┌─ Interfold.sol ────────────────────────────┐  │
     │  │       │  │  onCommitteeFinalized(e3Id) {            │  │
     │  │       │  │    require(stage == Requested)            │  │
     │  │       │  │    stage = CommitteeFinalized             │  │
@@ -311,9 +311,9 @@ CiphernodeRegistrySolWriter receives CommitteeFinalizeRequested
 
 ```text
 CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized event
-│  [ICiphernodeRegistry.SortitionCommitteeFinalized — NOT IEnclave.CommitteeFinalized]
+│  [ICiphernodeRegistry.SortitionCommitteeFinalized — NOT IInterfold.CommitteeFinalized]
 │
-├─ Publishes EnclaveEvent::CommitteeFinalized {
+├─ Publishes InterfoldEvent::CommitteeFinalized {
 │     e3_id, committee: [addr1, addr2, ..., addrN], scores: [s1, s2, ..., sN], chain_id
 │   }
 │
@@ -398,13 +398,13 @@ If any deadline is missed → anyone can call markE3Failed()
 
 `CiphernodeRegistryOwnable._validateNodeEligibility` derives the per-node ticket weight from
 `bondingRegistry.getTicketBalanceAtBlock(node, committee.requestBlock - 1)`, which reads the
-`EnclaveTicketToken` ERC20Votes checkpoint history (EIP-6372 timestamp clock). Same-block or
+`InterfoldTicketToken` ERC20Votes checkpoint history (EIP-6372 timestamp clock). Same-block or
 post-request rebalancing therefore cannot inflate a node's selection weight; the outer
 `isCiphernodeEligible(msg.sender)` still gates on the current `isActive` flag for liveness.
 
 ### M-33 — `markE3Failed` grace period
 
-When `markFailedGracePeriod > 0` (set via `Enclave.setMarkFailedGracePeriod`), calling
+When `markFailedGracePeriod > 0` (set via `Interfold.setMarkFailedGracePeriod`), calling
 `markE3Failed` within `deadline … deadline + markFailedGracePeriod` is restricted to
 `{ original requester, contract owner, any committee member }`. After that window any caller may
 finalize the failure. Default `markFailedGracePeriod = 0` preserves the legacy permissionless flow.
@@ -412,5 +412,5 @@ finalize the failure. Default `markFailedGracePeriod = 0` preserves the legacy p
 ### H-26 — timestamp-clock `requestBlock`
 
 `Committee.requestBlock` stores `block.timestamp` (EIP-6372 timestamp mode) so that `getPastVotes` /
-`getTicketBalanceAtBlock` lookups against the `EnclaveTicketToken` resolve consistently across L1
+`getTicketBalanceAtBlock` lookups against the `InterfoldTicketToken` resolve consistently across L1
 and L2 clocks. The field name is preserved for storage / event ABI compatibility.

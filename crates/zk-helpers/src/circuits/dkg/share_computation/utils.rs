@@ -42,7 +42,7 @@ pub fn parity_matrix_constant_string(
     threshold: usize,
 ) -> Result<String, CircuitsErrors> {
     let parity_matrix = compute_parity_matrix(threshold_params.moduli(), n_parties, threshold)
-        .map_err(|e| CircuitsErrors::Sample(e))?;
+        .map_err(CircuitsErrors::Sample)?;
 
     let parity_matrix_strings: Vec<String> = parity_matrix
         .iter()

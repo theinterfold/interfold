@@ -64,6 +64,7 @@ pub async fn move_file<P: AsRef<Path>, Q: AsRef<Path>>(src: P, dst: Q) -> Result
 }
 
 #[async_recursion]
+#[allow(clippy::multiple_bound_locations)]
 pub async fn remove_all_files_in_dir<P: AsRef<Path> + Send>(dir_path: P) -> Result<()> {
     let mut entries = fs::read_dir(dir_path).await?;
     while let Some(entry) = entries.next_entry().await? {

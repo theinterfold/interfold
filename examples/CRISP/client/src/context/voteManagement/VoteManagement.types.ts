@@ -26,6 +26,7 @@ export type VoteManagementContextType = {
   txUrl: string | undefined
   pollResult: PollResult | null
   currentRoundId: number | null
+  displayedRoundIsFallback: boolean
   hasVotedInCurrentRound: boolean
   voteStatusLoading: boolean
   sessionId: string

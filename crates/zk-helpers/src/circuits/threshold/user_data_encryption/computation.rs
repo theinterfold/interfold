@@ -12,7 +12,7 @@
 use crate::calculate_bit_width;
 use crate::get_zkp_modulus;
 use crate::math::compute_k0is;
-use crate::math::{cyclotomic_polynomial, decompose_residue};
+use crate::math::{cyclotomic_polynomial, decompose_residue, plaintext_poly_u64};
 use crate::threshold::user_data_encryption::circuit::UserDataEncryptionCircuit;
 use crate::threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData;
 use crate::CircuitsErrors;
@@ -30,12 +30,9 @@ use num_bigint::BigUint;
 use num_bigint::ToBigInt;
 use num_traits::Signed;
 use num_traits::ToPrimitive;
-use rand::thread_rng;
 use rayon::iter::ParallelIterator;
 use rayon::prelude::ParallelBridge;
 use serde::{Deserialize, Serialize};
-use std::ops::Deref;
-
 /// Output of [`CircuitComputation::compute`] for [`UserDataEncryptionCircuit`]: bounds, bit widths, and inputs.
 #[derive(Debug)]
 pub struct UserDataEncryptionComputationOutput {
@@ -217,7 +214,7 @@ impl Computation for Bounds {
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
         let n = BigInt::from(threshold_params.degree());
-        let ctx = threshold_params.ctx_at_level(0)?;
+        let ctx = threshold_params.context_at_level(0)?;
 
         let t = BigInt::from(threshold_params.plaintext());
 
@@ -252,11 +249,7 @@ impl Computation for Bounds {
         let k1_up_bound: BigInt = ptxt_up_bound.clone();
 
         // Calculate bounds for each CRT basis
-        let moduli: Vec<u64> = ctx
-            .moduli_operators()
-            .into_iter()
-            .map(|q| q.modulus())
-            .collect();
+        let moduli: Vec<u64> = ctx.moduli_operators().iter().map(|q| **q).collect();
         let k0is = compute_k0is(&moduli, threshold_params.plaintext())?;
 
         let mut pk_bounds: Vec<BigInt> = Vec::new();
@@ -266,8 +259,8 @@ impl Computation for Bounds {
         let mut p1_bounds: Vec<BigInt> = Vec::new();
         let mut p2_bounds: Vec<BigInt> = Vec::new();
 
-        for (i, qi) in ctx.moduli_operators().into_iter().enumerate() {
-            let qi_bigint = BigInt::from(qi.modulus());
+        for (i, qi) in ctx.moduli_operators().iter().enumerate() {
+            let qi_bigint = BigInt::from(**qi);
             let qi_bound = (&qi_bigint - BigInt::from(1)) / BigInt::from(2);
 
             let k0qi = BigInt::from(k0is[i]);
@@ -343,7 +336,7 @@ impl Computation for Inputs {
         let pt = data.plaintext.clone();
 
         // Context and plaintext modulus (use same ctx for e0 reconstruction and loop).
-        let ctx = threshold_params.ctx_at_level(0)?;
+        let ctx = threshold_params.context_at_level(0)?;
 
         #[allow(non_snake_case)]
         let modulus_q = BigInt::from(ctx.modulus().clone());
@@ -359,7 +352,7 @@ impl Computation for Inputs {
         // Encrypt using the provided public key to ensure ciphertext matches the key.
         let (ct, u, e0, e1) = data
             .public_key
-            .try_encrypt_extended(&data.plaintext, &mut thread_rng())?;
+            .try_encrypt_extended(&data.plaintext, &mut rand::rng())?;
 
         // Reconstruct e0 coefficients mod Q (CRT) for e0_quotient computation.
         let mut e0_mod_q = Polynomial::from_fhe_polynomial(&e0);
@@ -368,7 +361,7 @@ impl Computation for Inputs {
         e0_mod_q.center(&modulus_q);
 
         // Reconstruct k1 from plaintext polynomial.
-        let mut k1_u64 = pt.value.deref().to_vec(); // m
+        let mut k1_u64 = plaintext_poly_u64(&pt)?; // m
 
         Modulus::new(t)
             .map_err(|e| CircuitsErrors::Fhe(fhe::Error::from(e)))?
@@ -389,10 +382,10 @@ impl Computation for Inputs {
         e1.center(&BigInt::from(moduli[0]));
         e1.reverse();
 
-        let mut ct0 = CrtPolynomial::from_fhe_polynomial(&ct.c[0]);
-        let mut ct1 = CrtPolynomial::from_fhe_polynomial(&ct.c[1]);
-        let mut pk0 = CrtPolynomial::from_fhe_polynomial(&pk.c.c[0]);
-        let mut pk1 = CrtPolynomial::from_fhe_polynomial(&pk.c.c[1]);
+        let mut ct0 = CrtPolynomial::from_fhe_polynomial(&ct[0]);
+        let mut ct1 = CrtPolynomial::from_fhe_polynomial(&ct[1]);
+        let mut pk0 = CrtPolynomial::from_fhe_polynomial(&pk.c[0]);
+        let mut pk1 = CrtPolynomial::from_fhe_polynomial(&pk.c[1]);
         let mut e0 = CrtPolynomial::from_fhe_polynomial(&e0);
 
         ct0.reverse();
@@ -401,13 +394,13 @@ impl Computation for Inputs {
         pk1.reverse();
         e0.reverse();
 
-        ct0.center(&moduli)?;
-        ct1.center(&moduli)?;
+        ct0.center(moduli)?;
+        ct1.center(moduli)?;
 
-        pk0.center(&moduli)?;
-        pk1.center(&moduli)?;
+        pk0.center(moduli)?;
+        pk1.center(moduli)?;
 
-        e0.center(&moduli)?;
+        e0.center(moduli)?;
 
         let CrtPolynomial { limbs: ct0_limbs } = ct0;
         let CrtPolynomial { limbs: ct1_limbs } = ct1;
@@ -427,7 +420,7 @@ impl Computation for Inputs {
         .enumerate()
         .par_bridge()
         .map(|(i, (qi, ct0i, ct1i, pk0i, pk1i, e0i))| {
-            let qi_bigint = BigInt::from(qi.modulus());
+            let qi_bigint = BigInt::from(**qi);
 
             // Compute e0_quotients[i] = (e0 - e0i) / qi for each coefficient
             // This is used for CRT consistency check: e0[j] = e0i[j] + e0_quotients[i][j] * qi
@@ -546,7 +539,7 @@ impl Computation for Inputs {
             e0: e0_mod_q,
             e1,
             u,
-            k1: k1,
+            k1,
             ciphertext: ct.to_bytes(),
         })
     }

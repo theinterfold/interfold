@@ -20,11 +20,11 @@ pub static SLED_CACHE: Lazy<Arc<Mutex<HashMap<String, Db>>>> =
 
 // Returns a stable canonical string path used as a cache key.
 // Canonicalizes the parent directory if the target path does not yet exist.
-fn canonical_key(path: &PathBuf) -> String {
+fn canonical_key(path: &Path) -> String {
     if path.exists() {
         return path
             .canonicalize()
-            .unwrap_or_else(|_| path.clone())
+            .unwrap_or_else(|_| path.to_path_buf())
             .to_string_lossy()
             .into_owned();
     }

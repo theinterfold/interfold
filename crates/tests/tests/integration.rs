@@ -7,48 +7,43 @@
 use actix::Actor;
 use alloy::primitives::{Address, FixedBytes, I256, U256};
 use alloy::signers::local::PrivateKeySigner;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use e3_bfv_client::decode_bytes_to_vec_u64;
 use e3_ciphernode_builder::{CiphernodeBuilder, EventSystem};
 use e3_config::BBPath;
 use e3_crypto::Cipher;
 use e3_events::{
-    prelude::*, BusHandle, CiphertextOutputPublished, CommitteeFinalized, ComputeRequestKind,
-    ComputeResponseKind, ConfigurationUpdated, E3Requested, E3id, EffectsEnabled, EnclaveEvent,
-    EnclaveEventData, EventType, GetEvents, HistoryCollector, OperatorActivationChanged,
-    OrderedSet, PkAggregationProofPending, PkAggregationProofRequest, PlaintextAggregated,
-    ProofType, Seed, TakeEvents, TicketBalanceUpdated, VerificationKind, ZkRequest, ZkResponse,
+    hlc::HlcTimestamp, prelude::*, BusHandle, CiphertextOutputPublished, CommitteeFinalized,
+    ComputeRequestKind, ComputeResponseKind, ConfigurationUpdated, E3Requested, E3id,
+    InterfoldEvent, InterfoldEventData, OperatorActivationChanged, PlaintextAggregated, ProofType,
+    Seed, TakeEvents, TicketBalanceUpdated, VerificationKind, ZkRequest, ZkResponse,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
-use e3_fhe_params::{build_pair_for_preset, create_deterministic_crp_from_default_seed};
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
 use e3_multithread::{Multithread, MultithreadReport, ToReport};
 use e3_net::events::{GossipData, NetEvent};
 use e3_net::NetEventTranslator;
-use e3_polynomial::CrtPolynomial;
 use e3_sortition::{calculate_buffer_size, RegisteredNode, ScoreSortition, Ticket};
 use e3_test_helpers::ciphernode_system::{
     CiphernodeHistory, CiphernodeSystem, CiphernodeSystemBuilder,
 };
 use e3_test_helpers::{
-    create_seed_from_u64, create_shared_rng_from_u64, find_bb, with_tracing, AddToCommittee,
+    create_seed_from_u64, derive_shared_rng, find_bb, with_tracing, AddToCommittee,
 };
 use e3_trbfv::helpers::calculate_error_size;
 use e3_trbfv::{TrBFVRequest, TrBFVResponse};
 use e3_utils::utility_types::ArcBytes;
 use e3_utils::{colorize, rand_eth_addr, Color};
-use e3_zk_helpers::{compute_modulus_bit, compute_threshold_pk_commitment};
 use e3_zk_prover::test_utils::get_tempdir;
-use e3_zk_prover::{ProofRequestActor, VersionInfo, ZkBackend};
+use e3_zk_prover::{VersionInfo, ZkBackend};
 use fhe::bfv::PublicKey;
-use fhe::bfv::SecretKey;
-use fhe::mbfv::{AggregateIter, PublicKeyShare};
 use fhe_traits::{DeserializeParametrized, Serialize};
 use num_bigint::BigUint;
-use rand::rngs::OsRng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha20Rng;
+use std::collections::HashSet;
 use std::ffi::OsString;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 use std::{fs, path::PathBuf, sync::Arc};
 use tokio::{
@@ -91,18 +86,27 @@ fn select_benchmark_params() -> BenchmarkParams {
         "insecure-512"
     };
 
-    let collection_timeout_secs = if is_secure_mode {
-        Some((1800, 7200, 7200))
+    let committee = active_committee(preset_subdir);
+    let is_small_committee = committee == e3_zk_helpers::CiphernodesCommitteeSize::Small;
+
+    let collection_timeout_secs = if is_secure_mode && is_small_committee {
+        Some((7_200, 46_000, 46_000)) // Small: threshold/dec kept > pubkey_flow
+    } else if is_secure_mode {
+        Some((1_800, 7_200, 7_200))
     } else {
         None
     };
 
-    let pubkey_flow_timeout = if is_secure_mode {
+    let pubkey_flow_timeout = if is_secure_mode && is_small_committee {
+        Duration::from_secs(45_000) // Small: conservative upper bound
+    } else if is_secure_mode {
         Duration::from_secs(15_000)
     } else {
         Duration::from_secs(5_000)
     };
-    let plaintext_flow_timeout = if is_secure_mode {
+    let plaintext_flow_timeout = if is_secure_mode && is_small_committee {
+        Duration::from_secs(6_000) // Small: conservative upper bound; smaller than DKG
+    } else if is_secure_mode {
         Duration::from_secs(3_000)
     } else {
         Duration::from_secs(1_000)
@@ -116,6 +120,147 @@ fn select_benchmark_params() -> BenchmarkParams {
         pubkey_flow_timeout,
         plaintext_flow_timeout,
     }
+}
+
+/// Registered ciphernodes (excluding the observer collector) for benchmark sortition.
+///
+/// Production registers enough nodes to fill `N + buffer`; the harness must register at least
+/// `threshold_n` so party ids `0..N-1` all exist during encryption-key collection.
+fn benchmark_participant_node_count(threshold_m: usize, threshold_n: usize) -> usize {
+    threshold_n + calculate_buffer_size(threshold_m, threshold_n)
+}
+
+/// Whether `test_trbfv_actor` runs the full recursive fold + aggregator path (default: on).
+///
+/// Benchmark harness always enables proof aggregation (`run_benchmarks.sh` exports `true`).
+fn benchmark_proof_aggregation_enabled() -> bool {
+    !matches!(
+        std::env::var("BENCHMARK_PROOF_AGGREGATION")
+            .unwrap_or_else(|_| "true".into())
+            .to_ascii_lowercase()
+            .as_str(),
+        "0" | "false" | "no" | "off"
+    )
+}
+
+/// Rayon multithread pool concurrency for benchmark runs (`BENCHMARK_MULTITHREAD_JOBS`, default 1).
+fn benchmark_multithread_concurrent_jobs() -> usize {
+    std::env::var("BENCHMARK_MULTITHREAD_JOBS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .filter(|&n| n >= 1)
+        .unwrap_or(1)
+}
+
+static NEXT_BENCHMARK_NODE_RNG_SALT: AtomicU64 = AtomicU64::new(1);
+
+/// One ChaCha20 mutex per ciphernode in `test_trbfv_actor` (see `derive_shared_rng`).
+fn next_benchmark_node_rng(base_seed: u64) -> e3_utils::SharedRng {
+    let salt = NEXT_BENCHMARK_NODE_RNG_SALT.fetch_add(1, Ordering::Relaxed);
+    derive_shared_rng(base_seed, salt)
+}
+
+/// Fold attestation verifier address for benchmark JSON reports (env override or default).
+fn benchmark_dkg_fold_attestation_verifier_address() -> Option<Address> {
+    if !benchmark_proof_aggregation_enabled() {
+        return None;
+    }
+    std::env::var("BENCHMARK_DKG_FOLD_ATTESTATION_VERIFIER")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .or_else(|| "0x7969c5eD335650692Bc04293B07F5BF2e7A673C0".parse().ok())
+}
+
+/// Monorepo root (`crates/tests` → `../..`).
+fn repo_root() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("..")
+        .join("..")
+}
+
+/// Whether `setup_test_zk_backend` copies from `dist/circuits/<preset>/<committee>/`.
+/// Under the new per-committee layout artifacts live under `{preset}/{committee}/recursive/...`.
+fn uses_dist_preset_artifacts(preset_subdir: &str, committee_str: &str) -> bool {
+    repo_root()
+        .join("dist/circuits")
+        .join(preset_subdir)
+        .join(committee_str)
+        .join("recursive/dkg/pk/pk.json")
+        .exists()
+}
+
+/// Preset stamp path — under the new layout each `{preset}/{committee}` dir has its own stamp.
+fn resolve_preset_stamp_path(preset_subdir: &str, committee_str: &str) -> PathBuf {
+    if uses_dist_preset_artifacts(preset_subdir, committee_str) {
+        repo_root()
+            .join("dist/circuits")
+            .join(preset_subdir)
+            .join(committee_str)
+            .join(".build-stamp.json")
+    } else {
+        repo_root()
+            .join("circuits")
+            .join("bin")
+            .join(".active-preset.json")
+    }
+}
+
+/// Reads the active committee from `circuits/bin/.active-preset.json`, which is written by every
+/// `pnpm build:circuits` invocation and is the canonical source for the new per-committee layout.
+///
+/// Falls back to `Minimum` (and warns) when the stamp is missing or pre-dates the `committee`
+/// field — same default as the build script, so a freshly cloned repo's minimum circuits work
+/// out of the box.
+fn active_committee(_preset_subdir: &str) -> e3_zk_helpers::CiphernodesCommitteeSize {
+    use std::str::FromStr;
+    // `circuits/bin/.active-preset.json` is written by every build and hydrate. It is the
+    // authoritative source under the new per-committee layout because the per-committee dist
+    // stamp is nested under `dist/circuits/{preset}/{committee}/`, which requires already
+    // knowing the committee to locate.
+    let stamp_path = repo_root()
+        .join("circuits")
+        .join("bin")
+        .join(".active-preset.json");
+    let fallback = e3_zk_helpers::CiphernodesCommitteeSize::Minimum;
+
+    let Ok(raw) = std::fs::read_to_string(&stamp_path) else {
+        eprintln!(
+            "⚠️  {} not found; defaulting to {fallback}. \
+             Run `pnpm build:circuits --committee <name>` to make this deterministic.",
+            stamp_path.display(),
+        );
+        return fallback;
+    };
+    let Ok(stamp) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        eprintln!(
+            "⚠️  {} is not valid JSON; defaulting to {fallback}.",
+            stamp_path.display()
+        );
+        return fallback;
+    };
+    let Some(active) = stamp.get("committee").and_then(|v| v.as_str()) else {
+        eprintln!(
+            "⚠️  {} has no `committee` field (older build); defaulting to {fallback}.",
+            stamp_path.display(),
+        );
+        return fallback;
+    };
+    e3_zk_helpers::CiphernodesCommitteeSize::from_str(active).unwrap_or_else(|e| {
+        panic!(
+            "{} has unknown committee=\"{active}\": {e}. \
+             Expected minimum|micro|small.",
+            stamp_path.display()
+        )
+    })
+}
+
+/// Slashing manager address for benchmarks (no live RPC; used as EIP-712
+/// `verifyingContract` for accusation vote signatures).
+fn benchmark_slashing_manager_address() -> Address {
+    let addr = std::env::var("BENCHMARK_SLASHING_MANAGER")
+        .unwrap_or_else(|_| "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707".to_string());
+    addr.parse()
+        .expect("BENCHMARK_SLASHING_MANAGER must be a valid address")
 }
 
 /// RAII guard that restores the benchmark-specific collector-timeout env vars on scope exit.
@@ -155,6 +300,55 @@ impl Drop for EnvTimeoutVarsGuard {
     }
 }
 
+/// RAII guard that restores a single env var on scope exit.
+#[allow(dead_code)]
+struct ScopedEnvVar {
+    name: &'static str,
+    original: Option<OsString>,
+}
+
+impl ScopedEnvVar {
+    #[allow(dead_code)]
+    fn set(name: &'static str, value: &str) -> Self {
+        let original = std::env::var_os(name);
+        std::env::set_var(name, value);
+        Self { name, original }
+    }
+}
+
+impl Drop for ScopedEnvVar {
+    fn drop(&mut self) {
+        if let Some(v) = &self.original {
+            std::env::set_var(self.name, v);
+        } else {
+            std::env::remove_var(self.name);
+        }
+    }
+}
+
+async fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Result<()> {
+    tokio::fs::create_dir_all(dst).await?;
+    let mut entries = tokio::fs::read_dir(src).await?;
+    while let Some(entry) = entries.next_entry().await? {
+        let file_type = entry.file_type().await?;
+        let dest = dst.join(entry.file_name());
+        if file_type.is_dir() {
+            Box::pin(copy_dir_recursive(&entry.path(), &dest)).await?;
+        } else {
+            tokio::fs::copy(entry.path(), &dest)
+                .await
+                .with_context(|| {
+                    format!(
+                        "copy circuit artifact {} -> {}",
+                        entry.path().display(),
+                        dest.display()
+                    )
+                })?;
+        }
+    }
+    Ok(())
+}
+
 /// Create a ZkBackend for integration tests.
 /// If a local bb binary is found, uses it with fixture files (fast path).
 /// Otherwise, calls `ensure_installed()` to download bb + circuits (CI path).
@@ -167,6 +361,15 @@ async fn setup_test_zk_backend(
     let bb_binary = noir_dir.join("bin").join("bb");
     let circuits_dir = noir_dir.join("circuits");
     let work_dir = noir_dir.join("work").join("test_node");
+    let repo_root = repo_root();
+    // Derive committee before constructing any paths — it determines the subdirectory under
+    // `dist/circuits/{preset}/{committee}/` in the new per-committee layout.
+    let committee = active_committee(preset_subdir);
+    let committee_str = committee.as_str();
+    let dist_preset = repo_root
+        .join("dist/circuits")
+        .join(preset_subdir)
+        .join(committee_str);
 
     if let Some(bb) = find_bb().await {
         tokio::fs::create_dir_all(bb_binary.parent().unwrap())
@@ -180,344 +383,380 @@ async fn setup_test_zk_backend(
         #[cfg(not(unix))]
         compile_error!("Integration tests require unix symlink support");
 
-        let circuits_build_root = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("..")
-            .join("..")
-            .join("circuits")
-            .join("bin");
-        let dkg_target = circuits_build_root.join("dkg").join("target");
-        let threshold_target = circuits_build_root.join("threshold").join("target");
-        let c3_fold_target = circuits_build_root
-            .join("recursive_aggregation")
-            .join("c3_fold")
-            .join("target");
-        let c3_fold_kernel_target = circuits_build_root
-            .join("recursive_aggregation")
-            .join("c3_fold_kernel")
-            .join("target");
-        let c6_fold_target = circuits_build_root
-            .join("recursive_aggregation")
-            .join("c6_fold")
-            .join("target");
-        let c6_fold_kernel_target = circuits_build_root
-            .join("recursive_aggregation")
-            .join("c6_fold_kernel")
-            .join("target");
-        let c2ab_fold_target = circuits_build_root
-            .join("recursive_aggregation")
-            .join("c2ab_fold")
-            .join("target");
-        let c3ab_fold_target = circuits_build_root
-            .join("recursive_aggregation")
-            .join("c3ab_fold")
-            .join("target");
-        let c4ab_fold_target = circuits_build_root
-            .join("recursive_aggregation")
-            .join("c4ab_fold")
-            .join("target");
-        let node_fold_target = circuits_build_root
-            .join("recursive_aggregation")
-            .join("node_fold")
-            .join("target");
-        let nodes_fold_target = circuits_build_root
-            .join("recursive_aggregation")
-            .join("nodes_fold")
-            .join("target");
-        let nodes_fold_kernel_target = circuits_build_root
-            .join("recursive_aggregation")
-            .join("nodes_fold_kernel")
-            .join("target");
-        let dkg_aggregator_target = circuits_build_root
-            .join("recursive_aggregation")
-            .join("dkg_aggregator")
-            .join("target");
-        let decryption_aggregator_target = circuits_build_root
-            .join("recursive_aggregation")
-            .join("decryption_aggregator")
-            .join("target");
+        let preset_out = circuits_dir.join(preset_subdir).join(committee_str);
+        let circuits_bin_marker = repo_root.join("circuits/bin/dkg/target/pk.json");
+        // `circuits/bin` is preset-agnostic on disk — only `.active-preset.json` records which
+        // preset+committee the most recent local build targeted. Without it we cannot tell
+        // whether `circuits/bin` matches `preset_subdir`, and copying wrong artifacts would
+        // silently produce invalid proofs.
+        let preset_build_stamp = resolve_preset_stamp_path(preset_subdir, committee_str);
 
-        // Helper: copy {name}.json + VK artifacts into a destination directory.
-        // vk_suffix/vk_hash_suffix select the source VK flavor:
-        //   ".vk_noir" / ".vk_noir_hash"       → Recursive variant (inner proofs)
-        //   ".vk_recursive" / ".vk_recursive_hash" → Default variant (wrapper/fold proofs)
-        //   ".vk" / ".vk_hash"                  → EVM variant
-        async fn copy_circuit(
-            src_dir: &std::path::Path,
-            dst_dir: &std::path::Path,
-            name: &str,
-            vk_suffix: &str,
-            vk_hash_suffix: &str,
-        ) {
-            tokio::fs::create_dir_all(dst_dir).await.unwrap();
-            tokio::fs::copy(
-                src_dir.join(format!("{name}.json")),
-                dst_dir.join(format!("{name}.json")),
+        if uses_dist_preset_artifacts(preset_subdir, committee_str) {
+            copy_dir_recursive(&dist_preset, &preset_out).await?;
+        } else if !circuits_bin_marker.exists() || !preset_build_stamp.exists() {
+            // Either no local build exists, or the local build cannot be proven to match
+            // the requested preset; download the pinned release tarball instead.
+            println!(
+                "No verifiable local circuit fixtures for preset `{}/{}` \
+                 (need either dist/circuits/{}/{}/recursive/dkg/pk/pk.json \
+                 or circuits/bin + circuits/bin/.active-preset.json); \
+                 downloading release circuits via ensure_installed()...",
+                preset_subdir, committee_str, preset_subdir, committee_str
+            );
+            let backend = ZkBackend::new(BBPath::Default(bb_binary), circuits_dir, work_dir);
+            backend
+                .ensure_installed()
+                .await
+                .context("download ZK circuits for integration tests")?;
+            return Ok((backend, temp));
+        } else {
+            let circuits_build_root = repo_root.join("circuits").join("bin");
+            let dkg_target = circuits_build_root.join("dkg").join("target");
+            let threshold_target = circuits_build_root.join("threshold").join("target");
+            let c3_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("c3_fold")
+                .join("target");
+            let c3_fold_kernel_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("c3_fold_kernel")
+                .join("target");
+            let c6_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("c6_fold")
+                .join("target");
+            let c6_fold_kernel_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("c6_fold_kernel")
+                .join("target");
+            let c2ab_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("c2ab_fold")
+                .join("target");
+            let c3ab_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("c3ab_fold")
+                .join("target");
+            let c4ab_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("c4ab_fold")
+                .join("target");
+            let node_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("node_fold")
+                .join("target");
+            let nodes_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("nodes_fold")
+                .join("target");
+            let nodes_fold_kernel_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("nodes_fold_kernel")
+                .join("target");
+            let dkg_aggregator_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("dkg_aggregator")
+                .join("target");
+            let decryption_aggregator_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("decryption_aggregator")
+                .join("target");
+
+            // Helper: copy {name}.json + VK artifacts into a destination directory.
+            // vk_suffix/vk_hash_suffix select the source VK flavor:
+            //   ".vk_noir" / ".vk_noir_hash"       → Recursive variant (inner proofs)
+            //   ".vk_recursive" / ".vk_recursive_hash" → Default variant (wrapper/fold proofs)
+            //   ".vk" / ".vk_hash"                  → EVM variant
+            async fn copy_circuit(
+                src_dir: &std::path::Path,
+                dst_dir: &std::path::Path,
+                name: &str,
+                vk_suffix: &str,
+                vk_hash_suffix: &str,
+            ) -> Result<()> {
+                tokio::fs::create_dir_all(dst_dir).await?;
+                let copy_file = |src: std::path::PathBuf, dst: std::path::PathBuf| async move {
+                    tokio::fs::copy(&src, &dst).await.with_context(|| {
+                        format!(
+                            "copy circuit artifact {} -> {}",
+                            src.display(),
+                            dst.display()
+                        )
+                    })
+                };
+                copy_file(
+                    src_dir.join(format!("{name}.json")),
+                    dst_dir.join(format!("{name}.json")),
+                )
+                .await?;
+                copy_file(
+                    src_dir.join(format!("{name}{vk_suffix}")),
+                    dst_dir.join(format!("{name}.vk")),
+                )
+                .await?;
+                let vk_hash_src = src_dir.join(format!("{name}{vk_hash_suffix}"));
+                let vk_hash_src = if tokio::fs::try_exists(&vk_hash_src).await? {
+                    vk_hash_src
+                } else {
+                    // `bb write_vk` leaves `vk_hash` in some aggregation target dirs.
+                    src_dir.join("vk_hash")
+                };
+                copy_file(vk_hash_src, dst_dir.join(format!("{name}.vk_hash"))).await?;
+                Ok(())
+            }
+
+            // ── recursive/ variant (inner/base proofs, uses .vk_noir) ──────────
+            let preset_dir = circuits_dir.join(preset_subdir).join(committee_str);
+
+            let rv = preset_dir.join("recursive");
+
+            // T0 (pk)
+            copy_circuit(
+                &dkg_target,
+                &rv.join("dkg/pk"),
+                "pk",
+                ".vk_noir",
+                ".vk_noir_hash",
             )
-            .await
-            .unwrap();
-            tokio::fs::copy(
-                src_dir.join(format!("{name}{vk_suffix}")),
-                dst_dir.join(format!("{name}.vk")),
+            .await?;
+            // C1 (pk_generation)
+            copy_circuit(
+                &threshold_target,
+                &rv.join("threshold/pk_generation"),
+                "pk_generation",
+                ".vk_noir",
+                ".vk_noir_hash",
             )
-            .await
-            .unwrap();
-            tokio::fs::copy(
-                src_dir.join(format!("{name}{vk_hash_suffix}")),
-                dst_dir.join(format!("{name}.vk_hash")),
+            .await?;
+            // C2a (sk_share_computation)
+            copy_circuit(
+                &dkg_target,
+                &rv.join("dkg/sk_share_computation"),
+                "sk_share_computation",
+                ".vk_noir",
+                ".vk_noir_hash",
             )
-            .await
-            .unwrap();
+            .await?;
+            // C2b (e_sm_share_computation)
+            copy_circuit(
+                &dkg_target,
+                &rv.join("dkg/e_sm_share_computation"),
+                "e_sm_share_computation",
+                ".vk_noir",
+                ".vk_noir_hash",
+            )
+            .await?;
+            // C3 (share_encryption)
+            copy_circuit(
+                &dkg_target,
+                &rv.join("dkg/share_encryption"),
+                "share_encryption",
+                ".vk_noir",
+                ".vk_noir_hash",
+            )
+            .await?;
+            // C4 (dkg/share_decryption)
+            copy_circuit(
+                &dkg_target,
+                &rv.join("dkg/share_decryption"),
+                "share_decryption",
+                ".vk_noir",
+                ".vk_noir_hash",
+            )
+            .await?;
+            // C5 (pk_aggregation)
+            copy_circuit(
+                &threshold_target,
+                &rv.join("threshold/pk_aggregation"),
+                "pk_aggregation",
+                ".vk_noir",
+                ".vk_noir_hash",
+            )
+            .await?;
+            // C6 (threshold/share_decryption)
+            copy_circuit(
+                &threshold_target,
+                &rv.join("threshold/share_decryption"),
+                "share_decryption",
+                ".vk_noir",
+                ".vk_noir_hash",
+            )
+            .await?;
+            // C7 (decrypted_shares_aggregation)
+            copy_circuit(
+                &threshold_target,
+                &rv.join("threshold/decrypted_shares_aggregation"),
+                "decrypted_shares_aggregation",
+                ".vk_noir",
+                ".vk_noir_hash",
+            )
+            .await?;
+
+            // ── default/ variant (recursive aggregation bins, uses .vk_recursive) ───
+
+            let dv = preset_dir.join("default");
+
+            // C5 (pk_aggregation) — proven with noir-recursive-no-zk and folded into
+            // DkgAggregator, so it must be staged under default/ too.
+            copy_circuit(
+                &threshold_target,
+                &dv.join("threshold/pk_aggregation"),
+                "pk_aggregation",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+
+            copy_circuit(
+                &c3_fold_target,
+                &dv.join("recursive_aggregation/c3_fold"),
+                "c3_fold",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &c3_fold_kernel_target,
+                &dv.join("recursive_aggregation/c3_fold_kernel"),
+                "c3_fold_kernel",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &c6_fold_target,
+                &dv.join("recursive_aggregation/c6_fold"),
+                "c6_fold",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &c6_fold_kernel_target,
+                &dv.join("recursive_aggregation/c6_fold_kernel"),
+                "c6_fold_kernel",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &c2ab_fold_target,
+                &dv.join("recursive_aggregation/c2ab_fold"),
+                "c2ab_fold",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &c3ab_fold_target,
+                &dv.join("recursive_aggregation/c3ab_fold"),
+                "c3ab_fold",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &c4ab_fold_target,
+                &dv.join("recursive_aggregation/c4ab_fold"),
+                "c4ab_fold",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &node_fold_target,
+                &dv.join("recursive_aggregation/node_fold"),
+                "node_fold",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &nodes_fold_target,
+                &dv.join("recursive_aggregation/nodes_fold"),
+                "nodes_fold",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &nodes_fold_kernel_target,
+                &dv.join("recursive_aggregation/nodes_fold_kernel"),
+                "nodes_fold_kernel",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &dkg_aggregator_target,
+                &dv.join("recursive_aggregation/dkg_aggregator"),
+                "dkg_aggregator",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &decryption_aggregator_target,
+                &dv.join("recursive_aggregation/decryption_aggregator"),
+                "decryption_aggregator",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            // C7 (decrypted_shares_aggregation) — proven with noir-recursive-no-zk and
+            // folded into DecryptionAggregator, so it must also be staged under default/.
+            copy_circuit(
+                &threshold_target,
+                &dv.join("threshold/decrypted_shares_aggregation"),
+                "decrypted_shares_aggregation",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+
+            // ── evm/ variant (on-chain verification: DKG aggregator, C7) ───────────
+
+            let ev = preset_dir.join("evm");
+
+            // DKG aggregator — EVM-targeted (folds + C5 verified inside)
+            copy_circuit(
+                &dkg_aggregator_target,
+                &ev.join("recursive_aggregation/dkg_aggregator"),
+                "dkg_aggregator",
+                ".vk",
+                ".vk_hash",
+            )
+            .await?;
+            // Decryption aggregator — EVM-targeted (C6 fold + C7 verified inside)
+            copy_circuit(
+                &decryption_aggregator_target,
+                &ev.join("recursive_aggregation/decryption_aggregator"),
+                "decryption_aggregator",
+                ".vk",
+                ".vk_hash",
+            )
+            .await?;
+            // C7 (decrypted_shares_aggregation) — EVM-targeted
+            copy_circuit(
+                &threshold_target,
+                &ev.join("threshold/decrypted_shares_aggregation"),
+                "decrypted_shares_aggregation",
+                ".vk",
+                ".vk_hash",
+            )
+            .await?;
         }
-
-        // ── recursive/ variant (inner/base proofs, uses .vk_noir) ──────────
-        let preset_dir = circuits_dir.join(preset_subdir);
-
-        let rv = preset_dir.join("recursive");
-
-        // T0 (pk)
-        copy_circuit(
-            &dkg_target,
-            &rv.join("dkg/pk"),
-            "pk",
-            ".vk_noir",
-            ".vk_noir_hash",
-        )
-        .await;
-        // C1 (pk_generation)
-        copy_circuit(
-            &threshold_target,
-            &rv.join("threshold/pk_generation"),
-            "pk_generation",
-            ".vk_noir",
-            ".vk_noir_hash",
-        )
-        .await;
-        // C2a (sk_share_computation)
-        copy_circuit(
-            &dkg_target,
-            &rv.join("dkg/sk_share_computation"),
-            "sk_share_computation",
-            ".vk_noir",
-            ".vk_noir_hash",
-        )
-        .await;
-        // C2b (e_sm_share_computation)
-        copy_circuit(
-            &dkg_target,
-            &rv.join("dkg/e_sm_share_computation"),
-            "e_sm_share_computation",
-            ".vk_noir",
-            ".vk_noir_hash",
-        )
-        .await;
-        // C3 (share_encryption)
-        copy_circuit(
-            &dkg_target,
-            &rv.join("dkg/share_encryption"),
-            "share_encryption",
-            ".vk_noir",
-            ".vk_noir_hash",
-        )
-        .await;
-        // C4 (dkg/share_decryption)
-        copy_circuit(
-            &dkg_target,
-            &rv.join("dkg/share_decryption"),
-            "share_decryption",
-            ".vk_noir",
-            ".vk_noir_hash",
-        )
-        .await;
-        // C5 (pk_aggregation)
-        copy_circuit(
-            &threshold_target,
-            &rv.join("threshold/pk_aggregation"),
-            "pk_aggregation",
-            ".vk_noir",
-            ".vk_noir_hash",
-        )
-        .await;
-        // C6 (threshold/share_decryption)
-        copy_circuit(
-            &threshold_target,
-            &rv.join("threshold/share_decryption"),
-            "share_decryption",
-            ".vk_noir",
-            ".vk_noir_hash",
-        )
-        .await;
-        // C7 (decrypted_shares_aggregation)
-        copy_circuit(
-            &threshold_target,
-            &rv.join("threshold/decrypted_shares_aggregation"),
-            "decrypted_shares_aggregation",
-            ".vk_noir",
-            ".vk_noir_hash",
-        )
-        .await;
-
-        // ── default/ variant (recursive aggregation bins, uses .vk_recursive) ───
-
-        let dv = preset_dir.join("default");
-
-        // C5 (pk_aggregation) — proven with noir-recursive-no-zk and folded into
-        // DkgAggregator, so it must be staged under default/ too.
-        copy_circuit(
-            &threshold_target,
-            &dv.join("threshold/pk_aggregation"),
-            "pk_aggregation",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-
-        copy_circuit(
-            &c3_fold_target,
-            &dv.join("recursive_aggregation/c3_fold"),
-            "c3_fold",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-        copy_circuit(
-            &c3_fold_kernel_target,
-            &dv.join("recursive_aggregation/c3_fold_kernel"),
-            "c3_fold_kernel",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-        copy_circuit(
-            &c6_fold_target,
-            &dv.join("recursive_aggregation/c6_fold"),
-            "c6_fold",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-        copy_circuit(
-            &c6_fold_kernel_target,
-            &dv.join("recursive_aggregation/c6_fold_kernel"),
-            "c6_fold_kernel",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-        copy_circuit(
-            &c2ab_fold_target,
-            &dv.join("recursive_aggregation/c2ab_fold"),
-            "c2ab_fold",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-        copy_circuit(
-            &c3ab_fold_target,
-            &dv.join("recursive_aggregation/c3ab_fold"),
-            "c3ab_fold",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-        copy_circuit(
-            &c4ab_fold_target,
-            &dv.join("recursive_aggregation/c4ab_fold"),
-            "c4ab_fold",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-        copy_circuit(
-            &node_fold_target,
-            &dv.join("recursive_aggregation/node_fold"),
-            "node_fold",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-        copy_circuit(
-            &nodes_fold_target,
-            &dv.join("recursive_aggregation/nodes_fold"),
-            "nodes_fold",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-        copy_circuit(
-            &nodes_fold_kernel_target,
-            &dv.join("recursive_aggregation/nodes_fold_kernel"),
-            "nodes_fold_kernel",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-        copy_circuit(
-            &dkg_aggregator_target,
-            &dv.join("recursive_aggregation/dkg_aggregator"),
-            "dkg_aggregator",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-        copy_circuit(
-            &decryption_aggregator_target,
-            &dv.join("recursive_aggregation/decryption_aggregator"),
-            "decryption_aggregator",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-        // C7 (decrypted_shares_aggregation) — proven with noir-recursive-no-zk and
-        // folded into DecryptionAggregator, so it must also be staged under default/.
-        copy_circuit(
-            &threshold_target,
-            &dv.join("threshold/decrypted_shares_aggregation"),
-            "decrypted_shares_aggregation",
-            ".vk_recursive",
-            ".vk_recursive_hash",
-        )
-        .await;
-
-        // ── evm/ variant (on-chain verification: DKG aggregator, C7) ───────────
-
-        let ev = preset_dir.join("evm");
-
-        // DKG aggregator — EVM-targeted (folds + C5 verified inside)
-        copy_circuit(
-            &dkg_aggregator_target,
-            &ev.join("recursive_aggregation/dkg_aggregator"),
-            "dkg_aggregator",
-            ".vk",
-            ".vk_hash",
-        )
-        .await;
-        // Decryption aggregator — EVM-targeted (C6 fold + C7 verified inside)
-        copy_circuit(
-            &decryption_aggregator_target,
-            &ev.join("recursive_aggregation/decryption_aggregator"),
-            "decryption_aggregator",
-            ".vk",
-            ".vk_hash",
-        )
-        .await;
-        // C7 (decrypted_shares_aggregation) — EVM-targeted
-        copy_circuit(
-            &threshold_target,
-            &ev.join("threshold/decrypted_shares_aggregation"),
-            "decrypted_shares_aggregation",
-            ".vk",
-            ".vk_hash",
-        )
-        .await;
 
         let backend = ZkBackend::new(BBPath::Default(bb_binary), circuits_dir, work_dir);
 
         // `CiphernodeBuilder` calls `ensure_installed()`, which deletes `circuits_dir` and downloads
         // the release tarball whenever `version.json` does not record the pinned bb/circuits
         // versions. That would wipe the fixture tree we just copied from `circuits/bin/`.
-        let mut version_info = VersionInfo::default();
-        version_info.bb_version = Some(backend.config.required_bb_version.clone());
-        version_info.circuits_version = Some(backend.config.required_circuits_version.clone());
+        let version_info = VersionInfo {
+            bb_version: Some(backend.config.required_bb_version.clone()),
+            circuits_version: Some(backend.config.required_circuits_version.clone()),
+            ..Default::default()
+        };
         version_info
             .save(&backend.version_file())
             .await
@@ -638,6 +877,27 @@ fn determine_committee(
     Ok((committee, committee_scores, buffer_nodes))
 }
 
+/// Lowest-address committee member after `CommitteeFinalized::sort_by_score` (party 0 / active aggregator).
+fn active_aggregator_address(
+    committee: &[String],
+    scores: &[String],
+    e3_id: &E3id,
+    chain_id: u64,
+) -> String {
+    let mut finalized = CommitteeFinalized {
+        e3_id: e3_id.clone(),
+        committee: committee.to_vec(),
+        scores: scores.to_vec(),
+        chain_id,
+    };
+    finalized.sort_by_score();
+    finalized
+        .committee
+        .first()
+        .cloned()
+        .expect("committee must be non-empty")
+}
+
 fn find_node_index_by_address(nodes: &CiphernodeSystem, address: &str) -> Result<usize> {
     for (index, node) in nodes.iter().enumerate() {
         if node.address().eq_ignore_ascii_case(address) {
@@ -648,6 +908,7 @@ fn find_node_index_by_address(nodes: &CiphernodeSystem, address: &str) -> Result
     bail!("Could not find node index for address {address}");
 }
 
+#[allow(dead_code)]
 async fn expect_node_events_with_timeouts(
     nodes: &CiphernodeSystem,
     index: usize,
@@ -669,9 +930,9 @@ async fn expect_node_events_with_timeouts(
     Ok(h)
 }
 
-fn project_history<F>(history: &[EnclaveEvent], mut projector: F) -> Vec<&'static str>
+fn project_history<F>(history: &[InterfoldEvent], mut projector: F) -> Vec<&'static str>
 where
-    F: FnMut(&EnclaveEventData) -> Option<&'static str>,
+    F: FnMut(&InterfoldEventData) -> Option<&'static str>,
 {
     history
         .iter()
@@ -683,83 +944,197 @@ fn count_projected_events(projected: &[&str], event_type: &str) -> usize {
     projected.iter().filter(|seen| **seen == event_type).count()
 }
 
-fn publickey_aggregator_marker(data: &EnclaveEventData, e3_id: &E3id) -> Option<&'static str> {
+/// Scan a node history for slashing, accusation, and protocol-fault signals that must not
+/// appear on an all-honest benchmark run. Catches regressions such as spurious C2→C4
+/// commitment mismatches when N > H that completion-only assertions would miss.
+fn collect_honest_run_faults(
+    history: &[InterfoldEvent],
+    e3_id: &E3id,
+    context: &str,
+) -> Vec<String> {
+    let mut faults = Vec::new();
+
+    for event in history {
+        match event.get_data() {
+            InterfoldEventData::CommitmentConsistencyCheckComplete(data)
+                if data.e3_id == *e3_id && !data.inconsistent_parties.is_empty() =>
+            {
+                faults.push(format!(
+                    "{context}: CommitmentConsistencyCheckComplete kind={:?} inconsistent_parties={:?}",
+                    data.kind, data.inconsistent_parties
+                ));
+            }
+            InterfoldEventData::CommitmentConsistencyViolation(data) if data.e3_id == *e3_id => {
+                faults.push(format!(
+                    "{context}: CommitmentConsistencyViolation accused_party_id={} proof_type={:?}",
+                    data.accused_party_id, data.proof_type
+                ));
+            }
+            InterfoldEventData::ProofFailureAccusation(data) if data.e3_id == *e3_id => {
+                faults.push(format!(
+                    "{context}: ProofFailureAccusation accuser={} accused_party_id={} proof_type={:?}",
+                    data.accuser, data.accused_party_id, data.proof_type
+                ));
+            }
+            InterfoldEventData::ProofVerificationFailed(data) if data.e3_id == *e3_id => {
+                faults.push(format!(
+                    "{context}: ProofVerificationFailed accused_party_id={} proof_type={:?}",
+                    data.accused_party_id, data.proof_type
+                ));
+            }
+            InterfoldEventData::SignedProofFailed(data) if data.e3_id == *e3_id => {
+                faults.push(format!(
+                    "{context}: SignedProofFailed faulting_node={} proof_type={:?}",
+                    data.faulting_node, data.proof_type
+                ));
+            }
+            InterfoldEventData::ShareVerificationComplete(data)
+                if data.e3_id == *e3_id && !data.dishonest_parties.is_empty() =>
+            {
+                faults.push(format!(
+                    "{context}: ShareVerificationComplete kind={:?} dishonest_parties={:?}",
+                    data.kind, data.dishonest_parties
+                ));
+            }
+            InterfoldEventData::AccusationVote(data) if data.e3_id == *e3_id => {
+                faults.push(format!(
+                    "{context}: AccusationVote voter={} accusation_id={:?}",
+                    data.voter, data.accusation_id
+                ));
+            }
+            InterfoldEventData::CommitteeMemberExpelled(data) if data.e3_id == *e3_id => {
+                faults.push(format!(
+                    "{context}: CommitteeMemberExpelled node={} party_id={:?}",
+                    data.node, data.party_id
+                ));
+            }
+            InterfoldEventData::E3Failed(data) if data.e3_id == *e3_id => {
+                faults.push(format!(
+                    "{context}: E3Failed stage={:?} reason={:?}",
+                    data.failed_at_stage, data.reason
+                ));
+            }
+            InterfoldEventData::InterfoldError(data) => {
+                faults.push(format!(
+                    "{context}: InterfoldError {:?}: {}",
+                    data.err_type, data.message
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    faults
+}
+
+fn assert_honest_run_safeguards(history: &[InterfoldEvent], e3_id: &E3id, context: &str) {
+    let faults = collect_honest_run_faults(history, e3_id, context);
+    assert!(
+        faults.is_empty(),
+        "honest-run safeguard failures ({}):\n{}",
+        context,
+        faults.join("\n")
+    );
+}
+
+/// Wall seconds between first `start_when` and last `end_when` event in `history` (HLC physical time).
+fn history_wall_seconds_between<F1, F2>(
+    history: &[InterfoldEvent],
+    start_when: F1,
+    end_when: F2,
+) -> Option<f64>
+where
+    F1: Fn(&InterfoldEventData) -> bool,
+    F2: Fn(&InterfoldEventData) -> bool,
+{
+    let start = history.iter().find(|e| start_when(e.get_data()))?;
+    let end = history.iter().rfind(|e| end_when(e.get_data()))?;
+    let start_us = HlcTimestamp::wall_time(start.ts());
+    let end_us = HlcTimestamp::wall_time(end.ts());
+    (end_us >= start_us).then(|| (end_us - start_us) as f64 / 1_000_000.0)
+}
+
+fn publickey_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Option<&'static str> {
     match data {
-        EnclaveEventData::CommitteeFinalized(data) if data.e3_id == *e3_id => {
+        InterfoldEventData::CommitteeFinalized(data) if data.e3_id == *e3_id => {
             Some("CommitteeFinalized")
         }
-        EnclaveEventData::CiphernodeSelected(data) if data.e3_id == *e3_id => {
+        InterfoldEventData::CiphernodeSelected(data) if data.e3_id == *e3_id => {
             Some("CiphernodeSelected")
         }
-        EnclaveEventData::AggregatorChanged(data) if data.e3_id == *e3_id && data.is_aggregator => {
+        InterfoldEventData::AggregatorChanged(data)
+            if data.e3_id == *e3_id && data.is_aggregator =>
+        {
             Some("AggregatorChanged")
         }
-        EnclaveEventData::KeyshareCreated(data) if data.e3_id == *e3_id => Some("KeyshareCreated"),
-        EnclaveEventData::ShareVerificationDispatched(data)
+        InterfoldEventData::KeyshareCreated(data) if data.e3_id == *e3_id => {
+            Some("KeyshareCreated")
+        }
+        InterfoldEventData::ShareVerificationDispatched(data)
             if data.e3_id == *e3_id && data.kind == VerificationKind::PkGenerationProofs =>
         {
             Some("ShareVerificationDispatched")
         }
-        EnclaveEventData::CommitmentConsistencyCheckRequested(data)
+        InterfoldEventData::CommitmentConsistencyCheckRequested(data)
             if data.e3_id == *e3_id && data.kind == VerificationKind::PkGenerationProofs =>
         {
             Some("CommitmentConsistencyCheckRequested")
         }
-        EnclaveEventData::CommitmentConsistencyCheckComplete(data)
+        InterfoldEventData::CommitmentConsistencyCheckComplete(data)
             if data.e3_id == *e3_id && data.kind == VerificationKind::PkGenerationProofs =>
         {
             Some("CommitmentConsistencyCheckComplete")
         }
-        EnclaveEventData::ProofVerificationPassed(data)
+        InterfoldEventData::ProofVerificationPassed(data)
             if data.e3_id == *e3_id && data.proof_type == ProofType::C1PkGeneration =>
         {
             Some("ProofVerificationPassed")
         }
-        EnclaveEventData::ShareVerificationComplete(data)
+        InterfoldEventData::ShareVerificationComplete(data)
             if data.e3_id == *e3_id && data.kind == VerificationKind::PkGenerationProofs =>
         {
             Some("ShareVerificationComplete")
         }
-        EnclaveEventData::PkAggregationProofPending(data) if data.e3_id == *e3_id => {
+        InterfoldEventData::PkAggregationProofPending(data) if data.e3_id == *e3_id => {
             Some("PkAggregationProofPending")
         }
-        EnclaveEventData::PkAggregationProofSigned(data) if data.e3_id == *e3_id => {
+        InterfoldEventData::PkAggregationProofSigned(data) if data.e3_id == *e3_id => {
             Some("PkAggregationProofSigned")
         }
-        EnclaveEventData::DKGRecursiveAggregationComplete(data) if data.e3_id == *e3_id => {
+        InterfoldEventData::DKGRecursiveAggregationComplete(data) if data.e3_id == *e3_id => {
             Some("DKGRecursiveAggregationComplete")
         }
-        EnclaveEventData::PublicKeyAggregated(data) if data.e3_id == *e3_id => {
+        InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == *e3_id => {
             Some("PublicKeyAggregated")
         }
         _ => None,
     }
 }
 
-fn plaintext_aggregator_marker(data: &EnclaveEventData, e3_id: &E3id) -> Option<&'static str> {
+fn plaintext_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Option<&'static str> {
     match data {
-        EnclaveEventData::CiphertextOutputPublished(data) if data.e3_id == *e3_id => {
+        InterfoldEventData::CiphertextOutputPublished(data) if data.e3_id == *e3_id => {
             Some("CiphertextOutputPublished")
         }
-        EnclaveEventData::DecryptionshareCreated(data) if data.e3_id == *e3_id => {
+        InterfoldEventData::DecryptionshareCreated(data) if data.e3_id == *e3_id => {
             Some("DecryptionshareCreated")
         }
-        EnclaveEventData::ShareVerificationDispatched(data)
+        InterfoldEventData::ShareVerificationDispatched(data)
             if data.e3_id == *e3_id && data.kind == VerificationKind::ThresholdDecryptionProofs =>
         {
             Some("ShareVerificationDispatched")
         }
-        EnclaveEventData::CommitmentConsistencyCheckRequested(data)
+        InterfoldEventData::CommitmentConsistencyCheckRequested(data)
             if data.e3_id == *e3_id && data.kind == VerificationKind::ThresholdDecryptionProofs =>
         {
             Some("CommitmentConsistencyCheckRequested")
         }
-        EnclaveEventData::CommitmentConsistencyCheckComplete(data)
+        InterfoldEventData::CommitmentConsistencyCheckComplete(data)
             if data.e3_id == *e3_id && data.kind == VerificationKind::ThresholdDecryptionProofs =>
         {
             Some("CommitmentConsistencyCheckComplete")
         }
-        EnclaveEventData::ComputeRequest(data)
+        InterfoldEventData::ComputeRequest(data)
             if data.e3_id == *e3_id
                 && matches!(
                     &data.request,
@@ -773,7 +1148,7 @@ fn plaintext_aggregator_marker(data: &EnclaveEventData, e3_id: &E3id) -> Option<
         {
             Some("ComputeRequest")
         }
-        EnclaveEventData::ComputeResponse(data)
+        InterfoldEventData::ComputeResponse(data)
             if data.e3_id == *e3_id
                 && matches!(
                     &data.response,
@@ -789,23 +1164,23 @@ fn plaintext_aggregator_marker(data: &EnclaveEventData, e3_id: &E3id) -> Option<
         {
             Some("ComputeResponse")
         }
-        EnclaveEventData::ProofVerificationPassed(data)
+        InterfoldEventData::ProofVerificationPassed(data)
             if data.e3_id == *e3_id && data.proof_type == ProofType::C6ThresholdShareDecryption =>
         {
             Some("ProofVerificationPassed")
         }
-        EnclaveEventData::ShareVerificationComplete(data)
+        InterfoldEventData::ShareVerificationComplete(data)
             if data.e3_id == *e3_id && data.kind == VerificationKind::ThresholdDecryptionProofs =>
         {
             Some("ShareVerificationComplete")
         }
-        EnclaveEventData::AggregationProofPending(data) if data.e3_id == *e3_id => {
+        InterfoldEventData::AggregationProofPending(data) if data.e3_id == *e3_id => {
             Some("AggregationProofPending")
         }
-        EnclaveEventData::AggregationProofSigned(data) if data.e3_id == *e3_id => {
+        InterfoldEventData::AggregationProofSigned(data) if data.e3_id == *e3_id => {
             Some("AggregationProofSigned")
         }
-        EnclaveEventData::PlaintextAggregated(data) if data.e3_id == *e3_id => {
+        InterfoldEventData::PlaintextAggregated(data) if data.e3_id == *e3_id => {
             Some("PlaintextAggregated")
         }
         _ => None,
@@ -846,9 +1221,22 @@ async fn setup_score_sortition_environment(
     Ok(())
 }
 
+#[derive(Clone, Copy)]
+enum PhaseMetric {
+    WallClock,
+}
+
+impl PhaseMetric {
+    fn as_str(self) -> &'static str {
+        match self {
+            PhaseMetric::WallClock => "wall_clock",
+        }
+    }
+}
+
 #[derive(Default)]
 struct Report {
-    inner: Vec<(String, Duration)>,
+    inner: Vec<(String, Duration, PhaseMetric)>,
 }
 
 fn repeat(ch: char, num: usize) -> String {
@@ -872,10 +1260,14 @@ fn json_escape(s: &str) -> String {
 }
 
 impl Report {
-    pub fn push(&mut self, repo: (&str, Duration)) {
-        let (label, dur) = repo;
+    pub fn push_wall(&mut self, label: &str, dur: Duration) {
         self.show(label);
-        self.inner.push((label.to_owned(), dur));
+        self.inner
+            .push((label.to_owned(), dur, PhaseMetric::WallClock));
+    }
+
+    pub fn push(&mut self, repo: (&str, Duration)) {
+        self.push_wall(repo.0, repo.1);
     }
 
     pub fn show(&self, label: &str) {
@@ -890,11 +1282,16 @@ impl Report {
     }
 
     pub fn serialize(&self) -> String {
-        let max_key_len = self.inner.iter().map(|(k, _)| k.len()).max().unwrap_or(0);
+        let max_key_len = self
+            .inner
+            .iter()
+            .map(|(k, _, _)| k.len())
+            .max()
+            .unwrap_or(0);
 
         self.inner
             .iter()
-            .map(|(key, duration)| {
+            .map(|(key, duration, _)| {
                 format!(
                     "{:width$}: {:.3}s",
                     key,
@@ -932,8 +1329,7 @@ async fn test_trbfv_actor() -> Result<()> {
 
     let setup = Instant::now();
 
-    // Create rng
-    let rng = create_shared_rng_from_u64(42);
+    const BENCHMARK_NODE_RNG_BASE: u64 = 42;
 
     // Create "trigger" bus
     let system = EventSystem::new().with_fresh_bus();
@@ -963,13 +1359,20 @@ async fn test_trbfv_actor() -> Result<()> {
     let params = ArcBytes::from_bytes(&encode_bfv_params(&params_raw.clone()));
 
     // round information
-    let threshold_m = 1;
-    let threshold_n = 3;
-    let esi_per_ct = 1;
-
-    // Statistical security parameter λ used for smudging bound / error_size.
-    // Comes from the selected BFV preset metadata to avoid mixing parameter families.
-    let lambda = benchmark_params.lambda;
+    // Committee comes from the build stamp — the test always runs against whatever the circuits
+    // in `circuits/bin/` were compiled for, so switching committee is a single
+    // `pnpm build:circuits --committee <name>` away with no env var to remember.
+    let committee_size = active_committee(benchmark_params.preset_subdir);
+    let benchmark_committee = committee_size.values();
+    let threshold_m = benchmark_committee.threshold;
+    let threshold_n = benchmark_committee.n;
+    let committee_h = benchmark_committee.h;
+    let participant_count = benchmark_participant_node_count(threshold_m, threshold_n);
+    let nodes_spawned = participant_count + 1; // +1 non-registered observer collector
+                                               // Statistical security parameter λ used for smudging bound / error_size.
+                                               // Comes from the selected BFV preset metadata to avoid mixing parameter families.
+                                               // Lambda is secure or insecure depending on the selected preset's security tier.
+    let lambda = benchmark_params.bfv_preset.lambda()?;
 
     let seed = create_seed_from_u64(123);
     let error_size = ArcBytes::from_bytes(&BigUint::to_bytes_be(&calculate_error_size(
@@ -983,11 +1386,42 @@ async fn test_trbfv_actor() -> Result<()> {
     let cipher = Arc::new(Cipher::from_password("I am the music man.").await?);
 
     // Actor system setup
-    // Seems like you cannot send more than one job at a time to rayon
-    let concurrent_jobs = 1;
+    let concurrent_jobs = benchmark_multithread_concurrent_jobs();
+    let slashing_manager_addr = benchmark_slashing_manager_address();
     let max_threadroom = Multithread::get_max_threads_minus(1);
-    let task_pool = Multithread::create_taskpool(max_threadroom, concurrent_jobs);
-    let multithread_report = MultithreadReport::new(max_threadroom, concurrent_jobs).start();
+    let pool_threads = concurrent_jobs.min(max_threadroom).max(1);
+    let task_pool = Multithread::create_taskpool(pool_threads, concurrent_jobs);
+    let multithread_report = MultithreadReport::new(pool_threads, concurrent_jobs).start();
+
+    // Minimal chain config for in-process benchmarks (no RPC needed).
+    // Provides slashing_manager address for EIP-712 accusation vote signatures.
+    let bench_chain_config = e3_config::chain_config::ChainConfig {
+        enabled: Some(false),
+        name: "bench".into(),
+        rpc_url: "http://localhost:8545".into(),
+        rpc_auth: Default::default(),
+        contracts: e3_config::ContractAddresses {
+            interfold: e3_config::Contract::AddressOnly(
+                "0x0000000000000000000000000000000000000000".into(),
+            ),
+            ciphernode_registry: e3_config::Contract::AddressOnly(
+                "0x0000000000000000000000000000000000000000".into(),
+            ),
+            bonding_registry: e3_config::Contract::AddressOnly(
+                "0x0000000000000000000000000000000000000000".into(),
+            ),
+            e3_program: None,
+            fee_token: None,
+            slashing_manager: Some(e3_config::Contract::AddressOnly(
+                slashing_manager_addr.to_string(),
+            )),
+            dkg_fold_attestation_verifier: benchmark_dkg_fold_attestation_verifier_address()
+                .map(|a| e3_config::Contract::AddressOnly(a.to_string())),
+        },
+        finalization_ms: None,
+        reorg_confirmations: None,
+        chain_id: Some(1),
+    };
 
     // Setup ZK backend for proof generation/verification
     let (zk_backend, _zk_temp) = setup_test_zk_backend(benchmark_params.preset_subdir).await?;
@@ -995,47 +1429,54 @@ async fn test_trbfv_actor() -> Result<()> {
     let nodes = CiphernodeSystemBuilder::new()
         // All nodes run the same binary under the aggregator-committee model.
         // Node 0 stays an observer only because it is excluded from sortition registration.
-        // Adding 20 total nodes: 3 for committee + 3 buffer = 6 selected, 14 unselected
+        // Participant count scales with active committee (N + sortition buffer).
         .add_group(1, || async {
-            let addr = rand_eth_addr(&rng);
+            let node_rng = next_benchmark_node_rng(BENCHMARK_NODE_RNG_BASE);
+            let addr = rand_eth_addr(&node_rng);
             println!("Building collector {}!", addr);
-            CiphernodeBuilder::new(rng.clone(), cipher.clone())
-                .testmode_with_history()
-                .with_shared_taskpool(&task_pool)
-                .with_multithread_concurrent_jobs(concurrent_jobs)
-                .with_shared_multithread_report(&multithread_report)
-                .with_trbfv()
-                .with_zkproof(zk_backend.clone())
-                .testmode_with_signer(PrivateKeySigner::random())
-                .with_pubkey_aggregation()
-                .with_sortition_score()
-                .with_threshold_plaintext_aggregation()
-                .testmode_with_forked_bus(bus.event_bus())
-                .testmode_ignore_address_check()
-                .with_logging()
-                .build()
-                .await
+            {
+                let b = CiphernodeBuilder::new(node_rng, cipher.clone())
+                    .with_history_collector()
+                    .with_shared_taskpool(&task_pool)
+                    .with_multithread_concurrent_jobs(concurrent_jobs)
+                    .with_shared_multithread_report(&multithread_report)
+                    .with_trbfv()
+                    .with_zkproof(zk_backend.clone())
+                    .with_signer(PrivateKeySigner::random())
+                    .with_pubkey_aggregation()
+                    .with_sortition_score()
+                    .with_threshold_plaintext_aggregation()
+                    .with_forked_bus(bus.event_bus())
+                    .with_chains(std::slice::from_ref(&bench_chain_config))
+                    .with_logging();
+                b.build().await
+            }
         })
-        .add_group(19, || async {
-            let addr = rand_eth_addr(&rng);
-            println!("Building normal {}", &addr);
-            CiphernodeBuilder::new(rng.clone(), cipher.clone())
-                .testmode_with_history()
-                .with_shared_taskpool(&task_pool)
-                .with_multithread_concurrent_jobs(concurrent_jobs)
-                .with_shared_multithread_report(&multithread_report)
-                .with_trbfv()
-                .with_zkproof(zk_backend.clone())
-                .testmode_with_signer(PrivateKeySigner::random())
-                .with_pubkey_aggregation()
-                .with_sortition_score()
-                .with_threshold_plaintext_aggregation()
-                .testmode_with_forked_bus(bus.event_bus())
-                .testmode_ignore_address_check()
-                .with_logging()
-                .build()
-                .await
-        })
+        .add_group(
+            u32::try_from(participant_count).expect("benchmark participant count fits in u32"),
+            || async {
+                let node_rng = next_benchmark_node_rng(BENCHMARK_NODE_RNG_BASE);
+                let addr = rand_eth_addr(&node_rng);
+                println!("Building normal {}", &addr);
+                {
+                    let b = CiphernodeBuilder::new(node_rng, cipher.clone())
+                        .with_history_collector()
+                        .with_shared_taskpool(&task_pool)
+                        .with_multithread_concurrent_jobs(concurrent_jobs)
+                        .with_shared_multithread_report(&multithread_report)
+                        .with_trbfv()
+                        .with_zkproof(zk_backend.clone())
+                        .with_signer(PrivateKeySigner::random())
+                        .with_pubkey_aggregation()
+                        .with_sortition_score()
+                        .with_threshold_plaintext_aggregation()
+                        .with_forked_bus(bus.event_bus())
+                        .with_chains(std::slice::from_ref(&bench_chain_config))
+                        .with_logging();
+                    b.build().await
+                }
+            },
+        )
         .simulate_libp2p()
         .build()
         .await?;
@@ -1045,19 +1486,26 @@ async fn test_trbfv_actor() -> Result<()> {
     let committee_setup = Instant::now();
     let chain_id = 1u64;
 
-    // Only register nodes 1-19 in sortition (exclude collector at index 0).
+    // Only register nodes 1..=participant_count in sortition (exclude collector at index 0).
     // This ensures the collector is never selected, making the test deterministic.
     // The collector node will observe events as a non-participant.
-    let collector_addr = nodes.get(0).unwrap().address();
+    let collector_addr = nodes.first().unwrap().address();
     let eth_addrs: Vec<String> = nodes
         .iter()
         .skip(1) // Skip the collector node
         .map(|n| n.address())
         .collect();
 
+    anyhow::ensure!(
+        eth_addrs.len() >= threshold_n,
+        "benchmark harness: need at least {threshold_n} registered nodes for committee N, got {}",
+        eth_addrs.len()
+    );
+
     println!(
-        "Test setup: {} registered nodes, {} threshold, collector (observer): {}",
+        "Test setup: {} registered nodes (pool target {}), committee N={}, collector (observer): {}",
         eth_addrs.len(),
+        participant_count,
         threshold_n,
         collector_addr
     );
@@ -1072,8 +1520,7 @@ async fn test_trbfv_actor() -> Result<()> {
     ///////////////////////////////////////////////////////////////////////////////////
     // 2. Trigger E3Requested
     //
-    //   - m=1.
-    //   - n=3
+    //   - threshold_m / threshold_n / committee_h from active committee stamp
     //   - lambda -> calculate_error_size uses the selected BFV preset metadata
     //   - error_size -> calculate using calculate_error_size
     //   - esi_per_ciphertext = 1
@@ -1084,15 +1531,18 @@ async fn test_trbfv_actor() -> Result<()> {
     // Trigger actor DKG
     let e3_id = E3id::new("0", 1);
 
-    let proof_aggregation_enabled = true;
+    let proof_aggregation_enabled = benchmark_proof_aggregation_enabled();
+    println!(
+        "Benchmark trbfv: proof_aggregation={proof_aggregation_enabled}, preset={}, pool_threads={pool_threads}, max_concurrent_jobs={concurrent_jobs}",
+        benchmark_params.preset_subdir
+    );
 
     let e3_requested = E3Requested {
         e3_id: e3_id.clone(),
         threshold_m,
         threshold_n,
-        seed: seed.clone(),
+        seed,
         error_size,
-        esi_per_ct: esi_per_ct as usize,
         params_preset: benchmark_params.bfv_preset,
         params,
         proof_aggregation_enabled,
@@ -1117,10 +1567,8 @@ async fn test_trbfv_actor() -> Result<()> {
         buffer_nodes.len()
     ));
 
-    let active_aggregator_addr = committee
-        .first()
-        .cloned()
-        .expect("committee should have an active aggregator");
+    let active_aggregator_addr =
+        active_aggregator_address(&committee, &committee_scores, &e3_id, chain_id);
     let active_aggregator_index = find_node_index_by_address(&nodes, &active_aggregator_addr)?;
 
     println!(
@@ -1149,53 +1597,47 @@ async fn test_trbfv_actor() -> Result<()> {
     // Node 0 is a non-committee observer. It only sees bus-global events and the forwardable
     // gossip events from the active aggregator flow.
     let shares_to_pubkey_agg_timer = Instant::now();
-    const KS3: [&str; 3] = ["KeyshareCreated"; 3];
-    const DKG3: [&str; 3] = ["DKGRecursiveAggregationComplete"; 3];
-    const ACTIVE_AGGREGATOR_C1_C5: [&str; 9] = [
+    // KeyshareCreated is gossiped by each committee member (N). The aggregator folds H honest
+    // keyshares into PublicKeyAggregated; DKGRecursiveAggregationComplete is one per member (N).
+    let ks_n: Vec<&'static str> = vec!["KeyshareCreated"; threshold_n];
+    let dkg_n: Vec<&'static str> = vec!["DKGRecursiveAggregationComplete"; threshold_n];
+    let mut active_aggregator_c1_c5: Vec<&'static str> = vec![
         "ShareVerificationDispatched",
         "CommitmentConsistencyCheckRequested",
         "CommitmentConsistencyCheckComplete",
-        "ProofVerificationPassed",
-        "ProofVerificationPassed",
-        "ProofVerificationPassed",
+    ];
+    // C1 verification dispatches ALL N submitted keyshare proofs (the protocol needs to know
+    // who's dishonest before it can pick the H honest set), so N ProofVerificationPassed events
+    // fire. The aggregator subsequently truncates to H for C5 input only.
+    active_aggregator_c1_c5.extend(std::iter::repeat_n("ProofVerificationPassed", threshold_n));
+    active_aggregator_c1_c5.extend_from_slice(&[
         "ShareVerificationComplete",
         "PkAggregationProofPending",
         "PkAggregationProofSigned",
-    ];
+    ]);
 
     let mut expected_events: Vec<&'static str> = vec!["AggregatorChanged"];
     if proof_aggregation_enabled {
-        expected_events.extend_from_slice(&KS3);
-        expected_events.extend_from_slice(&DKG3);
+        expected_events.extend_from_slice(&ks_n);
+        expected_events.extend_from_slice(&dkg_n);
     } else {
-        expected_events.extend_from_slice(&DKG3);
-        expected_events.extend_from_slice(&KS3);
+        expected_events.extend_from_slice(&dkg_n);
+        expected_events.extend_from_slice(&ks_n);
     }
     expected_events.push("PublicKeyAggregated");
-    // KeyshareCreated and DKGRecursiveAggregationComplete are gossiped independently
-    // by different committee members, so at a non-committee observer they can interleave
-    // in any order. Assert the multiset matches and the boundary events are in place,
-    // rather than a strict sequence.
+    // Gossip can duplicate KeyshareCreated; wait until PublicKeyAggregated rather than a fixed take count.
     let h = nodes
-        .take_history_with_timeouts(
+        .take_history_until_last_event(
             0,
-            expected_events.len(),
+            "PublicKeyAggregated",
             Some(pubkey_flow_timeout),
             Some(pubkey_flow_timeout),
         )
         .await
-        .map_err(|e| anyhow::anyhow!("FAILURE on node 0: {expected_events:?} : {e}"))?;
+        .map_err(|e| anyhow::anyhow!("FAILURE on node 0 pubkey flow: {e}"))?;
     let actual_types = h.event_types();
-    println!("node 0 >> {:?} =~ {:?}", actual_types, expected_events);
-    let mut actual_sorted = actual_types.clone();
-    let mut expected_sorted: Vec<String> =
-        expected_events.iter().map(|s| (*s).to_string()).collect();
-    actual_sorted.sort();
-    expected_sorted.sort();
-    assert_eq!(
-        actual_sorted, expected_sorted,
-        "node 0 event multiset mismatch"
-    );
+    println!("node 0 >> {:?}", actual_types);
+
     assert_eq!(
         actual_types.first().map(String::as_str),
         Some("AggregatorChanged"),
@@ -1207,6 +1649,51 @@ async fn test_trbfv_actor() -> Result<()> {
         "node 0: last event must be PublicKeyAggregated"
     );
 
+    let dkg_parties: HashSet<u64> = h
+        .iter()
+        .filter_map(|e| match e.get_data() {
+            InterfoldEventData::DKGRecursiveAggregationComplete(d) => Some(d.party_id),
+            _ => None,
+        })
+        .collect();
+    let ks_parties: HashSet<u64> = h
+        .iter()
+        .filter_map(|e| match e.get_data() {
+            InterfoldEventData::KeyshareCreated(d) => Some(d.party_id),
+            _ => None,
+        })
+        .collect();
+    // Unlike KeyshareCreated (cheap, gossiped early — all N arrive before aggregation), the
+    // per-node recursive fold proof (DKGRecursiveAggregationComplete) is expensive and late.
+    // `PublicKeyAggregated` fires once the aggregator selects and aggregates the honest set, so
+    // only the H honest folds are guaranteed to have reached node 0 by this barrier; the extra
+    // N-H members' folds race against it (and may land afterward). Assert the guaranteed floor
+    // and that every observed fold party is a committee member, not the racy `== N`.
+    assert!(
+        dkg_parties.len() >= committee_h
+            && dkg_parties.len() <= threshold_n
+            && dkg_parties.iter().all(|p| (*p as usize) < threshold_n),
+        "node 0: expected DKGRecursiveAggregationComplete from {committee_h}..={threshold_n} committee members before PublicKeyAggregated (only the H honest folds are guaranteed by this barrier), got parties {dkg_parties:?}"
+    );
+    assert_eq!(
+        ks_parties.len(),
+        threshold_n,
+        "node 0: expected KeyshareCreated from each committee member (N={threshold_n}), got parties {ks_parties:?}"
+    );
+    let pk_agg = h
+        .iter()
+        .rev()
+        .find_map(|e| match e.get_data() {
+            InterfoldEventData::PublicKeyAggregated(d) => Some(d),
+            _ => None,
+        })
+        .expect("PublicKeyAggregated in history");
+    assert_eq!(
+        pk_agg.nodes.len(),
+        committee_h,
+        "PublicKeyAggregated must list H={committee_h} honest nodes"
+    );
+
     let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
     let active_aggregator_pubkey_history_len = active_aggregator_history.len();
     let mut expected_active_aggregator_pubkey_events = vec![
@@ -1215,14 +1702,14 @@ async fn test_trbfv_actor() -> Result<()> {
         "AggregatorChanged",
     ];
     if proof_aggregation_enabled {
-        expected_active_aggregator_pubkey_events.extend_from_slice(&KS3);
+        expected_active_aggregator_pubkey_events.extend_from_slice(&ks_n);
     } else {
-        expected_active_aggregator_pubkey_events.extend_from_slice(&DKG3);
-        expected_active_aggregator_pubkey_events.extend_from_slice(&KS3);
+        expected_active_aggregator_pubkey_events.extend_from_slice(&dkg_n);
+        expected_active_aggregator_pubkey_events.extend_from_slice(&ks_n);
     }
-    expected_active_aggregator_pubkey_events.extend_from_slice(&ACTIVE_AGGREGATOR_C1_C5);
+    expected_active_aggregator_pubkey_events.extend_from_slice(&active_aggregator_c1_c5);
     if proof_aggregation_enabled {
-        expected_active_aggregator_pubkey_events.extend_from_slice(&DKG3);
+        expected_active_aggregator_pubkey_events.extend_from_slice(&dkg_n);
     }
     expected_active_aggregator_pubkey_events.push("PublicKeyAggregated");
 
@@ -1256,10 +1743,26 @@ async fn test_trbfv_actor() -> Result<()> {
         "Active aggregator: last event must be PublicKeyAggregated"
     );
 
-    report.push((
+    if let Some(secs) = history_wall_seconds_between(
+        &active_aggregator_history,
+        |d| {
+            matches!(
+                d,
+                InterfoldEventData::PkAggregationProofPending(data) if data.e3_id == e3_id
+            )
+        },
+        |d| matches!(d, InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == e3_id),
+    ) {
+        report.push_wall(
+            "Aggregator P2: PkAggregation pending -> PublicKeyAggregated (wall)",
+            Duration::from_secs_f64(secs),
+        );
+    }
+
+    report.push_wall(
         "ThresholdShares -> PublicKeyAggregated",
         shares_to_pubkey_agg_timer.elapsed(),
-    ));
+    );
 
     report.push((
         "E3Request -> PublicKeyAggregated",
@@ -1270,7 +1773,7 @@ async fn test_trbfv_actor() -> Result<()> {
     // First we get the public key from the collector-visible gossip event.
     println!("Getting public key");
     let Some(pubkey_event) = h.iter().rev().find_map(|event| match event.get_data() {
-        EnclaveEventData::PublicKeyAggregated(data) => Some(data.clone()),
+        InterfoldEventData::PublicKeyAggregated(data) => Some(data.clone()),
         _ => None,
     }) else {
         panic!(
@@ -1291,7 +1794,6 @@ async fn test_trbfv_actor() -> Result<()> {
     let num_voters = 30;
     let (inputs, numbers) = e3_test_helpers::application::generate_ciphertexts(
         &pubkey,
-        params_raw.clone(),
         num_voters,
         num_votes_per_voter,
     );
@@ -1299,11 +1801,8 @@ async fn test_trbfv_actor() -> Result<()> {
 
     let running_app_timer = Instant::now();
     println!("Running application to generate outputs...");
-    let outputs = e3_test_helpers::application::run_application(
-        &inputs,
-        params_raw.clone(),
-        num_votes_per_voter,
-    );
+    let outputs =
+        e3_test_helpers::application::run_application(&inputs, &pubkey, num_votes_per_voter);
     report.push(("Running FHE Application", running_app_timer.elapsed()));
 
     let publishing_ct_timer = Instant::now();
@@ -1326,62 +1825,137 @@ async fn test_trbfv_actor() -> Result<()> {
 
     // The collector only sees the shared ciphertext event, gossiped decryption shares, and the
     // final gossiped plaintext output.
-    const DS3: [&str; 3] = ["DecryptionshareCreated"; 3];
+    // Only the H honest parties decrypt and gossip a share; the (N - H) extras stay in the
+    // full committee but do not participate in decryption.
+    let ds_n: Vec<&'static str> = vec!["DecryptionshareCreated"; committee_h];
     let mut expected_events: Vec<&'static str> = vec!["CiphertextOutputPublished"];
-    expected_events.extend_from_slice(&DS3);
+    expected_events.extend_from_slice(&ds_n);
     expected_events.push("PlaintextAggregated");
 
     println!(
         "[bench-progress] waiting for PlaintextAggregated flow on observer node (expected events: {})",
         expected_events.len()
     );
-    let h = expect_node_events_with_timeouts(
-        &nodes,
-        0,
-        &expected_events,
-        plaintext_flow_timeout,
-        plaintext_flow_timeout,
-    )
-    .await?;
+    // Gossip can duplicate DecryptionshareCreated on the collector path (same as KeyshareCreated
+    // in the pubkey flow); wait until `PlaintextAggregated` rather than a fixed take count, then
+    // assert the multiset matches with duplicates removed.
+    let h = nodes
+        .take_history_until_last_event(
+            0,
+            "PlaintextAggregated",
+            Some(plaintext_flow_timeout),
+            Some(plaintext_flow_timeout),
+        )
+        .await
+        .map_err(|e| anyhow::anyhow!("FAILURE on node 0 plaintext flow: {e}"))?;
+    let actual_types = h.event_types();
+    println!("node 0 >> {:?}", actual_types);
+    assert_eq!(
+        actual_types.first().map(String::as_str),
+        Some("CiphertextOutputPublished"),
+        "collector: first plaintext-flow event must be CiphertextOutputPublished"
+    );
+    assert_eq!(
+        actual_types.last().map(String::as_str),
+        Some("PlaintextAggregated"),
+        "collector: last plaintext-flow event must be PlaintextAggregated"
+    );
+    let unique_ds_parties: HashSet<u64> = h
+        .iter()
+        .filter_map(|e| match e.get_data() {
+            InterfoldEventData::DecryptionshareCreated(d) => Some(d.party_id),
+            _ => None,
+        })
+        .collect();
+    // All N committee members that received share material attempt decryption and gossip; the
+    // aggregator consumes only H. So the number of distinct senders observed at the collector
+    // sits in [H, N].
+    assert!(
+        unique_ds_parties.len() >= committee_h && unique_ds_parties.len() <= threshold_n,
+        "collector: expected DecryptionshareCreated from {committee_h}..={threshold_n} distinct parties, got {} parties {unique_ds_parties:?}",
+        unique_ds_parties.len()
+    );
     println!("[bench-progress] PlaintextAggregated observed on collector path");
 
     let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
-    const C6_VERIFY_PREFIX: [&str; 19] = [
-        "CiphertextOutputPublished",
-        "DecryptionshareCreated",
-        "DecryptionshareCreated",
-        "DecryptionshareCreated",
-        "ShareVerificationDispatched",
-        "CommitmentConsistencyCheckRequested",
-        "CommitmentConsistencyCheckComplete",
-        "ComputeRequest",
-        "ComputeResponse",
-        "ProofVerificationPassed",
-        "ProofVerificationPassed",
-        "ProofVerificationPassed",
-        "ProofVerificationPassed",
-        "ProofVerificationPassed",
-        "ProofVerificationPassed",
-        "ProofVerificationPassed",
-        "ProofVerificationPassed",
-        "ProofVerificationPassed",
-        "ShareVerificationComplete",
-    ];
     let active_aggregator_plaintext_events = project_history(
         &active_aggregator_history[active_aggregator_pubkey_history_len..],
         |data| plaintext_aggregator_marker(data, &e3_id),
     );
+
+    // C6 head layout:
+    //   CiphertextOutputPublished, DecryptionshareCreated × K, ShareVerificationDispatched,
+    //   CommitmentConsistencyCheckRequested, CommitmentConsistencyCheckComplete
+    // where K is in [H, N] plus possible gossip duplicates — every committee member that received
+    // share material gossips one, the aggregator selects H. Locate boundaries by name rather than
+    // by fixed offset.
     assert_eq!(
-        &active_aggregator_plaintext_events[..C6_VERIFY_PREFIX.len()],
-        C6_VERIFY_PREFIX,
-        "Unexpected active aggregator C6 verification prefix"
+        active_aggregator_plaintext_events.first().copied(),
+        Some("CiphertextOutputPublished"),
+        "active aggregator: first plaintext-flow event must be CiphertextOutputPublished"
+    );
+    let svd_index = active_aggregator_plaintext_events
+        .iter()
+        .position(|e| *e == "ShareVerificationDispatched")
+        .expect("ShareVerificationDispatched should be present in plaintext flow");
+    let pre_svd = &active_aggregator_plaintext_events[1..svd_index];
+    assert!(
+        pre_svd.iter().all(|e| *e == "DecryptionshareCreated"),
+        "active aggregator: only DecryptionshareCreated allowed between CiphertextOutputPublished and ShareVerificationDispatched, got {pre_svd:?}"
+    );
+    let unique_ds_parties_agg: HashSet<u64> = active_aggregator_history
+        [active_aggregator_pubkey_history_len..]
+        .iter()
+        .take_while(|e| {
+            !matches!(
+                e.get_data(),
+                InterfoldEventData::ShareVerificationDispatched(_)
+            )
+        })
+        .filter_map(|e| match e.get_data() {
+            InterfoldEventData::DecryptionshareCreated(d) if d.e3_id == e3_id => Some(d.party_id),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        unique_ds_parties_agg.len() >= committee_h && unique_ds_parties_agg.len() <= threshold_n,
+        "active aggregator: expected DecryptionshareCreated from {committee_h}..={threshold_n} distinct parties before ShareVerificationDispatched, got {} parties {unique_ds_parties_agg:?}",
+        unique_ds_parties_agg.len()
+    );
+    assert_eq!(
+        &active_aggregator_plaintext_events[svd_index..svd_index + 3],
+        &[
+            "ShareVerificationDispatched",
+            "CommitmentConsistencyCheckRequested",
+            "CommitmentConsistencyCheckComplete",
+        ][..],
+        "Unexpected active aggregator C6 head after ShareVerificationDispatched"
+    );
+    let c6_head_end = svd_index + 3;
+
+    let aggregation_pending_index = active_aggregator_plaintext_events
+        .iter()
+        .position(|event| *event == "AggregationProofPending")
+        .expect("AggregationProofPending should be present");
+    let c6_body = &active_aggregator_plaintext_events[c6_head_end..aggregation_pending_index];
+    assert_eq!(
+        count_projected_events(c6_body, "ShareVerificationComplete"),
+        1,
+        "expected one C6 ShareVerificationComplete before aggregation"
+    );
+    assert!(
+        count_projected_events(c6_body, "ProofVerificationPassed") >= committee_h,
+        "expected >= {committee_h} C6 ProofVerificationPassed events before aggregation"
+    );
+    let c6_compute_requests = count_projected_events(c6_body, "ComputeRequest");
+    let c6_compute_responses = count_projected_events(c6_body, "ComputeResponse");
+    assert!(
+        c6_compute_requests >= 1 && c6_compute_requests == c6_compute_responses,
+        "expected paired C6-phase ComputeRequest/ComputeResponse (got {c6_compute_requests} requests, {c6_compute_responses} responses)"
     );
 
-    let completion_events = &active_aggregator_plaintext_events[C6_VERIFY_PREFIX.len()..];
-
-    let mut expected_plaintext_completion = vec![
-        "ComputeRequest",
-        "ComputeResponse",
+    let aggregation_flow = &active_aggregator_plaintext_events[aggregation_pending_index..];
+    let mut expected_aggregation_flow = vec![
         "AggregationProofPending",
         "ComputeRequest",
         "ComputeResponse",
@@ -1389,60 +1963,75 @@ async fn test_trbfv_actor() -> Result<()> {
     ];
     if proof_aggregation_enabled {
         // `DecryptionAggregation`: one compute pair (C6 fold + C7 checked inside the worker).
-        expected_plaintext_completion.push("ComputeRequest");
-        expected_plaintext_completion.push("ComputeResponse");
+        expected_aggregation_flow.push("ComputeRequest");
+        expected_aggregation_flow.push("ComputeResponse");
     }
-    expected_plaintext_completion.push("PlaintextAggregated");
+    expected_aggregation_flow.push("PlaintextAggregated");
 
-    assert_eq!(
-        completion_events,
-        expected_plaintext_completion.as_slice(),
-        "Unexpected active aggregator plaintext completion flow"
-    );
-    assert_eq!(
-        count_projected_events(completion_events, "AggregationProofPending"),
-        1
-    );
-    assert_eq!(
-        count_projected_events(completion_events, "AggregationProofSigned"),
-        1
-    );
-    assert_eq!(
-        count_projected_events(completion_events, "PlaintextAggregated"),
-        1
-    );
-    let aggregation_pending_index = completion_events
+    // Filter out late-arriving DecryptionshareCreated gossip events that can interleave
+    // with the aggregation phase when using larger committees.
+    let aggregation_flow_filtered: Vec<&str> = aggregation_flow
         .iter()
-        .position(|event| *event == "AggregationProofPending")
-        .expect("AggregationProofPending should be present");
-    let aggregation_signed_index = completion_events
+        .copied()
+        .filter(|e| *e != "DecryptionshareCreated")
+        .collect();
+    assert_eq!(
+        aggregation_flow_filtered.as_slice(),
+        expected_aggregation_flow.as_slice(),
+        "Unexpected active aggregator C7/aggregation flow"
+    );
+    assert_eq!(
+        count_projected_events(aggregation_flow, "AggregationProofSigned"),
+        1
+    );
+    assert_eq!(
+        count_projected_events(aggregation_flow, "PlaintextAggregated"),
+        1
+    );
+    let aggregation_signed_index = aggregation_flow
         .iter()
         .position(|event| *event == "AggregationProofSigned")
         .expect("AggregationProofSigned should be present");
-    let plaintext_aggregated_index = completion_events
+    let plaintext_aggregated_index = aggregation_flow
         .iter()
         .position(|event| *event == "PlaintextAggregated")
         .expect("PlaintextAggregated should be present");
     assert!(
-        aggregation_pending_index < aggregation_signed_index,
-        "AggregationProofPending must precede AggregationProofSigned"
+        aggregation_signed_index < plaintext_aggregated_index,
+        "AggregationProofSigned must precede PlaintextAggregated"
     );
     assert_eq!(
         plaintext_aggregated_index,
-        completion_events.len() - 1,
+        aggregation_flow.len() - 1,
         "PlaintextAggregated must be the last active aggregator completion event"
     );
 
-    report.push((
+    if let Some(secs) = history_wall_seconds_between(
+        &active_aggregator_history[active_aggregator_pubkey_history_len..],
+        |d| {
+            matches!(
+                d,
+                InterfoldEventData::AggregationProofPending(data) if data.e3_id == e3_id
+            )
+        },
+        |d| matches!(d, InterfoldEventData::PlaintextAggregated(data) if data.e3_id == e3_id),
+    ) {
+        report.push_wall(
+            "Aggregator P4: Aggregation pending -> PlaintextAggregated (wall)",
+            Duration::from_secs_f64(secs),
+        );
+    }
+
+    report.push_wall(
         "Ciphertext published -> PlaintextAggregated",
         publishing_ct_timer.elapsed(),
-    ));
+    );
 
     let (plaintext, decryption_aggregator_proofs) = h
         .iter()
         .rev()
         .find_map(|e| {
-            if let EnclaveEventData::PlaintextAggregated(PlaintextAggregated {
+            if let InterfoldEventData::PlaintextAggregated(PlaintextAggregated {
                 decrypted_output,
                 decryption_aggregator_proofs,
                 ..
@@ -1463,10 +2052,12 @@ async fn test_trbfv_actor() -> Result<()> {
             )
         })?;
 
-    assert!(
-        !decryption_aggregator_proofs.is_empty(),
-        "DecryptionAggregator proofs should be present in PlaintextAggregated"
-    );
+    if proof_aggregation_enabled {
+        assert!(
+            !decryption_aggregator_proofs.is_empty(),
+            "DecryptionAggregator proofs should be present in PlaintextAggregated when proof_aggregation_enabled"
+        );
+    }
 
     if let Ok(path) = std::env::var("BENCHMARK_FOLDED_OUTPUT") {
         if let (Some(dkg_proof), Some(dec_proof)) = (
@@ -1507,14 +2098,11 @@ async fn test_trbfv_actor() -> Result<()> {
         .map(|a| decode_bytes_to_vec_u64(&a.extract_bytes()).expect("error decoding bytes"))
         .collect::<Vec<Vec<u64>>>();
 
-    let results: Vec<u64> = results
-        .into_iter()
-        .map(|r| r.first().unwrap().clone())
-        .collect();
+    let results: Vec<u64> = results.into_iter().map(|r| *r.first().unwrap()).collect();
 
     // Show summation result (mod plaintext modulus)
     let plaintext_modulus = params_raw.clone().plaintext();
-    let mut expected_result = vec![0u64; 3];
+    let mut expected_result = [0u64; 3];
     for vals in &numbers {
         for j in 0..num_votes_per_voter {
             expected_result[j] = (expected_result[j] + vals[j]) % plaintext_modulus;
@@ -1525,6 +2113,19 @@ async fn test_trbfv_actor() -> Result<()> {
         println!("Tally {i} result = {res} / {exp}");
         assert_eq!(res, exp);
     }
+
+    // All-honest safeguard: scan every participant and the observer for spurious accusations,
+    // commitment mismatches (including C4 DecryptionProofs on ThresholdKeyshare), and traps.
+    for index in 1..=participant_count {
+        let history = nodes.get_history(index).await?;
+        assert_honest_run_safeguards(
+            &history,
+            &e3_id,
+            &format!("participant node {index} ({})", nodes[index].address()),
+        );
+    }
+    let observer_history = nodes.get_history(0).await?;
+    assert_honest_run_safeguards(&observer_history, &e3_id, "observer node 0");
 
     let mt_report = multithread_report.send(ToReport).await.unwrap();
     println!("{}", mt_report);
@@ -1546,14 +2147,15 @@ async fn test_trbfv_actor() -> Result<()> {
             .collect::<Vec<_>>()
             .join(",\n");
 
-        let timings_json = report
+        let phase_timings_json = report
             .inner
             .iter()
-            .map(|(label, duration)| {
+            .map(|(label, duration, metric)| {
                 format!(
-                    "    {{\"label\": \"{}\", \"seconds\": {:.9}}}",
+                    "    {{\"label\": \"{}\", \"seconds\": {:.9}, \"metric\": \"{}\"}}",
                     json_escape(label),
-                    duration.as_secs_f64()
+                    duration.as_secs_f64(),
+                    metric.as_str()
                 )
             })
             .collect::<Vec<_>>()
@@ -1585,10 +2187,48 @@ async fn test_trbfv_actor() -> Result<()> {
             String::from("  \"folded_artifacts\": null\n")
         };
 
+        let dkg_fold_verifier_json = benchmark_dkg_fold_attestation_verifier_address()
+            .map(|addr| format!("  \"dkg_fold_attestation_verifier\": \"{addr}\",\n"))
+            .unwrap_or_default();
+
+        let benchmark_mode =
+            std::env::var("BENCHMARK_MODE").unwrap_or_else(|_| "insecure".to_string());
+        let benchmark_config_json = format!(
+            concat!(
+                "  \"benchmark_config\": {{\n",
+                "    \"mode\": \"{}\",\n",
+                "    \"bfv_preset_subdir\": \"{}\",\n",
+                "    \"bfv_preset\": \"{:?}\",\n",
+                "    \"lambda\": {},\n",
+                "    \"proof_aggregation_enabled\": {},\n",
+                "    \"multithread_concurrent_jobs\": {},\n",
+                "    \"committee_h\": {},\n",
+                "    \"committee_n\": {},\n",
+                "    \"committee_t\": {},\n",
+                "    \"nodes_spawned\": {},\n",
+                "    \"network_model\": \"in_process_bus\",\n",
+                "    \"testmode_harness\": true\n",
+                "  }},\n"
+            ),
+            json_escape(&benchmark_mode),
+            json_escape(benchmark_params.preset_subdir),
+            benchmark_params.bfv_preset,
+            benchmark_params.lambda,
+            proof_aggregation_enabled,
+            concurrent_jobs,
+            committee_h,
+            threshold_n,
+            threshold_m,
+            nodes_spawned,
+        );
+
         let summary_json = format!(
             concat!(
                 "{{\n",
                 "  \"integration_test\": \"test_trbfv_actor\",\n",
+                "{benchmark_config_json}",
+                "  \"proof_aggregation_enabled\": {},\n",
+                "{dkg_fold_verifier_json}",
                 "  \"multithread\": {{\n",
                 "    \"rayon_threads\": {},\n",
                 "    \"max_simultaneous_rayon_tasks\": {},\n",
@@ -1598,19 +2238,23 @@ async fn test_trbfv_actor() -> Result<()> {
                 "{}\n",
                 "  ],\n",
                 "  \"operation_timings_total_seconds\": {:.9},\n",
-                "  \"timings_seconds\": [\n",
+                "  \"operation_timings_metric\": \"tracked_job_wall\",\n",
+                "  \"phase_timings\": [\n",
                 "{}\n",
                 "  ],\n",
                 "{}",
                 "}}\n"
             ),
+            proof_aggregation_enabled,
             mt_report.rayon_threads(),
             mt_report.max_simultaneous_rayon_tasks(),
             mt_report.cores_available(),
             operation_timings_json,
             mt_report.tracked_total_seconds(),
-            timings_json,
-            folded_section
+            phase_timings_json,
+            folded_section,
+            benchmark_config_json = benchmark_config_json,
+            dkg_fold_verifier_json = dkg_fold_verifier_json,
         );
         fs::write(&path, summary_json)?;
         println!("Wrote benchmark summary to {path}");
@@ -1626,7 +2270,7 @@ async fn test_trbfv_actor() -> Result<()> {
 
 #[actix::test]
 async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
-    use e3_events::{CiphernodeSelected, EnclaveEvent, TakeEvents, Unsequenced};
+    use e3_events::{CiphernodeSelected, InterfoldEvent, TakeEvents, Unsequenced};
     use e3_net::events::GossipData;
     use e3_net::{events::NetEvent, NetEventTranslator};
     use std::sync::Arc;
@@ -1644,7 +2288,7 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
     NetEventTranslator::setup(&bus, &cmd_tx, &event_rx, "my-topic");
 
     // Capture messages from output on msgs vec
-    let msgs: Arc<Mutex<Vec<EnclaveEventData>>> = Arc::new(Mutex::new(Vec::new()));
+    let msgs: Arc<Mutex<Vec<InterfoldEventData>>> = Arc::new(Mutex::new(Vec::new()));
 
     let msgs_loop = msgs.clone();
 
@@ -1659,7 +2303,7 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
                 _ => None,
             } {
                 if let GossipData::GossipBytes(_) = msg {
-                    let event: EnclaveEvent<Unsequenced> = msg.clone().try_into().unwrap();
+                    let event: InterfoldEvent<Unsequenced> = msg.clone().try_into().unwrap();
                     let (data, _) = event.split();
                     msgs_loop.lock().await.push(data);
                     event_tx.send(NetEvent::GossipData(msg)).unwrap();
@@ -1697,7 +2341,7 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
 
     // check the history of the event bus
     let history = history_collector
-        .send(TakeEvents::<EnclaveEvent>::new(3))
+        .send(TakeEvents::<InterfoldEvent>::new(3))
         .await?;
 
     assert_eq!(
@@ -1738,7 +2382,7 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
         e3_id: E3id::new("1235", 1),
         threshold_m: 3,
         threshold_n: 3,
-        seed: seed.clone(),
+        seed,
         params: ArcBytes::from_bytes(&[1, 2, 3, 4]),
         ..E3Requested::default()
     };
@@ -1750,7 +2394,7 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
 
     // check the history of the event bus
     let history = history_collector
-        .send(TakeEvents::<EnclaveEvent>::new(1))
+        .send(TakeEvents::<InterfoldEvent>::new(1))
         .await?;
 
     assert_eq!(
@@ -1758,7 +2402,7 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
             .events
             .into_iter()
             .map(|e| e.into_data())
-            .collect::<Vec<EnclaveEventData>>(),
+            .collect::<Vec<InterfoldEventData>>(),
         vec![event.into()]
     );
 
@@ -1791,7 +2435,7 @@ async fn test_stopped_keyshares_retain_state() -> Result<()> {
         bus: &BusHandle,
         rng: &e3_utils::SharedRng,
         logging: bool,
-        addr: &str,
+        _addr: &str,
         store: Option<actix::Addr<InMemStore>>,
         cipher: &Arc<Cipher>,
         zk_backend: ZkBackend,
@@ -1799,10 +2443,10 @@ async fn test_stopped_keyshares_retain_state() -> Result<()> {
         let mut builder = CiphernodeBuilder::new(rng.clone(), cipher.clone())
             .with_trbfv()
             .with_zkproof(zk_backend)
-            .testmode_with_signer(PrivateKeySigner::random())
-            .testmode_with_forked_bus(bus.event_bus())
-            .testmode_with_history()
-            .testmode_with_errors()
+            .with_signer(PrivateKeySigner::random())
+            .with_forked_bus(bus.event_bus())
+            .with_history_collector()
+            .with_error_collector()
             .with_pubkey_aggregation()
             .with_threshold_plaintext_aggregation()
             .with_sortition_score();
@@ -1831,7 +2475,7 @@ async fn test_stopped_keyshares_retain_state() -> Result<()> {
         for addr in &eth_addrs {
             println!("Setting up eth addr: {}", addr);
             let tuple =
-                setup_local_ciphernode(&bus, &rng, true, addr, None, cipher, zk_backend.clone())
+                setup_local_ciphernode(bus, rng, true, addr, None, cipher, zk_backend.clone())
                     .await?;
             result.push(tuple);
         }
@@ -1861,7 +2505,7 @@ async fn test_stopped_keyshares_retain_state() -> Result<()> {
             e3_id: e3_id.clone(),
             threshold_m: 2,
             threshold_n: 2,
-            seed: seed.clone(),
+            seed,
             params: ArcBytes::from_bytes(&encode_bfv_params(&params)),
             ..E3Requested::default()
         })?;
@@ -1869,14 +2513,14 @@ async fn test_stopped_keyshares_retain_state() -> Result<()> {
         bus.publish_without_context(CommitteeFinalized {
             e3_id: e3_id.clone(),
             committee: eth_addrs.clone(),
-            scores: compute_committee_scores(&eth_addrs, &e3_id, seed.clone()),
+            scores: compute_committee_scores(&eth_addrs, &e3_id, seed),
             chain_id: 1,
         })?;
 
         let history_collector = cn1.history().unwrap();
         let error_collector = cn1.errors().unwrap();
         let history = history_collector
-            .send(TakeEvents::<e3_events::EnclaveEvent>::new(14))
+            .send(TakeEvents::<e3_events::InterfoldEvent>::new(14))
             .await?;
         let errors = error_collector.send(GetEvents::new()).await?;
 
@@ -1907,7 +2551,8 @@ async fn test_stopped_keyshares_retain_state() -> Result<()> {
 
     let bus = EventSystem::in_mem()
         .with_event_bus(
-            EventBus::<e3_events::EnclaveEvent>::new(EventBusConfig { deduplicate: true }).start(),
+            EventBus::<e3_events::InterfoldEvent>::new(EventBusConfig { deduplicate: true })
+                .start(),
         )
         .handle()?
         .enable("cn2");
@@ -1941,7 +2586,7 @@ async fn test_stopped_keyshares_retain_state() -> Result<()> {
         .events
         .iter()
         .filter_map(|evt| match evt.get_data() {
-            EnclaveEventData::KeyshareCreated(data) => {
+            InterfoldEventData::KeyshareCreated(data) => {
                 PublicKeyShare::deserialize(&data.pubkey, &params, crpoly.clone()).ok()
             }
             _ => None,
@@ -1961,14 +2606,14 @@ async fn test_stopped_keyshares_retain_state() -> Result<()> {
     })?;
 
     let history = history_collector
-        .send(TakeEvents::<e3_events::EnclaveEvent>::new(5))
+        .send(TakeEvents::<e3_events::InterfoldEvent>::new(5))
         .await?;
 
     let actual = history
         .events
         .into_iter()
         .filter_map(|e| match e.into_data() {
-            EnclaveEventData::PlaintextAggregated(data) => Some(data),
+            InterfoldEventData::PlaintextAggregated(data) => Some(data),
             _ => None,
         })
         .collect::<Vec<_>>()
@@ -2012,7 +2657,7 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
         bus: &BusHandle,
         rng: &e3_utils::SharedRng,
         logging: bool,
-        addr: &str,
+        _addr: &str,
         store: Option<actix::Addr<e3_data::InMemStore>>,
         cipher: &Arc<Cipher>,
         zk_backend: ZkBackend,
@@ -2020,10 +2665,10 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
         let mut builder = CiphernodeBuilder::new(rng.clone(), cipher.clone())
             .with_trbfv()
             .with_zkproof(zk_backend)
-            .testmode_with_signer(PrivateKeySigner::random())
-            .testmode_with_forked_bus(bus.event_bus())
-            .testmode_with_history()
-            .testmode_with_errors()
+            .with_signer(PrivateKeySigner::random())
+            .with_forked_bus(bus.event_bus())
+            .with_history_collector()
+            .with_error_collector()
             .with_pubkey_aggregation()
             .with_threshold_plaintext_aggregation()
             .with_sortition_score();
@@ -2052,7 +2697,7 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
         for addr in &eth_addrs {
             println!("Setting up eth addr: {}", addr);
             let tuple =
-                setup_local_ciphernode(&bus, &rng, true, addr, None, cipher, zk_backend.clone())
+                setup_local_ciphernode(bus, rng, true, addr, None, cipher, zk_backend.clone())
                     .await?;
             result.push(tuple);
         }
@@ -2066,7 +2711,7 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
         rng: &e3_utils::SharedRng,
         addr: &str,
     ) -> Result<PkSkShareTuple> {
-        let sk = SecretKey::random(&params, &mut *rng.lock().unwrap());
+        let sk = SecretKey::random(params, &mut *rng.lock().unwrap());
         let pk = PublicKeyShare::new(&sk, crp.clone(), &mut *rng.lock().unwrap())?;
         Ok((pk, sk, addr.to_owned()))
     }
@@ -2084,12 +2729,8 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
         Ok(result)
     }
 
-    fn aggregate_public_key(shares: &Vec<PkSkShareTuple>) -> Result<PublicKey> {
-        Ok(shares
-            .clone()
-            .into_iter()
-            .map(|(pk, _, _)| pk)
-            .aggregate()?)
+    fn aggregate_public_key(shares: &[PkSkShareTuple]) -> Result<PublicKey> {
+        Ok(shares.iter().map(|(pk, _, _)| pk.clone()).aggregate()?)
     }
 
     // Setup
@@ -2110,7 +2751,7 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
         e3_id: E3id::new("1234", 1),
         threshold_m: 2,
         threshold_n: 5,
-        seed: seed.clone(),
+        seed,
         params: ArcBytes::from_bytes(&encode_bfv_params(&params)),
         ..E3Requested::default()
     })?;
@@ -2118,7 +2759,7 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
     bus.publish_without_context(CommitteeFinalized {
         e3_id: E3id::new("1234", 1),
         committee: eth_addrs.clone(),
-        scores: compute_committee_scores(&eth_addrs, &E3id::new("1234", 1), seed.clone()),
+        scores: compute_committee_scores(&eth_addrs, &E3id::new("1234", 1), seed),
         chain_id: 1,
     })?;
 
@@ -2129,11 +2770,11 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
     )?)?;
     let history_collector = ciphernodes.last().unwrap().history().unwrap();
     let history = history_collector
-        .send(TakeEvents::<e3_events::EnclaveEvent>::new(28))
+        .send(TakeEvents::<e3_events::InterfoldEvent>::new(28))
         .await?;
 
-    let actual_pk_commitment_1 = match history.events.last().cloned().unwrap().into_data() {
-        e3_events::EnclaveEventData::PublicKeyAggregated(ev) => ev.pk_commitment,
+    let actual_pubkey_agg_1 = match history.events.last().cloned().unwrap().into_data() {
+        e3_events::InterfoldEventData::PublicKeyAggregated(ev) => ev,
         other => panic!("expected PublicKeyAggregated, got {other:?}"),
     };
     assert_eq!(
@@ -2142,8 +2783,11 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
             pubkey: ArcBytes::from_bytes(&test_pubkey.to_bytes()),
             e3_id: E3id::new("1234", 1),
             nodes: OrderedSet::from(eth_addrs.clone()),
-            pk_commitment: actual_pk_commitment_1,
+            committee_addresses: actual_pubkey_agg_1.committee_addresses.clone(),
+            honest_committee_addresses: actual_pubkey_agg_1.honest_committee_addresses.clone(),
+            pk_commitment: actual_pubkey_agg_1.pk_commitment,
             dkg_aggregator_proof: None,
+            dkg_attestation_bundle: None,
         }
         .into()
     );
@@ -2153,7 +2797,7 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
         e3_id: E3id::new("1234", 2),
         threshold_m: 2,
         threshold_n: 5,
-        seed: seed.clone(),
+        seed,
         params: ArcBytes::from_bytes(&encode_bfv_params(&params)),
         ..E3Requested::default()
     })?;
@@ -2161,7 +2805,7 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
     bus.publish_without_context(CommitteeFinalized {
         e3_id: E3id::new("1234", 2),
         committee: eth_addrs.clone(),
-        scores: compute_committee_scores(&eth_addrs, &E3id::new("1234", 2), seed.clone()),
+        scores: compute_committee_scores(&eth_addrs, &E3id::new("1234", 2), seed),
         chain_id: 2,
     })?;
 
@@ -2170,11 +2814,11 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
     )?)?;
 
     let history = history_collector
-        .send(TakeEvents::<e3_events::EnclaveEvent>::new(8))
+        .send(TakeEvents::<e3_events::InterfoldEvent>::new(8))
         .await?;
 
-    let actual_pk_commitment_2 = match history.events.last().cloned().unwrap().into_data() {
-        e3_events::EnclaveEventData::PublicKeyAggregated(ev) => ev.pk_commitment,
+    let actual_pubkey_agg_2 = match history.events.last().cloned().unwrap().into_data() {
+        e3_events::InterfoldEventData::PublicKeyAggregated(ev) => ev,
         other => panic!("expected PublicKeyAggregated, got {other:?}"),
     };
     assert_eq!(
@@ -2183,8 +2827,11 @@ async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
             pubkey: ArcBytes::from_bytes(&test_pubkey.to_bytes()),
             e3_id: E3id::new("1234", 2),
             nodes: OrderedSet::from(eth_addrs.clone()),
-            pk_commitment: actual_pk_commitment_2,
+            committee_addresses: actual_pubkey_agg_2.committee_addresses.clone(),
+            honest_committee_addresses: actual_pubkey_agg_2.honest_committee_addresses.clone(),
+            pk_commitment: actual_pubkey_agg_2.pk_commitment,
             dkg_aggregator_proof: None,
+            dkg_attestation_bundle: None,
         }
         .into()
     );

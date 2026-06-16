@@ -9,8 +9,8 @@ read
 # Use the locally installed bb
 export E3_CUSTOM_BB=$(which bb)
 
-echo "Resetting installed enclave"
-rm -rf ~/.cargo/bin/enclave
+echo "Resetting installed interfold"
+rm -rf ~/.cargo/bin/interfold
 
 rm -rf * && \
   git reset --hard HEAD && \

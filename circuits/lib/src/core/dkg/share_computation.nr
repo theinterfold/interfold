@@ -8,7 +8,7 @@ use crate::math::commitments::{
     compute_share_computation_e_sm_commitment, compute_share_computation_sk_commitment,
     compute_share_encryption_commitment_from_message,
 };
-use crate::math::modulo::U128::ModU128;
+use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 
 /// Cryptographic parameters for Threshold secret share verification circuit.
@@ -194,11 +194,8 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
                 // Reverse: position i gets the coefficient from N-1-i.
                 let c = self.e_sm_secret[j].coefficients[N - 1 - i];
                 // Center: shift [0, q) to [-(q-1)/2, (q-1)/2].
-                let centered = if (c as u128) > (half as u128) {
-                    c - q
-                } else {
-                    c
-                };
+                // c = e_sm_secret coeff in [0, q) < 2^62; half < 2^61: u64 saves 22 gates.
+                let centered = if (c as u64) > (half as u64) { c - q } else { c };
                 coeffs[i] = centered;
             }
             normalized[j] = Polynomial::new(coeffs);
@@ -294,10 +291,9 @@ pub fn verify_parity_check<let N: u32, let L: u32, let N_PARTIES: u32, let T: u3
                     sum = sum + h[mod_idx][row][col] * y[coeff_idx][mod_idx][col];
                 }
 
-                // Reduce mod q_j and verify == 0
-                let m = ModU128::new(q_j);
-                let result = m.reduce_mod(sum);
-                assert(result == 0, "Parity check failed");
+                // Assert sum divisible by q_j: ~12 gates vs reduce_mod's ~24 gates.
+                // Safe: sum < (N_PARTIES+1)*max(h)*q_j < 2^122 << field prime, no Field wrap.
+                ModU64::new(q_j as u64).assert_zero_mod(sum);
             }
         }
     }

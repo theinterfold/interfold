@@ -4,8 +4,6 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use std::mem::replace;
-
 use actix::Actor;
 use alloy::{primitives::Address, providers::Provider};
 use e3_events::{run_once, BusHandle, EventSubscriber, EventType, HistoricalEvmSyncStart};
@@ -72,18 +70,20 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
             let chain_id = self.chain_id;
 
             // Only gets consumed once so fine to use replace to clean out route_factories
-            let route_factories = replace(&mut self.route_factories, Vec::new());
+            let route_factories = std::mem::take(&mut self.route_factories);
 
             // The event is defined here
             move |msg| {
                 // Extract config
-                let deploy_block = msg.get_evm_config(chain_id)?.deploy_block();
+                let chain_config = msg.get_evm_config(chain_id)?;
+                let deploy_block = chain_config.deploy_block();
+                let confirmations = chain_config.confirmations();
 
                 // Pass next to the router
                 let router = configure_router(next, route_factories);
 
                 // Extract filters from the router
-                let filters = filters_from_router(&router, deploy_block);
+                let filters = filters_from_router(&router, deploy_block, confirmations);
 
                 // Setup and start the read interface and the router
                 EvmReadInterface::setup_with_factory(
@@ -117,6 +117,7 @@ fn configure_router(
     router
 }
 
-fn filters_from_router(router: &EvmRouter, deploy_block: u64) -> Filters {
+fn filters_from_router(router: &EvmRouter, deploy_block: u64, confirmations: u64) -> Filters {
     Filters::from_routing_table(router.get_routing_table(), deploy_block)
+        .with_confirmations(confirmations)
 }

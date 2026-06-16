@@ -19,7 +19,94 @@ use walkdir::WalkDir;
 
 use super::ZkBackend;
 
+/// Known committee subdirectories in per-committee circuit release layouts (v0.2.0+).
+const COMMITTEE_SUBDIRS: &[&str] = &["minimum", "micro", "small"];
+
+/// Circuit artifact variant directories at `{preset}/{committee?}/{variant}/...`.
+const CIRCUIT_VARIANT_DIRS: &[&str] = &["default", "evm", "recursive"];
+
+/// Collect candidate on-disk paths for a manifest entry (legacy flat + per-committee layouts).
+fn circuit_manifest_candidates(circuits_dir: &Path, rel_path: &str) -> Vec<PathBuf> {
+    let direct = circuits_dir.join(rel_path);
+    let mut candidates = vec![direct.clone()];
+
+    let mut parts = rel_path.split('/');
+    let Some(preset) = parts.next() else {
+        return candidates;
+    };
+    let Some(next) = parts.next() else {
+        return candidates;
+    };
+    if COMMITTEE_SUBDIRS.contains(&next) || !CIRCUIT_VARIANT_DIRS.contains(&next) {
+        return candidates;
+    }
+    let suffix = parts.collect::<Vec<_>>().join("/");
+    let suffix = if suffix.is_empty() {
+        String::new()
+    } else {
+        format!("/{suffix}")
+    };
+
+    for committee in COMMITTEE_SUBDIRS {
+        candidates.push(circuits_dir.join(format!("{preset}/{committee}/{next}{suffix}")));
+    }
+
+    candidates
+}
+
+/// Resolve a manifest path to an on-disk file, matching `expected_hash` when multiple committee
+/// copies exist (v0.2.0 flat checksums vs per-committee tarball layout).
+async fn locate_manifest_artifact(
+    circuits_dir: &Path,
+    rel_path: &str,
+    expected_hash: &str,
+) -> Result<PathBuf, ZkError> {
+    let mut last_mismatch: Option<(PathBuf, String)> = None;
+
+    for candidate in circuit_manifest_candidates(circuits_dir, rel_path) {
+        if !candidate.exists() {
+            continue;
+        }
+        let data = fs::read(&candidate).await?;
+        match verify_checksum(rel_path, &data, Some(expected_hash)) {
+            Ok(()) => return Ok(candidate),
+            Err(ZkError::ChecksumMismatch { actual, .. }) => {
+                last_mismatch = Some((candidate, actual));
+            }
+            Err(e) => return Err(e),
+        }
+    }
+
+    if let Some((_path, actual)) = last_mismatch {
+        return Err(ZkError::ChecksumMismatch {
+            file: rel_path.to_string(),
+            expected: expected_hash.to_string(),
+            actual,
+        });
+    }
+
+    Err(ZkError::CircuitNotFound(rel_path.to_string()))
+}
+
+async fn read_manifest_file(
+    circuits_dir: &Path,
+    rel_path: &str,
+    expected_hash: &str,
+) -> Result<Vec<u8>, ZkError> {
+    let path = locate_manifest_artifact(circuits_dir, rel_path, expected_hash).await?;
+    fs::read(&path).await.map_err(ZkError::from)
+}
+
 impl ZkBackend {
+    /// Resolve a `checksums.json` entry to an on-disk path (legacy flat or per-committee layout).
+    pub async fn locate_manifest_artifact(
+        &self,
+        rel_path: &str,
+        expected_hash: &str,
+    ) -> Result<PathBuf, ZkError> {
+        locate_manifest_artifact(&self.circuits_dir, rel_path, expected_hash).await
+    }
+
     pub async fn download_bb(&self) -> Result<(), ZkError> {
         if self.using_custom_bb {
             println!("IGNORING DOWNLOAD BECAUSE WE ARE USING A CUSTOM BB");
@@ -38,8 +125,8 @@ impl ZkBackend {
             .config
             .bb_download_url
             .replace("{version}", version)
-            .replace("{os}", &os)
-            .replace("{arch}", &arch);
+            .replace("{os}", os)
+            .replace("{arch}", arch);
 
         info!("downloading Barretenberg from: {}", url);
 
@@ -154,13 +241,7 @@ impl ZkBackend {
         let mut circuit_infos = HashMap::new();
 
         for (rel_path, expected_hash) in &manifest.files {
-            let file_path = self.circuits_dir.join(rel_path);
-            if !file_path.exists() {
-                return Err(ZkError::CircuitNotFound(rel_path.clone()));
-            }
-
-            let data = fs::read(&file_path).await?;
-            verify_checksum(rel_path, &data, Some(expected_hash))?;
+            read_manifest_file(&self.circuits_dir, rel_path, expected_hash).await?;
 
             circuit_infos.insert(
                 rel_path.clone(),
@@ -243,4 +324,95 @@ async fn download_with_progress(url: &str, message: &str) -> Result<Vec<u8>, ZkE
 
     pb.finish_with_message("download complete");
     Ok(bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sha2::{Digest, Sha256};
+    use std::fs;
+    use tempfile::TempDir;
+
+    fn write_file(root: &Path, rel: &str, contents: &[u8]) {
+        let path = root.join(rel);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).unwrap();
+        }
+        fs::write(path, contents).unwrap();
+    }
+
+    fn sha256_hex(data: &[u8]) -> String {
+        hex::encode(Sha256::digest(data))
+    }
+
+    #[tokio::test]
+    async fn read_manifest_file_prefers_direct_layout() {
+        let temp = TempDir::new().unwrap();
+        let circuits_dir = temp.path();
+        let contents = b"flat";
+        write_file(
+            circuits_dir,
+            "insecure-512/default/dkg/pk/pk.json",
+            contents,
+        );
+        let hash = sha256_hex(contents);
+
+        let data = read_manifest_file(circuits_dir, "insecure-512/default/dkg/pk/pk.json", &hash)
+            .await
+            .unwrap();
+
+        assert_eq!(data, contents);
+    }
+
+    #[tokio::test]
+    async fn read_manifest_file_picks_committee_matching_checksum() {
+        let temp = TempDir::new().unwrap();
+        let circuits_dir = temp.path();
+        let minimum = b"minimum";
+        let small = b"small";
+        write_file(
+            circuits_dir,
+            "insecure-512/minimum/default/dkg/pk/pk.json",
+            minimum,
+        );
+        write_file(
+            circuits_dir,
+            "insecure-512/small/default/dkg/pk/pk.json",
+            small,
+        );
+        let small_hash = sha256_hex(small);
+
+        let data = read_manifest_file(
+            circuits_dir,
+            "insecure-512/default/dkg/pk/pk.json",
+            &small_hash,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(data, small);
+    }
+
+    #[tokio::test]
+    async fn read_manifest_file_accepts_committee_scoped_manifest_path() {
+        let temp = TempDir::new().unwrap();
+        let circuits_dir = temp.path();
+        let contents = b"minimum";
+        write_file(
+            circuits_dir,
+            "insecure-512/minimum/default/dkg/pk/pk.json",
+            contents,
+        );
+        let hash = sha256_hex(contents);
+
+        let data = read_manifest_file(
+            circuits_dir,
+            "insecure-512/minimum/default/dkg/pk/pk.json",
+            &hash,
+        )
+        .await
+        .unwrap();
+
+        assert_eq!(data, contents);
+    }
 }

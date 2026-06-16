@@ -2,8 +2,8 @@
 
 set -e
 
-GITHUB_REPO="gnosisguild/enclave"
-BINARY_NAME="enclaveup"
+GITHUB_REPO="gnosisguild/interfold"
+BINARY_NAME="interfoldup"
 INSTALL_DIR="$HOME/.local/bin"
 
 log_info() {
@@ -133,7 +133,7 @@ get_download_url() {
 }
 
 main() {
-    log_info "Enclave Installer"
+    log_info "Interfold Installer"
     local platform
     platform=$(detect_platform)
     log_info "Detected platform: $platform"
@@ -191,11 +191,11 @@ main() {
     echo ""
     log_success "Installation complete!"
     echo ""
-    echo "You can now use $BINARY_NAME to install the Enclave CLI:"
+    echo "You can now use $BINARY_NAME to install the Interfold CLI:"
     echo ""
-    echo "  $BINARY_NAME install    # Install the latest enclave CLI"
+    echo "  $BINARY_NAME install    # Install the latest interfold CLI"
     echo "  $BINARY_NAME update     # Update to the latest version"
-    echo "  $BINARY_NAME uninstall  # Remove the enclave CLI"
+    echo "  $BINARY_NAME uninstall  # Remove the interfold CLI"
     echo "  $BINARY_NAME --help     # Show help"
     echo ""
 }

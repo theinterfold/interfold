@@ -228,9 +228,11 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         // Step 5: Generate Fiat-Shamir challenge from the transcript
         let gamma = self.generate_challenge();
 
-        // Step 6: Verify decryption share computation for each CRT basis
+        // Step 6: Verify decryption share computation for each CRT basis.
+        // cyclo_at_gamma is identical across all bases (same gamma, same N); compute once.
+        let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
         for i in 0..L {
-            self.verify_decryption_share_computation(i, gamma);
+            self.verify_decryption_share_computation(i, gamma, cyclo_at_gamma);
         }
 
         d_commitment
@@ -309,7 +311,12 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     ///
     /// # Panics
     /// The circuit will fail if the decryption share computation formula doesn't hold for the specified basis.
-    fn verify_decryption_share_computation(self, basis_idx: u32, gamma: Field) {
+    fn verify_decryption_share_computation(
+        self,
+        basis_idx: u32,
+        gamma: Field,
+        cyclo_at_gamma: Field,
+    ) {
         // Evaluate ciphertext components at gamma
         let c_0_at_gamma = self.ct0[basis_idx].eval(gamma);
         let c_1_at_gamma = self.ct1[basis_idx].eval(gamma);
@@ -321,9 +328,6 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
         // Evaluate quotient polynomials at gamma
         let r_1_at_gamma = self.r1[basis_idx].eval(gamma);
         let r_2_at_gamma = self.r2[basis_idx].eval(gamma);
-
-        // Evaluate cyclotomic polynomial X^N + 1 at gamma
-        let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
 
         // Compute expected decryption share using the lifted formula:
         // d_i = c_0i + c_1i * sk_i + e_sm_i + r_2i * (X^N + 1) + r_1i * q_i

@@ -18,9 +18,9 @@ const NAV_MENU_OPTIONS = [
     path: '/current',
   },
   {
-    name: 'Historic Polls',
+    name: 'All Polls',
     icon: <CheckFat />,
-    path: '/historic',
+    path: '/all',
   },
   {
     name: 'About',

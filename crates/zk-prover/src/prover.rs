@@ -7,11 +7,22 @@
 use crate::backend::ZkBackend;
 use crate::error::ZkError;
 use e3_events::{CircuitName, CircuitVariant, Proof};
+use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
 use std::fs;
 use std::path::PathBuf;
 use std::process::Command as StdCommand;
+use std::sync::atomic::{AtomicU64, Ordering};
 use tracing::{debug, info, warn};
+
+/// Unique bb job directories — shared [`ZkBackend::work_dir`] must not reuse the same paths
+/// when prove/verify runs concurrently (integration harness + `multithread_concurrent_jobs` > 1).
+static BB_WORK_JOB_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+fn next_bb_work_subdir(prefix: &str) -> String {
+    let id = BB_WORK_JOB_COUNTER.fetch_add(1, Ordering::Relaxed);
+    format!("{prefix}_{id}")
+}
 
 pub struct ZkProver {
     bb_binary: PathBuf,
@@ -30,6 +41,10 @@ impl ZkProver {
 
     pub fn circuits_dir(&self, variant: CircuitVariant, artifacts_dir: &str) -> PathBuf {
         self.circuits_dir.join(artifacts_dir).join(variant.as_str())
+    }
+
+    pub fn resolve_artifacts_dir(&self, preset: BfvPreset, committee: &str) -> String {
+        preset.artifacts_dir_for_committee(committee)
     }
 
     pub fn work_dir(&self) -> &PathBuf {
@@ -160,7 +175,10 @@ impl ZkProver {
             )));
         }
 
-        let job_dir = self.work_dir.join(e3_id);
+        let job_dir = self
+            .work_dir
+            .join(e3_id)
+            .join(next_bb_work_subdir(&format!("prove_{}", circuit.as_str())));
         let witness_path = job_dir.join("witness.gz");
         let output_dir = job_dir.join("out");
         fs::create_dir_all(&job_dir)?;
@@ -224,6 +242,8 @@ impl ZkProver {
             circuit.as_str(),
             e3_id
         );
+
+        let _ = fs::remove_dir_all(&job_dir);
 
         Ok(Proof::new(
             circuit,
@@ -296,6 +316,7 @@ impl ZkProver {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn verify_proof_impl(
         &self,
         circuit: CircuitName,
@@ -323,8 +344,6 @@ impl ZkProver {
             )));
         }
 
-        let verification_subdir = format!("verify_party_{}", party_id);
-
         debug!(
             "verifying proof for circuit {} (party {}) using VK: {}",
             circuit.as_str(),
@@ -332,7 +351,10 @@ impl ZkProver {
             vk_path.display()
         );
 
-        let job_dir = self.work_dir.join(e3_id).join(&verification_subdir);
+        let job_dir = self.work_dir.join(e3_id).join(next_bb_work_subdir(&format!(
+            "verify_party_{party_id}_{}",
+            circuit.as_str()
+        )));
         let out_dir = job_dir.join("out");
         fs::create_dir_all(&out_dir)?;
 
@@ -373,6 +395,8 @@ impl ZkProver {
                 stdout
             );
         }
+
+        let _ = fs::remove_dir_all(&job_dir);
 
         Ok(output.status.success())
     }

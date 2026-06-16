@@ -17,7 +17,7 @@ parameters that satisfy security constraints.
 
 ## Overview
 
-The `fhe-params` crate provides a complete solution for managing BFV parameters in the Enclave FHE
+The `fhe-params` crate provides a complete solution for managing BFV parameters in the Interfold FHE
 system. It supports two main workflows:
 
 1. **Using Presets**: Quick access to pre-validated parameter sets for production or testing

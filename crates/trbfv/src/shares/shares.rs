@@ -27,7 +27,7 @@ impl SharedSecret {
 
     /// Extract one party's complete share across all moduli.
     pub fn extract_party_share(&self, party_id: usize) -> Result<ShamirShare> {
-        let Some(first) = self.moduli_data.get(0) else {
+        let Some(first) = self.moduli_data.first() else {
             bail!("Secret must have at least one modulus in order to extract share");
         };
 

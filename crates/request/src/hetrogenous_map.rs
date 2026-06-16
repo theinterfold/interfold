@@ -27,6 +27,12 @@ pub struct HetrogenousMap {
     storage: HashMap<&'static str, Box<dyn Any + Send + Sync>>,
 }
 
+impl Default for HetrogenousMap {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HetrogenousMap {
     pub fn new() -> Self {
         Self {
@@ -133,11 +139,11 @@ mod tests {
 
         map.insert(STRING_KEY, "string".to_string());
         map.insert(INT_KEY, 42);
-        map.insert(FLOAT_KEY, 3.14);
+        map.insert(FLOAT_KEY, 1.5);
 
         assert_eq!(map.get(STRING_KEY), Some(&"string".to_string()));
         assert_eq!(map.get(INT_KEY), Some(&42));
-        assert_eq!(map.get(FLOAT_KEY), Some(&3.14));
+        assert_eq!(map.get(FLOAT_KEY), Some(&1.5));
     }
 
     // This test verifies that Send + Sync bounds work correctly

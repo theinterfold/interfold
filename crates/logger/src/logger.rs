@@ -6,7 +6,7 @@
 
 use actix::{Actor, Addr, Context, Handler};
 use e3_events::{
-    prelude::Event, EnclaveEvent, EnclaveEventData, EventBus, EventType, SeqState, Subscribe,
+    prelude::Event, EventBus, EventType, InterfoldEvent, InterfoldEventData, SeqState, Subscribe,
 };
 use std::marker::PhantomData;
 use tracing::{error, info};
@@ -48,10 +48,10 @@ impl<E: EventLogging> Handler<E> for SimpleLogger<E> {
     }
 }
 
-impl<S: SeqState> EventLogging for EnclaveEvent<S> {
+impl<S: SeqState> EventLogging for InterfoldEvent<S> {
     fn log(&self, logger_name: &str) {
         match self.get_data() {
-            EnclaveEventData::EnclaveError(_) => error!(event=%self, "ERROR!"),
+            InterfoldEventData::InterfoldError(_) => error!(event=%self, "ERROR!"),
             _ => match self.get_e3_id() {
                 Some(e3_id) => {
                     println!("{logger_name}: {e3_id} Event Broadcasted");

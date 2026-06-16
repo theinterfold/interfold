@@ -15,7 +15,6 @@ use crate::{
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
 use fhe_traits::FheEncoder;
-use rand::thread_rng;
 
 impl UserDataEncryptionCircuitData {
     /// Generates a random secret key, public key, and plaintext for the given BFV parameters.
@@ -24,7 +23,7 @@ impl UserDataEncryptionCircuitData {
             CircuitsErrors::Sample(format!("Failed to build pair for preset: {:?}", e))
         })?;
 
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
 
         let secret_key = SecretKey::random(&threshold_params, &mut rng);
         let public_key = PublicKey::new(&secret_key, &mut rng);
@@ -50,9 +49,11 @@ mod tests {
             UserDataEncryptionCircuitData::generate_sample(BfvPreset::InsecureThreshold512)
                 .unwrap();
 
-        assert_eq!(sample.public_key.c.c.len(), 2);
+        assert_eq!(sample.public_key.c.len(), 2);
         assert_eq!(
-            sample.plaintext.value.len(),
+            crate::math::plaintext_poly_u64(&sample.plaintext)
+                .unwrap()
+                .len(),
             BfvPreset::InsecureThreshold512.metadata().degree
         );
     }

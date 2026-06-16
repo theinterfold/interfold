@@ -37,8 +37,7 @@ pub async fn shallow_clone(
         return Err(anyhow::anyhow!(
             "Git clone failed with exit code: {}",
             status.code().unwrap_or(-1)
-        )
-        .into());
+        ));
     }
 
     Ok(())
@@ -139,7 +138,7 @@ pub async fn get_commit_hash(path: impl AsRef<Path>) -> Result<String> {
     let path = path.as_ref();
 
     let output = Command::new("git")
-        .args(&["rev-parse", "HEAD"])
+        .args(["rev-parse", "HEAD"])
         .current_dir(path)
         .output()
         .await
@@ -199,13 +198,13 @@ mod tests {
     #[test]
     fn test_git_url() -> Result<()> {
         let g = parse_git_url(
-            "git+https://github.com/gnosisguild/enclave.git#main:template/default".to_string(),
+            "git+https://github.com/gnosisguild/interfold.git#main:template/default".to_string(),
         )?;
 
         assert_eq!(g.branch, Some("main".to_string()));
         assert_eq!(
             g.base_url,
-            "https://github.com/gnosisguild/enclave.git".to_string()
+            "https://github.com/gnosisguild/interfold.git".to_string()
         );
 
         assert_eq!(g.path, Some("template/default".to_string()));

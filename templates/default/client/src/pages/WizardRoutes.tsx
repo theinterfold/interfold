@@ -45,7 +45,7 @@ const STEPS: StepConfig[] = [
 ]
 
 /**
- * WizardRoutes component that manages the multi-step wizard flow for Enclave E3.
+ * WizardRoutes component that manages the multi-step wizard flow for Interfold E3.
  * Handles routing between wizard steps, displays step indicators, and manages
  * error states for environment configuration and SDK errors.
  *

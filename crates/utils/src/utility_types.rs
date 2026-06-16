@@ -51,7 +51,7 @@ impl fmt::Debug for ArcBytes {
 
 impl AsBytesSerde for ArcBytes {
     fn as_bytes(&self) -> &[u8] {
-        &self.0.as_ref()
+        &self.0
     }
     fn try_from_bytes(bytes: Vec<u8>) -> Result<Self, String> {
         Ok(ArcBytes(Arc::new(bytes)))

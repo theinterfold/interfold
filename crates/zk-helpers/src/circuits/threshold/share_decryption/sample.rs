@@ -23,8 +23,6 @@ use fhe::{
 };
 use fhe_traits::{FheEncoder, FheEncrypter};
 use ndarray::ArrayView;
-use rand::{rngs::OsRng, thread_rng};
-
 impl ShareDecryptionCircuitData {
     /// Generates a random secret key, public key, and plaintext for the given BFV parameters.
     pub fn generate_sample(
@@ -39,13 +37,15 @@ impl ShareDecryptionCircuitData {
             .search_defaults()
             .ok_or_else(|| CircuitsErrors::Sample("Preset has no search defaults".into()))?;
 
-        let mut rng = OsRng;
-        let mut thread_rng = thread_rng();
+        let mut rng = rand::rng();
 
         let num_parties = committee.n;
         let threshold = committee.threshold;
         let num_ciphertexts = sd.z as usize;
-        let lambda = preset.metadata().lambda;
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = preset
+            .lambda()
+            .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
         // Create TRBFV instance for share generation
         let trbfv = TRBFV::new(num_parties, threshold, threshold_params.clone())
@@ -61,7 +61,7 @@ impl ShareDecryptionCircuitData {
 
         for _ in 0..num_parties {
             let sk = fhe::bfv::SecretKey::random(&threshold_params, &mut rng);
-            let pk_share = PublicKeyShare::new(&sk, crp.clone(), &mut thread_rng).map_err(|e| {
+            let pk_share = PublicKeyShare::new(&sk, crp.clone(), &mut rng).map_err(|e| {
                 CircuitsErrors::Sample(format!("Failed to create public key share: {:?}", e))
             })?;
             party_secret_keys.push(sk);
@@ -77,7 +77,7 @@ impl ShareDecryptionCircuitData {
         let message = 1u64;
         let pt = Plaintext::try_encode(&[message], Encoding::poly(), &threshold_params)
             .map_err(|e| CircuitsErrors::Sample(format!("Failed to encode plaintext: {:?}", e)))?;
-        let ciphertext = public_key.try_encrypt(&pt, &mut thread_rng)?;
+        let ciphertext = public_key.try_encrypt(&pt, &mut rng)?;
 
         // Simulate party 0's perspective:
         // - Each party has their own secret key
@@ -85,7 +85,10 @@ impl ShareDecryptionCircuitData {
         // - Party 0 collects shares from other parties (including themselves)
         // - When party 0 computes a decryption share, they aggregate all collected shares
 
-        let mut share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone());
+        let mut share_manager = ShareManager::new(num_parties, threshold, threshold_params.clone())
+            .map_err(|e| {
+                CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e))
+            })?;
 
         // Generate shares for each party's secret key
         // In reality, each party would do this independently
@@ -102,7 +105,7 @@ impl ShareDecryptionCircuitData {
 
             let temp_trbfv = trbfv.clone();
             let sk_sss = temp_trbfv
-                .generate_secret_shares_from_poly(sk_poly, rng)
+                .generate_secret_shares_from_poly(sk_poly, &mut rng)
                 .map_err(|e| {
                     CircuitsErrors::Sample(format!("Failed to generate SK shares: {:?}", e))
                 })?;
@@ -118,7 +121,7 @@ impl ShareDecryptionCircuitData {
                 CircuitsErrors::Sample(format!("Failed to convert error to poly: {:?}", e))
             })?;
             let esi_sss = share_manager
-                .generate_secret_shares_from_poly(esi_poly, rng)
+                .generate_secret_shares_from_poly(esi_poly, &mut rng)
                 .map_err(|e| {
                     CircuitsErrors::Sample(format!("Failed to generate error shares: {:?}", e))
                 })?;
@@ -181,7 +184,7 @@ impl ShareDecryptionCircuitData {
         // Aggregate collected shares to get s and e polynomials
         // First, sum across parties for each modulus, then restructure to match
         // the format expected by aggregate_collected_shares: one Array2 of shape [num_moduli, degree]
-        let ctx = threshold_params.ctx_at_level(0)?;
+        let ctx = threshold_params.context_at_level(0)?;
         let num_moduli = sk_sss_collected.len();
 
         // Sum across parties for each modulus to create [num_moduli, degree] matrices
@@ -225,7 +228,7 @@ impl ShareDecryptionCircuitData {
             .clone()
             .decryption_share(
                 Arc::new(ciphertext.clone()),
-                sk_poly_sum.clone(),
+                sk_poly_sum.clone().into_ntt(),
                 es_poly_sum.clone(),
             )
             .map_err(|e| {
@@ -260,12 +263,12 @@ mod tests {
         let num_moduli = PRESET.metadata().num_moduli;
 
         assert_eq!(
-            sample.public_key.c.c.len(),
+            sample.public_key.c.len(),
             2,
             "BFV public key has two components"
         );
         assert_eq!(
-            sample.ciphertext.c.len(),
+            sample.ciphertext.len(),
             2,
             "BFV ciphertext has two components"
         );
@@ -314,7 +317,7 @@ mod tests {
         let a = ShareDecryptionCircuitData::generate_sample(PRESET, committee.clone()).unwrap();
         let b = ShareDecryptionCircuitData::generate_sample(PRESET, committee).unwrap();
 
-        assert_eq!(a.public_key.c.c.len(), b.public_key.c.c.len());
+        assert_eq!(a.public_key.c.len(), b.public_key.c.len());
         assert_eq!(a.s.limbs.len(), b.s.limbs.len());
         assert_eq!(a.e.limbs.len(), b.e.limbs.len());
         assert_eq!(a.d_share.limbs.len(), b.d_share.limbs.len());

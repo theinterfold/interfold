@@ -8,21 +8,29 @@ import { ConsoleMessage, Page } from '@playwright/test'
 import { testWithSynpress } from '@synthetixio/synpress'
 import { MetaMask, metaMaskFixtures } from '@synthetixio/synpress/playwright'
 import basicSetup from './wallet-setup/basic.setup'
-import { execSync } from 'child_process'
+import { execFileSync } from 'child_process'
 import { config } from 'dotenv'
 import path from 'path'
 
+const CLI = path.join(process.cwd(), 'target', 'debug', 'cli')
+
 config({ path: path.join(process.cwd(), 'server', '.env') })
+config({ path: path.join(process.cwd(), 'client', '.env') })
 
 const E3_DURATION = parseInt(process.env.E3_DURATION as string, 10) * 1000
 const OUTPUT_DECRYPTION_WAIT = 80_000 // A small buffer for decryption
 
+function crispTokenAddress(): string {
+  const tokenAddress = process.env.VITE_CRISP_TOKEN
+  if (!tokenAddress) {
+    throw new Error('VITE_CRISP_TOKEN must be set (see client/.env after deploy)')
+  }
+  return tokenAddress
+}
+
 async function runCliInit(): Promise<number> {
   try {
-    // Execute the command and wait for it to complete
-    const output = execSync('pnpm cli init --token-address 0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512 --balance-threshold 1000', {
-      encoding: 'utf-8',
-    })
+    const output = execFileSync(CLI, ['init', '--token-address', crispTokenAddress(), '--balance-threshold', '1000'], { encoding: 'utf-8' })
     console.log('Command output:', output)
     const lines = output.trim().split('\n')
     const lastLine = lines[lines.length - 1].trim()
@@ -39,7 +47,7 @@ async function runCliInit(): Promise<number> {
 
 async function checkE3Ready(e3id: number): Promise<boolean> {
   try {
-    const output = execSync(`pnpm cli check-e3-ready --e3id ${e3id}`, {
+    const output = execFileSync(CLI, ['check-e3-ready', '--e3id', String(e3id)], {
       encoding: 'utf-8',
     })
     const lines = output.trim().split('\n')
@@ -78,6 +86,58 @@ function log(msg: string) {
 // ConnectKit modal animations + app initialization (initialLoad/switchChain)
 // can cause the MetaMask button to be detached from the DOM or the page to
 // navigate while the modal is opening. Retry the whole flow up to 3 times.
+// After reload, wagmi/ConnectKit reconnect and App.tsx switchChain can lag on CI.
+// Wait until the demo poll is interactive and the wallet session is restored.
+async function waitForDemoPollReady(page: Page) {
+  await page.waitForLoadState('load')
+  await expect(page.locator("[data-test-id='poll-button-0']")).toBeVisible({ timeout: 60_000 })
+  await expect(page.locator('button:has-text("Connect Wallet")')).not.toBeVisible({ timeout: 60_000 })
+  await expect(page.locator('.tag.live')).toBeVisible({ timeout: 60_000 })
+}
+
+async function waitForWalletSession(page: Page) {
+  log('waiting for wallet session...')
+  await expect(page.locator('button:has-text("Connect Wallet")')).toHaveCount(0, { timeout: 60_000 })
+  // ConnectKit shows a truncated address once wagmi isConnected; VoteManagement only
+  // sets `user` from the same source, so this gates Cast → signMessage.
+  await expect(page.locator('button').filter({ hasText: /^0x/i })).toBeVisible({ timeout: 60_000 })
+  // Vote status fetch proves user.address + currentRoundId are wired in React context.
+  await expect(page.locator('.tag').filter({ hasText: 'Checking' })).toHaveCount(0, { timeout: 90_000 })
+  log('wallet session ready')
+}
+
+async function reconnectWalletIfNeeded(page: Page, metamask: MetaMask) {
+  const connectWalletBtn = page.locator('button:has-text("Connect Wallet")')
+  if (await connectWalletBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
+    log('wallet disconnected — reconnecting...')
+    await connectWalletWithRetry(page)
+    await metamask.connectToDapp()
+  }
+}
+
+async function castVoteWithSignature(page: Page, metamask: MetaMask) {
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      log(`clicking first vote card (attempt ${attempt})...`)
+      await page.locator("[data-test-id='poll-button-0']").click()
+
+      const castBtn = page.locator('button:has-text("Cast")')
+      await expect(castBtn).toBeEnabled({ timeout: 30_000 })
+
+      log(`clicking Cast Vote (attempt ${attempt})...`)
+      await castBtn.click()
+      log(`confirming MetaMask signature request...`)
+      await metamask.confirmSignature()
+      return
+    } catch (error) {
+      if (attempt === 3) throw error
+      log(`signature attempt ${attempt} failed, retrying...`)
+      await page.keyboard.press('Escape').catch(() => {})
+      await page.waitForTimeout(2_000)
+    }
+  }
+}
+
 async function connectWalletWithRetry(page: Page, maxAttempts = 3) {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
@@ -140,21 +200,25 @@ test('CRISP smoke test', async ({ context, page, metamaskPage, extensionId }) =>
   const DKG_DURATION = Date.now() - testStart
   log(`DKG duration: ${DKG_DURATION}ms`)
   log(`forcing page reload...`)
+  const voteStatusReady = page.waitForResponse((resp) => resp.url().includes('/voting/status') && resp.ok(), { timeout: 120_000 })
   await page.reload()
-
-  log(`clicking first vote card...`)
-  await page.locator("[data-test-id='poll-button-0']").click()
-  log(`clicking Cast Vote...`)
-  await page.locator('button:has-text("Cast")').click()
-  log(`confirming MetaMask signature request...`)
-  await metamask.confirmSignature()
+  await page.waitForLoadState('load')
+  log(`ensuring local anvil network after reload...`)
+  await metamask.switchNetwork('localwallet')
+  await reconnectWalletIfNeeded(page, metamask)
+  await waitForDemoPollReady(page)
+  await waitForWalletSession(page)
+  await voteStatusReady.catch(() => {
+    log('vote status response not observed (may have completed before listener)')
+  })
+  await castVoteWithSignature(page, metamask)
   const WAIT = E3_DURATION - DKG_DURATION + OUTPUT_DECRYPTION_WAIT
   log(`waiting ${WAIT}ms...`)
   await page.waitForTimeout(WAIT)
-  log(`clicking historic polls button...`)
-  await page.locator('a:has-text("Historic Polls")').click()
-  log(`asserting that Historic polls exists...`)
-  await expect(page.locator('h1')).toHaveText('Past polls')
+  log(`clicking all polls button...`)
+  await page.locator('a:has-text("All Polls")').click()
+  log(`asserting that All polls page exists...`)
+  await expect(page.locator('h1')).toHaveText('All polls')
   log(`asserting that result has 100% on the vote we clicked on...`)
   await expect(page.locator("[data-test-id='poll-0-0'] [data-test-id='poll-result-0'] .h2")).toHaveText('100%')
   log(`asserting that result has 0% on the vote we did not click on...`)

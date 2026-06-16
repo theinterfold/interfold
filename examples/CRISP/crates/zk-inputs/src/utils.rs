@@ -15,14 +15,14 @@ pub fn numbers_to_strings_for_js(value: serde_json::Value) -> serde_json::Value 
     match value {
         serde_json::Value::Number(n) => {
             if let Some(i) = n.as_i64() {
-                if i > JS_SAFE_INT_MAX || i < -JS_SAFE_INT_MAX {
+                if !(-JS_SAFE_INT_MAX..=JS_SAFE_INT_MAX).contains(&i) {
                     return serde_json::Value::String(i.to_string());
                 }
             } else if let Some(u) = n.as_u64() {
                 if u > JS_SAFE_INT_MAX as u64 {
                     return serde_json::Value::String(u.to_string());
                 }
-            } else if n.as_f64().map_or(true, |f| {
+            } else if n.as_f64().is_none_or(|f| {
                 f < -JS_SAFE_INT_MAX as f64 || f > JS_SAFE_INT_MAX as f64
             }) {
                 return serde_json::Value::String(n.to_string());

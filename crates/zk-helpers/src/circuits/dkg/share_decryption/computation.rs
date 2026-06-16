@@ -22,6 +22,7 @@
 use crate::circuits::commitments::compute_share_encryption_commitment_from_message;
 use crate::dkg::share_decryption::ShareDecryptionCircuit;
 use crate::dkg::share_decryption::ShareDecryptionCircuitData;
+use crate::math::plaintext_poly_u64;
 use crate::CircuitsErrors;
 use crate::{bigint_2d_to_json_values, poly_coefficients_to_toml_json};
 use crate::{compute_modulus_bit, compute_msg_bit};
@@ -32,8 +33,6 @@ use e3_polynomial::Polynomial;
 use fhe_traits::FheDecrypter;
 use num_bigint::BigInt;
 use serde::{Deserialize, Serialize};
-use std::ops::Deref;
-
 /// Output of [`CircuitComputation::compute`] for [`ShareDecryptionCircuit`]: bounds, bit widths, and input.
 #[derive(Debug)]
 pub struct ShareDecryptionOutput {
@@ -114,11 +113,11 @@ impl Computation for Configs {
         let (_, dkg_params) = build_pair_for_preset(preset)
             .map_err(|e| crate::utils::ZkHelpersUtilsError::ParseBound(e.to_string()))?;
 
-        let n = dkg_params.degree() as usize;
+        let n = dkg_params.degree();
         let l = dkg_params.moduli().len();
         let h = data.honest_ciphertexts.len();
 
-        let bounds = Bounds::compute(preset, &data)?;
+        let bounds = Bounds::compute(preset, data)?;
         let bits = Bits::compute(preset, &bounds)?;
 
         Ok(Configs {
@@ -198,18 +197,15 @@ impl Computation for Inputs {
                             threshold_l
                         )));
                     }
-                    for mod_idx in 0..threshold_l {
-                        let decrypted_pt = data
-                            .secret_key
-                            .try_decrypt(&party_cts[mod_idx])
-                            .map_err(|e| {
-                                CircuitsErrors::Other(format!(
-                                    "failed to decrypt honest ciphertext at modulus {}: {:?}",
-                                    mod_idx, e
-                                ))
-                            })?;
-                        let share_coeffs = decrypted_pt.value.deref().to_vec();
-                        // Reverse to match C3's `pt.value.reversed()` commitment convention.
+                    for (mod_idx, ct) in party_cts.iter().enumerate().take(threshold_l) {
+                        let decrypted_pt = data.secret_key.try_decrypt(ct).map_err(|e| {
+                            CircuitsErrors::Other(format!(
+                                "failed to decrypt honest ciphertext at modulus {}: {:?}",
+                                mod_idx, e
+                            ))
+                        })?;
+                        let share_coeffs = plaintext_poly_u64(&decrypted_pt)?;
+                        // Reverse to match C3's reversed commitment convention.
                         let mut reversed_coeffs = share_coeffs.clone();
                         reversed_coeffs.reverse();
                         party_commitments.push(compute_share_encryption_commitment_from_message(
@@ -375,7 +371,7 @@ mod tests {
                     Some(party_cts) => {
                         let decrypted_pt =
                             sample.secret_key.try_decrypt(&party_cts[mod_idx]).unwrap();
-                        decrypted_pt.value.deref().to_vec()
+                        plaintext_poly_u64(&decrypted_pt).unwrap()
                     }
                     None => sample.own_plaintext_share[mod_idx].clone(),
                 };

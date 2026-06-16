@@ -53,7 +53,7 @@ components and workflows involved in executing E3 computations.
 
 #### Bonding Registry Contract
 
-- Manages operator license bonds (ENCL tokens) and ticket balances (ETK)
+- Manages operator license bonds (FOLD tokens) and ticket balances (tFOLD)
 - Handles operator registration and deregistration
 - Enforces minimum bond and ticket requirements for active status
 - Processes exit queues with configurable delay periods
@@ -112,7 +112,7 @@ The following steps outline how these components interact in a typical computati
 
 ## E3 Lifecycle Stages
 
-Every E3 transitions through a well-defined state machine managed by the Enclave contract:
+Every E3 transitions through a well-defined state machine managed by the Interfold contract:
 
 | Stage                  | Description                                                     |
 | ---------------------- | --------------------------------------------------------------- |
@@ -125,9 +125,9 @@ Every E3 transitions through a well-defined state machine managed by the Enclave
 | **Failed**             | Timeout or fault detected; refund process initiated             |
 
 Timeout deadlines are configured per-deployment via `E3TimeoutConfig` (DKG window, compute window,
-decryption window) on the Enclave contract. The committee formation window is managed separately by
-the CiphernodeRegistry. If any deadline passes without the expected action, the E3 can be marked as
-failed and the refund manager distributes funds to honest participants.
+decryption window) on the Interfold contract. The committee formation window is managed separately
+by the CiphernodeRegistry. If any deadline passes without the expected action, the E3 can be marked
+as failed and the refund manager distributes funds to honest participants.
 
 Current Sepolia timeout configuration:
 
@@ -161,4 +161,4 @@ As a developer, you'll interact with:
 For how DKG, threshold BFV, and ZK circuits (**C0–C7**) fit the protocol story, see
 [Cryptography](/cryptography). For the `circuits/` tree, scripts, and toolchain, see
 [Noir Circuits](/noir-circuits) and the repo’s
-[`circuits/README.md`](https://github.com/gnosisguild/enclave/blob/main/circuits/README.md).
+[`circuits/README.md`](https://github.com/gnosisguild/interfold/blob/main/circuits/README.md).

@@ -3,12 +3,12 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
-pragma solidity >=0.8.27;
+pragma solidity 0.8.28;
 
-import { IRiscZeroVerifier } from "@risc0/ethereum/contracts/IRiscZeroVerifier.sol";
-import { IE3Program } from "@enclave-e3/contracts/contracts/interfaces/IE3Program.sol";
-import { IEnclave } from "@enclave-e3/contracts/contracts/interfaces/IEnclave.sol";
-import { E3 } from "@enclave-e3/contracts/contracts/interfaces/IE3.sol";
+import { IRiscZeroVerifier } from "risc0/IRiscZeroVerifier.sol";
+import { IE3Program } from "@interfold/contracts/contracts/interfaces/IE3Program.sol";
+import { IInterfold } from "@interfold/contracts/contracts/interfaces/IInterfold.sol";
+import { E3 } from "@interfold/contracts/contracts/interfaces/IE3.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { LazyIMTData, InternalLazyIMT, PoseidonT3 } from "@zk-kit/lazy-imt.sol/InternalLazyIMT.sol";
 
@@ -20,7 +20,7 @@ contract MyProgram is IE3Program, Ownable {
   uint8 public constant TREE_DEPTH = 20;
 
   // State variables
-  IEnclave public enclave;
+  IInterfold public interfold;
   IRiscZeroVerifier public verifier;
   bytes32 public imageId;
 
@@ -41,21 +41,19 @@ contract MyProgram is IE3Program, Ownable {
   event InputPublished(uint256 indexed e3Id, bytes data, uint256 index);
 
   /// @notice Initialize the contract, binding it to a specified RISC Zero verifier.
-  /// @param _enclave The Enclave contract address
+  /// @param _interfold The Interfold contract address
   /// @param _verifier The RISC Zero verifier address
   /// @param _imageId The image ID for the guest program
-  constructor(IEnclave _enclave, IRiscZeroVerifier _verifier, bytes32 _imageId) Ownable(msg.sender) {
+  constructor(IInterfold _interfold, IRiscZeroVerifier _verifier, bytes32 _imageId) Ownable(msg.sender) {
     require(address(_verifier) != address(0), VerifierAddressZero());
 
-    enclave = _enclave;
+    interfold = _interfold;
     verifier = _verifier;
     imageId = _imageId;
-    authorizedContracts[address(_enclave)] = true;
+    authorizedContracts[address(_interfold)] = true;
   }
 
-  /// @notice Validate the E3 program parameters
-  /// @param e3Id The E3 program ID
-  /// @param e3ProgramParams The E3 program parameters
+  /// @inheritdoc IE3Program
   function validate(uint256 e3Id, uint256, bytes calldata e3ProgramParams, bytes calldata, bytes calldata) external returns (bytes32) {
     require(authorizedContracts[msg.sender] || msg.sender == owner(), CallerNotAuthorized());
     require(paramsHashes[e3Id] == bytes32(0), E3AlreadyInitialized());
@@ -70,7 +68,7 @@ contract MyProgram is IE3Program, Ownable {
   /// @param e3Id The e3 id for which to publish input
   /// @param data The input to be verified.
   function publishInput(uint256 e3Id, bytes memory data) external {
-    E3 memory e3 = enclave.getE3(e3Id);
+    E3 memory e3 = interfold.getE3(e3Id);
 
     if (block.timestamp > e3.inputWindow[1]) {
       revert InputDeadlineReached();
@@ -79,7 +77,7 @@ contract MyProgram is IE3Program, Ownable {
     if (data.length == 0) revert EmptyInputData();
 
     // You can add your own validation logic here.
-    // EXAMPLE: https://github.com/gnosisguild/enclave/blob/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol
+    // EXAMPLE: https://github.com/gnosisguild/interfold/blob/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol
 
     uint256 index = inputs[e3Id].numberOfLeaves;
     inputs[e3Id]._insert(PoseidonT3.hash([uint256(keccak256(data)), index]));
@@ -91,7 +89,7 @@ contract MyProgram is IE3Program, Ownable {
   /// @param e3Id The E3 program ID
   /// @param ciphertextOutputHash The hash of the ciphertext output
   /// @param proof The proof to verify
-  function verify(uint256 e3Id, bytes32 ciphertextOutputHash, bytes memory proof) external view override returns (bool) {
+  function verify(uint256 e3Id, bytes32 ciphertextOutputHash, bytes memory proof) external override returns (bool) {
     require(paramsHashes[e3Id] != bytes32(0), E3DoesNotExist());
     bytes32 inputRoot = bytes32(inputs[e3Id]._root());
     bytes memory journal = new bytes(396); // (32 + 1) * 4 * 3

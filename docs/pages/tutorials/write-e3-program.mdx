@@ -22,8 +22,8 @@ verification flow well enough to build your own.
 
 ## The IE3Program Interface
 
-Every E3 program implements the `IE3Program` interface from `@enclave-e3/contracts`. It has three
-functions that the Enclave contract calls at different stages of the E3 lifecycle:
+Every E3 program implements the `IE3Program` interface from `@interfold/contracts`. It has three
+functions that the Interfold contract calls at different stages of the E3 lifecycle:
 
 ```solidity
 interface IE3Program {
@@ -55,8 +55,8 @@ interface IE3Program {
 
 ## Step 1: validate — Initialise the Round
 
-When a new E3 is requested, the Enclave contract calls `validate` on your program. This is where you
-parse parameters, set up state, and decide whether the request is valid.
+When a new E3 is requested, the Interfold contract calls `validate` on your program. This is where
+you parse parameters, set up state, and decide whether the request is valid.
 
 CRISP's implementation (`CRISPProgram.sol`):
 
@@ -68,7 +68,7 @@ function validate(
   bytes calldata,
   bytes calldata customParams
 ) external returns (bytes32) {
-  if (msg.sender != address(enclave) && msg.sender != owner()) revert CallerNotAuthorized();
+  if (msg.sender != address(interfold) && msg.sender != owner()) revert CallerNotAuthorized();
   if (e3Data[e3Id].paramsHash != bytes32(0)) revert E3AlreadyInitialized();
 
   // Decode voting parameters from customParams
@@ -91,17 +91,17 @@ function validate(
 
 Key points:
 
-- Only the Enclave contract (or the program owner) can call `validate`
+- Only the Interfold contract (or the program owner) can call `validate`
 - `customParams` carries application-specific configuration — CRISP uses it for voting options and
   credit mode
-- The function returns an encryption scheme identifier so the Enclave contract knows which scheme
+- The function returns an encryption scheme identifier so the Interfold contract knows which scheme
   the ciphernodes should use
 
 ---
 
 ## Step 2: publishInput — Validate User Inputs
 
-Each time a user submits encrypted data to the E3, the Enclave contract calls `publishInput`. This
+Each time a user submits encrypted data to the E3, the Interfold contract calls `publishInput`. This
 is where you enforce application-specific rules.
 
 CRISP's `publishInput` does several things:
@@ -116,10 +116,10 @@ CRISP's `publishInput` does several things:
 
 ```solidity
 function publishInput(uint256 e3Id, bytes memory data) external {
-  E3 memory e3 = enclave.getE3(e3Id);
+  E3 memory e3 = interfold.getE3(e3Id);
 
   // Stage and window checks
-  if (enclave.getE3Stage(e3Id) != IEnclave.E3Stage.KeyPublished) revert KeyNotPublished(e3Id);
+  if (interfold.getE3Stage(e3Id) != IInterfold.E3Stage.KeyPublished) revert KeyNotPublished(e3Id);
   if (block.timestamp > e3.inputWindow[1]) revert InputDeadlinePassed(e3Id, e3.inputWindow[1]);
   if (block.timestamp < e3.inputWindow[0]) revert E3NotAcceptingInputs(e3Id);
   if (e3Data[e3Id].merkleRoot == 0) revert MerkleRootNotSet();
@@ -196,7 +196,7 @@ were deployed using full mock mode, otherwise a real proof will be needed.
 
 ## Step 4: verify — Confirm the Result
 
-After the compute provider publishes its result, the Enclave contract calls `verify` on your
+After the compute provider publishes its result, the Interfold contract calls `verify` on your
 program. CRISP's implementation checks the RISC Zero proof:
 
 ```solidity
@@ -205,7 +205,7 @@ function verify(
   bytes32 ciphertextOutputHash,
   bytes memory proof
 ) external returns (bool) {
-  if (msg.sender != address(enclave)) revert CallerNotAuthorized();
+  if (msg.sender != address(interfold)) revert CallerNotAuthorized();
 
   // Reconstruct the expected journal from known values
   bytes memory journal = abi.encodePacked(
@@ -234,7 +234,7 @@ The full lifecycle for a CRISP voting round:
 ```mermaid
 sequenceDiagram
     participant U as User
-    participant E as Enclave contract
+    participant E as Interfold contract
     participant P as CRISPProgram
     participant C as Ciphernode committee
     participant CP as Compute provider
@@ -262,7 +262,7 @@ sequenceDiagram
 To create a new E3 program:
 
 1. **Implement `IE3Program`** — start from the
-   [MockE3Program](https://github.com/gnosisguild/enclave/blob/main/packages/enclave-contracts/contracts/test/MockE3Program.sol)
+   [MockE3Program](https://github.com/gnosisguild/interfold/blob/main/packages/interfold-contracts/contracts/test/MockE3Program.sol)
    for a minimal example, or study `CRISPProgram.sol` for a full implementation
 2. **Write your FHE computation** — implement the `fhe_processor` function for your use case
    (aggregation, comparison, etc.)

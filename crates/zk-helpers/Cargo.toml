@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "ZK circuit helpers"
-repository = "https://github.com/gnosisguild/enclave/crates/zk-helpers"
+repository = "https://github.com/gnosisguild/interfold/crates/zk-helpers"
 
 [dependencies]
 anyhow = { workspace = true }

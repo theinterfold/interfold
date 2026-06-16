@@ -11,14 +11,14 @@ use async_trait::async_trait;
 use e3_data::{
     Checkpoint, FromSnapshotWithParams, Repositories, RepositoriesFactory, Repository, Snapshot,
 };
-use e3_events::{E3id, EnclaveEvent};
+use e3_events::{E3id, InterfoldEvent};
 use serde::{Deserialize, Serialize};
 use std::{collections::HashMap, sync::Arc};
 
 /// Initialize the HashMap with a list of expected Recipients. In order to know whether or not we
 /// should buffer we need to iterate over this list and determine which recipients are missing based
 /// on the recipient value is why we set it here to have keys with empty values.
-fn init_recipients() -> HashMap<String, Option<Recipient<EnclaveEvent>>> {
+fn init_recipients() -> HashMap<String, Option<Recipient<InterfoldEvent>>> {
     HashMap::from([
         ("keyshare".to_owned(), None),
         ("threshold_keyshare".to_owned(), None),
@@ -34,8 +34,8 @@ fn init_recipients() -> HashMap<String, Option<Recipient<EnclaveEvent>>> {
 pub struct E3Context {
     /// The E3Request's ID
     pub e3_id: E3id,
-    /// A way to store EnclaveEvent recipients on the context
-    pub recipients: HashMap<String, Option<Recipient<EnclaveEvent>>>, // NOTE: can be a None value
+    /// A way to store InterfoldEvent recipients on the context
+    pub recipients: HashMap<String, Option<Recipient<InterfoldEvent>>>, // NOTE: can be a None value
     /// A way to store an extension's dependencies on the context
     pub dependencies: HetrogenousMap,
     /// A Repository for storing this context's data snapshot
@@ -73,14 +73,14 @@ impl E3Context {
 
     /// Return a list of expected recipient keys alongside any values that have or have not been
     /// set.
-    fn recipients(&self) -> Vec<(String, Option<Recipient<EnclaveEvent>>)> {
+    fn recipients(&self) -> Vec<(String, Option<Recipient<InterfoldEvent>>)> {
         self.recipients
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect()
     }
 
-    pub fn forward_message(&self, msg: &EnclaveEvent, buffer: &mut EventBuffer) {
+    pub fn forward_message(&self, msg: &InterfoldEvent, buffer: &mut EventBuffer) {
         self.recipients().into_iter().for_each(|(key, recipient)| {
             // Use composite key of e3_id:recipient_key to scope buffered events per E3 request
             let buffer_key = format!("{}:{}", self.e3_id, key);
@@ -95,7 +95,7 @@ impl E3Context {
         });
     }
 
-    pub fn forward_message_now(&self, msg: &EnclaveEvent) {
+    pub fn forward_message_now(&self, msg: &InterfoldEvent) {
         self.recipients().into_iter().for_each(|(_, recipient)| {
             if let Some(act) = recipient {
                 act.do_send(msg.clone());
@@ -106,13 +106,16 @@ impl E3Context {
     pub fn set_event_recipient(
         &mut self,
         key: impl Into<String>,
-        value: Option<Recipient<EnclaveEvent>>,
+        value: Option<Recipient<InterfoldEvent>>,
     ) {
         self.recipients.insert(key.into(), value);
         self.checkpoint();
     }
 
-    pub fn get_event_recipient(&self, key: impl Into<String>) -> Option<&Recipient<EnclaveEvent>> {
+    pub fn get_event_recipient(
+        &self,
+        key: impl Into<String>,
+    ) -> Option<&Recipient<InterfoldEvent>> {
         self.recipients
             .get(&key.into())
             .and_then(|opt| opt.as_ref())

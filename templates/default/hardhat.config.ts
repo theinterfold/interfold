@@ -4,8 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { ciphernodeAdd, ciphernodeAdminAdd } from '@enclave-e3/contracts/tasks/ciphernode'
-import { cleanDeploymentsTask } from '@enclave-e3/contracts/tasks/utils'
+import { ciphernodeAdd, ciphernodeAdminAdd } from '@interfold/contracts/tasks/ciphernode'
+import { cleanDeploymentsTask } from '@interfold/contracts/tasks/utils'
 import dotenv from 'dotenv'
 
 import hardhatEthersChaiMatchers from '@nomicfoundation/hardhat-ethers-chai-matchers'
@@ -76,12 +76,22 @@ const config: HardhatUserConfig = {
     tsNocheck: false,
   },
   paths: {
-    sources: ['./contracts', './.enclave/generated/contracts'],
+    sources: ['./contracts', './.interfold/generated/contracts'],
   },
   networks: {
     hardhat: {
       type: 'edr-simulated',
       chainType: 'l1',
+    },
+    localhost: {
+      accounts: {
+        mnemonic,
+      },
+      chainId: chainIds.hardhat,
+      url: 'http://localhost:8545',
+      type: 'http',
+      chainType: 'l1',
+      timeout: 60000,
     },
     ganache: {
       accounts: {
@@ -106,25 +116,25 @@ const config: HardhatUserConfig = {
       'poseidon-solidity/PoseidonT3.sol',
       '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol',
       '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol',
-      '@enclave-e3/contracts/contracts/lib/EnclavePricing.sol',
-      '@enclave-e3/contracts/contracts/Enclave.sol',
-      '@enclave-e3/contracts/contracts/registry/CiphernodeRegistryOwnable.sol',
-      '@enclave-e3/contracts/contracts/registry/BondingRegistry.sol',
-      '@enclave-e3/contracts/contracts/slashing/SlashingManager.sol',
-      '@enclave-e3/contracts/contracts/E3RefundManager.sol',
-      '@enclave-e3/contracts/contracts/token/EnclaveToken.sol',
-      '@enclave-e3/contracts/contracts/token/EnclaveTicketToken.sol',
-      '@enclave-e3/contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol',
-      '@enclave-e3/contracts/contracts/verifiers/bfv/BfvPkVerifier.sol',
-      '@enclave-e3/contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol',
-      '@enclave-e3/contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol',
-      '@enclave-e3/contracts/contracts/test/MockCiphernodeRegistry.sol',
-      '@enclave-e3/contracts/contracts/test/MockComputeProvider.sol',
-      '@enclave-e3/contracts/contracts/test/MockDecryptionVerifier.sol',
-      '@enclave-e3/contracts/contracts/test/MockE3Program.sol',
-      '@enclave-e3/contracts/contracts/test/MockPkVerifier.sol',
-      '@enclave-e3/contracts/contracts/test/MockSlashingVerifier.sol',
-      '@enclave-e3/contracts/contracts/test/MockStableToken.sol',
+      '@interfold/contracts/contracts/lib/InterfoldPricing.sol',
+      '@interfold/contracts/contracts/Interfold.sol',
+      '@interfold/contracts/contracts/registry/CiphernodeRegistryOwnable.sol',
+      '@interfold/contracts/contracts/registry/BondingRegistry.sol',
+      '@interfold/contracts/contracts/slashing/SlashingManager.sol',
+      '@interfold/contracts/contracts/E3RefundManager.sol',
+      '@interfold/contracts/contracts/token/InterfoldToken.sol',
+      '@interfold/contracts/contracts/token/InterfoldTicketToken.sol',
+      '@interfold/contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol',
+      '@interfold/contracts/contracts/verifiers/bfv/BfvPkVerifier.sol',
+      '@interfold/contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol',
+      '@interfold/contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol',
+      '@interfold/contracts/contracts/test/MockCiphernodeRegistry.sol',
+      '@interfold/contracts/contracts/test/MockComputeProvider.sol',
+      '@interfold/contracts/contracts/test/MockDecryptionVerifier.sol',
+      '@interfold/contracts/contracts/test/MockE3Program.sol',
+      '@interfold/contracts/contracts/test/MockPkVerifier.sol',
+      '@interfold/contracts/contracts/test/MockSlashingVerifier.sol',
+      '@interfold/contracts/contracts/test/MockStableToken.sol',
     ],
     compilers: [
       {

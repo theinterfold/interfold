@@ -5,12 +5,12 @@ set -euo pipefail
 export CARGO_INCREMENTAL=1
 
 # nuke past installations as we are adding these nodes to the contract
-rm -rf ./.enclave/data
-rm -rf ./.enclave/config
+rm -rf ./.interfold/data
+rm -rf ./.interfold/config
 
 cleanup() {
   echo "Cleaning up processes..."
-  pkill -9 -f "enclave start"
+  pkill -9 -f "interfold start"
   sleep 1
   
   # Kill any remaining background jobs from this script
@@ -42,22 +42,22 @@ if [ -z "$PRIVATE_KEY_ADMIN" ]; then
   exit 1
 fi
 
-enclave wallet set --name cn1 --private-key "$PRIVATE_KEY_CN1"
-enclave wallet set --name cn2 --private-key "$PRIVATE_KEY_CN2"
-enclave wallet set --name cn3 --private-key "$PRIVATE_KEY_CN3"
-enclave wallet set --name cn4 --private-key "$PRIVATE_KEY_CN4"
-enclave wallet set --name cn5 --private-key "$PRIVATE_KEY_CN5"
+interfold wallet set --name cn1 --private-key "$PRIVATE_KEY_CN1"
+interfold wallet set --name cn2 --private-key "$PRIVATE_KEY_CN2"
+interfold wallet set --name cn3 --private-key "$PRIVATE_KEY_CN3"
+interfold wallet set --name cn4 --private-key "$PRIVATE_KEY_CN4"
+interfold wallet set --name cn5 --private-key "$PRIVATE_KEY_CN5"
 
 # using & instead of -d so that wait works below
-enclave nodes up -v &
+interfold nodes up -v &
 
 sleep 2
 
-CN1=$(yq -r '.nodes.cn1.address' ./enclave.config.yaml)
-CN2=$(yq -r '.nodes.cn2.address' ./enclave.config.yaml)
-CN3=$(yq -r '.nodes.cn3.address' ./enclave.config.yaml)
-CN4=$(yq -r '.nodes.cn4.address' ./enclave.config.yaml)
-CN5=$(yq -r '.nodes.cn5.address' ./enclave.config.yaml)
+CN1=$(yq -r '.nodes.cn1.address' ./interfold.config.yaml)
+CN2=$(yq -r '.nodes.cn2.address' ./interfold.config.yaml)
+CN3=$(yq -r '.nodes.cn3.address' ./interfold.config.yaml)
+CN4=$(yq -r '.nodes.cn4.address' ./interfold.config.yaml)
+CN5=$(yq -r '.nodes.cn5.address' ./interfold.config.yaml)
 
 echo "Minting tokens" 
 

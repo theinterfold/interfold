@@ -2,16 +2,16 @@
 
 CRISP (Coercion-Resistant Impartial Selection Protocol) is a secure protocol for digital
 decision-making, leveraging fully homomorphic encryption (FHE) and distributed threshold
-cryptography (DTC) to enable verifiable secret ballots. Built with Enclave, CRISP safeguards
+cryptography (DTC) to enable verifiable secret ballots. Built with Interfold, CRISP safeguards
 democratic systems and decision-making applications against coercion, manipulation, and other
 vulnerabilities. To learn more about CRISP, you can read our
-[blog post](https://blog.enclave.gg/crisp-private-voting-secret-ballot-fhe-zkp-mpc/) or visit the
+[blog post](https://blog.interfold.gg/crisp-private-voting-secret-ballot-fhe-zkp-mpc/) or visit the
 [documentation](https://docs.theinterfold.com/CRISP/introduction).
 
 ## Project Structure
 
-CRISP follows a modern structure with clear separation of concerns, consistent with the Enclave root
-structure.
+CRISP follows a modern structure with clear separation of concerns, consistent with the Interfold
+root structure.
 
 ```bash
 CRISP/
@@ -24,7 +24,7 @@ CRISP/
 ├── crates/                  # Rust libraries used by the server
 ├── circuits/                # Noir zero-knowledge circuits
 ├── scripts/                 # Development scripts for running, testing, and deployment
-├── enclave.config.yaml      # Local ciphernode network config
+├── interfold.config.yaml      # Local ciphernode network config
 └── docker-compose.yaml      # Optional multi-node deployment
 ```
 
@@ -49,7 +49,11 @@ Before getting started, ensure you have installed:
 The simplest way to run CRISP is:
 
 ```bash
-# Install dependencies and build everything
+# Optional: choose local profile (copied to crisp.dev.env on first setup)
+cp crisp.dev.env.example crisp.dev.env
+# Edit CRISP_PROOF_AGGREGATION_ENABLED and CRISP_BFV_PRESET (see docs/PROOF_AGGREGATION_AND_ZK.md)
+
+# Install dependencies and build everything (applies crisp.dev.env → server/.env)
 pnpm dev:setup
 
 # Start all services (Hardhat, contracts, ciphernodes, program server, coordination server, and UI)
@@ -59,9 +63,9 @@ pnpm dev:up
 `dev:up` runs `scripts/dev.sh`, which:
 
 1. Starts the Hardhat node in `packages/crisp-contracts`
-2. Deploys all contracts (Enclave, CRISPProgram, verifiers, registries) via
+2. Deploys all contracts (Interfold, CRISPProgram, verifiers, registries) via
    `scripts/crisp_deploy.sh`
-3. Starts ciphernodes using `enclave.config.yaml` via `scripts/dev_cipher.sh`
+3. Starts ciphernodes using `interfold.config.yaml` via `scripts/dev_cipher.sh`
 4. Launches the program server via `scripts/dev_program.sh`
 5. Starts the coordination server (Rust) via `scripts/dev_server.sh` on port `4000`
 6. Starts the React client via `scripts/dev_client.sh` on port `3000`
@@ -106,7 +110,7 @@ pnpm test:e2e
 
 ### Ciphernode Configuration
 
-The `enclave.config.yaml` file in the CRISP root directory configures the ciphernode network. By
+The `interfold.config.yaml` file in the CRISP root directory configures the ciphernode network. By
 default, it runs in development mode with fake proofs for fast local development:
 
 ```yaml
@@ -117,7 +121,7 @@ program:
 ### Boundless Configuration
 
 For production-grade zero-knowledge proofs with [Boundless](https://docs.beboundless.xyz/), update
-`enclave.config.yaml`:
+`interfold.config.yaml`:
 
 ```yaml
 program:
@@ -144,17 +148,17 @@ program:
 When you make changes to the guest program in `program/`, you need to upload it to IPFS to get a
 program URL:
 
-1. First, configure your Pinata JWT in `enclave.config.yaml` (as shown above)
+1. First, configure your Pinata JWT in `interfold.config.yaml` (as shown above)
 
 2. Build and upload your program:
 
    ```bash
    # This compiles the guest program and uploads it to IPFS via Pinata
-   enclave program upload
+   interfold program upload
    ```
 
-3. The command will output an IPFS hash like `QmXxx...`. Update your `enclave.config.yaml` with the
-   full URL:
+3. The command will output an IPFS hash like `QmXxx...`. Update your `interfold.config.yaml` with
+   the full URL:
 
    ```yaml
    program_url: 'https://gateway.pinata.cloud/ipfs/QmXxx...'
@@ -169,7 +173,36 @@ program URL:
 The `pnpm dev:setup` command automatically creates `.env` files for the server and client from the
 `.env.example` templates (if they don't already exist).
 
-The `enclave.config.yaml` file is automatically populated with contract addresses after deployment.
+After `pnpm dev:up`, contract addresses are written automatically to `interfold.config.yaml`,
+`server/.env`, and `client/.env` (no manual copy from `deployed_contracts.json`).
+
+### DKG proof aggregation and on-chain ZK
+
+Edit **`crisp.dev.env`** (created from `crisp.dev.env.example` on first `pnpm dev:setup`):
+
+| Variable                          | Default        | Effect                                                                                                          |
+| --------------------------------- | -------------- | --------------------------------------------------------------------------------------------------------------- |
+| `CRISP_BFV_PRESET`                | `insecure-512` | DKG circuit build preset when aggregation is on                                                                 |
+| `CRISP_PROOF_AGGREGATION_ENABLED` | `false`        | Synced to `server/.env`; controls DKG circuit build, deploy (`ENABLE_ZK_VERIFICATION`), and runtime aggregation |
+
+`pnpm dev:setup` applies this profile (build DKG circuits when needed, sync `server/.env`).
+`pnpm dev:up` deploys contracts using the same flags.
+
+See **[docs/PROOF_AGGREGATION_AND_ZK.md](./docs/PROOF_AGGREGATION_AND_ZK.md)** for modes, address
+sync, and troubleshooting (`VkHashMismatch`, etc.).
+
+### Vercel (CRISP client)
+
+Deploy from **`examples/CRISP/client`**. The build uses the published **`@crisp-e3/sdk@0.9.0`** on
+npm (`pnpm install --ignore-workspace`), not the monorepo workspace — so it does not compile Noir
+circuits on Vercel.
+
+- **Project root directory:** `examples/CRISP/client`
+- **`vercel build` in CI:** run from the **repository root** (not `cd examples/CRISP/client` first)
+- Optional Vercel env: `ENABLE_EXPERIMENTAL_COREPACK=1`
+
+Commit `examples/CRISP/client/pnpm-lock.yaml` after dependency bumps
+(`pnpm install --ignore-workspace` in that directory) for reproducible installs.
 
 ## Publishing packages to npm
 

@@ -25,7 +25,7 @@ Watch for reward events and ensure your wallet can receive the reward token:
 
 ```bash
 # Check your status including any pending rewards
-enclave ciphernode status
+interfold ciphernode status
 ```
 
 > Keep your operator wallet funded with ETH for gas - claiming rewards through automation scripts
@@ -58,7 +58,7 @@ Each slash reason has an associated policy:
 ```solidity
 struct SlashPolicy {
   uint256 ticketPenalty; // Tickets to burn
-  uint256 licensePenalty; // ENCL to confiscate
+  uint256 licensePenalty; // FOLD to confiscate
   bool requiresProof; // Whether on-chain proof verification is needed
   address proofVerifier; // ISlashVerifier contract for proof validation
   bool banNode; // Whether to permanently ban the node
@@ -86,8 +86,8 @@ struct SlashPolicy {
 
 | Penalty Type    | Effect                                           |
 | --------------- | ------------------------------------------------ |
-| Ticket penalty  | Burns ETK from your balance                      |
-| License penalty | Confiscates ENCL from your bond                  |
+| Ticket penalty  | Burns tFOLD from your balance                    |
+| License penalty | Confiscates FOLD from your bond                  |
 | Ban             | Prevents re-registration until governance clears |
 
 > Some policies have an `appealWindow` of 0, meaning execution is immediate with no appeal. Always
@@ -102,7 +102,7 @@ To safely exit the ciphernode registry:
 Request deregistration:
 
 ```bash
-enclave ciphernode deregister
+interfold ciphernode deregister
 ```
 
 ### Step 2: Wait for Exit Delay
@@ -112,12 +112,12 @@ Assets enter a queue with a delay period (7 days on Sepolia):
 | Asset   | Behavior                              |
 | ------- | ------------------------------------- |
 | Tickets | Burned immediately, USDC enters queue |
-| License | ENCL enters exit queue                |
+| License | FOLD enters exit queue                |
 
 Check your exit status:
 
 ```bash
-enclave ciphernode status
+interfold ciphernode status
 ```
 
 Look for "Exit pending" and "Pending exits" fields.
@@ -128,10 +128,10 @@ After the delay period:
 
 ```bash
 # Claim all pending exits
-enclave ciphernode license claim
+interfold ciphernode license claim
 
 # Or specify maximum amounts
-enclave ciphernode license claim --max-ticket 100 --max-license 50
+interfold ciphernode license claim --max-ticket 100 --max-license 50
 ```
 
 ### Cancel Exit
@@ -139,26 +139,26 @@ enclave ciphernode license claim --max-ticket 100 --max-license 50
 To cancel an exit and return to active status:
 
 ```bash
-enclave ciphernode register
+interfold ciphernode register
 ```
 
 This clears the exit queue and re-registers you in the registry.
 
 ## CLI Commands Summary
 
-| Command                            | Description                        |
-| ---------------------------------- | ---------------------------------- |
-| `enclave ciphernode status`        | Check registration and exit status |
-| `enclave ciphernode deregister`    | Start exit process                 |
-| `enclave ciphernode license claim` | Claim unlocked exits               |
-| `enclave ciphernode register`      | Cancel exit and re-register        |
-| `enclave ciphernode deactivate`    | Withdraw stakes to become inactive |
+| Command                              | Description                        |
+| ------------------------------------ | ---------------------------------- |
+| `interfold ciphernode status`        | Check registration and exit status |
+| `interfold ciphernode deregister`    | Start exit process                 |
+| `interfold ciphernode license claim` | Claim unlocked exits               |
+| `interfold ciphernode register`      | Cancel exit and re-register        |
+| `interfold ciphernode deactivate`    | Withdraw stakes to become inactive |
 
 ## Monitoring Checklist
 
 | Check                 | Command / Event                                 |
 | --------------------- | ----------------------------------------------- |
-| Exit queue status     | `enclave ciphernode status`                     |
+| Exit queue status     | `interfold ciphernode status`                   |
 | Pending exits amounts | `pendingExits(address)` on BondingRegistry      |
 | Exit in progress      | `hasExitInProgress(address)` on BondingRegistry |
 | Claimable amounts     | `previewClaimable(address)` on BondingRegistry  |
@@ -181,7 +181,7 @@ After successfully claiming exits:
 1. **Wipe local secrets**:
 
    ```bash
-   enclave purge-all
+   interfold purge-all
    ```
 
 2. **Revoke access**:

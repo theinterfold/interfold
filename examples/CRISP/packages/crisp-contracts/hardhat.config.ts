@@ -5,15 +5,11 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import type { HardhatUserConfig } from 'hardhat/config'
-import { cleanDeploymentsTask } from '@enclave-e3/contracts/tasks/utils'
-import { ciphernodeAdd, ciphernodeAdminAdd, ciphernodeMintTokens, updateSubmissionWindow } from '@enclave-e3/contracts/tasks/ciphernode'
+import { cleanDeploymentsTask } from '@interfold/contracts/tasks/utils'
+import { ciphernodeAdd, ciphernodeAdminAdd, ciphernodeMintTokens, updateSubmissionWindow } from '@interfold/contracts/tasks/ciphernode'
 import dotenv from 'dotenv'
 
-import hardhatEthersChaiMatchers from '@nomicfoundation/hardhat-ethers-chai-matchers'
-import hardhatNetworkHelpers from '@nomicfoundation/hardhat-network-helpers'
 import hardhatToolboxMochaEthersPlugin from '@nomicfoundation/hardhat-toolbox-mocha-ethers'
-import hardhatTypechainPlugin from '@nomicfoundation/hardhat-typechain'
-import hardhatVerify from '@nomicfoundation/hardhat-verify'
 
 dotenv.config()
 
@@ -62,7 +58,7 @@ function getChainConfig(chain: keyof typeof chainIds, apiUrl: string) {
 }
 
 const config: HardhatUserConfig = {
-  plugins: [hardhatTypechainPlugin, hardhatEthersChaiMatchers, hardhatNetworkHelpers, hardhatToolboxMochaEthersPlugin, hardhatVerify],
+  plugins: [hardhatToolboxMochaEthersPlugin],
   tasks: [cleanDeploymentsTask, ciphernodeAdd, ciphernodeAdminAdd, ciphernodeMintTokens, updateSubmissionWindow],
   networks: {
     default: {
@@ -129,24 +125,24 @@ const config: HardhatUserConfig = {
       'poseidon-solidity/PoseidonT3.sol',
       '@openzeppelin/contracts/proxy/transparent/ProxyAdmin.sol',
       '@openzeppelin/contracts/proxy/transparent/TransparentUpgradeableProxy.sol',
-      '@enclave-e3/contracts/contracts/Enclave.sol',
-      '@enclave-e3/contracts/contracts/lib/EnclavePricing.sol',
-      '@enclave-e3/contracts/contracts/registry/CiphernodeRegistryOwnable.sol',
-      '@enclave-e3/contracts/contracts/registry/BondingRegistry.sol',
-      '@enclave-e3/contracts/contracts/slashing/SlashingManager.sol',
-      '@enclave-e3/contracts/contracts/token/EnclaveToken.sol',
-      '@enclave-e3/contracts/contracts/token/EnclaveTicketToken.sol',
-      '@enclave-e3/contracts/contracts/test/MockCiphernodeRegistry.sol',
-      '@enclave-e3/contracts/contracts/test/MockComputeProvider.sol',
-      '@enclave-e3/contracts/contracts/test/MockDecryptionVerifier.sol',
-      '@enclave-e3/contracts/contracts/test/MockPkVerifier.sol',
-      '@enclave-e3/contracts/contracts/test/MockE3Program.sol',
-      '@enclave-e3/contracts/contracts/test/MockSlashingVerifier.sol',
-      '@enclave-e3/contracts/contracts/test/MockStableToken.sol',
-      '@enclave-e3/contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol',
-      '@enclave-e3/contracts/contracts/verifiers/bfv/BfvPkVerifier.sol',
-      '@enclave-e3/contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol',
-      '@enclave-e3/contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol',
+      '@interfold/contracts/contracts/Interfold.sol',
+      '@interfold/contracts/contracts/lib/InterfoldPricing.sol',
+      '@interfold/contracts/contracts/registry/CiphernodeRegistryOwnable.sol',
+      '@interfold/contracts/contracts/registry/BondingRegistry.sol',
+      '@interfold/contracts/contracts/slashing/SlashingManager.sol',
+      '@interfold/contracts/contracts/token/InterfoldToken.sol',
+      '@interfold/contracts/contracts/token/InterfoldTicketToken.sol',
+      '@interfold/contracts/contracts/test/MockCiphernodeRegistry.sol',
+      '@interfold/contracts/contracts/test/MockComputeProvider.sol',
+      '@interfold/contracts/contracts/test/MockDecryptionVerifier.sol',
+      '@interfold/contracts/contracts/test/MockPkVerifier.sol',
+      '@interfold/contracts/contracts/test/MockE3Program.sol',
+      '@interfold/contracts/contracts/test/MockSlashingVerifier.sol',
+      '@interfold/contracts/contracts/test/MockStableToken.sol',
+      '@interfold/contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol',
+      '@interfold/contracts/contracts/verifiers/bfv/BfvPkVerifier.sol',
+      '@interfold/contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol',
+      '@interfold/contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol',
     ],
     settings: {
       optimizer: {

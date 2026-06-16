@@ -1,5 +1,9 @@
 {
-  "installCommand": "pnpm install --no-link-workspace-packages --no-lockfile",
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": "vite",
+  "installCommand": "corepack enable && corepack prepare pnpm@10.7.1 --activate && pnpm install --ignore-workspace",
+  "buildCommand": "pnpm run build",
+  "outputDirectory": "dist",
   "headers": [
     {
       "source": "/(.*)",

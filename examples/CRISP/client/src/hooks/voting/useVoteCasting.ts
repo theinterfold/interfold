@@ -14,12 +14,12 @@ import { useNotificationAlertContext } from '@/context/NotificationAlert/Notific
 import { Poll } from '@/model/poll.model'
 import { BroadcastVoteRequest, Vote, VoteStateLite, VotingRound } from '@/model/vote.model'
 import { hashMessage } from 'viem'
-import { useEnclaveServer } from '../enclave/useEnclaveServer'
+import { useInterfoldServer } from '../interfold/useInterfoldServer'
 import { getRandomVoterToMask } from '@/utils/voters'
 import { handleGenericError } from '@/utils/handle-generic-error'
 import { NUM_OPTIONS } from '@/utils/constants'
 
-const ENCLAVE_API = import.meta.env.VITE_ENCLAVE_API
+const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
 
 export type VotingStep = 'idle' | 'signing' | 'encrypting' | 'generating_proof' | 'broadcasting' | 'confirming' | 'complete' | 'error'
 
@@ -73,7 +73,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
   const votingRound = customVotingRound ?? contextVotingRound
 
   const { signMessageAsync } = useSignMessage()
-  const { getEligibleVoters, getMerkleLeaves } = useEnclaveServer()
+  const { getEligibleVoters, getMerkleLeaves } = useInterfoldServer()
   const { showToast } = useNotificationAlertContext()
   const navigate = useNavigate()
   const [isVoting, setIsVoting] = useState<boolean>(false)
@@ -95,7 +95,7 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
       if (!votingRound) throw new Error('No voting round available for proof generation')
 
       try {
-        const sdk = new CrispSDK(ENCLAVE_API)
+        const sdk = new CrispSDK(INTERFOLD_API)
         const publicKey = new Uint8Array(votingRound.pk_bytes)
 
         const proof = isAMask

@@ -33,7 +33,7 @@ impl Fs {
     }
 
     pub fn physical() -> Result<Self> {
-        Ok(Self::physical_path("/")?)
+        Self::physical_path("/")
     }
 }
 
@@ -78,7 +78,7 @@ impl FileCopier for Fs {
         let copy_contents_only = src_str.ends_with("/.");
 
         let actual_src = if copy_contents_only {
-            let trimmed: &str = src_str.trim_end_matches("/.").as_ref();
+            let trimmed: &str = src_str.trim_end_matches("/.");
             self.root.join(trimmed)?
         } else {
             self.root.join(src_str.as_ref())?

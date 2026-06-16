@@ -1,7 +1,7 @@
 [package]
 name = "lib"
 type = "lib"
-authors = ["Gnosis Guild / Enclave"]
+authors = ["Gnosis Guild / Interfold"]
 
 [dependencies]
 poseidon = { tag = "v0.1.1", git = "https://github.com/noir-lang/poseidon" }

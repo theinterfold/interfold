@@ -12,7 +12,7 @@ use std::path::PathBuf;
 /// Examples:
 /// - "/foo/bar/thing.pdf" -> "/foo/bar/thing.0.pdf"
 /// - "/foo/bar/thing" -> "/foo/bar/thing.0"
-pub fn enumerate_path(path: &PathBuf, index: usize) -> PathBuf {
+pub fn enumerate_path(path: &std::path::Path, index: usize) -> PathBuf {
     if let Some(parent) = path.parent() {
         if let Some(file_name) = path.file_name() {
             if let Some(file_name_str) = file_name.to_str() {

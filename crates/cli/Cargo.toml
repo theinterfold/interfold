@@ -3,12 +3,12 @@ name = "e3-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "E3 - Enclave CLI"
-repository = "https://github.com/gnosisguild/enclave/crates/cli"
+description = "E3 - Interfold CLI"
+repository = "https://github.com/gnosisguild/interfold/crates/cli"
 build = "build.rs"
 
 [[bin]]
-name = "enclave"
+name = "interfold"
 path = "src/main.rs"
 
 [dependencies]
@@ -42,6 +42,8 @@ opentelemetry-otlp = { workspace = true }
 opentelemetry-stdout = { workspace = true }
 opentelemetry_sdk = { workspace = true }
 petname = { workspace = true }
+rand08 = { package = "rand", version = "=0.8.5", features = ["std", "std_rng"] }
+phf = { workspace = true }
 rand = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
@@ -52,3 +54,6 @@ tracing-opentelemetry = { workspace = true }
 tracing-subscriber = { workspace = true } 
 url = { workspace = true }
 zeroize = { workspace = true }
+
+[build-dependencies]
+serde_json = { workspace = true }

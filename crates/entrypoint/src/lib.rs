@@ -5,9 +5,11 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 pub mod config;
+pub mod fence;
 pub mod helpers;
 pub mod net;
 pub mod nodes;
 pub mod password;
 pub mod start;
+pub mod validate;
 pub mod wallet;

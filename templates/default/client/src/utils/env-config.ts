@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-export const ENCLAVE_ADDRESS = import.meta.env.VITE_ENCLAVE_ADDRESS
+export const INTERFOLD_ADDRESS = import.meta.env.VITE_INTERFOLD_ADDRESS
 export const E3_PROGRAM_ADDRESS = import.meta.env.VITE_E3_PROGRAM_ADDRESS
 export const REGISTRY_ADDRESS = import.meta.env.VITE_REGISTRY_ADDRESS
 export const BONDING_REGISTRY_ADDRESS = import.meta.env.VITE_BONDING_REGISTRY_ADDRESS
@@ -13,7 +13,7 @@ export const RPC_URL = import.meta.env.VITE_RPC_URL || 'http://localhost:8545'
 export const THRESHOLD_BFV_PARAMS_PRESET_NAME = import.meta.env.VITE_THRESHOLD_BFV_PARAMS_PRESET_NAME || 'INSECURE_THRESHOLD_512'
 
 const requiredEnvVars = {
-  VITE_ENCLAVE_ADDRESS: ENCLAVE_ADDRESS,
+  VITE_INTERFOLD_ADDRESS: INTERFOLD_ADDRESS,
   VITE_E3_PROGRAM_ADDRESS: E3_PROGRAM_ADDRESS,
   VITE_REGISTRY_ADDRESS: REGISTRY_ADDRESS,
   VITE_BONDING_REGISTRY_ADDRESS: BONDING_REGISTRY_ADDRESS,
@@ -46,7 +46,7 @@ export function validateEnvVars(): void {
 export function getContractAddresses() {
   validateEnvVars()
   return {
-    enclave: ENCLAVE_ADDRESS as `0x${string}`,
+    interfold: INTERFOLD_ADDRESS as `0x${string}`,
     ciphernodeRegistry: REGISTRY_ADDRESS as `0x${string}`,
     bondingRegistry: BONDING_REGISTRY_ADDRESS as `0x${string}`,
     e3Program: E3_PROGRAM_ADDRESS as `0x${string}`,

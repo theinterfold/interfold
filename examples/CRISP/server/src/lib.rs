@@ -5,5 +5,6 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 pub mod config;
+pub mod deployments;
 pub mod logger;
 pub mod server;

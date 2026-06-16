@@ -8,7 +8,7 @@ use anyhow::{bail, Context, Result};
 use derivative::Derivative;
 use e3_utils::utility_types::ArcBytes;
 use fhe::bfv::{BfvParameters, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
-use fhe_math::rq::Poly;
+use fhe_math::rq::{Ntt, Poly};
 use fhe_traits::{
     DeserializeParametrized, FheDecoder, FheDecrypter, FheEncoder, FheEncrypter,
     Serialize as FheSerialize,
@@ -28,7 +28,7 @@ pub use crate::helpers::{deserialize_secret_key, serialize_secret_key};
 ///
 /// Each share is encrypted as multiple BFV ciphertexts (one per modulus level).
 /// The recipient can only decrypt using their corresponding BFV secret key.
-#[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[derivative(Debug)]
 pub struct BfvEncryptedShare {
     /// BFV ciphertexts, one per modulus level
@@ -43,15 +43,15 @@ pub struct BfvEncryptionWitness {
     /// The BFV ciphertext produced.
     pub ciphertext: Ciphertext,
     /// Encryption randomness u (RNS form).
-    pub u_rns: Poly,
+    pub u_rns: Poly<Ntt>,
     /// Encryption error e0 (RNS form).
-    pub e0_rns: Poly,
+    pub e0_rns: Poly<Ntt>,
     /// Encryption error e1 (RNS form).
-    pub e1_rns: Poly,
+    pub e1_rns: Poly<Ntt>,
 }
 
 /// Debug helper for Vec<ArcBytes>
-fn debug_vec_arcbytes(v: &Vec<ArcBytes>, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+fn debug_vec_arcbytes(v: &[ArcBytes], f: &mut std::fmt::Formatter) -> std::fmt::Result {
     write!(
         f,
         "[{} ciphertexts, total {} bytes]",
@@ -187,14 +187,6 @@ impl BfvEncryptedShare {
     }
 }
 
-impl Default for BfvEncryptedShare {
-    fn default() -> Self {
-        Self {
-            ciphertexts: Vec::new(),
-        }
-    }
-}
-
 /// A collection of BFV-encrypted shares for all recipients.
 ///
 /// A collection of BFV-encrypted shares for all recipients.
@@ -203,7 +195,7 @@ impl Default for BfvEncryptedShare {
 /// with that recipient's public key. This struct holds all encrypted shares
 /// from a single sender. A `None` slot indicates the recipient was deliberately
 /// skipped (e.g. the sender does not encrypt their own share during DKG).
-#[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 #[derivative(Debug)]
 pub struct BfvEncryptedShares {
     /// Encrypted shares indexed by recipient party_id (0-based).
@@ -222,13 +214,12 @@ impl BfvEncryptedShares {
         let num_parties = recipient_pks.len();
         let mut shares = Vec::with_capacity(num_parties);
 
-        for party_id in 0..num_parties {
+        for (party_id, recipient_pk) in recipient_pks.iter().enumerate() {
             let share = secret
                 .extract_party_share(party_id)
                 .context(format!("Failed to extract share for party {}", party_id))?;
 
-            let encrypted =
-                BfvEncryptedShare::encrypt(&share, &recipient_pks[party_id], params, rng)?;
+            let encrypted = BfvEncryptedShare::encrypt(&share, recipient_pk, params, rng)?;
 
             shares.push(Some(encrypted));
         }
@@ -339,22 +330,15 @@ impl BfvEncryptedShares {
     }
 }
 
-impl Default for BfvEncryptedShares {
-    fn default() -> Self {
-        Self { shares: Vec::new() }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use e3_fhe_params::{BfvParamSet, BfvPreset};
-    use rand::rngs::OsRng;
 
     #[test]
     fn test_encrypt_decrypt_share() {
         let params = BfvParamSet::from(BfvPreset::InsecureDkg512).build_arc();
-        let mut rng = OsRng;
+        let mut rng = rand::rng();
 
         // Generate key pair
         let sk = SecretKey::random(&params, &mut rng);
@@ -385,7 +369,7 @@ mod tests {
     #[test]
     fn test_secret_key_serialization() {
         let params = BfvParamSet::from(BfvPreset::InsecureDkg512).build_arc();
-        let mut rng = OsRng;
+        let mut rng = rand::rng();
 
         // Generate a secret key
         let sk = SecretKey::random(&params, &mut rng);
@@ -404,7 +388,7 @@ mod tests {
     #[test]
     fn test_encrypt_all_extended_for_share_indices_uses_real_share_rows() {
         let params = BfvParamSet::from(BfvPreset::InsecureDkg512).build_arc();
-        let mut rng = OsRng;
+        let mut rng = rand::rng();
 
         let _sk_one = SecretKey::random(&params, &mut rng);
         let pk_one = PublicKey::new(&_sk_one, &mut rng);

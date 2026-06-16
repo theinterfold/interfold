@@ -38,7 +38,7 @@ pub enum ChannelType {
     Channel(ResponseChannel<ProtocolResponse>), // actual libp2p response channel
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 /// DirectResponder is used to respond to incoming libp2p requests.
 ///
 /// # Example
@@ -77,17 +77,6 @@ pub struct DirectResponder {
     response: Option<ProtocolResponse>,
     channel: OnceTake<ChannelType>,
     net_cmds: mpsc::Sender<NetCommand>,
-}
-impl Clone for DirectResponder {
-    fn clone(&self) -> Self {
-        Self {
-            id: self.id.clone(),
-            request: self.request.clone(),
-            response: self.response.clone(),
-            channel: self.channel.clone(),
-            net_cmds: self.net_cmds.clone(),
-        }
-    }
 }
 
 impl DirectResponder {
@@ -147,10 +136,9 @@ impl DirectResponder {
         self.response = Some(response);
         let cmds = self.net_cmds.clone();
         let incoming = IncomingResponse::new(self);
-        Ok(cmds
-            .clone()
+        cmds.clone()
             .try_send(NetCommand::IncomingResponse(incoming))
-            .map_err(|e| anyhow!("Failed to send response command {:?}", e))?)
+            .map_err(|e| anyhow!("Failed to send response command {:?}", e))
     }
 
     /// Request is ok returning response

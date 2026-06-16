@@ -6,23 +6,23 @@
 
 //! Test Application
 //! The following simulates a user application for testing
-use rand::{distributions::Uniform, prelude::Distribution, thread_rng};
+use rand::distr::{Distribution, Uniform};
 
 use fhe_traits::{FheEncoder, FheEncrypter};
 use std::sync::Arc;
 
-use fhe::bfv::{self, Ciphertext, Encoding, Plaintext, PublicKey};
+use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey};
 
 /// Each Voter encrypts `num_votes_per_voter` random bits and returns the ciphertexts along with
 /// the underlying plaintexts for verification.
 pub fn generate_ciphertexts(
     pk: &PublicKey,
-    params: Arc<bfv::BfvParameters>,
     num_voters: usize,
     num_votes_per_voter: usize,
 ) -> (Vec<Vec<Ciphertext>>, Vec<Vec<u64>>) {
-    let dist = Uniform::new_inclusive(0, 1);
-    let mut rng = thread_rng();
+    let params = &pk.par;
+    let dist = Uniform::new_inclusive(0, 1).expect("valid uniform range");
+    let mut rng = rand::rng();
     println!("generating ciphertexts...");
     let numbers: Vec<Vec<u64>> = (0..num_voters)
         .map(|_| {
@@ -37,12 +37,12 @@ pub fn generate_ciphertexts(
         .iter()
         .enumerate()
         .map(|(ni, vals)| {
-            let mut rng = thread_rng();
+            let mut rng = rand::rng();
             vals.iter()
                 .enumerate()
                 .map(|(i, &val)| {
                     println!("Encrypting {}/{}/{}", i, ni, nl);
-                    let pt = Plaintext::try_encode(&[val], Encoding::poly(), &params).unwrap();
+                    let pt = Plaintext::try_encode(&[val], Encoding::poly(), params).unwrap();
                     pk.try_encrypt(&pt, &mut rng).unwrap()
                 })
                 .collect()
@@ -55,7 +55,7 @@ pub fn generate_ciphertexts(
 /// Tally the submitted ciphertexts column-wise to produce aggregated sums.
 pub fn run_application(
     ciphertexts: &[Vec<Ciphertext>],
-    params: Arc<bfv::BfvParameters>,
+    pk: &PublicKey,
     num_votes_per_voter: usize,
 ) -> Vec<Arc<Ciphertext>> {
     println!("Running application");
@@ -64,7 +64,7 @@ pub fn run_application(
     }
 
     let mut sums: Vec<Ciphertext> = (0..num_votes_per_voter)
-        .map(|_| Ciphertext::zero(&params))
+        .map(|_| Ciphertext::zero(&pk.par))
         .collect();
 
     for ct_group in ciphertexts {

@@ -73,7 +73,7 @@ impl CommitmentLink for C6ToC7DCommitmentLink {
             return false;
         }
 
-        if target_public_signals.len() % FIELD_BYTE_LEN != 0 {
+        if !target_public_signals.len().is_multiple_of(FIELD_BYTE_LEN) {
             return false;
         }
 

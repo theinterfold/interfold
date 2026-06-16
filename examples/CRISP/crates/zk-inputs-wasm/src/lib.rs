@@ -8,7 +8,6 @@
 //!
 //! This crate provides JavaScript bindings for the CRISP ZK inputs generator using WASM.
 
-use js_sys;
 use wasm_bindgen::prelude::*;
 use zk_inputs::ZKInputsGenerator as CoreZKInputsGenerator;
 

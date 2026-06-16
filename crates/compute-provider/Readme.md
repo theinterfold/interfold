@@ -1,7 +1,7 @@
 # FHE Compute Manager
 
 This project provides a flexible and efficient framework for managing Secure Programs (SP) of the
-[Enclave Protocol](enclave.gg). It supports both sequential and parallel processing, with the
+[Interfold Protocol](interfold.gg). It supports both sequential and parallel processing, with the
 ability to integrate various compute providers.
 
 ## Features
@@ -17,7 +17,7 @@ To use this library, add it to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-e3-compute-provider = { git = "https://github.com/gnosisguild/enclave.git", path = "crates/compute-provider"}
+e3-compute-provider = { git = "https://github.com/gnosisguild/interfold.git", path = "crates/compute-provider"}
 ```
 
 ## Usage

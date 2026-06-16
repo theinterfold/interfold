@@ -61,4 +61,4 @@ defines `N`, `L`, `QIS`, bounds, `PARITY_MATRIX`, per-circuit `Configs`, and
 | ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------- |
 | Binary packages, `CircuitName`, build and test | [`circuits/README.md`](../../README.md)                                                                        |
 | Phases, PV-TBFV, circuit identifiers           | [Cryptography](https://docs.theinterfold.com/cryptography) · [source](../../../docs/pages/cryptography.mdx)    |
-| Toolchain, `enclave noir`, compile scripts     | [Noir Circuits](https://docs.theinterfold.com/noir-circuits) · [source](../../../docs/pages/noir-circuits.mdx) |
+| Toolchain, `interfold noir`, compile scripts   | [Noir Circuits](https://docs.theinterfold.com/noir-circuits) · [source](../../../docs/pages/noir-circuits.mdx) |

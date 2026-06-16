@@ -10,7 +10,7 @@ import CardContent from '../components/CardContent'
 import { useWizard } from '../../context/WizardContext'
 
 /**
- * Results component - Fifth step in the Enclave wizard flow
+ * Results component - Fifth step in the Interfold wizard flow
  *
  * This component displays the results of the computation, including the encrypted
  * computation, the E3 ID, the transaction hash, and the raw output.
@@ -101,7 +101,7 @@ const Results: React.FC = () => {
 
         <button
           onClick={handleReset}
-          className='w-full rounded-lg bg-enclave-400 px-6 py-3 font-semibold text-slate-800 transition-all duration-200 hover:bg-enclave-300 hover:shadow-md'
+          className='w-full rounded-lg bg-interfold-400 px-6 py-3 font-semibold text-slate-800 transition-all duration-200 hover:bg-interfold-300 hover:shadow-md'
         >
           Start New Computation
         </button>

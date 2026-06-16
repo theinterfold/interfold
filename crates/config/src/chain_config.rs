@@ -24,6 +24,10 @@ pub struct ChainConfig {
     pub rpc_auth: RpcAuth,
     pub contracts: ContractAddresses,
     pub finalization_ms: Option<u64>,
+    /// Number of block confirmations to wait before ingesting an on-chain log.
+    /// `None`/`0` reads to head; a positive value makes historical/backfill
+    /// ingestion reorg-safe by only acting on logs buried this deep.
+    pub reorg_confirmations: Option<u64>,
     pub chain_id: Option<u64>,
 }
 
@@ -57,7 +61,8 @@ impl TryFrom<&ChainConfig> for EvmEventConfigChain {
             lowest_block = [lowest_block, deploy_block].into_iter().flatten().min();
         }
         let start_block = lowest_block.unwrap_or(0);
-        Ok(EvmEventConfigChain::new(start_block))
+        Ok(EvmEventConfigChain::new(start_block)
+            .with_confirmations(value.reorg_confirmations.unwrap_or(0)))
     }
 }
 

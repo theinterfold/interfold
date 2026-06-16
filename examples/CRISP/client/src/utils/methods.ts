@@ -23,6 +23,9 @@ export const convertTimestampToDate = (timestamp: number, secondsToAdd: number =
 }
 
 export const getChain = (): Chain => {
+  const chainId = Number.parseInt(String(import.meta.env.VITE_CHAIN_ID ?? ''), 10)
+  if (chainId === anvil.id) return anvil
+  if (chainId === sepolia.id) return sepolia
   return import.meta.env.DEV ? anvil : sepolia
 }
 
@@ -50,13 +53,13 @@ export const convertPollData = (request: PollRequestResult[]): PollResult[] => {
     const options: PollOption[] = [
       {
         value: 0,
-        votes: poll.tally[0] ?? 0,
+        votes: Number.parseInt(String(poll.tally[0] ?? '0'), 10) || 0,
         label: poll.option_1_emoji,
         checked: false,
       },
       {
         value: 1,
-        votes: poll.tally[1] ?? 0,
+        votes: Number.parseInt(String(poll.tally[1] ?? '0'), 10) || 0,
         label: poll.option_2_emoji,
         checked: false,
       },

@@ -6,7 +6,7 @@
 
 import { network } from 'hardhat'
 import { zeroHash } from 'viem'
-import { CRISPProgram, HonkVerifier, MockEnclave, PoseidonT3 } from '../types'
+import { CRISPProgram, HonkVerifier, MockInterfold, PoseidonT3 } from '../types'
 
 // Non-zero address used in the tests.
 export const nonZeroAddress = '0xc6e7DF5E7b4f2A278906862b61205850344D4e7d'
@@ -37,13 +37,13 @@ export async function deployPoseidonT3() {
 }
 
 /**
- * Deploy MockEnclave and return the address.
- * @returns The address of the deployed MockEnclave contract.
+ * Deploy MockInterfold and return the address.
+ * @returns The address of the deployed MockInterfold contract.
  */
-export async function deployMockEnclave() {
-  const contract = await deployContract('MockEnclave')
+export async function deployMockInterfold() {
+  const contract = await deployContract('MockInterfold')
 
-  return contract as unknown as MockEnclave
+  return contract as unknown as MockInterfold
 }
 
 /**
@@ -67,11 +67,11 @@ export async function deployHonkVerifier() {
 }
 
 export async function deployCRISPProgram(
-  contracts: { mockEnclave?: MockEnclave; honkVerifier?: HonkVerifier; poseidonT3?: PoseidonT3 } = {},
+  contracts: { mockInterfold?: MockInterfold; honkVerifier?: HonkVerifier; poseidonT3?: PoseidonT3 } = {},
 ) {
   const poseidonT3 = contracts.poseidonT3 || (await deployPoseidonT3())
   const honkVerifier = contracts.honkVerifier || (await deployHonkVerifier())
-  const mockEnclave = contracts.mockEnclave || (await deployMockEnclave())
+  const mockInterfold = contracts.mockInterfold || (await deployMockInterfold())
 
   const programFactory = await ethers.getContractFactory('CRISPProgram', {
     libraries: {
@@ -79,7 +79,7 @@ export async function deployCRISPProgram(
     },
   })
 
-  const program = await programFactory.deploy(await mockEnclave.getAddress(), nonZeroAddress, await honkVerifier.getAddress(), zeroHash)
+  const program = await programFactory.deploy(await mockInterfold.getAddress(), nonZeroAddress, await honkVerifier.getAddress(), zeroHash)
 
   await program.waitForDeployment()
 

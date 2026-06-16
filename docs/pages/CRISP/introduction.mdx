@@ -29,7 +29,7 @@ coercion. CRISP mitigates these risks through:
 ## Project Structure
 
 CRISP, whose implementation is available in the
-[Interfold repository](https://github.com/gnosisguild/enclave/tree/main/examples/CRISP), follows a
+[Interfold repository](https://github.com/gnosisguild/interfold/tree/main/examples/CRISP), follows a
 modern structure with clear separation of concerns:
 
 ```
@@ -43,13 +43,13 @@ CRISP/
 ├── crates/                  # Rust libraries used by the server
 ├── circuits/                # Noir zero-knowledge circuits
 ├── scripts/                 # Development scripts for running, testing, and deployment
-├── enclave.config.yaml      # Ciphernodes + aggregator config
+├── interfold.config.yaml      # Ciphernodes + aggregator config
 └── docker-compose.yaml      # Optional multi-node deployment
 ```
 
 ### Client Application
 
-The [client](https://github.com/gnosisguild/enclave/tree/main/examples/CRISP/client) is a React
+The [client](https://github.com/gnosisguild/interfold/tree/main/examples/CRISP/client) is a React
 application built with TypeScript that provides the user a voting interface. It uses the CRISP
 [SDK](/CRISP/introduction#javascript-sdk) and [server](/CRISP/introduction#coordination-server)
 endpoints to deliver the following capabilities:
@@ -61,11 +61,11 @@ endpoints to deliver the following capabilities:
 
 ### Coordination Server
 
-The [server](https://github.com/gnosisguild/enclave/tree/main/examples/CRISP/server) is a Rust-based
-coordination service that manages the E3 lifecycle and drives the same SDK from a privileged wallet.
-It acts as a relayer and facilitator, handling blockchain interactions on behalf of clients.
-However, clients can bypass the server entirely and interact directly with the blockchain if they
-prefer.
+The [server](https://github.com/gnosisguild/interfold/tree/main/examples/CRISP/server) is a
+Rust-based coordination service that manages the E3 lifecycle and drives the same SDK from a
+privileged wallet. It acts as a relayer and facilitator, handling blockchain interactions on behalf
+of clients. However, clients can bypass the server entirely and interact directly with the
+blockchain if they prefer.
 
 The server's key responsibilities include:
 
@@ -77,10 +77,10 @@ The server's key responsibilities include:
 
 ### FHE Program
 
-The [FHE program](https://github.com/gnosisguild/enclave/tree/main/examples/CRISP/program) is a Rust
-guest program that runs inside the RISC Zero zkVM to perform homomorphic addition on encrypted votes
-(BFV ciphertexts). It computes the encrypted tally without decrypting individual votes, ensuring
-voter privacy throughout the process.
+The [FHE program](https://github.com/gnosisguild/interfold/tree/main/examples/CRISP/program) is a
+Rust guest program that runs inside the RISC Zero zkVM to perform homomorphic addition on encrypted
+votes (BFV ciphertexts). It computes the encrypted tally without decrypting individual votes,
+ensuring voter privacy throughout the process.
 
 The program decodes BFV parameters and ciphertexts, then sums all encrypted votes homomorphically to
 produce a single encrypted ciphertext containing the total. RISC Zero generates zero-knowledge
@@ -89,7 +89,7 @@ tally results.
 
 ### Zero-knowledge Circuits
 
-[Noir circuits](https://github.com/gnosisguild/enclave/tree/main/examples/CRISP/circuits) provide
+[Noir circuits](https://github.com/gnosisguild/interfold/tree/main/examples/CRISP/circuits) provide
 zero-knowledge proofs for vote validation before votes are accepted into the system. These circuits
 verify that votes are correctly encrypted using BFV fully homomorphic encryption under a valid
 public key, check that the voter's address is included in the eligibility Merkle tree, and ensure
@@ -97,13 +97,13 @@ votes conform to the expected structure and values. The circuits also support ma
 anyone to submit zero votes to mask slot activity and reduce the risk of collusion and coercion.
 
 For detailed documentation on how the circuit works, see the
-[main circuit implementation](https://github.com/gnosisguild/enclave/blob/main/examples/CRISP/circuits/src/main.nr).
+[main circuit implementation](https://github.com/gnosisguild/interfold/blob/main/examples/CRISP/circuits/src/main.nr).
 
 ### Smart Contracts
 
 The CRISP smart contracts implement the E3 program interface and handle the on-chain logic for
 voting rounds. The main contract is
-[CRISPProgram.sol](https://github.com/gnosisguild/enclave/tree/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol),
+[CRISPProgram.sol](https://github.com/gnosisguild/interfold/tree/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol),
 which orchestrates the entire voting process.
 
 When a new voting round is initialized, the `validate()` function sets up round parameters and
@@ -119,15 +119,16 @@ corresponds to the correct input Merkle root, parameters hash, and ciphertext ou
 `decodeTally()` decodes the encrypted results into readable yes and no vote counts.
 
 The
-[CRISPVerifier.sol](https://github.com/gnosisguild/enclave/tree/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPVerifier.sol)
+[CRISPVerifier.sol](https://github.com/gnosisguild/interfold/tree/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPVerifier.sol)
 contract is a Honk verifier generated from compiled Noir circuits that verifies zero-knowledge
 proofs demonstrating votes are correctly encrypted using BFV fully homomorphic encryption under the
 valid public key.
 
 ### JavaScript SDK
 
-The [CRISP SDK](https://github.com/gnosisguild/enclave/tree/main/examples/CRISP/packages/crisp-sdk)
-is a TypeScript library that abstracts away the complex cryptographic operations required for vote
+The
+[CRISP SDK](https://github.com/gnosisguild/interfold/tree/main/examples/CRISP/packages/crisp-sdk) is
+a TypeScript library that abstracts away the complex cryptographic operations required for vote
 submission and proof generation. It fetches round details from the coordination server, queries
 token balances at snapshot blocks to verify eligibility, and generates Merkle proofs demonstrating
 voter inclusion in the eligibility tree.

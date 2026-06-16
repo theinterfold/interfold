@@ -4,8 +4,8 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::backends::SortitionBackend;
-use crate::sortition::NodeStateStore;
+use crate::domain::backends::SortitionBackend;
+use crate::domain::node_registry::NodeStateStore;
 use crate::CiphernodeSelectorState;
 use e3_data::{Repositories, Repository};
 use e3_events::{Committee, E3id, StoreKeys};

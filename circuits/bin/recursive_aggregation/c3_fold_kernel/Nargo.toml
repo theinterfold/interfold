@@ -1,7 +1,7 @@
 [package]
 name = "c3_fold_kernel"
 type = "bin"
-authors = ["Gnosis Guild / Enclave"]
+authors = ["Gnosis Guild / Interfold"]
 
 [dependencies]
 lib = { path = "../../../lib" }

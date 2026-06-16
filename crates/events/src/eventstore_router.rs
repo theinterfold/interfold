@@ -8,7 +8,7 @@ use crate::{
     events::{EventStoreQueryResponse, StoreEventRequested},
     AggregateId, EventContextAccessors, EventLog, SequenceIndex,
 };
-use crate::{CorrelationId, Die, EnclaveEvent, EventStoreQueryBy, Seq, SeqAgg, Ts, TsAgg};
+use crate::{CorrelationId, Die, EventStoreQueryBy, InterfoldEvent, Seq, SeqAgg, Ts, TsAgg};
 use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Recipient};
 use anyhow::Result;
 use e3_utils::MAILBOX_LIMIT_LARGE;
@@ -20,7 +20,7 @@ struct QueryAggregator {
     parent_id: CorrelationId,
     sender: Recipient<EventStoreQueryResponse>,
     pending: HashMap<CorrelationId, AggregateId>,
-    collected_events: Vec<EnclaveEvent>,
+    collected_events: Vec<InterfoldEvent>,
 }
 
 impl QueryAggregator {
@@ -37,6 +37,7 @@ impl QueryAggregator {
         self.pending.insert(sub_query_id, aggregate_id);
     }
 
+    #[allow(dead_code)]
     fn pending_aggregates(&self) -> Vec<&AggregateId> {
         self.pending.values().collect()
     }
@@ -141,7 +142,7 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
 
         let mut aggregator = QueryAggregator::new(parent_id, sender);
         for (aggregate_id, _, sub_query_id, _) in &sub_queries {
-            aggregator.add_pending(*sub_query_id, aggregate_id.clone());
+            aggregator.add_pending(*sub_query_id, *aggregate_id);
         }
         let aggregator_addr = aggregator.start();
 
@@ -186,7 +187,7 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
 
         let mut aggregator = QueryAggregator::new(parent_id, sender);
         for (aggregate_id, _, sub_query_id, _) in &sub_queries {
-            aggregator.add_pending(*sub_query_id, aggregate_id.clone());
+            aggregator.add_pending(*sub_query_id, *aggregate_id);
         }
         let aggregator_addr = aggregator.start();
 

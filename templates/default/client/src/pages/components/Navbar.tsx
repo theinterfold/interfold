@@ -49,7 +49,7 @@ const Navbar: React.FC = () => {
     <nav className='w-full border-b border-slate-200 bg-white/80 px-6 backdrop-blur-sm lg:px-9'>
       <div className='mx-auto max-w-screen-xl'>
         <div className='flex h-20 items-center justify-between'>
-          <h1 className='text-2xl font-bold text-slate-800'>Enclave E3</h1>
+          <h1 className='text-2xl font-bold text-slate-800'>Interfold E3</h1>
           <div className='flex items-center gap-3'>
             <NetworkSwitchButton />
             <ConnectKitButton />

@@ -17,7 +17,7 @@ pub async fn preflight(config: &AppConfig) -> Result<()> {
     let pm = FilePasswordManager::new(key_file);
 
     if pm.is_set() {
-        bail!("Keyfile already exists. Try using `enclave password set` to set a new password or `enclave password delete` to remove the existing one.")
+        bail!("Keyfile already exists. Try using `interfold password set` to set a new password or `interfold password delete` to remove the existing one.")
     }
 
     Ok(())

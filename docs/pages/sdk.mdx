@@ -5,16 +5,16 @@ description: 'Use the TypeScript + React SDKs to drive E3 programs from clients 
 
 # Interfold SDK Overview
 
-The Interfold SDK (`@enclave-e3/sdk`) and React helpers (`@enclave-e3/react`) provide a
+The Interfold SDK (`@interfold/sdk`) and React helpers (`@interfold/react`) provide a
 batteries-included client stack for requesting E3 computations, subscribing to protocol events, and
 coordinating custom frontends or backend services. Both packages ship in this repository (see
-`packages/enclave-sdk` and `packages/enclave-react`).
+`packages/interfold-sdk` and `packages/interfold-react`).
 
 ## Installation
 
 ```bash
-pnpm add @enclave-e3/sdk           # TypeScript SDK
-pnpm add @enclave-e3/react         # React hooks (optional)
+pnpm add @interfold/sdk           # TypeScript SDK
+pnpm add @interfold/react         # React hooks (optional)
 ```
 
 For browser projects using WASM (encryption helpers, FHE keygen), configure Vite per the SDK README:
@@ -26,7 +26,7 @@ import topLevelAwait from 'vite-plugin-top-level-await'
 
 export default defineConfig({
   optimizeDeps: {
-    exclude: ['@enclave-e3/wasm'],
+    exclude: ['@interfold/wasm'],
   },
   plugins: [wasm(), topLevelAwait()],
 })
@@ -35,7 +35,7 @@ export default defineConfig({
 ## Core client
 
 ```ts
-import { EnclaveSDK, EnclaveEventType, RegistryEventType } from '@enclave-e3/sdk'
+import { InterfoldSDK, InterfoldEventType, RegistryEventType } from '@interfold/sdk'
 import { createPublicClient, createWalletClient, http, custom } from 'viem'
 import { sepolia } from 'viem/chains'
 
@@ -48,11 +48,11 @@ const walletClient = createWalletClient({
   transport: custom(window.ethereum),
 })
 
-const sdk = new EnclaveSDK({
+const sdk = new InterfoldSDK({
   publicClient,
   walletClient,
   contracts: {
-    enclave: import.meta.env.VITE_ENCLAVE_ADDRESS,
+    interfold: import.meta.env.VITE_INTERFOLD_ADDRESS,
     ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
     feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
   },
@@ -65,13 +65,13 @@ const sdk = new EnclaveSDK({
 For server-side or simpler setups, use the factory method:
 
 ```ts
-import { EnclaveSDK } from '@enclave-e3/sdk'
+import { InterfoldSDK } from '@interfold/sdk'
 import { sepolia } from 'viem/chains'
 
-const sdk = EnclaveSDK.create({
+const sdk = InterfoldSDK.create({
   rpcUrl: import.meta.env.VITE_RPC_URL,
   contracts: {
-    enclave: import.meta.env.VITE_ENCLAVE_ADDRESS,
+    interfold: import.meta.env.VITE_INTERFOLD_ADDRESS,
     ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
     feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
   },
@@ -85,7 +85,7 @@ const sdk = EnclaveSDK.create({
 ### BFV Parameter Presets
 
 The `thresholdBfvParamsPresetName` field selects the BFV encryption parameters used by the client.
-It must match the `paramSet` index registered in the on-chain `Enclave` contract:
+It must match the `paramSet` index registered in the on-chain `Interfold` contract:
 
 | Preset Name              | On-chain `paramSet` | Degree | CRT moduli (L) | Security | Use case                           |
 | ------------------------ | ------------------- | ------ | -------------- | -------- | ---------------------------------- |
@@ -124,20 +124,20 @@ const e3Handler = (event) => {
   console.log('New request', event.data)
 }
 
-sdk.onEnclaveEvent(EnclaveEventType.E3_REQUESTED, e3Handler)
+sdk.onInterfoldEvent(InterfoldEventType.E3_REQUESTED, e3Handler)
 
-sdk.onEnclaveEvent(RegistryEventType.COMMITTEE_REQUESTED, (event) => {
+sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_REQUESTED, (event) => {
   console.log('Committee requested', event.data)
 })
 
 // Later, remember to clean up
-sdk.off(EnclaveEventType.E3_REQUESTED, e3Handler)
+sdk.off(InterfoldEventType.E3_REQUESTED, e3Handler)
 ```
 
 ### React hook
 
 ```tsx
-import { useEnclaveSDK } from '@enclave-e3/react'
+import { useInterfoldSDK } from '@interfold/react'
 
 export function Dashboard() {
   const {
@@ -146,14 +146,14 @@ export function Dashboard() {
     error,
     requestE3,
     getThresholdBfvParamsSet,
-    onEnclaveEvent,
+    onInterfoldEvent,
     off,
-    EnclaveEventType,
+    InterfoldEventType,
     RegistryEventType,
-  } = useEnclaveSDK({
+  } = useInterfoldSDK({
     autoConnect: true,
     contracts: {
-      enclave: import.meta.env.VITE_ENCLAVE_ADDRESS,
+      interfold: import.meta.env.VITE_INTERFOLD_ADDRESS,
       ciphernodeRegistry: import.meta.env.VITE_REGISTRY_ADDRESS,
       feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
     },
@@ -164,8 +164,8 @@ export function Dashboard() {
   useEffect(() => {
     if (!isInitialized) return
     const handle = (event) => console.log('E3 Requested', event.data)
-    onEnclaveEvent(EnclaveEventType.E3_REQUESTED, handle)
-    return () => off(EnclaveEventType.E3_REQUESTED, handle)
+    onInterfoldEvent(InterfoldEventType.E3_REQUESTED, handle)
+    return () => off(InterfoldEventType.E3_REQUESTED, handle)
   }, [isInitialized])
 
   if (error) return <div>Error: {error}</div>
@@ -197,7 +197,7 @@ const { encryptedData: vecData, proof: vecProof } = await sdk.encryptVectorAndGe
 const { encryptedData, circuitInputs } = await sdk.encryptNumberAndGenInputs(42n, publicKey)
 
 // Standalone import (pass preset name explicitly)
-import { generatePublicKey, encryptNumber } from '@enclave-e3/sdk'
+import { generatePublicKey, encryptNumber } from '@interfold/sdk'
 
 const pk = await generatePublicKey('SECURE_THRESHOLD_8192')
 const ct = await encryptNumber(42n, pk, 'SECURE_THRESHOLD_8192')
@@ -224,18 +224,18 @@ The SDK is organized into three submodules (`contracts`, `events`, `crypto`) tha
 independently for tree-shaking:
 
 ```ts
-import { generatePublicKey, encryptNumber } from '@enclave-e3/sdk/crypto'
-import { ContractClient } from '@enclave-e3/sdk/contracts'
-import { EventListener, EnclaveEventType } from '@enclave-e3/sdk/events'
+import { generatePublicKey, encryptNumber } from '@interfold/sdk/crypto'
+import { ContractClient } from '@interfold/sdk/contracts'
+import { EventListener, InterfoldEventType } from '@interfold/sdk/events'
 ```
 
-All exports are also available from the main `@enclave-e3/sdk` entry point.
+All exports are also available from the main `@interfold/sdk` entry point.
 
 ## Event types
 
 The SDK provides two event type enums for subscribing to on-chain events:
 
-### `EnclaveEventType`
+### `InterfoldEventType`
 
 | Enum Key                         | Solidity Event Name          |
 | -------------------------------- | ---------------------------- |
@@ -259,7 +259,7 @@ The SDK provides two event type enums for subscribing to on-chain events:
 | `COMMITTEE_REQUESTED`   | `CommitteeRequested`   |
 | `COMMITTEE_PUBLISHED`   | `CommitteePublished`   |
 | `COMMITTEE_FINALIZED`   | `CommitteeFinalized`   |
-| `ENCLAVE_SET`           | `EnclaveSet`           |
+| `INTERFOLD_SET`         | `InterfoldSet`         |
 | `OWNERSHIP_TRANSFERRED` | `OwnershipTransferred` |
 | `INITIALIZED`           | `Initialized`          |
 
@@ -310,7 +310,7 @@ import {
   getCurrentTimestamp,
   DEFAULT_COMPUTE_PROVIDER_PARAMS,
   DEFAULT_E3_CONFIG,
-} from '@enclave-e3/sdk'
+} from '@interfold/sdk'
 ```
 
 | Export                            | Description                                                       |
@@ -328,16 +328,17 @@ import {
 ## Configuration contract map
 
 Provide the Interfold, CiphernodeRegistry, and FeeToken addresses. The template exposes these via
-`.env` / `enclave.config.yaml`. For multi-chain apps, instantiate separate SDK instances per chain.
+`.env` / `interfold.config.yaml`. For multi-chain apps, instantiate separate SDK instances per
+chain.
 
 ## Working with the template
 
-`enclave init` generates the default template (see [Project Template](/project-template)). The
-client already wires `@enclave-e3/sdk` and `@enclave-e3/react`:
+`interfold init` generates the default template (see [Project Template](/project-template)). The
+client already wires `@interfold/sdk` and `@interfold/react`:
 
 - `client/src/sdk.ts` builds the shared SDK instance
-- `client/src/hooks/useE3.ts` uses `useEnclaveSDK` to expose helper hooks throughout the UI
-- `server/src/services/enclave.ts` instantiates the SDK with a server wallet using
+- `client/src/hooks/useE3.ts` uses `useInterfoldSDK` to expose helper hooks throughout the UI
+- `server/src/services/interfold.ts` instantiates the SDK with a server wallet using
   `createWalletClient`
 
 When you add new contracts or E3 programs, update `client/.env` and `server/.env` with the new
@@ -347,8 +348,8 @@ addresses, then restart the dev server so the SDK reconnects.
 
 For complex E3 programs with specialized requirements, you may want to build an application-specific
 SDK on top of or alongside the Interfold SDK. For example,
-[CRISP](https://github.com/gnosisguild/enclave/tree/main/examples/CRISP) uses `@crisp-e3/sdk`, which
-provides:
+[CRISP](https://github.com/gnosisguild/interfold/tree/main/examples/CRISP) uses `@crisp-e3/sdk`,
+which provides:
 
 - Zero-knowledge proof generation for votes using Noir circuits
 - Merkle tree utilities for voter eligibility verification
@@ -401,4 +402,4 @@ that wraps or complements the core Interfold SDK.
 | Hooks never initialize         | Confirm `autoConnect` is true, wallet is connected, and React component is inside a wagmi provider that renders on the client. |
 | No events arrive               | Switch to a WebSocket RPC or call `sdk.startEventPolling()` so logs are polled over HTTP.                                      |
 
-For additional API surface details see `packages/enclave-sdk/README.md` inside this repo.
+For additional API surface details see `packages/interfold-sdk/README.md` inside this repo.

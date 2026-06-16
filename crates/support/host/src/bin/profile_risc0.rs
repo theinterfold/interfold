@@ -5,19 +5,35 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use e3_compute_provider::FHEInputs;
-use e3_fhe_params::DEFAULT_BFV_PRESET;
-use e3_fhe_params::{build_bfv_params_from_set_arc, encode_bfv_params};
+use e3_fhe_params::{build_bfv_params_from_set_arc, encode_bfv_params, BfvPreset};
 use e3_support_host::run_risc0_compute;
 use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
 use fhe_traits::{FheEncoder, FheEncrypter, Serialize};
-use rand::thread_rng;
+use rand::rng;
 
 fn main() {
     println!("Starting RISC0 profiling with mock ciphertexts...");
 
-    // Use InsecureThresholdBfv512 parameter set
-    let param_set = DEFAULT_BFV_PRESET.into();
-    let params = build_bfv_params_from_set_arc(param_set);
+    // BFV preset is configurable via env var, defaulting to insecure threshold
+    // for fast profiling. Set BFV_PRESET to one of:
+    //   INSECURE_THRESHOLD_BFV_512 | INSECURE_DKG_BFV_512 |
+    //   SECURE_THRESHOLD_BFV_8192  | SECURE_DKG_BFV_8192
+    let param_set: BfvPreset = match std::env::var("BFV_PRESET").ok().as_deref() {
+        Some("INSECURE_DKG_512") => BfvPreset::InsecureDkg512,
+        Some("SECURE_THRESHOLD_BFV_8192") => BfvPreset::SecureThreshold8192,
+        Some("SECURE_DKG_8192") => BfvPreset::SecureDkg8192,
+        Some(other) => {
+            eprintln!(
+                "Warning: unknown BFV_PRESET={}, using default InsecureThreshold512",
+                other
+            );
+            BfvPreset::InsecureThreshold512
+        }
+        None => BfvPreset::InsecureThreshold512,
+    };
+    println!("Using BFV preset: {:?}", param_set);
+
+    let params = build_bfv_params_from_set_arc(param_set.into());
 
     println!(
         "Generated BFV parameters: degree={}, plaintext_modulus={}",
@@ -26,7 +42,7 @@ fn main() {
     );
 
     // Generate keys
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let secret_key = SecretKey::random(&params, &mut rng);
     let public_key = PublicKey::new(&secret_key, &mut rng);
 

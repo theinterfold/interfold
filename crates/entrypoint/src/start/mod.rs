@@ -4,4 +4,5 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+#[allow(clippy::module_inception)]
 pub mod start;

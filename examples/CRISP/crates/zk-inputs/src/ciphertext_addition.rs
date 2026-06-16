@@ -48,12 +48,12 @@ impl CiphertextAdditionWitness {
         let moduli = params.moduli();
 
         let mut crt_polynomials = [
-            CrtPolynomial::from_fhe_polynomial(&prev_ct.c[0]),
-            CrtPolynomial::from_fhe_polynomial(&prev_ct.c[1]),
-            CrtPolynomial::from_fhe_polynomial(&ct.c[0]),
-            CrtPolynomial::from_fhe_polynomial(&ct.c[1]),
-            CrtPolynomial::from_fhe_polynomial(&sum_ct.c[0]),
-            CrtPolynomial::from_fhe_polynomial(&sum_ct.c[1]),
+            CrtPolynomial::from_fhe_polynomial(&prev_ct[0]),
+            CrtPolynomial::from_fhe_polynomial(&prev_ct[1]),
+            CrtPolynomial::from_fhe_polynomial(&ct[0]),
+            CrtPolynomial::from_fhe_polynomial(&ct[1]),
+            CrtPolynomial::from_fhe_polynomial(&sum_ct[0]),
+            CrtPolynomial::from_fhe_polynomial(&sum_ct[1]),
         ];
 
         // fhe-math stores coefficients in ascending degree (c_0, c_1, …). But here we want
@@ -68,7 +68,7 @@ impl CiphertextAdditionWitness {
         // which the circuit and compute_quotient expect.
         for c in &mut crt_polynomials {
             c.reverse();
-            c.center(&moduli)?;
+            c.center(moduli)?;
         }
 
         let [prev_ct0, prev_ct1, ct0, ct1, sum_ct0, sum_ct1] = crt_polynomials;
@@ -76,9 +76,9 @@ impl CiphertextAdditionWitness {
         // Compute quotient polynomials: r = (sum_centered - (ct_centered + prev_ct_centered)) / qi.
         // For ciphertext addition: sum_centered = ct_centered + prev_ct_centered + r * qi.
         // So: r = (sum_centered - (ct_centered + prev_ct_centered)) / qi.
-        let r0 = Self::compute_quotient(&sum_ct0, &ct0, &prev_ct0, &moduli)
+        let r0 = Self::compute_quotient(&sum_ct0, &ct0, &prev_ct0, moduli)
             .with_context(|| "Failed to compute r0 quotient")?;
-        let r1 = Self::compute_quotient(&sum_ct1, &ct1, &prev_ct1, &moduli)
+        let r1 = Self::compute_quotient(&sum_ct1, &ct1, &prev_ct1, moduli)
             .with_context(|| "Failed to compute r1 quotient")?;
 
         // Coefficients are centered per modulus; no zkp reduce. The circuit reduces mod r when needed.
@@ -124,11 +124,11 @@ impl CiphertextAdditionWitness {
 
         let mut quotient_limbs = Vec::with_capacity(num_moduli);
 
-        for i in 0..num_moduli {
+        for (i, &modulus) in moduli.iter().enumerate().take(num_moduli) {
             let sum_limb = sum.limb(i);
             let a_limb = a.limb(i);
             let b_limb = b.limb(i);
-            let qi = Polynomial::constant(BigInt::from(moduli[i]));
+            let qi = Polynomial::constant(BigInt::from(modulus));
 
             let diff = sum_limb.sub(&a_limb.add(b_limb));
             let (q_poly, remainder) = diff

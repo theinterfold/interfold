@@ -18,10 +18,9 @@ impl ZkBackend {
     }
 
     pub async fn load_version_info(&self) -> VersionInfo {
-        match VersionInfo::load(&self.version_file()).await {
-            Ok(info) => info,
-            Err(_) => VersionInfo::default(),
-        }
+        VersionInfo::load(&self.version_file())
+            .await
+            .unwrap_or_default()
     }
 
     pub async fn check_status(&self) -> SetupStatus {

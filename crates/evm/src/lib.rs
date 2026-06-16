@@ -4,40 +4,27 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-mod bonding_registry_sol;
-mod ciphernode_registry_sol;
-mod enclave_sol_reader;
-mod enclave_sol_writer;
-pub mod error_decoder;
-mod events;
-mod evm_chain_gateway;
-mod evm_hub;
-mod evm_parser;
-mod evm_read_interface;
-mod evm_router;
-mod fix_historical_order;
-pub mod helpers;
-mod log_fetcher;
-mod repo;
-mod slashing_manager_sol_reader;
-mod slashing_manager_sol_writer;
-mod sync_start_extractor;
+//! EVM integration for Interfold.
+//!
+//! - [`domain`] holds pure, synchronous, unit-testable services (no actix /
+//!   `BusHandle` / provider types in their cores).
+//! - [`actors`] holds the thin actix message-passing shells that wire those
+//!   services together and perform the EVM/provider I/O.
+//! - [`messages`] holds the actix message and event types exchanged between them.
 
-pub use bonding_registry_sol::BondingRegistrySolReader;
-pub use ciphernode_registry_sol::{
-    CiphernodeRegistrySol, CiphernodeRegistrySolReader, CiphernodeRegistrySolWriter,
-};
-pub use enclave_sol_reader::EnclaveSolReader;
-pub use enclave_sol_writer::EnclaveSolWriter;
-pub use events::*;
-pub use evm_chain_gateway::*;
-pub use evm_hub::*;
-pub use evm_parser::*;
-pub use evm_read_interface::*;
-pub use evm_router::*;
-pub use fix_historical_order::*;
+mod actors;
+mod contracts;
+mod domain;
+mod messages;
+mod repo;
+
+pub mod helpers;
+
+// `error_decoder` remains part of the public API (`e3_evm::error_decoder`).
+pub use domain::error_decoder;
+
+pub use actors::*;
+pub use domain::encode_attestation_evidence;
 pub use helpers::*;
+pub use messages::*;
 pub use repo::*;
-pub use slashing_manager_sol_reader::SlashingManagerSolReader;
-pub use slashing_manager_sol_writer::SlashingManagerSolWriter;
-pub use sync_start_extractor::*;

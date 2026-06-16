@@ -13,7 +13,7 @@ const Footer = () => {
   return (
     <footer style={{ padding: '3rem', textAlign: 'center', color: '#B8B8B8' }}>
       {/* <img
-        src='/enclave-mark-glow.svg'
+        src='/interfold-mark-glow.svg'
         style={{
           opacity: 0.3,
           margin: '0 auto',

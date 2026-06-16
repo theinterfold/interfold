@@ -6,12 +6,12 @@ packages:
   - examples/CRISP/packages/crisp-sdk
   - examples/CRISP/packages/crisp-contracts
   - examples/CRISP/packages/crisp-zk-inputs
-  - packages/enclave-config
-  - packages/enclave-react
-  - packages/enclave-sdk
-  - packages/enclave-contracts
-  - packages/enclave-mcp
-  - packages/enclave-dashboard
+  - packages/interfold-config
+  - packages/interfold-react
+  - packages/interfold-sdk
+  - packages/interfold-contracts
+  - packages/interfold-mcp
+  - packages/interfold-dashboard
   - templates/default
   - templates/default/client
 linkWorkspacePackages: true

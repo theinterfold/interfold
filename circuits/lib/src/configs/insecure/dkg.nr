@@ -4,7 +4,6 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::configs::default::{N_PARTIES, T};
 pub use crate::configs::insecure::threshold::{
     L as L_THRESHOLD, QIS as QIS_THRESHOLD,
     THRESHOLD_SHARE_DECRYPTION_BIT_SK as SHARE_DECRYPTION_BIT_AGG,
@@ -20,10 +19,9 @@ pub global PLAINTEXT_MODULUS: Field = 68719403009;
 pub global Q_MOD_T: Field = 2415755265;
 pub global Q_MOD_T_CENTERED: Field = 2415755265;
 
-pub global PARITY_MATRIX: [[[Field; N_PARTIES + 1]; N_PARTIES - T]; L_THRESHOLD] = [
-    [[1, 68719403007, 1, 0], [2, 68719403006, 0, 1]],
-    [[1, 68719230975, 1, 0], [2, 68719230974, 0, 1]],
-];
+// Parity matrix is sized for the active committee and the insecure-512 threshold QIS;
+// see `committee/{name}/parity_insecure.nr`. Re-exported via `committee::active`.
+pub use crate::configs::committee::active::PARITY_MATRIX_INSECURE as PARITY_MATRIX;
 
 /************************************
 -------------------------------------

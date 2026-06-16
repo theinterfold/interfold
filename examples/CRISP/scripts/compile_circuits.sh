@@ -2,26 +2,26 @@
 
 set -euo pipefail
 
-# Script runs from examples/CRISP. Enclave circuits are at ../../circuits.
-ENCLAVE_CIRCUITS="../../circuits"
+# Script runs from examples/CRISP. Interfold circuits are at ../../circuits.
+INTERFOLD_CIRCUITS="../../circuits"
 CRISP_CIRCUITS="circuits"
 
-echo "Compiling enclave user_data_encryption circuits (dependencies)..."
+echo "Compiling interfold user_data_encryption circuits (dependencies)..."
 
 echo "Compiling user_data_encryption_ct0..."
-if ! (cd "$ENCLAVE_CIRCUITS/bin/threshold/user_data_encryption_ct0" && nargo compile); then
+if ! (cd "$INTERFOLD_CIRCUITS/bin/threshold/user_data_encryption_ct0" && nargo compile); then
     echo "Error: user_data_encryption_ct0 compilation failed"
     exit 1
 fi
 
 echo "Compiling user_data_encryption_ct1..."
-if ! (cd "$ENCLAVE_CIRCUITS/bin/threshold/user_data_encryption_ct1" && nargo compile); then
+if ! (cd "$INTERFOLD_CIRCUITS/bin/threshold/user_data_encryption_ct1" && nargo compile); then
     echo "Error: user_data_encryption_ct1 compilation failed"
     exit 1
 fi
 
 echo "Compiling user_data_encryption..."
-if ! (cd "$ENCLAVE_CIRCUITS/bin/threshold/user_data_encryption" && nargo compile); then
+if ! (cd "$INTERFOLD_CIRCUITS/bin/threshold/user_data_encryption" && nargo compile); then
     echo "Error: user_data_encryption compilation failed"
     exit 1
 fi
@@ -33,8 +33,8 @@ if ! (cd "$CRISP_CIRCUITS/bin/crisp" && nargo compile); then
 fi
 
 # Inner recursive proofs use noir-recursive-no-zk; fold's compute_vk_hash chain reads
-# `{name}.vk_recursive_hash` in each package target/ (same layout as enclave `scripts/build-circuits.ts`).
-THRESHOLD_TARGET="${ENCLAVE_CIRCUITS}/bin/threshold/target"
+# `{name}.vk_recursive_hash` in each package target/ (same layout as interfold `scripts/build-circuits.ts`).
+THRESHOLD_TARGET="${INTERFOLD_CIRCUITS}/bin/threshold/target"
 CRISP_TARGET="${CRISP_CIRCUITS}/bin/crisp/target"
 echo "Writing noir-recursive-no-zk VKs (user_data_encryption + crisp stack)..."
 for name in user_data_encryption_ct0 user_data_encryption_ct1 user_data_encryption; do

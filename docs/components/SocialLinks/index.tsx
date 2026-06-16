@@ -22,6 +22,6 @@ export const socialLinks: SocialLinksProps[] = [
   {
     name: 'telegram',
     icon: <TelegramLogo size={24} />,
-    url: 'https://t.me/enclave_e3',
+    url: 'https://t.me/interfold_e3',
   },
 ]

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Ciphernode Builder"
-repository = "https://github.com/gnosisguild/enclave/crates/ciphernode-builder"
+repository = "https://github.com/gnosisguild/interfold/crates/ciphernode-builder"
 
 [dependencies]
 actix.workspace = true
@@ -23,6 +23,7 @@ e3-fhe-params.workspace = true
 e3-keyshare.workspace = true
 e3-multithread.workspace = true
 e3-net.workspace = true
+e3-slashing.workspace = true
 e3-zk-prover.workspace = true
 e3-request.workspace = true
 e3-sortition.workspace = true

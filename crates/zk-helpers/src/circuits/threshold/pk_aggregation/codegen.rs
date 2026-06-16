@@ -36,7 +36,7 @@ impl CircuitCodegen for PkAggregationCircuit {
 }
 
 pub fn generate_toml(inputs: Inputs) -> Result<CodegenToml, CircuitsErrors> {
-    let json = inputs.to_json().map_err(|e| CircuitsErrors::SerdeJson(e))?;
+    let json = inputs.to_json().map_err(CircuitsErrors::SerdeJson)?;
 
     Ok(toml::to_string(&json)?)
 }
@@ -96,30 +96,18 @@ mod tests {
             .get("pk0")
             .and_then(|value| value.as_array())
             .unwrap();
-        let pk1 = parsed
-            .get("pk1")
-            .and_then(|value| value.as_array())
-            .unwrap();
         let pk0_agg = parsed
             .get("pk0_agg")
             .and_then(|value| value.as_array())
             .unwrap();
-        let pk1_agg = parsed
-            .get("pk1_agg")
-            .and_then(|value| value.as_array())
-            .unwrap();
         assert!(!pk0.is_empty());
-        assert!(!pk1.is_empty());
         assert!(!pk0_agg.is_empty());
-        assert!(!pk1_agg.is_empty());
 
         let codegen_toml = generate_toml(inputs).unwrap();
         let codegen_configs = generate_configs(preset, &configs);
 
         assert!(codegen_toml.contains("pk0"));
-        assert!(codegen_toml.contains("pk1"));
         assert!(codegen_toml.contains("[[pk0_agg]]"));
-        assert!(codegen_toml.contains("[[pk1_agg]]"));
 
         assert!(codegen_configs.contains(format!("N: u32 = {}", configs.n).as_str()));
         assert!(codegen_configs.contains(format!("L: u32 = {}", configs.l).as_str()));

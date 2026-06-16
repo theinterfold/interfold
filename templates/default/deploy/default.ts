@@ -4,37 +4,33 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { readDeploymentArgs, storeDeploymentArgs, updateE3Config } from '@enclave-e3/contracts/scripts'
-import { Enclave__factory as EnclaveFactory } from '@enclave-e3/contracts/types'
+import { getDeploymentChain, readDeploymentArgs, storeDeploymentArgs, updateE3Config } from '@interfold/contracts/scripts'
+import { Interfold__factory as InterfoldFactory } from '@interfold/contracts/types'
+import { ensureTemplateCwd, INTERFOLD_CONFIG_FILE } from '../scripts/template-paths'
 import { MyProgram__factory as MyProgramFactory } from '../types/factories/contracts'
 import hre from 'hardhat'
-import path from 'path'
-import { fileURLToPath } from 'url'
 
 // Map contract names to config keys
 const contractMapping: Record<string, string> = {
   MyProgram: 'e3_program',
-  Enclave: 'enclave',
+  Interfold: 'interfold',
   CiphernodeRegistryOwnable: 'ciphernode_registry',
   BondingRegistry: 'bonding_registry',
   MockUSDC: 'fee_token',
 }
 
-// Get __dirname equivalent in ES modules
-const __filename = fileURLToPath(import.meta.url)
-const __dirname = path.dirname(__filename)
-
 export const deployTemplate = async () => {
+  ensureTemplateCwd()
   const { ethers } = await hre.network.connect()
   const [owner] = await ethers.getSigners()
 
-  const chain = hre.globalOptions.network
+  const chain = getDeploymentChain(hre)
 
-  const enclaveAddress = readDeploymentArgs('Enclave', chain)?.address
-  if (!enclaveAddress) {
-    throw new Error('Enclave address not found, it must be deployed first')
+  const interfoldAddress = readDeploymentArgs('Interfold', chain)?.address
+  if (!interfoldAddress) {
+    throw new Error('Interfold address not found, it must be deployed first')
   }
-  const enclave = EnclaveFactory.connect(enclaveAddress, owner)
+  const interfold = InterfoldFactory.connect(interfoldAddress, owner)
 
   const poseidonT3Address = readDeploymentArgs('PoseidonT3', chain)?.address
   if (!poseidonT3Address) {
@@ -65,14 +61,19 @@ export const deployTemplate = async () => {
     }),
     owner,
   )
-  const e3Program = await e3ProgramFactory.deploy(await enclave.getAddress(), await verifier.getAddress(), programId)
+  const e3Program = await e3ProgramFactory.deploy(await interfold.getAddress(), await verifier.getAddress(), programId)
   await e3Program.waitForDeployment()
 
-  const tx = await enclave.enableE3Program(await e3Program.getAddress())
-
+  const programAddress = await e3Program.getAddress()
+  const tx = await interfold.registerE3Program(programAddress)
   await tx.wait()
 
-  console.log("E3 Program enabled for Enclave's template")
+  const allowed = await interfold.e3Programs(programAddress)
+  if (!allowed) {
+    throw new Error(`MyProgram ${programAddress} was not enabled on Interfold ${interfoldAddress}`)
+  }
+
+  console.log("E3 Program enabled for Interfold's template")
 
   console.log(
     `
@@ -90,6 +91,5 @@ export const deployTemplate = async () => {
     chain,
   )
 
-  // this expects you to run it from CRISP's root
-  updateE3Config(chain, path.join(__dirname, '..', 'enclave.config.yaml'), contractMapping)
+  updateE3Config(chain, INTERFOLD_CONFIG_FILE, contractMapping)
 }

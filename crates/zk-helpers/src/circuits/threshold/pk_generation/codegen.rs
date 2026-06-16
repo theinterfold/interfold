@@ -28,7 +28,7 @@ impl CircuitCodegen for PkGenerationCircuit {
 
     fn codegen(&self, preset: Self::Preset, data: &Self::Data) -> Result<Artifacts, Self::Error> {
         let inputs = Inputs::compute(preset, data)?;
-        let configs = Configs::compute(preset, &())?;
+        let configs = Configs::compute(preset, &data.committee)?;
 
         let toml = generate_toml(inputs)?;
         let configs = generate_configs(preset, &configs)?;
@@ -38,7 +38,7 @@ impl CircuitCodegen for PkGenerationCircuit {
 }
 
 pub fn generate_toml(inputs: Inputs) -> Result<CodegenToml, CircuitsErrors> {
-    let json = inputs.to_json().map_err(|e| CircuitsErrors::SerdeJson(e))?;
+    let json = inputs.to_json().map_err(CircuitsErrors::SerdeJson)?;
 
     Ok(toml::to_string(&json)?)
 }
@@ -148,8 +148,6 @@ mod tests {
     use crate::codegen::write_artifacts;
     use crate::threshold::pk_generation::computation::{Bits, Bounds};
     use crate::threshold::pk_generation::PkGenerationCircuitData;
-    use crate::CiphernodesCommitteeSize;
-
     use e3_fhe_params::BfvPreset;
     use tempfile::TempDir;
 
@@ -191,7 +189,9 @@ mod tests {
         assert!(configs_path.exists());
 
         let configs_content = std::fs::read_to_string(&configs_path).unwrap();
-        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &()).unwrap();
+        use crate::ciphernodes_committee::CiphernodesCommitteeSize;
+        let committee = CiphernodesCommitteeSize::Micro.values();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &committee).unwrap();
         let bits = Bits::compute(BfvPreset::InsecureThreshold512, &bounds).unwrap();
 
         assert!(configs_content.contains(

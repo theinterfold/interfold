@@ -12,7 +12,7 @@ use e3_zk_helpers::circuits::Computation;
 use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::Error as FheError;
 use fhe_traits::{DeserializeParametrized, FheEncoder, FheEncrypter, Serialize};
-use rand::thread_rng;
+use rand::rng;
 
 /// Encrypt some data using BFV homomorphic encryption
 ///
@@ -51,7 +51,7 @@ where
         .map_err(|e: FheError| anyhow!("Error encoding plaintext: {e}"))?;
 
     let ct = pk
-        .try_encrypt(&pt, &mut thread_rng())
+        .try_encrypt(&pt, &mut rng())
         .map_err(|e| anyhow!("Error encrypting data: {e}"))?;
 
     let encrypted_data = ct.to_bytes();
@@ -105,7 +105,7 @@ where
         DEFAULT_BFV_PRESET,
         &UserDataEncryptionCircuitData {
             public_key: pk,
-            plaintext: plaintext,
+            plaintext,
         },
     )?;
 
@@ -135,7 +135,7 @@ pub fn generate_public_key(
     let params = build_bfv_params_arc(degree, plaintext_modulus, &moduli, None);
 
     // Generate keys.
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let sk = SecretKey::random(&params, &mut rng);
     let pk = PublicKey::new(&sk, &mut rng);
 
@@ -184,6 +184,7 @@ pub fn compute_ct_commitment(
 mod tests {
     use e3_fhe_params::DEFAULT_BFV_PRESET;
     use e3_fhe_params::{build_bfv_params_from_set_arc, BfvParamSet};
+    use fhe_traits::FheDecoder;
 
     use super::*;
 
@@ -197,18 +198,19 @@ mod tests {
         let degree = param_set.degree;
         let plaintext_modulus = param_set.plaintext_modulus;
         let moduli = param_set.moduli;
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let sk = SecretKey::random(&params, &mut rng);
         let pk = PublicKey::new(&sk, &mut rng);
 
         let num = [1u64];
         let encrypted_data =
-            bfv_encrypt(num, pk.to_bytes(), degree, plaintext_modulus, &moduli).unwrap();
+            bfv_encrypt(num, pk.to_bytes(), degree, plaintext_modulus, moduli).unwrap();
 
         let ct = Ciphertext::from_bytes(&encrypted_data, &params).unwrap();
         let pt = sk.try_decrypt(&ct).unwrap();
 
-        assert_eq!(pt.value[0], num[0]);
+        let decoded = Vec::<u64>::try_decode(&pt, Encoding::poly()).unwrap();
+        assert_eq!(decoded[0], num[0]);
     }
 
     #[test]
@@ -221,7 +223,7 @@ mod tests {
         let degree = param_set.degree;
         let plaintext_modulus = param_set.plaintext_modulus;
         let moduli = param_set.moduli;
-        let mut rng = thread_rng();
+        let mut rng = rng();
         let sk = SecretKey::random(&params, &mut rng);
         let pk = PublicKey::new(&sk, &mut rng);
 
@@ -231,15 +233,16 @@ mod tests {
             pk.to_bytes(),
             degree,
             plaintext_modulus,
-            &moduli,
+            moduli,
         )
         .unwrap();
 
         let ct = Ciphertext::from_bytes(&encrypted_data, &params).unwrap();
         let pt = sk.try_decrypt(&ct).unwrap();
 
-        assert_eq!(pt.value[0], num[0]);
-        assert_eq!(pt.value[1], num[1]);
+        let decoded = Vec::<u64>::try_decode(&pt, Encoding::poly()).unwrap();
+        assert_eq!(decoded[0], num[0]);
+        assert_eq!(decoded[1], num[1]);
     }
 
     #[test]
@@ -252,7 +255,7 @@ mod tests {
         let degree = param_set.degree;
         let plaintext_modulus = param_set.plaintext_modulus;
         let moduli = param_set.moduli;
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         let sk = SecretKey::random(&params, &mut rng);
         let pk = PublicKey::new(&sk, &mut rng);
 
@@ -269,7 +272,8 @@ mod tests {
         let ct = Ciphertext::from_bytes(&encrypted_data.encrypted_data, &params).unwrap();
         let pt = sk.try_decrypt(&ct).unwrap();
 
-        assert_eq!(pt.value[0], num[0]);
+        let decoded = Vec::<u64>::try_decode(&pt, Encoding::poly()).unwrap();
+        assert_eq!(decoded[0], num[0]);
     }
 
     #[test]
@@ -282,7 +286,7 @@ mod tests {
         let degree = param_set.degree;
         let plaintext_modulus = param_set.plaintext_modulus;
         let moduli = param_set.moduli;
-        let mut rng = thread_rng();
+        let mut rng = rand::rng();
         let sk = SecretKey::random(&params, &mut rng);
         let pk = PublicKey::new(&sk, &mut rng);
 
@@ -299,7 +303,8 @@ mod tests {
         let ct = Ciphertext::from_bytes(&encrypted_data.encrypted_data, &params).unwrap();
         let pt = sk.try_decrypt(&ct).unwrap();
 
-        assert_eq!(pt.value[0], num[0]);
-        assert_eq!(pt.value[1], num[1]);
+        let decoded = Vec::<u64>::try_decode(&pt, Encoding::poly()).unwrap();
+        assert_eq!(decoded[0], num[0]);
+        assert_eq!(decoded[1], num[1]);
     }
 }

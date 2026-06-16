@@ -285,6 +285,7 @@ mod tests {
     use super::{Persistable, StoreConnector};
 
     #[derive(Debug, Clone)]
+    #[allow(clippy::large_enum_variant)]
     enum Evts {
         Get,
         Insert(Insert),
@@ -343,6 +344,7 @@ mod tests {
             }
         }
 
+        #[allow(clippy::wrong_self_convention)]
         fn to_store_connector(self) -> (Addr<MockConnector>, StoreConnector) {
             let key = self.key.clone();
             let addr = self.start();

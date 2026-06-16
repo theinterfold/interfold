@@ -2,6 +2,8 @@
 
 # Clear any existing environment variables
 unset RISC0_DEV_MODE RPC_URL PRIVATE_KEY PINATA_JWT PROGRAM_URL BOUNDLESS_ONCHAIN
+unset BOUNDLESS_MIN_PRICE_ETH BOUNDLESS_MAX_PRICE_ETH
+unset BOUNDLESS_TIMEOUT_SECS BOUNDLESS_LOCK_TIMEOUT_SECS BOUNDLESS_RAMP_UP_SECS BOUNDLESS_LOCK_COLLATERAL_ZKC
 
 # Parse command line arguments
 POSITIONAL=()
@@ -29,6 +31,30 @@ while [[ $# -gt 0 ]]; do
       ;;
     --boundless-onchain)
       export BOUNDLESS_ONCHAIN="$2"
+      shift 2
+      ;;
+    --boundless-min-price-eth)
+      export BOUNDLESS_MIN_PRICE_ETH="$2"
+      shift 2
+      ;;
+    --boundless-max-price-eth)
+      export BOUNDLESS_MAX_PRICE_ETH="$2"
+      shift 2
+      ;;
+    --boundless-timeout-secs)
+      export BOUNDLESS_TIMEOUT_SECS="$2"
+      shift 2
+      ;;
+    --boundless-lock-timeout-secs)
+      export BOUNDLESS_LOCK_TIMEOUT_SECS="$2"
+      shift 2
+      ;;
+    --boundless-ramp-up-secs)
+      export BOUNDLESS_RAMP_UP_SECS="$2"
+      shift 2
+      ;;
+    --boundless-lock-collateral-zkc)
+      export BOUNDLESS_LOCK_COLLATERAL_ZKC="$2"
       shift 2
       ;;
     *)

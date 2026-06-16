@@ -41,7 +41,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         async move {
             if let Err(e) = start_indexer(
                 &CONFIG.ws_rpc_url,
-                &CONFIG.enclave_address,
+                &CONFIG.interfold_address,
                 &CONFIG.ciphernode_registry_address,
                 &CONFIG.e3_program_address,
                 db.clone(),

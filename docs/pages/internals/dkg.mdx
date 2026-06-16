@@ -258,7 +258,7 @@ ciphernode in **A**.
 
 ## P2: Public Key Aggregation (C5)
 
-The aggregator (party_id=0) collects all public key shares from C1 and sums them:
+The aggregator (the elected node for this E3) collects all public key shares from C1 and sums them:
 
 ```
 pk_threshold = Σ pk_share_i   for i ∈ A
@@ -276,7 +276,7 @@ This circuit runs once, executed by the aggregator.
 ## P3: User Encryption
 
 With the threshold public key published, users encrypt their private inputs using a specialisation
-of the [GRECO](https://blog.theinterfold.com/enclave-cryptography-greco-fhe-zk/) circuit. This
+of the [GRECO](https://blog.theinterfold.com/interfold-cryptography-greco-fhe-zk/) circuit. This
 proves each ciphertext was formed correctly under the threshold public key without revealing the
 plaintext or encryption randomness. The circuit verifies `commit(pk_threshold)` from C5 before
 validating the encryption.
@@ -325,6 +325,261 @@ steps:
 C7 proves all three steps were done correctly. The output is the final plaintext — the result of the
 encrypted computation, publicly verifiable by anyone. This circuit runs once, executed by the
 aggregator.
+
+---
+
+## Proof Aggregation and On-Chain Anchoring
+
+E3 programs can opt into **proof aggregation** by setting `proofAggregationEnabled = true` at
+request time. In that mode the network does not post per-node, per-circuit proofs on-chain. Instead
+the aggregator submits two recursive proofs — one for DKG, one for decryption — together with
+per-node attestations that bind each surfaced commitment to a specific registered operator.
+
+### Canonical party_id assignment
+
+`party_id` is each node's index in the committee's canonical ordering. On chain, the committee is
+finalised as `topNodes`, sorted by **ascending address** (lowest numeric address = party 0). The
+ciphernodes derive their own `party_id` from `position()` in the `CommitteeFinalized.committee`
+array, which carries the same canonical order. Address-sort is deterministic and reproducible by
+both sides from just the set of committee addresses, so the Rust and Solidity sides never need to
+agree on per-run sortition scores to agree on the labeling.
+
+### Committee hash binding
+
+Both recursive proofs include a `committee_hash` in their public inputs, split into 128-bit
+`committee_hash_hi` and `committee_hash_lo` for the BN254 field. The hash is `keccak256` over the
+raw 20-byte addresses of `topNodes` concatenated in address-ascending order (see
+`CommitteeHashLib.hash` in the registry and `e3_utils::committee_hash::hash_committee_addresses` in
+Rust). The two implementations produce byte-identical output for the same committee, so the proof's
+bound hash matches whatever the registry computed at `publishCommittee` — failing the verifier
+otherwise.
+
+### NodeDkgFold and fold attestations
+
+After completing C0–C4 locally, each ciphernode folds its proofs into a single `NodeDkgFold` proof
+that surfaces three values: `sk_agg_commit`, `esm_agg_commit`, and the node's `party_id`. The node
+then signs an EIP-712-style digest over `(chainId, e3Id, partyId, skAggCommit, esmAggCommit)` with
+its operator key and gossips the signed fold output to peers via `DKGRecursiveAggregationComplete`.
+
+In proof-aggregation mode, the aggregator collects all honest parties' fold outputs and:
+
+1. Recursively verifies each `NodeDkgFold` inside the DKG aggregator proof (so an aggregator cannot
+   fabricate a node's fold without the recursive proof failing).
+2. Assembles a **DKG fold-attestation bundle**: one signed attestation per honest party plus a
+   `(partyId → node address)` binding table.
+
+The DKG aggregator proof surfaces, as public outputs, the array of `party_ids`, `sk_agg_commits[]`,
+`esm_agg_commits[]`, the committee hash limbs, and the aggregated public-key commitment.
+
+### `publishCommittee` verification
+
+When the aggregator calls
+[`CiphernodeRegistry.publishCommittee`](https://github.com/gnosisguild/interfold/blob/main/packages/interfold-contracts/contracts/registry/CiphernodeRegistryOwnable.sol),
+the registry runs two checks in order:
+
+1. **Honk proof verification** via
+   [`BfvPkVerifier`](https://github.com/gnosisguild/interfold/blob/main/packages/interfold-contracts/contracts/verifiers/bfv/BfvPkVerifier.sol).
+   It checks the recursive VK hashes for `node_fold` and `pk_aggregation` (so the underlying
+   circuits are the deployed ones), the committee-hash hi/lo limbs match
+   `CommitteeHashLib.hash(c.topNodes)`, the surfaced `pkCommitment` equals the caller-supplied
+   value, and the raw Honk proof verifies.
+2. **Fold-attestation verification** via
+   [`DkgFoldAttestationVerifier`](https://github.com/gnosisguild/interfold/blob/main/packages/interfold-contracts/contracts/verifiers/DkgFoldAttestationVerifier.sol).
+   It walks the bundle's `(partyId, node)` bindings — strictly ascending by `partyId`, no duplicates
+   — and for each binding: requires `canonicalCommitteeNodeAt(e3Id, partyId) == node` (slot
+   binding), requires `isCommitteeMemberActive(e3Id, node)`, recovers the signer via `ecrecover` on
+   the canonical EIP-712 typed-data digest (with `chainId` and this verifier address in the domain
+   separator), requires `signer == node`, and checks that the signed `skAggCommit` / `esmAggCommit`
+   match the DKG proof's surfaced commitments at that party's slot. The honest-set cardinality must
+   equal the honest-party count derived from the proof's public-input shape (`(len - 6) / 3`). The
+   slot binding prevents an aggregator from reassigning a node's signed attestation to a different
+   slot — even an actively cooperating signer cannot be "moved" between partyIds because the
+   registry's own slot mapping is checked structurally.
+
+Only if both succeed does the registry store the per-party anchors:
+
+```solidity
+dkgPartyIds[e3Id] = partyIds;
+dkgSkAggCommits[e3Id] = skAgg;
+dkgEsmAggCommits[e3Id] = esmAgg;
+```
+
+These anchors are what downstream decryption verifies against, and what slashing-by-attribution can
+read to identify which registered operator produced which DKG output. The mapping
+`operator = topNodes[partyIds[i]]` is a closed cryptographic chain: the proof binds to the addresses
+(via committee hash), the attestation binds to the proof commitments and the operator key, and the
+operator key was registered against `topNodes` at committee finalisation.
+
+### Registry-backed runtime config (operator restart requirement)
+
+Two registry storage values are fetched **once at process startup** and reused for the entire
+process lifetime:
+
+1. `dkgFoldAttestationVerifier` — the EIP-712 `verifyingContract` for fold attestations (see
+   [`fetch_dkg_fold_attestation_verifier`](https://github.com/gnosisguild/interfold/blob/main/crates/evm/src/ciphernode_registry_sol.rs)).
+2. `accusationVoteValidity` — the seconds-window applied to accusation vote `deadline`s (see the
+   [Registry-wide vote validity window](#registry-wide-vote-validity-window) subsection).
+
+Both follow the same restart-required lifecycle: governance updates take effect for new processes
+only, and live nodes keep using the value they fetched at startup.
+
+#### Verifier rotation
+
+The address of the on-chain `DkgFoldAttestationVerifier` is governance-mutable on the registry via a
+2-day timelocked propose / commit / cancel flow (`DKG_FOLD_VERIFIER_TIMELOCK`). This is intentional
+— the verifier is treated as a critical admin key so a compromised owner cannot instantly swap in a
+weakened verifier that bypasses per-party attestation checks.
+
+**Node-operator requirement.** After a successful `commitDkgFoldAttestationVerifier`, signatures
+produced by long-running nodes will be rejected on-chain by the new verifier — different
+`verifyingContract` means a different EIP-712 domain separator, so `ECDSA.recover` returns the wrong
+address, the canonical-slot binding check fails, and aggregators will treat those nodes as dishonest
+until they restart.
+
+The 2-day timelock window exists for exactly this reason: it gives operators time to coordinate a
+rolling restart before the swap becomes effective. Operators MUST restart all ciphernodes within
+`DKG_FOLD_VERIFIER_TIMELOCK` of the propose event being emitted; this is a strict requirement, not a
+recommendation. Nodes that miss the window silently produce invalid attestations until restarted.
+The same rule applies to the one-shot deploy-time `setInitialDkgFoldAttestationVerifier`, except
+that call is only valid when no verifier is yet configured.
+
+#### Vote validity changes
+
+`setAccusationVoteValidity` is not timelocked — governance can change the window instantly. The
+restart requirement is therefore weaker than for the verifier (an updated window doesn't reject old
+signatures, it only shortens or extends the freshness check for future ones), but the same "live
+nodes keep stamping deadlines from the old value" caveat applies. After a non-trivial shortening,
+coordinate a rolling restart so every node observes the new window before any votes are signed
+against it. See the [Registry-wide vote validity window](#registry-wide-vote-validity-window)
+subsection for the emergency-stop semantics (setting it to 0).
+
+**Multi-chain caveat.** When `interfold.config.yaml` lists more than one chain, the node reads
+`dkgFoldAttestationVerifier` and `accusationVoteValidity` from the **first enabled** chain only
+(`fetch_dkg_fold_attestation_verifier_from_registry` /
+`fetch_accusation_vote_validity_from_registry` in `ciphernode-builder`). That single value is then
+used for every E3 the node participates in, regardless of which chain the E3 lives on. This is a
+deliberate trade-off:
+
+- **Today most operators run single-chain nodes**, so the practical risk is zero.
+- A multi-chain node whose first-enabled chain has a _stricter_ setter for either knob produces
+  values the other chain's contract may refuse — e.g. a `verifyingContract` on chain A is
+  meaningless when chain B's verifier recomputes the EIP-712 domain against its own address. There
+  is no in-flight fallback.
+- If you add a new chain to a running node's config, or rotate any chain's verifier / vote-validity
+  window, restart the node so all per-chain fetches re-run.
+
+A robust per-E3 lookup (re-fetch from the chain that owns the E3 every time we sign or encode) is
+left as future work — the design is straightforward but the wiring crosses multiple actors and isn't
+worth the surface area until a multi-chain deployment makes the trade-off concrete.
+
+### Keeping the on-chain Honk verifiers in sync
+
+The two on-chain Honk verifiers consumed by `publishCommittee` and the decryption flow
+(`DkgAggregatorVerifier.sol`, `DecryptionAggregatorVerifier.sol`, both under
+`packages/interfold-contracts/contracts/verifiers/bfv/honk/`) are **generated** from the recursive
+VKs of `recursive_aggregation/dkg_aggregator` and `recursive_aggregation/decryption_aggregator` via
+`bb write_solidity_verifier`. They are committed to git so production deploys are reproducible, but
+they must stay in lockstep with the circuits' recursive VKs — a verifier whose baked-in VK doesn't
+match the circuit will silently reject every proof.
+
+**Preset is pinned.** The committed `.sol` files correspond to exactly one BFV preset:
+**`insecure-512`** (the dev / CI / benchmark default). The recursive VKs are preset-dependent —
+different BFV parameter sets compile to different VKs and therefore different `.sol` bytes — so "the
+committed verifier" is only well-defined for one preset. `pnpm generate:verifiers` refuses to run
+(in both `--check` and `--write` modes) unless `dist/circuits/insecure-512/.build-stamp.json` exists
+and reports that preset. If `pnpm build:circuits --preset secure-8192` was the last build, the
+generator surfaces this loudly with a fix recipe instead of silently producing wrong VK bytes.
+Production deploys on a non-canonical preset must regenerate locally for that deploy.
+
+The repo enforces sync with two modes of `pnpm generate:verifiers`:
+
+- **`--check`** — used by `tests/integration/lib/prebuild.sh` (when
+  `PROOF_AGGREGATION_ENABLED=true`) and by the benchmark gas-extraction scripts. Regenerates each
+  verifier in memory, runs the same `prettier-plugin-solidity` formatting the committed files use,
+  and diffs against the committed `.sol`. Any drift fails the run with a clear fix recipe instead of
+  silently rewriting committed contracts mid-test.
+- **`--write`** (the default for manual invocation) — overwrites the committed files. Run this when
+  you intentionally bump the canonical-preset circuits or the Noir/bb toolchain, then commit the
+  diff.
+
+The version pinning lives in `crates/zk-prover/versions.json` (consumed by `interfold noir setup`
+and by the integration test prebuild). If `--check` fails after a clean
+`pnpm build:circuits --preset insecure-512`, your local toolchain is out of sync with that pin. See
+[`scripts/README.md`](https://github.com/gnosisguild/interfold/blob/main/scripts/README.md#verifier-generator)
+for the full contract.
+
+### Decryption recursive proof
+
+The decryption recursive proof (`BfvDecryptionVerifier`) follows the same shape: a recursive Honk
+proof aggregates **C6** from at least **T+1** parties plus **C7**, surfaces `expected_sk_commits[]`
+and `expected_esm_commits[]` per party, and binds to the on-chain committee hash. The registry
+compares the surfaced commitments against the anchors stored at `publishCommittee` — if any anchor
+differs the proof is rejected — and the plaintext is decoded from the proof's last 100 public inputs
+(one `uint64` coefficient each, packed into bytes).
+
+### Slashing-evidence binding
+
+When fault attribution leads to a slash, the off-chain accusation quorum produces a payload that
+[`SlashingManager.proposeSlash`](https://github.com/gnosisguild/interfold/blob/main/packages/interfold-contracts/contracts/slashing/SlashingManager.sol)
+decodes as
+`(uint256 proofType, address[] voters, bytes32[] dataHashes, bytes evidence, uint256 deadline, bytes[] signatures)`.
+`_verifyAttestationEvidence` enforces:
+
+- ≥ `M` voters, sorted ascending, accused excluded, each producing a canonical EIP-712 typed-data
+  signature over
+  `AccusationVote(uint256 e3Id, bytes32 accusationId, address voter, bytes32 dataHash, uint256 deadline)`.
+  `chainId` and `verifyingContract = address(SlashingManager)` live in the EIP-712 domain — see
+  `EIP712_DOMAIN_NAME` ("InterfoldSlashing") and `EIP712_DOMAIN_VERSION` ("1") on the contract; the
+  Rust signer reads the exact same strings from `e3_events::VOTE_DOMAIN_NAME` /
+  `VOTE_DOMAIN_VERSION` / `VOTE_TYPEHASH_STR`.
+- All `dataHashes[i]` equal a common `dataHash` (voters must agree on the same evidence, not just
+  "something bad").
+- `keccak256(evidence) == dataHash` (explicit preimage binding on chain).
+- `block.timestamp <= deadline`. Every voter signs the same `deadline` value — the accuser stamps it
+  at proposal time as `now + accusationVoteValidity` (a registry-wide governance knob, see the
+  subsection below), and `AccusationManager::on_vote_received` rejects peers' votes whose deadline
+  disagrees so the aggregated evidence carries one shared value. Stolen signatures can't be replayed
+  indefinitely.
+- Agreement is implicit: there is no `agrees` field on the signed struct or on the gossip wire. A
+  peer who finds the disputed proof passes simply stays silent; every signature reaching the
+  on-chain decoder is an affirmative attestation. See the
+  [`AccusationVote` docstring](https://github.com/gnosisguild/interfold/blob/main/crates/events/src/interfold_event/accusation_vote.rs)
+  for the rationale and the fast-fail trade-off this design accepts.
+
+The faulty-proof preimage (`abi.encode(proof.data, public_signals)`) is **not** transported on chain
+— the previous `keccak256(evidence) == commonDataHash` check was dropped because the `dataHash`
+equality across voters is sufficient for attribution and the calldata cost of carrying ~16 KB of
+preimage per slash is not. The preimage is kept on the off-chain `AccusationQuorumReached` event as
+audit metadata for observers; populated for every accusation path that leads to a slash (ZK
+verification failures via `ProofVerificationFailed`, forwarded C3a/C3b accusations via the
+re-verification path, and commitment-consistency violations via `CommitmentConsistencyViolation`).
+
+#### Registry-wide vote validity window
+
+The `accusationVoteValidity` storage on
+[`CiphernodeRegistryOwnable`](https://github.com/gnosisguild/interfold/blob/main/packages/interfold-contracts/contracts/registry/CiphernodeRegistryOwnable.sol)
+(default 30 minutes, seeded by `DEFAULT_ACCUSATION_VOTE_VALIDITY` at `initialize`) is the
+seconds-window applied to every accusation vote's `deadline`. Ciphernodes fetch it once at process
+startup via `fetch_accusation_vote_validity_from_registry` and reuse the value for the process
+lifetime — same lifecycle as `dkgFoldAttestationVerifier`.
+
+Governance can change it with `setAccusationVoteValidity(uint256)`. Two notable knob positions:
+
+- **Shorter window**: tighter freshness — useful if stolen-signature replay becomes a concern, at
+  the cost of giving on-chain submitters less slack to land the `proposeSlash` transaction after
+  off-chain quorum reaches `M`.
+- **Zero**: practically disables slashing — `accusationVoteValidity = 0` is a zero-second window, so
+  every new vote's `deadline` is stamped as `now` (no slack beyond the current block time).
+  Off-chain nodes still gossip votes; `proposeSlash` succeeds only if `SlashingManager` sees at
+  least **M** agreeing `AccusationVote` signatures and passes `block.timestamp <= deadline`. That
+  comparison is inclusive, so a vote whose `deadline` equals the current block time can still land
+  if `proposeSlash` is included in the **same block** — zero is an emergency brake, not a guaranteed
+  hard stop. Restore a non-zero window quickly to keep the slashing path operational.
+
+In-flight ciphernodes do not pick up the new value until restart. After a non-trivial shortening
+(e.g. 30 min → 1 min) operators should coordinate a rolling restart, otherwise live nodes will keep
+stamping deadlines from the old window and produce votes that the on-chain check rejects when the
+round closes.
 
 ---
 

@@ -6,8 +6,8 @@
 
 //! Polynomial arithmetic implementation.
 
+use crate::fhe_poly::ToPowerBasisPoly;
 use crate::utils::{center, reduce};
-use fhe_math::rq::{Poly, Representation};
 use num_bigint::{BigInt, BigUint, ToBigInt};
 use num_traits::{One, Zero};
 use std::fmt;
@@ -53,8 +53,6 @@ pub enum PolynomialError {
 }
 
 /// A polynomial with coefficients stored as `BigInt` for arbitrary precision arithmetic.
-
-///
 #[derive(Clone, Debug, PartialEq)]
 #[cfg_attr(feature = "serde", derive(Serialize, Deserialize))]
 pub struct Polynomial {
@@ -79,12 +77,10 @@ impl fmt::Display for Polynomial {
                 if coeff < &BigInt::zero() {
                     write!(f, "-")?;
                 }
+            } else if coeff > &BigInt::zero() {
+                write!(f, " + ")?;
             } else {
-                if coeff > &BigInt::zero() {
-                    write!(f, " + ")?;
-                } else {
-                    write!(f, " - ")?;
-                }
+                write!(f, " - ")?;
             }
             first = false;
 
@@ -132,12 +128,8 @@ impl Polynomial {
     }
 
     /// Creates a new polynomial from a fhe-math `Poly` (CRT-reconstructed mod Q).
-    pub fn from_fhe_polynomial(p: &Poly) -> Self {
-        let mut p = p.clone();
-
-        if *p.representation() == Representation::Ntt {
-            p.change_representation(Representation::PowerBasis);
-        }
+    pub fn from_fhe_polynomial(p: &impl ToPowerBasisPoly) -> Self {
+        let p = p.to_power_basis_poly();
 
         let coefficients: Vec<BigUint> = Vec::<BigUint>::from(&p);
         let bigints: Vec<BigInt> = coefficients

@@ -4,14 +4,16 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+mod actors;
 mod context;
+mod domain;
 mod hetrogenous_map;
 mod meta;
 mod repo;
-mod router;
 
+pub use actors::*;
 pub use context::*;
+pub use domain::*;
 pub use hetrogenous_map::*;
 pub use meta::*;
 pub use repo::*;
-pub use router::*;

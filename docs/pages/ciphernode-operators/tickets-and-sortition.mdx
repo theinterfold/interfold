@@ -10,13 +10,13 @@ ticket system and sortition algorithm.
 
 ## Ticket Overview
 
-| Token    | Purpose                                            | Transferable |
-| -------- | -------------------------------------------------- | ------------ |
-| **ENCL** | License bond - required to register                | Yes          |
-| **ETK**  | Ticket token - determines committee selection odds | No           |
-| **USDC** | Underlying asset for tickets (fee token)           | Yes          |
+| Token     | Purpose                                            | Transferable |
+| --------- | -------------------------------------------------- | ------------ |
+| **FOLD**  | License bond - required to register                | Yes          |
+| **tFOLD** | Ticket token - determines committee selection odds | No           |
+| **USDC**  | Underlying asset for tickets (fee token)           | Yes          |
 
-Tickets are priced in stablecoins and minted into non-transferable ETK balances:
+Tickets are priced in stablecoins and minted into non-transferable tFOLD balances:
 
 ```
 availableTickets = floor(ticketTokenBalance / ticketPrice)
@@ -30,14 +30,14 @@ Deposit stablecoins to mint tickets:
 
 ```bash
 # Buy tickets worth 100 USDC
-enclave ciphernode tickets buy --amount 100
+interfold ciphernode tickets buy --amount 100
 ```
 
 This:
 
 1. Approves the ticket contract to spend your USDC (if needed)
 2. Deposits the stablecoin
-3. Mints equivalent ETK to your balance
+3. Mints equivalent tFOLD to your balance
 
 ### Burn Tickets
 
@@ -45,7 +45,7 @@ Withdraw the underlying stablecoin:
 
 ```bash
 # Burn tickets and withdraw 50 USDC worth
-enclave ciphernode tickets burn --amount 50
+interfold ciphernode tickets burn --amount 50
 ```
 
 > Burning tickets takes effect immediately. Dropping below the minimum ticket balance makes you
@@ -54,7 +54,7 @@ enclave ciphernode tickets burn --amount 50
 ### Check Balance
 
 ```bash
-enclave ciphernode status
+interfold ciphernode status
 ```
 
 Look for the "Ticket balance" and "available" fields in the output.

@@ -23,8 +23,7 @@ pub async fn execute(config: &AppConfig) -> Result<PeerId> {
         .await?
         .context("No wallet has been set.")?;
     let mut bytes = Zeroizing::new(cipher.decrypt_data(&encrypted)?);
-    let keypair: libp2p::identity::Keypair =
-        ed25519::Keypair::try_from_bytes(&mut bytes)?.try_into()?;
+    let keypair: libp2p::identity::Keypair = ed25519::Keypair::try_from_bytes(&mut bytes)?.into();
     let peer_id = PeerId::from(keypair.public());
     Ok(peer_id)
 }

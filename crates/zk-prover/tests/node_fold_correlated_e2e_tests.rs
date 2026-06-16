@@ -17,7 +17,8 @@ mod node_fold_witness;
 use std::path::PathBuf;
 
 use common::{
-    find_bb, setup_compiled_circuit, setup_recursive_aggregation_fold_circuit, setup_test_prover,
+    find_bb, require_minimum_circuits, setup_compiled_circuit,
+    setup_recursive_aggregation_fold_circuit, setup_test_prover,
 };
 use e3_events::{CircuitName, Proof};
 use e3_fhe_params::BfvPreset;
@@ -134,6 +135,10 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         return;
     };
 
+    if require_minimum_circuits().is_none() {
+        return;
+    }
+
     let gate = recursive_aggregation_compiled_json_path(CircuitName::NodeFold);
     if !gate.exists() {
         println!(
@@ -147,7 +152,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         return;
     }
 
-    let committee = CiphernodesCommitteeSize::Micro.values();
+    let committee = CiphernodesCommitteeSize::Minimum.values();
     let preset = BfvPreset::InsecureThreshold512;
 
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -289,13 +294,13 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         .expect("c2ab_fold proof");
 
     let (_dkg_th, dkg_dkg) = e3_fhe_params::build_pair_for_preset(preset).expect("pair");
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     let dkg_sk = fhe::bfv::SecretKey::random(&dkg_dkg, &mut rng);
     let dkg_pk = fhe::bfv::PublicKey::new(&dkg_sk, &mut rng);
 
     let total_slots = c3_fold_total_slots_from_compiled_json();
     assert_eq!(total_slots, 6, "Micro / insecure preset uses 3×2 C3 slots");
-    let slots_per_party = total_slots / committee.n as usize;
+    let slots_per_party = total_slots / committee.n;
     let own_party_id = 0usize;
 
     let mut c3a_inners = Vec::new();

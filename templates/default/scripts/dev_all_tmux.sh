@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -e
 
-SESSION_NAME="enclave-splits"
+SESSION_NAME="interfold-splits"
 
 # Check if tmux is available
 if command -v tmux &> /dev/null; then

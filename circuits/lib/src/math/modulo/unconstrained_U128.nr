@@ -135,6 +135,20 @@ pub unconstrained fn __mul_with_quotient(lhs: Field, rhs: Field, m: Field) -> (F
     __compute_mod_reduction(product, m)
 }
 
+/// Multiplies lhs and rhs via u128 arithmetic, returning (quotient, remainder).
+///
+/// Safe when lhs, rhs < 2^62: product < 2^124, fits in u128 without wrapping.
+/// Prefer this over `__mul_with_quotient` when inputs are known to be < 2^62 (i.e. when
+/// the modulus is < 2^62), as it avoids silent Field-prime wraparound.
+///
+/// # Safety
+/// This is an unconstrained function. The result must be verified in constrained code.
+pub unconstrained fn __mul_with_quotient_u128(lhs: Field, rhs: Field, m: Field) -> (Field, Field) {
+    let product = lhs as u128 * rhs as u128; // safe: inputs < 2^62, product < 2^124
+    let q = m as u128;
+    ((product / q) as Field, (product % q) as Field)
+}
+
 /// Computes the modular multiplicative inverse using Fermat's Little Theorem (unconstrained).
 ///
 /// For a prime modulus `m` and value `val` coprime to `m`, computes `val^(-1) mod m`

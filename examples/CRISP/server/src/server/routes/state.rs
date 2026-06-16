@@ -17,7 +17,7 @@ use crate::server::{
 use actix_web::{web, HttpResponse, Responder};
 use alloy::primitives::{Address, Bytes, U256};
 use e3_sdk::evm_helpers::contracts::{
-    EnclaveContract, EnclaveContractFactory, EnclaveWrite, ReadWrite,
+    InterfoldContract, InterfoldContractFactory, InterfoldWrite, ReadWrite,
 };
 use evm_helpers::CRISPContractFactory;
 use log::{error, info};
@@ -149,20 +149,21 @@ async fn handle_program_server_result(data: web::Json<WebhookPayload>) -> impl R
             }
 
             // Create the contract
-            let contract: EnclaveContract<ReadWrite> = match EnclaveContractFactory::create_write(
-                &CONFIG.http_rpc_url,
-                &CONFIG.enclave_address,
-                &CONFIG.private_key,
-            )
-            .await
-            {
-                Ok(contract) => contract,
-                Err(e) => {
-                    error!("Failed to create contract: {:?}", e);
-                    return HttpResponse::InternalServerError()
-                        .json(format!("Failed to create contract: {}", e));
-                }
-            };
+            let contract: InterfoldContract<ReadWrite> =
+                match InterfoldContractFactory::create_write(
+                    &CONFIG.http_rpc_url,
+                    &CONFIG.interfold_address,
+                    &CONFIG.private_key,
+                )
+                .await
+                {
+                    Ok(contract) => contract,
+                    Err(e) => {
+                        error!("Failed to create contract: {:?}", e);
+                        return HttpResponse::InternalServerError()
+                            .json(format!("Failed to create contract: {}", e));
+                    }
+                };
 
             // Try the direct call
             let tx_result = contract

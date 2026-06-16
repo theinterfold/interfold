@@ -28,11 +28,11 @@ interface PackageJson {
 }
 
 const PACKAGES: Package[] = [
-  { name: '@enclave-e3/wasm', path: 'crates/wasm' },
-  { name: '@enclave-e3/config', path: 'packages/enclave-config' },
-  { name: '@enclave-e3/contracts', path: 'packages/enclave-contracts' },
-  { name: '@enclave-e3/sdk', path: 'packages/enclave-sdk' },
-  { name: '@enclave-e3/react', path: 'packages/enclave-react' },
+  { name: '@interfold/wasm', path: 'crates/wasm' },
+  { name: '@interfold/config', path: 'packages/interfold-config' },
+  { name: '@interfold/contracts', path: 'packages/interfold-contracts' },
+  { name: '@interfold/sdk', path: 'packages/interfold-sdk' },
+  { name: '@interfold/react', path: 'packages/interfold-react' },
 ]
 
 console.log('🔧 Preparing packages for npm publishing...\n')

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "A polynomial library with big integer coefficients for cryptographic operations"
-repository = "https://github.com/gnosisguild/enclave/crates/polynomial"
+repository = "https://github.com/gnosisguild/interfold/crates/polynomial"
 
 [dependencies]
 num-bigint = { workspace = true, features = ["rand", "serde"] }
@@ -13,7 +13,6 @@ serde = { workspace = true, optional = true, features = ["rc"] }
 bincode = { workspace = true, optional = true }
 thiserror = { workspace = true }
 fhe-math = { workspace = true }
-ndarray = { workspace = true }
 
 [dev-dependencies]
 criterion = "0.5"

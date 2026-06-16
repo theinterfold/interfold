@@ -34,7 +34,7 @@ pub async fn program_upload(program_config: ProgramConfig, is_dev: Option<bool>)
 /// Open up a shell in the docker container
 pub async fn program_shell() -> Result<()> {
     let cwd = env::current_dir()?;
-    let script = cwd.join(".enclave/support/ctl/shell");
+    let script = cwd.join(".interfold/support/ctl/shell");
     ensure_script_exists(&script).await?;
     run_bash_script(&cwd, &script, &[]).await?;
     Ok(())
@@ -43,7 +43,7 @@ pub async fn program_shell() -> Result<()> {
 /// Purge all build caches from support
 pub async fn program_cache_purge() -> Result<()> {
     let cwd = env::current_dir()?;
-    let caches = cwd.join(".enclave/caches");
+    let caches = cwd.join(".interfold/caches");
     fs::remove_dir_all(caches).await?;
     Ok(())
 }

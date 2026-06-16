@@ -25,7 +25,7 @@ This guide covers the most frequent problems operators encounter and how to reso
 ### Check your status
 
 ```bash
-enclave ciphernode status
+interfold ciphernode status
 ```
 
 Look for:
@@ -44,14 +44,14 @@ Look for:
 total tickets and you hold 10, you'll be selected ~1% of the time. Add more tickets:
 
 ```bash
-enclave ciphernode tickets buy --amount 100
+interfold ciphernode tickets buy --amount 100
 ```
 
 **Bond dropped below minimum.** If you were slashed, your bond may have fallen below
 `licenseRequiredBond`. Top it up:
 
 ```bash
-enclave ciphernode license bond --amount 100
+interfold ciphernode license bond --amount 100
 ```
 
 **Inactive status.** Both bond AND tickets must be above their minimums for `isActive` to be `true`.
@@ -106,7 +106,7 @@ Check your node logs for:
 - `"Listening on /ip4/0.0.0.0/udp/<port>/quic-v1"` — confirms the listener started
 - `"Peer connected: <peer_id>"` — confirms at least one peer is reachable
 
-If no peers connect, verify that your `quic_port` in `enclave.config.yaml` matches what's open in
+If no peers connect, verify that your `quic_port` in `interfold.config.yaml` matches what's open in
 your firewall.
 
 ---
@@ -125,7 +125,7 @@ miss events.
 **Fix:** Use a WebSocket RPC endpoint:
 
 ```yaml
-# enclave.config.yaml
+# interfold.config.yaml
 chains:
   - name: sepolia
     rpc_url: wss://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
@@ -154,7 +154,7 @@ The CLI uses `-v` flags, not `RUST_LOG`. Each additional `v` goes one level deep
 | `-q, --quiet` | `ERROR` | Only log errors                                                 |
 
 ```bash
-enclave start -vv
+interfold start -vv
 ```
 
 ### Log file location
@@ -162,14 +162,14 @@ enclave start -vv
 To find the current log file path:
 
 ```bash
-enclave config get log_file
+interfold config get log_file
 ```
 
-The default lives under your platform's state directory (e.g. `~/.local/state/enclave/` on Linux,
-`~/Library/Application Support/enclave/` on macOS). Tail it while reproducing an issue:
+The default lives under your platform's state directory (e.g. `~/.local/state/interfold/` on Linux,
+`~/Library/Application Support/interfold/` on macOS). Tail it while reproducing an issue:
 
 ```bash
-tail -f "$(enclave config get log_file)"
+tail -f "$(interfold config get log_file)"
 ```
 
 ---
@@ -210,7 +210,7 @@ a bigger instance.
 For real-time monitoring, enable the [node dashboard](./using-the-dashboard):
 
 ```yaml
-# enclave.config.yaml
+# interfold.config.yaml
 node:
   dashboard_port: 8080
 ```
@@ -224,5 +224,5 @@ details.
 
 - Check the [Tickets & Sortition](/ciphernode-operators/tickets-and-sortition) reference for
   parameter details
-- Join the community [Telegram group](https://t.me/enclave_e3) for help
-- If you suspect a bug, open an issue on [GitHub](https://github.com/gnosisguild/enclave/issues)
+- Join the community [Telegram group](https://t.me/interfold_e3) for help
+- If you suspect a bug, open an issue on [GitHub](https://github.com/gnosisguild/interfold/issues)

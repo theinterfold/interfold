@@ -43,11 +43,11 @@ use zeroize::{Zeroize, Zeroizing};
 /// ABI-encodes a ZK proof for EVM verifiers (C5 pk, C7 decryption, etc.).
 /// Format: abi.encode(rawProof, publicInputs). Public inputs as bytes32[].
 pub fn encode_zk_proof(proof: &Proof) -> Result<Bytes> {
-    let signals: &[u8] = &*proof.public_signals;
+    let signals: &[u8] = &proof.public_signals;
     if signals.is_empty() {
         anyhow::bail!("public_signals must be non-empty");
     }
-    if signals.len() % 32 != 0 {
+    if !signals.len().is_multiple_of(32) {
         anyhow::bail!(
             "public_signals length must be a multiple of 32, got {}",
             signals.len()
@@ -61,7 +61,7 @@ pub fn encode_zk_proof(proof: &Proof) -> Result<Bytes> {
     }
 
     Ok(Bytes::from(
-        ((&*proof.data).to_vec(), inputs).abi_encode_params(),
+        (&proof.data.to_vec(), inputs).abi_encode_params(),
     ))
 }
 
@@ -266,7 +266,7 @@ fn should_retry_error(error: &str, decoded_error: Option<&str>, retry_on_errors:
         return true;
     }
     retry_on_errors.iter().any(|code| {
-        error.contains(code) || decoded_error.map_or(false, |decoded| decoded.contains(code))
+        error.contains(code) || decoded_error.is_some_and(|decoded| decoded.contains(code))
     })
 }
 

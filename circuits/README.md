@@ -101,16 +101,16 @@ pnpm tsx scripts/build-circuits.ts   # compile circuits, verification keys, arti
 ```
 
 Pin **nargo** and **bb** to the versions in `crates/zk-prover` and `versions.json`. For local work,
-**`enclave noir setup`** installs a toolchain that lines up with the prover and the artifacts CI
+**`interfold noir setup`** installs a toolchain that lines up with the prover and the artifacts CI
 produces. Install options and CLI flags are on the
 [Noir Circuits](https://docs.theinterfold.com/noir-circuits) page
 ([`docs/pages/noir-circuits.mdx`](../docs/pages/noir-circuits.mdx)).
 
 ## Related documentation
 
-| Topic                                                                  | Location                                                                                                                            |
-| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------- |
-| Cryptographic model (PV-TBFV, phases P1–P4, circuit identifiers C0–C7) | [Cryptography](https://docs.theinterfold.com/cryptography) · [source](../docs/pages/cryptography.mdx)                               |
-| Toolchain, repository layout, `enclave noir`, compilation              | [Noir Circuits](https://docs.theinterfold.com/noir-circuits) · [source](../docs/pages/noir-circuits.mdx)                            |
-| Rust types (`ProofType`, `CircuitName`)                                | [`signed_proof.rs`](../crates/events/src/enclave_event/signed_proof.rs) · [`proof.rs`](../crates/events/src/enclave_event/proof.rs) |
-| Protocol execution (actors, events, proof ordering)                    | [`agent/flow-trace/04_DKG_AND_COMPUTATION.md`](../agent/flow-trace/04_DKG_AND_COMPUTATION.md)                                       |
+| Topic                                                                  | Location                                                                                                                                |
+| ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| Cryptographic model (PV-TBFV, phases P1–P4, circuit identifiers C0–C7) | [Cryptography](https://docs.theinterfold.com/cryptography) · [source](../docs/pages/cryptography.mdx)                                   |
+| Toolchain, repository layout, `interfold noir`, compilation            | [Noir Circuits](https://docs.theinterfold.com/noir-circuits) · [source](../docs/pages/noir-circuits.mdx)                                |
+| Rust types (`ProofType`, `CircuitName`)                                | [`signed_proof.rs`](../crates/events/src/interfold_event/signed_proof.rs) · [`proof.rs`](../crates/events/src/interfold_event/proof.rs) |
+| Protocol execution (actors, events, proof ordering)                    | [`agent/flow-trace/04_DKG_AND_COMPUTATION.md`](../agent/flow-trace/04_DKG_AND_COMPUTATION.md)                                           |

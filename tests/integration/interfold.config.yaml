@@ -1,0 +1,79 @@
+# Sync from packages/interfold-contracts/deployed_contracts.json (localhost) after each `pnpm evm:deploy`.
+chains:
+  - name: 'localhost'
+    rpc_url: 'ws://localhost:8545'
+    contracts:
+      e3_program:
+        address: '0x4c5859f0F772848b2D91F1D83E2Fe57935348029'
+        deploy_block: 37
+      interfold:
+        address: '0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0'
+        deploy_block: 18
+      ciphernode_registry:
+        address: '0xa513E6E4b8f2a923D98304ec87F64353C4D5C853'
+        deploy_block: 13
+      bonding_registry:
+        address: '0x8A791620dd6260079BF849Dc5567aDC3F2FdC318'
+        deploy_block: 14
+      slashing_manager:
+        address: '0x5FC8d32690cc91D4c39d9d3abcBD16989F875707'
+        deploy_block: 12
+      fee_token:
+        address: '0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512'
+        deploy_block: 8
+
+program:
+  dev: true
+  # risc0:
+  #   risc0_dev_mode: 0 # 0 = production (Boundless), 1 = dev mode (fake proofs)
+  #   boundless:
+  #     rpc_url: "https://sepolia.infura.io/v3/YOUR_KEY"
+  #     private_key: "PRIVATE_KEY" # Use env vars for secrets
+  #     pinata_jwt: "PINATA_JWT" # For uploading programs
+  #     program_url: "https://gateway.pinata.cloud/ipfs/QmNMRAB7DW43JSmENfzGmD96G6sqaeBBNfTVrrq5WQae3D" # Pre-uploaded program
+  #     onchain: true # true = onchain requests, false = offchain
+  #     Optional — custom auction parameters (defaults shown):
+  #     min_price_eth: 0.00005
+  #     max_price_eth: 0.002
+  #     timeout_secs: 600
+  #     lock_timeout_secs: 300
+  #     ramp_up_secs: 60
+  #     lock_collateral_zkc: 2.0
+  # Default profile: multithread uses (logical CPUs - 1) Rayon workers and the same concurrent job
+  # limit. Reserve threads with `multithread_reserve_threads` (default 1 for Actix / libp2p).
+  # Example override on a 16-core host:
+  # node:
+  #   multithread_reserve_threads: 1
+  #   multithread_concurrent_jobs: 8
+
+nodes:
+  cn1:
+    address: '0x70997970C51812dc3A010C7d01b50e0d17dc79C8'
+    quic_port: 9201
+    ctrl_port: 50501
+    autonetkey: true
+    autopassword: true
+  cn2:
+    address: '0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC'
+    quic_port: 9202
+    ctrl_port: 50502
+    autonetkey: true
+    autopassword: true
+  cn3:
+    address: '0x90F79bf6EB2c4f870365E785982E1f101E93b906'
+    quic_port: 9203
+    ctrl_port: 50503
+    autonetkey: true
+    autopassword: true
+  cn4:
+    address: '0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65'
+    quic_port: 9204
+    ctrl_port: 50504
+    autonetkey: true
+    autopassword: true
+  cn5:
+    address: '0x9965507D1a55bcC2695C58ba16FB37d819B0A4dc'
+    quic_port: 9205
+    ctrl_port: 50505
+    autonetkey: true
+    autopassword: true

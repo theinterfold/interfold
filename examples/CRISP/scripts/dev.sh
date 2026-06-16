@@ -6,7 +6,7 @@ export CARGO_INCREMENTAL=1
 
 cleanup() {
   echo "Cleaning up processes..."
-  pkill -9 -f "enclave start"
+  pkill -9 -f "interfold start"
   sleep 1
 
   pkill -9 -f "anvil" 2>/dev/null || true

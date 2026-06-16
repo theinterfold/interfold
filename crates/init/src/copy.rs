@@ -97,9 +97,9 @@ mod tests {
         // Define source and destination paths
         let src_path = "/tmp/mysource/.";
         let dest_path = "/home/user/myproj";
-        fs.mkdirp(&dest_path).await?;
+        fs.mkdirp(dest_path).await?;
         // Create some test files in the source directory
-        fs.mkdirp(&src_path).await?;
+        fs.mkdirp(src_path).await?;
         fs.write_to_file(format!("{}/file1.txt", src_path), "Content of file 1")
             .await?;
         fs.write_to_file(format!("{}/file2.txt", src_path), "Content of file 2")
@@ -138,7 +138,7 @@ mod tests {
             &fs,
             &src_path,
             &dest_path,
-            &vec![
+            &[
                 Filter::new(
                     "**/*/package.json",
                     r#""lodash":\s*"[^"]*""#,

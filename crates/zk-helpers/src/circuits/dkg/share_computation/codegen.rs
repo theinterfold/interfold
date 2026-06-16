@@ -41,9 +41,7 @@ impl CircuitCodegen for ShareComputationCircuit {
 }
 
 pub fn generate_toml(witness: &Inputs) -> Result<CodegenToml, CircuitsErrors> {
-    let json = witness
-        .to_json()
-        .map_err(|e| CircuitsErrors::SerdeJson(e))?;
+    let json = witness.to_json().map_err(CircuitsErrors::SerdeJson)?;
 
     Ok(toml::to_string(&json)?)
 }

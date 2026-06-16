@@ -18,7 +18,7 @@ impl ProgramSupportApi for ProgramSupportRisc0 {
     /// Run the docker container compile script
     async fn compile(&self) -> Result<()> {
         let cwd = env::current_dir()?;
-        let script = cwd.join(".enclave/support/ctl/compile");
+        let script = cwd.join(".interfold/support/ctl/compile");
         ensure_script_exists(&script).await?;
         run_bash_script(&cwd, &script, &[]).await?;
         Ok(())
@@ -27,41 +27,68 @@ impl ProgramSupportApi for ProgramSupportRisc0 {
     /// Run the docker container start script
     async fn start(&self) -> Result<()> {
         let cwd = env::current_dir()?;
-        let script = cwd.join(".enclave/support/ctl/start");
+        let script = cwd.join(".interfold/support/ctl/start");
         ensure_script_exists(&script).await?;
 
         let Some(risc0_config) = self.0.risc0() else {
             bail!("start must be run with risc0 config available");
         };
 
-        let risc0_dev_mode_str = risc0_config.risc0_dev_mode.to_string();
-        let mut args = vec!["--risc0-dev-mode", risc0_dev_mode_str.as_str()];
+        let mut args: Vec<String> = vec![
+            "--risc0-dev-mode".into(),
+            risc0_config.risc0_dev_mode.to_string(),
+        ];
 
         // Boundless support
         if let Some(boundless) = &risc0_config.boundless {
-            args.extend(["--rpc-url", boundless.rpc_url.as_str()]);
-            args.extend(["--private-key", boundless.private_key.as_str()]);
+            args.extend_from_slice(&[
+                "--rpc-url".into(),
+                boundless.rpc_url.clone(),
+                "--private-key".into(),
+                boundless.private_key.clone(),
+            ]);
 
             if let Some(jwt) = &boundless.pinata_jwt {
-                args.extend(["--pinata-jwt", jwt.as_str()]);
+                args.extend_from_slice(&["--pinata-jwt".into(), jwt.clone()]);
             }
 
             if let Some(url) = &boundless.program_url {
-                args.extend(["--program-url", url.as_str()]);
+                args.extend_from_slice(&["--program-url".into(), url.clone()]);
             }
 
             let onchain = if boundless.onchain { "true" } else { "false" };
-            args.extend(["--boundless-onchain", onchain]);
+            args.extend_from_slice(&["--boundless-onchain".into(), onchain.into()]);
+
+            // Offer params — push flag + value as owned Strings
+            if let Some(v) = boundless.min_price_eth {
+                args.extend_from_slice(&["--boundless-min-price-eth".into(), v.to_string()]);
+            }
+            if let Some(v) = boundless.max_price_eth {
+                args.extend_from_slice(&["--boundless-max-price-eth".into(), v.to_string()]);
+            }
+            if let Some(v) = boundless.timeout_secs {
+                args.extend_from_slice(&["--boundless-timeout-secs".into(), v.to_string()]);
+            }
+            if let Some(v) = boundless.lock_timeout_secs {
+                args.extend_from_slice(&["--boundless-lock-timeout-secs".into(), v.to_string()]);
+            }
+            if let Some(v) = boundless.ramp_up_secs {
+                args.extend_from_slice(&["--boundless-ramp-up-secs".into(), v.to_string()]);
+            }
+            if let Some(v) = boundless.lock_collateral_zkc {
+                args.extend_from_slice(&["--boundless-lock-collateral-zkc".into(), v.to_string()]);
+            }
         }
 
-        run_bash_script(&cwd, &script, &args).await?;
+        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
+        run_bash_script(&cwd, &script, &arg_refs).await?;
         Ok(())
     }
 
     /// Upload the compiled program to Pinata IPFS
     async fn upload(&self) -> Result<()> {
         let cwd = env::current_dir()?;
-        let script = cwd.join(".enclave/support/ctl/upload");
+        let script = cwd.join(".interfold/support/ctl/upload");
         ensure_script_exists(&script).await?;
 
         let mut args = vec![];

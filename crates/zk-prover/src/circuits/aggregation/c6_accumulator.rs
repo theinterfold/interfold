@@ -29,6 +29,31 @@ fn c6_fold_public_input_field_count(total_slots: usize) -> usize {
 const C6_FOLD_PREFIX_LEN: usize = 4;
 const C6_FOLD_SLOT_WIDTH: usize = 4;
 
+struct C6FoldVks {
+    inner_vk: vk::VkArtifacts,
+    fold_vk: vk::VkArtifacts,
+    kernel_vk: vk::VkArtifacts,
+}
+
+impl C6FoldVks {
+    fn load(prover: &ZkProver, artifacts_dir: &str) -> Result<Self, ZkError> {
+        Ok(Self {
+            inner_vk: vk::load_vk_artifacts(
+                &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+                CircuitName::ThresholdShareDecryption,
+            )?,
+            fold_vk: vk::load_vk_artifacts(
+                &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+                CircuitName::C6Fold,
+            )?,
+            kernel_vk: vk::load_vk_artifacts(
+                &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+                CircuitName::C6FoldKernel,
+            )?,
+        })
+    }
+}
+
 fn generate_c6_fold_kernel_genesis_proof(
     prover: &ZkProver,
     inner: &Proof,
@@ -124,7 +149,8 @@ fn parse_c6_fold_public_field_strings(proof: &Proof) -> Result<Vec<String>, ZkEr
     )
 }
 
-fn generate_c6_fold_step(
+#[allow(clippy::too_many_arguments)]
+fn generate_c6_fold_step_with_vks(
     prover: &ZkProver,
     inner: &Proof,
     prior_fold: Option<&Proof>,
@@ -132,22 +158,14 @@ fn generate_c6_fold_step(
     total_slots: usize,
     e3_id: &str,
     artifacts_dir: &str,
+    vks: &C6FoldVks,
 ) -> Result<Proof, ZkError> {
     let is_first_step = prior_fold.is_none();
 
-    let inner_vk = vk::load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::ThresholdShareDecryption,
-    )?;
     let c6_public_inputs = threshold_share_decryption_inner_public_inputs(inner)?;
-
     let expected_acc_pub = c6_fold_public_input_field_count(total_slots);
 
-    let (acc_vk_art, acc_proof, acc_public_inputs) = if is_first_step {
-        let kernel_vk = vk::load_vk_artifacts(
-            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-            CircuitName::C6FoldKernel,
-        )?;
+    let (acc_vk_fields, acc_vk_hash, acc_proof, acc_public_inputs) = if is_first_step {
         let kernel_job_id = format!("{e3_id}-c6fold-kernel");
         let kernel_proof = generate_c6_fold_kernel_genesis_proof(
             prover,
@@ -167,7 +185,8 @@ fn generate_c6_fold_step(
             )));
         }
         (
-            kernel_vk,
+            vks.kernel_vk.verification_key.clone(),
+            vks.kernel_vk.key_hash.clone(),
             bytes_to_field_strings(&kernel_proof.data)?,
             acc_pi,
         )
@@ -195,24 +214,22 @@ fn generate_c6_fold_step(
             )));
         }
         (
-            vk::load_vk_artifacts(
-                &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-                CircuitName::C6Fold,
-            )?,
+            vks.fold_vk.verification_key.clone(),
+            vks.fold_vk.key_hash.clone(),
             bytes_to_field_strings(&p.data)?,
             acc_pi,
         )
     };
 
     let full_input = C6FoldStepInput {
-        inner_vk: inner_vk.verification_key,
+        inner_vk: vks.inner_vk.verification_key.clone(),
         inner_proof: bytes_to_field_strings(&inner.data)?,
         c6_public_inputs,
-        acc_vk: acc_vk_art.verification_key,
+        acc_vk: acc_vk_fields,
         acc_proof,
         acc_public_inputs,
-        inner_key_hash: inner_vk.key_hash,
-        acc_key_hash: acc_vk_art.key_hash,
+        inner_key_hash: vks.inner_vk.key_hash.clone(),
+        acc_key_hash: acc_vk_hash,
         is_first_step,
         slot_index,
     };
@@ -274,12 +291,13 @@ pub fn generate_sequential_c6_fold(
         }
         seen[idx] = true;
     }
+    let vks = C6FoldVks::load(prover, artifacts_dir)?;
     sequential_fold(
         "generate_sequential_c6_fold",
         inner_proofs,
         slot_indices,
         |inner, prior, slot| {
-            generate_c6_fold_step(
+            generate_c6_fold_step_with_vks(
                 prover,
                 inner,
                 prior,
@@ -287,6 +305,7 @@ pub fn generate_sequential_c6_fold(
                 total_slots,
                 e3_id,
                 artifacts_dir,
+                &vks,
             )
         },
     )

@@ -8,7 +8,7 @@ configure local state, encrypt credentials, and submit an on-chain transaction t
 
 ---
 
-## Step 1: `enclave ciphernode setup`
+## Step 1: `interfold ciphernode setup`
 
 **File:** `crates/cli/src/ciphernode/setup.rs` → delegates to
 `crates/entrypoint/src/config/setup.rs`
@@ -16,13 +16,13 @@ configure local state, encrypt credentials, and submit an on-chain transaction t
 ### What happens call-by-call:
 
 ```
-User runs: enclave ciphernode setup
+User runs: interfold ciphernode setup
 │
 ├─ 1. Checks if config already exists → ABORTS if yes
 │
 ├─ 2. Prompts for PASSWORD (confirmed twice)
 │     └─ Stored encrypted via Cipher → written to local keystore
-│        File: ~/.config/enclave/<name>/password (encrypted blob)
+│        File: ~/.config/interfold/<name>/password (encrypted blob)
 │
 ├─ 3. Prompts for WEBSOCKET RPC URL
 │     └─ Default: wss://ethereum-sepolia-rpc.publicnode.com
@@ -34,14 +34,14 @@ User runs: enclave ciphernode setup
 │     └─ NEVER stored in plaintext
 │
 ├─ 5. Prompts for CONFIG DIRECTORY
-│     └─ Default: ~/.config/enclave
+│     └─ Default: ~/.config/interfold
 │
 ├─ 6. Creates config file (YAML):
 │     chains:
 │       - name: "default"
 │         rpc_url: <user's URL>
 │         contracts:
-│           enclave: <address>
+│           interfold: <address>
 │           bonding_registry: <address>
 │           ciphernode_registry: <address>
 │           slashing_manager: <address>
@@ -62,20 +62,20 @@ User runs: enclave ciphernode setup
 
 ---
 
-## Step 2: `enclave ciphernode register`
+## Step 2: `interfold ciphernode register`
 
 **File:** `crates/cli/src/ciphernode/lifecycle.rs` → `register()`
 
 ### Prerequisites (must be done FIRST):
 
 - Setup completed (config + password + private key exist)
-- License bonded: `enclave ciphernode license bond --amount N` (see Part 2)
-- Tickets purchased: `enclave ciphernode tickets buy --amount N` (see Part 2)
+- License bonded: `interfold ciphernode license bond --amount N` (see Part 2)
+- Tickets purchased: `interfold ciphernode tickets buy --amount N` (see Part 2)
 
 ### What happens call-by-call:
 
 ```
-User runs: enclave ciphernode register [--chain default]
+User runs: interfold ciphernode register [--chain default]
 │
 ├─ 1. ChainContext::new()
 │     ├─ Loads AppConfig from disk
@@ -138,12 +138,12 @@ User runs: enclave ciphernode register [--chain default]
 
 ---
 
-## Step 3: `enclave ciphernode activate`
+## Step 3: `interfold ciphernode activate`
 
 **File:** `crates/cli/src/ciphernode/lifecycle.rs` → `activate()`
 
 ```
-User runs: enclave ciphernode activate
+User runs: interfold ciphernode activate
 │
 └─ Currently delegates directly to register()
    └─ Calls BondingRegistryContract.registerOperator()
@@ -162,12 +162,12 @@ User runs: enclave ciphernode activate
 
 ---
 
-## Step 4: `enclave ciphernode status`
+## Step 4: `interfold ciphernode status`
 
 **File:** `crates/cli/src/ciphernode/lifecycle.rs` → `status()`
 
 ```
-User runs: enclave ciphernode status
+User runs: interfold ciphernode status
 │
 ├─ ChainContext::new() (same as register)
 │
@@ -188,7 +188,7 @@ User runs: enclave ciphernode status
    Active:           true
    Exit Pending:     false
    Ticket Balance:   100 (available: 95)
-   License Bond:     50000 ENCL
+   License Bond:     50000 FOLD
    Pending Exits:    tickets=0, license=0
    Requirements:     minTickets=10, ticketPrice=1000000, licenseBond=50000
 ```
@@ -197,7 +197,7 @@ User runs: enclave ciphernode status
 
 ## Rust-Side: What Happens When a Running Node Detects Registration
 
-When a ciphernode is running (`enclave start`), its EVM readers are listening for on-chain events:
+When a ciphernode is running (`interfold start`), its EVM readers are listening for on-chain events:
 
 ```
 BondingRegistrySolReader detects OperatorActivationChanged event

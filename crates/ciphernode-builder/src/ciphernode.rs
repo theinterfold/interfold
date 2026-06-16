@@ -7,21 +7,46 @@
 use actix::Addr;
 use anyhow::Result;
 use e3_data::{DataStore, InMemStore, StoreAddr};
-use e3_events::{BusHandle, EnclaveEvent, HistoryCollector};
+use e3_events::{BusHandle, HistoryCollector, InterfoldEvent};
 use e3_net::NetChannelBridge;
 use libp2p::PeerId;
 
-/// A Sharable handle to a Ciphernode. NOTE: clones are available for use in the CiphernodeSystem
-/// but they cannot await the task.
+/// The kind of network interface backing a ciphernode.
+#[derive(Debug, Clone)]
+pub enum NetInterfaceKind {
+    /// Real libp2p networking (production).
+    Libp2p,
+    /// In-process channel bridge (tests / benchmarks).
+    ChannelBridge(NetChannelBridge),
+}
+
+impl NetInterfaceKind {
+    /// Extract the channel bridge, failing if this is a libp2p interface.
+    pub fn into_channel_bridge(self) -> Result<NetChannelBridge> {
+        match self {
+            NetInterfaceKind::ChannelBridge(bridge) => Ok(bridge),
+            NetInterfaceKind::Libp2p => Err(anyhow::anyhow!(
+                "No channel bridge exists — node is using libp2p networking"
+            )),
+        }
+    }
+}
+
+/// A sharable handle to a Ciphernode. Clones are available for use in the
+/// CiphernodeSystem but they cannot await the task.
 #[derive(Debug)]
 pub struct CiphernodeHandle {
     pub address: String,
     pub store: DataStore,
     pub bus: BusHandle,
-    pub history: Option<Addr<HistoryCollector<EnclaveEvent>>>,
-    pub errors: Option<Addr<HistoryCollector<EnclaveEvent>>>,
+    /// Optional event history collector. Populated when the builder is configured
+    /// with [`CiphernodeBuilder::with_history_collector`].
+    pub history: Option<Addr<HistoryCollector<InterfoldEvent>>>,
+    /// Optional error event collector. Populated when the builder is configured
+    /// with [`CiphernodeBuilder::with_error_collector`].
+    pub errors: Option<Addr<HistoryCollector<InterfoldEvent>>>,
     pub peer_id: PeerId,
-    pub channel_bridge: Option<NetChannelBridge>,
+    pub net_interface: NetInterfaceKind,
 }
 
 impl PartialEq for CiphernodeHandle {
@@ -37,10 +62,10 @@ impl CiphernodeHandle {
         address: String,
         store: DataStore,
         bus: BusHandle,
-        history: Option<Addr<HistoryCollector<EnclaveEvent>>>,
-        errors: Option<Addr<HistoryCollector<EnclaveEvent>>>,
+        history: Option<Addr<HistoryCollector<InterfoldEvent>>>,
+        errors: Option<Addr<HistoryCollector<InterfoldEvent>>>,
         peer_id: PeerId,
-        channel_bridge: Option<NetChannelBridge>,
+        net_interface: NetInterfaceKind,
     ) -> Self {
         Self {
             address,
@@ -49,7 +74,7 @@ impl CiphernodeHandle {
             history,
             errors,
             peer_id,
-            channel_bridge,
+            net_interface,
         }
     }
 
@@ -57,11 +82,11 @@ impl CiphernodeHandle {
         &self.bus
     }
 
-    pub fn history(&self) -> Option<Addr<HistoryCollector<EnclaveEvent>>> {
+    pub fn history(&self) -> Option<Addr<HistoryCollector<InterfoldEvent>>> {
         self.history.clone()
     }
 
-    pub fn errors(&self) -> Option<Addr<HistoryCollector<EnclaveEvent>>> {
+    pub fn errors(&self) -> Option<Addr<HistoryCollector<InterfoldEvent>>> {
         self.errors.clone()
     }
 
@@ -73,18 +98,17 @@ impl CiphernodeHandle {
         &self.store
     }
 
+    /// Extract the channel bridge for test network simulation.
+    /// Returns an error if the node is using libp2p networking.
     pub fn channel_bridge(&self) -> Result<NetChannelBridge> {
-        Ok(self.channel_bridge.clone().ok_or(anyhow::anyhow!(
-            "No channel bridge exists. We are likely not in test mode"
-        ))?)
+        self.net_interface.clone().into_channel_bridge()
     }
 
     pub fn in_mem_store(&self) -> Option<&Addr<InMemStore>> {
         let addr = self.store.get_addr();
         if let StoreAddr::InMem(ref store) = addr {
             return Some(store);
-        };
-
+        }
         None
     }
 }

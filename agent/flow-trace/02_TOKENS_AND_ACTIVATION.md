@@ -4,9 +4,9 @@
 
 Before a node can register, it must stake two types of collateral:
 
-1. **ENCL tokens** (license bond) — governance/utility token, staked directly
-2. **Stablecoin via ETK tickets** (ticket collateral) — USDC wrapped into non-transferable
-   EnclaveTicketToken
+1. **FOLD tokens** (license bond) — governance/utility token, staked directly
+2. **Stablecoin via tFOLD tickets** (ticket collateral) — USDC wrapped into non-transferable
+   InterfoldTicketToken
 
 ---
 
@@ -14,18 +14,67 @@ Before a node can register, it must stake two types of collateral:
 
 ```
 ┌───────────────────────────────────────────────────────────┐
-│                    EnclaveToken (ENCL)                     │
+│                    InterfoldToken (FOLD)                     │
 │  ERC20 + ERC20Permit + ERC20Votes + AccessControl         │
+│  + Ownable2Step                                            │
 │                                                           │
 │  MAX_SUPPLY: 1,200,000,000 (1.2B with 18 decimals)       │
-│  Roles: MINTER_ROLE can mint via mintAllocation()         │
-│  Transfer restrictions: when transfersRestricted=true,    │
-│    only whitelisted addresses can transfer                │
+│  Immutables: CCA_START, CCA_END, CLAIM_SOURCE,            │
+│              BONDING_REGISTRY (set at construction)        │
+│                                                           │
+│  Lifecycle phases (derived from CCA window + TGE):        │
+│    Virtual → PublicSale → Cooldown → Live                 │
+│    - Virtual: mint() + mintAllocations() allowed           │
+│    - PublicSale: CCA bidding window                        │
+│    - Cooldown: CCA ended, TGE not yet called               │
+│    - Live: TGE fired (permissionless after cooldown)       │
+│                                                           │
+│  Minting (Virtual phase only):                            │
+│    - mint(recipient, amount, label)                        │
+│      DEFAULT_ADMIN_ROLE — unlocked tokens                  │
+│    - mintAllocations(MintAllocation[])                     │
+│      MINTER_ROLE — tokens locked under a policy            │
+│                                                           │
+│  Pre-TGE transfer gate (phase-based, automatic):          │
+│    Allowed: bonding registry, claim source, whitelisted    │
+│    Blocked: all other transfers                            │
+│    Once TGE fires, all transfers unrestricted              │
+│                                                           │
+│  Lock system (wallet-level pooled enforcement):           │
+│    - createLockPolicy(id, LockPolicy) → write-once         │
+│      LOCK_MANAGER_ROLE                                     │
+│    - linkClaim(account, amount, policyId)                  │
+│      LOCK_MANAGER_ROLE                                     │
+│    - LockPolicy: { holdUntil, Curve { anchor, start,      │
+│        cliffDuration, vestDuration } }                     │
+│    - Anchor: Absolute (fixed start) | Tge (tgeTimestamp)   │
+│    - PENDING_LOCK_POLICY_ID for unclassified claims        │
+│    - Queued locks consumed by later claims (linkClaim)     │
+│                                                           │
+│  Lock invariant for transfers:                             │
+│    transferable = balance - max(0, lockedBalance -         │
+│      BONDING_REGISTRY.totalBonded(account))                │
+│    Transfer reverts with InsufficientUnlockedBalance       │
+│    if value > transferable                                 │
+│                                                            │
+│  Lock sunset (NO_MORE_LOCKS, immutable):                   │
+│    - Absolute timestamp set at deployment                  │
+│    - createLockPolicy rejects any policy that could        │
+│      outlast the sunset (curves and holdUntil)             │
+│    - From NO_MORE_LOCKS on, _update skips all lock         │
+│      accounting (vanilla ERC20); PENDING locks die too     │
+│                                                            │
+│  Whitelisting:                                             │
+│    - setTransferWhitelisted(addr, bool)                    │
+│      WHITELIST_ROLE — pre-TGE transfer gate                │
+│    - setLockWhitelisted(addr, bool)                        │
+│      LOCK_MANAGER_ROLE — exempt from claim-source locks    │
+│                                                           │
 │  Used as: LICENSE BOND token                              │
 └───────────────────────────────────────────────────────────┘
 
 ┌───────────────────────────────────────────────────────────┐
-│              EnclaveTicketToken (ETK)                      │
+│              InterfoldTicketToken (tFOLD)                      │
 │  ERC20Wrapper over stablecoin (e.g. USDC)                 │
 │                                                           │
 │  NON-TRANSFERABLE: _update() reverts on transfer          │
@@ -33,10 +82,10 @@ Before a node can register, it must stake two types of collateral:
 │  NO APPROVALS: approve() reverts                          │
 │                                                           │
 │  Only BondingRegistry (registry role) can:                │
-│    depositFor()  → wrap USDC, mint ETK to operator        │
-│    depositFrom() → pull USDC from X, mint ETK to Y       │
-│    burnTickets() → burn ETK, NO underlying returned       │
-│    withdrawTo()  → burn ETK, return underlying USDC       │
+│    depositFor()  → wrap USDC, mint tFOLD to operator        │
+│    depositFrom() → pull USDC from X, mint tFOLD to Y       │
+│    burnTickets() → burn tFOLD, NO underlying returned       │
+│    withdrawTo()  → burn tFOLD, return underlying USDC       │
 │    payout()      → send underlying from payableBalance    │
 │                                                           │
 │  Used as: TICKET COLLATERAL token                         │
@@ -45,19 +94,19 @@ Before a node can register, it must stake two types of collateral:
 
 ---
 
-## Step 1: Bond License (`enclave ciphernode license bond`)
+## Step 1: Bond License (`interfold ciphernode license bond`)
 
 **File:** `crates/cli/src/ciphernode/license.rs`
 
 ```
-User runs: enclave ciphernode license bond --amount 50000
+User runs: interfold ciphernode license bond --amount 50000
 │
 ├─ 1. ChainContext::new()
 │     └─ Loads config, decrypts wallet, connects to BondingRegistry
 │
-├─ 2. Approve ENCL spend:
-│     └─ EnclaveToken.approve(bondingRegistry, 50000)
-│        → Allows BondingRegistry to pull ENCL tokens
+├─ 2. Approve FOLD spend:
+│     └─ InterfoldToken.approve(bondingRegistry, 50000)
+│        → Allows BondingRegistry to pull FOLD tokens
 │
 ├─ 3. BondingRegistryContract.bondLicense(50000).send().await
 │     │
@@ -65,13 +114,16 @@ User runs: enclave ciphernode license bond --amount 50000
 │     │  │                                                      │
 │     │  │  bondLicense(uint256 amount) {                       │
 │     │  │    1. require(amount > 0)                            │
-│     │  │    2. licenseToken.safeTransferFrom(                 │
+│     │  │    2. operators[msg.sender].licenseBond += amount    │
+│     │  │       → totalBonded(msg.sender) now includes amount  │
+│     │  │    3. licenseToken.safeTransferFrom(                 │
 │     │  │         msg.sender,   // from operator               │
 │     │  │         address(this), // to BondingRegistry         │
 │     │  │         amount                                       │
 │     │  │       )                                              │
-│     │  │       → ENCL tokens move from operator → contract    │
-│     │  │    3. operators[msg.sender].licenseBond += amount    │
+│     │  │       → FOLD _update can see the pre-recorded bond   │
+│     │  │         and enforce locked-floor accounting          │
+│     │  │       → FOLD tokens move from operator → contract    │
 │     │  │    4. _updateOperatorStatus(msg.sender)              │
 │     │  │       → May activate if all conditions now met       │
 │     │  │    5. Emit LicenseBondUpdated(msg.sender, newBond)   │
@@ -80,6 +132,14 @@ User runs: enclave ciphernode license bond --amount 50000
 │     │
 └─ OUTPUT: "Transaction hash: 0x..."
 ```
+
+### Locked FOLD bonding
+
+`BondingRegistry.totalBonded(account)` returns active FOLD license bond plus pending FOLD exits that
+remain slashable/not returned. `InterfoldToken` uses this view for pooled wallet-level locks, so
+locked FOLD can be self-bonded by the same account without becoming transferable. Delegated
+source-aware bonding is not part of the pooled-lock model; license bonds are credited to
+`msg.sender` through `bondLicense(amount)`.
 
 ### Activation check after bonding:
 
@@ -91,7 +151,7 @@ _updateOperatorStatus(operator):
     operators[operator].registered == true
     AND operators[operator].licenseBond >= (licenseRequiredBond * licenseActiveBps / 10000)
         // Default: licenseActiveBps = 8000 (80%)
-        // So if licenseRequiredBond = 50000, need >= 40000 ENCL
+        // So if licenseRequiredBond = 50000, need >= 40000 FOLD
     AND ticketToken.balanceOf(operator) / ticketPrice >= minTicketBalance
   )
 
@@ -108,7 +168,7 @@ _updateOperatorStatus(operator):
 
 ---
 
-## Step 2: Buy Tickets (`enclave ciphernode tickets buy`)
+## Step 2: Buy Tickets (`interfold ciphernode tickets buy`)
 
 **File:** `crates/cli/src/ciphernode/tickets.rs`
 
@@ -119,7 +179,7 @@ _updateOperatorStatus(operator):
 > multiply the deposit amount.
 
 ```
-User runs: enclave ciphernode tickets buy --amount 100
+User runs: interfold ciphernode tickets buy --amount 100
 │
 ├─ 1. ChainContext::new()
 │
@@ -141,16 +201,16 @@ User runs: enclave ciphernode tickets buy --amount 100
 │     │  │    3. modifier: require(!exitInProgress(msg.sender)) │
 │     │  │    4. ticketToken.depositFrom(                       │
 │     │  │         msg.sender,  // pull USDC from operator      │
-│     │  │         msg.sender,  // mint ETK to operator         │
+│     │  │         msg.sender,  // mint tFOLD to operator         │
 │     │  │         amount       // RAW stablecoin units         │
 │     │  │       )              // NO ticketPrice multiplication│
 │     │  │       │                                              │
-│     │  │       │  ┌─ EnclaveTicketToken.depositFrom() ────┐  │
+│     │  │       │  ┌─ InterfoldTicketToken.depositFrom() ────┐  │
 │     │  │       │  │  1. underlying.transferFrom(           │  │
 │     │  │       │  │       from, address(this), amount)     │  │
-│     │  │       │  │     → USDC moves: operator → ETK       │  │
+│     │  │       │  │     → USDC moves: operator → tFOLD       │  │
 │     │  │       │  │  2. _mint(to, amount)                  │  │
-│     │  │       │  │     → ETK minted 1:1 with USDC         │  │
+│     │  │       │  │     → tFOLD minted 1:1 with USDC         │  │
 │     │  │       │  │  3. Auto-delegate to self on first     │  │
 │     │  │       │  │     deposit (for voting power tracking)│  │
 │     │  │       │  └────────────────────────────────────────┘  │
@@ -165,7 +225,7 @@ User runs: enclave ciphernode tickets buy --amount 100
 
 ### Why tickets are non-transferable:
 
-ETK tokens cannot be transferred between addresses. This ensures:
+tFOLD tokens cannot be transferred between addresses. This ensures:
 
 - An operator's collateral can't be moved to avoid slashing
 - The ticket balance is always attributable to the specific operator
@@ -173,10 +233,10 @@ ETK tokens cannot be transferred between addresses. This ensures:
 
 ---
 
-## Step 3: Unbond License (`enclave ciphernode license unbond`)
+## Step 3: Unbond License (`interfold ciphernode license unbond`)
 
 ```
-User runs: enclave ciphernode license unbond --amount 10000
+User runs: interfold ciphernode license unbond --amount 10000
 │
 ├─ BondingRegistryContract.unbondLicense(10000).send().await
 │     │
@@ -190,17 +250,8 @@ User runs: enclave ciphernode license unbond --amount 10000
 │     │  │    4. _exits.queueLicensesForExit(                   │
 │     │  │         msg.sender, exitDelay, amount                 │
 │     │  │       )                                               │
-│     │  │       │                                               │
-│     │  │       │  ┌─ ExitQueueLib ─────────────────────────┐  │
-│     │  │       │  │  Creates ExitTranche {                 │  │
-│     │  │       │  │    unlockTimestamp: now + exitDelay,    │  │
-│     │  │       │  │    ticketAmount: 0,                    │  │
-│     │  │       │  │    licenseAmount: 10000                │  │
-│     │  │       │  │  }                                     │  │
-│     │  │       │  │  Merges into last tranche if same      │  │
-│     │  │       │  │  unlock time, else appends new tranche │  │
-│     │  │       │  │  Updates pendingTotals                 │  │
-│     │  │       │  └────────────────────────────────────────┘  │
+│     │  │       → Pending FOLD still counts in totalBonded()    │
+│     │  │         until claimed or slashed                      │
 │     │  │    5. _updateOperatorStatus(msg.sender)               │
 │     │  │       → May DEACTIVATE if bond drops below threshold  │
 │     │  │    6. Emit LicenseBondUpdated(msg.sender, newBond)    │
@@ -212,14 +263,14 @@ User runs: enclave ciphernode license unbond --amount 10000
 
 ---
 
-## Step 4: Burn Tickets (`enclave ciphernode tickets burn`)
+## Step 4: Burn Tickets (`interfold ciphernode tickets burn`)
 
-> **IMPORTANT:** Like `addTicketBalance`, the `amount` here is in **raw stablecoin base units** (ETK
-> units, which are 1:1 with underlying). There is NO `ticketPrice` multiplication. The CLI parses
-> the user's amount using the ticket token's decimals.
+> **IMPORTANT:** Like `addTicketBalance`, the `amount` here is in **raw stablecoin base units**
+> (tFOLD units, which are 1:1 with underlying). There is NO `ticketPrice` multiplication. The CLI
+> parses the user's amount using the ticket token's decimals.
 
 ```
-User runs: enclave ciphernode tickets burn --amount 50
+User runs: interfold ciphernode tickets burn --amount 50
 │
 ├─ CLI parses "50" using ticket token decimals → raw units
 │
@@ -235,11 +286,11 @@ User runs: enclave ciphernode tickets burn --amount 50
 │     │  │    4. ticketToken.burnTickets(msg.sender, amount)     │
 │     │  │       │  (NO ticketPrice multiplication — raw units)  │
 │     │  │       │                                               │
-│     │  │       │  ┌─ EnclaveTicketToken ───────────────────┐  │
+│     │  │       │  ┌─ InterfoldTicketToken ───────────────────┐  │
 │     │  │       │  │  burnTickets(operator, amount):        │  │
 │     │  │       │  │    payableBalance += amount             │  │
 │     │  │       │  │    _burn(operator, amount)             │  │
-│     │  │       │  │    → ETK destroyed                     │  │
+│     │  │       │  │    → tFOLD destroyed                     │  │
 │     │  │       │  │    → Underlying USDC NOT returned yet  │  │
 │     │  │       │  │    → Tracked in payableBalance for     │  │
 │     │  │       │  │      later payout()                    │  │
@@ -258,19 +309,19 @@ User runs: enclave ciphernode tickets burn --amount 50
 
 ---
 
-## Step 5: Claim Exits (`enclave ciphernode license claim`)
+## Step 5: Claim Exits (`interfold ciphernode license claim`)
 
 ```
-User runs: enclave ciphernode license claim [--max-ticket 50] [--max-license 10000]
+User runs: interfold ciphernode license claim [--max-ticket 50] [--max-license 10000]
 │
 ├─ BondingRegistryContract.claimExits(50, 10000).send().await
 │     │
 │     │  ┌─── ON-CHAIN ─────────────────────────────────────────┐
 │     │  │                                                       │
 │     │  │  claimExits(maxTicket, maxLicense) {                  │
-│     │  │    1. (ticketAmount, licenseAmount) =                 │
+│     │  │    1. (ticketAmount, _) =                             │
 │     │  │       _exits.claimAssets(                             │
-│     │  │         msg.sender, maxTicket, maxLicense             │
+│     │  │         msg.sender, maxTicket, 0                      │
 │     │  │       )                                               │
 │     │  │       │                                               │
 │     │  │       │  ┌─ ExitQueueLib.claimAssets() ───────────┐  │
@@ -278,7 +329,7 @@ User runs: enclave ciphernode license claim [--max-ticket 50] [--max-license 100
 │     │  │       │  │  for each tranche where                │  │
 │     │  │       │  │    block.timestamp >= unlockTimestamp:  │  │
 │     │  │       │  │      take min(wanted, available)       │  │
-│     │  │       │  │      from ticketAmount & licenseAmount  │  │
+│     │  │       │  │      from ticketAmount                  │  │
 │     │  │       │  │  Skip locked tranches (future unlock)  │  │
 │     │  │       │  │  Clean up empty tranches               │  │
 │     │  │       │  │  Update pendingTotals                  │  │
@@ -287,22 +338,25 @@ User runs: enclave ciphernode license claim [--max-ticket 50] [--max-license 100
 │     │  │    2. if ticketAmount > 0:                            │
 │     │  │       ticketToken.payout(msg.sender, ticketAmount)    │
 │     │  │       │                                               │
-│     │  │       │  ┌─ EnclaveTicketToken.payout() ──────────┐  │
+│     │  │       │  ┌─ InterfoldTicketToken.payout() ──────────┐  │
 │     │  │       │  │  Transfers underlying USDC from        │  │
 │     │  │       │  │  payableBalance to operator             │  │
 │     │  │       │  │  payableBalance -= amount               │  │
 │     │  │       │  │  underlying.safeTransfer(to, amount)    │  │
 │     │  │       │  └────────────────────────────────────────┘  │
 │     │  │                                                       │
-│     │  │    3. if licenseAmount > 0:                           │
-│     │  │       licenseToken.safeTransfer(                      │
-│     │  │         msg.sender, licenseAmount                     │
+│     │  │    3. licenseAmount = _claimLicenseExits(             │
+│     │  │         msg.sender, maxLicense                        │
 │     │  │       )                                               │
-│     │  │       → ENCL tokens returned to operator              │
+│     │  │       → Each FOLD source pays its withdrawalAddress   │
+│     │  │       → Receiver callback gets (operator, amount,     │
+│     │  │         sourceId) when supported                      │
+│     │  │       → Pending FOLD is removed from totalBonded()    │
+│     │  │         as returned FOLD reaches the wallet           │
 │     │  │  }                                                    │
 │     │  └───────────────────────────────────────────────────────┘
 │
-└─ Operator receives back their USDC and/or ENCL tokens
+└─ Operator receives back USDC; FOLD goes to each source's withdrawal address
 ```
 
 ---
@@ -311,7 +365,7 @@ User runs: enclave ciphernode license claim [--max-ticket 50] [--max-license 100
 
 | Requirement           | Default             | Description                                |
 | --------------------- | ------------------- | ------------------------------------------ |
-| `licenseRequiredBond` | Configured by owner | Min ENCL to register                       |
+| `licenseRequiredBond` | Configured by owner | Min FOLD to register                       |
 | `licenseActiveBps`    | 8000 (80%)          | % of required bond to stay active          |
 | `minTicketBalance`    | Configured by owner | Min tickets for active status              |
 | `ticketPrice`         | Configured by owner | Stablecoin cost per ticket (in base units) |
@@ -333,21 +387,21 @@ active = registered
                 BOND LICENSE                          BUY TICKETS
                 ────────────                          ───────────
   Operator                                 Operator
-  ENCL wallet ──→ BondingRegistry          USDC wallet ──→ EnclaveTicketToken
-                  (licenseBond++)                          (wraps USDC → mints ETK)
-                                                           ETK → Operator balance
+  FOLD wallet ──→ BondingRegistry          USDC wallet ──→ InterfoldTicketToken
+                  (licenseBond++)                          (wraps USDC → mints tFOLD)
+                                                           tFOLD → Operator balance
 
                UNBOND LICENSE                         BURN TICKETS
                ──────────────                         ────────────
-  licenseBond -= amount                    ETK burned from operator
-  amount → ExitQueue (locked)              USDC stays in ETK contract (payableBalance)
+  licenseBond -= amount                    tFOLD burned from operator
+  amount → ExitQueue (locked)              USDC stays in tFOLD contract (payableBalance)
                                            amount → ExitQueue (locked)
 
                               CLAIM EXITS
                               ───────────
                    After exitDelay seconds:
-                   ENCL → returned from ExitQueue
-                   USDC → paid out from ETK.payableBalance
+                   FOLD → returned to source withdrawal address
+                   USDC → paid out from tFOLD.payableBalance
 ```
 
 ---
@@ -355,9 +409,9 @@ active = registered
 ## Audit Cluster 2 Changes (Tokens)
 
 The token contracts were hardened against the following audit findings. All changes are covered by
-`packages/enclave-contracts/test/Token/` and have no runtime impact outside the touched contracts.
+`packages/interfold-contracts/test/Token/` and have no runtime impact outside the touched contracts.
 
-### EnclaveTicketToken (ETK)
+### InterfoldTicketToken (tFOLD)
 
 - **H-02 — registry initialization.** The constructor now takes
   `(IERC20 baseToken, address registry_, address initialOwner_)` and assigns `registry = registry_`
@@ -380,20 +434,37 @@ The token contracts were hardened against the following audit findings. All chan
 - **M-29 — EIP-6372 timestamp clock.** `clock() = uint48(block.timestamp)`,
   `CLOCK_MODE() = "mode=timestamp"`.
 
-### EnclaveToken (ENCL)
+### InterfoldToken (FOLD) — Complete Rewrite
 
-- **H-15 — WHITELIST_ROLE separation + one-way disable.** New `WHITELIST_ROLE` gates
-  `toggleTransferWhitelist` and `whitelistContracts`, decoupling whitelist edits from `MINTER_ROLE`.
-  `disableTransferRestrictions` is `DEFAULT_ADMIN_ROLE` only and idempotent (silent no-op when
-  already disabled) so deployment/setup scripts can call it unconditionally.
-- **M-21 — per-epoch mint cap.** New rolling cap configured via
-  `setMintCap(epochLength, capPerEpoch)` (`ZeroEpochLength` on zero length). Both `mintAllocation`
-  and `batchMintAllocations` route through `_accountForMintAgainstCap`, which rolls the epoch
-  (`MintEpochRolled(newStart)`) and reverts `ExceedsMintCap` on overflow. Constructor defaults to a
-  30-day epoch with `cap = MAX_SUPPLY` so bootstrap deployments keep working; governance is expected
-  to tighten this before broad distribution.
-- **M-29 — EIP-6372 timestamp clock.** Same timestamp clock as ETK, aligning ENCL voting checkpoints
-  with timepoints used elsewhere.
+The FOLD token was rewritten to implement a CCA-auction-aligned lifecycle with wallet-level lock
+enforcement based on immutable policy curves. Key changes:
+
+- **Phase-based lifecycle.** The token derives its phase from immutable `CCA_START` / `CCA_END` and
+  the one-way `tge()` call: Virtual → PublicSale → Cooldown → Live. Minting is gated to Virtual
+  phase only; TGE is permissionless after `CCA_END + TGE_COOLDOWN` (45 days). The pre-TGE transfer
+  gate automatically lifts at TGE — no `disableTransferRestrictions` / `transfersRestricted` flag.
+- **Pre-TGE transfer gate.** Before TGE, only bonding-registry transfers, claim-source
+  distributions, and whitelisted addresses can transfer. Bonding is always allowed so operators can
+  stake during Virtual phase.
+- **Immutable constructor parameters.** `CCA_START`, `CCA_END`, `CLAIM_SOURCE`, and
+  `BONDING_REGISTRY` are set at construction and cannot change. The BondingRegistry must be deployed
+  first (or a placeholder used and fixed via `setLicenseToken`).
+- **Lock policy system.** `createLockPolicy(id, LockPolicy)` creates write-once policies with
+  `Curve { anchor (Absolute|Tge), start, cliffDuration, vestDuration }` and optional `holdUntil`.
+  `linkClaim(account, amount, policyId)` classifies pending claim-source tokens under a real policy.
+  `PENDING_LOCK_POLICY_ID` holds unclassified claim tokens until linked.
+- **Pooled wallet enforcement.** `lockedBalanceOf(account)` sums active locks (including PENDING).
+  `transferableBalanceOf(account) = balance - max(0, locked - BONDING_REGISTRY.totalBonded(account))`.
+  Transfers that exceed the transferable balance revert with `InsufficientUnlockedBalance`.
+- **Claim-source auto-lock.** Tokens arriving from `CLAIM_SOURCE` are automatically locked as
+  PENDING unless the recipient is in `lockWhitelist`. `linkClaim` moves PENDING to a real policy and
+  queues unfilled amounts for future claims.
+- **EIP-6372 timestamp clock.** `clock()` returns `block.timestamp`, `CLOCK_MODE()` is
+  `"mode=timestamp"`.
+- **Minting.** `mint(recipient, amount, label)` (DEFAULT_ADMIN_ROLE, unlocked) and
+  `mintAllocations(MintAllocation[])` (MINTER_ROLE, locked to a policy) are both Virtual-only.
+- **Ownership.** `renounceOwnership()` is disabled. Two-step ownership transfer via Ownable2Step
+  syncs all AccessControl roles atomically.
 
 ### Registry coordination
 
@@ -401,4 +472,4 @@ The token contracts were hardened against the following audit findings. All chan
   field names are preserved for backwards compatibility). All callers — including
   `BondingRegistry.getTicketBalanceAtBlock(node, c.requestBlock - 1)` — pass the value through
   unchanged; the parameter is now a timepoint per EIP-6372 rather than a block number, which is
-  required for the ETK timestamp clock to be valid.
+  required for the tFOLD timestamp clock to be valid.

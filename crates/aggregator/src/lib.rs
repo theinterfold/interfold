@@ -4,19 +4,19 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-mod committee;
-mod committee_finalizer;
-pub mod committee_hash;
-mod decryptionshare_created_buffer;
-pub mod ext;
-mod keyshare_created_filter_buffer;
-mod publickey_aggregator;
-mod repo;
-mod threshold_plaintext_aggregator;
-pub use committee_finalizer::CommitteeFinalizer;
-pub use publickey_aggregator::{
-    PublicKeyAggregator, PublicKeyAggregatorParams, PublicKeyAggregatorState,
-};
-pub use threshold_plaintext_aggregator::*;
+//! Public-key and threshold-plaintext aggregation.
+//!
+//! The crate is organised into two layers:
+//! - [`actors`] — thin actix actors that own persistence and the event bus and
+//!   route messages between the protocol and the domain services.
+//! - [`domain`] — pure, synchronous services holding the aggregation state
+//!   machines and cryptographic combination logic, unit-tested in isolation.
 
+mod actors;
+mod domain;
+pub mod ext;
+mod repo;
+
+pub use actors::*;
+pub use domain::committee_hash;
 pub use repo::*;

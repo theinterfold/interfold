@@ -150,23 +150,25 @@ impl Computation for Bounds {
     type Data = ShareComputationCircuitData;
     type Error = CircuitsErrors;
 
-    fn compute(preset: Self::Preset, _data: &Self::Data) -> Result<Self, Self::Error> {
+    fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
         let (threshold_params, _) =
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
         let defaults = preset
             .search_defaults()
             .ok_or_else(|| CircuitsErrors::Sample("missing search defaults".to_string()))?;
         let num_ciphertexts = defaults.z;
-        let lambda = defaults.lambda;
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = preset
+            .lambda()
+            .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
 
-        // Use search_defaults.n (same as C1/PkGeneration) so the smudging bound and
-        // resulting bit width match C1's PK_GENERATION_BIT_E_SM. This ensures
-        // C1.e_sm_commitment == C2b.expected_secret_commitment for the same e_sm.
+        // Use the same committee size as C1 (pk_generation) so smudging bounds and
+        // bit widths match PK_GENERATION_BIT_E_SM / SHARE_COMPUTATION_E_SM_BIT_SECRET.
         let e_sm_config = SmudgingBoundCalculatorConfig::new(
             threshold_params,
-            defaults.n as usize,
+            data.n_parties as usize,
             num_ciphertexts as usize,
-            lambda as usize,
+            lambda,
         );
 
         let e_sm_calculator = SmudgingBoundCalculator::new(e_sm_config);
@@ -258,7 +260,7 @@ impl Computation for Inputs {
             secret_crt,
             y,
             expected_secret_commitment,
-            dkg_input_type: data.dkg_input_type.clone(),
+            dkg_input_type: data.dkg_input_type,
         })
     }
 

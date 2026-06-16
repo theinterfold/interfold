@@ -37,17 +37,17 @@ you'll be selected roughly 10% of the time (assuming no buffer effects).
 
 ## Buying Tickets
 
-Deposit stablecoins (USDC or the configured fee token) to mint ticket tokens (ETK):
+Deposit stablecoins (USDC or the configured fee token) to mint ticket tokens (tFOLD):
 
 ```bash
-enclave ciphernode tickets buy --amount 100
+interfold ciphernode tickets buy --amount 100
 ```
 
 This:
 
 1. Approves the ticket contract to spend your stablecoins (if needed)
 2. Deposits the stablecoins
-3. Mints equivalent ETK to your balance
+3. Mints equivalent tFOLD to your balance
 
 Your available ticket count is:
 
@@ -55,7 +55,7 @@ Your available ticket count is:
 availableTickets = floor(etkBalance / ticketPrice)
 ```
 
-Check `ticketPrice` with `enclave ciphernode status` — it's set by governance and may change.
+Check `ticketPrice` with `interfold ciphernode status` — it's set by governance and may change.
 
 ---
 
@@ -64,7 +64,7 @@ Check `ticketPrice` with `enclave ciphernode status` — it's set by governance 
 Withdraw the underlying stablecoins by burning tickets:
 
 ```bash
-enclave ciphernode tickets burn --amount 50
+interfold ciphernode tickets burn --amount 50
 ```
 
 Burning takes effect **immediately**. If it drops you below `minTicketBalance`, your node becomes
@@ -95,7 +95,7 @@ stops being eligible for selection.
 Check the current minimum:
 
 ```bash
-enclave ciphernode status
+interfold ciphernode status
 ```
 
 ---
@@ -114,12 +114,12 @@ two requests ahead so they're captured in the snapshot.
 
 ### Monitor the economics
 
-| Parameter             | What it means                 | How to check                |
-| --------------------- | ----------------------------- | --------------------------- |
-| `ticketPrice`         | Stablecoins per ticket        | `enclave ciphernode status` |
-| `minTicketBalance`    | Minimum to stay active        | `enclave ciphernode status` |
-| `availableTickets`    | Your current ticket count     | `enclave ciphernode status` |
-| Total network tickets | Sum of all operators' tickets | On-chain query (registry)   |
+| Parameter             | What it means                 | How to check                  |
+| --------------------- | ----------------------------- | ----------------------------- |
+| `ticketPrice`         | Stablecoins per ticket        | `interfold ciphernode status` |
+| `minTicketBalance`    | Minimum to stay active        | `interfold ciphernode status` |
+| `availableTickets`    | Your current ticket count     | `interfold ciphernode status` |
+| Total network tickets | Sum of all operators' tickets | On-chain query (registry)     |
 
 ## What Happens When You're Selected
 

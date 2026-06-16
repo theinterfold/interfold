@@ -8,6 +8,7 @@ use anyhow::Result;
 use derivative::Derivative;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+#[allow(dead_code)]
 #[derive(Serialize, Deserialize, Debug)]
 pub struct ComputeResponse {
     pub ciphertext: Vec<u8>,

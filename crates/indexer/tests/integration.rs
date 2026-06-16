@@ -13,24 +13,24 @@ use e3_bfv_client::compute_pk_commitment;
 use e3_evm_helpers::contracts::ReadOnly;
 use e3_fhe_params::build_bfv_params_from_set_arc;
 use e3_fhe_params::DEFAULT_BFV_PRESET;
-use e3_indexer::{DataStore, EnclaveIndexer, InMemoryStore};
+use e3_indexer::{DataStore, InMemoryStore, InterfoldIndexer};
 use eyre::Result;
 use fhe::bfv::{PublicKey, SecretKey};
 use fhe_traits::Serialize;
 use helpers::setup_two_contracts;
-use rand::thread_rng;
+use rand::rng;
 use std::{
     sync::{Arc, Mutex},
     time::Duration,
 };
 use tokio::time::sleep;
 use EmitLogs::PublishMessage;
-use Enclave::InputPublished;
+use Interfold::InputPublished;
 
 sol!(
     #[sol(rpc)]
-    Enclave,
-    "tests/fixtures/fake_enclave.json"
+    Interfold,
+    "tests/fixtures/fake_interfold.json"
 );
 
 sol!(
@@ -42,15 +42,15 @@ sol!(
 #[tokio::test]
 async fn test_indexer() -> Result<()> {
     const E3_ID: u64 = 10;
-    const THRESHOLD: u64 = 10;
+    const _THRESHOLD: u64 = 10;
     const INDEXER_DELAY_MS: u64 = 30;
 
     let param_set = DEFAULT_BFV_PRESET.into();
     let params = build_bfv_params_from_set_arc(param_set);
 
     let (
-        enclave_contract,
-        enclave_address,
+        interfold_contract,
+        interfold_address,
         emit_logs_contract,
         emit_logs_address,
         endpoint,
@@ -58,9 +58,12 @@ async fn test_indexer() -> Result<()> {
     ) = setup_two_contracts().await?;
 
     let indexer = Arc::new(
-        EnclaveIndexer::<InMemoryStore, ReadOnly>::from_endpoint_address_in_mem(
+        InterfoldIndexer::<InMemoryStore, ReadOnly>::from_endpoint_address_in_mem(
             &endpoint.to_string(),
-            &[&enclave_address.to_string(), &emit_logs_address.to_string()],
+            &[
+                &interfold_address.to_string(),
+                &emit_logs_address.to_string(),
+            ],
         )
         .await?,
     );
@@ -94,9 +97,9 @@ async fn test_indexer() -> Result<()> {
         .await;
 
     let indexer_listening = indexer.clone();
-    let _ = tokio::spawn(async move { indexer_listening.listen().await });
+    tokio::spawn(async move { indexer_listening.listen().await });
 
-    let mut rng = thread_rng();
+    let mut rng = rng();
     let sk = SecretKey::random(&params, &mut rng);
     let pk = PublicKey::new(&sk, &mut rng);
 
@@ -112,7 +115,7 @@ async fn test_indexer() -> Result<()> {
     let ciphertext_output_data = vec![9, 8, 7, 6, 5, 4, 3, 2, 1];
 
     // first publish committee pk
-    enclave_contract
+    interfold_contract
         .emitCommitteePublished(
             Uint::from(E3_ID),
             Bytes::from(pk.to_bytes()),
@@ -124,7 +127,7 @@ async fn test_indexer() -> Result<()> {
         .watch()
         .await?;
 
-    enclave_contract
+    interfold_contract
         .emitInputPublished(
             Uint::from(E3_ID),
             input_data_bytes.clone(),
@@ -144,7 +147,7 @@ async fn test_indexer() -> Result<()> {
         .watch()
         .await?;
 
-    enclave_contract
+    interfold_contract
         .emitInputPublished(
             Uint::from(E3_ID),
             input_data_bytes.clone(),
@@ -156,7 +159,7 @@ async fn test_indexer() -> Result<()> {
         .watch()
         .await?;
 
-    enclave_contract
+    interfold_contract
         .emitInputPublished(
             Uint::from(E3_ID),
             input_data_bytes.clone(),
@@ -170,17 +173,18 @@ async fn test_indexer() -> Result<()> {
 
     sleep(Duration::from_millis(INDEXER_DELAY_MS)).await;
 
-    let messages_from_second_contract = captured_messages.lock().unwrap();
-    assert_eq!(
-        messages_from_second_contract
-            .iter()
-            .cloned()
-            .collect::<Vec<_>>(),
-        vec!["Hello from contract2!".to_string()]
-    );
-    drop(messages_from_second_contract);
+    {
+        let messages_from_second_contract = captured_messages.lock().unwrap();
+        assert_eq!(
+            messages_from_second_contract
+                .iter()
+                .cloned()
+                .collect::<Vec<_>>(),
+            vec!["Hello from contract2!".to_string()]
+        );
+    }
 
-    enclave_contract
+    interfold_contract
         .emitCiphertextOutputPublished(
             Uint::from(E3_ID),
             Bytes::from(ciphertext_output_data.clone()),
@@ -208,7 +212,7 @@ async fn test_indexer() -> Result<()> {
 
 mod test_memory_leak {
 
-    use e3_evm_helpers::{contracts::EnclaveContractFactory, event_listener::EventListener};
+    use e3_evm_helpers::{contracts::InterfoldContractFactory, event_listener::EventListener};
 
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
@@ -235,14 +239,14 @@ mod test_memory_leak {
         }
     }
 
-    async fn create_indexer() -> Result<EnclaveIndexer<InMemoryStore, ReadOnly>> {
-        let (_, enclave_address, _, _, endpoint, _anvil) = setup_two_contracts().await?;
+    async fn create_indexer() -> Result<InterfoldIndexer<InMemoryStore, ReadOnly>> {
+        let (_, interfold_address, _, _, endpoint, _anvil) = setup_two_contracts().await?;
 
         let listener =
-            EventListener::create_contract_listener(&endpoint, &[&enclave_address]).await?;
-        let contract = EnclaveContractFactory::create_read(&endpoint, &enclave_address).await?;
+            EventListener::create_contract_listener(&endpoint, &[&interfold_address]).await?;
+        let contract = InterfoldContractFactory::create_read(&endpoint, &interfold_address).await?;
 
-        EnclaveIndexer::<InMemoryStore, ReadOnly>::new_with_in_mem_store(listener, contract).await
+        InterfoldIndexer::<InMemoryStore, ReadOnly>::new_with_in_mem_store(listener, contract).await
     }
 
     sol! {

@@ -13,7 +13,7 @@ use fhe::bfv::Ciphertext;
 use fhe::bfv::Plaintext;
 use fhe::bfv::PublicKey;
 use fhe::bfv::SecretKey;
-use fhe_math::rq::Poly;
+use fhe_math::rq::{Ntt, Poly};
 
 /// Share-encryption circuit: proves correct encryption of a (secret or smudging) share under the DKG public key.
 #[derive(Debug)]
@@ -38,11 +38,11 @@ pub struct ShareEncryptionCircuitData {
     /// Secret key (for input; not revealed in proof).
     pub secret_key: SecretKey,
     /// Encryption randomness u in RNS form (from try_encrypt_extended).
-    pub u_rns: Poly,
+    pub u_rns: Poly<Ntt>,
     /// Encryption error e0 in RNS form.
-    pub e0_rns: Poly,
+    pub e0_rns: Poly<Ntt>,
     /// Encryption error e1 in RNS form.
-    pub e1_rns: Poly,
+    pub e1_rns: Poly<Ntt>,
     /// Type of DKG input (SecretKey or SmudgingNoise) to determine which circuit variant to use.
     pub dkg_input_type: DkgInputType,
 }

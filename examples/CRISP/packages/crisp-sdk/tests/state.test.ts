@@ -16,7 +16,7 @@ describe('State', () => {
   const mockRoundDetailsResponse: RoundDetailsResponse = {
     id: '0',
     chain_id: '11155111',
-    enclave_address: '0x1234567890123456789012345678901234567890',
+    interfold_address: '0x1234567890123456789012345678901234567890',
     status: 'active',
     vote_count: '10',
     start_time: '1000000',
@@ -53,7 +53,7 @@ describe('State', () => {
       expect(state).toBeDefined()
       expect(state.e3Id).toBe(0n)
       expect(state.chainId).toBe(11155111n)
-      expect(state.enclaveAddress).toBe('0x1234567890123456789012345678901234567890')
+      expect(state.interfoldAddress).toBe('0x1234567890123456789012345678901234567890')
       expect(state.status).toBe('active')
       expect(state.voteCount).toBe(10n)
       expect(state.startTime).toBe(1000000n)

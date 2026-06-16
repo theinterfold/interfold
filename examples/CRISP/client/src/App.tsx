@@ -12,7 +12,7 @@ import { useSwitchChain } from 'wagmi'
 //Pages
 import Landing from '@/pages/Landing/Landing'
 import DailyPoll from '@/pages/DailyPoll/DailyPoll'
-import HistoricPoll from '@/pages/HistoricPoll/HistoricPoll'
+import AllPolls from '@/pages/AllPolls/AllPolls'
 import About from '@/pages/About/About'
 import PollResult from '@/pages/PollResult/PollResult'
 import RoundPoll from '@/pages/RoundPoll'
@@ -58,7 +58,8 @@ const App: React.FC = () => {
             <Route path='/about' element={<About />} />
             <Route path='/current' element={<DailyPoll />} />
             <Route path='/round/:roundId' element={<RoundPoll />} />
-            <Route path='/historic' element={<HistoricPoll />} />
+            <Route path='/all' element={<AllPolls />} />
+            <Route path='/historic' element={<Navigate to='/all' replace />} />
             <Route path='/result/:roundId/:type?' element={<PollResult />} />
             <Route path='*' element={<Navigate to='/' replace />} />
           </Routes>

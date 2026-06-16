@@ -40,7 +40,7 @@ impl CircuitCodegen for ShareDecryptionCircuit {
 
 /// Serializes the input to TOML string for the Noir prover (Prover.toml).
 pub fn generate_toml(inputs: &Inputs) -> Result<CodegenToml, CircuitsErrors> {
-    let json = inputs.to_json().map_err(|e| CircuitsErrors::SerdeJson(e))?;
+    let json = inputs.to_json().map_err(CircuitsErrors::SerdeJson)?;
 
     Ok(toml::to_string(&json)?)
 }

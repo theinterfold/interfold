@@ -1,0 +1,59 @@
+{
+  "name": "@interfold/react",
+  "version": "0.2.1",
+  "description": "React hooks and utilities for Interfold SDK",
+  "type": "module",
+  "private": false,
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "sideEffects": false,
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsup",
+    "dev": "tsup --watch",
+    "clean": "rm -rf dist",
+    "prepublishOnly": "pnpm run clean && pnpm run build",
+    "release": "pnpm publish --access=public"
+  },
+  "keywords": [
+    "react",
+    "hooks",
+    "interfold",
+    "encryption",
+    "fhe",
+    "e3"
+  ],
+  "author": {
+    "name": "gnosisguild",
+    "url": "https://github.com/gnosisguild"
+  },
+  "license": "LGPL-3.0-only",
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "wagmi": "^2.14.16"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
+  "dependencies": {
+    "@interfold/sdk": "workspace:*",
+    "viem": "2.30.6"
+  },
+  "devDependencies": {
+    "@interfold/config": "workspace:*",
+    "@types/react": "^18.2.0",
+    "tsup": "^8.5.0",
+    "typescript": "5.8.3"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gnosisguild/interfold.git",
+    "directory": "packages/interfold-react"
+  }
+}

@@ -1,0 +1,201 @@
+{
+  "name": "@interfold/contracts",
+  "description": "Interfold is an open-source protocol for Encrypted Execution Environments (E3).",
+  "version": "0.2.1",
+  "license": "LGPL-3.0-only",
+  "type": "module",
+  "author": {
+    "name": "gnosisguild",
+    "url": "https://github.com/gnosisguild"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/gnosisguild/interfold.git",
+    "directory": "packages/interfold-contracts"
+  },
+  "exports": {
+    "./tasks/ciphernode": {
+      "import": {
+        "types": "./dist/tasks/ciphernode.d.ts",
+        "default": "./dist/tasks/ciphernode.js"
+      },
+      "require": {
+        "types": "./dist/tasks/ciphernode.d.ts",
+        "default": "./dist/tasks/ciphernode.js"
+      }
+    },
+    "./tasks/program": {
+      "import": {
+        "types": "./dist/tasks/program.d.ts",
+        "default": "./dist/tasks/program.js"
+      },
+      "require": {
+        "types": "./dist/tasks/program.d.ts",
+        "default": "./dist/tasks/program.js"
+      }
+    },
+    "./tasks/interfold": {
+      "import": {
+        "types": "./dist/tasks/interfold.d.ts",
+        "default": "./dist/tasks/interfold.js"
+      },
+      "require": {
+        "types": "./dist/tasks/interfold.d.ts",
+        "default": "./dist/tasks/interfold.js"
+      }
+    },
+    "./tasks/utils": {
+      "import": {
+        "types": "./dist/tasks/utils.d.ts",
+        "default": "./dist/tasks/utils.js"
+      },
+      "require": {
+        "types": "./dist/tasks/utils.d.ts",
+        "default": "./dist/tasks/utils.js"
+      }
+    },
+    "./scripts": {
+      "import": {
+        "types": "./dist/scripts/index.d.ts",
+        "default": "./dist/scripts/index.js"
+      },
+      "require": {
+        "types": "./dist/scripts/index.d.ts",
+        "default": "./dist/scripts/index.js"
+      }
+    },
+    "./contracts/*": "./contracts/*",
+    "./artifacts/*": "./artifacts/*",
+    "./types": {
+      "import": {
+        "types": "./dist/types/index.d.ts",
+        "default": "./dist/types/index.js"
+      },
+      "require": {
+        "types": "./dist/types/index.d.ts",
+        "default": "./dist/types/index.js"
+      }
+    },
+    "./ignition/modules/*": {
+      "import": {
+        "types": "./dist/ignition/modules/*.d.ts",
+        "default": "./dist/ignition/modules/*.js"
+      },
+      "require": {
+        "types": "./dist/ignition/modules/*.d.ts",
+        "default": "./dist/ignition/modules/*.js"
+      }
+    }
+  },
+  "devDependencies": {
+    "@interfold/config": "workspace:*",
+    "@nomicfoundation/hardhat-ethers": "4",
+    "@nomicfoundation/hardhat-ethers-chai-matchers": "^3.0.0",
+    "@nomicfoundation/hardhat-ignition": "^3.0.0",
+    "@nomicfoundation/hardhat-ignition-ethers": "^3.0.1",
+    "@nomicfoundation/hardhat-network-helpers": "3",
+    "@nomicfoundation/hardhat-toolbox-mocha-ethers": "3.0.0",
+    "@nomicfoundation/hardhat-typechain": "3",
+    "@nomicfoundation/hardhat-verify": "^3.0.1",
+    "@openzeppelin/contracts": "^5.0.2",
+    "@trivago/prettier-plugin-sort-imports": "^4.3.0",
+    "@typechain/hardhat": "^9.1.0",
+    "@types/chai": "^4.3.20",
+    "@types/chai-as-promised": "^8.0.2",
+    "@types/fs-extra": "^11.0.4",
+    "@types/js-yaml": "^4.0.9",
+    "@types/mocha": "^10.0.10",
+    "@types/node": "^22.18.0",
+    "@typescript-eslint/eslint-plugin": "^7.11.0",
+    "@typescript-eslint/parser": "^7.11.0",
+    "chai": "^5.3.3",
+    "cross-env": "^7.0.3",
+    "dotenv": "^16.4.5",
+    "ethers": "^6.15.0",
+    "forge-std": "github:foundry-rs/forge-std#v1.9.4",
+    "fs-extra": "^11.2.0",
+    "hardhat": "3.0.11",
+    "hardhat-gas-reporter": "^2.2.0",
+    "lodash": "^4.17.21",
+    "mocha": "^11.7.1",
+    "poseidon-lite": "^0.3.0",
+    "prettier": "^3.1.1",
+    "prettier-plugin-solidity": "^1.2.0",
+    "rimraf": "^5.0.5",
+    "solhint": "^5.0.5",
+    "solhint-plugin-prettier": "^0.1.0",
+    "solidity-coverage": "^0.8.5",
+    "ts-generator": "^0.1.1",
+    "tsup": "^8.5.0",
+    "typechain": "^8.3.2",
+    "typescript": "5.8.3"
+  },
+  "files": [
+    "contracts",
+    "dist",
+    "artifacts"
+  ],
+  "keywords": [
+    "blockchain",
+    "ethers",
+    "ethereum",
+    "hardhat",
+    "smart-contracts",
+    "solidity",
+    "template",
+    "typescript",
+    "typechain"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "clean": "rimraf ./artifacts ./cache ./coverage ./types ./dist ./coverage.json",
+    "clean:deployments": "hardhat utils:clean-deployments",
+    "build": "pnpm compile",
+    "compile": "pnpm compile:contracts && pnpm compile:ts",
+    "compile:contracts": "cross-env TS_NODE_TRANSPILE_ONLY=true hardhat compile",
+    "compile:ts": "tsc",
+    "coverage": "pnpm test --coverage",
+    "deploy": "hardhat run scripts/run.ts",
+    "deploy:mocks": "export DEPLOY_MOCKS=true && pnpm clean:deployments && hardhat run scripts/run.ts --network localhost",
+    "configure:slashing-policies": "hardhat run scripts/runConfigureSlashingPolicies.ts --network localhost",
+    "deploy:verifiers": "hardhat run scripts/deployVerifiers.ts",
+    "upgrade:interfold": "hardhat run scripts/upgrade/interfold.ts",
+    "upgrade:bondingRegistry": "hardhat run scripts/upgrade/bondingRegistry.ts",
+    "validate:upgrade": "hardhat run scripts/validateUpgrade.ts",
+    "upgrade:ciphernodeRegistryOwnable": "hardhat run scripts/upgrade/ciphernodeRegistryOwnable.ts",
+    "e3:activate": "hardhat e3:activate",
+    "e3:enable": "hardhat interfold:enableE3",
+    "ciphernode:add": "hardhat ciphernode:add",
+    "ciphernode:admin-add": "hardhat ciphernode:admin-add",
+    "ciphernode:mint-tokens": "hardhat ciphernode:mint-tokens",
+    "ciphernode:remove": "hardhat ciphernode:remove",
+    "committee:new": "hardhat committee:new",
+    "committee:get-public-key": "hardhat committee:getPublicKey",
+    "committee:get-active-aggregator": "hardhat committee:getActiveAggregator",
+    "e3:get-plaintext": "hardhat e3:getPlaintext",
+    "lint": "solhint --disc --max-warnings 10 \"contracts/**/*.sol\"",
+    "prettier:check": "prettier --check \"**/*.{js,json,md,sol,ts,yml}\"",
+    "prettier:write": "prettier --write \"**/*.{js,json,md,sol,ts,yml}\"",
+    "test": "hardhat test mocha",
+    "test:report-gas": "REPORT_GAS=true hardhat test mocha",
+    "test:interfold": "pnpm run test test/Interfold.spec.ts",
+    "test:ciphernodeRegistry": "pnpm run test test/Registry/CiphernodeRegistryOwnable.spec.ts",
+    "test:bondingRegistry": "pnpm run test test/Registry/BondingRegistry.spec.ts",
+    "test:integration": "pnpm run test test/E3Lifecycle/E3Integration.spec.ts",
+    "test:slashing": "pnpm run test test/Slashing/SlashingManager.spec.ts",
+    "prerelease": "pnpm clean && pnpm compile && pnpm typechain",
+    "release": "pnpm publish",
+    "verify:contracts": "hardhat run scripts/runVerification.ts",
+    "updateSubmissionWindow": "hardhat ciphernode:window",
+    "utils:sync-integration-config": "hardhat run scripts/syncIntegrationConfig.ts --network localhost"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts-upgradeable": "^5.0.2",
+    "@zk-kit/lazy-imt.sol": "2.0.0-beta.12",
+    "js-yaml": "^4.1.1",
+    "poseidon-solidity": "0.0.5"
+  },
+  "packageManager": "pnpm@10.7.1+sha512.2d92c86b7928dc8284f53494fb4201f983da65f0fb4f0d40baafa5cf628fa31dae3e5968f12466f17df7e97310e30f343a648baea1b9b350685dafafffdf5808"
+}

@@ -22,6 +22,6 @@ pub use crp::{create_deterministic_crp_from_default_seed, create_deterministic_c
 #[cfg(feature = "abi-encoding")]
 pub use encoding::{decode_bfv_params, decode_bfv_params_arc, encode_bfv_params, EncodingError};
 pub use presets::{
-    default_param_set, BfvParamSet, BfvPreset, ParameterType, PresetError, PresetMetadata,
-    PresetSearchDefaults, SecurityTier, DEFAULT_BFV_PRESET,
+    default_param_set, BfvParamSet, BfvPreset, LambdaConfig, ParameterType, PresetError,
+    PresetMetadata, PresetSearchDefaults, SecurityTier, DEFAULT_BFV_PRESET,
 };
