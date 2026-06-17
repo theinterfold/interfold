@@ -23,11 +23,10 @@ type Slice = {
 // Ordered largest → smallest. Colours are a cohesive cool/azure palette
 // anchored on the docs' primary hue (203) so the charts match the theme.
 const ALLOCATION: Slice[] = [
-  { key: 'Community Grants & Treasury', pct: 43, tokens: 516_000_000, color: '#075E9D' },
+  { key: 'Community Grants & Treasury', pct: 47, tokens: 564_000_000, color: '#075E9D' },
   { key: 'Gnosis Guild', pct: 20, tokens: 240_000_000, color: '#009DFF' },
   { key: 'Investors', pct: 15, tokens: 180_000_000, color: '#38BDF8' },
   { key: 'Uniswap CCA', pct: 10, tokens: 120_000_000, color: '#0D9488' },
-  { key: 'Early Contributors', pct: 4, tokens: 48_000_000, color: '#2DD4BF' },
   { key: 'Airdrop', pct: 4, tokens: 48_000_000, color: '#6366F1' },
   { key: 'Liquidity Reserves', pct: 3, tokens: 36_000_000, color: '#818CF8' },
   { key: 'Advisors', pct: 1, tokens: 12_000_000, color: '#94A3B8' },
@@ -85,8 +84,7 @@ function donutSlice(
 export function KeyParameters() {
   const cards = [
     { label: 'Total Supply', value: '1.2B' },
-    { label: 'Circulating Supply at TGE', value: '15%' },
-    { label: 'Fully Vested', value: '48 mo' },
+    { label: 'Circulating Supply at TGE', value: '17%' },
   ]
   return (
     <div className={classes.stats}>
@@ -215,7 +213,7 @@ type Vest = {
 }
 
 // Bottom → top stacking order (flat/immediate at the base, long linear vests on
-// top). Early Contributors is omitted — the source sheet defines no schedule.
+// top).
 const VESTING: Vest[] = [
   { key: 'Liquidity Reserves', total: 36_000_000, vestMonths: 1, term: '100% at TGE' },
   { key: 'Uniswap CCA', total: 120_000_000, vestMonths: 1, term: '100% at TGE' },
@@ -223,11 +221,11 @@ const VESTING: Vest[] = [
   { key: 'Advisors', total: 12_000_000, vestMonths: 24, term: '24-month linear unlock' },
   { key: 'Investors', total: 180_000_000, vestMonths: 24, term: '24-month linear unlock' },
   { key: 'Gnosis Guild', total: 240_000_000, vestMonths: 48, term: '48-month linear unlock' },
-  { key: 'Community Grants & Treasury', total: 516_000_000, vestMonths: 48, term: '48-month linear unlock' },
+  { key: 'Community Grants & Treasury', total: 564_000_000, vestMonths: 48, term: '48-month linear unlock' },
 ]
 
 // Vesting terms table — same order as the allocation table (largest → smallest
-// share). Cliffs are all zero in the source schedule. Early Contributors omitted.
+// share). Cliffs are all zero in the source schedule.
 const VESTING_TERMS = [
   { key: 'Community Grants & Treasury', cliff: 'None', schedule: '48 months' },
   { key: 'Gnosis Guild', cliff: 'None', schedule: '48 months' },
@@ -236,7 +234,6 @@ const VESTING_TERMS = [
   { key: 'Airdrop', cliff: 'None', schedule: '24 months' },
   { key: 'Liquidity Reserves', cliff: 'None', schedule: '100% at TGE' },
   { key: 'Advisors', cliff: 'None', schedule: '24 months' },
-  { key: 'Early Contributors', cliff: 'None', schedule: '100% at TGE' },
 ]
 
 const MONTHS_AXIS = 48
