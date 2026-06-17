@@ -18,27 +18,21 @@ server, Compute Providers, or other network participants.
 2. **Choose a Compute Provider**: Your program must align with the execution backend (e.g.,
    [RISC Zero](https://www.risczero.com/) for [CRISP](/CRISP/introduction) or a custom FHE
    coprocessor).
-3. **Assemble `E3RequestParams`**:
-   - `threshold`: the CiCo size/threshold tuple (m/n) used for decryption security
+3. **Assemble request parameters**:
+   - `committeeSize`: the committee size enum (`Minimum`, `Micro`, or `Small`)
    - `inputWindow`: a two-element array `[start, end]` defining when inputs open and close
-   - `e3Program`, `e3ProgramParams`, `computeProviderParams`, and optional `customParams`
-4. **Submit the Request**: Call `request` with the struct to publish the new computation.
+   - `e3Program`, `computeProviderParams`, and optional `customParams`
+4. **Submit the Request**: Call `request` to publish the new computation.
 
    ```solidity
    function request(
-     E3RequestParams calldata requestParams
-   ) external returns (uint256 e3Id, E3 memory e3);
-   ```
-
-   ```solidity
-   struct E3RequestParams {
-     uint32[2] threshold;
-     uint256[2] inputWindow;
-     IE3Program e3Program;
-     bytes e3ProgramParams;
-     bytes computeProviderParams;
-     bytes customParams;
-   }
+     CommitteeSize committeeSize,
+     uint256[2] calldata inputWindow,
+     IE3Program e3Program,
+     uint8 paramSet,
+     bytes calldata computeProviderParams,
+     bytes calldata customParams
+   ) external returns (uint256 e3Id);
    ```
 
    The contract validates the parameters, transfers the required fee from the requester, creates an
@@ -48,7 +42,14 @@ server, Compute Providers, or other network participants.
    You can estimate the fee before submitting by calling `getE3Quote`:
 
    ```solidity
-   function getE3Quote(E3RequestParams calldata requestParams) external view returns (uint256 fee);
+   function getE3Quote(
+     CommitteeSize committeeSize,
+     uint256[2] calldata inputWindow,
+     IE3Program e3Program,
+     uint8 paramSet,
+     bytes calldata computeProviderParams,
+     bytes calldata customParams
+   ) external view returns (uint256 fee);
    ```
 
 ### Phase 2: Node Selection

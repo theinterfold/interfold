@@ -12,10 +12,10 @@ live, which scripts to run, and how they connect to the Rust prover and on-chain
 For **what** the circuits prove (PV-TBFV, phases **P1–P4**, **C0–C7**, commitments), read
 [Cryptography](./cryptography) first. For **Rust types and events** (`ProofType`, `CircuitName`,
 public inputs), use the repo’s
-[`agent/flow-trace/04_DKG_AND_COMPUTATION.md`](https://github.com/gnosisguild/interfold/blob/main/agent/flow-trace/04_DKG_AND_COMPUTATION.md).
+[`agent/flow-trace/04_DKG_AND_COMPUTATION.md`](https://github.com/theinterfold/interfold/blob/main/agent/flow-trace/04_DKG_AND_COMPUTATION.md).
 
 The canonical **package index** (paths, **CircuitName**, C0–C7 IDs) is
-[`circuits/README.md`](https://github.com/gnosisguild/interfold/blob/main/circuits/README.md) in the
+[`circuits/README.md`](https://github.com/theinterfold/interfold/blob/main/circuits/README.md) in the
 open-source tree—Noir sources are the source of truth; treat docs as orientation only.
 
 ## Workspace layout
@@ -51,7 +51,7 @@ Add a path or git dependency in your `Nargo.toml` (pin a **tag or rev** that mat
 
 ```toml
 [dependencies]
-interfold_lib = { git = "https://github.com/gnosisguild/interfold", tag = "v0.1.15", directory = "circuits/lib" }
+interfold_lib = { git = "https://github.com/theinterfold/interfold", tag = "v0.2.2", directory = "circuits/lib" }
 ```
 
 Check `crates/zk-prover/Cargo.toml` / `versions.json` in the same release for compatible **nargo**
@@ -90,9 +90,9 @@ pnpm check:committee                             # verify active.nr, utils.ts, p
 **Preset** (`insecure-512` | `secure-8192`) selects the BFV parameter set; **committee** (`minimum`
 | `micro` | `small`) selects `(N, T, H)` for secret sharing. Always switch committee via
 `pnpm build:circuits --committee <name>` — see
-[`scripts/README.md`](https://github.com/gnosisguild/interfold/blob/main/scripts/README.md#circuit-builder)
+[`scripts/README.md`](https://github.com/theinterfold/interfold/blob/main/scripts/README.md#circuit-builder)
 and
-[`circuits/benchmarks/README.md`](https://github.com/gnosisguild/interfold/blob/main/circuits/benchmarks/README.md).
+[`circuits/benchmarks/README.md`](https://github.com/theinterfold/interfold/blob/main/circuits/benchmarks/README.md).
 
 Generate per-circuit witness/config artifacts with `zk_cli` (must pass matching `--committee`):
 

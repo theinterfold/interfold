@@ -13,18 +13,20 @@ Before installing Interfold, make sure you have the following dependency install
 
 - [Rust](https://www.rust-lang.org/tools/install)
 
+For full hardware and software requirements, see [System Requirements](/requirements).
+
 ## Quick Install (Recommended)
 
 The easiest way to install the Interfold CLI is using our installer script:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
 ```
 
 Or if you prefer `wget`:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
+wget -qO- https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
 ```
 
 This script will download and install `interfoldup`, which is the standalone installer for the
@@ -75,7 +77,7 @@ with no additional dependencies — Nix handles everything including installing 
 Get a devshell directly without installing it:
 
 ```bash
-nix develop github:gnosisguild/interfold/{branch,tag,commit}
+nix develop github:theinterfold/interfold/{branch,tag,commit}
 ```
 
 This will build from source using the nix package manager and provide a runtime environemnt for
@@ -83,9 +85,9 @@ interfold. It might take some time but the result will be cached on your local n
 execution.
 
 ```bash
-❯ nix develop github:gnosisguild/interfold/ry/v0.1.16
+❯ nix develop github:theinterfold/interfold/v0.2.2
 ❯ interfold --version
-interfold 0.1.16
+interfold 0.2.2
 ❯ bb --version
 3.0.0-nightly.20251104
 ❯ echo $E3_CUSTOM_BB
@@ -106,7 +108,7 @@ If you decline, everything still works — it just builds from source, which tak
 
 If you prefer to install manually:
 
-1. Visit the [releases page](https://github.com/gnosisguild/interfold/releases)
+1. Visit the [releases page](https://github.com/theinterfold/interfold/releases)
 2. Download the appropriate release archive for your platform:
    - Linux: `interfold-linux-x86_64.tar.gz`
    - macOS: `interfold-macos-aarch64.tar.gz`
@@ -131,7 +133,7 @@ If you need to build `interfold` from source:
 2. Clone the repository
 
 ```bash
-git clone https://github.com/gnosisguild/interfold.git
+git clone https://github.com/theinterfold/interfold.git
 cd interfold
 ```
 

@@ -1,6 +1,8 @@
 ---
 title: 'Writing an E3 Contract'
-description: ''
+description:
+  'Implement the IE3Program interface — validate, publishInput, and verify functions for your
+  on-chain E3 program'
 ---
 
 # Writing an E3 Contract
@@ -46,7 +48,7 @@ and initialize the new E3. Some useful validations include:
   settings).
 
 For an example, see this
-[mockup](https://github.com/gnosisguild/interfold/blob/cf50fd6c10f0df8f03eecfd19cedc17b051e72a6/packages/interfold-contracts/contracts/test/MockE3Program.sol#L9)
+[mockup](https://github.com/theinterfold/interfold/blob/cf50fd6c10f0df8f03eecfd19cedc17b051e72a6/packages/interfold-contracts/contracts/test/MockE3Program.sol#L9)
 or check out the
 [demo implementation for the CRISP protocol](https://github.com/gnosisguild/CRISP/blob/9ffc89aedf92e8f8eb8a21b03091b1f48b587fe4/packages/risc0/contracts/CRISPRisc0.sol#L28).
 
@@ -81,7 +83,7 @@ function publishInput(uint256 e3Id, bytes memory data) external;
 **Example:**
 
 ```solidity
-pragma solidity >=0.8.27;
+pragma solidity >=0.8.28;
 
 function publishInput(uint256 e3Id, bytes memory data) external {
   // Decode the input data

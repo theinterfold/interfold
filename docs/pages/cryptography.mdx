@@ -73,23 +73,23 @@ decrypts after homomorphic evaluation.
 
 - **P2 — Public key aggregation** is deliberately short: someone acting as aggregator sums the
   surviving public key shares into the single **threshold public key**. Circuit
-  [**C5**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_aggregation)
+  [**C5**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_aggregation)
   checks that this sum matches what earlier proofs committed to.
 
 - **P3 — User encryption** is where data providers enter. They encrypt under the aggregated
   threshold key; the in-tree packages
-  [`user_data_encryption_ct0`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/user_data_encryption_ct0),
-  [`user_data_encryption_ct1`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/user_data_encryption_ct1),
+  [`user_data_encryption_ct0`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/user_data_encryption_ct0),
+  [`user_data_encryption_ct1`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/user_data_encryption_ct1),
   and
-  [`user_data_encryption`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/user_data_encryption)
+  [`user_data_encryption`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/user_data_encryption)
   implement a **GRECO**-style proof pattern: show that the ciphertext is a valid BFV encryption
   without revealing the message or the randomness.
 
 - **P4 — Threshold decryption** closes the loop after homomorphic evaluation. Ciphernodes in **A**
   produce partial decryptions; circuits
-  [**C6**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/share_decryption)
+  [**C6**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/share_decryption)
   and
-  [**C7**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/decrypted_shares_aggregation)
+  [**C7**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/decrypted_shares_aggregation)
   prove the shares and the final recombination. The FHE evaluation itself sits **between** P3 and
   P4: it consumes user ciphertexts and yields the output ciphertext that **C6** and **C7** reason
   about. Those evaluation proofs are **not** the same Noir binaries as DKG or decryption; what you
@@ -98,20 +98,20 @@ decrypts after homomorphic evaluation.
 ### Wiring phases to packages in the repository
 
 Before any of this runs in production, a one-shot **`config`** proof (see
-[`circuits/bin/config`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/config))
+[`circuits/bin/config`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/config))
 checks that parameter presets—CRT limbs, noise bounds, Reed–Solomon parity matrices, and the
 like—match across the deployment. After that, the table below is the map most people keep open while
 reading the code: it connects the narrative phases P1–P4 to the **C0–C7** labels used in issues,
 logs, and the
-[`circuits/README.md`](https://github.com/gnosisguild/interfold/blob/main/circuits/README.md) index.
+[`circuits/README.md`](https://github.com/theinterfold/interfold/blob/main/circuits/README.md) index.
 
 | Phase                    | Circuits                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | What you are looking at                                                                                       |
 | ------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------- |
-| **Config**               | [`config`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/config)                                                                                                                                                                                                                                                                                                                                                                                                      | One-time consistency of presets before any E3.                                                                |
-| **P1 — DKG**             | [**C0**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/pk), [**C1**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_generation), [**C2**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/sk_share_computation), [**C3**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/share_encryption), [**C4**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/share_decryption) | Individual pk; TrBFV contribution; Shamir + parity (recursive **C2**); encrypt shares; decrypt and aggregate. |
-| **P2 — Aggregation**     | [**C5**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_aggregation)                                                                                                                                                                                                                                                                                                                                                                                      | Sum honest public key shares into the threshold pk.                                                           |
-| **P3 — User encryption** | [`user_data_encryption_*`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/user_data_encryption_ct0)                                                                                                                                                                                                                                                                                                                                                          | Valid BFV encryption under the aggregated key.                                                                |
-| **P4 — Decryption**      | [**C6**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/share_decryption), [**C7**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/decrypted_shares_aggregation)                                                                                                                                                                                                                                                                  | Partial decryptions; Lagrange combination, CRT lift, decode to plaintext.                                     |
+| **Config**               | [`config`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/config)                                                                                                                                                                                                                                                                                                                                                                                                      | One-time consistency of presets before any E3.                                                                |
+| **P1 — DKG**             | [**C0**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/pk), [**C1**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_generation), [**C2**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/sk_share_computation), [**C3**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/share_encryption), [**C4**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/share_decryption) | Individual pk; TrBFV contribution; Shamir + parity (recursive **C2**); encrypt shares; decrypt and aggregate. |
+| **P2 — Aggregation**     | [**C5**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_aggregation)                                                                                                                                                                                                                                                                                                                                                                                      | Sum honest public key shares into the threshold pk.                                                           |
+| **P3 — User encryption** | [`user_data_encryption_*`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/user_data_encryption_ct0)                                                                                                                                                                                                                                                                                                                                                          | Valid BFV encryption under the aggregated key.                                                                |
+| **P4 — Decryption**      | [**C6**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/share_decryption), [**C7**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/decrypted_shares_aggregation)                                                                                                                                                                                                                                                                  | Partial decryptions; Lagrange combination, CRT lift, decode to plaintext.                                     |
 
 ### Sequence diagram
 
@@ -162,11 +162,11 @@ in a centralised system—generating key material, moving it under encryption, a
 keys, taking user ciphertexts, emitting decryption shares—is backed by a statement that verifiers
 can check **without** seeing the private witnesses. The DKG slice of that story is what we call
 **PVDKG**; in the repository it lands in **C0** through **C4** (with
-[**C1**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_generation)
+[**C1**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_generation)
 living under
-[`circuits/bin/threshold`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold)
+[`circuits/bin/threshold`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold)
 and the rest of the DKG chain under
-[`circuits/bin/dkg`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg)).
+[`circuits/bin/dkg`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg)).
 
 Taken together, the design is aiming for a few properties that reinforce each other. **Threshold
 security** means decrypting user data should require at least **T+1** cooperating honest shares for
@@ -180,19 +180,19 @@ so the protocol can update **A** and the economic layer can apply penalties when
 BFV keys and intermediate polynomials are enormous under post-quantum parameters. Publishing them in
 full for every step would be impractical on-chain, so each circuit hashes the relevant outputs into
 a short **commitment** using the **SAFE** sponge (see
-[`circuits/lib/src/math/safe.nr`](https://github.com/gnosisguild/interfold/blob/main/circuits/lib/src/math/safe.nr)),
+[`circuits/lib/src/math/safe.nr`](https://github.com/theinterfold/interfold/blob/main/circuits/lib/src/math/safe.nr)),
 built from **Poseidon2** and **Keccak256**. The story that emerges is a **chain of accountability**:
 later circuits take earlier commitments as **public inputs**, re-hash the private witnesses inside
 the proof, and check equality. That is how
-[**C1**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_generation)
+[**C1**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_generation)
 connects to
-[**C5**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_aggregation),
+[**C5**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_aggregation),
 and how
-[**C4**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/share_decryption) hands
+[**C4**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/share_decryption) hands
 off to
-[**C6**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/share_decryption),
+[**C6**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/share_decryption),
 without ever dumping raw polynomials into calldata. Domain labels (`DS_*` in
-[`commitments.nr`](https://github.com/gnosisguild/interfold/blob/main/circuits/lib/src/math/commitments.nr))
+[`commitments.nr`](https://github.com/theinterfold/interfold/blob/main/circuits/lib/src/math/commitments.nr))
 keep different commitment kinds from being confused with one another.
 
 ### Proof aggregation
@@ -201,9 +201,9 @@ Individual circuit proofs cover each step in isolation, but the protocol must la
 a compact, verifiable package. A naive fold of all proofs into one recursive aggregate produces an
 opaque commitment that the contract cannot interpret without the original public inputs, and if
 cross-circuit consistency (e.g. that
-[**C2**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/sk_share_computation)'s
+[**C2**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/sk_share_computation)'s
 expected commitments match
-[**C1**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_generation)'s
+[**C1**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_generation)'s
 outputs) is only checked off-chain, end-to-end correctness still depends on trusting the committee
 network rather than on verifiable mathematics.
 
@@ -212,11 +212,11 @@ The aggregation design addresses both problems. When an E3 is requested with
 
 1. **DKG recursive proof**: the aggregator recursively verifies every node's C0–C4 fold chain
    together with **C5**, which aggregates the public key. Verified on-chain by
-   [`BfvPkVerifier`](https://github.com/gnosisguild/interfold/blob/main/packages/interfold-contracts/contracts/verifiers/bfv/BfvPkVerifier.sol)
+   [`BfvPkVerifier`](https://github.com/theinterfold/interfold/blob/main/packages/interfold-contracts/contracts/verifiers/bfv/BfvPkVerifier.sol)
    at `publishCommittee`.
 2. **Decryption recursive proof**: the aggregator recursively verifies **C6** proofs from at least
    **T+1** parties together with **C7**, which reconstructs the plaintext. Verified on-chain by
-   [`BfvDecryptionVerifier`](https://github.com/gnosisguild/interfold/blob/main/packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol)
+   [`BfvDecryptionVerifier`](https://github.com/theinterfold/interfold/blob/main/packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol)
    at `publishPlaintextOutput`.
 
 Individual nodes do not post their inner proofs on-chain. Each node folds its own C0–C4 chain into a
@@ -237,7 +237,7 @@ Each node's fold attestation signs the canonical **EIP-712 typed-data digest**
 and `verifyingContract` (the deployed `DkgFoldAttestationVerifier` address); off-chain signers must
 include those domain fields. The **struct hash** binds `(e3Id, partyId, skAggCommit, esmAggCommit)`
 — the tuple values in the signed payload, separate from the domain. The on-chain
-[`DkgFoldAttestationVerifier`](https://github.com/gnosisguild/interfold/blob/main/packages/interfold-contracts/contracts/verifiers/DkgFoldAttestationVerifier.sol)
+[`DkgFoldAttestationVerifier`](https://github.com/theinterfold/interfold/blob/main/packages/interfold-contracts/contracts/verifiers/DkgFoldAttestationVerifier.sol)
 then enforces four properties per attestation:
 
 1. **Slot binding**: `canonicalCommitteeNodeAt(e3Id, binding.partyId) == binding.node`. The
@@ -262,7 +262,7 @@ proofs can be checked against them.
 #### Per-operator attribution for slashing
 
 When a node misbehaves, the off-chain accusation quorum protocol produces a
-[`SlashingManager.proposeSlash`](https://github.com/gnosisguild/interfold/blob/main/packages/interfold-contracts/contracts/slashing/SlashingManager.sol)
+[`SlashingManager.proposeSlash`](https://github.com/theinterfold/interfold/blob/main/packages/interfold-contracts/contracts/slashing/SlashingManager.sol)
 call. The on-chain check enforces, in `_verifyAttestationEvidence`:
 
 1. **Voter quorum and signatures**: ≥ `M` committee-member voters (sorted ascending, accused
@@ -344,45 +344,45 @@ logs or Noir sources.
 
 | Term                                    | Meaning                                                                                                                                                                                                                                                                                                                                                                                                             |
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Individual key pair**                 | Per-node BFV keys used **only** to encrypt **Shamir shares** in transit during DKG. [**C0**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/pk) commits the individual public key; [**C3**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/share_encryption) binds encryption to that commitment.                                                                         |
+| **Individual key pair**                 | Per-node BFV keys used **only** to encrypt **Shamir shares** in transit during DKG. [**C0**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/pk) commits the individual public key; [**C3**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/share_encryption) binds encryption to that commitment.                                                                         |
 | **Secret key contribution**             | One node’s additive piece of the threshold secret **before** Shamir splitting in the usual DKG story.                                                                                                                                                                                                                                                                                                               |
-| **Public key share**                    | The TrBFV public material for that contribution; [**C1**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_generation) proves BFV keygen relations; [**C5**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_aggregation) sums these shares.                                                                                                               |
+| **Public key share**                    | The TrBFV public material for that contribution; [**C1**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_generation) proves BFV keygen relations; [**C5**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_aggregation) sums these shares.                                                                                                               |
 | **Secret key share**                    | After P1, a node’s **Shamir** share of the threshold secret (not the same as “contribution”).                                                                                                                                                                                                                                                                                                                       |
-| **Threshold public key**                | The BFV key users encrypt to after [**C5**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_aggregation); no single party holds the full matching secret.                                                                                                                                                                                                                              |
-| **Smudging noise**                      | Noise shared across parties so decryption shares do not leak **sk**; **e_sm** in Noir; proved in [**C1**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_generation)–[**C4**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/share_decryption) and used in [**C6**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/share_decryption). |
-| **Smudging noise contribution / share** | Per-node piece of smudging material and its Shamir shares, parallel to the secret-key track ([**C2**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/sk_share_computation) / [**C3**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/share_encryption) / [**C4**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/share_decryption) smudging track).  |
+| **Threshold public key**                | The BFV key users encrypt to after [**C5**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_aggregation); no single party holds the full matching secret.                                                                                                                                                                                                                              |
+| **Smudging noise**                      | Noise shared across parties so decryption shares do not leak **sk**; **e_sm** in Noir; proved in [**C1**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_generation)–[**C4**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/share_decryption) and used in [**C6**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/share_decryption). |
+| **Smudging noise contribution / share** | Per-node piece of smudging material and its Shamir shares, parallel to the secret-key track ([**C2**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/sk_share_computation) / [**C3**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/share_encryption) / [**C4**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/share_decryption) smudging track).  |
 
 In Noir,
-[**C1**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_generation)
+[**C1**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_generation)
 names the BFV encryption-error polynomial **`eek`**. Ring dimension **N**, CRT limbs **L**,
 plaintext modulus **t**, and threshold **T** are fixed per deployment; the **PARITY_MATRIX** that
 constrains Shamir structure in
-[**C2**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/sk_share_computation)
+[**C2**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/sk_share_computation)
 ships inside the secure preset that
-[`config`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/config) checks.
+[`config`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/config) checks.
 
 ## Phases & Circuits
 
 The phase table in **Wiring phases to packages** is the map; this section walks the same path with
 implementation detail. Names and paths match
-[`circuits/README.md`](https://github.com/gnosisguild/interfold/blob/main/circuits/README.md).
+[`circuits/README.md`](https://github.com/theinterfold/interfold/blob/main/circuits/README.md).
 
 ### P1 — Distributed Key Generation
 
 The DKG story begins by pinning down each node’s **individual** public key: circuit
-[**C0**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/pk) (`dkg/pk`) commits
+[**C0**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/pk) (`dkg/pk`) commits
 that key, and later
-[**C3**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/share_encryption)
+[**C3**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/share_encryption)
 proves that share ciphertexts use exactly the key material promised in that commitment.
 
 Next,
-[**C1**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_generation)
+[**C1**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_generation)
 (`threshold/pk_generation`) proves the TrBFV contribution satisfies BFV key generation—bounded
 coefficients, Fiat–Shamir challenge points, Schwartz–Zippel style checks—and emits commitments that
 feed both the share pipeline
-([**C2**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/sk_share_computation),
+([**C2**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/sk_share_computation),
 for secret and smudging tracks) and aggregation
-([**C5**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_aggregation)).
+([**C5**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_aggregation)).
 At one Fiat–Shamir challenge point γ (per CRT limb), the TrBFV public key legs are checked in the
 shape below (the implementation names the error polynomial **eek**):
 
@@ -396,7 +396,7 @@ shape below (the implementation names the error polynomial **eek**):
 public-key leg is the CRS polynomial **a**, so **pk1**[\ell] = **a**[\ell] by construction—the
 circuit’s `verify_evaluations` only evaluates the **pk0** identity at γ.)
 
-[**C2**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/sk_share_computation)
+[**C2**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/sk_share_computation)
 is not a single monolithic proof: the repository uses inner share-computation circuits
 `sk_share_computation` and `e_sm_share_computation` to check Shamir-style sharing and Reed–Solomon
 parity, and a recursive aggregation wrapper (`recursive_aggregation/c2ab_fold`) to fold the batch
@@ -409,7 +409,7 @@ low-degree Shamir-style codewords pass (the exact **PARITY_MATRIX** is preset an
 \mathbf{H}_j\,\mathbf{y}_{i,j}^{\mathsf{T}} \equiv \mathbf{0} \pmod{q_j}
 ```
 
-[**C3**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/share_encryption)
+[**C3**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/share_encryption)
 (`dkg/share_encryption`) then encrypts each share under the recipient’s individual key; in a fully
 connected committee the proof count scales like **|A| × (|A| − 1)** per track. At a Fiat–Shamir
 challenge point, the BFV encryption algebra it checks matches the usual two-leg ciphertext (per
@@ -426,10 +426,10 @@ limb), schematically:
 evaluation is reused for every **ℓ** in the **ct1** leg, matching the witness layout in Noir.)
 
 Finally,
-[**C4**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/share_decryption)
+[**C4**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/share_decryption)
 (`dkg/share_decryption`) runs after local decryption: it proves the opened values match **C2**’s
 commitments, aggregates per modulus, and forwards commitments toward threshold decryption
-([**C6**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/share_decryption)).
+([**C6**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/share_decryption)).
 Because the threshold secret is the sum of contributions, each node combines the decrypted shares
 into per-limb aggregates that line up with that design:
 
@@ -439,7 +439,7 @@ into per-limb aggregates that line up with that design:
 
 ### P2 — Public key aggregation
 
-[**C5**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/pk_aggregation)
+[**C5**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_aggregation)
 (`threshold/pk_aggregation`) is the bridge from many committed contributions to one threshold public
 key: it re-checks each contribution against **C1**, then aggregates. The **first** leg is summed
 across honest parties; the **second** leg is the same CRS polynomial **a** for every party, so
@@ -457,10 +457,10 @@ across honest parties; the **second** leg is the same CRS polynomial **a** for e
 
 The user-encryption family proves that ciphertexts are valid BFV encryptions under the aggregated
 key—implemented across
-[`user_data_encryption_ct0`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/user_data_encryption_ct0),
-[`user_data_encryption_ct1`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/user_data_encryption_ct1),
+[`user_data_encryption_ct0`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/user_data_encryption_ct0),
+[`user_data_encryption_ct1`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/user_data_encryption_ct1),
 and
-[`user_data_encryption`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/user_data_encryption)—following
+[`user_data_encryption`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/user_data_encryption)—following
 a GRECO-style encryption proof pattern. Algebraically it is the same BFV encryption statement as in
 **C3**, but with **pk0**, **pk1** taken from the aggregated threshold key committed by **C5**; the
 split across `ct0` / `ct1` packages exists to keep witness sizes and verifier constraints
@@ -468,10 +468,10 @@ manageable.
 
 ### P4 — Threshold decryption
 
-[**C6**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/share_decryption)
+[**C6**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/share_decryption)
 ties each partial decryption to **C4**’s aggregated material and to the homomorphic output
 ciphertext.
-[**C7**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/decrypted_shares_aggregation)
+[**C7**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/decrypted_shares_aggregation)
 collects at least **T+1** such shares, applies Lagrange weights, reconstructs across CRT, and
 decodes modulo **t**; it runs once at the aggregator after enough valid **C6** proofs are available.
 
@@ -509,16 +509,16 @@ Across the stack you will see the same few ideas reused in different algebraic c
 **Schwartz–Zippel** lets the circuits test identities at random points instead of
 coefficient-by-coefficient. **Reed–Solomon parity** via **PARITY_MATRIX** enforces valid Shamir
 structure inside
-[**C2**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/dkg/sk_share_computation)
+[**C2**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/sk_share_computation)
 without reconstructing secrets in the clear. **CRT / RNS** arithmetic shows up everywhere in BFV,
 with explicit reconstruction where the statement needs a single ring element—notably in
-[**C7**](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/threshold/decrypted_shares_aggregation).
+[**C7**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/decrypted_shares_aggregation).
 Finally, **range checks** keep coefficients inside the bounds that make RLWE-style assumptions
 meaningful inside a proof.
 
 Some statements, especially the large **C2** pipeline, do not fit in one proof: the repository uses
 inner UltraHonk proofs, wrapper circuits, and the folding machinery under
-[`recursive_aggregation/`](https://github.com/gnosisguild/interfold/tree/main/circuits/bin/recursive_aggregation);
+[`recursive_aggregation/`](https://github.com/theinterfold/interfold/tree/main/circuits/bin/recursive_aggregation);
 see [Noir Circuits](./noir-circuits) for how to build and verify them. The on-chain Honk verifier
 contracts that consume the outer `dkg_aggregator` and `decryption_aggregator` proofs are generated
 from the circuits' recursive VKs and committed to git; the repo enforces they stay in lockstep via
@@ -530,7 +530,7 @@ for the contract.
 
 If you are integrating proofs from Rust or following on-chain events, these entry points complement
 this page: the
-[`circuits/README.md`](https://github.com/gnosisguild/interfold/blob/main/circuits/README.md) index
+[`circuits/README.md`](https://github.com/theinterfold/interfold/blob/main/circuits/README.md) index
 for package names and **C0–C7** paths;
-[DKG & computation](https://github.com/gnosisguild/interfold/blob/main/agent/flow-trace/04_DKG_AND_COMPUTATION.md)
+[DKG & computation](https://github.com/theinterfold/interfold/blob/main/agent/flow-trace/04_DKG_AND_COMPUTATION.md)
 for actors, gossip, and proof ordering in a running node.

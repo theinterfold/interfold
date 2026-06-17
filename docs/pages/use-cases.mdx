@@ -31,12 +31,12 @@ structure so you can quickly map Interfold building blocks to the outcomes you n
 
 - **Problem**: Networks such as Ritual and Olas expose agent marketplaces; those agents still need a
   privacy-preserving substrate for sensitive scoring, routing, or risk checks.
-- **Pattern**: Treat each agent as a Data Provider, push policy enforcement into an
-  `IInputValidator`, and let the Interfold host shared state transitions (e.g., allocating budget or
-  updating trust scores).
+- **Pattern**: Treat each agent as a Data Provider, push policy enforcement into the E3 Program's
+  `publishInput` validation, and let the Interfold host shared state transitions (e.g., allocating
+  budget or updating trust scores).
 - **Flow**: Agents encrypt telemetry, the Secure Process computes rankings, and downstream contracts
   or marketplaces read the published plaintext.
-- **Extras**: Use `customParams` inside `E3RequestParams` to tag rounds per agent vertical (NFT
+- **Extras**: Use `customParams` inside the E3 request to tag rounds per agent vertical (NFT
   curation, wallet assistants, on-chain AI retrieval).
 
 ## Identity, Compliance, and Scoring

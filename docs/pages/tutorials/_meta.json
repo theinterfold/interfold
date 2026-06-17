@@ -1,7 +1,7 @@
 {
   "-- Build an E3": {
     "type": "separator",
-    "title": "Build an E3"
+    "title": "Build an E3 App"
   },
   "write-e3-program": {
     "title": "Build a Complete E3 Program"

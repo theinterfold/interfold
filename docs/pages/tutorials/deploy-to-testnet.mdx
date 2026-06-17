@@ -27,15 +27,15 @@ You'll need:
   [sepoliafaucet.com](https://sepoliafaucet.com),
   [Google Cloud faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia), or
   [PoW faucet](https://sepolia-faucet.pk910.de).
-- **Test FOLD** — for ciphernode bonding (only if you're running your own nodes). The mock FOLD
-  token is deployed at `0x24b28471AE7BdF1fdBcfDd183c73D13ff0689B99`. Reach out on the
+- **Test FOLD** — for ciphernode bonding (only if you're running your own nodes). The InterfoldToken
+  (FOLD) is deployed at `0xbAb3220FD04a193a192F07879673597Cd695Cb03`. Reach out on the
   [community Telegram](https://t.me/encaborations) for test FOLD.
 - **Test USDC** — for E3 fees and tickets. Mock USDC at
-  `0x01AbD7D8e6547c943c2fE082C3Ce194fDCe57396`. Same channel for tokens.
+  `0x2721Cdf281d40744aD567cBf3e7100F60bcbAE79`. Same channel for tokens.
 
 > The full list of deployed Sepolia addresses lives in
 > [Ciphernode Operators → Sepolia Contract Addresses](/ciphernode-operators#sepolia-contract-addresses)
-> and in `deployed_contracts.json` inside the repo.
+> and in `packages/interfold-contracts/deployed_contracts.json` inside the repo.
 
 ---
 
@@ -55,9 +55,9 @@ PRIVATE_KEY=0x...
 CHAIN_ID=11155111
 
 # Deployed Interfold contract addresses (Sepolia)
-INTERFOLD_ADDRESS=0x450015E41E1F6b6AfaEbf598E32a8d02a368c0A0
-CIPHERNODE_REGISTRY_ADDRESS=0xc8D2880c59D5e807eFFDee3451fb0Aa97f6aefDA
-FEE_TOKEN_ADDRESS=0x01AbD7D8e6547c943c2fE082C3Ce194fDCe57396
+INTERFOLD_ADDRESS=0x670eFE043d1D340148037b4b76c4F9dfED294309
+CIPHERNODE_REGISTRY_ADDRESS=0x4D707127F72a216EA116AF0B4262dD7382F84259
+FEE_TOKEN_ADDRESS=0x2721Cdf281d40744aD567cBf3e7100F60bcbAE79
 ```
 
 ---
@@ -150,7 +150,7 @@ Update your coordination server to point to Sepolia:
 # .env for the server
 WS_RPC_URL=wss://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
 HTTP_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-INTERFOLD_ADDRESS=0x450015E41E1F6b6AfaEbf598E32a8d02a368c0A0
+INTERFOLD_ADDRESS=0x670eFE043d1D340148037b4b76c4F9dfED294309
 E3_PROGRAM_ADDRESS=<your deployed program address>
 CHAIN_ID=11155111
 ```
