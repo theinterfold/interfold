@@ -18,8 +18,8 @@ use anyhow::{anyhow, bail, ensure, Result};
 use e3_data::Persistable;
 use e3_events::{
     prelude::*, trap, AggregationProofPending, AggregationProofSigned, BusHandle,
-    CommitteeMemberExpelled, ComputeRequest, ComputeRequestError, ComputeResponse,
-    ComputeResponseKind, CorrelationId, DecryptedSharesAggregationProofRequest,
+    CommitteeMemberExpelled, ComputeRequest, ComputeRequestError, ComputeRequestErrorKind,
+    ComputeResponse, ComputeResponseKind, CorrelationId, DecryptedSharesAggregationProofRequest,
     DecryptionAggregationRequest, DecryptionshareCreated, Die, E3Failed, E3Stage, E3id, EType,
     EventContext, FailureReason, InterfoldEvent, InterfoldEventData, PlaintextAggregated, Proof,
     Sequenced, ShareVerificationComplete, ShareVerificationDispatched, SignedProofPayload,
@@ -642,6 +642,27 @@ impl ThresholdPlaintextAggregator {
             return Ok(());
         }
 
+        // Surface the structured threshold-BFV failure when present so the implicated party and
+        // failure mode are visible in logs. Slashing/accusation stays driven by the C6 proof
+        // verification path; this is diagnostics only.
+        if let ComputeRequestErrorKind::TrBFV(trbfv_err) = msg.get_err() {
+            let failure = trbfv_err.failure();
+            match &failure.threshold {
+                Some(threshold) => warn!(
+                    e3_id = %self.e3_id,
+                    kind = ?threshold.kind,
+                    party_id = ?threshold.party_id,
+                    "threshold decryption failed with structured error: {}",
+                    threshold.message,
+                ),
+                None => warn!(
+                    e3_id = %self.e3_id,
+                    "threshold decryption failed: {}",
+                    failure.message,
+                ),
+            }
+        }
+
         self.fail_decryption_round(ec)
     }
 
@@ -1173,7 +1194,7 @@ mod tests {
         aggregator.handle_compute_request_error(TypedEvent::new(
             ComputeRequestError::new(
                 ComputeRequestErrorKind::TrBFV(e3_trbfv::TrBFVError::CalculateThresholdDecryption(
-                    "boom".to_string(),
+                    "boom".into(),
                 )),
                 request,
             ),

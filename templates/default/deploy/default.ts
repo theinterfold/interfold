@@ -65,7 +65,7 @@ export const deployTemplate = async () => {
   await e3Program.waitForDeployment()
 
   const programAddress = await e3Program.getAddress()
-  const tx = await interfold.enableE3Program(programAddress)
+  const tx = await interfold.registerE3Program(programAddress)
   await tx.wait()
 
   const allowed = await interfold.e3Programs(programAddress)

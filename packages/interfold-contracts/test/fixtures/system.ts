@@ -269,13 +269,8 @@ export async function deployInterfoldSystem(
     usdcToken = MockUSDCFactory.connect(await mockUSDC.getAddress(), owner);
   }
 
-  const { interfoldToken } = await ignition.deploy(InterfoldTokenModule, {
-    parameters: { InterfoldToken: { owner: ownerAddress } },
-  });
-  const licenseToken = InterfoldTokenFactory.connect(
-    await interfoldToken.getAddress(),
-    owner,
-  );
+  // Deferred: InterfoldToken is deployed after BondingRegistry so the
+  // immutable BONDING_REGISTRY reference can be set. See below.
 
   const { interfoldTicketToken } = await ignition.deploy(
     InterfoldTicketTokenModule,
@@ -338,6 +333,7 @@ export async function deployInterfoldSystem(
     effectiveRegistryAddress = mockRegAddress;
   }
 
+  // ── BondingRegistry (deployed before token; uses ADDRESS_ONE placeholder) ──
   const { bondingRegistry: _bondingRegistry } = await ignition.deploy(
     BondingRegistryModule,
     {
@@ -345,7 +341,7 @@ export async function deployInterfoldSystem(
         BondingRegistry: {
           owner: ownerAddress,
           ticketToken: await ticketToken.getAddress(),
-          licenseToken: await licenseToken.getAddress(),
+          licenseToken: ADDRESS_ONE, // placeholder — fixed below
           registry: effectiveRegistryAddress,
           slashedFundsTreasury: slashedFundsTreasuryAddress,
           ticketPrice: TICKET_PRICE,
@@ -360,6 +356,34 @@ export async function deployInterfoldSystem(
     await _bondingRegistry.getAddress(),
     owner,
   );
+  const bondingRegistryAddress = await bondingRegistry.getAddress();
+
+  // ── InterfoldToken (deployed after BondingRegistry for immutable ref) ──
+  const deployTime = BigInt(await time.latest());
+  const ccaStart = deployTime + 1000n; // keep Virtual phase during setup
+  const ccaEnd = ccaStart + 7n * 24n * 60n * 60n; // 7-day CCA window
+  const claimSource = ownerAddress; // owner as placeholder claim source
+  const noMoreLocks =
+    ccaEnd + 45n * 24n * 60n * 60n + 4n * 365n * 24n * 60n * 60n;
+  const { interfoldToken } = await ignition.deploy(InterfoldTokenModule, {
+    parameters: {
+      InterfoldToken: {
+        owner: ownerAddress,
+        ccaStart,
+        ccaEnd,
+        claimSource,
+        bondingRegistry: bondingRegistryAddress,
+        noMoreLocks,
+      },
+    },
+  });
+  const licenseToken = InterfoldTokenFactory.connect(
+    await interfoldToken.getAddress(),
+    owner,
+  );
+
+  // Fix the BondingRegistry licenseToken placeholder.
+  await bondingRegistry.setLicenseToken(await licenseToken.getAddress());
 
   // ── Interfold ────────────────────────────────────────────────────────────────
   const { interfold: _interfold } = await ignition.deploy(InterfoldModule, {
@@ -465,7 +489,7 @@ export async function deployInterfoldSystem(
     );
   }
 
-  await interfold.enableE3Program(await e3Program.getAddress());
+  await interfold.registerE3Program(await e3Program.getAddress());
   await interfold.setParamSet(0, bfvParams);
   await interfold.setDecryptionVerifier(
     ENCRYPTION_SCHEME_ID,
@@ -481,8 +505,7 @@ export async function deployInterfoldSystem(
     await interfold.setCommitteeThresholds(size, [m, n]);
   }
 
-  // ── Operators ─────────────────────────────────────────────────────────────
-  await licenseToken.disableTransferRestrictions();
+  // ── Operators (token stays in Virtual phase — bonding allowed pre-TGE) ────
   if (operators.length > 0) {
     for (const operator of operators) {
       await setupOperatorForSortition(

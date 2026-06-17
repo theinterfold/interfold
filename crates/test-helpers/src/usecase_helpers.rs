@@ -8,7 +8,7 @@ use std::{collections::HashMap, sync::Arc};
 use anyhow::{Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_events::ThresholdShare;
-use e3_fhe_params::{BfvParamSet, BfvPreset};
+use e3_fhe_params::{BfvParamSet, BfvPreset, LambdaConfig};
 use e3_trbfv::{
     calculate_decryption_key::{
         calculate_decryption_key, CalculateDecryptionKeyRequest, CalculateDecryptionKeyResponse,
@@ -75,7 +75,7 @@ pub fn generate_shares_hash_map(
                 GenPkShareAndSkSssRequest {
                     trbfv_config: trbfv_config.clone(),
                     crp: ArcBytes::from_bytes(&crp.to_bytes()),
-                    lambda: 40,
+                    lambda: LambdaConfig::Insecure(40),
                     num_ciphertexts: 1,
                 },
             )

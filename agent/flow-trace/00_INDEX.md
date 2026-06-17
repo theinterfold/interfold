@@ -5,7 +5,7 @@
 | #   | File                                                                   | Covers                                                                                                                                                                                                                                                                                                                                                                |
 | --- | ---------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | 1   | [01_REGISTRATION.md](01_REGISTRATION.md)                               | `setup`, `register`, `activate`, `status` CLI commands. On-chain registration into BondingRegistry → CiphernodeRegistry IMT. Rust-side event detection.                                                                                                                                                                                                               |
-| 2   | [02_TOKENS_AND_ACTIVATION.md](02_TOKENS_AND_ACTIVATION.md)             | INTF license bonding, USDC→ITK ticket purchasing, unbonding, burning, exit queue, claiming. Activation thresholds and the `_updateOperatorStatus` formula.                                                                                                                                                                                                            |
+| 2   | [02_TOKENS_AND_ACTIVATION.md](02_TOKENS_AND_ACTIVATION.md)             | FOLD license bonding, USDC→tFOLD ticket purchasing, unbonding, burning, exit queue, claiming. Activation thresholds and the `_updateOperatorStatus` formula.                                                                                                                                                                                                          |
 | 3   | [03_E3_REQUEST_AND_COMMITTEE.md](03_E3_REQUEST_AND_COMMITTEE.md)       | E3 request on-chain flow, fee payment, committee request, IMT snapshot. Rust-side sortition (score-based), on-chain ticket submission, committee finalization, `CiphernodeSelected` event.                                                                                                                                                                            |
 | 4   | [04_DKG_AND_COMPUTATION.md](04_DKG_AND_COMPUTATION.md)                 | Full DKG with ZK proof pipeline: BFV keygen → C0 proof → encryption key exchange → TrBFV share generation → C1/C2/C3 proofs → share verification → Shamir secret sharing → encrypted share broadcast → C4 proofs → decryption key reconstruction. C5 proof for PK aggregation. Ciphertext output → C6 proof for decryption shares → C7 proof for plaintext → rewards. |
 | 5   | [05_FAILURE_REFUND_SLASHING.md](05_FAILURE_REFUND_SLASHING.md)         | Timeout-based failure detection, `markE3Failed`, `processE3Failure`. Refund calculation (work-value allocation). Off-chain AccusationManager quorum protocol (proof failure → accusation → voting → quorum). Lane A (attestation-based, atomic) and Lane B (evidence-based, with appeals) slashing. Ticket/license slashing. Slashed funds escrow and routing.        |
@@ -20,7 +20,7 @@
                   → Config, password, private key stored locally
 
 2. BOND         interfold ciphernode license bond --amount N
-                  → INTF tokens locked in BondingRegistry
+                  → FOLD tokens locked in BondingRegistry
 
 3. TICKETS      interfold ciphernode tickets buy --amount N
                   → USDC → InterfoldTicketToken (non-transferable)
@@ -77,7 +77,7 @@
 15. DEREGISTER  interfold ciphernode deregister --proof X
                   → All collateral queued for exit
                   → Removed from IMT
-                  → After exitDelay: claim USDC + INTF back
+                  → After exitDelay: claim USDC + FOLD back
 ```
 
 ## End-to-End Failure Path Summary

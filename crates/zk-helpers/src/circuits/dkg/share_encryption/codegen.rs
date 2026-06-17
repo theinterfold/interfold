@@ -198,7 +198,6 @@ mod tests {
             committee.clone(),
             DkgInputType::SecretKey,
             sd.z,
-            sd.lambda,
         )
         .unwrap();
         let artifacts = ShareEncryptionCircuit
@@ -221,7 +220,6 @@ mod tests {
             committee.clone(),
             DkgInputType::SecretKey,
             sd.z,
-            sd.lambda,
         )
         .unwrap();
 

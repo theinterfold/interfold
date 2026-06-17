@@ -160,7 +160,6 @@ async fn setup_share_encryption_e_sm_test() -> Option<(
         committee,
         DkgInputType::SmudgingNoise,
         sd.z,
-        sd.lambda,
     )
     .ok()?;
     let prover = ZkProver::new(&backend);
@@ -201,7 +200,6 @@ async fn setup_share_encryption_sk_test() -> Option<(
         committee,
         DkgInputType::SecretKey,
         sd.z,
-        sd.lambda,
     )
     .ok()?;
     let prover = ZkProver::new(&backend);

@@ -635,7 +635,7 @@ _executeSlash(proposalId):
 │     │  │     activeBalance = ticketToken.balanceOf(operator)   │
 │     │  │     slashFromActive = min(amount, activeBalance)      │
 │     │  │     ticketToken.burnTickets(operator, slashFromActive)│
-│     │  │     → Burns ITK, underlying stays as payableBalance   │
+│     │  │     → Burns tFOLD, underlying stays as payableBalance   │
 │     │  │                                                       │
 │     │  │  2. Remaining from EXIT QUEUE:                        │
 │     │  │     remaining = amount - slashFromActive              │
@@ -661,15 +661,19 @@ _executeSlash(proposalId):
 │     │
 │     │  ┌─── BondingRegistry.slashLicenseBond() ───────────────┐
 │     │  │                                                       │
-│     │  │  1. Slash from ACTIVE bond first:                     │
-│     │  │     slashFromActive = min(amount, licenseBond)        │
-│     │  │     operators[op].licenseBond -= slashFromActive      │
+│     │  │  1. Compute active + pending FOLD source total        │
 │     │  │                                                       │
-│     │  │  2. Remaining from EXIT QUEUE:                        │
-│     │  │     _exits.slashPendingAssets(                        │
-│     │  │       operator, 0, remaining,                         │
-│     │  │       includeLockedAssets=true                        │
-│     │  │     )                                                 │
+│     │  │  2. _slashLicenseSourcesLifo(operator, amount):       │
+│     │  │     Compare newest active source sequence with        │
+│     │  │     newest pending-exit source sequence               │
+│     │  │     Slash the newest source first                     │
+│     │  │     → Active slash decrements operators[op].licenseBond│
+│     │  │     → Pending slash decrements pending license totals │
+│     │  │     → totalBonded(op) drops immediately; if op has   │
+│     │  │       token-level locks, same-wallet FOLD may become │
+│     │  │       encumbered until the locked floor decays/top-up │
+│     │  │     → Receiver callback gets (operator, amount,       │
+│     │  │       sourceId) when supported                        │
 │     │  │                                                       │
 │     │  │  3. slashedLicenseBond += totalSlashed                │
 │     │  │  4. _updateOperatorStatus(operator)                   │
@@ -894,7 +898,7 @@ Case 4: E3 completes successfully with escrowed slashed funds
 ```
 SlashPolicy {
   ticketPenalty:    uint256   // tickets to slash (in base units)
-  licensePenalty:   uint256   // INTF to slash
+  licensePenalty:   uint256   // FOLD to slash
   requiresProof:   bool      // Lane A (true) or Lane B (false)
   proofVerifier:    address   // verifier address (Lane A: used in policy lookup)
   banNode:          bool      // permanently ban operator
@@ -1021,7 +1025,7 @@ FALLBACK: TREASURY WITHDRAWAL
     → licenseToken.safeTransfer(treasury, licenseAmount)
   Effect: slashedTicketBalance decremented
 
-License bond slashes always go to treasury (no escrow routing for INTF).
+License bond slashes always go to treasury (no escrow routing for FOLD).
 ```
 
 ---

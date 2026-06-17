@@ -69,7 +69,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       ciphernodeRegistry: registry,
       slashingManager,
       bondingRegistry,
-      licenseToken: intfToken,
+      licenseToken: foldToken,
       ticketToken,
       usdcToken,
       mocks,
@@ -107,14 +107,14 @@ describe("Committee Expulsion & Fault Tolerance", function () {
     async function setupOperator(operator: Signer) {
       const operatorAddress = await operator.getAddress();
 
-      await intfToken.mintAllocation(
+      await foldToken.mint(
         operatorAddress,
         ethers.parseEther("10000"),
-        "Test allocation",
+        ethers.encodeBytes32String("Test allocation"),
       );
       await usdcToken.mint(operatorAddress, ethers.parseUnits("100000", 6));
 
-      await intfToken
+      await foldToken
         .connect(operator)
         .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
       await bondingRegistry
@@ -180,7 +180,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       bondingRegistry,
       mockVerifier,
       usdcToken,
-      intfToken,
+      foldToken,
       ticketToken,
       owner,
       requester,

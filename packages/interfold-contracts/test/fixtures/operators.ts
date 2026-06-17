@@ -22,10 +22,10 @@ export async function setupOperatorForSortition(
 ): Promise<void> {
   const operatorAddress = await operator.getAddress();
 
-  await licenseToken.mintAllocation(
+  await licenseToken.mint(
     operatorAddress,
     ethers.parseEther("10000"),
-    "Test allocation",
+    ethers.encodeBytes32String("Test allocation"),
   );
   await usdcToken.mint(operatorAddress, ethers.parseUnits("100000", 6));
 

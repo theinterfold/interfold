@@ -51,7 +51,7 @@ pub enum CiphernodeCommands {
         #[arg(short='k', long, value_parser = ensure_hex_zeroizing)]
         private_key: Option<Zeroizing<String>>,
     },
-    /// Manage INTF license tokens and bonding state
+    /// Manage FOLD license tokens and bonding state
     License {
         #[command(subcommand)]
         command: LicenseCommands,
@@ -98,12 +98,12 @@ pub enum CiphernodeCommands {
 
 #[derive(Subcommand, Clone, Debug)]
 pub enum LicenseCommands {
-    /// Bond INTF into the bonding registry
+    /// Bond FOLD into the bonding registry
     Bond {
         #[arg(long = "amount")]
         amount: String,
     },
-    /// Unbond INTF (moves stake to the exit queue)
+    /// Unbond FOLD (moves stake to the exit queue)
     Unbond {
         #[arg(long = "amount")]
         amount: String,

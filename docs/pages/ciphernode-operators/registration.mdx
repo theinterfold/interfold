@@ -14,7 +14,7 @@ Before registering, ensure your wallet has:
 
 | Token                   | Amount Required                          | Purpose                      |
 | ----------------------- | ---------------------------------------- | ---------------------------- |
-| **INTF**                | ≥ 100 INTF (check `licenseRequiredBond`) | License bond collateral      |
+| **FOLD**                | ≥ 100 FOLD (check `licenseRequiredBond`) | License bond collateral      |
 | **USDC** (or fee token) | ≥ 10 USDC per ticket (minimum 1 ticket)  | Ticket balance for sortition |
 | **ETH**                 | Sufficient for gas                       | Transaction fees             |
 
@@ -39,12 +39,12 @@ Ciphernode status on sepolia:
   Ticket balance: 0 (0 available)
   License bond: 0
   Pending exits: tickets=0, license=0
-  Requirements: minTickets=1, ticketPrice=10 ITK, licenseBond=100 INTF
+  Requirements: minTickets=1, ticketPrice=10 tFOLD, licenseBond=100 FOLD
 ```
 
 ### Step 2: Bond Your License
 
-Bond INTF tokens to meet the license requirement:
+Bond FOLD tokens to meet the license requirement:
 
 ```bash
 interfold ciphernode license bond --amount 100
@@ -52,7 +52,7 @@ interfold ciphernode license bond --amount 100
 
 This command:
 
-- Approves the BondingRegistry to spend your INTF (if needed)
+- Approves the BondingRegistry to spend your FOLD (if needed)
 - Calls `bondLicense(100e18)` on the BondingRegistry contract
 
 > You can bond more than the minimum for a buffer against slashing. The active license floor is 80%
@@ -77,7 +77,7 @@ Purchase tickets by depositing the underlying stablecoin:
 interfold ciphernode tickets buy --amount 100
 ```
 
-This deposits 100 USDC (or fee token units) and mints the equivalent in non-transferable ITK
+This deposits 100 USDC (or fee token units) and mints the equivalent in non-transferable tFOLD
 (InterfoldTicketToken).
 
 The number of usable tickets is calculated as:
@@ -107,7 +107,7 @@ Ciphernode status on sepolia:
   Ticket balance: 100 (10 available)
   License bond: 100
   Pending exits: tickets=0, license=0
-  Requirements: minTickets=1, ticketPrice=10 ITK, licenseBond=100 INTF
+  Requirements: minTickets=1, ticketPrice=10 tFOLD, licenseBond=100 FOLD
 ```
 
 ## CLI Command Reference
@@ -115,10 +115,10 @@ Ciphernode status on sepolia:
 ### License Commands
 
 ```bash
-# Bond INTF tokens
+# Bond FOLD tokens
 interfold ciphernode license bond --amount <AMOUNT>
 
-# Unbond INTF (moves to exit queue)
+# Unbond FOLD (moves to exit queue)
 interfold ciphernode license unbond --amount <AMOUNT>
 
 # Claim unlocked exits
@@ -173,7 +173,7 @@ Current Sepolia defaults (verify on-chain before depositing):
 | Parameter             | Value                | Description                        |
 | --------------------- | -------------------- | ---------------------------------- |
 | `ticketPrice`         | 10,000,000 (10 USDC) | Cost per ticket in fee token units |
-| `licenseRequiredBond` | 100 INTF             | Minimum INTF to bond               |
+| `licenseRequiredBond` | 100 FOLD             | Minimum FOLD to bond               |
 | `minTicketBalance`    | 1 ticket             | Minimum tickets to be active       |
 | `exitDelay`           | 604,800s (7 days)    | Wait time before claiming exits    |
 
@@ -212,7 +212,7 @@ status changes due to balance or bond updates.
 
 | Issue                     | Cause                                   | Solution                                             |
 | ------------------------- | --------------------------------------- | ---------------------------------------------------- |
-| `isActive` is false       | Below minimum license (80%) or tickets  | Add more INTF or tickets                             |
+| `isActive` is false       | Below minimum license (80%) or tickets  | Add more FOLD or tickets                             |
 | Registration fails        | Already registered, banned, or unbonded | Check `isRegistered()`, ban status, and license bond |
 | Ticket purchase fails     | Insufficient stablecoin or allowance    | Ensure balance and approve spending                  |
 | "NodeNotEligible" in logs | Not registered before E3 request        | Register before requests are made                    |

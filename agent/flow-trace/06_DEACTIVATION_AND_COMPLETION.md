@@ -22,9 +22,9 @@ User runs: interfold ciphernode deactivate --tickets 50
     │  ┌─── ON-CHAIN (BondingRegistry.sol) ─────────────────────┐
     │  │                                                         │
     │  │  removeTicketBalance(50):                               │
-    │  │    1. require(amount != 0, registered, sufficient ITK)  │
+    │  │    1. require(amount != 0, registered, sufficient tFOLD)  │
     │  │    2. ticketToken.burnTickets(operator, amount)         │
-    │  │       → ITK destroyed, underlying becomes claimable      │
+    │  │       → tFOLD destroyed, underlying becomes claimable      │
     │  │    3. _exits.queueTicketsForExit(                       │
     │  │         operator, exitDelay, amount                      │
     │  │       )                                                  │
@@ -51,9 +51,11 @@ User runs: interfold ciphernode deactivate --license 20000
     │  ┌─── ON-CHAIN ───────────────────────────────────────────┐
     │  │                                                         │
     │  │  unbondLicense(20000):                                  │
-    │  │    1. require(amount != 0, sufficient bonded INTF)      │
+    │  │    1. require(amount != 0, sufficient bonded FOLD)      │
     │  │    2. operators[op].licenseBond -= 20000                │
     │  │    3. _exits.queueLicensesForExit(op, exitDelay, 20000)│
+    │  │       → Pending FOLD remains in totalBonded(op) for     │
+    │  │         token-level locked-floor accounting             │
     │  │    4. _updateOperatorStatus(operator)                   │
     │  │       → If licenseBond <                                │
     │  │         (licenseRequiredBond * licenseActiveBps / 10000)│
@@ -72,8 +74,8 @@ User runs: interfold ciphernode deactivate --tickets 50 --license 20000
 │
 ├─ Calls removeTicketBalance(50) first
 └─ Then calls unbondLicense(20000)
-   → Both queued in ExitQueue with same exitDelay
-   → May merge into single tranche if same unlock time
+  → Tickets are queued in ExitQueueLib
+  → FOLD is queued in ExitQueueLib pending license exits and remains counted in totalBonded()
 ```
 
 ---
@@ -109,8 +111,9 @@ User runs: interfold ciphernode deregister
     │  │       _exits.queueAssetsForExit(                        │
     │  │         op, exitDelay,                                   │
     │  │         fullTicketBalance,  // tickets                   │
-    │  │         licenseBondAmount   // license                   │
+    │  │         0                   // license handled below     │
     │  │       )                                                  │
+    │  │       _queueLicenseExitFromSources(op, licenseBondAmount)│
     │  │                                                         │
     │  │    8. Remove from Merkle tree:                          │
     │  │       registry.removeCiphernode(msg.sender)             │
@@ -276,8 +279,9 @@ Time ─────────────────────────
 │ or deactivate()  │   EXIT DELAY       │                  │
 │                  │  (configured)       │                  │
 │ Assets queued    │                    │ Assets claimable │
-│ ITK burned       │  Cannot cancel     │ USDC returned    │
-│ INTF locked      │  Can be slashed!   │ INTF returned    │
+│ tFOLD burned       │  Cannot cancel     │ USDC returned    │
+│ FOLD locked      │  Can be slashed!   │ FOLD returned to │
+│                  │                    │ withdrawal addr  │
 │                  │                    │                  │
 
 IMPORTANT: Even during the exit delay, slashing can still

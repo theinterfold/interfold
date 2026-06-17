@@ -54,14 +54,18 @@ impl E3RequestedWithChainId {
         let params_arc = BfvParamSet::from(params_preset).build_arc();
         let params_bytes = encode_bfv_params(&params_arc);
 
-        let lambda = params_preset.metadata().lambda;
+        // Lambda is secure or insecure depending on the preset's security tier.
+        let lambda = params_preset
+            .lambda()
+            .map_err(|e| anyhow::anyhow!("Failed to build lambda for preset: {}", e))?;
+        let lambda_value = lambda.value();
 
         let error_size = match calculate_error_size(params_arc, threshold_n, threshold_m, lambda) {
             Ok(size) => {
                 let size_bytes = size.to_bytes_be();
                 info!(
                     "Calculated error_size for E3 (threshold_n={}, threshold_m={}, lambda={}): {} bytes",
-                    threshold_n, threshold_m, lambda, size_bytes.len()
+                    threshold_n, threshold_m, lambda_value, size_bytes.len()
                 );
                 ArcBytes::from_bytes(&size_bytes)
             }

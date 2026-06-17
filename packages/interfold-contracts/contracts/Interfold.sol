@@ -680,20 +680,13 @@ contract Interfold is IInterfold, Ownable2StepUpgradeable {
     }
 
     /// @inheritdoc IInterfold
-    function enableE3Program(IE3Program e3Program) external {
+    function registerE3Program(IE3Program e3Program) external {
         require(
             !e3Programs[e3Program],
             ModuleAlreadyEnabled(address(e3Program))
         );
         e3Programs[e3Program] = true;
-        emit E3ProgramEnabled(e3Program);
-    }
-
-    /// @inheritdoc IInterfold
-    function disableE3Program(IE3Program e3Program) external onlyOwner {
-        require(e3Programs[e3Program], ModuleNotEnabled(address(e3Program)));
-        delete e3Programs[e3Program];
-        emit E3ProgramDisabled(e3Program);
+        emit E3ProgramRegistered(e3Program);
     }
 
     /// @inheritdoc IInterfold

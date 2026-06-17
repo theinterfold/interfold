@@ -148,7 +148,7 @@ pub fn calculate_threshold_decryption(
                 index
             );
 
-            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone());
+            let share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
             let Some(threshold_shares) = d_share_polys.get(index) else {
                 bail!("Poly not found for index {}", index)
             };

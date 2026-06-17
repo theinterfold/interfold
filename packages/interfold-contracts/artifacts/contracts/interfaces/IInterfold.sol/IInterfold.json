@@ -369,17 +369,6 @@
     {
       "inputs": [
         {
-          "internalType": "address",
-          "name": "module",
-          "type": "address"
-        }
-      ],
-      "name": "ModuleNotEnabled",
-      "type": "error"
-    },
-    {
-      "inputs": [
-        {
           "internalType": "uint256",
           "name": "e3Id",
           "type": "uint256"
@@ -612,20 +601,7 @@
           "type": "address"
         }
       ],
-      "name": "E3ProgramDisabled",
-      "type": "event"
-    },
-    {
-      "anonymous": false,
-      "inputs": [
-        {
-          "indexed": false,
-          "internalType": "contract IE3Program",
-          "name": "e3Program",
-          "type": "address"
-        }
-      ],
-      "name": "E3ProgramEnabled",
+      "name": "E3ProgramRegistered",
       "type": "event"
     },
     {
@@ -1325,38 +1301,12 @@
     {
       "inputs": [
         {
-          "internalType": "contract IE3Program",
-          "name": "e3Program",
-          "type": "address"
-        }
-      ],
-      "name": "disableE3Program",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
           "internalType": "bytes32",
           "name": "encryptionSchemeId",
           "type": "bytes32"
         }
       ],
       "name": "disableEncryptionScheme",
-      "outputs": [],
-      "stateMutability": "nonpayable",
-      "type": "function"
-    },
-    {
-      "inputs": [
-        {
-          "internalType": "contract IE3Program",
-          "name": "e3Program",
-          "type": "address"
-        }
-      ],
-      "name": "enableE3Program",
       "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
@@ -2004,6 +1954,19 @@
     {
       "inputs": [
         {
+          "internalType": "contract IE3Program",
+          "name": "e3Program",
+          "type": "address"
+        }
+      ],
+      "name": "registerE3Program",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
+    },
+    {
+      "inputs": [
+        {
           "components": [
             {
               "internalType": "enum IInterfold.CommitteeSize",
@@ -2427,5 +2390,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-bc3ca5094033f5b4b0cf838691e05da99cc1561b"
+  "buildInfoId": "solc-0_8_28-9672985902d4f3c60307b637e6940bacad029c39"
 }

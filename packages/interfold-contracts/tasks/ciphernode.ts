@@ -53,7 +53,7 @@ export const ciphernodeAdd = task(
   .addOption({
     name: "licenseBondAmount",
     description:
-      "amount of INTF to bond (in wei, e.g., 1000000000000000000000 for 1000 INTF)",
+      "amount of FOLD to bond (in wei, e.g., 1000000000000000000000 for 1000 FOLD)",
     defaultValue: "1000000000000000000000",
   })
   .addOption({
@@ -96,18 +96,18 @@ export const ciphernodeAdd = task(
 
       try {
         console.log("Step 1: Checking balances...");
-        const intfBalance = await licenseToken.balanceOf(signer.address);
+        const foldBalance = await licenseToken.balanceOf(signer.address);
         const usdcBalance = await usdcToken.balanceOf(signer.address);
 
-        console.log(`INTF balance: ${ethers.formatEther(intfBalance)}`);
+        console.log(`FOLD balance: ${ethers.formatEther(foldBalance)}`);
         console.log(`USDC balance: ${ethers.formatUnits(usdcBalance, 6)}`);
 
         const licenseBondAmountBigInt = BigInt(licenseBondAmount);
         const ticketAmountBigInt = BigInt(ticketAmount);
 
-        if (intfBalance < licenseBondAmountBigInt) {
+        if (foldBalance < licenseBondAmountBigInt) {
           throw new Error(
-            `Insufficient INTF balance. Need: ${ethers.formatEther(licenseBondAmountBigInt)}, Have: ${ethers.formatEther(intfBalance)}`,
+            `Insufficient FOLD balance. Need: ${ethers.formatEther(licenseBondAmountBigInt)}, Have: ${ethers.formatEther(foldBalance)}`,
           );
         }
 
@@ -117,13 +117,13 @@ export const ciphernodeAdd = task(
           );
         }
 
-        console.log("Step 2: Approving INTF for license bond...");
+        console.log("Step 2: Approving FOLD for license bond...");
         const approveTx = await licenseToken.approve(
           await bondingRegistry.getAddress(),
           licenseBondAmountBigInt,
         );
         await approveTx.wait();
-        console.log("INTF approved");
+        console.log("FOLD approved");
 
         console.log("Step 3: Bonding license...");
         const bondTx = await bondingRegistryConnected.bondLicense(
@@ -131,7 +131,7 @@ export const ciphernodeAdd = task(
         );
         await bondTx.wait();
         console.log(
-          `Licensed bonded: ${ethers.formatEther(licenseBondAmountBigInt)} INTF`,
+          `Licensed bonded: ${ethers.formatEther(licenseBondAmountBigInt)} FOLD`,
         );
 
         console.log("Step 4: Registering as operator...");
@@ -174,7 +174,7 @@ export const ciphernodeAdd = task(
         console.log(`Ciphernode: ${signer.address}`);
         console.log(`Registered: ${isRegistered}`);
         console.log(`Active: ${isActive}`);
-        console.log(`License Bond: ${ethers.formatEther(licenseBond)} INTF`);
+        console.log(`License Bond: ${ethers.formatEther(licenseBond)} FOLD`);
         console.log(
           `Ticket Balance: ${ethers.formatUnits(ticketBalance, 6)} USDC worth`,
         );
@@ -226,7 +226,7 @@ export const ciphernodeRemove = task(
 
 export const ciphernodeMintTokens = task(
   "ciphernode:mint-tokens",
-  "Mint INTF and USDC tokens for a ciphernode (for testing)",
+  "Mint FOLD and USDC tokens for a ciphernode (for testing)",
 )
   .addOption({
     name: "ciphernodeAddress",
@@ -234,9 +234,9 @@ export const ciphernodeMintTokens = task(
     defaultValue: ZeroAddress,
   })
   .addOption({
-    name: "intfAmount",
+    name: "foldAmount",
     description:
-      "amount of INTF to mint (in ether units, e.g., 2000 for 2000 INTF)",
+      "amount of FOLD to mint (in ether units, e.g., 2000 for 2000 FOLD)",
     defaultValue: "2000",
   })
   .addOption({
@@ -246,7 +246,7 @@ export const ciphernodeMintTokens = task(
     defaultValue: "1000",
   })
   .setAction(async () => ({
-    default: async ({ ciphernodeAddress, intfAmount, usdcAmount }, hre) => {
+    default: async ({ ciphernodeAddress, foldAmount, usdcAmount }, hre) => {
       const connection = await hre.network.connect();
       const { ethers } = connection;
 
@@ -275,14 +275,14 @@ export const ciphernodeMintTokens = task(
       try {
         console.log(`Minting tokens for: ${ciphernodeAddress}`);
 
-        console.log(`Minting ${intfAmount} INTF...`);
-        const intfTx = await interfoldTokenContract.mintAllocation(
+        console.log(`Minting ${foldAmount} FOLD...`);
+        const foldTx = await interfoldTokenContract.mint(
           ciphernodeAddress,
-          ethers.parseEther(intfAmount),
-          "Ciphernode allocation",
+          ethers.parseEther(foldAmount),
+          ethers.encodeBytes32String("cn-alloc"),
         );
-        await intfTx.wait();
-        console.log(`${intfAmount} INTF minted`);
+        await foldTx.wait();
+        console.log(`${foldAmount} FOLD minted`);
 
         console.log(`Minting ${usdcAmount} USDC...`);
         const usdcTx = await mockUSDCContract.mint(
@@ -292,22 +292,26 @@ export const ciphernodeMintTokens = task(
         await usdcTx.wait();
         console.log(`${usdcAmount} USDC minted`);
 
-        const intfBalance =
+        const foldBalance =
           await interfoldTokenContract.balanceOf(ciphernodeAddress);
         const usdcBalance = await mockUSDCContract.balanceOf(ciphernodeAddress);
 
         console.log("\n=== Token Balances ===");
-        console.log(`INTF: ${ethers.formatEther(intfBalance)}`);
+        console.log(`FOLD: ${ethers.formatEther(foldBalance)}`);
         console.log(`USDC: ${ethers.formatUnits(usdcBalance, 6)}`);
 
-        const transfersRestricted =
-          await interfoldTokenContract.transfersRestricted();
-        if (transfersRestricted) {
-          console.log("Allowing InterfoldToken to be transferrable...");
-          const transferEnabledTx =
-            await interfoldTokenContract.disableTransferRestrictions();
-          await transferEnabledTx.wait();
-          console.log("InterfoldToken transfers are now enabled");
+        const tgeTs = await interfoldTokenContract.tgeTimestamp();
+        if (tgeTs === 0n) {
+          console.log("Firing TGE to enable transfers...");
+          try {
+            await (await interfoldTokenContract.tge()).wait();
+            console.log("InterfoldToken TGE fired, transfers enabled");
+          } catch (e: any) {
+            console.warn(
+              "TGE not yet available (CCA cooldown may not have passed):",
+              e.reason ?? e.message ?? e,
+            );
+          }
         }
       } catch (error) {
         console.error("Token minting failed:", error);
@@ -335,7 +339,7 @@ export const ciphernodeAdminAdd = task(
   .addOption({
     name: "licenseBondAmount",
     description:
-      "amount of INTF to bond (in ether units, e.g., 1000 for 1000 INTF)",
+      "amount of FOLD to bond (in ether units, e.g., 1000 for 1000 FOLD)",
     defaultValue: "1000",
   })
   .addOption({
@@ -413,21 +417,21 @@ export const ciphernodeAdminAdd = task(
         const licenseBondWei = ethers.parseEther(licenseBondAmount);
         const ticketAmountWei = ethers.parseUnits(ticketAmount, 6);
 
-        console.log("Step 1: Minting and transferring INTF to ciphernode...");
+        console.log("Step 1: Minting and transferring FOLD to ciphernode...");
 
-        const intfTx = await interfoldTokenConnected.mintAllocation(
+        const foldTx = await interfoldTokenConnected.mint(
           adminWallet.address,
           licenseBondWei,
-          "Admin allocation for ciphernode registration",
+          ethers.encodeBytes32String("admin-cn-reg"),
         );
-        await intfTx.wait();
+        await foldTx.wait();
 
         const transferTx = await interfoldTokenConnected.transfer(
           ciphernodeAddress,
           licenseBondWei,
         );
         await transferTx.wait();
-        console.log(`${licenseBondAmount} INTF transferred to ciphernode`);
+        console.log(`${licenseBondAmount} FOLD transferred to ciphernode`);
 
         console.log("Step 2: Minting USDC to admin...");
         const usdcTx = await mockUSDCConnected.mint(
@@ -465,7 +469,7 @@ export const ciphernodeAdminAdd = task(
         const bondTx =
           await bondingRegistryAsCiphernode.bondLicense(licenseBondWei);
         await bondTx.wait();
-        console.log(`License bonded: ${licenseBondAmount} INTF`);
+        console.log(`License bonded: ${licenseBondAmount} FOLD`);
 
         const registerTx = await bondingRegistryAsCiphernode.registerOperator();
         await registerTx.wait();
@@ -529,7 +533,7 @@ export const ciphernodeAdminAdd = task(
         console.log(`Ciphernode: ${ciphernodeAddress}`);
         console.log(`Registered: ${isRegistered}`);
         console.log(`Active: ${isActive}`);
-        console.log(`License Bond: ${ethers.formatEther(licenseBond)} INTF`);
+        console.log(`License Bond: ${ethers.formatEther(licenseBond)} FOLD`);
         console.log(
           `Ticket Balance: ${ethers.formatUnits(ticketBalance, 6)} USDC worth`,
         );

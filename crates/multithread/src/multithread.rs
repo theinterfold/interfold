@@ -54,7 +54,7 @@ use e3_trbfv::helpers::try_poly_from_sensitive_bytes;
 use e3_trbfv::helpers::try_poly_ntt_from_bytes;
 use e3_trbfv::helpers::try_poly_pb_from_bytes;
 use e3_trbfv::shares::SharedSecret;
-use e3_trbfv::{TrBFVError, TrBFVRequest, TrBFVResponse};
+use e3_trbfv::{TrBFVError, TrBFVFailure, TrBFVRequest, TrBFVResponse};
 use e3_utils::SharedRng;
 use e3_utils::MAILBOX_LIMIT;
 use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
@@ -270,16 +270,18 @@ async fn handle_compute_request_event(
                 ComputeRequestKind::TrBFV(ref trbfv_req) => {
                     let msg = format!("Pool error: {pool_err}");
                     ComputeRequestErrorKind::TrBFV(match trbfv_req {
-                        TrBFVRequest::GenPkShareAndSkSss(_) => TrBFVError::GenPkShareAndSkSss(msg),
-                        TrBFVRequest::GenEsiSss(_) => TrBFVError::GenEsiSss(msg),
+                        TrBFVRequest::GenPkShareAndSkSss(_) => {
+                            TrBFVError::GenPkShareAndSkSss(msg.into())
+                        }
+                        TrBFVRequest::GenEsiSss(_) => TrBFVError::GenEsiSss(msg.into()),
                         TrBFVRequest::CalculateDecryptionKey(_) => {
-                            TrBFVError::CalculateDecryptionKey(msg)
+                            TrBFVError::CalculateDecryptionKey(msg.into())
                         }
                         TrBFVRequest::CalculateDecryptionShare(_) => {
-                            TrBFVError::CalculateDecryptionShare(msg)
+                            TrBFVError::CalculateDecryptionShare(msg.into())
                         }
                         TrBFVRequest::CalculateThresholdDecryption(_) => {
-                            TrBFVError::CalculateThresholdDecryption(msg)
+                            TrBFVError::CalculateThresholdDecryption(msg.into())
                         }
                     })
                 }
@@ -558,7 +560,9 @@ fn handle_trbfv_request(
                     request.e3_id,
                 )),
                 Err(e) => Err(ComputeRequestError::new(
-                    ComputeRequestErrorKind::TrBFV(TrBFVError::GenPkShareAndSkSss(e.to_string())),
+                    ComputeRequestErrorKind::TrBFV(TrBFVError::GenPkShareAndSkSss(
+                        TrBFVFailure::from_error(&e),
+                    )),
                     request,
                 )),
             }
@@ -572,7 +576,9 @@ fn handle_trbfv_request(
                     request.e3_id,
                 )),
                 Err(e) => Err(ComputeRequestError::new(
-                    ComputeRequestErrorKind::TrBFV(TrBFVError::GenEsiSss(e.to_string())),
+                    ComputeRequestErrorKind::TrBFV(TrBFVError::GenEsiSss(
+                        TrBFVFailure::from_error(&e),
+                    )),
                     request,
                 )),
             }
@@ -590,7 +596,7 @@ fn handle_trbfv_request(
                     error!("Error calculating decryption key: {}", e);
                     Err(ComputeRequestError::new(
                         ComputeRequestErrorKind::TrBFV(TrBFVError::CalculateDecryptionKey(
-                            e.to_string(),
+                            TrBFVFailure::from_error(&e),
                         )),
                         request,
                     ))
@@ -608,7 +614,7 @@ fn handle_trbfv_request(
                 )),
                 Err(e) => Err(ComputeRequestError::new(
                     ComputeRequestErrorKind::TrBFV(TrBFVError::CalculateDecryptionShare(
-                        e.to_string(),
+                        TrBFVFailure::from_error(&e),
                     )),
                     request,
                 )),
@@ -625,7 +631,7 @@ fn handle_trbfv_request(
                 )),
                 Err(e) => Err(ComputeRequestError::new(
                     ComputeRequestErrorKind::TrBFV(TrBFVError::CalculateThresholdDecryption(
-                        e.to_string(),
+                        TrBFVFailure::from_error(&e),
                     )),
                     request,
                 )),

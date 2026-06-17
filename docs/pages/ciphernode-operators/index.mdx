@@ -27,15 +27,15 @@ malicious behavior.
 
 The Interfold protocol uses several contracts that work together:
 
-| Contract                 | Purpose                                                                        |
-| ------------------------ | ------------------------------------------------------------------------------ |
-| **Interfold**            | Core coordinator that manages E3 requests and computation lifecycle            |
-| **CiphernodeRegistry**   | Tracks registered operators and manages committee formation                    |
-| **BondingRegistry**      | Handles license bonds (INTF) and ticket balances (ITK)                         |
-| **SlashingManager**      | Processes slashing proposals, appeals, and ban enforcement                     |
-| **E3RefundManager**      | Calculates and distributes refunds when an E3 fails                            |
-| **InterfoldToken**       | INTF token used for license bonding                                            |
-| **InterfoldTicketToken** | Non-transferable ITK token representing ticket balances (backed by stablecoin) |
+| Contract                 | Purpose                                                                          |
+| ------------------------ | -------------------------------------------------------------------------------- |
+| **Interfold**            | Core coordinator that manages E3 requests and computation lifecycle              |
+| **CiphernodeRegistry**   | Tracks registered operators and manages committee formation                      |
+| **BondingRegistry**      | Handles license bonds (FOLD) and ticket balances (tFOLD)                         |
+| **SlashingManager**      | Processes slashing proposals, appeals, and ban enforcement                       |
+| **E3RefundManager**      | Calculates and distributes refunds when an E3 fails                              |
+| **InterfoldToken**       | FOLD token used for license bonding                                              |
+| **InterfoldTicketToken** | Non-transferable tFOLD token representing ticket balances (backed by stablecoin) |
 
 ### Sepolia Contract Addresses
 
@@ -47,7 +47,7 @@ The Interfold protocol uses several contracts that work together:
 | SlashingManager       | `0x0553387EE0992Fe339579728B6c777164fD1de40` | 10939868     |
 | E3RefundManager       | `0xD327ec50C7a8909f90DE15fe53872e88B4948Ee0` | 10939876     |
 | InterfoldTicketToken  | `0x2446f2AC9632f17af96053e48dEDff44b50711Ea` | 10939867     |
-| InterfoldToken (INTF) | `0xbAb3220FD04a193a192F07879673597Cd695Cb03` | 10939866     |
+| InterfoldToken (FOLD) | `0xbAb3220FD04a193a192F07879673597Cd695Cb03` | 10939866     |
 | MockUSDC (fee token)  | `0x2721Cdf281d40744aD567cBf3e7100F60bcbAE79` | 10939865     |
 
 The DKG and decryption aggregator circuits are deployed as the sole on-chain verifiers for BFV
@@ -86,7 +86,7 @@ stateDiagram-v2
 | State           | Description                                                                        |
 | --------------- | ---------------------------------------------------------------------------------- |
 | **Unbonded**    | No license bond deposited; cannot register                                         |
-| **Licensed**    | INTF bonded but not yet registered in the registry                                 |
+| **Licensed**    | FOLD bonded but not yet registered in the registry                                 |
 | **Registered**  | In the registry but lacking minimum ticket balance                                 |
 | **Active**      | Fully operational; eligible for committee selection via sortition                  |
 | **Inactive**    | Registered but below minimum requirements (tickets or license bond)                |
@@ -98,7 +98,7 @@ Before operating a ciphernode, ensure you have:
 
 | Requirement     | Details                                                                  |
 | --------------- | ------------------------------------------------------------------------ |
-| **INTF Tokens** | At least `100 INTF` for the license bond (check `licenseRequiredBond()`) |
+| **FOLD Tokens** | At least `100 FOLD` for the license bond (check `licenseRequiredBond()`) |
 | **Stablecoin**  | USDC (or configured fee token) for tickets; minimum 1 ticket worth       |
 | **ETH**         | Gas for transactions on your target network                              |
 | **Hardware**    | Linux/macOS, 4+ cores, 16GB+ RAM, stable internet with open UDP port     |
