@@ -101,7 +101,7 @@ impl ComputeProvider for Risc0Provider {
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
-pragma solidity >=0.8.27;
+pragma solidity >=0.8.28;
 
 import {IInterfold, IE3Program} from "@interfold/contracts/interfaces/IInterfold.sol";
 import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
@@ -145,14 +145,14 @@ contract MyE3Program is IE3Program {
 await FeeTokenContract.approve(InterfoldContract.address, computationFee)
 
 // Then request the E3
-await InterfoldContract.request({
-  threshold: [thresholdMin, thresholdMax],
-  inputWindow: [inputWindowStart, inputWindowEnd],
-  e3Program: e3ProgramAddress,
-  e3ProgramParams: e3ProgramParams,
-  computeProviderParams: computeProviderParams,
-  customParams: '0x',
-})
+await InterfoldContract.request(
+  0, // CommitteeSize.Minimum
+  [inputWindowStart, inputWindowEnd],
+  e3ProgramAddress,
+  0, // paramSet (0 = insecure dev, 1 = secure production)
+  computeProviderParams,
+  '0x', // customParams
+)
 ```
 
 ### Step 8: Submit Encrypted Inputs
@@ -195,9 +195,9 @@ encrypted data, enabling a new class of decentralized applications.
 ## Additional Resources
 
 - **Interfold GitHub Repository**:
-  [https://github.com/gnosisguild/interfold](https://github.com/gnosisguild/interfold)
+  [https://github.com/theinterfold/interfold](https://github.com/theinterfold/interfold)
 - **CRISP GitHub Repository**:
-  [https://github.com/gnosisguild/interfold](https://github.com/gnosisguild/interfold/tree/main/examples/CRISP)
+  [https://github.com/theinterfold/interfold](https://github.com/theinterfold/interfold/tree/main/examples/CRISP)
 - **Interfold Quick Start**: [Quick Start](/quick-start)
 - **RISC Zero Documentation**: [https://www.risczero.com](https://www.risczero.com)
 - **Compute Provider Package**: Check the Interfold repository for the Compute Provider package and
