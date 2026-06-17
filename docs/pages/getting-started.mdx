@@ -1,6 +1,6 @@
 ---
 title: 'Getting Started'
-description: ''
+description: 'Start building E3 programs on the Interfold protocol'
 ---
 
 # Build an E3 Program
@@ -17,4 +17,26 @@ building an E3 Program, covering:
 The Interfold network of Ciphernodes and client-side encryption tools handle much of the complexity,
 allowing you to focus on the logic of your specific E3 Program.
 
-Let's begin by setting up a Compute Provider.
+## Quick Navigation
+
+| Step                               | Guide                                                      |
+| ---------------------------------- | ---------------------------------------------------------- |
+| 1. Set up your environment         | [Installation](/installation)                              |
+| 2. Create a new E3 project         | [Quick Start](/quick-start)                                |
+| 3. Choose a compute provider       | [Compute Provider Setup](/compute-provider)                |
+| 4. Write the secure process        | [Writing the Secure Process](/write-secure-program)        |
+| 5. Build the E3 contract           | [Writing an E3 Contract](/write-e3-contract)               |
+| 6. Encrypt and submit data         | [Encrypt & Submit Data](/tutorials/encrypt-and-submit)     |
+| 7. Build a complete E3 (reference) | [Build a Complete E3 Program](/tutorials/write-e3-program) |
+
+## Reference Implementation
+
+For a complete working example, study [CRISP](/CRISP/introduction) — a private voting application
+that demonstrates every component of an E3 program: Noir circuits for input validation, a RISC Zero
+guest for FHE computation, smart contracts implementing `IE3Program`, a React frontend, and a Rust
+coordination server.
+
+## Next Steps
+
+Start with [Compute Provider Setup](/compute-provider) to choose your execution backend, then move
+on to [Writing the Secure Process](/write-secure-program) to define your FHE computation logic.

@@ -62,14 +62,15 @@ Each computation is tracked by an `E3` struct:
 ```solidity
 struct E3 {
   uint256 seed; // Random seed for committee selection
-  uint32[2] threshold; // [M, N] - M required out of N members
+  CommitteeSize committeeSize; // Committee size enum (Minimum, Micro, Small)
   uint256 requestBlock; // Block when E3 was requested
   uint256[2] inputWindow; // [start, end] timestamps for input acceptance
   bytes32 encryptionSchemeId; // Encryption scheme identifier
   IE3Program e3Program; // E3 Program contract address
-  bytes e3ProgramParams; // ABI-encoded program params
+  uint8 paramSet; // BFV encryption parameter set index
   bytes customParams; // Arbitrary application-defined params
   IDecryptionVerifier decryptionVerifier; // Verifier for decryption proofs
+  IPkVerifier pkVerifier; // Verifier for public key publication proofs
   bytes32 committeePublicKey; // Hash of committee's shared public key
   bytes32 ciphertextOutput; // Hash of encrypted output
   bytes plaintextOutput; // Decrypted final result
@@ -103,7 +104,14 @@ function getE3(uint256 e3Id) external view returns (E3 memory e3);
 function getE3Stage(uint256 e3Id) external view returns (E3Stage stage);
 
 // Estimate the fee for an E3 request
-function getE3Quote(E3RequestParams calldata params) external view returns (uint256 fee);
+function getE3Quote(
+  CommitteeSize committeeSize,
+  uint256[2] calldata inputWindow,
+  IE3Program e3Program,
+  uint8 paramSet,
+  bytes calldata computeProviderParams,
+  bytes calldata customParams
+) external view returns (uint256 fee);
 
 // Get the decryption verifier for an encryption scheme
 function getDecryptionVerifier(
@@ -127,21 +135,26 @@ function getTimeoutConfig() external view returns (E3TimeoutConfig memory config
 
 ### Request Flow
 
-1. Users submit `E3RequestParams` containing thresholds, timing windows, program references, and
-   optional custom params.
+1. Users submit the request parameters: committee size, timing windows, program references, BFV
+   parameter set, and optional custom params.
 
    ```solidity
    function request(
-     E3RequestParams calldata requestParams
-   ) external returns (uint256 e3Id, E3 memory e3);
+     CommitteeSize committeeSize,
+     uint256[2] calldata inputWindow,
+     IE3Program e3Program,
+     uint8 paramSet,
+     bytes calldata computeProviderParams,
+     bytes calldata customParams
+   ) external returns (uint256 e3Id);
    ```
 
-2. Contract validates the struct, estimates the fee, and stores an `E3` record seeded with a random
-   value derived from block entropy.
+2. Contract validates the parameters, estimates the fee, and stores an `E3` record seeded with a
+   random value derived from block entropy.
 3. The E3 program's `validate` hook returns the encryption scheme ID, which is persisted on the `E3`
    struct.
 4. Committee selection is delegated to the `ciphernodeRegistry` via `requestCommittee`.
-5. `E3Requested(e3Id, requester, e3ProgramAddress)` is emitted for off-chain watchers.
+5. `E3Requested(e3Id, e3, e3ProgramAddress)` is emitted for off-chain watchers.
 
 ## Committee and Ciphernode Management
 

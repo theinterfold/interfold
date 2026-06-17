@@ -1,8 +1,4 @@
 {
-  "index": {
-    "display": "hidden",
-    "title": "Home"
-  },
   "-- Overview": {
     "type": "separator",
     "title": "Overview"
@@ -37,6 +33,9 @@
   "-- Getting Started": {
     "type": "separator",
     "title": "Getting Started"
+  },
+  "requirements": {
+    "title": "System Requirements"
   },
   "installation": {
     "title": "Installation"
@@ -95,9 +94,6 @@
   },
   "ciphernode-operators": {
     "title": "Ciphernode Operators"
-  },
-  "build-e3": {
-    "display": "hidden"
   },
   "-- Examples": {
     "type": "separator",

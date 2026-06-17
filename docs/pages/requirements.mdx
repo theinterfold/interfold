@@ -1,0 +1,137 @@
+---
+title: 'System Requirements'
+description: 'Hardware, software, and network requirements for running Interfold components'
+---
+
+# System Requirements
+
+This page covers the hardware, software, and network requirements for running the various components
+of the Interfold protocol: ciphernodes, compute providers, and development environments.
+
+## Ciphernode Requirements
+
+A ciphernode participates in threshold cryptography (DKG, decryption) and generates zero-knowledge
+proofs. The workload is CPU and memory intensive, especially during DKG and proof generation.
+
+### Minimum (Development / Testnet)
+
+| Component   | Specification                            |
+| ----------- | ---------------------------------------- |
+| **CPU**     | 4+ modern cores (x86-64)                 |
+| **RAM**     | 16 GB                                    |
+| **Disk**    | 100 GB SSD                               |
+| **Network** | Stable broadband, UDP port open for QUIC |
+
+### Recommended (Production / Mainnet)
+
+| Component   | Specification                         |
+| ----------- | ------------------------------------- |
+| **CPU**     | 8+ modern cores (x86-64, AVX2)        |
+| **RAM**     | 32 GB DDR5 (or DDR4 ECC)              |
+| **Disk**    | 500 GB NVMe SSD                       |
+| **Network** | Low-latency broadband, unfiltered UDP |
+
+### Operating System
+
+| Platform | Status                       |
+| -------- | ---------------------------- |
+| Linux    | ✅ Fully supported (x86_64)  |
+| macOS    | ✅ Supported (Apple Silicon) |
+| Windows  | ⚠️ Via WSL2 or Docker        |
+
+> **Note:** The Linux binary is the primary target. macOS Apple Silicon binaries are available.
+> Windows users should use WSL2 or the Docker image.
+
+### Software Dependencies
+
+| Dependency        | Minimum Version | Purpose                                |
+| ----------------- | --------------- | -------------------------------------- |
+| **Interfold CLI** | Latest release  | Node management and CLI operations     |
+| **Rust**          | 1.91.1+         | Building from source                   |
+| **WebSocket RPC** | —               | Real-time event listening (wss:// URL) |
+
+### Network Requirements
+
+- **QUIC port**: UDP must be unfiltered. Default QUIC port is set in your config
+  (`interfold.config.yaml`). Cloud firewalls (AWS Security Groups, GCP firewall rules) must allow
+  UDP inbound on this port.
+- **WebSocket RPC**: The node subscribes to on-chain events via WebSocket. An HTTP-only RPC endpoint
+  will fall back to polling and may miss events. Always use a `wss://` URL.
+- **NAT**: If behind NAT, configure port forwarding for the QUIC UDP port.
+
+### Disk Usage
+
+| Data                 | Typical Size      |
+| -------------------- | ----------------- |
+| Node state           | 10–50 GB          |
+| Circuit artifacts    | 5–15 GB           |
+| Logs                 | 1–10 GB (rotated) |
+| **Total (baseline)** | 30–100 GB         |
+
+Provision at least 500 GB to accommodate growth, log retention, and multiple networks. Use SSD
+storage — spinning disks may cause missed submission windows under I/O load.
+
+## Compute Provider Requirements
+
+Running a compute provider (e.g., RISC Zero with Boundless) requires additional resources beyond the
+ciphernode baseline.
+
+### RISC Zero / Boundless
+
+| Component | Specification                   |
+| --------- | ------------------------------- |
+| **CPU**   | 16+ cores (more is better)      |
+| **RAM**   | 64 GB+                          |
+| **Disk**  | 200 GB+ SSD                     |
+| **GPU**   | Not required (CPU proving only) |
+
+For production proving, Boundless offloads proof generation to a decentralized market. Local
+resources are only needed for development and testing.
+
+## Development Environment
+
+For local development with CRISP or a project template:
+
+| Component   | Specification                                            |
+| ----------- | -------------------------------------------------------- |
+| **CPU**     | 4+ cores                                                 |
+| **RAM**     | 16 GB                                                    |
+| **Disk**    | 50 GB free                                               |
+| **Node.js** | 22.10.0+                                                 |
+| **pnpm**    | 10.7.1+                                                  |
+| **Rust**    | 1.91.1+                                                  |
+| **Foundry** | Latest (for contracts)                                   |
+| **Noir**    | See `crates/zk-prover/Cargo.toml` for compatible version |
+| **Docker**  | Optional (for containerized dev)                         |
+
+## Resource Scaling Guide
+
+| Workload          | CPU       | RAM      | Notes                             |
+| ----------------- | --------- | -------- | --------------------------------- |
+| Idle ciphernode   | 1–2       | 2–4 GB   | Just listening for events         |
+| DKG (N=3, L=2)    | 4–8       | 8–16 GB  | Insecure preset, local dev        |
+| DKG (N=5, L=4)    | 8–16      | 24–32 GB | Secure preset, production         |
+| ZK proof gen peak | All cores | 28–32 GB | Memory spikes during C3 proofs    |
+| Compute provider  | 8–32      | 32–64 GB | Depends on FHE program complexity |
+
+> **Memory tip:** If your node starts OOM-killing during DKG, this is a resource constraint, not a
+> software bug. Add more RAM or reduce parallelism settings.
+
+## Monitoring Resource Usage
+
+Use the [embedded dashboard](/tutorials/using-the-dashboard) to monitor node health. For
+system-level monitoring:
+
+```bash
+# Check memory usage
+free -h
+
+# Monitor CPU and memory per process
+htop
+
+# Check disk usage
+df -h
+
+# Monitor network connections (QUIC uses UDP)
+ss -ulnp | grep <quic_port>
+```

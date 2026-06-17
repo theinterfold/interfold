@@ -178,10 +178,10 @@ tail -f "$(interfold config get log_file)"
 
 A mainnet-grade ciphernode should have:
 
-- **CPU:** 4+ modern cores. DKG and ZK proving are CPU-heavy.
-- **Memory:** 16 GB minimum, 32 GB recommended. Proof generation during DKG peaks well above idle.
-- **Disk:** 30 GB for the node data directory, more if you retain historical events. Use SSD —
-  spinning disks will miss submission windows under load.
+- **CPU:** 8+ modern cores (x86-64 with AVX2). DKG and ZK proving are CPU-heavy.
+- **Memory:** 32 GB DDR5 minimum. Proof generation during DKG peaks well above idle.
+- **Disk:** 500 GB NVMe SSD for the node data directory, more if you retain historical events. Use
+  SSD — spinning disks will miss submission windows under load.
 - **Network:** Stable residential or cloud link. UDP must be unfiltered for QUIC (see below).
 
 If your node starts OOM-killing during DKG, that's a memory problem, not a bug — add RAM or move to
@@ -225,4 +225,4 @@ details.
 - Check the [Tickets & Sortition](/ciphernode-operators/tickets-and-sortition) reference for
   parameter details
 - Join the community [Telegram group](https://t.me/interfold_e3) for help
-- If you suspect a bug, open an issue on [GitHub](https://github.com/gnosisguild/interfold/issues)
+- If you suspect a bug, open an issue on [GitHub](https://github.com/theinterfold/interfold/issues)
