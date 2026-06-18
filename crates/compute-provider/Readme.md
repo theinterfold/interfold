@@ -1,8 +1,8 @@
 # FHE Compute Manager
 
 This project provides a flexible and efficient framework for managing Secure Programs (SP) of the
-[Interfold Protocol](interfold.gg). It supports both sequential and parallel processing, with the
-ability to integrate various compute providers.
+[Interfold Protocol](interfold.network). It supports both sequential and parallel processing, with
+the ability to integrate various compute providers.
 
 ## Features
 
