@@ -100,7 +100,7 @@ const RequestComputation: React.FC = () => {
       const committeeSize = DEFAULT_E3_CONFIG.committeeSize
       const publicClient = sdk.sdk.getPublicClient()
 
-      const inputWindow = await calculateInputWindow(publicClient, 600) // 10 min
+      const inputWindow = await calculateInputWindow(publicClient, 100) // 100 Seconds
       const computeProviderParams = encodeComputeProviderParams(DEFAULT_COMPUTE_PROVIDER_PARAMS)
 
       const requestParams = {
