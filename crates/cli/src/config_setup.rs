@@ -29,9 +29,9 @@ include!(concat!(env!("OUT_DIR"), "/contract_deployments.rs"));
 /// Bootstrap peer written into a freshly generated config so a new ciphernode
 /// can join the network without manual peer configuration. This is a stable
 /// libp2p `/dnsaddr` entry — the backing nodes (and their pinned `/p2p/<PeerId>`)
-/// are rotated via the `_dnsaddr.bootstrap.interfold.gg` TXT records, so this value
+/// are rotated via the `_dnsaddr.bootstrap.interfold.network` TXT records, so this value
 /// does not change between CLI releases.
-const BOOTSTRAP_PEER: &str = "/dnsaddr/bootstrap.interfold.gg";
+const BOOTSTRAP_PEER: &str = "/dnsaddr/bootstrap.interfold.network";
 
 fn get_contract_info(name: &str) -> Result<&ContractInfo> {
     CONTRACT_DEPLOYMENTS

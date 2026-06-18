@@ -229,7 +229,7 @@ new package version.
 
 ## Links
 
-- [Interfold Docs](https://docs.interfold.gg)
+- [Interfold Docs](https://docs.interfold.network)
 - [DAppNode Package Development – Single Configuration](https://docs.dappnode.io/docs/dev/package-development/single-configuration/)
 - [DAppNode Docker Compose Reference](https://docs.dappnode.io/docs/dev/references/docker-compose/)
 - [DAppNode Setup Wizard Reference](https://docs.dappnode.io/docs/dev/references/setup-wizard/)

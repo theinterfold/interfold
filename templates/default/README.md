@@ -168,7 +168,7 @@ You successfully ran a **Fully Homomorphic Encryption** computation where:
 ## Manual Start
 
 If you prefer to install the Interfold CLI manually, please visit the dedicated section in the
-[documentation](https://docs.interfold.gg/installation#manual-installation).
+[documentation](https://docs.interfold.network/installation#manual-installation).
 
 ## Next Steps
 
@@ -180,5 +180,5 @@ Now that you have a working E3 program:
 4. **Deploy**: Learn about production deployment
 
 Ready to dive deeper? Continue with our
-[Hello World Tutorial](https://docs.interfold.gg/hello-world-tutorial) for a step-by-step breakdown
-of building E3 programs from scratch.
+[Hello World Tutorial](https://docs.interfold.network/hello-world-tutorial) for a step-by-step
+breakdown of building E3 programs from scratch.

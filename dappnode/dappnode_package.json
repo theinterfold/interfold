@@ -12,8 +12,8 @@
   "categories": ["Blockchain", "Developer tools"],
   "keywords": ["interfold", "fhe", "mpc", "ciphernode", "threshold", "encryption"],
   "links": {
-    "homepage": "https://interfold.gg",
-    "docs": "https://docs.interfold.gg",
+    "homepage": "https://interfold.network",
+    "docs": "https://docs.interfold.network",
     "repository": "https://github.com/gnosisguild/interfold"
   },
   "repository": {

@@ -1,12 +1,12 @@
 ---
 title: 'Running a Ciphernode'
-description: 'Three ways to run a ciphernode: DappNode, Interfold CLI, or Docker'
+description: 'Four ways to run a ciphernode: DappNode, Interfold CLI, Docker, or PM2'
 ---
 
 # Running a Ciphernode
 
-This guide covers three methods to run a ciphernode, from easiest to most flexible. Choose the
-method that best fits your infrastructure.
+This guide covers four methods to run a ciphernode, from easiest to most flexible. Choose the method
+that best fits your infrastructure.
 
 ## Method 1: DappNode (Easiest)
 
@@ -88,7 +88,7 @@ node:
   address: '0xYourAddress'
   quic_port: 9091
   peers:
-    - '/dnsaddr/bootstrap.interfold.gg'
+    - '/dnsaddr/bootstrap.interfold.network'
   autonetkey: true
   autopassword: true
 
@@ -174,7 +174,7 @@ node:
   address: '0xYourAddress'
   quic_port: 9091
   peers:
-    - '/dnsaddr/bootstrap.interfold.gg'
+    - '/dnsaddr/bootstrap.interfold.network'
   autonetkey: true
   autopassword: true
 
@@ -239,6 +239,141 @@ volumes:
 ```bash
 docker logs -f ciphernode
 ```
+
+---
+
+## Method 4: PM2 (Process Manager)
+
+[PM2](https://pm2.keymetrics.io/) is a production process manager for Node.js applications that also
+works well for managing long-running binaries like the Interfold CLI. It provides automatic restarts
+on crash, log management, and startup-on-boot.
+
+### Install PM2
+
+```bash
+npm install -g pm2
+# Or via your system package manager
+```
+
+### Create an Ecosystem File
+
+Create an `ecosystem.config.js` file for your ciphernode:
+
+```javascript
+module.exports = {
+  apps: [
+    {
+      name: 'interfold-ciphernode',
+      script: 'interfold',
+      args: 'start -v',
+      interpreter: 'none', // Run binary directly, not via Node.js
+      env: {
+        ENCRYPTION_PASSWORD: 'your_secure_password',
+        PRIVATE_KEY: '0xYourPrivateKey',
+        NETWORK_PRIVATE_KEY: '0xYourNetworkKey', // optional
+        RUST_LOG: 'info', // optional — overrides -v
+      },
+      // Restart policy
+      autorestart: true,
+      max_restarts: 10,
+      restart_delay: 5000, // 5 seconds between restarts
+      // Logging
+      error_file: '/var/log/interfold/ciphernode-error.log',
+      out_file: '/var/log/interfold/ciphernode-out.log',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss Z',
+      merge_logs: true,
+      // Resource limits
+      max_memory_restart: '28G', // Restart if memory exceeds 28 GB
+    },
+  ],
+}
+```
+
+### Start the Ciphernode
+
+```bash
+# Start the node
+pm2 start ecosystem.config.js
+
+# Save the process list so it survives reboots
+pm2 save
+
+# Enable startup-on-boot
+pm2 startup
+# Follow the instructions printed by the command above
+```
+
+### Managing the Ciphernode with PM2
+
+```bash
+# View process status
+pm2 status
+
+# View real-time logs
+pm2 logs interfold-ciphernode
+
+# View only the last 100 lines
+pm2 logs interfold-ciphernode --lines 100
+
+# Restart the node
+pm2 restart interfold-ciphernode
+
+# Stop the node
+pm2 stop interfold-ciphernode
+
+# Remove from PM2 (stops and deletes)
+pm2 delete interfold-ciphernode
+
+# Monitor CPU and memory in real time
+pm2 monit
+```
+
+### Running Multiple Nodes with PM2
+
+To run multiple ciphernodes on the same machine, define each as a separate app in the ecosystem
+file:
+
+```javascript
+module.exports = {
+  apps: [
+    {
+      name: 'cn1',
+      script: 'interfold',
+      args: '--name cn1 start -v',
+      interpreter: 'none',
+      env: {
+        ENCRYPTION_PASSWORD: 'pass_cn1',
+        PRIVATE_KEY: '0xPrivateKey1',
+      },
+      autorestart: true,
+      max_memory_restart: '28G',
+    },
+    {
+      name: 'cn2',
+      script: 'interfold',
+      args: '--name cn2 start -v',
+      interpreter: 'none',
+      env: {
+        ENCRYPTION_PASSWORD: 'pass_cn2',
+        PRIVATE_KEY: '0xPrivateKey2',
+      },
+      autorestart: true,
+      max_memory_restart: '28G',
+    },
+  ],
+}
+```
+
+### PM2 Best Practices
+
+- **Set `max_memory_restart`** to prevent OOM kills during DKG (28 GB is a safe ceiling for a 32 GB
+  machine — adjust based on your hardware).
+- **Use `restart_delay`** to avoid tight restart loops if the node fails immediately on startup.
+- **Log rotation**: PM2 handles log rotation automatically with `pm2 install pm2-logrotate`.
+- **Environment variables**: Store secrets like `PRIVATE_KEY` and `ENCRYPTION_PASSWORD` in a `.env`
+  file and reference it with `env_file` in the ecosystem config instead of hardcoding.
+- **Monitoring**: Use `pm2 monit` or integrate with [PM2 Plus](https://pm2.io/) for dashboards and
+  alerting.
 
 ---
 
@@ -308,7 +443,7 @@ Connect to the Interfold bootstrap network:
 
 ```yaml
 peers:
-  - '/dnsaddr/bootstrap.interfold.gg'
+  - '/dnsaddr/bootstrap.interfold.network'
 ```
 
 Or specify individual peers:
