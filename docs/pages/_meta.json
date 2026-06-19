@@ -3,6 +3,9 @@
     "type": "separator",
     "title": "Overview"
   },
+  "index": {
+    "title": "Interfold"
+  },
   "introduction": {
     "title": "Introduction"
   },

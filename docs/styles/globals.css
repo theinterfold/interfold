@@ -11,6 +11,15 @@ body {
   background-color: #fffaf0;
 }
 
+.nextra-content p,
+.nextra-content li {
+  text-align: justify;
+}
+
+.subheading-anchor {
+  display: none;
+}
+
 img {
   border-radius: 10px;
 }

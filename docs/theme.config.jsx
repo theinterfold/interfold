@@ -20,7 +20,7 @@ export default {
     key: 'enclave-rename',
     text: (
       <span>
-        Enclave is now <strong>The Interfold</strong>. Documentation is being updated.
+        Enclave is now <strong>The Interfold</strong>.
       </span>
     ),
   },
