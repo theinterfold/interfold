@@ -5,8 +5,8 @@ decision-making, leveraging fully homomorphic encryption (FHE) and distributed t
 cryptography (DTC) to enable verifiable secret ballots. Built with Interfold, CRISP safeguards
 democratic systems and decision-making applications against coercion, manipulation, and other
 vulnerabilities. To learn more about CRISP, you can read our
-[blog post](https://blog.interfold.gg/crisp-private-voting-secret-ballot-fhe-zkp-mpc/) or visit the
-[documentation](https://docs.theinterfold.com/CRISP/introduction).
+[blog post](https://blog.interfold.network/crisp-private-voting-secret-ballot-fhe-zkp-mpc/) or visit
+the [documentation](https://docs.theinterfold.com/CRISP/introduction).
 
 ## Project Structure
 
