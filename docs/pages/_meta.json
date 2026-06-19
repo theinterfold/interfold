@@ -3,6 +3,9 @@
     "type": "separator",
     "title": "Overview"
   },
+  "index": {
+    "title": "Interfold"
+  },
   "introduction": {
     "title": "Introduction"
   },
@@ -108,6 +111,16 @@
   },
   "internals": {
     "title": "Technical Deep Dives"
+  },
+  "-- FOLD Token": {
+    "type": "separator",
+    "title": "FOLD Token"
+  },
+  "tokenomics": {
+    "title": "Tokenomics"
+  },
+  "faq": {
+    "title": "Frequently Asked Questions"
   },
   "-- Reference": {
     "type": "separator",

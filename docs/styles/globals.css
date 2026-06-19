@@ -11,6 +11,28 @@ body {
   background-color: #fffaf0;
 }
 
+.nextra-content p,
+.nextra-content li {
+  text-align: justify;
+}
+
+.subheading-anchor {
+  display: none;
+}
+
 img {
   border-radius: 10px;
+}
+
+/* On mobile, Nextra merges the active page's in-page heading anchors (#...) into
+   the sidebar drawer (there is no right-hand "On this page" rail on small
+   screens). That clutters the menu, so hide those heading anchors on mobile —
+   page and section navigation still works. */
+@media (max-width: 767px) {
+  .nextra-sidebar-container a[href^='#'] {
+    display: none;
+  }
+  .nextra-sidebar-container ul:has(> li > a[href^='#']) {
+    display: none;
+  }
 }

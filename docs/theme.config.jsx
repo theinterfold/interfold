@@ -17,10 +17,10 @@ export default {
   logoLink: false,
 
   banner: {
-    key: 'interfold-rename',
+    key: 'enclave-rename',
     text: (
       <span>
-        Enclave is now <strong>The Interfold</strong>. Documentation is being updated.
+        Enclave is now <strong>The Interfold</strong>.
       </span>
     ),
   },

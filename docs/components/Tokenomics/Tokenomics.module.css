@@ -1,0 +1,254 @@
+/* SPDX-License-Identifier: LGPL-3.0-only */
+
+.stats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 1rem;
+  margin: 1.5rem 0 2.5rem;
+}
+
+.statCard {
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 12px;
+  padding: 1.1rem 1.25rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.statLabel {
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #6b7280;
+  margin: 0 0 0.4rem;
+}
+
+.statValue {
+  font-size: 1.5rem;
+  font-weight: 600;
+  color: #0f2233;
+  line-height: 1.1;
+}
+
+.statSub {
+  font-size: 0.78rem;
+  color: #9aa3b0;
+  margin-top: 0.25rem;
+}
+
+/* Allocation */
+.allocation {
+  position: relative;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2rem;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  padding: 1.75rem;
+  margin: 1.5rem 0 2.5rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.legend tr {
+  transition: background 0.15s ease;
+}
+
+.tooltip {
+  position: absolute;
+  pointer-events: none;
+  transform: translate(-50%, -135%);
+  background: #0f2233;
+  color: #ffffff;
+  font-size: 0.8rem;
+  font-weight: 500;
+  padding: 0.35rem 0.6rem;
+  border-radius: 8px;
+  white-space: nowrap;
+  box-shadow: 0 6px 16px rgba(15, 23, 42, 0.22);
+  z-index: 5;
+}
+
+.tooltipSub {
+  margin-left: 0.45rem;
+  opacity: 0.65;
+  font-weight: 400;
+}
+
+.pieWrap {
+  flex: 0 0 auto;
+  margin: 0 auto;
+  max-width: 100%;
+}
+
+.pieWrap svg {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.legend {
+  flex: 1 1 320px;
+  min-width: 0;
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.92rem;
+}
+
+.legend th {
+  text-align: left;
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: #9aa3b0;
+  font-weight: 600;
+  padding: 0 0.5rem 0.6rem;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+}
+
+.legend td {
+  padding: 0.55rem 0.5rem;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.05);
+  color: #243240;
+}
+
+.legend tr:last-child td {
+  border-bottom: none;
+}
+
+.legend .num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.legend .center {
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.swatch {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border-radius: 3px;
+  margin-right: 0.6rem;
+  vertical-align: -1px;
+}
+
+.catCell {
+  font-weight: 500;
+}
+
+/* Vesting */
+.vesting {
+  position: relative;
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  padding: 1.5rem 1.25rem;
+  margin: 1.5rem 0 1rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.svgScroll {
+  overflow-x: auto;
+}
+
+.vtableWrap {
+  margin-top: 1.25rem;
+  padding-top: 1rem;
+  border-top: 1px solid rgba(15, 23, 42, 0.07);
+}
+
+.vlegendItem {
+  transition: opacity 0.15s ease;
+}
+
+.vestingNote {
+  font-size: 0.82rem;
+  color: #9aa3b0;
+  margin: 0 0 1.5rem;
+}
+
+.tableCard {
+  background: #ffffff;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 16px;
+  padding: 1.25rem 1.5rem;
+  margin: 1.5rem 0 1rem;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+  overflow-x: auto;
+}
+
+.vlegend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem 1.5rem;
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid rgba(15, 23, 42, 0.07);
+}
+
+.vlegendItem {
+  display: flex;
+  align-items: center;
+  font-size: 0.88rem;
+}
+
+.vname {
+  font-weight: 500;
+  color: #243240;
+}
+
+/* Mobile */
+@media (max-width: 640px) {
+  .stats {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 0.6rem;
+    margin: 1.25rem 0 2rem;
+  }
+
+  .statCard {
+    padding: 0.85rem 0.9rem;
+  }
+
+  .statValue {
+    font-size: 1.25rem;
+  }
+
+  .allocation {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 1.25rem;
+    padding: 1.1rem;
+    border-radius: 14px;
+  }
+
+  .legend {
+    flex: 1 1 auto;
+    font-size: 0.82rem;
+  }
+
+  .legend th,
+  .legend td {
+    padding-left: 0.3rem;
+    padding-right: 0.3rem;
+  }
+
+  .swatch {
+    margin-right: 0.4rem;
+  }
+
+  .vesting {
+    padding: 1.1rem 0.85rem;
+    border-radius: 14px;
+  }
+
+  /* Hover tooltip is not useful on touch; the table below conveys the same info */
+  .tooltip {
+    display: none;
+  }
+}
