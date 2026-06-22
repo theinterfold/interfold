@@ -23,13 +23,13 @@ type Slice = {
 // Ordered largest → smallest. Colours are a cohesive cool/azure palette
 // anchored on the docs' primary hue (203) so the charts match the theme.
 const ALLOCATION: Slice[] = [
-  { key: 'Community Grants & Treasury', pct: 47, tokens: 564_000_000, color: '#075E9D' },
+  { key: 'Community Grants & Treasury', pct: 39, tokens: 467_000_000, color: '#075E9D' },
   { key: 'Gnosis Guild', pct: 20, tokens: 240_000_000, color: '#009DFF' },
   { key: 'Investors', pct: 15, tokens: 180_000_000, color: '#38BDF8' },
   { key: 'Uniswap CCA', pct: 10, tokens: 120_000_000, color: '#0D9488' },
+  { key: 'Individual Core Contributors', pct: 9, tokens: 109_000_000, color: '#A78BFA' },
   { key: 'Airdrop', pct: 4, tokens: 48_000_000, color: '#6366F1' },
   { key: 'Liquidity Reserves', pct: 3, tokens: 36_000_000, color: '#818CF8' },
-  { key: 'Advisors', pct: 1, tokens: 12_000_000, color: '#94A3B8' },
 ]
 
 const COLOR_BY_KEY: Record<string, string> = Object.fromEntries(
@@ -84,7 +84,7 @@ function donutSlice(
 export function KeyParameters() {
   const cards = [
     { label: 'Total Supply', value: '1.2B' },
-    { label: 'Circulating Supply at TGE', value: '17%' },
+    { label: 'Circulating Supply at TGE', value: '13%' },
   ]
   return (
     <div className={classes.stats}>
@@ -218,10 +218,10 @@ const VESTING: Vest[] = [
   { key: 'Liquidity Reserves', total: 36_000_000, vestMonths: 1, term: '100% at TGE' },
   { key: 'Uniswap CCA', total: 120_000_000, vestMonths: 1, term: '100% at TGE' },
   { key: 'Airdrop', total: 48_000_000, vestMonths: 24, term: '24-month linear unlock' },
-  { key: 'Advisors', total: 12_000_000, vestMonths: 24, term: '24-month linear unlock' },
+  { key: 'Individual Core Contributors', total: 109_000_000, vestMonths: 24, term: '24-month linear unlock' },
   { key: 'Investors', total: 180_000_000, vestMonths: 24, term: '24-month linear unlock' },
   { key: 'Gnosis Guild', total: 240_000_000, vestMonths: 48, term: '48-month linear unlock' },
-  { key: 'Community Grants & Treasury', total: 564_000_000, vestMonths: 48, term: '48-month linear unlock' },
+  { key: 'Community Grants & Treasury', total: 467_000_000, vestMonths: 48, term: '48-month linear unlock' },
 ]
 
 // Vesting terms table — same order as the allocation table (largest → smallest
@@ -231,9 +231,9 @@ const VESTING_TERMS = [
   { key: 'Gnosis Guild', cliff: 'None', schedule: '48 months' },
   { key: 'Investors', cliff: 'None', schedule: '24 months' },
   { key: 'Uniswap CCA', cliff: 'None', schedule: '100% at TGE' },
+  { key: 'Individual Core Contributors', cliff: 'None', schedule: '24 months' },
   { key: 'Airdrop', cliff: 'None', schedule: '24 months' },
   { key: 'Liquidity Reserves', cliff: 'None', schedule: '100% at TGE' },
-  { key: 'Advisors', cliff: 'None', schedule: '24 months' },
 ]
 
 const MONTHS_AXIS = 48
