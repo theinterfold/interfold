@@ -8,7 +8,7 @@ use crate::traits::{ErrorEvent, Event};
 use crate::EventType;
 use actix::prelude::*;
 use bloom::{BloomFilter, ASMS};
-use e3_utils::{MAILBOX_LIMIT, MAILBOX_LIMIT_LARGE};
+use e3_utils::{colorize, Color, MAILBOX_LIMIT, MAILBOX_LIMIT_LARGE};
 use std::collections::HashMap;
 use std::fmt;
 use std::marker::PhantomData;
@@ -136,12 +136,7 @@ impl<E: Event> Handler<E> for EventBus<E> {
             }
         }
 
-        // The structured protocol logger owns operator-visible event output.
-        // Keep the bus dispatch record payload-free and opt-in for developers.
-        tracing::trace!(
-            event_type = %event.event_type(),
-            "event dispatched"
-        );
+        tracing::info!("{} {}", colorize(">>>", Color::Yellow), event);
         self.track(event);
     }
 }
