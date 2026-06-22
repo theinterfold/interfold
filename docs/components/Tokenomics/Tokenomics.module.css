@@ -142,6 +142,24 @@
   font-weight: 500;
 }
 
+.groupRow td {
+  padding: 0.75rem 0.5rem 0.1rem;
+  border-bottom: none;
+}
+
+.groupLabel {
+  font-size: 0.7rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+}
+
+.groupPct {
+  font-weight: 700;
+  margin-left: 0.35rem;
+  opacity: 0.7;
+}
+
 /* Vesting */
 .vesting {
   position: relative;
