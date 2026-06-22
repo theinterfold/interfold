@@ -15,10 +15,12 @@ pub(crate) mod event_conversion;
 pub(crate) mod event_translation;
 pub(crate) mod net_buffer;
 pub(crate) mod net_event_batch;
+mod network_status;
 pub(crate) mod peer_failure_tracker;
 pub(crate) mod sync_coordinator;
 
 pub use document_publishing::{datetime_to_instant_from_now, DocumentPublishingService};
 pub use event_conversion::{EventConversionService, IncomingDocument};
 pub use event_translation::EventTranslationService;
+pub use network_status::{ConnectedPeer, NetworkSnapshot, NetworkStatus};
 pub use sync_coordinator::{build_sync_batch, NetReadiness, ReadinessDecision, SyncBatchOutcome};

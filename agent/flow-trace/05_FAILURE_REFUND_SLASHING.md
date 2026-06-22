@@ -1149,6 +1149,10 @@ Applied audit findings: **C-05, H-05, H-06, H-07, H-09, H-10, H-24, M-14, M-15, 
 - `SlashProposed` and `SlashExecuted` carry a `Lane lane` field (`LaneA = 0`, `LaneB = 1`) so
   off-chain indexers can disambiguate the two paths without re-deriving from policy bits.
 
+The Rust minimal ABI matches the current `SlashExecuted` signature, including `bool executed` and
+`Lane lane` (`uint8` at the ABI boundary). The typed actor event keeps the fields required for
+expulsion handling; the full contract log is also retained by the raw EVM observability fallback.
+
 ### Upgrade posture
 
 - `SlashingManager` is **non-upgradeable** by design (transparent proxy removed). Migrations require

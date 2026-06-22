@@ -11,7 +11,11 @@ use alloy::{
     primitives::{LogData, B256},
     sol_types::SolEvent,
 };
-use e3_events::{CommitteeFinalized, E3id, InterfoldEventData, Seed};
+use e3_events::{
+    CommitteeActivationChanged, CommitteeFinalized, CommitteeFormationFailed, CommitteePublished,
+    CommitteeViabilityUpdated, E3id, InterfoldEventData, Seed,
+};
+use e3_utils::ArcBytes;
 use tracing::{error, info, trace};
 
 struct CiphernodeAddedWithChainId(pub ICiphernodeRegistry::CiphernodeAdded, pub u64);
@@ -168,6 +172,89 @@ impl From<CommitteeMemberExpelledWithChainId> for InterfoldEventData {
     }
 }
 
+struct CommitteePublishedWithChainId(pub ICiphernodeRegistry::CommitteePublished, pub u64);
+
+impl From<CommitteePublishedWithChainId> for CommitteePublished {
+    fn from(value: CommitteePublishedWithChainId) -> Self {
+        CommitteePublished {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            nodes: value.0.nodes.iter().map(|a| a.to_string()).collect(),
+            public_key: ArcBytes::from_bytes(value.0.publicKey.as_ref()),
+            proof: ArcBytes::from_bytes(value.0.proof.as_ref()),
+        }
+    }
+}
+
+impl From<CommitteePublishedWithChainId> for InterfoldEventData {
+    fn from(value: CommitteePublishedWithChainId) -> Self {
+        let payload: CommitteePublished = value.into();
+        InterfoldEventData::from(payload)
+    }
+}
+
+struct CommitteeFormationFailedWithChainId(
+    pub ICiphernodeRegistry::CommitteeFormationFailed,
+    pub u64,
+);
+
+impl From<CommitteeFormationFailedWithChainId> for CommitteeFormationFailed {
+    fn from(value: CommitteeFormationFailedWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            nodes_submitted: value.0.nodesSubmitted.to_string(),
+            threshold_required: value.0.thresholdRequired.to_string(),
+        }
+    }
+}
+
+impl From<CommitteeFormationFailedWithChainId> for InterfoldEventData {
+    fn from(value: CommitteeFormationFailedWithChainId) -> Self {
+        CommitteeFormationFailed::from(value).into()
+    }
+}
+
+struct CommitteeActivationChangedWithChainId(
+    pub ICiphernodeRegistry::CommitteeActivationChanged,
+    pub u64,
+);
+
+impl From<CommitteeActivationChangedWithChainId> for CommitteeActivationChanged {
+    fn from(value: CommitteeActivationChangedWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            active: value.0.active,
+        }
+    }
+}
+
+impl From<CommitteeActivationChangedWithChainId> for InterfoldEventData {
+    fn from(value: CommitteeActivationChangedWithChainId) -> Self {
+        CommitteeActivationChanged::from(value).into()
+    }
+}
+
+struct CommitteeViabilityUpdatedWithChainId(
+    pub ICiphernodeRegistry::CommitteeViabilityUpdated,
+    pub u64,
+);
+
+impl From<CommitteeViabilityUpdatedWithChainId> for CommitteeViabilityUpdated {
+    fn from(value: CommitteeViabilityUpdatedWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            active_count: value.0.activeCount.to_string(),
+            threshold_m: value.0.thresholdM.to_string(),
+            viable: value.0.viable,
+        }
+    }
+}
+
+impl From<CommitteeViabilityUpdatedWithChainId> for InterfoldEventData {
+    fn from(value: CommitteeViabilityUpdatedWithChainId) -> Self {
+        CommitteeViabilityUpdated::from(value).into()
+    }
+}
+
 pub(crate) fn extractor(
     data: &LogData,
     topics: &[B256],
@@ -211,6 +298,18 @@ pub(crate) fn extractor(
                 event, chain_id,
             )))
         }
+        Some(&ICiphernodeRegistry::CommitteeFormationFailed::SIGNATURE_HASH) => {
+            let Ok(mut event) =
+                ICiphernodeRegistry::CommitteeFormationFailed::decode_log_data(data)
+            else {
+                error!("Error parsing event CommitteeFormationFailed after topic matched!");
+                return None;
+            };
+            event.e3Id = topics
+                .get(1)
+                .map(|topic| alloy::primitives::U256::from_be_bytes(topic.0))?;
+            Some(CommitteeFormationFailedWithChainId(event, chain_id).into())
+        }
         Some(&ICiphernodeRegistry::TicketSubmitted::SIGNATURE_HASH) => {
             let Ok(event) = ICiphernodeRegistry::TicketSubmitted::decode_log_data(data) else {
                 error!("Error parsing event TicketSubmitted after topic was matched!");
@@ -234,12 +333,62 @@ pub(crate) fn extractor(
                 CommitteeMemberExpelledWithChainId(event, chain_id),
             ))
         }
+        Some(&ICiphernodeRegistry::CommitteePublished::SIGNATURE_HASH) => {
+            let Ok(mut event) = ICiphernodeRegistry::CommitteePublished::decode_log_data(data)
+            else {
+                error!("Error parsing event CommitteePublished after topic was matched!");
+                return None;
+            };
+            // e3Id is indexed → extract from topics[1], not log data
+            if let Some(e3_id_topic) = topics.get(1) {
+                event.e3Id = alloy::primitives::U256::from_be_bytes(e3_id_topic.0);
+            } else {
+                error!("CommitteePublished missing indexed e3Id in topics!");
+                return None;
+            }
+            info!(
+                "CommitteePublished event received: e3_id={}, nodes={:?}",
+                event.e3Id, event.nodes
+            );
+            Some(InterfoldEventData::from(CommitteePublishedWithChainId(
+                event, chain_id,
+            )))
+        }
+        Some(&ICiphernodeRegistry::CommitteeActivationChanged::SIGNATURE_HASH) => {
+            let Ok(mut event) =
+                ICiphernodeRegistry::CommitteeActivationChanged::decode_log_data(data)
+            else {
+                error!("Error parsing event CommitteeActivationChanged after topic matched!");
+                return None;
+            };
+            event.e3Id = topics
+                .get(1)
+                .map(|topic| alloy::primitives::U256::from_be_bytes(topic.0))?;
+            Some(CommitteeActivationChangedWithChainId(event, chain_id).into())
+        }
+        Some(&ICiphernodeRegistry::CommitteeViabilityUpdated::SIGNATURE_HASH) => {
+            let Ok(mut event) =
+                ICiphernodeRegistry::CommitteeViabilityUpdated::decode_log_data(data)
+            else {
+                error!("Error parsing event CommitteeViabilityUpdated after topic matched!");
+                return None;
+            };
+            event.e3Id = topics
+                .get(1)
+                .map(|topic| alloy::primitives::U256::from_be_bytes(topic.0))?;
+            Some(CommitteeViabilityUpdatedWithChainId(event, chain_id).into())
+        }
         _ => {
             trace!(
                 topic=?topics.first(),
-                "Unknown event was received by CiphernodeRegistry.sol parser but was ignored"
+                "Preserving event without a typed CiphernodeRegistry decoder"
             );
-            None
+            Some(crate::domain::evm_log_observation::observe(
+                "CiphernodeRegistry",
+                data,
+                topics,
+                chain_id,
+            ))
         }
     }
 }
@@ -247,7 +396,7 @@ pub(crate) fn extractor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::{Address, U256};
+    use alloy::primitives::{Address, Bytes, U256};
 
     #[test]
     fn test_extractor_decodes_ciphernode_added() {
@@ -292,8 +441,33 @@ mod tests {
     }
 
     #[test]
-    fn test_extractor_ignores_unknown_topic() {
+    fn test_extractor_preserves_unknown_topic() {
         let log_data = LogData::default();
-        assert!(extractor(&log_data, &[B256::ZERO], 1).is_none());
+        assert!(matches!(
+            extractor(&log_data, &[B256::ZERO], 1),
+            Some(InterfoldEventData::EvmLogObserved(_))
+        ));
+    }
+
+    #[test]
+    fn test_extractor_decodes_committee_publication() {
+        let node = Address::repeat_byte(0x33);
+        let event = ICiphernodeRegistry::CommitteePublished {
+            e3Id: U256::from(12),
+            nodes: vec![node],
+            publicKey: Bytes::from_static(b"public-key"),
+            pkCommitment: B256::repeat_byte(0x44),
+            proof: Bytes::from_static(b"proof"),
+        };
+        let log = event.encode_log_data();
+        let out = extractor(&log, log.topics(), 100);
+        match out {
+            Some(InterfoldEventData::CommitteePublished(event)) => {
+                assert_eq!(event.e3_id, E3id::new("12", 100));
+                assert_eq!(event.nodes, vec![node.to_string()]);
+                assert_eq!(event.public_key.extract_bytes(), b"public-key");
+            }
+            other => panic!("expected CommitteePublished, got {other:?}"),
+        }
     }
 }

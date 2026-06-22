@@ -220,10 +220,19 @@ On restart:
 │   5. Historical libp2p sync retries failed aggregate fetches after reconnects
 │      and also on bounded retry intervals even without a new connection event
 │   6. Sort & publish merged events by HLC timestamp
+│      → ComputeEffectGate has already subscribed and buffers ComputeRequest
+│        effects, deduplicating semantic retries while replay is in progress
 │   7. Enable effects (writers may submit only after this point)
+│      → Gate cancels work for terminal E3s and releases only the newest
+│        pending request for each in-flight semantic compute operation
 │   8. SyncEnded → live operations begin
 └─ Node resumes from where it left off
 ```
+
+Post-completion EVM receipts (`RewardsDistributed`, `RewardCredited`, `RewardClaimed`, and related
+settlement observations) remain in EventStore for auditing and operator projections. The router does
+not deliver them to a completed per-E3 context because they report settlement; they do not resume
+protocol execution.
 
 ---
 
@@ -267,6 +276,11 @@ E3LifecycleCoordinator::attach(bus, store)   (wired in ciphernode_builder.build(
 The coordinator is safe by construction during EventStore replay: observing a replayed lifecycle
 event simply re-derives the same monotonic stage, so the restored map is identical whether built
 live or from replay.
+
+The node-operator dashboard uses the same replay property. It pages every configured EventStore
+aggregate and incrementally derives E3 stages, committees, tickets, failures, and rewards. The
+projection is disposable and is rebuilt on restart; EventStore remains the only durable protocol
+history.
 
 ---
 

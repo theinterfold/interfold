@@ -11,22 +11,35 @@ use tokio::{
     time::sleep,
 };
 
-use crate::events::{NetCommand, NetEvent};
+use crate::{
+    events::{NetCommand, NetEvent},
+    NetworkStatus,
+};
 
 #[derive(Debug)]
 pub struct NetInterfaceHandle {
     tx: mpsc::Sender<NetCommand>,
     rx: broadcast::Receiver<NetEvent>,
+    status: NetworkStatus,
 }
 impl NetInterfaceHandle {
-    pub fn new(tx: mpsc::Sender<NetCommand>, rx: broadcast::Receiver<NetEvent>) -> Self {
-        Self { tx, rx }
+    pub fn new(
+        tx: mpsc::Sender<NetCommand>,
+        rx: broadcast::Receiver<NetEvent>,
+        status: NetworkStatus,
+    ) -> Self {
+        Self { tx, rx, status }
+    }
+
+    pub fn status(&self) -> NetworkStatus {
+        self.status.clone()
     }
 }
 
 pub trait NetInterface: Sized {
     fn tx(&self) -> mpsc::Sender<NetCommand>;
     fn rx(&self) -> broadcast::Receiver<NetEvent>;
+    fn status(&self) -> NetworkStatus;
     fn handle(&self) -> NetInterfaceHandle {
         NetInterfaceHandle::from(self)
     }
@@ -46,6 +59,7 @@ impl NetInterfaceHandle {
         Self {
             tx: interface.tx(),
             rx: interface.rx(),
+            status: interface.status(),
         }
     }
 }
@@ -56,6 +70,10 @@ impl NetInterface for NetInterfaceHandle {
 
     fn tx(&self) -> mpsc::Sender<NetCommand> {
         self.tx.clone()
+    }
+
+    fn status(&self) -> NetworkStatus {
+        self.status.clone()
     }
 }
 
@@ -85,6 +103,7 @@ pub fn create_channel_bridge() -> (NetInterfaceHandle, NetChannelBridge) {
     let handle = NetInterfaceHandle {
         tx: m_cmd_tx.clone(),
         rx: b_evt_tx.subscribe(),
+        status: NetworkStatus::new(0),
     };
 
     let inverted = NetChannelBridge {

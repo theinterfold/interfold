@@ -3118,6 +3118,7 @@ dependencies = [
  "e3-fhe",
  "e3-fhe-params",
  "e3-keyshare",
+ "e3-logger",
  "e3-multithread",
  "e3-net",
  "e3-request",
@@ -3159,6 +3160,7 @@ dependencies = [
  "e3-evm",
  "e3-fhe-params",
  "e3-init",
+ "e3-logger",
  "e3-support-scripts",
  "e3-trbfv",
  "e3-utils",
@@ -3275,7 +3277,17 @@ dependencies = [
 name = "e3-dashboard"
 version = "0.2.2"
 dependencies = [
+ "actix-web",
+ "alloy",
  "anyhow",
+ "e3-ciphernode-builder",
+ "e3-config",
+ "e3-events",
+ "e3-evm",
+ "e3-logger",
+ "e3-net",
+ "e3-utils",
+ "futures",
  "reqwest",
  "serde",
  "serde_json",
@@ -3576,7 +3588,10 @@ dependencies = [
  "actix",
  "base64",
  "e3-events",
+ "serde",
+ "serde_json",
  "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]

@@ -19,11 +19,9 @@ use actix::prelude::*;
 use actix::{Actor, Handler};
 use anyhow::Result;
 use e3_crypto::Cipher;
-use e3_events::run_once;
 use e3_events::trap_fut;
 
 use e3_events::EType;
-use e3_events::EffectsEnabled;
 use e3_events::{
     BusHandle, ComputeRequest, ComputeRequestError, ComputeRequestErrorKind, ComputeRequestKind,
     ComputeResponse, DecryptedSharesAggregationProofRequest,
@@ -87,6 +85,8 @@ use num_bigint::BigInt;
 use rand::Rng;
 use tracing::{error, info};
 
+use crate::effect_gate::ComputeEffectGate;
+
 /// Multithread actor
 pub struct Multithread {
     bus: BusHandle,
@@ -139,21 +139,8 @@ impl Multithread {
     ) -> Addr<Self> {
         let addr = Self::new(bus.clone(), rng.clone(), cipher.clone(), task_pool, report).start();
 
-        // Gate ComputeRequest behind EffectsEnabled — proof generation should
-        // not trigger during historical event replay.
-        bus.subscribe(
-            EventType::EffectsEnabled,
-            run_once::<EffectsEnabled>({
-                let bus = bus.clone();
-                let addr = addr.clone();
-                move |_| {
-                    bus.subscribe(EventType::ComputeRequest, addr.clone().recipient());
-                    info!("Multithread actor listening for events.");
-                    Ok(())
-                }
-            })
-            .recipient(),
-        );
+        ComputeEffectGate::attach(bus, addr.clone().recipient());
+        info!("Multithread actor waiting behind the replay-safe effect gate.");
 
         addr
     }
@@ -179,19 +166,8 @@ impl Multithread {
             addr.clone().into(),
         );
 
-        bus.subscribe(
-            EventType::EffectsEnabled,
-            run_once::<EffectsEnabled>({
-                let bus = bus.clone();
-                let addr = addr.clone();
-                move |_| {
-                    bus.subscribe(EventType::ComputeRequest, addr.clone().recipient());
-                    info!("Multithread actor with ZK listening for events.");
-                    Ok(())
-                }
-            })
-            .recipient(),
-        );
+        ComputeEffectGate::attach(bus, addr.clone().recipient());
+        info!("Multithread actor with ZK waiting behind the replay-safe effect gate.");
 
         addr
     }

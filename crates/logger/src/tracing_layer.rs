@@ -1,0 +1,158 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+//! `tracing` integration for the operator log store.
+
+use serde_json::{Map, Number, Value};
+use tracing::{span, Id, Subscriber};
+use tracing_subscriber::{layer::Context, registry::LookupSpan, Layer};
+
+use crate::LogCollector;
+
+/// Captures structured tracing events for the bounded dashboard store and
+/// rotating JSONL file. It does not subscribe to or mutate the protocol bus.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct OperationalLogLayer;
+
+impl<S> Layer<S> for OperationalLogLayer
+where
+    S: Subscriber + for<'lookup> LookupSpan<'lookup>,
+{
+    fn on_new_span(&self, attributes: &span::Attributes<'_>, id: &Id, ctx: Context<'_, S>) {
+        let mut visitor = LogVisitor::default();
+        attributes.record(&mut visitor);
+        if let Some(span) = ctx.span(id) {
+            span.extensions_mut().insert(SpanFields(visitor.fields));
+        }
+    }
+
+    fn on_record(&self, id: &Id, values: &span::Record<'_>, ctx: Context<'_, S>) {
+        let Some(span) = ctx.span(id) else {
+            return;
+        };
+        let mut visitor = LogVisitor::default();
+        values.record(&mut visitor);
+        let mut extensions = span.extensions_mut();
+        if let Some(fields) = extensions.get_mut::<SpanFields>() {
+            fields.0.extend(visitor.fields);
+        } else {
+            extensions.insert(SpanFields(visitor.fields));
+        }
+    }
+
+    fn on_event(&self, event: &tracing::Event<'_>, ctx: Context<'_, S>) {
+        let Some(collector) = LogCollector::global() else {
+            return;
+        };
+        let mut visitor = LogVisitor::default();
+        if let Some(scope) = ctx.event_scope(event) {
+            for span in scope.from_root() {
+                if let Some(fields) = span.extensions().get::<SpanFields>() {
+                    visitor.fields.extend(fields.0.clone());
+                }
+            }
+        }
+        event.record(&mut visitor);
+        let message = visitor
+            .message
+            .take()
+            .unwrap_or_else(|| event.metadata().name().to_owned());
+        collector.record(
+            event.metadata().level().as_str(),
+            event.metadata().target(),
+            message,
+            visitor.fields,
+        );
+    }
+}
+
+struct SpanFields(Map<String, Value>);
+
+#[derive(Default)]
+struct LogVisitor {
+    message: Option<String>,
+    fields: Map<String, Value>,
+}
+
+impl LogVisitor {
+    fn record_value(&mut self, field: &tracing::field::Field, value: Value) {
+        if field.name() == "message" {
+            self.message = value
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| Some(value.to_string()));
+        } else {
+            self.fields.insert(field.name().to_owned(), value);
+        }
+    }
+}
+
+impl tracing::field::Visit for LogVisitor {
+    fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+        self.record_value(field, Value::Bool(value));
+    }
+
+    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
+        self.record_value(field, Value::Number(value.into()));
+    }
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        self.record_value(field, Value::Number(value.into()));
+    }
+
+    fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
+        let value = Number::from_f64(value)
+            .map(Value::Number)
+            .unwrap_or(Value::Null);
+        self.record_value(field, value);
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        self.record_value(field, Value::String(value.to_owned()));
+    }
+
+    fn record_error(
+        &mut self,
+        field: &tracing::field::Field,
+        value: &(dyn std::error::Error + 'static),
+    ) {
+        self.record_value(field, Value::String(value.to_string()));
+    }
+
+    fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
+        self.record_value(field, Value::String(format!("{value:?}")));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tracing_subscriber::prelude::*;
+
+    #[test]
+    fn events_inherit_structured_span_fields() {
+        let collector = LogCollector::init("test-node", None);
+        let subscriber = tracing_subscriber::registry().with(OperationalLogLayer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            let span = tracing::info_span!(
+                "compute",
+                e3_id = "31337:9",
+                stage = "computation",
+                operation = "verify_c5"
+            );
+            let _guard = span.enter();
+            tracing::info!(duration_ms = 7_u64, "span inheritance test");
+        });
+
+        let result = collector.query(None, Some(10), None, None, Some("span inheritance test"));
+        let entry = result.entries.last().expect("captured tracing event");
+        assert_eq!(entry.fields["e3_id"], "31337:9");
+        assert_eq!(entry.fields["stage"], "computation");
+        assert_eq!(entry.fields["operation"], "verify_c5");
+        assert_eq!(entry.fields["duration_ms"], 7);
+    }
+}

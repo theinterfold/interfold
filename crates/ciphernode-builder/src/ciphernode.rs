@@ -8,8 +8,10 @@ use actix::Addr;
 use anyhow::Result;
 use e3_data::{DataStore, InMemStore, StoreAddr};
 use e3_events::{BusHandle, HistoryCollector, InterfoldEvent};
-use e3_net::NetChannelBridge;
+use e3_net::{NetChannelBridge, NetworkStatus};
 use libp2p::PeerId;
+
+use crate::global_eventstore_cache::EventStoreReader;
 
 /// The kind of network interface backing a ciphernode.
 #[derive(Debug, Clone)]
@@ -47,6 +49,9 @@ pub struct CiphernodeHandle {
     pub errors: Option<Addr<HistoryCollector<InterfoldEvent>>>,
     pub peer_id: PeerId,
     pub net_interface: NetInterfaceKind,
+    pub network_status: NetworkStatus,
+    pub eventstore: EventStoreReader,
+    pub aggregate_ids: Vec<usize>,
 }
 
 impl PartialEq for CiphernodeHandle {
@@ -66,6 +71,9 @@ impl CiphernodeHandle {
         errors: Option<Addr<HistoryCollector<InterfoldEvent>>>,
         peer_id: PeerId,
         net_interface: NetInterfaceKind,
+        network_status: NetworkStatus,
+        eventstore: EventStoreReader,
+        aggregate_ids: Vec<usize>,
     ) -> Self {
         Self {
             address,
@@ -75,6 +83,9 @@ impl CiphernodeHandle {
             errors,
             peer_id,
             net_interface,
+            network_status,
+            eventstore,
+            aggregate_ids,
         }
     }
 
@@ -92,6 +103,18 @@ impl CiphernodeHandle {
 
     pub fn address(&self) -> String {
         self.address.clone()
+    }
+
+    pub fn network_status(&self) -> NetworkStatus {
+        self.network_status.clone()
+    }
+
+    pub fn eventstore(&self) -> EventStoreReader {
+        self.eventstore.clone()
+    }
+
+    pub fn aggregate_ids(&self) -> &[usize] {
+        &self.aggregate_ids
     }
 
     pub fn store(&self) -> &DataStore {

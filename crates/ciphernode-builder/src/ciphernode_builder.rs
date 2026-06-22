@@ -28,6 +28,7 @@ use e3_evm::{
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
+use e3_logger::attach_protocol_logger;
 use e3_multithread::{Multithread, MultithreadReport, TaskPool};
 use e3_net::{
     create_channel_bridge, setup_libp2p_keypair, setup_net, setup_net_interface,
@@ -72,6 +73,7 @@ pub struct CiphernodeBuilder {
     in_mem_store: Option<Addr<InMemStore>>,
     keyshare: Option<KeyshareKind>,
     logging: bool,
+    name: Option<String>,
     multithread_cache: Option<Addr<Multithread>>,
     multithread_concurrent_jobs: Option<usize>,
     multithread_report: Option<Addr<MultithreadReport>>,
@@ -136,6 +138,7 @@ impl CiphernodeBuilder {
             in_mem_store: None,
             keyshare: None,
             logging: false,
+            name: None,
             multithread_cache: None,
             multithread_concurrent_jobs: None,
             multithread_report: None,
@@ -168,6 +171,12 @@ impl CiphernodeBuilder {
     /// event stream that mirrors the source.
     pub fn with_forked_bus(mut self, bus: &Addr<EventBus<InterfoldEvent>>) -> Self {
         self.source_bus = Some(BusMode::Forked(bus.clone()));
+        self
+    }
+
+    /// Set the node name for dashboard display and log attribution.
+    pub fn with_name(mut self, name: &str) -> Self {
+        self.name = Some(name.to_string());
         self
     }
 
@@ -497,6 +506,11 @@ impl CiphernodeBuilder {
         let addr = provider_cache.ensure_signer().await?.address().to_string();
         let bus = event_system.handle()?.enable(&addr);
 
+        if self.logging {
+            let logger_name = self.name.as_deref().unwrap_or("ciphernode");
+            attach_protocol_logger(logger_name, &bus);
+        }
+
         // Setup sortition
         let (sortition, ciphernode_selector) =
             self.setup_sortition(&bus, &repositories, &addr).await?;
@@ -531,6 +545,7 @@ impl CiphernodeBuilder {
         // Setup networking
         let topic = "interfold-gossip";
         let (peer_id, interface, net_kind) = self.setup_networking(&store, topic).await?;
+        let network_status = interface.status();
         setup_net(topic, bus.clone(), eventstore.ts(), interface)?;
 
         // Run the sync routine
@@ -551,6 +566,9 @@ impl CiphernodeBuilder {
             errors,
             peer_id,
             net_kind,
+            network_status,
+            eventstore,
+            aggregate_config.indexed_ids(),
         ))
     }
 

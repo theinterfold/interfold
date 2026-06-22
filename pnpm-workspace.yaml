@@ -12,6 +12,7 @@ packages:
   - packages/interfold-contracts
   - packages/interfold-mcp
   - packages/interfold-dashboard
+  - packages/interfold-node
   - templates/default
   - templates/default/client
 linkWorkspacePackages: true

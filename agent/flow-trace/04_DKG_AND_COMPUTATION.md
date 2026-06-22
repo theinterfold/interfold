@@ -1070,3 +1070,21 @@ ACTIVE AGGREGATOR collects PK_share₁ + PK_share₂ + PK_share₃
   → Produces aggregate_PK (public, published on-chain)
   → Anyone can encrypt, only committee can decrypt
 ```
+
+## Durable flow tracing
+
+The dashboard renders event ID, causation ID, origin ID, HLC timestamp, block watermark, aggregate,
+and source exactly as the local EventStore recorded them. Observability does not change the
+sequencing or gossip path. Local cause/effect chains are exact; received network events follow the
+protocol's established receiver-local context semantics.
+
+`InputPublished`, `RewardsDistributed`, `RewardCredited`, and `RewardClaimed` have typed EVM
+translations. `CommitteePublished` and `PlaintextOutputPublished` are also translated from their
+canonical on-chain logs. Every current interface signature is catalogued: logs without a
+protocol-driving typed decoder become named, lossless `EvmLogObserved` facts, while a signature not
+present in the running ABI catalog is exposed as `UnknownEvmLog` with raw topics/data.
+
+During restart, `ComputeEffectGate` observes replay before compute workers are effects-enabled. It
+buffers and deduplicates `ComputeRequest`s, prefers the newest regenerated request, cancels terminal
+E3 work, and releases pending jobs only after `EffectsEnabled`. The gate changes effect timing, not
+durable event order or audit state.

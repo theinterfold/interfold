@@ -36,16 +36,6 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
 
     launch_socket_server(config.ctrl_port());
 
-    if let Some(dashboard_port) = config.dashboard_port() {
-        let ctrl_port = config.ctrl_port();
-        let node_name = config.name();
-        let config_path = config.config_yaml().to_str().map(|s| s.to_string());
-        tokio::task::spawn_local(async move {
-            e3_dashboard::start_dashboard(dashboard_port, ctrl_port, node_name, config_path).await;
-        });
-        info!("Dashboard available at http://0.0.0.0:{}", dashboard_port);
-    }
-
     let node = tokio::select! {
         // build the ciphernode and if it completes first return the result
         result = build_ciphernode(&mut config, peers) => result,
@@ -55,6 +45,47 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
             return Ok(());
         }
     }?;
+
+    if let Some(dashboard_port) = config.dashboard_port() {
+        let chains = node
+            .aggregate_ids()
+            .iter()
+            .copied()
+            .filter(|aggregate| *aggregate != 0)
+            .map(|aggregate| {
+                let id = aggregate as u64;
+                let name = config
+                    .chains()
+                    .iter()
+                    .find(|chain| chain.chain_id == Some(id))
+                    .map(|chain| chain.name.clone())
+                    .unwrap_or_else(|| format!("Chain {id}"));
+                e3_dashboard::DashboardChain { id, name }
+            })
+            .collect();
+        let runtime = e3_dashboard::DashboardRuntime {
+            node_name: config.name(),
+            address: node.address.clone(),
+            peer_id: node.peer_id.to_string(),
+            quic_port: config.quic_port(),
+            dashboard_port,
+            version: env!("CARGO_PKG_VERSION").to_owned(),
+            chains,
+        };
+        let state = e3_dashboard::DashboardState::new(
+            runtime,
+            node.eventstore(),
+            node.aggregate_ids().to_vec(),
+            node.network_status(),
+            config.chains().clone(),
+        );
+        tokio::task::spawn_local(async move {
+            if let Err(error) = e3_dashboard::start_dashboard(dashboard_port, state).await {
+                error!(%error, "node dashboard stopped");
+            }
+        });
+        info!("Dashboard available at http://127.0.0.1:{dashboard_port}");
+    }
 
     info!(
         "LAUNCHING CIPHERNODE: ({}/{}/{})",
@@ -125,4 +156,7 @@ pub async fn graceful_shutdown(node: Option<CiphernodeHandle>) {
 
     tokio::time::sleep(Duration::from_secs(2)).await;
     info!("Graceful shutdown complete");
+    if let Some(logs) = e3_logger::LogCollector::global() {
+        logs.flush();
+    }
 }
