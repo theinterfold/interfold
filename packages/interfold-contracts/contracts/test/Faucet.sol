@@ -11,8 +11,8 @@ contract Faucet {
     IERC20 public fold;
     IERC20 public feeToken;
 
-    uint256 public constant AMOUNT_FOLD = 100e18;
-    uint256 public constant AMOUNT_FEE_TOKEN = 10e6;
+    uint256 public constant AMOUNT_FOLD = 200e18;
+    uint256 public constant AMOUNT_FEE_TOKEN = 200e6;
 
     constructor(address _fold, address _feeToken) payable {
         fold = IERC20(_fold);
