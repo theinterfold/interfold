@@ -14,6 +14,13 @@ const withNextra = nextra({
 })
 
 module.exports = withNextra({
+  webpack: (config) => {
+    // Nextra v2 skips addContextDependency in production, so webpack reuses
+    // cached MDX compilations when only _meta.json changes. Disabling the
+    // cache forces a full recompile on every build.
+    config.cache = false
+    return config
+  },
   async redirects() {
     return [
       {
