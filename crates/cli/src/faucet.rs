@@ -25,10 +25,19 @@ use e3_evm::{
 mod faucet_contract {
     use super::sol;
 
+    // Declared inline rather than read from the Hardhat artifact JSON: test
+    // contract artifacts are not committed, so the JSON path fails to resolve
+    // on a clean checkout / CI.
     sol!(
         #[sol(rpc)]
-        FaucetContract,
-        "../../packages/interfold-contracts/artifacts/contracts/test/Faucet.sol/Faucet.json"
+        #[allow(clippy::too_many_arguments)]
+        interface FaucetContract {
+            function faucet() external;
+            function fold() external view returns (address);
+            function feeToken() external view returns (address);
+            function AMOUNT_FOLD() external view returns (uint256);
+            function AMOUNT_FEE_TOKEN() external view returns (uint256);
+        }
     );
 }
 

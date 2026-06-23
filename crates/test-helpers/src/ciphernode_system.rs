@@ -369,7 +369,7 @@ mod tests {
     // Minimal mock actor that satisfies the EventStoreReader recipient requirements.
     struct MockEventStore;
     impl Actor for MockEventStore {
-        type Context = Context<Self>;
+        type Context = actix::Context<Self>;
     }
     impl Handler<EventStoreQueryBy<SeqAgg>> for MockEventStore {
         type Result = ();
