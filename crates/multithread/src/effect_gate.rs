@@ -118,7 +118,8 @@ impl ComputeEffectGate {
     fn cancel(&mut self, e3_id: &E3id) {
         self.pending
             .retain(|(pending_id, _), _| pending_id != e3_id);
-        self.forwarded.retain(|(forwarded_id, _)| forwarded_id != e3_id);
+        self.forwarded
+            .retain(|(forwarded_id, _)| forwarded_id != e3_id);
     }
 }
 

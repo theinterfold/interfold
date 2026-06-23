@@ -21,8 +21,36 @@ const MAX_FIELD_VALUE_CHARS: usize = 1024;
 /// growth from inheriting every ancestor span's fields.
 const MAX_FIELDS: usize = 64;
 
-/// Truncate an over-long string value with an ellipsis marker.
-fn truncate_value(value: String) -> Value {
+/// Strip ANSI escape sequences (e.g. the terminal colours the event bus adds
+/// to log lines) so the structured store and JSONL file hold clean text.
+fn strip_ansi(input: &str) -> String {
+    if !input.contains('\u{1b}') {
+        return input.to_owned();
+    }
+    let mut out = String::with_capacity(input.len());
+    let mut chars = input.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c == '\u{1b}' {
+            // CSI sequence: ESC '[' params... final-byte in 0x40..=0x7E.
+            if chars.peek() == Some(&'[') {
+                chars.next();
+                for nc in chars.by_ref() {
+                    if ('\u{40}'..='\u{7e}').contains(&nc) {
+                        break;
+                    }
+                }
+            }
+            // Any other escape: drop the ESC and continue.
+            continue;
+        }
+        out.push(c);
+    }
+    out
+}
+
+/// Strip ANSI then truncate an over-long string value with an ellipsis marker.
+fn clean_value(value: String) -> Value {
+    let value = strip_ansi(&value);
     if value.chars().count() > MAX_FIELD_VALUE_CHARS {
         let truncated: String = value.chars().take(MAX_FIELD_VALUE_CHARS).collect();
         Value::String(format!("{truncated}…"))
@@ -73,9 +101,7 @@ where
                     for (key, value) in &fields.0 {
                         // Respect the per-entry field cap during inheritance;
                         // closer (child) spans overwrite ancestors' values.
-                        if visitor.fields.len() >= MAX_FIELDS
-                            && !visitor.fields.contains_key(key)
-                        {
+                        if visitor.fields.len() >= MAX_FIELDS && !visitor.fields.contains_key(key) {
                             continue;
                         }
                         visitor.fields.insert(key.clone(), value.clone());
@@ -144,7 +170,7 @@ impl tracing::field::Visit for LogVisitor {
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        self.record_value(field, truncate_value(value.to_owned()));
+        self.record_value(field, clean_value(value.to_owned()));
     }
 
     fn record_error(
@@ -152,11 +178,11 @@ impl tracing::field::Visit for LogVisitor {
         field: &tracing::field::Field,
         value: &(dyn std::error::Error + 'static),
     ) {
-        self.record_value(field, truncate_value(value.to_string()));
+        self.record_value(field, clean_value(value.to_string()));
     }
 
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        self.record_value(field, truncate_value(format!("{value:?}")));
+        self.record_value(field, clean_value(format!("{value:?}")));
     }
 }
 
@@ -187,5 +213,32 @@ mod tests {
         assert_eq!(entry.fields["stage"], "computation");
         assert_eq!(entry.fields["operation"], "verify_c5");
         assert_eq!(entry.fields["duration_ms"], 7);
+    }
+
+    #[test]
+    fn strip_ansi_removes_color_codes() {
+        assert_eq!(strip_ansi("\u{1b}[33mhi\u{1b}[0m"), "hi");
+        assert_eq!(strip_ansi("plain text"), "plain text");
+        assert_eq!(strip_ansi("\u{1b}[1;36mA\u{1b}[0mB"), "AB");
+        assert_eq!(strip_ansi(">>> already clean"), ">>> already clean");
+    }
+
+    #[test]
+    fn strips_ansi_from_captured_message() {
+        let collector = LogCollector::init("test-node", None);
+        let subscriber = tracing_subscriber::registry().with(OperationalLogLayer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!("\u{1b}[33m>>> ansi-marker-xyz\u{1b}[0m payload");
+        });
+
+        let result = collector.query(None, Some(50), None, None, Some("ansi-marker-xyz"));
+        let entry = result.entries.last().expect("captured tracing event");
+        assert!(
+            !entry.message.contains('\u{1b}'),
+            "message retained ANSI: {:?}",
+            entry.message
+        );
+        assert_eq!(entry.message, ">>> ansi-marker-xyz payload");
     }
 }
