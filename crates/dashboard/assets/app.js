@@ -8445,21 +8445,19 @@ function op({ e3s: e, selected: t, onSelect: n, refreshKey: r }) {
                                 o.jsxs('div', {
                                   className: 'ticket-list',
                                   children: [
-                                    l.data.tickets
-                                      .slice(0, 12)
-                                      .map((g) =>
-                                        o.jsxs(
-                                          'div',
-                                          {
-                                            children: [
-                                              o.jsxs('span', { className: 'mono', children: ['#', g.ticket_id] }),
-                                              o.jsx('strong', { className: 'mono', children: fe(g.node, 8, 5) }),
-                                              o.jsx('small', { children: qt(g.score) }),
-                                            ],
-                                          },
-                                          `${g.node}-${g.ticket_id}`,
-                                        ),
+                                    l.data.tickets.slice(0, 12).map((g) =>
+                                      o.jsxs(
+                                        'div',
+                                        {
+                                          children: [
+                                            o.jsxs('span', { className: 'mono', children: ['#', g.ticket_id] }),
+                                            o.jsx('strong', { className: 'mono', children: fe(g.node, 8, 5) }),
+                                            o.jsx('small', { children: qt(g.score) }),
+                                          ],
+                                        },
+                                        `${g.node}-${g.ticket_id}`,
                                       ),
+                                    ),
                                     !l.data.tickets.length &&
                                       o.jsx('div', { className: 'empty-inline', children: 'No submitted tickets observed.' }),
                                   ],
