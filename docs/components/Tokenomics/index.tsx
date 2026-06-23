@@ -295,7 +295,7 @@ type Vest = {
 const VESTING: Vest[] = [
   { key: 'Liquidity Reserve',   total:  36_000_000, vestMonths:  1, term: 'No restrictions from TGE' },
   { key: 'CCA',                 total: 120_000_000, vestMonths:  1, term: 'No restrictions from TGE' },
-  { key: 'Investors',           total: 168_000_000, vestMonths: 12, term: '12-month linear unlock' },
+  { key: 'Investors',           total: 168_000_000, vestMonths: 24, term: '24-month linear unlock' },
   { key: 'Airdrop',             total:  48_000_000, vestMonths: 24, term: '24-month linear unlock' },
   { key: 'Team and Advisors',   total: 108_000_000, vestMonths: 24, term: '24-month linear unlock' },
   { key: 'Gnosis Guild',        total: 240_000_000, vestMonths: 48, term: '48-month linear unlock' },
@@ -308,7 +308,7 @@ const VESTING_TERMS = [
   { key: 'Airdrop',             schedule: '24 month linear unlock from TGE', group: 'community' as Group },
   { key: 'Liquidity Reserve',   schedule: 'No restrictions from TGE',        group: 'community' as Group },
   { key: 'Gnosis Guild',        schedule: '48 month linear unlock from TGE', group: 'other' as Group },
-  { key: 'Investors',           schedule: '12 month linear unlock from TGE', group: 'other' as Group },
+  { key: 'Investors',           schedule: '24 month linear unlock from TGE', group: 'other' as Group },
   { key: 'Team and Advisors',   schedule: '24 month linear unlock from TGE', group: 'other' as Group },
 ]
 
