@@ -280,8 +280,9 @@ export const deployInterfold = async (
   // out), so we mint unlocked FOLD and whitelist the faucet to bypass the
   // pre-TGE transfer gate. Only on sepolia, and only with mocks present.
   if (networkName === "sepolia" && mockStableToken) {
-    const FAUCET_FOLD_SUPPLY = ethers.parseEther("1000000"); // 1M FOLD
-    const FAUCET_USDC_SUPPLY = ethers.parseUnits("1000000", 6); // 1M USDC
+    // Stock the faucet for this many self-serve claims. Supply is derived from
+    // the contract's per-claim amounts so it stays correct if those change.
+    const FAUCET_TARGET_MINTS = 1000n;
 
     console.log("Deploying Faucet...");
     const { faucet } = await deployAndSaveFaucet({
@@ -291,6 +292,11 @@ export const deployInterfold = async (
     });
     const faucetAddress = await faucet.getAddress();
     console.log("Faucet deployed to:", faucetAddress);
+
+    const amountFold = await faucet.AMOUNT_FOLD();
+    const amountFeeToken = await faucet.AMOUNT_FEE_TOKEN();
+    const FAUCET_FOLD_SUPPLY = amountFold * FAUCET_TARGET_MINTS;
+    const FAUCET_USDC_SUPPLY = amountFeeToken * FAUCET_TARGET_MINTS;
 
     // Whitelist the faucet so faucet -> tester FOLD transfers pass the
     // pre-TGE gate (transferWhitelist[from] short-circuits the restriction).

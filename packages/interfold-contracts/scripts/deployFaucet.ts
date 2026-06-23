@@ -30,8 +30,9 @@ import {
  *
  * Usage: hardhat run scripts/deployFaucet.ts --network sepolia
  */
-const FAUCET_FOLD_SUPPLY = 1_000_000n; // 1M FOLD (18 decimals applied below)
-const FAUCET_USDC_SUPPLY = 1_000_000n; // 1M USDC (6 decimals applied below)
+// Stock the faucet for this many self-serve claims; supply is derived from the
+// contract's per-claim amounts below so it stays correct if those change.
+const FAUCET_TARGET_MINTS = 1000n;
 
 const main = async () => {
   const { ethers } = await hre.network.connect();
@@ -65,9 +66,6 @@ const main = async () => {
     );
   }
 
-  const foldSupply = ethers.parseEther(FAUCET_FOLD_SUPPLY.toString());
-  const usdcSupply = ethers.parseUnits(FAUCET_USDC_SUPPLY.toString(), 6);
-
   console.log("Deploying Faucet...");
   const faucet = await new FaucetFactory(signer).deploy(
     foldAddress,
@@ -77,6 +75,11 @@ const main = async () => {
   const faucetAddress = await faucet.getAddress();
   const blockNumber = await ethers.provider.getBlockNumber();
   console.log("Faucet deployed to:", faucetAddress);
+
+  // Derive supply from the contract's per-claim amounts so it covers the
+  // target number of mints regardless of how the amounts are configured.
+  const foldSupply = (await faucet.AMOUNT_FOLD()) * FAUCET_TARGET_MINTS;
+  const usdcSupply = (await faucet.AMOUNT_FEE_TOKEN()) * FAUCET_TARGET_MINTS;
 
   storeDeploymentArgs(
     {
