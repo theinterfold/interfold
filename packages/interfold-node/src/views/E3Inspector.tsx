@@ -54,7 +54,9 @@ export default function E3Inspector({
   const [focus, setFocus] = useState<{ id: string; nonce: number }>()
   const currentPhase = trace.data?.current_phase
 
+  // Sync phase with trace's current_phase on E3 selection change.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (currentPhase) setPhase(currentPhase)
   }, [selected, currentPhase])
 

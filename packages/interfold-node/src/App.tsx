@@ -87,7 +87,9 @@ export default function App() {
   const snapshot = useSnapshot()
   const updates = useUpdates()
 
+  // Auto-select the first E3 when data first loads and none is selected.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     if (!selectedE3 && snapshot.data?.e3s[0]) setSelectedE3(snapshot.data.e3s[0].e3_id)
   }, [selectedE3, snapshot.data?.e3s])
 

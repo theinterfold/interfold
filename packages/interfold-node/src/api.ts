@@ -58,11 +58,9 @@ export function useE3Trace(e3Id?: string, refreshKey = 0): QueryState<E3Trace> {
   const [state, setState] = useState<QueryState<E3Trace>>({ loading: Boolean(e3Id) })
 
   useEffect(() => {
-    if (!e3Id) {
-      setState({ loading: false })
-      return
-    }
+    if (!e3Id) return
     const controller = new AbortController()
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setState((previous) => ({ ...previous, loading: !previous.data }))
     getJson<E3Trace>(`/api/e3?e3_id=${encodeURIComponent(e3Id)}`, controller.signal)
       .then((data) => setState({ data, loading: false }))
@@ -74,6 +72,7 @@ export function useE3Trace(e3Id?: string, refreshKey = 0): QueryState<E3Trace> {
     return () => controller.abort()
   }, [e3Id, refreshKey])
 
+  if (!e3Id) return { loading: false }
   return state
 }
 

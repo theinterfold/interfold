@@ -128,7 +128,9 @@ export default function FlowGraphView({
   const trace = useE3Trace(selectedE3, refreshKey)
   const [selectedEvent, setSelectedEvent] = useState<EventView>()
 
+  // Auto-select the most recent event when E3 selection or events change.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSelectedEvent(trace.data?.events.at(-1))
   }, [selectedE3, trace.data?.events])
 
