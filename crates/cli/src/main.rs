@@ -17,6 +17,7 @@ mod cli;
 mod config;
 mod config_setup;
 mod events;
+mod faucet;
 pub mod helpers;
 mod init;
 mod net;

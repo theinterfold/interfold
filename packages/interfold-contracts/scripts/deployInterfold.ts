@@ -14,6 +14,7 @@ import { deployAndSaveBondingRegistry } from "./deployAndSave/bondingRegistry";
 import { deployAndSaveCiphernodeRegistryOwnable } from "./deployAndSave/ciphernodeRegistryOwnable";
 import { deployAndSaveDkgFoldAttestationVerifier } from "./deployAndSave/dkgFoldAttestationVerifier";
 import { deployAndSaveE3RefundManager } from "./deployAndSave/e3RefundManager";
+import { deployAndSaveFaucet } from "./deployAndSave/faucet";
 import { deployAndSaveInterfold } from "./deployAndSave/interfold";
 import { deployAndSaveInterfoldTicketToken } from "./deployAndSave/interfoldTicketToken";
 import { deployAndSaveInterfoldToken } from "./deployAndSave/interfoldToken";
@@ -151,13 +152,18 @@ export const deployInterfold = async (
   }
 
   let feeTokenAddress: string;
+  let mockStableToken:
+    | Awaited<
+        ReturnType<typeof deployAndSaveMockStableToken>
+      >["mockStableToken"]
+    | undefined;
 
   if (shouldDeployMocks) {
     console.log("Deploying mock Fee token...");
-    const { mockStableToken } = await deployAndSaveMockStableToken({
+    ({ mockStableToken } = await deployAndSaveMockStableToken({
       initialSupply: 1000000,
       hre,
-    });
+    }));
     feeTokenAddress = await mockStableToken.getAddress();
     console.log("MockFeeToken deployed to:", feeTokenAddress);
   } else {
@@ -173,11 +179,11 @@ export const deployInterfold = async (
   let ccaStart: bigint;
   if (ccaStartEnv?.trim()) {
     ccaStart = parseRequiredUint64(ccaStartEnv.trim(), "INTERFOLD_CCA_START");
-  } else if (isLocalDeploymentChain(networkName)) {
+  } else if (isLocalDeploymentChain(networkName) || networkName === "sepolia") {
     const now = BigInt(latestBlock.timestamp);
     ccaStart = now + 3600n; // 1 hour from now
     console.warn(
-      `[WARN] INTERFOLD_CCA_START not set; using ${ccaStart} (block.timestamp + 1h) for local deployment.`,
+      `[WARN] INTERFOLD_CCA_START not set; using ${ccaStart} (block.timestamp + 1h) for ${networkName} deployment.`,
     );
   } else {
     throw new Error(
@@ -267,6 +273,51 @@ export const deployInterfold = async (
   await (
     await interfoldToken.setTransferWhitelisted(bondingRegistryAddress, true)
   ).wait();
+
+  // ── Testnet faucet (sepolia only) ───────────────────────────────────────
+  // Deploy a public Faucet pre-funded with FOLD + mock USDC so testers can
+  // self-serve tokens. FOLD is in the Virtual phase here (CCA_START is ~1h
+  // out), so we mint unlocked FOLD and whitelist the faucet to bypass the
+  // pre-TGE transfer gate. Only on sepolia, and only with mocks present.
+  if (networkName === "sepolia" && mockStableToken) {
+    const FAUCET_FOLD_SUPPLY = ethers.parseEther("1000000"); // 1M FOLD
+    const FAUCET_USDC_SUPPLY = ethers.parseUnits("1000000", 6); // 1M USDC
+
+    console.log("Deploying Faucet...");
+    const { faucet } = await deployAndSaveFaucet({
+      fold: interfoldTokenAddress,
+      feeToken: feeTokenAddress,
+      hre,
+    });
+    const faucetAddress = await faucet.getAddress();
+    console.log("Faucet deployed to:", faucetAddress);
+
+    // Whitelist the faucet so faucet -> tester FOLD transfers pass the
+    // pre-TGE gate (transferWhitelist[from] short-circuits the restriction).
+    console.log("Whitelisting Faucet in FOLD...");
+    await (
+      await interfoldToken.setTransferWhitelisted(faucetAddress, true)
+    ).wait();
+
+    console.log("Minting FOLD to Faucet...");
+    await (
+      await interfoldToken.mint(
+        faucetAddress,
+        FAUCET_FOLD_SUPPLY,
+        ethers.encodeBytes32String("faucet"),
+      )
+    ).wait();
+
+    console.log("Minting mock USDC to Faucet...");
+    await (
+      await mockStableToken.mint(faucetAddress, FAUCET_USDC_SUPPLY)
+    ).wait();
+
+    console.log(
+      `Faucet funded with ${ethers.formatEther(FAUCET_FOLD_SUPPLY)} FOLD ` +
+        `and ${ethers.formatUnits(FAUCET_USDC_SUPPLY, 6)} USDC.`,
+    );
+  }
 
   console.log("Deploying Interfold...");
   const { interfold } = await deployAndSaveInterfold({

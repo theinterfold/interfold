@@ -158,8 +158,42 @@ export function AllocationPie() {
   const arcs = buildArcs()
 
   const onMove = (e: React.MouseEvent) => {
+    // While hovering from the table the tooltip is pinned to the donut arc, so
+    // ignore cursor movement to avoid yanking it back to the pointer.
+    if (fromTable) return
     const r = wrapRef.current?.getBoundingClientRect()
     if (r) setPos({ x: e.clientX - r.left, y: e.clientY - r.top })
+  }
+
+  // Position of a slice's tooltip on the donut, in wrapper-local coordinates.
+  // Reads refs, so it must only be called from event handlers (not render).
+  const arcTooltipPos = (key: string) => {
+    const svg = svgRef.current
+    const wrap = wrapRef.current
+    if (!svg || !wrap) return null
+    const arc = arcs.find(a => a.key === key)
+    if (!arc) return null
+    const midAngle = (arc.start + arc.end) / 2
+    const midR     = (rOuter + rInner) / 2
+    const [svgX, svgY] = polar(cx, cy, midR, midAngle)
+    const svgRect  = svg.getBoundingClientRect()
+    const wrapRect = wrap.getBoundingClientRect()
+    return {
+      x: (svgRect.left - wrapRect.left) + svgX * (svgRect.width / size),
+      y: (svgRect.top - wrapRect.top) + svgY * (svgRect.height / size),
+    }
+  }
+
+  const onTableEnter = (key: string) => {
+    setHover(key)
+    setFromTable(true)
+    const p = arcTooltipPos(key)
+    if (p) setPos(p)
+  }
+
+  const onTableLeave = () => {
+    setHover(null)
+    setFromTable(false)
   }
 
   return (
@@ -220,8 +254,8 @@ export function AllocationPie() {
           {communitySlices.map(d => (
             <tr
               key={d.key}
-              onMouseEnter={() => { setHover(d.key); setFromTable(true) }}
-              onMouseLeave={() => { setHover(null); setFromTable(false) }}
+              onMouseEnter={() => onTableEnter(d.key)}
+              onMouseLeave={onTableLeave}
               style={{ background: hover === d.key ? 'rgba(15,23,42,0.05)' : undefined }}
             >
               <td className={classes.catCell}>
@@ -240,8 +274,8 @@ export function AllocationPie() {
           {otherSlices.map(d => (
             <tr
               key={d.key}
-              onMouseEnter={() => { setHover(d.key); setFromTable(true) }}
-              onMouseLeave={() => { setHover(null); setFromTable(false) }}
+              onMouseEnter={() => onTableEnter(d.key)}
+              onMouseLeave={onTableLeave}
               style={{ background: hover === d.key ? 'rgba(15,23,42,0.05)' : undefined }}
             >
               <td className={classes.catCell}>
@@ -254,27 +288,11 @@ export function AllocationPie() {
         </tbody>
       </table>
 
-      {hover && (() => {
-        let tx = pos.x
-        let ty = pos.y
-        if (fromTable && svgRef.current && wrapRef.current) {
-          const arc = arcs.find(a => a.key === hover)
-          if (arc) {
-            const midAngle = (arc.start + arc.end) / 2
-            const midR     = (rOuter + rInner) / 2
-            const [svgX, svgY] = polar(cx, cy, midR, midAngle)
-            const svgRect  = svgRef.current.getBoundingClientRect()
-            const wrapRect = wrapRef.current.getBoundingClientRect()
-            tx = (svgRect.left - wrapRect.left) + svgX * (svgRect.width  / size)
-            ty = (svgRect.top  - wrapRect.top)  + svgY * (svgRect.height / size)
-          }
-        }
-        return (
-          <div className={classes.tooltip} style={{ left: tx, top: ty }}>
-            {hover}
-          </div>
-        )
-      })()}
+      {hover && (
+        <div className={classes.tooltip} style={{ left: pos.x, top: pos.y }}>
+          {hover}
+        </div>
+      )}
     </div>
   )
 }
@@ -337,11 +355,12 @@ export function VestingSchedule() {
   const y = (v: number) => padT + plotH - (v / Y_MAX) * plotH
 
   const months = Array.from({ length: MONTHS_AXIS + 1 }, (_, t) => t)
-  let running  = months.map(() => 0)
-  const bands  = VESTING.map(v => {
-    const lower = running.slice()
+  const bands  = VESTING.map((v, vi) => {
+    // Lower boundary is the cumulative stack of all bands beneath this one.
+    const lower = months.map(t =>
+      VESTING.slice(0, vi).reduce((s, prev) => s + cumulative(prev, t), 0),
+    )
     const upper = months.map((t, i) => lower[i] + cumulative(v, t))
-    running = upper
     const top = months.map((t, i) => `${x(t).toFixed(1)},${y(upper[i]).toFixed(1)}`)
     const bot = months.map((t, i) => `${x(t).toFixed(1)},${y(lower[i]).toFixed(1)}`).reverse()
     return { key: v.key, color: COLOR_BY_KEY[v.key], d: `M ${top.join(' L ')} L ${bot.join(' L ')} Z` }
@@ -355,11 +374,29 @@ export function VestingSchedule() {
   const svgRef                    = useRef<SVGSVGElement>(null)
 
   const onMove = (e: React.MouseEvent) => {
+    // While hovering from the table the tooltip is pinned to the band, so
+    // ignore cursor movement.
+    if (fromTable) return
     const r = wrapRef.current?.getBoundingClientRect()
     if (r) setPos({ x: e.clientX - r.left, y: e.clientY - r.top })
   }
 
+  const onBandTableEnter = (key: string) => {
+    setHover(key)
+    setTip(true)
+    setFromTable(true)
+    const bc = getBandCenter(key)
+    if (bc) setPos(bc)
+  }
+
+  const onBandTableLeave = () => {
+    setHover(null)
+    setTip(false)
+    setFromTable(false)
+  }
+
   // Compute the centre of a vesting band at t=36 months, in container coords.
+  // Reads refs, so it must only be called from event handlers (not render).
   const getBandCenter = (key: string): { x: number; y: number } | null => {
     if (!svgRef.current || !wrapRef.current) return null
     const T = 36
@@ -456,8 +493,8 @@ export function VestingSchedule() {
             {communityVT.map(v => (
               <tr
                 key={v.key}
-                onMouseEnter={() => { setHover(v.key); setTip(true); setFromTable(true) }}
-                onMouseLeave={() => { setHover(null); setTip(false); setFromTable(false) }}
+                onMouseEnter={() => onBandTableEnter(v.key)}
+                onMouseLeave={onBandTableLeave}
                 style={{ background: hover === v.key ? 'rgba(15,23,42,0.05)' : undefined }}
               >
                 <td className={classes.catCell}>
@@ -476,8 +513,8 @@ export function VestingSchedule() {
             {otherVT.map(v => (
               <tr
                 key={v.key}
-                onMouseEnter={() => { setHover(v.key); setTip(true); setFromTable(true) }}
-                onMouseLeave={() => { setHover(null); setTip(false); setFromTable(false) }}
+                onMouseEnter={() => onBandTableEnter(v.key)}
+                onMouseLeave={onBandTableLeave}
                 style={{ background: hover === v.key ? 'rgba(15,23,42,0.05)' : undefined }}
               >
                 <td className={classes.catCell}>
@@ -491,19 +528,11 @@ export function VestingSchedule() {
         </table>
       </div>
 
-      {tip && hover && (() => {
-        let tx = pos.x
-        let ty = pos.y
-        if (fromTable) {
-          const bc = getBandCenter(hover)
-          if (bc) { tx = bc.x; ty = bc.y }
-        }
-        return (
-          <div className={classes.tooltip} style={{ left: tx, top: ty }}>
-            {hover}
-          </div>
-        )
-      })()}
+      {tip && hover && (
+        <div className={classes.tooltip} style={{ left: pos.x, top: pos.y }}>
+          {hover}
+        </div>
+      )}
     </div>
   )
 }

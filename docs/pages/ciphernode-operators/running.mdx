@@ -97,20 +97,23 @@ chains:
     rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
     contracts:
       interfold:
-        address: '0x670eFE043d1D340148037b4b76c4F9dfED294309'
-        deploy_block: 10939874
+        address: '0x75496A79903442df15E9B546A947132D61F839dc'
+        deploy_block: 11121991
       ciphernode_registry:
-        address: '0x4D707127F72a216EA116AF0B4262dD7382F84259'
-        deploy_block: 10939869
+        address: '0xAD1e67D369a9404BB51dcdd1e7E0f30f813ED718'
+        deploy_block: 11121978
       bonding_registry:
-        address: '0xb9b64c5e0a30f38ed33760f299613087aAe87283'
-        deploy_block: 10939870
+        address: '0xfdE5DAbaD974223C401c867eDF3bB6262175F578'
+        deploy_block: 11121979
       slashing_manager:
-        address: '0x0553387EE0992Fe339579728B6c777164fD1de40'
-        deploy_block: 10939868
+        address: '0x1Ed62919aa6434066b39e80268072D52F4180459'
+        deploy_block: 11121977
       fee_token:
-        address: '0x2721Cdf281d40744aD567cBf3e7100F60bcbAE79'
-        deploy_block: 10939865
+        address: '0x156e0411F66BC06d57a57cA85408FF7d88ad2587'
+        deploy_block: 11121974
+      faucet:
+        address: '0xA43DDEE07BbeE473083Cb72561dfA3D3Be0b597a'
+        deploy_block: 11122125
 ```
 
 ### Start Your Node
@@ -183,20 +186,23 @@ chains:
     rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
     contracts:
       interfold:
-        address: '0x670eFE043d1D340148037b4b76c4F9dfED294309'
-        deploy_block: 10939874
+        address: '0x75496A79903442df15E9B546A947132D61F839dc'
+        deploy_block: 11121991
       ciphernode_registry:
-        address: '0x4D707127F72a216EA116AF0B4262dD7382F84259'
-        deploy_block: 10939869
+        address: '0xAD1e67D369a9404BB51dcdd1e7E0f30f813ED718'
+        deploy_block: 11121978
       bonding_registry:
-        address: '0xb9b64c5e0a30f38ed33760f299613087aAe87283'
-        deploy_block: 10939870
+        address: '0xfdE5DAbaD974223C401c867eDF3bB6262175F578'
+        deploy_block: 11121979
       slashing_manager:
-        address: '0x0553387EE0992Fe339579728B6c777164fD1de40'
-        deploy_block: 10939868
+        address: '0x1Ed62919aa6434066b39e80268072D52F4180459'
+        deploy_block: 11121977
       fee_token:
-        address: '0x2721Cdf281d40744aD567cBf3e7100F60bcbAE79'
-        deploy_block: 10939865
+        address: '0x156e0411F66BC06d57a57cA85408FF7d88ad2587'
+        deploy_block: 11121974
+      faucet:
+        address: '0xA43DDEE07BbeE473083Cb72561dfA3D3Be0b597a'
+        deploy_block: 11122125
 ```
 
 ### Run the Container
@@ -276,15 +282,19 @@ Each chain requires these contract addresses:
 | `slashing_manager`    | Manages slashing penalties              | Yes                     |
 | `e3_program`          | E3 Program contract address             | No                      |
 | `fee_token`           | Stablecoin address for fees and tickets | No                      |
+| `faucet`              | Testnet faucet for FOLD + fee tokens    | No                      |
 
 Each contract can be specified as a simple address string or with a deploy block for faster syncing:
 
 ```yaml
 contracts:
   interfold:
-    address: '0x670eFE043d1D340148037b4b76c4F9dfED294309'
-    deploy_block: 10939874
-  ciphernode_registry: '0x4D707127F72a216EA116AF0B4262dD7382F84259'
+    address: '0x75496A79903442df15E9B546A947132D61F839dc'
+    deploy_block: 11121991
+  ciphernode_registry: '0xAD1e67D369a9404BB51dcdd1e7E0f30f813ED718'
+  faucet:
+    address: '0xA43DDEE07BbeE473083Cb72561dfA3D3Be0b597a'
+    deploy_block: 11122125
 ```
 
 ---

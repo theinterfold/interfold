@@ -17,6 +17,7 @@ const contractMapping: Record<string, string> = {
   CiphernodeRegistryOwnable: 'ciphernode_registry',
   BondingRegistry: 'bonding_registry',
   MockUSDC: 'fee_token',
+  Faucet: 'faucet',
 }
 
 export const deployTemplate = async () => {

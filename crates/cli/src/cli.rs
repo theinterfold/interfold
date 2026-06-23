@@ -7,6 +7,7 @@
 use crate::ciphernode::{self, ChainArgs, CiphernodeCommands};
 use crate::config::{self, ConfigCommands};
 use crate::events::{self, EventsCommands};
+use crate::faucet;
 use crate::helpers::telemetry::{setup_simple_tracing, setup_tracing};
 use crate::net::{self, NetCommands};
 use crate::node::{self, NodeCommands as NodeStateCommands};
@@ -188,6 +189,9 @@ impl Cli {
             Commands::Node { command } => node::execute(out, command, &config).await?,
             Commands::Rev => rev::execute(out).await?,
             Commands::Config { command } => config::execute(out, command, &config).await?,
+            Commands::Faucet { chain } => {
+                faucet::execute(out, &config, chain.chain.as_deref()).await?
+            }
         }
 
         close_all_connections();
@@ -320,6 +324,12 @@ pub enum Commands {
     Config {
         #[command(subcommand)]
         command: ConfigCommands,
+    },
+
+    /// Request testnet tokens (FOLD + fee token) from the configured faucet
+    Faucet {
+        #[command(flatten)]
+        chain: ChainArgs,
     },
 }
 
