@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold Ciphernode Logger"
-repository = "https://github.com/gnosisguild/interfold/crates/logger"
+repository = "https://github.com/theinterfold/interfold/crates/logger"
 
 [dependencies]
 e3-events = { workspace = true }

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold CLI"
-repository = "https://github.com/gnosisguild/interfold/crates/cli"
+repository = "https://github.com/theinterfold/interfold/crates/cli"
 build = "build.rs"
 
 [[bin]]

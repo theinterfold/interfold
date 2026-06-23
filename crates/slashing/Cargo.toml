@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 fault attribution, accusation quorum, and commitment consistency"
-repository = "https://github.com/gnosisguild/interfold/crates/slashing"
+repository = "https://github.com/theinterfold/interfold/crates/slashing"
 
 [dependencies]
 actix = { workspace = true }

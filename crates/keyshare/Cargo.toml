@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold Ciphernode Keyshare Actors"
-repository = "https://github.com/gnosisguild/interfold/crates/keyshare"
+repository = "https://github.com/theinterfold/interfold/crates/keyshare"
 
 [dependencies]
 actix = { workspace = true }

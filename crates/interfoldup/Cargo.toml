@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Installer for the Interfold CLI tool"
-repository = "https://github.com/gnosisguild/interfold"
+repository = "https://github.com/theinterfold/interfold"
 
 [[bin]]
 name = "interfoldup"

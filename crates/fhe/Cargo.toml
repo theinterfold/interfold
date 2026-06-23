@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold Ciphernode FHE Actors"
-repository = "https://github.com/gnosisguild/interfold/crates/fhe"
+repository = "https://github.com/theinterfold/interfold/crates/fhe"
 
 [dependencies]
 actix = { workspace = true }

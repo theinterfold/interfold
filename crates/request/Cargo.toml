@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold Ciphernode E3Request Handling Components"
-repository = "https://github.com/gnosisguild/interfold/crates/request"
+repository = "https://github.com/theinterfold/interfold/crates/request"
 
 [dependencies]
 actix = { workspace = true }

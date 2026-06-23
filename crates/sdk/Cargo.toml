@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold SDK"
-repository = "https://github.com/gnosisguild/interfold/crates/sdk"
+repository = "https://github.com/theinterfold/interfold/crates/sdk"
 
 [dependencies]
 e3-evm-helpers = { workspace = true, optional = true }

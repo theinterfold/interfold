@@ -15,7 +15,7 @@ version = "0.1.0"
 edition = "2021"
 license = "LGPL-3.0-only"
 description = "CRISP — Voting Application on Interfold"
-repository = "https://github.com/gnosisguild/interfold"
+repository = "https://github.com/theinterfold/interfold"
 
 [workspace.dependencies]
 e3-user-program = { path = "./program" }

@@ -75,7 +75,7 @@ version = "0.2.2"
 edition = "2021"
 license = "LGPL-3.0-only"
 description = "E3 — Encrypted Execution Environments"
-repository = "https://github.com/gnosisguild/interfold"
+repository = "https://github.com/theinterfold/interfold"
 
 [workspace.dependencies]
 e3-aggregator = { version = "0.2.2", path = "./crates/aggregator" }
