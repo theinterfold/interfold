@@ -1293,7 +1293,7 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "e3-bfv-client"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "e3-fhe-params",
@@ -1307,7 +1307,7 @@ dependencies = [
 
 [[package]]
 name = "e3-compute-provider"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ff 0.4.2",
@@ -1326,7 +1326,7 @@ dependencies = [
 
 [[package]]
 name = "e3-fhe-params"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -1343,7 +1343,7 @@ dependencies = [
 
 [[package]]
 name = "e3-parity-matrix"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -1353,7 +1353,7 @@ dependencies = [
 
 [[package]]
 name = "e3-polynomial"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "fhe-math",
  "num-bigint",
@@ -1364,7 +1364,7 @@ dependencies = [
 
 [[package]]
 name = "e3-program-server"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "actix-web",
  "anyhow",
@@ -1379,7 +1379,7 @@ dependencies = [
 
 [[package]]
 name = "e3-safe"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
@@ -1413,7 +1413,7 @@ dependencies = [
 
 [[package]]
 name = "e3-zk-helpers"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "ark-bn254 0.5.0",
