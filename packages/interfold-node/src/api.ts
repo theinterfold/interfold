@@ -15,11 +15,20 @@ async function getJson<T>(path: string, signal?: AbortSignal): Promise<T> {
     const detail = await response.json().catch(() => null)
     throw new Error(detail?.error ?? `${response.status} ${response.statusText}`)
   }
-  return response.json() as Promise<T>
+  try {
+    return (await response.json()) as T
+  } catch {
+    throw new Error(`Invalid JSON in response from ${path}`)
+  }
 }
 
-export function useSnapshot(intervalMs = 2_000): QueryState<DashboardSnapshot> {
-  const [state, setState] = useState<QueryState<DashboardSnapshot>>({ loading: true })
+/**
+ * Polls a JSON endpoint on an interval with an abort on unmount, a
+ * re-entrancy guard so a slow endpoint can't stack overlapping requests, and a
+ * visibility check so background tabs don't poll.
+ */
+function usePolledJson<T>(path: string, intervalMs: number): QueryState<T> {
+  const [state, setState] = useState<QueryState<T>>({ loading: true })
 
   useEffect(() => {
     let active = true
@@ -30,7 +39,7 @@ export function useSnapshot(intervalMs = 2_000): QueryState<DashboardSnapshot> {
       refreshing = true
       controller = new AbortController()
       try {
-        const data = await getJson<DashboardSnapshot>('/api/snapshot', controller.signal)
+        const data = await getJson<T>(path, controller.signal)
         if (active) setState({ data, loading: false })
       } catch (error) {
         if (active && !(error instanceof DOMException && error.name === 'AbortError')) {
@@ -49,9 +58,13 @@ export function useSnapshot(intervalMs = 2_000): QueryState<DashboardSnapshot> {
       controller?.abort()
       window.clearInterval(timer)
     }
-  }, [intervalMs])
+  }, [path, intervalMs])
 
   return state
+}
+
+export function useSnapshot(intervalMs = 2_000): QueryState<DashboardSnapshot> {
+  return usePolledJson<DashboardSnapshot>('/api/snapshot', intervalMs)
 }
 
 export function useE3Trace(e3Id?: string, refreshKey = 0): QueryState<E3Trace> {
@@ -77,73 +90,13 @@ export function useE3Trace(e3Id?: string, refreshKey = 0): QueryState<E3Trace> {
 }
 
 export function useLogs(intervalMs = 2_000): QueryState<LogResponse> {
-  const [state, setState] = useState<QueryState<LogResponse>>({ loading: true })
-  useEffect(() => {
-    let active = true
-    const refresh = () => {
-      getJson<LogResponse>('/api/logs?limit=2000')
-        .then((data) => {
-          if (active) setState({ data, loading: false })
-        })
-        .catch((error) => {
-          if (active)
-            setState((previous) => ({ ...previous, error: error instanceof Error ? error.message : String(error), loading: false }))
-        })
-    }
-    refresh()
-    const timer = window.setInterval(refresh, intervalMs)
-    return () => {
-      active = false
-      window.clearInterval(timer)
-    }
-  }, [intervalMs])
-  return state
+  return usePolledJson<LogResponse>('/api/logs?limit=2000', intervalMs)
 }
 
 export function useEvents(intervalMs = 2_500): QueryState<EventsResponse> {
-  const [state, setState] = useState<QueryState<EventsResponse>>({ loading: true })
-  useEffect(() => {
-    let active = true
-    const refresh = () => {
-      getJson<EventsResponse>('/api/events?limit=2000')
-        .then((data) => {
-          if (active) setState({ data, loading: false })
-        })
-        .catch((error) => {
-          if (active)
-            setState((previous) => ({ ...previous, error: error instanceof Error ? error.message : String(error), loading: false }))
-        })
-    }
-    refresh()
-    const timer = window.setInterval(refresh, intervalMs)
-    return () => {
-      active = false
-      window.clearInterval(timer)
-    }
-  }, [intervalMs])
-  return state
+  return usePolledJson<EventsResponse>('/api/events?limit=2000', intervalMs)
 }
 
 export function useUpdates(intervalMs = 60 * 60 * 1_000): QueryState<UpdateSnapshot> {
-  const [state, setState] = useState<QueryState<UpdateSnapshot>>({ loading: true })
-  useEffect(() => {
-    let active = true
-    const refresh = () => {
-      getJson<UpdateSnapshot>('/api/updates')
-        .then((data) => {
-          if (active) setState({ data, loading: false })
-        })
-        .catch((error) => {
-          if (active)
-            setState((previous) => ({ ...previous, error: error instanceof Error ? error.message : String(error), loading: false }))
-        })
-    }
-    refresh()
-    const timer = window.setInterval(refresh, intervalMs)
-    return () => {
-      active = false
-      window.clearInterval(timer)
-    }
-  }, [intervalMs])
-  return state
+  return usePolledJson<UpdateSnapshot>('/api/updates', intervalMs)
 }

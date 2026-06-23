@@ -87,8 +87,10 @@ impl LogCollector {
     }
 
     pub fn record(&self, level: &str, target: &str, message: String, fields: Map<String, Value>) {
-        let entry = LogEntry {
-            seq: self.next_seq.fetch_add(1, Ordering::Relaxed),
+        let mut entry = LogEntry {
+            // Assigned under the entries lock below so the deque stays ordered
+            // by seq; query()'s cursor pagination relies on that invariant.
+            seq: 0,
             timestamp_ms: now_ms(),
             level: level.to_owned(),
             target: target.to_owned(),
@@ -97,21 +99,32 @@ impl LogCollector {
             fields,
         };
 
-        if let Ok(mut entries) = self.entries.lock() {
+        {
+            // Recover from a poisoned lock rather than silently dropping every
+            // subsequent log line after a single panic-while-holding-lock.
+            let mut entries = match self.entries.lock() {
+                Ok(entries) => entries,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            // Stamp seq while holding the lock so increment and push are atomic
+            // relative to other writers (no out-of-order insertion).
+            entry.seq = self.next_seq.fetch_add(1, Ordering::Relaxed);
             if entries.len() == self.capacity {
                 entries.pop_front();
             }
             entries.push_back(entry.clone());
         }
 
-        if let Ok(mut writer_guard) = self.writer.lock() {
-            let failed = writer_guard
-                .as_mut()
-                .and_then(|writer| writer.write(&entry).err());
-            if let Some(error) = failed {
-                eprintln!("failed to write ciphernode operational log: {error}");
-                *writer_guard = None;
-            }
+        let mut writer_guard = match self.writer.lock() {
+            Ok(writer_guard) => writer_guard,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        let failed = writer_guard
+            .as_mut()
+            .and_then(|writer| writer.write(&entry).err());
+        if let Some(error) = failed {
+            eprintln!("failed to write ciphernode operational log: {error}");
+            *writer_guard = None;
         }
     }
 
@@ -186,10 +199,12 @@ impl LogCollector {
     }
 
     pub fn flush(&self) {
-        if let Ok(mut writer) = self.writer.lock() {
-            if let Some(writer) = writer.as_mut() {
-                let _ = writer.flush();
-            }
+        let mut writer = match self.writer.lock() {
+            Ok(writer) => writer,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        if let Some(writer) = writer.as_mut() {
+            let _ = writer.flush();
         }
     }
 }

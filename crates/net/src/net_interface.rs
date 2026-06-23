@@ -350,17 +350,21 @@ async fn process_swarm_event(
                 info!("Peer connected: {peer_id} (total: {total})");
             }
             let remote_addr = endpoint.get_remote_address().clone();
-            status.connected(
-                peer_id.to_string(),
-                remote_addr.to_string(),
-                if endpoint.is_dialer() {
-                    "outbound"
-                } else {
-                    "inbound"
-                },
-                num_established.get(),
-            );
-            if !(should_filter_loopback(swarm) && is_loopback_addr(&remote_addr)) {
+            // Only track/advertise peers we consider routable. Filtered loopback
+            // connections are excluded from both the dashboard peer count and
+            // Kademlia so the two stay consistent.
+            let filter_loopback = should_filter_loopback(swarm) && is_loopback_addr(&remote_addr);
+            if !filter_loopback {
+                status.connected(
+                    peer_id.to_string(),
+                    remote_addr.to_string(),
+                    if endpoint.is_dialer() {
+                        "outbound"
+                    } else {
+                        "inbound"
+                    },
+                    num_established.get(),
+                );
                 swarm
                     .behaviour_mut()
                     .kademlia

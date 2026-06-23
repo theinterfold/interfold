@@ -12,6 +12,25 @@ use tracing_subscriber::{layer::Context, registry::LookupSpan, Layer};
 
 use crate::LogCollector;
 
+/// Maximum characters retained for a single string/Debug field value. A large
+/// `?`-logged value (e.g. a ciphertext) is truncated so it cannot blow up the
+/// in-memory store or the rotating JSONL file.
+const MAX_FIELD_VALUE_CHARS: usize = 1024;
+
+/// Maximum number of structured fields retained per log entry, bounding the
+/// growth from inheriting every ancestor span's fields.
+const MAX_FIELDS: usize = 64;
+
+/// Truncate an over-long string value with an ellipsis marker.
+fn truncate_value(value: String) -> Value {
+    if value.chars().count() > MAX_FIELD_VALUE_CHARS {
+        let truncated: String = value.chars().take(MAX_FIELD_VALUE_CHARS).collect();
+        Value::String(format!("{truncated}…"))
+    } else {
+        Value::String(value)
+    }
+}
+
 /// Captures structured tracing events for the bounded dashboard store and
 /// rotating JSONL file. It does not subscribe to or mutate the protocol bus.
 #[derive(Clone, Copy, Debug, Default)]
@@ -51,7 +70,16 @@ where
         if let Some(scope) = ctx.event_scope(event) {
             for span in scope.from_root() {
                 if let Some(fields) = span.extensions().get::<SpanFields>() {
-                    visitor.fields.extend(fields.0.clone());
+                    for (key, value) in &fields.0 {
+                        // Respect the per-entry field cap during inheritance;
+                        // closer (child) spans overwrite ancestors' values.
+                        if visitor.fields.len() >= MAX_FIELDS
+                            && !visitor.fields.contains_key(key)
+                        {
+                            continue;
+                        }
+                        visitor.fields.insert(key.clone(), value.clone());
+                    }
                 }
             }
         }
@@ -85,6 +113,11 @@ impl LogVisitor {
                 .map(str::to_owned)
                 .or_else(|| Some(value.to_string()));
         } else {
+            // Bound the field count so a deeply nested span tree can't grow an
+            // entry without limit; always allow overwriting an existing key.
+            if self.fields.len() >= MAX_FIELDS && !self.fields.contains_key(field.name()) {
+                return;
+            }
             self.fields.insert(field.name().to_owned(), value);
         }
     }
@@ -111,7 +144,7 @@ impl tracing::field::Visit for LogVisitor {
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        self.record_value(field, Value::String(value.to_owned()));
+        self.record_value(field, truncate_value(value.to_owned()));
     }
 
     fn record_error(
@@ -119,11 +152,11 @@ impl tracing::field::Visit for LogVisitor {
         field: &tracing::field::Field,
         value: &(dyn std::error::Error + 'static),
     ) {
-        self.record_value(field, Value::String(value.to_string()));
+        self.record_value(field, truncate_value(value.to_string()));
     }
 
     fn record_debug(&mut self, field: &tracing::field::Field, value: &dyn std::fmt::Debug) {
-        self.record_value(field, Value::String(format!("{value:?}")));
+        self.record_value(field, truncate_value(format!("{value:?}")));
     }
 }
 
