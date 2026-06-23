@@ -97,6 +97,9 @@ impl RequestRouter {
                 // E3Failed from on-chain markE3Failed may arrive after a local timeout already
                 // cleaned up the context.
                 InterfoldEventData::E3Failed(data) if data.reason.is_timeout() => true,
+                // Settlement receipts (PlaintextOutputPublished, etc.) can arrive in the same
+                // EVM block after E3StageChanged(Complete) already tore down the context.
+                InterfoldEventData::PlaintextOutputPublished(_) => true,
                 _ => false,
             };
             if is_late_terminal {
