@@ -1417,6 +1417,7 @@ async fn test_trbfv_actor() -> Result<()> {
             )),
             dkg_fold_attestation_verifier: benchmark_dkg_fold_attestation_verifier_address()
                 .map(|a| e3_config::Contract::AddressOnly(a.to_string())),
+            faucet: None,
         },
         finalization_ms: None,
         reorg_confirmations: None,

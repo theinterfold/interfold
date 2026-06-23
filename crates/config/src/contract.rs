@@ -50,6 +50,8 @@ pub struct ContractAddresses {
     pub fee_token: Option<Contract>,
     pub slashing_manager: Option<Contract>,
     pub dkg_fold_attestation_verifier: Option<Contract>,
+    /// Testnet faucet (sepolia). Distributes FOLD + fee tokens to callers.
+    pub faucet: Option<Contract>,
 }
 
 impl ContractAddresses {
@@ -62,6 +64,7 @@ impl ContractAddresses {
             self.fee_token.as_ref(),
             self.slashing_manager.as_ref(),
             self.dkg_fold_attestation_verifier.as_ref(),
+            self.faucet.as_ref(),
         ]
         .into_iter()
         .flatten()

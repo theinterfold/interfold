@@ -7,12 +7,22 @@
 //! Pure decoding of raw EVM revert data into human-readable contract errors.
 
 use crate::contracts::{ICiphernodeRegistry, IInterfold, ISlashingManager};
-use alloy::sol_types::SolInterface;
+use alloy::sol_types::{Panic, Revert, SolError, SolInterface};
 
 /// Try to decode raw revert data into a human-readable error string.
 pub fn decode_error(data: &[u8]) -> Option<String> {
     if data.len() < 4 {
         return None;
+    }
+
+    // Standard `Error(string)` reverts (e.g. `require(cond, "msg")` /
+    // `revert("msg")`) and `Panic(uint256)` are not contract-specific, so
+    // try them first.
+    if let Ok(revert) = Revert::abi_decode(data) {
+        return Some(revert.reason);
+    }
+    if let Ok(panic) = Panic::abi_decode(data) {
+        return Some(format!("panic: {panic}"));
     }
 
     if let Ok(err) = IInterfold::IInterfoldErrors::abi_decode(data) {
@@ -111,6 +121,14 @@ mod tests {
     fn test_decode_unknown_error() {
         let data = vec![0xde, 0xad, 0xbe, 0xef];
         assert!(decode_error(&data).is_none());
+    }
+
+    #[test]
+    fn test_decode_string_revert() {
+        // Standard `revert("No FOLD")` -> Error(string)
+        let data = Revert::from("No FOLD").abi_encode();
+        let decoded = decode_error(&data).unwrap();
+        assert_eq!(decoded, "No FOLD");
     }
 
     #[test]

@@ -28,10 +28,15 @@ You'll need:
   [Google Cloud faucet](https://cloud.google.com/application/web3/faucet/ethereum/sepolia), or
   [PoW faucet](https://sepolia-faucet.pk910.de).
 - **Test FOLD** — for ciphernode bonding (only if you're running your own nodes). The InterfoldToken
-  (FOLD) is deployed at `0xbAb3220FD04a193a192F07879673597Cd695Cb03`. Reach out on the
-  [community Telegram](https://t.me/encaborations) for test FOLD.
+  (FOLD) is deployed at `0x8d299447dc025c9dDc4639AcbBe2453edb5B950B`.
 - **Test USDC** — for E3 fees and tickets. Mock USDC at
-  `0x2721Cdf281d40744aD567cBf3e7100F60bcbAE79`. Same channel for tokens.
+  `0x156e0411F66BC06d57a57cA85408FF7d88ad2587`.
+
+> **Faucet:** the quickest way to get both test tokens is the on-chain faucet at
+> `0xA43DDEE07BbeE473083Cb72561dfA3D3Be0b597a`. Run `interfold faucet` (with the `faucet` address
+> set in your config) and it sends a fixed amount of FOLD and mock USDC to your signer. Each token
+> is only topped up if your balance is below the per-token threshold. If the faucet runs dry, reach
+> out on the [community Telegram](https://t.me/encaborations).
 
 > The full list of deployed Sepolia addresses lives in
 > [Ciphernode Operators → Sepolia Contract Addresses](/ciphernode-operators#sepolia-contract-addresses)
@@ -55,9 +60,9 @@ PRIVATE_KEY=0x...
 CHAIN_ID=11155111
 
 # Deployed Interfold contract addresses (Sepolia)
-INTERFOLD_ADDRESS=0x670eFE043d1D340148037b4b76c4F9dfED294309
-CIPHERNODE_REGISTRY_ADDRESS=0x4D707127F72a216EA116AF0B4262dD7382F84259
-FEE_TOKEN_ADDRESS=0x2721Cdf281d40744aD567cBf3e7100F60bcbAE79
+INTERFOLD_ADDRESS=0x75496A79903442df15E9B546A947132D61F839dc
+CIPHERNODE_REGISTRY_ADDRESS=0xAD1e67D369a9404BB51dcdd1e7E0f30f813ED718
+FEE_TOKEN_ADDRESS=0x156e0411F66BC06d57a57cA85408FF7d88ad2587
 ```
 
 ---
@@ -150,7 +155,7 @@ Update your coordination server to point to Sepolia:
 # .env for the server
 WS_RPC_URL=wss://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
 HTTP_RPC_URL=https://eth-sepolia.g.alchemy.com/v2/YOUR_KEY
-INTERFOLD_ADDRESS=0x670eFE043d1D340148037b4b76c4F9dfED294309
+INTERFOLD_ADDRESS=0x75496A79903442df15E9B546A947132D61F839dc
 E3_PROGRAM_ADDRESS=<your deployed program address>
 CHAIN_ID=11155111
 ```
