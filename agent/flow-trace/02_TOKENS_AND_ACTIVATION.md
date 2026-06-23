@@ -473,3 +473,10 @@ enforcement based on immutable policy curves. Key changes:
   `BondingRegistry.getTicketBalanceAtBlock(node, c.requestBlock - 1)` — pass the value through
   unchanged; the parameter is now a timepoint per EIP-6372 rather than a block number, which is
   required for the tFOLD timestamp clock to be valid.
+
+### Node-operator event projection
+
+The EVM reader now emits typed `LicenseBondUpdated` and `CiphernodeDeregistrationRequested` events
+alongside the existing ticket and activation events. The local dashboard rebuilds each chain's
+registered/active node sets and the operator's ticket, license, and exit state from EventStore
+history; it does not parse human-oriented CLI status output.

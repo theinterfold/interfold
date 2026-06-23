@@ -59,6 +59,25 @@ impl RequestRouter {
             return RoutingDecision::Broadcast;
         }
 
+        // Durable observational EVM facts are consumed directly by projections
+        // and global observers. They describe an E3, but they do not drive its
+        // per-E3 actors. Routing them into a context would create contexts for
+        // historical observations and report expected post-settlement receipts
+        // as errors after teardown.
+        if matches!(
+            msg.get_data(),
+            InterfoldEventData::InputPublished(_)
+                | InterfoldEventData::RewardsDistributed(_)
+                | InterfoldEventData::RewardCredited(_)
+                | InterfoldEventData::RewardClaimed(_)
+                | InterfoldEventData::CommitteeFormationFailed(_)
+                | InterfoldEventData::CommitteeActivationChanged(_)
+                | InterfoldEventData::CommitteeViabilityUpdated(_)
+                | InterfoldEventData::EvmLogObserved(_)
+        ) {
+            return RoutingDecision::Ignore;
+        }
+
         // Only process events with e3_ids.
         let Some(e3_id) = msg.get_e3_id() else {
             return RoutingDecision::Ignore;
@@ -78,6 +97,9 @@ impl RequestRouter {
                 // E3Failed from on-chain markE3Failed may arrive after a local timeout already
                 // cleaned up the context.
                 InterfoldEventData::E3Failed(data) if data.reason.is_timeout() => true,
+                // Settlement receipts (PlaintextOutputPublished, etc.) can arrive in the same
+                // EVM block after E3StageChanged(Complete) already tore down the context.
+                InterfoldEventData::PlaintextOutputPublished(_) => true,
                 _ => false,
             };
             if is_late_terminal {
@@ -117,7 +139,7 @@ mod tests {
     use super::*;
     use e3_events::{
         E3Failed, E3RequestComplete, E3Stage, E3StageChanged, FailureReason, InterfoldEvent,
-        PlaintextAggregated, Sequenced, Shutdown,
+        PlaintextAggregated, RewardCredited, Sequenced, Shutdown,
     };
 
     fn e3id() -> E3id {
@@ -178,6 +200,24 @@ mod tests {
         assert_eq!(
             RequestRouter::route(&msg, &completed),
             RoutingDecision::AlreadyCompleted(id)
+        );
+    }
+
+    #[test]
+    fn settlement_receipt_is_not_routed_to_completed_context() {
+        let id = e3id();
+        let mut completed = HashSet::new();
+        completed.insert(id.clone());
+        let msg = from_data(RewardCredited {
+            e3_id: id,
+            account: "0x01".into(),
+            token: "0x02".into(),
+            amount: "10".into(),
+        });
+
+        assert_eq!(
+            RequestRouter::route(&msg, &completed),
+            RoutingDecision::Ignore
         );
     }
 

@@ -11,7 +11,7 @@ use alloy::{
     primitives::{LogData, B256},
     sol_types::SolEvent,
 };
-use e3_events::InterfoldEventData;
+use e3_events::{CiphernodeDeregistrationRequested, InterfoldEventData, LicenseBondUpdated};
 use tracing::{error, trace};
 
 struct TicketBalanceUpdatedWithChainId(pub IBondingRegistry::TicketBalanceUpdated, pub u64);
@@ -87,6 +87,47 @@ impl From<OperatorActivationChangedWithChainId> for InterfoldEventData {
     }
 }
 
+struct LicenseBondUpdatedWithChainId(pub IBondingRegistry::LicenseBondUpdated, pub u64);
+
+impl From<LicenseBondUpdatedWithChainId> for LicenseBondUpdated {
+    fn from(value: LicenseBondUpdatedWithChainId) -> Self {
+        Self {
+            operator: value.0.operator.to_string(),
+            delta: value.0.delta,
+            new_bond: value.0.newBond,
+            reason: value.0.reason.into(),
+            chain_id: value.1,
+        }
+    }
+}
+
+impl From<LicenseBondUpdatedWithChainId> for InterfoldEventData {
+    fn from(value: LicenseBondUpdatedWithChainId) -> Self {
+        LicenseBondUpdated::from(value).into()
+    }
+}
+
+struct CiphernodeDeregistrationRequestedWithChainId(
+    pub IBondingRegistry::CiphernodeDeregistrationRequested,
+    pub u64,
+);
+
+impl From<CiphernodeDeregistrationRequestedWithChainId> for CiphernodeDeregistrationRequested {
+    fn from(value: CiphernodeDeregistrationRequestedWithChainId) -> Self {
+        Self {
+            operator: value.0.operator.to_string(),
+            unlock_at: value.0.unlockAt,
+            chain_id: value.1,
+        }
+    }
+}
+
+impl From<CiphernodeDeregistrationRequestedWithChainId> for InterfoldEventData {
+    fn from(value: CiphernodeDeregistrationRequestedWithChainId) -> Self {
+        CiphernodeDeregistrationRequested::from(value).into()
+    }
+}
+
 pub(crate) fn extractor(
     data: &LogData,
     topics: &[B256],
@@ -112,6 +153,22 @@ pub(crate) fn extractor(
                 OperatorActivationChangedWithChainId(event, chain_id),
             ))
         }
+        Some(&IBondingRegistry::LicenseBondUpdated::SIGNATURE_HASH) => {
+            let Ok(event) = IBondingRegistry::LicenseBondUpdated::decode_log_data(data) else {
+                error!("Error parsing event LicenseBondUpdated after topic matched!");
+                return None;
+            };
+            Some(LicenseBondUpdatedWithChainId(event, chain_id).into())
+        }
+        Some(&IBondingRegistry::CiphernodeDeregistrationRequested::SIGNATURE_HASH) => {
+            let Ok(event) =
+                IBondingRegistry::CiphernodeDeregistrationRequested::decode_log_data(data)
+            else {
+                error!("Error parsing CiphernodeDeregistrationRequested after topic matched!");
+                return None;
+            };
+            Some(CiphernodeDeregistrationRequestedWithChainId(event, chain_id).into())
+        }
         Some(&IBondingRegistry::ConfigurationUpdated::SIGNATURE_HASH) => {
             let Ok(event) = IBondingRegistry::ConfigurationUpdated::decode_log_data(data) else {
                 error!("Error parsing event ConfigurationUpdated after topic was matched!");
@@ -124,9 +181,14 @@ pub(crate) fn extractor(
         _ => {
             trace!(
                 topic=?topics.first(),
-                "Unknown event was received by BondingRegistry.sol parser but was ignored"
+                "Preserving event without a typed BondingRegistry decoder"
             );
-            None
+            Some(crate::domain::evm_log_observation::observe(
+                "BondingRegistry",
+                data,
+                topics,
+                chain_id,
+            ))
         }
     }
 }
@@ -173,8 +235,11 @@ mod tests {
     }
 
     #[test]
-    fn test_extractor_ignores_unknown_topic() {
+    fn test_extractor_preserves_unknown_topic() {
         let log_data = LogData::default();
-        assert!(extractor(&log_data, &[B256::ZERO], 1).is_none());
+        assert!(matches!(
+            extractor(&log_data, &[B256::ZERO], 1),
+            Some(InterfoldEventData::EvmLogObserved(_))
+        ));
     }
 }

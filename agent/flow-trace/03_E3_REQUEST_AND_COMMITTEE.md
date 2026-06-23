@@ -414,3 +414,10 @@ finalize the failure. Default `markFailedGracePeriod = 0` preserves the legacy p
 `Committee.requestBlock` stores `block.timestamp` (EIP-6372 timestamp mode) so that `getPastVotes` /
 `getTicketBalanceAtBlock` lookups against the `InterfoldTicketToken` resolve consistently across L1
 and L2 clocks. The field name is preserved for storage / event ABI compatibility.
+
+### Committee observability events
+
+The EVM reader has typed coverage for `CommitteeFormationFailed`, `CommitteeActivationChanged`, and
+`CommitteeViabilityUpdated` in addition to ticket submission, finalization, publication, and
+expulsion. These facts are stored in the E3's chain aggregate and projected into the dashboard's
+committee stage, including submitted/required thresholds and post-expulsion viability.

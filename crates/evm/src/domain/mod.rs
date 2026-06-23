@@ -18,6 +18,8 @@ pub(crate) mod backoff;
 pub(crate) mod bonding_registry_events;
 pub(crate) mod chain_sync_state;
 pub(crate) mod ciphernode_registry_events;
+pub(crate) mod evm_event_catalog;
+pub(crate) mod evm_log_observation;
 pub(crate) mod historical_order_fixer;
 pub(crate) mod interfold_events;
 pub(crate) mod log_timestamp;

@@ -18,6 +18,7 @@ use crate::{
     events::{IncomingResponse, OutgoingRequest, ProtocolResponse},
     keypair::Libp2pKeypair,
     net_interface_handle::NetInterfaceHandle,
+    NetworkStatus,
 };
 use anyhow::{bail, Context, Result};
 use e3_events::CorrelationId;
@@ -133,6 +134,8 @@ pub struct Libp2pNetInterface {
     cmd_tx: mpsc::Sender<NetCommand>,
     /// Local receiver to process NetCommands from
     cmd_rx: mpsc::Receiver<NetCommand>,
+    /// Live operational connection state exposed to node operators.
+    status: NetworkStatus,
 }
 
 impl Libp2pNetInterface {
@@ -144,6 +147,7 @@ impl Libp2pNetInterface {
     ) -> Result<Self> {
         let (event_tx, _) = broadcast::channel(EVENT_CHANNEL_SIZE);
         let (cmd_tx, cmd_rx) = mpsc::channel(CMD_CHANNEL_SIZE);
+        let status = NetworkStatus::new(peers.len());
 
         let swarm = libp2p::SwarmBuilder::with_existing_identity(id.into_keypair())
             .with_tokio()
@@ -164,11 +168,16 @@ impl Libp2pNetInterface {
             event_tx,
             cmd_tx,
             cmd_rx,
+            status,
         })
     }
 
     pub fn handle(&self) -> NetInterfaceHandle {
-        NetInterfaceHandle::new(self.cmd_tx.clone(), self.event_tx.subscribe())
+        NetInterfaceHandle::new(
+            self.cmd_tx.clone(),
+            self.event_tx.subscribe(),
+            self.status.clone(),
+        )
     }
 
     pub async fn start(&mut self) -> Result<()> {
@@ -238,7 +247,7 @@ impl Libp2pNetInterface {
                 }
                 // Process events
                 event = self.swarm.select_next_some() =>  {
-                    match process_swarm_event(&mut self.swarm, &event_tx, &cmd_tx, &mut correlator, &mut peer_failures, &mut peer_id_mismatches, event).await {
+                    match process_swarm_event(&mut self.swarm, &event_tx, &cmd_tx, &mut correlator, &mut peer_failures, &mut peer_id_mismatches, &self.status, event).await {
                         Ok(_) => (),
                         Err(e) => error!("Error processing NetEvent: {e}")
                     }
@@ -322,6 +331,7 @@ async fn process_swarm_event(
     correlator: &mut Correlator,
     peer_failures: &mut PeerFailureTracker,
     peer_id_mismatches: &mut PeerFailureTracker,
+    status: &NetworkStatus,
     event: SwarmEvent<NodeBehaviourEvent>,
 ) -> Result<()> {
     match event {
@@ -340,7 +350,21 @@ async fn process_swarm_event(
                 info!("Peer connected: {peer_id} (total: {total})");
             }
             let remote_addr = endpoint.get_remote_address().clone();
-            if !(should_filter_loopback(swarm) && is_loopback_addr(&remote_addr)) {
+            // Only track/advertise peers we consider routable. Filtered loopback
+            // connections are excluded from both the dashboard peer count and
+            // Kademlia so the two stay consistent.
+            let filter_loopback = should_filter_loopback(swarm) && is_loopback_addr(&remote_addr);
+            if !filter_loopback {
+                status.connected(
+                    peer_id.to_string(),
+                    remote_addr.to_string(),
+                    if endpoint.is_dialer() {
+                        "outbound"
+                    } else {
+                        "inbound"
+                    },
+                    num_established.get(),
+                );
                 swarm
                     .behaviour_mut()
                     .kademlia
@@ -362,6 +386,7 @@ async fn process_swarm_event(
             error,
             connection_id,
         } => {
+            status.record_error(format!("connection {connection_id}: {error}"));
             if let Some(ref failed_peer) = peer_id {
                 if let DialError::WrongPeerId {
                     obtained,
@@ -465,6 +490,7 @@ async fn process_swarm_event(
             if error_str.contains("Local peer ID") || error_str.contains("aborted by peer") {
                 debug!("{}", error_str);
             } else {
+                status.record_error(format!("incoming connection: {error_str}"));
                 warn!("Incoming connection error: {}", error_str);
             }
         }
@@ -552,6 +578,7 @@ async fn process_swarm_event(
         }
 
         SwarmEvent::NewListenAddr { address, .. } => {
+            status.listening_on(address.to_string());
             trace!("Local node is listening on {address}");
         }
 
@@ -666,6 +693,7 @@ async fn process_swarm_event(
             cause,
             ..
         } => {
+            status.disconnected(&peer_id.to_string(), num_established);
             if num_established == 0 {
                 let total = swarm.connected_peers().count();
                 info!("Peer disconnected: {peer_id} (total: {total}, cause: {cause:?})");
@@ -675,10 +703,13 @@ async fn process_swarm_event(
         SwarmEvent::ListenerClosed {
             addresses, reason, ..
         } => {
+            status.stopped_listening(addresses.iter().map(ToString::to_string));
+            status.record_error(format!("listener closed: {reason:?}"));
             warn!("Listener closed on {addresses:?}: {reason:?}");
         }
 
         SwarmEvent::ListenerError { error, .. } => {
+            status.record_error(format!("listener error: {error}"));
             error!("Listener error: {error}");
         }
 

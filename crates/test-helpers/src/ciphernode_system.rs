@@ -358,10 +358,27 @@ impl Deref for CiphernodeHistory {
 mod tests {
     use super::*;
     use actix::prelude::*;
-    use e3_ciphernode_builder::{EventSystem, NetInterfaceKind};
+    use e3_ciphernode_builder::{
+        global_eventstore_cache::EventStoreReader, EventSystem, NetInterfaceKind,
+    };
     use e3_data::InMemStore;
-    use e3_events::{EventBus, EventBusConfig};
+    use e3_events::{EventBus, EventBusConfig, EventStoreQueryBy, SeqAgg, TsAgg};
+    use e3_net::NetworkStatus;
     use libp2p::PeerId;
+
+    // Minimal mock actor that satisfies the EventStoreReader recipient requirements.
+    struct MockEventStore;
+    impl Actor for MockEventStore {
+        type Context = actix::Context<Self>;
+    }
+    impl Handler<EventStoreQueryBy<SeqAgg>> for MockEventStore {
+        type Result = ();
+        fn handle(&mut self, _msg: EventStoreQueryBy<SeqAgg>, _ctx: &mut Self::Context) {}
+    }
+    impl Handler<EventStoreQueryBy<TsAgg>> for MockEventStore {
+        type Result = ();
+        fn handle(&mut self, _msg: EventStoreQueryBy<TsAgg>, _ctx: &mut Self::Context) {}
+    }
 
     async fn mock_setup_node(address: String) -> Result<CiphernodeHandle> {
         // Create mock actors for the test
@@ -375,6 +392,10 @@ mod tests {
             .handle()?
             .enable("test");
 
+        // Mock event store for EventStoreReader
+        let mock_es = MockEventStore.start();
+        let eventstore = EventStoreReader::new(mock_es.clone().recipient(), mock_es.recipient());
+
         Ok(CiphernodeHandle {
             address,
             store: (&store).into(),
@@ -383,6 +404,9 @@ mod tests {
             errors: Some(errors),
             peer_id: PeerId::random(),
             net_interface: NetInterfaceKind::Libp2p,
+            network_status: NetworkStatus::default(),
+            eventstore,
+            aggregate_ids: vec![],
         })
     }
 

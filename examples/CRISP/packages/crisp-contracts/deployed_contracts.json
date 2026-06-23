@@ -67,12 +67,21 @@
     },
     "InterfoldToken": {
       "constructorArgs": {
+<<<<<<< HEAD
         "owner": "0x8837e47c4Bb520ADE83AAB761C3B60679443af1B",
         "ccaStart": "1782210660",
         "ccaEnd": "1782815460",
         "noMoreLocks": "1912847460",
         "claimSource": "0x8837e47c4Bb520ADE83AAB761C3B60679443af1B",
         "bondingRegistry": "0xfdE5DAbaD974223C401c867eDF3bB6262175F578"
+=======
+        "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "ccaStart": "1782168274",
+        "ccaEnd": "1782773074",
+        "claimSource": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "bondingRegistry": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+        "noMoreLocks": "1912805074"
+>>>>>>> a5c9072e5 (fix: events)
       },
       "blockNumber": 11121982,
       "address": "0x8d299447dc025c9dDc4639AcbBe2453edb5B950B"

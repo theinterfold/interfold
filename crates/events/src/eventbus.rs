@@ -136,7 +136,6 @@ impl<E: Event> Handler<E> for EventBus<E> {
             }
         }
 
-        // TODO: workshop to work out best display format
         tracing::info!("{} {}", colorize(">>>", Color::Yellow), event);
         self.track(event);
     }

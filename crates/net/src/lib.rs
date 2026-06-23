@@ -31,6 +31,7 @@ use actors::{NetEventBuffer, NetSyncManager};
 
 pub use actors::*;
 pub use cid::ContentHash;
+pub use domain::{ConnectedPeer, NetworkSnapshot, NetworkStatus};
 pub use keypair::*;
 pub use net_interface::*;
 pub use net_interface_handle::*;

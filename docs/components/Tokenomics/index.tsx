@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import React, { useRef, useState } from 'react'
+import React, { useCallback, useRef, useState } from 'react'
 import classes from './Tokenomics.module.css'
 
 // ---------------------------------------------------------------------------
@@ -26,28 +26,26 @@ type Slice = {
 // Colors alternate light↔dark across stacking order for maximum area-chart legibility.
 const ALLOCATION: Slice[] = [
   // Community (57%)
-  { key: 'Foundation Treasury', pct: 40, color: '#3A7D44', group: 'community' },  // vivid forest
-  { key: 'CCA',                 pct: 10, color: '#687d71', group: 'community' },  // brand sage
-  { key: 'Airdrop',             pct:  4, color: '#82F5AD', group: 'community' },  // brand bright mint
-  { key: 'Liquidity Reserve',   pct:  3, color: '#C5EFD0', group: 'community' },  // pale mint
+  { key: 'Foundation Treasury', pct: 40, color: '#3A7D44', group: 'community' }, // vivid forest
+  { key: 'CCA', pct: 10, color: '#687d71', group: 'community' }, // brand sage
+  { key: 'Airdrop', pct: 4, color: '#82F5AD', group: 'community' }, // brand bright mint
+  { key: 'Liquidity Reserve', pct: 3, color: '#C5EFD0', group: 'community' }, // pale mint
   // Other (43%)
-  { key: 'Gnosis Guild',        pct: 20, color: '#252525', group: 'other' },      // brand dark charcoal
-  { key: 'Investors',           pct: 14, color: '#3A4E42', group: 'other' },      // dark muted forest
-  { key: 'Team and Advisors',   pct:  9, color: '#8FAE96', group: 'other' },      // muted sage
+  { key: 'Gnosis Guild', pct: 20, color: '#252525', group: 'other' }, // brand dark charcoal
+  { key: 'Investors', pct: 14, color: '#3A4E42', group: 'other' }, // dark muted forest
+  { key: 'Team and Advisors', pct: 9, color: '#8FAE96', group: 'other' }, // muted sage
 ]
 
-const communitySlices = ALLOCATION.filter(d => d.group === 'community')
-const otherSlices     = ALLOCATION.filter(d => d.group === 'other')
-const COMMUNITY_PCT   = communitySlices.reduce((s, d) => s + d.pct, 0)  // 57
-const OTHER_PCT       = otherSlices.reduce((s, d) => s + d.pct, 0)       // 43
+const communitySlices = ALLOCATION.filter((d) => d.group === 'community')
+const otherSlices = ALLOCATION.filter((d) => d.group === 'other')
+const COMMUNITY_PCT = communitySlices.reduce((s, d) => s + d.pct, 0) // 57
+const OTHER_PCT = otherSlices.reduce((s, d) => s + d.pct, 0) // 43
 
-const COLOR_BY_KEY: Record<string, string> = Object.fromEntries(
-  ALLOCATION.map(s => [s.key, s.color]),
-)
+const COLOR_BY_KEY: Record<string, string> = Object.fromEntries(ALLOCATION.map((s) => [s.key, s.color]))
 
 const GROUP_COLOR: Record<Group, string> = {
-  community: '#3A5E3C',  // brand forest green
-  other:     '#1C3A22',  // dark forest
+  community: '#3A5E3C', // brand forest green
+  other: '#1C3A22', // dark forest
 }
 
 // ---------------------------------------------------------------------------
@@ -61,10 +59,7 @@ function polar(cx: number, cy: number, r: number, angleDeg: number): [number, nu
   return [cx + r * Math.cos(a), cy + r * Math.sin(a)]
 }
 
-function donutSlice(
-  cx: number, cy: number, rOuter: number, rInner: number,
-  start: number, end: number,
-): string {
+function donutSlice(cx: number, cy: number, rOuter: number, rInner: number, start: number, end: number): string {
   const [x1, y1] = polar(cx, cy, rOuter, end)
   const [x2, y2] = polar(cx, cy, rOuter, start)
   const [x3, y3] = polar(cx, cy, rInner, start)
@@ -90,7 +85,7 @@ export function KeyParameters() {
   ]
   return (
     <div className={classes.stats}>
-      {cards.map(c => (
+      {cards.map((c) => (
         <div key={c.label} className={classes.statCard}>
           <p className={classes.statLabel}>{c.label}</p>
           <div className={classes.statValue}>{c.value}</div>
@@ -106,25 +101,25 @@ export function KeyParameters() {
 
 // Community and Other groups are separated by a small angular gap in the donut
 // so the two colour families read as distinct visual clusters.
-const GROUP_GAP_DEG      = 6
-const TOTAL_SLICE_DEG    = 360 - 2 * GROUP_GAP_DEG                      // 348°
-const COMMUNITY_SPAN_DEG = (COMMUNITY_PCT / 100) * TOTAL_SLICE_DEG      // ≈ 198.36°
-const OTHER_SPAN_DEG     = (OTHER_PCT     / 100) * TOTAL_SLICE_DEG      // ≈ 149.64°
-const OTHER_START_DEG    = COMMUNITY_SPAN_DEG + GROUP_GAP_DEG           // ≈ 204.36°
+const GROUP_GAP_DEG = 6
+const TOTAL_SLICE_DEG = 360 - 2 * GROUP_GAP_DEG // 348°
+const COMMUNITY_SPAN_DEG = (COMMUNITY_PCT / 100) * TOTAL_SLICE_DEG // ≈ 198.36°
+const OTHER_SPAN_DEG = (OTHER_PCT / 100) * TOTAL_SLICE_DEG // ≈ 149.64°
+const OTHER_START_DEG = COMMUNITY_SPAN_DEG + GROUP_GAP_DEG // ≈ 204.36°
 
 export function AllocationPie() {
-  const size   = 260
-  const cx     = size / 2   // 130
-  const cy     = size / 2   // 130
+  const size = 260
+  const cx = size / 2 // 130
+  const cy = size / 2 // 130
   const rOuter = 122
   const rInner = 74
-  const POP    = 7
+  const POP = 7
 
-  const [hover, setHover]         = useState<string | null>(null)
-  const [pos, setPos]             = useState({ x: 0, y: 0 })
+  const [hover, setHover] = useState<string | null>(null)
+  const [pos, setPos] = useState({ x: 0, y: 0 })
   const [fromTable, setFromTable] = useState(false)
-  const wrapRef                   = useRef<HTMLDivElement>(null)
-  const svgRef                    = useRef<SVGSVGElement>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const svgRef = useRef<SVGSVGElement>(null)
 
   type Arc = Slice & { start: number; end: number; dx: number; dy: number }
 
@@ -134,7 +129,7 @@ export function AllocationPie() {
 
     for (const d of communitySlices) {
       const start = cur
-      const span  = (d.pct / COMMUNITY_PCT) * COMMUNITY_SPAN_DEG
+      const span = (d.pct / COMMUNITY_PCT) * COMMUNITY_SPAN_DEG
       cur += span
       const end = cur
       const mid = (((start + end) / 2 - 90) * Math.PI) / 180
@@ -145,7 +140,7 @@ export function AllocationPie() {
 
     for (const d of otherSlices) {
       const start = cur
-      const span  = (d.pct / OTHER_PCT) * OTHER_SPAN_DEG
+      const span = (d.pct / OTHER_PCT) * OTHER_SPAN_DEG
       cur += span
       const end = cur
       const mid = (((start + end) / 2 - 90) * Math.PI) / 180
@@ -171,16 +166,16 @@ export function AllocationPie() {
     const svg = svgRef.current
     const wrap = wrapRef.current
     if (!svg || !wrap) return null
-    const arc = arcs.find(a => a.key === key)
+    const arc = arcs.find((a) => a.key === key)
     if (!arc) return null
     const midAngle = (arc.start + arc.end) / 2
-    const midR     = (rOuter + rInner) / 2
+    const midR = (rOuter + rInner) / 2
     const [svgX, svgY] = polar(cx, cy, midR, midAngle)
-    const svgRect  = svg.getBoundingClientRect()
+    const svgRect = svg.getBoundingClientRect()
     const wrapRect = wrap.getBoundingClientRect()
     return {
-      x: (svgRect.left - wrapRect.left) + svgX * (svgRect.width / size),
-      y: (svgRect.top - wrapRect.top) + svgY * (svgRect.height / size),
+      x: svgRect.left - wrapRect.left + svgX * (svgRect.width / size),
+      y: svgRect.top - wrapRect.top + svgY * (svgRect.height / size),
     }
   }
 
@@ -199,22 +194,16 @@ export function AllocationPie() {
   return (
     <div className={classes.allocation} ref={wrapRef} onMouseMove={onMove}>
       <div className={classes.pieWrap}>
-        <svg
-          ref={svgRef}
-          width={size} height={size}
-          viewBox={`0 0 ${size} ${size}`}
-          role="img"
-          aria-label="Token distribution by category"
-        >
+        <svg ref={svgRef} width={size} height={size} viewBox={`0 0 ${size} ${size}`} role='img' aria-label='Token distribution by category'>
           {/* Donut slices */}
-          {arcs.map(a => {
+          {arcs.map((a) => {
             const isHover = hover === a.key
             return (
               <path
                 key={a.key}
                 d={donutSlice(cx, cy, rOuter, rInner, a.start, a.end)}
                 fill={a.color}
-                stroke="#ffffff"
+                stroke='#ffffff'
                 strokeWidth={2.5}
                 style={{
                   transition: 'transform 0.18s ease, opacity 0.18s ease',
@@ -222,17 +211,23 @@ export function AllocationPie() {
                   opacity: hover && !isHover ? 0.78 : 1,
                   cursor: 'pointer',
                 }}
-                onMouseEnter={() => { setHover(a.key); setFromTable(false) }}
-                onMouseLeave={() => { setHover(null); setFromTable(false) }}
+                onMouseEnter={() => {
+                  setHover(a.key)
+                  setFromTable(false)
+                }}
+                onMouseLeave={() => {
+                  setHover(null)
+                  setFromTable(false)
+                }}
               />
             )
           })}
 
           {/* Centre label */}
-          <text x={cx} y={cy - 6} textAnchor="middle" fontSize="30" fontWeight="700" fill="#0f2233">
+          <text x={cx} y={cy - 6} textAnchor='middle' fontSize='30' fontWeight='700' fill='#0f2233'>
             1.2B
           </text>
-          <text x={cx} y={cy + 16} textAnchor="middle" fontSize="11" letterSpacing="0.08em" fill="#6b7280">
+          <text x={cx} y={cy + 16} textAnchor='middle' fontSize='11' letterSpacing='0.08em' fill='#6b7280'>
             TOTAL SUPPLY
           </text>
         </svg>
@@ -251,7 +246,7 @@ export function AllocationPie() {
               Community<span className={classes.groupPct}>({COMMUNITY_PCT}%)</span>
             </td>
           </tr>
-          {communitySlices.map(d => (
+          {communitySlices.map((d) => (
             <tr
               key={d.key}
               onMouseEnter={() => onTableEnter(d.key)}
@@ -271,7 +266,7 @@ export function AllocationPie() {
               Other<span className={classes.groupPct}>({OTHER_PCT}%)</span>
             </td>
           </tr>
-          {otherSlices.map(d => (
+          {otherSlices.map((d) => (
             <tr
               key={d.key}
               onMouseEnter={() => onTableEnter(d.key)}
@@ -311,30 +306,30 @@ type Vest = {
 // Stacking order: bottom → top. Shorter unlock periods at the base so the
 // chart reads as progressively longer commitments toward the top.
 const VESTING: Vest[] = [
-  { key: 'Liquidity Reserve',   total:  36_000_000, vestMonths:  1, term: 'No restrictions from TGE' },
-  { key: 'CCA',                 total: 120_000_000, vestMonths:  1, term: 'No restrictions from TGE' },
-  { key: 'Investors',           total: 168_000_000, vestMonths: 24, term: '24-month linear unlock' },
-  { key: 'Airdrop',             total:  48_000_000, vestMonths: 24, term: '24-month linear unlock' },
-  { key: 'Team and Advisors',   total: 108_000_000, vestMonths: 24, term: '24-month linear unlock' },
-  { key: 'Gnosis Guild',        total: 240_000_000, vestMonths: 48, term: '48-month linear unlock' },
+  { key: 'Liquidity Reserve', total: 36_000_000, vestMonths: 1, term: 'No restrictions from TGE' },
+  { key: 'CCA', total: 120_000_000, vestMonths: 1, term: 'No restrictions from TGE' },
+  { key: 'Investors', total: 168_000_000, vestMonths: 24, term: '24-month linear unlock' },
+  { key: 'Airdrop', total: 48_000_000, vestMonths: 24, term: '24-month linear unlock' },
+  { key: 'Team and Advisors', total: 108_000_000, vestMonths: 24, term: '24-month linear unlock' },
+  { key: 'Gnosis Guild', total: 240_000_000, vestMonths: 48, term: '48-month linear unlock' },
   { key: 'Foundation Treasury', total: 480_000_000, vestMonths: 48, term: '48-month linear unlock' },
 ]
 
 const VESTING_TERMS = [
   { key: 'Foundation Treasury', schedule: '48 month linear unlock from TGE', group: 'community' as Group },
-  { key: 'CCA',                 schedule: 'No restrictions from TGE',        group: 'community' as Group },
-  { key: 'Airdrop',             schedule: '24 month linear unlock from TGE', group: 'community' as Group },
-  { key: 'Liquidity Reserve',   schedule: 'No restrictions from TGE',        group: 'community' as Group },
-  { key: 'Gnosis Guild',        schedule: '48 month linear unlock from TGE', group: 'other' as Group },
-  { key: 'Investors',           schedule: '24 month linear unlock from TGE', group: 'other' as Group },
-  { key: 'Team and Advisors',   schedule: '24 month linear unlock from TGE', group: 'other' as Group },
+  { key: 'CCA', schedule: 'No restrictions from TGE', group: 'community' as Group },
+  { key: 'Airdrop', schedule: '24 month linear unlock from TGE', group: 'community' as Group },
+  { key: 'Liquidity Reserve', schedule: 'No restrictions from TGE', group: 'community' as Group },
+  { key: 'Gnosis Guild', schedule: '48 month linear unlock from TGE', group: 'other' as Group },
+  { key: 'Investors', schedule: '24 month linear unlock from TGE', group: 'other' as Group },
+  { key: 'Team and Advisors', schedule: '24 month linear unlock from TGE', group: 'other' as Group },
 ]
 
 const MONTHS_AXIS = 48
-const X_TICKS  = [0, 12, 24, 36, 48]
+const X_TICKS = [0, 12, 24, 36, 48]
 const X_LABELS = ['TGE', '12 mo', '24 mo', '36 mo', '48 mo']
-const Y_MAX    = 1_200_000_000
-const Y_TICKS  = [0, 300_000_000, 600_000_000, 900_000_000, 1_200_000_000]
+const Y_MAX = 1_200_000_000
+const Y_TICKS = [0, 300_000_000, 600_000_000, 900_000_000, 1_200_000_000]
 const Y_LABELS = ['0', '300M', '600M', '900M', '1.2B']
 
 function cumulative(v: Vest, t: number): number {
@@ -342,36 +337,34 @@ function cumulative(v: Vest, t: number): number {
 }
 
 export function VestingSchedule() {
-  const W     = 860
-  const H     = 380
-  const padL  = 56
-  const padR  = 24
-  const padT  = 24
-  const padB  = 48
+  const W = 860
+  const H = 380
+  const padL = 56
+  const padR = 24
+  const padT = 24
+  const padB = 48
   const plotW = W - padL - padR
   const plotH = H - padT - padB
 
-  const x = (t: number) => padL + (t / MONTHS_AXIS) * plotW
-  const y = (v: number) => padT + plotH - (v / Y_MAX) * plotH
+  const x = useCallback((t: number) => padL + (t / MONTHS_AXIS) * plotW, [padL, plotW])
+  const y = useCallback((v: number) => padT + plotH - (v / Y_MAX) * plotH, [padT, plotH])
 
   const months = Array.from({ length: MONTHS_AXIS + 1 }, (_, t) => t)
-  const bands  = VESTING.map((v, vi) => {
+  const bands = VESTING.map((v, vi) => {
     // Lower boundary is the cumulative stack of all bands beneath this one.
-    const lower = months.map(t =>
-      VESTING.slice(0, vi).reduce((s, prev) => s + cumulative(prev, t), 0),
-    )
+    const lower = months.map((t) => VESTING.slice(0, vi).reduce((s, prev) => s + cumulative(prev, t), 0))
     const upper = months.map((t, i) => lower[i] + cumulative(v, t))
     const top = months.map((t, i) => `${x(t).toFixed(1)},${y(upper[i]).toFixed(1)}`)
     const bot = months.map((t, i) => `${x(t).toFixed(1)},${y(lower[i]).toFixed(1)}`).reverse()
     return { key: v.key, color: COLOR_BY_KEY[v.key], d: `M ${top.join(' L ')} L ${bot.join(' L ')} Z` }
   })
 
-  const [hover, setHover]         = useState<string | null>(null)
-  const [tip, setTip]             = useState(false)
-  const [pos, setPos]             = useState({ x: 0, y: 0 })
+  const [hover, setHover] = useState<string | null>(null)
+  const [tip, setTip] = useState(false)
+  const [pos, setPos] = useState({ x: 0, y: 0 })
   const [fromTable, setFromTable] = useState(false)
-  const wrapRef                   = useRef<HTMLDivElement>(null)
-  const svgRef                    = useRef<SVGSVGElement>(null)
+  const wrapRef = useRef<HTMLDivElement>(null)
+  const svgRef = useRef<SVGSVGElement>(null)
 
   const onMove = (e: React.MouseEvent) => {
     // While hovering from the table the tooltip is pinned to the band, so
@@ -404,13 +397,13 @@ export function VestingSchedule() {
     for (const v of VESTING) {
       const c = cumulative(v, T)
       if (v.key === key) {
-        const svgX    = x(T)
-        const svgY    = (y(runL) + y(runL + c)) / 2
-        const svgRect  = svgRef.current.getBoundingClientRect()
+        const svgX = x(T)
+        const svgY = (y(runL) + y(runL + c)) / 2
+        const svgRect = svgRef.current.getBoundingClientRect()
         const wrapRect = wrapRef.current.getBoundingClientRect()
         return {
-          x: (svgRect.left - wrapRect.left) + svgX * (svgRect.width  / W),
-          y: (svgRect.top  - wrapRect.top)  + svgY * (svgRect.height / H),
+          x: svgRect.left - wrapRect.left + svgX * (svgRect.width / W),
+          y: svgRect.top - wrapRect.top + svgY * (svgRect.height / H),
         }
       }
       runL += c
@@ -418,39 +411,39 @@ export function VestingSchedule() {
     return null
   }
 
-  const communityVT = VESTING_TERMS.filter(v => v.group === 'community')
-  const otherVT     = VESTING_TERMS.filter(v => v.group === 'other')
+  const communityVT = VESTING_TERMS.filter((v) => v.group === 'community')
+  const otherVT = VESTING_TERMS.filter((v) => v.group === 'other')
 
   return (
     <div className={classes.vesting} ref={wrapRef} onMouseMove={onMove}>
       <div className={classes.svgScroll}>
         <svg
           ref={svgRef}
-          width="100%"
+          width='100%'
           viewBox={`0 0 ${W} ${H}`}
-          role="img"
-          aria-label="Cumulative circulating supply by category over time"
+          role='img'
+          aria-label='Cumulative circulating supply by category over time'
           style={{ minWidth: 600 }}
         >
           {/* Horizontal gridlines + y labels */}
           {Y_TICKS.map((t, i) => (
             <g key={t}>
-              <line x1={padL} y1={y(t)} x2={W - padR} y2={y(t)} stroke="#ece3d4" strokeWidth={1} />
-              <text x={padL - 10} y={y(t) + 4} textAnchor="end" fontSize="11" fill="#9aa3b0">
+              <line x1={padL} y1={y(t)} x2={W - padR} y2={y(t)} stroke='#ece3d4' strokeWidth={1} />
+              <text x={padL - 10} y={y(t) + 4} textAnchor='end' fontSize='11' fill='#9aa3b0'>
                 {Y_LABELS[i]}
               </text>
             </g>
           ))}
 
           {/* Stacked area bands */}
-          {bands.map(b => {
+          {bands.map((b) => {
             const isHover = hover === b.key
             return (
               <path
                 key={b.key}
                 d={b.d}
                 fill={b.color}
-                stroke="#ffffff"
+                stroke='#ffffff'
                 strokeWidth={isHover ? 1.5 : 0.75}
                 style={{
                   transition: 'opacity 0.18s ease, filter 0.18s ease',
@@ -458,8 +451,16 @@ export function VestingSchedule() {
                   filter: isHover ? 'brightness(1.08)' : 'none',
                   cursor: 'pointer',
                 }}
-                onMouseEnter={() => { setHover(b.key); setTip(true); setFromTable(false) }}
-                onMouseLeave={() => { setHover(null); setTip(false); setFromTable(false) }}
+                onMouseEnter={() => {
+                  setHover(b.key)
+                  setTip(true)
+                  setFromTable(false)
+                }}
+                onMouseLeave={() => {
+                  setHover(null)
+                  setTip(false)
+                  setFromTable(false)
+                }}
               />
             )
           })}
@@ -467,8 +468,8 @@ export function VestingSchedule() {
           {/* X ticks + labels */}
           {X_TICKS.map((m, i) => (
             <g key={m}>
-              <line x1={x(m)} y1={padT} x2={x(m)} y2={padT + plotH} stroke="#ece3d4" strokeWidth={m === 0 ? 0 : 1} />
-              <text x={x(m)} y={padT + plotH + 20} textAnchor="middle" fontSize="11" fill="#6b7280">
+              <line x1={x(m)} y1={padT} x2={x(m)} y2={padT + plotH} stroke='#ece3d4' strokeWidth={m === 0 ? 0 : 1} />
+              <text x={x(m)} y={padT + plotH + 20} textAnchor='middle' fontSize='11' fill='#6b7280'>
                 {X_LABELS[i]}
               </text>
             </g>
@@ -490,7 +491,7 @@ export function VestingSchedule() {
                 Community
               </td>
             </tr>
-            {communityVT.map(v => (
+            {communityVT.map((v) => (
               <tr
                 key={v.key}
                 onMouseEnter={() => onBandTableEnter(v.key)}
@@ -510,7 +511,7 @@ export function VestingSchedule() {
                 Other
               </td>
             </tr>
-            {otherVT.map(v => (
+            {otherVT.map((v) => (
               <tr
                 key={v.key}
                 onMouseEnter={() => onBandTableEnter(v.key)}

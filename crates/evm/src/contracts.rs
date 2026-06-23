@@ -53,8 +53,13 @@ sol! {
 
         // ── Events ──────────────────────────────────────────────────────────
         event E3Requested(uint256 e3Id, E3 e3, address indexed e3Program);
+        event InputPublished(uint256 indexed e3Id, bytes data, uint256 inputHash, uint256 index);
         event CiphertextOutputPublished(uint256 indexed e3Id, bytes ciphertextOutput);
-        event E3Failed(uint256 e3Id, uint8 failedAtStage, uint8 reason);
+        event PlaintextOutputPublished(uint256 indexed e3Id, bytes plaintextOutput, bytes proof);
+        event RewardsDistributed(uint256 indexed e3Id, address[] nodes, uint256[] amounts);
+        event RewardCredited(uint256 indexed e3Id, address indexed account, address indexed token, uint256 amount);
+        event RewardClaimed(uint256 indexed e3Id, address indexed account, address indexed token, uint256 amount);
+        event E3Failed(uint256 indexed e3Id, uint8 failedAtStage, uint8 reason);
         event E3StageChanged(uint256 indexed e3Id, uint8 previousStage, uint8 newStage);
 
         // ── Errors (only those our called functions can revert with) ────────
@@ -93,12 +98,14 @@ sol! {
 
         // ── Events ──────────────────────────────────────────────────────────
         event SlashExecuted(
-            uint256 proposalId,
+            uint256 indexed proposalId,
             uint256 e3Id,
-            address operator,
-            bytes32 reason,
+            address indexed operator,
+            bytes32 indexed reason,
             uint256 ticketAmount,
-            uint256 licenseAmount
+            uint256 licenseAmount,
+            bool executed,
+            uint8 lane
         );
 
         // ── Errors (only those our called functions can revert with) ────────
@@ -163,6 +170,8 @@ sol! {
 
         function accusationVoteValidity() external view returns (uint256);
 
+        function numCiphernodes() external view returns (uint256);
+
         // ── Events ──────────────────────────────────────────────────────────
         event CiphernodeAdded(
             address indexed node,
@@ -190,6 +199,29 @@ sol! {
             uint256 indexed e3Id,
             address[] committee,
             uint256[] scores
+        );
+
+        event CommitteeFormationFailed(
+            uint256 indexed e3Id,
+            uint256 nodesSubmitted,
+            uint256 thresholdRequired
+        );
+
+        event CommitteePublished(
+            uint256 indexed e3Id,
+            address[] nodes,
+            bytes publicKey,
+            bytes32 pkCommitment,
+            bytes proof
+        );
+
+        event CommitteeActivationChanged(uint256 indexed e3Id, bool active);
+
+        event CommitteeViabilityUpdated(
+            uint256 indexed e3Id,
+            uint256 activeCount,
+            uint256 thresholdM,
+            bool viable
         );
 
         event TicketSubmitted(
@@ -231,12 +263,29 @@ sol! {
     #[sol(rpc)]
     #[derive(Debug)]
     interface IBondingRegistry {
+        function getTicketBalance(address operator) external view returns (uint256);
+        function getLicenseBond(address operator) external view returns (uint256);
+        function availableTickets(address operator) external view returns (uint256);
+        function isRegistered(address operator) external view returns (bool);
+        function isActive(address operator) external view returns (bool);
+        function numActiveOperators() external view returns (uint256);
+        function hasExitInProgress(address operator) external view returns (bool);
+
         event TicketBalanceUpdated(
             address indexed operator,
             int256 delta,
             uint256 newBalance,
             bytes32 indexed reason
         );
+
+        event LicenseBondUpdated(
+            address indexed operator,
+            int256 delta,
+            uint256 newBond,
+            bytes32 indexed reason
+        );
+
+        event CiphernodeDeregistrationRequested(address indexed operator, uint64 unlockAt);
 
         event OperatorActivationChanged(address indexed operator, bool active);
 

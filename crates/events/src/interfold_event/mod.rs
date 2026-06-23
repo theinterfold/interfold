@@ -10,14 +10,18 @@ mod aggregation_proof_pending;
 mod aggregation_proof_signed;
 mod aggregator_changed;
 mod ciphernode_added;
+mod ciphernode_deregistration_requested;
 mod ciphernode_removed;
 mod ciphernode_selected;
 mod ciphertext_output_published;
 mod commitment_consistency;
+mod committee_activation_changed;
 mod committee_finalize_requested;
 mod committee_finalized;
+mod committee_formation_failed;
 mod committee_published;
 mod committee_requested;
+mod committee_viability_updated;
 mod compute_request;
 mod configuration_updated;
 mod decryption_key_shared;
@@ -37,8 +41,11 @@ mod encryption_key_collection_failed;
 mod encryption_key_created;
 mod encryption_key_pending;
 mod encryption_key_received;
+mod evm_log_observed;
+mod input_published;
 mod interfold_error;
 mod keyshare_created;
+mod license_bond_updated;
 mod net_ready;
 mod operator_activation_changed;
 mod outgoing_sync_requested;
@@ -53,6 +60,9 @@ mod proof_verification_failed;
 mod proof_verification_passed;
 mod publickey_aggregated;
 mod publish_document;
+mod reward_claimed;
+mod reward_credited;
+mod rewards_distributed;
 mod share_computation_proof_signed;
 mod share_decryption_proof_pending;
 mod share_verification;
@@ -77,14 +87,18 @@ pub use aggregation_proof_pending::*;
 pub use aggregation_proof_signed::*;
 pub use aggregator_changed::*;
 pub use ciphernode_added::*;
+pub use ciphernode_deregistration_requested::*;
 pub use ciphernode_removed::*;
 pub use ciphernode_selected::*;
 pub use ciphertext_output_published::*;
 pub use commitment_consistency::*;
+pub use committee_activation_changed::*;
 pub use committee_finalize_requested::*;
 pub use committee_finalized::*;
+pub use committee_formation_failed::*;
 pub use committee_published::*;
 pub use committee_requested::*;
+pub use committee_viability_updated::*;
 pub use compute_request::*;
 pub use configuration_updated::*;
 pub use decryption_key_shared::*;
@@ -105,8 +119,11 @@ pub use encryption_key_collection_failed::*;
 pub use encryption_key_created::*;
 pub use encryption_key_pending::*;
 pub use encryption_key_received::*;
+pub use evm_log_observed::*;
+pub use input_published::*;
 pub use interfold_error::*;
 pub use keyshare_created::*;
+pub use license_bond_updated::*;
 pub use net_ready::*;
 pub use operator_activation_changed::*;
 pub use outgoing_sync_requested::*;
@@ -121,6 +138,9 @@ pub use proof_verification_failed::*;
 pub use proof_verification_passed::*;
 pub use publickey_aggregated::*;
 pub use publish_document::*;
+pub use reward_claimed::*;
+pub use reward_credited::*;
+pub use rewards_distributed::*;
 pub use share_computation_proof_signed::*;
 pub use share_decryption_proof_pending::*;
 pub use share_verification::*;
@@ -309,6 +329,16 @@ pub enum InterfoldEventData {
     CommitmentConsistencyViolation(CommitmentConsistencyViolation),
     /// This is a test event to use in testing
     TestEvent(TestEvent),
+    InputPublished(InputPublished),
+    RewardsDistributed(RewardsDistributed),
+    RewardCredited(RewardCredited),
+    RewardClaimed(RewardClaimed),
+    LicenseBondUpdated(LicenseBondUpdated),
+    CiphernodeDeregistrationRequested(CiphernodeDeregistrationRequested),
+    CommitteeFormationFailed(CommitteeFormationFailed),
+    CommitteeActivationChanged(CommitteeActivationChanged),
+    CommitteeViabilityUpdated(CommitteeViabilityUpdated),
+    EvmLogObserved(EvmLogObserved),
 }
 
 impl InterfoldEventData {
@@ -601,6 +631,14 @@ impl InterfoldEventData {
             InterfoldEventData::CommitmentConsistencyViolation(ref data) => {
                 Some(data.e3_id.clone())
             }
+            InterfoldEventData::InputPublished(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::RewardsDistributed(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::RewardCredited(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::RewardClaimed(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::CommitteeFormationFailed(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::CommitteeActivationChanged(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::CommitteeViabilityUpdated(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::EvmLogObserved(ref data) => data.e3_id.clone(),
             _ => None,
         }
     }
@@ -608,6 +646,9 @@ impl InterfoldEventData {
 
 impl WithAggregateId for InterfoldEventData {
     fn get_aggregate_id(&self) -> AggregateId {
+        if let InterfoldEventData::EvmLogObserved(event) = self {
+            return AggregateId::from_chain_id(Some(event.chain_id));
+        }
         let chain_id = self.get_e3_id().map(|e3_id| e3_id.chain_id());
         AggregateId::from_chain_id(chain_id)
     }
@@ -696,7 +737,17 @@ impl_event_types!(
     DKGRecursiveAggregationComplete,
     CommitmentConsistencyCheckRequested,
     CommitmentConsistencyCheckComplete,
-    CommitmentConsistencyViolation
+    CommitmentConsistencyViolation,
+    InputPublished,
+    RewardsDistributed,
+    RewardCredited,
+    RewardClaimed,
+    LicenseBondUpdated,
+    CiphernodeDeregistrationRequested,
+    CommitteeFormationFailed,
+    CommitteeActivationChanged,
+    CommitteeViabilityUpdated,
+    EvmLogObserved
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

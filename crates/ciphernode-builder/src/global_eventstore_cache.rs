@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use actix::Recipient;
 use e3_events::{EventStoreQueryBy, SeqAgg, TsAgg};
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct EventStoreReader {
     query_by_seq: Recipient<EventStoreQueryBy<SeqAgg>>,
     query_by_ts: Recipient<EventStoreQueryBy<TsAgg>>,

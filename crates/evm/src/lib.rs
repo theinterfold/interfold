@@ -16,6 +16,7 @@ mod actors;
 mod contracts;
 mod domain;
 mod messages;
+mod operator_status;
 mod repo;
 
 pub mod helpers;
@@ -27,4 +28,5 @@ pub use actors::*;
 pub use domain::encode_attestation_evidence;
 pub use helpers::*;
 pub use messages::*;
+pub use operator_status::*;
 pub use repo::*;

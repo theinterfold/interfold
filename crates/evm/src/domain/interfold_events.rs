@@ -11,7 +11,10 @@ use alloy::primitives::{LogData, B256};
 use alloy::sol_types::SolEvent;
 use e3_events::E3id;
 use e3_events::InterfoldEventData;
-use e3_events::{E3Failed, E3Stage, E3StageChanged, FailureReason};
+use e3_events::{
+    E3Failed, E3Stage, E3StageChanged, FailureReason, InputPublished, PlaintextOutputPublished,
+    RewardClaimed, RewardCredited, RewardsDistributed,
+};
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
 use e3_trbfv::helpers::calculate_error_size;
 use e3_utils::ArcBytes;
@@ -185,6 +188,124 @@ impl From<E3StageChangedWithChainId> for InterfoldEventData {
     }
 }
 
+struct PlaintextOutputPublishedWithChainId(pub IInterfold::PlaintextOutputPublished, pub u64);
+
+impl From<PlaintextOutputPublishedWithChainId> for PlaintextOutputPublished {
+    fn from(value: PlaintextOutputPublishedWithChainId) -> Self {
+        PlaintextOutputPublished {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            plaintext_output: ArcBytes::from_bytes(value.0.plaintextOutput.as_ref()),
+            proof: ArcBytes::from_bytes(value.0.proof.as_ref()),
+        }
+    }
+}
+
+impl From<PlaintextOutputPublishedWithChainId> for InterfoldEventData {
+    fn from(value: PlaintextOutputPublishedWithChainId) -> Self {
+        let payload: PlaintextOutputPublished = value.into();
+        payload.into()
+    }
+}
+
+struct InputPublishedWithChainId(pub IInterfold::InputPublished, pub u64);
+
+impl From<InputPublishedWithChainId> for InputPublished {
+    fn from(value: InputPublishedWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            data: ArcBytes::from_bytes(value.0.data.as_ref()),
+            input_hash: value.0.inputHash.to_string(),
+            index: value.0.index.to_string(),
+        }
+    }
+}
+
+impl From<InputPublishedWithChainId> for InterfoldEventData {
+    fn from(value: InputPublishedWithChainId) -> Self {
+        InputPublished::from(value).into()
+    }
+}
+
+struct RewardsDistributedWithChainId(pub IInterfold::RewardsDistributed, pub u64);
+
+impl From<RewardsDistributedWithChainId> for RewardsDistributed {
+    fn from(value: RewardsDistributedWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            nodes: value
+                .0
+                .nodes
+                .into_iter()
+                .map(|node| node.to_string())
+                .collect(),
+            amounts: value
+                .0
+                .amounts
+                .into_iter()
+                .map(|amount| amount.to_string())
+                .collect(),
+        }
+    }
+}
+
+impl From<RewardsDistributedWithChainId> for InterfoldEventData {
+    fn from(value: RewardsDistributedWithChainId) -> Self {
+        RewardsDistributed::from(value).into()
+    }
+}
+
+struct RewardCreditedWithChainId(pub IInterfold::RewardCredited, pub u64);
+
+impl From<RewardCreditedWithChainId> for RewardCredited {
+    fn from(value: RewardCreditedWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            account: value.0.account.to_string(),
+            token: value.0.token.to_string(),
+            amount: value.0.amount.to_string(),
+        }
+    }
+}
+
+impl From<RewardCreditedWithChainId> for InterfoldEventData {
+    fn from(value: RewardCreditedWithChainId) -> Self {
+        RewardCredited::from(value).into()
+    }
+}
+
+struct RewardClaimedWithChainId(pub IInterfold::RewardClaimed, pub u64);
+
+impl From<RewardClaimedWithChainId> for RewardClaimed {
+    fn from(value: RewardClaimedWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            account: value.0.account.to_string(),
+            token: value.0.token.to_string(),
+            amount: value.0.amount.to_string(),
+        }
+    }
+}
+
+impl From<RewardClaimedWithChainId> for InterfoldEventData {
+    fn from(value: RewardClaimedWithChainId) -> Self {
+        RewardClaimed::from(value).into()
+    }
+}
+
+fn indexed_u256(
+    topics: &[B256],
+    index: usize,
+    event_type: &str,
+) -> Option<alloy::primitives::U256> {
+    topics
+        .get(index)
+        .map(|topic| alloy::primitives::U256::from_be_bytes(topic.0))
+        .or_else(|| {
+            error!("{event_type} missing indexed topic {index}");
+            None
+        })
+}
+
 pub(crate) fn extractor(
     data: &LogData,
     topics: &[B256],
@@ -228,11 +349,20 @@ pub(crate) fn extractor(
                 CiphertextOutputPublishedWithChainId(event, chain_id),
             ))
         }
+        Some(&IInterfold::InputPublished::SIGNATURE_HASH) => {
+            let Ok(mut event) = IInterfold::InputPublished::decode_log_data(data) else {
+                error!("Error parsing event InputPublished after topic matched!");
+                return None;
+            };
+            event.e3Id = indexed_u256(topics, 1, "InputPublished")?;
+            Some(InputPublishedWithChainId(event, chain_id).into())
+        }
         Some(&IInterfold::E3Failed::SIGNATURE_HASH) => {
-            let Ok(event) = IInterfold::E3Failed::decode_log_data(data) else {
+            let Ok(mut event) = IInterfold::E3Failed::decode_log_data(data) else {
                 error!("Error parsing event E3Failed after topic matched!");
                 return None;
             };
+            event.e3Id = indexed_u256(topics, 1, "E3Failed")?;
             info!(
                 "E3Failed event received: e3_id={}, stage={:?}, reason={:?}",
                 event.e3Id, event.failedAtStage, event.reason
@@ -263,12 +393,61 @@ pub(crate) fn extractor(
                 event, chain_id,
             )))
         }
+        Some(&IInterfold::PlaintextOutputPublished::SIGNATURE_HASH) => {
+            let Ok(mut event) = IInterfold::PlaintextOutputPublished::decode_log_data(data) else {
+                error!("Error parsing event PlaintextOutputPublished after topic matched!");
+                return None;
+            };
+            // e3Id is indexed → extract from topics[1], not log data
+            if let Some(e3_id_topic) = topics.get(1) {
+                event.e3Id = alloy::primitives::U256::from_be_bytes(e3_id_topic.0);
+            } else {
+                error!("PlaintextOutputPublished missing indexed e3Id in topics!");
+                return None;
+            }
+            info!(
+                "PlaintextOutputPublished event received: e3_id={}",
+                event.e3Id
+            );
+            Some(InterfoldEventData::from(
+                PlaintextOutputPublishedWithChainId(event, chain_id),
+            ))
+        }
+        Some(&IInterfold::RewardsDistributed::SIGNATURE_HASH) => {
+            let Ok(mut event) = IInterfold::RewardsDistributed::decode_log_data(data) else {
+                error!("Error parsing event RewardsDistributed after topic matched!");
+                return None;
+            };
+            event.e3Id = indexed_u256(topics, 1, "RewardsDistributed")?;
+            Some(RewardsDistributedWithChainId(event, chain_id).into())
+        }
+        Some(&IInterfold::RewardCredited::SIGNATURE_HASH) => {
+            let Ok(mut event) = IInterfold::RewardCredited::decode_log_data(data) else {
+                error!("Error parsing event RewardCredited after topic matched!");
+                return None;
+            };
+            event.e3Id = indexed_u256(topics, 1, "RewardCredited")?;
+            Some(RewardCreditedWithChainId(event, chain_id).into())
+        }
+        Some(&IInterfold::RewardClaimed::SIGNATURE_HASH) => {
+            let Ok(mut event) = IInterfold::RewardClaimed::decode_log_data(data) else {
+                error!("Error parsing event RewardClaimed after topic matched!");
+                return None;
+            };
+            event.e3Id = indexed_u256(topics, 1, "RewardClaimed")?;
+            Some(RewardClaimedWithChainId(event, chain_id).into())
+        }
         _ => {
             trace!(
                 topic=?topic0,
-                "Unknown event received by Interfold.sol parser but was ignored"
+                "Preserving event without a typed Interfold.sol decoder"
             );
-            None
+            Some(crate::domain::evm_log_observation::observe(
+                "Interfold",
+                data,
+                topics,
+                chain_id,
+            ))
         }
     }
 }
@@ -276,7 +455,7 @@ pub(crate) fn extractor(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::U256;
+    use alloy::primitives::{Address, Bytes, U256};
 
     #[test]
     fn test_convert_u8_to_e3_stage_known_and_unknown() {
@@ -323,9 +502,71 @@ mod tests {
     }
 
     #[test]
-    fn test_extractor_ignores_unknown_topic() {
+    fn test_extractor_preserves_unknown_topic() {
         let log_data = LogData::default();
-        assert!(extractor(&log_data, &[B256::ZERO], 1).is_none());
-        assert!(extractor(&log_data, &[], 1).is_none());
+        assert!(matches!(
+            extractor(&log_data, &[B256::ZERO], 1),
+            Some(InterfoldEventData::EvmLogObserved(_))
+        ));
+        assert!(matches!(
+            extractor(&log_data, &[], 1),
+            Some(InterfoldEventData::EvmLogObserved(_))
+        ));
+    }
+
+    #[test]
+    fn test_extractor_decodes_input_and_reward_events() {
+        let input = IInterfold::InputPublished {
+            e3Id: U256::from(8),
+            data: Bytes::from_static(b"ciphertext"),
+            inputHash: U256::from(99),
+            index: U256::from(3),
+        };
+        let input_log = input.encode_log_data();
+        let out = extractor(&input_log, input_log.topics(), 10);
+        match out {
+            Some(InterfoldEventData::InputPublished(event)) => {
+                assert_eq!(event.e3_id, E3id::new("8", 10));
+                assert_eq!(event.index, "3");
+                assert_eq!(event.data.extract_bytes(), b"ciphertext");
+            }
+            other => panic!("expected InputPublished, got {other:?}"),
+        }
+
+        let reward = IInterfold::RewardCredited {
+            e3Id: U256::from(8),
+            account: Address::repeat_byte(0x11),
+            token: Address::repeat_byte(0x22),
+            amount: U256::from(500),
+        };
+        let reward_log = reward.encode_log_data();
+        let out = extractor(&reward_log, reward_log.topics(), 10);
+        match out {
+            Some(InterfoldEventData::RewardCredited(event)) => {
+                assert_eq!(event.e3_id, E3id::new("8", 10));
+                assert_eq!(event.amount, "500");
+                assert_eq!(event.account, Address::repeat_byte(0x11).to_string());
+            }
+            other => panic!("expected RewardCredited, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_extractor_decodes_plaintext_publication() {
+        let event = IInterfold::PlaintextOutputPublished {
+            e3Id: U256::from(18),
+            plaintextOutput: Bytes::from_static(b"plain"),
+            proof: Bytes::from_static(b"c7"),
+        };
+        let log = event.encode_log_data();
+        let out = extractor(&log, log.topics(), 100);
+        match out {
+            Some(InterfoldEventData::PlaintextOutputPublished(event)) => {
+                assert_eq!(event.e3_id, E3id::new("18", 100));
+                assert_eq!(event.plaintext_output.extract_bytes(), b"plain");
+                assert_eq!(event.proof.extract_bytes(), b"c7");
+            }
+            other => panic!("expected PlaintextOutputPublished, got {other:?}"),
+        }
     }
 }

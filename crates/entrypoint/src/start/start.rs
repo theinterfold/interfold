@@ -32,6 +32,8 @@ pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
     );
 
     let node = CiphernodeBuilder::new(rng.clone(), cipher.clone())
+        .with_name(&config.name())
+        .with_logging()
         .with_persistence(&config.log_file(), &config.db_file())
         .with_sortition_score()
         .with_chains(config.chains())

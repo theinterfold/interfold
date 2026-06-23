@@ -13,7 +13,7 @@ use actix::{Actor, ActorContext, Addr, AsyncContext, Context, Handler, Recipient
 use anyhow::Result;
 use e3_utils::MAILBOX_LIMIT_LARGE;
 use std::collections::HashMap;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, error, warn};
 
 /// QueryAggregator - handles a single query's lifecycle
 struct QueryAggregator {
@@ -54,7 +54,7 @@ impl Handler<EventStoreQueryResponse> for QueryAggregator {
         let sub_query_id = msg.id();
 
         if let Some(aggregate_id) = self.pending.remove(&sub_query_id) {
-            info!(
+            debug!(
                 "Received response for aggregate {:?}, {} pending",
                 aggregate_id,
                 self.pending.len()
@@ -62,7 +62,7 @@ impl Handler<EventStoreQueryResponse> for QueryAggregator {
             self.collected_events.extend(msg.into_events());
 
             if self.pending.is_empty() {
-                info!("All aggregates fulfilled, sending response");
+                debug!("All aggregates fulfilled, sending response");
                 let response = EventStoreQueryResponse::new(
                     self.parent_id,
                     std::mem::take(&mut self.collected_events),

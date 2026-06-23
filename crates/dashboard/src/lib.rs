@@ -4,259 +4,378 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use std::collections::HashMap;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::net::TcpStream;
-use tracing::{error, info};
+mod projection;
+mod updates;
 
-const DASHBOARD_HTML: &str = include_str!("dashboard.html");
+use actix_web::{
+    get,
+    http::header::{self, CacheControl, CacheDirective},
+    middleware, web, App, HttpResponse, HttpServer, Responder,
+};
+use anyhow::{Context, Result};
+use e3_ciphernode_builder::global_eventstore_cache::EventStoreReader;
+use e3_config::chain_config::ChainConfig;
+use e3_events::{
+    AggregateId, CorrelationId, EventContextSeq, EventStoreQueryBy, EventStoreQueryResponse, SeqAgg,
+};
+use e3_logger::LogCollector;
+use e3_net::NetworkStatus;
+use e3_utils::actix::channel as actix_toolbox;
+use projection::TelemetryProjection;
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+};
+use tokio::sync::Mutex;
+use tracing::info;
 
-/// Start the dashboard HTTP server on the given port, proxying API calls to the daemon server.
-/// `node_name` and `config_path` are included in proxied requests so the daemon loads the correct config.
-pub async fn start_dashboard(
-    dashboard_port: u16,
-    ctrl_port: u16,
-    node_name: String,
-    config_path: Option<String>,
-) {
-    let addr = format!("0.0.0.0:{}", dashboard_port);
-    let listener = match tokio::net::TcpListener::bind(&addr).await {
-        Ok(l) => l,
-        Err(e) => {
-            error!("Failed to bind dashboard socket on {}: {}", addr, e);
-            return;
+const INDEX_HTML: &str = include_str!("../assets/index.html");
+const APP_JS: &str = include_str!("../assets/app.js");
+const APP_CSS: &str = include_str!("../assets/app.css");
+const INTERFOLD_LOGO: &str = include_str!("../assets/interfold.svg");
+const PAGE_SIZE: u64 = 2_000;
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DashboardChain {
+    pub id: u64,
+    pub name: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub struct DashboardRuntime {
+    pub node_name: String,
+    pub address: String,
+    pub peer_id: String,
+    pub quic_port: u16,
+    pub dashboard_port: u16,
+    pub version: String,
+    pub chains: Vec<DashboardChain>,
+}
+
+#[derive(Clone)]
+pub struct DashboardState {
+    runtime: DashboardRuntime,
+    eventstore: EventStoreReader,
+    aggregate_ids: Arc<Vec<usize>>,
+    network: NetworkStatus,
+    projection: Arc<Mutex<ProjectionState>>,
+    chain_configs: Arc<Vec<ChainConfig>>,
+    operator_status: Arc<Mutex<OperatorStatusCache>>,
+    updates: updates::UpdateService,
+}
+
+struct ProjectionState {
+    cursors: HashMap<usize, u64>,
+    projection: TelemetryProjection,
+}
+
+#[derive(Clone, Debug, Default, Serialize)]
+struct OperatorStatusSnapshot {
+    chains: Vec<e3_evm::OperatorChainStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    updated_at_ms: u64,
+}
+
+#[derive(Default)]
+struct OperatorStatusCache {
+    refreshed_at: Option<Instant>,
+    snapshot: OperatorStatusSnapshot,
+}
+
+impl DashboardState {
+    pub fn new(
+        runtime: DashboardRuntime,
+        eventstore: EventStoreReader,
+        aggregate_ids: Vec<usize>,
+        network: NetworkStatus,
+        chain_configs: Vec<ChainConfig>,
+    ) -> Self {
+        let mut aggregate_ids = aggregate_ids;
+        aggregate_ids.sort_unstable();
+        aggregate_ids.dedup();
+        let projection = TelemetryProjection::new(runtime.address.clone());
+        let update_service = updates::UpdateService::new(runtime.version.clone());
+        Self {
+            runtime,
+            eventstore,
+            aggregate_ids: Arc::new(aggregate_ids),
+            network,
+            projection: Arc::new(Mutex::new(ProjectionState {
+                cursors: HashMap::new(),
+                projection,
+            })),
+            chain_configs: Arc::new(chain_configs),
+            operator_status: Arc::new(Mutex::new(OperatorStatusCache::default())),
+            updates: update_service,
         }
-    };
+    }
 
-    info!("Dashboard listening on http://{}", addr);
-
-    loop {
-        match listener.accept().await {
-            Ok((stream, _)) => {
-                let ctrl = ctrl_port;
-                let name = node_name.clone();
-                let cfg = config_path.clone();
-                tokio::task::spawn_local(async move {
-                    if let Err(e) = handle_request(stream, ctrl, &name, cfg.as_deref()).await {
-                        error!("Dashboard connection error: {}", e);
-                    }
-                });
-            }
-            Err(e) => {
-                error!("Dashboard accept error: {}", e);
-                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    async fn refresh(&self) -> Result<()> {
+        let mut state = self.projection.lock().await;
+        for aggregate in self.aggregate_ids.iter().copied() {
+            loop {
+                let since = state.cursors.get(&aggregate).copied().unwrap_or(0);
+                let page = self.fetch_page(aggregate, since).await?;
+                if page.is_empty() {
+                    break;
+                }
+                let event_count = page.len();
+                let next = page
+                    .iter()
+                    .map(EventContextSeq::seq)
+                    .max()
+                    .unwrap_or(since)
+                    .saturating_add(1);
+                for event in page {
+                    state.projection.apply(event);
+                }
+                state.cursors.insert(aggregate, next);
+                if event_count < PAGE_SIZE as usize {
+                    break;
+                }
             }
         }
+        Ok(())
+    }
+
+    async fn fetch_page(
+        &self,
+        aggregate: usize,
+        since: u64,
+    ) -> Result<Vec<e3_events::InterfoldEvent>> {
+        let (recipient, response) = actix_toolbox::oneshot::<EventStoreQueryResponse>();
+        let query = EventStoreQueryBy::<SeqAgg>::new(
+            CorrelationId::new(),
+            HashMap::from([(AggregateId::new(aggregate), since)]),
+            recipient,
+        )
+        .with_limit(PAGE_SIZE);
+        self.eventstore.seq().do_send(query);
+        let response = tokio::time::timeout(Duration::from_secs(5), response)
+            .await
+            .context("EventStore dashboard query timed out")??;
+        Ok(response.into_events())
+    }
+
+    async fn refresh_operator_status(&self) -> OperatorStatusSnapshot {
+        let mut cache = self.operator_status.lock().await;
+        if cache
+            .refreshed_at
+            .is_some_and(|updated| updated.elapsed() < Duration::from_secs(15))
+        {
+            return cache.snapshot.clone();
+        }
+
+        let operator = match alloy::primitives::Address::from_str(&self.runtime.address) {
+            Ok(operator) => operator,
+            Err(error) => {
+                cache.snapshot.error = Some(format!("invalid operator address: {error}"));
+                return cache.snapshot.clone();
+            }
+        };
+        let mut chains = Vec::new();
+        let mut errors = Vec::new();
+        let queries = self
+            .chain_configs
+            .iter()
+            .filter(|chain| chain.enabled.unwrap_or(true))
+            .map(|chain| async move {
+                (
+                    chain.name.clone(),
+                    tokio::time::timeout(
+                        Duration::from_secs(8),
+                        e3_evm::fetch_operator_status(chain, operator),
+                    )
+                    .await,
+                )
+            });
+        for (chain_name, result) in futures::future::join_all(queries).await {
+            match result {
+                Ok(Ok(status)) => chains.push(status),
+                Ok(Err(error)) => errors.push(format!("{chain_name}: {error}")),
+                Err(_) => errors.push(format!("{chain_name}: RPC query timed out")),
+            }
+        }
+        cache.refreshed_at = Some(Instant::now());
+        cache.snapshot = OperatorStatusSnapshot {
+            chains,
+            error: (!errors.is_empty()).then(|| errors.join("; ")),
+            updated_at_ms: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|duration| duration.as_millis() as u64)
+                .unwrap_or(0),
+        };
+        cache.snapshot.clone()
     }
 }
 
-struct HttpRequest {
-    method: String,
-    path: String,
-    query: HashMap<String, String>,
+#[get("/api/updates")]
+async fn release_updates(state: web::Data<DashboardState>) -> impl Responder {
+    HttpResponse::Ok().json(state.updates.snapshot().await)
 }
 
-fn parse_request_line(line: &str) -> Option<HttpRequest> {
-    let parts: Vec<&str> = line.split_whitespace().collect();
-    if parts.len() < 2 {
-        return None;
+#[derive(Serialize)]
+struct DashboardSnapshot {
+    node: DashboardRuntime,
+    network: e3_net::NetworkSnapshot,
+    protocol: projection::ProtocolOverview,
+    operator: OperatorStatusSnapshot,
+    e3s: Vec<projection::E3Summary>,
+    recent_events: Vec<projection::EventView>,
+}
+
+#[get("/api/snapshot")]
+async fn snapshot(state: web::Data<DashboardState>) -> impl Responder {
+    match state.refresh().await {
+        Ok(()) => {
+            let operator = state.refresh_operator_status().await;
+            let projection = state.projection.lock().await;
+            HttpResponse::Ok().json(DashboardSnapshot {
+                node: state.runtime.clone(),
+                network: state.network.snapshot(),
+                protocol: projection.projection.overview(),
+                operator,
+                e3s: projection.projection.summaries(),
+                recent_events: projection.projection.recent_events(40),
+            })
+        }
+        Err(error) => api_error(error),
     }
-    let method = parts[0].to_uppercase();
-    let raw_path = parts[1];
+}
 
-    let (path, query) = if let Some(idx) = raw_path.find('?') {
-        let p = &raw_path[..idx];
-        let q = parse_query_string(&raw_path[idx + 1..]);
-        (p.to_string(), q)
-    } else {
-        (raw_path.to_string(), HashMap::new())
-    };
+#[derive(Deserialize)]
+struct E3Query {
+    e3_id: String,
+}
 
-    Some(HttpRequest {
-        method,
-        path,
-        query,
+#[get("/api/e3")]
+async fn e3_trace(state: web::Data<DashboardState>, query: web::Query<E3Query>) -> impl Responder {
+    match state.refresh().await {
+        Ok(()) => {
+            let projection = state.projection.lock().await;
+            match projection.projection.trace(&query.e3_id) {
+                Some(trace) => HttpResponse::Ok().json(trace),
+                None => HttpResponse::NotFound().json(serde_json::json!({
+                    "error": format!("unknown E3 {}", query.e3_id),
+                })),
+            }
+        }
+        Err(error) => api_error(error),
+    }
+}
+
+#[derive(Deserialize)]
+struct EventsQuery {
+    limit: Option<usize>,
+}
+
+#[get("/api/events")]
+async fn protocol_events(
+    state: web::Data<DashboardState>,
+    query: web::Query<EventsQuery>,
+) -> impl Responder {
+    match state.refresh().await {
+        Ok(()) => {
+            let projection = state.projection.lock().await;
+            HttpResponse::Ok().json(serde_json::json!({
+                "events": projection
+                    .projection
+                    .recent_events(query.limit.unwrap_or(500).min(2_000)),
+            }))
+        }
+        Err(error) => api_error(error),
+    }
+}
+
+#[derive(Deserialize)]
+struct LogsQuery {
+    since: Option<u64>,
+    limit: Option<usize>,
+    level: Option<String>,
+    target: Option<String>,
+    text: Option<String>,
+}
+
+#[get("/api/logs")]
+async fn logs(query: web::Query<LogsQuery>) -> impl Responder {
+    match LogCollector::global() {
+        Some(collector) => HttpResponse::Ok().json(collector.query(
+            query.since,
+            query.limit,
+            query.level.as_deref(),
+            query.target.as_deref(),
+            query.text.as_deref(),
+        )),
+        None => HttpResponse::Ok().json(serde_json::json!({
+            "entries": [],
+            "next_cursor": 0,
+            "oldest_cursor": 0,
+            "total_stored": 0,
+        })),
+    }
+}
+
+async fn index() -> impl Responder {
+    HttpResponse::Ok()
+        .insert_header((header::CONTENT_TYPE, "text/html; charset=utf-8"))
+        .insert_header(CacheControl(vec![CacheDirective::NoCache]))
+        .body(INDEX_HTML)
+}
+
+async fn app_js() -> impl Responder {
+    static_asset("text/javascript; charset=utf-8", APP_JS)
+}
+
+async fn app_css() -> impl Responder {
+    static_asset("text/css; charset=utf-8", APP_CSS)
+}
+
+async fn logo() -> impl Responder {
+    static_asset("image/svg+xml", INTERFOLD_LOGO)
+}
+
+fn static_asset(content_type: &'static str, body: &'static str) -> HttpResponse {
+    HttpResponse::Ok()
+        .insert_header((header::CONTENT_TYPE, content_type))
+        .insert_header(CacheControl(vec![
+            CacheDirective::Public,
+            CacheDirective::MaxAge(31_536_000),
+        ]))
+        .body(body)
+}
+
+fn api_error(error: anyhow::Error) -> HttpResponse {
+    HttpResponse::ServiceUnavailable().json(serde_json::json!({
+        "error": error.to_string(),
+    }))
+}
+
+/// Serve the node-operator dashboard. It binds to loopback because the API
+/// exposes detailed protocol payloads and is intentionally unauthenticated.
+pub async fn start_dashboard(port: u16, state: DashboardState) -> std::io::Result<()> {
+    let address = ("127.0.0.1", port);
+    info!(port, "node dashboard listening on http://127.0.0.1:{port}");
+    HttpServer::new(move || {
+        App::new()
+            .wrap(middleware::Compress::default())
+            .app_data(web::Data::new(state.clone()))
+            .service(snapshot)
+            .service(e3_trace)
+            .service(protocol_events)
+            .service(logs)
+            .service(release_updates)
+            .route("/", web::get().to(index))
+            .route("/assets/app.js", web::get().to(app_js))
+            .route("/assets/app.css", web::get().to(app_css))
+            .route("/assets/interfold.svg", web::get().to(logo))
+            .route("/interfold.svg", web::get().to(logo))
+            .default_service(web::get().to(index))
     })
-}
-
-fn parse_query_string(qs: &str) -> HashMap<String, String> {
-    let mut map = HashMap::new();
-    for pair in qs.split('&') {
-        if let Some(idx) = pair.find('=') {
-            let key = &pair[..idx];
-            let value = &pair[idx + 1..];
-            map.insert(key.to_string(), value.to_string());
-        }
-    }
-    map
-}
-
-async fn handle_request(
-    stream: TcpStream,
-    ctrl_port: u16,
-    node_name: &str,
-    config_path: Option<&str>,
-) -> anyhow::Result<()> {
-    let (reader, mut writer) = stream.into_split();
-    let mut buf_reader = BufReader::new(reader);
-
-    // Read the request line
-    let mut request_line = String::new();
-    buf_reader.read_line(&mut request_line).await?;
-
-    let req = match parse_request_line(request_line.trim()) {
-        Some(r) => r,
-        None => {
-            let resp = http_response("400 Bad Request", "text/plain", "Bad Request");
-            writer.write_all(resp.as_bytes()).await?;
-            writer.shutdown().await?;
-            return Ok(());
-        }
-    };
-
-    // Read remaining headers (we don't need them but must consume them)
-    loop {
-        let mut line = String::new();
-        buf_reader.read_line(&mut line).await?;
-        if line.trim().is_empty() {
-            break;
-        }
-    }
-
-    // Handle OPTIONS for CORS preflight
-    if req.method == "OPTIONS" {
-        let resp = cors_preflight_response();
-        writer.write_all(resp.as_bytes()).await?;
-        writer.shutdown().await?;
-        return Ok(());
-    }
-
-    let (status, content_type, body) = route(&req, ctrl_port, node_name, config_path).await;
-
-    let resp = http_response_with_cors(&status, &content_type, &body);
-    writer.write_all(resp.as_bytes()).await?;
-    writer.shutdown().await?;
-    Ok(())
-}
-
-async fn route(
-    req: &HttpRequest,
-    ctrl_port: u16,
-    node_name: &str,
-    config_path: Option<&str>,
-) -> (String, String, String) {
-    if req.method == "GET" && req.path == "/" {
-        return (
-            "200 OK".to_string(),
-            "text/html; charset=utf-8".to_string(),
-            DASHBOARD_HTML.to_string(),
-        );
-    }
-
-    if req.method != "GET" {
-        return (
-            "405 Method Not Allowed".to_string(),
-            "text/plain".to_string(),
-            "Method Not Allowed".to_string(),
-        );
-    }
-
-    let command = match req.path.as_str() {
-        "/api/events" => {
-            let since = req.query.get("since").and_then(|v| v.parse::<u64>().ok());
-            let limit = req.query.get("limit").and_then(|v| v.parse::<u64>().ok());
-            let agg = req.query.get("agg").and_then(|v| v.parse::<usize>().ok());
-            serde_json::json!({ "EventsQuery": { "agg": agg, "since": since, "limit": limit } })
-        }
-        "/api/config" => {
-            let param = req.query.get("param").cloned();
-            serde_json::json!({ "ConfigGet": { "param": param } })
-        }
-        "/api/status" => {
-            let chain = req.query.get("chain").cloned();
-            serde_json::json!({ "CiphernodeStatus": { "chain": { "chain": chain } } })
-        }
-        "/api/noir" => serde_json::json!("NoirStatus"),
-        "/api/wallet" => serde_json::json!("WalletGet"),
-        "/api/peer-id" => serde_json::json!("NetGetPeerId"),
-        _ => {
-            return (
-                "404 Not Found".to_string(),
-                "text/plain".to_string(),
-                "Not Found".to_string(),
-            );
-        }
-    };
-
-    let json_body = serde_json::json!({
-        "name": node_name,
-        "config": config_path,
-        "command": command,
-        "verbose": 0,
-        "quiet": false
-    });
-
-    match proxy_to_daemon(ctrl_port, &json_body).await {
-        Ok(response) => (
-            "200 OK".to_string(),
-            "application/json".to_string(),
-            response,
-        ),
-        Err(e) => (
-            "502 Bad Gateway".to_string(),
-            "text/plain".to_string(),
-            format!("Failed to reach daemon: {}", e),
-        ),
-    }
-}
-
-async fn proxy_to_daemon(ctrl_port: u16, body: &serde_json::Value) -> anyhow::Result<String> {
-    let url = format!("http://127.0.0.1:{}", ctrl_port);
-    let client = reqwest::Client::new();
-    let resp = client
-        .post(&url)
-        .json(body)
-        .timeout(std::time::Duration::from_secs(10))
-        .send()
-        .await?;
-    // Don't use error_for_status() — return the body even on 500
-    // so the dashboard can display the actual error message.
-    let text = resp.text().await?;
-    Ok(text)
-}
-
-fn http_response(status: &str, content_type: &str, body: &str) -> String {
-    format!(
-        "HTTP/1.1 {}\r\nContent-Type: {}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-        status,
-        content_type,
-        body.len(),
-        body
-    )
-}
-
-fn http_response_with_cors(status: &str, content_type: &str, body: &str) -> String {
-    format!(
-        "HTTP/1.1 {}\r\n\
-         Content-Type: {}\r\n\
-         Content-Length: {}\r\n\
-         Access-Control-Allow-Origin: *\r\n\
-         Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
-         Access-Control-Allow-Headers: Content-Type\r\n\
-         Connection: close\r\n\r\n{}",
-        status,
-        content_type,
-        body.len(),
-        body
-    )
-}
-
-fn cors_preflight_response() -> String {
-    "HTTP/1.1 204 No Content\r\n\
-     Access-Control-Allow-Origin: *\r\n\
-     Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n\
-     Access-Control-Allow-Headers: Content-Type\r\n\
-     Access-Control-Max-Age: 86400\r\n\
-     Connection: close\r\n\r\n"
-        .to_string()
+    .bind(address)?
+    .run()
+    .await
 }

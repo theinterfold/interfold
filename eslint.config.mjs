@@ -24,6 +24,8 @@ export default defineConfig([
     '**/playwright-report/**',
     // Generated WASM bindings
     '**/pkg/**',
+    // Bundled dashboard assets
+    'crates/dashboard/assets/**',
   ]),
   {
     extends: [config],

@@ -77,9 +77,14 @@ pub(crate) fn extractor(
         _ => {
             trace!(
                 topic=?topics.first(),
-                "Unknown event was received by SlashingManager.sol parser but was ignored"
+                "Preserving event without a typed SlashingManager decoder"
             );
-            None
+            Some(crate::domain::evm_log_observation::observe(
+                "SlashingManager",
+                data,
+                topics,
+                chain_id,
+            ))
         }
     }
 }
@@ -87,6 +92,7 @@ pub(crate) fn extractor(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::primitives::Address;
 
     #[test]
     fn test_safe_u256_to_u128_within_range() {
@@ -101,9 +107,39 @@ mod tests {
     }
 
     #[test]
-    fn test_extractor_ignores_unknown_topic() {
+    fn test_extractor_preserves_unknown_topic() {
         let log_data = LogData::default();
-        assert!(extractor(&log_data, &[B256::ZERO], 1).is_none());
-        assert!(extractor(&log_data, &[], 1).is_none());
+        assert!(matches!(
+            extractor(&log_data, &[B256::ZERO], 1),
+            Some(InterfoldEventData::EvmLogObserved(_))
+        ));
+        assert!(matches!(
+            extractor(&log_data, &[], 1),
+            Some(InterfoldEventData::EvmLogObserved(_))
+        ));
+    }
+
+    #[test]
+    fn test_extractor_matches_current_slash_executed_signature() {
+        let event = ISlashingManager::SlashExecuted {
+            proposalId: U256::from(3),
+            e3Id: U256::from(9),
+            operator: Address::repeat_byte(0x44),
+            reason: B256::repeat_byte(0x55),
+            ticketAmount: U256::from(100),
+            licenseAmount: U256::from(200),
+            executed: true,
+            lane: 1,
+        };
+        let log = event.encode_log_data();
+        let out = extractor(&log, log.topics(), 31337);
+        match out {
+            Some(InterfoldEventData::SlashExecuted(event)) => {
+                assert_eq!(event.e3_id, E3id::new("9", 31337));
+                assert_eq!(event.ticket_amount, 100);
+                assert_eq!(event.license_amount, 200);
+            }
+            other => panic!("expected SlashExecuted, got {other:?}"),
+        }
     }
 }
