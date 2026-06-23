@@ -20,7 +20,7 @@
   "main": "./dist/index.js",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
-  "homepage": "https://github.com/gnosisguild/interfold",
+  "homepage": "https://github.com/theinterfold/interfold",
   "scripts": {
     "compile:circuits": "pnpm compile:crisp && pnpm compile:user_data_encryption_ct0 && pnpm compile:user_data_encryption_ct1 && pnpm compile:user_data_encryption && pnpm compile:fold",
     "compile:user_data_encryption_ct0": "cd ../../../../circuits/bin/threshold/user_data_encryption_ct0 && nargo compile",

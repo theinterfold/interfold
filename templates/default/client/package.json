@@ -7,7 +7,7 @@
     "name": "gnosisguild",
     "url": "https://github.com/gnosisguild"
   },
-  "homepage": "https://github.com/gnosisguild/interfold",
+  "homepage": "https://github.com/theinterfold/interfold",
   "scripts": {
     "dev": "vite --no-open --host",
     "build": "tsc && vite build",

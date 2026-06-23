@@ -1,7 +1,7 @@
 {
   "name": "@interfold/main",
   "description": "Interfold is an open-source protocol for Encrypted Execution Environments (E3).",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "private": true,
   "license": "LGPL-3.0-only",
   "author": {
@@ -10,7 +10,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/gnosisguild/interfold"
+    "url": "https://github.com/theinterfold/interfold"
   },
   "scripts": {
     "bump:versions": "tsx scripts/bump-versions.ts",

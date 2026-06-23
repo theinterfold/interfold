@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold SAFE"
-repository = "https://github.com/gnosisguild/interfold/crates/safe"
+repository = "https://github.com/theinterfold/interfold/crates/safe"
 
 [dependencies]
 sha3 = "0.10.8"

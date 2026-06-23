@@ -3,7 +3,7 @@
   "version": "0.1.8",
   "upstreamVersion": "0.1.8",
   "upstreamArg": "UPSTREAM_VERSION",
-  "upstreamRepo": "gnosisguild/interfold",
+  "upstreamRepo": "theinterfold/interfold",
   "shortDescription": "Interfold Ciphernode - Run a node for confidential computing",
   "description": "Run an Interfold ciphernode to participate in the E3 (Encrypted Execution Environments) network.",
   "type": "service",
@@ -14,15 +14,15 @@
   "links": {
     "homepage": "https://interfold.network",
     "docs": "https://docs.interfold.network",
-    "repository": "https://github.com/gnosisguild/interfold"
+    "repository": "https://github.com/theinterfold/interfold"
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/gnosisguild/interfold.git",
+    "url": "https://github.com/theinterfold/interfold.git",
     "directory": "dappnode"
   },
   "bugs": {
-    "url": "https://github.com/gnosisguild/interfold/issues"
+    "url": "https://github.com/theinterfold/interfold/issues"
   },
   "license": "LGPL-3.0-only",
   "requirements": {

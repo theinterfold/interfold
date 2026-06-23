@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - A indexer for Interfold"
-repository = "https://github.com/gnosisguild/interfold/crates/indexer"
+repository = "https://github.com/theinterfold/interfold/crates/indexer"
 
 [dependencies]
 alloy.workspace = true

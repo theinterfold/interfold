@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Ciphernode Data persistence"
-repository = "https://github.com/gnosisguild/interfold/crates/data"
+repository = "https://github.com/theinterfold/interfold/crates/data"
 
 [dependencies]
 actix = { workspace = true }

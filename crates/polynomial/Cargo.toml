@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "A polynomial library with big integer coefficients for cryptographic operations"
-repository = "https://github.com/gnosisguild/interfold/crates/polynomial"
+repository = "https://github.com/theinterfold/interfold/crates/polynomial"
 
 [dependencies]
 num-bigint = { workspace = true, features = ["rand", "serde"] }

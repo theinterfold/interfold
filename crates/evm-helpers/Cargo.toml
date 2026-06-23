@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold EVM Helpers"
-repository = "https://github.com/gnosisguild/interfold/crates/evm-helpers"
+repository = "https://github.com/theinterfold/interfold/crates/evm-helpers"
 
 [dependencies]
 alloy.workspace = true

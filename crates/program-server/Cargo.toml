@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold Program Server"
-repository = "https://github.com/gnosisguild/interfold/crates/program-server"
+repository = "https://github.com/theinterfold/interfold/crates/program-server"
 
 [dependencies]
 actix-web.workspace = true

@@ -4,7 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "E3 - Interfold FHE Params"
-repository = "https://github.com/gnosisguild/interfold/crates/fhe-params"
+repository = "https://github.com/theinterfold/interfold/crates/fhe-params"
 
 [dependencies]
 fhe = { workspace = true }

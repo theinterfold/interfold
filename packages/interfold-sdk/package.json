@@ -1,6 +1,6 @@
 {
   "name": "@interfold/sdk",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "type": "module",
   "exports": {
     ".": {
@@ -36,7 +36,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "https://github.com/gnosisguild/interfold.git",
+    "url": "https://github.com/theinterfold/interfold.git",
     "directory": "packages/interfold-sdk"
   },
   "scripts": {
