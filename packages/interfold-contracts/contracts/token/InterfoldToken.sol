@@ -184,7 +184,7 @@ contract InterfoldToken is
     bytes32 public constant LOCK_MANAGER_ROLE = keccak256("LOCK_MANAGER_ROLE");
 
     /// @notice Minimum time between {CCA_END} and {tge}.
-    uint64 public constant TGE_COOLDOWN = 45 days;
+    uint64 public constant TGE_COOLDOWN = 40 days;
 
     bytes32 public constant PENDING_LOCK_POLICY_ID = "PENDING";
 
@@ -338,27 +338,27 @@ contract InterfoldToken is
     // ─────────────────────────────────────────────────────────────────────────
 
     /// @notice Plain vanilla admin mint: FOLD with no lock attached. Only
-    ///         allowed during the Virtual phase.
+    ///         allowed before TGE (Virtual, CCA, and Cooldown phases).
     function mint(
         address recipient,
         uint256 amount,
         bytes32 label
     ) external onlyRole(DEFAULT_ADMIN_ROLE) {
-        if (phase() != Phase.Virtual) revert MintingClosed();
+        if (phase() == Phase.Live) revert MintingClosed();
         _mintTokens(recipient, amount);
         emit AllocationMinted(recipient, amount, bytes32(0), label);
     }
 
     /// @notice Mints allocations locked under their policies; the path the
     ///         minter role uses to distribute vested supply. Only allowed
-    ///         during the Virtual phase.
+    ///         before TGE (Virtual, CCA, and Cooldown phases).
     /// @dev Team / GG "vested as of TGE" amounts must be calculated
     ///      off-chain using the expected TGE date, since {tgeTimestamp} is
-    ///      not known when Virtual minting closes at {CCA_START}.
+    ///      not known at the time allocations are minted.
     function mintAllocations(
         MintAllocation[] calldata allocations
     ) external onlyRole(MINTER_ROLE) {
-        if (phase() != Phase.Virtual) revert MintingClosed();
+        if (phase() == Phase.Live) revert MintingClosed();
         uint256 len = allocations.length;
         for (uint256 i = 0; i < len; i++) {
             _mintAllocation(allocations[i]);
