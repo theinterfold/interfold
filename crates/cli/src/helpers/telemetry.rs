@@ -12,10 +12,14 @@ use opentelemetry_otlp::{Protocol, WithExportConfig};
 use opentelemetry_sdk::{trace::SdkTracerProvider, Resource};
 use std::path::PathBuf;
 use tracing::Level;
+use tracing_subscriber::filter::Targets;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 pub fn setup_simple_tracing(log_level: Level) {
     LogCollector::init("interfold", None);
+    let targets = Targets::new()
+        .with_default(log_level)
+        .with_target("alloy_pubsub", Level::WARN);
     let _ = tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -23,15 +27,17 @@ pub fn setup_simple_tracing(log_level: Level) {
                 .with_target(false),
         )
         .with(OperationalLogLayer)
-        .with(tracing_subscriber::filter::LevelFilter::from_level(
-            log_level,
-        ))
+        .with(targets)
         .try_init();
 }
 
 pub fn setup_tracing(config: &AppConfig, log_level: Level) -> Result<()> {
     let name = config.name();
     LogCollector::init(&name, Some(operational_log_path(config)));
+
+    let targets = Targets::new()
+        .with_default(log_level)
+        .with_target("alloy_pubsub", Level::WARN);
 
     match config.otel() {
         Some(endpoint) => {
@@ -55,9 +61,7 @@ pub fn setup_tracing(config: &AppConfig, log_level: Level) -> Result<()> {
                 )
                 .with(OperationalLogLayer)
                 .with(telemetry)
-                .with(tracing_subscriber::filter::LevelFilter::from_level(
-                    log_level,
-                ))
+                .with(targets)
                 .try_init();
         }
         None => {
@@ -68,9 +72,7 @@ pub fn setup_tracing(config: &AppConfig, log_level: Level) -> Result<()> {
                         .with_target(false),
                 )
                 .with(OperationalLogLayer)
-                .with(tracing_subscriber::filter::LevelFilter::from_level(
-                    log_level,
-                ))
+                .with(targets)
                 .try_init();
         }
     }
