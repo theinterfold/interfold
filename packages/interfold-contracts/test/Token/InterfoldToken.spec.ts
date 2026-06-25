@@ -16,7 +16,7 @@ const { loadFixture, time } = networkHelpers;
 const DAY = 24n * 60n * 60n;
 const YEAR = 365n * DAY;
 const NO_MORE_LOCKS_DELAY = 4n * YEAR;
-const TGE_COOLDOWN = 45n * DAY;
+const TGE_COOLDOWN = 40n * DAY;
 
 function noMoreLocksFor(ccaEnd: bigint) {
   return ccaEnd + TGE_COOLDOWN + NO_MORE_LOCKS_DELAY;
@@ -114,7 +114,7 @@ describe("InterfoldToken", function () {
     ]);
 
     // Fire TGE.
-    const TGE_COOLDOWN = 45n * DAY;
+    const TGE_COOLDOWN = 40n * DAY;
     await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
     const tgeTx = await token.tge();
     const receipt = await tgeTx.wait();
@@ -134,7 +134,7 @@ describe("InterfoldToken", function () {
       .connect(admin)
       .mint(await alice.getAddress(), amount, ethers.ZeroHash);
 
-    const TGE_COOLDOWN = 45n * DAY;
+    const TGE_COOLDOWN = 40n * DAY;
     await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
     await token.tge();
 
@@ -382,7 +382,7 @@ describe("InterfoldToken", function () {
 
     it("enters Live phase after TGE", async function () {
       const { token, ccaEnd } = await loadFixture(deploy);
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
       await token.tge();
       expect(await token.phase()).to.equal(3); // Phase.Live
@@ -416,9 +416,10 @@ describe("InterfoldToken", function () {
       expect(await token.balanceOf(await alice.getAddress())).to.equal(amount);
     });
 
-    it("mint reverts after Virtual phase", async function () {
-      const { token, admin, alice, ccaStart } = await loadFixture(deploy);
-      await time.increaseTo(ccaStart);
+    it("mint reverts after TGE (Live phase)", async function () {
+      const { token, admin, alice, ccaEnd } = await loadFixture(deploy);
+      await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
+      await token.tge();
       await expect(
         token
           .connect(admin)
@@ -513,10 +514,11 @@ describe("InterfoldToken", function () {
       ).to.be.revertedWithCustomError(token, "PolicyNotDefined");
     });
 
-    it("reverts after Virtual phase", async function () {
-      const { token, admin, alice, ccaStart } = await loadFixture(deploy);
+    it("mintAllocations reverts after TGE (Live phase)", async function () {
+      const { token, admin, alice, ccaEnd } = await loadFixture(deploy);
       const policyId = await createLinearPolicy(token, admin, "TEST_POLICY");
-      await time.increaseTo(ccaStart);
+      await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
+      await token.tge();
       await expect(
         token.connect(admin).mintAllocations([
           {
@@ -614,7 +616,7 @@ describe("InterfoldToken", function () {
 
     it("anyone can trigger TGE after cooldown", async function () {
       const { token, ccaEnd, alice } = await loadFixture(deploy);
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
       await expect(token.connect(alice).tge()).to.emit(token, "TgeTriggered");
       expect(await token.tgeTimestamp()).to.be.gt(0);
@@ -623,7 +625,7 @@ describe("InterfoldToken", function () {
 
     it("reverts if already live", async function () {
       const { token, ccaEnd } = await loadFixture(deploy);
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
       await token.tge();
       await expect(token.tge()).to.be.revertedWithCustomError(
@@ -1006,7 +1008,7 @@ describe("InterfoldToken", function () {
       ]);
 
       // Fire TGE.
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
       const tgeTx = await token.tge();
       const receipt = await tgeTx.wait();
@@ -1103,7 +1105,7 @@ describe("InterfoldToken", function () {
       ]);
 
       // Fire TGE.
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
       const tgeTx = await token.tge();
       const receipt = await tgeTx.wait();
@@ -1161,7 +1163,7 @@ describe("InterfoldToken", function () {
       const aliceAddress = await alice.getAddress();
 
       // Compute the intended TGE timestamp before firing it.
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       const intendedTge = ccaEnd + TGE_COOLDOWN + 1n;
 
       // Policy: 1-year linear vest, holdUntil = intended TGE + 2 years.
@@ -1685,7 +1687,7 @@ describe("InterfoldToken", function () {
         .mint(await claimSource.getAddress(), linkAmount, ethers.ZeroHash);
 
       // Fire TGE so transfers are unrestricted.
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
       await token.tge();
 
@@ -1748,7 +1750,7 @@ describe("InterfoldToken", function () {
         .connect(admin)
         .mint(await claimSource.getAddress(), linkAmount, ethers.ZeroHash);
 
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
       await token.tge();
 
@@ -1778,7 +1780,7 @@ describe("InterfoldToken", function () {
         .connect(admin)
         .mint(await claimSource.getAddress(), claimAmount, ethers.ZeroHash);
 
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
       await token.tge();
 
@@ -1857,7 +1859,7 @@ describe("InterfoldToken", function () {
         .mint(await claimSource.getAddress(), totalClaim, ethers.ZeroHash);
 
       // Fire TGE.
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
       await token.tge();
 
@@ -1910,7 +1912,7 @@ describe("InterfoldToken", function () {
       ]);
 
       // Fire TGE.
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
       await token.tge();
 
@@ -1986,7 +1988,7 @@ describe("InterfoldToken", function () {
         .mint(await claimSource.getAddress(), ccaAmount, ethers.ZeroHash);
 
       // Fire TGE.
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
       await token.tge();
 
@@ -2091,7 +2093,7 @@ describe("InterfoldToken", function () {
       ]);
 
       // Fire TGE.
-      const TGE_COOLDOWN = 45n * DAY;
+      const TGE_COOLDOWN = 40n * DAY;
       await time.increaseTo(ccaEnd + TGE_COOLDOWN + 1n);
       await token.tge();
 
