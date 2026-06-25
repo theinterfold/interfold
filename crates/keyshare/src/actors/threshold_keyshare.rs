@@ -1557,6 +1557,42 @@ impl ThresholdKeyshare {
         let (msg, ec) = msg.into_components();
         let ciphertext_output = msg.ciphertext_output;
 
+        // If we are already in Decrypting (or beyond), this is a duplicate
+        // event — e.g. replayed from the EventStore during crash recovery.
+        // Re-issue the compute request idempotently (downstream aggregation
+        // deduplicates by party_id) and skip the state transition.
+        {
+            let state = self.state.try_get()?;
+            match &state.state {
+                KeyshareState::Decrypting(_) => {
+                    info!(
+                        e3_id = %state.e3_id,
+                        "CiphertextOutputPublished received while already Decrypting — re-issuing decryption-share request"
+                    );
+                    return self.issue_decryption_share_request(ec);
+                }
+                KeyshareState::GeneratingDecryptionProof(_) | KeyshareState::Completed => {
+                    info!(
+                        e3_id = %state.e3_id,
+                        state = %state.variant_name(),
+                        "CiphertextOutputPublished received after decryption already in progress — ignoring"
+                    );
+                    return Ok(());
+                }
+                KeyshareState::ReadyForDecryption(_) => {
+                    // Normal path — proceed with transition below.
+                }
+                other => {
+                    warn!(
+                        e3_id = %state.e3_id,
+                        state = %other.variant_name(),
+                        "CiphertextOutputPublished received in unexpected state — cannot process decryption"
+                    );
+                    return Ok(());
+                }
+            }
+        }
+
         // Set state to decrypting, storing ciphertext for later C6 proof generation
         self.state.try_mutate(&ec, |s| {
             use KeyshareState as K;
