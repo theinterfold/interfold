@@ -441,7 +441,7 @@ enforcement based on immutable policy curves. Key changes:
 
 - **Phase-based lifecycle.** The token derives its phase from immutable `CCA_START` / `CCA_END` and
   the one-way `tge()` call: Virtual → PublicSale → Cooldown → Live. Minting is gated to Virtual
-  phase only; TGE is permissionless after `CCA_END + TGE_COOLDOWN` (45 days). The pre-TGE transfer
+  phase only; TGE is permissionless after `CCA_END + TGE_COOLDOWN` (40 days). The pre-TGE transfer
   gate automatically lifts at TGE — no `disableTransferRestrictions` / `transfersRestricted` flag.
 - **Pre-TGE transfer gate.** Before TGE, only bonding-registry transfers, claim-source
   distributions, and whitelisted addresses can transfer. Bonding is always allowed so operators can

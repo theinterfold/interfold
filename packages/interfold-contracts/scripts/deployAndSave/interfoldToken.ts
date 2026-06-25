@@ -44,7 +44,7 @@ async function disableTransferRestrictionsForLocal(
   const tgeTs = await contract.tgeTimestamp();
   if (tgeTs === 0n) {
     console.warn(
-      "TGE not yet fired — call tge() after advancing time past CCA_END + 45 days.",
+      "TGE not yet fired — call tge() after advancing time past CCA_END + 40 days.",
     );
   } else {
     console.log("Token is already Live (TGE timestamp:", tgeTs.toString(), ")");
