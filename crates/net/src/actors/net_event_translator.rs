@@ -18,8 +18,8 @@ use tokio::sync::mpsc;
 use tracing::{info, warn};
 
 /// NetEventTranslator Actor converts between EventBus events and Libp2p events forwarding them to a
-/// Libp2pNetInterface for propagation over the p2p network. All translation/dedup decisions live
-/// in [`EventTranslationService`].
+/// Libp2pNetInterface for propagation over the p2p network. All translation/dedup/retry decisions
+/// live in [`EventTranslationService`].
 pub struct NetEventTranslator {
     bus: BusHandle,
     tx: mpsc::Sender<NetCommand>,
@@ -37,6 +37,26 @@ impl Actor for NetEventTranslator {
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 #[rtype(result = "()")]
 struct LibP2pEvent(pub GossipData);
+
+/// A gossip publish completed — clean up pending tracking.
+#[derive(Message)]
+#[rtype(result = "()")]
+struct GossipPublishAcknowledged {
+    correlation_id: CorrelationId,
+}
+
+/// A gossip publish failed — check if it should be queued for retry.
+#[derive(Message)]
+#[rtype(result = "()")]
+struct GossipPublishFailed {
+    correlation_id: CorrelationId,
+    error: Arc<libp2p::gossipsub::PublishError>,
+}
+
+/// A new peer connection was established — flush the retry queue.
+#[derive(Message)]
+#[rtype(result = "()")]
+struct PeerConnected;
 
 impl NetEventTranslator {
     /// Create a new NetEventTranslator actor
@@ -64,10 +84,28 @@ impl NetEventTranslator {
             let addr = addr.clone();
             async move {
                 while let Ok(event) = rx.recv().await {
-                    if let NetEvent::GossipData(data) = event {
-                        if let GossipData::GossipBytes(_) = data {
-                            addr.do_send(LibP2pEvent(data));
+                    match event {
+                        NetEvent::GossipData(data) => {
+                            if let GossipData::GossipBytes(_) = data {
+                                addr.do_send(LibP2pEvent(data));
+                            }
                         }
+                        NetEvent::GossipPublishError {
+                            correlation_id,
+                            error,
+                        } => {
+                            addr.do_send(GossipPublishFailed {
+                                correlation_id,
+                                error,
+                            });
+                        }
+                        NetEvent::GossipPublished { correlation_id, .. } => {
+                            addr.do_send(GossipPublishAcknowledged { correlation_id });
+                        }
+                        NetEvent::ConnectionEstablished { .. } => {
+                            addr.do_send(PeerConnected);
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -86,12 +124,16 @@ impl NetEventTranslator {
     fn handle_interfold_event(&mut self, msg: InterfoldEvent) -> Result<()> {
         if let Some(data) = self.service.prepare_outbound(msg)? {
             let topic = self.service.topic().to_owned();
+            let correlation_id = CorrelationId::new();
+            self.service
+                .track_publish(correlation_id, data.clone(), topic.clone());
             if let Err(e) = self.tx.try_send(NetCommand::GossipPublish {
                 topic,
                 data,
-                correlation_id: CorrelationId::new(),
+                correlation_id,
             }) {
                 warn!("Failed to send gossip command (channel full or closed): {e}");
+                self.service.on_published(correlation_id);
             }
         }
         Ok(())
@@ -103,6 +145,37 @@ impl NetEventTranslator {
         self.bus
             .publish_from_remote(data, ec.ts(), None, EventSource::Net)?;
         Ok(())
+    }
+
+    /// Re-send items returned by the domain. The domain already tracked each
+    /// correlation_id — the actor just sends the GossipPublish commands.
+    fn resend_queued(&mut self, items: Vec<(CorrelationId, GossipData, String)>) {
+        let mut unsent = Vec::new();
+        for (correlation_id, data, topic) in items {
+            if self
+                .tx
+                .try_send(NetCommand::GossipPublish {
+                    topic: topic.clone(),
+                    data: data.clone(),
+                    correlation_id,
+                })
+                .is_err()
+            {
+                warn!("Failed to flush gossip retry (channel full or closed)");
+                // Clean up the domain's pending tracking and re-queue.
+                self.service.on_published(correlation_id);
+                unsent.push((data, topic));
+            }
+        }
+        // Re-queue all unsent items. Retry count starts fresh since these
+        // were never actually published — the channel was full.
+        for (data, topic) in unsent {
+            self.service.queue_back(data, topic, 0);
+        }
+    }
+
+    fn is_insufficient_peers(error: &libp2p::gossipsub::PublishError) -> bool {
+        matches!(error, libp2p::gossipsub::PublishError::InsufficientPeers)
     }
 }
 
@@ -121,5 +194,32 @@ impl Handler<InterfoldEvent> for NetEventTranslator {
         trap(EType::Net, &self.bus.with_ec(msg.get_ctx()), || {
             self.handle_interfold_event(msg)
         })
+    }
+}
+
+impl Handler<GossipPublishAcknowledged> for NetEventTranslator {
+    type Result = ();
+    fn handle(&mut self, msg: GossipPublishAcknowledged, _: &mut Self::Context) -> Self::Result {
+        self.service.on_published(msg.correlation_id);
+    }
+}
+
+impl Handler<GossipPublishFailed> for NetEventTranslator {
+    type Result = ();
+    fn handle(&mut self, msg: GossipPublishFailed, _: &mut Self::Context) -> Self::Result {
+        let is_insufficient = Self::is_insufficient_peers(&msg.error);
+        self.service
+            .on_publish_error(msg.correlation_id, is_insufficient);
+    }
+}
+
+impl Handler<PeerConnected> for NetEventTranslator {
+    type Result = ();
+    fn handle(&mut self, _: PeerConnected, _: &mut Self::Context) -> Self::Result {
+        let items = self.service.on_peer_connected();
+        if !items.is_empty() {
+            info!(count = items.len(), "Flushing gossip retry queue");
+        }
+        self.resend_queued(items);
     }
 }

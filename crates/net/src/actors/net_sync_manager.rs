@@ -47,7 +47,9 @@ const SYNC_FETCH_RETRY_TIMEOUT: Duration = Duration::from_secs(5);
 const SYNC_RECOVERY_RETRY_INTERVAL: Duration = Duration::from_secs(15);
 
 /// Number of recovery rounds to try for failed aggregates after the initial fetch pass.
-const SYNC_RECOVERY_MAX_ATTEMPTS: usize = 3;
+/// 20 rounds × 15s interval = 300s (5 min) recovery window — enough for P2P bootstrap
+/// after a single-node restart even on slow networks.
+const SYNC_RECOVERY_MAX_ATTEMPTS: usize = 20;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncResponseValue {

@@ -76,6 +76,7 @@ case "$SERVICE" in
 
   cn1|cn2|cn3|cn4|cn5)
     cd "${CRISP_ROOT}"
+    rm -f "${SIGNAL_FILE}"
     wait_for_file "${SIGNAL_FILE}" "deploy signal file"
     echo "[run_service] Deploy done. Starting ${SERVICE} directly..."
     exec interfold --name "${SERVICE}" start -v

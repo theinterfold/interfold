@@ -13,6 +13,7 @@ pub(crate) mod correlator;
 pub(crate) mod document_publishing;
 pub(crate) mod event_conversion;
 pub(crate) mod event_translation;
+pub(crate) mod gossip_retry;
 pub(crate) mod net_buffer;
 pub(crate) mod net_event_batch;
 mod network_status;
