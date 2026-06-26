@@ -13,7 +13,8 @@ use anyhow::{Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_utils::utility_types::ArcBytes;
 use fhe::trbfv::ShareManager;
-use rand::{CryptoRng, RngCore};
+use rand::{CryptoRng, RngCore, SeedableRng};
+use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use tracing::info;
 
@@ -23,11 +24,18 @@ pub struct GenEsiSssRequest {
     pub trbfv_config: TrBFVConfig,
     /// Pre-generated smudging noise polynomial (private witness, encrypted at rest).
     pub e_sm_raw: SensitiveBytes,
+    /// Deterministic seed for the smudging-noise Shamir sharing. Like the secret-key path, seeding
+    /// this makes the regenerated `esi_sss` byte-identical after a crash so the C3b ESM-share
+    /// encryption matches what peers recorded (no equivocation / false slash). All-zero falls back
+    /// to the supplied entropic RNG.
+    #[serde(default)]
+    pub secret_seed: [u8; 32],
 }
 
 struct InnerRequest {
     pub trbfv_config: TrBFVConfig,
     pub e_sm_raw: ArcBytes,
+    pub secret_seed: [u8; 32],
 }
 
 impl GenEsiSssRequest {
@@ -36,6 +44,7 @@ impl GenEsiSssRequest {
         Ok(InnerRequest {
             trbfv_config: self.trbfv_config,
             e_sm_raw: ArcBytes::from_bytes(&e_sm_decrypted),
+            secret_seed: self.secret_seed,
         })
     }
 }
@@ -87,6 +96,15 @@ pub fn gen_esi_sss<R: RngCore + CryptoRng>(
     let mut share_manager = ShareManager::new(num_ciphernodes, threshold, params.clone())?;
 
     info!("gen_esi_sss:generate_secret_shares_from_poly...");
+
+    // Deterministic share sampling when a seed is supplied (see `GenEsiSssRequest::secret_seed`),
+    // so a re-issued request reproduces byte-identical shares; entropic fallback when unseeded.
+    let mut rng = if req.secret_seed == [0u8; 32] {
+        ChaCha20Rng::from_rng(rng)
+    } else {
+        ChaCha20Rng::from_seed(req.secret_seed)
+    };
+    let rng = &mut rng;
 
     let esi_sss = vec![SharedSecret::from(
         share_manager

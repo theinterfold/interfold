@@ -254,7 +254,6 @@ impl ShareVerificationActor {
 
         // Filter ECDSA-passed proofs to only consistent parties and dispatch ZK
         let inconsistent = &data.inconsistent_parties;
-        let zk_correlation_id = CorrelationId::new();
 
         let (request, dispatched_party_ids) = match pending.kind {
             VerificationKind::ShareProofs
@@ -279,7 +278,6 @@ impl ShareVerificationActor {
                         params_preset: pending.params_preset,
                         committee_size: pending.committee_size,
                     }),
-                    zk_correlation_id,
                     pending.e3_id.clone(),
                 );
                 (req, ids)
@@ -304,12 +302,12 @@ impl ShareVerificationActor {
                         params_preset: pending.params_preset,
                         committee_size: pending.committee_size,
                     }),
-                    zk_correlation_id,
                     pending.e3_id.clone(),
                 );
                 (req, ids)
             }
         };
+        let zk_correlation_id = request.correlation_id;
 
         // Only keep proof hashes/signals/addresses for parties going to ZK
         let party_addresses: HashMap<u64, Address> = pending

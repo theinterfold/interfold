@@ -214,10 +214,11 @@ impl NodeProofAggregator {
         }
 
         let req = state.build_fold_request();
-        let corr = CorrelationId::new();
         let ec = state.last_ec.clone();
         let party_id = state.meta.party_id;
 
+        let request = ComputeRequest::zk(ZkRequest::NodeDkgFold(req), e3_id.clone());
+        let corr = request.correlation_id;
         state.fold_correlation = Some(corr);
         self.fold_correlation.insert(corr, e3_id.clone());
 
@@ -226,10 +227,7 @@ impl NodeProofAggregator {
             e3_id, party_id
         );
 
-        if let Err(err) = self.bus.publish(
-            ComputeRequest::zk(ZkRequest::NodeDkgFold(req), corr, e3_id.clone()),
-            ec,
-        ) {
+        if let Err(err) = self.bus.publish(request, ec) {
             error!(
                 "NodeProofAggregator: failed to publish NodeDkgFold for E3 {}: {err}",
                 e3_id
@@ -532,7 +530,26 @@ mod tests {
         let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
         let mut aggregator = NodeProofAggregator::new(&bus, test_signer(), HashMap::new());
         let e3_id = E3id::new("42", 1);
-        let correlation_id = CorrelationId::new();
+        let request = ComputeRequest::zk(
+            ZkRequest::NodeDkgFold(NodeDkgFoldRequest {
+                c0_proof: dummy_proof(1),
+                c1_proof: dummy_proof(2),
+                c2a_proof: dummy_proof(3),
+                c2b_proof: dummy_proof(4),
+                c3a_inner_proofs: Vec::new(),
+                c3b_inner_proofs: Vec::new(),
+                c4a_proof: dummy_proof(5),
+                c4b_proof: dummy_proof(6),
+                c3_slot_indices_a: Vec::new(),
+                c3_slot_indices_b: Vec::new(),
+                c3_total_slots: 0,
+                party_id: 7,
+                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+                committee_size: CiphernodesCommitteeSize::Minimum,
+            }),
+            e3_id.clone(),
+        );
+        let correlation_id = request.correlation_id;
 
         aggregator.states.insert(
             e3_id.clone(),
@@ -563,27 +580,6 @@ mod tests {
         aggregator
             .fold_correlation
             .insert(correlation_id, e3_id.clone());
-
-        let request = ComputeRequest::zk(
-            ZkRequest::NodeDkgFold(NodeDkgFoldRequest {
-                c0_proof: dummy_proof(1),
-                c1_proof: dummy_proof(2),
-                c2a_proof: dummy_proof(3),
-                c2b_proof: dummy_proof(4),
-                c3a_inner_proofs: Vec::new(),
-                c3b_inner_proofs: Vec::new(),
-                c4a_proof: dummy_proof(5),
-                c4b_proof: dummy_proof(6),
-                c3_slot_indices_a: Vec::new(),
-                c3_slot_indices_b: Vec::new(),
-                c3_total_slots: 0,
-                party_id: 7,
-                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
-                committee_size: CiphernodesCommitteeSize::Minimum,
-            }),
-            correlation_id,
-            e3_id.clone(),
-        );
 
         aggregator.handle_compute_request_error(TypedEvent::new(
             ComputeRequestError::new(

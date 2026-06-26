@@ -296,6 +296,32 @@ impl CommitmentConsistency {
         }
     }
 
+    /// Cache a verified proof **without** evaluating any links or emitting
+    /// violations. Used to rehydrate the cache from persisted
+    /// `ProofVerificationPassed` events after a restart: the per-E3 checker is
+    /// (re)created late (on `CommitteeFinalized` replay), so the C0/C1 proofs
+    /// verified earlier in the boot replay never reached it. Without this, the
+    /// cross-circuit links (e.g. C0→C3) would evaluate against an incomplete
+    /// cache and false-accuse honest peers. Preload is cache-only so it cannot
+    /// re-emit violations that were already handled before the crash.
+    pub(crate) fn cache_verified_proof(&mut self, data: ProofVerificationPassed) {
+        if data.e3_id != self.e3_id {
+            return;
+        }
+        let address = data.address;
+        self.insert_verified(
+            address,
+            data.proof_type,
+            VerifiedProofData {
+                party_id: data.party_id,
+                address,
+                public_signals: data.public_signals,
+                data_hash: data.data_hash,
+                proof_data: data.proof_data,
+            },
+        );
+    }
+
     /// Post-ZK: cache a newly verified proof and evaluate the links relevant to
     /// its proof type, returning any [`CommitmentConsistencyViolation`]s to emit.
     pub(crate) fn on_proof_verified(
@@ -719,6 +745,105 @@ mod tests {
             signals(0x42),
         ));
         assert!(v.is_empty(), "evicted faulty party must not resurface");
+    }
+
+    /// A `SourceMustExistInTargets` link (like C0→C3) must not false-accuse a source when the
+    /// *matching* target is merely absent from the cache. Rehydrating the matching target via
+    /// `cache_verified_proof` (as the restart path does from the EventStore) prevents the false
+    /// violation that occurs when only some other party's target is cached.
+    #[test]
+    fn rehydrated_target_prevents_false_consistency_violation() {
+        let link = Box::new(TestLink {
+            scope: LinkScope::SourceMustExistInTargets,
+            source: ProofType::C3aSkShareEncryption,
+            target: ProofType::C0PkBfv,
+        });
+        let mut svc = CommitmentConsistency::new(e3(), vec![link], 2);
+
+        // A *different* party's C0 is cached, so the link runs (targets non-empty)...
+        svc.cache_verified_proof(passed(
+            e3(),
+            2,
+            addr(2),
+            ProofType::C0PkBfv,
+            [0x01; 32],
+            signals(0x99),
+        ));
+        // ...and the matching party's C0 is rehydrated from the EventStore.
+        svc.cache_verified_proof(passed(
+            e3(),
+            1,
+            addr(1),
+            ProofType::C0PkBfv,
+            [0x02; 32],
+            signals(0x42),
+        ));
+
+        let req = CommitmentConsistencyCheckRequested {
+            e3_id: e3(),
+            kind: VerificationKind::ShareProofs,
+            correlation_id: CorrelationId::new(),
+            party_proofs: vec![PartyProofData {
+                party_id: 1,
+                address: addr(1),
+                proofs: vec![(
+                    ProofType::C3aSkShareEncryption,
+                    signals(0x42),
+                    [0x03; 32],
+                    ArcBytes::from_bytes(&[0x01]),
+                )],
+            }],
+        };
+        let outcome = svc.on_check_requested(req).expect("same e3");
+        assert!(
+            outcome.complete.inconsistent_parties.is_empty(),
+            "matching rehydrated target must prevent a false violation"
+        );
+        assert!(outcome.violations.is_empty());
+    }
+
+    /// Companion to the above: with the matching target absent (no rehydration) but another
+    /// party's target present, the source IS flagged — proving the previous test is meaningful and
+    /// documenting the pre-restart-fix failure mode.
+    #[test]
+    fn missing_matching_target_causes_violation() {
+        let link = Box::new(TestLink {
+            scope: LinkScope::SourceMustExistInTargets,
+            source: ProofType::C3aSkShareEncryption,
+            target: ProofType::C0PkBfv,
+        });
+        let mut svc = CommitmentConsistency::new(e3(), vec![link], 2);
+
+        // Only a non-matching party's C0 is cached (the matching one was never rehydrated).
+        svc.cache_verified_proof(passed(
+            e3(),
+            2,
+            addr(2),
+            ProofType::C0PkBfv,
+            [0x01; 32],
+            signals(0x99),
+        ));
+
+        let req = CommitmentConsistencyCheckRequested {
+            e3_id: e3(),
+            kind: VerificationKind::ShareProofs,
+            correlation_id: CorrelationId::new(),
+            party_proofs: vec![PartyProofData {
+                party_id: 1,
+                address: addr(1),
+                proofs: vec![(
+                    ProofType::C3aSkShareEncryption,
+                    signals(0x42),
+                    [0x03; 32],
+                    ArcBytes::from_bytes(&[0x01]),
+                )],
+            }],
+        };
+        let outcome = svc.on_check_requested(req).expect("same e3");
+        assert!(
+            outcome.complete.inconsistent_parties.contains(&1),
+            "source must be flagged when its matching target is absent from the cache"
+        );
     }
 
     #[test]

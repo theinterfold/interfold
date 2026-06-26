@@ -47,7 +47,13 @@ pub struct ComputeRequest {
 }
 
 impl ComputeRequest {
-    pub fn new(request: ComputeRequestKind, correlation_id: CorrelationId, e3_id: E3id) -> Self {
+    /// Construct a compute request with a **content-derived** correlation id (see
+    /// [`CorrelationId::from_seed`]). The id is a deterministic function of `(e3_id, request)`, so
+    /// request/response matching survives a process restart and a replayed request collapses with
+    /// its regenerated twin at the `ComputeEffectGate` (which dedups by the same content). Callers
+    /// that track the dispatch read the id back from the returned `ComputeRequest.correlation_id`.
+    pub fn new(request: ComputeRequestKind, e3_id: E3id) -> Self {
+        let correlation_id = Self::derive_correlation(&e3_id, &request);
         Self {
             request,
             correlation_id,
@@ -55,16 +61,19 @@ impl ComputeRequest {
         }
     }
 
-    pub fn trbfv(
-        request: e3_trbfv::TrBFVRequest,
-        correlation_id: CorrelationId,
-        e3_id: E3id,
-    ) -> Self {
-        Self::new(ComputeRequestKind::TrBFV(request), correlation_id, e3_id)
+    /// Deterministic correlation id for a `(e3_id, request)` pair.
+    pub fn derive_correlation(e3_id: &E3id, request: &ComputeRequestKind) -> CorrelationId {
+        let mut bytes = bincode::serialize(e3_id).unwrap_or_default();
+        bytes.extend(bincode::serialize(request).unwrap_or_default());
+        CorrelationId::from_seed(&bytes)
     }
 
-    pub fn zk(request: ZkRequest, correlation_id: CorrelationId, e3_id: E3id) -> Self {
-        Self::new(ComputeRequestKind::Zk(request), correlation_id, e3_id)
+    pub fn trbfv(request: e3_trbfv::TrBFVRequest, e3_id: E3id) -> Self {
+        Self::new(ComputeRequestKind::TrBFV(request), e3_id)
+    }
+
+    pub fn zk(request: ZkRequest, e3_id: E3id) -> Self {
+        Self::new(ComputeRequestKind::Zk(request), e3_id)
     }
 }
 

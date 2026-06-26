@@ -10,15 +10,16 @@ use e3_crypto::{Cipher, SensitiveBytes};
 use e3_data::Persistable;
 use e3_events::{
     prelude::*, trap, BusHandle, CiphernodeSelected, CiphertextOutputPublished,
-    CommitteeMemberExpelled, ComputeRequest, ComputeResponse, ComputeResponseKind, CorrelationId,
+    CommitteeMemberExpelled, ComputeRequest, ComputeResponse, ComputeResponseKind,
     DecryptionKeyShared, DecryptionShareProofSigned, DecryptionShareProofsPending, Die,
-    DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, EType,
-    EncryptionKey, EncryptionKeyCollectionFailed, EncryptionKeyCreated, EncryptionKeyPending,
-    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
-    PartyProofsToVerify, PartyShareDecryptionProofsToVerify, PkGenerationProofSigned, ProofType,
-    Sequenced, ShareDecryptionProofPending, ShareVerificationComplete, ShareVerificationDispatched,
-    SignedProofPayload, ThresholdShare, ThresholdShareCollectionFailed, ThresholdShareCreated,
-    ThresholdShareDecryptionProofRequest, ThresholdSharePending, TypedEvent, VerificationKind,
+    DkgDocumentResyncRequest, DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed,
+    E3RequestComplete, E3Stage, EType, EncryptionKey, EncryptionKeyCollectionFailed,
+    EncryptionKeyCreated, EncryptionKeyPending, EventContext, FailureReason, InterfoldEvent,
+    InterfoldEventData, KeyshareCreated, PartyProofsToVerify, PartyShareDecryptionProofsToVerify,
+    PkGenerationProofSigned, ProofType, Sequenced, ShareDecryptionProofPending,
+    ShareVerificationComplete, ShareVerificationDispatched, SignedProofPayload, ThresholdShare,
+    ThresholdShareCollectionFailed, ThresholdShareCreated, ThresholdShareDecryptionProofRequest,
+    ThresholdSharePending, TypedEvent, VerificationKind,
 };
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::BfvPreset;
@@ -39,6 +40,7 @@ use fhe_traits::Serialize;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
+    time::Duration,
 };
 use tracing::{error, info, trace, warn};
 
@@ -54,10 +56,11 @@ use crate::actors::threshold_share_collector::{
 };
 use crate::domain::timeout_policy::{resolve_timeout, DkgTimeoutPhase};
 use crate::domain::{
-    build_decryption_key_plan, build_shares_generated_plan, generate_bfv_keypair,
-    AggregatingDecryptionKey, BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting,
-    DecryptionKeyPlan, GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState,
-    ProofRequestData, ReadyForDecryption, ReceivedShareProofs, ThresholdKeyshareState,
+    build_decryption_key_plan, build_shares_generated_plan, derive_secret_gen_seed,
+    generate_bfv_keypair, AggregatingDecryptionKey, BfvKeypairMaterial,
+    CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan, GeneratingDecryptionProof,
+    GeneratingThresholdShareData, KeyshareState, ProofRequestData, ReadyForDecryption,
+    ReceivedShareProofs, ThresholdKeyshareState,
 };
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
@@ -678,6 +681,15 @@ impl ThresholdKeyshare {
             .get()
             .ok_or(anyhow!("State not found on ThrehsoldKeyshare"))?;
 
+        // Derive a deterministic seed for secret generation from this node's persisted BFV secret
+        // key, so re-issuing this request after a crash reproduces a byte-identical threshold secret
+        // (and therefore an identical C0–C3 chain) instead of equivocating and triggering a false
+        // consistency-violation slash. `sk_bfv` is stable across restarts (generated once in the
+        // encryption-key phase and carried forward), private, and unique per (node, E3).
+        let current: GeneratingThresholdShareData = state.clone().try_into()?;
+        let sk_bfv_raw = current.sk_bfv.access_raw(&self.cipher)?;
+        let secret_seed = derive_secret_gen_seed(e3_id.to_string().as_bytes(), &sk_bfv_raw);
+
         let trbfv_config: TrBFVConfig = state.get_trbfv_config();
 
         let crp = ArcBytes::from_bytes(
@@ -698,8 +710,8 @@ impl ThresholdKeyshare {
                 crp,
                 lambda: threshold_preset.lambda_config(),
                 num_ciphertexts: defaults.z as usize,
+                secret_seed,
             }),
-            CorrelationId::new(),
             e3_id,
         );
 
@@ -777,12 +789,21 @@ impl ThresholdKeyshare {
 
         let trbfv_config = state.get_trbfv_config();
 
+        // Deterministic seed for the ESM (smudging-noise) Shamir sharing, derived from the same
+        // stable `sk_bfv` but domain-separated from the secret-key seed so the two RNG streams never
+        // overlap. Makes the regenerated `esi_sss` byte-identical on resume (prevents a C3b
+        // equivocation / false slash).
+        let current: GeneratingThresholdShareData = state.clone().try_into()?;
+        let sk_bfv_raw = current.sk_bfv.access_raw(&self.cipher)?;
+        let secret_seed =
+            derive_secret_gen_seed(format!("esi-sss:{e3_id}").as_bytes(), &sk_bfv_raw);
+
         let event = ComputeRequest::trbfv(
             TrBFVRequest::GenEsiSss(GenEsiSssRequest {
                 trbfv_config,
                 e_sm_raw,
+                secret_seed,
             }),
-            CorrelationId::new(),
             e3_id,
         );
 
@@ -829,9 +850,12 @@ impl ThresholdKeyshare {
                     anyhow!("pending_own_dkg_shares missing — handle_shares_generated did not run")
                 })?;
 
-            // Now transition to AggregatingDecryptionKey with minimal state
+            // Transition to AggregatingDecryptionKey, retaining the share-generation source so the
+            // outgoing share can be re-published byte-identically on restart (deterministic
+            // encryption makes the re-run reproduce the same ciphertexts).
             self.state.try_mutate(&ec, |s| {
                 let current: GeneratingThresholdShareData = s.clone().try_into()?;
+                let threshold_share_source = Box::new(current.clone());
                 s.new_state(KeyshareState::AggregatingDecryptionKey(
                     AggregatingDecryptionKey {
                         pk_share: current.pk_share.expect("pk_share checked above"),
@@ -843,6 +867,7 @@ impl ThresholdKeyshare {
                         signed_e_sm_share_computation_proof: None,
                         signed_sk_share_encryption_proofs: Vec::new(),
                         signed_e_sm_share_encryption_proofs: Vec::new(),
+                        threshold_share_source: Some(threshold_share_source),
                     },
                 ))
             })?;
@@ -852,25 +877,41 @@ impl ThresholdKeyshare {
 
     /// 4. SharesGenerated - Encrypt shares with BFV and publish
     pub fn handle_shares_generated(&mut self, ec: EventContext<Sequenced>) -> Result<()> {
-        let Some(ThresholdKeyshareState {
-            state:
-                KeyshareState::GeneratingThresholdShare(GeneratingThresholdShareData {
-                    pk_share: Some(pk_share),
-                    sk_sss: Some(sk_sss),
-                    esi_sss: Some(esi_sss),
-                    e_sm_raw: Some(e_sm_raw),
-                    proof_request_data: Some(proof_request_data),
-                    collected_encryption_keys,
-                    ..
-                }),
-            party_id,
-            e3_id,
-            threshold_m,
-            threshold_n,
-            ..
-        }) = self.state.get()
-        else {
+        let Some(state) = self.state.get() else {
+            bail!("State not found on ThresholdKeyshare");
+        };
+        let KeyshareState::GeneratingThresholdShare(source) = &state.state else {
             bail!("Invalid state - expected GeneratingThresholdShare with all data");
+        };
+        let own_shares = self.build_and_publish_threshold_share_pending(&state, source, ec)?;
+        // Cache own plaintext share rows for the AggregatingDecryptionKey transition.
+        self.pending_own_dkg_shares = Some(own_shares);
+        Ok(())
+    }
+
+    /// Build this node's outgoing threshold share from already-generated material in `source` and
+    /// publish `ThresholdSharePending` (ProofRequestActor then generates the proofs and publishes
+    /// `ThresholdShareCreated`). Returns this party's own plaintext share rows for the later C4 step.
+    ///
+    /// **Byte-identical & re-runnable.** `source` (the Shamir/ESI shares) is fixed, and the BFV
+    /// share-encryption randomness is derived deterministically (see `derive_share_encryption_seed`),
+    /// so re-running this on restart reproduces the exact same ciphertexts and proofs. That is what
+    /// lets a node that crashed mid-share-generation re-produce and re-broadcast its share without
+    /// equivocating against any copy peers already hold (peers also dedup by `party_id`).
+    fn build_and_publish_threshold_share_pending(
+        &self,
+        state: &ThresholdKeyshareState,
+        source: &GeneratingThresholdShareData,
+        ec: EventContext<Sequenced>,
+    ) -> Result<(SensitiveBytes, Vec<SensitiveBytes>)> {
+        let (Some(pk_share), Some(sk_sss), Some(esi_sss), Some(e_sm_raw), Some(proof_request_data)) = (
+            source.pk_share.clone(),
+            source.sk_sss.clone(),
+            source.esi_sss.clone(),
+            source.e_sm_raw.clone(),
+            source.proof_request_data.clone(),
+        ) else {
+            bail!("Cannot publish ThresholdSharePending: share material is incomplete");
         };
 
         // Decrypt our shares from local storage
@@ -883,32 +924,23 @@ impl ThresholdKeyshare {
         let plan = build_shares_generated_plan(
             &self.cipher,
             self.share_enc_preset,
-            party_id,
-            threshold_m,
-            threshold_n,
+            state.party_id,
+            state.threshold_m,
+            state.threshold_n,
             pk_share,
             decrypted_sk_sss,
             decrypted_esi_sss,
             e_sm_raw,
             proof_request_data,
-            &collected_encryption_keys,
+            &source.collected_encryption_keys,
         )?;
 
-        // Cache own plaintext share rows for the AggregatingDecryptionKey transition.
-        self.pending_own_dkg_shares = Some((plan.own_sk_share_raw, plan.own_esi_shares_raw));
-
-        let proof_aggregation_enabled = self
-            .state
-            .try_get()
-            .map(|s| s.proof_aggregation_enabled)
-            .unwrap_or(true);
-
-        info!("Publishing ThresholdSharePending for E3 {}", e3_id);
+        info!("Publishing ThresholdSharePending for E3 {}", state.e3_id);
 
         // Publish ThresholdSharePending - ProofRequestActor will generate proof, sign, and publish ThresholdShareCreated
         self.bus.publish(
             ThresholdSharePending {
-                e3_id,
+                e3_id: state.e3_id.clone(),
                 full_share: Arc::new(plan.full_share),
                 proof_request: plan.proof_request,
                 sk_share_computation_request: plan.sk_share_computation_request,
@@ -916,12 +948,12 @@ impl ThresholdKeyshare {
                 sk_share_encryption_requests: plan.sk_share_encryption_requests,
                 e_sm_share_encryption_requests: plan.e_sm_share_encryption_requests,
                 recipient_party_ids: plan.recipient_party_ids,
-                proof_aggregation_enabled,
+                proof_aggregation_enabled: state.proof_aggregation_enabled,
             },
             ec,
         )?;
 
-        Ok(())
+        Ok((plan.own_sk_share_raw, plan.own_esi_shares_raw))
     }
 
     /// 5. AllThresholdSharesCollected - Verify C2/C3 proofs, then decrypt and aggregate
@@ -1250,7 +1282,6 @@ impl ThresholdKeyshare {
                 // Publish CalculateDecryptionKey request before persisting (ordering preserved).
                 let event = ComputeRequest::trbfv(
                     TrBFVRequest::CalculateDecryptionKey(calc_request),
-                    CorrelationId::new(),
                     e3_id.clone(),
                 );
                 self.bus.publish(event, ec.clone())?;
@@ -1626,7 +1657,6 @@ impl ThresholdKeyshare {
                 es_poly_sum: decrypting.es_poly_sum,
                 trbfv_config,
             }),
-            CorrelationId::new(),
             e3_id.clone(),
         );
         self.bus.publish(event, ec)?; // CalculateDecryptionShareRequest
@@ -1650,7 +1680,6 @@ impl ThresholdKeyshare {
                 es_poly_sum: decrypting.es_poly_sum,
                 trbfv_config,
             }),
-            CorrelationId::new(),
             e3_id.clone(),
         );
         self.bus.publish(event, ec)?;
@@ -1668,14 +1697,107 @@ impl ThresholdKeyshare {
     ///   * `DecryptionshareCreated` — threshold plaintext aggregation keys shares by
     ///     `party_id` (re-insert overwrites with the identical deterministic share).
     ///
-    /// Only states where the local result is already determined are re-driven. Earlier
-    /// phases depend on peer gossip that cannot be reconstructed locally and are surfaced
-    /// (non-destructively) by `interfold node validate` instead of being force-re-driven.
+    /// DKG share-exchange recovery has two halves, both byte-identical (no divergent randomness):
+    ///   * *Inbound* — a `DkgDocumentResyncRequest` (below) makes peers re-announce the documents
+    ///     whose ephemeral DHT notifications we missed while down.
+    ///   * *Outbound* — we re-drive our own phase output: re-publish `EncryptionKeyPending` /
+    ///     `ThresholdSharePending`. Because the BFV share-encryption randomness is derived
+    ///     deterministically (`derive_share_encryption_seed`) and bb proving is Fiat-Shamir
+    ///     deterministic, the regenerated share is byte-identical to any copy peers already hold —
+    ///     so this re-delivers a share that was never broadcast (crash mid-generation) without
+    ///     equivocating if it had been. This closes the mid-generation stall.
+    ///
+    /// The per-phase collectors on peers wait for all N committee members and only short-circuit on
+    /// an on-chain expulsion, so a node that crashed mid-DKG would otherwise stall the committee.
     fn resume_in_flight_work(&mut self, ec: EventContext<Sequenced>) -> Result<()> {
         let Some(state) = self.state.get() else {
             return Ok(());
         };
+        let e3_id = state.e3_id.clone();
+        let (party_id, threshold_m, threshold_n) =
+            (state.party_id, state.threshold_m, state.threshold_n);
+
+        // For in-flight DKG share-exchange phases, ask committee peers to re-announce their DKG
+        // documents. This is the *inbound* recovery: peer share documents whose ephemeral DHT
+        // notifications we missed while down cannot be re-fetched otherwise (the content-addressed
+        // key is unrecoverable). Our *own* outbound share is re-produced byte-identically by the
+        // per-phase re-drive below (deterministic share encryption).
+        if matches!(
+            state.state,
+            KeyshareState::CollectingEncryptionKeys(_)
+                | KeyshareState::GeneratingThresholdShare(_)
+                | KeyshareState::AggregatingDecryptionKey(_)
+        ) {
+            info!(
+                e3_id = %e3_id,
+                "Resuming in-flight work: requesting DKG document resync from peers"
+            );
+            if let Err(err) = self.bus.publish(
+                DkgDocumentResyncRequest {
+                    e3_id: e3_id.clone(),
+                    requester: state.address.clone(),
+                },
+                ec.clone(),
+            ) {
+                warn!("Failed to publish DkgDocumentResyncRequest: {err}");
+            }
+        }
+
         match &state.state {
+            // Re-publish our BFV encryption key. Re-running C0 over the persisted (fixed) BFV
+            // keypair is deterministic, so this is byte-identical and safe even if the original
+            // already reached peers.
+            KeyshareState::CollectingEncryptionKeys(data) => {
+                info!(e3_id = %e3_id, "Resuming in-flight work: re-publishing EncryptionKeyPending");
+                let committee_size = CiphernodesCommitteeSize::from_threshold(
+                    threshold_m as usize,
+                    threshold_n as usize,
+                )?;
+                self.bus.publish(
+                    EncryptionKeyPending {
+                        e3_id,
+                        key: Arc::new(EncryptionKey::new(party_id, data.pk_bfv.clone())),
+                        params_preset: self.share_enc_preset,
+                        committee_size,
+                    },
+                    ec,
+                )?;
+            }
+            // Re-produce and re-broadcast our threshold share. If the share material is complete we
+            // re-publish ThresholdSharePending (byte-identical via deterministic encryption);
+            // otherwise share generation was interrupted before anything was broadcast, so it is
+            // safe to re-issue it from scratch.
+            KeyshareState::GeneratingThresholdShare(source) => {
+                let ready = source.pk_share.is_some()
+                    && source.sk_sss.is_some()
+                    && source.esi_sss.is_some()
+                    && source.e_sm_raw.is_some()
+                    && source.proof_request_data.is_some();
+                if ready {
+                    info!(e3_id = %e3_id, "Resuming in-flight work: re-publishing ThresholdSharePending");
+                    self.build_and_publish_threshold_share_pending(&state, source, ec)?;
+                } else if let Some(ciphernode_selected) = source.ciphernode_selected.clone() {
+                    info!(e3_id = %e3_id, "Resuming in-flight work: re-issuing threshold share generation");
+                    self.handle_gen_pk_share_and_sk_sss_requested(TypedEvent::new(
+                        GenPkShareAndSkSss(ciphernode_selected),
+                        ec,
+                    ))?;
+                } else {
+                    warn!(e3_id = %e3_id, "Cannot resume GeneratingThresholdShare: no CiphernodeSelected retained");
+                }
+            }
+            // We crashed after publishing ThresholdSharePending (possibly mid proof generation,
+            // before ThresholdShareCreated was broadcast). Re-publish from the retained source;
+            // deterministic encryption makes the regenerated share byte-identical to any copy peers
+            // already hold, so this both re-delivers a never-broadcast share and is safe if it was.
+            KeyshareState::AggregatingDecryptionKey(adk) => {
+                if let Some(source) = adk.threshold_share_source.as_deref() {
+                    info!(e3_id = %e3_id, "Resuming in-flight work: re-publishing ThresholdSharePending to re-broadcast our threshold share");
+                    self.build_and_publish_threshold_share_pending(&state, source, ec)?;
+                } else {
+                    trace!(e3_id = %e3_id, "AggregatingDecryptionKey has no retained share source (pre-upgrade snapshot); relying on resync only");
+                }
+            }
             // We have produced our public-key share but may have crashed before (or while)
             // publishing KeyshareCreated. Re-publishing is idempotent at the aggregator, but
             // ReadyForDecryption is entered *before* C4 honest-set verification authorizes the
@@ -1683,7 +1805,7 @@ impl ThresholdKeyshare {
             // un-published ReadyForDecryption is a loose end surfaced by `interfold node validate`.
             KeyshareState::ReadyForDecryption(_) if state.keyshare_published => {
                 info!(
-                    e3_id = %state.e3_id,
+                    e3_id = %e3_id,
                     "Resuming in-flight work: re-publishing KeyshareCreated"
                 );
                 self.publish_keyshare_created(ec)?;
@@ -1693,7 +1815,7 @@ impl ThresholdKeyshare {
             // computation so a DecryptionshareCreated is (re)produced.
             KeyshareState::Decrypting(_) => {
                 info!(
-                    e3_id = %state.e3_id,
+                    e3_id = %e3_id,
                     "Resuming in-flight work: re-publishing KeyshareCreated and re-issuing decryption-share request"
                 );
                 self.publish_keyshare_created(ec.clone())?;
@@ -1701,7 +1823,7 @@ impl ThresholdKeyshare {
             }
             other => {
                 trace!(
-                    e3_id = %state.e3_id,
+                    e3_id = %e3_id,
                     state = %other.variant_name(),
                     "No locally re-drivable work on resume; loose ends are surfaced by `interfold node validate`"
                 );
@@ -1948,9 +2070,70 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 if let Err(err) = self.resume_in_flight_work(ec) {
                     warn!("resume_in_flight_work failed: {err}");
                 }
+                // The resync request published in resume only captures artifacts peers have
+                // *already* produced. Peers we unblock by re-broadcasting our share produce their
+                // later-stage artifacts (e.g. DKGRecursiveAggregationComplete markers) seconds
+                // later, and gossip to a just-rejoined node is best-effort. So re-emit the resync a
+                // few more times to pull those in. Only while still resolving an in-flight DKG.
+                if self
+                    .state
+                    .get()
+                    .map(|s| {
+                        matches!(
+                            s.state,
+                            KeyshareState::CollectingEncryptionKeys(_)
+                                | KeyshareState::GeneratingThresholdShare(_)
+                                | KeyshareState::AggregatingDecryptionKey(_)
+                                | KeyshareState::ReadyForDecryption(_)
+                        )
+                    })
+                    .unwrap_or(false)
+                {
+                    ctx.notify_later(ResyncTick { remaining: 6 }, Duration::from_secs(8));
+                }
             }
             _ => (),
         }
+    }
+}
+
+/// Periodic re-emission of `DkgDocumentResyncRequest` after a restart, so peer artifacts produced
+/// *after* the initial resume-time request are still pulled in (see the `EffectsEnabled` handler).
+#[derive(Message, Clone, Copy)]
+#[rtype(result = "()")]
+struct ResyncTick {
+    remaining: u32,
+}
+
+impl Handler<ResyncTick> for ThresholdKeyshare {
+    type Result = ();
+    fn handle(&mut self, msg: ResyncTick, ctx: &mut Self::Context) -> Self::Result {
+        let Some(state) = self.state.get() else {
+            return;
+        };
+        // Stop once the local DKG/key phase is resolved or the budget is exhausted.
+        let in_dkg = matches!(
+            state.state,
+            KeyshareState::CollectingEncryptionKeys(_)
+                | KeyshareState::GeneratingThresholdShare(_)
+                | KeyshareState::AggregatingDecryptionKey(_)
+                | KeyshareState::ReadyForDecryption(_)
+        );
+        if !in_dkg || msg.remaining == 0 {
+            return;
+        }
+        if let Err(err) = self.bus.publish_without_context(DkgDocumentResyncRequest {
+            e3_id: state.e3_id.clone(),
+            requester: state.address.clone(),
+        }) {
+            warn!("Failed to re-publish DkgDocumentResyncRequest: {err}");
+        }
+        ctx.notify_later(
+            ResyncTick {
+                remaining: msg.remaining - 1,
+            },
+            Duration::from_secs(8),
+        );
     }
 }
 
@@ -2205,9 +2388,10 @@ mod tests {
     use e3_crypto::Cipher;
     use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
     use e3_events::{
-        hlc_factory::HlcFactory, BusHandle, E3Stage, E3id, EventBus, EventBusConfig, FailureReason,
-        HistoryCollector, InterfoldEvent, InterfoldEventData, Sequencer, StoreEventRequested,
-        StoreEventResponse, TakeEvents,
+        hlc_factory::HlcFactory, BusHandle, CiphernodeSelected, E3Stage, E3id, EffectsEnabled,
+        EventBus, EventBusConfig, EventSource, FailureReason, HistoryCollector, InterfoldEvent,
+        InterfoldEventData, Sequencer, StoreEventRequested, StoreEventResponse, TakeEvents,
+        Unsequenced,
     };
     use e3_fhe_params::DEFAULT_BFV_PRESET;
     use std::sync::Arc;
@@ -2263,6 +2447,52 @@ mod tests {
         .start();
 
         Ok((actor, history, E3id::new("42", 1)))
+    }
+
+    /// Start an actor hydrated with a specific persisted DKG phase, as happens after a restart.
+    async fn start_actor_with_state(
+        e3_id: &E3id,
+        party_id: u64,
+        state: KeyshareState,
+    ) -> Result<(
+        Addr<ThresholdKeyshare>,
+        Addr<HistoryCollector<InterfoldEvent>>,
+    )> {
+        let (bus, history) = test_bus();
+        let store = InMemStore::new(false).start();
+        let repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
+        let tks = ThresholdKeyshareState::new(
+            e3_id.clone(),
+            party_id,
+            state,
+            1,
+            3,
+            ArcBytes::from_bytes(&[0u8; 8]),
+            "0xabc".to_string(),
+            true,
+        );
+        let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+            bus,
+            cipher: Arc::new(Cipher::from_password("test-password").await?),
+            state: repo.send(Some(tks)),
+            share_enc_preset: DEFAULT_BFV_PRESET,
+        })
+        .start();
+        Ok((actor, history))
+    }
+
+    /// Deliver `EffectsEnabled` to the actor the way the boot sequence does at end of sync.
+    async fn send_effects_enabled(actor: &Addr<ThresholdKeyshare>) -> Result<()> {
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            EffectsEnabled::new().into(),
+            None,
+            1,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(1);
+        actor.send(event).await?;
+        Ok(())
     }
 
     async fn next_event(
@@ -2365,6 +2595,66 @@ mod tests {
                 if data.e3_id == failure.e3_id
                     && data.failed_at_stage == E3Stage::CommitteeFinalized
                     && data.reason == FailureReason::DecryptionTimeout
+        ));
+
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn resume_in_dkg_phase_requests_document_resync_then_redrives() -> Result<()> {
+        // Resuming a DKG phase first requests a peer resync (inbound recovery), then re-drives its
+        // own output. For CollectingEncryptionKeys that re-drive re-publishes EncryptionKeyPending
+        // (byte-identical — C0 over the persisted keypair is deterministic).
+        let e3_id = E3id::new("42", 1);
+        let state = KeyshareState::CollectingEncryptionKeys(CollectingEncryptionKeysData {
+            sk_bfv: SensitiveBytes::from_encrypted(&[]),
+            pk_bfv: ArcBytes::from_bytes(&[7, 7, 7, 7]),
+            ciphernode_selected: CiphernodeSelected::default(),
+        });
+        let (actor, history) = start_actor_with_state(&e3_id, 0, state).await?;
+
+        send_effects_enabled(&actor).await?;
+
+        // First the resync request, then the re-published EncryptionKeyPending.
+        let events = next_events(&history, 2).await?;
+        assert!(matches!(
+            events[0].clone().into_data(),
+            InterfoldEventData::DkgDocumentResyncRequest(data) if data.e3_id == e3_id
+        ));
+        assert!(matches!(
+            events[1].clone().into_data(),
+            InterfoldEventData::EncryptionKeyPending(data) if data.key.party_id == 0
+        ));
+
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn resume_in_aggregating_decryption_key_without_source_only_resyncs() -> Result<()> {
+        // A pre-upgrade AggregatingDecryptionKey snapshot has no retained share source, so it cannot
+        // re-drive its own share and falls back to resync only (no panic, no ThresholdSharePending).
+        let e3_id = E3id::new("42", 1);
+        let adk = AggregatingDecryptionKey {
+            pk_share: ArcBytes::from_bytes(&[1]),
+            sk_bfv: SensitiveBytes::from_encrypted(&[]),
+            own_sk_share_raw: SensitiveBytes::from_encrypted(&[]),
+            own_esi_shares_raw: Vec::new(),
+            signed_pk_generation_proof: None,
+            signed_sk_share_computation_proof: None,
+            signed_e_sm_share_computation_proof: None,
+            signed_sk_share_encryption_proofs: Vec::new(),
+            signed_e_sm_share_encryption_proofs: Vec::new(),
+            threshold_share_source: None,
+        };
+        let (actor, history) =
+            start_actor_with_state(&e3_id, 0, KeyshareState::AggregatingDecryptionKey(adk)).await?;
+
+        send_effects_enabled(&actor).await?;
+
+        let event = next_event(&history).await?;
+        assert!(matches!(
+            event.into_data(),
+            InterfoldEventData::DkgDocumentResyncRequest(_)
         ));
 
         Ok(())

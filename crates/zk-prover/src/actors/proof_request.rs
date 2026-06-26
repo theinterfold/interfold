@@ -97,23 +97,21 @@ impl ProofRequestActor {
 
     fn handle_encryption_key_pending(&mut self, msg: TypedEvent<EncryptionKeyPending>) {
         let (msg, ec) = msg.into_components();
-        let correlation_id = CorrelationId::new();
-        self.pending.insert(
-            correlation_id,
-            PendingProofRequest {
-                e3_id: msg.e3_id.clone(),
-                key: msg.key.clone(),
-            },
-        );
-
         let request = ComputeRequest::zk(
             ZkRequest::PkBfv(PkBfvProofRequest::new(
                 msg.key.pk_bfv.clone(),
                 msg.params_preset,
                 msg.committee_size,
             )),
+            msg.e3_id.clone(),
+        );
+        let correlation_id = request.correlation_id;
+        self.pending.insert(
             correlation_id,
-            msg.e3_id,
+            PendingProofRequest {
+                e3_id: msg.e3_id.clone(),
+                key: msg.key.clone(),
+            },
         );
 
         info!("Requesting C0 proof generation");
@@ -183,13 +181,11 @@ impl ProofRequestActor {
             msg.sk_share_encryption_requests,
             msg.e_sm_share_encryption_requests,
         ) {
-            let corr = CorrelationId::new();
+            let request = ComputeRequest::zk(item.request, e3_id.clone());
+            let corr = request.correlation_id;
             self.threshold_correlation
                 .insert(corr, (e3_id.clone(), item.kind, item.seq));
-            if let Err(err) = self.bus.publish(
-                ComputeRequest::zk(item.request, corr, e3_id.clone()),
-                ec.clone(),
-            ) {
+            if let Err(err) = self.bus.publish(request, ec.clone()) {
                 error!("Failed to publish threshold proof request: {err}");
                 self.threshold_correlation
                     .retain(|_, (eid, _, _)| *eid != e3_id);
@@ -287,13 +283,11 @@ impl ProofRequestActor {
             .map(NodeAggregationMeta::c4_base_seq)
             .unwrap_or(0);
         for item in plan_decryption_dispatch(msg.sk_request, msg.esm_requests, c4_base_seq) {
-            let corr = CorrelationId::new();
+            let request = ComputeRequest::zk(item.request, e3_id.clone());
+            let corr = request.correlation_id;
             self.decryption_correlation
                 .insert(corr, (e3_id.clone(), item.kind, item.seq));
-            if let Err(err) = self.bus.publish(
-                ComputeRequest::zk(item.request, corr, e3_id.clone()),
-                ec.clone(),
-            ) {
+            if let Err(err) = self.bus.publish(request, ec.clone()) {
                 error!("Failed to publish C4 proof request: {err}");
                 self.decryption_correlation
                     .retain(|_, (eid, _, _)| *eid != e3_id);
@@ -451,7 +445,11 @@ impl ProofRequestActor {
             },
         );
 
-        let correlation_id = CorrelationId::new();
+        let request = ComputeRequest::zk(
+            ZkRequest::ThresholdShareDecryption(msg.proof_request),
+            e3_id.clone(),
+        );
+        let correlation_id = request.correlation_id;
         self.share_decryption_correlation
             .insert(correlation_id, e3_id.clone());
 
@@ -459,14 +457,7 @@ impl ProofRequestActor {
             "Requesting C6 ThresholdShareDecryption proof for E3 {}",
             e3_id
         );
-        if let Err(err) = self.bus.publish(
-            ComputeRequest::zk(
-                ZkRequest::ThresholdShareDecryption(msg.proof_request),
-                correlation_id,
-                e3_id.clone(),
-            ),
-            ec,
-        ) {
+        if let Err(err) = self.bus.publish(request, ec) {
             error!("Failed to publish C6 proof request: {err}");
             self.share_decryption_correlation.remove(&correlation_id);
             self.pending_share_decryption.remove(&e3_id);
@@ -560,19 +551,14 @@ impl ProofRequestActor {
             },
         );
 
-        let correlation_id = CorrelationId::new();
+        let request =
+            ComputeRequest::zk(ZkRequest::PkAggregation(msg.proof_request), e3_id.clone());
+        let correlation_id = request.correlation_id;
         self.pk_aggregation_correlation
             .insert(correlation_id, e3_id.clone());
 
         info!("Requesting C5 PkAggregation proof for E3 {}", e3_id);
-        if let Err(err) = self.bus.publish(
-            ComputeRequest::zk(
-                ZkRequest::PkAggregation(msg.proof_request),
-                correlation_id,
-                e3_id.clone(),
-            ),
-            ec,
-        ) {
+        if let Err(err) = self.bus.publish(request, ec) {
             error!("Failed to publish C5 proof request: {err}");
             self.pk_aggregation_correlation.remove(&correlation_id);
             self.pending_pk_aggregation.remove(&e3_id);
@@ -636,7 +622,11 @@ impl ProofRequestActor {
         self.pending_aggregation
             .insert(e3_id.clone(), PendingAggregationProof { ec: ec.clone() });
 
-        let correlation_id = CorrelationId::new();
+        let request = ComputeRequest::zk(
+            ZkRequest::DecryptedSharesAggregation(msg.proof_request),
+            e3_id.clone(),
+        );
+        let correlation_id = request.correlation_id;
         self.aggregation_correlation
             .insert(correlation_id, e3_id.clone());
 
@@ -644,14 +634,7 @@ impl ProofRequestActor {
             "Requesting C7 DecryptedSharesAggregation proof for E3 {}",
             e3_id
         );
-        if let Err(err) = self.bus.publish(
-            ComputeRequest::zk(
-                ZkRequest::DecryptedSharesAggregation(msg.proof_request),
-                correlation_id,
-                e3_id.clone(),
-            ),
-            ec,
-        ) {
+        if let Err(err) = self.bus.publish(request, ec) {
             error!("Failed to publish C7 proof request: {err}");
             self.aggregation_correlation.remove(&correlation_id);
             self.pending_aggregation.remove(&e3_id);
@@ -1371,7 +1354,15 @@ mod tests {
         let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
         let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random());
         let e3_id = E3id::new("44", 1);
-        let correlation_id = CorrelationId::new();
+        let request = ComputeRequest::zk(
+            ZkRequest::PkBfv(PkBfvProofRequest::new(
+                ArcBytes::from_bytes(&[1]),
+                e3_fhe_params::BfvPreset::InsecureThreshold512,
+                e3_zk_helpers::CiphernodesCommitteeSize::Minimum,
+            )),
+            e3_id.clone(),
+        );
+        let correlation_id = request.correlation_id;
 
         actor.pending.insert(
             correlation_id,
@@ -1384,15 +1375,7 @@ mod tests {
         actor.handle_compute_request_error(TypedEvent::new(
             ComputeRequestError::new(
                 ComputeRequestErrorKind::Zk(ZkError::ProofGenerationFailed("boom".to_string())),
-                ComputeRequest::zk(
-                    ZkRequest::PkBfv(PkBfvProofRequest::new(
-                        ArcBytes::from_bytes(&[1]),
-                        e3_fhe_params::BfvPreset::InsecureThreshold512,
-                        e3_zk_helpers::CiphernodesCommitteeSize::Minimum,
-                    )),
-                    correlation_id,
-                    e3_id.clone(),
-                ),
+                request,
             ),
             test_ctx(E3Failed {
                 e3_id: e3_id.clone(),

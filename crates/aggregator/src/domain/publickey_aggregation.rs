@@ -367,6 +367,40 @@ impl PublicKeyAggregation {
         Ok(state)
     }
 
+    /// Force the `Collecting → VerifyingC1` transition with the keyshares collected so far,
+    /// used when the keyshare-collection timeout fires before all N keyshares arrived (e.g. a
+    /// committee member was briefly absent and capped out of the honest roster, so its keyshare
+    /// never comes). Returns `Some(VerifyingC1)` only when at least `threshold_m + 1` keyshares are
+    /// present — i.e. a viable honest set exists — otherwise `None` (the caller keeps Collecting;
+    /// there are too few honest members to proceed). C1 verification + canonical-roster capping then
+    /// select the deterministic lowest-`H` honest set from whatever was collected.
+    pub(crate) fn force_verifying_c1(
+        state: &PublicKeyAggregatorState,
+    ) -> Option<PublicKeyAggregatorState> {
+        let PublicKeyAggregatorState::Collecting {
+            threshold_m,
+            circuit_committee_n,
+            circuit_committee_h,
+            c1_proofs,
+            submission_order,
+            ..
+        } = state
+        else {
+            return None;
+        };
+        if submission_order.len() <= *threshold_m {
+            return None;
+        }
+        Some(PublicKeyAggregatorState::VerifyingC1 {
+            submission_order: submission_order.clone(),
+            threshold_m: *threshold_m,
+            circuit_committee_n: *circuit_committee_n,
+            circuit_committee_h: *circuit_committee_h,
+            c1_proofs: c1_proofs.clone(),
+            no_proof_parties: Vec::new(),
+        })
+    }
+
     /// Split the collected keyshare submissions into parties with a C1 proof to verify and
     /// parties that submitted no proof (treated as dishonest by the caller).
     pub(crate) fn plan_c1_dispatch(

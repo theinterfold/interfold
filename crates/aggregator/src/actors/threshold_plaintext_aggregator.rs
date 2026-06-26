@@ -323,16 +323,15 @@ impl ThresholdPlaintextAggregator {
         let trbfv_config =
             TrBFVConfig::new(state.params.clone(), state.threshold_n, state.threshold_m);
 
-        let correlation_id = CorrelationId::new();
         let event = ComputeRequest::trbfv(
             TrBFVRequest::CalculateThresholdDecryption(CalculateThresholdDecryptionRequest {
                 ciphertexts: state.ciphertext_output.clone(),
                 trbfv_config,
                 d_share_polys: honest_shares.clone(),
             }),
-            correlation_id,
             self.e3_id.clone(),
         );
+        let correlation_id = event.correlation_id;
         self.bus.publish(event, ec.clone())?;
 
         self.honest_c6_proofs_for_agg = Some(honest_c6);
@@ -500,27 +499,24 @@ impl ThresholdPlaintextAggregator {
         else {
             return self.fail_decryption_round(ec.clone());
         };
-        let corr = CorrelationId::new();
         info!(
             e3_id = %self.e3_id,
             num_jobs = num_ct,
             c6_slots = c6_total_slots,
             "DecryptionAggregation: publishing Zk compute request"
         );
-        self.bus.publish(
-            ComputeRequest::zk(
-                ZkRequest::DecryptionAggregation(DecryptionAggregationRequest {
-                    c6_total_slots,
-                    jobs,
-                    committee_addresses: self.committee_addresses.clone(),
-                    params_preset: self.params_preset,
-                    committee_size: self.committee_size,
-                }),
-                corr,
-                self.e3_id.clone(),
-            ),
-            ec.clone(),
-        )?;
+        let request = ComputeRequest::zk(
+            ZkRequest::DecryptionAggregation(DecryptionAggregationRequest {
+                c6_total_slots,
+                jobs,
+                committee_addresses: self.committee_addresses.clone(),
+                params_preset: self.params_preset,
+                committee_size: self.committee_size,
+            }),
+            self.e3_id.clone(),
+        );
+        let corr = request.correlation_id;
+        self.bus.publish(request, ec.clone())?;
         self.decryption_aggregation_correlation = Some(corr);
         Ok(())
     }
@@ -1176,10 +1172,8 @@ mod tests {
 
     #[actix::test]
     async fn threshold_decryption_compute_error_emits_e3_failed() -> Result<()> {
-        let correlation_id = CorrelationId::new();
         let (mut aggregator, history, e3_id) =
             build_plaintext_aggregator(computing_state(), true).await?;
-        aggregator.threshold_decryption_correlation = Some(correlation_id);
 
         let request = ComputeRequest::trbfv(
             TrBFVRequest::CalculateThresholdDecryption(CalculateThresholdDecryptionRequest {
@@ -1187,9 +1181,9 @@ mod tests {
                 trbfv_config: TrBFVConfig::new(test_params(), 2, 1),
                 d_share_polys: vec![(0, vec![ArcBytes::from_bytes(&[7])])],
             }),
-            correlation_id,
             e3_id.clone(),
         );
+        aggregator.threshold_decryption_correlation = Some(request.correlation_id);
 
         aggregator.handle_compute_request_error(TypedEvent::new(
             ComputeRequestError::new(
@@ -1250,7 +1244,6 @@ mod tests {
 
     #[actix::test]
     async fn decryption_aggregation_compute_error_emits_e3_failed() -> Result<()> {
-        let correlation_id = CorrelationId::new();
         let (mut aggregator, history, e3_id) =
             build_plaintext_aggregator(generating_c7_state(), true).await?;
         aggregator.c7_proofs_pending = Some(vec![dummy_proof(CircuitName::PkAggregation)]);
@@ -1258,7 +1251,6 @@ mod tests {
             0,
             vec![dummy_proof(CircuitName::ThresholdShareDecryption)],
         )]);
-        aggregator.decryption_aggregation_correlation = Some(correlation_id);
         aggregator.last_ec = Some(test_ctx(E3Failed {
             e3_id: e3_id.clone(),
             failed_at_stage: E3Stage::None,
@@ -1273,9 +1265,9 @@ mod tests {
                 params_preset: BfvPreset::InsecureThreshold512,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             }),
-            correlation_id,
             e3_id.clone(),
         );
+        aggregator.decryption_aggregation_correlation = Some(request.correlation_id);
 
         aggregator.handle_compute_request_error(TypedEvent::new(
             ComputeRequestError::new(

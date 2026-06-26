@@ -196,24 +196,32 @@ mod tests {
         }
     }
 
-    fn compute(correlation_id: CorrelationId, timestamp: u128) -> InterfoldEvent {
-        let request = ComputeRequest::zk(
+    fn compute_request() -> ComputeRequest {
+        ComputeRequest::zk(
             ZkRequest::PkBfv(PkBfvProofRequest::new(
                 ArcBytes::from_bytes(&[]),
                 BfvPreset::default(),
                 CiphernodesCommitteeSize::Micro,
             )),
-            correlation_id,
             E3id::new("4", 1),
-        );
+        )
+    }
+
+    fn compute(timestamp: u128) -> InterfoldEvent {
         InterfoldEvent::<Unsequenced>::new_with_timestamp(
-            request.into(),
+            compute_request().into(),
             None,
             timestamp,
             None,
             EventSource::Local,
         )
         .into_sequenced(1)
+    }
+
+    /// The deterministic correlation every `compute(_)` shares (same content) — a stale replayed
+    /// copy and its regenerated twin collapse to this single id.
+    fn compute_corr() -> CorrelationId {
+        compute_request().correlation_id
     }
 
     fn effects_enabled() -> InterfoldEvent {
@@ -245,15 +253,15 @@ mod tests {
     async fn buffers_until_enabled_and_keeps_newest_semantic_retry() {
         let recorder = Recorder::default().start();
         let gate = ComputeEffectGate::new(recorder.clone().recipient()).start();
-        let stale = CorrelationId::new();
-        let regenerated = CorrelationId::new();
 
-        gate.send(compute(stale, 10)).await.unwrap();
-        gate.send(compute(regenerated, 20)).await.unwrap();
+        // A stale replayed copy (older ts) and its regenerated twin (newer ts) share one
+        // content-derived correlation; the gate buffers and forwards a single copy on enable.
+        gate.send(compute(10)).await.unwrap();
+        gate.send(compute(20)).await.unwrap();
         assert!(recorder.send(Received).await.unwrap().is_empty());
 
         gate.send(effects_enabled()).await.unwrap();
-        assert_eq!(recorder.send(Received).await.unwrap(), vec![regenerated]);
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![compute_corr()]);
     }
 
     #[actix::test]
@@ -261,7 +269,7 @@ mod tests {
         let recorder = Recorder::default().start();
         let gate = ComputeEffectGate::new(recorder.clone().recipient()).start();
 
-        gate.send(compute(CorrelationId::new(), 10)).await.unwrap();
+        gate.send(compute(10)).await.unwrap();
         gate.send(completed()).await.unwrap();
         gate.send(effects_enabled()).await.unwrap();
 
@@ -272,17 +280,15 @@ mod tests {
     async fn drops_redriven_duplicate_after_enable() {
         let recorder = Recorder::default().start();
         let gate = ComputeEffectGate::new(recorder.clone().recipient()).start();
-        let buffered = CorrelationId::new();
-        let redriven = CorrelationId::new();
 
         // Released from the replay buffer on enable.
-        gate.send(compute(buffered, 10)).await.unwrap();
+        gate.send(compute(10)).await.unwrap();
         gate.send(effects_enabled()).await.unwrap();
-        assert_eq!(recorder.send(Received).await.unwrap(), vec![buffered]);
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![compute_corr()]);
 
         // Same (e3_id, kind) re-driven by a hydrated actor after EffectsEnabled
         // is suppressed — only one compute reaches the target.
-        gate.send(compute(redriven, 40)).await.unwrap();
-        assert_eq!(recorder.send(Received).await.unwrap(), vec![buffered]);
+        gate.send(compute(40)).await.unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![compute_corr()]);
     }
 }

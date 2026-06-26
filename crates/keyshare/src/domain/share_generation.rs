@@ -28,12 +28,94 @@ use e3_zk_helpers::computation::DkgInputType;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use fhe::bfv::PublicKey;
 use fhe_traits::{DeserializeParametrized, Serialize as _};
-use rand::rngs::OsRng;
-use rand_core::UnwrapErr;
+use rand::SeedableRng;
+use rand_chacha::ChaCha20Rng;
+use sha2::{Digest, Sha256};
 use std::sync::Arc;
 use tracing::info;
 
 use crate::domain::ProofRequestData;
+
+/// Derive the deterministic seed for this node's BFV share-encryption randomness.
+///
+/// The BFV share encryption (C3) samples per-recipient randomness (`u/e0/e1`). Seeding it
+/// deterministically (instead of from the OS RNG) makes a re-generated threshold share
+/// **byte-identical** to the original, so a node that crashed mid-share-generation can re-produce
+/// and re-broadcast the exact same share on restart without equivocating against any copy peers
+/// already hold. A single ChaCha20 stream from this seed supplies every per-(recipient, row, esi)
+/// encryption in a fixed order; the stream never repeats, so no randomness is reused.
+///
+/// SECURITY — requires crypto-owner review:
+/// - **Secret:** derived one-way (SHA-256) from the node's TrBFV secret-key bytes, so the
+///   encryption randomness stays unknown without the secret key (RFC 6979-style deterministic
+///   nonce derivation).
+/// - **Per-E3 / per-node unique:** `sk_raw` is freshly generated per E3 per node, so distinct E3s
+///   and nodes get distinct streams without threading the e3_id in explicitly.
+/// - **Reproducible across restart:** `sk_raw` is persisted, so re-deriving reproduces the exact
+///   randomness stream.
+///
+/// The distribution of `u/e0/e1` is unchanged: the same fhe.rs sampler draws from the same
+/// distributions; only the RNG *source* is deterministic, so the C3 circuit (which constrains the
+/// witness distribution, not its provenance) accepts the result identically.
+fn derive_share_encryption_seed(party_id: u64, sk_raw: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"interfold/dkg/share-encryption-randomness/v1");
+    hasher.update(party_id.to_le_bytes());
+    hasher.update(sk_raw);
+    hasher.finalize().into()
+}
+
+/// Derive the deterministic seed for this node's threshold-secret generation (`GenPkShareAndSkSss`:
+/// the threshold secret key, its public-key share, smudging noise, and Shamir shares).
+///
+/// Seeding secret generation deterministically makes a re-issued `GenPkShareAndSkSss` reproduce a
+/// **byte-identical** secret, and hence an identical C0–C3 chain, after a crash. Without this, a
+/// node killed mid-share-generation re-generates a *fresh* secret on resume; its new C3 then
+/// disagrees with the commitments peers already recorded, so they raise a
+/// `CommitmentConsistencyViolation` and (falsely) move to slash it, stalling the E3.
+///
+/// SECURITY — requires crypto-owner review (same model as [`derive_share_encryption_seed`]):
+/// - **Secret:** derived one-way (SHA-256) from this node's BFV secret-key bytes (`sk_bfv`), so the
+///   generated threshold secret stays unknown without that key.
+/// - **Per-E3 / per-node unique:** `sk_bfv` is freshly generated per E3 per node; the `e3_id` is
+///   mixed in for explicit domain separation.
+/// - **Reproducible across restart:** `sk_bfv` is persisted in the keyshare state, so re-deriving
+///   reproduces the exact secret.
+pub(crate) fn derive_secret_gen_seed(e3_id_bytes: &[u8], sk_bfv_raw: &[u8]) -> [u8; 32] {
+    let mut hasher = Sha256::new();
+    hasher.update(b"interfold/dkg/threshold-secret-gen/v1");
+    hasher.update((e3_id_bytes.len() as u64).to_le_bytes());
+    hasher.update(e3_id_bytes);
+    hasher.update(sk_bfv_raw);
+    hasher.finalize().into()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::derive_share_encryption_seed;
+
+    /// The seed is deterministic for fixed inputs and domain-separated by party and secret —
+    /// that determinism is what makes a regenerated threshold share byte-identical across restart.
+    #[test]
+    fn seed_is_deterministic_and_domain_separated() {
+        let sk = [9u8; 64];
+        assert_eq!(
+            derive_share_encryption_seed(0, &sk),
+            derive_share_encryption_seed(0, &sk),
+            "same inputs → same seed"
+        );
+        assert_ne!(
+            derive_share_encryption_seed(0, &sk),
+            derive_share_encryption_seed(1, &sk),
+            "different party → different seed"
+        );
+        assert_ne!(
+            derive_share_encryption_seed(0, &sk),
+            derive_share_encryption_seed(0, &[8u8; 64]),
+            "different secret → different seed"
+        );
+    }
+}
 
 /// Fully assembled output of the share-generation phase.
 pub(crate) struct SharesGeneratedPlan {
@@ -162,7 +244,11 @@ pub(crate) fn build_shares_generated_plan(
 
     // BFV-encrypt shares to all recipients except own slot (own share is bound via C2,
     // consumed locally by C4). Returns per-row randomness for C3 proofs.
-    let mut rng = UnwrapErr(OsRng);
+    //
+    // Deterministic RNG (seeded from the node's own secret) so a re-run on restart reproduces the
+    // exact same ciphertexts/witness — see `derive_share_encryption_seed`.
+    let sk_raw = proof_request_data.sk_raw.access_raw(cipher)?;
+    let mut rng = ChaCha20Rng::from_seed(derive_share_encryption_seed(party_id, &sk_raw));
     let (encrypted_sk_sss, sk_witnesses) =
         BfvEncryptedShares::encrypt_all_extended_for_share_indices(
             &decrypted_sk_sss,

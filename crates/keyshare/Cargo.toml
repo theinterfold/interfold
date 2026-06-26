@@ -27,6 +27,7 @@ fhe-traits = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
 rand_core = { workspace = true }
+sha2 = { workspace = true }
 serde = { workspace = true }
 tracing = { workspace = true }
 ndarray = { workspace = true }

@@ -7,10 +7,10 @@
 use actix::{Actor, Addr, AsyncContext, Handler, Message, Recipient, ResponseFuture};
 use anyhow::{bail, Context, Result};
 use e3_events::{
-    prelude::*, trap, trap_fut, AggregateId, BusHandle, CorrelationId, EType, EventSource,
+    prelude::*, trap, trap_fut, AggregateId, BusHandle, CorrelationId, E3id, EType, EventSource,
     EventStoreFilter, EventStoreQueryBy, EventStoreQueryResponse, EventType,
     HistoricalNetSyncEventsReceived, HistoricalNetSyncStart, InterfoldEvent, InterfoldEventData,
-    NetReady, TsAgg, TypedEvent, Unsequenced,
+    NetReady, PublishDocumentRequested, TsAgg, TypedEvent, Unsequenced,
 };
 use e3_utils::MAILBOX_LIMIT;
 use serde::{Deserialize, Serialize};
@@ -24,12 +24,14 @@ use tokio::sync::{broadcast, mpsc};
 use tracing::{debug, error, info, warn};
 
 use crate::{
+    actors::handle_publish_document_requested,
     direct_requester::DirectRequester,
     direct_responder::DirectResponder,
     domain::{
         build_sync_batch,
         net_event_batch::{fetch_all_batched_events, FetchEventsSince},
-        EventTranslationService, NetReadiness, ReadinessDecision, SyncBatchOutcome,
+        EventConversionService, EventTranslationService, NetReadiness, ReadinessDecision,
+        SyncBatchOutcome,
     },
     events::{await_event, GossipData, IncomingRequest, NetCommand, NetEvent, PeerTarget},
 };
@@ -101,6 +103,9 @@ pub struct NetSyncManager {
     net_ready: bool,
     /// Guard so the post-restart re-broadcast fires at most once per process.
     rebroadcast_started: bool,
+    /// In-flight EventStore queries answering a peer's `DkgDocumentResyncRequest`, mapped to the
+    /// requested E3 so the response re-announces only that E3's document artifacts.
+    resync_query_e3: HashMap<CorrelationId, E3id>,
 }
 
 impl NetSyncManager {
@@ -123,6 +128,7 @@ impl NetSyncManager {
             rebroadcast_query_ids: HashSet::new(),
             net_ready: false,
             rebroadcast_started: false,
+            resync_query_e3: HashMap::new(),
         }
     }
 
@@ -132,17 +138,26 @@ impl NetSyncManager {
         Ok(())
     }
 
-    /// After a restart, proactively re-gossip this node's own already-produced forwardable DKG
-    /// artifacts (H3/H11). Resume from a persisted phase is otherwise passive: the restored
+    /// After a restart, proactively re-emit this node's own already-produced DKG artifacts
+    /// (H3/H11). Resume from a persisted phase is otherwise passive: the restored
     /// keyshare/aggregator actors wait for peer documents and never re-emit their own outputs, so
-    /// peers that missed the original gossip (cache expiry, DHT miss, peer churn) can stall the
-    /// node to its phase timeout.
+    /// peers that missed the original broadcast (cache expiry, DHT miss, peer churn, a crash mid-
+    /// broadcast) can stall the node to its phase timeout.
     ///
-    /// The artifacts are sent straight to libp2p as `GossipPublish`, bypassing both the EventBus
-    /// dedup bloom (which already tracked them during replay) and the translator (which is only
-    /// created on `EffectsEnabled`). Re-broadcasting the byte-identical original payload is
-    /// equivocation-safe (peers dedup by event id) and idempotent. The query is bounded to the
-    /// snapshot-cursor window so only the in-flight (un-delivered) artifacts are re-sent.
+    /// Two channels are covered, both bounded to the snapshot-cursor window so only the in-flight
+    /// (un-delivered) artifacts are re-sent:
+    ///   * Gossip artifacts (`KeyshareCreated`, `DecryptionshareCreated`, `PublicKeyAggregated`,
+    ///     …) are sent straight to libp2p as `GossipPublish`, bypassing both the EventBus dedup
+    ///     bloom (which already tracked them during replay) and the translator (which is only
+    ///     created on `EffectsEnabled`).
+    ///   * Document artifacts — the DKG share exchange (`EncryptionKeyCreated`,
+    ///     `ThresholdShareCreated`, `DecryptionKeyShared`) — travel over the DHT, not gossip, so
+    ///     they are re-PUT to the DHT and their publish notification re-broadcast via the same
+    ///     path the live `DocumentPublisher` uses.
+    ///
+    /// Re-emitting the byte-identical original payload is equivocation-safe and idempotent: peers
+    /// dedup gossip by event id and document shares by sender `party_id`, and the DHT key is the
+    /// content hash so a re-PUT overwrites with the same record.
     fn maybe_rebroadcast_own_artifacts(&mut self, ctx: &mut actix::Context<Self>) {
         if self.rebroadcast_started || !self.net_ready {
             return;
@@ -165,31 +180,149 @@ impl NetSyncManager {
         }
     }
 
-    /// Re-gossip the node's own forwardable artifacts returned by the re-broadcast query.
-    fn handle_rebroadcast_response(&mut self, events: Vec<InterfoldEvent>) {
-        let mut count = 0usize;
-        for event in events {
-            if !EventTranslationService::is_forwardable_event(&event) {
-                continue;
+    /// Build a document re-publish request for one of this node's own DKG share-exchange
+    /// artifacts (the DHT-channel counterpart to gossip re-broadcast). Returns `None` for
+    /// non-document events; the conversion itself returns `None` for externally-sourced
+    /// artifacts, so peer documents are never re-published even if they slip the source filter.
+    fn own_document_request(event: &InterfoldEvent) -> Option<PublishDocumentRequested> {
+        match event.get_data() {
+            InterfoldEventData::ThresholdShareCreated(d) => {
+                EventConversionService::threshold_share_to_request(d.clone())
+                    .ok()
+                    .flatten()
             }
-            let data: GossipData = match event.try_into() {
-                Ok(data) => data,
-                Err(e) => {
-                    warn!("Failed to convert own artifact to gossip data: {e}");
+            InterfoldEventData::EncryptionKeyCreated(d) => {
+                EventConversionService::encryption_key_to_request(d.clone())
+                    .ok()
+                    .flatten()
+            }
+            InterfoldEventData::DecryptionKeyShared(d) => {
+                EventConversionService::decryption_key_to_request(d.clone())
+                    .ok()
+                    .flatten()
+            }
+            _ => None,
+        }
+    }
+
+    /// A peer is resuming an in-flight DKG and asked us to re-announce our DKG documents for
+    /// `e3_id`. Query our own `EventSource::Local` events (unbounded — `since` 0) for that E3's
+    /// chain and re-PUT/re-notify the document artifacts, so the rejoining node can fetch the shares
+    /// whose original (ephemeral) notifications it missed while down.
+    fn handle_resync_request(&mut self, e3_id: E3id, ctx: &mut actix::Context<Self>) {
+        let id = CorrelationId::new();
+        self.resync_query_e3.insert(id, e3_id.clone());
+        let since: HashMap<AggregateId, u128> =
+            HashMap::from([(AggregateId::from_chain_id(Some(e3_id.chain_id())), 0u128)]);
+        info!("NetSyncManager: peer requested DKG document resync for {e3_id}; re-announcing our documents");
+        if let Err(e) = self.eventstore.try_send(
+            EventStoreQueryBy::<TsAgg>::new(id, since, ctx.address().recipient())
+                .with_filter(EventStoreFilter::Source(EventSource::Local)),
+        ) {
+            error!("Failed to query EventStore for resync response: {e}");
+            self.resync_query_e3.remove(&id);
+        }
+    }
+
+    /// Respond to a peer's resync for `e3_id` by re-emitting our own artifacts for it on **both**
+    /// channels: forwardable gossip artifacts (e.g. `DKGRecursiveAggregationComplete`,
+    /// `KeyshareCreated`) are re-gossiped, and DKG share documents are re-PUT/re-notified. A node
+    /// rejoining mid-DKG can miss either kind, so both must be re-delivered.
+    fn handle_resync_response(&mut self, e3_id: E3id, events: Vec<InterfoldEvent>) {
+        let mut doc_count = 0usize;
+        let mut gossip_count = 0usize;
+        for event in events {
+            // Forwardable gossip artifacts for this E3 — re-gossip straight to libp2p.
+            if EventTranslationService::is_forwardable_event(&event) {
+                if event.get_e3_id().as_ref() != Some(&e3_id) {
                     continue;
                 }
+                match GossipData::try_from(event) {
+                    Ok(data) => {
+                        if let Err(e) = self.tx.try_send(NetCommand::GossipPublish {
+                            topic: self.topic.clone(),
+                            data,
+                            correlation_id: CorrelationId::new(),
+                        }) {
+                            warn!("Failed to re-gossip artifact for resync: {e}");
+                        } else {
+                            gossip_count += 1;
+                        }
+                    }
+                    Err(e) => warn!("Failed to convert artifact to gossip data for resync: {e}"),
+                }
+                continue;
+            }
+            // DKG share documents — re-PUT to the DHT and re-notify.
+            let Some(request) = Self::own_document_request(&event) else {
+                continue;
             };
-            if let Err(e) = self.tx.try_send(NetCommand::GossipPublish {
-                topic: self.topic.clone(),
-                data,
-                correlation_id: CorrelationId::new(),
-            }) {
-                warn!("Failed to re-broadcast own artifact (channel full or closed): {e}");
-            } else {
-                count += 1;
+            if request.meta.e3_id != e3_id {
+                continue;
+            }
+            let tx = self.tx.clone();
+            let rx = self.rx.clone();
+            let bus = self.bus.clone();
+            let topic = self.topic.clone();
+            actix::spawn(async move {
+                if let Err(e) = handle_publish_document_requested(tx, rx, request, topic, bus).await
+                {
+                    warn!("Failed to re-announce DKG document for resync: {e}");
+                }
+            });
+            doc_count += 1;
+        }
+        info!("NetSyncManager: re-announced {doc_count} document(s) and re-gossiped {gossip_count} artifact(s) for {e3_id} resync");
+    }
+
+    /// Re-emit the node's own artifacts returned by the re-broadcast query: gossip artifacts go
+    /// straight to libp2p; DKG document shares are re-PUT to the DHT and re-notified.
+    fn handle_rebroadcast_response(&mut self, events: Vec<InterfoldEvent>) {
+        let mut gossip_count = 0usize;
+        let mut doc_count = 0usize;
+        for event in events {
+            // Gossip-channel artifacts: re-gossip the byte-identical payload straight to libp2p.
+            if EventTranslationService::is_forwardable_event(&event) {
+                let data: GossipData = match event.try_into() {
+                    Ok(data) => data,
+                    Err(e) => {
+                        warn!("Failed to convert own artifact to gossip data: {e}");
+                        continue;
+                    }
+                };
+                if let Err(e) = self.tx.try_send(NetCommand::GossipPublish {
+                    topic: self.topic.clone(),
+                    data,
+                    correlation_id: CorrelationId::new(),
+                }) {
+                    warn!("Failed to re-broadcast own artifact (channel full or closed): {e}");
+                } else {
+                    gossip_count += 1;
+                }
+                continue;
+            }
+
+            // Document-channel artifacts (the DKG share exchange): re-PUT to the DHT and
+            // re-broadcast the publish notification so peers that missed the original (crash mid-
+            // broadcast, DHT miss, peer churn) can fetch our share and stop waiting on us.
+            if let Some(request) = Self::own_document_request(&event) {
+                let tx = self.tx.clone();
+                let rx = self.rx.clone();
+                let bus = self.bus.clone();
+                let topic = self.topic.clone();
+                actix::spawn(async move {
+                    if let Err(e) =
+                        handle_publish_document_requested(tx, rx, request, topic, bus).await
+                    {
+                        warn!("Failed to re-publish own DKG document after restart: {e}");
+                    }
+                });
+                doc_count += 1;
             }
         }
-        info!("NetSyncManager: re-broadcast {count} own forwardable artifact(s) after restart");
+        info!(
+            "NetSyncManager: re-broadcast {gossip_count} gossip and {doc_count} document artifact(s) after restart"
+        );
     }
 
     /// Apply a readiness decision: publish `NetReady`, or schedule the fallback timeout.
@@ -232,6 +365,10 @@ impl NetSyncManager {
         let addr = Self::new(bus, tx, rx, eventstore, topic).start();
 
         bus.subscribe(EventType::HistoricalNetSyncStart, addr.clone().recipient());
+        bus.subscribe(
+            EventType::DkgDocumentResyncRequest,
+            addr.clone().recipient(),
+        );
 
         // Forward from NetEvent
         tokio::spawn({
@@ -268,14 +405,45 @@ impl Actor for NetSyncManager {
 impl Handler<InterfoldEvent> for NetSyncManager {
     type Result = ();
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
+        let source = msg.source();
+        // Our own resync request: push it straight to libp2p. NetSyncManager exists from process
+        // start, so this is reliable regardless of when the gossip translator is created during boot
+        // (the translator also gossips it once up; receivers dedup by event id).
+        if source == EventSource::Local {
+            if let InterfoldEventData::DkgDocumentResyncRequest(_) = msg.get_data() {
+                match GossipData::try_from(msg.clone()) {
+                    Ok(data) => {
+                        if let Err(e) = self.tx.try_send(NetCommand::GossipPublish {
+                            topic: self.topic.clone(),
+                            data,
+                            correlation_id: CorrelationId::new(),
+                        }) {
+                            warn!("Failed to gossip DkgDocumentResyncRequest: {e}");
+                        }
+                    }
+                    Err(e) => warn!("Failed to convert DkgDocumentResyncRequest to gossip: {e}"),
+                }
+            }
+        }
+
         let (msg, ec) = msg.into_components();
-        // We are making a sync request of another node
-        if let InterfoldEventData::HistoricalNetSyncStart(data) = msg {
-            // Capture the snapshot-cursor map so we can bound the post-restart re-broadcast of our
-            // own forwardable artifacts to the in-flight window (H3/H11).
-            self.rebroadcast_since = Some(data.since.clone().into_iter().collect());
-            self.maybe_rebroadcast_own_artifacts(ctx);
-            ctx.notify(TypedEvent::new(data, ec))
+        match msg {
+            // We are making a sync request of another node
+            InterfoldEventData::HistoricalNetSyncStart(data) => {
+                // Capture the snapshot-cursor map so we can bound the post-restart re-broadcast of
+                // our own forwardable artifacts to the in-flight window (H3/H11).
+                self.rebroadcast_since = Some(data.since.clone().into_iter().collect());
+                self.maybe_rebroadcast_own_artifacts(ctx);
+                ctx.notify(TypedEvent::new(data, ec))
+            }
+            // A DKG resync request — re-announce our own documents for the E3 byte-identically.
+            // Fires for both a peer's request (we are a committee member with shares it needs) and
+            // our own request on resume (so peers waiting on us re-receive our shares). The Local
+            // copy was also gossiped out above so peers re-announce theirs to us.
+            InterfoldEventData::DkgDocumentResyncRequest(data) => {
+                self.handle_resync_request(data.e3_id, ctx);
+            }
+            _ => {}
         }
     }
 }
@@ -363,6 +531,11 @@ impl Handler<IncomingRequest> for NetSyncManager {
 impl Handler<EventStoreQueryResponse> for NetSyncManager {
     type Result = ();
     fn handle(&mut self, msg: EventStoreQueryResponse, _: &mut Self::Context) -> Self::Result {
+        // Response to a peer's DkgDocumentResyncRequest — re-announce our docs for that E3.
+        if let Some(e3_id) = self.resync_query_e3.remove(&msg.id()) {
+            self.handle_resync_response(e3_id, msg.into_events());
+            return;
+        }
         // Post-restart re-broadcast response (own forwardable artifacts) — handled separately from
         // peer sync-request responses.
         if self.rebroadcast_query_ids.remove(&msg.id()) {
@@ -667,6 +840,25 @@ mod tests {
         .into_sequenced(1)
     }
 
+    /// This node's own (non-external) DKG encryption-key document artifact.
+    fn local_own_document_event() -> InterfoldEvent {
+        use e3_events::{EncryptionKey, EncryptionKeyCreated};
+        use std::sync::Arc;
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            EncryptionKeyCreated {
+                e3_id: E3id::new("1234", 1),
+                key: Arc::new(EncryptionKey::new(0u64, ArcBytes::from_bytes(&[9, 9, 9]))),
+                external: false,
+            }
+            .into(),
+            None,
+            12,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(3)
+    }
+
     fn local_non_forwardable_event() -> InterfoldEvent {
         InterfoldEvent::<Unsequenced>::new_with_timestamp(
             TestEvent::new("not-forwardable", 1).into(),
@@ -710,6 +902,34 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "non-forwardable event should not be re-broadcast"
+        );
+    }
+
+    #[actix::test]
+    async fn rebroadcast_reputs_own_dkg_document_artifacts() {
+        use std::time::Duration;
+        use tokio::time::timeout;
+
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle().unwrap().enable("test");
+        let (tx, mut rx) = mpsc::channel::<NetCommand>(100);
+        let (_evt_tx, evt_rx) = broadcast::channel::<NetEvent>(100);
+        let evt_rx = Arc::new(evt_rx);
+        let eventstore = NoopEventStore.start().recipient();
+
+        let mut mgr = NetSyncManager::new(&bus, &tx, &evt_rx, eventstore, "my-topic");
+
+        // An own DKG document artifact must be re-PUT to the DHT (not gossiped).
+        mgr.handle_rebroadcast_response(vec![local_own_document_event()]);
+
+        // The re-publish runs on a spawned task; expect a DhtPutRecord on the net command channel.
+        let cmd = timeout(Duration::from_secs(1), rx.recv())
+            .await
+            .expect("expected a net command")
+            .expect("channel closed");
+        assert!(
+            matches!(cmd, NetCommand::DhtPutRecord { .. }),
+            "expected DhtPutRecord for own document artifact, got {cmd:?}"
         );
     }
 }

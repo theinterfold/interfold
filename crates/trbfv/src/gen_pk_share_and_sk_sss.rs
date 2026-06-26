@@ -20,7 +20,8 @@ use fhe::{
     trbfv::{ShareManager, TRBFV},
 };
 use fhe_traits::Serialize as FheSerialize;
-use rand::{CryptoRng, RngCore};
+use rand::{CryptoRng, RngCore, SeedableRng};
+use rand_chacha::ChaCha20Rng;
 use serde::{Deserialize, Serialize};
 use std::ops::Deref;
 use tracing::info;
@@ -36,6 +37,14 @@ pub struct GenPkShareAndSkSssRequest {
     pub lambda: LambdaConfig,
     /// Number of ciphertexts (z) for smudging noise generation.
     pub num_ciphertexts: usize,
+    /// Deterministic seed for all secret sampling (the threshold secret key, smudging noise, and
+    /// Shamir shares). Derived by the caller from stable, persisted, node-private material so that
+    /// re-issuing this request after a crash reproduces a **byte-identical** secret and therefore an
+    /// identical C0–C3 chain — preventing the equivocation that would otherwise make peers flag a
+    /// `CommitmentConsistencyViolation` and slash the restarting node. All-zero means "no seed
+    /// provided" and falls back to the supplied entropic RNG (back-compat / non-resumable callers).
+    #[serde(default)]
+    pub secret_seed: [u8; 32],
 }
 
 struct InnerRequest {
@@ -43,6 +52,7 @@ struct InnerRequest {
     pub crp: CommonRandomPoly,
     pub lambda: LambdaConfig,
     pub num_ciphertexts: usize,
+    pub secret_seed: [u8; 32],
 }
 
 impl TryFrom<GenPkShareAndSkSssRequest> for InnerRequest {
@@ -55,6 +65,7 @@ impl TryFrom<GenPkShareAndSkSssRequest> for InnerRequest {
             crp,
             lambda: value.lambda,
             num_ciphertexts: value.num_ciphertexts,
+            secret_seed: value.secret_seed,
         })
     }
 }
@@ -125,6 +136,19 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
         "gen_pk_share_and_sk_sss: n={}, t={}",
         num_ciphernodes, threshold
     );
+
+    // Drive all secret sampling from a single ChaCha20 stream. With a caller-provided seed the
+    // stream — and hence the secret key, smudging noise, and Shamir shares — is fully deterministic,
+    // so a crashed node re-issuing this request regenerates a byte-identical secret (no
+    // equivocation). With no seed (all-zero) we seed the stream from the supplied entropic RNG, so
+    // behaviour is unchanged for non-resumable callers.
+    let mut rng = if req.secret_seed == [0u8; 32] {
+        ChaCha20Rng::from_rng(rng)
+    } else {
+        ChaCha20Rng::from_seed(req.secret_seed)
+    };
+    let rng = &mut rng;
+
     let sk_share = SecretKey::random(&params, rng);
     let (pk0_share, _, _, eek) = PublicKeyShare::new_extended(&sk_share, crp.clone(), rng)?;
 

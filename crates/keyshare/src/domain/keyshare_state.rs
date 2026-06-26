@@ -68,6 +68,15 @@ pub struct AggregatingDecryptionKey {
     pub(crate) signed_e_sm_share_computation_proof: Option<SignedProofPayload>,
     pub(crate) signed_sk_share_encryption_proofs: Vec<SignedProofPayload>,
     pub(crate) signed_e_sm_share_encryption_proofs: Vec<SignedProofPayload>,
+    /// Source material retained from `GeneratingThresholdShare` so this node can re-publish its
+    /// outgoing `ThresholdSharePending` on restart if it crashed mid-share-generation (before its
+    /// `ThresholdShareCreated` was broadcast). Re-running `build_shares_generated_plan` from this is
+    /// now **byte-identical** because the BFV share-encryption randomness is derived
+    /// deterministically (see `derive_share_encryption_seed`), so the regenerated share matches any
+    /// copy peers already hold — no equivocation. `Option` + `serde(default)` keeps pre-upgrade
+    /// snapshots loadable.
+    #[serde(default)]
+    pub(crate) threshold_share_source: Option<Box<GeneratingThresholdShareData>>,
 }
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -475,6 +484,7 @@ mod tests {
             signed_e_sm_share_computation_proof: None,
             signed_sk_share_encryption_proofs: Vec::new(),
             signed_e_sm_share_encryption_proofs: Vec::new(),
+            threshold_share_source: None,
         }
     }
 

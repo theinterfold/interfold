@@ -79,7 +79,11 @@ case "$SERVICE" in
     rm -f "${SIGNAL_FILE}"
     wait_for_file "${SIGNAL_FILE}" "deploy signal file"
     echo "[run_service] Deploy done. Starting ${SERVICE} directly..."
-    exec interfold --name "${SERVICE}" start -v
+    mkdir -p "${CRISP_ROOT}/.interfold/logs"
+    # Mirror stdout/stderr to a logfile (truncated each start) while keeping the VS Code terminal
+    # output, so node logs can be inspected after the fact. exec keeps interfold as the task PID so
+    # Terminate Task still delivers signals to it.
+    exec interfold --name "${SERVICE}" start -v > >(tee "${CRISP_ROOT}/.interfold/logs/${SERVICE}.log") 2>&1
     ;;
 
   program)

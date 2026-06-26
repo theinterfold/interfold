@@ -40,11 +40,12 @@ use libp2p::{
         self, cbor, Event as RequestResponseEvent, Message as RequestResponseMessage,
         ProtocolSupport,
     },
-    swarm::{dial_opts::DialOpts, DialError, NetworkBehaviour, SwarmEvent},
+    swarm::{dial_opts::DialOpts, ConnectionId, DialError, NetworkBehaviour, SwarmEvent},
     Multiaddr, StreamProtocol, Swarm,
 };
 use rand::prelude::IteratorRandom;
 use std::{
+    collections::HashMap,
     io::Error,
     sync::Arc,
     time::{Duration, Instant},
@@ -151,10 +152,24 @@ impl Libp2pNetInterface {
 
         let swarm = libp2p::SwarmBuilder::with_existing_identity(id.into_keypair())
             .with_tokio()
-            .with_quic()
+            .with_quic_config(|mut cfg| {
+                // Detect a dead peer promptly. When a node is killed, its QUIC connection lingers on
+                // the survivors until the idle timeout fires; if a restarted node reconnects (same
+                // PeerId) before that happens, gossipsub treats the new connection as a non-first
+                // one and never re-exchanges topic subscriptions, so the rejoining node can't publish
+                // (`InsufficientPeers`). A short idle timeout + keep-alive evicts the stale
+                // connection within ~15s so the rejoin can become a clean first connection.
+                cfg.max_idle_timeout = 15_000;
+                cfg.keep_alive_interval = Duration::from_secs(5);
+                cfg
+            })
             .with_dns()
             .map_err(|e| anyhow::anyhow!("Failed to enable DNS: {e}"))?
             .with_behaviour(create_behaviour)?
+            // Hold an otherwise-idle connection briefly so a freshly (re)connected peer isn't torn
+            // down before gossipsub grafts it into the topic mesh, while still being short enough to
+            // not mask a genuinely dead peer (QUIC's own idle timeout above bounds that case).
+            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(20)))
             .build();
 
         // TODO: Use topics to manage network traffic instead of just using a single topic
@@ -193,6 +208,11 @@ impl Libp2pNetInterface {
         let mut peer_id_mismatches = PeerFailureTracker::new();
         // This is to make sure we dont spam warnings in the logs
         let mut last_backpressure_warn = Instant::now();
+        // Live connection ids per peer, used to detect a restarted peer reconnecting over a
+        // still-open stale connection so it can be forced through a clean re-handshake.
+        let mut peer_connections: HashMap<libp2p::PeerId, Vec<ConnectionId>> = HashMap::new();
+        // Cooldown so a forced reconnect handshake can't ping-pong on simultaneous dials.
+        let mut last_force_disconnect: HashMap<libp2p::PeerId, Instant> = HashMap::new();
 
         // Subscribe to topic
         self.swarm
@@ -247,7 +267,7 @@ impl Libp2pNetInterface {
                 }
                 // Process events
                 event = self.swarm.select_next_some() =>  {
-                    match process_swarm_event(&mut self.swarm, &event_tx, &cmd_tx, &mut correlator, &mut peer_failures, &mut peer_id_mismatches, &self.status, event).await {
+                    match process_swarm_event(&mut self.swarm, &event_tx, &cmd_tx, &mut correlator, &mut peer_failures, &mut peer_id_mismatches, &self.status, &mut peer_connections, &mut last_force_disconnect, event).await {
                         Ok(_) => (),
                         Err(e) => error!("Error processing NetEvent: {e}")
                     }
@@ -280,7 +300,10 @@ fn create_behaviour(
     );
 
     let gossipsub_config = gossipsub::ConfigBuilder::default()
-        .heartbeat_interval(Duration::from_secs(10))
+        // 1s heartbeat (libp2p default) so the topic mesh forms/heals within a couple of seconds
+        // after a node (re)connects, rather than up to ~10s — critical for a node rejoining mid-DKG
+        // so it can gossip its keyshare/markers promptly instead of failing with InsufficientPeers.
+        .heartbeat_interval(Duration::from_secs(1))
         .max_transmit_size(MAX_GOSSIP_MSG_SIZE_KB * 1024)
         .validation_mode(gossipsub::ValidationMode::Strict)
         .build()
@@ -332,6 +355,8 @@ async fn process_swarm_event(
     peer_failures: &mut PeerFailureTracker,
     peer_id_mismatches: &mut PeerFailureTracker,
     status: &NetworkStatus,
+    peer_connections: &mut HashMap<libp2p::PeerId, Vec<ConnectionId>>,
+    last_force_disconnect: &mut HashMap<libp2p::PeerId, Instant>,
     event: SwarmEvent<NodeBehaviourEvent>,
 ) -> Result<()> {
     match event {
@@ -371,12 +396,56 @@ async fn process_swarm_event(
                     .add_address(&peer_id, remote_addr.clone());
             }
 
-            // Trigger Kademlia bootstrap to discover peers beyond direct connections
-            if num_established.get() == 1 {
+            // Detect a stale predecessor connection. A second connection to a peer we already hold
+            // one to is the signature of a node restarting and reconnecting with the same PeerId
+            // before our connection to its dead process has been evicted. gossipsub only exchanges
+            // topic subscriptions on the *first* connection to a peer (`other_established == 0`), so
+            // while a stale connection lingers the rejoin is treated as non-first and the peers
+            // never re-advertise their subscriptions to the rejoining node — which can then never
+            // publish (`InsufficientPeers`). Closing just the stale connection and manually
+            // re-subscribing does not work: the unsubscribe/subscribe pair races gossipsub's own
+            // sends and is delivered out of order, leaving the peer unsubscribed. Instead, fully
+            // disconnect so the next connection is a genuine clean first connection that triggers a
+            // single, correct subscription exchange.
+            let conns = peer_connections.entry(peer_id).or_default();
+            if !conns.is_empty() {
+                // Only force a disconnect once per cooldown window. A genuine stale-reconnect needs
+                // a single clean re-handshake; without this guard, two healthy nodes that happen to
+                // dial each other simultaneously (a transient second connection) could ping-pong
+                // disconnects forever. If we recently forced one, just accept the extra connection —
+                // for healthy peers the subscription exchange already happened on their first
+                // connection, so nothing is lost.
+                let cooling_down = last_force_disconnect
+                    .get(&peer_id)
+                    .is_some_and(|t| t.elapsed() < Duration::from_secs(15));
+                if cooling_down {
+                    conns.push(connection_id);
+                    event_tx.send(NetEvent::ConnectionEstablished { connection_id })?;
+                    return Ok(());
+                }
+                conns.clear();
+                peer_connections.remove(&peer_id);
+                last_force_disconnect.insert(peer_id, Instant::now());
+                info!(
+                    "Peer {peer_id} reconnected over a stale connection — dropping all connections to force a clean re-handshake"
+                );
+                let _ = swarm.disconnect_peer_id(peer_id);
+                // Re-discover/redial via Kademlia so a clean reconnection follows promptly.
                 if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
                     debug!("Kademlia bootstrap not possible yet: {e}");
                 }
+                return Ok(());
             }
+            conns.push(connection_id);
+
+            // Trigger Kademlia bootstrap to discover peers beyond direct connections
+            if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
+                debug!("Kademlia bootstrap not possible yet: {e}");
+            }
+            // Treat every connected peer as a gossipsub explicit peer. In a small known committee
+            // this makes publishing robust to mesh/subscription staleness: explicit peers are
+            // flooded to regardless of mesh state.
+            swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
 
             event_tx.send(NetEvent::ConnectionEstablished { connection_id })?;
         }
@@ -690,14 +759,31 @@ async fn process_swarm_event(
         SwarmEvent::ConnectionClosed {
             peer_id,
             num_established,
+            connection_id,
             cause,
             ..
         } => {
             status.disconnected(&peer_id.to_string(), num_established);
+            if let Some(conns) = peer_connections.get_mut(&peer_id) {
+                conns.retain(|c| *c != connection_id);
+                if conns.is_empty() {
+                    peer_connections.remove(&peer_id);
+                }
+            }
             if num_established == 0 {
+                // Fully disconnected — drop it as a gossipsub explicit peer (re-added on reconnect).
+                swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .remove_explicit_peer(&peer_id);
                 let total = swarm.connected_peers().count();
                 info!("Peer disconnected: {peer_id} (total: {total}, cause: {cause:?})");
             }
+            // NOTE: we intentionally do NOT re-advertise (unsubscribe+subscribe) here. Closing the
+            // stale connection above already lets gossipsub treat the surviving connection as a
+            // first connection and send our subscription naturally; an explicit unsubscribe toggle
+            // races that send and, observed in practice, lands its UNSUBSCRIBE last — wiping the
+            // rejoined peer's view of our subscription and leaving it unable to publish.
         }
 
         SwarmEvent::ListenerClosed {

@@ -877,18 +877,6 @@ impl AccusationVoting {
             }
 
             // Dispatch ZK re-verification
-            let correlation_id = CorrelationId::new();
-            self.pending_reverifications.insert(
-                correlation_id,
-                PendingReVerification {
-                    accusation_id,
-                    data_hash,
-                    accused: key.0,
-                    proof_type: key.1,
-                    evidence,
-                },
-            );
-
             let party_proof = PartyProofsToVerify {
                 sender_party_id: accused_party_id,
                 signed_proofs: vec![forwarded_clone],
@@ -899,8 +887,18 @@ impl AccusationVoting {
                     params_preset: self.params_preset,
                     committee_size,
                 }),
-                correlation_id,
                 self.e3_id.clone(),
+            );
+            let correlation_id = request.correlation_id;
+            self.pending_reverifications.insert(
+                correlation_id,
+                PendingReVerification {
+                    accusation_id,
+                    data_hash,
+                    accused: key.0,
+                    proof_type: key.1,
+                    evidence,
+                },
             );
 
             actions.push(VoteAction::DispatchZk {

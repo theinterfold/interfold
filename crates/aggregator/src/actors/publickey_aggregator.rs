@@ -30,7 +30,36 @@ use e3_utils::{ArcBytes, MAILBOX_LIMIT};
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::collections::HashMap;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use std::time::Duration;
+use tracing::{debug, error, info, warn};
+
+/// Env override for the keyshare-collection timeout (seconds).
+const KEYSHARE_COLLECTION_TIMEOUT_ENV: &str = "E3_KEYSHARE_COLLECTION_TIMEOUT_SECS";
+/// Default keyshare-collection timeout. The aggregator normally transitions as soon as all N
+/// keyshares arrive; this only fires when a committee member is absent/excluded and its keyshare
+/// never comes. Long enough not to drop a merely-slow honest node, short enough to bound recovery.
+const DEFAULT_KEYSHARE_COLLECTION_TIMEOUT_SECS: u64 = 300;
+
+fn keyshare_collection_timeout() -> Duration {
+    match std::env::var(KEYSHARE_COLLECTION_TIMEOUT_ENV)
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+    {
+        Some(secs) => {
+            info!(
+                "Keyshare-collection timeout overridden via {}={}s",
+                KEYSHARE_COLLECTION_TIMEOUT_ENV, secs
+            );
+            Duration::from_secs(secs)
+        }
+        None => Duration::from_secs(DEFAULT_KEYSHARE_COLLECTION_TIMEOUT_SECS),
+    }
+}
+
+/// Internal self-message fired when the keyshare-collection window elapses while still Collecting.
+#[derive(Message, Clone, Debug)]
+#[rtype(result = "()")]
+struct KeyshareCollectionTimeout;
 
 // Public-key aggregation state machine + pure transition logic now live in
 // `crate::domain::publickey_aggregation`; re-exported here to preserve the public path
@@ -46,6 +75,11 @@ pub struct PublicKeyAggregator {
     committee_size: CiphernodesCommitteeSize,
     /// DKG recursive aggregation events received before entering GeneratingC5Proof.
     early_dkg_proofs: Vec<TypedEvent<DKGRecursiveAggregationComplete>>,
+    /// Cancels the keyshare-collection timeout once collection completes normally.
+    timeout_handle: Option<SpawnHandle>,
+    /// Most recent real event context, reused to drive the timeout-fired state transition (which
+    /// has no event of its own). Captured whenever a keyshare arrives.
+    last_ec: Option<EventContext<Sequenced>>,
 }
 
 pub struct PublicKeyAggregatorParams {
@@ -72,6 +106,8 @@ impl PublicKeyAggregator {
             params_preset: params.params_preset,
             committee_size: params.committee_size,
             early_dkg_proofs: Vec::new(),
+            timeout_handle: None,
+            last_ec: None,
         }
     }
 
@@ -627,23 +663,20 @@ impl PublicKeyAggregator {
         let inner_proof = inner_proof.clone();
         let prior_accumulator = nodes_fold_accumulator.clone();
 
-        let corr = CorrelationId::new();
-        self.bus.publish(
-            ComputeRequest::zk(
-                ZkRequest::NodesFoldStep(NodesFoldStepRequest {
-                    inner_proof,
-                    prior_accumulator,
-                    slot_index: next_slot,
-                    total_slots,
-                    e3_id: self.e3_id.to_string(),
-                    params_preset: self.params_preset,
-                    committee_size: self.committee_size,
-                }),
-                corr,
-                self.e3_id.clone(),
-            ),
-            ec.clone(),
-        )?;
+        let request = ComputeRequest::zk(
+            ZkRequest::NodesFoldStep(NodesFoldStepRequest {
+                inner_proof,
+                prior_accumulator,
+                slot_index: next_slot,
+                total_slots,
+                e3_id: self.e3_id.to_string(),
+                params_preset: self.params_preset,
+                committee_size: self.committee_size,
+            }),
+            self.e3_id.clone(),
+        );
+        let corr = request.correlation_id;
+        self.bus.publish(request, ec.clone())?;
 
         info!(
             "PublicKeyAggregator: dispatched NodesFoldStep slot={}/{} for E3 {}",
@@ -945,23 +978,20 @@ impl PublicKeyAggregator {
             );
         }
 
-        let corr = CorrelationId::new();
-        self.bus.publish(
-            ComputeRequest::zk(
-                ZkRequest::DkgAggregation(DkgAggregationRequest {
-                    node_fold_proofs,
-                    nodes_fold_proof: precomputed_fold,
-                    c5_proof: c5_proof.clone(),
-                    party_ids,
-                    committee_addresses,
-                    params_preset: self.params_preset,
-                    committee_size: self.committee_size,
-                }),
-                corr,
-                self.e3_id.clone(),
-            ),
-            ec.clone(),
-        )?;
+        let request = ComputeRequest::zk(
+            ZkRequest::DkgAggregation(DkgAggregationRequest {
+                node_fold_proofs,
+                nodes_fold_proof: precomputed_fold,
+                c5_proof: c5_proof.clone(),
+                party_ids,
+                committee_addresses,
+                params_preset: self.params_preset,
+                committee_size: self.committee_size,
+            }),
+            self.e3_id.clone(),
+        );
+        let corr = request.correlation_id;
+        self.bus.publish(request, ec.clone())?;
 
         self.state.try_mutate(ec, |state| {
             let PublicKeyAggregatorState::GeneratingC5Proof {
@@ -1387,6 +1417,77 @@ impl Actor for PublicKeyAggregator {
     type Context = Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        // Bound the keyshare-collection phase: a committee member that was briefly absent can be
+        // capped out of the honest roster, so its keyshare never arrives and waiting for all N
+        // would stall forever. On expiry we proceed with the collected majority if a viable honest
+        // set exists (see the timeout handler). The timer is cancelled once all N arrive normally.
+        let timeout = keyshare_collection_timeout();
+        info!(
+            e3_id = %self.e3_id,
+            ?timeout,
+            "PublicKeyAggregator started; scheduling keyshare-collection timeout"
+        );
+        self.timeout_handle = Some(ctx.notify_later(KeyshareCollectionTimeout, timeout));
+    }
+}
+
+impl Handler<KeyshareCollectionTimeout> for PublicKeyAggregator {
+    type Result = ();
+    fn handle(&mut self, _: KeyshareCollectionTimeout, ctx: &mut Self::Context) -> Self::Result {
+        self.timeout_handle = None;
+
+        // Only act while still Collecting; if we have already transitioned (VerifyingC1/…) the
+        // round is progressing and the timer is a no-op.
+        if !matches!(
+            self.state.get(),
+            Some(PublicKeyAggregatorState::Collecting { .. })
+        ) {
+            debug!(
+                e3_id = %self.e3_id,
+                "Keyshare-collection timeout fired but already past Collecting; ignoring"
+            );
+            return;
+        }
+
+        let Some(forced) = self
+            .state
+            .get()
+            .as_ref()
+            .and_then(PublicKeyAggregation::force_verifying_c1)
+        else {
+            warn!(
+                e3_id = %self.e3_id,
+                "Keyshare-collection timed out with too few keyshares for a viable honest set; cannot proceed"
+            );
+            return;
+        };
+
+        let Some(ec) = self.last_ec.clone() else {
+            warn!(
+                e3_id = %self.e3_id,
+                "Keyshare-collection timed out but no event context captured; cannot force transition"
+            );
+            return;
+        };
+
+        warn!(
+            e3_id = %self.e3_id,
+            "Keyshare-collection timed out; proceeding to C1 verification with the collected majority"
+        );
+
+        trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
+            self.state.try_mutate(&ec, |_| Ok(forced.clone()))?;
+            if let Some(PublicKeyAggregatorState::VerifyingC1 {
+                submission_order,
+                c1_proofs,
+                ..
+            }) = self.state.get()
+            {
+                self.dispatch_c1_verification(&submission_order, &c1_proofs, ec.clone())?;
+            }
+            Ok(())
+        });
+        let _ = ctx;
     }
 }
 
@@ -1485,10 +1586,14 @@ impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {
                 return Ok(());
             }
 
+            // Capture a real event context to drive a possible timeout-fired transition later.
+            self.last_ec = Some(ec.clone());
+
             self.add_keyshare(pubkey, node, party_id, c1_proof, &ec)?;
 
             // If we just transitioned to VerifyingC1, dispatch verification
-            // using c1_proofs stored in the new state.
+            // using c1_proofs stored in the new state. (The keyshare-collection timer, if it
+            // fires after this, no-ops because we are no longer Collecting.)
             if let Some(PublicKeyAggregatorState::VerifyingC1 {
                 submission_order,
                 c1_proofs,
@@ -1763,10 +1868,6 @@ mod tests {
 
     #[actix::test]
     async fn dkg_aggregation_compute_error_emits_e3_failed() -> Result<()> {
-        let correlation_id = CorrelationId::new();
-        let (mut aggregator, history, e3_id) =
-            build_public_key_aggregator(generating_c5_state(correlation_id)).await?;
-
         let request = ComputeRequest::zk(
             ZkRequest::DkgAggregation(DkgAggregationRequest {
                 node_fold_proofs: vec![dummy_proof(CircuitName::PkAggregation)],
@@ -1779,9 +1880,12 @@ mod tests {
                 params_preset: BfvPreset::InsecureThreshold512,
                 committee_size: CiphernodesCommitteeSize::Minimum,
             }),
-            correlation_id,
-            e3_id.clone(),
+            E3id::new("42", 1),
         );
+        let correlation_id = request.correlation_id;
+        let (mut aggregator, history, e3_id) =
+            build_public_key_aggregator(generating_c5_state(correlation_id)).await?;
+        let _ = &e3_id;
 
         aggregator.handle_compute_request_error(TypedEvent::new(
             ComputeRequestError::new(

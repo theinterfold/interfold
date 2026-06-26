@@ -12,9 +12,12 @@
 //! in the [`E3Context`] so it receives routed events.
 
 use crate::actors::commitment_consistency_checker::CommitmentConsistencyChecker;
+use actix::Recipient;
 use anyhow::Result;
 use async_trait::async_trait;
-use e3_events::{BusHandle, CommitmentLink, Event, InterfoldEvent, InterfoldEventData};
+use e3_events::{
+    BusHandle, CommitmentLink, Event, EventStoreQueryBy, InterfoldEvent, InterfoldEventData, TsAgg,
+};
 use e3_fhe_params::BfvPreset;
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
 use e3_zk_helpers::CiphernodesCommitteeSize;
@@ -24,6 +27,8 @@ type LinksFactory = Box<dyn Fn(BfvPreset) -> Vec<Box<dyn CommitmentLink>> + Send
 
 pub struct CommitmentConsistencyCheckerExtension {
     bus: BusHandle,
+    /// EventStore reader handed to each per-E3 checker for cache rehydration after restart.
+    eventstore: Recipient<EventStoreQueryBy<TsAgg>>,
     /// Factory that builds commitment links for a given BFV preset.
     links_factory: LinksFactory,
 }
@@ -31,10 +36,12 @@ pub struct CommitmentConsistencyCheckerExtension {
 impl CommitmentConsistencyCheckerExtension {
     pub fn create(
         bus: &BusHandle,
+        eventstore: Recipient<EventStoreQueryBy<TsAgg>>,
         links_factory: impl Fn(BfvPreset) -> Vec<Box<dyn CommitmentLink>> + Send + Sync + 'static,
     ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
+            eventstore,
             links_factory: Box::new(links_factory),
         })
     }
@@ -69,7 +76,13 @@ impl E3Extension for CommitmentConsistencyCheckerExtension {
                 .expect("committee size must be canonical at CommitteeFinalized")
                 .values()
                 .h;
-        let addr = CommitmentConsistencyChecker::setup(&self.bus, e3_id, links, committee_h);
+        let addr = CommitmentConsistencyChecker::setup(
+            &self.bus,
+            self.eventstore.clone(),
+            e3_id,
+            links,
+            committee_h,
+        );
 
         ctx.set_event_recipient("commitment_consistency_checker", Some(addr.into()));
     }

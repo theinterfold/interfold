@@ -536,6 +536,7 @@ impl CiphernodeBuilder {
                 &addr,
                 &dkg_fold_verifier_by_chain,
                 &accusation_vote_validity_by_chain,
+                eventstore.ts(),
             )
             .await?;
 
@@ -708,6 +709,7 @@ impl CiphernodeBuilder {
         addr: &str,
         dkg_fold_verifier_by_chain: &HashMap<u64, Option<Address>>,
         accusation_vote_validity_by_chain: &HashMap<u64, u64>,
+        eventstore_ts: actix::Recipient<e3_events::EventStoreQueryBy<e3_events::TsAgg>>,
     ) -> Result<e3_request::E3RouterBuilder> {
         let mut e3_builder = E3Router::builder(bus, store.clone());
 
@@ -781,6 +783,7 @@ impl CiphernodeBuilder {
             info!("Setting up CommitmentConsistencyCheckerExtension");
             e3_builder = e3_builder.with(CommitmentConsistencyCheckerExtension::create(
                 bus,
+                eventstore_ts,
                 e3_zk_prover::default_links,
             ));
         }

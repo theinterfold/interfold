@@ -29,6 +29,7 @@ mod decryption_share_proof_signed;
 mod decryption_share_proofs;
 mod decryptionshare_created;
 mod die;
+mod dkg_document_resync_request;
 mod dkg_fold_attestation;
 mod dkg_inner_proof_ready;
 mod dkg_recursive_aggregation_complete;
@@ -106,6 +107,7 @@ pub use decryption_share_proof_signed::*;
 pub use decryption_share_proofs::*;
 pub use decryptionshare_created::*;
 pub use die::*;
+pub use dkg_document_resync_request::*;
 pub use dkg_fold_attestation::*;
 pub use dkg_inner_proof_ready::*;
 pub use dkg_recursive_aggregation_complete::*;
@@ -268,6 +270,7 @@ pub enum InterfoldEventData {
     PublicKeyAggregated(PublicKeyAggregated),
     CiphertextOutputPublished(CiphertextOutputPublished),
     DecryptionKeyShared(DecryptionKeyShared),
+    DkgDocumentResyncRequest(DkgDocumentResyncRequest),
     DecryptionshareCreated(DecryptionshareCreated),
     PlaintextAggregated(PlaintextAggregated),
     PublishDocumentRequested(PublishDocumentRequested),
@@ -585,6 +588,7 @@ impl InterfoldEventData {
             InterfoldEventData::PublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CiphertextOutputPublished(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionKeyShared(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::DkgDocumentResyncRequest(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionshareCreated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::PlaintextAggregated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::PkGenerationProofSigned(ref data) => Some(data.e3_id.clone()),
@@ -678,6 +682,7 @@ impl_event_types!(
     PublicKeyAggregated,
     CiphertextOutputPublished,
     DecryptionKeyShared,
+    DkgDocumentResyncRequest,
     DecryptionshareCreated,
     PlaintextAggregated,
     PublishDocumentRequested,

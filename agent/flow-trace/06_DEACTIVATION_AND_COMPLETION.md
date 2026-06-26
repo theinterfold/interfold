@@ -229,6 +229,59 @@ On restart:
 └─ Node resumes from where it left off
 ```
 
+**Restart re-broadcast of own artifacts (`NetSyncManager::maybe_rebroadcast_own_artifacts`).**
+Resume from a persisted DKG phase is otherwise passive — the restored keyshare/aggregator actors
+wait for peer input and do not re-emit their own outputs — so peers that missed a node's original
+broadcast (crash mid-broadcast, DHT-record miss, peer churn) can stall the committee to its phase
+timeout. The `ThresholdShareCollector` and the encryption-key / decryption-key-share collectors wait
+for **all N** committee members and only short-circuit on an on-chain expulsion, never on a plain
+crash, so one silently-missing share halts the whole DKG. After `NetReady`, `NetSyncManager` queries
+its own `EventSource::Local` events in the snapshot-cursor (in-flight) window and re-emits them on
+both channels:
+
+- **Gossip artifacts** (`KeyshareCreated`, `DecryptionshareCreated`, `PublicKeyAggregated`,
+  `ProofFailureAccusation`, `AccusationVote`, `DKGRecursiveAggregationComplete`) are re-sent straight
+  to libp2p as `GossipPublish`, bypassing the EventBus dedup bloom and the (not-yet-created)
+  translator.
+- **Document artifacts** — the DKG share exchange (`EncryptionKeyCreated`, `ThresholdShareCreated`,
+  `DecryptionKeyShared`) travel over the Kademlia DHT, not gossip, so they are re-PUT to the DHT and
+  their `DocumentPublishedNotification` re-broadcast via the same `handle_publish_document_requested`
+  path the live `DocumentPublisher` uses.
+
+Both are equivocation-safe and idempotent: gossip dedups by event id, document shares dedup by sender
+`party_id`, and the DHT key is the content hash so a re-PUT overwrites the same record. This lets a
+restarted committee member re-deliver its already-produced DKG contribution and unblock peers that
+were waiting on it.
+
+**DKG resync on resume — byte-identical only.** Recovery never *regenerates* a DKG artifact:
+re-running share generation re-randomises the C3 BFV encryption, producing a share that differs
+byte-for-byte from the copy peers already hold → equivocation → false accusation / slashing. So
+`ThresholdKeyshare::resume_in_flight_work`, for an in-flight DKG phase (`CollectingEncryptionKeys` /
+`GeneratingThresholdShare` / `AggregatingDecryptionKey`), publishes a **`DkgDocumentResyncRequest`**
+instead of re-driving its own output. `NetSyncManager`:
+
+- gossips the node's own request straight to libp2p (reliable from process start), and
+- on any resync request (a peer's, or its own on resume) re-announces **its own** already-produced
+  DKG documents for that E3 **verbatim** from the EventStore (`handle_resync_request` → re-PUT to the
+  DHT + re-notify via `handle_publish_document_requested`).
+
+So every committee member re-announces its documents: the restarted node re-fetches the peer shares
+whose ephemeral notifications it missed while down, and peers waiting on the restarted node
+re-receive its share. All re-announcement is content-addressed and `party_id`-deduped — no
+equivocation.
+
+**Verification rehydration (`CommitmentConsistencyChecker`).** The per-E3 checker is created late
+(on `CommitteeFinalized` replay), after the boot sequence already re-delivered the earlier
+`ProofVerificationPassed` events, so a fresh checker would evaluate cross-circuit links (e.g. C0→C3)
+against an empty cache and false-accuse honest peers. On startup it now **rehydrates its
+verified-proof cache from the EventStore** (every persisted `ProofVerificationPassed` for its E3) and
+**buffers inbound consistency checks until rehydration completes**, so re-verification on a restarted
+node matches a never-crashed node.
+
+`ReadyForDecryption` (post-authorization) / `Decrypting` still re-publish `KeyshareCreated` and
+re-issue the decryption-share computation as before. Residual gap: a crash in the brief window before
+a node's own share is ever produced is a stall (nothing to re-announce) — never a slash.
+
 Post-completion EVM receipts (`RewardsDistributed`, `RewardCredited`, `RewardClaimed`, and related
 settlement observations) remain in EventStore for auditing and operator projections. The router does
 not deliver them to a completed per-E3 context because they report settlement; they do not resume

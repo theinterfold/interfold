@@ -52,6 +52,7 @@ impl EventTranslationService {
                 | InterfoldEventData::PublicKeyAggregated(_)
                 | InterfoldEventData::ProofFailureAccusation(_)
                 | InterfoldEventData::AccusationVote(_)
+                | InterfoldEventData::DkgDocumentResyncRequest(_)
         )
     }
 
