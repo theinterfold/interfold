@@ -21,7 +21,7 @@ const Footer: React.FC = () => {
           <a href='https://x.com/InterfoldE3' target='_blank' rel='noopener noreferrer' aria-label='X'>
             <TwitterLogo size={18} />
           </a>
-          <a href='https://t.me/interfold_e3' target='_blank' rel='noopener noreferrer' aria-label='Telegram'>
+          <a href='https://t.me/enclave_e3' target='_blank' rel='noopener noreferrer' aria-label='Telegram'>
             <TelegramLogo size={18} />
           </a>
           <a href='https://warpcast.com/interfolde3' target='_blank' rel='noopener noreferrer' aria-label='Farcaster'>
