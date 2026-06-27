@@ -1,0 +1,78 @@
+{
+  "name": "sepolia-protocol",
+  "chainId": 11155111,
+  "safe": "0x0000000000000000000000000000000000000000",
+  "fold": "0x0000000000000000000000000000000000000000",
+  "bondingRegistryProxy": "0x0000000000000000000000000000000000000000",
+  "bondingRegistryProxyAdmin": "0x0000000000000000000000000000000000000000",
+  "feeToken": "0x0000000000000000000000000000000000000000",
+  "protocolTreasury": "0x0000000000000000000000000000000000000000",
+  "slashedFundsTreasury": "0x0000000000000000000000000000000000000000",
+  "slasher": "0x0000000000000000000000000000000000000000",
+  "ticketToken": {
+    "lockRegistry": false
+  },
+  "bonding": {
+    "ticketPrice": "10000000",
+    "licenseRequiredBond": "100000000000000000000",
+    "minTicketBalance": "1",
+    "exitDelay": "604800"
+  },
+  "registry": {
+    "sortitionSubmissionWindow": "10"
+  },
+  "slashing": {
+    "initialDelay": "172800"
+  },
+  "interfold": {
+    "maxDuration": "2592000",
+    "markFailedGracePeriod": "0",
+    "timeoutConfig": {
+      "dkgWindow": "7200",
+      "computeWindow": "86400",
+      "decryptionWindow": "3600"
+    },
+    "pricing": {
+      "keyGenFixedPerNode": "100000",
+      "keyGenPerEncryptionProof": "50000",
+      "coordinationPerPair": "10000",
+      "availabilityPerNodePerSec": "50",
+      "decryptionPerNode": "300000",
+      "publicationBase": "1000000",
+      "verificationPerProof": "5000",
+      "protocolTreasury": "0x0000000000000000000000000000000000000000",
+      "marginBps": "1500",
+      "protocolShareBps": "2000",
+      "dkgUtilizationBps": "2500",
+      "computeUtilizationBps": "5000",
+      "decryptUtilizationBps": "2500",
+      "minCommitteeSize": "0",
+      "minThreshold": "0"
+    },
+    "committeeThresholds": [
+      {
+        "size": "0",
+        "quorum": "2",
+        "total": "3"
+      },
+      {
+        "size": "1",
+        "quorum": "5",
+        "total": "9"
+      },
+      {
+        "size": "2",
+        "quorum": "10",
+        "total": "19"
+      }
+    ],
+    "registerDefaultBfvParamSets": true,
+    "allowFeeToken": true
+  },
+  "verifiers": {
+    "decryptionVerifier": "0x0000000000000000000000000000000000000000",
+    "pkVerifier": "0x0000000000000000000000000000000000000000",
+    "dkgFoldAttestationVerifier": "0x0000000000000000000000000000000000000000"
+  },
+  "e3Programs": []
+}
