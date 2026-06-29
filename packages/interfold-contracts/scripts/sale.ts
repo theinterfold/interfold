@@ -389,6 +389,7 @@ async function proposeSafeTransactions(
   const safeTxHash = await protocolKit.getTransactionHash(safeTransaction);
   const signature = await protocolKit.signHash(safeTxHash);
 
+  let url: string | undefined;
   await apiKit.proposeTransaction({
     safeAddress: config.safe,
     safeTransactionData: safeTransaction.data,
@@ -397,6 +398,10 @@ async function proposeSafeTransactions(
     senderSignature: signature.data,
     origin,
   });
+  url = safeTransactionUrl(config.chainId, config.safe, safeTxHash);
+  console.log(
+    `Safe proposal URL: ${url ?? "(open the Safe UI pending queue)"}`,
+  );
 
   const proposal: SafeProposal = {
     safeTxHash,
@@ -869,8 +874,12 @@ function makeTemplateConfig(opts: {
   currentBlock: bigint;
   currentTimestamp: bigint;
 }): SaleConfigFile {
-  const ccaStart = opts.currentTimestamp + 1n * DAY;
-  const ccaEnd = ccaStart + 7n * DAY;
+  const offsetSeconds = BigInt(arg("cca-offset-seconds") ?? String(DAY));
+  const durationSeconds = BigInt(
+    arg("cca-duration-seconds") ?? String(7n * DAY),
+  );
+  const ccaStart = opts.currentTimestamp + offsetSeconds;
+  const ccaEnd = ccaStart + durationSeconds;
   const startBlock = opts.currentBlock + 2n;
   const endBlock = startBlock + BigInt(arg("auction-duration-blocks") ?? "40");
   const auctionBlocks = endBlock - startBlock;
@@ -1609,6 +1618,9 @@ Common flags:
   --plan <file>             Optional plan path override
   --deployment <file>       Optional deployment path override
   --mock-cca                Local fallback only; Sepolia/mainnet use real CCA factories by default
+  --auction-duration-blocks N  CCA length in blocks (default 40)
+  --cca-offset-seconds N    Seconds until FOLD CCA_START from now (default 86400 = 1 day)
+  --cca-duration-seconds N  Seconds FOLD CCA lasts (default 604800 = 7 days)
 
 Examples:
   pnpm sale --network sepolia --action full-test

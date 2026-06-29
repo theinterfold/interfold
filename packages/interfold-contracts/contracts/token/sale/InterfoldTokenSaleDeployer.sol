@@ -1,8 +1,4 @@
 // SPDX-License-Identifier: LGPL-3.0-only
-//
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
-// or FITNESS FOR A PARTICULAR PURPOSE.
 pragma solidity 0.8.28;
 
 import {
@@ -25,53 +21,13 @@ interface IFoldToken {
 
 /**
  * @title InterfoldTokenSaleDeployer
- * @notice Safe-owned, operator-run deployment factory for the FOLD token
- *         sale via a Uniswap Continuous Clearing Auction (CCA).
- *
- * @dev    PURPOSE & THREAT MODEL
- *
- *         For legal reasons FOLD must be deployed from a specific jurisdiction.
- *         The pattern here lets an "operator" wallet (the gas payer) press the
- *         button, while the Interfold Foundation Safe remains the sole protocol
- *         authority:
- *
- *           - {protocolAdmin} is set explicitly at construction. The operator
- *             may deploy THIS contract, but the script/config must pass the
- *             Foundation Safe as protocolAdmin.
- *           - FOLD is deployed with `initialOwner = address(this)` so the
- *             factory can fund the sale, then ownership is handed to the Safe.
- *             FOLD is {Ownable2Step}: the Safe must call {acceptOwnership} to
- *             finalize, which atomically moves every role to the Safe.
- *
- *         CIRCULAR-DEPENDENCY SOLUTION
- *
- *         FOLD's constructor needs the CCA auction address (`CLAIM_SOURCE`,
- *         immutable), and the CCA needs FOLD's address. This is resolved with
- *         deterministic prediction, verified atomically on-chain:
- *
- *           1. Off-chain: predict FOLD's address from this factory's next nonce
- *              (plain CREATE) and bake it into `configData`/the CCA prediction.
- *           2. Off-chain: predict the CCA address from the Uniswap factory using
- *              `sender = address(this)` (this contract calls the CCA factory).
- *           3. Off-chain: bake the predicted CCA address into FOLD's init code
- *              as `claimSource`.
- *           4. On-chain: this contract CREATEs FOLD, creates the auction, and
- *              REQUIRES `fold.CLAIM_SOURCE() == auction`. That single equality
- *              catches any nonce/prediction/sender mismatch and reverts the whole
- *              transaction, so a wrong prediction can never half-deploy.
- *
- *         SUPPORTED UNISWAP VERSIONS
- *
- *         {SaleConfig.ccaUseV2} selects the entrypoint: v1.1.0 uses
- *         {ICCAFactoryV1.initializeDistribution}; v2.0.0 uses
- *         {ICCAFactoryV2.create}. The off-chain predictor must mirror the same
- *         version, since their CREATE2 init code differs.
+ * @notice Operator-callable sale deployment factory. The Safe passed as
+ *         `protocolAdmin` becomes the FOLD owner; the caller only pays gas.
+ * @dev FOLD and the CCA auction depend on each other's addresses. The deploy
+ *      script predicts both addresses, this contract checks the prediction
+ *      on-chain, and the whole transaction reverts on any mismatch.
  */
 contract InterfoldTokenSaleDeployer {
-    // ─────────────────────────────────────────────────────────────────────────
-    // Types
-    // ─────────────────────────────────────────────────────────────────────────
-
     /// @param ccaFactory The deployed Uniswap CCA factory address.
     /// @param ccaUseV2 When true, call the v2 `create`/`getAddress` ABI; when
     ///        false, the v1.1.0 `initializeDistribution`/`getAuctionAddress` ABI.
@@ -92,10 +48,6 @@ contract InterfoldTokenSaleDeployer {
         bytes32 foldInitCodeHash;
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Errors
-    // ─────────────────────────────────────────────────────────────────────────
-
     error ZeroAddress();
     error ConfigAlreadyUsed(bytes32 configHash);
     error FoldInitCodeMismatch();
@@ -105,27 +57,12 @@ contract InterfoldTokenSaleDeployer {
     error FoldOwnershipNotRetained(address owner);
     error AuctionTokenMismatch(address expected, address actual);
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Constants & immutables
-    // ─────────────────────────────────────────────────────────────────────────
-
     /// @notice The Safe that becomes FOLD owner/admin.
-    /// @dev Passed at construction so an EOA can deploy the factory while the
-    ///      Foundation Safe remains the only admin address.
-    ///      Kept camelCase as a deliberate, documented external API name.
     // solhint-disable-next-line immutable-vars-naming
     address public immutable protocolAdmin;
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Storage
-    // ─────────────────────────────────────────────────────────────────────────
-
     /// @notice Replay guard: each config can be deployed exactly once.
     mapping(bytes32 configHash => bool used) public usedConfigHashes;
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Events
-    // ─────────────────────────────────────────────────────────────────────────
 
     /// @notice Emitted once a sale is fully deployed and funded.
     event SaleDeployed(
@@ -136,18 +73,10 @@ contract InterfoldTokenSaleDeployer {
         address operator
     );
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Constructor
-    // ─────────────────────────────────────────────────────────────────────────
-
     constructor(address protocolAdmin_) {
         if (protocolAdmin_ == address(0)) revert ZeroAddress();
         protocolAdmin = protocolAdmin_;
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Deployment
-    // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * @notice Deploys FOLD + the CCA auction and funds the sale, all in one
@@ -164,25 +93,15 @@ contract InterfoldTokenSaleDeployer {
         SaleConfig calldata config,
         bytes calldata foldInitCode
     ) external returns (address fold, address auction) {
-        // 1. Verify config integrity and replay guard.
         bytes32 configHash = _checkConfig(config, foldInitCode);
 
-        // 2. Deploy FOLD via plain CREATE (address fixed by this factory's nonce,
-        //    matching the off-chain prediction baked into the CCA config).
         fold = _create(foldInitCode);
-        // The factory must be FOLD's owner so it can mint the sale supply.
         if (IFoldToken(fold).owner() != address(this)) {
             revert FoldOwnershipNotRetained(IFoldToken(fold).owner());
         }
 
-        // 3. Create the CCA auction through the deployed Uniswap factory.
-        //    `sender` in the prediction was address(this); here we ARE the
-        //    caller, so the address matches by construction.
         auction = _createAuction(config, fold);
 
-        // 4. Atomic correctness gate: the auction we just created MUST be the
-        //    one baked into FOLD as the immutable claim source. This single
-        //    check fails the whole tx on any prediction/nonce/sender mismatch.
         address claimSource = IFoldToken(fold).CLAIM_SOURCE();
         if (auction != claimSource) {
             revert AuctionMismatch(claimSource, auction);
@@ -191,14 +110,9 @@ contract InterfoldTokenSaleDeployer {
             revert AuctionTokenMismatch(fold, ICCAAuction(auction).token());
         }
 
-        // 5. Fund the sale: mint the sale supply to the auction and notify it.
         IFoldToken(fold).mint(auction, config.saleAmount, config.saleLabel);
         ICCAAuction(auction).onTokensReceived();
 
-        // 6. Hand FOLD ownership to the Safe. FOLD is Ownable2Step, so this is a
-        //    pending transfer; the Safe must call acceptOwnership() to finalize,
-        //    which atomically moves every role to the Safe. Until then the
-        //    factory retains the roles but exposes no further minting path.
         IFoldToken(fold).transferOwnership(protocolAdmin);
 
         emit SaleDeployed(
@@ -209,10 +123,6 @@ contract InterfoldTokenSaleDeployer {
             msg.sender
         );
     }
-
-    // ─────────────────────────────────────────────────────────────────────────
-    // Views
-    // ─────────────────────────────────────────────────────────────────────────
 
     /**
      * @notice Deterministic hash used to identify a deployment config.
@@ -239,12 +149,6 @@ contract InterfoldTokenSaleDeployer {
             );
     }
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // Internal
-    // ─────────────────────────────────────────────────────────────────────────
-
-    /// @dev Validates the FOLD init code hash and the replay guard. Marks the
-    ///      config used. Returns the config hash.
     function _checkConfig(
         SaleConfig calldata config,
         bytes calldata foldInitCode

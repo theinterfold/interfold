@@ -471,19 +471,11 @@ export const getActiveAggregator = task(
         throw new Error(`No active committee nodes found for e3Id=${e3Id}`);
       }
 
-      const [activeAggregator] = activeNodes
-        .map((node, index) => ({
-          node,
-          score: activeScores[index],
-          index,
-        }))
-        .sort((left, right) => {
-          if (left.score < right.score) return -1;
-          if (left.score > right.score) return 1;
-          return left.index - right.index;
-        });
-
-      console.log(activeAggregator.node);
+      // The finalized committee is stored in canonical party-id order. Runtime
+      // aggregator selection uses the first active party, then failover promotes
+      // the next active party. Scores are only for committee selection and must
+      // not be used to choose the active aggregator after finalization.
+      console.log(activeNodes[0]);
     },
   }))
   .build();
