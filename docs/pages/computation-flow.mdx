@@ -52,6 +52,13 @@ server, Compute Providers, or other network participants.
    ) external view returns (uint256 fee);
    ```
 
+   E3 pricing is cost-plus. The quote models ciphernode work (key generation, proof verification,
+   availability time, decryption, publication, and coordination), then applies the configured
+   margin. Protocol revenue comes from the treasury share of completed E3 fees; ticket purchases are
+   ciphernode sortition deposits, not normal protocol revenue. The launch configuration uses a 10%
+   margin (`marginBps = 1000`) and a 1.82% gross treasury share (`protocolShareBps = 182`), which is
+   approximately 20% of the margin because the contract splits treasury revenue from the gross fee.
+
 ### Phase 2: Node Selection
 
 Each new request to the Interfold contracts initiates a verifiable sortition process to select a
@@ -139,7 +146,7 @@ sentinel used for bounds-checking in `IInterfold`):
 - The requester can claim their share via `claimRequesterRefund(e3Id)`
 - Honest committee members (non-expelled nodes) can claim compensation via
   `claimHonestNodeReward(e3Id)`
-- A protocol fee is retained for operational costs
+- The protocol treasury receives the configured failure-path protocol share
 
 For the complete `FailureReason` → allocation map, see the `markE3Failed` / `claimRequesterRefund`
 flow in `IE3RefundManager` and `IInterfold`.

@@ -153,12 +153,16 @@ publishPlaintextOutput() succeeds
 │   ├─ stage = Complete
 │   ├─ _distributeRewards(e3Id)
 │   │   ├─ (activeNodes, _) = ciphernodeRegistry.getActiveCommitteeNodes(e3Id)
-│   │   ├─ perNode = payment / activeNodes.length
+│   │   ├─ protocolAmount = payment * snapshotted protocolShareBps / 10_000
+│   │   ├─ cnAmount = payment - protocolAmount
+│   │   ├─ perNode = cnAmount / activeNodes.length
 │   │   ├─ dust → last member
 │   │   ├─ if activeNodes.length == 0: refund payment to requester
 │   │   ├─ if payment == 0: only slashed-funds distribution runs
-│   │   ├─ bondingRegistry.distributeRewards(token, nodes, amounts)
-│   │   │   → Transfers fee tokens to each registered operator
+│   │   ├─ if protocolAmount > 0:
+│   │   │   _pendingTreasury[snapshottedTreasury][token] += protocolAmount
+│   │   ├─ _creditRewards(e3Id, nodes, amounts, token)
+│   │   │   → Credits pull-payment rewards to each registered operator
 │   │   ├─ e3RefundManager.distributeSlashedFundsOnSuccess(
 │   │   │     e3Id, activeNodes, paymentToken
 │   │   │   )
@@ -215,6 +219,9 @@ On restart:
 │      → Extensions must preserve hydrated recipients; replayed committee events
 │        must not replace a restored per-E3 actor with a fresh instance
 │   2. CiphernodeSelector emits persisted AggregatorChanged state before replay
+│      → ThresholdPlaintextAggregatorExtension records this role in the E3 context
+│        so a plaintext buffer created later by CiphertextOutputPublished starts
+│        with the correct active-aggregator flag
 │   3. Replay EventStore events since last snapshot (effects still disabled)
 │   4. Fetch historical EVM events from last known block
 │   5. Historical libp2p sync retries failed aggregate fetches after reconnects
@@ -229,10 +236,92 @@ On restart:
 └─ Node resumes from where it left off
 ```
 
+### Restart + Persist State Diagram
+
+```mermaid
+flowchart TD
+    Crash["Crash after key publication<br/>before ciphertext"] --> Boot["Ciphernode boot"]
+
+    subgraph DurableStorage["Durable storage"]
+        EventStore["EventStore<br/>sequenced bus events"]
+        RouterSnap["E3Router/E3Context snapshots<br/>context ids + dependency keys only"]
+        PublicKeyRepo["PublicKeyAggregatorState<br/>full committee; sometimes honest set"]
+        KeyshareRepo["ThresholdKeyshareState<br/>honest_parties, aggregated_pk, local phase"]
+        PlaintextRepo["ThresholdPlaintextAggregatorState<br/>only exists after ciphertext"]
+    end
+
+    Boot --> Actors["Attach bus subscribers<br/>router, proof actor, effect gate, sortition"]
+    Actors --> Hydrate["E3Router::from_snapshot hydrates extensions"]
+
+    Hydrate --> Meta["E3MetaExtension loads meta"]
+    Hydrate --> PKHydrate["PublicKeyAggregatorExtension loads public-key actor"]
+    Hydrate --> KeyHydrate["ThresholdKeyshareExtension loads keyshare actor"]
+    Hydrate --> CCHydrate["CommitmentConsistencyCheckerExtension<br/>recreates per-E3 checker from meta"]
+    Hydrate --> PTAHydrate["ThresholdPlaintextAggregatorExtension recovers plaintext deps"]
+
+    PublicKeyRepo --> PTAHydrate
+    KeyshareRepo --> PTAHydrate
+    PTAHydrate --> FullCommittee["committee_addresses = full party-order topNodes"]
+    PTAHydrate --> HonestCommittee["honest_committee_addresses = honest_parties mapped through topNodes"]
+    PlaintextRepo --> ExistingPlaintext{"Plaintext actor state exists?"}
+    ExistingPlaintext -- yes --> StartExisting["Hydrate ThresholdPlaintextAggregator"]
+    ExistingPlaintext -- no --> WaitCiphertext["No plaintext actor yet; wait for ciphertext"]
+
+    Actors --> Replay["sync(): replay EventStore<br/>effects disabled"]
+    EventStore --> Replay
+    Replay --> CommitteeReplay["CommitteePublished replay<br/>restores full committee"]
+
+    Replay --> Effects["EffectsEnabled"]
+    Effects --> Gate["ComputeEffectGate releases replay-safe compute work"]
+
+    Effects --> Live["Live/historical chain events"]
+    Live --> Ciphertext["CiphertextOutputPublished"]
+    Ciphertext --> CanStart{"full + honest committee<br/>and keyshare actor ready?"}
+    CanStart -- yes --> NewPlaintext["Create ThresholdPlaintextAggregator<br/>seed buffer with active aggregator role"]
+    CanStart -- no --> Pending["Store pending ciphertext<br/>retry on committee/public-key events"]
+
+    KeyHydrate --> KeyshareActor["ThresholdKeyshare actor"]
+    Ciphertext --> KeyshareActor
+    KeyshareActor --> Shares["honest nodes publish DecryptionshareCreated"]
+    Shares --> Buffer["DecryptionshareCreatedBuffer"]
+    NewPlaintext --> Buffer
+    Buffer --> Active{"is active aggregator?"}
+    Active -- yes --> Collect["Collect H honest shares<br/>verify C6, aggregate C7"]
+    CCHydrate --> Collect
+    Collect --> Plaintext["PlaintextAggregated"]
+
+    CanStart -- old failure --> Lost["Observed failure before fix:<br/>full committee restored, honest subset missing,<br/>active aggregator never started plaintext"]
+```
+
 Post-completion EVM receipts (`RewardsDistributed`, `RewardCredited`, `RewardClaimed`, and related
 settlement observations) remain in EventStore for auditing and operator projections. The router does
 not deliver them to a completed per-E3 context because they report settlement; they do not resume
 protocol execution.
+
+For crashes after key publication but before ciphertext publication, the recovered active aggregator
+may not have a `ThresholdPlaintextAggregator` actor yet when the persisted `AggregatorChanged` event
+is re-emitted. The plaintext extension records that role in the live E3 context, then seeds the later
+`DecryptionshareCreatedBuffer` from it. Committee and honest-committee addresses are recovered
+from completed public-key aggregation state, in-flight public-key aggregation state, or the
+persisted `ThresholdKeyshareState.honest_parties` set during async context hydration. Replayed
+`CommitteePublished` can also restore the full committee address dependency, but cannot infer the
+H-sized honest subset when `N > H`; that subset must come from `PublicKeyAggregated`,
+`PublicKeyAggregatorState::GeneratingC5Proof`, or threshold-keyshare state. The synchronous
+`on_event` path must not read actor-backed repositories directly, because blocking the router while
+waiting for the store can freeze live gossip and make peers time out.
+If `CiphertextOutputPublished` is replayed before those committee dependencies are ready, the
+extension records the ciphertext in the E3 context and retries plaintext actor creation when
+`PublicKeyAggregated` or `CommitteePublished` supplies the missing facts; the router's existing
+recipient buffer then drains any ciphertext/decryption-share events into the newly-created
+plaintext path.
+
+`ShareVerificationActor` gates C1/C6 proof verification behind
+`CommitmentConsistencyCheckRequested` / `CommitmentConsistencyCheckComplete`. The per-E3
+`CommitmentConsistencyChecker` is therefore restart-critical even though it has no durable state of
+its own: after context hydration, `CommitmentConsistencyCheckerExtension` recreates it from the
+recovered `E3Meta` so restarted active aggregators can complete C6 verification. Without this
+recipient, the restarted node can collect honest decryption shares and then wait forever for a
+consistency-check response that no actor is subscribed to publish.
 
 ---
 

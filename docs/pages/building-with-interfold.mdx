@@ -113,6 +113,12 @@ function getE3Quote(
   bytes calldata customParams
 ) external view returns (uint256 fee);
 
+// Quotes are cost-plus: modeled ciphernode costs plus marginBps. On success,
+// the treasury receives protocolShareBps of the gross E3 fee and the active
+// committee receives the remainder. Launch uses marginBps = 1000 and
+// protocolShareBps = 182, so treasury receives about 1.82% of gross fees,
+// which is approximately 20% of the 10% margin.
+
 // Get the decryption verifier for an encryption scheme
 function getDecryptionVerifier(
   bytes32 encryptionSchemeId
@@ -306,7 +312,7 @@ await tx.wait()
 
 The size and threshold of the Ciphernode Committee you select for your computation directly impacts
 both the cost and economic security of your E3. A higher threshold means more economic security (a
-higher cost to compromise the E3), but incurs a higher protocol fee.
+higher cost to compromise the E3), but incurs a higher E3 fee.
 
 2. **Input Validation**
 
