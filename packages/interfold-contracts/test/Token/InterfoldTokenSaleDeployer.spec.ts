@@ -53,7 +53,6 @@ interface TestConfig {
   chainId: number;
   saleDeployer: string;
   safe: string;
-  ccaVersion: "v1.1.0" | "v2.0.0";
   ccaFactory: string;
   saleAmount: string;
   ccaSalt: string;
@@ -84,7 +83,6 @@ interface TestSalePlan {
   foldInitCode: string;
   saleConfig: {
     ccaFactory: string;
-    ccaUseV2: boolean;
     saleAmount: bigint;
     ccaSalt: string;
     ccaConfigData: string;
@@ -99,7 +97,6 @@ describe("InterfoldTokenSaleDeployer", function () {
     safe: string;
     bondingRegistry: string;
     ccaFactory: string;
-    useV2: boolean;
   }): Promise<TestConfig> {
     const now = BigInt(await time.latest());
     const ccaStart = now + 10n * DAY;
@@ -111,7 +108,6 @@ describe("InterfoldTokenSaleDeployer", function () {
       chainId: Number((await ethers.provider.getNetwork()).chainId),
       saleDeployer: opts.saleDeployer,
       safe: opts.safe,
-      ccaVersion: opts.useV2 ? "v2.0.0" : "v1.1.0",
       ccaFactory: opts.ccaFactory,
       saleAmount: SALE_AMOUNT.toString(),
       ccaSalt: ethers.ZeroHash,
@@ -137,7 +133,7 @@ describe("InterfoldTokenSaleDeployer", function () {
     };
   }
 
-  async function setup(useV2 = false) {
+  async function setup() {
     const [deployer, operator, safeAdmin, stranger] = await ethers.getSigners();
 
     const safeAddress = await safeAdmin.getAddress();
@@ -149,7 +145,6 @@ describe("InterfoldTokenSaleDeployer", function () {
     const bondingRegistryAddress = await bondingRegistry.getAddress();
 
     const ccaFactory = await new MockCCAFactoryFactory(deployer).deploy(
-      useV2,
       ethers.ZeroAddress,
     );
     await ccaFactory.waitForDeployment();
@@ -180,7 +175,6 @@ describe("InterfoldTokenSaleDeployer", function () {
       ccaFactoryAddress,
       saleDeployer,
       saleDeployerAddress,
-      useV2,
     };
   }
 
@@ -193,7 +187,6 @@ describe("InterfoldTokenSaleDeployer", function () {
       safe: ctx.safeAddress,
       bondingRegistry: ctx.bondingRegistryAddress,
       ccaFactory: ctx.ccaFactoryAddress,
-      useV2: ctx.useV2,
     });
 
     const factoryNonce =
@@ -231,23 +224,15 @@ describe("InterfoldTokenSaleDeployer", function () {
       [AUCTION_PARAMETERS_TUPLE],
       [auctionValues],
     );
-    const predictedAuction = ctx.useV2
-      ? await (ctx.ccaFactory as any)[
-          "getAddress(address,uint256,bytes,bytes32,address)"
-        ](
-          predictedFold,
-          SALE_AMOUNT,
-          ccaConfigData,
-          config.ccaSalt,
-          config.saleDeployer,
-        )
-      : await ctx.ccaFactory.getAuctionAddress(
-          predictedFold,
-          SALE_AMOUNT,
-          ccaConfigData,
-          config.ccaSalt,
-          config.saleDeployer,
-        );
+    const predictedAuction = await (ctx.ccaFactory as any)[
+      "getAddress(address,uint256,bytes,bytes32,address)"
+    ](
+      predictedFold,
+      SALE_AMOUNT,
+      ccaConfigData,
+      config.ccaSalt,
+      config.saleDeployer,
+    );
     const noMoreLocks = BigInt(config.fold.ccaEnd) + FORTY_DAYS + FOUR_YEARS;
     const foldInitCode = ethers.concat([
       InterfoldTokenFactory.bytecode,
@@ -270,7 +255,6 @@ describe("InterfoldTokenSaleDeployer", function () {
       foldInitCode,
       saleConfig: {
         ccaFactory: config.ccaFactory,
-        ccaUseV2: ctx.useV2,
         saleAmount: SALE_AMOUNT,
         ccaSalt: config.ccaSalt,
         ccaConfigData,
@@ -284,7 +268,6 @@ describe("InterfoldTokenSaleDeployer", function () {
     const sc = salePlan.saleConfig;
     return {
       ccaFactory: sc.ccaFactory,
-      ccaUseV2: sc.ccaUseV2,
       saleAmount: sc.saleAmount,
       ccaSalt: sc.ccaSalt,
       ccaConfigData: sc.ccaConfigData,
@@ -298,8 +281,8 @@ describe("InterfoldTokenSaleDeployer", function () {
     expect(await ctx.saleDeployer.protocolAdmin()).to.equal(ctx.safeAddress);
   });
 
-  it("deploys FOLD + CCA at the predicted addresses (v1.1.0)", async function () {
-    const ctx = await setup(false);
+  it("deploys FOLD + CCA at the predicted addresses through CCA v2", async function () {
+    const ctx = await setup();
     const { salePlan } = await makePlan(ctx);
     const digest = await ctx.saleDeployer.hashConfig(structFrom(salePlan));
 
@@ -330,23 +313,6 @@ describe("InterfoldTokenSaleDeployer", function () {
     expect(await auction.token()).to.equal(salePlan.predictedFold);
     expect(await auction.totalSupply()).to.equal(SALE_AMOUNT);
     expect(await auction.tokensReceived()).to.equal(true);
-  });
-
-  it("deploys FOLD + CCA at the predicted addresses (v2.0.0)", async function () {
-    const ctx = await setup(true);
-    const { salePlan } = await makePlan(ctx);
-
-    await ctx.saleDeployer
-      .connect(ctx.operator)
-      .deploySale(structFrom(salePlan), salePlan.foldInitCode);
-
-    const fold = InterfoldTokenFactory.connect(
-      salePlan.predictedFold,
-      ctx.operator,
-    );
-    expect(await fold.CLAIM_SOURCE()).to.equal(salePlan.predictedAuction);
-    const auction = auctionAt(salePlan.predictedAuction, ctx.operator);
-    expect(await auction.token()).to.equal(salePlan.predictedFold);
   });
 
   it("hands FOLD ownership to the Safe (pending until acceptOwnership)", async function () {

@@ -2,14 +2,20 @@
 import { ethers as ethersLib } from "ethers";
 import fs from "fs";
 
-import { connect, hasFlag } from "./cli";
+import { connect, hasFlag, networkName } from "./cli";
 import { proxyAdminInterface } from "./constants";
 import { deployProtocolContracts } from "./deployContracts";
-import { deploymentPath, readJson, safeBatchPath, writeJson } from "./files";
+import {
+  deploymentPath,
+  readJson,
+  safeBatchPath,
+  writeJson,
+} from "./files";
 import { proposeSafeBatch, safeBatch } from "./safe";
 import { buildSafeTransactions } from "./transactions";
 import type { ProtocolDeployment, SafeTransaction } from "./types";
 import { address, loadConfig, requireContract } from "./values";
+import { syncProtocolDeploymentRecords } from "../deploymentRecords";
 
 async function assertPreconditions(
   ethers: any,
@@ -55,13 +61,14 @@ export async function actionDeploy(): Promise<void> {
     );
   }
 
-  await assertPreconditions(ethers, config);
-
   const [operator] = await ethers.getSigners();
   const operatorAddress = await operator.getAddress();
+  await assertPreconditions(ethers, config);
+
   console.log(`Deploying protocol contracts for ${config.name}`);
 
   const result = await deployProtocolContracts(ethers, operator, config);
+  const blockNumber = await ethers.provider.getBlockNumber();
   const txs = buildSafeTransactions(
     config,
     result.contracts,
@@ -84,6 +91,11 @@ export async function actionDeploy(): Promise<void> {
   };
   const deploymentFile = deploymentPath(config);
   writeJson(deploymentFile, deployment);
+  syncProtocolDeploymentRecords(config, deployment, result.interfaces, {
+    chain: networkName(),
+    blockNumber,
+    syncIntegrationConfig: hasFlag("sync-integration-config"),
+  });
 
   if (hasFlag("propose-safe")) {
     deployment.safeProposal = await proposeSafeBatch(config, txs);

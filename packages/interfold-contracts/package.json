@@ -166,6 +166,7 @@
     "upgrade:bondingRegistry": "hardhat run scripts/upgrade/bondingRegistry.ts",
     "validate:upgrade": "hardhat run scripts/validateUpgrade.ts",
     "upgrade:ciphernodeRegistryOwnable": "hardhat run scripts/upgrade/ciphernodeRegistryOwnable.ts",
+    "upgrade:e3RefundManager": "hardhat run scripts/upgrade/e3RefundManager.ts",
     "e3:activate": "hardhat e3:activate",
     "e3:enable": "hardhat interfold:enableE3",
     "ciphernode:add": "hardhat ciphernode:add",

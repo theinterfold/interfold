@@ -20,11 +20,18 @@ pub struct DecryptionshareCreatedBuffer {
 
 impl DecryptionshareCreatedBuffer {
     pub fn new(dest: Addr<ThresholdPlaintextAggregator>) -> Self {
+        Self::new_with_aggregator_state(dest, false)
+    }
+
+    pub fn new_with_aggregator_state(
+        dest: Addr<ThresholdPlaintextAggregator>,
+        is_aggregator: bool,
+    ) -> Self {
         Self {
             dest,
             buffer: Vec::new(),
             expelled_parties: HashSet::new(),
-            is_aggregator: false,
+            is_aggregator,
         }
     }
 

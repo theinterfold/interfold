@@ -469,8 +469,8 @@ export const deployInterfold = async (
     publicationBase: 1000000, // 1.00 USDC
     verificationPerProof: 5000, // 0.005 USDC
     protocolTreasury: protocolTreasury,
-    marginBps: 1500, // 15%
-    protocolShareBps: 2000, // 20%
+    marginBps: 1000, // 10%
+    protocolShareBps: 182, // 1.82% gross ~= 20% of 10% margin
     dkgUtilizationBps: 2500, // 25%
     computeUtilizationBps: 5000, // 50%
     decryptUtilizationBps: 2500, // 25%

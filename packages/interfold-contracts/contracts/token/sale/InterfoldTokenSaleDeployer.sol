@@ -1,11 +1,7 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 pragma solidity 0.8.28;
 
-import {
-    ICCAFactoryV1,
-    ICCAFactoryV2,
-    ICCAAuction
-} from "../../interfaces/external/ICCA.sol";
+import { ICCAFactory, ICCAAuction } from "../../interfaces/external/ICCA.sol";
 
 /// @notice The minimal slice of {InterfoldToken} the deployer needs.
 interface IFoldToken {
@@ -29,8 +25,6 @@ interface IFoldToken {
  */
 contract InterfoldTokenSaleDeployer {
     /// @param ccaFactory The deployed Uniswap CCA factory address.
-    /// @param ccaUseV2 When true, call the v2 `create`/`getAddress` ABI; when
-    ///        false, the v1.1.0 `initializeDistribution`/`getAuctionAddress` ABI.
     /// @param saleAmount FOLD sale supply minted to the auction (must fit uint128).
     /// @param ccaSalt Salt forwarded to the Uniswap factory.
     /// @param ccaConfigData abi.encode(AuctionParameters) for the auction.
@@ -40,7 +34,6 @@ contract InterfoldTokenSaleDeployer {
     ///        bytecode/params into the one-use config hash.
     struct SaleConfig {
         address ccaFactory;
-        bool ccaUseV2;
         uint256 saleAmount;
         bytes32 ccaSalt;
         bytes ccaConfigData;
@@ -139,7 +132,6 @@ contract InterfoldTokenSaleDeployer {
                     block.chainid,
                     address(this),
                     config.ccaFactory,
-                    config.ccaUseV2,
                     config.saleAmount,
                     config.ccaSalt,
                     keccak256(config.ccaConfigData),
@@ -164,26 +156,17 @@ contract InterfoldTokenSaleDeployer {
         usedConfigHashes[configHash] = true;
     }
 
-    /// @dev Dispatches to the correct Uniswap CCA factory ABI for the version.
+    /// @dev Deploys the auction through the Uniswap CCA v2 factory.
     function _createAuction(
         SaleConfig calldata config,
         address fold
     ) internal returns (address auction) {
-        if (config.ccaUseV2) {
-            auction = ICCAFactoryV2(config.ccaFactory).create(
-                fold,
-                config.saleAmount,
-                config.ccaConfigData,
-                config.ccaSalt
-            );
-        } else {
-            auction = ICCAFactoryV1(config.ccaFactory).initializeDistribution(
-                fold,
-                config.saleAmount,
-                config.ccaConfigData,
-                config.ccaSalt
-            );
-        }
+        auction = ICCAFactory(config.ccaFactory).create(
+            fold,
+            config.saleAmount,
+            config.ccaConfigData,
+            config.ccaSalt
+        );
     }
 
     /// @dev Deploys `initCode` with plain CREATE and returns the new address.

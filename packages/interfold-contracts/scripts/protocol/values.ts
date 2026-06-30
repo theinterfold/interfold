@@ -96,10 +96,61 @@ export function pricingConfig(config: PricingConfig) {
 
 export function loadConfig(file = configPath()): ProtocolConfigFile {
   const config = readJson<ProtocolConfigFile>(file);
-  const safeOverride = arg("safe") ?? process.env.SAFE_ADDRESS;
-  if (safeOverride && config.safe === ZERO) config.safe = safeOverride;
+  applyAddressOverride(config, "safe", "safe", "SAFE_ADDRESS");
+  applyAddressOverride(config, "fold", "fold", "FOLD_ADDRESS");
+  applyAddressOverride(
+    config,
+    "bondingRegistryProxy",
+    "bonding-registry",
+    "BONDING_REGISTRY",
+  );
+  applyAddressOverride(
+    config,
+    "bondingRegistryProxyAdmin",
+    "bonding-registry-proxy-admin",
+    "BONDING_REGISTRY_PROXY_ADMIN",
+  );
+  applyAddressOverride(config, "feeToken", "fee-token", "FEE_TOKEN");
+  applyAddressOverride(
+    config,
+    "protocolTreasury",
+    "protocol-treasury",
+    "PROTOCOL_TREASURY",
+  );
+  applyAddressOverride(
+    config,
+    "slashedFundsTreasury",
+    "slashed-funds-treasury",
+    "SLASHED_FUNDS_TREASURY",
+  );
+  applyAddressOverride(config, "slasher", "slasher", "SLASHER_ADDRESS");
+  if (config.interfold.pricing.protocolTreasury === ZERO) {
+    config.interfold.pricing.protocolTreasury = config.protocolTreasury;
+  }
   validateConfig(config);
   return config;
+}
+
+function applyAddressOverride(
+  config: ProtocolConfigFile,
+  key: keyof Pick<
+    ProtocolConfigFile,
+    | "safe"
+    | "fold"
+    | "bondingRegistryProxy"
+    | "bondingRegistryProxyAdmin"
+    | "feeToken"
+    | "protocolTreasury"
+    | "slashedFundsTreasury"
+    | "slasher"
+  >,
+  cliName: string,
+  envName: string,
+): void {
+  const override = arg(cliName) ?? process.env[envName];
+  if (override && config[key] === ZERO) {
+    config[key] = override;
+  }
 }
 
 function validateConfig(config: ProtocolConfigFile): void {

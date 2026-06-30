@@ -105,19 +105,9 @@ abstract contract MockCCAAuctionBase {
     }
 }
 
-/// @notice Mock v1.1.0 auction: 3 constructor args (no fee controller), matching
-///         the real v1.1.0 CREATE2 init-code preimage.
-contract MockCCAAuctionV1 is MockCCAAuctionBase {
-    constructor(
-        address _token,
-        uint128 _totalSupply,
-        AuctionParameters memory _params
-    ) MockCCAAuctionBase(_token, _totalSupply, _params) {}
-}
-
-/// @notice Mock v2.0.0 auction: 4 constructor args (fee controller in init
+/// @notice Mock CCA v2.0.0 auction: 4 constructor args (fee controller in init
 ///         code), matching the real v2.0.0 CREATE2 init-code preimage.
-contract MockCCAAuctionV2 is MockCCAAuctionBase {
+contract MockCCAAuction is MockCCAAuctionBase {
     address public immutable protocolFeeController;
 
     constructor(
@@ -130,18 +120,15 @@ contract MockCCAAuctionV2 is MockCCAAuctionBase {
     }
 }
 
-/// @notice Mock of the Uniswap CCA factory supporting BOTH live ABIs.
+/// @notice Mock of the Uniswap CCA v2 factory.
 /// @dev CREATE2 derivation matches the real contracts exactly:
 ///        salt        = keccak256(abi.encode(sender, userSalt))
 ///        initCode    = type(MockCCAAuction).creationCode ++
-///                      abi.encode(token, uint128(amount), params [, feeController])
-///      v1.1.0 omits the fee controller from init code; v2.0.0 includes it.
+///                      abi.encode(token, uint128(amount), params, feeController)
 ///      Because the deployer predicts off-chain against the *real* auction
 ///      bytecode, tests must predict against THIS contract's bytecode instead;
 ///      the prediction helper accepts a creation-code override for that.
 contract MockCCAFactory {
-    /// @notice When true, behave like v2.0.0 (fee controller in init code).
-    bool public immutable useV2;
     address public immutable protocolFeeController;
 
     event AuctionCreated(
@@ -153,33 +140,9 @@ contract MockCCAFactory {
 
     error InvalidTokenAmount(uint256 amount);
 
-    constructor(bool _useV2, address _protocolFeeController) {
-        useV2 = _useV2;
+    constructor(address _protocolFeeController) {
         protocolFeeController = _protocolFeeController;
     }
-
-    // ── v1.1.0 ABI ──────────────────────────────────────────────────────────
-
-    function initializeDistribution(
-        address token,
-        uint256 amount,
-        bytes calldata configData,
-        bytes32 salt
-    ) external returns (address auction) {
-        return _create(token, amount, configData, salt, msg.sender);
-    }
-
-    function getAuctionAddress(
-        address token,
-        uint256 amount,
-        bytes calldata configData,
-        bytes32 salt,
-        address sender
-    ) external view returns (address) {
-        return _predict(token, amount, configData, salt, sender);
-    }
-
-    // ── v2.0.0 ABI ──────────────────────────────────────────────────────────
 
     function create(
         address token,
@@ -220,24 +183,15 @@ contract MockCCAFactory {
         uint256 amount,
         AuctionParameters memory params
     ) internal view returns (bytes memory) {
-        if (useV2) {
-            // v2.0.0: fee controller is part of the auction init code.
-            return
-                abi.encodePacked(
-                    type(MockCCAAuctionV2).creationCode,
-                    abi.encode(
-                        token,
-                        uint128(amount),
-                        params,
-                        protocolFeeController
-                    )
-                );
-        }
-        // v1.1.0: no fee controller in the auction init code.
         return
             abi.encodePacked(
-                type(MockCCAAuctionV1).creationCode,
-                abi.encode(token, uint128(amount), params)
+                type(MockCCAAuction).creationCode,
+                abi.encode(
+                    token,
+                    uint128(amount),
+                    params,
+                    protocolFeeController
+                )
             );
     }
 

@@ -11,6 +11,10 @@ import fs from "fs";
 import hre from "hardhat";
 import path from "path";
 
+import {
+  syncSaleDeploymentRecords,
+  syncSaleInfraRecords,
+} from "./deploymentRecords";
 import { getProxyAdmin } from "./proxy";
 
 const ZERO = ethersLib.ZeroAddress;
@@ -19,13 +23,8 @@ const DAY = 24n * 60n * 60n;
 const FORTY_DAYS = 40n * DAY;
 const FOUR_YEARS = 4n * 365n * DAY;
 const DEFAULT_SALE_AMOUNT = ethersLib.parseEther("1000").toString();
-
-type CcaVersion = "v1.1.0" | "v2.0.0";
-
-const CCA_FACTORY_ADDRESSES: Record<CcaVersion, string> = {
-  "v1.1.0": "0xCCccCcCAE7503Cac057829BF2811De42E16e0bD5",
-  "v2.0.0": "0x00cCa200BF124dBfA848937c553864f4B4CE0632",
-};
+const CCA_VERSION = "v2.0.0";
+const CCA_FACTORY_ADDRESS = "0x00cCa200BF124dBfA848937c553864f4B4CE0632";
 
 const AUCTION_PARAMETERS_TUPLE =
   "tuple(" +
@@ -42,12 +41,7 @@ const AUCTION_PARAMETERS_TUPLE =
   "bytes auctionStepsData" +
   ")";
 
-const CCA_FACTORY_V1_ABI = [
-  "function initializeDistribution(address token,uint256 amount,bytes configData,bytes32 salt) returns (address)",
-  "function getAuctionAddress(address token,uint256 amount,bytes configData,bytes32 salt,address sender) view returns (address)",
-];
-
-const CCA_FACTORY_V2_ABI = [
+const CCA_FACTORY_ABI = [
   "function create(address token,uint256 amount,bytes configData,bytes32 salt) returns (address)",
   "function getAddress(address token,uint256 amount,bytes configData,bytes32 salt,address sender) view returns (address)",
   "function protocolFeeController() view returns (address)",
@@ -105,7 +99,6 @@ interface SaleConfigFile {
   chainId: number;
   saleDeployer: string;
   safe: string;
-  ccaVersion: CcaVersion;
   ccaFactory?: string;
   saleAmount: string;
   ccaSalt: string;
@@ -148,7 +141,6 @@ export interface SalePlan {
   auction: AuctionParameters;
   saleConfig: {
     ccaFactory: string;
-    ccaUseV2: boolean;
     saleAmount: string;
     ccaSalt: string;
     ccaConfigData: string;
@@ -454,9 +446,14 @@ function loadConfig(file = configPath()): SaleConfigFile {
 
 function validateConfig(config: SaleConfigFile): void {
   if (!config.name) throw new Error("Config name is required");
-  if (config.ccaVersion !== "v1.1.0" && config.ccaVersion !== "v2.0.0") {
-    throw new Error("ccaVersion must be v1.1.0 or v2.0.0");
+  const legacyVersion = (config as SaleConfigFile & { ccaVersion?: unknown })
+    .ccaVersion;
+  if (legacyVersion !== undefined && legacyVersion !== CCA_VERSION) {
+    throw new Error(
+      `ccaVersion is no longer configurable; remove it or set it to ${CCA_VERSION}`,
+    );
   }
+  delete (config as SaleConfigFile & { ccaVersion?: unknown }).ccaVersion;
   config.safe = address(config.safe, "safe");
   config.saleDeployer = address(config.saleDeployer, "saleDeployer");
   if (config.ccaFactory)
@@ -544,10 +541,7 @@ function encodeAuctionConfigData(params: AuctionParameters): string {
 }
 
 function resolveCcaFactory(config: SaleConfigFile): string {
-  return address(
-    config.ccaFactory ?? CCA_FACTORY_ADDRESSES[config.ccaVersion],
-    "ccaFactory",
-  );
+  return address(config.ccaFactory ?? CCA_FACTORY_ADDRESS, "ccaFactory");
 }
 
 function deriveNoMoreLocks(ccaEnd: bigint, explicit?: string): bigint {
@@ -590,7 +584,6 @@ function buildFoldInitCode(opts: {
 function saleConfigStruct(plan: SalePlan) {
   return {
     ccaFactory: plan.saleConfig.ccaFactory,
-    ccaUseV2: plan.saleConfig.ccaUseV2,
     saleAmount: BigInt(plan.saleConfig.saleAmount),
     ccaSalt: plan.saleConfig.ccaSalt,
     ccaConfigData: plan.saleConfig.ccaConfigData,
@@ -695,25 +688,20 @@ async function buildSalePlan(
     throw new Error("saleAmount exceeds uint128 max");
   }
 
-  const factoryAbi =
-    config.ccaVersion === "v2.0.0" ? CCA_FACTORY_V2_ABI : CCA_FACTORY_V1_ABI;
-  const cca = new ethersLib.Contract(ccaFactory, factoryAbi, ethers.provider);
-  const predictedAuction =
-    config.ccaVersion === "v2.0.0"
-      ? await cca["getAddress(address,uint256,bytes,bytes32,address)"](
-          predictedFold,
-          saleAmount,
-          ccaConfigData,
-          config.ccaSalt,
-          config.saleDeployer,
-        )
-      : await cca.getAuctionAddress(
-          predictedFold,
-          saleAmount,
-          ccaConfigData,
-          config.ccaSalt,
-          config.saleDeployer,
-        );
+  const cca = new ethersLib.Contract(
+    ccaFactory,
+    CCA_FACTORY_ABI,
+    ethers.provider,
+  );
+  const predictedAuction = await cca[
+    "getAddress(address,uint256,bytes,bytes32,address)"
+  ](
+    predictedFold,
+    saleAmount,
+    ccaConfigData,
+    config.ccaSalt,
+    config.saleDeployer,
+  );
 
   const foldFactory = await ethers.getContractFactory("InterfoldToken");
   const foldInitCode = buildFoldInitCode({
@@ -747,7 +735,6 @@ async function buildSalePlan(
     auction: auctionParams,
     saleConfig: {
       ccaFactory,
-      ccaUseV2: config.ccaVersion === "v2.0.0",
       saleAmount: saleAmount.toString(),
       ccaSalt: config.ccaSalt,
       ccaConfigData,
@@ -798,7 +785,7 @@ function writeSaleUiManifest(
     ...deployment,
     saleAmount: config.saleAmount,
     saleLabel: config.saleLabel,
-    ccaVersion: config.ccaVersion,
+    ccaVersion: CCA_VERSION,
     auctionConfig: config.auction,
     foldSchedule: {
       ccaStart: config.fold.ccaStart,
@@ -840,10 +827,9 @@ async function deploySaleDeployer(
 
 async function deployMockCcaFactory(
   ethers: Awaited<ReturnType<typeof hre.network.connect>>["ethers"],
-  useV2: boolean,
 ): Promise<string> {
   const factory = await ethers.getContractFactory("MockCCAFactory");
-  const mock = await factory.deploy(useV2, ZERO);
+  const mock = await factory.deploy(ZERO);
   await mock.waitForDeployment();
   return deployedAddress(mock);
 }
@@ -870,7 +856,6 @@ function makeTemplateConfig(opts: {
   saleDeployer: string;
   bondingRegistry: string;
   ccaFactory: string;
-  ccaVersion: CcaVersion;
   currentBlock: bigint;
   currentTimestamp: bigint;
 }): SaleConfigFile {
@@ -890,7 +875,6 @@ function makeTemplateConfig(opts: {
     chainId: opts.chainId,
     safe: opts.safe,
     saleDeployer: opts.saleDeployer,
-    ccaVersion: opts.ccaVersion,
     ccaFactory: opts.ccaFactory,
     saleAmount: arg("sale-amount") ?? DEFAULT_SALE_AMOUNT,
     ccaSalt: ethersLib.id(`${opts.name}:${opts.chainId}:${Date.now()}`),
@@ -921,22 +905,25 @@ async function actionPrepare(): Promise<void> {
   const { ethers } = await connect();
   const network = await ethers.provider.getNetwork();
   const chainId = Number(network.chainId);
-  const safe = address(arg("safe") ?? process.env.SAFE_ADDRESS ?? "", "safe");
-  if (!hasFlag("allow-eoa-safe")) {
+  const [operator] = await ethers.getSigners();
+  const operatorAddress = await operator.getAddress();
+  const local = chainId === 31337 || chainId === 1337;
+  const safeInput = arg("safe") ?? process.env.SAFE_ADDRESS;
+  if (!safeInput && !local && !hasFlag("allow-eoa-safe")) {
+    throw new Error("SAFE_ADDRESS or --safe is required outside localhost.");
+  }
+  const safe = address(safeInput ?? operatorAddress, "safe");
+  if (!local && !hasFlag("allow-eoa-safe")) {
     await requireContract(ethers.provider, safe, "safe");
   }
 
   const useMockCca = hasFlag("mock-cca");
-  const ccaVersion = (arg("cca-version") as CcaVersion | undefined) ?? "v1.1.0";
-  if (ccaVersion !== "v1.1.0" && ccaVersion !== "v2.0.0") {
-    throw new Error("CCA_VERSION must be v1.1.0 or v2.0.0");
-  }
 
   const registry = await deployMockBondingRegistryProxy(ethers, safe);
   const saleDeployer = await deploySaleDeployer(ethers, safe);
   const ccaFactory = useMockCca
-    ? await deployMockCcaFactory(ethers, ccaVersion === "v2.0.0")
-    : CCA_FACTORY_ADDRESSES[ccaVersion];
+    ? await deployMockCcaFactory(ethers)
+    : CCA_FACTORY_ADDRESS;
 
   const latest = await ethers.provider.getBlock("latest");
   if (!latest) throw new Error("Could not read latest block");
@@ -951,7 +938,6 @@ async function actionPrepare(): Promise<void> {
         saleDeployer,
         bondingRegistry: registry.proxy,
         ccaFactory,
-        ccaVersion,
         currentBlock: BigInt(latest.number),
         currentTimestamp: BigInt(latest.timestamp),
       });
@@ -959,7 +945,6 @@ async function actionPrepare(): Promise<void> {
   config.chainId = chainId;
   config.safe = safe;
   config.saleDeployer = saleDeployer;
-  config.ccaVersion = ccaVersion;
   config.ccaFactory = ccaFactory;
   config.fold.bondingRegistry = registry.proxy;
 
@@ -975,6 +960,21 @@ async function actionPrepare(): Promise<void> {
     ccaFactory,
     mockCcaFactory: useMockCca ? ccaFactory : undefined,
   });
+  syncSaleInfraRecords(
+    {
+      safe,
+      saleDeployer,
+      bondingRegistryProxy: registry.proxy,
+      bondingRegistryImplementation: registry.implementation,
+      bondingRegistryProxyAdmin: registry.proxyAdmin,
+      ccaFactory,
+      mockCcaFactory: useMockCca ? ccaFactory : undefined,
+    },
+    {
+      chain: networkName(),
+      blockNumber: await ethers.provider.getBlockNumber(),
+    },
+  );
 
   console.log(`
 Prepared sale infrastructure
@@ -1080,6 +1080,10 @@ async function deployFromPlan(
   };
   writeJson(deploymentPath(config), deployment);
   writeSaleUiManifest(config, plan, deployment);
+  syncSaleDeploymentRecords(deployment, plan, {
+    chain: networkName(),
+    blockNumber: receipt.blockNumber,
+  });
   if (hasFlag("propose-safe")) {
     const proposal = await proposeSaleSafeActions(config, deployment);
     deployment.safeProposal = proposal;
@@ -1541,8 +1545,8 @@ async function actionFullTest(): Promise<void> {
   const registry = await deployMockBondingRegistryProxy(ethers, safe);
   const useMockCca = hasFlag("mock-cca") || network.chainId === 31337n;
   const ccaFactory = useMockCca
-    ? await deployMockCcaFactory(ethers, false)
-    : CCA_FACTORY_ADDRESSES["v1.1.0"];
+    ? await deployMockCcaFactory(ethers)
+    : CCA_FACTORY_ADDRESS;
   const saleDeployer = await deploySaleDeployer(ethers, safe);
   const latest = await ethers.provider.getBlock("latest");
   if (!latest) throw new Error("Could not read latest block");
@@ -1554,7 +1558,6 @@ async function actionFullTest(): Promise<void> {
     saleDeployer,
     bondingRegistry: registry.proxy,
     ccaFactory,
-    ccaVersion: "v1.1.0",
     currentBlock: BigInt(latest.number),
     currentTimestamp: BigInt(latest.timestamp),
   });

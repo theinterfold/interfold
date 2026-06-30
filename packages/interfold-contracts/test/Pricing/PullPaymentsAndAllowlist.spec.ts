@@ -71,8 +71,8 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       publicationBase: 1000000n,
       verificationPerProof: 5000n,
       protocolTreasury: treasuryAddress,
-      marginBps: 1500,
-      protocolShareBps: 2000, // 20% to treasury
+      marginBps: 1000,
+      protocolShareBps: 182, // 1.82% gross ~= 20% of 10% margin
       dkgUtilizationBps: 2500,
       computeUtilizationBps: 5000,
       decryptUtilizationBps: 2500,
