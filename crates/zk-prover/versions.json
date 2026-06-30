@@ -1,12 +1,12 @@
 {
-  "required_bb_version": "3.0.0-nightly.20260102",
+  "required_bb_version": "5.0.0-rc.2",
   "required_circuits_version": "0.2.2",
   "bb_download_url": "https://github.com/AztecProtocol/aztec-packages/releases/download/v{version}/barretenberg-{arch}-{os}.tar.gz",
   "bb_checksums": {
-    "amd64-linux": "0a4a331a40ef1a4f0e2fb745c38a02e2cbd32a9a5e71188d6f0d93ebee52a31f",
-    "amd64-darwin": "7740ccd76936efc12e80592c7f59a52e2c045a4aef4ab6ab90213b73402b521f",
-    "arm64-linux": "626d4b2b7c0895d9d4f1b6c74941685c14420f4c4d208fa19be670f486788fb7",
-    "arm64-darwin": "7c9c3fd4a9a3bfe0541eaf99a1cd0eb60fb366353ac108b2d07bbe73beb0fcb0"
+    "amd64-linux": "cf2d3149e19134873000f3f7489c8bf5e441502cc60f4aa854b6ecd4ea5efe09",
+    "amd64-darwin": "0e78bd32159b1ef9435cf2286e2941549458b2a6f19e311da341c52ce5f724ed",
+    "arm64-linux": "81b73e101a8aafcb9b84329008fad35ec9ea7067e966fe36c426295905f0e3cb",
+    "arm64-darwin": "9efe0b912916270fd491b21787205ae251b5136dd69620bb13c2090140d04994"
   },
   "circuits_download_url": "https://github.com/gnosisguild/interfold/releases/download/v{version}/circuits-{version}.tar.gz"
 }

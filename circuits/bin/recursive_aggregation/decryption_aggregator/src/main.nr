@@ -70,9 +70,9 @@ fn main(
         );
     }
 
-    let mut vk_hashes = Vec::new();
-    vk_hashes.push(c6_fold_key_hash);
-    vk_hashes.push(c7_key_hash);
+    let mut vk_hashes = [].as_vector();
+    vk_hashes = vk_hashes.push_back(c6_fold_key_hash);
+    vk_hashes = vk_hashes.push_back(c7_key_hash);
     let key_hash = compute_vk_hash(vk_hashes);
 
     let mut party_ids: [Field; T + 1] = [0; T + 1];

@@ -35,9 +35,9 @@ fn main(
     verify_honk_proof_non_zk(c3a_vk, c3a_proof, c3a_public, c3a_key_hash);
     verify_honk_proof_non_zk(c3b_vk, c3b_proof, c3b_public, c3b_key_hash);
 
-    let mut vk_hashes = Vec::new();
-    vk_hashes.push(c3a_key_hash);
-    vk_hashes.push(c3b_key_hash);
+    let mut vk_hashes = [].as_vector();
+    vk_hashes = vk_hashes.push_back(c3a_key_hash);
+    vk_hashes = vk_hashes.push_back(c3b_key_hash);
     let key_hash = compute_vk_hash(vk_hashes);
 
     let mut pk_a: [Field; C3_SLOTS] = [0; C3_SLOTS];

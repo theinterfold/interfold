@@ -238,11 +238,11 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Uses commitments in place of full pk and message polynomials to reduce
     /// constraint count while preserving binding properties. The computed k1 is
     /// included explicitly since it is derived, not directly committed.
-    fn payload(self, k1: Polynomial<N>) -> Vec<Field> {
-        let mut inputs = Vec::new();
+    fn payload(self, k1: Polynomial<N>) -> [Field] {
+        let mut inputs = [].as_vector();
 
         // Use pk commitment instead of full pk polynomials
-        inputs.push(self.expected_pk_commitment);
+        inputs = inputs.push_back(self.expected_pk_commitment);
 
         inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0is);
         inputs = flatten::<_, _, BIT_CT>(inputs, self.ct1is);
@@ -252,11 +252,11 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         inputs = flatten::<_, _, BIT_U>(inputs, [self.u]);
 
         // Use message commitment instead of full message
-        inputs.push(self.expected_message_commitment);
+        inputs = inputs.push_back(self.expected_message_commitment);
 
         // Include computed k1 in payload
         for i in 0..N {
-            inputs.push(k1.coefficients[i]);
+            inputs = inputs.push_back(k1.coefficients[i]);
         }
 
         inputs = flatten::<_, _, BIT_R1>(inputs, self.r1is);
@@ -356,7 +356,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Returns 2*L challenge values: one primary gamma at index 0 for evaluating all
     /// polynomials, L-1 weights at indices 1..L-1 for batching ct0 equations across
     /// moduli, and L weights at indices L..2L-1 for batching ct1 equations.
-    fn generate_challenge(self, k1: Polynomial<N>) -> Vec<Field> {
+    fn generate_challenge(self, k1: Polynomial<N>) -> [Field] {
         let inputs = self.payload(k1);
 
         compute_share_encryption_challenge::<L>(inputs)
@@ -372,8 +372,8 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// into a weighted batch sum using additional challenge values as weights.
     /// A deviation in any single equation will cause the accumulated sums to diverge
     /// with overwhelming probability (Schwartz-Zippel soundness).
-    fn verify_evaluations(self, gammas: Vec<Field>, k1: Polynomial<N>) {
-        let gamma = gammas.get(0);
+    fn verify_evaluations(self, gammas: [Field], k1: Polynomial<N>) {
+        let gamma = gammas[0];
         let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
         let u_at_gamma = self.u.eval(gamma);
         let e1_at_gamma = self.e1.eval(gamma);
@@ -403,10 +403,10 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             let ct1_lhs = self.ct1is[i].eval(gamma);
 
             // Accumulate into batched sum using per-modulus challenge weights
-            let gamma_i = if i == 0 { 1 } else { gammas.get(i) };
+            let gamma_i = if i == 0 { 1 } else { gammas[i] };
             sum = (
-                sum.0 + ct0_lhs * gamma_i + ct1_lhs * gammas.get(i + L),
-                sum.1 + ct0_rhs * gamma_i + ct1_rhs * gammas.get(i + L),
+                sum.0 + ct0_lhs * gamma_i + ct1_lhs * gammas[i + L],
+                sum.1 + ct0_rhs * gamma_i + ct1_rhs * gammas[i + L],
             );
         }
 

@@ -147,13 +147,13 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         ct0_commitment: Field,
         k1_commitment: Field,
         u_commitment: Field,
-    ) -> Vec<Field> {
-        let mut payload = Vec::new();
+    ) -> [Field] {
+        let mut payload = [].as_vector();
 
-        payload.push(pk0_commitment);
-        payload.push(ct0_commitment);
-        payload.push(k1_commitment);
-        payload.push(u_commitment);
+        payload = payload.push_back(pk0_commitment);
+        payload = payload.push_back(ct0_commitment);
+        payload = payload.push_back(k1_commitment);
+        payload = payload.push_back(u_commitment);
 
         payload = flatten::<_, _, BIT_E0>(payload, [self.e0]);
         payload = flatten::<_, _, BIT_R1>(payload, self.r1is);
@@ -164,8 +164,8 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         gammas
     }
 
-    fn verify_evaluations(self, gammas: Vec<Field>) -> bool {
-        let gamma = gammas.get(0);
+    fn verify_evaluations(self, gammas: [Field]) -> bool {
+        let gamma = gammas[0];
         let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
         let u_at_gamma = self.u.eval(gamma);
         let k1_at_gamma = self.k1.eval(gamma);
@@ -183,7 +183,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             ct0_rhs += r2i_at_gamma * cyclo_at_gamma;
 
             let ct0_lhs = self.ct0is[i].eval(gamma);
-            let gamma_i = if i == 0 { 1 } else { gammas.get(i) };
+            let gamma_i = if i == 0 { 1 } else { gammas[i] };
 
             sum = (sum.0 + ct0_lhs * gamma_i, sum.1 + ct0_rhs * gamma_i);
         }

@@ -30,9 +30,9 @@ fn main(
     verify_honk_proof(c4a_vk, c4a_proof, c4a_public, c4a_key_hash);
     verify_honk_proof(c4b_vk, c4b_proof, c4b_public, c4b_key_hash);
 
-    let mut vk_hashes = Vec::new();
-    vk_hashes.push(c4a_key_hash);
-    vk_hashes.push(c4b_key_hash);
+    let mut vk_hashes = [].as_vector();
+    vk_hashes = vk_hashes.push_back(c4a_key_hash);
+    vk_hashes = vk_hashes.push_back(c4b_key_hash);
     let key_hash = compute_vk_hash(vk_hashes);
 
     let mut c4a_expected: [[Field; L_THRESHOLD]; H] = [[0; L_THRESHOLD]; H];

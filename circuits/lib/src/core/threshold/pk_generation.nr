@@ -99,8 +99,8 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
     ///
     /// Uses commitments for sk and pk rather than full polynomials to reduce constraint
     /// count while maintaining binding properties. e_sm is not included in the payload.
-    fn payload(self, sk_commitment: Field, pk_commitment: Field) -> Vec<Field> {
-        let mut inputs = Vec::new();
+    fn payload(self, sk_commitment: Field, pk_commitment: Field) -> [Field] {
+        let mut inputs = [].as_vector();
 
         // Flatten CRS polynomials a (L polynomials of degree N)
         inputs = flatten::<_, _, BIT_PK>(inputs, self.a);
@@ -109,8 +109,8 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         inputs = flatten::<_, _, BIT_EEK>(inputs, [self.eek]);
 
         // Use commitments instead of full polynomials
-        inputs.push(sk_commitment);
-        inputs.push(pk_commitment);
+        inputs = inputs.push_back(sk_commitment);
+        inputs = inputs.push_back(pk_commitment);
 
         // Flatten quotient polynomials (L polynomials each)
         inputs = flatten::<_, _, BIT_R1>(inputs, self.r1);

@@ -30,9 +30,9 @@ fn main(
     verify_honk_proof(c2a_vk, c2a_proof, c2a_public, c2a_key_hash);
     verify_honk_proof(c2b_vk, c2b_proof, c2b_public, c2b_key_hash);
 
-    let mut vk_hashes = Vec::new();
-    vk_hashes.push(c2a_key_hash);
-    vk_hashes.push(c2b_key_hash);
+    let mut vk_hashes = [].as_vector();
+    vk_hashes = vk_hashes.push_back(c2a_key_hash);
+    vk_hashes = vk_hashes.push_back(c2b_key_hash);
     let key_hash = compute_vk_hash(vk_hashes);
 
     let c2a_expected = c2a_public[0];

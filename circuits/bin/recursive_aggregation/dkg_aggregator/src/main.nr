@@ -161,9 +161,9 @@ fn main(
         );
     }
 
-    let mut vk_hashes = Vec::new();
-    vk_hashes.push(nodes_fold_key_hash);
-    vk_hashes.push(c5_key_hash);
+    let mut vk_hashes = [].as_vector();
+    vk_hashes = vk_hashes.push_back(nodes_fold_key_hash);
+    vk_hashes = vk_hashes.push_back(c5_key_hash);
     let key_hash = compute_vk_hash(vk_hashes);
 
     let mut sk_agg_commits: [Field; H] = [0; H];

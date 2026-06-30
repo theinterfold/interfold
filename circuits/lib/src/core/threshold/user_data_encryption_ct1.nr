@@ -100,12 +100,12 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         pk1_commitment: Field,
         ct1_commitment: Field,
         u_commitment: Field,
-    ) -> Vec<Field> {
-        let mut payload = Vec::new();
+    ) -> [Field] {
+        let mut payload = [].as_vector();
 
-        payload.push(pk1_commitment);
-        payload.push(ct1_commitment);
-        payload.push(u_commitment);
+        payload = payload.push_back(pk1_commitment);
+        payload = payload.push_back(ct1_commitment);
+        payload = payload.push_back(u_commitment);
 
         payload = flatten::<_, _, BIT_E1>(payload, [self.e1]);
         payload = flatten::<_, _, BIT_P1>(payload, self.p1is);
@@ -114,8 +114,8 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         compute_user_data_encryption_ct1_challenge::<L>(payload)
     }
 
-    fn verify_evaluations(self, gammas: Vec<Field>) -> bool {
-        let gamma = gammas.get(0);
+    fn verify_evaluations(self, gammas: [Field]) -> bool {
+        let gamma = gammas[0];
         let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
         let u_at_gamma = self.u.eval(gamma);
         let e1_at_gamma = self.e1.eval(gamma);
@@ -131,7 +131,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             ct1_rhs += p2is_at_gamma * cyclo_at_gamma;
 
             let ct1_lhs = self.ct1is[i].eval(gamma);
-            let gamma_i = gammas.get(i + L);
+            let gamma_i = gammas[i + L];
 
             sum = (sum.0 + ct1_lhs * gamma_i, sum.1 + ct1_rhs * gamma_i);
         }

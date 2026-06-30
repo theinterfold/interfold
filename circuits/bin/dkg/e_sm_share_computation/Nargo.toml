@@ -5,4 +5,4 @@ authors = [""]
 
 [dependencies]
 lib = { path = "../../../lib" }
-bb_proof_verification = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v3.0.0-nightly.20260102", directory = "barretenberg/noir/bb_proof_verification" }
+bb_proof_verification = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v5.0.0-rc.2", directory = "barretenberg/noir/bb_proof_verification" }

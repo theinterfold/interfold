@@ -111,7 +111,7 @@ impl<let L: u32> SafeSponge<L> {
     ///
     /// # Arguments
     /// - `input`: Array of field elements to absorb (variable length, must match IO pattern)
-    pub fn absorb(&mut self, input: Vec<Field>) {
+    pub fn absorb(&mut self, input: [Field]) {
         let length = input.len() as u32;
 
         // Validate against IO pattern.
@@ -138,7 +138,7 @@ impl<let L: u32> SafeSponge<L> {
             // Add X[i] to state at absorb_pos (spec 2.4).
             // Note: absorb_pos is the rate position, not capacity position.
             self.state[self.absorb_pos + CAPACITY] =
-                self.state[self.absorb_pos + CAPACITY] + input.get(i);
+                self.state[self.absorb_pos + CAPACITY] + input[i];
             self.absorb_pos += 1;
         }
 
@@ -155,7 +155,7 @@ impl<let L: u32> SafeSponge<L> {
     /// Extracts field elements from the sponge state, interleaving permutation calls as needed (following spec 2.4).
     ///
     /// The number of elements to squeeze is automatically determined from the IO pattern.
-    pub fn squeeze(&mut self) -> Vec<Field> {
+    pub fn squeeze(&mut self) -> [Field] {
         // Validate against IO pattern.
         assert(self.io_count < L);
 
@@ -167,7 +167,7 @@ impl<let L: u32> SafeSponge<L> {
         // Validate operation type
         assert(is_expected_squeeze, "Expected SQUEEZE operation");
 
-        let mut output = Vec::new();
+        let mut output = [].as_vector();
 
         // SQUEEZE implementation following spec 2.4.
         // If length==0, loop won't execute (spec 2.4).
@@ -180,7 +180,7 @@ impl<let L: u32> SafeSponge<L> {
                 self.absorb_pos = 0;
             }
             // Set Y[i] to state element at squeeze_pos (spec 2.4).
-            output.push(self.state[self.squeeze_pos + CAPACITY]);
+            output = output.push_back(self.state[self.squeeze_pos + CAPACITY]);
             self.squeeze_pos += 1;
         }
 
@@ -214,7 +214,7 @@ impl<let L: u32> SafeSponge<L> {
     /// # Returns
     /// New state after permutation
     fn permute(self) -> [Field; STATE_SIZE] {
-        poseidon2_permutation(self.state, STATE_SIZE)
+        poseidon2_permutation(self.state)
     }
 }
 
@@ -343,7 +343,7 @@ fn test_safe_hashing() {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0,
     ];
-    let elements = Vec::from_slice(&[1, 2, 3]);
+    let elements = [1, 2, 3].as_vector();
 
     // Pattern: ABSORB(3), SQUEEZE(1)
     let io_pattern = [0x80000003, 0x00000001];
@@ -353,7 +353,7 @@ fn test_safe_hashing() {
     sponge.finish();
 
     assert(output.len() == 1);
-    assert(output.get(0) != 0);
+    assert(output[0] != 0);
 
     // Test determinism
     let mut sponge2 = SafeSponge::start(io_pattern, domain_separator);
@@ -362,7 +362,7 @@ fn test_safe_hashing() {
     sponge2.finish();
 
     assert(output2.len() == 1);
-    assert(output2.get(0) != 0);
+    assert(output2[0] != 0);
 }
 
 #[test]
@@ -374,8 +374,8 @@ fn test_merkle_node() {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0,
     ];
-    let left = Vec::from_slice([123]);
-    let right = Vec::from_slice([456]);
+    let left = [123].as_vector();
+    let right = [456].as_vector();
 
     // Pattern: ABSORB(1), ABSORB(1), SQUEEZE(1)
     let io_pattern = [0x80000001, 0x80000001, 0x00000001];
@@ -386,7 +386,7 @@ fn test_merkle_node() {
     sponge.finish();
 
     assert(output.len() == 1);
-    assert(output.get(0) != 0);
+    assert(output[0] != 0);
 
     // Test determinism
     let mut sponge2 = SafeSponge::start(io_pattern, domain_separator);
@@ -396,7 +396,7 @@ fn test_merkle_node() {
     sponge2.finish();
 
     assert(output2.len() == 1);
-    assert(output2.get(0) != 0);
+    assert(output2[0] != 0);
 }
 
 #[test]
@@ -408,7 +408,7 @@ fn test_commitment_scheme() {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0,
     ];
-    let values = Vec::from_slice([10, 20, 30]);
+    let values = [10, 20, 30].as_vector();
 
     // Pattern: ABSORB(3), SQUEEZE(1)
     let io_pattern = [0x80000003, 0x00000001];
@@ -418,7 +418,7 @@ fn test_commitment_scheme() {
     sponge.finish();
 
     assert(output.len() == 1);
-    assert(output.get(0) != 0);
+    assert(output[0] != 0);
 
     // Test determinism
     let mut sponge2 = SafeSponge::start(io_pattern, domain_separator);
@@ -427,14 +427,14 @@ fn test_commitment_scheme() {
     sponge2.finish();
 
     assert(output2.len() == 1);
-    assert(output2.get(0) != 0);
+    assert(output2[0] != 0);
 }
 
 #[test]
 fn test_domain_separation() {
     // Verifies that different domain separators produce different outputs for the same input.
     // This is crucial for cross-protocol security and preventing collisions between different applications.
-    let elements = Vec::from_slice([1, 2, 3]);
+    let elements = [1, 2, 3].as_vector();
     let domain1 = [
         0x41, 0x42, 0x43, 0x44, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
@@ -461,7 +461,7 @@ fn test_domain_separation() {
 
     assert(output1.len() == 1);
     assert(output2.len() == 1);
-    assert(output1.get(0) != output2.get(0)); // Different domain separators should produce different outputs
+    assert(output1[0] != output2[0]); // Different domain separators should produce different outputs
 }
 
 #[test]
@@ -473,7 +473,7 @@ fn test_multiple_squeeze() {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0,
     ];
-    let elements = Vec::from_slice([1, 2, 3]);
+    let elements = [1, 2, 3].as_vector();
 
     // Pattern: ABSORB(3), SQUEEZE(2)
     let io_pattern = [0x80000003, 0x00000002];
@@ -483,9 +483,9 @@ fn test_multiple_squeeze() {
     sponge.finish();
 
     assert(output.len() == 2);
-    assert(output.get(0) != 0);
-    assert(output.get(1) != 0);
-    assert(output.get(0) != output.get(1)); // Different squeeze outputs should be different
+    assert(output[0] != 0);
+    assert(output[1] != 0);
+    assert(output[0] != output[1]); // Different squeeze outputs should be different
 }
 
 #[test]
@@ -501,12 +501,12 @@ fn test_zero_length_operations() {
     // Pattern: ABSORB(0), SQUEEZE(1)
     let io_pattern = [0x80000000, 0x00000001];
     let mut sponge = SafeSponge::start(io_pattern, domain_separator);
-    sponge.absorb(Vec::new());
+    sponge.absorb([].as_vector());
     let output = sponge.squeeze();
     sponge.finish();
 
     assert(output.len() == 1);
-    assert(output.get(0) != 0);
+    assert(output[0] != 0);
 }
 
 #[test]

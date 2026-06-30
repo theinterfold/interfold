@@ -62,16 +62,16 @@ fn packing_layout<let BIT: u32>() -> (u32, u32) {
 /// ## Returns
 /// - The same `inputs` vector, extended with all carriers in deterministic order.
 pub fn flatten<let A: u32, let L: u32, let BIT: u32>(
-    mut inputs: Vec<Field>,
+    mut inputs: [Field],
     poly: [Polynomial<A>; L],
-) -> Vec<Field> {
+) -> [Field] {
     for j in 0..L {
         // Pack its A coefficients into `num_chunks` carriers using the same BIT layout.
         let packed = pack::<A, BIT>(poly[j].coefficients);
 
         // Append carriers in-order to `inputs` to keep a stable transcript layout.
         for i in 0..packed.len() {
-            inputs.push(packed.get(i));
+            inputs = inputs.push_back(packed[i]);
         }
     }
 
@@ -79,7 +79,7 @@ pub fn flatten<let A: u32, let L: u32, let BIT: u32>(
     inputs
 }
 
-/// Pack `A` values into a `Vec<Field>` of carriers using the shared hex-aligned layout.
+/// Pack `A` values into a `[Field]` of carriers using the shared hex-aligned layout.
 ///
 /// ## What this does
 /// - Computes `(nibble_bits, group)` via `packing_layout::<BIT>()`.
@@ -104,9 +104,9 @@ pub fn flatten<let A: u32, let L: u32, let BIT: u32>(
 /// - Padding with `digit = 2^nibble_bits` encodes `zero limb` consistently.
 ///
 /// ## Returns
-/// - A `Vec<Field>` where each element is a concatenation of up to `group` limbs,
+/// - A `[Field]` where each element is a concatenation of up to `group` limbs,
 ///   suitable for hashing or transcript I/O.
-pub fn pack<let A: u32, let BIT: u32>(values: [Field; A]) -> Vec<Field> {
+pub fn pack<let A: u32, let BIT: u32>(values: [Field; A]) -> [Field] {
     // Layout parameters: nibble-aligned width and limbs-per-carrier group size.
     let (nibble_bits, group) = packing_layout::<BIT>();
 
@@ -115,7 +115,7 @@ pub fn pack<let A: u32, let BIT: u32>(values: [Field; A]) -> Vec<Field> {
 
     // Number of chunks to emit: ceil(A / group).
     let num_chunks = (A + group - 1) / group;
-    let mut out = Vec::new();
+    let mut out = [].as_vector();
 
     // Process in fixed-size chunks of `group` limbs.
     for chunk in 0..num_chunks {
@@ -135,7 +135,7 @@ pub fn pack<let A: u32, let BIT: u32>(values: [Field; A]) -> Vec<Field> {
             acc = acc * radix + base;
         }
 
-        out.push(acc);
+        out = out.push_back(acc);
     }
     out
 }
@@ -157,11 +157,7 @@ pub fn pack<let A: u32, let BIT: u32>(values: [Field; A]) -> Vec<Field> {
 /// # Returns
 /// A vector of field elements squeezed from the sponge, with length determined by
 /// the SQUEEZE operation in the IO pattern.
-pub fn compute_safe(
-    domain_separator: [u8; 64],
-    inputs: Vec<Field>,
-    io_pattern: [u32; 2],
-) -> Vec<Field> {
+pub fn compute_safe(domain_separator: [u8; 64], inputs: [Field], io_pattern: [u32; 2]) -> [Field] {
     let mut sponge = SafeSponge::start(io_pattern, domain_separator);
     sponge.absorb(inputs);
     let digests = sponge.squeeze();
@@ -180,16 +176,16 @@ fn test_flatten() {
     let polynomials = [poly1, poly2, poly3];
 
     // Initialize target array with zeros
-    let mut inputs = Vec::new();
+    let mut inputs = [].as_vector();
 
     // Flatten the polynomials
     let result = flatten::<_, _, 4>(inputs, polynomials);
 
     // Verify the flattened coefficients are in the correct positions
     // Every value shifted 1 nibble incase of negative integers
-    assert(result.get(0) == 0x11121310101010101010101010101010101010101010101010101010101010);
-    assert(result.get(1) == 0x14001610101010101010101010101010101010101010101010101010101010); // -16 became 00 at  0x 14 00 16,
-    assert(result.get(2) == 0x09181910101010101010101010101010101010101010101010101010101010); // -7 became 09 at 0x 09 18 19(16 - 7 = 9)
+    assert(result[0] == 0x11121310101010101010101010101010101010101010101010101010101010);
+    assert(result[1] == 0x14001610101010101010101010101010101010101010101010101010101010); // -16 became 00 at  0x 14 00 16,
+    assert(result[2] == 0x09181910101010101010101010101010101010101010101010101010101010); // -7 became 09 at 0x 09 18 19(16 - 7 = 9)
 }
 
 #[test]
@@ -229,7 +225,7 @@ fn test_flatten_big() {
     let polynomials = [poly1, poly2, poly3];
 
     // Initialize target array with zeros
-    let mut inputs = Vec::new();
+    let mut inputs = [].as_vector();
 
     // Flatten the polynomials
     let result = flatten::<_, _, 54>(inputs, polynomials);
@@ -249,12 +245,12 @@ fn test_flatten_big() {
     // base - 5921327228407753 = 0xeaf69591f3b037 (negative coefficient shifted)
     // base - 3644467483862151 = 0xf30d604a3a9b79 (negative coefficient shifted)
     // base + 5430119342984413 = 0x1134aaa2e86ccdd
-    assert(result.get(0) == 0x1065d1a8b8b718a0eaf69591f3b0370f30d604a3a9b791134aaa2e86ccdd);
-    assert(result.get(1) == 0x1028105ab1b789411fa010339db66b0fc220f1326bc8e0f1e3f4cc1e02e1);
-    assert(result.get(2) == 0x0f23dfbe7cd76c90f4901299312ddf10a569efe35acef11c0d76f005412b);
-    assert(result.get(3) == 0x107624a8f605dc50f0638a368960421022ecb3cf36b7911d73ff2c27ec14);
-    assert(result.get(4) == 0x0f6013a24e1b9a90f4fd2c158a08481180c2dba8af4cc10242413515171c);
-    assert(result.get(5) == 0x11b0964eb898ce411076805680b85410729c962da53a40f4b44412d0f6ed);
+    assert(result[0] == 0x1065d1a8b8b718a0eaf69591f3b0370f30d604a3a9b791134aaa2e86ccdd);
+    assert(result[1] == 0x1028105ab1b789411fa010339db66b0fc220f1326bc8e0f1e3f4cc1e02e1);
+    assert(result[2] == 0x0f23dfbe7cd76c90f4901299312ddf10a569efe35acef11c0d76f005412b);
+    assert(result[3] == 0x107624a8f605dc50f0638a368960421022ecb3cf36b7911d73ff2c27ec14);
+    assert(result[4] == 0x0f6013a24e1b9a90f4fd2c158a08481180c2dba8af4cc10242413515171c);
+    assert(result[5] == 0x11b0964eb898ce411076805680b85410729c962da53a40f4b44412d0f6ed);
 }
 
 #[test]
@@ -267,14 +263,14 @@ fn test_flatten_small() {
     let polynomials = [poly1, poly2, poly3];
 
     // Initialize target array with zeros
-    let mut inputs = Vec::new();
+    let mut inputs = [].as_vector();
 
     // Flatten the polynomials
     let result = flatten::<_, _, 20>(inputs, polynomials);
 
-    assert(result.get(0) == 0x1ade991199991f423f17a12110007b19fbf110004d100000100000100000);
-    assert(result.get(1) == 0x10000117ffff1d9038105ba01087071badf8100000100000100000100000);
-    assert(result.get(2) == 0x16c81c15161513640e11b2071f120613c41a10350b100000100000100000);
+    assert(result[0] == 0x1ade991199991f423f17a12110007b19fbf110004d100000100000100000);
+    assert(result[1] == 0x10000117ffff1d9038105ba01087071badf8100000100000100000100000);
+    assert(result[2] == 0x16c81c15161513640e11b2071f120613c41a10350b100000100000100000);
 }
 
 #[test]
@@ -285,21 +281,21 @@ fn test_safe_hashing_with_safe_helper() {
         0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
         0, 0, 0, 0, 0, 0,
     ];
-    let elements = Vec::from_slice(&[1, 2, 3]);
+    let elements = [1, 2, 3].as_vector();
 
     // Pattern: ABSORB(3), SQUEEZE(1)
     let io_pattern = [0x80000003, 0x00000001];
     let digests1 = compute_safe(domain_separator, elements, io_pattern);
 
     assert(digests1.len() == 1);
-    assert(digests1.get(0) != 0);
+    assert(digests1[0] != 0);
 
     // Test determinism
     let digests2 = compute_safe(domain_separator, elements, io_pattern);
 
     assert(digests2.len() == 1);
-    assert(digests2.get(0) != 0);
-    assert(digests2.get(0) == digests1.get(0));
+    assert(digests2[0] != 0);
+    assert(digests2[0] == digests1[0]);
 }
 
 #[test]
@@ -324,7 +320,7 @@ fn test_pack_single_value() {
     let values = [42];
     let packed = pack::<1, 8>(values);
     assert(packed.len() == 1);
-    assert(packed.get(0) != 0);
+    assert(packed[0] != 0);
 }
 
 #[test]
@@ -336,6 +332,6 @@ fn test_pack_determinism() {
 
     assert(packed1.len() == packed2.len());
     for i in 0..packed1.len() {
-        assert(packed1.get(i) == packed2.get(i));
+        assert(packed1[i] == packed2[i]);
     }
 }

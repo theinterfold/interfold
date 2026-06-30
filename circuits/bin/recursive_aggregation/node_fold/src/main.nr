@@ -79,12 +79,12 @@ fn main(
     verify_honk_proof_non_zk(c3ab_vk, c3ab_proof, c3ab_public, c3ab_key_hash);
     verify_honk_proof_non_zk(c4ab_vk, c4ab_proof, c4ab_public, c4ab_key_hash);
 
-    let mut vk_hashes = Vec::new();
-    vk_hashes.push(c0_key_hash);
-    vk_hashes.push(c1_key_hash);
-    vk_hashes.push(c2ab_key_hash);
-    vk_hashes.push(c3ab_key_hash);
-    vk_hashes.push(c4ab_key_hash);
+    let mut vk_hashes = [].as_vector();
+    vk_hashes = vk_hashes.push_back(c0_key_hash);
+    vk_hashes = vk_hashes.push_back(c1_key_hash);
+    vk_hashes = vk_hashes.push_back(c2ab_key_hash);
+    vk_hashes = vk_hashes.push_back(c3ab_key_hash);
+    vk_hashes = vk_hashes.push_back(c4ab_key_hash);
     let key_hash = compute_vk_hash(vk_hashes);
 
     // C0: `commit(pk_dkg)` (DKG key for C3). C1[1]: `commit(pk_trbfv)` (threshold key); not equal to C0.

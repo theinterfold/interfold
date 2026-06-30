@@ -17,8 +17,8 @@ env:
   CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
   NODE_VERSION: 22
   RUST_TOOLCHAIN: 1.91.1
-  NOIR_TOOLCHAIN: v1.0.0-beta.16
-  BB_VERSION: 3.0.0-nightly.20260102
+  NOIR_TOOLCHAIN: v1.0.0-beta.22
+  BB_VERSION: 5.0.0-rc.2
   HARDHAT_VAR_MNEMONIC: 'test test test test test test test test test test test junk'
   HARDHAT_VAR_INFURA_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
   PRIVATE_KEY: '0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80'
