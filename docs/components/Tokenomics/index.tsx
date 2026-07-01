@@ -80,7 +80,7 @@ function donutSlice(cx: number, cy: number, rOuter: number, rInner: number, star
 export function KeyParameters() {
   const cards = [
     { label: 'Total Supply', value: '1.2B' },
-    { label: 'Circulating Supply at TGE', value: '≤ 26%' },
+    { label: 'Circulating Supply at TGE', value: '≤ 30%' },
   ]
   return (
     <div className={classes.stats}>
