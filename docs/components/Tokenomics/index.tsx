@@ -26,7 +26,7 @@ type Slice = {
 // Colors alternate light↔dark across stacking order for maximum area-chart legibility.
 const ALLOCATION: Slice[] = [
   // Community (57%)
-  { key: 'Foundation Treasury', pct: 40, color: '#3A7D44', group: 'community' }, // vivid forest
+  { key: 'Foundation Treasury', pct: 43, color: '#3A7D44', group: 'community' }, // vivid forest
   { key: 'CCA', pct: 10, color: '#687d71', group: 'community' }, // brand sage
   { key: 'Airdrop', pct: 4, color: '#82F5AD', group: 'community' }, // brand bright mint
   { key: 'Liquidity Reserve', pct: 3, color: '#C5EFD0', group: 'community' }, // pale mint
@@ -81,7 +81,7 @@ function donutSlice(cx: number, cy: number, rOuter: number, rInner: number, star
 export function KeyParameters() {
   const cards = [
     { label: 'Total Supply', value: '1.2B' },
-    { label: 'Circulating Supply at TGE', value: '13%' },
+    { label: 'Circulating Supply at TGE', value: 'up to 26%' },
   ]
   return (
     <div className={classes.stats}>
@@ -306,7 +306,6 @@ type Vest = {
 // Stacking order: bottom → top. Shorter unlock periods at the base so the
 // chart reads as progressively longer commitments toward the top.
 const VESTING: Vest[] = [
-  { key: 'Liquidity Reserve', total: 36_000_000, vestMonths: 1, term: 'No restrictions from TGE' },
   { key: 'CCA', total: 120_000_000, vestMonths: 1, term: 'No restrictions from TGE' },
   { key: 'Investors', total: 168_000_000, vestMonths: 24, term: '24-month linear unlock' },
   { key: 'Airdrop', total: 48_000_000, vestMonths: 24, term: '24-month linear unlock' },
@@ -319,9 +318,8 @@ const VESTING_TERMS = [
   { key: 'Foundation Treasury', schedule: '48 month linear unlock from TGE', group: 'community' as Group },
   { key: 'CCA', schedule: 'No restrictions from TGE', group: 'community' as Group },
   { key: 'Airdrop', schedule: '24 month linear unlock from TGE', group: 'community' as Group },
-  { key: 'Liquidity Reserve', schedule: 'No restrictions from TGE', group: 'community' as Group },
   { key: 'Gnosis Guild', schedule: '48 month linear unlock from TGE', group: 'other' as Group },
-  { key: 'Investors', schedule: '24 month linear unlock from TGE', group: 'other' as Group },
+  { key: 'Investors', schedule: 'No restrictions from TGE', group: 'other' as Group },
   { key: 'Team and Advisors', schedule: '24 month linear unlock from TGE', group: 'other' as Group },
 ]
 
