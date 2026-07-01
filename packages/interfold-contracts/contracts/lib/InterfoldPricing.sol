@@ -52,13 +52,13 @@ library InterfoldPricing {
     ///         constants below.
     function applyDefaultPricingConfig() external {
         // Packed slot 31:
-        //   marginBps           = 1500  << 160
+        //   marginBps           = 1000  << 160
         //   protocolShareBps    =    0  << 176
         //   dkgUtilizationBps   = 2500  << 192
         //   computeUtilizationBps = 5000 << 208
         //   decryptUtilizationBps = 2500 << 224
         // protocolTreasury (low 160 bits) and trailing padding are zero.
-        uint256 slot31 = (uint256(1500) << 160) |
+        uint256 slot31 = (uint256(1000) << 160) |
             (uint256(2500) << 192) |
             (uint256(5000) << 208) |
             (uint256(2500) << 224);
@@ -92,7 +92,7 @@ library InterfoldPricing {
         cfg.decryptionPerNode = 300000; // 0.30 USDC
         cfg.publicationBase = 1000000; // 1.00 USDC
         cfg.verificationPerProof = 5000; // 0.005 USDC
-        cfg.marginBps = 1500; // 15%
+        cfg.marginBps = 1000; // 10%
         cfg.dkgUtilizationBps = 2500; // 25%
         cfg.computeUtilizationBps = 5000; // 50%
         cfg.decryptUtilizationBps = 2500; // 25%

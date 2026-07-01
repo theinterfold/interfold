@@ -126,7 +126,7 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │  │     requesterAmount = payment * workLeftBps / 10000   │
 │     │  │     protocolAmount = payment - honest - requester     │
 │     │  │                                                       │
-│     │  │  3. Transfer protocol fee to treasury immediately     │
+│     │  │  3. Credit protocol amount to treasury pull ledger    │
 │     │  │                                                       │
 │     │  │  4. Store RefundDistribution {                        │
 │     │  │       honestNodeAmount, requesterAmount,              │

@@ -46,20 +46,73 @@ contract MockE3Program is IE3Program {...}
 
 ## To deploy
 
+Phase 1 deploys FOLD plus the CCA sale:
+
 ```sh
-pnpm deploy --network [network]
+pnpm sale --network sepolia --action prepare --safe 0xSafe
+pnpm sale --network sepolia --action plan --config packages/interfold-contracts/deploy/sale/sepolia-sale.config.json
+pnpm sale --network sepolia --action deploy --config packages/interfold-contracts/deploy/sale/sepolia-sale.config.json --propose-safe
+pnpm sale --network sepolia --action validate --config packages/interfold-contracts/deploy/sale/sepolia-sale.config.json --allow-pending-owner
 ```
 
-This will add the deployment information to the `./ignition/deployments`
-directory, as well as to the `deployed_contracts.json` file.
+To deploy a Predicate-gated sale, add Predicate at prepare time:
 
-Be sure to configure your desired network in `hardhat.config.ts` before
-deploying.
+```sh
+pnpm sale --network sepolia --action prepare --safe 0xSafe \
+  --predicate-registry 0xPredicateRegistry \
+  --predicate-policy-id x-your-policy
+```
 
-For non-local networks, set `INTERFOLD_TGE_TIMESTAMP` to the agreed FOLD TGE
-Unix timestamp before deploying. The deployment script configures this on
-`InterfoldToken` for token-level lock schedules. Local mock deployments default
-this timestamp to the latest local block timestamp.
+The Safe owners then approve the queued sale activation in the Safe UI. For a
+plain sale this is `FOLD.acceptOwnership()`; for a Predicate-gated sale the same
+batch also calls `PredicateValidationHook.setAuction(<CCA auction>)`. After
+that, rerun sale validation without `--allow-pending-owner`.
+
+`auction.auctionStepsData` is generated from the same packed uint64 schedule
+format used by Uniswap's CCA tooling:
+
+```sh
+pnpm cca:schedule -- --config deploy/sale/mainnet-sale.config.json --update-config
+```
+
+The protocol deploy happens after the sale/TGE prep and upgrades the existing
+placeholder bonding registry proxy:
+
+```sh
+pnpm protocol --network sepolia --action deploy --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json --propose-safe
+pnpm protocol --network sepolia --action validate --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json
+```
+
+The canonical outputs live under `packages/interfold-contracts/deploy/`. The
+scripts also mirror addresses into `deployed_contracts.json` for older tasks and
+verification.
+
+## E3 pricing and protocol revenue
+
+Protocol revenue comes from successful E3 request fees, not from ticket
+purchases. Tickets are USDC-backed sortition capacity deposits for ciphernodes;
+they are normally redeemable by the node, while slashed ticket funds are routed
+through the failure/success slashed-funds paths.
+
+The launch pricing model is cost-plus:
+
+```text
+modeled base cost = key generation + coordination + availability
+                  + decryption + publication + verification
+gross E3 fee      = modeled base cost * (1 + marginBps / 10_000)
+treasury revenue  = gross E3 fee * protocolShareBps / 10_000
+CN reward pool    = gross E3 fee - treasury revenue
+```
+
+Launch defaults set `marginBps = 1000` and `protocolShareBps = 182`. In plain
+English: requests pay a 10% margin over modeled ciphernode cost, and the
+protocol treasury receives about 1.82% of the gross E3 fee. Because the treasury
+share is applied to the gross fee in-contract, 1.82% gross is approximately 20%
+of the 10% margin; the remaining fee is distributed to active committee nodes.
+
+Do not configure `protocolShareBps = 2000` unless the intent is for the treasury
+to receive 20% of the whole E3 fee. With a 10% margin, that would pay
+ciphernodes less than the modeled base cost.
 
 ## Localhost deployment
 
@@ -69,7 +122,8 @@ Anvil) node, then deploy the contracts using the following commands:
 ```sh
 pnpm hardhat node
 pnpm clean:deployments
-pnpm deploy:mocks --network localhost
+pnpm sale --network localhost --action full-test --mock-cca --safe 0xYourLocalSafeOrOperator
+pnpm protocol --network localhost --action deploy --config packages/interfold-contracts/deploy/protocol/localhost-protocol.config.json --sync-integration-config
 ```
 
 This will ensure that you are a local node running, as well as that there are no

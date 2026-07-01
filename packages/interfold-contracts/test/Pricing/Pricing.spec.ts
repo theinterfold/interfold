@@ -27,7 +27,7 @@ describe("E3 Pricing", function () {
     publicationBase: 1000000n,
     verificationPerProof: 5000n,
     protocolTreasury: ethers.ZeroAddress,
-    marginBps: 1500,
+    marginBps: 1000,
     protocolShareBps: 0,
     dkgUtilizationBps: 2500,
     computeUtilizationBps: 5000,
@@ -256,12 +256,12 @@ describe("E3 Pricing", function () {
       expect(feeAfter).to.be.gt(feeBefore);
     });
 
-    it("reverts if margin exceeds 100%", async function () {
+    it("reverts if margin exceeds the 50% cap", async function () {
       const { interfold } = await loadFixture(setup);
       await expect(
         interfold.setPricingConfig({
           ...defaultPricingConfig,
-          marginBps: 10001,
+          marginBps: 5001,
         }),
       ).to.be.revertedWithCustomError(interfold, "BpsExceedsMax");
     });
@@ -276,12 +276,12 @@ describe("E3 Pricing", function () {
       expect(pc.marginBps).to.equal(0);
     });
 
-    it("reverts if protocolShareBps exceeds 100%", async function () {
+    it("reverts if protocolShareBps exceeds the 50% cap", async function () {
       const { interfold } = await loadFixture(setup);
       await expect(
         interfold.setPricingConfig({
           ...defaultPricingConfig,
-          protocolShareBps: 10001,
+          protocolShareBps: 5001,
         }),
       ).to.be.revertedWithCustomError(interfold, "BpsExceedsMax");
     });
@@ -419,12 +419,12 @@ describe("E3 Pricing", function () {
         mocks: { decryptionVerifier, e3Program },
       } = await loadFixture(setup);
 
-      // Configure 20% protocol share
+      // Launch split: 1.82% gross share approximates 20% of the 10% margin.
       const treasuryAddr = await treasury.getAddress();
       await interfold.setPricingConfig({
         ...defaultPricingConfig,
         protocolTreasury: treasuryAddr,
-        protocolShareBps: 2000,
+        protocolShareBps: 182,
       });
 
       // Build a fresh request with current timestamps
@@ -491,7 +491,7 @@ describe("E3 Pricing", function () {
       const op2After = await usdcToken.balanceOf(nodes[1]);
       const op3After = await usdcToken.balanceOf(nodes[2]);
 
-      const expectedProtocol = (fee * 2000n) / 10000n;
+      const expectedProtocol = (fee * 182n) / 10000n;
       const expectedCN = fee - expectedProtocol;
       const totalOpDistributed =
         op1After - op1Before + (op2After - op2Before) + (op3After - op3Before);
@@ -516,7 +516,7 @@ describe("E3 Pricing", function () {
       expect(pc.decryptionPerNode).to.equal(300000);
       expect(pc.publicationBase).to.equal(1000000);
       expect(pc.verificationPerProof).to.equal(5000);
-      expect(pc.marginBps).to.equal(1500);
+      expect(pc.marginBps).to.equal(1000);
       expect(pc.protocolShareBps).to.equal(0);
       expect(pc.dkgUtilizationBps).to.equal(2500);
       expect(pc.computeUtilizationBps).to.equal(5000);

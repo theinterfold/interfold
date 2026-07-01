@@ -29,9 +29,11 @@ covers four things, in roughly this order of cost:
 3. **Running the actual computation** through the compute provider.
 4. **Decrypting the result** and posting it on-chain.
 
-A small protocol share (zero by default, configurable by governance, capped at 100%) is taken on
-successful rounds and routed to the protocol treasury. Everything else is paid out to the operators
-who actually did work.
+Pricing is cost-plus: the protocol models the ciphernode work, applies a configurable margin, then
+splits the final E3 fee between the protocol treasury and the operators who actually did work.
+Launch pricing uses a 10% margin and a 1.82% treasury share of the gross E3 fee. That 1.82% gross
+share is approximately 20% of the margin; ticket purchases are operator capacity deposits, not
+normal protocol revenue.
 
 The fee is **charged once, when you submit the request**, and held in escrow until the round
 finishes. You don't get a refund on success — that's the price of the computation. You _do_ get a
@@ -58,7 +60,7 @@ A round can fail for a handful of reasons. Each one matches a specific phase, an
 with a different refund split. The general rule is simple:
 
 > **You get refunded for the work that wasn't completed.** Honest operators get paid for the work
-> that _was_ completed. A small fixed share (default 5%) covers protocol overhead.
+> that _was_ completed. A configurable failure-path protocol share (default 5%) covers overhead.
 
 Concretely, every E3 that ends in a failed state is tagged with a `FailureReason`:
 

@@ -1,0 +1,29 @@
+{
+  "name": "interfold-mainnet-cca",
+  "chainId": 1,
+  "saleDeployer": "0x0000000000000000000000000000000000000000",
+  "safe": "0x0000000000000000000000000000000000000000",
+  "ccaFactory": "0x00cCa200BF124dBfA848937c553864f4B4CE0632",
+  "saleAmount": "120000000000000000000000000",
+  "ccaSalt": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "saleLabel": "cca-sale",
+  "fold": {
+    "ccaStart": "0",
+    "ccaEnd": "0",
+    "noMoreLocks": "",
+    "bondingRegistry": "0x0000000000000000000000000000000000000000"
+  },
+  "auction": {
+    "currency": "ETH",
+    "tokensRecipient": "0x0000000000000000000000000000000000000000",
+    "fundsRecipient": "0x0000000000000000000000000000000000000000",
+    "startBlock": "0",
+    "endBlock": "0",
+    "claimBlock": "0",
+    "tickSpacing": "100000",
+    "validationHook": "0x0000000000000000000000000000000000000000",
+    "floorPrice": "4295000000",
+    "requiredCurrencyRaised": "0",
+    "auctionStepsData": "0x0186a00000000064"
+  }
+}

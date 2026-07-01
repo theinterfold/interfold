@@ -455,7 +455,7 @@ interface IInterfold {
     /// @param minimum The required minimum
     error BelowMinThreshold(uint256 threshold, uint256 minimum);
 
-    /// @notice A basis-points value exceeds 100% (10000)
+    /// @notice A basis-points value exceeds its configured maximum
     /// @param value The invalid BPS value
     error BpsExceedsMax(uint256 value);
 

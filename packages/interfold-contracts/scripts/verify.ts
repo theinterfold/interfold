@@ -75,7 +75,7 @@ const findContractPath = (
 const verifyContract = (
   contractName: string,
   address: string,
-  constructorArgs: Record<string, string | string[]> | undefined,
+  constructorArgs: Record<string, unknown> | readonly unknown[] | undefined,
   network: string,
 ): void => {
   // Create a temporary args file
@@ -83,7 +83,9 @@ const verifyContract = (
 
   try {
     if (constructorArgs) {
-      const argsArray = Object.values(constructorArgs);
+      const argsArray = Array.isArray(constructorArgs)
+        ? constructorArgs
+        : Object.values(constructorArgs);
 
       const fileContent = `module.exports = ${JSON.stringify(argsArray, null, 2)};`;
       fs.writeFileSync(argsFile, fileContent);
@@ -144,9 +146,23 @@ export const verifyContracts = (chain: string): void => {
     }
 
     const deployment = chainDeployments[contractName];
-    const isProxy = Boolean(deployment.proxyRecords?.implementationAddress);
+    if (deployment.skipVerification) {
+      console.log(
+        `  ℹ️  Skipping ${contractName}: ${deployment.verificationNote ?? "marked skipVerification"}`,
+      );
+      return;
+    }
 
-    if (isProxy && deployment.proxyRecords) {
+    const isProxy = Boolean(deployment.proxyRecords?.implementationAddress);
+    const skipProxyConstructorVerification =
+      contractName === "BondingRegistry" &&
+      Boolean(deployment.constructorArgs?.licenseToken);
+
+    if (
+      isProxy &&
+      deployment.proxyRecords &&
+      !skipProxyConstructorVerification
+    ) {
       console.log(`  📦 Proxy deployment detected`);
 
       console.log(`  ├─ Verifying TransparentUpgradeableProxy...`);
@@ -167,6 +183,11 @@ export const verifyContracts = (chain: string): void => {
         deployment.proxyRecords.proxyAdminAddress as string,
         { owner: deployment.proxyRecords.initialOwner },
         chain,
+      );
+    } else if (skipProxyConstructorVerification) {
+      console.log(
+        "  ℹ️  Skipping BondingRegistry proxy constructor verification; " +
+          "the proxy was deployed during the sale with the placeholder implementation.",
       );
     }
 
