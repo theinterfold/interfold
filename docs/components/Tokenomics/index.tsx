@@ -29,7 +29,6 @@ const ALLOCATION: Slice[] = [
   { key: 'Foundation Treasury', pct: 43, color: '#3A7D44', group: 'community' }, // vivid forest
   { key: 'CCA', pct: 10, color: '#687d71', group: 'community' }, // brand sage
   { key: 'Airdrop', pct: 4, color: '#82F5AD', group: 'community' }, // brand bright mint
-  { key: 'Liquidity Reserve', pct: 3, color: '#C5EFD0', group: 'community' }, // pale mint
   // Other (43%)
   { key: 'Gnosis Guild', pct: 20, color: '#252525', group: 'other' }, // brand dark charcoal
   { key: 'Investors', pct: 14, color: '#3A4E42', group: 'other' }, // dark muted forest
@@ -307,11 +306,11 @@ type Vest = {
 // chart reads as progressively longer commitments toward the top.
 const VESTING: Vest[] = [
   { key: 'CCA', total: 120_000_000, vestMonths: 1, term: 'No restrictions from TGE' },
-  { key: 'Investors', total: 168_000_000, vestMonths: 24, term: '24-month linear unlock' },
+  { key: 'Investors', total: 168_000_000, vestMonths: 1, term: 'No restrictions from TGE' },
   { key: 'Airdrop', total: 48_000_000, vestMonths: 24, term: '24-month linear unlock' },
   { key: 'Team and Advisors', total: 108_000_000, vestMonths: 24, term: '24-month linear unlock' },
   { key: 'Gnosis Guild', total: 240_000_000, vestMonths: 48, term: '48-month linear unlock' },
-  { key: 'Foundation Treasury', total: 480_000_000, vestMonths: 48, term: '48-month linear unlock' },
+  { key: 'Foundation Treasury', total: 516_000_000, vestMonths: 48, term: '48-month linear unlock' },
 ]
 
 const VESTING_TERMS = [
