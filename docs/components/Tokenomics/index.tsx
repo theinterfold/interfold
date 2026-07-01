@@ -80,7 +80,7 @@ function donutSlice(cx: number, cy: number, rOuter: number, rInner: number, star
 export function KeyParameters() {
   const cards = [
     { label: 'Total Supply', value: '1.2B' },
-    { label: 'Circulating Supply at TGE', value: 'up to 26%' },
+    { label: 'Circulating Supply at TGE', value: '≤ 26%' },
   ]
   return (
     <div className={classes.stats}>
@@ -256,7 +256,7 @@ export function AllocationPie() {
                 <span className={classes.swatch} style={{ background: d.color }} />
                 {d.key}
               </td>
-              <td className={classes.center}>{fmtPct(d.pct)}</td>
+              <td className={classes.center}>{(d.key === 'CCA' ? '≤' : '') + fmtPct(d.pct)}</td>
             </tr>
           ))}
 
@@ -276,7 +276,7 @@ export function AllocationPie() {
                 <span className={classes.swatch} style={{ background: d.color }} />
                 {d.key}
               </td>
-              <td className={classes.center}>{fmtPct(d.pct)}</td>
+              <td className={classes.center}>{(d.key === 'CCA' ? '≤' : '') + fmtPct(d.pct)}</td>
             </tr>
           ))}
         </tbody>
