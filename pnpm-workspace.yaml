@@ -13,7 +13,6 @@ packages:
   - packages/interfold-mcp
   - packages/interfold-dashboard
   - packages/interfold-node
-  - packages/interfold-sale
   - templates/default
   - templates/default/client
 linkWorkspacePackages: true
