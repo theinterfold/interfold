@@ -55,8 +55,25 @@ pnpm sale --network sepolia --action deploy --config packages/interfold-contract
 pnpm sale --network sepolia --action validate --config packages/interfold-contracts/deploy/sale/sepolia-sale.config.json --allow-pending-owner
 ```
 
-The Safe owners then approve `FOLD.acceptOwnership()` in the Safe UI. After
+To deploy a Predicate-gated sale, add Predicate at prepare time:
+
+```sh
+pnpm sale --network sepolia --action prepare --safe 0xSafe \
+  --predicate-registry 0xPredicateRegistry \
+  --predicate-policy-id x-your-policy
+```
+
+The Safe owners then approve the queued sale activation in the Safe UI. For a
+plain sale this is `FOLD.acceptOwnership()`; for a Predicate-gated sale the same
+batch also calls `PredicateValidationHook.setAuction(<CCA auction>)`. After
 that, rerun sale validation without `--allow-pending-owner`.
+
+`auction.auctionStepsData` is generated from the same packed uint64 schedule
+format used by Uniswap's CCA tooling:
+
+```sh
+pnpm cca:schedule -- --config deploy/sale/mainnet-sale.config.json --update-config
+```
 
 The protocol deploy happens after the sale/TGE prep and upgrades the existing
 placeholder bonding registry proxy:

@@ -12,6 +12,11 @@ import hre from "hardhat";
 import path from "path";
 
 import {
+  decodeSchedule,
+  encodeSchedule,
+  generateSchedule,
+} from "./ccaSchedule";
+import {
   syncSaleDeploymentRecords,
   syncSaleInfraRecords,
 } from "./deploymentRecords";
@@ -71,6 +76,15 @@ const CCA_AUCTION_ABI = [
   "function claim() returns (uint256)",
 ];
 
+const PREDICATE_VALIDATION_HOOK_ABI = [
+  "function auction() view returns (address)",
+  "function owner() view returns (address)",
+  "function getRegistry() view returns (address)",
+  "function getPolicyID() view returns (string)",
+  "function requireSenderIsOwner() view returns (bool)",
+  "function setAuction(address auction)",
+];
+
 const abi = ethersLib.AbiCoder.defaultAbiCoder();
 
 interface FoldTokenConfig {
@@ -94,6 +108,13 @@ interface AuctionConfig {
   auctionStepsData: string;
 }
 
+interface PredicateHookConfig {
+  registry: string;
+  policyID: string;
+  address?: string;
+  requireSenderIsOwner?: boolean;
+}
+
 interface SaleConfigFile {
   name: string;
   chainId: number;
@@ -105,6 +126,7 @@ interface SaleConfigFile {
   saleLabel: string;
   fold: FoldTokenConfig;
   auction: AuctionConfig;
+  predicateHook?: PredicateHookConfig;
 }
 
 interface AuctionParameters {
@@ -165,6 +187,10 @@ interface DeploymentFile {
   bondingRegistry: string;
   bondingRegistryProxyAdmin?: string;
   ccaFactory: string;
+  validationHook?: string;
+  predicateRegistry?: string;
+  predicatePolicyID?: string;
+  predicateRequireSenderIsOwner?: boolean;
   mockCcaFactory?: string;
   testBidId?: string;
   safeProposal?: SafeProposal;
@@ -424,6 +450,21 @@ function requireBytes32(value: string, label: string): string {
   return value;
 }
 
+function validateAuctionStepsData(
+  auctionStepsData: string,
+  startBlock: bigint,
+  endBlock: bigint,
+): void {
+  const schedule = decodeSchedule(auctionStepsData);
+  const totalBlocks = schedule.reduce((sum, step) => sum + step.blockDelta, 0n);
+  const windowBlocks = endBlock - startBlock;
+  if (totalBlocks !== windowBlocks) {
+    throw new Error(
+      `auctionStepsData covers ${totalBlocks} blocks, but auction window is ${windowBlocks}`,
+    );
+  }
+}
+
 function loadConfig(file = configPath()): SaleConfigFile {
   const config = readJson<SaleConfigFile>(file);
   const safeOverride = arg("safe") ?? process.env.SAFE_ADDRESS;
@@ -474,6 +515,26 @@ function validateConfig(config: SaleConfigFile): void {
     config.auction.validationHook || ZERO,
     "auction.validationHook",
   );
+  if (config.predicateHook) {
+    config.predicateHook.registry = address(
+      config.predicateHook.registry,
+      "predicateHook.registry",
+    );
+    if (config.predicateHook.address?.trim()) {
+      config.predicateHook.address = address(
+        config.predicateHook.address,
+        "predicateHook.address",
+      );
+      if (config.auction.validationHook === ZERO) {
+        config.auction.validationHook = config.predicateHook.address;
+      }
+    }
+    if (!config.predicateHook.policyID?.trim()) {
+      throw new Error(
+        "predicateHook.policyID is required when predicateHook is set",
+      );
+    }
+  }
   requireBytes32(config.ccaSalt, "ccaSalt");
   ethersLib.encodeBytes32String(config.saleLabel);
   BigInt(config.saleAmount);
@@ -501,6 +562,7 @@ function toAuctionParameters(config: AuctionConfig): AuctionParameters {
   if (!ethersLib.isHexString(auctionStepsData)) {
     throw new Error("auction.auctionStepsData must be 0x-prefixed hex");
   }
+  validateAuctionStepsData(auctionStepsData, startBlock, endBlock);
   return {
     currency: resolveCurrency(config.currency),
     tokensRecipient: address(config.tokensRecipient, "auction.tokensRecipient"),
@@ -825,6 +887,26 @@ async function deploySaleDeployer(
   return deployedAddress(deployer);
 }
 
+async function deployPredicateValidationHook(
+  ethers: Awaited<ReturnType<typeof hre.network.connect>>["ethers"],
+  opts: {
+    owner: string;
+    registry: string;
+    policyID: string;
+    requireSenderIsOwner: boolean;
+  },
+): Promise<string> {
+  const factory = await ethers.getContractFactory("PredicateValidationHook");
+  const hook = await factory.deploy(
+    opts.owner,
+    opts.registry,
+    opts.policyID,
+    opts.requireSenderIsOwner,
+  );
+  await hook.waitForDeployment();
+  return deployedAddress(hook);
+}
+
 async function deployMockCcaFactory(
   ethers: Awaited<ReturnType<typeof hre.network.connect>>["ethers"],
 ): Promise<string> {
@@ -832,21 +914,6 @@ async function deployMockCcaFactory(
   const mock = await factory.deploy(ZERO);
   await mock.waitForDeployment();
   return deployedAddress(mock);
-}
-
-function packAuctionStep(mps: bigint, blockDelta: bigint): string {
-  if (mps <= 0n || mps > 0xffffffn) {
-    throw new Error(`auction step mps out of uint24 range: ${mps}`);
-  }
-  if (blockDelta <= 0n || blockDelta > 0xffffffffffn) {
-    throw new Error(
-      `auction step blockDelta out of uint40 range: ${blockDelta}`,
-    );
-  }
-  return ethersLib.zeroPadValue(
-    ethersLib.toBeHex((mps << 40n) | blockDelta),
-    8,
-  );
 }
 
 function makeTemplateConfig(opts: {
@@ -867,8 +934,16 @@ function makeTemplateConfig(opts: {
   const ccaEnd = ccaStart + durationSeconds;
   const startBlock = opts.currentBlock + 2n;
   const endBlock = startBlock + BigInt(arg("auction-duration-blocks") ?? "40");
-  const auctionBlocks = endBlock - startBlock;
-  const mps = (10_000_000n + auctionBlocks - 1n) / auctionBlocks;
+  const auctionBlocks = Number(endBlock - startBlock);
+  const auctionStepsData = encodeSchedule(
+    generateSchedule({
+      auctionBlocks: auctionBlocks - 1,
+      prebidBlocks: 0,
+      numSteps: Math.min(12, Math.max(1, auctionBlocks - 1)),
+      finalBlockPct: 0.3,
+      alpha: 1.2,
+    }),
+  );
   const floorPrice = "4295000000";
   return {
     name: opts.name,
@@ -896,8 +971,57 @@ function makeTemplateConfig(opts: {
       validationHook: ZERO,
       floorPrice,
       requiredCurrencyRaised: "0",
-      auctionStepsData: packAuctionStep(mps, auctionBlocks),
+      auctionStepsData,
     },
+  };
+}
+
+function nonZero(value?: string): string | undefined {
+  if (!value?.trim()) return undefined;
+  return value === ZERO ? undefined : value;
+}
+
+function resolvePredicateHookInput(
+  config?: SaleConfigFile,
+): PredicateHookConfig | undefined {
+  const addressInput =
+    arg("predicate-hook") ??
+    arg("validation-hook") ??
+    nonZero(config?.predicateHook?.address) ??
+    nonZero(config?.auction.validationHook);
+  const registryInput =
+    arg("predicate-registry") ??
+    process.env.PREDICATE_REGISTRY ??
+    config?.predicateHook?.registry;
+  const policyID =
+    arg("predicate-policy-id") ??
+    process.env.PREDICATE_POLICY_ID ??
+    config?.predicateHook?.policyID;
+
+  if (!addressInput && !registryInput && !policyID) return undefined;
+
+  const requireSenderIsOwner = hasFlag("predicate-allow-delegated-owner")
+    ? false
+    : (config?.predicateHook?.requireSenderIsOwner ?? true);
+
+  if (!addressInput && (!registryInput || !policyID)) {
+    throw new Error(
+      "Predicate hook deployment requires --predicate-registry and --predicate-policy-id.",
+    );
+  }
+  if (registryInput && !policyID) {
+    throw new Error("Predicate hook config requires a policy ID.");
+  }
+
+  return {
+    registry: registryInput
+      ? address(registryInput, "predicateHook.registry")
+      : ZERO,
+    policyID: policyID ?? "",
+    address: addressInput
+      ? address(addressInput, "predicateHook.address")
+      : undefined,
+    requireSenderIsOwner,
   };
 }
 
@@ -918,35 +1042,57 @@ async function actionPrepare(): Promise<void> {
   }
 
   const useMockCca = hasFlag("mock-cca");
+  const file = configPath(false);
+  const existingConfig = fs.existsSync(file) ? loadConfig(file) : undefined;
+  const predicateHookInput = resolvePredicateHookInput(existingConfig);
 
   const registry = await deployMockBondingRegistryProxy(ethers, safe);
   const saleDeployer = await deploySaleDeployer(ethers, safe);
   const ccaFactory = useMockCca
     ? await deployMockCcaFactory(ethers)
     : CCA_FACTORY_ADDRESS;
+  let predicateHookAddress = predicateHookInput?.address;
+  if (predicateHookInput && !predicateHookAddress) {
+    predicateHookAddress = await deployPredicateValidationHook(ethers, {
+      owner: safe,
+      registry: predicateHookInput.registry,
+      policyID: predicateHookInput.policyID,
+      requireSenderIsOwner: predicateHookInput.requireSenderIsOwner ?? true,
+    });
+  }
 
   const latest = await ethers.provider.getBlock("latest");
   if (!latest) throw new Error("Could not read latest block");
 
-  const file = configPath(false);
-  const config = fs.existsSync(file)
-    ? loadConfig(file)
-    : makeTemplateConfig({
-        name: arg("name") ?? `${networkName()}-fold-cca`,
-        chainId,
-        safe,
-        saleDeployer,
-        bondingRegistry: registry.proxy,
-        ccaFactory,
-        currentBlock: BigInt(latest.number),
-        currentTimestamp: BigInt(latest.timestamp),
-      });
+  const config =
+    existingConfig ??
+    makeTemplateConfig({
+      name: arg("name") ?? `${networkName()}-fold-cca`,
+      chainId,
+      safe,
+      saleDeployer,
+      bondingRegistry: registry.proxy,
+      ccaFactory,
+      currentBlock: BigInt(latest.number),
+      currentTimestamp: BigInt(latest.timestamp),
+    });
 
   config.chainId = chainId;
   config.safe = safe;
   config.saleDeployer = saleDeployer;
   config.ccaFactory = ccaFactory;
   config.fold.bondingRegistry = registry.proxy;
+  if (predicateHookInput && predicateHookAddress) {
+    config.auction.validationHook = predicateHookAddress;
+    if (predicateHookInput.registry !== ZERO && predicateHookInput.policyID) {
+      config.predicateHook = {
+        registry: predicateHookInput.registry,
+        policyID: predicateHookInput.policyID,
+        address: predicateHookAddress,
+        requireSenderIsOwner: predicateHookInput.requireSenderIsOwner ?? true,
+      };
+    }
+  }
 
   writeJson(file, config);
   const infraFile = path.join(saleDir, `${config.name}.infra.json`);
@@ -959,6 +1105,13 @@ async function actionPrepare(): Promise<void> {
     bondingRegistryProxyAdmin: registry.proxyAdmin,
     ccaFactory,
     mockCcaFactory: useMockCca ? ccaFactory : undefined,
+    validationHook: predicateHookAddress,
+    predicateRegistry:
+      predicateHookInput?.registry === ZERO
+        ? undefined
+        : predicateHookInput?.registry,
+    predicatePolicyID: predicateHookInput?.policyID || undefined,
+    predicateRequireSenderIsOwner: predicateHookInput?.requireSenderIsOwner,
   });
   syncSaleInfraRecords(
     {
@@ -969,6 +1122,13 @@ async function actionPrepare(): Promise<void> {
       bondingRegistryProxyAdmin: registry.proxyAdmin,
       ccaFactory,
       mockCcaFactory: useMockCca ? ccaFactory : undefined,
+      validationHook: predicateHookAddress,
+      predicateRegistry:
+        predicateHookInput?.registry === ZERO
+          ? undefined
+          : predicateHookInput?.registry,
+      predicatePolicyID: predicateHookInput?.policyID || undefined,
+      predicateRequireSenderIsOwner: predicateHookInput?.requireSenderIsOwner,
     },
     {
       chain: networkName(),
@@ -984,6 +1144,7 @@ Prepared sale infrastructure
   bondingRegistry proxy:        ${registry.proxy}
   bondingRegistry ProxyAdmin:   ${registry.proxyAdmin}
   ccaFactory:                   ${ccaFactory}
+  validationHook:               ${predicateHookAddress ?? ZERO}
   config:                       ${file}
   infra:                        ${infraFile}
 
@@ -1077,6 +1238,13 @@ async function deployFromPlan(
       config.fold.bondingRegistry,
     ),
     ccaFactory: plan.ccaFactory,
+    validationHook:
+      config.auction.validationHook === ZERO
+        ? undefined
+        : config.auction.validationHook,
+    predicateRegistry: config.predicateHook?.registry,
+    predicatePolicyID: config.predicateHook?.policyID,
+    predicateRequireSenderIsOwner: config.predicateHook?.requireSenderIsOwner,
   };
   writeJson(deploymentPath(config), deployment);
   writeSaleUiManifest(config, plan, deployment);
@@ -1106,6 +1274,12 @@ Safe action still required:
   to:   ${fold}
   data: 0x79ba5097
   desc: FOLD.acceptOwnership()
+${
+  deployment.validationHook
+    ? `  to:   ${deployment.validationHook}
+  desc: PredicateValidationHook.setAuction(${auction})`
+    : ""
+}
 `);
   return deployment;
 }
@@ -1120,10 +1294,26 @@ async function proposeSaleSafeActions(
     data: "0x79ba5097",
     operation: OperationType.Call,
   };
+  const txs = [acceptOwnership];
+  const validationHook =
+    deployment.validationHook ?? config.auction.validationHook;
+  if (validationHook && validationHook !== ZERO) {
+    const hookInterface = new ethersLib.Interface(
+      PREDICATE_VALIDATION_HOOK_ABI,
+    );
+    txs.push({
+      to: validationHook,
+      value: "0",
+      data: hookInterface.encodeFunctionData("setAuction", [
+        deployment.auction,
+      ]),
+      operation: OperationType.Call,
+    });
+  }
   return proposeSafeTransactions(
     config,
-    [acceptOwnership],
-    `Interfold ${config.name} FOLD ownership acceptance`,
+    txs,
+    `Interfold ${config.name} sale Safe activation`,
   );
 }
 
@@ -1233,11 +1423,12 @@ async function bidClaim(
       const maxPrice = BigInt(
         arg("max-price") ?? String(floorPrice + tickSpacing),
       );
+      const hookData = arg("hook-data") ?? "0x";
       const bidTx = await auction["submitBid(uint256,uint128,address,bytes)"](
         maxPrice,
         bidValue,
         buyerAddress,
-        "0x",
+        hookData,
         {
           value:
             resolveCurrency(config.auction.currency) === ZERO ? bidValue : 0n,
@@ -1437,8 +1628,38 @@ async function validateDeployment(
   const hook = await optionalView("auction.validationHook", () =>
     auction.validationHook(),
   );
-  if (hook !== undefined)
+  if (hook !== undefined) {
     assertEq("auction.validationHook", hook, config.auction.validationHook);
+  }
+  const validationHook =
+    deployment.validationHook ?? config.auction.validationHook;
+  if (validationHook && validationHook !== ZERO) {
+    const predicateHook = new ethersLib.Contract(
+      validationHook,
+      PREDICATE_VALIDATION_HOOK_ABI,
+      ethers.provider,
+    );
+    assertEq("validationHook.owner", await predicateHook.owner(), config.safe);
+    assertEq(
+      "validationHook.auction",
+      await predicateHook.auction(),
+      deployment.auction,
+    );
+    if (config.predicateHook?.registry) {
+      assertEq(
+        "validationHook.registry",
+        await predicateHook.getRegistry(),
+        config.predicateHook.registry,
+      );
+    }
+    if (config.predicateHook?.policyID) {
+      assertEq(
+        "validationHook.policyID",
+        await predicateHook.getPolicyID(),
+        config.predicateHook.policyID,
+      );
+    }
+  }
   const tokensReceived = await optionalView("auction.tokensReceived", () =>
     auction.tokensReceived(),
   );
@@ -1621,6 +1842,10 @@ Common flags:
   --plan <file>             Optional plan path override
   --deployment <file>       Optional deployment path override
   --mock-cca                Local fallback only; Sepolia/mainnet use real CCA factories by default
+  --predicate-registry 0x... Deploy a Safe-owned Predicate validation hook
+  --predicate-policy-id x... Predicate policy/verification hash for that hook
+  --predicate-hook 0x...     Use an already deployed validation hook
+  --hook-data 0x...          Encoded Predicate attestation for --action bid-claim
   --auction-duration-blocks N  CCA length in blocks (default 40)
   --cca-offset-seconds N    Seconds until FOLD CCA_START from now (default 86400 = 1 day)
   --cca-duration-seconds N  Seconds FOLD CCA lasts (default 604800 = 7 days)

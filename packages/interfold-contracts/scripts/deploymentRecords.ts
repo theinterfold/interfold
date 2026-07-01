@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
+import { type Interface, ethers as ethersLib } from "ethers";
 import path from "path";
-
-import { ethers as ethersLib, type Interface } from "ethers";
 
 import { ADDRESS_ONE } from "./protocol/constants";
 import { repoRoot } from "./protocol/files";
@@ -30,6 +29,10 @@ interface SaleInfraRecord {
   bondingRegistryProxyAdmin: string;
   ccaFactory: string;
   mockCcaFactory?: string;
+  validationHook?: string;
+  predicateRegistry?: string;
+  predicatePolicyID?: string;
+  predicateRequireSenderIsOwner?: boolean;
 }
 
 interface SaleDeploymentRecord {
@@ -58,7 +61,9 @@ function maybeBlock(blockNumber?: number): number | null {
 }
 
 function shouldSyncIntegration(opts: SyncOptions): boolean {
-  return Boolean(opts.syncIntegrationConfig || isLocalDeploymentChain(opts.chain));
+  return Boolean(
+    opts.syncIntegrationConfig || isLocalDeploymentChain(opts.chain),
+  );
 }
 
 function integrationConfigPath(): string {
@@ -301,10 +306,35 @@ export function syncSaleInfraRecords(
   );
   if (infra.mockCcaFactory) {
     storeDeploymentArgs(
-      { address: infra.mockCcaFactory, blockNumber: maybeBlock(opts.blockNumber) },
+      {
+        address: infra.mockCcaFactory,
+        blockNumber: maybeBlock(opts.blockNumber),
+      },
       "MockCCAFactory",
       opts.chain,
     );
+  }
+  if (infra.validationHook) {
+    const hasHookConstructorArgs = Boolean(
+      infra.predicateRegistry && infra.predicatePolicyID,
+    );
+    const hookRecord = {
+      address: infra.validationHook,
+      blockNumber: maybeBlock(opts.blockNumber),
+      skipVerification: hasHookConstructorArgs ? undefined : true,
+      verificationNote: hasHookConstructorArgs
+        ? undefined
+        : "Predicate hook was supplied as an existing address; constructor args are not recorded.",
+      constructorArgs: hasHookConstructorArgs
+        ? {
+            owner: infra.safe,
+            registry: infra.predicateRegistry,
+            policyID: infra.predicatePolicyID,
+            requireSenderIsOwner: infra.predicateRequireSenderIsOwner ?? true,
+          }
+        : undefined,
+    };
+    storeDeploymentArgs(hookRecord, "PredicateValidationHook", opts.chain);
   }
 }
 
@@ -335,7 +365,9 @@ function interfacesFor(name: "E3RefundManager"): Interface {
   // Keep this tiny helper here so deployment record generation stays independent
   // from a connected Hardhat runtime.
   if (name === "E3RefundManager") {
-    return new ethersLib.Interface(["function initialize(address,address,address)"]);
+    return new ethersLib.Interface([
+      "function initialize(address,address,address)",
+    ]);
   }
   throw new Error(`Unknown interface ${name}`);
 }
