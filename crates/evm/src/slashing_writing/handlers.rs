@@ -2,7 +2,7 @@
 
 //! Admission, scheduling, and submission-outcome handlers.
 
-use super::effects::submit_slash_proposal;
+use super::effects::{slash_evidence_consumed, submit_slash_proposal};
 use super::*;
 
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
@@ -11,7 +11,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
     type Result = ();
 
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
-        match msg.into_data() {
+        let data = match msg.into_data() {
+            InterfoldEventData::EffectRetry(retry) => retry.into_effect(),
+            data => data,
+        };
+        match data {
             InterfoldEventData::AccusationQuorumReached(data) => {
                 // Only submit if:
                 // 1. This is the right chain
@@ -77,6 +81,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                     );
                 }
             }
+            InterfoldEventData::EvmLogObserved(observation) => {
+                if let Some(key) = SlashIntentKey::from_observation(&observation) {
+                    self.submissions.complete_observed(key);
+                }
+            }
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
             _ => (),
         }
@@ -111,31 +120,53 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
                     tokio::time::sleep(delay).await;
                 }
 
-                let result = submit_slash_proposal(provider, contract_address, msg).await;
-                let terminal = match result {
-                    Ok(receipt) => {
-                        info!(tx=%receipt.transaction_hash, "Submitted attestation-based slash proposal on-chain");
+                let terminal = match slash_evidence_consumed(
+                    provider.clone(),
+                    contract_address,
+                    &key,
+                )
+                .await
+                {
+                    Ok(true) => {
+                        info!(e3_id = %msg.e3_id, "Skipping slash intent; evidence is already consumed on-chain");
                         true
                     }
                     Err(err) => {
-                        let decoded = format_evm_error(&err);
-                        let benign = decoded.contains("OperatorNotInCommittee")
-                            || decoded.contains("VoterNotInCommittee")
-                            || decoded.contains("DuplicateEvidence");
-                        if benign {
-                            // Fallback submitters expect DuplicateEvidence reverts
-                            // when the primary submitter has already landed the tx.
-                            // Operator/VoterNotInCommittee indicate a stale off-chain accusation
-                            // (e.g. cross-E3 race) — not a node-local fault.
-                            warn!("Slash submission skipped (rank {rank}): {decoded}");
-                        } else {
-                            bus.err(
-                                EType::Evm,
-                                anyhow::anyhow!("Error submitting slash proposal: {decoded}"),
-                            );
-                        }
-                        benign
+                        bus.err(
+                            EType::Evm,
+                            anyhow::anyhow!(
+                                "Error preflighting slash evidence replay: {}",
+                                format_evm_error(&err)
+                            ),
+                        );
+                        false
                     }
+                    Ok(false) => match submit_slash_proposal(provider, contract_address, msg).await
+                    {
+                        Ok(receipt) => {
+                            info!(tx=%receipt.transaction_hash, "Submitted attestation-based slash proposal on-chain");
+                            true
+                        }
+                        Err(err) => {
+                            let decoded = format_evm_error(&err);
+                            let benign = decoded.contains("OperatorNotInCommittee")
+                                || decoded.contains("VoterNotInCommittee")
+                                || decoded.contains("DuplicateEvidence");
+                            if benign {
+                                // Fallback submitters expect DuplicateEvidence reverts
+                                // when the primary submitter has already landed the tx.
+                                // Operator/VoterNotInCommittee indicate a stale off-chain accusation
+                                // (e.g. cross-E3 race) — not a node-local fault.
+                                warn!("Slash submission skipped (rank {rank}): {decoded}");
+                            } else {
+                                bus.err(
+                                    EType::Evm,
+                                    anyhow::anyhow!("Error submitting slash proposal: {decoded}"),
+                                );
+                            }
+                            benign
+                        }
+                    },
                 };
                 if let Err(error) = address
                     .send(SlashSubmissionFinished { key, terminal })

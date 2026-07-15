@@ -17,9 +17,9 @@ use std::{
     time::Duration,
 };
 
-use alloy::primitives::{Address, U256};
+use alloy::primitives::{keccak256, Address, B256, U256};
 use anyhow::{Context, Result};
-use e3_events::{AccusationOutcome, AccusationQuorumReached};
+use e3_events::{AccusationOutcome, AccusationQuorumReached, EvmLogObserved};
 
 /// Maximum number of voters eligible to attempt on-chain submission.
 /// Rank 0 submits immediately, rank 1 after one delay interval, etc.
@@ -52,6 +52,39 @@ impl SlashIntentKey {
             operator: event.accused,
             proof_type: event.proof_type as u8,
         })
+    }
+
+    pub(crate) fn from_observation(event: &EvmLogObserved) -> Option<Self> {
+        if event.contract != "SlashingManager" || event.event_name != "SlashProposed" {
+            return None;
+        }
+        let e3_id: U256 = event.e3_id.clone()?.try_into().ok()?;
+        let topic = event.topics.get(3)?;
+        let hex = topic.strip_prefix("0x").unwrap_or(topic);
+        if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return None;
+        }
+        let operator = format!("0x{}", &hex[24..]).parse().ok()?;
+        let data = event.data.extract_bytes();
+        let reason = data.get(..32)?;
+        let proof_type =
+            (0u8..=10).find(|candidate| keccak256([*candidate]).as_slice() == reason)?;
+
+        Some(Self {
+            chain_id: event.chain_id,
+            e3_id,
+            operator,
+            proof_type,
+        })
+    }
+
+    pub(crate) fn evidence_key(&self) -> B256 {
+        let mut encoded = Vec::with_capacity(32 + 32 + 20 + 1);
+        encoded.extend_from_slice(&U256::from(self.chain_id).to_be_bytes::<32>());
+        encoded.extend_from_slice(&self.e3_id.to_be_bytes::<32>());
+        encoded.extend_from_slice(self.operator.as_slice());
+        encoded.push(self.proof_type);
+        keccak256(encoded)
     }
 }
 
@@ -124,6 +157,12 @@ impl SlashSubmissionGate {
             self.completed.insert(key.clone());
         }
     }
+
+    pub(crate) fn complete_observed(&mut self, key: SlashIntentKey) {
+        self.deferred.remove(&key);
+        self.in_flight.remove(&key);
+        self.completed.insert(key);
+    }
 }
 
 /// Determine this node's submission rank: its position in the voter set after
@@ -163,8 +202,18 @@ pub(crate) fn submission_delay(rank: usize) -> Duration {
 mod tests {
     use super::*;
     use alloy::primitives::{Bytes, B256};
-    use e3_events::{AccusationQuorumReached, AccusationVote, E3id, ProofType};
+    use alloy::sol_types::SolValue;
+    use e3_events::{AccusationQuorumReached, AccusationVote, E3id, EvmLogObserved, ProofType};
     use e3_utils::ArcBytes;
+
+    alloy::sol! {
+        struct EvidenceKeyDomain {
+            uint256 chainId;
+            uint256 e3Id;
+            address operator;
+            uint8 proofType;
+        }
+    }
 
     fn vote(voter: Address) -> AccusationVote {
         AccusationVote {
@@ -189,6 +238,26 @@ mod tests {
         }
     }
 
+    fn slash_proposed() -> EvmLogObserved {
+        let mut data = keccak256([ProofType::C0PkBfv as u8]).to_vec();
+        data.resize(32 * 6, 0);
+        EvmLogObserved {
+            contract: "SlashingManager".to_owned(),
+            chain_id: 1,
+            e3_id: Some(E3id::new("1", 1)),
+            event_name: "SlashProposed".to_owned(),
+            signature: None,
+            known: true,
+            topics: vec![
+                String::new(),
+                String::new(),
+                String::new(),
+                format!("0x{}{}", "00".repeat(12), "08".repeat(20)),
+            ],
+            data: ArcBytes::from_bytes(&data),
+        }
+    }
+
     #[test]
     fn test_submission_rank_sorts_ascending() {
         let a = Address::repeat_byte(0x01);
@@ -198,6 +267,35 @@ mod tests {
         assert_eq!(submission_rank([c, a, b], b), Some(1));
         assert_eq!(submission_rank([c, a, b], a), Some(0));
         assert_eq!(submission_rank([c, a, b], c), Some(2));
+    }
+
+    #[test]
+    fn observed_proposal_closes_deferred_replay_intent() {
+        let mut gate = SlashSubmissionGate::new();
+        let (_, decision) = gate.admit(quorum(vec![Address::repeat_byte(1)])).unwrap();
+        assert_eq!(decision, SlashSubmissionDecision::Defer);
+
+        let key = SlashIntentKey::from_observation(&slash_proposed()).unwrap();
+        gate.complete_observed(key);
+
+        assert!(gate.enable_effects().is_empty());
+    }
+
+    #[test]
+    fn evidence_key_matches_solidity_encode_packed_domain() {
+        let event = quorum(vec![Address::repeat_byte(1)]);
+        let key = SlashIntentKey::from_quorum(&event).unwrap();
+        let expected = keccak256(
+            EvidenceKeyDomain {
+                chainId: U256::from(1),
+                e3Id: U256::from(1),
+                operator: Address::repeat_byte(8),
+                proofType: ProofType::C0PkBfv as u8,
+            }
+            .abi_encode_packed(),
+        );
+
+        assert_eq!(key.evidence_key(), expected);
     }
 
     #[test]

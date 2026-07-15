@@ -29,9 +29,21 @@ async fn infrastructure_events_are_filtered_during_replay() -> anyhow::Result<()
             .data(make_historical_evm_sync_start())
             .seq(4)
             .build(),
+        InterfoldEvent::<Unsequenced>::test_event("retry")
+            .data(
+                e3_events::EffectRetry::new(
+                    e3_events::CommitteeFinalizeRequested {
+                        e3_id: e3_events::E3id::new("1", 1),
+                    }
+                    .into(),
+                )
+                .unwrap(),
+            )
+            .seq(5)
+            .build(),
         InterfoldEvent::<Unsequenced>::test_event("after")
             .id(2)
-            .seq(5)
+            .seq(6)
             .build(),
     ];
 

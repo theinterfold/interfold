@@ -86,6 +86,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P>
         bus.subscribe_all(
             &[
                 EventType::AccusationQuorumReached,
+                EventType::EffectRetry,
+                EventType::EvmLogObserved,
                 EventType::EffectsEnabled,
                 EventType::Shutdown,
             ],

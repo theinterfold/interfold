@@ -1102,5 +1102,6 @@ present in the running ABI catalog is exposed as `UnknownEvmLog` with raw topics
 
 During restart, `ComputeEffectGate` observes replay before compute workers are effects-enabled. It
 buffers and deduplicates `ComputeRequest`s, prefers the newest regenerated request, cancels terminal
-E3 work, and releases pending jobs only after `EffectsEnabled`. The gate changes effect timing, not
-durable event order or audit state.
+E3 work, and consumes matching `ComputeResponse` / `ComputeRequestError` events so completed jobs
+are not released. The full-log open-effect scan wraps only unmatched requests in `EffectRetry`
+after `EffectsEnabled`. The gate changes effect timing, not durable event order or audit state.

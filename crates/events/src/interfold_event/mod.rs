@@ -36,6 +36,7 @@ mod e3_failed;
 mod e3_request_complete;
 mod e3_requested;
 mod e3_stage_changed;
+mod effect_retry;
 mod enable_effects;
 mod encryption_key_collection_failed;
 mod encryption_key_created;
@@ -114,6 +115,7 @@ pub use e3_request_complete::*;
 pub use e3_requested::*;
 pub use e3_stage_changed::*;
 use e3_utils::{colorize, colorize_event_ids, Color};
+pub use effect_retry::*;
 pub use enable_effects::*;
 pub use encryption_key_collection_failed::*;
 pub use encryption_key_created::*;
@@ -341,6 +343,7 @@ pub enum InterfoldEventData {
     CommitteeActivationChanged(CommitteeActivationChanged),
     CommitteeViabilityUpdated(CommitteeViabilityUpdated),
     EvmLogObserved(EvmLogObserved),
+    EffectRetry(EffectRetry),
 }
 
 impl InterfoldEventData {
@@ -661,6 +664,7 @@ impl InterfoldEventData {
             InterfoldEventData::CommitteeActivationChanged(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CommitteeViabilityUpdated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::EvmLogObserved(ref data) => data.e3_id.clone(),
+            InterfoldEventData::EffectRetry(ref data) => Some(data.effect().e3_id().clone()),
             _ => None,
         }
     }
@@ -769,7 +773,8 @@ impl_event_types!(
     CommitteeFormationFailed,
     CommitteeActivationChanged,
     CommitteeViabilityUpdated,
-    EvmLogObserved
+    EvmLogObserved,
+    EffectRetry
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

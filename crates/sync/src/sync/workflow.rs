@@ -13,8 +13,9 @@ use std::collections::BTreeMap;
 /// Decision returned for each event encountered during EventStore replay.
 ///
 /// Infrastructure events (`SyncEnded`, `EffectsEnabled`, `HistoricalEvmSyncStart`,
-/// `HistoricalNetSyncStart`) are re-published by the sync process itself, so replaying them
-/// would poison the EventBus deduplication window. They must be skipped during replay.
+/// `HistoricalNetSyncStart`, and persisted `EffectRetry` envelopes) are re-published or
+/// reconstructed by the sync process itself, so replaying them would poison the EventBus
+/// deduplication window. They must be skipped during replay.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ReplayDecision {
     /// Forward the event to listeners.
@@ -49,6 +50,7 @@ impl SyncPlanner {
                 | InterfoldEventData::EffectsEnabled(_)
                 | InterfoldEventData::HistoricalEvmSyncStart(_)
                 | InterfoldEventData::HistoricalNetSyncStart(_)
+                | InterfoldEventData::EffectRetry(_)
                 | InterfoldEventData::Shutdown(_)
         )
     }
@@ -135,15 +137,28 @@ mod tests {
             .data(Shutdown)
             .seq(4)
             .build();
+        let retry = InterfoldEvent::<Unsequenced>::test_event("retry")
+            .data(
+                e3_events::EffectRetry::new(
+                    e3_events::CommitteeFinalizeRequested {
+                        e3_id: E3id::new("1", 1),
+                    }
+                    .into(),
+                )
+                .unwrap(),
+            )
+            .seq(5)
+            .build();
         let test_event = InterfoldEvent::<Unsequenced>::test_event("hello")
             .id(42)
-            .seq(5)
+            .seq(6)
             .build();
 
         assert!(SyncPlanner::is_infrastructure_event(&sync_ended));
         assert!(SyncPlanner::is_infrastructure_event(&effects_enabled));
         assert!(SyncPlanner::is_infrastructure_event(&evm_sync_start));
         assert!(SyncPlanner::is_infrastructure_event(&shutdown));
+        assert!(SyncPlanner::is_infrastructure_event(&retry));
         assert!(!SyncPlanner::is_infrastructure_event(&test_event));
     }
 

@@ -29,6 +29,20 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                     ctx.notify(data);
                 }
             }
+            InterfoldEventData::EffectRetry(retry) => match retry.into_effect() {
+                InterfoldEventData::PlaintextAggregated(data)
+                    if self.provider.chain_id() == data.e3_id.chain_id() =>
+                {
+                    ctx.notify(data);
+                }
+                InterfoldEventData::E3StageChanged(data)
+                    if data.new_stage == E3Stage::Failed
+                        && self.provider.chain_id() == data.e3_id.chain_id() =>
+                {
+                    ctx.notify(data);
+                }
+                _ => {}
+            },
             InterfoldEventData::E3RequestComplete(data) => self.notify_sync(ctx, data),
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
             _ => (),
@@ -192,7 +206,27 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3StageChanged>
             let e3_id = msg.e3_id.clone();
             let contract_address = self.contract_address;
             let provider = self.provider.clone();
+            let bus = self.bus.clone();
             async move {
+                match should_process_e3_failure(provider.clone(), contract_address, e3_id.clone())
+                    .await
+                {
+                    Ok(false) => {
+                        info!(e3_id = %e3_id, "Skipping processE3Failure; refund was already processed");
+                        return;
+                    }
+                    Err(err) => {
+                        bus.err(
+                            EType::Evm,
+                            anyhow::anyhow!(
+                                "Error preflighting E3 failure processing: {}",
+                                format_evm_error(&err)
+                            ),
+                        );
+                        return;
+                    }
+                    Ok(true) => {}
+                }
                 let result = process_e3_failure(provider, contract_address, e3_id.clone()).await;
                 match result {
                     Ok(receipt) => {

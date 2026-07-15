@@ -52,6 +52,11 @@ pub enum ProofType {
 }
 
 impl ProofType {
+    /// On-chain replay domain used by `SlashingManager` for this proof type.
+    pub fn onchain_reason(&self) -> [u8; 32] {
+        keccak256([*self as u8]).0
+    }
+
     /// Map this proof type to its corresponding circuit names.
     pub fn circuit_names(&self) -> Vec<CircuitName> {
         match self {

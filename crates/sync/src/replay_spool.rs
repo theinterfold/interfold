@@ -24,7 +24,7 @@ use tracing::info;
 
 use crate::{ReplayDecision, SyncPlanner};
 
-const REPLAY_QUERY_PAGE_SIZE: usize = 1_024;
+pub(crate) const REPLAY_QUERY_PAGE_SIZE: usize = 1_024;
 const REPLAY_MERGE_FAN_IN: usize = 32;
 const MAX_SPOOLED_EVENT_BYTES: usize = 64 * 1024 * 1024;
 const REPLAY_PROGRESS_INTERVAL: usize = 10_000;
@@ -147,7 +147,7 @@ impl ReplaySpool {
     }
 }
 
-async fn query_page(
+pub(crate) async fn query_page(
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
     aggregate_id: AggregateId,
     cursor: u64,

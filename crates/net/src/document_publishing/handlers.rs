@@ -15,6 +15,10 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
     type Result = ();
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (msg, ec) = msg.into_components();
+        let msg = match msg {
+            InterfoldEventData::EffectRetry(retry) => retry.into_effect(),
+            msg => msg,
+        };
         match msg {
             InterfoldEventData::PublishDocumentRequested(data) => {
                 ctx.notify(TypedEvent::new(data, ec))

@@ -70,6 +70,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
                 EventType::AggregatorChanged,
                 EventType::PlaintextAggregated,
                 EventType::E3StageChanged,
+                EventType::EffectRetry,
                 EventType::E3RequestComplete,
                 EventType::Shutdown,
             ],

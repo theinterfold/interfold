@@ -237,25 +237,33 @@ On restart:
 │      → ThresholdPlaintextAggregatorExtension records this role in the E3 context
 │        so a plaintext buffer created later by CiphertextOutputPublished starts
 │        with the correct active-aggregator flag
-│   3. Replay EventStore events since last snapshot (effects still disabled)
+│   3. Scan every aggregate from sequence one in bounded pages
+│      → Pair local effect intents with their completion/terminal events
+│      → Retain only open intents, bounded by count and encoded bytes
+│      → Covers an intent that is older than the latest snapshot cursor
+│   4. Replay EventStore events since last snapshot (effects still disabled)
 │      → Read each aggregate in 1,024-event pages, sort bounded temporary runs,
 │        and perform a bounded-fan-in global merge by HLC timestamp
 │      → Each concurrent EventBus fanout is acknowledged before the next event;
 │        an unavailable or blocked listener aborts recovery after a bounded wait
 │      → Structured progress is emitted every 10,000 EventBus-handled events
-│   4. Fetch historical EVM events from last known block
-│   5. Historical libp2p sync retries failed aggregate fetches after reconnects
+│      → ComputeEffectGate buffers requests and consumes matching results/errors
+│   5. Fetch historical EVM events from last known block
+│   6. Historical libp2p sync retries failed aggregate fetches after reconnects
 │      and also on bounded retry intervals even without a new connection event
-│   6. Sort & publish merged events by HLC timestamp
+│   7. Sort merged historical events by HLC timestamp
 │      → A logical event returned by a peer with its source changed from Local to Net is
 │        idempotent when timestamp, stable event ID, and payload match the stored record;
 │        a different payload at the same timestamp still fails closed as a collision
 │      → ComputeEffectGate has already subscribed and buffers ComputeRequest
 │        effects, deduplicating semantic retries while replay is in progress
-│   7. Enable effects (writers may submit only after this point)
+│   8. Enable effects (writers may submit only after this point)
 │      → Gate cancels work for terminal E3s and releases only the newest
 │        pending request for each in-flight semantic compute operation
-│   8. SyncEnded → live operations begin
+│   9. Persist and fan out EffectRetry for each unmatched intent
+│      → The closed retry envelope is consumed only by effect executors
+│      → Old retry envelopes are skipped on replay; original intent/result pairs stay authoritative
+│  10. Publish merged historical events, then SyncEnded → live operations begin
 └─ Node resumes from where it left off
 ```
 
@@ -325,12 +333,15 @@ flowchart TD
 
     Actors --> Replay["sync(): replay EventStore<br/>effects disabled"]
     EventStore --> Replay
+    EventStore --> OpenEffects["bounded full-log scan<br/>pair effect intents/results"]
     Replay --> CommitteeReplay["CommitteePublished replay<br/>restores full committee"]
 
     Replay --> Effects["EffectsEnabled"]
     Effects --> Gate["ComputeEffectGate releases replay-safe compute work"]
+    OpenEffects --> Retry["unmatched EffectRetry envelopes"]
+    Effects --> Retry
 
-    Effects --> Live["Live/historical chain events"]
+    Retry --> Live["Live/historical chain events"]
     Live --> Ciphertext["CiphertextOutputPublished"]
     Ciphertext --> CanStart{"full + honest committee<br/>and keyshare actor ready?"}
     CanStart -- yes --> NewPlaintext["Create ThresholdPlaintextAggregator<br/>seed buffer with active aggregator role"]

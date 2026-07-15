@@ -38,6 +38,45 @@ pub async fn submit_ticket_to_registry<P: Provider + WalletProvider + Clone + 's
     .await
 }
 
+pub(in crate::actors::ciphernode_registry_sol) async fn should_submit_ticket<
+    P: Provider + WalletProvider + Clone + 'static,
+>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id: E3id,
+    ticket_number: u64,
+) -> Result<bool> {
+    let e3_id: U256 = e3_id.try_into()?;
+    let contract = ICiphernodeRegistry::new(contract_address, provider.provider());
+    match contract
+        .submitTicket(e3_id, U256::from(ticket_number))
+        .call()
+        .await
+    {
+        Ok(_) => Ok(true),
+        Err(err) => {
+            let err = anyhow::Error::from(err);
+            let decoded = decode_error_from_str(&format!("{err:?}"));
+            if decoded.as_deref().is_some_and(ticket_retry_is_terminal) {
+                return Ok(false);
+            }
+            Err(err)
+        }
+    }
+}
+
+fn ticket_retry_is_terminal(message: &str) -> bool {
+    [
+        "NodeAlreadySubmitted",
+        "CommitteeAlreadyFinalized",
+        "CommitteeDeadlineReached",
+        "CommitteeNotRequested",
+        "NodeNotEligible",
+    ]
+    .iter()
+    .any(|terminal| message.contains(terminal))
+}
+
 pub async fn finalize_committee_on_registry<P: Provider + WalletProvider + Clone + 'static>(
     provider: EthProvider<P>,
     contract_address: Address,
@@ -226,5 +265,18 @@ pub async fn fetch_accusation_vote_validity<P: Provider + Clone>(
         Ok(None)
     } else {
         Ok(Some(validity))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::ticket_retry_is_terminal;
+
+    #[test]
+    fn ticket_preflight_only_suppresses_terminal_contract_states() {
+        assert!(ticket_retry_is_terminal("NodeAlreadySubmitted()"));
+        assert!(ticket_retry_is_terminal("CommitteeDeadlineReached()"));
+        assert!(!ticket_retry_is_terminal("RpcTransportError"));
+        assert!(!ticket_retry_is_terminal("SubmissionWindowNotClosed()"));
     }
 }

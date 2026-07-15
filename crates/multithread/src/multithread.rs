@@ -188,6 +188,10 @@ impl Handler<InterfoldEvent> for Multithread {
     type Result = ();
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (data, ec) = msg.into_components();
+        let data = match data {
+            InterfoldEventData::EffectRetry(retry) => retry.into_effect(),
+            data => data,
+        };
         if let InterfoldEventData::ComputeRequest(data) = data {
             ctx.notify(TypedEvent::new(data, ec))
         }

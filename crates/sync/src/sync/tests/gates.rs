@@ -22,7 +22,11 @@ async fn startup_history_is_fenced_between_effects_and_live_mode() -> anyhow::Re
             .build(),
     ];
 
-    publish_reconciled_history(&bus, historical).await?;
+    let open_effects = vec![e3_events::CommitteeFinalizeRequested {
+        e3_id: e3_events::E3id::new("3", 1),
+    }
+    .into()];
+    publish_reconciled_history(&bus, open_effects, historical).await?;
 
     let received = history.send(GetEvents::new()).await?;
     let types = received
@@ -31,7 +35,13 @@ async fn startup_history_is_fenced_between_effects_and_live_mode() -> anyhow::Re
         .collect::<Vec<_>>();
     assert_eq!(
         types,
-        ["EffectsEnabled", "TestEvent", "TestEvent", "SyncEnded"]
+        [
+            "EffectsEnabled",
+            "EffectRetry",
+            "TestEvent",
+            "TestEvent",
+            "SyncEnded"
+        ]
     );
     Ok(())
 }

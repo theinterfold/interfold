@@ -340,6 +340,7 @@ flowchart TD
         Restart[restart] --> Index[reconcile timestamp index in 1024-record pages]
         Index --> Schema[schema-version preflight before runtime actor writes]
         Schema --> SnapshotMeta[load aggregate cursors and initial HLC floor]
+        SnapshotMeta --> OpenEffects[scan complete logs for unmatched effect intents]
         SnapshotMeta --> Query[query every post-snapshot aggregate]
         Query --> Runs[sort 1024-event pages into secure temporary runs]
         Runs --> GlobalOrder[bounded-fan-in merge by HLC timestamp]
@@ -349,7 +350,9 @@ flowchart TD
         EvmBackfill --> NetBackfill[bounded historical network sync]
         NetBackfill --> Merge[merge and sort EVM plus network history by HLC]
         Merge --> Enable[EffectsEnabled]
-        Enable -->|durable pipeline and fanout fence| PersistHistory[persist and dispatch reconciled history]
+        OpenEffects --> Retry[bounded set of internal EffectRetry envelopes]
+        Enable -->|durable pipeline and fanout fence| Retry
+        Retry -->|durable pipeline and fanout fence| PersistHistory[persist and dispatch reconciled history]
         PersistHistory -->|durable pipeline and fanout fence| End[SyncEnded]
         End -->|durable pipeline and fanout fence| Live[live operation]
     end
@@ -375,22 +378,29 @@ newer log records. Replay then waits for concurrent acceptance by all current Ev
 An unavailable subscriber or a subscriber blocked beyond the bounded acceptance timeout aborts
 recovery. An `EventBusBarrier` therefore completes only after the last replay fanout has completed.
 A persisted `Shutdown` event from the previous process is classified as infrastructure and is not
-replayed into newly constructed actors.
+replayed into newly constructed actors. Startup separately scans every aggregate from sequence one
+in the same bounded pages, retaining only supported effect intents that have no matching completion
+or terminal lifecycle event. This full-log scan covers intents older than the latest snapshot cursor
+while bounding retained work by count and encoded size.
 
 The EventBus mailbox remains bounded at `MAILBOX_LIMIT_LARGE` (2,560 messages). The replay producer
 no longer attempts to enqueue the entire backlog into that mailbox in one burst, and EventBus
 subscriber fanout no longer bypasses downstream mailbox limits. EventStore query responses also
 await recipient capacity, preventing a full aggregation mailbox from dropping one aggregate response
-and hanging startup. Recovery publishes `EffectsEnabled`, canonical history, and `SyncEnded` as
-three separately fenced phases. Runtime log-read failures are returned in the correlated query
-response and flow through the existing error paths; a remote sync query therefore cannot panic the
-EventStore actor. The fail-stop behavior below applies to durable append/index-write failures. An
-event-log or timestamp-index write error panics the affected EventStore before live dispatch. This
-preserves durable-before-dispatch safety, but under the default unwind profile an Actix actor panic
-is contained at its spawned task boundary: it can kill the store actor and stall the sequencer
-without terminating the process. Process-level health supervision would need to detect the stalled
-pipeline, but the current runtime does not provide that guarantee. A restart, when it occurs, treats
-the event log as authoritative and reconciles missing derived index rows.
+and hanging startup. Recovery publishes `EffectsEnabled`, persisted `EffectRetry` envelopes,
+canonical history, and `SyncEnded` as separately fenced phases. Retry envelopes contain a closed
+set of effect payloads and are consumed only by effect executors, so state-building subscribers do
+not observe the original domain event a second time. Persisted retry envelopes are classified as
+infrastructure on the next replay; the original intent/completion pair remains the durable recovery
+authority. Runtime log-read failures are returned in the correlated query response and flow through
+the existing error paths; a remote sync query therefore cannot panic the EventStore actor. The
+fail-stop behavior below applies to durable append/index-write failures. An event-log or
+timestamp-index write error panics the affected EventStore before live dispatch. This preserves
+durable-before-dispatch safety, but under the default unwind profile an Actix actor panic is contained
+at its spawned task boundary: it can kill the store actor and stall the sequencer without terminating
+the process. Process-level health supervision would need to detect the stalled pipeline, but the
+current runtime does not provide that guarantee. A restart, when it occurs, treats the event log as
+authoritative and reconciles missing derived index rows.
 
 Those replay guarantees bound local replay memory and file-descriptor use, but they do not make the
 whole persistence path synchronously acknowledged. Live publication and the sequencer/store response
@@ -567,11 +577,11 @@ coalesced by the contract's semantic replay domain across deferred, in-flight, a
 submissions. Retryable submission failures release their key; successful or known-benign terminal
 results retain it.
 
-The gate is deliberately described as in-memory: there is no durable external-effect outbox or
-persisted transaction intent. A crash after snapshot advancement but before receipt classification
-can therefore lose the local redrive state, and a crash after submission can require on-chain
-reconciliation to distinguish landed from missing work. Closing that gap requires a durable
-intent/result state machine and contract preflight, not another process-local set.
+The submission gate itself is in-memory, but startup reconstructs its missing work from the full
+durable event log. A `SlashProposed` observation closes the matching semantic replay key during
+replay; otherwise an `EffectRetry` is delivered after effects are enabled. A crash after
+submission is reconciled through the contract's `evidenceConsumed` view before retry, while
+`DuplicateEvidence` remains the final race-safe idempotency boundary.
 
 ## Program-server trust boundary
 
@@ -664,7 +674,8 @@ flowchart LR
 | C0/share proof-verification context      | Finalized-committee and ciphernode-selector repositories plus global verifier memory | Canonical slots and E3 preset/threshold metadata load before ZK actor startup, then lifecycle events maintain or clear them |
 | HLC, EventBus dedup, and admission state | Event pipeline actors in memory                                                      | Maximum snapshot/replay HLC; a fresh bounded dedup window is populated by replay and live events                            |
 | Network peer/buffer/interest state       | libp2p and network actors in memory                                                  | Fresh peer dialing; document interest returns only when selection observations are replayed or redriven                     |
-| Slash-submission replay gate             | `SlashingManagerSolWriter` process memory                                            | Rebuilt from replay; not a durable outbox                                                                                   |
+| Open effect intents                      | Per-aggregate append-only event logs                                                 | Full bounded intent/completion scan followed by `EffectRetry` after `EffectsEnabled`                                        |
+| Slash-submission replay gate             | `SlashingManagerSolWriter` process memory                                            | Rebuilt from replay plus the durable open-effect scan                                                                       |
 | Pending transaction nonce allocation     | Per-chain writer mutex in memory                                                     | Provider pending nonce on restart                                                                                           |
 | In-flight accusation votes and timers    | Per-E3 accusation actor memory                                                       | No complete durable reconstruction; only events inside the replay window may be observed again                              |
 | libp2p identity                          | Encrypted keypair repository                                                         | Decrypt at startup                                                                                                          |
