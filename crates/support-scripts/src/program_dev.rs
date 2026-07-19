@@ -26,7 +26,12 @@ impl ProgramSupportApi for ProgramSupportDev {
         run_bash_script(&cwd, &script, &[]).await?;
         Ok(())
     }
-    async fn start(&self) -> Result<()> {
+    async fn start(&self, linux_network_host_mode: bool) -> Result<()> {
+        if linux_network_host_mode {
+            eprintln!(
+                "warning: --linux-network-host-mode has no effect in --dev mode (Docker is not used)"
+            );
+        }
         let cwd = env::current_dir()?;
         let script = cwd.join(".interfold/support/dev/start");
         ensure_script_exists(&script).await?;

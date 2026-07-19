@@ -147,9 +147,18 @@ async fn handle_compute(req: web::Json<ComputeRequest>) -> ActixResult<HttpRespo
     };
 
     println!("fhe_inputs.params = {:?}", fhe_inputs.params);
-    let callback_url = callback_url
-        .replace("localhost", "host.local")
-        .replace("127.0.0.1", "host.local");
+    let callback_url = if std::env::var("INTERFOLD_SKIP_LOCALHOST_REWRITE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        // Docker --network=host: localhost in the container is the host.
+        callback_url
+    } else {
+        // Bridge networking: rewrite so callbacks reach the host via host-gateway.
+        callback_url
+            .replace("localhost", "host.local")
+            .replace("127.0.0.1", "host.local")
+    };
 
     // Process computation in background
     tokio::spawn(async move {

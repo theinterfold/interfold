@@ -40,22 +40,44 @@ else
     TTY_FLAGS=""
 fi
 
+# Peel networking mode before forwarding remaining args into the container.
+LINUX_NETWORK_HOST_MODE=0
+INNER_ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == "--linux-network-host-mode" ]]; then
+        LINUX_NETWORK_HOST_MODE=1
+    else
+        INNER_ARGS+=("$arg")
+    fi
+done
+set -- "${INNER_ARGS[@]}"
+
 if docker ps -q -f name="$CONTAINER_NAME" | grep -q .; then
     echo "Running exec $IMAGE..."
     docker exec $TTY_FLAGS "$CONTAINER_NAME" bash -c "$*"
 else
     echo "Running start $IMAGE..."
-    # --network=host does not work on macos for allowing the container to access 
-    # the local machine. `--add-host...` is adding host.local to the hosts file 
-    # in the docker container we can then replace localhost and 127.0.0.1 
-    # from the input callback url so calls redirect to gateway.
-    # This should in theory be crossplatform
-    # However on linux the user must allow incoming connections from Docker's bridge network 172.17.0.0/16 through their firewall.
+    # Default (cross-platform): `--add-host=host.local:host-gateway` plus rewriting
+    # localhost/127.0.0.1 in callback URLs so the container can reach the host.
+    # On Linux that requires allowing Docker's bridge network (172.17.0.0/16) through
+    # the firewall. `--linux-network-host-mode` uses Docker `--network=host` instead
+    # so localhost callbacks work without rewrite or firewall changes.
+    # Note: `--network=host` is not useful on macOS Docker Desktop.
+    DOCKER_NET_ARGS=(--add-host=host.local:host-gateway -p 13151:13151)
+    DOCKER_ENV_ARGS=()
+    if [[ "$LINUX_NETWORK_HOST_MODE" == "1" ]]; then
+        echo "Using Docker --network=host (linux network host mode)"
+        # Keep host.local→127.0.0.1 so older support images that still rewrite
+        # localhost callbacks keep working under host networking.
+        DOCKER_NET_ARGS=(--network=host --add-host=host.local:127.0.0.1)
+        DOCKER_ENV_ARGS=(-e INTERFOLD_SKIP_LOCALHOST_REWRITE=1)
+    fi
+
     docker run $TTY_FLAGS  --rm \
         --name "$CONTAINER_NAME" \
         --platform linux/amd64 \
-        --add-host=host.local:host-gateway \
-        -p 13151:13151 \
+        "${DOCKER_NET_ARGS[@]}" \
+        "${DOCKER_ENV_ARGS[@]}" \
         -v "$(pwd)/.interfold/generated/contracts:/app/contracts:rw" \
         -v "$(pwd)/tests:/app/tests" \
         -v "$(pwd)/.interfold/caches/target:/app/target" \

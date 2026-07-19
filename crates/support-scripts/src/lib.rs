@@ -22,8 +22,14 @@ pub async fn program_compile(program_config: ProgramConfig, is_dev: Option<bool>
     ProgramSupport::new(program_config, is_dev).compile().await
 }
 
-pub async fn program_start(program_config: ProgramConfig, is_dev: Option<bool>) -> Result<()> {
-    ProgramSupport::new(program_config, is_dev).start().await
+pub async fn program_start(
+    program_config: ProgramConfig,
+    is_dev: Option<bool>,
+    linux_network_host_mode: bool,
+) -> Result<()> {
+    ProgramSupport::new(program_config, is_dev)
+        .start(linux_network_host_mode)
+        .await
 }
 
 /// Upload the compiled program to Pinata IPFS
