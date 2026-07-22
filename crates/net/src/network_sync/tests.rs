@@ -143,12 +143,18 @@ async fn rebroadcast_only_gossips_forwardable_own_artifacts() {
     let evt_rx = Arc::new(evt_rx);
     let eventstore = NoopEventStore.start().recipient();
 
-    let mut mgr = NetSyncManager::new(&bus, &tx, &evt_rx, eventstore, "my-topic");
+    let mgr = NetSyncManager::new(&bus, &tx, &evt_rx, eventstore, "my-topic");
 
-    mgr.handle_rebroadcast_response(vec![
-        local_forwardable_event("1234"),
-        local_non_forwardable_event(),
-    ]);
+    NetSyncManager::rebroadcast_own_artifacts(
+        mgr.tx.clone(),
+        mgr.topic.clone(),
+        vec![
+            local_forwardable_event("1234"),
+            local_non_forwardable_event(),
+        ],
+    )
+    .await
+    .unwrap();
 
     // Exactly one GossipPublish for the forwardable artifact, on the configured topic.
     let cmd = rx.try_recv().expect("expected a GossipPublish command");

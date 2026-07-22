@@ -42,10 +42,11 @@ impl NetSyncManager {
     }
 
     /// Re-gossip the node's own forwardable artifacts returned by the re-broadcast query.
-    pub(in crate::actors::net_sync_manager) fn handle_rebroadcast_response(
-        &mut self,
+    pub(in crate::actors::net_sync_manager) async fn rebroadcast_own_artifacts(
+        tx: mpsc::Sender<NetCommand>,
+        topic: String,
         events: Vec<InterfoldEvent>,
-    ) {
+    ) -> Result<usize> {
         let mut count = 0usize;
         for event in events {
             if !EventTranslationService::is_forwardable_event(&event) {
@@ -58,16 +59,16 @@ impl NetSyncManager {
                     continue;
                 }
             };
-            if let Err(e) = self.tx.try_send(NetCommand::GossipPublish {
-                topic: self.topic.clone(),
+            tx.send(NetCommand::GossipPublish {
+                topic: topic.clone(),
                 data,
                 correlation_id: CorrelationId::new(),
-            }) {
-                warn!("Failed to re-broadcast own artifact (channel full or closed): {e}");
-            } else {
-                count += 1;
-            }
+            })
+            .await
+            .context("network command channel closed while re-broadcasting an own artifact")?;
+            count += 1;
         }
         info!("NetSyncManager: re-broadcast {count} own forwardable artifact(s) after restart");
+        Ok(count)
     }
 }

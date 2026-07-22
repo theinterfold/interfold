@@ -250,6 +250,8 @@ On restart:
 │        probabilistic Bloom membership cannot open the effects barrier
 │   5. Historical libp2p sync retries failed aggregate fetches after reconnects
 │      and also on bounded retry intervals even without a new connection event
+│      → outbound artifacts await bounded network-channel capacity and enter exact FIFO dedup
+│        only after acceptance; restart re-broadcast uses the same backpressure boundary
 │   6. Sort & publish merged events by HLC timestamp
 │      → A logical event returned by a peer with its source changed from Local to Net is
 │        idempotent when timestamp, stable event ID, and payload match the stored record;

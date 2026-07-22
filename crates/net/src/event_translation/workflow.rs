@@ -5,8 +5,10 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::{ensure, Result};
-use bloom::{BloomFilter, ASMS};
-use e3_events::{prelude::*, Event, InterfoldEvent, InterfoldEventData, SeqState, Unsequenced};
+use e3_events::{
+    prelude::*, Event, EventId, InterfoldEvent, InterfoldEventData, SeqState, Unsequenced,
+};
+use std::collections::{HashSet, VecDeque};
 use tracing::{trace, warn};
 
 use crate::events::GossipData;
@@ -18,14 +20,20 @@ use crate::events::GossipData;
 ///
 /// Holds no actix/bus/channel state — the actor performs the actual publish I/O.
 pub struct EventTranslationService {
-    sent_events: BloomFilter,
+    sent_events: HashSet<EventId>,
+    sent_order: VecDeque<EventId>,
+    dedup_capacity: usize,
     topic: String,
 }
+
+const SENT_EVENT_DEDUP_CAPACITY: usize = 10_000;
 
 impl EventTranslationService {
     pub fn new(topic: &str) -> Self {
         Self {
-            sent_events: BloomFilter::with_rate(0.001, 10_000),
+            sent_events: HashSet::new(),
+            sent_order: VecDeque::new(),
+            dedup_capacity: SENT_EVENT_DEDUP_CAPACITY,
             topic: topic.to_string(),
         }
     }
@@ -53,7 +61,7 @@ impl EventTranslationService {
     ///
     /// Returns `Some(GossipData)` to publish over the network, or `None` when the event is not
     /// forwardable or has already been broadcast.
-    pub fn prepare_outbound(&mut self, event: InterfoldEvent) -> Result<Option<GossipData>> {
+    pub fn prepare_outbound(&self, event: InterfoldEvent) -> Result<Option<(EventId, GossipData)>> {
         if !Self::is_forwardable_event(&event) {
             let id = event.event_id();
             trace!(evt_id=%id, "Local events should not be rebroadcast so ignoring");
@@ -65,16 +73,30 @@ impl EventTranslationService {
             trace!(evt_id=%id, "Have seen event before not rebroadcasting!");
             return Ok(None);
         }
-        self.sent_events.insert(&id);
-
         warn!("GossipPublish event: {}", event.event_type());
         let data: GossipData = event.try_into()?;
-        Ok(Some(data))
+        Ok(Some((id, data)))
     }
 
-    /// Decode an inbound gossip payload into the internal event to publish locally, recording it
-    /// for dedup so it is not later rebroadcast.
-    pub fn prepare_inbound(&mut self, data: GossipData) -> Result<InterfoldEvent<Unsequenced>> {
+    /// Record an event only after the downstream command/bus has accepted it.
+    pub fn mark_accepted(&mut self, id: EventId) {
+        if !self.sent_events.insert(id) {
+            return;
+        }
+        self.sent_order.push_back(id);
+        while self.sent_order.len() > self.dedup_capacity {
+            if let Some(expired) = self.sent_order.pop_front() {
+                self.sent_events.remove(&expired);
+            }
+        }
+    }
+
+    /// Decode and authorize an inbound gossip payload. The actor records its ID only after the
+    /// local event pipeline accepts it.
+    pub fn prepare_inbound(
+        &self,
+        data: GossipData,
+    ) -> Result<(EventId, InterfoldEvent<Unsequenced>)> {
         let event: InterfoldEvent<Unsequenced> = data.try_into()?;
         ensure!(
             Self::is_forwardable_event(&event),
@@ -82,8 +104,7 @@ impl EventTranslationService {
             event.event_type()
         );
         let id = event.id();
-        self.sent_events.insert(&id);
-        Ok(event)
+        Ok((id, event))
     }
 }
 
@@ -131,13 +152,13 @@ mod tests {
 
     #[test]
     fn non_forwardable_events_produce_no_gossip() {
-        let mut svc = EventTranslationService::new("topic");
+        let svc = EventTranslationService::new("topic");
         assert!(svc.prepare_outbound(local_test_event()).unwrap().is_none());
     }
 
     #[test]
     fn inbound_gossip_rejects_non_forwardable_internal_events() {
-        let mut svc = EventTranslationService::new("topic");
+        let svc = EventTranslationService::new("topic");
         let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
             TestEvent::new("fish", 7).into(),
             None,
@@ -152,12 +173,23 @@ mod tests {
 
     #[test]
     fn inbound_gossip_accepts_forwardable_protocol_events() {
-        let mut svc = EventTranslationService::new("topic");
+        let svc = EventTranslationService::new("topic");
         let expected = local_forwardable_event();
         let data: GossipData = expected.clone().try_into().unwrap();
 
-        let decoded = svc.prepare_inbound(data).unwrap();
+        let (_, decoded) = svc.prepare_inbound(data).unwrap();
 
         assert_eq!(decoded.get_data(), expected.get_data());
+    }
+
+    #[test]
+    fn outbound_dedup_advances_only_after_acceptance() {
+        let mut svc = EventTranslationService::new("topic");
+        let event = local_forwardable_event();
+        let (id, _) = svc.prepare_outbound(event.clone()).unwrap().unwrap();
+
+        assert!(svc.prepare_outbound(event.clone()).unwrap().is_some());
+        svc.mark_accepted(id);
+        assert!(svc.prepare_outbound(event).unwrap().is_none());
     }
 }

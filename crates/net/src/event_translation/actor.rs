@@ -88,25 +88,12 @@ impl NetEventTranslator {
         EventTranslationService::is_forwardable_event(event)
     }
 
-    fn handle_interfold_event(&mut self, msg: InterfoldEvent) -> Result<()> {
-        if let Some(data) = self.service.prepare_outbound(msg)? {
-            let topic = self.service.topic().to_owned();
-            if let Err(e) = self.tx.try_send(NetCommand::GossipPublish {
-                topic,
-                data,
-                correlation_id: CorrelationId::new(),
-            }) {
-                warn!("Failed to send gossip command (channel full or closed): {e}");
-            }
-        }
-        Ok(())
-    }
-
     fn handle_remote_event(&mut self, msg: LibP2pEvent) -> Result<()> {
-        let event = self.service.prepare_inbound(msg.0)?;
+        let (id, event) = self.service.prepare_inbound(msg.0)?;
         let (data, ec) = event.into_components();
         self.bus
             .publish_from_remote(data, ec.ts(), None, EventSource::Net)?;
+        self.service.mark_accepted(id);
         Ok(())
     }
 }
@@ -121,10 +108,98 @@ impl Handler<LibP2pEvent> for NetEventTranslator {
 }
 
 impl Handler<InterfoldEvent> for NetEventTranslator {
-    type Result = ();
+    type Result = AtomicResponse<Self, ()>;
     fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
-        trap(EType::Net, &self.bus.with_ec(msg.get_ctx()), || {
-            self.handle_interfold_event(msg)
-        })
+        let bus = self.bus.with_ec(msg.get_ctx());
+        let prepared = match self.service.prepare_outbound(msg) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                bus.err(EType::Net, error);
+                return AtomicResponse::new(Box::pin(actix::fut::ready(())));
+            }
+        };
+        let Some((id, data)) = prepared else {
+            return AtomicResponse::new(Box::pin(actix::fut::ready(())));
+        };
+
+        let command = NetCommand::GossipPublish {
+            topic: self.service.topic().to_owned(),
+            data,
+            correlation_id: CorrelationId::new(),
+        };
+        let tx = self.tx.clone();
+        AtomicResponse::new(Box::pin(
+            async move { tx.send(command).await }
+                .into_actor(self)
+                .map(move |result, actor, _| match result {
+                    Ok(()) => actor.service.mark_accepted(id),
+                    Err(error) => bus.err(
+                        EType::Net,
+                        anyhow::anyhow!(
+                            "network command channel closed before gossip acceptance: {error}"
+                        ),
+                    ),
+                }),
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use e3_ciphernode_builder::EventSystem;
+    use e3_events::{
+        E3id, EventConstructorWithTimestamp, EventSource, PlaintextAggregated, Unsequenced,
+    };
+    use e3_utils::ArcBytes;
+    use std::time::Duration;
+
+    fn forwardable_event() -> InterfoldEvent {
+        let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
+            PlaintextAggregated {
+                e3_id: E3id::new("1", 1),
+                decrypted_output: vec![ArcBytes::from_bytes(&[1, 2, 3])],
+                decryption_aggregator_proofs: vec![],
+            }
+            .into(),
+            None,
+            42,
+            None,
+            EventSource::Local,
+        );
+        event.into_sequenced(1)
+    }
+
+    #[actix::test]
+    async fn full_command_channel_applies_backpressure_without_losing_or_deduping() {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle().unwrap().enable("test");
+        let (tx, mut rx) = mpsc::channel(1);
+        tx.send(NetCommand::Shutdown).await.unwrap();
+        let addr = NetEventTranslator::new(&bus, &tx, "topic").start();
+        let event = forwardable_event();
+
+        let pending = tokio::spawn({
+            let addr = addr.clone();
+            let event = event.clone();
+            async move { addr.send(event).await }
+        });
+        tokio::time::sleep(Duration::from_millis(20)).await;
+        assert!(
+            !pending.is_finished(),
+            "full channel must backpressure the actor"
+        );
+
+        assert!(matches!(rx.recv().await, Some(NetCommand::Shutdown)));
+        pending.await.unwrap().unwrap();
+        assert!(matches!(
+            rx.recv().await,
+            Some(NetCommand::GossipPublish { .. })
+        ));
+
+        addr.send(event).await.unwrap();
+        assert!(tokio::time::timeout(Duration::from_millis(20), rx.recv())
+            .await
+            .is_err());
     }
 }
