@@ -15,6 +15,7 @@ pub mod events;
 mod keypair;
 mod net_interface;
 mod net_interface_handle;
+mod net_supervisor;
 mod repo;
 
 use std::sync::Arc;
@@ -25,7 +26,6 @@ use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_data::Repository;
 use e3_events::{run_once, BusHandle, EffectsEnabled, EventStoreQueryBy, EventSubscriber, TsAgg};
-use tracing::error;
 use tracing::{info, instrument};
 
 use actors::{NetEventBuffer, NetSyncManager};
@@ -36,6 +36,7 @@ pub use domain::{ConnectedPeer, NetworkSnapshot, NetworkStatus};
 pub use keypair::*;
 pub use net_interface::*;
 pub use net_interface_handle::*;
+pub use net_supervisor::*;
 pub use repo::*;
 
 pub async fn setup_libp2p_keypair(
@@ -58,18 +59,15 @@ pub fn setup_net_interface(
     keypair: Libp2pKeypair,
     peers: Vec<String>,
     quic_port: u16,
-) -> Result<NetInterfaceHandle> {
+) -> Result<(NetInterfaceHandle, NetworkTaskSupervisor)> {
     let mut interface = Libp2pNetInterface::new(keypair, peers, Some(quic_port), topic)?;
 
     let handle = interface.handle();
-
-    actix::spawn(async move {
-        if let Err(e) = interface.start().await {
-            error!("{e}");
-        }
+    let supervisor = supervise_network_task(handle.tx(), handle.status(), async move {
+        interface.start().await
     });
 
-    Ok(handle)
+    Ok((handle, supervisor))
 }
 
 /// Spawn a Libp2p interface and hook it up to this actor

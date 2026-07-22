@@ -202,6 +202,12 @@ publishPlaintextOutput() succeeds
 
 ## Rust-Side: Node Shutdown
 
+The libp2p event loop is a required supervised task. Startup races protocol readiness against its
+exit, and the running CLI races the shutdown signal against the same one-shot exit status; an
+unexpected interface exit records a live network error, drains the node, and returns non-zero.
+Normal shutdown first sends `NetCommand::Shutdown` and awaits the interface loop before actor,
+event-log, snapshot, and backing-store barriers, preventing new network ingress during the drain.
+
 ```
 interfold start → running node
 │

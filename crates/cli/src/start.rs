@@ -10,7 +10,7 @@ use crate::{
     cli::{Cli, RemoteCli},
     owo,
 };
-use anyhow::Result;
+use anyhow::{bail, Result};
 use e3_ciphernode_builder::CiphernodeHandle;
 use e3_config::AppConfig;
 use e3_console::Console;
@@ -97,7 +97,23 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
         node.peer_id
     );
 
-    shutdown.await;
+    let network_supervisor = node.network_supervisor();
+    let network_failure = tokio::select! {
+        _ = &mut shutdown => None,
+        exit = network_supervisor.wait_for_exit(), if network_supervisor.is_managed() => {
+            Some(exit?)
+        }
+    };
+    if let Some(exit) = network_failure {
+        if let Err(shutdown_error) = graceful_shutdown(Some(node)).await {
+            error!(%shutdown_error, "Graceful cleanup after network failure also failed");
+        }
+        bail!(
+            "required network interface exited after readiness: {}",
+            exit.reason
+        );
+    }
+
     graceful_shutdown(Some(node)).await?;
 
     Ok(())

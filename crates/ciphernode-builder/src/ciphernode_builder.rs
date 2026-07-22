@@ -32,7 +32,7 @@ use e3_logger::attach_protocol_logger;
 use e3_multithread::{Multithread, MultithreadReport, TaskPool, TaskPoolPolicy};
 use e3_net::{
     create_channel_bridge, setup_libp2p_keypair, setup_net_interface, setup_net_with_limits,
-    NetRepositoryFactory,
+    NetRepositoryFactory, NetworkTaskSupervisor,
 };
 use e3_request::E3Router;
 use e3_request::{E3LifecycleCoordinator, E3LifecycleRepositoryFactory};
@@ -609,7 +609,8 @@ impl CiphernodeBuilder {
 
         // Setup networking
         let topic = "interfold-gossip";
-        let (peer_id, interface, net_kind) = self.setup_networking(&store, topic).await?;
+        let (peer_id, interface, net_kind, network_supervisor) =
+            self.setup_networking(&store, topic).await?;
         let network_status = interface.status();
         let net_buffer = setup_net_with_limits(
             topic,
@@ -622,17 +623,33 @@ impl CiphernodeBuilder {
 
         // Run the sync routine
         let seq_eventstore = eventstore.seq();
-        tokio::try_join!(
-            sync(
-                &bus,
-                &evm_config,
-                &repositories,
-                &aggregate_config,
-                &seq_eventstore,
-            ),
-            wait_for_evm_gateways(evm_gateways),
-            net_buffer.wait_until_running(),
-        )?;
+        {
+            let readiness = async {
+                tokio::try_join!(
+                    sync(
+                        &bus,
+                        &evm_config,
+                        &repositories,
+                        &aggregate_config,
+                        &seq_eventstore,
+                    ),
+                    wait_for_evm_gateways(evm_gateways),
+                    net_buffer.wait_until_running(),
+                )?;
+                anyhow::Ok(())
+            };
+            tokio::pin!(readiness);
+            tokio::select! {
+                biased;
+                exit = network_supervisor.wait_for_exit(), if network_supervisor.is_managed() => {
+                    let exit = exit?;
+                    anyhow::bail!("required network interface exited before node readiness: {}", exit.reason);
+                }
+                result = &mut readiness => {
+                    result?;
+                }
+            }
+        }
 
         Ok(CiphernodeHandle {
             address: addr.to_owned(),
@@ -643,6 +660,7 @@ impl CiphernodeBuilder {
             peer_id,
             net_interface: net_kind,
             network_status,
+            network_supervisor,
             eventstore,
             aggregate_ids: aggregate_config.indexed_ids(),
         })
@@ -930,18 +948,23 @@ impl CiphernodeBuilder {
         &self,
         store: &e3_data::DataStore,
         topic: &str,
-    ) -> Result<(PeerId, e3_net::NetInterfaceHandle, NetInterfaceKind)> {
+    ) -> Result<(
+        PeerId,
+        e3_net::NetInterfaceHandle,
+        NetInterfaceKind,
+        NetworkTaskSupervisor,
+    )> {
         if let Some(ref net_config) = self.net_config {
             let repositories = store.repositories();
             let keypair = setup_libp2p_keypair(repositories.libp2p_keypair(), &self.cipher).await?;
             let peer_id = keypair.peer_id();
-            let interface = setup_net_interface(
+            let (interface, supervisor) = setup_net_interface(
                 topic,
                 keypair,
                 net_config.peers.clone(),
                 net_config.quic_port,
             )?;
-            Ok((peer_id, interface, NetInterfaceKind::Libp2p))
+            Ok((peer_id, interface, NetInterfaceKind::Libp2p, supervisor))
         } else {
             let (interface, channel_bridge) = create_channel_bridge();
             let peer_id = PeerId::random();
@@ -949,6 +972,7 @@ impl CiphernodeBuilder {
                 peer_id,
                 interface,
                 NetInterfaceKind::ChannelBridge(channel_bridge),
+                NetworkTaskSupervisor::external(),
             ))
         }
     }
