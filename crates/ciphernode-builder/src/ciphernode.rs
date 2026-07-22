@@ -8,6 +8,7 @@ use actix::Addr;
 use anyhow::{Context, Result};
 use e3_data::{DataStore, InMemStore, StoreAddr};
 use e3_events::{BusHandle, HistoryCollector, InterfoldEvent};
+use e3_evm::{EvmIngestionStatus, EvmWriterProbe};
 use e3_net::{NetChannelBridge, NetworkStatus, NetworkTaskExit, NetworkTaskSupervisor};
 use libp2p::PeerId;
 use std::{future::Future, time::Duration};
@@ -69,6 +70,8 @@ pub struct CiphernodeHandle {
     pub network_supervisor: NetworkTaskSupervisor,
     pub eventstore: EventStoreReader,
     pub aggregate_ids: Vec<usize>,
+    pub evm_ingestion: Vec<EvmIngestionStatus>,
+    pub evm_writers: Vec<EvmWriterProbe>,
 }
 
 impl PartialEq for CiphernodeHandle {
@@ -114,6 +117,14 @@ impl CiphernodeHandle {
 
     pub fn aggregate_ids(&self) -> &[usize] {
         &self.aggregate_ids
+    }
+
+    pub fn evm_ingestion(&self) -> &[EvmIngestionStatus] {
+        &self.evm_ingestion
+    }
+
+    pub fn evm_writers(&self) -> &[EvmWriterProbe] {
+        &self.evm_writers
     }
 
     pub fn store(&self) -> &DataStore {

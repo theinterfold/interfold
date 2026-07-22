@@ -5,7 +5,10 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 mod projection;
+mod readiness;
 mod updates;
+
+pub use readiness::ReadinessPolicy;
 
 use actix_web::{
     get,
@@ -15,9 +18,11 @@ use actix_web::{
 use anyhow::{Context, Result};
 use e3_ciphernode_builder::global_eventstore_cache::EventStoreReader;
 use e3_config::chain_config::ChainConfig;
+use e3_data::DataStore;
 use e3_events::{
     AggregateId, CorrelationId, EventContextSeq, EventStoreQueryBy, EventStoreQueryResponse, SeqAgg,
 };
+use e3_evm::{EvmIngestionStatus, EvmWriterProbe};
 use e3_logger::LogCollector;
 use e3_net::NetworkStatus;
 use e3_utils::actix::channel as actix_toolbox;
@@ -65,6 +70,33 @@ pub struct DashboardState {
     chain_configs: Arc<Vec<ChainConfig>>,
     operator_status: Arc<Mutex<OperatorStatusCache>>,
     updates: updates::UpdateService,
+    store: DataStore,
+    evm_ingestion: Arc<Vec<EvmIngestionStatus>>,
+    evm_writers: Arc<Vec<EvmWriterProbe>>,
+    readiness_policy: ReadinessPolicy,
+}
+
+pub struct ReadinessSources {
+    store: DataStore,
+    evm_ingestion: Vec<EvmIngestionStatus>,
+    evm_writers: Vec<EvmWriterProbe>,
+    policy: ReadinessPolicy,
+}
+
+impl ReadinessSources {
+    pub fn new(
+        store: DataStore,
+        evm_ingestion: Vec<EvmIngestionStatus>,
+        evm_writers: Vec<EvmWriterProbe>,
+        policy: ReadinessPolicy,
+    ) -> Self {
+        Self {
+            store,
+            evm_ingestion,
+            evm_writers,
+            policy,
+        }
+    }
 }
 
 struct ProjectionState {
@@ -93,6 +125,7 @@ impl DashboardState {
         aggregate_ids: Vec<usize>,
         network: NetworkStatus,
         chain_configs: Vec<ChainConfig>,
+        readiness: ReadinessSources,
     ) -> Self {
         let mut aggregate_ids = aggregate_ids;
         aggregate_ids.sort_unstable();
@@ -111,6 +144,10 @@ impl DashboardState {
             chain_configs: Arc::new(chain_configs),
             operator_status: Arc::new(Mutex::new(OperatorStatusCache::default())),
             updates: update_service,
+            store: readiness.store,
+            evm_ingestion: Arc::new(readiness.evm_ingestion),
+            evm_writers: Arc::new(readiness.evm_writers),
+            readiness_policy: readiness.policy,
         }
     }
 
@@ -211,11 +248,90 @@ impl DashboardState {
         };
         cache.snapshot.clone()
     }
+
+    async fn readiness_snapshot(&self) -> readiness::ReadinessSnapshot {
+        let event_pipeline_error =
+            match tokio::time::timeout(Duration::from_secs(6), self.refresh()).await {
+                Ok(Ok(())) => None,
+                Ok(Err(error)) => Some(format!("event store query failed: {error:#}")),
+                Err(_) => Some("event store readiness query timed out".to_owned()),
+            };
+        let storage_error =
+            match tokio::time::timeout(Duration::from_secs(5), self.store.health_check()).await {
+                Ok(Ok(())) => None,
+                Ok(Err(error)) => Some(format!("durable store health check failed: {error:#}")),
+                Err(_) => Some("durable store health check timed out".to_owned()),
+            };
+
+        let writer_checks = self.evm_writers.iter().map(|probe| async move {
+            match tokio::time::timeout(Duration::from_secs(5), probe.snapshot()).await {
+                Ok(Ok(health)) => readiness::WriterObservation {
+                    health: Some(health),
+                    error: None,
+                },
+                Ok(Err(error)) => readiness::WriterObservation {
+                    health: None,
+                    error: Some(error.to_string()),
+                },
+                Err(_) => readiness::WriterObservation {
+                    health: None,
+                    error: Some("required EVM writer health query timed out".to_owned()),
+                },
+            }
+        });
+        let writers = futures::future::join_all(writer_checks).await;
+        let e3s = self.projection.lock().await.projection.summaries();
+
+        readiness::evaluate(
+            &self.readiness_policy,
+            readiness::ReadinessObservations {
+                now_ms: now_ms(),
+                // The dashboard is constructed only after the builder's schema preflight and
+                // acknowledged startup synchronization have succeeded.
+                schema_compatible: true,
+                storage_error,
+                event_pipeline_error,
+                network: self.network.snapshot(),
+                chains: self
+                    .evm_ingestion
+                    .iter()
+                    .map(EvmIngestionStatus::snapshot)
+                    .collect(),
+                writers,
+                e3s,
+            },
+        )
+    }
 }
 
 #[get("/api/updates")]
 async fn release_updates(state: web::Data<DashboardState>) -> impl Responder {
     HttpResponse::Ok().json(state.updates.snapshot().await)
+}
+
+#[get("/health/live")]
+async fn liveness() -> impl Responder {
+    HttpResponse::Ok().json(serde_json::json!({ "live": true }))
+}
+
+#[get("/health/ready")]
+async fn protocol_readiness(state: web::Data<DashboardState>) -> impl Responder {
+    let readiness_snapshot = state.readiness_snapshot().await;
+    if readiness_snapshot.ready {
+        HttpResponse::Ok().json(readiness_snapshot)
+    } else {
+        HttpResponse::ServiceUnavailable().json(readiness_snapshot)
+    }
+}
+
+#[get("/metrics")]
+async fn metrics(state: web::Data<DashboardState>) -> impl Responder {
+    HttpResponse::Ok()
+        .insert_header((
+            header::CONTENT_TYPE,
+            "text/plain; version=0.0.4; charset=utf-8",
+        ))
+        .body(state.readiness_snapshot().await.prometheus())
 }
 
 #[derive(Serialize)]
@@ -368,6 +484,9 @@ pub async fn start_dashboard(port: u16, state: DashboardState) -> std::io::Resul
             .service(protocol_events)
             .service(logs)
             .service(release_updates)
+            .service(liveness)
+            .service(protocol_readiness)
+            .service(metrics)
             .route("/", web::get().to(index))
             .route("/assets/app.js", web::get().to(app_js))
             .route("/assets/app.css", web::get().to(app_css))
@@ -378,4 +497,11 @@ pub async fn start_dashboard(port: u16, state: DashboardState) -> std::io::Resul
     .bind(address)?
     .run()
     .await
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis() as u64)
+        .unwrap_or(0)
 }

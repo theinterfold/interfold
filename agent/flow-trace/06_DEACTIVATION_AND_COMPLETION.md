@@ -293,25 +293,68 @@ buffering window remains a fail-closed readiness error because those skipped eve
 reconciled safely.
 
 Protocol-event gossip is authenticated before that startup-buffer accounting: the buffer's ingress
-recovers the EVM signer from an envelope bound to the gossipsub author, checks the current
-chain/E3 committee, expulsion and event role, and applies per-peer/per-E3 event and byte quotas.
-Only accepted events enter the startup queue. Invalid input is reported to gossipsub immediately,
-and a repeatedly invalid author is blacklisted and disconnected, so an outsider cannot exhaust the
-startup budget or reach the durable bus with unique protocol-shaped payloads.
+recovers the EVM signer from an envelope bound to the gossipsub author, checks the current chain/E3
+committee, expulsion and event role, and applies per-peer/per-E3 event and byte quotas. Only
+accepted events enter the startup queue. Invalid input is reported to gossipsub immediately, and a
+repeatedly invalid author is blacklisted and disconnected, so an outsider cannot exhaust the startup
+budget or reach the durable bus with unique protocol-shaped payloads.
 
-Correctness-sensitive publishers use the acknowledged publication path. Its success boundary is:
-the sequencer has assigned the event, the target EventStore has appended and synchronously flushed
-it, and every current EventBus subscriber's bounded mailbox has admitted it. EventBus does not wait
-for an ordinary handler's full computation—recursive proof handlers can legitimately take minutes—
-but mailbox FIFO preserves event order per subscriber. `Shutdown` is the explicit stronger case and
+## Runtime Protocol Readiness
+
+After startup returns a `CiphernodeHandle`, the CLI starts the loopback dashboard with live handles
+for storage, networking, each EVM reader, and every required EVM writer. The endpoints have distinct
+meanings:
+
+```
+/health/live
+└─ HTTP task responds (liveness only)
+
+/health/ready
+├─ startup schema preflight was compatible
+├─ durable backing-store flush succeeds
+├─ all configured EventStore aggregates answer a bounded paged query
+├─ configured peer quorum exists
+│  ├─ idle: connected libp2p peers count
+│  └─ active E3: only connected peers with recent successful protocol authorization count
+├─ every EVM reader reports the expected chain ID
+├─ RPC head poll and block timestamp are fresh
+├─ confirmed head minus ingestion cursor is within the configured block threshold
+├─ every required writer actor responds with effects enabled
+├─ the oldest non-terminal durable outbox intent is within its age threshold
+└─ every active E3 has recent durable-event progress
+   → all pass: HTTP 200 and ready=true
+   → any fail: HTTP 503 and component-level details
+
+/metrics
+└─ Prometheus rendering of the same readiness snapshot
+```
+
+The peer authentication record is refreshed only after an envelope passes its EVM signature,
+libp2p-author binding, current committee, expulsion, claimed-role, and replay checks. It expires and
+is removed on disconnect. This record is an operational signal; every protocol event is still
+authorized independently against current state.
+
+Reader progress refreshes from the raw head even when no logs arrive. Writer status includes
+effects-enabled state, in-flight work, pending durable intent count, and oldest admission age.
+Storage readiness issues an actual flush, so an earlier asynchronous Sled write failure also revokes
+readiness. The DAppNode health check requires `/health/ready` in addition to exact PID/config,
+protected-file, persistence-path, and QUIC-listener checks. Alert thresholds and safe recovery steps
+are documented in the operator readiness runbook; operators must preserve the durable outbox and
+active-E3 state while diagnosing a failure.
+
+Correctness-sensitive publishers use the acknowledged publication path. Its success boundary is: the
+sequencer has assigned the event, the target EventStore has appended and synchronously flushed it,
+and every current EventBus subscriber's bounded mailbox has admitted it. EventBus does not wait for
+an ordinary handler's full computation—recursive proof handlers can legitimately take minutes— but
+mailbox FIFO preserves event order per subscriber. `Shutdown` is the explicit stronger case and
 waits for every shutdown handler to complete. EventBus inserts the event ID into its exact bounded
 deduplication set only after admission succeeds, so a failed delivery remains retriable. Remote
 libp2p ingress does not mark its own exact deduplication set until the same durable/admission
-acknowledgement returns. Live EVM ingress uses that path as well. At `SyncEnded`, the EVM
-gateway first releases the EventBus callback to avoid a circular wait, remains in a bounded
-`Draining` state, and reports Live only after all buffered batches (including events arriving during
-the drain) have crossed the acknowledged path. Fire-and-forget `EventPublisher` methods expose only
-bounded mailbox admission and are not a durability acknowledgement.
+acknowledgement returns. Live EVM ingress uses that path as well. At `SyncEnded`, the EVM gateway
+first releases the EventBus callback to avoid a circular wait, remains in a bounded `Draining`
+state, and reports Live only after all buffered batches (including events arriving during the drain)
+have crossed the acknowledged path. Fire-and-forget `EventPublisher` methods expose only bounded
+mailbox admission and are not a durability acknowledgement.
 
 `ComputeEffectGate` likewise records a semantic compute key only after its target recipient accepts
 the request. A full or closed target mailbox therefore leaves the key retriable, both during normal
@@ -493,7 +536,8 @@ live or from replay.
 The node-operator dashboard uses the same replay property. It pages every configured EventStore
 aggregate and incrementally derives E3 stages, committees, tickets, failures, and rewards. The
 projection is disposable and is rebuilt on restart; EventStore remains the only durable protocol
-history.
+history. The readiness probe makes the same bounded page path observable, so a closed or stalled
+EventStore revokes protocol readiness rather than leaving a process-only health signal green.
 
 ---
 

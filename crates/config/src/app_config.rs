@@ -54,6 +54,25 @@ pub struct NodeDefinition {
     pub autowallet: bool,
     /// Optional dashboard port. When set, serves a monitoring web UI on this port.
     pub dashboard_port: Option<u16>,
+    /// Minimum live libp2p connections required for readiness. While an E3 is active, the peers
+    /// must also have recently passed protocol-gossip authorization.
+    #[serde(default = "default_readiness_min_peers")]
+    pub readiness_min_peers: usize,
+    /// Maximum time since a successful RPC head observation.
+    #[serde(default = "default_readiness_max_rpc_poll_age_secs")]
+    pub readiness_max_rpc_poll_age_secs: u64,
+    /// Maximum permitted age of the timestamp on the latest RPC block.
+    #[serde(default = "default_readiness_max_chain_head_age_secs")]
+    pub readiness_max_chain_head_age_secs: u64,
+    /// Maximum block distance between the confirmed head and the ingestion cursor.
+    #[serde(default = "default_readiness_max_sync_lag_blocks")]
+    pub readiness_max_sync_lag_blocks: u64,
+    /// Maximum age of the oldest pending durable EVM effect.
+    #[serde(default = "default_readiness_max_outbox_age_secs")]
+    pub readiness_max_outbox_age_secs: u64,
+    /// Maximum time an active E3 may show no durable event progress.
+    #[serde(default = "default_readiness_max_active_e3_idle_secs")]
+    pub readiness_max_active_e3_idle_secs: u64,
     /// Logical CPUs reserved for Actix, libp2p, and RPC (not used by the Rayon compute pool).
     #[serde(default = "default_multithread_reserve_threads")]
     pub multithread_reserve_threads: usize,
@@ -117,6 +136,30 @@ fn default_max_buffered_net_bytes() -> usize {
     256 * 1024 * 1024
 }
 
+fn default_readiness_min_peers() -> usize {
+    1
+}
+
+fn default_readiness_max_rpc_poll_age_secs() -> u64 {
+    30
+}
+
+fn default_readiness_max_chain_head_age_secs() -> u64 {
+    120
+}
+
+fn default_readiness_max_sync_lag_blocks() -> u64 {
+    2
+}
+
+fn default_readiness_max_outbox_age_secs() -> u64 {
+    300
+}
+
+fn default_readiness_max_active_e3_idle_secs() -> u64 {
+    20 * 60
+}
+
 impl Default for NodeDefinition {
     fn default() -> Self {
         Self {
@@ -133,6 +176,12 @@ impl Default for NodeDefinition {
             autopassword: false,
             autowallet: false,
             dashboard_port: None,
+            readiness_min_peers: default_readiness_min_peers(),
+            readiness_max_rpc_poll_age_secs: default_readiness_max_rpc_poll_age_secs(),
+            readiness_max_chain_head_age_secs: default_readiness_max_chain_head_age_secs(),
+            readiness_max_sync_lag_blocks: default_readiness_max_sync_lag_blocks(),
+            readiness_max_outbox_age_secs: default_readiness_max_outbox_age_secs(),
+            readiness_max_active_e3_idle_secs: default_readiness_max_active_e3_idle_secs(),
             multithread_reserve_threads: default_multithread_reserve_threads(),
             multithread_concurrent_jobs: None,
             multithread_admission_timeout_secs: default_multithread_admission_timeout_secs(),
@@ -243,6 +292,21 @@ impl AppConfig {
         }
         if node.max_buffered_net_bytes == 0 {
             bail!("node.max_buffered_net_bytes must be greater than zero");
+        }
+        if node.readiness_min_peers == 0 {
+            bail!("node.readiness_min_peers must be greater than zero");
+        }
+        if node.readiness_max_rpc_poll_age_secs == 0 {
+            bail!("node.readiness_max_rpc_poll_age_secs must be greater than zero");
+        }
+        if node.readiness_max_chain_head_age_secs == 0 {
+            bail!("node.readiness_max_chain_head_age_secs must be greater than zero");
+        }
+        if node.readiness_max_outbox_age_secs == 0 {
+            bail!("node.readiness_max_outbox_age_secs must be greater than zero");
+        }
+        if node.readiness_max_active_e3_idle_secs == 0 {
+            bail!("node.readiness_max_active_e3_idle_secs must be greater than zero");
         }
 
         let config_dir_override = (node.config_dir != PathBuf::new())
@@ -416,6 +480,30 @@ impl AppConfig {
     /// Get the optional dashboard port
     pub fn dashboard_port(&self) -> Option<u16> {
         self.node_def().dashboard_port
+    }
+
+    pub fn readiness_min_peers(&self) -> usize {
+        self.node_def().readiness_min_peers
+    }
+
+    pub fn readiness_max_rpc_poll_age_secs(&self) -> u64 {
+        self.node_def().readiness_max_rpc_poll_age_secs
+    }
+
+    pub fn readiness_max_chain_head_age_secs(&self) -> u64 {
+        self.node_def().readiness_max_chain_head_age_secs
+    }
+
+    pub fn readiness_max_sync_lag_blocks(&self) -> u64 {
+        self.node_def().readiness_max_sync_lag_blocks
+    }
+
+    pub fn readiness_max_outbox_age_secs(&self) -> u64 {
+        self.node_def().readiness_max_outbox_age_secs
+    }
+
+    pub fn readiness_max_active_e3_idle_secs(&self) -> u64 {
+        self.node_def().readiness_max_active_e3_idle_secs
     }
 
     /// CPUs reserved for non-compute work (Actix, networking, RPC).
@@ -596,6 +684,13 @@ mod tests {
             ("${ADDRESS}", address),
             ("${NODE_ADDRESS}", address),
             ("${QUIC_PORT}", "37173"),
+            ("${READINESS_PORT}", "50506"),
+            ("${READINESS_MIN_PEERS}", "1"),
+            ("${READINESS_MAX_RPC_POLL_AGE_SECS}", "30"),
+            ("${READINESS_MAX_CHAIN_HEAD_AGE_SECS}", "120"),
+            ("${READINESS_MAX_SYNC_LAG_BLOCKS}", "2"),
+            ("${READINESS_MAX_OUTBOX_AGE_SECS}", "300"),
+            ("${READINESS_MAX_ACTIVE_E3_IDLE_SECS}", "1200"),
             ("${NETWORK}", "sepolia"),
             ("${CHAIN_ID}", "11155111"),
             ("${REORG_CONFIRMATIONS}", "64"),
@@ -1094,6 +1189,33 @@ node:
                     &PathBuf::from("/my/cwd"),
                 )
                 .expect_err("zero network buffer limit must fail configuration");
+            assert!(
+                error.to_string().contains(field),
+                "unexpected validation error for {field}: {error}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_zero_readiness_minimum_and_timeouts_are_rejected() -> Result<()> {
+        for field in [
+            "readiness_min_peers",
+            "readiness_max_rpc_poll_age_secs",
+            "readiness_max_chain_head_age_secs",
+            "readiness_max_outbox_age_secs",
+            "readiness_max_active_e3_idle_secs",
+        ] {
+            let yaml = format!("node:\n  {field}: 0\n");
+            let unscoped: UnscopedAppConfig = serde_yaml::from_str(&yaml)?;
+            let error = unscoped
+                .into_scoped_with_defaults(
+                    "_default",
+                    &PathBuf::from("/default/data"),
+                    &PathBuf::from("/default/config"),
+                    &PathBuf::from("/my/cwd"),
+                )
+                .expect_err("zero readiness safety threshold must fail configuration");
             assert!(
                 error.to_string().contains(field),
                 "unexpected validation error for {field}: {error}"

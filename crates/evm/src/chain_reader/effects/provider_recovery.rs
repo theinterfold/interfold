@@ -22,6 +22,7 @@ async fn recreate_provider<P: Provider + Clone + 'static>(
     shutdown: &mut oneshot::Receiver<()>,
     chain_id: u64,
     backoff: &mut Backoff,
+    ingestion_status: &crate::EvmIngestionStatus,
 ) -> Option<EthProvider<P>> {
     loop {
         if shutdown.try_recv().is_ok() {
@@ -66,6 +67,9 @@ async fn recreate_provider<P: Provider + Clone + 'static>(
             Ok(new_provider) => {
                 let new_chain_id = new_provider.chain_id();
                 if new_chain_id != chain_id {
+                    ingestion_status.record_error(format!(
+                        "recreated RPC is on wrong chain: expected {chain_id}, got {new_chain_id}"
+                    ));
                     error!(
                         chain_id,
                         new_chain_id, "Recreated provider is on wrong chain — fatal"
@@ -77,6 +81,7 @@ async fn recreate_provider<P: Provider + Clone + 'static>(
                 return Some(new_provider);
             }
             Err(e) => {
+                ingestion_status.record_error(format!("provider recreation failed: {e:#}"));
                 error!(
                     chain_id,
                     error = %e,
@@ -94,19 +99,21 @@ pub(super) async fn get_new_provider_or_exit<P: Provider + Clone + 'static>(
     chain_id: u64,
     backoff: &mut Backoff,
     bus: &BusHandle,
+    ingestion_status: &crate::EvmIngestionStatus,
 ) -> Option<EthProvider<P>> {
     let Some(factory) = factory else {
         error!(
             chain_id,
             "Transport died and no provider factory configured"
         );
+        ingestion_status.record_error("transport died and no provider factory is configured");
         bus.err(
             EType::Evm,
             anyhow!("Transport died and no provider factory configured"),
         );
         return None;
     };
-    let result = recreate_provider(factory, shutdown, chain_id, backoff).await;
+    let result = recreate_provider(factory, shutdown, chain_id, backoff, ingestion_status).await;
     if result.is_none() && shutdown.try_recv().is_err() {
         bus.err(
             EType::Evm,

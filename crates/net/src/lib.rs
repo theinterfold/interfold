@@ -33,7 +33,7 @@ use actors::{NetEventBuffer, NetSyncManager};
 
 pub use actors::*;
 pub use cid::ContentHash;
-pub use domain::{ConnectedPeer, NetworkSnapshot, NetworkStatus};
+pub use domain::{AuthenticatedPeer, ConnectedPeer, NetworkSnapshot, NetworkStatus};
 pub use keypair::*;
 pub use net_interface::*;
 pub use net_interface_handle::*;
@@ -126,6 +126,7 @@ pub fn setup_net_with_limits(
         signer,
         authorization,
     } = protocol_identity;
+    let network_status = interface.status();
     // NOTE: Pass the unbuffered rx to SyncManager as it must operate before live events are
     // processed
     let _net_sync = NetSyncManager::setup(
@@ -144,6 +145,7 @@ pub fn setup_net_with_limits(
         &interface.rx(),
         interface.tx(),
         authorization.clone(),
+        network_status,
         max_buffered_events,
         max_buffered_bytes,
     );

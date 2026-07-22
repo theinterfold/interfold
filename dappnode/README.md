@@ -29,7 +29,7 @@ dappnode/
 ├── dappnode_package.json # Package metadata (name, version, links, backup, etc.)
 ├── setup-wizard.yml      # DAppNode UI form -> configuration and credential upload
 ├── entrypoint.sh         # Startup script (validates env, renders config, runs interfold)
-├── healthcheck.sh        # Local process, credential, config, and QUIC listener checks
+├── healthcheck.sh        # Local process, persistence, QUIC, and protocol-readiness checks
 ├── config.template.yaml  # Interfold config template (filled via envsubst)
 ├── releases.json         # Release metadata used by DAppNode
 └── avatar-default.png    # Icon shown in the DAppNode UI
@@ -178,10 +178,9 @@ of 16 KiB, required fields, a minimum 16-byte password, and key encodings, then 
 commands supported by the pinned Interfold v0.4.0 image. Any failed command aborts startup. The
 wallet command atomically derives and stores both the Ethereum and libp2p identities. Both keys are
 encrypted in `/data`; the password key is stored separately with mode `0400`. After successful
-persistence, the entrypoint removes
-the combined plaintext upload. Provisioning sends the secrets through the CLI's hidden TTY prompts
-over stdin; plaintext credentials are never placed in process arguments or container environment
-variables.
+persistence, the entrypoint removes the combined plaintext upload. Provisioning sends the secrets
+through the CLI's hidden TTY prompts over stdin; plaintext credentials are never placed in process
+arguments or container environment variables.
 
 Legacy three-field files containing `network_private_key` are accepted for upgrade compatibility,
 but v0.4.0 ignores that obsolete field on a fresh setup. When encrypted identity state already
@@ -246,20 +245,22 @@ its first start it atomically renames the custom-config state root from `/data/.
 version 1 using its release-era compatibility behavior. Interfold v0.4.0 uses schema version 2 and
 intentionally rejects schema 1 because keyshare state changed incompatibly. There is no in-place
 v0.2.3-to-v0.4.0 state migration: finish or canonically fail active E3s, keep a verified backup, and
-perform a controlled fresh resync. Never wipe in-flight threshold-share state as an upgrade shortcut.
+perform a controlled fresh resync. Never wipe in-flight threshold-share state as an upgrade
+shortcut.
 
 ## Health semantics
 
-Interfold v0.4.0 does not yet expose a complete protocol-readiness endpoint. The package health
-check therefore uses local signals: PID 1 must be the expected
-`interfold start` command using `/data/config.yaml`, the protected config/password files must exist,
-the v0.4.0 Sled/event-log directories must be initialized, and the configured QUIC UDP listener must
-be bound. This detects the old false-positive case where an unrelated process matched `pgrep`, as
-well as missing credentials, uninitialized persistence, and a dead network listener.
+PID 1 must be the exact `interfold start` command using `/data/config.yaml`; the protected
+config/password files and initialized Sled/event-log paths must exist; and the configured QUIC UDP
+listener must be bound. The probe then calls the loopback `/health/ready` endpoint. A stale or
+wrong-chain RPC, lagged confirmed cursor, missing writer, disabled effects, aged durable outbox,
+lost peer quorum, stalled active E3, schema failure, or disk/EventStore failure marks the container
+unhealthy.
 
-This remains a liveness/startup check, not proof of canonical chain sync, healthy RPC responses,
-honest peers, registration, or safe protocol participation. Operators must inspect logs and on-chain
-status before treating the node as protocol-ready.
+The readiness endpoint is served on `READINESS_PORT` (default `50506`) and is not published outside
+the container. Threshold environment variables mirror the `node.readiness_*` configuration. See the
+[Protocol Readiness Runbook](https://docs.interfold.network/ciphernode-operators/readiness-runbook)
+for defaults, Prometheus alerts, and safe response procedures.
 
 ## Data & Ports
 

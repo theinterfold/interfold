@@ -18,7 +18,7 @@ use tracing::warn;
 
 use crate::domain::net_buffer::{BufferDecision, NetEventBufferState};
 use crate::events::{GossipAcceptance, GossipData, NetCommand, NetEvent};
-use crate::{NetworkAuthorizationState, ProtocolAdmission};
+use crate::{NetworkAuthorizationState, NetworkStatus, ProtocolAdmission};
 
 pub const DEFAULT_MAX_BUFFERED_NET_EVENTS: usize = 1_024;
 pub const DEFAULT_MAX_BUFFERED_NET_BYTES: usize = 256 * 1024 * 1024;
@@ -49,6 +49,7 @@ pub struct NetEventBuffer {
     readiness: Option<oneshot::Sender<std::result::Result<(), String>>>,
     net_commands: mpsc::Sender<NetCommand>,
     protocol_admission: ProtocolAdmission,
+    network_status: NetworkStatus,
 }
 
 impl NetEventBuffer {
@@ -57,6 +58,7 @@ impl NetEventBuffer {
         input_rx: &broadcast::Receiver<NetEvent>,
         net_commands: mpsc::Sender<NetCommand>,
         authorization: NetworkAuthorizationState,
+        network_status: NetworkStatus,
         max_events: usize,
         max_bytes: usize,
     ) -> (broadcast::Receiver<NetEvent>, NetEventBufferHandle) {
@@ -74,6 +76,7 @@ impl NetEventBuffer {
             readiness: Some(readiness_tx),
             net_commands,
             protocol_admission: ProtocolAdmission::new(authorization),
+            network_status,
         };
 
         let addr = actor.start();

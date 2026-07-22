@@ -39,6 +39,7 @@ async fn test_buffers_until_sync_ended() -> Result<()> {
         &input_rx,
         net_commands,
         NetworkAuthorizationState::default(),
+        NetworkStatus::default(),
         DEFAULT_MAX_BUFFERED_NET_EVENTS,
         DEFAULT_MAX_BUFFERED_NET_BYTES,
     );
@@ -102,6 +103,7 @@ async fn startup_buffer_overflow_fails_readiness_without_dropping_oldest() -> Re
         &input_rx,
         net_commands,
         NetworkAuthorizationState::default(),
+        NetworkStatus::default(),
         1,
         DEFAULT_MAX_BUFFERED_NET_BYTES,
     );
@@ -135,6 +137,7 @@ async fn startup_buffer_enforces_estimated_payload_bytes() -> Result<()> {
         &input_rx,
         net_commands,
         NetworkAuthorizationState::default(),
+        NetworkStatus::default(),
         16,
         estimated_bytes - 1,
     );
@@ -181,11 +184,19 @@ async fn unauthorized_gossip_is_rejected_before_startup_buffering() -> Result<()
         HashMap::from([(e3_id, Committee::new(vec![member.address().to_string()]))]),
         HashMap::new(),
     );
+    let network_status = NetworkStatus::new(1);
+    network_status.connected(
+        member_signer.peer_id().to_string(),
+        "/ip4/127.0.0.1",
+        "inbound",
+        1,
+    );
     let (mut output_rx, handle) = NetEventBuffer::setup_with_limits(
         &bus,
         &input_rx,
         net_commands,
         authorization,
+        network_status.clone(),
         1,
         DEFAULT_MAX_BUFFERED_NET_BYTES,
     );
@@ -217,6 +228,12 @@ async fn unauthorized_gossip_is_rejected_before_startup_buffering() -> Result<()
             ..
         })
     ));
+    let authenticated = network_status.snapshot().authenticated_peers;
+    assert_eq!(authenticated.len(), 1);
+    assert_eq!(
+        authenticated[0].peer_id,
+        member_signer.peer_id().to_string()
+    );
     assert!(timeout(Duration::from_millis(20), output_rx.recv())
         .await
         .is_err());

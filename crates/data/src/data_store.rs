@@ -207,6 +207,19 @@ impl DataStore {
         Ok(inserted)
     }
 
+    /// Verify that the backing store actor is alive and can flush durable state.
+    ///
+    /// This is an operational readiness probe. It does not mutate protocol state, but Sled also
+    /// reports any earlier asynchronous write failure so a node cannot remain ready after a lost
+    /// persistence operation.
+    pub async fn health_check(&self) -> Result<()> {
+        self.flush
+            .send(Flush)
+            .await
+            .context("data store stopped during health check")??;
+        Ok(())
+    }
+
     /// Drain the snapshot buffer and durably close the backing store.
     pub async fn shutdown(&self) -> Result<()> {
         if let Some(flush_pending) = &self.flush_pending_snapshots {

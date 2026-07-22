@@ -3277,6 +3277,7 @@ dependencies = [
  "anyhow",
  "e3-ciphernode-builder",
  "e3-config",
+ "e3-data",
  "e3-events",
  "e3-evm",
  "e3-logger",

@@ -1,0 +1,137 @@
+---
+title: 'Protocol Readiness Runbook'
+description:
+  'Operate the ciphernode readiness endpoint, Prometheus alerts, thresholds, and safe recovery'
+---
+
+# Protocol Readiness Runbook
+
+The dashboard port exposes three local operational endpoints:
+
+- `GET /health/live` returns `200` when the HTTP task is alive. It does **not** mean the node can
+  participate safely.
+- `GET /health/ready` returns `200` only when every protocol gate passes, otherwise `503`. Its JSON
+  body always identifies the failed component.
+- `GET /metrics` returns the same snapshot in Prometheus text format.
+
+The server binds to `127.0.0.1`. Query it on the node, through an SSH tunnel, or from the same
+container namespace:
+
+```bash
+curl --fail-with-body http://127.0.0.1:8080/health/ready | jq
+curl --silent http://127.0.0.1:8080/metrics
+```
+
+Do not route protocol work based on `/health/live`. DAppNode's container health check calls
+`/health/ready` in addition to checking the exact process, protected files, persistence paths, and
+QUIC listener.
+
+## Readiness gates and defaults
+
+| Gate             | Ready condition                                                                                                                                                                    | Default threshold                         |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------- |
+| Schema           | Startup schema preflight passed before state-writing actors started                                                                                                                | Exact current schema                      |
+| Storage          | A durable store flush completes                                                                                                                                                    | 5-second probe timeout                    |
+| Event pipeline   | Every configured EventStore aggregate responds to a paged query                                                                                                                    | 6-second probe timeout                    |
+| Peers            | At least the configured quorum is connected; during an active E3, peers must also have recently passed EVM-signature, current-committee, expulsion, role, and libp2p-author checks | `readiness_min_peers: 1`                  |
+| RPC identity     | Each provider reports its configured chain ID                                                                                                                                      | Exact equality                            |
+| RPC poll         | A block-head query completed recently                                                                                                                                              | `readiness_max_rpc_poll_age_secs: 30`     |
+| Chain head       | The latest block timestamp is recent                                                                                                                                               | `readiness_max_chain_head_age_secs: 120`  |
+| Confirmed cursor | The ingestion cursor is no more than the configured distance behind the confirmation-adjusted head                                                                                 | `readiness_max_sync_lag_blocks: 2`        |
+| Writers          | Every required Interfold, registry, and slashing writer responds and effects are enabled                                                                                           | All required writers                      |
+| Durable outbox   | The oldest non-terminal EVM effect is recent                                                                                                                                       | `readiness_max_outbox_age_secs: 300`      |
+| Active E3        | Every active E3 has recent durable event progress                                                                                                                                  | `readiness_max_active_e3_idle_secs: 1200` |
+
+Set these under `node:` in `interfold.config.yaml`. Minimum peers and time thresholds must be
+positive. A zero sync-lag threshold is valid and requires the cursor to equal the confirmed head.
+
+## Recommended alerts
+
+Start with these Prometheus rules and tune only from measured chain finality, RPC latency, and
+protocol phase duration:
+
+```yaml
+groups:
+  - name: interfold-ciphernode
+    rules:
+      - alert: InterfoldNotReady
+        expr: interfold_ready == 0
+        for: 2m
+        labels:
+          severity: page
+        annotations:
+          summary: Ciphernode protocol readiness has failed
+
+      - alert: InterfoldPersistenceUnavailable
+        expr:
+          interfold_schema_ready == 0 or interfold_storage_ready == 0 or
+          interfold_event_pipeline_ready == 0
+        for: 1m
+        labels:
+          severity: page
+
+      - alert: InterfoldPeerQuorumLost
+        expr: interfold_peer_ready == 0
+        for: 2m
+        labels:
+          severity: page
+
+      - alert: InterfoldRpcOrSyncStale
+        expr: interfold_chain_ready == 0
+        for: 2m
+        labels:
+          severity: page
+
+      - alert: InterfoldWriterUnavailable
+        expr: interfold_writer_ready == 0
+        for: 1m
+        labels:
+          severity: page
+
+      - alert: InterfoldOutboxWedged
+        expr: interfold_outbox_oldest_age_seconds > 300
+        for: 1m
+        labels:
+          severity: page
+
+      - alert: InterfoldActiveE3Stalled
+        expr: interfold_active_e3_ready == 0
+        for: 2m
+        labels:
+          severity: page
+```
+
+Keep the thresholds in alert rules synchronized with the node configuration. Useful diagnostic
+series include `interfold_connected_peers`, `interfold_authenticated_peers`,
+`interfold_rpc_poll_age_seconds`, `interfold_chain_head_age_seconds`,
+`interfold_chain_cursor_lag_blocks`, `interfold_outbox_pending_effects`, and
+`interfold_active_e3_idle_seconds`.
+
+## Response procedure
+
+1. Save the `/health/ready` JSON and relevant metrics before restarting. Check the exact failing
+   array entry, chain ID, writer, contract address, E3 ID, and age.
+2. For `schema`, `storage`, or `event_pipeline`, stop new work and inspect disk space, mount mode,
+   permissions, I/O errors, and the event log with `interfold node validate`. Restore from a
+   verified backup or use only the validator's narrowly approved repair. Do not delete the database,
+   event log, schema marker, or active-E3 state.
+3. For RPC identity or freshness, compare the configured and connected chain IDs, query the head
+   directly, and fail over to a healthy endpoint for the same chain. Never change the configured
+   chain ID to match an accidental endpoint.
+4. For cursor lag, keep the node running if storage and RPC are healthy and watch the lag close. If
+   it grows, inspect rate limits, subscription reconnects, and backfill errors before a controlled
+   restart.
+5. For peer quorum, verify UDP/QUIC reachability and configured peer multiaddresses. During an
+   active E3, a transport-only connection is insufficient: inspect rejected gossip for stale,
+   expelled, wrong-role, wrong-peer, or invalid-signature senders.
+6. For writer or outbox failures, inspect the writer mailbox, effects-enabled state, RPC receipt,
+   persisted transaction hash/nonce, revert reason, signer funds, and contract address. Preserve the
+   durable outbox; deleting it can duplicate or lose an irreversible transaction.
+7. For an active E3 stall, trace that E3 in the dashboard and compare its current phase with chain
+   deadlines and committee traffic. Do not wipe state to make the alert green. Use the canonical
+   failure/timeout path when its chain deadline has elapsed.
+8. After remediation, require `/health/ready` to remain `200` and `interfold_ready` to remain `1`
+   for at least two minutes before returning the node to service.
+
+The readiness failure-injection suite lives in `e3-dashboard`; DAppNode also has a hermetic check
+that forces `/health/ready` to fail and asserts the container is marked unhealthy.

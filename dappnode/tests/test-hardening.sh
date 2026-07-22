@@ -283,7 +283,12 @@ printf '%s\n' \
     '#!/bin/sh' \
     'printf "%s\n" "${STAT_MODE:-600}"' \
     > "$health_dir/bin/stat"
-chmod +x "$health_dir/bin/ss" "$health_dir/bin/stat"
+printf '%s\n' \
+    '#!/bin/sh' \
+    '[ "${READINESS_READY:-1}" = 1 ] || exit 22' \
+    'printf "{\"ready\":true}\n"' \
+    > "$health_dir/bin/curl"
+chmod +x "$health_dir/bin/ss" "$health_dir/bin/stat" "$health_dir/bin/curl"
 
 PROC_ROOT="$health_dir/proc" \
 CONFIG_FILE="$health_dir/data/config.yaml" \
@@ -292,6 +297,7 @@ DB_PATH="$health_dir/data/db" \
 EVENT_LOG_PATH="$health_dir/data/log.0" \
 SS_BIN="$health_dir/bin/ss" \
 STAT_BIN="$health_dir/bin/stat" \
+CURL_BIN="$health_dir/bin/curl" \
 sh "$ROOT_DIR/healthcheck.sh" || fail "healthy local state was rejected"
 
 if PROC_ROOT="$health_dir/proc" \
@@ -301,6 +307,7 @@ if PROC_ROOT="$health_dir/proc" \
     EVENT_LOG_PATH="$health_dir/data/log.0" \
     SS_BIN="$health_dir/bin/ss" \
     STAT_BIN="$health_dir/bin/stat" \
+    CURL_BIN="$health_dir/bin/curl" \
     SS_READY=0 sh "$ROOT_DIR/healthcheck.sh"; then
     fail "missing QUIC listener was considered healthy"
 fi
@@ -312,6 +319,7 @@ if PROC_ROOT="$health_dir/proc" \
     EVENT_LOG_PATH="$health_dir/data/log.0" \
     SS_BIN="$health_dir/bin/ss" \
     STAT_BIN="$health_dir/bin/stat" \
+    CURL_BIN="$health_dir/bin/curl" \
     STAT_MODE=644 sh "$ROOT_DIR/healthcheck.sh"; then
     fail "insecure credential permissions were considered healthy"
 fi
@@ -324,6 +332,7 @@ if PROC_ROOT="$health_dir/proc" \
     EVENT_LOG_PATH="$health_dir/data/log.0" \
     SS_BIN="$health_dir/bin/ss" \
     STAT_BIN="$health_dir/bin/stat" \
+    CURL_BIN="$health_dir/bin/curl" \
     sh "$ROOT_DIR/healthcheck.sh"; then
     fail "unrelated PID 1 was considered healthy"
 fi
@@ -337,8 +346,22 @@ if PROC_ROOT="$health_dir/proc" \
     EVENT_LOG_PATH="$health_dir/data/log.0" \
     SS_BIN="$health_dir/bin/ss" \
     STAT_BIN="$health_dir/bin/stat" \
+    CURL_BIN="$health_dir/bin/curl" \
     sh "$ROOT_DIR/healthcheck.sh"; then
     fail "uninitialized event persistence was considered healthy"
+fi
+
+mkdir "$health_dir/data/log.0"
+if PROC_ROOT="$health_dir/proc" \
+    CONFIG_FILE="$health_dir/data/config.yaml" \
+    PASSWORD_FILE="$health_dir/data/password" \
+    DB_PATH="$health_dir/data/db" \
+    EVENT_LOG_PATH="$health_dir/data/log.0" \
+    SS_BIN="$health_dir/bin/ss" \
+    STAT_BIN="$health_dir/bin/stat" \
+    CURL_BIN="$health_dir/bin/curl" \
+    READINESS_READY=0 sh "$ROOT_DIR/healthcheck.sh"; then
+    fail "failed protocol readiness was considered healthy"
 fi
 
 printf 'PASS: DAppNode credential and health hardening regressions\n'

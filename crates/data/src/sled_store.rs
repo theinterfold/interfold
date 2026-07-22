@@ -172,6 +172,9 @@ impl Handler<StoreHasExactKeys> for SledStore {
 impl Handler<Flush> for SledStore {
     type Result = Result<()>;
     fn handle(&mut self, _: Flush, _: &mut Self::Context) -> Self::Result {
+        if let Some(error) = &self.write_failure {
+            anyhow::bail!("SledStore observed an earlier write failure: {error}");
+        }
         let Some(ref db) = self.db else {
             anyhow::bail!("SledStore is closed");
         };

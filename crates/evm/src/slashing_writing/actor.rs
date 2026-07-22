@@ -124,3 +124,33 @@ impl<P: Provider + WalletProvider + Clone + 'static> Actor for SlashingManagerSo
         });
     }
 }
+
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<crate::GetEvmWriterHealth>
+    for SlashingManagerSolWriter<P>
+{
+    type Result = ResponseFuture<crate::EvmWriterHealth>;
+
+    fn handle(
+        &mut self,
+        message: crate::GetEvmWriterHealth,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        let outbox = self.outbox.clone();
+        let chain_id = self.provider.chain_id();
+        let contract_address = self.contract_address.to_string();
+        let effects_enabled = self.effects_enabled;
+        let in_flight_effects = self.submitting.len();
+        Box::pin(async move {
+            let summary = outbox.summary(message.now_ms).await;
+            crate::EvmWriterHealth {
+                writer: "slashing_manager".to_owned(),
+                chain_id,
+                contract_address,
+                effects_enabled,
+                pending_effects: summary.pending_effects,
+                oldest_pending_age_ms: summary.oldest_pending_age_ms,
+                in_flight_effects,
+            }
+        })
+    }
+}

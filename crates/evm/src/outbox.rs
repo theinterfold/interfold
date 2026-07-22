@@ -71,6 +71,7 @@ impl EvmEffectStatus {
 pub struct EvmEffectRecord<T> {
     pub payload: T,
     pub status: EvmEffectStatus,
+    pub admitted_at_ms: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -99,6 +100,12 @@ pub enum DispatchReconciliation {
     Pending,
     Retry,
     Terminal,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EvmOutboxSummary {
+    pub pending_effects: usize,
+    pub oldest_pending_age_ms: Option<u64>,
 }
 
 /// Stable outbox identity for one contract method and its semantic calldata. The readable prefix
@@ -153,6 +160,7 @@ where
             EvmEffectRecord {
                 payload,
                 status: EvmEffectStatus::Intent,
+                admitted_at_ms: crate::operational::now_ms(),
             },
         );
         if let Err(error) = self.repository.write_sync(&state).await {
@@ -235,6 +243,28 @@ where
             .filter(|(_, record)| !matches!(record.status, EvmEffectStatus::Terminal { .. }))
             .map(|(key, record)| (key.clone(), record.payload.clone(), record.status.clone()))
             .collect()
+    }
+
+    pub async fn summary(&self, now_ms: u64) -> EvmOutboxSummary {
+        let state = self.state.lock().await;
+        let mut pending_effects = 0usize;
+        let mut oldest_admission = None;
+        for record in state
+            .entries
+            .values()
+            .filter(|record| !matches!(record.status, EvmEffectStatus::Terminal { .. }))
+        {
+            pending_effects = pending_effects.saturating_add(1);
+            oldest_admission = Some(
+                oldest_admission.map_or(record.admitted_at_ms, |oldest: u64| {
+                    oldest.min(record.admitted_at_ms)
+                }),
+            );
+        }
+        EvmOutboxSummary {
+            pending_effects,
+            oldest_pending_age_ms: oldest_admission.map(|admitted| now_ms.saturating_sub(admitted)),
+        }
     }
 
     pub async fn status(&self, key: &str) -> Result<EvmEffectStatus> {
@@ -460,6 +490,58 @@ mod tests {
             OutboxAdmission::AlreadyTerminal
         );
         assert!(outbox.pending().await.is_empty());
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn summary_reports_pending_count_and_oldest_durable_age() -> Result<()> {
+        let repositories = Repositories::in_mem();
+        let repository = Repository::new(repositories.store.scope("//test/evm_outbox_summary"));
+        let state = EvmEffectOutboxState {
+            entries: BTreeMap::from([
+                (
+                    "oldest".to_owned(),
+                    EvmEffectRecord {
+                        payload: 1u8,
+                        status: EvmEffectStatus::Intent,
+                        admitted_at_ms: 1_000,
+                    },
+                ),
+                (
+                    "newer".to_owned(),
+                    EvmEffectRecord {
+                        payload: 2u8,
+                        status: EvmEffectStatus::Signed {
+                            tx_hash: [1; 32],
+                            nonce: 1,
+                            raw_transaction: vec![1],
+                        },
+                        admitted_at_ms: 4_000,
+                    },
+                ),
+                (
+                    "terminal".to_owned(),
+                    EvmEffectRecord {
+                        payload: 3u8,
+                        status: EvmEffectStatus::Terminal {
+                            tx_hash: None,
+                            nonce: None,
+                        },
+                        admitted_at_ms: 500,
+                    },
+                ),
+            ]),
+        };
+        repository.write_sync(&state).await?;
+        let outbox = EvmEffectOutbox::load(repository).await?;
+
+        assert_eq!(
+            outbox.summary(10_000).await,
+            EvmOutboxSummary {
+                pending_effects: 2,
+                oldest_pending_age_ms: Some(9_000),
+            }
+        );
         Ok(())
     }
 

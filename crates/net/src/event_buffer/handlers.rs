@@ -62,9 +62,19 @@ impl Handler<IncomingNetEvent> for NetEventBuffer {
                         reason: error.to_string(),
                         quarantine: false,
                     })
-                    .and_then(|now| self.protocol_admission.authorize(author, envelope, now));
+                    .and_then(|now| {
+                        self.protocol_admission
+                            .authorize(author, envelope, now)
+                            .map(|authorized| (authorized, now))
+                    });
                 match admission {
-                    Ok(authorized) => {
+                    Ok((authorized, now)) => {
+                        let authenticated_peer = AuthenticatedPeerAdmission {
+                            peer_id: author.to_string(),
+                            signer: authorized.signer.to_string(),
+                            e3_id: authorized.e3_id.to_string(),
+                            authenticated_at_ms: now.saturating_mul(1_000),
+                        };
                         self.submit_net_commands(
                             vec![NetCommand::GossipValidation {
                                 propagation_source,
@@ -72,6 +82,7 @@ impl Handler<IncomingNetEvent> for NetEventBuffer {
                                 acceptance: GossipAcceptance::Accept,
                             }],
                             Some(NetEvent::AuthorizedGossip(Box::new(authorized.event))),
+                            Some(authenticated_peer),
                             ctx,
                         );
                         return;
@@ -88,7 +99,7 @@ impl Handler<IncomingNetEvent> for NetEventBuffer {
                         } else {
                             tracing::trace!(%author, reason=%rejection.reason, "Rejecting protocol gossip before startup buffering");
                         }
-                        self.submit_net_commands(commands, None, ctx);
+                        self.submit_net_commands(commands, None, None, ctx);
                         return;
                     }
                 }
@@ -105,6 +116,7 @@ impl Handler<IncomingNetEvent> for NetEventBuffer {
                         acceptance: GossipAcceptance::Reject,
                     }],
                     None,
+                    None,
                     ctx,
                 );
                 return;
@@ -120,6 +132,7 @@ impl NetEventBuffer {
         &mut self,
         commands: Vec<NetCommand>,
         admitted: Option<NetEvent>,
+        authenticated_peer: Option<AuthenticatedPeerAdmission>,
         ctx: &mut actix::Context<Self>,
     ) {
         let tx = self.net_commands.clone();
@@ -133,6 +146,14 @@ impl NetEventBuffer {
             .into_actor(self)
             .map(move |result, actor, ctx| match result {
                 Ok(()) => {
+                    if let Some(peer) = authenticated_peer {
+                        actor.network_status.protocol_authenticated(
+                            peer.peer_id,
+                            peer.signer,
+                            peer.e3_id,
+                            peer.authenticated_at_ms,
+                        );
+                    }
                     if let Some(event) = admitted {
                         actor.process_net_event(event, ctx);
                     }
@@ -162,6 +183,13 @@ impl NetEventBuffer {
             self.fail_closed(error, ctx);
         }
     }
+}
+
+struct AuthenticatedPeerAdmission {
+    peer_id: String,
+    signer: String,
+    e3_id: String,
+    authenticated_at_ms: u64,
 }
 
 impl Handler<NetInputLagged> for NetEventBuffer {
@@ -221,6 +249,7 @@ mod tests {
             readiness: Some(readiness),
             net_commands: mpsc::channel(1).0,
             protocol_admission: ProtocolAdmission::default(),
+            network_status: NetworkStatus::default(),
         }
         .start();
 

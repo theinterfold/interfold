@@ -81,6 +81,25 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
             node.aggregate_ids().to_vec(),
             node.network_status(),
             config.chains().clone(),
+            e3_dashboard::ReadinessSources::new(
+                node.store().clone(),
+                node.evm_ingestion().to_vec(),
+                node.evm_writers().to_vec(),
+                e3_dashboard::ReadinessPolicy {
+                    min_connected_peers: config.readiness_min_peers(),
+                    max_rpc_poll_age_ms: config
+                        .readiness_max_rpc_poll_age_secs()
+                        .saturating_mul(1_000),
+                    max_chain_head_age_ms: config
+                        .readiness_max_chain_head_age_secs()
+                        .saturating_mul(1_000),
+                    max_sync_lag_blocks: config.readiness_max_sync_lag_blocks(),
+                    max_outbox_age_ms: config.readiness_max_outbox_age_secs().saturating_mul(1_000),
+                    max_active_e3_idle_ms: config
+                        .readiness_max_active_e3_idle_secs()
+                        .saturating_mul(1_000),
+                },
+            ),
         );
         tokio::task::spawn_local(async move {
             if let Err(error) = e3_dashboard::start_dashboard(dashboard_port, state).await {

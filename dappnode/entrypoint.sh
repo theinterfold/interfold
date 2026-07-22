@@ -94,8 +94,27 @@ fi
 # Set non-secret defaults.
 export NETWORK="${NETWORK:-sepolia}"
 export QUIC_PORT="${QUIC_PORT:-37173}"
+export READINESS_PORT="${READINESS_PORT:-50506}"
+export READINESS_MIN_PEERS="${READINESS_MIN_PEERS:-1}"
+export READINESS_MAX_RPC_POLL_AGE_SECS="${READINESS_MAX_RPC_POLL_AGE_SECS:-30}"
+export READINESS_MAX_CHAIN_HEAD_AGE_SECS="${READINESS_MAX_CHAIN_HEAD_AGE_SECS:-120}"
+export READINESS_MAX_SYNC_LAG_BLOCKS="${READINESS_MAX_SYNC_LAG_BLOCKS:-2}"
+export READINESS_MAX_OUTBOX_AGE_SECS="${READINESS_MAX_OUTBOX_AGE_SECS:-300}"
+export READINESS_MAX_ACTIVE_E3_IDLE_SECS="${READINESS_MAX_ACTIVE_E3_IDLE_SECS:-1200}"
 export NODE_ADDRESS="${NODE_ADDRESS:-}"
 export LOG_LEVEL="${LOG_LEVEL:-info}"
+
+for readiness_integer in READINESS_PORT READINESS_MIN_PEERS \
+    READINESS_MAX_RPC_POLL_AGE_SECS READINESS_MAX_CHAIN_HEAD_AGE_SECS \
+    READINESS_MAX_SYNC_LAG_BLOCKS READINESS_MAX_OUTBOX_AGE_SECS \
+    READINESS_MAX_ACTIVE_E3_IDLE_SECS; do
+    [[ "${!readiness_integer}" =~ ^[0-9]+$ ]] \
+        || fail "$readiness_integer must be a non-negative decimal integer"
+done
+[ "$READINESS_PORT" -ge 1 ] && [ "$READINESS_PORT" -le 65535 ] \
+    || fail "READINESS_PORT must be between 1 and 65535"
+[ "$READINESS_MIN_PEERS" -ge 1 ] \
+    || fail "READINESS_MIN_PEERS must be greater than zero"
 
 case "$LOG_LEVEL" in
     info|debug|trace) ;;
