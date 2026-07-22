@@ -62,6 +62,13 @@ pub struct NodeDefinition {
     /// `E3_NODE__MULTITHREAD_CONCURRENT_JOBS`, or a named profile with
     /// `E3_NODES__<NAME>__MULTITHREAD_CONCURRENT_JOBS`.
     pub multithread_concurrent_jobs: Option<usize>,
+    /// Maximum wait for a fair Rayon admission permit before the request fails.
+    #[serde(default = "default_multithread_admission_timeout_secs")]
+    pub multithread_admission_timeout_secs: u64,
+    /// Hard wall-clock budget for one CPU job. Because running Rayon closures cannot be safely
+    /// interrupted, exceeding this deadline terminates the process and lets the OS reclaim them.
+    #[serde(default = "default_multithread_execution_timeout_secs")]
+    pub multithread_execution_timeout_secs: u64,
     /// Hard deadline for construction and initial synchronization. A node that cannot reach live
     /// protocol operation before this deadline exits non-zero instead of remaining falsely alive.
     #[serde(default = "default_startup_timeout_secs")]
@@ -84,6 +91,14 @@ pub struct NodeDefinition {
 
 fn default_multithread_reserve_threads() -> usize {
     1
+}
+
+fn default_multithread_admission_timeout_secs() -> u64 {
+    60
+}
+
+fn default_multithread_execution_timeout_secs() -> u64 {
+    15 * 60
 }
 
 fn default_startup_timeout_secs() -> u64 {
@@ -120,6 +135,8 @@ impl Default for NodeDefinition {
             dashboard_port: None,
             multithread_reserve_threads: default_multithread_reserve_threads(),
             multithread_concurrent_jobs: None,
+            multithread_admission_timeout_secs: default_multithread_admission_timeout_secs(),
+            multithread_execution_timeout_secs: default_multithread_execution_timeout_secs(),
             startup_timeout_secs: default_startup_timeout_secs(),
             max_buffered_evm_events: default_max_buffered_evm_events(),
             max_buffered_net_events: default_max_buffered_net_events(),
@@ -211,6 +228,12 @@ impl AppConfig {
         let node = node.clone();
         if node.startup_timeout_secs == 0 {
             bail!("node.startup_timeout_secs must be greater than zero");
+        }
+        if node.multithread_admission_timeout_secs == 0 {
+            bail!("node.multithread_admission_timeout_secs must be greater than zero");
+        }
+        if node.multithread_execution_timeout_secs == 0 {
+            bail!("node.multithread_execution_timeout_secs must be greater than zero");
         }
         if node.max_buffered_evm_events == 0 {
             bail!("node.max_buffered_evm_events must be greater than zero");
@@ -404,6 +427,14 @@ impl AppConfig {
     /// [`Self::multithread_reserve_threads`].
     pub fn multithread_concurrent_jobs(&self) -> Option<usize> {
         self.node_def().multithread_concurrent_jobs
+    }
+
+    pub fn multithread_admission_timeout_secs(&self) -> u64 {
+        self.node_def().multithread_admission_timeout_secs
+    }
+
+    pub fn multithread_execution_timeout_secs(&self) -> u64 {
+        self.node_def().multithread_execution_timeout_secs
     }
 
     /// Maximum time allowed for construction and initial synchronization.
@@ -878,6 +909,8 @@ chains:
 node:
   multithread_reserve_threads: 2
   multithread_concurrent_jobs: 4
+  multithread_admission_timeout_secs: 12
+  multithread_execution_timeout_secs: 34
 "#;
         let unscoped: UnscopedAppConfig = serde_yaml::from_str(config_str)?;
         let config = unscoped.into_scoped_with_defaults(
@@ -888,6 +921,8 @@ node:
         )?;
         assert_eq!(config.multithread_reserve_threads(), 2);
         assert_eq!(config.multithread_concurrent_jobs(), Some(4));
+        assert_eq!(config.multithread_admission_timeout_secs(), 12);
+        assert_eq!(config.multithread_execution_timeout_secs(), 34);
         Ok(())
     }
 
@@ -970,6 +1005,8 @@ node:
             &PathBuf::from("/my/cwd"),
         )?;
         assert_eq!(default.startup_timeout_secs(), 30 * 60);
+        assert_eq!(default.multithread_admission_timeout_secs(), 60);
+        assert_eq!(default.multithread_execution_timeout_secs(), 15 * 60);
         assert_eq!(default.max_buffered_evm_events(), 100_000);
         assert_eq!(default.max_buffered_net_events(), 1_024);
         assert_eq!(default.max_buffered_net_bytes(), 256 * 1024 * 1024);
@@ -995,6 +1032,30 @@ node:
         assert!(error
             .to_string()
             .contains("startup_timeout_secs must be greater than zero"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_zero_multithread_timeouts_are_rejected() -> Result<()> {
+        for field in [
+            "multithread_admission_timeout_secs",
+            "multithread_execution_timeout_secs",
+        ] {
+            let yaml = format!("node:\n  {field}: 0\n");
+            let unscoped: UnscopedAppConfig = serde_yaml::from_str(&yaml)?;
+            let error = unscoped
+                .into_scoped_with_defaults(
+                    "_default",
+                    &PathBuf::from("/default/data"),
+                    &PathBuf::from("/default/config"),
+                    &PathBuf::from("/my/cwd"),
+                )
+                .expect_err("zero multithread timeout must fail configuration");
+            assert!(
+                error.to_string().contains(field),
+                "unexpected validation error for {field}: {error}"
+            );
+        }
         Ok(())
     }
 

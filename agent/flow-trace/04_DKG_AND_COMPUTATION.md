@@ -9,6 +9,14 @@ members buffer them, and the active aggregator combines them. The runtime first 
 finalized committee into ascending ticket-score order, and the active aggregator is then the lowest
 non-expelled `party_id` in that normalized order.
 
+CPU-bound ZK and TrBFV requests enter a fair, semaphore-bounded Rayon pool. Admission has a
+configurable timeout, and every admitted closure has a configurable execution budget
+(`multithread_admission_timeout_secs` and `multithread_execution_timeout_secs`). Rayon cannot safely
+interrupt an already-running closure, so a production deadline breach or cancellation after
+dispatch is fail-stop: the process aborts and the OS reclaims every worker instead of leaving an
+orphan to monopolize protocol capacity. Panics are caught and returned as correlated
+`ComputeRequestError` events.
+
 ---
 
 ## Phase 1: DKG — Distributed Key Generation

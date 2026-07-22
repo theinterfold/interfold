@@ -29,7 +29,7 @@ use e3_evm::{
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
 use e3_logger::attach_protocol_logger;
-use e3_multithread::{Multithread, MultithreadReport, TaskPool};
+use e3_multithread::{Multithread, MultithreadReport, TaskPool, TaskPoolPolicy};
 use e3_net::{
     create_channel_bridge, setup_libp2p_keypair, setup_net_interface, setup_net_with_limits,
     NetRepositoryFactory,
@@ -80,6 +80,7 @@ pub struct CiphernodeBuilder {
     multithread_cache: Option<Addr<Multithread>>,
     multithread_concurrent_jobs: Option<usize>,
     multithread_report: Option<Addr<MultithreadReport>>,
+    task_pool_policy: TaskPoolPolicy,
     proof_aggregation_enabled: bool,
     pubkey_agg: bool,
     rng: SharedRng,
@@ -149,6 +150,7 @@ impl CiphernodeBuilder {
             multithread_cache: None,
             multithread_concurrent_jobs: None,
             multithread_report: None,
+            task_pool_policy: TaskPoolPolicy::default(),
             proof_aggregation_enabled: true,
             pubkey_agg: false,
             rng,
@@ -381,6 +383,17 @@ impl CiphernodeBuilder {
         );
         self.threads = Some(pool_threads);
         self.multithread_concurrent_jobs = Some(jobs);
+        self
+    }
+
+    /// Set bounded admission and hard execution deadlines for CPU work. The production policy is
+    /// fail-stop because an already-running Rayon closure cannot be safely cancelled in-process.
+    pub fn with_multithread_deadlines(
+        mut self,
+        admission_timeout: Duration,
+        execution_timeout: Duration,
+    ) -> Self {
+        self.task_pool_policy = TaskPoolPolicy::fail_stop(admission_timeout, execution_timeout);
         self
     }
 
@@ -951,7 +964,7 @@ impl CiphernodeBuilder {
             let pool_threads = self.threads.unwrap_or(1);
             let concurrent_jobs = self.multithread_concurrent_jobs.unwrap_or(1);
             let pool_threads = concurrent_jobs.min(pool_threads).max(1);
-            Multithread::create_taskpool(pool_threads, concurrent_jobs)
+            TaskPool::new_with_policy(pool_threads, concurrent_jobs, self.task_pool_policy)
         });
 
         let addr = if let Some(ref backend) = self.zk_backend {
