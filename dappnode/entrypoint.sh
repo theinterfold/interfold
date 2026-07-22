@@ -34,6 +34,8 @@ fi
 # Validate RPC URL (required).
 [ -n "${RPC_URL:-}" ] || fail "RPC_URL is required; set it in the DAppNode package configuration"
 [[ "$RPC_URL" =~ ^wss?:// ]] || fail "RPC_URL must be a WebSocket URL (ws:// or wss://)"
+[ -n "${CHAIN_ID:-}" ] || fail "CHAIN_ID is required; set the expected numeric RPC chain ID"
+[[ "$CHAIN_ID" =~ ^[1-9][0-9]*$ ]] || fail "CHAIN_ID must be a positive decimal integer"
 
 [ -r "$TEMPLATE_FILE" ] || fail "configuration template is not readable: $TEMPLATE_FILE"
 mkdir -p "$CONFIG_DIR"

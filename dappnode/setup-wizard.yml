@@ -31,6 +31,17 @@ fields:
     pattern: '^wss?://.*'
     patternErrorMessage: 'Must be a WebSocket URL (wss:// or ws://)'
 
+  - id: CHAIN_ID
+    target:
+      type: environment
+      name: CHAIN_ID
+      service: ciphernode
+    title: 'Chain ID'
+    description: 'Expected numeric chain ID returned by the configured RPC endpoint.'
+    required: true
+    pattern: '^[1-9][0-9]*$'
+    patternErrorMessage: 'Must be a positive decimal chain ID.'
+
   - id: NODE_ADDRESS
     target:
       type: environment

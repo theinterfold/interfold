@@ -18,6 +18,7 @@ services:
       RPC_URL: ''
       # Network & node config
       NETWORK: 'sepolia'
+      CHAIN_ID: '11155111'
       NODE_ADDRESS: ''
       QUIC_PORT: '37173'
       PEERS: ''

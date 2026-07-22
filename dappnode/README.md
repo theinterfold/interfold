@@ -49,6 +49,7 @@ Once this package is published to the DAppStore:
 2. Search for **“Interfold Ciphernode”** and install the package.
 3. The **setup wizard** will prompt you for:
    - `RPC_URL` – WebSocket RPC endpoint (e.g. `wss://ethereum-sepolia-rpc.publicnode.com`)
+   - `CHAIN_ID` – expected numeric chain ID for that RPC (Sepolia: `11155111`)
    - `NETWORK` – e.g. `sepolia`, `mainnet`, `localhost`
    - Contract addresses + deploy blocks
    - A required ciphernode credentials JSON file
@@ -124,6 +125,8 @@ Non-secret runtime configuration is provided through environment variables:
 
 - **`RPC_URL`** (required) WebSocket RPC endpoint for the chain (e.g.
   `wss://ethereum-sepolia-rpc.publicnode.com`).
+- **`CHAIN_ID`** (required) Numeric chain ID that the RPC must report. Startup fails if it is
+  missing or mismatched.
 
 - **`NETWORK`** Logical network name written into the Interfold config (e.g. `sepolia`, `mainnet`,
   `localhost`).

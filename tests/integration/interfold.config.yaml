@@ -1,6 +1,7 @@
 # Sync from packages/interfold-contracts/deployed_contracts.json (localhost) after each `pnpm evm:deploy`.
 chains:
   - name: 'localhost'
+    chain_id: 31337
     rpc_url: 'ws://localhost:8545'
     contracts:
       e3_program:

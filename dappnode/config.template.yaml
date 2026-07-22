@@ -13,6 +13,7 @@ node:
 
 chains:
   - name: '${NETWORK}'
+    chain_id: ${CHAIN_ID}
     rpc_url: '${RPC_URL}'
     contracts:
       interfold:

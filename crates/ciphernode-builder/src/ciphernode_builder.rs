@@ -1000,13 +1000,20 @@ fn parse_env_u64(name: &str, default_val: u64) -> u64 {
 
 /// Validate chain ID matches expected configuration
 fn validate_chain_id(chain: &ChainConfig, actual_chain_id: u64) -> Result<()> {
-    if let Some(expected_chain_id) = chain.chain_id {
-        if actual_chain_id != expected_chain_id {
-            return Err(anyhow::anyhow!(
-                "Chain '{}' validation failed: expected chain_id {}, but provider returned chain_id {}",
-                chain.name, expected_chain_id, actual_chain_id
-            ));
-        }
+    let expected_chain_id = chain.chain_id.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Chain '{}' is enabled but has no chain_id; set the expected chain ID explicitly so \
+             the RPC endpoint cannot silently bind this node to a different chain",
+            chain.name
+        )
+    })?;
+    if actual_chain_id != expected_chain_id {
+        return Err(anyhow::anyhow!(
+            "Chain '{}' validation failed: expected chain_id {}, but provider returned chain_id {}",
+            chain.name,
+            expected_chain_id,
+            actual_chain_id
+        ));
     }
     Ok(())
 }
@@ -1025,12 +1032,18 @@ fn create_aggregate_delays(
     let mut delays = HashMap::new();
 
     for (chain, actual_chain_id) in chain_providers.iter().cloned() {
-        // Validate chain_id if specified in configuration
+        // Bind every enabled configuration to its intended RPC chain.
         validate_chain_id(&chain, actual_chain_id)?;
 
         // Add delay if configured
         let (aggregate_id, delay_us) = create_aggregate_delay(&chain, actual_chain_id);
-        delays.insert(aggregate_id, delay_us);
+        if delays.insert(aggregate_id, delay_us).is_some() {
+            anyhow::bail!(
+                "Duplicate enabled chain_id {actual_chain_id}: chain '{}' would overwrite an \
+                 existing aggregate configuration",
+                chain.name
+            );
+        }
     }
 
     Ok(delays)
@@ -1174,7 +1187,7 @@ async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::create_aggregate_delay;
+    use super::{create_aggregate_delay, create_aggregate_delays, validate_chain_id};
     use e3_config::{
         chain_config::ChainConfig,
         contract::{Contract, ContractAddresses},
@@ -1219,5 +1232,36 @@ mod tests {
         let (_, delay) = create_aggregate_delay(&chain_with_finalization_ms(None), 1);
 
         assert_eq!(delay, Duration::ZERO);
+    }
+
+    #[test]
+    fn enabled_chain_requires_an_explicit_chain_id() {
+        let mut chain = chain_with_finalization_ms(None);
+        chain.chain_id = None;
+
+        let error = validate_chain_id(&chain, 1).unwrap_err();
+
+        assert!(error.to_string().contains("has no chain_id"));
+    }
+
+    #[test]
+    fn rpc_chain_must_match_the_configured_chain_id() {
+        let chain = chain_with_finalization_ms(None);
+
+        let error = validate_chain_id(&chain, 2).unwrap_err();
+
+        assert!(error.to_string().contains("expected chain_id 1"));
+        assert!(error.to_string().contains("returned chain_id 2"));
+    }
+
+    #[test]
+    fn duplicate_actual_chain_ids_are_rejected() {
+        let first = chain_with_finalization_ms(Some(10));
+        let mut second = chain_with_finalization_ms(Some(20));
+        second.name = "duplicate".to_owned();
+
+        let error = create_aggregate_delays(&[(first, 1), (second, 1)]).unwrap_err();
+
+        assert!(error.to_string().contains("Duplicate enabled chain_id 1"));
     }
 }

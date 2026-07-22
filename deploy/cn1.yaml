@@ -3,6 +3,7 @@ node:
   quic_port: ${QUIC_PORT}
 chains:
   - name: 'sepolia'
+    chain_id: 11155111
     rpc_url: '${RPC_URL}'
     contracts:
       interfold: '${SEPOLIA_INTERFOLD_ADDRESS}'

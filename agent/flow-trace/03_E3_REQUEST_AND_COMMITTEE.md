@@ -126,6 +126,10 @@ Requester calls: Interfold.request({
 
 When the running ciphernodes detect `E3Requested` and `CommitteeRequested` events from the chain:
 
+Before any reader or writer is attached, every enabled chain configuration must provide an
+explicit `chain_id`. Startup compares it with the RPC-reported ID and rejects missing, mismatched,
+or duplicate IDs, so two configured chains cannot share and overwrite one event aggregate.
+
 ### 2a. E3Requested Event Processing
 
 ```

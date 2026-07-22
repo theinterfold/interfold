@@ -7,6 +7,7 @@ node:
     - '/dns4/cn4/udp/9094/quic-v1'
 chains:
   - name: 'sepolia'
+    chain_id: 11155111
     rpc_url: '${RPC_URL}'
     contracts:
       interfold: '${SEPOLIA_INTERFOLD_ADDRESS}'
