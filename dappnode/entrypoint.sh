@@ -40,6 +40,19 @@ fi
 [[ "$REORG_CONFIRMATIONS" =~ ^[1-9][0-9]*$ ]] \
     || fail "REORG_CONFIRMATIONS must be a positive decimal integer"
 
+for contract_var in INTERFOLD_CONTRACT CIPHERNODE_REGISTRY_CONTRACT \
+    BONDING_REGISTRY_CONTRACT SLASHING_MANAGER_CONTRACT; do
+    contract_value=${!contract_var:-}
+    [[ "$contract_value" =~ ^0x[0-9a-fA-F]{40}$ ]] \
+        || fail "$contract_var must be a 20-byte hexadecimal address"
+done
+for block_var in INTERFOLD_DEPLOY_BLOCK CIPHERNODE_REGISTRY_DEPLOY_BLOCK \
+    BONDING_REGISTRY_DEPLOY_BLOCK SLASHING_MANAGER_DEPLOY_BLOCK; do
+    block_value=${!block_var:-}
+    [[ "$block_value" =~ ^[1-9][0-9]*$ ]] \
+        || fail "$block_var must be a positive deployment block"
+done
+
 [ -r "$TEMPLATE_FILE" ] || fail "configuration template is not readable: $TEMPLATE_FILE"
 mkdir -p "$CONFIG_DIR"
 
@@ -57,7 +70,7 @@ migrate_legacy_state() {
         fail "both legacy and current state directories exist; refusing an ambiguous upgrade"
     fi
     if [ -d "$LEGACY_STATE_DIR" ]; then
-        log "Migrating the v0.1.8 state namespace to Interfold v0.2.3..."
+        log "Migrating the legacy state namespace to Interfold..."
         mv -- "$LEGACY_STATE_DIR" "$CURRENT_STATE_DIR" \
             || fail "could not migrate legacy state into $CURRENT_STATE_DIR"
     fi

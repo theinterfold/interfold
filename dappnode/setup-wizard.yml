@@ -98,6 +98,17 @@ fields:
     pattern: '^0x[a-fA-F0-9]{40}$'
     patternErrorMessage: 'Must be a valid Ethereum address (0x...)'
 
+  - id: SLASHING_MANAGER_CONTRACT
+    target:
+      type: environment
+      name: SLASHING_MANAGER_CONTRACT
+      service: ciphernode
+    title: 'Slashing Manager Contract'
+    description: 'Address used as the EIP-712 verifying contract for accusation votes.'
+    required: true
+    pattern: '^0x[a-fA-F0-9]{40}$'
+    patternErrorMessage: 'Must be a valid Ethereum address (0x...)'
+
   - id: INTERFOLD_DEPLOY_BLOCK
     target:
       type: environment
@@ -130,6 +141,17 @@ fields:
     required: true
     pattern: '^[0-9]+$'
     patternErrorMessage: 'Must be a block number (integer).'
+
+  - id: SLASHING_MANAGER_DEPLOY_BLOCK
+    target:
+      type: environment
+      name: SLASHING_MANAGER_DEPLOY_BLOCK
+      service: ciphernode
+    title: 'Slashing Manager Deploy Block'
+    description: 'Block number where the SlashingManager contract was deployed.'
+    required: true
+    pattern: '^[1-9][0-9]*$'
+    patternErrorMessage: 'Must be a positive block number.'
 
   - id: PEERS
     target:

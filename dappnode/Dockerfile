@@ -22,7 +22,8 @@ RUN useradd -m -u 1000 -s /bin/bash ciphernode
 
 # Create writable data and ephemeral credential-upload directories.
 RUN install -d -o ciphernode -g ciphernode -m 0750 /data \
-    && install -d -o ciphernode -g ciphernode -m 0700 /run/secrets
+    && install -d -o ciphernode -g ciphernode -m 0700 /run/secrets \
+    && install -d -o ciphernode -g ciphernode -m 0700 /run/interfold
 
 # Copy binary from upstream
 COPY --from=upstream /usr/local/bin/interfold /usr/local/bin/interfold

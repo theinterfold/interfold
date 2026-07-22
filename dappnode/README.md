@@ -152,9 +152,11 @@ Used to populate the `chains[0].contracts` section in `config.yaml`:
 - `INTERFOLD_CONTRACT`
 - `CIPHERNODE_REGISTRY_CONTRACT`
 - `BONDING_REGISTRY_CONTRACT`
+- `SLASHING_MANAGER_CONTRACT`
 - `INTERFOLD_DEPLOY_BLOCK`
 - `CIPHERNODE_REGISTRY_DEPLOY_BLOCK`
 - `BONDING_REGISTRY_DEPLOY_BLOCK`
+- `SLASHING_MANAGER_DEPLOY_BLOCK`
 
 These are all required in the setup wizard so that the node can index chain events from the correct
 block heights.
@@ -172,16 +174,17 @@ Create a local JSON file containing the password and operator key:
 
 Upload it in the setup wizard as **Ciphernode Credentials JSON**. DAppNode copies it to
 `/run/secrets/secrets.json` before starting the container. The entrypoint validates a maximum size
-of 16 KiB, required fields, and key encodings, then runs the exact commands supported by the pinned
-Interfold v0.2.3 image. Any failed command aborts startup. The wallet command atomically derives and
-stores both the Ethereum and libp2p identities. Both keys are encrypted in `/data`; v0.2.3 stores
-its password key there as a mode-`0400` file. After successful persistence, the entrypoint removes
+of 16 KiB, required fields, a minimum 16-byte password, and key encodings, then runs the exact
+commands supported by the pinned Interfold v0.4.0 image. Any failed command aborts startup. The
+wallet command atomically derives and stores both the Ethereum and libp2p identities. Both keys are
+encrypted in `/data`; the password key is stored separately with mode `0400`. After successful
+persistence, the entrypoint removes
 the combined plaintext upload. Provisioning sends the secrets through the CLI's hidden TTY prompts
 over stdin; plaintext credentials are never placed in process arguments or container environment
 variables.
 
 Legacy three-field files containing `network_private_key` are accepted for upgrade compatibility,
-but v0.2.3 ignores that obsolete field on a fresh setup. When encrypted identity state already
+but v0.4.0 ignores that obsolete field on a fresh setup. When encrypted identity state already
 exists, a matching upload is removed without rewriting either identity; a password mismatch fails
 closed.
 
@@ -235,22 +238,22 @@ excluded from that encrypted-state backup. Securely escrow the password outside 
 only `/data` cannot unlock the node. New ciphertext uses a versioned envelope with a fresh random
 Argon2id salt, while legacy ciphertext is read only for migration and is upgraded on its next write.
 
-### Required v0.1.8 upgrade bridge
+### Legacy upgrade boundary
 
 DAppNode package v0.2.3 is the required bridge from the shipped v0.1.8 package to later binaries. On
 its first start it atomically renames the custom-config state root from `/data/.enclave` to
 `/data/.interfold`, refusing to proceed if both roots exist. The v0.2.3 binary then stamps schema
-version 1 using its release-era compatibility behavior. Later fail-closed binaries can therefore
-verify the marker instead of rejecting the old unversioned datastore. Do not skip this package when
-upgrading an existing v0.1.8 node, and keep a verified backup of `/data` until the bridge has
-started successfully.
+version 1 using its release-era compatibility behavior. Interfold v0.4.0 uses schema version 2 and
+intentionally rejects schema 1 because keyshare state changed incompatibly. There is no in-place
+v0.2.3-to-v0.4.0 state migration: finish or canonically fail active E3s, keep a verified backup, and
+perform a controlled fresh resync. Never wipe in-flight threshold-share state as an upgrade shortcut.
 
 ## Health semantics
 
-Interfold v0.2.3 does not expose a local readiness endpoint. The package health check therefore uses
-the strongest non-invasive local signals available in that release: PID 1 must be the expected
+Interfold v0.4.0 does not yet expose a complete protocol-readiness endpoint. The package health
+check therefore uses local signals: PID 1 must be the expected
 `interfold start` command using `/data/config.yaml`, the protected config/password files must exist,
-the v0.2.3 Sled/event-log directories must be initialized, and the configured QUIC UDP listener must
+the v0.4.0 Sled/event-log directories must be initialized, and the configured QUIC UDP listener must
 be bound. This detects the old false-positive case where an unrelated process matched `pgrep`, as
 well as missing credentials, uninitialized persistence, and a dead network listener.
 

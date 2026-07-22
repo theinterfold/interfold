@@ -29,3 +29,6 @@ chains:
       bonding_registry:
         address: '${BONDING_REGISTRY_CONTRACT}'
         deploy_block: ${BONDING_REGISTRY_DEPLOY_BLOCK}
+      slashing_manager:
+        address: '${SLASHING_MANAGER_CONTRACT}'
+        deploy_block: ${SLASHING_MANAGER_DEPLOY_BLOCK}

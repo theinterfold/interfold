@@ -4,8 +4,8 @@ services:
     build:
       context: .
       args:
-        UPSTREAM_VERSION: 0.2.3
-    image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.2.3'
+        UPSTREAM_VERSION: 0.4.0
+    image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.4.0'
     restart: unless-stopped
     # Allow the node's 30-second durability barrier to finish before Docker sends SIGKILL.
     stop_grace_period: 45s
@@ -30,9 +30,11 @@ services:
       INTERFOLD_CONTRACT: ''
       CIPHERNODE_REGISTRY_CONTRACT: ''
       BONDING_REGISTRY_CONTRACT: ''
+      SLASHING_MANAGER_CONTRACT: ''
       INTERFOLD_DEPLOY_BLOCK: '0'
       CIPHERNODE_REGISTRY_DEPLOY_BLOCK: '0'
       BONDING_REGISTRY_DEPLOY_BLOCK: '0'
+      SLASHING_MANAGER_DEPLOY_BLOCK: '0'
     security_opt:
       - no-new-privileges:true
     healthcheck:

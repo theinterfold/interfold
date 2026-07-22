@@ -556,7 +556,75 @@ mod tests {
     use super::*;
     use crate::program_config::Risc0Config;
     use crate::rpc::RpcAuth;
+    use e3_events::EvmEventConfigChain;
     use figment::Jail;
+
+    fn render_release_config(source: &str) -> String {
+        let address = "0x1111111111111111111111111111111111111111";
+        [
+            ("${ADDRESS}", address),
+            ("${NODE_ADDRESS}", address),
+            ("${QUIC_PORT}", "37173"),
+            ("${NETWORK}", "sepolia"),
+            ("${CHAIN_ID}", "11155111"),
+            ("${REORG_CONFIRMATIONS}", "64"),
+            ("${RPC_URL}", "wss://example.invalid"),
+            ("${INTERFOLD_CONTRACT}", address),
+            ("${CIPHERNODE_REGISTRY_CONTRACT}", address),
+            ("${BONDING_REGISTRY_CONTRACT}", address),
+            ("${SLASHING_MANAGER_CONTRACT}", address),
+            ("${INTERFOLD_DEPLOY_BLOCK}", "1"),
+            ("${CIPHERNODE_REGISTRY_DEPLOY_BLOCK}", "2"),
+            ("${BONDING_REGISTRY_DEPLOY_BLOCK}", "3"),
+            ("${SLASHING_MANAGER_DEPLOY_BLOCK}", "4"),
+            ("${SEPOLIA_INTERFOLD_ADDRESS}", address),
+            ("${SEPOLIA_CIPHERNODE_REGISTRY_ADDRESS}", address),
+            ("${SEPOLIA_BONDING_REGISTRY}", address),
+            ("${SEPOLIA_SLASHING_MANAGER_ADDRESS}", address),
+            ("${SEPOLIA_INTERFOLD_DEPLOY_BLOCK}", "1"),
+            ("${SEPOLIA_CIPHERNODE_REGISTRY_DEPLOY_BLOCK}", "2"),
+            ("${SEPOLIA_BONDING_REGISTRY_DEPLOY_BLOCK}", "3"),
+            ("${SEPOLIA_SLASHING_MANAGER_DEPLOY_BLOCK}", "4"),
+        ]
+        .into_iter()
+        .fold(source.to_owned(), |rendered, (key, value)| {
+            rendered.replace(key, value)
+        })
+    }
+
+    #[test]
+    fn shipped_v04_configs_include_required_chain_safety_and_writers() -> Result<()> {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let paths = [
+            "dappnode/config.template.yaml",
+            "deploy/cn1.yaml",
+            "deploy/cn2.yaml",
+            "deploy/cn3.yaml",
+            "deploy/cn4.yaml",
+        ];
+
+        for relative in paths {
+            let source = std::fs::read_to_string(root.join(relative))?;
+            let unscoped: UnscopedAppConfig = serde_yaml::from_str(&render_release_config(&source))
+                .with_context(|| format!("failed to parse shipped config {relative}"))?;
+            let config = unscoped.into_scoped_with_defaults(
+                "_default",
+                &PathBuf::from("/tmp/interfold-data"),
+                &PathBuf::from("/tmp/interfold-config"),
+                &root,
+            )?;
+            let chain = config
+                .chains()
+                .first()
+                .with_context(|| format!("{relative} has no chain"))?;
+            assert_eq!(chain.chain_id, Some(11_155_111), "{relative}");
+            assert_eq!(chain.reorg_confirmations, Some(64), "{relative}");
+            assert!(chain.contracts.slashing_manager.is_some(), "{relative}");
+            EvmEventConfigChain::try_from(chain)
+                .with_context(|| format!("{relative} is not viable for remote ingestion"))?;
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_deserialization() -> Result<()> {

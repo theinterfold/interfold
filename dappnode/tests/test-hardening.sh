@@ -108,14 +108,16 @@ run_entrypoint() {
         INTERFOLD_CONTRACT="0x4444444444444444444444444444444444444444" \
         CIPHERNODE_REGISTRY_CONTRACT="0x5555555555555555555555555555555555555555" \
         BONDING_REGISTRY_CONTRACT="0x6666666666666666666666666666666666666666" \
+        SLASHING_MANAGER_CONTRACT="0x7777777777777777777777777777777777777777" \
         INTERFOLD_DEPLOY_BLOCK=1 \
         CIPHERNODE_REGISTRY_DEPLOY_BLOCK=2 \
         BONDING_REGISTRY_DEPLOY_BLOCK=3 \
+        SLASHING_MANAGER_DEPLOY_BLOCK=4 \
         PRIVATE_KEY="${TEST_PRIVATE_KEY:-}" \
         "$@" bash "$ROOT_DIR/entrypoint.sh" > "$case_dir/output" 2>&1
 }
 
-# Successful provisioning uses the v0.2.3 atomic wallet command, removes the
+# Successful provisioning uses the atomic wallet command, removes the
 # plaintext upload, and starts only after every credential command succeeds.
 success_dir="$TEST_ROOT/success"
 mkdir -p "$success_dir/secrets"
@@ -159,7 +161,7 @@ run_entrypoint "$matching_dir"
 [ "$(tr '\n' ' ' < "$matching_dir/calls")" = "start " ] || fail "matching persisted state was re-provisioned"
 [ ! -e "$matching_dir/secrets/secrets.json" ] || fail "matching upload was not removed"
 
-# Legacy three-field uploads remain accepted; v0.2.3 derives the libp2p key
+# Legacy three-field uploads remain accepted; the CLI derives the libp2p key
 # atomically from the wallet key and ignores the obsolete separate network key.
 legacy_credentials_dir="$TEST_ROOT/legacy-credentials"
 mkdir -p "$legacy_credentials_dir/secrets"
@@ -248,8 +250,10 @@ fi
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--password "$password"'
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--private-key "$private_key"'
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--net-keypair "$network_private_key"'
-assert_contains "$ROOT_DIR/dappnode_package.json" '"version": "0.2.3"'
-assert_contains "$ROOT_DIR/docker-compose.yml" 'UPSTREAM_VERSION: 0.2.3'
+assert_contains "$ROOT_DIR/dappnode_package.json" '"version": "0.4.0"'
+assert_contains "$ROOT_DIR/docker-compose.yml" 'UPSTREAM_VERSION: 0.4.0'
+assert_contains "$ROOT_DIR/config.template.yaml" 'slashing_manager:'
+assert_contains "$success_dir/data/config.yaml" '0x7777777777777777777777777777777777777777'
 assert_contains "$ROOT_DIR/healthcheck.sh" '/data/.interfold/data/_default/db'
 assert_contains "$ROOT_DIR/healthcheck.sh" '/run/interfold/key'
 assert_contains "$ROOT_DIR/config.template.yaml" "key_file: '/run/interfold/key'"
