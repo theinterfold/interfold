@@ -910,7 +910,9 @@ jobs:
         run: bb --version
 
       - name: Check formatting
-        run: ./scripts/lint-circuits.sh
+        run: |
+          nargo --version
+          ./scripts/lint-circuits.sh
 
       - name: Test Noir circuits
         run: ./scripts/test-circuits.sh
