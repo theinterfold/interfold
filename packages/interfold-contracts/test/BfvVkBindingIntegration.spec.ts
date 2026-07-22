@@ -72,11 +72,9 @@ const readFoldedArtifactsFromFile = (
     return null;
   }
   const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf8"));
-  if (filePath.endsWith("integration_summary.json")) {
-    const summary = parsed as { folded_artifacts?: unknown };
-    return isValidFoldedArtifacts(summary.folded_artifacts)
-      ? summary.folded_artifacts
-      : null;
+  const summary = parsed as { folded_artifacts?: unknown };
+  if (isValidFoldedArtifacts(summary.folded_artifacts)) {
+    return summary.folded_artifacts;
   }
   return isValidFoldedArtifacts(parsed) ? parsed : null;
 };
@@ -107,9 +105,15 @@ const hasCompiledVkArtifacts = (): boolean =>
     fs.existsSync(p),
   );
 
+const requireProofIntegration =
+  process.env.REQUIRE_BFV_PROOF_INTEGRATION === "1" ||
+  process.env.REQUIRE_BFV_PROOF_INTEGRATION === "true";
+
 const describeDeployTimeVkChecks = hasCompiledVkArtifacts()
   ? describe
-  : describe.skip;
+  : requireProofIntegration
+    ? describe
+    : describe.skip;
 
 function hexToBytes32Array(hex: string): string[] {
   const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
@@ -226,6 +230,14 @@ describe("BfvVkBindingIntegration", function () {
   };
 
   describeDeployTimeVkChecks("deploy-time VK staleness checks", function () {
+    before(function () {
+      if (!hasCompiledVkArtifacts()) {
+        throw new Error(
+          "REQUIRE_BFV_PROOF_INTEGRATION is set but compiled VK artifacts are missing",
+        );
+      }
+    });
+
     it("rejects BfvPkVerifier with stale immutables", async function () {
       const { bfvPk } = await loadFixture(deployHonkAndBfv);
       const address = await bfvPk.getAddress();
@@ -277,18 +289,44 @@ describe("BfvVkBindingIntegration", function () {
     });
   });
 
+  const foldedArtifacts = loadFoldedArtifacts();
+  const foldedLayoutIsCurrent =
+    foldedArtifacts !== null &&
+    hexToBytes32Array(foldedArtifacts.dkg_aggregator.public_inputs_hex)
+      .length === DKG_EXPECTED_PUBLIC_INPUT_LEN &&
+    hexToBytes32Array(foldedArtifacts.decryption_aggregator.public_inputs_hex)
+      .length === DEC_EXPECTED_PUBLIC_INPUT_LEN;
   const runFoldedProofIntegration =
-    loadFoldedArtifacts() !== null && hasCompiledVkArtifacts();
+    foldedArtifacts !== null &&
+    foldedLayoutIsCurrent &&
+    hasCompiledVkArtifacts();
+  const proofIntegrationTest =
+    runFoldedProofIntegration || requireProofIntegration ? it : it.skip;
 
-  (runFoldedProofIntegration ? it : it.skip)(
+  const getFoldedArtifactsOrThrow = (): FoldedArtifacts => {
+    const folded = loadFoldedArtifacts();
+    if (folded === null) {
+      throw new Error(
+        "required folded proof artifacts are missing; set BFV_VK_BINDING_FOLDED_ARTIFACTS",
+      );
+    }
+    if (!foldedLayoutIsCurrent) {
+      throw new Error(
+        "folded proof public-input layout is stale; regenerate the proof-aggregation fixture",
+      );
+    }
+    if (!hasCompiledVkArtifacts()) {
+      throw new Error("required compiled VK hash artifacts are missing");
+    }
+    return folded;
+  };
+
+  proofIntegrationTest(
     "folded aggregator proofs: artifact VK hashes match publicInputs[0..1] and verify passes",
     async function () {
       this.timeout(120_000);
 
-      const folded = loadFoldedArtifacts();
-      if (folded === null) {
-        this.skip();
-      }
+      const folded = getFoldedArtifactsOrThrow();
 
       const dkgPublicInputs = hexToBytes32Array(
         folded.dkg_aggregator.public_inputs_hex,
@@ -315,17 +353,8 @@ describe("BfvVkBindingIntegration", function () {
       expect(decPublicInputs[0]).to.equal(expectedC6FoldKeyHash);
       expect(decPublicInputs[1]).to.equal(expectedC7KeyHash);
 
-      if (
-        dkgPublicInputs.length !== DKG_EXPECTED_PUBLIC_INPUT_LEN ||
-        decPublicInputs.length !== DEC_EXPECTED_PUBLIC_INPUT_LEN
-      ) {
-        console.warn(
-          "Skipping folded proof verify: folded artifact public-input layout is stale. " +
-            "Re-run insecure benchmarks (syncs test/fixtures/bfv_vk_binding/folded_artifacts.json) " +
-            "or set BFV_VK_BINDING_FOLDED_ARTIFACTS.",
-        );
-        this.skip();
-      }
+      expect(dkgPublicInputs.length).to.equal(DKG_EXPECTED_PUBLIC_INPUT_LEN);
+      expect(decPublicInputs.length).to.equal(DEC_EXPECTED_PUBLIC_INPUT_LEN);
 
       const dkgCommitteeHash = committeeHashFromLimbs(
         dkgPublicInputs[DKG_COMMITTEE_HASH_IDX.hi],
@@ -429,15 +458,12 @@ describe("BfvVkBindingIntegration", function () {
     },
   );
 
-  (runFoldedProofIntegration ? it : it.skip)(
+  proofIntegrationTest(
     "rejects verify when expectedNodesFoldKeyHash is wrong by one byte",
     async function () {
       this.timeout(120_000);
 
-      const folded = loadFoldedArtifacts();
-      if (folded === null) {
-        this.skip();
-      }
+      const folded = getFoldedArtifactsOrThrow();
       const [testSigner] = await ethers.getSigners();
 
       const dkgPublicInputs = hexToBytes32Array(
