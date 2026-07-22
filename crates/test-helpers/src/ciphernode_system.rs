@@ -408,6 +408,8 @@ mod tests {
             network_supervisor: e3_net::NetworkTaskSupervisor::external(),
             eventstore,
             aggregate_ids: vec![],
+            evm_ingestion: vec![],
+            evm_writers: vec![],
         })
     }
 
