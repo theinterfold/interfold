@@ -74,6 +74,14 @@ impl TryFrom<&ChainConfig> for EvmEventConfigChain {
     }
 }
 
+impl TryFrom<ChainConfig> for EvmEventConfigChain {
+    type Error = anyhow::Error;
+    fn try_from(value: ChainConfig) -> std::result::Result<Self, Self::Error> {
+        let r = &value;
+        r.try_into()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -130,13 +138,5 @@ mod tests {
         let config = EvmEventConfigChain::try_from(&chain("ws://127.0.0.1:8545", None)).unwrap();
 
         assert_eq!(config.confirmations(), 0);
-    }
-}
-
-impl TryFrom<ChainConfig> for EvmEventConfigChain {
-    type Error = anyhow::Error;
-    fn try_from(value: ChainConfig) -> std::result::Result<Self, Self::Error> {
-        let r = &value;
-        r.try_into()
     }
 }
