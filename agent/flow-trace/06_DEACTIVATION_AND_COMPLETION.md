@@ -282,6 +282,21 @@ disables gossip translation, document notifications, or historical-sync/readines
 buffering window remains a fail-closed readiness error because those skipped events cannot yet be
 reconciled safely.
 
+Correctness-sensitive publishers use the acknowledged publication path. Its success boundary is:
+the sequencer has assigned the event, the target EventStore has appended and synchronously flushed
+it, and every current EventBus subscriber has completed fanout. EventBus inserts the event ID into
+its exact bounded deduplication set only after that fanout succeeds, so a failed delivery remains
+retriable. Remote libp2p ingress does not mark its own exact deduplication set until the same full
+pipeline acknowledgement returns. Live EVM ingress uses that path as well. At `SyncEnded`, the EVM
+gateway first releases the EventBus callback to avoid a circular wait, remains in a bounded
+`Draining` state, and reports Live only after all buffered batches (including events arriving during
+the drain) have crossed the acknowledged path. Fire-and-forget `EventPublisher` methods expose only
+bounded mailbox admission and are not a durability acknowledgement.
+
+`ComputeEffectGate` likewise records a semantic compute key only after its target recipient accepts
+the request. A full or closed target mailbox therefore leaves the key retriable, both during normal
+operation and while draining replay-buffered effects.
+
 EventStore replay uses a disk-backed external merge: per-aggregate pages are sorted into secure
 temporary runs, then compacted and merged with bounded file-descriptor fan-in. Replay waits for
 concurrent EventBus listener acceptance for each event. A listener that is unavailable or cannot

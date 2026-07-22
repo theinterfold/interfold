@@ -9,7 +9,9 @@ use crate::{EvmEvent, EvmLogRejected};
 use super::*;
 use e3_ciphernode_builder::EventSystem;
 
-use e3_events::{CorrelationId, EvmEventConfig, EvmEventConfigChain, TakeEvents, TestEvent};
+use e3_events::{
+    CorrelationId, EventPublisher, EvmEventConfig, EvmEventConfigChain, TakeEvents, TestEvent,
+};
 use tokio::sync::mpsc;
 use tracing_subscriber::{fmt, EnvFilter};
 

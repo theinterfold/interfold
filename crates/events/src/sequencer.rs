@@ -5,24 +5,27 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
-    events::{FlushEventStores, SequencerBarrier, StoreEventRequested, StoreEventResponse},
-    EventBus, InterfoldEvent, Sequenced, Unsequenced,
+    events::{FlushEventStores, PersistEvent, PublishEvent, SequencerBarrier},
+    EventBus, EventBusFanout, InterfoldEvent, Sequenced, Unsequenced,
 };
-use actix::{Actor, Addr, AsyncContext, Handler, Recipient, ResponseFuture};
+use actix::{
+    Actor, ActorContext, ActorFutureExt, Addr, AsyncContext, AtomicResponse, Handler, Recipient,
+    ResponseFuture, WrapFuture,
+};
 use anyhow::{Context, Result};
 use e3_utils::MAILBOX_LIMIT;
 
 /// Component to sequence the storage of events
 pub struct Sequencer {
     bus: Addr<EventBus<InterfoldEvent<Sequenced>>>,
-    eventstore: Recipient<StoreEventRequested>,
+    eventstore: Recipient<PersistEvent>,
     eventstore_flush: Option<Recipient<FlushEventStores>>,
 }
 
 impl Sequencer {
     pub fn new(
         bus: &Addr<EventBus<InterfoldEvent<Sequenced>>>,
-        eventstore: impl Into<Recipient<StoreEventRequested>>,
+        eventstore: impl Into<Recipient<PersistEvent>>,
     ) -> Self {
         Self {
             bus: bus.clone(),
@@ -33,7 +36,7 @@ impl Sequencer {
 
     pub fn new_with_flush(
         bus: &Addr<EventBus<InterfoldEvent<Sequenced>>>,
-        eventstore: impl Into<Recipient<StoreEventRequested>>,
+        eventstore: impl Into<Recipient<PersistEvent>>,
         eventstore_flush: impl Into<Recipient<FlushEventStores>>,
     ) -> Self {
         Self {
@@ -42,11 +45,23 @@ impl Sequencer {
             eventstore_flush: Some(eventstore_flush.into()),
         }
     }
+}
 
-    fn handle_store_event_response(&self, msg: StoreEventResponse) {
-        let event = msg.into_event();
-        self.bus.do_send(event);
+async fn persist_and_fanout(
+    eventstore: Recipient<PersistEvent>,
+    bus: Addr<EventBus<InterfoldEvent<Sequenced>>>,
+    event: InterfoldEvent<Unsequenced>,
+) -> Result<()> {
+    let stored = eventstore
+        .send(PersistEvent(event))
+        .await
+        .context("event-store router stopped before accepting publication")??;
+    if let Some(event) = stored {
+        bus.send(EventBusFanout(event))
+            .await
+            .context("EventBus stopped before accepting persisted event")??;
     }
+    Ok(())
 }
 
 impl Actor for Sequencer {
@@ -63,15 +78,23 @@ impl Handler<InterfoldEvent<Unsequenced>> for Sequencer {
         msg: InterfoldEvent<Unsequenced>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        self.eventstore
-            .do_send(StoreEventRequested::new(msg, ctx.address()));
+        let future = persist_and_fanout(self.eventstore.clone(), self.bus.clone(), msg);
+        ctx.wait(future.into_actor(self).map(|result, _, ctx| {
+            if let Err(error) = result {
+                ctx.stop();
+                panic!("required event pipeline failed: {error:#}");
+            }
+        }));
     }
 }
 
-impl Handler<StoreEventResponse> for Sequencer {
-    type Result = ();
-    fn handle(&mut self, msg: StoreEventResponse, _: &mut Self::Context) -> Self::Result {
-        self.handle_store_event_response(msg);
+impl Handler<PublishEvent> for Sequencer {
+    type Result = AtomicResponse<Self, Result<()>>;
+
+    fn handle(&mut self, msg: PublishEvent, _: &mut Self::Context) -> Self::Result {
+        AtomicResponse::new(Box::pin(
+            persist_and_fanout(self.eventstore.clone(), self.bus.clone(), msg.0).into_actor(self),
+        ))
     }
 }
 
@@ -100,8 +123,28 @@ impl Handler<SequencerBarrier> for Sequencer {
 
 #[cfg(test)]
 mod tests {
+    use actix::{Actor, Handler, ResponseFuture};
     use e3_ciphernode_builder::EventSystem;
-    use e3_events::{EventPublisher, GetEvents, InterfoldEvent, TakeEvents, TestEvent};
+    use e3_events::{
+        EventType, GetEvents, InterfoldEvent, Sequenced, Subscribe, TakeEvents, TestEvent,
+    };
+    use std::sync::Arc;
+    use tokio::sync::Notify;
+
+    struct BlockingSubscriber(Arc<Notify>);
+
+    impl Actor for BlockingSubscriber {
+        type Context = actix::Context<Self>;
+    }
+
+    impl Handler<InterfoldEvent<Sequenced>> for BlockingSubscriber {
+        type Result = ResponseFuture<()>;
+
+        fn handle(&mut self, _: InterfoldEvent<Sequenced>, _: &mut Self::Context) -> Self::Result {
+            let gate = Arc::clone(&self.0);
+            Box::pin(async move { gate.notified().await })
+        }
+    }
 
     #[actix::test]
     async fn it_adds_seqence_numbers_to_events() -> anyhow::Result<()> {
@@ -116,7 +159,7 @@ mod tests {
         ];
 
         for d in event_data.clone() {
-            bus.publish_without_context(d)?;
+            bus.publish_and_wait(d, None).await?;
         }
 
         let expected = event_data
@@ -146,7 +189,8 @@ mod tests {
         let start = std::time::Instant::now();
 
         for i in 0..count {
-            bus.publish_without_context(TestEvent::new(&format!("evt-{i}"), i as u64))?;
+            bus.publish_and_wait(TestEvent::new(&format!("evt-{i}"), i as u64), None)
+                .await?;
         }
 
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
@@ -166,6 +210,30 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn acknowledged_publish_waits_for_subscriber_completion() -> anyhow::Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("acknowledged-publish");
+        let gate = Arc::new(Notify::new());
+        let subscriber = BlockingSubscriber(Arc::clone(&gate)).start();
+
+        bus.event_bus()
+            .send(Subscribe::new(EventType::TestEvent, subscriber.recipient()))
+            .await?;
+
+        let mut publish = Box::pin(bus.publish_and_wait(TestEvent::new("blocked", 1), None));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_millis(20), &mut publish)
+                .await
+                .is_err(),
+            "publication acknowledged before its subscriber completed"
+        );
+
+        gate.notify_one();
+        publish.await?;
         Ok(())
     }
 }

@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
-    events::{FlushEventStores, StoreEventRequested, StoreEventResponse},
+    events::{FlushEventStores, PersistEvent},
     Event, EventContextAccessors, EventLog, EventStoreFilter, EventStoreQueryBy,
     EventStoreQueryResponse, InterfoldEvent, Seq, SequenceIndex, Sequenced, Ts, Unsequenced,
 };
@@ -247,30 +247,17 @@ impl<I: SequenceIndex, L: EventLog> Actor for EventStore<I, L> {
     type Context = actix::Context<Self>;
 }
 
-impl<I: SequenceIndex, L: EventLog> Handler<StoreEventRequested> for EventStore<I, L> {
-    type Result = ();
-    fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) -> Self::Result {
-        match self.store_event(msg.event) {
-            Ok(Some(sequenced)) => {
-                msg.sender.do_send(StoreEventResponse(sequenced));
-            }
-            Ok(None) => {} // duplicate — already warned inside store_event
-            Err(e) => {
-                // The event log is the source of truth for crash recovery. If an event cannot be
-                // durably persisted (most commonly a full or read-only disk), continuing would let
-                // in-memory actors act on an event the durable log does not contain, causing silent
-                // divergence after a restart. We therefore fail-stop loudly rather than proceed.
-                error!(
-                    "Unrecoverable event storage failure: {e}. The most likely cause is a full or \
-                     read-only data disk. Free disk space / fix permissions, then restart the node \
-                     to resume from the durable event log."
-                );
-                panic!(
-                    "Unrecoverable event storage failure: {e} (likely disk full or read-only). \
-                     Halting to avoid silent state divergence; operator recovery required."
-                );
-            }
-        }
+impl<I: SequenceIndex, L: EventLog> Handler<PersistEvent> for EventStore<I, L> {
+    type Result = Result<Option<InterfoldEvent<Sequenced>>>;
+
+    fn handle(&mut self, msg: PersistEvent, _: &mut Self::Context) -> Self::Result {
+        let stored = self.store_event(msg.0)?;
+        // Flush duplicates too: a previous attempt may have appended and
+        // indexed the event but failed its durability acknowledgement.
+        self.log
+            .flush()
+            .context("failed to durably flush accepted event")?;
+        Ok(stored)
     }
 }
 
@@ -599,6 +586,26 @@ mod tests {
         store.send(FlushEventStores).await??;
 
         assert_eq!(flushes.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn persistence_acknowledgement_crosses_the_flush_boundary() -> Result<()> {
+        let flushes = Arc::new(AtomicUsize::new(0));
+        let store = EventStore::new(
+            MockIndex::new(),
+            MockLog::with_flush_tracker(Arc::clone(&flushes)),
+        )?
+        .start();
+
+        let stored = store.send(PersistEvent(make_local_event(100))).await??;
+
+        assert!(stored.is_some());
+        assert_eq!(flushes.load(Ordering::SeqCst), 1);
+
+        let duplicate = store.send(PersistEvent(make_local_event(100))).await??;
+        assert!(duplicate.is_none());
+        assert_eq!(flushes.load(Ordering::SeqCst), 2);
         Ok(())
     }
 

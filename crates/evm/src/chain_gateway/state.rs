@@ -6,7 +6,7 @@
 
 //! Pure state machine coordinating event flow through the `EvmChainGateway`.
 //!
-//! `Init -> ForwardToSyncActor -> BufferUntilLive -> Live`
+//! `Init -> ForwardToSyncActor -> BufferUntilLive -> Draining -> Live`
 //!
 //! The machine is generic over the sync-actor sender type `S` so it stays free
 //! of any actix runtime types; the owning actor performs the actual sends.
@@ -45,6 +45,9 @@ pub(crate) enum SyncStatus<S> {
     /// Once the chain has completed historical sync then we buffer all "live"
     /// events until sync is complete.
     BufferUntilLive(Vec<InterfoldEvent<Unsequenced>>),
+    /// Buffered events are being durably published. New live events remain
+    /// buffered until every preceding batch has crossed the publication ack.
+    Draining(Vec<InterfoldEvent<Unsequenced>>),
     /// Forward all events directly to the bus.
     Live,
     /// A buffer or transition invariant failed. This state is terminal.
@@ -70,6 +73,7 @@ impl<S: std::fmt::Debug> SyncStatus<S> {
             Self::Init { buffer, .. } => ("Init", buffer.len()),
             Self::ForwardToSyncActor(data) => ("ForwardToSyncActor", data.buffer.len()),
             Self::BufferUntilLive(buffer) => ("BufferUntilLive", buffer.len()),
+            Self::Draining(buffer) => ("Draining", buffer.len()),
             Self::Live => bail!("Cannot buffer an EVM event after the gateway is Live"),
             Self::Failed { reason } => bail!("EVM chain gateway already failed: {reason}"),
         };
@@ -87,7 +91,9 @@ impl<S: std::fmt::Debug> SyncStatus<S> {
         }
 
         match self {
-            Self::Init { buffer, .. } | Self::BufferUntilLive(buffer) => buffer.push(event),
+            Self::Init { buffer, .. } | Self::BufferUntilLive(buffer) | Self::Draining(buffer) => {
+                buffer.push(event)
+            }
             Self::ForwardToSyncActor(data) => data.buffer.push(event),
             Self::Live | Self::Failed { .. } => {
                 bail!("EVM chain gateway changed state while buffering an event")
@@ -142,13 +148,28 @@ impl<S: std::fmt::Debug> SyncStatus<S> {
         Ok(state_data)
     }
 
-    pub(crate) fn live(&mut self) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
+    pub(crate) fn begin_draining(&mut self) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
         let Self::BufferUntilLive(buffer) = self else {
-            bail!("Cannot change state to Live when state is {:?}", self);
+            bail!("Cannot begin the Live drain when state is {:?}", self);
         };
         let buffer = std::mem::take(buffer);
-        *self = SyncStatus::Live;
+        *self = SyncStatus::Draining(Vec::new());
         Ok(buffer)
+    }
+
+    /// Finish one acknowledged drain batch. If events arrived while that batch
+    /// was publishing, return them as the next batch and remain in `Draining`.
+    pub(crate) fn finish_drain_batch(
+        &mut self,
+    ) -> Result<Option<Vec<InterfoldEvent<Unsequenced>>>> {
+        let Self::Draining(buffer) = self else {
+            bail!("Cannot finish the Live drain when state is {:?}", self);
+        };
+        if buffer.is_empty() {
+            *self = SyncStatus::Live;
+            return Ok(None);
+        }
+        Ok(Some(std::mem::take(buffer)))
     }
 }
 
@@ -177,8 +198,8 @@ mod tests {
         assert!(message.contains("limit of 2 events"), "{message}");
         assert!(matches!(status, SyncStatus::Failed { .. }));
 
-        let live_error = status.live().unwrap_err().to_string();
-        assert!(live_error.contains("Cannot change state to Live"));
+        let live_error = status.begin_draining().unwrap_err().to_string();
+        assert!(live_error.contains("Cannot begin the Live drain"));
         assert!(matches!(status, SyncStatus::Failed { .. }));
     }
 
@@ -196,15 +217,17 @@ mod tests {
         assert_eq!(data.sender, Some(FakeSender(7)));
         assert!(matches!(status, SyncStatus::BufferUntilLive(_)));
 
-        let buffered = status.live().unwrap();
+        let buffered = status.begin_draining().unwrap();
         assert!(buffered.is_empty());
+        assert!(matches!(status, SyncStatus::Draining(_)));
+        assert!(status.finish_drain_batch().unwrap().is_none());
         assert!(matches!(status, SyncStatus::Live));
     }
 
     #[test]
     fn test_invalid_transition_from_init_to_live_errors() {
         let mut status: SyncStatus<FakeSender> = SyncStatus::default();
-        assert!(status.live().is_err());
+        assert!(status.begin_draining().is_err());
         assert!(status.buffer_until_live().is_err());
     }
 
@@ -238,5 +261,23 @@ mod tests {
         status.forward_to_sync_actor(FakeSender(1)).unwrap();
         status.buffer_until_live().unwrap();
         assert_overflow_fails_closed(&mut status, "BufferUntilLive");
+    }
+
+    #[test]
+    fn events_arriving_during_drain_are_returned_as_the_next_batch() {
+        let mut status: SyncStatus<FakeSender> = SyncStatus::default();
+        status.forward_to_sync_actor(FakeSender(1)).unwrap();
+        status.buffer_until_live().unwrap();
+        status.add_buffered_event(event(1), 2).unwrap();
+
+        let first = status.begin_draining().unwrap();
+        assert_eq!(first.len(), 1);
+        status.add_buffered_event(event(2), 2).unwrap();
+
+        let second = status.finish_drain_batch().unwrap().unwrap();
+        assert_eq!(second.len(), 1);
+        assert!(matches!(status, SyncStatus::Draining(_)));
+        assert!(status.finish_drain_batch().unwrap().is_none());
+        assert!(matches!(status, SyncStatus::Live));
     }
 }

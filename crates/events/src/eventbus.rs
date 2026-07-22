@@ -159,14 +159,14 @@ impl<E: Event> EventBus<E> {
         source.do_send(Subscribe::new(EventType::All, filter.recipient()));
     }
 
-    fn track(&mut self, event: &E) {
-        if self.config.deduplicate {
-            self.ids.insert(event.event_id());
-        }
-    }
-
     fn is_duplicate(&self, event: &E) -> bool {
         self.config.deduplicate && self.ids.contains(&event.event_id())
+    }
+
+    fn track_id(&mut self, event_id: E::Id) {
+        if self.config.deduplicate {
+            self.ids.insert(event_id);
+        }
     }
 
     fn live_listeners_for(&mut self, event_type: &str) -> Vec<Recipient<E>> {
@@ -199,7 +199,6 @@ impl<E: Event> EventBus<E> {
         }
 
         tracing::info!("{} {}", colorize(">>>", Color::Yellow), event);
-        self.track(event);
         Some((event_type, listeners))
     }
 }
@@ -252,6 +251,7 @@ impl<E: Event> Handler<E> for EventBus<E> {
         let Some((event_type, listeners)) = self.prepare_fanout(&event) else {
             return;
         };
+        let event_id = event.event_id();
 
         // `Recipient::do_send` bypasses mailbox capacity. During startup replay that turns a
         // bounded EventBus into an unbounded multiplier: every replayed event is cloned into each
@@ -263,9 +263,10 @@ impl<E: Event> Handler<E> for EventBus<E> {
         ctx.wait(
             async move { fanout(event, event_type.clone(), listeners).await }
                 .into_actor(self)
-                .map(|result, _, _| {
-                    if let Err(error) = result {
-                        tracing::error!(%error, "EventBus fanout did not complete");
+                .map(move |result, actor, _| match result {
+                    Ok(()) => actor.track_id(event_id),
+                    Err(error) => {
+                        tracing::error!(%error, "EventBus fanout did not complete; event remains retriable");
                     }
                 }),
         );
@@ -278,6 +279,8 @@ impl<E: Event> Handler<EventBusFanout<E>> for EventBus<E> {
     fn handle(&mut self, msg: EventBusFanout<E>, _: &mut Context<Self>) -> Self::Result {
         let event = msg.0;
         let prepared = self.prepare_fanout(&event);
+        let should_track = prepared.is_some();
+        let event_id = event.event_id();
         AtomicResponse::new(Box::pin(
             async move {
                 if let Some((event_type, listeners)) = prepared {
@@ -286,7 +289,13 @@ impl<E: Event> Handler<EventBusFanout<E>> for EventBus<E> {
                     Ok(())
                 }
             }
-            .into_actor(self),
+            .into_actor(self)
+            .map(move |result, actor, _| {
+                if result.is_ok() && should_track {
+                    actor.track_id(event_id);
+                }
+                result
+            }),
         ))
     }
 }

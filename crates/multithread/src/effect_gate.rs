@@ -6,7 +6,7 @@
 
 //! Replay-safe gate for value-bearing compute effects.
 
-use actix::{Actor, Context, Handler, Recipient};
+use actix::{Actor, ActorFutureExt, AtomicResponse, Context, Handler, Recipient, WrapFuture};
 use e3_events::{
     ComputeRequestKind, E3Stage, E3id, Event, EventContextAccessors, EventSubscriber, EventType,
     InterfoldEvent, InterfoldEventData,
@@ -58,18 +58,31 @@ impl ComputeEffectGate {
         }
     }
 
-    /// Forward a compute effect to the target once, recording its key so a
-    /// later duplicate (stale-vs-re-driven across the enable boundary) is
-    /// suppressed. Returns false if the key was already forwarded.
-    fn forward(&mut self, event: InterfoldEvent) -> bool {
-        if let Some(key) = Self::request_key(&event) {
-            if !self.forwarded.insert(key) {
-                debug!("dropping duplicate compute effect (already forwarded)");
-                return false;
-            }
+    /// Forward a compute effect and record its key only after the target
+    /// mailbox has accepted it. The atomic response serializes duplicate
+    /// decisions while acceptance is pending.
+    fn forward(&mut self, event: InterfoldEvent) -> AtomicResponse<Self, ()> {
+        let key = Self::request_key(&event);
+        if key.as_ref().is_some_and(|key| self.forwarded.contains(key)) {
+            debug!("dropping duplicate compute effect (already forwarded)");
+            return AtomicResponse::new(Box::pin(actix::fut::ready(())));
         }
-        self.target.do_send(event);
-        true
+        let target = self.target.clone();
+        AtomicResponse::new(Box::pin(
+            async move { target.send(event).await }
+                .into_actor(self)
+                .map(move |result, actor, _| match result {
+                    Ok(()) => {
+                        if let Some(key) = key {
+                            actor.forwarded.insert(key);
+                        }
+                    }
+                    Err(error) => tracing::error!(
+                        %error,
+                        "Compute target rejected effect; semantic key remains retriable"
+                    ),
+                }),
+        ))
     }
 
     pub(crate) fn attach(bus: &BusHandle, target: Recipient<InterfoldEvent>) {
@@ -104,15 +117,45 @@ impl ComputeEffectGate {
         }
     }
 
-    fn enable(&mut self) {
+    fn enable(&mut self) -> AtomicResponse<Self, ()> {
         self.enabled = true;
         let mut pending: Vec<_> = self.pending.drain().map(|(_, event)| event).collect();
         pending.sort_by_key(EventContextAccessors::ts);
         let count = pending.len();
-        for event in pending {
-            self.forward(event);
-        }
-        info!(count, "released replay-safe compute effects");
+        let target = self.target.clone();
+        let already_forwarded = self.forwarded.clone();
+        AtomicResponse::new(Box::pin(
+            async move {
+                let mut accepted = Vec::new();
+                for event in pending {
+                    let key = Self::request_key(&event);
+                    if key
+                        .as_ref()
+                        .is_some_and(|key| already_forwarded.contains(key))
+                    {
+                        continue;
+                    }
+                    match target.send(event).await {
+                        Ok(()) => accepted.extend(key),
+                        Err(error) => {
+                            return (accepted, Some(error));
+                        }
+                    }
+                }
+                (accepted, None)
+            }
+            .into_actor(self)
+            .map(move |(accepted, error), actor, _| {
+                actor.forwarded.extend(accepted);
+                if let Some(error) = error {
+                    tracing::error!(
+                        %error,
+                        "Compute target rejected replay effect; remaining keys stay retriable"
+                    );
+                }
+                info!(count, "released replay-safe compute effects");
+            }),
+        ))
     }
 
     fn cancel(&mut self, e3_id: &E3id) {
@@ -132,23 +175,34 @@ impl Actor for ComputeEffectGate {
 }
 
 impl Handler<InterfoldEvent> for ComputeEffectGate {
-    type Result = ();
+    type Result = AtomicResponse<Self, ()>;
 
-    fn handle(&mut self, event: InterfoldEvent, _: &mut Self::Context) {
+    fn handle(&mut self, event: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
         match event.get_data() {
-            InterfoldEventData::ComputeRequest(_) if self.enabled => {
-                self.forward(event);
+            InterfoldEventData::ComputeRequest(_) if self.enabled => self.forward(event),
+            InterfoldEventData::ComputeRequest(_) => {
+                self.queue(event);
+                AtomicResponse::new(Box::pin(actix::fut::ready(())))
             }
-            InterfoldEventData::ComputeRequest(_) => self.queue(event),
             InterfoldEventData::EffectsEnabled(_) => self.enable(),
-            InterfoldEventData::E3RequestComplete(complete) => self.cancel(&complete.e3_id),
-            InterfoldEventData::E3Failed(failed) => self.cancel(&failed.e3_id),
+            InterfoldEventData::E3RequestComplete(complete) => {
+                let e3_id = complete.e3_id.clone();
+                self.cancel(&e3_id);
+                AtomicResponse::new(Box::pin(actix::fut::ready(())))
+            }
+            InterfoldEventData::E3Failed(failed) => {
+                let e3_id = failed.e3_id.clone();
+                self.cancel(&e3_id);
+                AtomicResponse::new(Box::pin(actix::fut::ready(())))
+            }
             InterfoldEventData::E3StageChanged(stage)
                 if matches!(stage.new_stage, E3Stage::Complete | E3Stage::Failed) =>
             {
-                self.cancel(&stage.e3_id)
+                let e3_id = stage.e3_id.clone();
+                self.cancel(&e3_id);
+                AtomicResponse::new(Box::pin(actix::fut::ready(())))
             }
-            _ => {}
+            _ => AtomicResponse::new(Box::pin(actix::fut::ready(()))),
         }
     }
 }

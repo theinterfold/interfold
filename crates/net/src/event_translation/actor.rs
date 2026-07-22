@@ -6,10 +6,9 @@
 use crate::domain::EventTranslationService;
 use crate::events::{GossipData, NetCommand, NetEvent};
 use actix::prelude::*;
-use anyhow::Result;
 use e3_events::{
-    prelude::*, trap, BusHandle, CorrelationId, EType, EventContextAccessors, EventSource,
-    EventType, InterfoldEvent,
+    prelude::*, BusHandle, CorrelationId, EType, EventContextAccessors, EventSource, EventType,
+    InterfoldEvent,
 };
 use e3_utils::MAILBOX_LIMIT;
 use std::sync::Arc;
@@ -87,23 +86,31 @@ impl NetEventTranslator {
     pub fn is_forwardable_event(event: &InterfoldEvent) -> bool {
         EventTranslationService::is_forwardable_event(event)
     }
-
-    fn handle_remote_event(&mut self, msg: LibP2pEvent) -> Result<()> {
-        let (id, event) = self.service.prepare_inbound(msg.0)?;
-        let (data, ec) = event.into_components();
-        self.bus
-            .publish_from_remote(data, ec.ts(), None, EventSource::Net)?;
-        self.service.mark_accepted(id);
-        Ok(())
-    }
 }
 
 impl Handler<LibP2pEvent> for NetEventTranslator {
-    type Result = ();
+    type Result = AtomicResponse<Self, ()>;
     fn handle(&mut self, msg: LibP2pEvent, _: &mut Self::Context) -> Self::Result {
-        trap(EType::Net, &self.bus.clone(), || {
-            self.handle_remote_event(msg)
-        })
+        let (id, event) = match self.service.prepare_inbound(msg.0) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                self.bus.err(EType::Net, error);
+                return AtomicResponse::new(Box::pin(actix::fut::ready(())));
+            }
+        };
+        let (data, ec) = event.into_components();
+        let bus = self.bus.clone();
+        AtomicResponse::new(Box::pin(
+            async move {
+                bus.publish_from_remote_and_wait(data, ec.ts(), None, None, EventSource::Net)
+                    .await
+            }
+            .into_actor(self)
+            .map(move |result, actor, _| match result {
+                Ok(()) => actor.service.mark_accepted(id),
+                Err(error) => actor.bus.err(EType::Net, error),
+            }),
+        ))
     }
 }
 

@@ -9,7 +9,7 @@ use crate::E3ContextSnapshot;
 use actix::{Actor, Handler};
 use async_trait::async_trait;
 use e3_data::{InMemStore, RepositoriesFactory};
-use e3_events::{hlc_factory::HlcFactory, BusHandle, EventBus, Sequencer, StoreEventRequested};
+use e3_events::{hlc_factory::HlcFactory, BusHandle, EventBus, PersistEvent, Sequencer};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc,
@@ -21,10 +21,12 @@ impl Actor for StoreSink {
     type Context = Context<Self>;
 }
 
-impl Handler<StoreEventRequested> for StoreSink {
-    type Result = ();
+impl Handler<PersistEvent> for StoreSink {
+    type Result = anyhow::Result<Option<InterfoldEvent>>;
 
-    fn handle(&mut self, _: StoreEventRequested, _: &mut Self::Context) {}
+    fn handle(&mut self, _: PersistEvent, _: &mut Self::Context) -> Self::Result {
+        Ok(None)
+    }
 }
 
 struct RecoveryExtension {

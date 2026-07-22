@@ -13,8 +13,7 @@ use e3_crypto::Cipher;
 use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
 use e3_events::{
     hlc_factory::HlcFactory, BusHandle, E3Stage, E3id, EventBus, EventBusConfig, FailureReason,
-    HistoryCollector, InterfoldEvent, InterfoldEventData, Sequencer, StoreEventRequested,
-    StoreEventResponse, TakeEvents,
+    HistoryCollector, InterfoldEvent, InterfoldEventData, PersistEvent, Sequencer, TakeEvents,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use std::sync::Arc;
@@ -28,14 +27,13 @@ impl Actor for TestEventStore {
     type Context = actix::Context<Self>;
 }
 
-impl Handler<StoreEventRequested> for TestEventStore {
-    type Result = ();
+impl Handler<PersistEvent> for TestEventStore {
+    type Result = anyhow::Result<Option<InterfoldEvent>>;
 
-    fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) -> Self::Result {
-        let StoreEventRequested { event, sender } = msg;
+    fn handle(&mut self, msg: PersistEvent, _: &mut Self::Context) -> Self::Result {
         let seq = self.next_seq;
         self.next_seq += 1;
-        sender.do_send(StoreEventResponse(event.into_sequenced(seq)));
+        Ok(Some(msg.0.into_sequenced(seq)))
     }
 }
 
