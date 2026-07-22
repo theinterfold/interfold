@@ -54,6 +54,7 @@ pub struct Complete {
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+#[allow(clippy::large_enum_variant)]
 pub enum ThresholdPlaintextAggregatorState {
     Collecting(Collecting),
     VerifyingC6(VerifyingC6),
