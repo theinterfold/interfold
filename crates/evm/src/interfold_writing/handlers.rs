@@ -34,7 +34,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
                 InterfoldEffect::PublishPlaintext(event) => {
                     self.is_active_aggregator_for(&event.e3_id)
                 }
-                InterfoldEffect::ProcessFailure(_) => true,
+                InterfoldEffect::ProcessFailure(_)
+                | InterfoldEffect::RefreshFailoverLease(_)
+                | InterfoldEffect::MarkFailure(_) => true,
             }
     }
 }
@@ -58,6 +60,33 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                     && self.provider.chain_id() == data.e3_id.chain_id() =>
             {
                 self.admit_effect(InterfoldEffect::ProcessFailure(data), ctx)
+            }
+            InterfoldEventData::CommitteeFinalized(data)
+                if self.provider.chain_id() == data.e3_id.chain_id() =>
+            {
+                self.admit_effect(
+                    InterfoldEffect::RefreshFailoverLease(FailoverLeaseRefresh {
+                        e3_id: data.e3_id,
+                        phase: AggregatorPhase::AwaitingPublicKey,
+                    }),
+                    ctx,
+                )
+            }
+            InterfoldEventData::CiphertextOutputPublished(data)
+                if self.provider.chain_id() == data.e3_id.chain_id() =>
+            {
+                self.admit_effect(
+                    InterfoldEffect::RefreshFailoverLease(FailoverLeaseRefresh {
+                        e3_id: data.e3_id,
+                        phase: AggregatorPhase::AwaitingPlaintext,
+                    }),
+                    ctx,
+                )
+            }
+            InterfoldEventData::AggregatorFailoverExhausted(data)
+                if self.provider.chain_id() == data.e3_id.chain_id() =>
+            {
+                self.admit_effect(InterfoldEffect::MarkFailure(data), ctx)
             }
             InterfoldEventData::E3RequestComplete(data) => self.notify_sync(ctx, data),
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
@@ -223,6 +252,44 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<ExecuteInterfoldEff
                         )
                         .await?;
                         info!(tx=%receipt.transaction_hash, e3_id=%event.e3_id, "Called processE3Failure");
+                    }
+                    InterfoldEffect::RefreshFailoverLease(event) => {
+                        if let Some(lease) = read_failover_lease(
+                            provider.clone(),
+                            contract_address,
+                            event.e3_id,
+                            event.phase,
+                        )
+                        .await?
+                        {
+                            bus.publish_without_context(lease)?;
+                        }
+                    }
+                    InterfoldEffect::MarkFailure(event) => {
+                        match should_mark_e3_failed(
+                            provider.clone(),
+                            contract_address,
+                            event.e3_id.clone(),
+                            event.phase,
+                        )
+                        .await?
+                        {
+                            MarkFailurePreflight::Terminal => {
+                                outbox.mark_terminal(&key).await?;
+                                return Ok(());
+                            }
+                            MarkFailurePreflight::Retry => return Ok(()),
+                            MarkFailurePreflight::Submit => {}
+                        }
+                        let receipt = mark_e3_failed(
+                            provider.clone(),
+                            contract_address,
+                            event.e3_id.clone(),
+                            &outbox,
+                            &key,
+                        )
+                        .await?;
+                        info!(tx=%receipt.transaction_hash, e3_id=%event.e3_id, "Called markE3Failed after aggregator exhaustion");
                     }
                 }
                 outbox.mark_terminal(&key).await?;

@@ -21,9 +21,9 @@ use alloy::{
 use anyhow::Result;
 use e3_data::{Repositories, Repository};
 use e3_events::{
-    prelude::*, AggregatorChanged, BusHandle, E3RequestComplete, E3Stage, E3StageChanged, E3id,
-    EType, EffectsEnabled, EventType, InterfoldEvent, InterfoldEventData, PlaintextAggregated,
-    Proof, Shutdown,
+    prelude::*, AggregatorChanged, AggregatorFailoverExhausted, AggregatorPhase, BusHandle,
+    E3RequestComplete, E3Stage, E3StageChanged, E3id, EType, EffectsEnabled, EventType,
+    InterfoldEvent, InterfoldEventData, PlaintextAggregated, Proof, Shutdown,
 };
 use e3_utils::{require_successful_receipt, NotifySync, MAILBOX_LIMIT};
 use serde::{Deserialize, Serialize};
@@ -53,6 +53,14 @@ pub struct InterfoldSolWriter<P> {
 enum InterfoldEffect {
     PublishPlaintext(PlaintextAggregated),
     ProcessFailure(E3StageChanged),
+    RefreshFailoverLease(FailoverLeaseRefresh),
+    MarkFailure(AggregatorFailoverExhausted),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct FailoverLeaseRefresh {
+    e3_id: E3id,
+    phase: AggregatorPhase,
 }
 
 impl InterfoldEffect {
@@ -65,6 +73,12 @@ impl InterfoldEffect {
             ),
             Self::ProcessFailure(event) => {
                 crate::semantic_effect_key("process_failure", &event.e3_id, &())
+            }
+            Self::RefreshFailoverLease(event) => {
+                crate::semantic_effect_key("refresh_failover_lease", &event.e3_id, &event.phase)
+            }
+            Self::MarkFailure(event) => {
+                crate::semantic_effect_key("mark_failure", &event.e3_id, &event.phase)
             }
         }
     }
@@ -118,6 +132,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> InterfoldSolWriter<P> {
                 EventType::AggregatorChanged,
                 EventType::PlaintextAggregated,
                 EventType::E3StageChanged,
+                EventType::CommitteeFinalized,
+                EventType::CiphertextOutputPublished,
+                EventType::AggregatorFailoverExhausted,
                 EventType::E3RequestComplete,
                 EventType::Shutdown,
             ],

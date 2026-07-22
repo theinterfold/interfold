@@ -184,8 +184,8 @@ publishPlaintextOutput() succeeds
     │   → Removes e3_id from node_state.e3_committees map
     │   → Removes the durable finalized-committee and pending-expulsion records
     │
-    ├─ CiphernodeSelector: removes e3_id from e3_cache, committee, expelled set,
-    │  and persisted aggregator designation for the E3
+    ├─ CiphernodeSelector: removes e3_id from e3_cache, committee, expelled/unresponsive sets,
+    │  persisted aggregator designation, and the separate aggregator failover lease
     │
     ├─ Per-E3 actors receive Die / shutdown on completion:
     │   ├─ ThresholdKeyshare: state = Completed, actor stops
@@ -245,6 +245,8 @@ On restart:
 │      → ThresholdPlaintextAggregatorExtension records this role in the E3 context
 │        so a plaintext buffer created later by CiphertextOutputPublished starts
 │        with the correct active-aggregator flag
+│      → The separate failover repository restores phase/deadline/active-party state;
+│        any source chain event lacking a derived lease remains queued in the Interfold outbox
 │   3. Replay EventStore events since last snapshot (effects still disabled)
 │      → Read each aggregate in 1,024-event pages, sort bounded temporary runs,
 │        and perform a bounded-fan-in global merge by HLC timestamp

@@ -4,6 +4,112 @@
 
 use super::*;
 
+pub(in crate::actors::interfold_sol_writer) async fn read_failover_lease<
+    P: Provider + WalletProvider + Clone,
+>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id: E3id,
+    phase: AggregatorPhase,
+) -> Result<Option<e3_events::AggregatorLeaseUpdated>> {
+    let e3_id_u256: U256 = e3_id.clone().try_into()?;
+    let contract = IInterfold::new(contract_address, provider.provider());
+    let stage = contract.getE3Stage(e3_id_u256).call().await?;
+    let expected_stage = match phase {
+        AggregatorPhase::AwaitingPublicKey => 2,
+        AggregatorPhase::AwaitingPlaintext => 4,
+    };
+    if stage != expected_stage {
+        return Ok(None);
+    }
+
+    let deadlines = contract.getDeadlines(e3_id_u256).call().await?;
+    let deadline = match phase {
+        AggregatorPhase::AwaitingPublicKey => deadlines.dkgDeadline,
+        AggregatorPhase::AwaitingPlaintext => deadlines.decryptionDeadline,
+    };
+    let stage_deadline: u64 = deadline
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("failover deadline does not fit u64 for E3 {e3_id}"))?;
+    anyhow::ensure!(
+        stage_deadline > 0,
+        "failover deadline is zero for E3 {e3_id}"
+    );
+    Ok(Some(e3_events::AggregatorLeaseUpdated {
+        e3_id,
+        phase,
+        stage_deadline,
+    }))
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(in crate::actors::interfold_sol_writer) enum MarkFailurePreflight {
+    Submit,
+    Retry,
+    Terminal,
+}
+
+pub(in crate::actors::interfold_sol_writer) async fn should_mark_e3_failed<
+    P: Provider + WalletProvider + Clone,
+>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id: E3id,
+    phase: AggregatorPhase,
+) -> Result<MarkFailurePreflight> {
+    let e3_id: U256 = e3_id.try_into()?;
+    let contract = IInterfold::new(contract_address, provider.provider());
+    let stage = contract.getE3Stage(e3_id).call().await?;
+    if matches!(stage, 5 | 6) {
+        return Ok(MarkFailurePreflight::Terminal);
+    }
+    let expected_stage = match phase {
+        AggregatorPhase::AwaitingPublicKey => 2,
+        AggregatorPhase::AwaitingPlaintext => 4,
+    };
+    if stage != expected_stage {
+        return Ok(MarkFailurePreflight::Terminal);
+    }
+
+    match contract.markE3Failed(e3_id).call().await {
+        Ok(_) => Ok(MarkFailurePreflight::Submit),
+        Err(error) => {
+            let error = anyhow::Error::from(error);
+            let decoded = decode_error_from_str(&format!("{error:?}"));
+            if decoded.as_deref().is_some_and(|message| {
+                message.contains("FailureConditionNotMet")
+                    || message.contains("MarkE3FailedInGracePeriod")
+            }) {
+                return Ok(MarkFailurePreflight::Retry);
+            }
+            if decoded.as_deref().is_some_and(|message| {
+                message.contains("InvalidStage") || message.contains("E3AlreadyFailed")
+            }) {
+                return Ok(MarkFailurePreflight::Terminal);
+            }
+            Err(error)
+        }
+    }
+}
+
+pub(in crate::actors::interfold_sol_writer) async fn mark_e3_failed<
+    P: Provider + WalletProvider + Clone,
+>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id: E3id,
+    outbox: &EvmEffectOutbox<InterfoldEffect>,
+    outbox_key: &str,
+) -> Result<TransactionReceipt> {
+    let e3_id: U256 = e3_id.try_into()?;
+    let contract = IInterfold::new(contract_address, provider.provider());
+    let request = contract.markE3Failed(e3_id).into_transaction_request();
+    let pending = crate::send_prepared_transaction(&provider, request, outbox, outbox_key).await?;
+    let receipt = pending.get_receipt().await?;
+    require_successful_receipt("mark E3 failed", &receipt)?;
+    Ok(receipt)
+}
+
 pub(in crate::actors::interfold_sol_writer) async fn publish_plaintext_output<
     P: Provider + WalletProvider + Clone,
 >(

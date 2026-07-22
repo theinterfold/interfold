@@ -6,8 +6,16 @@ After committee finalization, the selected ciphernodes perform Distributed Key G
 using threshold BFV (TrBFV) cryptography. This produces a collective public key without any single
 party knowing the full secret key. Later, the committee produces decryption shares; all committee
 members buffer them, and the active aggregator combines them. The runtime first normalizes the
-finalized committee into ascending ticket-score order, and the active aggregator is then the lowest
-non-expelled `party_id` in that normalized order.
+finalized committee into ascending address order, and the active aggregator is then the lowest
+non-expelled/non-unresponsive `party_id` in that normalized order.
+
+The selector drives both aggregation phases from persisted leases derived from authoritative
+Interfold deadlines. Each eligible party receives an equal slice of the remaining DKG or decryption
+window. When one slice expires without confirmed publication, every node skips the same party and
+the next standby's existing verified buffer activates through `AggregatorChanged`. `CommitteePublished`
+settles the DKG lease; `CiphertextOutputPublished` arms a fresh decryption lease and resets local
+liveness presumptions; `PlaintextOutputPublished` settles it. After the final slice and exact chain
+deadline, the durable EVM outbox submits `markE3Failed`.
 
 CPU-bound ZK and TrBFV requests enter a fair, semaphore-bounded Rayon pool. Admission has a
 configurable timeout, and every admitted closure has a configurable execution budget
@@ -574,7 +582,7 @@ ThresholdKeyshare receives AllThresholdSharesCollected
   │   └─ Compares committee, keyshare, and expulsion identities as parsed EVM addresses;
   │      EIP-55 casing differences cannot bypass an expulsion or its buffered-share purge
   │   └─ Buffers until BOTH CommitteeFinalized and AggregatorChanged(is_aggregator=true)
-  │   └─ On expulsion-driven handoff, the next active aggregator flushes its existing buffer
+  │   └─ On expulsion- or lease-driven handoff, the next active aggregator flushes its existing buffer
 │
   ├─ Only the active aggregator's buffer flushes into PublicKeyAggregator
   │

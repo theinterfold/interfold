@@ -141,6 +141,7 @@ fn start_sortition(bus: &BusHandle) -> Addr<Sortition> {
     let selector = CiphernodeSelector::new(
         bus,
         test_persistable(CiphernodeSelectorState::default()),
+        test_persistable(Default::default()),
         "node-1",
     )
     .start();

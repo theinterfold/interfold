@@ -38,9 +38,10 @@ use e3_request::E3Router;
 use e3_request::{E3LifecycleCoordinator, E3LifecycleRepositoryFactory};
 use e3_slashing::{AccusationManagerExtension, CommitmentConsistencyCheckerExtension};
 use e3_sortition::{
-    CiphernodeSelector, CiphernodeSelectorFactory, EmitPersistedAggregatorState,
-    FinalizedCommitteeRetention, FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory,
-    Sortition, SortitionBackend, SortitionRepositoryFactory,
+    AggregatorFailoverRepositoryFactory, CiphernodeSelector, CiphernodeSelectorFactory,
+    EmitPersistedAggregatorState, FinalizedCommitteeRetention,
+    FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory, Sortition, SortitionBackend,
+    SortitionRepositoryFactory,
 };
 use e3_sync::{preflight_schema_version, sync};
 use e3_utils::SharedRng;
@@ -712,8 +713,13 @@ impl CiphernodeBuilder {
         repositories: &e3_data::Repositories,
         addr: &str,
     ) -> Result<(Addr<Sortition>, Addr<CiphernodeSelector>)> {
-        let ciphernode_selector =
-            CiphernodeSelector::attach(bus, repositories.ciphernode_selector(), addr).await?;
+        let ciphernode_selector = CiphernodeSelector::attach(
+            bus,
+            repositories.ciphernode_selector(),
+            repositories.aggregator_failover(),
+            addr,
+        )
+        .await?;
         let committees_repo = repositories.finalized_committees();
         let mut committees = committees_repo.read().await?.unwrap_or_default();
         let lifecycle = repositories

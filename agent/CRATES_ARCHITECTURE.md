@@ -530,6 +530,37 @@ C3b multiplicity would be `Z * L_THRESHOLD` per recipient. Supporting multiple E
 sets requires coordinated producer, validator, NodeFold, wire, and circuit work; the current
 validator must not silently infer that extension.
 
+## Aggregator failover
+
+```mermaid
+flowchart LR
+    Progress[confirmed CommitteeFinalized or CiphertextOutputPublished] --> Read[read matching Interfold stage deadline]
+    Read --> Intent[durable AggregatorLeaseUpdated]
+    Intent --> Lease[persist phase, stage deadline, active party, attempt deadline]
+    Lease --> Wait{attempt lease expired?}
+    Wait -->|no| Lease
+    Wait -->|yes, standby remains| Promote[mark active party unresponsive and emit AggregatorChanged]
+    Promote --> Lease
+    Wait -->|yes, all exhausted| Exhaust[durable AggregatorFailoverExhausted]
+    Exhaust --> Outbox[Interfold EVM outbox]
+    Outbox --> Failed[permissionless markE3Failed after exact chain deadline]
+    Committee[confirmed CommitteePublished] --> Settle[settle DKG lease]
+    Plaintext[confirmed PlaintextOutputPublished] --> Settle2[settle decryption lease]
+```
+
+`CiphernodeSelector` persists leases separately from its legacy selector snapshot so this additive
+state does not change an existing bincode layout. The authoritative DKG or decryption deadline comes
+from the Interfold contract after the corresponding confirmed chain event. Eligible committee
+members receive equal slices of the remaining stage window in canonical party order; every node
+therefore makes the same promotion decision without trusting peer progress claims. A promotion
+populates the persisted `unresponsive` set and changes the local aggregator role, which releases the
+already-buffered verified artifacts on the standby. A later chain phase resets local liveness
+presumptions. Confirmed committee/plaintext publication settles the relevant lease, so overlapping
+old and new aggregators are contained by the contract's single-shot publication checks. Once every
+candidate is exhausted, the durable Interfold outbox preflights and submits `markE3Failed`; a node
+inside the contract grace period retries until its caller role or the permissionless window permits
+the transition.
+
 ## Failure, accusation, slashing, expulsion, and timeout
 
 ```mermaid
@@ -667,6 +698,7 @@ flowchart LR
 | Network document history                 | Event log plus network repository                                                    | Historical net sync                                                                                                         |
 | E3 actor contexts                        | `E3Router` in memory                                                                 | Durable replay and canonical chain observations                                                                             |
 | Request-local DKG/aggregation state      | Per-E3 actors plus repositories                                                      | Snapshots, replay, and `EffectsEnabled` redrive                                                                             |
+| Aggregator failover leases               | Separate ciphernode-selector repository                                               | Confirmed chain progress events plus persisted phase/deadline/active-party/failure-requested state                          |
 | C0/share proof-verification context      | Finalized-committee and ciphernode-selector repositories plus global verifier memory | Canonical slots and E3 preset/threshold metadata load before ZK actor startup, then lifecycle events maintain or clear them |
 | HLC, EventBus dedup, and admission state | Event pipeline actors in memory                                                      | Maximum snapshot/replay HLC; a fresh bounded dedup window is populated by replay and live events                            |
 | Network peer/buffer/interest state       | libp2p and network actors in memory                                                  | Fresh peer dialing; document interest returns only when selection observations are replayed or redriven                     |
@@ -842,7 +874,7 @@ persist recovery intent.
 | `e3-net`                           | Translate bounded libp2p traffic and serve gossip, DHT, and historical sync.                         | Swarm, Kademlia records, peer/transport status, channels, startup buffer, and document interests.                                              | Signed gossip is type-allowlisted; decodes, startup backlog, and sync fetches are bounded; metadata must match DHT payload. Errors fail readiness or stop the affected ingress loop.                                                                                                                                                                                   | `NetInterface` and pure translation services; must not own E3 transitions or infer committee authority from PeerId alone. |
 | `e3-evm`                           | Read chain history under the configured confirmation policy and submit typed contract transactions.  | Per-chain gateways, provider handles, chain buffers, nonce mutexes, and durable registry/Interfold/slashing effect outboxes.                  | Malformed logs and reverted receipts fail. Every irreversible effect is synchronously admitted, then locally signed with raw bytes/nonce/hash persisted before RPC dispatch, and reconciled/retried after restart. A well-formed unsupported request is skipped for version tolerance. Full chain-reorg rollback remains intentionally outside the writer boundary.             | Provider/contract helpers; must not own off-chain proof policy.                                                           |
 | `e3-request`                       | Route E3-scoped events and enforce lifecycle progress.                                               | `E3Router`, lifecycle state, typed `(E3, recipient)` buffers, and request actor contexts; depends on event and protocol actor APIs.            | Legal progress is monotonic; buffered history precedes the recipient-creating event; terminal teardown purges absent-role buffers. Active buffer size and child `do_send` remain residual risks.                                                                                                                                                                       | Domain lifecycle/routing functions; must not implement storage, network framing, or contract decoding.                    |
-| `e3-sortition`                     | Track registry/tickets and derive canonical selection/committee observations.                        | Node registry, ticket state, selector backend, and chain-derived committee state.                                                              | On-chain ordering is authoritative; terminal cleanup releases local participation state and removes durable finalized-committee and pending-expulsion records.                                                                                                                                                                                                         | Sortition backend; must not construct cryptographic proofs.                                                               |
+| `e3-sortition`                     | Track registry/tickets and derive canonical selection/committee observations.                        | Node registry, ticket state, selector backend, chain-derived committee state, and persisted aggregator leases.                                 | On-chain ordering/deadlines are authoritative; deterministic lease expiry populates the local unresponsive set and promotes canonical standbys. Exhaustion is durably bridged to canonical failure; terminal cleanup releases all request-local records.                                                                                                                   | Sortition backend; must not construct cryptographic proofs or submit EVM transactions.                                    |
 | `e3-keyshare`                      | Coordinate request-local DKG, shares, and decryption work.                                           | Threshold keyshare actor state and repositories; depends on FHE/ZK services and the event bus.                                                 | Party IDs index the canonical committee; each recipient gets C2a/C2b singletons and C3a/C3b per threshold Shamir row; resumable determined outputs redrive only after `EffectsEnabled`.                                                                                                                                                                                | Cryptographic backend/task pool; must not own transport frames or ABI decoding.                                           |
 | `e3-zk-prover`                     | Build and verify typed proof jobs/statements.                                                        | Backend job state, circuit registry, verification outcomes, and durable-seeded in-memory committee/preset caches.                              | Statement shapes, canonical committee dimensions, signer/slot binding, and proof multiplicity are checked before acceptance; DKG presets normalize to their threshold counterpart when deriving C3 row counts. Finalized slots plus C0 preset/threshold context load before replay so snapshot cursors cannot erase signer authority or artifact selection on restart. | ZK backend and registry; must not add committee policy absent from the proof statement.                                   |
 | `e3-aggregator`                    | Aggregate canonical verified public-key/plaintext shares.                                            | Explicit per-E3 aggregation state machines and repositories.                                                                                   | One signer-bound share/proof occupies each canonical party slot and output multiplicity is exact; invalid or duplicate contributions are rejected.                                                                                                                                                                                                                     | Pure aggregation states and proof backend; must not own EVM transaction policy.                                           |

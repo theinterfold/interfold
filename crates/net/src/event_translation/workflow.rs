@@ -112,7 +112,8 @@ impl EventTranslationService {
 mod tests {
     use super::*;
     use e3_events::{
-        E3id, EventConstructorWithTimestamp, EventSource, PlaintextAggregated, TestEvent,
+        AggregatorLeaseUpdated, AggregatorPhase, E3id, EventConstructorWithTimestamp, EventSource,
+        PlaintextAggregated, TestEvent,
     };
     use e3_utils::ArcBytes;
 
@@ -141,6 +142,23 @@ mod tests {
             EventSource::Local,
         );
         unsequenced.into_sequenced(1)
+    }
+
+    #[test]
+    fn chain_derived_failover_leases_are_never_gossip_admissible() {
+        let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
+            AggregatorLeaseUpdated {
+                e3_id: E3id::new("1", 7),
+                phase: AggregatorPhase::AwaitingPublicKey,
+                stage_deadline: 1_000,
+            }
+            .into(),
+            None,
+            42,
+            None,
+            EventSource::Local,
+        );
+        assert!(!EventTranslationService::is_forwardable_event(&event));
     }
 
     #[test]
