@@ -87,24 +87,24 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PlaintextAggregated
 
         Box::pin({
             let e3_id = msg.e3_id.clone();
-            let decrypted_output = msg.decrypted_output.clone();
+            let decrypted_output = msg.decrypted_output;
+            let decryption_aggregator_proofs = msg.decryption_aggregator_proofs;
             let contract_address = self.contract_address;
             let provider = self.provider.clone();
             let bus = self.bus.clone();
             async move {
-                // HACK: plaintext format is now a Vec of ArcBytes for legacy tests for now we are extracting
-                // the first entry and writing this will change once we make our legacy tests catch up
-                if let Err(msg_err) = validate_plaintext_output(
+                let publication = match validate_plaintext_output(
                     &e3_id,
-                    &decrypted_output,
-                    &msg.decryption_aggregator_proofs,
+                    decrypted_output,
+                    decryption_aggregator_proofs,
                 ) {
-                    self_addr.do_send(ClearSubmitting(e3_id.clone()));
-                    bus.err(EType::Evm, anyhow::anyhow!(msg_err));
-                    return;
-                }
-                // Safe: `validate_plaintext_output` guarantees exactly one output.
-                let decrypted = &decrypted_output[0];
+                    Ok(publication) => publication,
+                    Err(msg_err) => {
+                        self_addr.do_send(ClearSubmitting(e3_id.clone()));
+                        bus.err(EType::Evm, anyhow::anyhow!(msg_err));
+                        return;
+                    }
+                };
                 match should_publish_plaintext(provider.clone(), contract_address, e3_id.clone())
                     .await
                 {
@@ -130,8 +130,8 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<PlaintextAggregated
                     provider,
                     contract_address,
                     e3_id.clone(),
-                    decrypted.extract_bytes(),
-                    msg.decryption_aggregator_proofs.first(),
+                    publication.decrypted_output.extract_bytes(),
+                    Some(&publication.proof),
                 )
                 .await;
                 match result {
