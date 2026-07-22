@@ -10,6 +10,8 @@ pub(in crate::actors::slashing_manager_sol_writer) async fn submit_slash_proposa
     provider: EthProvider<P>,
     contract_address: Address,
     data: AccusationQuorumReached,
+    outbox: &EvmEffectOutbox<AccusationQuorumReached>,
+    outbox_key: &str,
 ) -> Result<TransactionReceipt> {
     let e3_id: U256 = data.e3_id.clone().try_into()?;
     let operator = data.accused;
@@ -52,36 +54,73 @@ pub(in crate::actors::slashing_manager_sol_writer) async fn submit_slash_proposa
         );
         let proof = Bytes::from(proof_data.clone());
         let provider = provider.clone();
+        let outbox = outbox.clone();
+        let outbox_key = outbox_key.to_owned();
 
         async move {
-            let _nonce_guard = transaction_nonce_guard(&provider).await;
-            let from_address = provider.provider().default_signer_address();
-            let current_nonce = provider
-                .provider()
-                .get_transaction_count(from_address)
-                .pending()
-                .await?;
             let contract = ISlashingManager::new(contract_address, provider.provider());
-            let pending = if let Some(pid) = party_id {
+            let request = if let Some(pid) = party_id {
                 contract
                     .proposeSlashByDkgParty(e3_id, pid, proof)
-                    .nonce(current_nonce)
-                    .send()
-                    .await?
+                    .into_transaction_request()
             } else {
                 contract
                     .proposeSlash(e3_id, operator, proof)
-                    .nonce(current_nonce)
-                    .send()
-                    .await?
+                    .into_transaction_request()
             };
-            drop(_nonce_guard);
+            let pending =
+                crate::send_prepared_transaction(&provider, request, &outbox, &outbox_key).await?;
             let receipt = pending.get_receipt().await?;
             require_successful_receipt("submit slashing evidence", &receipt)?;
             Ok(receipt)
         }
     })
     .await
+}
+
+pub(in crate::actors::slashing_manager_sol_writer) async fn should_submit_slash_proposal<
+    P: Provider + WalletProvider + Clone,
+>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    data: AccusationQuorumReached,
+) -> Result<bool> {
+    let e3_id: U256 = data.e3_id.clone().try_into()?;
+    let operator = data.accused;
+    let proof =
+        Bytes::from(encode_attestation_evidence(&data).ok_or_else(|| {
+            anyhow::anyhow!("AccusationQuorumReached has empty votes or evidence")
+        })?);
+    let party_id =
+        resolve_party_id_for_operator(provider.clone(), contract_address, e3_id, operator)
+            .await
+            .ok()
+            .flatten();
+    let contract = ISlashingManager::new(contract_address, provider.provider());
+    let result = if let Some(party_id) = party_id {
+        contract
+            .proposeSlashByDkgParty(e3_id, party_id, proof)
+            .call()
+            .await
+    } else {
+        contract.proposeSlash(e3_id, operator, proof).call().await
+    };
+
+    match result {
+        Ok(_) => Ok(true),
+        Err(error) => {
+            let error = anyhow::Error::from(error);
+            let decoded = decode_error_from_str(&format!("{error:?}"));
+            if decoded.as_deref().is_some_and(|message| {
+                message.contains("DuplicateEvidence")
+                    || message.contains("OperatorNotInCommittee")
+                    || message.contains("VoterNotInCommittee")
+            }) {
+                return Ok(false);
+            }
+            Err(error)
+        }
+    }
 }
 
 async fn resolve_party_id_for_operator<P: Provider + WalletProvider + Clone>(

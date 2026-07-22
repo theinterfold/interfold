@@ -644,14 +644,16 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │       }
 │
 └─ CiphernodeRegistrySolWriter receives PublicKeyAggregated:
-  ├─ Requires EffectsEnabled
-  ├─ Requires active_aggregators[e3_id] == true
+  ├─ Persists the full publication intent before checking the effects gate
+  ├─ Requires EffectsEnabled and active_aggregators[e3_id] == true before dispatch
   ├─ Reads chain state to confirm committee public key is still unset
   ├─ Encodes the DkgAggregator proof in production
   ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C5 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
-  └─ Calls contract.publishCommittee(e3_id, publicKey, pkCommitment, proof)
+  └─ Locally signs contract.publishCommittee(e3_id, publicKey, pkCommitment, proof)
+        ├─ Persists signed raw bytes + nonce + tx hash before RPC dispatch
+        └─ Receipt/preflight reconciliation closes the durable intent; missing work rebroadcasts the same bytes
         │
         │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────┐
         │  │                                                     │
@@ -930,14 +932,16 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │       }
 │
 └─ InterfoldSolWriter receives PlaintextAggregated:
-  ├─ Requires EffectsEnabled
-  ├─ Requires active_aggregators[e3_id] == true
+  ├─ Persists the full publication intent before checking the effects gate
+  ├─ Requires EffectsEnabled and active_aggregators[e3_id] == true before dispatch
   ├─ Reads chain state to confirm plaintextOutput is still empty
   ├─ Encodes the final DecryptionAggregator proof in production
   ├─ Feature-gated test/CI nodes with `skip_proof_aggregation` reuse the non-empty C7 proof as a
   │  mock-verifier placeholder; this does not bypass contract verification
   │  and every node in a test swarm must use the same flag value
-  └─ Calls contract.publishPlaintextOutput(e3Id, output, proof)
+  └─ Locally signs contract.publishPlaintextOutput(e3Id, output, proof)
+        ├─ Persists signed raw bytes + nonce + tx hash before RPC dispatch
+        └─ Receipt/preflight reconciliation closes the durable intent; missing work rebroadcasts the same bytes
         │
         │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────┐
         │  │                                                     │

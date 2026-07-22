@@ -85,7 +85,10 @@ Specific triggers:
 Runtime note: `processE3Failure()` is a permissionless cleanup path. The Rust `InterfoldSolWriter`
 may auto-submit it from any effects-enabled node on the same chain, and it must not depend on
 active-aggregator designation because failures can happen before committee finalization or while the
-current aggregator is offline.
+current aggregator is offline. The writer first persists the semantic intent, then locally signs and
+persists the exact raw transaction, nonce, and hash before RPC dispatch. It reconciles the receipt,
+payment-zero preflight, or an unknown transaction after restart; a disappeared hash rebroadcasts the
+same bytes. Slash proposals use the same durable state machine after ranked-submitter admission.
 
 ```
 Anyone calls: Interfold.processE3Failure(e3Id)

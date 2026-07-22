@@ -1,9 +1,35 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-//! Admission, scheduling, and submission-outcome handlers.
+//! Durable slash-intent admission, replay, and submission-outcome handlers.
 
-use super::effects::submit_slash_proposal;
+use super::effects::{should_submit_slash_proposal, submit_slash_proposal};
 use super::*;
+use crate::{reconcile_dispatched, DispatchReconciliation, OutboxAdmission};
+
+impl<P: Provider + WalletProvider + Clone + 'static> SlashingManagerSolWriter<P> {
+    fn admit_intent(&mut self, event: AccusationQuorumReached, ctx: &mut Context<Self>) {
+        let key = match SlashIntentKey::from_quorum(&event) {
+            Ok(key) => key.storage_key(),
+            Err(error) => {
+                self.bus.err(EType::Evm, error);
+                return;
+            }
+        };
+        let outbox = self.outbox.clone();
+        let bus = self.bus.clone();
+        ctx.wait(
+            async move { outbox.admit(key, event).await }
+                .into_actor(self)
+                .map(move |result, _, ctx| match result {
+                    Ok(OutboxAdmission::AlreadyTerminal) => {}
+                    Ok(OutboxAdmission::Inserted | OutboxAdmission::AlreadyPending) => {
+                        ctx.notify(DrainSlashOutbox);
+                    }
+                    Err(error) => bus.err(EType::Evm, error),
+                }),
+        );
+    }
+}
 
 impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
     for SlashingManagerSolWriter<P>
@@ -13,69 +39,30 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         match msg.into_data() {
             InterfoldEventData::AccusationQuorumReached(data) => {
-                // Only submit if:
-                // 1. This is the right chain
-                // 2. The quorum decided the accused is at fault OR equivocated
-                // 3. This node is among the top MAX_SLASH_SUBMITTERS voters
-                //    (sorted ascending by address). The lowest-address voter
-                //    submits immediately; higher-ranked fallback voters wait
-                //    progressively longer (rank * SUBMITTER_DELAY_SECS) before
-                //    attempting submission. On-chain DuplicateEvidence protection
-                //    ensures at most one slash executes.
                 let my_addr = self.provider.provider().default_signer_address();
-                let rank = submission_rank(data.votes_for.iter().map(|v| v.voter), my_addr);
-
-                if should_submit_slash(
+                let rank = submission_rank(data.votes_for.iter().map(|vote| vote.voter), my_addr);
+                if !should_submit_slash(
                     self.provider.chain_id() == data.e3_id.chain_id(),
                     &data.outcome,
                     rank,
                 ) {
-                    if encode_attestation_evidence(&data).is_none() {
-                        self.bus.err(
-                            EType::Evm,
-                            anyhow::anyhow!(
-                                "Refusing malformed slash intent for E3 {}: votes or evidence are empty",
-                                data.e3_id
-                            ),
-                        );
-                        return;
-                    }
-                    match self.submissions.admit(data.clone()) {
-                        Ok((key, SlashSubmissionDecision::Submit)) => {
-                            ctx.notify(SubmitSlashIntent { key, event: data });
-                        }
-                        Ok((_, SlashSubmissionDecision::Defer)) => {
-                            info!(e3_id = %data.e3_id, "Deferred slash intent until effects are enabled");
-                        }
-                        Ok((_, SlashSubmissionDecision::IgnoreDuplicate)) => {
-                            info!(e3_id = %data.e3_id, "Ignored duplicate slash intent");
-                        }
-                        Err(error) => self.bus.err(EType::Evm, error),
-                    }
+                    return;
                 }
+                if encode_attestation_evidence(&data).is_none() {
+                    self.bus.err(
+                        EType::Evm,
+                        anyhow::anyhow!(
+                            "Refusing malformed slash intent for E3 {}: votes or evidence are empty",
+                            data.e3_id
+                        ),
+                    );
+                    return;
+                }
+                self.admit_intent(data, ctx);
             }
             InterfoldEventData::EffectsEnabled(_) => {
-                let deferred = self.submissions.enable_effects();
-                if !deferred.is_empty() {
-                    info!(
-                        intents = deferred.len(),
-                        "Releasing deferred slash intents after startup reconciliation"
-                    );
-                    let address = ctx.address();
-                    ctx.spawn(
-                        async move {
-                            for (key, event) in deferred {
-                                if let Err(error) =
-                                    address.send(SubmitSlashIntent { key, event }).await
-                                {
-                                    warn!(%error, "Slashing writer stopped with deferred intents pending");
-                                    break;
-                                }
-                            }
-                        }
-                        .into_actor(self),
-                    );
-                }
+                self.effects_enabled = true;
+                ctx.notify(DrainSlashOutbox);
             }
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
             _ => (),
@@ -83,66 +70,109 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
     }
 }
 
-impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitSlashIntent>
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<DrainSlashOutbox>
+    for SlashingManagerSolWriter<P>
+{
+    type Result = ();
+
+    fn handle(&mut self, _: DrainSlashOutbox, ctx: &mut Self::Context) -> Self::Result {
+        if !self.effects_enabled {
+            return;
+        }
+        let outbox = self.outbox.clone();
+        let my_addr = self.provider.provider().default_signer_address();
+        let chain_id = self.provider.chain_id();
+        ctx.wait(async move { outbox.pending().await }.into_actor(self).map(
+            move |pending, actor, ctx| {
+                for (key, event, status) in pending {
+                    let rank =
+                        submission_rank(event.votes_for.iter().map(|vote| vote.voter), my_addr);
+                    if should_submit_slash(chain_id == event.e3_id.chain_id(), &event.outcome, rank)
+                        && actor.submitting.insert(key.clone())
+                    {
+                        ctx.notify(ExecuteSlashIntent { key, event, status });
+                    }
+                }
+            },
+        ));
+    }
+}
+
+impl<P: Provider + WalletProvider + Clone + 'static> Handler<ExecuteSlashIntent>
     for SlashingManagerSolWriter<P>
 {
     type Result = ResponseFuture<()>;
 
-    fn handle(&mut self, msg: SubmitSlashIntent, ctx: &mut Self::Context) -> Self::Result {
-        Box::pin({
-            let contract_address = self.contract_address;
-            let provider = self.provider.clone();
-            let bus = self.bus.clone();
-            let my_addr = self.provider.provider().default_signer_address();
-            let address = ctx.address();
-            async move {
-                let SubmitSlashIntent { key, event: msg } = msg;
-                // Compute this node's submission rank for staggered fallback
-                let rank =
-                    submission_rank(msg.votes_for.iter().map(|v| v.voter), my_addr).unwrap_or(0);
+    fn handle(&mut self, msg: ExecuteSlashIntent, ctx: &mut Self::Context) -> Self::Result {
+        let contract_address = self.contract_address;
+        let provider = self.provider.clone();
+        let outbox = self.outbox.clone();
+        let bus = self.bus.clone();
+        let my_addr = self.provider.provider().default_signer_address();
+        let address = ctx.address();
 
-                // Fallback submitters wait before attempting, giving the primary
-                // submitter time to land the transaction on-chain.
+        Box::pin(async move {
+            let ExecuteSlashIntent { key, event, status } = msg;
+            let result: Result<()> = async {
+                match reconcile_dispatched(&provider, &outbox, &key, &status).await? {
+                    DispatchReconciliation::Pending | DispatchReconciliation::Terminal => {
+                        return Ok(())
+                    }
+                    DispatchReconciliation::NotDispatched | DispatchReconciliation::Retry => {}
+                }
+
+                let rank = submission_rank(event.votes_for.iter().map(|vote| vote.voter), my_addr)
+                    .unwrap_or(0);
                 if rank > 0 {
                     let delay = submission_delay(rank);
-                    info!(
-                        "Fallback submitter (rank {rank}): waiting {delay:?} before submission attempt"
-                    );
+                    info!("Fallback submitter (rank {rank}): waiting {delay:?} before submission attempt");
                     tokio::time::sleep(delay).await;
                 }
 
-                let result = submit_slash_proposal(provider, contract_address, msg).await;
-                let terminal = match result {
-                    Ok(receipt) => {
-                        info!(tx=%receipt.transaction_hash, "Submitted attestation-based slash proposal on-chain");
-                        true
-                    }
-                    Err(err) => {
-                        let decoded = format_evm_error(&err);
-                        let benign = decoded.contains("OperatorNotInCommittee")
-                            || decoded.contains("VoterNotInCommittee")
-                            || decoded.contains("DuplicateEvidence");
-                        if benign {
-                            // Fallback submitters expect DuplicateEvidence reverts
-                            // when the primary submitter has already landed the tx.
-                            // Operator/VoterNotInCommittee indicate a stale off-chain accusation
-                            // (e.g. cross-E3 race) — not a node-local fault.
-                            warn!("Slash submission skipped (rank {rank}): {decoded}");
-                        } else {
-                            bus.err(
-                                EType::Evm,
-                                anyhow::anyhow!("Error submitting slash proposal: {decoded}"),
-                            );
-                        }
-                        benign
-                    }
-                };
-                if let Err(error) = address
-                    .send(SlashSubmissionFinished { key, terminal })
-                    .await
+                if !should_submit_slash_proposal(
+                    provider.clone(),
+                    contract_address,
+                    event.clone(),
+                )
+                .await?
                 {
-                    warn!(%error, "Slashing writer stopped before recording submission outcome");
+                    outbox.mark_terminal(&key).await?;
+                    return Ok(());
                 }
+
+                let receipt = submit_slash_proposal(
+                    provider.clone(),
+                    contract_address,
+                    event,
+                    &outbox,
+                    &key,
+                )
+                .await?;
+                info!(tx=%receipt.transaction_hash, "Submitted attestation-based slash proposal on-chain");
+                outbox.mark_terminal(&key).await?;
+                Ok(())
+            }
+            .await;
+
+            if let Err(error) = result {
+                let decoded = format_evm_error(&error);
+                let benign = decoded.contains("OperatorNotInCommittee")
+                    || decoded.contains("VoterNotInCommittee")
+                    || decoded.contains("DuplicateEvidence");
+                if benign {
+                    if let Err(persist_error) = outbox.mark_terminal(&key).await {
+                        bus.err(EType::Evm, persist_error);
+                    }
+                    warn!(effect_key=%key, "Slash submission reconciled as terminal: {decoded}");
+                } else {
+                    bus.err(
+                        EType::Evm,
+                        anyhow::anyhow!("Durable slash effect {key} remains pending: {decoded}"),
+                    );
+                }
+            }
+            if let Err(error) = address.send(SlashSubmissionFinished { key }).await {
+                warn!(%error, "Slashing writer stopped before clearing in-flight effect");
             }
         })
     }
@@ -154,7 +184,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SlashSubmissionFini
     type Result = ();
 
     fn handle(&mut self, msg: SlashSubmissionFinished, _: &mut Self::Context) -> Self::Result {
-        self.submissions.finish(&msg.key, msg.terminal);
+        self.submitting.remove(&msg.key);
     }
 }
 

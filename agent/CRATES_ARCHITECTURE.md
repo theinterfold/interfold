@@ -544,37 +544,40 @@ flowchart TD
     Decision --> Writer[SlashingManagerSolWriter]
     Writer --> Eligible{right chain, slashable outcome, and ranked submitter?}
     Eligible -->|no| Ignore[ignore locally]
-    Eligible -->|yes| Effects{EffectsEnabled?}
-    Effects -->|no| Deferred[in-memory deferred intents]
-    Deferred -->|startup reconciliation complete| Submit
-    Effects -->|yes| Gate{semantic intent already deferred, in flight, or complete?}
-    Gate -->|yes| Ignore[coalesce duplicate]
-    Gate -->|no| Submit[submit now or after rank delay]
-    Submit --> Outcome{transaction outcome}
+    Eligible -->|yes| Persist[persist semantic intent and full payload]
+    Persist --> Effects{EffectsEnabled?}
+    Effects -->|no| Deferred[durable pending intent]
+    Deferred -->|startup reconciliation complete| Reconcile
+    Effects -->|yes| Reconcile{persisted tx hash known?}
+    Reconcile -->|receipt succeeded| Complete
+    Reconcile -->|still pending| Deferred
+    Reconcile -->|missing or reverted| Submit[submit now or after rank delay]
+    Reconcile -->|no prior dispatch| Submit
+    Submit --> Sign[persist signed raw transaction, nonce, and hash]
+    Sign --> Dispatch[broadcast exact raw transaction]
+    Dispatch --> Outcome{transaction outcome}
     Outcome -->|success or classified benign result| Complete[retain completed key]
     Outcome -->|retryable failure| Retry[clear in-flight key]
-    Retry --> Gate
+    Retry --> Reconcile
     Complete --> Chain[on-chain slash / expulsion]
     Chain --> Registry[registry and committee observations]
     Registry --> Lifecycle[E3 lifecycle / cleanup]
     Timeout --> Lifecycle
 
-    classDef residual fill:#fff1f0,stroke:#cf222e,color:#82071e
-    class Deferred residual
+    classDef durable fill:#e6ffed,stroke:#238636,color:#116329
+    class Persist,Deferred,Dispatch,Complete durable
 ```
 
 Vote quorum uses the honest threshold rather than the total committee size. Cryptographic
 verification failures must be structurally attributable to a canonical party before they become
-slashing evidence. Replayed `AccusationQuorumReached` events are held until `EffectsEnabled`, then
-coalesced by the contract's semantic replay domain across deferred, in-flight, and completed
-submissions. Retryable submission failures release their key; successful or known-benign terminal
-results retain it.
-
-The gate is deliberately described as in-memory: there is no durable external-effect outbox or
-persisted transaction intent. A crash after snapshot advancement but before receipt classification
-can therefore lose the local redrive state, and a crash after submission can require on-chain
-reconciliation to distinguish landed from missing work. Closing that gap requires a durable
-intent/result state machine and contract preflight, not another process-local set.
+slashing evidence. Registry, Interfold, and slashing writers synchronously persist the full semantic
+effect under a chain/writer/contract/signer scope and a canonical calldata digest. They then locally
+sign and persist the exact raw transaction, nonce, and hash before exposing it to the RPC; a receipt
+or an idempotent on-chain preflight records a terminal marker. `EffectsEnabled` and the periodic
+drain replay pending work. Restart reconciliation checks the persisted hash for a successful receipt,
+known-pending transaction, revert, or disappearance before deciding whether to wait, close, rebuild
+after a consumed revert, or rebroadcast the identical signed bytes. Contract single-shot guards
+remain the final cross-node idempotency boundary.
 
 ## Program-server trust boundary
 
@@ -667,8 +670,8 @@ flowchart LR
 | C0/share proof-verification context      | Finalized-committee and ciphernode-selector repositories plus global verifier memory | Canonical slots and E3 preset/threshold metadata load before ZK actor startup, then lifecycle events maintain or clear them |
 | HLC, EventBus dedup, and admission state | Event pipeline actors in memory                                                      | Maximum snapshot/replay HLC; a fresh bounded dedup window is populated by replay and live events                            |
 | Network peer/buffer/interest state       | libp2p and network actors in memory                                                  | Fresh peer dialing; document interest returns only when selection observations are replayed or redriven                     |
-| Slash-submission replay gate             | `SlashingManagerSolWriter` process memory                                            | Rebuilt from replay; not a durable outbox                                                                                   |
-| Pending transaction nonce allocation     | Per-chain writer mutex in memory                                                     | Provider pending nonce on restart                                                                                           |
+| EVM effect intents and outcomes           | Per-chain/writer/contract/signer Sled outboxes                                         | Canonical payload key plus full payload and intent/signed/dispatched/terminal state; reconciled against RPC and contract preflights on restart |
+| Pending transaction nonce allocation     | Per-chain/signer mutex plus signed raw-transaction outbox record                       | Serialized pending nonce selection; exact raw transaction, nonce, and precomputed hash survive RPC ambiguity and restart   |
 | In-flight accusation votes and timers    | Per-E3 accusation actor memory                                                       | No complete durable reconstruction; only events inside the replay window may be observed again                              |
 | libp2p identity                          | Encrypted keypair repository                                                         | Decrypt at startup                                                                                                          |
 | Program-server job permits/tasks         | Tokio semaphore and detached tasks                                                   | Not reconstructed after process exit                                                                                        |
@@ -837,7 +840,7 @@ persist recovery intent.
 | `e3-data`                          | Serve typed repository reads/writes and append-only event-log/index records.                         | Sled/in-memory stores, log handles, batch writes, and flush failure state.                                                                     | Acknowledged sync/batch writes flush before success; decode corruption and recorded write failures fail closed.                                                                                                                                                                                                                                                        | Repository/store factories; must not decide committees, proofs, or lifecycle transitions.                                 |
 | `e3-sync`                          | Reconstruct actor state and reconcile EVM/network history before live mode.                          | Startup plan, disk-backed local replay runs, and bounded reconciled-history vectors; depends on repositories, EventBus, EVM, and net adapters. | Schema is checked before state-writing actors; HLC includes post-snapshot history; replay is global-HLC ordered with acknowledged subscriber acceptance; Effects/history/SyncEnded phases are downstream-acknowledged; history gaps or bounded-net-sync failure abort startup.                                                                                         | Historical collectors/planners; must not submit live transactions.                                                        |
 | `e3-net`                           | Translate bounded libp2p traffic and serve gossip, DHT, and historical sync.                         | Swarm, Kademlia records, peer/transport status, channels, startup buffer, and document interests.                                              | Signed gossip is type-allowlisted; decodes, startup backlog, and sync fetches are bounded; metadata must match DHT payload. Errors fail readiness or stop the affected ingress loop.                                                                                                                                                                                   | `NetInterface` and pure translation services; must not own E3 transitions or infer committee authority from PeerId alone. |
-| `e3-evm`                           | Read chain history under the configured confirmation policy and submit typed contract transactions.  | Per-chain gateways, provider handles, chain buffers, nonce mutexes, and slash replay gate.                                                     | Malformed logs and reverted receipts fail. A well-formed `E3Requested` with an unsupported committee/preset enum is marked processed and skipped so an older node stays live without participating. Nonce allocation is serialized in-process; no durable transaction outbox or full reorg rollback exists.                                                            | Provider/contract helpers; must not own off-chain proof policy.                                                           |
+| `e3-evm`                           | Read chain history under the configured confirmation policy and submit typed contract transactions.  | Per-chain gateways, provider handles, chain buffers, nonce mutexes, and durable registry/Interfold/slashing effect outboxes.                  | Malformed logs and reverted receipts fail. Every irreversible effect is synchronously admitted, then locally signed with raw bytes/nonce/hash persisted before RPC dispatch, and reconciled/retried after restart. A well-formed unsupported request is skipped for version tolerance. Full chain-reorg rollback remains intentionally outside the writer boundary.             | Provider/contract helpers; must not own off-chain proof policy.                                                           |
 | `e3-request`                       | Route E3-scoped events and enforce lifecycle progress.                                               | `E3Router`, lifecycle state, typed `(E3, recipient)` buffers, and request actor contexts; depends on event and protocol actor APIs.            | Legal progress is monotonic; buffered history precedes the recipient-creating event; terminal teardown purges absent-role buffers. Active buffer size and child `do_send` remain residual risks.                                                                                                                                                                       | Domain lifecycle/routing functions; must not implement storage, network framing, or contract decoding.                    |
 | `e3-sortition`                     | Track registry/tickets and derive canonical selection/committee observations.                        | Node registry, ticket state, selector backend, and chain-derived committee state.                                                              | On-chain ordering is authoritative; terminal cleanup releases local participation state and removes durable finalized-committee and pending-expulsion records.                                                                                                                                                                                                         | Sortition backend; must not construct cryptographic proofs.                                                               |
 | `e3-keyshare`                      | Coordinate request-local DKG, shares, and decryption work.                                           | Threshold keyshare actor state and repositories; depends on FHE/ZK services and the event bus.                                                 | Party IDs index the canonical committee; each recipient gets C2a/C2b singletons and C3a/C3b per threshold Shamir row; resumable determined outputs redrive only after `EffectsEnabled`.                                                                                                                                                                                | Cryptographic backend/task pool; must not own transport frames or ABI decoding.                                           |

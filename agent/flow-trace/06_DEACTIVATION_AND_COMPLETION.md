@@ -269,6 +269,8 @@ On restart:
 │   7. Enable effects (writers may submit only after this point)
 │      → Gate cancels work for terminal E3s and releases only the newest
 │        pending request for each in-flight semantic compute operation
+│      → EVM writers drain synchronously-persisted ticket/finalize/committee/plaintext/
+│        failure/slashing intents; signed raw transaction+nonce+hash records reconcile before retry
 │   8. SyncEnded → live operations begin
 └─ Node resumes from where it left off
 ```

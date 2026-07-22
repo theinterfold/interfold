@@ -210,7 +210,14 @@ CiphernodeSelector receives WithSortitionTicket<E3Requested>
 ```
 CiphernodeRegistrySolWriter receives TicketGenerated event
 │
-└─ Calls contract.submitTicket(e3Id, ticketNumber).send()
+├─ Synchronously persists `ticket/{chain:e3}` with the full event payload
+├─ Waits for `EffectsEnabled`; periodic drain and restart replay retain the intent
+├─ Preflights `submitTicket` so an already-submitted/expired semantic intent closes idempotently
+└─ Builds and locally signs contract.submitTicket(e3Id, ticketNumber)
+    ├─ Persists exact raw transaction bytes, nonce, and hash before RPC dispatch
+    ├─ Broadcasts the persisted raw transaction before releasing the nonce lock
+    ├─ Successful receipt persists a terminal marker
+    └─ Unknown receipt is reconciled by hash before any retry
     │
     │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────────┐
     │  │                                                         │
