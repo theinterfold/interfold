@@ -210,6 +210,7 @@ interfold start → running node
 └─ graceful_shutdown():
     ├─ Persists Shutdown and waits for acknowledged EventBus fanout
     ├─ Flushes the sequencer and event-store pipeline
+    │  → Event-log flush includes `sync_all` for every segment/index and the log directory
     ├─ Drains open snapshot batches, flushes the backing store, and closes it
     ├─ Enforces a 30-second deadline and exits unsuccessfully on failure
     └─ Flushes the optional operational JSON log collector
