@@ -14,6 +14,7 @@ node:
 chains:
   - name: '${NETWORK}'
     chain_id: ${CHAIN_ID}
+    reorg_confirmations: ${REORG_CONFIRMATIONS}
     rpc_url: '${RPC_URL}'
     contracts:
       interfold:

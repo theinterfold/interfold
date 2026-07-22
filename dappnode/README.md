@@ -50,6 +50,7 @@ Once this package is published to the DAppStore:
 3. The **setup wizard** will prompt you for:
    - `RPC_URL` – WebSocket RPC endpoint (e.g. `wss://ethereum-sepolia-rpc.publicnode.com`)
    - `CHAIN_ID` – expected numeric chain ID for that RPC (Sepolia: `11155111`)
+   - `REORG_CONFIRMATIONS` – positive finality depth (Sepolia default: `64`)
    - `NETWORK` – e.g. `sepolia`, `mainnet`, `localhost`
    - Contract addresses + deploy blocks
    - A required ciphernode credentials JSON file
@@ -127,6 +128,8 @@ Non-secret runtime configuration is provided through environment variables:
   `wss://ethereum-sepolia-rpc.publicnode.com`).
 - **`CHAIN_ID`** (required) Numeric chain ID that the RPC must report. Startup fails if it is
   missing or mismatched.
+- **`REORG_CONFIRMATIONS`** (required) Positive number of blocks an EVM event must be buried before
+  ingestion. The shipped Sepolia configuration uses `64`.
 
 - **`NETWORK`** Logical network name written into the Interfold config (e.g. `sepolia`, `mainnet`,
   `localhost`).

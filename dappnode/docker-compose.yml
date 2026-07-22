@@ -19,6 +19,7 @@ services:
       # Network & node config
       NETWORK: 'sepolia'
       CHAIN_ID: '11155111'
+      REORG_CONFIRMATIONS: '64'
       NODE_ADDRESS: ''
       QUIC_PORT: '37173'
       PEERS: ''

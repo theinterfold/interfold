@@ -42,6 +42,17 @@ fields:
     pattern: '^[1-9][0-9]*$'
     patternErrorMessage: 'Must be a positive decimal chain ID.'
 
+  - id: REORG_CONFIRMATIONS
+    target:
+      type: environment
+      name: REORG_CONFIRMATIONS
+      service: ciphernode
+    title: 'Finality confirmations'
+    description: 'Positive block-confirmation depth required before an EVM event is ingested.'
+    required: true
+    pattern: '^[1-9][0-9]*$'
+    patternErrorMessage: 'Must be a positive number of confirmations.'
+
   - id: NODE_ADDRESS
     target:
       type: environment

@@ -8,6 +8,7 @@ node:
 chains:
   - name: 'sepolia'
     chain_id: 11155111
+    reorg_confirmations: 64
     rpc_url: '${RPC_URL}'
     contracts:
       interfold: '${SEPOLIA_INTERFOLD_ADDRESS}'

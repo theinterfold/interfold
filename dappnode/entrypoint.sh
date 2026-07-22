@@ -36,6 +36,10 @@ fi
 [[ "$RPC_URL" =~ ^wss?:// ]] || fail "RPC_URL must be a WebSocket URL (ws:// or wss://)"
 [ -n "${CHAIN_ID:-}" ] || fail "CHAIN_ID is required; set the expected numeric RPC chain ID"
 [[ "$CHAIN_ID" =~ ^[1-9][0-9]*$ ]] || fail "CHAIN_ID must be a positive decimal integer"
+[ -n "${REORG_CONFIRMATIONS:-}" ] \
+    || fail "REORG_CONFIRMATIONS is required for non-local RPC finality"
+[[ "$REORG_CONFIRMATIONS" =~ ^[1-9][0-9]*$ ]] \
+    || fail "REORG_CONFIRMATIONS must be a positive decimal integer"
 
 [ -r "$TEMPLATE_FILE" ] || fail "configuration template is not readable: $TEMPLATE_FILE"
 mkdir -p "$CONFIG_DIR"

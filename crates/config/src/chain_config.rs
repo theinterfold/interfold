@@ -25,8 +25,8 @@ pub struct ChainConfig {
     pub contracts: ContractAddresses,
     pub finalization_ms: Option<u64>,
     /// Number of block confirmations to wait before ingesting an on-chain log.
-    /// `None`/`0` reads to head; a positive value makes historical/backfill
-    /// ingestion reorg-safe by only acting on logs buried this deep.
+    /// Non-local RPCs must configure a positive value. Local development RPCs
+    /// may use `None`/`0` to read directly to head.
     pub reorg_confirmations: Option<u64>,
     pub chain_id: Option<u64>,
 }
@@ -42,6 +42,15 @@ impl TryFrom<&ChainConfig> for EvmEventConfigChain {
     type Error = anyhow::Error;
     fn try_from(value: &ChainConfig) -> std::result::Result<Self, Self::Error> {
         let rpc = value.rpc_url()?;
+        let confirmations = value.reorg_confirmations.unwrap_or(0);
+        if !rpc.is_local() && confirmations == 0 {
+            bail!(
+                "Misconfiguration: chain '{}' uses non-local RPC {} but has no positive \
+                 reorg_confirmations finality policy",
+                value.name,
+                rpc.url()
+            );
+        }
         let contracts = value.contracts.contracts();
         let mut lowest_block: Option<u64> = None;
         for contract in contracts {
@@ -61,8 +70,66 @@ impl TryFrom<&ChainConfig> for EvmEventConfigChain {
             lowest_block = [lowest_block, deploy_block].into_iter().flatten().min();
         }
         let start_block = lowest_block.unwrap_or(0);
-        Ok(EvmEventConfigChain::new(start_block)
-            .with_confirmations(value.reorg_confirmations.unwrap_or(0)))
+        Ok(EvmEventConfigChain::new(start_block).with_confirmations(confirmations))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::contract::{Contract, ContractAddresses};
+
+    fn chain(rpc_url: &str, confirmations: Option<u64>) -> ChainConfig {
+        let contract = || Contract::Full {
+            address: "0x0000000000000000000000000000000000000001".to_owned(),
+            deploy_block: Some(1),
+        };
+        ChainConfig {
+            enabled: Some(true),
+            name: "test".to_owned(),
+            rpc_url: rpc_url.to_owned(),
+            rpc_auth: RpcAuth::default(),
+            contracts: ContractAddresses {
+                interfold: contract(),
+                ciphernode_registry: contract(),
+                bonding_registry: contract(),
+                e3_program: None,
+                fee_token: None,
+                slashing_manager: None,
+                dkg_fold_attestation_verifier: None,
+                faucet: None,
+            },
+            finalization_ms: None,
+            reorg_confirmations: confirmations,
+            chain_id: Some(1),
+        }
+    }
+
+    #[test]
+    fn remote_rpc_requires_positive_confirmations() {
+        for confirmations in [None, Some(0)] {
+            let error = EvmEventConfigChain::try_from(&chain(
+                "wss://ethereum-sepolia-rpc.publicnode.com",
+                confirmations,
+            ))
+            .unwrap_err();
+
+            assert!(error.to_string().contains("positive reorg_confirmations"));
+        }
+    }
+
+    #[test]
+    fn remote_rpc_preserves_configured_confirmations() {
+        let config = EvmEventConfigChain::try_from(&chain("wss://example.com", Some(64))).unwrap();
+
+        assert_eq!(config.confirmations(), 64);
+    }
+
+    #[test]
+    fn local_rpc_may_read_directly_to_head() {
+        let config = EvmEventConfigChain::try_from(&chain("ws://127.0.0.1:8545", None)).unwrap();
+
+        assert_eq!(config.confirmations(), 0);
     }
 }
 
