@@ -8,7 +8,7 @@
   "description": "Run an Interfold ciphernode to participate in the E3 (Encrypted Execution Environments) network.",
   "type": "service",
   "mainService": "ciphernode",
-  "author": "Gnosis Guild <https://github.com/gnosisguild>",
+  "author": "Interfold <https://interfold.network>",
   "categories": ["Blockchain", "Developer tools"],
   "keywords": ["interfold", "fhe", "mpc", "ciphernode", "threshold", "encryption"],
   "links": {

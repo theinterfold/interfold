@@ -2,7 +2,7 @@
 # Uses official upstream image from GitHub Container Registry
 
 ARG UPSTREAM_VERSION
-FROM ghcr.io/gnosisguild/ciphernode:${UPSTREAM_VERSION} AS upstream
+FROM ghcr.io/theinterfold/ciphernode:${UPSTREAM_VERSION} AS upstream
 
 # Runtime image
 FROM debian:stable-slim
@@ -36,8 +36,8 @@ COPY --chmod=644 config.template.yaml /opt/config.template.yaml
 COPY --chmod=444 provision-credentials.exp /opt/provision-credentials.exp
 
 # Labels
-LABEL maintainer="Gnosis Guild <https://gnosisguild.org>"
-LABEL org.opencontainers.image.source="https://github.com/gnosisguild/interfold"
+LABEL maintainer="Interfold <https://interfold.network>"
+LABEL org.opencontainers.image.source="https://github.com/theinterfold/interfold"
 LABEL org.opencontainers.image.description="Interfold Ciphernode for DAppNode"
 
 USER ciphernode
