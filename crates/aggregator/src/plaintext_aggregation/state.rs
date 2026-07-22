@@ -14,6 +14,10 @@ pub struct Collecting {
     pub(crate) seed: Seed,
     pub(crate) ciphertext_output: Vec<ArcBytes>,
     pub(crate) params: ArcBytes,
+    /// Absolute wall-clock deadline. Hydration schedules only the remaining collection window.
+    pub(crate) deadline_unix_ms: u64,
+    /// Causal parent captured from the ciphertext event that opened plaintext aggregation.
+    pub(crate) timeout_context: EventContext<Sequenced>,
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -125,6 +129,8 @@ impl ThresholdPlaintextAggregatorState {
         seed: Seed,
         ciphertext_output: Vec<ArcBytes>,
         params: ArcBytes,
+        deadline_unix_ms: u64,
+        timeout_context: EventContext<Sequenced>,
     ) -> Self {
         ThresholdPlaintextAggregatorState::Collecting(Collecting {
             threshold_m,
@@ -134,6 +140,8 @@ impl ThresholdPlaintextAggregatorState {
             seed,
             ciphertext_output,
             params,
+            deadline_unix_ms,
+            timeout_context,
         })
     }
 }

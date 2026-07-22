@@ -17,7 +17,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use anyhow::{bail, ensure, Result};
 use e3_events::CircuitName;
 use e3_events::{
-    DecryptionAggregationJobRequest, PartyProofsToVerify, Proof, Seed, SignedProofPayload,
+    DecryptionAggregationJobRequest, EventContext, PartyProofsToVerify, Proof, Seed, Sequenced,
+    SignedProofPayload,
 };
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;

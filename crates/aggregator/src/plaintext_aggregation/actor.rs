@@ -6,7 +6,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::workflow::threshold_plaintext_aggregation::{
     build_decryption_aggregation_jobs, format_decrypted_plaintext, ThresholdPlaintextAggregation,
@@ -44,7 +44,7 @@ const DECRYPTION_COLLECTION_TIMEOUT_ENV: &str = "E3_DECRYPTION_COLLECTION_TIMEOU
 const DEFAULT_DECRYPTION_COLLECTION_TIMEOUT_SECS: u64 = 1800;
 
 /// Resolve the decryption-share collection timeout, honouring the env override.
-fn decryption_collection_timeout() -> Duration {
+pub(crate) fn decryption_collection_timeout() -> Duration {
     match std::env::var(DECRYPTION_COLLECTION_TIMEOUT_ENV)
         .ok()
         .and_then(|v| v.parse::<u64>().ok())
@@ -58,6 +58,24 @@ fn decryption_collection_timeout() -> Duration {
         }
         None => Duration::from_secs(DEFAULT_DECRYPTION_COLLECTION_TIMEOUT_SECS),
     }
+}
+
+pub(crate) fn unix_time_millis() -> u64 {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
+    u64::try_from(millis).unwrap_or(u64::MAX)
+}
+
+pub(crate) fn decryption_collection_deadline() -> u64 {
+    let timeout_millis =
+        u64::try_from(decryption_collection_timeout().as_millis()).unwrap_or(u64::MAX);
+    unix_time_millis().saturating_add(timeout_millis)
+}
+
+fn remaining_collection_timeout(deadline_unix_ms: u64, now_unix_ms: u64) -> Duration {
+    Duration::from_millis(deadline_unix_ms.saturating_sub(now_unix_ms))
 }
 
 /// Internal self-message fired when the decryption-share collection window elapses.
@@ -92,9 +110,8 @@ struct PendingDecryptionWork {
     last_ec: Option<EventContext<Sequenced>>,
     /// Timer handle for the decryption-share collection timeout (cancelled when the actor stops).
     timeout_handle: Option<SpawnHandle>,
-    /// Most recent inbound event context, used as the causal parent for the `E3Failed` event
-    /// emitted if the collection window elapses while still collecting shares.
-    timeout_ec: Option<EventContext<Sequenced>>,
+    /// Prevent a second timeout message from racing the acknowledged terminal publish.
+    timeout_firing: bool,
 }
 
 pub struct ThresholdPlaintextAggregator {

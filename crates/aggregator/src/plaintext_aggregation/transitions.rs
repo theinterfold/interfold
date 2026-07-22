@@ -51,6 +51,8 @@ impl ThresholdPlaintextAggregation {
                 shares,
                 c6_proofs,
                 seed: current.seed,
+                deadline_unix_ms: current.deadline_unix_ms,
+                timeout_context: current.timeout_context,
             }));
         }
 
@@ -101,6 +103,8 @@ impl ThresholdPlaintextAggregation {
                 seed: current.seed,
                 ciphertext_output: current.ciphertext_output,
                 params: current.params,
+                deadline_unix_ms: current.deadline_unix_ms,
+                timeout_context: current.timeout_context,
             }));
         }
 
@@ -113,6 +117,8 @@ impl ThresholdPlaintextAggregation {
                 seed: current.seed,
                 ciphertext_output: current.ciphertext_output,
                 params: current.params,
+                deadline_unix_ms: current.deadline_unix_ms,
+                timeout_context: current.timeout_context,
             }));
         }
 

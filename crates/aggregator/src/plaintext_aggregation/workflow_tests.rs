@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use e3_events::{E3Failed, E3Stage, EventContext, FailureReason, InterfoldEventData, Unsequenced};
 
 fn ab(b: u8) -> ArcBytes {
     ArcBytes::from_bytes(&[b])
@@ -25,6 +26,15 @@ fn c6_proof(marker: u8) -> SignedProofPayload {
     }
 }
 
+fn timeout_context() -> EventContext<Sequenced> {
+    EventContext::<Unsequenced>::from(InterfoldEventData::E3Failed(E3Failed {
+        e3_id: e3_events::E3id::new("1", 1),
+        failed_at_stage: E3Stage::CiphertextReady,
+        reason: FailureReason::None,
+    }))
+    .sequence(0)
+}
+
 fn collecting(threshold_m: u64, threshold_n: u64) -> ThresholdPlaintextAggregatorState {
     ThresholdPlaintextAggregatorState::init(
         threshold_m,
@@ -32,6 +42,8 @@ fn collecting(threshold_m: u64, threshold_n: u64) -> ThresholdPlaintextAggregato
         Seed([0u8; 32]),
         vec![ab(1)],
         ab(2),
+        u64::MAX,
+        timeout_context(),
     )
 }
 
@@ -132,6 +144,8 @@ fn handle_member_expelled_transitions_when_enough_remain() {
         seed: Seed([0u8; 32]),
         ciphertext_output: vec![ab(1)],
         params: ab(2),
+        deadline_unix_ms: u64::MAX,
+        timeout_context: timeout_context(),
     });
     let _ = state;
     let state = ThresholdPlaintextAggregatorState::Collecting(Collecting {
@@ -142,6 +156,8 @@ fn handle_member_expelled_transitions_when_enough_remain() {
         seed: Seed([0u8; 32]),
         ciphertext_output: vec![ab(1)],
         params: ab(2),
+        deadline_unix_ms: u64::MAX,
+        timeout_context: timeout_context(),
     });
     // remove party 0 -> 2 shares remain, required_shares=2 -> VerifyingC6
     let next = ThresholdPlaintextAggregation::handle_member_expelled(state, 0, 2).unwrap();

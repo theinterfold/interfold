@@ -399,6 +399,13 @@ the E3 context and retries plaintext actor creation when `PublicKeyAggregated` o
 `CommitteePublished` supplies the missing facts; the router's existing recipient buffer then drains
 any ciphertext/decryption-share events into the newly-created plaintext path.
 
+Plaintext share collection records its absolute Unix-millisecond deadline and the originating
+`CiphertextOutputPublished` event context in the persisted `Collecting` state. A hydrated actor
+schedules only the remaining duration (or fires immediately when the deadline has passed), so a
+restart cannot renew the collection budget. The timeout publishes `E3Failed(DecryptionTimeout)`
+through acknowledged EventBus delivery before stopping, and its causal parent does not depend on a
+later decryption share having arrived.
+
 `ShareVerificationActor` gates C1/C6 proof verification behind `CommitmentConsistencyCheckRequested`
 / `CommitmentConsistencyCheckComplete`. The per-E3 `CommitmentConsistencyChecker` is therefore
 restart-critical even though it has no durable state of its own: after context hydration,
