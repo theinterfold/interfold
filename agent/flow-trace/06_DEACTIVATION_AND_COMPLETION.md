@@ -246,6 +246,8 @@ On restart:
 │        an unavailable or blocked listener aborts recovery after a bounded wait
 │      → Structured progress is emitted every 10,000 EventBus-handled events
 │   4. Fetch historical EVM events from last known block
+│      → completion waits on exact membership for its referenced final event;
+│        probabilistic Bloom membership cannot open the effects barrier
 │   5. Historical libp2p sync retries failed aggregate fetches after reconnects
 │      and also on bounded retry intervals even without a new connection event
 │   6. Sort & publish merged events by HLC timestamp
