@@ -77,17 +77,32 @@ You’ll typically:
 
 #### 1. Build the package
 
-From the `dappnode/` directory:
+Build the exact candidate binary first, create the same normalized archive used by the release
+workflow, and provide its checksum to Compose:
 
 ```bash
+cargo build --locked --release --bin interfold
+CANDIDATE_EPOCH=$(git show -s --format=%ct HEAD)
+tar --format=ustar --sort=name --mtime="@${CANDIDATE_EPOCH}" \
+  --owner=0 --group=0 --numeric-owner -C target/release -cf - interfold \
+  | gzip -n > dappnode/interfold-linux-x86_64.tar.gz
+export DAPPNODE_UPSTREAM_BINARY_SHA256=$(
+  sha256sum dappnode/interfold-linux-x86_64.tar.gz | awk '{print $1}'
+)
+./dappnode/verify-candidate-binary.sh \
+  dappnode/interfold-linux-x86_64.tar.gz 0.4.0 "$DAPPNODE_UPSTREAM_BINARY_SHA256"
+
 cd dappnode
-npx @dappnode/dappnodesdk@latest build -p remote
+npm ci --ignore-scripts
+./node_modules/.bin/dappnodesdk build --provider dappnode
 ```
 
 This will:
 
+- Reject a binary whose checksum, version, archive layout, readiness route, or readiness metric does
+  not match the package.
 - Validate `docker-compose.yml`, `setup-wizard.yml`, and `dappnode_package.json`
-- Build a multi-arch Docker image for `ciphernode.interfold-ciphernode.public.dappnode.eth`
+- Build the Linux x86-64 Docker image for `ciphernode.interfold-ciphernode.public.dappnode.eth`
 - Upload the release to the DAppNode IPFS node
 - Print an `/ipfs/<hash>` you can use to install the package
 
@@ -113,7 +128,7 @@ Fill in the wizard fields, then install.
 - Edit `entrypoint.sh`, `config.template.yaml`, or `setup-wizard.yml` locally, then rebuild with:
 
   ```bash
-  npx @dappnode/dappnodesdk@latest build -p remote
+  ./node_modules/.bin/dappnodesdk build --provider dappnode
   ```
 
 - Reinstall with the new IPFS hash.
@@ -278,7 +293,7 @@ If you change `QUIC_PORT` in the config, you must also adjust the `ports:` mappi
 To publish this package to the public DAppStore so others can install it:
 
 ```bash
-npx @dappnode/dappnodesdk@latest publish \
+./node_modules/.bin/dappnodesdk publish \
   --type=<patch|minor|major> \
   --eth-provider=<your ETH RPC> \
   --content-provider=<your IPFS API> \
@@ -294,4 +309,4 @@ new package version.
 - [DAppNode Package Development – Single Configuration](https://docs.dappnode.io/docs/dev/package-development/single-configuration/)
 - [DAppNode Docker Compose Reference](https://docs.dappnode.io/docs/dev/references/docker-compose/)
 - [DAppNode Setup Wizard Reference](https://docs.dappnode.io/docs/dev/references/setup-wizard/)
-- [Interfold GitHub Repository](https://github.com/gnosisguild/interfold)
+- [Interfold GitHub Repository](https://github.com/theinterfold/interfold)

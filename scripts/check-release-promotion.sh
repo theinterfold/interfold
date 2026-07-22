@@ -50,6 +50,12 @@ grep -Fq 'cargo workspaces publish --from-git --dry-run --yes' "$RELEASE_WORKFLO
     || fail 'Rust packages are not dry-run before release approval'
 grep -Fq 'npm publish --dry-run --access public' "$RELEASE_WORKFLOW" \
     || fail 'NPM packages are not dry-run before release approval'
+grep -Fq 'build-dappnode-candidate,' "$RELEASE_WORKFLOW" \
+    || fail 'protected approval does not require the exact-candidate DAppNode build'
+grep -Fq './dappnode/verify-candidate-binary.sh' "$RELEASE_WORKFLOW" \
+    || fail 'DAppNode does not verify the exact release candidate binary'
+grep -Fq 'dappnodesdk build --skip-save' "$RELEASE_WORKFLOW" \
+    || fail 'DAppNode candidate is not built before release approval'
 grep -Fq 'cargo workspaces publish --from-git --skip-published --yes' "$RELEASE_WORKFLOW" \
     || fail 'Rust publication cannot roll forward after a partial registry attempt'
 grep -Fq './scripts/publish-npm-idempotent.sh' "$RELEASE_WORKFLOW" \
@@ -66,6 +72,8 @@ grep -Fq 'At least one required registry publication did not succeed' "$RELEASE_
     || fail 'release candidate ancestry verifier is not executable'
 [ -x "$ROOT_DIR/scripts/test-release-candidate-ancestry.sh" ] \
     || fail 'release candidate ancestry regression is not executable'
+[ -x "$ROOT_DIR/dappnode/verify-candidate-binary.sh" ] \
+    || fail 'DAppNode candidate verifier is not executable'
 grep -Fq 'release-assets/release-provenance.json' "$RELEASE_WORKFLOW" \
     || fail 'release assets do not record the verified candidate commit'
 grep -Fq 'REMOTE_STABLE=$(git ls-remote origin refs/tags/stable' "$RELEASE_WORKFLOW" \

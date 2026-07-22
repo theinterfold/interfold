@@ -900,9 +900,9 @@ persist recovery intent.
 ## Release construction and provenance
 
 Release construction fails closed on mutable or unverifiable inputs. The release container
-Dockerfiles pin base-image digests and Debian snapshot dates; downloaded compiler, tool, and
-upstream binary artifacts carry explicit SHA-256 checks; JavaScript installation consumes the
-committed lockfile in frozen mode; and Rust uses the exact patch toolchain from
+Dockerfiles pin base-image digests and Debian snapshot dates; downloaded compiler and tool artifacts
+and the staged DAppNode candidate binary carry explicit SHA-256 checks; JavaScript installation
+consumes committed lockfiles in frozen mode; and Rust uses the exact patch toolchain from
 `rust-toolchain.toml`. `.github/workflows/releases.yml` pins third-party actions to full commits and
 fixed runner images, emits SBOMs and build provenance for published artifacts, and compares two
 cache-isolated ciphernode OCI builds before publishing the image. Binary archives normalize
@@ -925,6 +925,13 @@ crate, and every NPM package to succeed before assets are collected, mutable ali
 non-draft GitHub release is created, or the Git `stable` alias advances. Stable-tag promotion names
 the verified candidate explicitly and confirms the remote ref resolves to that SHA. Release
 concurrency is serialized and missing circuit artifacts are fatal.
+
+The DAppNode image is also a candidate artifact rather than an independently downloaded historical
+binary. The Linux archive produced by `build-binaries` is staged into the DAppNode build context;
+both a host verifier and the Dockerfile require its expected SHA-256, one-file archive shape, exact
+package version, `/health/ready` route, and `interfold_ready` metric. The DAppNode SDK and its full
+dependency graph are locked, and its image build must succeed before protected release approval.
+This keeps the shipped health check and the binary that serves it on the same tested commit.
 
 ## Subsystem contracts
 

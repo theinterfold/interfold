@@ -617,6 +617,49 @@ jobs:
             )
           done
 
+  build-dappnode-candidate:
+    name: Build DAppNode from Exact Candidate Binary
+    runs-on: ubuntu-24.04
+    needs: [validate-and-prepare, candidate-ci, build-binaries]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Download candidate Linux binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: interfold-binaries-linux-x86_64
+          path: dappnode
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: dappnode/package-lock.json
+
+      - name: Install locked DAppNode SDK
+        run: npm ci --ignore-scripts --prefix dappnode
+
+      - name: Verify candidate binary identity and readiness capability
+        id: candidate
+        run: |
+          ARCHIVE=dappnode/interfold-linux-x86_64.tar.gz
+          SHA256=$(sha256sum "$ARCHIVE" | awk '{print $1}')
+          ./dappnode/verify-candidate-binary.sh \
+            "$ARCHIVE" "${{ needs.validate-and-prepare.outputs.version }}" "$SHA256"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Build candidate DAppNode package
+        working-directory: dappnode
+        env:
+          DAPPNODE_UPSTREAM_BINARY_SHA256: ${{ steps.candidate.outputs.sha256 }}
+        run: ./node_modules/.bin/dappnodesdk build --skip-save --timeout 120min
+
   release-candidate-gate:
     name: Approve Fully Validated Candidate
     runs-on: ubuntu-24.04
@@ -630,6 +673,7 @@ jobs:
         download-circuits,
         validate-rust-packages,
         validate-npm-packages,
+        build-dappnode-candidate,
       ]
     environment: release
     steps:

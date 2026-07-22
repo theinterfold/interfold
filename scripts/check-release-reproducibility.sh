@@ -42,7 +42,17 @@ if grep -Eq 'curl[^|]*\|[[:space:]]*(bash|sh)|wget[^|]*\|[[:space:]]*(bash|sh)' 
     fail "Docker build executes an unchecked remote installer"
 fi
 grep -Fq 'sha256sum --check --strict' "$ROOT_DIR/dappnode/Dockerfile" \
-    || fail "DAppNode image does not checksum the upstream release binary"
+    || fail "DAppNode image does not checksum the staged candidate binary"
+grep -Fq 'COPY ${UPSTREAM_BINARY_SOURCE} /tmp/interfold.tar.gz' "$ROOT_DIR/dappnode/Dockerfile" \
+    || fail "DAppNode image is not built from the staged candidate archive"
+grep -Fq 'npm ci --ignore-scripts --prefix dappnode' "$RELEASE_WORKFLOW" \
+    || fail "release workflow does not use the locked DAppNode SDK dependency graph"
+node -e '
+const lock = require(process.argv[1]);
+const sdk = lock.packages["node_modules/@dappnode/dappnodesdk"];
+if (!sdk || sdk.version !== "0.3.53" || !sdk.integrity) process.exit(1);
+' "$ROOT_DIR/dappnode/package-lock.json" \
+    || fail "DAppNode SDK version and integrity are not locked"
 grep -Eq '^channel = "[0-9]+\.[0-9]+\.[0-9]+"$' "$ROOT_DIR/rust-toolchain.toml" \
     || fail "rust-toolchain.toml is not pinned to an exact patch release"
 grep -Fq 'provenance: mode=max' "$RELEASE_WORKFLOW" \

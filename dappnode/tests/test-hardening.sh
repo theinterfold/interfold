@@ -252,9 +252,11 @@ assert_not_contains "$ROOT_DIR/entrypoint.sh" '--private-key "$private_key"'
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--net-keypair "$network_private_key"'
 assert_contains "$ROOT_DIR/dappnode_package.json" '"version": "0.4.0"'
 assert_contains "$ROOT_DIR/docker-compose.yml" 'UPSTREAM_VERSION: 0.4.0'
-assert_contains "$ROOT_DIR/docker-compose.yml" 'UPSTREAM_BINARY_SHA256: 7369fdec1769d5cb60d4168e85f4f9a197c9e2c725f80a9e1bb95255ba16cf3b'
+assert_contains "$ROOT_DIR/docker-compose.yml" 'DAPPNODE_UPSTREAM_BINARY_SHA256:?stage and verify the exact candidate binary first'
 assert_contains "$ROOT_DIR/Dockerfile" 'echo "${UPSTREAM_BINARY_SHA256}  /tmp/interfold.tar.gz" | sha256sum --check --strict'
-assert_contains "$ROOT_DIR/Dockerfile" 'https://github.com/theinterfold/interfold'
+assert_contains "$ROOT_DIR/Dockerfile" "grep -aFq '/health/ready' /usr/local/bin/interfold"
+assert_contains "$ROOT_DIR/Dockerfile" "grep -aFq 'interfold_ready' /usr/local/bin/interfold"
+assert_not_contains "$ROOT_DIR/Dockerfile" 'releases/download'
 assert_not_contains "$ROOT_DIR/Dockerfile" 'gnosisguild/ciphernode'
 assert_not_contains "$ROOT_DIR/Dockerfile" 'debian:stable-slim'
 assert_contains "$ROOT_DIR/config.template.yaml" 'slashing_manager:'
@@ -264,6 +266,39 @@ assert_contains "$ROOT_DIR/healthcheck.sh" '/run/interfold/key'
 assert_contains "$ROOT_DIR/config.template.yaml" "key_file: '/run/interfold/key'"
 assert_contains "$ROOT_DIR/docker-compose.yml" 'ciphernode_secrets:/run/interfold'
 assert_not_contains "$ROOT_DIR/dappnode_package.json" '/run/interfold'
+
+# Candidate packaging must accept only an exact-version, exact-hash binary that contains the
+# readiness route and metric required by the DAppNode health contract.
+candidate_dir="$TEST_ROOT/candidate-binary"
+mkdir -p "$candidate_dir/good" "$candidate_dir/missing-readiness"
+printf '%s\n' \
+    '#!/bin/sh' \
+    '# /health/ready' \
+    '# interfold_ready' \
+    'printf "interfold 0.4.0\n"' \
+    > "$candidate_dir/good/interfold"
+chmod +x "$candidate_dir/good/interfold"
+tar -czf "$candidate_dir/good.tar.gz" -C "$candidate_dir/good" interfold
+candidate_sha=$(sha256sum "$candidate_dir/good.tar.gz" | awk '{print $1}')
+"$ROOT_DIR/verify-candidate-binary.sh" \
+    "$candidate_dir/good.tar.gz" 0.4.0 "$candidate_sha" >/dev/null \
+    || fail 'valid candidate binary was rejected'
+if "$ROOT_DIR/verify-candidate-binary.sh" \
+    "$candidate_dir/good.tar.gz" 0.4.0 "$(printf '0%.0s' {1..64})" >/dev/null 2>&1; then
+    fail 'candidate binary with a mismatched checksum was accepted'
+fi
+printf '%s\n' \
+    '#!/bin/sh' \
+    'printf "interfold 0.4.0\n"' \
+    > "$candidate_dir/missing-readiness/interfold"
+chmod +x "$candidate_dir/missing-readiness/interfold"
+tar -czf "$candidate_dir/missing-readiness.tar.gz" \
+    -C "$candidate_dir/missing-readiness" interfold
+missing_readiness_sha=$(sha256sum "$candidate_dir/missing-readiness.tar.gz" | awk '{print $1}')
+if "$ROOT_DIR/verify-candidate-binary.sh" \
+    "$candidate_dir/missing-readiness.tar.gz" 0.4.0 "$missing_readiness_sha" >/dev/null 2>&1; then
+    fail 'candidate binary without protocol readiness was accepted'
+fi
 
 # Health probe regression: require the exact process/config, protected files,
 # and bound QUIC listener rather than accepting an arbitrary matching PID.

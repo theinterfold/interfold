@@ -1,13 +1,15 @@
-# DAppNode Interfold Ciphernode Dockerfile
-# Uses the checksum-pinned official release binary.
+# DAppNode Interfold Ciphernode Dockerfile.
+# The exact candidate archive must be staged in this build context by CI or the developer.
 
 ARG UPSTREAM_VERSION
+ARG UPSTREAM_BINARY_SOURCE=interfold-linux-x86_64.tar.gz
 ARG UPSTREAM_BINARY_SHA256
 
 # Runtime image
 FROM debian:12.15-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
 ARG UPSTREAM_VERSION
+ARG UPSTREAM_BINARY_SOURCE
 ARG UPSTREAM_BINARY_SHA256
 ARG DEBIAN_SNAPSHOT=20260720T000000Z
 
@@ -36,16 +38,19 @@ RUN install -d -o ciphernode -g ciphernode -m 0750 /data \
     && install -d -o ciphernode -g ciphernode -m 0700 /run/secrets \
     && install -d -o ciphernode -g ciphernode -m 0700 /run/interfold
 
-# Install only the immutable, checksum-verified upstream release binary. A version update without
-# its matching checksum fails closed instead of silently consuming changed bytes.
+# Install only the staged, checksum-verified candidate binary. The archive must contain exactly the
+# expected executable, report the package version, and expose the protocol-readiness surface used by
+# this image's health check.
+COPY ${UPSTREAM_BINARY_SOURCE} /tmp/interfold.tar.gz
 RUN test -n "${UPSTREAM_VERSION}" \
     && echo "${UPSTREAM_BINARY_SHA256}" | grep -Eq '^[0-9a-f]{64}$' \
-    && curl --fail --show-error --silent --location \
-        --output /tmp/interfold.tar.gz \
-        "https://github.com/theinterfold/interfold/releases/download/v${UPSTREAM_VERSION}/interfold-linux-x86_64.tar.gz" \
     && echo "${UPSTREAM_BINARY_SHA256}  /tmp/interfold.tar.gz" | sha256sum --check --strict \
+    && test "$(tar -tzf /tmp/interfold.tar.gz)" = interfold \
     && tar -xzf /tmp/interfold.tar.gz -C /usr/local/bin interfold \
     && chmod 0755 /usr/local/bin/interfold \
+    && test "$(/usr/local/bin/interfold --version)" = "interfold ${UPSTREAM_VERSION}" \
+    && grep -aFq '/health/ready' /usr/local/bin/interfold \
+    && grep -aFq 'interfold_ready' /usr/local/bin/interfold \
     && rm /tmp/interfold.tar.gz
 
 # Copy entrypoint and config template
