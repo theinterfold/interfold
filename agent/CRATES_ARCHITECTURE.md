@@ -332,7 +332,7 @@ flowchart TD
         Sequencer -. do_send .-> EventStore[append event log and timestamp index]
         EventStore -. response do_send .-> Sequencer
         Sequencer -. do_send .-> Dispatch[EventBus dispatch]
-        Dispatch -->|await each live recipient| Subscribers[actor subscribers]
+        Dispatch -->|bounded mailbox admission| Subscribers[actor subscribers]
         Dispatch --> SnapshotBuffer[aggregate snapshot buffer]
         SnapshotBuffer -. do_send .-> SnapshotRouter[BatchRouter and per-sequence Batch actors]
         SnapshotRouter --> Repositories[(Sled KV state)]
@@ -346,8 +346,8 @@ flowchart TD
         Query --> Runs[sort 1024-event pages into secure temporary runs]
         Runs --> GlobalOrder[bounded-fan-in merge by HLC timestamp]
         GlobalOrder --> ReplayFloor[advance HLC floor while loading the runs]
-        ReplayFloor -->|EventBus acknowledged fanout one event at a time| Dispatch
-        Dispatch -->|EventBusBarrier after completed fanout| EvmBackfill[configured-confirmation EVM backfill]
+        ReplayFloor -->|EventBus acknowledged admission one event at a time| Dispatch
+        Dispatch -->|EventBusBarrier after completed admission| EvmBackfill[configured-confirmation EVM backfill]
         EvmBackfill --> NetBackfill[bounded historical network sync]
         NetBackfill --> Merge[merge and sort EVM plus network history by HLC]
         Merge --> Enable[EffectsEnabled]
@@ -373,11 +373,12 @@ an integrity failure. Post-snapshot events are queried per aggregate in 1,024-ev
 into secure temporary runs. Runs are compacted with bounded fan-in and merged globally by persisted
 HLC timestamp, so memory and open-file use do not scale with the entire backlog. Before fanout, the
 HLC floor advances to the maximum replay timestamp, which covers a snapshot cursor stalled behind
-newer log records. Replay then waits for concurrent acceptance by all current EventBus subscribers.
-An unavailable subscriber or a subscriber blocked beyond the bounded acceptance timeout aborts
-recovery. An `EventBusBarrier` therefore completes only after the last replay fanout has completed.
-A persisted `Shutdown` event from the previous process is classified as infrastructure and is not
-replayed into newly constructed actors.
+newer log records. Replay then requires bounded mailbox admission by all current EventBus
+subscribers. An unavailable subscriber or a full mailbox aborts recovery. An `EventBusBarrier`
+therefore completes only after the last replay fanout has been admitted; mailbox FIFO preserves
+ordering while ordinary handler computation continues asynchronously. `Shutdown` separately waits
+for handler completion. A persisted `Shutdown` event from the previous process is classified as
+infrastructure and is not replayed into newly constructed actors.
 
 The EventBus mailbox remains bounded at `MAILBOX_LIMIT_LARGE` (2,560 messages). The replay producer
 no longer attempts to enqueue the entire backlog into that mailbox in one burst, and EventBus

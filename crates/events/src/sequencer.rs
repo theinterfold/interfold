@@ -214,7 +214,7 @@ mod tests {
     }
 
     #[actix::test]
-    async fn acknowledged_publish_waits_for_subscriber_completion() -> anyhow::Result<()> {
+    async fn acknowledged_publish_waits_for_subscriber_mailbox_admission() -> anyhow::Result<()> {
         let system = EventSystem::new().with_fresh_bus();
         let bus = system.handle()?.enable("acknowledged-publish");
         let gate = Arc::new(Notify::new());
@@ -224,16 +224,13 @@ mod tests {
             .send(Subscribe::new(EventType::TestEvent, subscriber.recipient()))
             .await?;
 
-        let mut publish = Box::pin(bus.publish_and_wait(TestEvent::new("blocked", 1), None));
-        assert!(
-            tokio::time::timeout(std::time::Duration::from_millis(20), &mut publish)
-                .await
-                .is_err(),
-            "publication acknowledged before its subscriber completed"
-        );
+        tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            bus.publish_and_wait(TestEvent::new("blocked", 1), None),
+        )
+        .await??;
 
         gate.notify_one();
-        publish.await?;
         Ok(())
     }
 }

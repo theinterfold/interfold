@@ -37,10 +37,11 @@ impl Default for EventBusConfig {
 /// evicted in first-observed order and a later occurrence is accepted again.
 const DEFAULT_DEDUP_CAPACITY: usize = 250_000;
 
-/// Actor handlers are expected to hand long-running work to child futures. A
-/// full mailbox that cannot accept one event within this window is unhealthy;
-/// replay fails closed instead of hanging startup forever.
-const FANOUT_ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
+/// Shutdown is the one event whose handlers must finish before the EventBus barrier can pass.
+/// Ordinary protocol delivery is acknowledged at bounded mailbox admission because an Actix
+/// `send` future resolves only after the handler's work completes, which may legitimately take
+/// minutes for proof aggregation.
+const SHUTDOWN_COMPLETION_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A bounded, exact FIFO set.
 ///
@@ -208,21 +209,34 @@ async fn fanout<E: Event>(
     event_type: String,
     listeners: Vec<Recipient<E>>,
 ) -> anyhow::Result<()> {
-    let deliveries = listeners.into_iter().map(|listener| {
-        let event = event.clone();
-        async move { tokio::time::timeout(FANOUT_ACCEPT_TIMEOUT, listener.send(event)).await }
-    });
+    if event_type == EventType::Shutdown.as_str() {
+        let deliveries =
+            listeners.into_iter().map(|listener| {
+                let event = event.clone();
+                async move {
+                    tokio::time::timeout(SHUTDOWN_COMPLETION_TIMEOUT, listener.send(event)).await
+                }
+            });
 
-    for delivery in join_all(deliveries).await {
-        match delivery {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => anyhow::bail!(
-                "EventBus subscriber was unavailable while accepting {event_type}: {error}"
-            ),
-            Err(_) => anyhow::bail!(
-                "EventBus subscriber did not accept {event_type} within {:?}",
-                FANOUT_ACCEPT_TIMEOUT
-            ),
+        for delivery in join_all(deliveries).await {
+            match delivery {
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => anyhow::bail!(
+                    "EventBus subscriber was unavailable while completing {event_type}: {error}"
+                ),
+                Err(_) => anyhow::bail!(
+                    "EventBus subscriber did not complete {event_type} within {:?}",
+                    SHUTDOWN_COMPLETION_TIMEOUT
+                ),
+            }
+        }
+    } else {
+        for listener in listeners {
+            listener.try_send(event.clone()).map_err(|error| {
+                anyhow::anyhow!(
+                    "EventBus subscriber rejected bounded mailbox admission for {event_type}: {error}"
+                )
+            })?;
         }
     }
     Ok(())
@@ -253,13 +267,11 @@ impl<E: Event> Handler<E> for EventBus<E> {
         };
         let event_id = event.event_id();
 
-        // `Recipient::do_send` bypasses mailbox capacity. During startup replay that turns a
-        // bounded EventBus into an unbounded multiplier: every replayed event is cloned into each
-        // subscriber even when its mailbox is full. Await subscriber capacity concurrently and
-        // pause this actor so at most one subsequent event can be queued while downstream actors
-        // catch up. A wedged subscriber is bounded by FANOUT_ACCEPT_TIMEOUT.
-        // This also makes EventBusBarrier an acknowledgement of completed fanout rather than mere
-        // enqueueing.
+        // `Recipient::do_send` bypasses mailbox capacity. Acknowledged fanout uses `try_send` for
+        // ordinary events, so success means every live bounded mailbox admitted the event. It
+        // deliberately does not await handler completion: proof handlers can run for minutes and
+        // awaiting them creates a protocol-wide head-of-line block. Shutdown remains the explicit
+        // completion barrier.
         ctx.wait(
             async move { fanout(event, event_type.clone(), listeners).await }
                 .into_actor(self)
@@ -806,8 +818,8 @@ mod tests {
     }
 
     #[actix::test]
-    async fn ordinary_fanout_pauses_event_bus_until_subscriber_acknowledges() -> anyhow::Result<()>
-    {
+    async fn ordinary_fanout_acknowledges_mailbox_admission_not_handler_completion(
+    ) -> anyhow::Result<()> {
         let bus = EventBus::with_dedup_capacity(EventBusConfig::default(), 2).start();
         let gate = Arc::new(Notify::new());
         let completed = Arc::new(AtomicBool::new(false));
@@ -821,29 +833,25 @@ mod tests {
             .await?;
         bus.send(CollidingEvent::new(9)).await?;
 
-        let mut fence = Box::pin(bus.send(EventBusBarrier));
+        tokio::time::timeout(Duration::from_millis(100), bus.send(EventBusBarrier)).await??;
         assert!(
-            tokio::time::timeout(Duration::from_millis(20), &mut fence)
-                .await
-                .is_err(),
-            "EventBus fence completed before the ordinary subscriber"
+            !completed.load(Ordering::SeqCst),
+            "mailbox admission unexpectedly waited for handler completion"
         );
 
         gate.notify_one();
-        fence.await?;
-        assert!(completed.load(Ordering::SeqCst));
         Ok(())
     }
 
     #[actix::test]
-    async fn acknowledged_fanout_does_not_head_of_line_block_other_subscribers(
+    async fn acknowledged_fanout_does_not_wait_for_long_running_subscriber_handlers(
     ) -> anyhow::Result<()> {
         let bus = EventBus::with_dedup_capacity(EventBusConfig::default(), 2).start();
         let gate = Arc::new(Notify::new());
         let completed = Arc::new(AtomicBool::new(false));
         let blocked = BlockingSubscriber {
             gate: Arc::clone(&gate),
-            completed,
+            completed: Arc::clone(&completed),
         }
         .start();
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -862,15 +870,10 @@ mod tests {
             received, 9,
             "the healthy subscriber should receive concurrently"
         );
-        assert!(
-            tokio::time::timeout(Duration::from_millis(20), &mut fanout)
-                .await
-                .is_err(),
-            "acknowledged fanout completed while one subscriber was still blocked"
-        );
+        tokio::time::timeout(Duration::from_millis(100), &mut fanout).await???;
+        assert!(!completed.load(Ordering::SeqCst));
 
         gate.notify_one();
-        fanout.await??;
         Ok(())
     }
 }

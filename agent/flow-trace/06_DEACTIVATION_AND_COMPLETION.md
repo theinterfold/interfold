@@ -214,7 +214,7 @@ interfold start → running node
 ├─ Ctrl+C / SIGINT / SIGTERM
 │
 └─ graceful_shutdown():
-    ├─ Persists Shutdown and waits for acknowledged EventBus fanout
+    ├─ Persists Shutdown and waits for every subscribed shutdown handler to complete
     ├─ Flushes the sequencer and event-store pipeline
     │  → Event-log flush includes `sync_all` for every segment/index and the log directory
     ├─ Drains open snapshot batches, flushes the backing store, and closes it
@@ -248,8 +248,8 @@ On restart:
 │   3. Replay EventStore events since last snapshot (effects still disabled)
 │      → Read each aggregate in 1,024-event pages, sort bounded temporary runs,
 │        and perform a bounded-fan-in global merge by HLC timestamp
-│      → Each concurrent EventBus fanout is acknowledged before the next event;
-│        an unavailable or blocked listener aborts recovery after a bounded wait
+│      → Each EventBus fanout receives bounded mailbox admission before the next event;
+│        a closed or full listener fails recovery instead of being bypassed
 │      → Structured progress is emitted every 10,000 EventBus-handled events
 │   4. Fetch historical EVM events from last known block
 │      → completion waits on exact membership for its referenced final event;
@@ -290,10 +290,13 @@ reconciled safely.
 
 Correctness-sensitive publishers use the acknowledged publication path. Its success boundary is:
 the sequencer has assigned the event, the target EventStore has appended and synchronously flushed
-it, and every current EventBus subscriber has completed fanout. EventBus inserts the event ID into
-its exact bounded deduplication set only after that fanout succeeds, so a failed delivery remains
-retriable. Remote libp2p ingress does not mark its own exact deduplication set until the same full
-pipeline acknowledgement returns. Live EVM ingress uses that path as well. At `SyncEnded`, the EVM
+it, and every current EventBus subscriber's bounded mailbox has admitted it. EventBus does not wait
+for an ordinary handler's full computation—recursive proof handlers can legitimately take minutes—
+but mailbox FIFO preserves event order per subscriber. `Shutdown` is the explicit stronger case and
+waits for every shutdown handler to complete. EventBus inserts the event ID into its exact bounded
+deduplication set only after admission succeeds, so a failed delivery remains retriable. Remote
+libp2p ingress does not mark its own exact deduplication set until the same durable/admission
+acknowledgement returns. Live EVM ingress uses that path as well. At `SyncEnded`, the EVM
 gateway first releases the EventBus callback to avoid a circular wait, remains in a bounded
 `Draining` state, and reports Live only after all buffered batches (including events arriving during
 the drain) have crossed the acknowledged path. Fire-and-forget `EventPublisher` methods expose only
@@ -305,10 +308,10 @@ operation and while draining replay-buffered effects.
 
 EventStore replay uses a disk-backed external merge: per-aggregate pages are sorted into secure
 temporary runs, then compacted and merged with bounded file-descriptor fan-in. Replay waits for
-concurrent EventBus listener acceptance for each event. A listener that is unavailable or cannot
-accept within the timeout fails recovery instead of being silently skipped. Snapshot routing still
-contains asynchronous edges, so this does not claim that every downstream actor is synchronously
-durable at each replay step.
+bounded EventBus listener admission for each event. A listener that is unavailable or whose mailbox
+is full fails recovery instead of being silently skipped. Snapshot routing and handler execution
+remain asynchronous, so this does not claim that every downstream actor is synchronously durable at
+each replay step.
 
 `interfold node validate` detects a recoverable uncommitted event-log tail without changing it. With
 the node stopped, `interfold node validate --repair` applies the same boundary-checked tail recovery

@@ -68,13 +68,13 @@ impl EventStoreQueryResponse {
 pub struct FlushEventStores;
 
 /// A no-op sequencer mailbox fence. Once its response arrives, every earlier
-/// acknowledged persistence/fanout future has completed.
+/// persistence and bounded subscriber-mailbox admission has completed.
 #[derive(Message, Debug)]
 #[rtype(result = "()")]
 pub struct SequencerBarrier;
 
-/// A no-op EventBus mailbox fence. Once handled, every earlier event has been
-/// processed by every live downstream subscriber.
+/// A no-op EventBus mailbox fence. Once handled, every earlier ordinary event has been admitted
+/// by every live downstream subscriber. `Shutdown` is stronger: its handlers have completed.
 #[derive(Message, Debug)]
 #[rtype(result = "()")]
 pub struct EventBusBarrier;

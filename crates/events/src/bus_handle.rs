@@ -264,7 +264,7 @@ impl BusHandle<Enabled> {
         Ok(())
     }
 
-    /// Publish a local event and return only after durable persistence and acknowledged fanout.
+    /// Publish locally after durable persistence and bounded admission by every live subscriber.
     pub async fn publish_and_wait(
         &self,
         data: impl Into<InterfoldEventData>,
@@ -276,7 +276,7 @@ impl BusHandle<Enabled> {
         Ok(())
     }
 
-    /// Publish a remote event and return only after durable persistence and acknowledged fanout.
+    /// Publish remotely after durable persistence and bounded admission by every live subscriber.
     pub async fn publish_from_remote_and_wait(
         &self,
         data: impl Into<InterfoldEventData>,
