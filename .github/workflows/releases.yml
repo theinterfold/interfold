@@ -39,6 +39,7 @@ jobs:
     outputs:
       version: ${{ steps.get_version.outputs.version }}
       is_prerelease: ${{ steps.get_version.outputs.is_prerelease }}
+      candidate_sha: ${{ steps.verify_candidate.outputs.candidate_sha }}
     steps:
       - name: Checkout code
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
@@ -47,6 +48,14 @@ jobs:
 
       - name: Verify immutable release inputs
         run: ./scripts/check-release-reproducibility.sh
+
+      - name: Verify tag target is on protected main
+        id: verify_candidate
+        run: |
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main
+          ./scripts/verify-release-candidate.sh \
+            "$GITHUB_REF" refs/remotes/origin/main "$GITHUB_SHA"
 
       - name: Get version from tag
         id: get_version
@@ -626,7 +635,7 @@ jobs:
     steps:
       - name: Record immutable candidate approval
         run: |
-          echo "Approved release candidate $GITHUB_SHA"
+          echo "Approved release candidate ${{ needs.validate-and-prepare.outputs.candidate_sha }}"
           echo "Version ${{ needs.validate-and-prepare.outputs.version }}"
 
   publication-gate:
@@ -719,6 +728,19 @@ jobs:
         run: |
           mkdir -p release-assets
           find dist/ -name "*.tar.gz" -exec cp {} release-assets/ \;
+          jq --null-input \
+            --arg tag "$GITHUB_REF_NAME" \
+            --arg candidateSha "${{ needs.validate-and-prepare.outputs.candidate_sha }}" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg circuitSourceHash "${{ needs.download-circuits.outputs.source_hash }}" \
+            '{
+              tag: $tag,
+              candidateSha: $candidateSha,
+              workflowRunId: $runId,
+              workflowRunAttempt: $runAttempt,
+              circuitSourceHash: $circuitSourceHash
+            }' > release-assets/release-provenance.json
           ls -la release-assets/
 
       - name: Generate Release Notes
@@ -730,6 +752,8 @@ jobs:
           # Create release notes
           cat > release_notes.md << EOF
           ## 🚀 Release v${VERSION}
+
+          Candidate commit: \`${{ needs.validate-and-prepare.outputs.candidate_sha }}\`
 
           EOF
 
@@ -862,6 +886,12 @@ jobs:
       - name: Update stable tag (for stable releases only)
         if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
         run: |
-          git tag -f stable
-          git push origin stable --force
-          echo "✅ Updated 'stable' tag to point to v${{ needs.validate-and-prepare.outputs.version }}"
+          CANDIDATE_SHA="${{ needs.validate-and-prepare.outputs.candidate_sha }}"
+          git tag -f stable "$CANDIDATE_SHA"
+          git push origin refs/tags/stable --force
+          REMOTE_STABLE=$(git ls-remote origin refs/tags/stable | awk '{print $1}')
+          if [[ "$REMOTE_STABLE" != "$CANDIDATE_SHA" ]]; then
+            echo "::error::stable resolved to $REMOTE_STABLE, expected $CANDIDATE_SHA"
+            exit 1
+          fi
+          echo "✅ Updated 'stable' tag to candidate $CANDIDATE_SHA"

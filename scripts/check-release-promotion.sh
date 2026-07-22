@@ -19,6 +19,10 @@ grep -Fq 'uses: ./.github/workflows/ci.yml' "$RELEASE_WORKFLOW" \
     || fail 'release does not validate its exact candidate through CI'
 grep -Fq 'release_candidate: true' "$RELEASE_WORKFLOW" \
     || fail 'release does not force the complete candidate CI suite'
+grep -Fq './scripts/verify-release-candidate.sh' "$RELEASE_WORKFLOW" \
+    || fail 'release tag is not verified against the protected candidate history'
+grep -Fq 'candidate_sha: ${{ steps.verify_candidate.outputs.candidate_sha }}' "$RELEASE_WORKFLOW" \
+    || fail 'verified candidate commit is not exported to release jobs'
 grep -Fq 'group: release-promotion-${{ github.repository }}' "$RELEASE_WORKFLOW" \
     || fail 'release promotions are not serialized'
 grep -Fq 'environment: release' "$RELEASE_WORKFLOW" \
@@ -58,5 +62,13 @@ grep -Fq 'At least one required registry publication did not succeed' "$RELEASE_
     || fail 'NPM roll-forward helper is not executable'
 [ -x "$ROOT_DIR/scripts/test-publish-npm-idempotent.sh" ] \
     || fail 'NPM publication recovery regression is not executable'
+[ -x "$ROOT_DIR/scripts/verify-release-candidate.sh" ] \
+    || fail 'release candidate ancestry verifier is not executable'
+[ -x "$ROOT_DIR/scripts/test-release-candidate-ancestry.sh" ] \
+    || fail 'release candidate ancestry regression is not executable'
+grep -Fq 'release-assets/release-provenance.json' "$RELEASE_WORKFLOW" \
+    || fail 'release assets do not record the verified candidate commit'
+grep -Fq 'REMOTE_STABLE=$(git ls-remote origin refs/tags/stable' "$RELEASE_WORKFLOW" \
+    || fail 'stable tag promotion does not verify its remote candidate target'
 
 printf 'release candidate and publication gates are fail closed\n'

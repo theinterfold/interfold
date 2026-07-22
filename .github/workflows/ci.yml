@@ -54,6 +54,9 @@ jobs:
       - name: Test atomic release promotion graph
         run: ./scripts/check-release-promotion.sh
 
+      - name: Test protected release candidate ancestry
+        run: ./scripts/test-release-candidate-ancestry.sh
+
       - name: Test idempotent NPM publication recovery
         run: ./scripts/test-publish-npm-idempotent.sh
 
