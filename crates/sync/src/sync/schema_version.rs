@@ -12,7 +12,7 @@
 /// marker is the guardrail: bump it whenever a persisted format changes in a
 /// non-additive way. On boot the persisted value is compared against this
 /// constant (see `decide_schema_version`).
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +88,19 @@ mod tests {
                 assert!(msg.contains("upgrade"));
             }
             other => panic!("expected Halt, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn v03_schema_one_halts_before_state_decode() {
+        let decision = decide_schema_version(Some(1), SCHEMA_VERSION, true);
+        match decision {
+            SchemaVersionDecision::Halt(message) => {
+                assert!(message.contains("version 1"));
+                assert!(message.contains("version 2"));
+                assert!(message.contains("migration is required"));
+            }
+            other => panic!("v0.3 schema must halt before decoding keyshare state, got {other:?}"),
         }
     }
 
