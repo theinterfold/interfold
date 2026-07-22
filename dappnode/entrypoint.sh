@@ -11,9 +11,8 @@ SECRETS_FILE="${SECRETS_FILE:-/run/secrets/secrets.json}"
 CREDENTIAL_PROVISIONER="${CREDENTIAL_PROVISIONER:-/opt/provision-credentials.exp}"
 LEGACY_STATE_DIR="${LEGACY_STATE_DIR:-$CONFIG_DIR/.enclave}"
 CURRENT_STATE_DIR="${CURRENT_STATE_DIR:-$CONFIG_DIR/.interfold}"
-# Interfold v0.2.3 resolves a relative `key_file: key` beside a discovered
-# /data/config.yaml to this path for the default node profile.
-PASSWORD_FILE="${PASSWORD_FILE:-$CURRENT_STATE_DIR/config/_default/key}"
+PASSWORD_FILE="${PASSWORD_FILE:-/run/interfold/key}"
+LEGACY_PASSWORD_FILE="${LEGACY_PASSWORD_FILE:-$CURRENT_STATE_DIR/config/_default/key}"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$1"; }
 fail() {
@@ -66,6 +65,19 @@ migrate_legacy_state() {
 
 migrate_legacy_state
 
+# Move the legacy co-located password into the separately mounted secret
+# volume. Refuse ambiguity rather than guessing which key protects the state.
+if [ -e "$PASSWORD_FILE" ] && [ -e "$LEGACY_PASSWORD_FILE" ] \
+    && [ "$PASSWORD_FILE" != "$LEGACY_PASSWORD_FILE" ]; then
+    fail "both separated and legacy password files exist; refusing ambiguous credential state"
+fi
+if [ ! -e "$PASSWORD_FILE" ] && [ -f "$LEGACY_PASSWORD_FILE" ] \
+    && [ "$PASSWORD_FILE" != "$LEGACY_PASSWORD_FILE" ]; then
+    mkdir -p "$(dirname "$PASSWORD_FILE")"
+    mv -- "$LEGACY_PASSWORD_FILE" "$PASSWORD_FILE" \
+        || fail "could not separate the legacy password from encrypted node state"
+fi
+
 # Set non-secret defaults.
 export NETWORK="${NETWORK:-sepolia}"
 export QUIC_PORT="${QUIC_PORT:-37173}"
@@ -96,7 +108,7 @@ validate_secret_file() {
         type == "object" and
         ((keys | sort == ["password", "private_key"]) or
             (keys | sort == ["network_private_key", "password", "private_key"])) and
-        (.password | type == "string" and length > 0 and length <= 1024 and
+        (.password | type == "string" and length >= 16 and length <= 1024 and
             test("^[^\\r\\n\\u0000]+$") and . == gsub("^\\s+|\\s+$"; "")) and
         (.private_key | type == "string" and test("^0x[0-9a-fA-F]{64}$")) and
         ((has("network_private_key") | not) or
@@ -131,8 +143,8 @@ configure_credentials() {
         || fail "one or more credential commands failed"
 
     # DAppNode copies fileUpload content into this container before startup.
-    # Wallet/network keys are encrypted in /data and v0.2.3 stores the password
-    # key there with mode 0400. Remove the combined plaintext upload.
+    # Wallet/network keys are encrypted in /data while the password is stored
+    # on the separate /run/interfold volume. Remove the combined plaintext upload.
     rm -f "$SECRETS_FILE"
     log "Credential setup completed."
 }

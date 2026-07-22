@@ -11,6 +11,7 @@ services:
     stop_grace_period: 45s
     volumes:
       - 'ciphernode_data:/data'
+      - 'ciphernode_secrets:/run/interfold'
     ports:
       - 37173:37173/udp
     environment:
@@ -43,3 +44,4 @@ services:
 
 volumes:
   ciphernode_data: {}
+  ciphernode_secrets: {}

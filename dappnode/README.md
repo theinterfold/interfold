@@ -229,9 +229,11 @@ At container startup, `entrypoint.sh`:
    ```
 
 The state and databases live under `/data` inside the container, which is backed by the
-`ciphernode_data` Docker volume and listed as a backup target in `dappnode_package.json`. Because
-that volume includes the password key, DAppNode backups of `/data` must be encrypted and
-access-controlled even though the wallet and network keys inside the volume are encrypted.
+`ciphernode_data` Docker volume and listed as a backup target in `dappnode_package.json`. The
+password key lives separately at `/run/interfold/key` on `ciphernode_secrets` and is deliberately
+excluded from that encrypted-state backup. Securely escrow the password outside DAppNode; restoring
+only `/data` cannot unlock the node. New ciphertext uses a versioned envelope with a fresh random
+Argon2id salt, while legacy ciphertext is read only for migration and is upgraded on its next write.
 
 ### Required v0.1.8 upgrade bridge
 

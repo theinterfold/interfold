@@ -15,6 +15,15 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+pub const MIN_PASSWORD_BYTES: usize = 16;
+
+pub fn validate_new_password(contents: &[u8]) -> Result<()> {
+    if contents.len() < MIN_PASSWORD_BYTES {
+        bail!("Password must contain at least {MIN_PASSWORD_BYTES} bytes")
+    }
+    Ok(())
+}
+
 #[async_trait]
 pub trait PasswordManager {
     async fn get_key(&self) -> Result<Zeroizing<Vec<u8>>>;
@@ -133,9 +142,7 @@ impl PasswordManager for FilePasswordManager {
     async fn set_key(&mut self, contents: Zeroizing<Vec<u8>>) -> Result<()> {
         let path = &self.path;
 
-        if contents.is_empty() {
-            bail!("Password must contain data!")
-        }
+        validate_new_password(&contents)?;
 
         // Ensure parent directories exist
         if let Some(parent) = path.parent() {
@@ -191,4 +198,15 @@ fn ensure_file_permissions(path: &PathBuf, perms: u32) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn new_passwords_require_meaningful_entropy_budget() {
+        assert!(validate_new_password(&[0_u8; MIN_PASSWORD_BYTES - 1]).is_err());
+        assert!(validate_new_password(&[0_u8; MIN_PASSWORD_BYTES]).is_ok());
+    }
 }

@@ -3,6 +3,9 @@
 
 node:
   address: '${NODE_ADDRESS}'
+  # Kept on a separate volume so encrypted-state backups do not contain their
+  # own unwrap password.
+  key_file: '/run/interfold/key'
   quic_port: ${QUIC_PORT}
   # Credentials are provisioned from /run/secrets/secrets.json before start.
   # Fail closed if required credential state is absent instead of generating a

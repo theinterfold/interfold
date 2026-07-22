@@ -183,6 +183,16 @@ if run_entrypoint "$missing_dir"; then
 fi
 [ ! -s "$missing_dir/calls" ] || fail "missing credentials invoked Interfold"
 
+weak_dir="$TEST_ROOT/weak-password"
+mkdir -p "$weak_dir/secrets"
+printf '%s\n' \
+    '{"password":"too-short","private_key":"0x1111111111111111111111111111111111111111111111111111111111111111"}' \
+    > "$weak_dir/secrets/secrets.json"
+if run_entrypoint "$weak_dir"; then
+    fail "weak first-start password was accepted"
+fi
+[ ! -s "$weak_dir/calls" ] || fail "weak password invoked Interfold"
+
 # A normal restart may reuse credentials already encrypted in the persistent
 # /data volume without requiring the one-time plaintext upload again.
 restart_dir="$TEST_ROOT/restart"
@@ -191,6 +201,19 @@ printf '%s' 'persisted-password' > "$restart_dir/data/password"
 chmod 400 "$restart_dir/data/password"
 run_entrypoint "$restart_dir"
 [ "$(tr '\n' ' ' < "$restart_dir/calls")" = "start " ] || fail "persisted restart unexpectedly re-provisioned credentials"
+
+# Existing co-located passwords migrate once into the separate secret volume,
+# leaving encrypted-state backups without their own unwrap key.
+separation_dir="$TEST_ROOT/password-separation"
+legacy_password="$separation_dir/data/.interfold/config/_default/key"
+separated_password="$separation_dir/secrets-volume/key"
+mkdir -p "$(dirname "$legacy_password")"
+printf '%s' 'persisted-password' > "$legacy_password"
+run_entrypoint "$separation_dir" \
+    PASSWORD_FILE="$separated_password" \
+    LEGACY_PASSWORD_FILE="$legacy_password"
+[ -s "$separated_password" ] || fail "legacy password was not moved to the secret volume"
+[ ! -e "$legacy_password" ] || fail "legacy password remained co-located with encrypted state"
 
 # The 0.1.8 -> 0.2.3 bridge moves the complete custom-config namespace in one
 # rename, preserving the unversioned DB/event log for v0.2.3 to stamp schema 1.
@@ -228,6 +251,10 @@ assert_not_contains "$ROOT_DIR/entrypoint.sh" '--net-keypair "$network_private_k
 assert_contains "$ROOT_DIR/dappnode_package.json" '"version": "0.2.3"'
 assert_contains "$ROOT_DIR/docker-compose.yml" 'UPSTREAM_VERSION: 0.2.3'
 assert_contains "$ROOT_DIR/healthcheck.sh" '/data/.interfold/data/_default/db'
+assert_contains "$ROOT_DIR/healthcheck.sh" '/run/interfold/key'
+assert_contains "$ROOT_DIR/config.template.yaml" "key_file: '/run/interfold/key'"
+assert_contains "$ROOT_DIR/docker-compose.yml" 'ciphernode_secrets:/run/interfold'
+assert_not_contains "$ROOT_DIR/dappnode_package.json" '/run/interfold'
 
 # Health probe regression: require the exact process/config, protected files,
 # and bound QUIC listener rather than accepting an arbitrary matching PID.

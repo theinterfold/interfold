@@ -8,7 +8,7 @@ set -eu
 
 PROC_ROOT="${PROC_ROOT:-/proc}"
 CONFIG_FILE="${CONFIG_FILE:-/data/config.yaml}"
-PASSWORD_FILE="${PASSWORD_FILE:-/data/.interfold/config/_default/key}"
+PASSWORD_FILE="${PASSWORD_FILE:-/run/interfold/key}"
 DB_PATH="${DB_PATH:-/data/.interfold/data/_default/db}"
 EVENT_LOG_PATH="${EVENT_LOG_PATH:-/data/.interfold/data/_default/log.0}"
 QUIC_PORT="${QUIC_PORT:-37173}"
