@@ -41,6 +41,9 @@ jobs:
       - name: Test DAppNode packaging hardening
         run: ./dappnode/tests/test-hardening.sh
 
+      - name: Test immutable release inputs
+        run: ./scripts/check-release-reproducibility.sh
+
   detect_changes:
     timeout-minutes: 5
     runs-on: 'ubuntu-latest'

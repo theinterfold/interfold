@@ -2,6 +2,7 @@ name: Release
 
 permissions:
   id-token: write
+  attestations: write
   contents: write
   packages: write
 
@@ -16,6 +17,11 @@ env:
   SUPPORT_DOCKERFILE_PATH: crates/support/Dockerfile
   CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
   SUPPORT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/e3-support
+  NODE_VERSION: 22.23.1
+  RUST_TOOLCHAIN: 1.91.1
+  SOLC_VERSION: 0.8.27
+  SOLC_STATIC_LINUX_SHA256: b9977d500c17cba6f0032ca939ef98c4decf6363f19f386d05fb02f708115264
+  SOLC_MACOS_SHA256: 8c406fa5cab9bd0a175da02c652072f814c3d06205a2fd6d92bc152599a6aabb
   NOIR_TOOLCHAIN: v1.0.0-beta.16
   MNEMONIC: 'test test test test test test test test test test test junk'
   INFURA_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
@@ -24,15 +30,18 @@ env:
 jobs:
   validate-and-prepare:
     name: Validate Tag and Prepare Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.get_version.outputs.version }}
       is_prerelease: ${{ steps.get_version.outputs.is_prerelease }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
+
+      - name: Verify immutable release inputs
+        run: ./scripts/check-release-reproducibility.sh
 
       - name: Get version from tag
         id: get_version
@@ -73,31 +82,70 @@ jobs:
 
           echo "✅ All versions match: $VERSION"
 
+  verify-ciphernode-reproducibility:
+    name: Verify reproducible ciphernode image
+    runs-on: ubuntu-24.04
+    needs: validate-and-prepare
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build twice without shared cache
+        run: |
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+          export SOURCE_DATE_EPOCH
+          docker buildx build --no-cache \
+            --provenance=false \
+            --sbom=false \
+            --build-arg SOURCE_DATE_EPOCH \
+            --output "type=oci,dest=$RUNNER_TEMP/ciphernode-one.tar" \
+            --file crates/Dockerfile .
+          docker buildx build --no-cache \
+            --provenance=false \
+            --sbom=false \
+            --build-arg SOURCE_DATE_EPOCH \
+            --output "type=oci,dest=$RUNNER_TEMP/ciphernode-two.tar" \
+            --file crates/Dockerfile .
+
+      - name: Compare isolated OCI outputs
+        run: |
+          mkdir "$RUNNER_TEMP/ciphernode-one" "$RUNNER_TEMP/ciphernode-two"
+          tar -xf "$RUNNER_TEMP/ciphernode-one.tar" -C "$RUNNER_TEMP/ciphernode-one"
+          tar -xf "$RUNNER_TEMP/ciphernode-two.tar" -C "$RUNNER_TEMP/ciphernode-two"
+          diff --recursive --no-dereference \
+            "$RUNNER_TEMP/ciphernode-one" "$RUNNER_TEMP/ciphernode-two"
+          sha256sum "$RUNNER_TEMP/ciphernode-one/index.json" \
+            "$RUNNER_TEMP/ciphernode-two/index.json"
+
   build-ciphernode-image-release:
     name: Build & Push ciphernode (release)
-    runs-on: ubuntu-latest
-    needs: validate-and-prepare
+    runs-on: ubuntu-24.04
+    needs: [validate-and-prepare, verify-ciphernode-reproducibility]
     env:
       CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push ciphernode release image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: crates/Dockerfile
           push: true
+          provenance: mode=max
+          sbom: true
           tags: |
             ${{ env.CIPHERNODE_IMAGE_NAME }}:${{ needs.validate-and-prepare.outputs.version }}
             ${{ env.CIPHERNODE_IMAGE_NAME }}:latest
@@ -108,29 +156,31 @@ jobs:
 
   build-e3-support-release:
     name: Build & Push e3-support (release)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: validate-and-prepare
     env:
       SUPPORT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/e3-support
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push e3-support release image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./crates/support
           file: ${{ env.SUPPORT_DOCKERFILE_PATH }}
           push: true
+          provenance: mode=max
+          sbom: true
           tags: |
             ${{ env.SUPPORT_IMAGE_NAME }}:${{ needs.validate-and-prepare.outputs.version }}
             ${{ env.SUPPORT_IMAGE_NAME }}:latest
@@ -141,15 +191,15 @@ jobs:
 
   build-nix-flake:
     name: Build Nix Flake
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: validate-and-prepare
     steps:
-      - uses: actions/checkout@v6
-      - uses: cachix/install-nix-action@v30
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-      - uses: cachix/cachix-action@v15
+      - uses: cachix/cachix-action@ad2ddac53f961de1989924296a1f236fcfbaa4fc # v15
         with:
           name: interfold
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
@@ -167,39 +217,49 @@ jobs:
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             os_name: linux
             arch: x86_64
-          - os: macos-latest
+          - os: macos-14
             target: aarch64-apple-darwin
             os_name: macos
             arch: aarch64
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.target }}
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ${{ matrix.target }}
 
       - name: Install solc (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
-          sudo add-apt-repository -y ppa:ethereum/ethereum
-          sudo apt-get update
-          sudo apt-get install -y solc
+          curl --fail --show-error --silent --location \
+            --output "$RUNNER_TEMP/solc" \
+            "https://github.com/argotorg/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux"
+          echo "${SOLC_STATIC_LINUX_SHA256}  $RUNNER_TEMP/solc" | sha256sum --check --strict
+          sudo install -m 0755 "$RUNNER_TEMP/solc" /usr/local/bin/solc
+          solc --version
 
       - name: Install solc (macOS)
-        if: matrix.os == 'macos-latest'
-        run: brew install solidity
+        if: matrix.os == 'macos-14'
+        run: |
+          curl --fail --show-error --silent --location \
+            --output "$RUNNER_TEMP/solc" \
+            "https://github.com/argotorg/solidity/releases/download/v${SOLC_VERSION}/solc-macos"
+          echo "${SOLC_MACOS_SHA256}  $RUNNER_TEMP/solc" | shasum --algorithm 256 --check
+          sudo install -m 0755 "$RUNNER_TEMP/solc" /usr/local/bin/solc
+          solc --version
 
       - name: Build interfold binary
         run: cargo build --locked --release --target ${{ matrix.target }} --bin interfold
@@ -211,6 +271,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
 
           # Get the correct binary extension
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then
@@ -219,37 +280,71 @@ jobs:
             EXT=""
           fi
 
+          create_archive() {
+            local binary=$1
+            local archive=$2
+
+            if [[ "$RUNNER_OS" == "Linux" ]]; then
+              touch --date="@$SOURCE_DATE_EPOCH" "$binary"
+              tar --format=ustar --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
+                --owner=0 --group=0 --numeric-owner -cf - "$binary" | gzip -n > "$archive"
+            else
+              local touch_timestamp
+              touch_timestamp=$(date -u -r "$SOURCE_DATE_EPOCH" +%Y%m%d%H%M.%S)
+              touch -t "$touch_timestamp" "$binary"
+              COPYFILE_DISABLE=1 tar --format=ustar --uid 0 --gid 0 \
+                --uname root --gname root -cf - "$binary" | gzip -n > "$archive"
+            fi
+          }
+
           # Create interfold archive
           cp "target/${{ matrix.target }}/release/interfold${EXT}" "./interfold${EXT}"
-          tar -czf "dist/interfold-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" "interfold${EXT}"
+          create_archive "interfold${EXT}" \
+            "dist/interfold-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz"
           rm "interfold${EXT}"
 
           # Create interfoldup archive
           cp "target/${{ matrix.target }}/release/interfoldup${EXT}" "./interfoldup${EXT}"
-          tar -czf "dist/interfoldup-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" "interfoldup${EXT}"
+          create_archive "interfoldup${EXT}" \
+            "dist/interfoldup-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz"
           rm "interfoldup${EXT}"
 
+      - name: Generate binary SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: dist
+          format: spdx-json
+          output-file: dist/interfold-${{ matrix.os_name }}-${{ matrix.arch }}.spdx.json
+          upload-artifact: false
+
+      - name: Attest binary provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: dist/*
+
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: interfold-binaries-${{ matrix.os_name }}-${{ matrix.arch }}
           path: dist/
 
   publish-rust-crates:
     name: Publish Rust Crates
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: validate-and-prepare
     continue-on-error: true
     # Publish ALL versions to crates.io (including pre-releases)
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Publish to crates.io
         env:
@@ -269,34 +364,29 @@ jobs:
 
   publish-npm-packages:
     name: Publish NPM Packages
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: validate-and-prepare
     permissions:
       contents: read
       id-token: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Upgrade npm
-        run: |
-          npm install -g npm@latest
-          echo "npm version: $(npm --version)"
-
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       # `pnpm build:ts` builds the SDK, whose prebuild compiles the threshold
       # circuits via `nargo` (packages/interfold-sdk/scripts/compile-circuits.sh).
       # Without nargo on PATH the build fails with "nargo is not installed".
       - name: Install Nargo
-        uses: noir-lang/noirup@v0.1.4
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
@@ -346,21 +436,21 @@ jobs:
 
   download-circuits:
     name: Download Circuit Artifacts
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs: validate-and-prepare
     outputs:
       found: ${{ steps.pull.outputs.found }}
       source_hash: ${{ steps.pull.outputs.source_hash }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - run: pnpm install --frozen-lockfile
 
@@ -421,7 +511,7 @@ jobs:
           cd dist
           tar -czvf circuits-${{ needs.validate-and-prepare.outputs.version }}.tar.gz circuits/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: steps.pull.outputs.found == 'true'
         with:
           name: noir-circuits
@@ -432,7 +522,7 @@ jobs:
 
   create-github-release:
     name: Create GitHub Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       [
         validate-and-prepare,
@@ -447,12 +537,12 @@ jobs:
     if: always() && needs.validate-and-prepare.result == 'success' && needs.build-binaries.result == 'success'
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
       - name: Download all binary artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           path: dist/
 
@@ -588,7 +678,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ needs.validate-and-prepare.outputs.version }}
           name: v${{ needs.validate-and-prepare.outputs.version }}

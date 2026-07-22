@@ -5,6 +5,7 @@ services:
       context: .
       args:
         UPSTREAM_VERSION: 0.4.0
+        UPSTREAM_BINARY_SHA256: 7369fdec1769d5cb60d4168e85f4f9a197c9e2c725f80a9e1bb95255ba16cf3b
     image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.4.0'
     restart: unless-stopped
     # Allow the node's 30-second durability barrier to finish before Docker sends SIGKILL.

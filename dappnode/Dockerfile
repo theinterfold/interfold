@@ -1,11 +1,21 @@
 # DAppNode Interfold Ciphernode Dockerfile
-# Uses official upstream image from GitHub Container Registry
+# Uses the checksum-pinned official release binary.
 
 ARG UPSTREAM_VERSION
-FROM ghcr.io/theinterfold/ciphernode:${UPSTREAM_VERSION} AS upstream
+ARG UPSTREAM_BINARY_SHA256
 
 # Runtime image
-FROM debian:stable-slim
+FROM debian:12.15-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+
+ARG UPSTREAM_VERSION
+ARG UPSTREAM_BINARY_SHA256
+ARG DEBIAN_SNAPSHOT=20260720T000000Z
+
+RUN sed -ri \
+        "s|https?://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g; \
+         s|https?://security.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99snapshot
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -14,6 +24,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     iproute2 \
     jq \
     expect \
+    curl \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -25,9 +36,17 @@ RUN install -d -o ciphernode -g ciphernode -m 0750 /data \
     && install -d -o ciphernode -g ciphernode -m 0700 /run/secrets \
     && install -d -o ciphernode -g ciphernode -m 0700 /run/interfold
 
-# Copy binary from upstream
-COPY --from=upstream /usr/local/bin/interfold /usr/local/bin/interfold
-RUN chmod +x /usr/local/bin/interfold
+# Install only the immutable, checksum-verified upstream release binary. A version update without
+# its matching checksum fails closed instead of silently consuming changed bytes.
+RUN test -n "${UPSTREAM_VERSION}" \
+    && echo "${UPSTREAM_BINARY_SHA256}" | grep -Eq '^[0-9a-f]{64}$' \
+    && curl --fail --show-error --silent --location \
+        --output /tmp/interfold.tar.gz \
+        "https://github.com/theinterfold/interfold/releases/download/v${UPSTREAM_VERSION}/interfold-linux-x86_64.tar.gz" \
+    && echo "${UPSTREAM_BINARY_SHA256}  /tmp/interfold.tar.gz" | sha256sum --check --strict \
+    && tar -xzf /tmp/interfold.tar.gz -C /usr/local/bin interfold \
+    && chmod 0755 /usr/local/bin/interfold \
+    && rm /tmp/interfold.tar.gz
 
 # Copy entrypoint and config template
 COPY --chmod=755 entrypoint.sh /usr/local/bin/entrypoint.sh
