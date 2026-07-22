@@ -2,7 +2,9 @@
 set -Eeuo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-TEST_ROOT=$(mktemp -d)
+TEST_TMP_PARENT=${TMPDIR:-/tmp}
+mkdir -p "$TEST_TMP_PARENT"
+TEST_ROOT=$(mktemp -d "$TEST_TMP_PARENT/interfold-hardening.XXXXXX")
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 fail() {
@@ -37,7 +39,7 @@ make_mock_interfold() {
         '  *) operation=unexpected ;;' \
         'esac' \
         'printf "%s\n" "$operation" >> "$CALL_LOG"' \
-        'tr "\0" " " < /proc/$$/cmdline >> "$ARGV_LOG"' \
+        'printf "%q " "$@" >> "$ARGV_LOG"' \
         'printf "\n" >> "$ARGV_LOG"' \
         '[ "${FAIL_ON:-}" != "$operation" ] || exit 42' \
         '[ "$operation" != unexpected ]' \

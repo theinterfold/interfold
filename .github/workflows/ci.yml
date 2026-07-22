@@ -29,6 +29,18 @@ permissions:
   packages: write
 
 jobs:
+  dappnode_hardening:
+    timeout-minutes: 5
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Install test dependencies
+        run: sudo apt-get update -y && sudo apt-get install -y jq
+
+      - name: Test DAppNode packaging hardening
+        run: ./dappnode/tests/test-hardening.sh
+
   detect_changes:
     timeout-minutes: 5
     runs-on: 'ubuntu-latest'
