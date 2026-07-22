@@ -254,6 +254,8 @@ On restart:
 │      → A logical event returned by a peer with its source changed from Local to Net is
 │        idempotent when timestamp, stable event ID, and payload match the stored record;
 │        a different payload at the same timestamp still fails closed as a collision
+│      → Event IDs are domain-separated SHA-256 over fixed-width, little-endian bincode payloads;
+│        they do not collapse identity through Rust's 64-bit `DefaultHasher`
 │      → ComputeEffectGate has already subscribed and buffers ComputeRequest
 │        effects, deduplicating semantic retries while replay is in progress
 │   7. Enable effects (writers may submit only after this point)
