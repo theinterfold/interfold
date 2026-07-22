@@ -157,7 +157,7 @@ where
     }
 
     async fn read_from_store(connector: &StoreConnector) -> Result<Option<T>> {
-        let Some(bytes) = connector.get.send(Get::new(&connector.key)).await? else {
+        let Some(bytes) = connector.get.send(Get::new(&connector.key)).await?? else {
             return Ok(None);
         };
         if bytes == [0] {
@@ -324,6 +324,7 @@ mod tests {
     struct MockConnector {
         key: Vec<u8>,
         events: Vec<Evts>,
+        fail_reads: bool,
     }
     #[derive(Message)]
     #[rtype("Vec<Evts>")]
@@ -357,10 +358,13 @@ mod tests {
     }
 
     impl Handler<Get> for MockConnector {
-        type Result = Option<Vec<u8>>;
+        type Result = anyhow::Result<Option<Vec<u8>>>;
         fn handle(&mut self, _msg: Get, _ctx: &mut Self::Context) -> Self::Result {
             self.events.push(Evts::Get);
-            None
+            if self.fail_reads {
+                anyhow::bail!("injected read failure");
+            }
+            Ok(None)
         }
     }
 
@@ -383,7 +387,13 @@ mod tests {
             Self {
                 key: key.into(),
                 events: Vec::new(),
+                fail_reads: false,
             }
+        }
+
+        fn with_read_failure(mut self) -> Self {
+            self.fail_reads = true;
+            self
         }
 
         #[allow(clippy::wrong_self_convention)]
@@ -400,6 +410,22 @@ mod tests {
                 ),
             )
         }
+    }
+
+    #[actix::test]
+    async fn load_or_default_does_not_write_after_read_failure() {
+        let (addr, connector) = MockConnector::new(b"loc")
+            .with_read_failure()
+            .to_store_connector();
+
+        let error = Persistable::load_or_default(connector, 42i32)
+            .await
+            .unwrap_err();
+
+        assert!(error.to_string().contains("injected read failure"));
+        let events = addr.send(GetEvents).await.unwrap();
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], Evts::Get));
     }
 
     #[actix::test]

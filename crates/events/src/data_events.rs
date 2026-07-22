@@ -105,7 +105,7 @@ impl From<InsertSync> for Insert {
 }
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash)]
-#[rtype(result = "Option<Vec<u8>>")]
+#[rtype(result = "Result<Option<Vec<u8>>>")]
 pub struct Get(pub Vec<u8>);
 impl Get {
     pub fn new<K: IntoKey>(key: K) -> Self {

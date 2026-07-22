@@ -215,6 +215,8 @@ interfold start → running node
     └─ Flushes the optional operational JSON log collector
 
 On restart:
+├─ Sled reads preserve the distinction between a missing key and a database/read failure
+│  → read errors abort hydration; `load_or_default` never overwrites recovery state after an error
 ├─ Event-log open:
 │   → validates physical frames against the commitlog index
 │   → truncates only a CRC/length-invalid suffix after the final indexed record

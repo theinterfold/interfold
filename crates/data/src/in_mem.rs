@@ -134,9 +134,9 @@ impl Handler<Remove> for InMemStore {
 }
 
 impl Handler<Get> for InMemStore {
-    type Result = Option<Vec<u8>>;
-    fn handle(&mut self, event: Get, _: &mut Self::Context) -> Option<Vec<u8>> {
-        self.store.get(event.key())
+    type Result = Result<Option<Vec<u8>>>;
+    fn handle(&mut self, event: Get, _: &mut Self::Context) -> Self::Result {
+        Ok(self.store.get(event.key()))
     }
 }
 

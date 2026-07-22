@@ -119,7 +119,7 @@ impl DataStore {
     where
         T: for<'de> Deserialize<'de>,
     {
-        let Some(bytes) = self.get.send(Get::new(&self.scope)).await? else {
+        let Some(bytes) = self.get.send(Get::new(&self.scope)).await?? else {
             return Ok(None);
         };
 

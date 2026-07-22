@@ -129,20 +129,24 @@ impl Handler<Remove> for SledStore {
 }
 
 impl Handler<Get> for SledStore {
-    type Result = Option<Vec<u8>>;
+    type Result = Result<Option<Vec<u8>>>;
 
     fn handle(&mut self, event: Get, _: &mut Self::Context) -> Self::Result {
-        if let Some(ref mut db) = &mut self.db {
-            match db.get(event) {
-                Ok(v) => v,
-                Err(err) => {
-                    self.bus.err(EType::Data, err);
-                    None
-                }
+        let Some(ref db) = self.db else {
+            let error = anyhow::anyhow!("SledStore is closed");
+            error!(%error, "Attempt to get data from dropped db");
+            self.bus
+                .err(EType::Data, anyhow::anyhow!(error.to_string()));
+            return Err(error);
+        };
+
+        match db.get(event) {
+            Ok(value) => Ok(value),
+            Err(error) => {
+                self.bus
+                    .err(EType::Data, anyhow::anyhow!(format!("{error:#}")));
+                Err(error)
             }
-        } else {
-            error!("Attempt to get data from dropped db");
-            None
         }
     }
 }
