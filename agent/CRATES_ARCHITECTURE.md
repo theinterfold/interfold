@@ -910,6 +910,19 @@ timestamps, ownership, tar format, and gzip headers to the tagged source commit.
 `scripts/check-release-reproducibility.sh` gate prevents a mutable input or missing provenance step
 from silently returning to the release path.
 
+A tag is not itself authority to publish. The tag-triggered workflow calls the repository CI as a
+reusable workflow for that exact `GITHUB_SHA` and forces every path-filtered job on. Only after that
+CI, deterministic image comparison, Nix/binary builds, mandatory matching circuit download, and
+Rust/NPM package dry runs succeed can the protected `release` environment approve the immutable
+candidate. Registry jobs depend on that approval and may publish only version-addressed container
+tags; stable container aliases move later. Crate publication skips already verified versions, and
+NPM recovery compares the locally packed integrity against an existing registry version before it
+continues, so an interrupted multi-package publication can roll forward without silently accepting
+different bytes. A publication gate requires both images, every crate, and every NPM package to
+succeed before assets are collected, mutable aliases move, a non-draft GitHub release is created, or
+the Git `stable` alias advances. Release concurrency is serialized and missing circuit artifacts are
+fatal.
+
 ## Subsystem contracts
 
 | Subsystem                          | Responsibility and I/O                                                                               | Owned state and dependencies                                                                                                                                              | Invariant and failure behavior                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        | Extension boundary / must not own                                                                                                             |

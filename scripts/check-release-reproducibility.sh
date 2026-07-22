@@ -22,6 +22,7 @@ for dockerfile in \
 done
 
 while IFS= read -r action; do
+    [[ "$action" == *"uses: ./"* ]] && continue
     [[ "$action" =~ @[0-9a-f]{40}([[:space:]]|$) ]] \
         || fail "release workflow contains an action not pinned to a commit: $action"
 done < <(grep -E '^[[:space:]]*(- )?uses:' "$RELEASE_WORKFLOW")
@@ -56,5 +57,7 @@ grep -Fq -- '--sbom=false' "$RELEASE_WORKFLOW" \
     || fail "reproducibility comparison includes generated SBOM metadata"
 grep -Fq 'gzip -n' "$RELEASE_WORKFLOW" \
     || fail "binary archive gzip headers are not normalized"
+grep -Eq '^  NPM_VERSION: [0-9]+\.[0-9]+\.[0-9]+$' "$RELEASE_WORKFLOW" \
+    || fail "release workflow does not pin the trusted-publishing npm CLI"
 
 printf 'release reproducibility inputs are pinned\n'
