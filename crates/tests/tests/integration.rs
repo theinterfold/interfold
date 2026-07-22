@@ -21,8 +21,8 @@ use e3_events::{
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
 use e3_multithread::{Multithread, MultithreadReport, TaskPool, TaskPoolPolicy, ToReport};
-use e3_net::events::{GossipData, NetEvent};
-use e3_net::NetEventTranslator;
+use e3_net::events::NetEvent;
+use e3_net::{Libp2pKeypair, NetEventTranslator, NetworkAuthorizationState, ProtocolSigner};
 use e3_sortition::{calculate_buffer_size, RegisteredNode, ScoreSortition, Ticket};
 use e3_test_helpers::ciphernode_system::{
     CiphernodeHistory, CiphernodeSystem, CiphernodeSystemBuilder,
@@ -39,7 +39,7 @@ use e3_zk_prover::{VersionInfo, ZkBackend};
 use fhe::bfv::PublicKey;
 use fhe_traits::{DeserializeParametrized, Serialize};
 use num_bigint::BigUint;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -2283,7 +2283,9 @@ async fn test_trbfv_actor() -> Result<()> {
 
 #[actix::test]
 async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
-    use e3_events::{CiphernodeSelected, InterfoldEvent, TakeEvents, Unsequenced};
+    use e3_events::{
+        CiphernodeSelected, Committee, EffectsEnabled, InterfoldEvent, TakeEvents, Unsequenced,
+    };
     use e3_net::events::GossipData;
     use e3_net::{events::NetEvent, NetEventTranslator};
     use std::sync::Arc;
@@ -2297,8 +2299,36 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
     let bus = system.handle()?.enable("test");
     let history_collector = bus.history();
     let event_rx = Arc::new(event_tx.subscribe());
-    // Pas cmd and event channels to NetEventTranslator
-    NetEventTranslator::setup(&bus, &cmd_tx, &event_rx, "my-topic");
+    // Pass command and event channels to NetEventTranslator.
+    let signer = PrivateKeySigner::random();
+    let protocol_signer = ProtocolSigner::new(signer.clone(), Libp2pKeypair::generate().peer_id());
+    let authorization = NetworkAuthorizationState::new(
+        HashMap::from([
+            (
+                E3id::new("1235", 1),
+                Committee::new(vec![signer.address().to_string()]),
+            ),
+            (
+                E3id::new("1236", 1),
+                Committee::new(vec![signer.address().to_string()]),
+            ),
+        ]),
+        HashMap::new(),
+    );
+    let translator = NetEventTranslator::setup(
+        &bus,
+        &cmd_tx,
+        &event_rx,
+        "my-topic",
+        protocol_signer,
+        authorization,
+    );
+    translator
+        .send(
+            bus.event_from(EffectsEnabled::new(), None)?
+                .into_sequenced(0),
+        )
+        .await?;
 
     // Capture messages from output on msgs vec
     let msgs: Arc<Mutex<Vec<InterfoldEventData>>> = Arc::new(Mutex::new(Vec::new()));
@@ -2315,11 +2345,13 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
                 e3_net::events::NetCommand::GossipPublish { data, .. } => Some(data),
                 _ => None,
             } {
-                if let GossipData::GossipBytes(_) = msg {
+                if let GossipData::ProtocolEvent(_) = msg {
                     let event: InterfoldEvent<Unsequenced> = msg.clone().try_into().unwrap();
-                    let (data, _) = event.split();
+                    let (data, _) = event.clone().split();
                     msgs_loop.lock().await.push(data);
-                    event_tx.send(NetEvent::GossipData(msg)).unwrap();
+                    event_tx
+                        .send(NetEvent::AuthorizedGossip(Box::new(event)))
+                        .unwrap();
                 }
             }
             // if this  manages to broadcast an event to the
@@ -2386,7 +2418,23 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
     let bus = system.handle()?.enable("test");
     let history_collector = bus.history();
 
-    NetEventTranslator::setup(&bus, &cmd_tx, &Arc::new(event_rx), "mytopic");
+    let signer = PrivateKeySigner::random();
+    let protocol_signer = ProtocolSigner::new(signer.clone(), Libp2pKeypair::generate().peer_id());
+    let authorization = NetworkAuthorizationState::new(
+        HashMap::from([(
+            E3id::new("1235", 1),
+            e3_events::Committee::new(vec![signer.address().to_string()]),
+        )]),
+        HashMap::new(),
+    );
+    NetEventTranslator::setup(
+        &bus,
+        &cmd_tx,
+        &Arc::new(event_rx),
+        "mytopic",
+        protocol_signer,
+        authorization,
+    );
 
     // Capture messages from output on msgs vec
     // Only protocol artifacts may cross the gossip trust boundary. Requests originate from the
@@ -2398,8 +2446,8 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
     };
 
     // lets send an event from the network
-    let _ = event_tx.send(NetEvent::GossipData(GossipData::GossipBytes(
-        bus.event_from(event.clone(), None)?.to_bytes()?,
+    let _ = event_tx.send(NetEvent::AuthorizedGossip(Box::new(
+        bus.event_from(event.clone(), None)?,
     )));
 
     // check the history of the event bus

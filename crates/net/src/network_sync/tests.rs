@@ -10,10 +10,28 @@ use crate::{
     events::{IncomingRequest, NetCommand},
 };
 use actix::{Actor, Context as ActixContext, Handler};
+use alloy::signers::local::PrivateKeySigner;
 use e3_ciphernode_builder::EventSystem;
-use e3_events::{E3id, EventSource, InterfoldEvent, PlaintextAggregated, TestEvent, Unsequenced};
+use e3_events::{
+    Committee, E3id, EventSource, InterfoldEvent, PlaintextAggregated, TestEvent, Unsequenced,
+};
 use e3_utils::ArcBytes;
+use std::collections::HashMap;
 use tokio::sync::{broadcast, mpsc, mpsc::UnboundedSender};
+
+fn protocol_signer() -> ProtocolSigner {
+    ProtocolSigner::new(PrivateKeySigner::random(), PeerId::random())
+}
+
+fn protocol_authorization(signer: &ProtocolSigner, e3: &str) -> NetworkAuthorizationState {
+    NetworkAuthorizationState::new(
+        HashMap::from([(
+            E3id::new(e3, 1),
+            Committee::new(vec![signer.address().to_string()]),
+        )]),
+        HashMap::new(),
+    )
+}
 
 /// Minimal EventStore stand-in so `NetSyncManager::new` can be constructed in tests; the
 /// re-broadcast unit test drives `handle_rebroadcast_response` directly and never queries it.
@@ -55,7 +73,15 @@ fn manager_with_recording_store(
         .recipient();
 
     (
-        NetSyncManager::new(&bus, &tx, &evt_rx, eventstore, "my-topic"),
+        NetSyncManager::new(
+            &bus,
+            &tx,
+            &evt_rx,
+            eventstore,
+            "my-topic",
+            protocol_signer(),
+            NetworkAuthorizationState::default(),
+        ),
         rx,
     )
 }
@@ -143,13 +169,26 @@ async fn rebroadcast_only_gossips_forwardable_own_artifacts() {
     let evt_rx = Arc::new(evt_rx);
     let eventstore = NoopEventStore.start().recipient();
 
-    let mgr = NetSyncManager::new(&bus, &tx, &evt_rx, eventstore, "my-topic");
+    let signer = protocol_signer();
+    let authorization = protocol_authorization(&signer, "1234");
+    let mgr = NetSyncManager::new(
+        &bus,
+        &tx,
+        &evt_rx,
+        eventstore,
+        "my-topic",
+        signer,
+        authorization,
+    );
 
     NetSyncManager::rebroadcast_own_artifacts(
         mgr.tx.clone(),
         mgr.topic.clone(),
+        mgr.protocol_signer.clone(),
+        mgr.protocol_authorization.clone(),
         vec![
             local_forwardable_event("1234"),
+            local_forwardable_event("stale-committee"),
             local_non_forwardable_event(),
         ],
     )

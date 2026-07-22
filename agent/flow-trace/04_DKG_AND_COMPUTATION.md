@@ -106,7 +106,7 @@ ProofRequestActor receives EncryptionKeyPending
 │          e3_id, party_id, bfv_public_key,
 │          signed_proof: SignedProofPayload { proof, signature }
 │        }
-│        → Broadcast to all nodes via libp2p gossip
+│        → Broadcast to all nodes via EVM-authenticated libp2p protocol gossip
 │
 └─ RECEIVING NODES verify C0 proof:
      ProofVerificationActor receives EncryptionKeyReceived (from P2P)
@@ -307,7 +307,7 @@ ProofRequestActor receives ThresholdSharePending
 │          signed_sk_encryption_proofs,    // C3a[] indexed by (recipient, row)
 │          signed_esm_encryption_proofs    // C3b[] indexed by (esi, recipient, row)
 │        }
-│        → Broadcast to all nodes via libp2p gossip
+│        → Broadcast to all nodes via EVM-authenticated libp2p protocol gossip
 │
 └─ IMPORTANT: ThresholdShareCreated is NOT published until ALL proofs complete
    → Ensures no incomplete data is gossiped
@@ -538,7 +538,7 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │           signed_sk_decryption_proof,       // C4a
 │     │           signed_esm_decryption_proofs[]    // C4b per ESI
 │     │         }
-│     │         → Broadcast to all committee nodes via P2P gossip
+│     │         → Broadcast to all committee nodes via EVM-authenticated P2P protocol gossip
 │     │         → This is Protocol Exchange #3 (decryption key sharing)
 │
 ├─ 5. COLLECT C4 SHARES FROM ALL PARTIES:
@@ -1159,6 +1159,14 @@ ACTIVE AGGREGATOR collects PK_share₁ + PK_share₂ + PK_share₃
 ```
 
 ## Durable flow tracing
+
+Every protocol-event gossip described above is wrapped in a domain-separated EVM signature that
+also commits to the signed gossipsub author, wire version, and issuance time. Before startup
+buffering or durable publication, the receiver recovers the address, checks the current chain/E3
+committee and expulsion view, validates any claimed node/party/accuser/voter role, and charges
+per-peer plus per-peer/E3 event and byte quotas. Rejected authors do not consume the startup buffer;
+repeated invalid input quarantines the peer. The inner proof signatures and ZK checks documented in
+this trace remain the artifact-validity boundary after network admission.
 
 The dashboard renders event ID, causation ID, origin ID, HLC timestamp, block watermark, aggregate,
 and source exactly as the local EventStore recorded them. Observability does not change the

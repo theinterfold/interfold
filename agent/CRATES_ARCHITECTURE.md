@@ -409,13 +409,24 @@ flowchart LR
     Peer[remote PeerId] --> Quic[authenticated QUIC transport]
     Quic --> Swarm[libp2p Swarm]
     Swarm --> Signed[gossipsub signed message validation]
-    Signed --> Raw[bounded NetEvent broadcast]
-    Raw --> Startup[NetEventBuffer count + byte limits]
+    Signed --> Decode[8 MiB bounded gossip decode]
+    Decode --> Raw[bounded NetEvent broadcast]
+    Raw --> Protocol{protocol event?}
+    Protocol -->|yes| Envelope[version + PeerId + replay window + EVM signature]
+    Envelope --> Membership[current chain/E3 committee + expulsion]
+    Membership --> Role[event role and claimed party binding]
+    Role --> Quota[per-peer and per-peer/E3 event + byte quotas]
+    Quota --> Accept[gossipsub Accept]
+    Accept --> Startup[NetEventBuffer count + byte limits]
+    Envelope -->|invalid| Reject[Reject; quarantine repeated invalid authors]
+    Membership -->|invalid| Reject
+    Role -->|invalid| Reject
+    Quota -->|invalid| Reject
     Raw --> SyncManager[NetSyncManager]
     Startup -->|await actor acceptance after SyncEnded| Translator[NetEventTranslator]
-    Translator --> Allowlist{forwardable event type?}
-    Allowlist -->|yes| Domain[bounded decode to InterfoldEvent]
-    Allowlist -->|no| Reject[reject input]
+    Translator --> Allowlist{defensive forwardable-type check}
+    Allowlist -->|yes| Domain[authorized InterfoldEvent]
+    Allowlist -->|no| Reject
     Domain --> Handle[BusHandle remote publish]
     Bus --> DocumentPublisher[DocumentPublisher]
     DocumentPublisher --> Command[NetCommand channel]
@@ -423,7 +434,7 @@ flowchart LR
     SyncManager --> EventStore[(EventStore query)]
     SyncManager --> Budget[one startup budget: 512 pages / 50k events / 128 MiB / 5 min]
     Budget --> Direct[versioned direct request/response]
-    Signed --> Notice[DHT document notification]
+    Protocol -->|document notice| Notice[DHT document notification]
     Notice --> Fetch[content-addressed DHT fetch]
     Fetch --> MetaCheck{E3, kind, and party filter match payload?}
     MetaCheck -->|yes| Handle
@@ -431,23 +442,30 @@ flowchart LR
     Handle --> Bus[durable event pipeline]
 ```
 
-The network interface owns the QUIC swarm, signed gossipsub topic, Kademlia store, and transport
-channels. Gossipsub and direct-request/DHT decoding have explicit byte limits. Translation actors
-accept only the protocol event allowlist before publishing remote events, and their
-broadcast-to-actor ingress loops await mailbox acceptance and stop when the destination actor
-closes. Startup buffering is bounded by both event count and estimated bytes and fails readiness on
-overflow or broadcast lag; after `SyncEnded`, broadcast lag is warned and skipped without stopping
-the ingress loop. Historical direct sync requires advancing cursors and enforces one cumulative
-page, event, byte, and time budget across all aggregate fetches and recovery retries in a startup
-attempt.
+The network interface owns the QUIC swarm, signed gossipsub topic, Kademlia store, connection
+limits, and transport channels. Gossipsub and direct-request/DHT decoding have explicit byte
+limits. Protocol events carry a domain-separated EVM signature over the event, version, issuing
+time, and libp2p author. `NetEventBuffer` verifies that envelope, binds the PeerId to its recovered
+EVM address, checks current `(chain, E3)` committee membership and expulsion state, validates the
+event-specific claimed party/address role, and applies per-peer plus per-peer/E3 event and byte
+quotas before the event can consume startup-buffer space. Invalid authors receive a gossipsub
+reject; repeated invalid input blacklists and disconnects the author. Only admitted events receive
+gossipsub acceptance and reach the translator's defensive protocol allowlist before durable
+publication. The broadcast-to-actor ingress loops await mailbox acceptance and stop when the
+destination actor closes. Startup buffering is bounded by both event count and estimated bytes and
+fails readiness on overflow or broadcast lag; after `SyncEnded`, broadcast lag is warned and
+skipped without stopping the ingress loop. Historical direct sync requires advancing cursors and
+enforces one cumulative page, event, byte, and time budget across all aggregate fetches and recovery
+retries in a startup attempt. Restart re-broadcast signs only artifacts that still belong to a
+current committee member.
 
 The gossiped `DocumentMeta` is independent of the DHT content hash, so
 `EventConversionService::validate_received` decodes the fetched payload and binds the metadata E3
 identifier, `TrBFV` kind, and party-filter shape to that payload before a `DocumentReceived` event
-is persisted. Transport and gossipsub identities authenticate the sending peer; they do not by
-themselves prove that a peer is an authorized member of a particular E3 committee. Topic/chain
-isolation, wire negotiation beyond the current `0.0.1` identifiers, durable peer reputation, and
-end-to-end application authorization remain separate protocol-hardening work.
+is persisted. Document notifications and historical direct sync retain their separate bounded
+transport/content validation; the EVM-authenticated committee admission above applies to durable
+protocol-event gossip. Wire negotiation beyond the current `0.0.1` identifiers and durable peer
+reputation remain separate protocol-hardening work.
 
 ## E3 lifecycle
 
@@ -871,7 +889,7 @@ persist recovery intent.
 | `e3-events`                        | Admit, timestamp, persist, deduplicate, and fan out typed events.                                    | HLC factory, subscriber registry, sequencer, event stores, and snapshot bridge; depends on Actix and protocol payload types.                   | Event log append precedes live dispatch; startup index reads are paged; query responses and shutdown/replay/recovery-phase barriers are acknowledged. Storage or mailbox failures reach a caller where the path is awaited, but live append/response `do_send` edges remain.                                                                                           | Event/subscription APIs; must not own request-specific protocol policy.                                                   |
 | `e3-data`                          | Serve typed repository reads/writes and append-only event-log/index records.                         | Sled/in-memory stores, log handles, batch writes, and flush failure state.                                                                     | Acknowledged sync/batch writes flush before success; decode corruption and recorded write failures fail closed.                                                                                                                                                                                                                                                        | Repository/store factories; must not decide committees, proofs, or lifecycle transitions.                                 |
 | `e3-sync`                          | Reconstruct actor state and reconcile EVM/network history before live mode.                          | Startup plan, disk-backed local replay runs, and bounded reconciled-history vectors; depends on repositories, EventBus, EVM, and net adapters. | Schema is checked before state-writing actors; HLC includes post-snapshot history; replay is global-HLC ordered with acknowledged subscriber acceptance; Effects/history/SyncEnded phases are downstream-acknowledged; history gaps or bounded-net-sync failure abort startup.                                                                                         | Historical collectors/planners; must not submit live transactions.                                                        |
-| `e3-net`                           | Translate bounded libp2p traffic and serve gossip, DHT, and historical sync.                         | Swarm, Kademlia records, peer/transport status, channels, startup buffer, and document interests.                                              | Signed gossip is type-allowlisted; decodes, startup backlog, and sync fetches are bounded; metadata must match DHT payload. Errors fail readiness or stop the affected ingress loop.                                                                                                                                                                                   | `NetInterface` and pure translation services; must not own E3 transitions or infer committee authority from PeerId alone. |
+| `e3-net`                           | Translate bounded libp2p traffic and serve gossip, DHT, and historical sync.                         | Swarm, Kademlia records, peer/transport status, channels, startup buffer, current committee/expulsion admission view, rate meters, and document interests. | Protocol gossip is EVM-signed over its libp2p author and admitted only for current `(chain, E3)` committee roles before startup buffering or durable publication; repeated invalid authors are quarantined. Decodes, connections, DHT storage, startup backlog, per-peer traffic, and sync fetches are bounded; metadata must match DHT payload. Errors fail readiness or stop the affected ingress loop. | `NetInterface` and pure translation services; must not own E3 transitions or treat transport authentication alone as committee authority. |
 | `e3-evm`                           | Read chain history under the configured confirmation policy and submit typed contract transactions.  | Per-chain gateways, provider handles, chain buffers, nonce mutexes, and durable registry/Interfold/slashing effect outboxes.                  | Malformed logs and reverted receipts fail. Every irreversible effect is synchronously admitted, then locally signed with raw bytes/nonce/hash persisted before RPC dispatch, and reconciled/retried after restart. A well-formed unsupported request is skipped for version tolerance. Full chain-reorg rollback remains intentionally outside the writer boundary.             | Provider/contract helpers; must not own off-chain proof policy.                                                           |
 | `e3-request`                       | Route E3-scoped events and enforce lifecycle progress.                                               | `E3Router`, lifecycle state, typed `(E3, recipient)` buffers, and request actor contexts; depends on event and protocol actor APIs.            | Legal progress is monotonic; buffered history precedes the recipient-creating event; terminal teardown purges absent-role buffers. Active buffer size and child `do_send` remain residual risks.                                                                                                                                                                       | Domain lifecycle/routing functions; must not implement storage, network framing, or contract decoding.                    |
 | `e3-sortition`                     | Track registry/tickets and derive canonical selection/committee observations.                        | Node registry, ticket state, selector backend, chain-derived committee state, and persisted aggregator leases.                                 | On-chain ordering/deadlines are authoritative; deterministic lease expiry populates the local unresponsive set and promotes canonical standbys. Exhaustion is durably bridged to canonical failure; terminal cleanup releases all request-local records.                                                                                                                   | Sortition backend; must not construct cryptographic proofs or submit EVM transactions.                                    |

@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use actix::{Actor, ActorContext, AsyncContext, Handler, Message};
+use actix::{Actor, ActorContext, ActorFutureExt, AsyncContext, Handler, Message, WrapFuture};
 use anyhow::{anyhow, Context, Result};
 use e3_events::{
     BusHandle, EType, ErrorDispatcher, Event, EventSubscriber, EventType, InterfoldEvent,
@@ -12,11 +12,13 @@ use e3_events::{
 };
 use e3_utils::MAILBOX_LIMIT;
 use tokio::sync::broadcast::{self, error::RecvError};
+use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use tracing::warn;
 
 use crate::domain::net_buffer::{BufferDecision, NetEventBufferState};
-use crate::events::NetEvent;
+use crate::events::{GossipAcceptance, GossipData, NetCommand, NetEvent};
+use crate::{NetworkAuthorizationState, ProtocolAdmission};
 
 pub const DEFAULT_MAX_BUFFERED_NET_EVENTS: usize = 1_024;
 pub const DEFAULT_MAX_BUFFERED_NET_BYTES: usize = 256 * 1024 * 1024;
@@ -45,12 +47,16 @@ pub struct NetEventBuffer {
     max_events: usize,
     max_bytes: usize,
     readiness: Option<oneshot::Sender<std::result::Result<(), String>>>,
+    net_commands: mpsc::Sender<NetCommand>,
+    protocol_admission: ProtocolAdmission,
 }
 
 impl NetEventBuffer {
     pub(crate) fn setup_with_limits(
         bus: &BusHandle,
         input_rx: &broadcast::Receiver<NetEvent>,
+        net_commands: mpsc::Sender<NetCommand>,
+        authorization: NetworkAuthorizationState,
         max_events: usize,
         max_bytes: usize,
     ) -> (broadcast::Receiver<NetEvent>, NetEventBufferHandle) {
@@ -66,17 +72,20 @@ impl NetEventBuffer {
             max_events,
             max_bytes,
             readiness: Some(readiness_tx),
+            net_commands,
+            protocol_admission: ProtocolAdmission::new(authorization),
         };
 
         let addr = actor.start();
 
         // Subscribe to InterfoldEvent on the bus
-        bus.subscribe(EventType::SyncEnded, addr.clone().recipient());
+        bus.subscribe(EventType::All, addr.clone().recipient());
 
         (output_rx, NetEventBufferHandle { readiness })
     }
 
     fn handle_interfold_event(&mut self, msg: InterfoldEvent) -> Result<()> {
+        self.protocol_admission.observe(&msg);
         if let InterfoldEventData::SyncEnded(_) = msg.get_data() {
             return self.process_sync_ended();
         }

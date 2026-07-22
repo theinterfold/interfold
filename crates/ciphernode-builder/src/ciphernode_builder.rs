@@ -32,7 +32,8 @@ use e3_logger::attach_protocol_logger;
 use e3_multithread::{Multithread, MultithreadReport, TaskPool, TaskPoolPolicy};
 use e3_net::{
     create_channel_bridge, setup_libp2p_keypair, setup_net_interface, setup_net_with_limits,
-    NetRepositoryFactory, NetworkTaskSupervisor,
+    NetRepositoryFactory, NetworkAuthorizationState, NetworkTaskSupervisor, ProtocolGossipIdentity,
+    ProtocolSigner,
 };
 use e3_request::E3Router;
 use e3_request::{E3LifecycleCoordinator, E3LifecycleRepositoryFactory};
@@ -614,12 +615,26 @@ impl CiphernodeBuilder {
         let topic = "interfold-gossip";
         let (peer_id, interface, net_kind, network_supervisor) =
             self.setup_networking(&store, topic).await?;
+        let committees = repositories
+            .finalized_committees()
+            .read()
+            .await?
+            .unwrap_or_default();
+        let expelled = repositories
+            .ciphernode_selector()
+            .read()
+            .await?
+            .unwrap_or_default()
+            .expelled;
+        let network_authorization = NetworkAuthorizationState::new(committees, expelled);
+        let protocol_signer = ProtocolSigner::new(provider_cache.ensure_signer().await?, peer_id);
         let network_status = interface.status();
         let net_buffer = setup_net_with_limits(
             topic,
             bus.clone(),
             eventstore.ts(),
             interface,
+            ProtocolGossipIdentity::new(protocol_signer, network_authorization),
             self.max_buffered_net_events,
             self.max_buffered_net_bytes,
         )?;

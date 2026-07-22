@@ -176,10 +176,18 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
         if is_rebroadcast {
             let tx = self.tx.clone();
             let topic = self.topic.clone();
+            let signer = self.protocol_signer.clone();
+            let authorization = self.protocol_authorization.clone();
             let bus = self.bus.clone();
             return Box::pin(async move {
-                if let Err(error) =
-                    NetSyncManager::rebroadcast_own_artifacts(tx, topic, events).await
+                if let Err(error) = NetSyncManager::rebroadcast_own_artifacts(
+                    tx,
+                    topic,
+                    signer,
+                    authorization,
+                    events,
+                )
+                .await
                 {
                     bus.err(EType::Net, error);
                 }

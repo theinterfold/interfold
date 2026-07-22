@@ -7,13 +7,12 @@
 use crate::{
     direct_responder::DirectResponder,
     domain::wire::{decode, MAX_GOSSIP_BYTES},
-    ContentHash,
+    AuthenticatedProtocolEvent, ContentHash,
 };
 use actix::Message;
 use anyhow::{anyhow, bail, Context, Result};
 use e3_events::{
-    CorrelationId, DocumentMeta, EventContextAccessors, EventSource, InterfoldEvent, Sequenced,
-    Unsequenced,
+    CorrelationId, DocumentMeta, EventContextAccessors, EventSource, InterfoldEvent, Unsequenced,
 };
 use e3_utils::{ArcBytes, OnceTake};
 use libp2p::{
@@ -43,7 +42,10 @@ pub enum PeerTarget {
 /// Incoming/Outgoing GossipData. We disambiguate on concerns relative to the net package.
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum GossipData {
-    GossipBytes(Vec<u8>), // Serialized InterfoldEvent
+    /// EVM-authenticated protocol event accepted by the production ingress path.
+    ProtocolEvent(AuthenticatedProtocolEvent),
+    /// Legacy diagnostic payload. The production interface rejects this variant before ingress.
+    GossipBytes(Vec<u8>),
     DocumentPublishedNotification(DocumentPublishedNotification),
 }
 
@@ -57,25 +59,14 @@ impl GossipData {
     }
 }
 
-impl TryFrom<InterfoldEvent<Sequenced>> for GossipData {
-    type Error = anyhow::Error;
-    fn try_from(value: InterfoldEvent<Sequenced>) -> Result<Self, Self::Error> {
-        let bytes = value
-            .clone_unsequenced() // Note serializing UNSEQUENCED
-            .to_bytes()
-            .context("Could not convert event to bytes for serialization!")?;
-        Ok(GossipData::GossipBytes(bytes))
-    }
-}
-
 impl TryFrom<GossipData> for InterfoldEvent<Unsequenced> {
     type Error = anyhow::Error;
     fn try_from(value: GossipData) -> Result<Self, Self::Error> {
-        let GossipData::GossipBytes(bytes) = value else {
-            bail!("GossipData was not the GossipBytes variant");
+        let GossipData::ProtocolEvent(envelope) = value else {
+            bail!("GossipData was not the ProtocolEvent variant");
         };
 
-        Ok(InterfoldEvent::from_bytes(&bytes)?.with_source(EventSource::Net))
+        Ok(InterfoldEvent::from_bytes(&envelope.event)?.with_source(EventSource::Net))
     }
 }
 
@@ -164,6 +155,16 @@ pub enum NetCommand {
         data: GossipData,
         correlation_id: CorrelationId,
     },
+    /// Release or reject a gossipsub message held by application-level validation.
+    GossipValidation {
+        propagation_source: PeerId,
+        message_id: MessageId,
+        acceptance: GossipAcceptance,
+    },
+    /// Stop accepting protocol gossips authored by an identity that repeatedly failed auth.
+    QuarantinePeer {
+        peer_id: PeerId,
+    },
     /// Dial peer
     Dial(OnceTake<DialOpts>),
     /// Command to PublishDocument to Kademlia
@@ -189,6 +190,13 @@ pub enum NetCommand {
     IncomingResponse(IncomingResponse),
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum GossipAcceptance {
+    Accept,
+    Reject,
+    Ignore,
+}
+
 impl NetCommand {
     pub fn correlation_id(&self) -> Option<CorrelationId> {
         use NetCommand as N;
@@ -208,6 +216,15 @@ impl NetCommand {
 pub enum NetEvent {
     /// Bytes have been broadcast over the network
     GossipData(GossipData),
+    /// Protocol event awaiting application-level authentication and validation.
+    AuthenticatedGossip {
+        author: PeerId,
+        propagation_source: PeerId,
+        message_id: MessageId,
+        data: GossipData,
+    },
+    /// Protocol event that passed envelope, membership, role, replay, and rate admission.
+    AuthorizedGossip(Box<InterfoldEvent<Unsequenced>>),
     /// There was an Error publishing bytes over the network
     GossipPublishError {
         correlation_id: CorrelationId,
@@ -285,7 +302,10 @@ impl NetEvent {
     /// event-count limit.
     pub(crate) fn buffered_size_bytes(&self) -> usize {
         let dynamic = match self {
-            Self::GossipData(data) => serialized_size(data),
+            Self::GossipData(data) | Self::AuthenticatedGossip { data, .. } => {
+                serialized_size(data)
+            }
+            Self::AuthorizedGossip(event) => event.to_bytes().map_or(0, |bytes| bytes.len()),
             Self::GossipPublished { message_id, .. } => message_id.0.len(),
             Self::DhtGetRecordSucceeded { value, .. } => value.len(),
             Self::DhtGetRecordError { error, .. } => match error {
@@ -470,12 +490,16 @@ pub fn estimate_hashmap_size<K, V>(map: &HashMap<K, V>) -> usize {
 
 #[cfg(test)]
 mod tests {
+    use alloy::signers::local::PrivateKeySigner;
     use e3_events::{
         EventConstructorWithTimestamp, EventSource, InterfoldEvent, Sequenced, TestEvent,
         Unsequenced,
     };
 
+    use libp2p::PeerId;
+
     use super::GossipData;
+    use crate::ProtocolSigner;
 
     #[test]
     fn test_interfold_event_gossip_lifecycle() -> anyhow::Result<()> {
@@ -492,10 +516,11 @@ mod tests {
         let event: InterfoldEvent<Sequenced> = event.into_sequenced(90210);
 
         // event is broadcast
-        let gossip_data: GossipData = event.try_into()?;
+        let signer = ProtocolSigner::new(PrivateKeySigner::random(), PeerId::random());
+        let gossip_data = GossipData::ProtocolEvent(signer.sign_event(event)?);
 
-        let GossipData::GossipBytes(_) = gossip_data else {
-            panic!("events must only be serialized to GossipBytes");
+        let GossipData::ProtocolEvent(_) = gossip_data else {
+            panic!("protocol events must only be serialized to authenticated envelopes");
         };
 
         // received gossip data from libp2p convert to unsequenced event

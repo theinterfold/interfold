@@ -16,6 +16,7 @@ mod keypair;
 mod net_interface;
 mod net_interface_handle;
 mod net_supervisor;
+mod protocol_auth;
 mod repo;
 
 use std::sync::Arc;
@@ -37,6 +38,7 @@ pub use keypair::*;
 pub use net_interface::*;
 pub use net_interface_handle::*;
 pub use net_supervisor::*;
+pub use protocol_auth::*;
 pub use repo::*;
 
 pub async fn setup_libp2p_keypair(
@@ -52,6 +54,21 @@ pub async fn setup_libp2p_keypair(
             None => bail!("No network keypair found in repository, please generate a new one using `interfold net generate-key`"),
         };
     Libp2pKeypair::try_from_bytes(&mut bytes)
+}
+
+#[derive(Clone)]
+pub struct ProtocolGossipIdentity {
+    pub signer: ProtocolSigner,
+    pub authorization: NetworkAuthorizationState,
+}
+
+impl ProtocolGossipIdentity {
+    pub fn new(signer: ProtocolSigner, authorization: NetworkAuthorizationState) -> Self {
+        Self {
+            signer,
+            authorization,
+        }
+    }
 }
 
 pub fn setup_net_interface(
@@ -77,12 +94,14 @@ pub fn setup_net(
     bus: BusHandle,
     eventstore: impl Into<Recipient<EventStoreQueryBy<TsAgg>>>,
     interface: impl NetInterface,
+    protocol_identity: ProtocolGossipIdentity,
 ) -> Result<()> {
     setup_net_with_limits(
         topic,
         bus,
         eventstore,
         interface,
+        protocol_identity,
         DEFAULT_MAX_BUFFERED_NET_EVENTS,
         DEFAULT_MAX_BUFFERED_NET_BYTES,
     )?;
@@ -96,12 +115,17 @@ pub fn setup_net_with_limits(
     bus: BusHandle,
     eventstore: impl Into<Recipient<EventStoreQueryBy<TsAgg>>>,
     interface: impl NetInterface,
+    protocol_identity: ProtocolGossipIdentity,
     max_buffered_events: usize,
     max_buffered_bytes: usize,
 ) -> Result<NetEventBufferHandle> {
     if max_buffered_events == 0 || max_buffered_bytes == 0 {
         bail!("network startup buffer limits must both be greater than zero");
     }
+    let ProtocolGossipIdentity {
+        signer,
+        authorization,
+    } = protocol_identity;
     // NOTE: Pass the unbuffered rx to SyncManager as it must operate before live events are
     // processed
     let _net_sync = NetSyncManager::setup(
@@ -110,17 +134,25 @@ pub fn setup_net_with_limits(
         &Arc::new(interface.rx()),
         eventstore.into(),
         topic,
+        signer.clone(),
+        authorization.clone(),
     );
 
     // Buffer all incoming events until SyncEnded
     let (rx, buffer_handle) = NetEventBuffer::setup_with_limits(
         &bus,
         &interface.rx(),
+        interface.tx(),
+        authorization.clone(),
         max_buffered_events,
         max_buffered_bytes,
     );
     let rx = Arc::new(rx);
     let tx = interface.tx();
+
+    // Start the membership observer before replay. Ingress remains behind NetEventBuffer until
+    // SyncEnded, and outbound publication remains gated until EffectsEnabled.
+    NetEventTranslator::setup(&bus, &tx, &rx, topic, signer, authorization);
 
     let runner = run_once::<EffectsEnabled>({
         let bus = bus.clone();
@@ -128,7 +160,6 @@ pub fn setup_net_with_limits(
         let topic = topic.to_owned();
         let tx = tx.clone();
         move |_| {
-            NetEventTranslator::setup(&bus, &tx, &rx, &topic);
             DocumentPublisher::setup(&bus, &tx, &rx, &topic);
             Ok(())
         }

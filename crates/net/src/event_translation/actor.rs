@@ -4,11 +4,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::domain::EventTranslationService;
-use crate::events::{GossipData, NetCommand, NetEvent};
+use crate::events::{NetCommand, NetEvent};
+use crate::{NetworkAuthorizationState, ProtocolSigner};
 use actix::prelude::*;
 use e3_events::{
     prelude::*, BusHandle, CorrelationId, EType, EventContextAccessors, EventSource, EventType,
-    InterfoldEvent,
+    InterfoldEvent, InterfoldEventData, Unsequenced,
 };
 use e3_utils::MAILBOX_LIMIT;
 use std::sync::Arc;
@@ -23,6 +24,8 @@ pub struct NetEventTranslator {
     bus: BusHandle,
     tx: mpsc::Sender<NetCommand>,
     service: EventTranslationService,
+    signer: ProtocolSigner,
+    effects_enabled: bool,
 }
 
 impl Actor for NetEventTranslator {
@@ -35,15 +38,23 @@ impl Actor for NetEventTranslator {
 /// Libp2pEvent is used to send data to the Libp2pNetInterface from the NetEventTranslator
 #[derive(Message, Clone, Debug, PartialEq, Eq)]
 #[rtype(result = "()")]
-struct LibP2pEvent(pub GossipData);
+struct LibP2pEvent(InterfoldEvent<Unsequenced>);
 
 impl NetEventTranslator {
     /// Create a new NetEventTranslator actor
-    pub fn new(bus: &BusHandle, tx: &mpsc::Sender<NetCommand>, topic: &str) -> Self {
+    pub fn new(
+        bus: &BusHandle,
+        tx: &mpsc::Sender<NetCommand>,
+        topic: &str,
+        signer: ProtocolSigner,
+        authorization: NetworkAuthorizationState,
+    ) -> Self {
         Self {
             bus: bus.clone(),
             tx: tx.clone(),
-            service: EventTranslationService::new(topic),
+            service: EventTranslationService::new(topic, authorization),
+            signer,
+            effects_enabled: true,
         }
     }
 
@@ -52,9 +63,13 @@ impl NetEventTranslator {
         tx: &mpsc::Sender<NetCommand>,
         rx: &Arc<broadcast::Receiver<NetEvent>>,
         topic: &str,
+        signer: ProtocolSigner,
+        authorization: NetworkAuthorizationState,
     ) -> Addr<Self> {
         let mut rx = rx.resubscribe();
-        let addr = NetEventTranslator::new(bus, tx, topic).start();
+        let mut actor = NetEventTranslator::new(bus, tx, topic, signer, authorization);
+        actor.effects_enabled = false;
+        let addr = actor.start();
 
         // Listen on all events
         bus.subscribe(EventType::All, addr.clone().recipient());
@@ -65,12 +80,10 @@ impl NetEventTranslator {
                 while let Some(event) =
                     crate::event_subscription::recv_net_event(&mut rx, "NetEventTranslator").await
                 {
-                    if let NetEvent::GossipData(data) = event {
-                        if let GossipData::GossipBytes(_) = data {
-                            if let Err(error) = addr.send(LibP2pEvent(data)).await {
-                                warn!(%error, "NetEventTranslator stopped; ending gossip ingress");
-                                break;
-                            }
+                    if let NetEvent::AuthorizedGossip(event) = event {
+                        if let Err(error) = addr.send(LibP2pEvent(*event)).await {
+                            warn!(%error, "NetEventTranslator stopped; ending gossip ingress");
+                            break;
                         }
                     }
                 }
@@ -91,13 +104,11 @@ impl NetEventTranslator {
 impl Handler<LibP2pEvent> for NetEventTranslator {
     type Result = AtomicResponse<Self, ()>;
     fn handle(&mut self, msg: LibP2pEvent, _: &mut Self::Context) -> Self::Result {
-        let (id, event) = match self.service.prepare_inbound(msg.0) {
-            Ok(prepared) => prepared,
-            Err(error) => {
-                self.bus.err(EType::Net, error);
-                return AtomicResponse::new(Box::pin(actix::fut::ready(())));
-            }
-        };
+        let event = msg.0;
+        if !EventTranslationService::is_forwardable_event(&event) {
+            return AtomicResponse::new(Box::pin(actix::fut::ready(())));
+        }
+        let id = event.id();
         let (data, ec) = event.into_components();
         let bus = self.bus.clone();
         AtomicResponse::new(Box::pin(
@@ -117,8 +128,15 @@ impl Handler<LibP2pEvent> for NetEventTranslator {
 impl Handler<InterfoldEvent> for NetEventTranslator {
     type Result = AtomicResponse<Self, ()>;
     fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
+        self.service.observe(&msg);
+        if matches!(msg.get_data(), InterfoldEventData::EffectsEnabled(_)) {
+            self.effects_enabled = true;
+        }
+        if !self.effects_enabled {
+            return AtomicResponse::new(Box::pin(actix::fut::ready(())));
+        }
         let bus = self.bus.with_ec(msg.get_ctx());
-        let prepared = match self.service.prepare_outbound(msg) {
+        let prepared = match self.service.prepare_outbound(msg, &self.signer) {
             Ok(prepared) => prepared,
             Err(error) => {
                 bus.err(EType::Net, error);
@@ -154,12 +172,15 @@ impl Handler<InterfoldEvent> for NetEventTranslator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::signers::local::PrivateKeySigner;
     use e3_ciphernode_builder::EventSystem;
     use e3_events::{
-        E3id, EventConstructorWithTimestamp, EventSource, PlaintextAggregated, Unsequenced,
+        Committee, E3id, EventConstructorWithTimestamp, EventSource, PlaintextAggregated,
+        Unsequenced,
     };
     use e3_utils::ArcBytes;
-    use std::time::Duration;
+    use libp2p::PeerId;
+    use std::{collections::HashMap, time::Duration};
 
     fn forwardable_event() -> InterfoldEvent {
         let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
@@ -183,8 +204,18 @@ mod tests {
         let bus = system.handle().unwrap().enable("test");
         let (tx, mut rx) = mpsc::channel(1);
         tx.send(NetCommand::Shutdown).await.unwrap();
-        let addr = NetEventTranslator::new(&bus, &tx, "topic").start();
         let event = forwardable_event();
+        let signer = PrivateKeySigner::random();
+        let protocol_signer = ProtocolSigner::new(signer.clone(), PeerId::random());
+        let authorization = NetworkAuthorizationState::new(
+            HashMap::from([(
+                event.get_e3_id().unwrap(),
+                Committee::new(vec![signer.address().to_string()]),
+            )]),
+            HashMap::new(),
+        );
+        let addr =
+            NetEventTranslator::new(&bus, &tx, "topic", protocol_signer, authorization).start();
 
         let pending = tokio::spawn({
             let addr = addr.clone();

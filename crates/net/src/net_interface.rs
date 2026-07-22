@@ -7,7 +7,7 @@
 use crate::{
     dialer::dial_peers,
     events::{
-        GossipData, IncomingRequest, NetCommand, NetEvent, OutgoingRequestFailed,
+        GossipAcceptance, GossipData, IncomingRequest, NetCommand, NetEvent, OutgoingRequestFailed,
         OutgoingRequestSucceeded, PeerTarget, PutOrStoreError,
     },
     ContentHash,
@@ -60,8 +60,8 @@ use tokio::{
 use tracing::{debug, error, info, trace, warn};
 
 const PROTOCOL_NAME: StreamProtocol = StreamProtocol::new("/interfold/kad/1.0.0");
-const MAX_KADEMLIA_PAYLOAD_MB: usize = 100;
-const DHT_MAX_RECORDS: usize = 4096;
+const MAX_KADEMLIA_PAYLOAD_MB: usize = 32;
+const DHT_MAX_RECORDS: usize = 1024;
 const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 40;
 const EVENT_CHANNEL_SIZE: usize = 1000;
 const CMD_CHANNEL_SIZE: usize = 1000;
@@ -288,7 +288,15 @@ fn create_behaviour(
     key: &Keypair,
 ) -> std::result::Result<NodeBehaviour, Box<dyn std::error::Error + Send + Sync + 'static>> {
     let peer_id = key.public().to_peer_id();
-    let connection_limits = connection_limits::Behaviour::new(ConnectionLimits::default());
+    let connection_limits = connection_limits::Behaviour::new(
+        ConnectionLimits::default()
+            .with_max_pending_incoming(Some(32))
+            .with_max_pending_outgoing(Some(32))
+            .with_max_established_incoming(Some(128))
+            .with_max_established_outgoing(Some(128))
+            .with_max_established(Some(192))
+            .with_max_established_per_peer(Some(2)),
+    );
     let identify = IdentifyBehaviour::new(
         IdentifyConfig::new("/interfold/0.0.1".into(), key.public())
             .with_interval(Duration::from_secs(60)),
@@ -298,6 +306,7 @@ fn create_behaviour(
         .heartbeat_interval(Duration::from_secs(10))
         .max_transmit_size(MAX_GOSSIP_BYTES)
         .validation_mode(gossipsub::ValidationMode::Strict)
+        .validate_messages()
         .build()
         .map_err(Error::other)?;
 
@@ -322,7 +331,7 @@ fn create_behaviour(
     let store_config = MemoryStoreConfig {
         max_records: DHT_MAX_RECORDS,
         max_value_bytes: MAX_DHT_DOCUMENT_BYTES,
-        max_providers_per_key: usize::MAX,
+        max_providers_per_key: 20,
         max_provided_keys: DHT_MAX_RECORDS,
     };
     let store = MemoryStore::with_config(peer_id, store_config);
@@ -583,13 +592,68 @@ async fn process_swarm_event(
         }
 
         SwarmEvent::Behaviour(NodeBehaviourEvent::Gossipsub(gossipsub::Event::Message {
-            propagation_source: peer_id,
+            propagation_source,
             message_id: id,
             message,
         })) => {
-            trace!("Got message with id: {id} from peer: {peer_id}");
-            let gossip_data = GossipData::from_bytes(&message.data)?;
-            event_tx.send(NetEvent::GossipData(gossip_data))?;
+            trace!("Got message with id: {id} from peer: {propagation_source}");
+            let Some(author) = message.source else {
+                swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .report_message_validation_result(
+                        &id,
+                        &propagation_source,
+                        gossipsub::MessageAcceptance::Reject,
+                    );
+                return Ok(());
+            };
+            let gossip_data = match GossipData::from_bytes(&message.data) {
+                Ok(data) => data,
+                Err(error) => {
+                    warn!(%author, %propagation_source, %error, "Rejecting malformed gossip before application admission");
+                    swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .report_message_validation_result(
+                            &id,
+                            &propagation_source,
+                            gossipsub::MessageAcceptance::Reject,
+                        );
+                    return Ok(());
+                }
+            };
+            match gossip_data {
+                data @ GossipData::ProtocolEvent(_) => {
+                    event_tx.send(NetEvent::AuthenticatedGossip {
+                        author,
+                        propagation_source,
+                        message_id: id,
+                        data,
+                    })?;
+                }
+                data @ GossipData::DocumentPublishedNotification(_) => {
+                    swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .report_message_validation_result(
+                            &id,
+                            &propagation_source,
+                            gossipsub::MessageAcceptance::Accept,
+                        );
+                    event_tx.send(NetEvent::GossipData(data))?;
+                }
+                GossipData::GossipBytes(_) => {
+                    swarm
+                        .behaviour_mut()
+                        .gossipsub
+                        .report_message_validation_result(
+                            &id,
+                            &propagation_source,
+                            gossipsub::MessageAcceptance::Reject,
+                        );
+                }
+            }
         }
 
         SwarmEvent::NewListenAddr { address, .. } => {
@@ -765,6 +829,29 @@ async fn process_swarm_command(
             correlation_id,
         } => {
             handle_gossip_publish(swarm, event_tx, data, topic, correlation_id)?;
+            Ok(())
+        }
+        NetCommand::GossipValidation {
+            propagation_source,
+            message_id,
+            acceptance,
+        } => {
+            let acceptance = match acceptance {
+                GossipAcceptance::Accept => gossipsub::MessageAcceptance::Accept,
+                GossipAcceptance::Reject => gossipsub::MessageAcceptance::Reject,
+                GossipAcceptance::Ignore => gossipsub::MessageAcceptance::Ignore,
+            };
+            swarm
+                .behaviour_mut()
+                .gossipsub
+                .report_message_validation_result(&message_id, &propagation_source, acceptance);
+            Ok(())
+        }
+        NetCommand::QuarantinePeer { peer_id } => {
+            swarm.behaviour_mut().gossipsub.blacklist_peer(&peer_id);
+            if let Err(error) = swarm.disconnect_peer_id(peer_id) {
+                debug!(%peer_id, ?error, "Quarantined gossip author was not directly connected");
+            }
             Ok(())
         }
         NetCommand::Dial(env) => {

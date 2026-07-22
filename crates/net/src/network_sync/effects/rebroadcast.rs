@@ -45,15 +45,22 @@ impl NetSyncManager {
     pub(in crate::actors::net_sync_manager) async fn rebroadcast_own_artifacts(
         tx: mpsc::Sender<NetCommand>,
         topic: String,
+        signer: ProtocolSigner,
+        authorization: NetworkAuthorizationState,
         events: Vec<InterfoldEvent>,
     ) -> Result<usize> {
         let mut count = 0usize;
+        let admission = ProtocolAdmission::new(authorization);
         for event in events {
             if !EventTranslationService::is_forwardable_event(&event) {
                 continue;
             }
-            let data: GossipData = match event.try_into() {
-                Ok(data) => data,
+            if let Err(error) = admission.authorize_local_event(signer.address(), &event) {
+                warn!(%error, event_id=%event.id(), "Skipping stale or unauthorized own artifact during re-broadcast");
+                continue;
+            }
+            let data = match signer.sign_event(event) {
+                Ok(envelope) => GossipData::ProtocolEvent(envelope),
                 Err(e) => {
                     warn!("Failed to convert own artifact to gossip data: {e}");
                     continue;

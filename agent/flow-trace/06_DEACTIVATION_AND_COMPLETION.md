@@ -292,6 +292,13 @@ disables gossip translation, document notifications, or historical-sync/readines
 buffering window remains a fail-closed readiness error because those skipped events cannot yet be
 reconciled safely.
 
+Protocol-event gossip is authenticated before that startup-buffer accounting: the buffer's ingress
+recovers the EVM signer from an envelope bound to the gossipsub author, checks the current
+chain/E3 committee, expulsion and event role, and applies per-peer/per-E3 event and byte quotas.
+Only accepted events enter the startup queue. Invalid input is reported to gossipsub immediately,
+and a repeatedly invalid author is blacklisted and disconnected, so an outsider cannot exhaust the
+startup budget or reach the durable bus with unique protocol-shaped payloads.
+
 Correctness-sensitive publishers use the acknowledged publication path. Its success boundary is:
 the sequencer has assigned the event, the target EventStore has appended and synchronously flushed
 it, and every current EventBus subscriber's bounded mailbox has admitted it. EventBus does not wait
