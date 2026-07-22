@@ -12,18 +12,18 @@ non-expelled/non-unresponsive `party_id` in that normalized order.
 The selector drives both aggregation phases from persisted leases derived from authoritative
 Interfold deadlines. Each eligible party receives an equal slice of the remaining DKG or decryption
 window. When one slice expires without confirmed publication, every node skips the same party and
-the next standby's existing verified buffer activates through `AggregatorChanged`. `CommitteePublished`
-settles the DKG lease; `CiphertextOutputPublished` arms a fresh decryption lease and resets local
-liveness presumptions; `PlaintextOutputPublished` settles it. After the final slice and exact chain
-deadline, the durable EVM outbox submits `markE3Failed`.
+the next standby's existing verified buffer activates through `AggregatorChanged`.
+`CommitteePublished` settles the DKG lease; `CiphertextOutputPublished` arms a fresh decryption
+lease and resets local liveness presumptions; `PlaintextOutputPublished` settles it. After the final
+slice and exact chain deadline, the durable EVM outbox submits `markE3Failed`.
 
 CPU-bound ZK and TrBFV requests enter a fair, semaphore-bounded Rayon pool. Admission has a
 configurable timeout, and every admitted closure has a configurable execution budget
 (`multithread_admission_timeout_secs` and `multithread_execution_timeout_secs`). Rayon cannot safely
-interrupt an already-running closure, so a production deadline breach or cancellation after
-dispatch is fail-stop: the process aborts and the OS reclaims every worker instead of leaving an
-orphan to monopolize protocol capacity. Panics are caught and returned as correlated
-`ComputeRequestError` events.
+interrupt an already-running closure, so a production deadline breach or cancellation after dispatch
+is fail-stop: the process aborts and the OS reclaims every worker instead of leaving an orphan to
+monopolize protocol capacity. Panics are caught and returned as correlated `ComputeRequestError`
+events.
 
 ---
 
@@ -1160,13 +1160,13 @@ ACTIVE AGGREGATOR collects PK_share₁ + PK_share₂ + PK_share₃
 
 ## Durable flow tracing
 
-Every protocol-event gossip described above is wrapped in a domain-separated EVM signature that
-also commits to the signed gossipsub author, wire version, and issuance time. Before startup
-buffering or durable publication, the receiver recovers the address, checks the current chain/E3
-committee and expulsion view, validates any claimed node/party/accuser/voter role, and charges
-per-peer plus per-peer/E3 event and byte quotas. Rejected authors do not consume the startup buffer;
-repeated invalid input quarantines the peer. The inner proof signatures and ZK checks documented in
-this trace remain the artifact-validity boundary after network admission.
+Every protocol-event gossip described above is wrapped in a domain-separated EVM signature that also
+commits to the signed gossipsub author, wire version, and issuance time. Before startup buffering or
+durable publication, the receiver recovers the address, checks the current chain/E3 committee and
+expulsion view, validates any claimed node/party/accuser/voter role, and charges per-peer plus
+per-peer/E3 event and byte quotas. Rejected authors do not consume the startup buffer; repeated
+invalid input quarantines the peer. The inner proof signatures and ZK checks documented in this
+trace remain the artifact-validity boundary after network admission.
 
 The dashboard renders event ID, causation ID, origin ID, HLC timestamp, block watermark, aggregate,
 and source exactly as the local EventStore recorded them. Observability does not change the

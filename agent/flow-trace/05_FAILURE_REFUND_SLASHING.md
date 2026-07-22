@@ -347,9 +347,9 @@ ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
 
 The accusation and vote signatures below authenticate the slashing evidence itself. In addition,
 their protocol-gossip envelopes bind the gossipsub author to a recovered EVM address. Network
-ingress checks that address against the current chain/E3 committee, expulsion state, and the
-event's declared `accuser` or `voter` before startup buffering or durable publication; replay/rate
-failures are rejected and repeated invalid authors are quarantined.
+ingress checks that address against the current chain/E3 committee, expulsion state, and the event's
+declared `accuser` or `voter` before startup buffering or durable publication; replay/rate failures
+are rejected and repeated invalid authors are quarantined.
 
 #### Step 2: Incoming Accusation Handling
 
