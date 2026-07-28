@@ -623,36 +623,23 @@ async fn process_swarm_event(
                     return Ok(());
                 }
             };
-            match gossip_data {
-                data @ GossipData::ProtocolEvent(_) => {
-                    event_tx.send(NetEvent::AuthenticatedGossip {
-                        author,
-                        propagation_source,
-                        message_id: id,
-                        data,
-                    })?;
-                }
-                data @ GossipData::DocumentPublishedNotification(_) => {
-                    swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .report_message_validation_result(
-                            &id,
-                            &propagation_source,
-                            gossipsub::MessageAcceptance::Accept,
-                        );
-                    event_tx.send(NetEvent::GossipData(data))?;
-                }
-                GossipData::GossipBytes(_) => {
-                    swarm
-                        .behaviour_mut()
-                        .gossipsub
-                        .report_message_validation_result(
-                            &id,
-                            &propagation_source,
-                            gossipsub::MessageAcceptance::Reject,
-                        );
-                }
+            if gossip_data.requires_protocol_admission() {
+                event_tx.send(NetEvent::AuthenticatedGossip {
+                    author,
+                    propagation_source,
+                    message_id: id,
+                    data: gossip_data,
+                })?;
+            } else {
+                swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .report_message_validation_result(
+                        &id,
+                        &propagation_source,
+                        gossipsub::MessageAcceptance::Accept,
+                    );
+                event_tx.send(NetEvent::GossipData(gossip_data))?;
             }
         }
 

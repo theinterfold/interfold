@@ -44,12 +44,16 @@ pub enum PeerTarget {
 pub enum GossipData {
     /// EVM-authenticated protocol event accepted by the production ingress path.
     ProtocolEvent(AuthenticatedProtocolEvent),
-    /// Legacy diagnostic payload. The production interface rejects this variant before ingress.
+    /// Opaque diagnostic payload. It is never decoded or persisted as a protocol event.
     GossipBytes(Vec<u8>),
     DocumentPublishedNotification(DocumentPublishedNotification),
 }
 
 impl GossipData {
+    pub(crate) fn requires_protocol_admission(&self) -> bool {
+        matches!(self, Self::ProtocolEvent(_))
+    }
+
     pub fn to_bytes(&self) -> Result<Vec<u8>> {
         bincode::serialize(self).context("Could not serialize GossipData")
     }
@@ -518,6 +522,7 @@ mod tests {
         // event is broadcast
         let signer = ProtocolSigner::new(PrivateKeySigner::random(), PeerId::random());
         let gossip_data = GossipData::ProtocolEvent(signer.sign_event(event)?);
+        assert!(gossip_data.requires_protocol_admission());
 
         let GossipData::ProtocolEvent(_) = gossip_data else {
             panic!("protocol events must only be serialized to authenticated envelopes");
@@ -548,5 +553,10 @@ mod tests {
 
         let error = GossipData::from_bytes(&bytes).unwrap_err();
         assert!(format!("{error:#}").contains("trailing bytes"));
+    }
+
+    #[test]
+    fn opaque_gossip_does_not_enter_protocol_admission() {
+        assert!(!GossipData::GossipBytes(vec![1, 2, 3]).requires_protocol_admission());
     }
 }
