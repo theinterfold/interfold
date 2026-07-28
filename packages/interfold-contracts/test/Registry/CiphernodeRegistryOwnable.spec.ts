@@ -45,6 +45,7 @@ describe("CiphernodeRegistryOwnable", function () {
       operator3: sys.operator3!,
       registry: sys.ciphernodeRegistry,
       interfold: sys.interfold,
+      slashingManager: sys.slashingManager,
       bondingRegistry: sys.bondingRegistry,
       licenseToken: sys.licenseToken,
       ticketToken: sys.ticketToken,
@@ -249,6 +250,63 @@ describe("CiphernodeRegistryOwnable", function () {
         mockDecryptionVerifier,
       );
       expect(await registry.rootAt(0)).to.equal(await registry.root());
+    });
+
+    it("rejects tickets from an operator banned after registration", async function () {
+      const {
+        owner,
+        notTheOwner,
+        operator1,
+        registry,
+        interfold,
+        slashingManager,
+        bondingRegistry,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      } = await loadFixture(setup);
+      const operator = await operator1.getAddress();
+      const reason = ethers.encodeBytes32String("manual_ban");
+      const governanceRole = await slashingManager.GOVERNANCE_ROLE();
+
+      await slashingManager
+        .connect(owner)
+        .grantRole(governanceRole, await notTheOwner.getAddress());
+      await slashingManager.connect(owner).proposeBan(operator, reason);
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      expect(await bondingRegistry.isActive(operator)).to.equal(true);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(3);
+
+      await expect(
+        slashingManager.connect(notTheOwner).confirmBan(operator, reason),
+      )
+        .to.emit(bondingRegistry, "OperatorActivationChanged")
+        .withArgs(operator, false);
+
+      expect(await bondingRegistry.isActive(operator)).to.equal(false);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(2);
+      expect(await registry.isCiphernodeEligible(operator)).to.equal(false);
+      await expect(
+        registry.connect(operator1).submitTicket(0, 1),
+      ).to.be.revertedWithCustomError(registry, "NodeNotEligible");
+
+      await expect(slashingManager.connect(owner).unbanNode(operator, reason))
+        .to.emit(bondingRegistry, "OperatorActivationChanged")
+        .withArgs(operator, true);
+      expect(await bondingRegistry.isActive(operator)).to.equal(true);
+      expect(await bondingRegistry.numActiveOperators()).to.equal(3);
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      await registry.connect(operator1).submitTicket(1, 1);
     });
   });
 

@@ -25,6 +25,8 @@ const getVoteCacheKey = (sessionId: string, roundId: number, address: string): s
   return `crisp-vote-status-${sessionId}-${roundId}-${address.toLowerCase()}`
 }
 
+const nowInSeconds = (): number => Math.floor(Date.now() / 1000)
+
 const VOTE_CACHE_DURATION = 5 * 60 * 1000
 
 const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
@@ -41,11 +43,9 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   /**
    * Voting Management States
    **/
-  const [user, setUser] = useState<{ address: string } | null>(null)
   const [roundState, setRoundState] = useState<VoteStateLite | null>(null)
   const [votingRound, setVotingRound] = useState<VotingRound | null>(null)
   const [roundEndDate, setRoundEndDate] = useState<Date | null>(null)
-  const [isLoading, setIsLoading] = useState<boolean>(false)
   const [pollOptions, setPollOptions] = useState<Poll[]>([])
   const [pastPolls, setPastPolls] = useState<PollResult[]>([])
   const [txUrl, setTxUrl] = useState<string | undefined>(undefined)
@@ -55,6 +55,13 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   const [hasVotedInCurrentRound, setHasVotedInCurrentRound] = useState<boolean>(false)
   const [voteStatusLoading, setVoteStatusLoading] = useState<boolean>(false)
   const voteStatusCache = useRef<Map<string, VoteStatus>>(new Map())
+
+  /**
+   * The connected wallet is the source of truth for the user, so it is derived
+   * rather than mirrored into state.
+   **/
+  const user = useMemo(() => (isConnected && address ? { address } : null), [isConnected, address])
+  const userAddress = user?.address
 
   /**
    * Voting Management Methods
@@ -107,9 +114,9 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
 
   const markVotedInRound = useCallback(
     (roundId: number) => {
-      if (!user?.address) return
+      if (!userAddress) return
 
-      const cacheKey = getVoteCacheKey(sessionId, roundId, user.address)
+      const cacheKey = getVoteCacheKey(sessionId, roundId, userAddress)
       const status: VoteStatus = {
         hasVoted: true,
         roundId: roundId,
@@ -121,7 +128,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
         return roundId === currentRoundId ? true : prevHasVoted
       })
     },
-    [sessionId, user?.address, currentRoundId],
+    [sessionId, userAddress, currentRoundId],
   )
 
   const initialLoad = async () => {
@@ -135,8 +142,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     const fetched = await getRoundStateLiteRequest(currentRound.id)
     if (!fetched) return
 
-    const nowSec = Math.floor(Date.now() / 1000)
-    const ended = Number(fetched.end_time) <= nowSec
+    const ended = Number(fetched.end_time) <= nowInSeconds()
     let fallbackRoundId: number | null = null
 
     if (ended) {
@@ -185,33 +191,22 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
       }
     } catch (error) {
       handleGenericError('getPastPolls', error as Error)
-    } finally {
-      setIsLoading(false)
     }
   }
 
+  // The cached vote statuses are keyed by address, so drop them when the wallet
+  // disconnects.
   useEffect(() => {
-    if (interfoldLoading) {
-      return setIsLoading(true)
-    }
-    setIsLoading(false)
-  }, [interfoldLoading])
-
-  useEffect(() => {
-    if (isConnected && address) {
-      setUser({ address })
-    } else {
-      setUser(null)
-      setHasVotedInCurrentRound(false)
+    if (!userAddress) {
       voteStatusCache.current.clear()
     }
-  }, [isConnected, address])
+  }, [userAddress])
 
   useEffect(() => {
     let cancelled = false
     const checkStatus = async () => {
-      if (user?.address && currentRoundId !== null && currentRoundId >= 0) {
-        const hasVoted = await checkVoteStatus(currentRoundId, user.address)
+      if (userAddress && currentRoundId !== null && currentRoundId >= 0) {
+        const hasVoted = await checkVoteStatus(currentRoundId, userAddress)
         if (!cancelled) {
           setHasVotedInCurrentRound(hasVoted)
         }
@@ -223,12 +218,12 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     return () => {
       cancelled = true
     }
-  }, [user?.address, currentRoundId, checkVoteStatus])
+  }, [userAddress, currentRoundId, checkVoteStatus])
 
   return (
     <VoteManagementContextProvider
       value={{
-        isLoading,
+        isLoading: interfoldLoading,
         user,
         votingRound,
         roundEndDate,
@@ -253,7 +248,6 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
         initialLoad,
         broadcastVote,
         setVotingRound,
-        setUser,
         checkVoteStatus,
         markVotedInRound,
       }}

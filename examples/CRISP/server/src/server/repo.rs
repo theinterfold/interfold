@@ -170,6 +170,7 @@ impl<S: DataStore> CrispE3Repository<S> {
         custom_params: CustomParams,
         requester: String,
         end_time: u64,
+        snapshot_block: u64,
     ) -> Result<()> {
         self.set_crisp(E3Crisp {
             has_voted: vec![],
@@ -187,6 +188,7 @@ impl<S: DataStore> CrispE3Repository<S> {
             credit_mode: custom_params.credit_mode,
             credits: custom_params.credits,
             end_time,
+            snapshot_block,
         })
         .await
     }
@@ -276,6 +278,7 @@ impl<S: DataStore> CrispE3Repository<S> {
     pub async fn get_e3_state_lite(&self) -> Result<E3StateLite> {
         let e3 = self.get_e3().await?;
         let e3_crisp = self.get_crisp().await?;
+        let snapshot_block = snapshot_block(e3.request_block, e3_crisp.snapshot_block);
         Ok(E3StateLite {
             emojis: e3_crisp.emojis,
             id: self.e3_id,
@@ -285,6 +288,7 @@ impl<S: DataStore> CrispE3Repository<S> {
             end_time: e3.input_window[1],
             vote_count: u64::try_from(e3_crisp.has_voted.len())?,
             start_block: e3.request_block,
+            snapshot_block,
             interfold_address: e3.interfold_address,
             committee_public_key: e3.committee_public_key,
             token_address: e3_crisp.token_address,
@@ -397,5 +401,39 @@ impl<S: DataStore> CrispE3Repository<S> {
     fn crisp_key(&self) -> String {
         let e3_id = self.e3_id;
         format!("_e3:crisp:{e3_id}")
+    }
+}
+
+/// The block the census was built at.
+///
+/// Rounds stored before the snapshot block was persisted fall back to the block before
+/// the request, which is what the indexer used to build their census.
+///
+/// `stored_snapshot_block` is the value persisted on the round, 0 when it is missing.
+fn snapshot_block(request_block: u64, stored_snapshot_block: u64) -> u64 {
+    if stored_snapshot_block == 0 {
+        request_block.saturating_sub(1)
+    } else {
+        stored_snapshot_block
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::snapshot_block;
+
+    #[test]
+    fn returns_the_stored_snapshot_block() {
+        assert_eq!(snapshot_block(100, 99), 99);
+    }
+
+    #[test]
+    fn falls_back_to_the_block_before_the_request() {
+        assert_eq!(snapshot_block(100, 0), 99);
+    }
+
+    #[test]
+    fn does_not_underflow_on_the_genesis_block() {
+        assert_eq!(snapshot_block(0, 0), 0);
     }
 }

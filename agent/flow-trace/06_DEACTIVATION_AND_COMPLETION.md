@@ -586,12 +586,16 @@ no safe harbor for misbehaving operators.
 ```
 SLASHING → operator banned:
   banned[operator] = true
+    → BondingRegistry refreshes registered operator status
+    → active = false and numActiveOperators decreases
+    → Cannot submit tickets for new committee selection
     → Cannot call registerOperator() (reverts with CiphernodeBanned)
   → Permanent until governance intervenes
 
 GOVERNANCE lifts ban:
-    SlashingManager.updateBanStatus(operator, false, keccak256("reason"))
+    SlashingManager.unbanNode(operator, keccak256("reason"))
   → banned[operator] = false
+  → BondingRegistry refreshes registered operator status
   → Operator can re-register
 ```
 
@@ -609,7 +613,8 @@ GOVERNANCE lifts ban:
 - **Two-step ban** (M-14, M-15): bans now require `proposeBan` → `confirmBan` from a **distinct**
   signer holding `GOVERNANCE_ROLE`. `cancelBan` rescinds an unconfirmed proposal. Legacy direct-set
   via `updateBanStatus(_, true, _)` reverts `BanRequiresConfirmation()`. Unban is single-step
-  (`unbanNode`).
+  (`unbanNode`). Ban and unban completion refresh the registered operator in `BondingRegistry`. A
+  ban therefore removes the operator from active counts and blocks later ticket submissions.
 
 - **DEFAULT_ADMIN handover** (M-17): operator-onboarding ops that depend on `DEFAULT_ADMIN_ROLE`
   rotation must use the `AccessControlDefaultAdminRules` two-step flow (`beginDefaultAdminTransfer`

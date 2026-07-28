@@ -22,9 +22,10 @@ pub fn numbers_to_strings_for_js(value: serde_json::Value) -> serde_json::Value 
                 if u > JS_SAFE_INT_MAX as u64 {
                     return serde_json::Value::String(u.to_string());
                 }
-            } else if n.as_f64().is_none_or(|f| {
-                f < -JS_SAFE_INT_MAX as f64 || f > JS_SAFE_INT_MAX as f64
-            }) {
+            } else if n
+                .as_f64()
+                .is_none_or(|f| f < -JS_SAFE_INT_MAX as f64 || f > JS_SAFE_INT_MAX as f64)
+            {
                 return serde_json::Value::String(n.to_string());
             }
 

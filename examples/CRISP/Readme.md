@@ -35,30 +35,50 @@ You can have an extended explanation of the single folders in the dedicated
 
 Before getting started, ensure you have installed:
 
-- [Rust](https://rust-lang.org/tools/install/)
+- [Rust](https://rust-lang.org/tools/install/) — see `rust-toolchain.toml` for the pinned version
 - [Foundry](https://getfoundry.sh)
-- [RiscZero](https://dev.risczero.com/api/zkvm/install)
-- [NodeJS](https://nodejs.org/en/download)
+- [NodeJS](https://nodejs.org/en/download) — CI uses 22.x (`NODE_VERSION` in
+  `.github/workflows/ci.yml`). Odd-numbered releases such as 25.x make Hardhat print an unsupported
+  version warning on every invocation
 - [pnpm](https://pnpm.io)
 - [MetaMask](https://metamask.io)
-- Noir toolchain ([`nargo`](https://noir-lang.org/docs/getting_started/quick_start),
-  [`bb`](https://barretenberg.aztec.network/docs/getting_started))
+- [`yq`](https://github.com/mikefarah/yq) — `scripts/dev_cipher.sh` reads node addresses with it
+- Noir toolchain: [`nargo`](https://noir-lang.org/docs/getting_started/quick_start) and
+  [`bb`](https://barretenberg.aztec.network/docs/getting_started). Install the versions CI pins,
+  since other versions may not compile the circuits:
+  - `nargo`: `noirup -v v1.0.0-beta.16` (`NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`)
+  - `bb`: version and per-platform checksums live in `crates/zk-prover/versions.json`
+
+[RiscZero](https://dev.risczero.com/api/zkvm/install) is **not** required for local development.
+`scripts/dev_program.sh` starts the program server with `--dev true`, so `pnpm dev:up` runs without
+a proving backend no matter what `program.dev` says in `interfold.config.yaml`. Real proving runs
+inside a container image that already ships RiscZero, so what that path needs locally is **Docker**,
+not a RiscZero install.
 
 ## Quick Start
 
 The simplest way to run CRISP is:
 
 ```bash
+# From the repository root — the CRISP contracts depend on the risc0-ethereum submodule
+git submodule update --init --recursive
+
+cd examples/CRISP
+
 # Optional: choose local profile (copied to crisp.dev.env on first setup)
 cp crisp.dev.env.example crisp.dev.env
 # Edit CRISP_SKIP_PROOF_AGGREGATION and CRISP_BFV_PRESET (see docs/PROOF_AGGREGATION_AND_ZK.md)
 
-# Install dependencies and build everything (applies crisp.dev.env → server/.env)
+# Install dependencies and build everything (creates server/.env from the example if missing)
 pnpm dev:setup
 
 # Start all services (Hardhat, contracts, ciphernodes, program server, coordination server, and UI)
 pnpm dev:up
 ```
+
+> **_Note:_** Without the submodule step, `pnpm dev:setup` fails while compiling contracts with
+> `HHE902 ... lib/risc0-ethereum/contracts/src/groth16/RiscZeroGroth16Verifier.sol doesn't exist`.
+> CI does not hit this because its checkout uses `submodules: recursive`.
 
 The program server accepts caller-supplied HTTP(S) callback URLs. It is a development-only test
 service, does not authenticate callers or allowlist callback destinations, and must stay isolated
@@ -84,8 +104,9 @@ While `pnpm dev:up` runs everything together, you can also run components separa
 # Start only the Hardhat node
 cd packages/crisp-contracts && pnpm hardhat node
 
-# Start only the ciphernodes (requires Hardhat running)
-./scripts/dev_cipher.sh
+# Start only the ciphernodes (requires Hardhat running).
+# The argument is the ready-file the script creates once the nodes are registered.
+./scripts/dev_cipher.sh ./.interfold/ready
 
 # Start only the program server (requires ciphernodes)
 ./scripts/dev_program.sh

@@ -405,15 +405,7 @@ contract BondingRegistry is
         }
 
         require(slashingManager != address(0), ZeroAddress());
-        uint256 managerCount = _authorizedSlashingManagers.length;
-        for (uint256 i = 0; i < managerCount; i++) {
-            require(
-                !ISlashingManager(_authorizedSlashingManagers[i]).isBanned(
-                    msg.sender
-                ),
-                CiphernodeBanned()
-            );
-        }
+        require(!_isOperatorBanned(msg.sender), CiphernodeBanned());
         require(!operators[msg.sender].registered, AlreadyRegistered());
         require(
             operators[msg.sender].licenseBond >= licenseRequiredBond,
@@ -1039,6 +1031,7 @@ contract BondingRegistry is
         bool oldActiveStatus = op.eligibilityVersion == currentVersion &&
             op.active;
         bool newActiveStatus = op.registered &&
+            !_isOperatorBanned(operator) &&
             op.licenseBond >= _minLicenseBond() &&
             (ticketToken.balanceOf(operator) / ticketPrice >= minTicketBalance);
 
@@ -1054,6 +1047,23 @@ contract BondingRegistry is
 
             emit OperatorActivationChanged(operator, newActiveStatus);
         }
+    }
+
+    /// @dev A ban from any retained slashing manager removes network eligibility.
+    ///      A manager that cannot answer fails closed until governance repairs
+    ///      or revokes that dependency.
+    function _isOperatorBanned(address operator) internal view returns (bool) {
+        uint256 len = _authorizedSlashingManagers.length;
+        for (uint256 i = 0; i < len; i++) {
+            (bool success, bytes memory result) = _authorizedSlashingManagers[i]
+                .staticcall(
+                    abi.encodeCall(ISlashingManager.isBanned, (operator))
+                );
+            if (!success || result.length != 32) return true;
+
+            if (abi.decode(result, (uint256)) != 0) return true;
+        }
+        return false;
     }
 
     /// @dev Calculates the minimum license bond required to maintain active status

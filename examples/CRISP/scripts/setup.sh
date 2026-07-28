@@ -26,11 +26,17 @@ apply_crisp_dev_config_to_server_env
 echo "client"
 (cd ./client && if [[ ! -f .env ]]; then cp .env.example .env; fi)
 echo "ciphernode"
-if [[ ! -f ~/.cargo/bin/interfold ]]; then
-  echo "Building and installing interfold CLI..."
-  (cd "${REPO_ROOT}" && cargo build --locked -p e3-cli && cargo install --locked --path crates/cli)
-else
-  echo "interfold CLI already installed, skipping build"
+# `load_crisp_dev_config` exports E3_NODES__CN*__SKIP_PROOF_AGGREGATION from this profile.
+# The node rejects that setting unless the binary carries the matching Cargo feature, so the
+# feature selection has to follow the profile or every ciphernode exits on startup.
+INTERFOLD_FEATURES=""
+if [[ "$CRISP_SKIP_PROOF_AGGREGATION" == "true" ]]; then
+  INTERFOLD_FEATURES="--features test-only-skip-proof-aggregation"
 fi
+echo "Building and installing interfold CLI (${INTERFOLD_FEATURES:-no extra features})..."
+# Always reinstall: `cargo install --path` rebuilds and replaces in place, so a stale binary
+# from an earlier checkout (or an earlier profile) cannot silently survive.
+# shellcheck disable=SC2086
+(cd "${REPO_ROOT}" && cargo install --locked --path crates/cli $INTERFOLD_FEATURES)
 
 print_crisp_dev_config_summary

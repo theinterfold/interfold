@@ -6,6 +6,7 @@
 
 export * from './token'
 export * from './state'
+export * from './api'
 export { MAX_MSG_NON_ZERO_COEFFS, MAX_VOTE_OPTIONS, MERKLE_TREE_MAX_DEPTH, SIGNATURE_MESSAGE, SIGNATURE_MESSAGE_HASH } from './constants'
 export {
   hashLeaf,
@@ -29,5 +30,23 @@ export {
 } from './vote'
 export { CrispSDK } from './sdk'
 
-export type { RoundDetails, RoundDetailsResponse, TokenDetails, Vote, MaskVoteProofInputs, VoteProofInputs, ProofData } from './types'
+export type {
+  OnChainRoundData,
+  RoundDetails,
+  TokenDetails,
+  Vote,
+  MaskVoteProofInputs,
+  VoteProofInputs,
+  ProofData,
+  CurrentRoundResponse,
+  E3StateLiteResponse,
+  JsonResponse,
+  NewRoundRequest,
+  BroadcastVoteRequest,
+  BroadcastVoteResponse,
+  VoteResponseStatus,
+  VoteStatusResponse,
+  WebResultResponse,
+  TokenHolder,
+} from './types'
 export { CreditMode } from './types'

@@ -117,6 +117,7 @@ User runs: interfold ciphernode register [--chain default]
 │     │  │       │                                               │
 │     │  │       │  Activation check (ALL must be true):         │
 │     │  │       │  ✓ registered == true                         │
+│     │  │       │  ✓ not banned by an authorized slash manager  │
 │     │  │       │  ✓ licenseBond >= requiredBond * 80%          │
 │     │  │       │  ✓ ticketBalance / ticketPrice >= minTickets  │
 │     │  │       │                                               │
@@ -136,8 +137,8 @@ User runs: interfold ciphernode register [--chain default]
 
 1. **IMT Insertion**: The node's address is now in the Incremental Merkle Tree. This tree is
    snapshot at each E3 request to determine eligible committee members.
-2. **Active Status**: If bond + tickets meet thresholds, the node is immediately active and eligible
-   for committee selection.
+2. **Active Status**: If bond and tickets meet thresholds, the node is active and eligible for
+   committee selection unless an authorized slashing manager has banned it.
 3. **Event Emission**: `CiphernodeAdded` and `OperatorActivationChanged` events are emitted, which
    running ciphernodes pick up via their EVM readers.
 

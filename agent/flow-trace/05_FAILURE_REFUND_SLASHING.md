@@ -727,7 +727,9 @@ _executeSlash(proposalId):
 ├─ 3. BAN NODE (if proposal.banNode):
 │     banned[operator] = true
 │     Emit NodeBanUpdated(operator, true, reason, address(this))
-│     → Banned nodes cannot re-register
+│     → BondingRegistry refreshes the registered operator
+│     → Active status and numActiveOperators update immediately
+│     → Banned nodes cannot submit new tickets or re-register
 │     → Only governance can lift ban
 │
 ├─ 4. COMMITTEE EXPULSION (if proposal.affectsCommittee):

@@ -9,6 +9,7 @@ import SlashingManagerModule from "../../ignition/modules/slashingManager";
 import type { MockCircuitVerifier } from "../../types";
 import type { SlashingManager } from "../../types/contracts/slashing/SlashingManager";
 import {
+  LICENSE_REQUIRED_BOND,
   deployInterfoldSystem,
   ethers,
   ignition,
@@ -952,10 +953,34 @@ describe("SlashingManager", function () {
         slashingManager,
         proposer,
         operatorAddress,
+        operator,
         voter1,
         voter2,
+        bondingRegistry,
+        interfoldToken,
+        ticketToken,
+        usdcToken,
         mockCiphernodeRegistry,
       } = await loadFixture(setup);
+
+      await interfoldToken
+        .connect(operator)
+        .approve(
+          await bondingRegistry.getAddress(),
+          LICENSE_REQUIRED_BOND * 2n,
+        );
+      await bondingRegistry
+        .connect(operator)
+        .bondLicense(LICENSE_REQUIRED_BOND * 2n);
+      await bondingRegistry.connect(operator).registerOperator();
+
+      const ticketAmount = ethers.parseUnits("200", 6);
+      await usdcToken.mint(operatorAddress, ticketAmount);
+      await usdcToken
+        .connect(operator)
+        .approve(await ticketToken.getAddress(), ticketAmount);
+      await bondingRegistry.connect(operator).addTicketBalance(ticketAmount);
+      expect(await bondingRegistry.isActive(operatorAddress)).to.be.true;
 
       await setupPolicies(slashingManager);
 
@@ -983,6 +1008,8 @@ describe("SlashingManager", function () {
 
       // banNode=true → auto-executed → node is now banned
       expect(await slashingManager.isBanned(operatorAddress)).to.be.true;
+      expect(await bondingRegistry.isActive(operatorAddress)).to.be.false;
+      expect(await bondingRegistry.numActiveOperators()).to.equal(0);
     });
 
     it("should propose slash via DKG partyId attribution", async function () {

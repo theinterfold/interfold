@@ -323,11 +323,7 @@ impl EtherscanClient {
         let decimals = Self::get_decimals(token_address, rpc_url).await?;
 
         // we want to keep some precision but want to deal with as small as numbers as possible
-        let precision = if decimals > 1 {
-            decimals - 1
-        } else {
-            0
-        };
+        let precision = if decimals > 1 { decimals - 1 } else { 0 };
 
         let scale_factor = U256::from(10u128.pow(precision as u32));
 

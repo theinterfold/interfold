@@ -2,7 +2,7 @@
   "name": "@crisp-e3/zk-inputs",
   "type": "module",
   "description": "Core logic to pre-compute CRISP ZK inputs (WASM/JavaScript bindings).",
-  "version": "0.11.0",
+  "version": "0.14.0",
   "license": "LGPL-3.0-only",
   "repository": {
     "type": "git",

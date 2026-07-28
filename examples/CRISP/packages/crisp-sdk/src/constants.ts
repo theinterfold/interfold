@@ -9,6 +9,15 @@ import { hashMessage } from 'viem'
 export const CRISP_SERVER_TOKEN_TREE_ENDPOINT = 'state/token-holders'
 export const CRISP_SERVER_STATE_LITE_ENDPOINT = 'state/lite'
 export const CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT = 'state/previous-ciphertext'
+export const CRISP_SERVER_STATE_RESULT_ENDPOINT = 'state/result'
+export const CRISP_SERVER_STATE_ALL_ENDPOINT = 'state/all'
+export const CRISP_SERVER_ELIGIBLE_ADDRESSES_ENDPOINT = 'state/eligible-addresses'
+export const CRISP_SERVER_VOTING_BROADCAST_ENDPOINT = 'voting/broadcast'
+export const CRISP_SERVER_VOTING_STATUS_ENDPOINT = 'voting/status'
+export const CRISP_SERVER_ROUNDS_CURRENT_ENDPOINT = 'rounds/current'
+export const CRISP_SERVER_ROUNDS_PUBLIC_KEY_ENDPOINT = 'rounds/public-key'
+export const CRISP_SERVER_ROUNDS_CIPHERTEXT_ENDPOINT = 'rounds/ciphertext'
+export const CRISP_SERVER_ROUNDS_REQUEST_ENDPOINT = 'rounds/request'
 
 export const MERKLE_TREE_MAX_DEPTH = 20 // static, hardcoded in the circuit.
 

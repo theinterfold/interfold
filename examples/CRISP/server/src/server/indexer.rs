@@ -101,6 +101,10 @@ pub async fn register_e3_requested(
 
                 let input_window = [e3.inputWindow[0].to::<u64>(), e3.inputWindow[1].to::<u64>()];
 
+                // The census is built at the block before the request, as the request block
+                // itself is not final when the E3 is requested.
+                let snapshot_block = event.e3.requestBlock.to::<u64>().saturating_sub(1);
+
                 // Get token holders from Etherscan API or mocked data.
                 let token_holders = if matches!(CONFIG.chain_id, 31337 | 1337) {
                     info!(
@@ -127,8 +131,7 @@ pub async fn register_e3_requested(
                             etherscan_client
                             .get_token_holders_with_constant_balance(
                                 token_address,
-                                // the block is the one before the request
-                                event.e3.requestBlock.to::<u64>() - 1u64,
+                                snapshot_block,
                                 credits_u256
                             )
                             .await
@@ -138,8 +141,7 @@ pub async fn register_e3_requested(
                             etherscan_client
                             .get_token_holders_with_voting_power(
                                 token_address,
-                                // the block is the one before the request
-                                event.e3.requestBlock.to::<u64>() - 1u64,
+                                snapshot_block,
                                 &CONFIG.http_rpc_url,
                                 U256::from_str_radix(&balance_threshold.to_string(), 10).map_err(
                                     |e| {
@@ -166,7 +168,12 @@ pub async fn register_e3_requested(
                 }
 
                 // save the e3 details
-                repo.initialize_round(custom_params, e3.requester.to_string(), input_window[1])
+                repo.initialize_round(
+                    custom_params,
+                    e3.requester.to_string(),
+                    input_window[1],
+                    snapshot_block,
+                )
                 .await?;
 
                 // Store eligible addresses in the repository.

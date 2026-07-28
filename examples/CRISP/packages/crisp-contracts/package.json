@@ -1,6 +1,6 @@
 {
   "name": "@crisp-e3/contracts",
-  "version": "0.11.0",
+  "version": "0.14.0",
   "type": "module",
   "files": [
     "contracts",
@@ -50,6 +50,7 @@
   "devDependencies": {
     "@crisp-e3/sdk": "workspace:^",
     "@crisp-e3/zk-inputs": "workspace:^",
+    "@nomicfoundation/hardhat-keystore": "3.0.3",
     "@nomicfoundation/hardhat-toolbox-mocha-ethers": "3.0.0",
     "@openzeppelin/contracts": "^5.0.2",
     "@typechain/ethers-v6": "^0.5.0",

@@ -17,6 +17,8 @@ import {
   SDKError,
 } from '@interfold/sdk'
 
+type RequestE3Params = Parameters<typeof InterfoldSDK.prototype.requestE3>[0]
+
 export interface UseInterfoldSDKConfig {
   contracts?: {
     interfold: `0x${string}`
@@ -113,9 +115,12 @@ export const useInterfoldSDK = (config: UseInterfoldSDKConfig): UseInterfoldSDKR
     }
   }, [publicClient, walletClient, config.contracts, config.thresholdBfvParamsPresetName])
 
-  // Initialize SDK when wagmi clients are available
+  // The SDK is an external system with its own lifecycle (event subscriptions +
+  // cleanup), so it is created in an effect and mirrored into state rather than
+  // being derived during render.
   useEffect(() => {
     if (config.autoConnect && publicClient && !isInitialized) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       initializeSDK()
     }
   }, [config.autoConnect, publicClient, isInitialized, initializeSDK])
@@ -123,6 +128,7 @@ export const useInterfoldSDK = (config: UseInterfoldSDKConfig): UseInterfoldSDKR
   // Re-initialize when wallet client changes (connect/disconnect)
   useEffect(() => {
     if (isInitialized && publicClient && walletClient) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       initializeSDK()
     }
   }, [walletClient, initializeSDK, isInitialized, publicClient])
@@ -142,9 +148,9 @@ export const useInterfoldSDK = (config: UseInterfoldSDKConfig): UseInterfoldSDKR
   }, [sdk])
 
   const requestE3 = useCallback(
-    (...args: Parameters<typeof InterfoldSDK.prototype.requestE3>) => {
+    (params: RequestE3Params) => {
       if (!sdk) throw new Error('SDK not initialized')
-      return sdk.requestE3(...args)
+      return sdk.requestE3(params)
     },
     [sdk],
   )

@@ -4,23 +4,22 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { CRISP_SERVER_STATE_LITE_ENDPOINT, CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT } from './constants'
+import { parseAbi } from 'viem'
 
-import type { RoundDetailsResponse, RoundDetails, TokenDetails } from './types'
+import { CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT } from './constants'
+import { getRoundStateLite } from './api'
+import { getPublicClient } from './chain'
+
+import type { CreditMode, OnChainRoundData, RoundDetails, TokenDetails } from './types'
 
 /**
- * Get the details of a specific round
+ * Get the details of a specific round in a camelCase convenience format
+ * @param serverUrl - The base URL of the CRISP server
+ * @param e3Id - The e3Id of the round
+ * @returns The round details
  */
 export const getRoundDetails = async (serverUrl: string, e3Id: number): Promise<RoundDetails> => {
-  const response = await fetch(`${serverUrl}/${CRISP_SERVER_STATE_LITE_ENDPOINT}`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({ round_id: e3Id }),
-  })
-
-  const data = (await response.json()) as RoundDetailsResponse
+  const data = await getRoundStateLite(serverUrl, e3Id)
 
   return {
     e3Id: BigInt(data.id),
@@ -31,11 +30,15 @@ export const getRoundDetails = async (serverUrl: string, e3Id: number): Promise<
     status: data.status,
     voteCount: BigInt(data.vote_count),
     startTime: BigInt(data.start_time),
-    duration: BigInt(data.duration),
-    expiration: BigInt(data.expiration),
+    endTime: BigInt(data.end_time),
     startBlock: BigInt(data.start_block),
-    committeePublicKey: data.committee_public_key,
+    snapshotBlock: BigInt(data.snapshot_block),
+    committeePublicKey: new Uint8Array(data.committee_public_key),
     emojis: data.emojis,
+    numOptions: BigInt(data.num_options),
+    requester: data.requester,
+    creditMode: data.credit_mode,
+    credits: data.credits !== null ? BigInt(data.credits) : undefined,
   }
 }
 
@@ -50,7 +53,41 @@ export const getRoundTokenDetails = async (serverUrl: string, e3Id: number): Pro
   return {
     tokenAddress: roundDetails.tokenAddress,
     threshold: roundDetails.balanceThreshold,
-    snapshotBlock: roundDetails.startBlock,
+    snapshotBlock: roundDetails.snapshotBlock,
+  }
+}
+
+/**
+ * Get the round data stored in the CRISPProgram contract, such as the merkle root
+ * of the census and the merkle root of the encrypted votes published so far.
+ *
+ * Unlike {@link getRoundDetails}, this reads directly from the chain and so does not
+ * depend on the CRISP server.
+ *
+ * @param programAddress - The address of the CRISPProgram contract
+ * @param e3Id - The e3Id of the round
+ * @param chainId - The chain ID of the network the program is deployed on
+ * @returns The on chain round data
+ */
+export const getOnChainRoundData = async (programAddress: string, e3Id: number, chainId: number): Promise<OnChainRoundData> => {
+  const publicClient = getPublicClient(chainId)
+
+  const [merkleRoot, paramsHash, numOptions, creditMode, inputRoot, numberOfVotes] = await publicClient.readContract({
+    address: programAddress as `0x${string}`,
+    abi: parseAbi([
+      'function getRoundData(uint256 e3Id) view returns (uint256 merkleRoot, bytes32 paramsHash, uint256 numOptions, uint8 creditMode, uint256 inputRoot, uint40 numberOfVotes)',
+    ]),
+    functionName: 'getRoundData',
+    args: [BigInt(e3Id)],
+  })
+
+  return {
+    merkleRoot,
+    paramsHash,
+    numOptions,
+    creditMode: creditMode as CreditMode,
+    inputRoot,
+    numberOfVotes: BigInt(numberOfVotes),
   }
 }
 

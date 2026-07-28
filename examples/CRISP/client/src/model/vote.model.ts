@@ -52,6 +52,7 @@ export interface VoteStateLite {
   start_time: number
   end_time: number
   start_block: number
+  snapshot_block: number
 
   committee_public_key: number[]
   emojis: [string, string]

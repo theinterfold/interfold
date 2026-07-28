@@ -788,6 +788,7 @@ contract SlashingManager is
         if (p.banNode) {
             banned[p.operator] = true;
             emit NodeBanUpdated(p.operator, true, p.reason, address(this));
+            _refreshOperatorEligibility(dependencies.bonding, p.operator);
         }
 
         // Committee expulsion for E3-scoped slashes (uses snapshotted behavioral flags)
@@ -1014,6 +1015,7 @@ contract SlashingManager is
         banned[node] = true;
 
         emit NodeBanUpdated(node, true, reason, msg.sender);
+        _refreshOperatorEligibility(bondingRegistry, node);
     }
 
     /// @inheritdoc ISlashingManager
@@ -1032,6 +1034,7 @@ contract SlashingManager is
             emit BanCancelled(node, msg.sender);
         }
         emit NodeBanUpdated(node, false, reason, msg.sender);
+        _refreshOperatorEligibility(bondingRegistry, node);
     }
 
     /// @inheritdoc ISlashingManager
@@ -1049,6 +1052,19 @@ contract SlashingManager is
             emit BanCancelled(node, msg.sender);
         }
         emit NodeBanUpdated(node, false, reason, msg.sender);
+        _refreshOperatorEligibility(bondingRegistry, node);
+    }
+
+    /// @dev Synchronizes the BondingRegistry active count after a ban changes.
+    ///      An unset test or deployment dependency cannot block ban state.
+    function _refreshOperatorEligibility(
+        IBondingRegistry registry,
+        address operator
+    ) private {
+        if (address(registry).code.length == 0) return;
+        if (registry.isRegistered(operator)) {
+            registry.refreshOperatorStatus(operator);
+        }
     }
 
     /// @notice ERC-165 interface detection. Advertises {ISlashingManager}

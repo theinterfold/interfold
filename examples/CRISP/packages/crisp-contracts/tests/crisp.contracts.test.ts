@@ -122,4 +122,66 @@ describe('CRISP Contracts', function () {
       await crispProgram.publishInput(e3Id, encodedProof)
     })
   })
+
+  describe('get round data', () => {
+    // Root of an empty LazyIMT of depth TREE_DEPTH (InternalLazyIMT.Z_20)
+    const EMPTY_TREE_ROOT = 15019797232609675441998260052101280400536945603062888308240081994073687793470n
+    // MockInterfold calls validate with empty e3ProgramParams
+    const EMPTY_PARAMS_HASH = ethers.keccak256('0x')
+
+    it('should return empty data for an e3 which was not initialized', async () => {
+      const e3Id = await mockInterfold.nextE3Id()
+
+      const [merkleRoot, paramsHash, numOptions, creditMode, inputRoot, numberOfVotes] = await crispProgram.getRoundData(e3Id)
+
+      expect(merkleRoot).to.equal(0n)
+      expect(paramsHash).to.equal(ethers.ZeroHash)
+      expect(numOptions).to.equal(0n)
+      expect(creditMode).to.equal(0n)
+      expect(inputRoot).to.equal(EMPTY_TREE_ROOT)
+      expect(numberOfVotes).to.equal(0n)
+    })
+
+    it('should return the data set by validate', async () => {
+      const e3Id = await mockInterfold.nextE3Id()
+      await mockInterfold.request(await crispProgram.getAddress())
+
+      const [merkleRoot, paramsHash, numOptions, creditMode, inputRoot, numberOfVotes] = await crispProgram.getRoundData(e3Id)
+
+      expect(merkleRoot).to.equal(0n)
+      expect(paramsHash).to.equal(EMPTY_PARAMS_HASH)
+      expect(numOptions).to.equal(2n)
+      // CreditMode.CONSTANT
+      expect(creditMode).to.equal(0n)
+      expect(inputRoot).to.equal(EMPTY_TREE_ROOT)
+      expect(numberOfVotes).to.equal(0n)
+    })
+
+    it('should return the merkle root of the census once set', async () => {
+      const e3Id = await mockInterfold.nextE3Id()
+      await mockInterfold.request(await crispProgram.getAddress())
+
+      const merkleTree = generateMerkleTree(leaves)
+      await crispProgram.setMerkleRoot(e3Id, merkleTree.root)
+
+      const [merkleRoot] = await crispProgram.getRoundData(e3Id)
+
+      expect(merkleRoot).to.equal(BigInt(merkleTree.root))
+    })
+
+    it('should reflect a published vote in the input tree', async function () {
+      const e3Id = await mockInterfold.nextE3Id()
+      await mockInterfold.request(await crispProgram.getAddress())
+
+      const merkleTree = generateMerkleTree(leaves)
+      await mockInterfold.setCommitteePublicKey(voteProof.publicInputs[6])
+      await crispProgram.setMerkleRoot(e3Id, merkleTree.root)
+      await crispProgram.publishInput(e3Id, encodeSolidityProof(voteProof))
+
+      const [, , , , inputRoot, numberOfVotes] = await crispProgram.getRoundData(e3Id)
+
+      expect(numberOfVotes).to.equal(1n)
+      expect(inputRoot).to.not.equal(EMPTY_TREE_ROOT)
+    })
+  })
 })

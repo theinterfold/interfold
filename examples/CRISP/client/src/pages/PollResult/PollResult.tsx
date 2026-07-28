@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import React, { Fragment, useEffect, useState } from 'react'
+import React, { Fragment, useEffect, useMemo } from 'react'
 import CardContent from '@/components/Cards/CardContent'
 import VotesBadge from '@/components/VotesBadge'
 import PollCardResult from '@/components/Cards/PollCardResult'
@@ -21,55 +21,48 @@ const PollResult: React.FC = () => {
   const params = useParams()
   const { roundId, type } = params
   const { pastPolls, getWebResultByRound, pollResult, setPollResult } = useVoteManagementContext()
-  const [loading, setLoading] = useState<boolean>(true)
   const { roundEndDate, txUrl, roundState } = useVoteManagementContext()
 
   const activeTotalCount = type === 'confirmation' ? roundState?.vote_count : pollResult?.totalVotes
 
-  const fetchPoll = async () => {
-    const pollResult = await getWebResultByRound(parseInt(roundId as string))
-    if (pollResult) {
-      const convertedPoll = convertPollData([pollResult])
-      setPollResult(convertedPoll[0])
-      setLoading(false)
-    }
-  }
+  // Right after voting the tally is not published yet, so the live round state
+  // is rendered instead of the fetched result.
+  const confirmationPoll = useMemo(() => {
+    if (type !== 'confirmation' || !roundState || !activeTotalCount) return null
+    return convertVoteStateLite(roundState)
+  }, [type, roundState, activeTotalCount])
+
+  const displayedPoll = confirmationPoll ?? pollResult
+  const loading = !displayedPoll
 
   useEffect(() => {
-    if (!pollResult && roundId && loading) {
-      fetchPoll()
-    } else if (activeTotalCount && roundState && type === 'confirmation') {
-      const currentPoll = convertVoteStateLite(roundState)
-      if (currentPoll) {
-        setPollResult(currentPoll)
-        setLoading(false)
+    if (pollResult || confirmationPoll || !roundId) return
+
+    const fetchPoll = async () => {
+      const fetched = await getWebResultByRound(parseInt(roundId))
+      if (fetched) {
+        setPollResult(convertPollData([fetched])[0])
       }
     }
+    fetchPoll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pastPolls, roundId, roundState, activeTotalCount])
-
-  useEffect(() => {
-    if (pollResult && loading) {
-      setLoading(false)
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pollResult])
+  }, [pastPolls, roundId, confirmationPoll, pollResult])
 
   return (
     <EditorialShell className='flex w-full flex-1 flex-col'>
       <section className='pad-section col' style={{ flex: 1, alignItems: 'center', gap: 36 }}>
-        {loading && !pollResult && (
+        {loading && (
           <div className='flex items-center justify-center'>
             <LoadingAnimation isLoading={loading} />
           </div>
         )}
-        {!loading && pollResult && (
+        {displayedPoll && (
           <Fragment>
             <div className='col' style={{ alignItems: 'center', gap: 24, width: '100%' }}>
               <div className='col' style={{ alignItems: 'center', gap: 8, textAlign: 'center' }}>
-                <p className='mono muted'>Poll {pollResult.roundId}</p>
+                <p className='mono muted'>Poll {displayedPoll.roundId}</p>
                 <h1 className='h1'>{type === 'confirmation' ? 'Thanks for voting!' : 'Poll Results'}</h1>
-                {type !== 'confirmation' && <p className='cap'>{formatDate(pollResult.date)}</p>}
+                {type !== 'confirmation' && <p className='cap'>{formatDate(displayedPoll.date)}</p>}
               </div>
               {type === 'confirmation' && roundEndDate && (
                 <div className='col' style={{ alignItems: 'center', gap: 6 }}>
@@ -79,8 +72,8 @@ const PollResult: React.FC = () => {
               )}
               <VotesBadge totalVotes={activeTotalCount ?? 0} />
               <PollCardResult
-                results={markWinner(pollResult.options)}
-                totalVotes={pollResult.totalVotes}
+                results={markWinner(displayedPoll.options)}
+                totalVotes={displayedPoll.totalVotes}
                 isResult
                 isActive={type === 'confirmation' ? true : false}
               />

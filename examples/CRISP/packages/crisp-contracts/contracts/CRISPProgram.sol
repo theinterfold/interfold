@@ -117,6 +117,32 @@ contract CRISPProgram is IE3Program, Ownable {
     return e3Data[e3Id].paramsHash;
   }
 
+  /// @notice Get the details about an E3 such as the merkle root of the census
+  /// @dev RoundData cannot be returned directly as it contains nested mappings
+  /// @param e3Id The E3 program ID
+  /// @return merkleRoot The census merkle root
+  /// @return paramsHash The hash of the E3 program params
+  /// @return numOptions The number of vote options
+  /// @return creditMode The credit mode for the round
+  /// @return inputRoot The current root of the input (votes) merkle tree
+  /// @return numberOfVotes The number of leaves in the input merkle tree
+  function getRoundData(
+    uint256 e3Id
+  )
+    public
+    view
+    returns (uint256 merkleRoot, bytes32 paramsHash, uint256 numOptions, CreditMode creditMode, uint256 inputRoot, uint40 numberOfVotes)
+  {
+    RoundData storage round = e3Data[e3Id];
+
+    merkleRoot = round.merkleRoot;
+    paramsHash = round.paramsHash;
+    numOptions = round.numOptions;
+    creditMode = round.creditMode;
+    inputRoot = round.votes._root(TREE_DEPTH);
+    numberOfVotes = round.votes.numberOfLeaves;
+  }
+
   /// @inheritdoc IE3Program
   function validate(
     uint256 e3Id,

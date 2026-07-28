@@ -15,7 +15,7 @@ use crate::server::{
     CONFIG,
 };
 use actix_web::{web, HttpResponse, Responder};
-use alloy::primitives::{Address, B256, Bytes, U256};
+use alloy::primitives::{Address, Bytes, B256, U256};
 use e3_sdk::evm_helpers::contracts::{
     InterfoldContract, InterfoldContractFactory, InterfoldWrite, ReadWrite,
 };

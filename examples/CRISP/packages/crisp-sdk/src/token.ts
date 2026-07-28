@@ -6,8 +6,9 @@
 
 import { CRISP_SERVER_TOKEN_TREE_ENDPOINT } from './constants'
 
-import { createPublicClient, http, parseAbi } from 'viem'
-import { localhost, sepolia } from 'viem/chains'
+import { parseAbi } from 'viem'
+
+import { getPublicClient } from './chain'
 
 /**
  * Get the merkle tree data from the CRISP server
@@ -44,22 +45,7 @@ export const getTreeData = async (serverUrl: string, e3Id: number): Promise<bigi
  * @returns The token balance as a bigint
  */
 export const getBalanceAt = async (voterAddress: string, tokenAddress: string, snapshotBlock: number, chainId: number): Promise<bigint> => {
-  let chain
-  switch (chainId) {
-    case 11155111:
-      chain = sepolia
-      break
-    case 31337:
-      chain = localhost
-      break
-    default:
-      throw new Error('Unsupported chainId')
-  }
-
-  const publicClient = createPublicClient({
-    transport: http(),
-    chain,
-  })
+  const publicClient = getPublicClient(chainId)
 
   const balance = (await publicClient.readContract({
     address: tokenAddress as `0x${string}`,
@@ -79,22 +65,7 @@ export const getBalanceAt = async (voterAddress: string, tokenAddress: string, s
  * @returns The total supply as a bigint
  */
 export const getTotalSupplyAt = async (tokenAddress: string, snapshotBlock: number, chainId: number): Promise<bigint> => {
-  let chain
-  switch (chainId) {
-    case 11155111:
-      chain = sepolia
-      break
-    case 31337:
-      chain = localhost
-      break
-    default:
-      throw new Error('Unsupported chainId')
-  }
-
-  const publicClient = createPublicClient({
-    transport: http(),
-    chain,
-  })
+  const publicClient = getPublicClient(chainId)
 
   const totalSupply = (await publicClient.readContract({
     address: tokenAddress as `0x${string}`,

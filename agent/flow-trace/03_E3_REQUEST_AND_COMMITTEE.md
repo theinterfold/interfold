@@ -38,6 +38,9 @@ Requester calls: Interfold.request({
 │   ├─ threshold[1] >= threshold[0] (N >= M)
 │   ├─ inputWindow[0] >= block.timestamp (start in future)
 │   ├─ inputWindow[1] >= inputWindow[0] (end after start)
+│   ├─ inputWindow[1] + computeWindow >
+│   │    block.timestamp + registry.sortitionSubmissionWindow()
+│   │    (committee finalization must be possible before compute expires)
 │   ├─ total duration < maxDuration
 │   └─ e3Programs[e3Program] == true (program whitelisted)
 │
@@ -228,7 +231,8 @@ CiphernodeRegistrySolWriter receives TicketGenerated event
     │  │    4. require(!submitted[msg.sender])                   │
     │  │       → Each node submits only once                     │
     │  │    5. require(isCiphernodeEligible(msg.sender))         │
-    │  │       → Must be in IMT AND bondingRegistry.isActive()   │
+    │  │       → Must be enabled AND bondingRegistry.isActive()  │
+    │  │       → Active status fails closed for a retained ban   │
     │  │                                                         │
     │  │    6. _validateNodeEligibility(e3Id, msg.sender,        │
     │  │                                ticketNumber):           │

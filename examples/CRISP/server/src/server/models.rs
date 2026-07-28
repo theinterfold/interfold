@@ -171,7 +171,10 @@ pub struct E3StateLite {
 
     pub start_time: u64,
     pub end_time: u64,
+    /// The block the E3 was requested at
     pub start_block: u64,
+    /// The block the census was built at
+    pub snapshot_block: u64,
 
     pub committee_public_key: Vec<u8>,
     pub emojis: [String; 2],
@@ -239,6 +242,10 @@ pub struct E3Crisp {
     pub num_options: String,
     pub credit_mode: CreditMode,
     pub credits: Option<String>,
+    /// The block the census was built at. Defaults to 0 for rounds stored before
+    /// this field existed, which is resolved when the round state is read.
+    #[serde(default)]
+    pub snapshot_block: u64,
 }
 
 impl From<E3> for WebResultRequest {

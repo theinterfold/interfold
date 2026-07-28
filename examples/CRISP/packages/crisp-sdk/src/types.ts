@@ -7,26 +7,8 @@
 import type { LeanIMTMerkleProof } from '@zk-kit/lean-imt'
 
 /**
- * Type representing the details of a specific round returned by the CRISP server
- */
-export type RoundDetailsResponse = {
-  id: string
-  chain_id: string
-  interfold_address: string
-  status: string
-  vote_count: string
-  start_time: string
-  duration: string
-  expiration: string
-  start_block: string
-  committee_public_key: string[]
-  emojis: [string, string]
-  token_address: string
-  balance_threshold: string
-}
-
-/**
  * Type representing the details of a specific round in a more convenient format
+ * (camelCase view of the server's `state/lite` response)
  */
 export type RoundDetails = {
   e3Id: bigint
@@ -35,13 +17,37 @@ export type RoundDetails = {
   status: string
   voteCount: bigint
   startTime: bigint
-  duration: bigint
-  expiration: bigint
+  endTime: bigint
+  /// The block the E3 was requested at
   startBlock: bigint
-  committeePublicKey: string[]
+  /// The block the census was built at
+  snapshotBlock: bigint
+  committeePublicKey: Uint8Array
   emojis: [string, string]
   tokenAddress: string
   balanceThreshold: bigint
+  numOptions: bigint
+  requester: string
+  creditMode: CreditMode
+  credits?: bigint
+}
+
+/**
+ * Type representing the round data stored in the CRISPProgram contract
+ */
+export type OnChainRoundData = {
+  /// The merkle root of the census
+  merkleRoot: bigint
+  /// The hash of the E3 program params
+  paramsHash: `0x${string}`
+  /// The number of vote options
+  numOptions: bigint
+  /// The credit mode of the round
+  creditMode: CreditMode
+  /// The root of the merkle tree holding the encrypted votes
+  inputRoot: bigint
+  /// The number of votes published on chain
+  numberOfVotes: bigint
 }
 
 /**
@@ -165,6 +171,107 @@ export type VoteProofRequest = {
   signature: `0x${string}`
   messageHash: `0x${string}`
   slotAddress: string
+}
+
+/**
+ * Type representing the current round returned by the CRISP server (`rounds/current`)
+ */
+export type CurrentRoundResponse = {
+  id: number
+}
+
+/**
+ * Type representing the lite state of a round returned by the CRISP server (`state/lite`)
+ */
+export type E3StateLiteResponse = {
+  id: number
+  chain_id: number
+  interfold_address: string
+  status: string
+  vote_count: number
+  start_time: number
+  end_time: number
+  start_block: number
+  snapshot_block: number
+  committee_public_key: number[]
+  emojis: [string, string]
+  token_address: string
+  balance_threshold: string
+  num_options: string
+  requester: string
+  credit_mode: CreditMode
+  credits: string | null
+}
+
+/**
+ * Type representing a generic message response from the CRISP server
+ */
+export type JsonResponse = {
+  response: string
+}
+
+/**
+ * Type representing a request to start a new E3 round (`rounds/request`)
+ */
+export type NewRoundRequest = {
+  cronApiKey: string
+  tokenAddress: string
+  balanceThreshold: string
+}
+
+/**
+ * Type representing a request to broadcast an encrypted vote (`voting/broadcast`)
+ */
+export type BroadcastVoteRequest = {
+  e3Id: number
+  encodedProof: string
+  address: string
+}
+
+/**
+ * The status of a vote broadcast returned by the CRISP server
+ */
+export type VoteResponseStatus = 'success' | 'user_already_voted' | 'failed_broadcast'
+
+/**
+ * Type representing the response to a vote broadcast (`voting/broadcast`)
+ */
+export type BroadcastVoteResponse = {
+  status: VoteResponseStatus
+  tx_hash: string | null
+  message: string | null
+  is_vote_update?: boolean
+}
+
+/**
+ * Type representing the vote status of an address in a round (`voting/status`)
+ */
+export type VoteStatusResponse = {
+  round_id: number
+  address: string
+  has_voted: boolean
+  round_status: string | null
+}
+
+/**
+ * Type representing the result of a round (`state/result` and `state/all`)
+ */
+export type WebResultResponse = {
+  round_id: number
+  tally: string[]
+  option_1_emoji: string
+  option_2_emoji: string
+  total_votes: number
+  end_time: number
+  requester: string
+}
+
+/**
+ * Type representing a token holder with their address and balance (`state/eligible-addresses`)
+ */
+export type TokenHolder = {
+  address: string
+  balance: string
 }
 
 /**

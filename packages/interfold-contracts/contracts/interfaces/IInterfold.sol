@@ -352,6 +352,14 @@ interface IInterfold {
     /// @param duration The invalid duration value.
     error InvalidDuration(uint256 duration);
 
+    /// @notice Thrown when committee finalization cannot precede computation.
+    /// @param computeDeadline The last timestamp for publishing ciphertext output.
+    /// @param committeeDeadline The earliest timestamp for finalizing the committee.
+    error ComputeDeadlinePrecedesCommitteeFinalization(
+        uint256 computeDeadline,
+        uint256 committeeDeadline
+    );
+
     /// @notice Thrown when output verification fails.
     /// @param output The invalid output data.
     error InvalidOutput(bytes output);

@@ -417,6 +417,35 @@ describe("Interfold", function () {
         }),
       ).to.be.revertedWithCustomError(interfold, "InvalidDuration");
     });
+    it("rejects a schedule whose compute deadline cannot follow committee finalization", async function () {
+      const { interfold, ciphernodeRegistryContract, request, usdcToken } =
+        await loadFixture(setup);
+      const sortitionWindow = time.duration.days(1);
+      const now = await time.latest();
+      const impossibleRequest = {
+        ...request,
+        inputWindow: [now + 10, now + 20] as [number, number],
+      };
+
+      await ciphernodeRegistryContract.setSortitionSubmissionWindow(
+        sortitionWindow,
+      );
+      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
+      const balanceBefore = await usdcToken.balanceOf(
+        await interfold.getAddress(),
+      );
+
+      await expect(
+        interfold.request(impossibleRequest),
+      ).to.be.revertedWithCustomError(
+        interfold,
+        "ComputeDeadlinePrecedesCommitteeFinalization",
+      );
+      expect(await usdcToken.balanceOf(await interfold.getAddress())).to.equal(
+        balanceBefore,
+      );
+      expect(await interfold.nexte3Id()).to.equal(0);
+    });
     it("reverts if E3 Program is not enabled", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
 

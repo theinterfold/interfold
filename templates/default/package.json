@@ -39,6 +39,7 @@
     "@nomicfoundation/hardhat-ignition": "3.0.4",
     "@nomicfoundation/hardhat-ignition-ethers": "3.0.4",
     "@nomicfoundation/hardhat-mocha": "3.0.6",
+    "@nomicfoundation/hardhat-keystore": "3.0.3",
     "@nomicfoundation/hardhat-network-helpers": "3.0.2",
     "@nomicfoundation/hardhat-toolbox-mocha-ethers": "3.0.0",
     "@nomicfoundation/hardhat-typechain": "3.0.1",

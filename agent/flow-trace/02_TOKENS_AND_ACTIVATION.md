@@ -159,6 +159,7 @@ _updateOperatorStatus(operator):
 
   isNowActive = (
     operators[operator].registered == true
+    AND no authorized slashing manager has banned the operator
     AND operators[operator].licenseBond >= (licenseRequiredBond * licenseActiveBps / 10000)
         // Default: licenseActiveBps = 8000 (80%)
         // So if licenseRequiredBond = 50000, need >= 40000 FOLD
@@ -184,6 +185,8 @@ batch form) to re-evaluate registered operators under the new policy. Only opera
 the current version count as active, so committee requests cannot rely on status cached under an
 older policy. The Rust sortition state consumes the same `ConfigurationUpdated` event and marks its
 chain-local operators inactive until matching `OperatorActivationChanged` refresh events arrive.
+
+A completed ban or unban refreshes the affected registered operator immediately.
 
 ---
 

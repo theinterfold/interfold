@@ -14,7 +14,6 @@ import { debounce } from '@/utils/methods'
 
 const AllPolls: React.FC = () => {
   const { votingRound, pastPolls, getPastPolls, isLoading } = useVoteManagementContext()
-  const [visiblePolls, setVisiblePolls] = useState<PollResult[]>([])
   const [page, setPage] = useState<number>(0)
   const [loadingMore, setLoadingMore] = useState<boolean>(false)
 
@@ -41,14 +40,7 @@ const AllPolls: React.FC = () => {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [votingRound])
 
-  useEffect(() => {
-    setVisiblePolls(pastPolls.slice(0, 12))
-  }, [pastPolls])
-
-  useEffect(() => {
-    const newVisiblePolls = pastPolls.slice(0, (page + 1) * 12)
-    setVisiblePolls(newVisiblePolls)
-  }, [page, pastPolls])
+  const visiblePolls = useMemo(() => pastPolls.slice(0, (page + 1) * 12), [page, pastPolls])
 
   const handleScroll = useMemo(
     () =>

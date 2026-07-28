@@ -74,8 +74,9 @@ class CRISPPublisher {
         console.log('      - @crisp-e3/sdk')
         console.log('      - @crisp-e3/contracts')
         console.log('      - @crisp-e3/zk-inputs')
+        console.log('   6. Update the standalone client/pnpm-lock.yaml')
         if (!this.options.skipGit) {
-          console.log('   6. Commit changes')
+          console.log('   7. Commit changes')
         }
         console.log('\n✅ Dry run complete. Run without --dry-run to perform these actions.')
         return
@@ -95,6 +96,9 @@ class CRISPPublisher {
 
       // Publish packages
       await this.publishPackages()
+
+      // Update the client lock file, which resolves the packages from npm
+      await this.updateClientLockFile()
 
       // Git operations (just commit, no tagging)
       if (!this.options.skipGit && !this.options.dryRun) {
@@ -314,6 +318,56 @@ class CRISPPublisher {
   }
 
   /**
+   * Update the standalone client lock file.
+   *
+   * The client is deployed on its own (`pnpm install --ignore-workspace`, see
+   * client/.npmrc and client/vercel.json), so it keeps a lock file which resolves
+   * the CRISP packages from npm rather than from the workspace. It can only be
+   * refreshed once the new version has been published.
+   */
+  private async updateClientLockFile(): Promise<void> {
+    console.log('\n🔒 Updating the client lock file...')
+
+    const clientDir = join(this.crispDir, 'client')
+
+    // The registry needs a moment to serve a freshly published version, and the
+    // install below resolves from it rather than from the workspace.
+    await this.waitForRegistry('@crisp-e3/sdk')
+
+    execSync('pnpm install --ignore-workspace --lockfile-only', {
+      cwd: clientDir,
+      stdio: 'pipe',
+    })
+
+    // A stale registry cache can resolve the previous version without failing, which
+    // would produce a lock file that Vercel then rejects.
+    const lockFile = readFileSync(join(clientDir, 'pnpm-lock.yaml'), 'utf-8')
+    if (!lockFile.includes(`'@crisp-e3/sdk@${this.newVersion}'`)) {
+      throw new Error(`client/pnpm-lock.yaml does not reference @crisp-e3/sdk@${this.newVersion} after the install`)
+    }
+
+    console.log('   ✓ client/pnpm-lock.yaml updated')
+  }
+
+  /**
+   * Wait for a freshly published version to be visible on the npm registry.
+   */
+  private async waitForRegistry(packageName: string, attempts = 10): Promise<void> {
+    for (let attempt = 1; attempt <= attempts; attempt++) {
+      try {
+        execSync(`npm view ${packageName}@${this.newVersion} version`, { stdio: 'pipe' })
+        return
+      } catch {
+        if (attempt === attempts) {
+          throw new Error(`${packageName}@${this.newVersion} is not available on the registry after ${attempts} attempts`)
+        }
+        console.log(`   … waiting for ${packageName}@${this.newVersion} on the registry (${attempt}/${attempts})`)
+        await new Promise((resolve) => setTimeout(resolve, 3000))
+      }
+    }
+  }
+
+  /**
    * Validate version format (semantic versioning)
    */
   private validateVersion(version: string): void {
@@ -475,7 +529,8 @@ The script will:
   4. Update pnpm-lock.yaml
   5. Build packages
   6. Publish to npm
-  7. Commit changes (no tags)
+  7. Update the standalone client/pnpm-lock.yaml
+  8. Commit changes (no tags)
 
 Note: Make sure you're logged in to npm (npm login) before publishing.
 `)

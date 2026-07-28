@@ -14,7 +14,7 @@ import { IDecryptionVerifier } from "../interfaces/IDecryptionVerifier.sol";
  * @notice External library extracted from {Interfold} to keep its deployed
  *         runtime bytecode under the EIP-170 24,576-byte cap.
  *
- *         All functions are pure validation / fee-quote math. They are
+ *         All functions contain validation / fee-quote math. They are
  *         declared `external` so Solidity emits a linked library DELEGATECALL
  *         site at each call instead of inlining the bytes into Interfold.
  *
@@ -342,9 +342,19 @@ library InterfoldPricing {
         uint32[2] calldata threshold,
         uint256 inputWindowStart,
         uint256 inputWindowEnd
-    ) external pure returns (uint256 fee) {
+    ) external view returns (uint256 fee) {
         if (inputWindowEnd < inputWindowStart)
             revert IInterfold.InvalidInputDeadlineEnd(inputWindowEnd);
+
+        {
+            uint256 computeDeadline = inputWindowEnd + tc.computeWindow;
+            uint256 committeeDeadline = block.timestamp + sortitionWindow;
+            if (computeDeadline <= committeeDeadline)
+                revert IInterfold.ComputeDeadlinePrecedesCommitteeFinalization(
+                    computeDeadline,
+                    committeeDeadline
+                );
+        }
 
         uint256 n = uint256(threshold[1]); // total committee size
         uint256 m = uint256(threshold[0]); // quorum/decryption threshold

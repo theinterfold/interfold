@@ -94,6 +94,7 @@
   },
   "pnpm": {
     "overrides": {
+      "@nomicfoundation/hardhat-keystore": "3.0.3",
       "@types/node": "22.7.5",
       "tsup": "8.5.0",
       "typescript": "5.8.3",
