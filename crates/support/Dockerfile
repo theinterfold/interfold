@@ -12,12 +12,14 @@ ARG RISC0_TOOLCHAIN
 ARG RZUP_SHA256
 ARG FOUNDRY_VERSION
 ARG FOUNDRY_LINUX_AMD64_SHA256
-ARG DEBIAN_SNAPSHOT=20260720T000000Z
+ARG DEBIAN_SNAPSHOT=20260720T202350Z
+ARG DEBIAN_SECURITY_SNAPSHOT=20260720T143120Z
 
 ENV CARGO_HOME=/usr/local/cargo
 RUN sed -ri \
-        "s|https?://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g; \
-         s|https?://security.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+        "s|https?://security\.debian\.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}|g; \
+         s|https?://deb\.debian\.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}|g; \
+         s|https?://deb\.debian\.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
         /etc/apt/sources.list.d/debian.sources \
     && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99snapshot
 RUN apt-get update && \

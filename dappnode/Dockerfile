@@ -11,11 +11,13 @@ FROM debian:12.15-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5a
 ARG UPSTREAM_VERSION
 ARG UPSTREAM_BINARY_SOURCE
 ARG UPSTREAM_BINARY_SHA256
-ARG DEBIAN_SNAPSHOT=20260720T000000Z
+ARG DEBIAN_SNAPSHOT=20260720T202350Z
+ARG DEBIAN_SECURITY_SNAPSHOT=20260720T143120Z
 
 RUN sed -ri \
-        "s|https?://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g; \
-         s|https?://security.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+        "s|https?://security\.debian\.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}|g; \
+         s|https?://deb\.debian\.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}|g; \
+         s|https?://deb\.debian\.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
         /etc/apt/sources.list.d/debian.sources \
     && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99snapshot
 

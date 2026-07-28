@@ -19,6 +19,12 @@ for dockerfile in \
     done < <(grep -E '^FROM ' "$dockerfile")
     grep -Eq 'DEBIAN_SNAPSHOT=[0-9]{8}T[0-9]{6}Z' "$dockerfile" \
         || fail "$dockerfile does not pin Debian package resolution to a snapshot"
+    grep -Eq 'DEBIAN_SECURITY_SNAPSHOT=[0-9]{8}T[0-9]{6}Z' "$dockerfile" \
+        || fail "$dockerfile does not pin Debian security packages to a snapshot"
+    grep -Fq 'archive/debian/${DEBIAN_SNAPSHOT}' "$dockerfile" \
+        || fail "$dockerfile does not use its Debian snapshot pin"
+    grep -Fq 'archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}' "$dockerfile" \
+        || fail "$dockerfile does not use its Debian security snapshot pin"
 done
 
 while IFS= read -r action; do

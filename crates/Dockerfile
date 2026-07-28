@@ -18,10 +18,12 @@ RUN cd packages/interfold-contracts && pnpm install --frozen-lockfile && pnpm co
 # Build stage
 FROM rust:1.91.1-bookworm@sha256:c1e5f19e773b7878c3f7a805dd00a495e747acbdc76fb2337a4ebf0418896b33 AS ciphernode-builder
 
-ARG DEBIAN_SNAPSHOT=20260720T000000Z
+ARG DEBIAN_SNAPSHOT=20260720T202350Z
+ARG DEBIAN_SECURITY_SNAPSHOT=20260720T143120Z
 RUN sed -ri \
-        "s|https?://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g; \
-         s|https?://security.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+        "s|https?://security\.debian\.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}|g; \
+         s|https?://deb\.debian\.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}|g; \
+         s|https?://deb\.debian\.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
         /etc/apt/sources.list.d/debian.sources \
     && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99snapshot
 
@@ -133,10 +135,12 @@ RUN cargo build --locked --release -p e3-cli
 # Runtime stage
 FROM debian:12.15-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
 
-ARG DEBIAN_SNAPSHOT=20260720T000000Z
+ARG DEBIAN_SNAPSHOT=20260720T202350Z
+ARG DEBIAN_SECURITY_SNAPSHOT=20260720T143120Z
 RUN sed -ri \
-        "s|https?://deb.debian.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g; \
-         s|https?://security.debian.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SNAPSHOT}|g" \
+        "s|https?://security\.debian\.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}|g; \
+         s|https?://deb\.debian\.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}|g; \
+         s|https?://deb\.debian\.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
         /etc/apt/sources.list.d/debian.sources \
     && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99snapshot
 
