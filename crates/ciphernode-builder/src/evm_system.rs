@@ -8,8 +8,9 @@ use actix::Actor;
 use alloy::{primitives::Address, providers::Provider};
 use e3_events::{run_once, BusHandle, EventSubscriber, EventType, HistoricalEvmSyncStart};
 use e3_evm::{
-    EthProvider, EvmChainGateway, EvmChainGatewayHandle, EvmEventProcessor, EvmReadInterface,
-    EvmRouter, Filters, FixHistoricalOrder, ProviderFactory, DEFAULT_MAX_BUFFERED_EVM_EVENTS,
+    EthProvider, EvmChainGateway, EvmChainGatewayHandle, EvmEventProcessor, EvmIngestionStatus,
+    EvmReadInterface, EvmRouter, Filters, FixHistoricalOrder, ProviderFactory,
+    DEFAULT_MAX_BUFFERED_EVM_EVENTS,
 };
 
 pub trait RouteFn: FnOnce(EvmEventProcessor) -> EvmEventProcessor + Send {}
@@ -25,6 +26,7 @@ pub struct EvmSystemChainBuilder<P> {
     chain_id: u64,
     max_buffered_events: usize,
     route_factories: Vec<(Address, RouteFactory)>,
+    ingestion_status: EvmIngestionStatus,
 }
 
 impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
@@ -37,7 +39,17 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
             chain_id,
             max_buffered_events: DEFAULT_MAX_BUFFERED_EVM_EVENTS,
             route_factories: Vec::new(),
+            ingestion_status: EvmIngestionStatus::new(format!("chain-{chain_id}"), chain_id),
         }
+    }
+
+    pub fn with_chain_identity(
+        &mut self,
+        chain_name: impl Into<String>,
+        expected_chain_id: u64,
+    ) -> &mut Self {
+        self.ingestion_status = EvmIngestionStatus::new(chain_name, expected_chain_id);
+        self
     }
 
     pub fn with_buffer_limit(&mut self, max_buffered_events: usize) -> &mut Self {
@@ -63,7 +75,7 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
         drop(self.build_with_readiness());
     }
 
-    pub(crate) fn build_with_readiness(&mut self) -> EvmChainGatewayHandle {
+    pub(crate) fn build_with_readiness(&mut self) -> (EvmChainGatewayHandle, EvmIngestionStatus) {
         // Think about the following in reverse order
 
         // Gateway is the final step before connecting to the bus
@@ -81,6 +93,7 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
             let provider = self.provider.clone();
             let provider_factory = self.provider_factory.clone();
             let chain_id = self.chain_id;
+            let ingestion_status = self.ingestion_status.clone();
 
             // Only gets consumed once so fine to use replace to clean out route_factories
             let route_factories = std::mem::take(&mut self.route_factories);
@@ -97,6 +110,7 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
 
                 // Extract filters from the router
                 let filters = filters_from_router(&router, deploy_block, confirmations);
+                ingestion_status.configure(chain_id, confirmations);
 
                 // Setup and start the read interface and the router
                 EvmReadInterface::setup_with_factory(
@@ -105,6 +119,7 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
                     router.start(),
                     &bus,
                     filters,
+                    ingestion_status,
                 );
                 Ok(())
             }
@@ -114,7 +129,7 @@ impl<P: Provider + Clone + 'static> EvmSystemChainBuilder<P> {
         self.bus
             .subscribe(EventType::HistoricalEvmSyncStart, next.recipient());
 
-        gateway
+        (gateway, self.ingestion_status.clone())
     }
 }
 

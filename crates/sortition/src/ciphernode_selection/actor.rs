@@ -14,19 +14,30 @@ use e3_events::EventContext;
 use e3_events::Sequenced;
 use e3_events::TypedEvent;
 use e3_events::{
-    prelude::*, trap, AggregatorChanged, BusHandle, CiphernodeSelected, Committee,
-    CommitteeFinalized, CommitteeMemberExpelled, E3Requested, E3id, EType, EventType,
-    InterfoldEvent, InterfoldEventData, Shutdown, TicketGenerated, TicketId,
+    prelude::*, trap, AggregatorChanged, AggregatorFailoverExhausted, AggregatorLeaseUpdated,
+    BusHandle, CiphernodeSelected, Committee, CommitteeFinalized, CommitteeMemberExpelled,
+    CommitteePublished, E3Failed, E3Requested, E3id, EType, EventType, InterfoldEvent,
+    InterfoldEventData, PlaintextOutputPublished, Shutdown, TicketGenerated, TicketId,
 };
 use e3_request::E3Meta;
 use e3_utils::NotifySync;
 use e3_utils::MAILBOX_LIMIT;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    time::{Duration, SystemTime, UNIX_EPOCH},
+};
 use tracing::info;
 
+#[path = "failover.rs"]
+mod failover;
 #[path = "handlers.rs"]
 mod handlers;
+
+pub use failover::AggregatorFailoverState;
+use failover::{
+    arm_lease, decide_failover, next_attempt_deadline, EligibleAggregators, FailoverDecision,
+};
 
 /// Build an `E3Meta` from an `E3Requested` event's fields.
 fn e3_meta_from(req: &E3Requested) -> E3Meta {
@@ -63,12 +74,16 @@ pub struct CiphernodeSelector {
     bus: BusHandle,
     address: String,
     state: Persistable<CiphernodeSelectorState>,
+    failover: Persistable<AggregatorFailoverState>,
 }
 
 impl Actor for CiphernodeSelector {
     type Context = Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        ctx.run_interval(Duration::from_secs(1), |actor, ctx| {
+            actor.evaluate_failover(ctx);
+        });
     }
 }
 
@@ -76,11 +91,13 @@ impl CiphernodeSelector {
     pub fn new(
         bus: &BusHandle,
         state: Persistable<CiphernodeSelectorState>,
+        failover: Persistable<AggregatorFailoverState>,
         address: &str,
     ) -> Self {
         Self {
             bus: bus.clone(),
             state,
+            failover,
             address: address.to_owned(),
         }
     }
@@ -88,21 +105,39 @@ impl CiphernodeSelector {
     pub async fn attach(
         bus: &BusHandle,
         selector_store: Repository<CiphernodeSelectorState>,
+        failover_store: Repository<AggregatorFailoverState>,
         address: &str,
     ) -> Result<Addr<Self>> {
         let state = selector_store
             .load_or_default(CiphernodeSelectorState::default())
             .await?;
-        let addr = CiphernodeSelector::new(bus, state, address).start();
+        let failover = failover_store
+            .load_or_default(AggregatorFailoverState::default())
+            .await?;
+        let addr = CiphernodeSelector::new(bus, state, failover, address).start();
 
         bus.subscribe(EventType::E3Requested, addr.clone().recipient());
         bus.subscribe(EventType::E3RequestComplete, addr.clone().recipient());
         bus.subscribe(EventType::CommitteeFinalized, addr.clone().recipient());
         bus.subscribe(EventType::CommitteeMemberExpelled, addr.clone().recipient());
+        bus.subscribe(EventType::AggregatorLeaseUpdated, addr.clone().recipient());
+        bus.subscribe(EventType::CommitteePublished, addr.clone().recipient());
+        bus.subscribe(
+            EventType::PlaintextOutputPublished,
+            addr.clone().recipient(),
+        );
+        bus.subscribe(EventType::E3Failed, addr.clone().recipient());
         bus.subscribe(EventType::Shutdown, addr.clone().recipient());
 
         info!("CiphernodeSelector listening!");
         Ok(addr)
+    }
+
+    fn now_secs() -> u64 {
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
     }
 
     fn update_aggregator_status(

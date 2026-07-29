@@ -54,6 +54,25 @@ pub struct NodeDefinition {
     pub autowallet: bool,
     /// Optional dashboard port. When set, serves a monitoring web UI on this port.
     pub dashboard_port: Option<u16>,
+    /// Minimum live libp2p connections required for readiness. While an E3 is active, the peers
+    /// must also have recently passed protocol-gossip authorization.
+    #[serde(default = "default_readiness_min_peers")]
+    pub readiness_min_peers: usize,
+    /// Maximum time since a successful RPC head observation.
+    #[serde(default = "default_readiness_max_rpc_poll_age_secs")]
+    pub readiness_max_rpc_poll_age_secs: u64,
+    /// Maximum permitted age of the timestamp on the latest RPC block.
+    #[serde(default = "default_readiness_max_chain_head_age_secs")]
+    pub readiness_max_chain_head_age_secs: u64,
+    /// Maximum block distance between the confirmed head and the ingestion cursor.
+    #[serde(default = "default_readiness_max_sync_lag_blocks")]
+    pub readiness_max_sync_lag_blocks: u64,
+    /// Maximum age of the oldest pending durable EVM effect.
+    #[serde(default = "default_readiness_max_outbox_age_secs")]
+    pub readiness_max_outbox_age_secs: u64,
+    /// Maximum time an active E3 may show no durable event progress.
+    #[serde(default = "default_readiness_max_active_e3_idle_secs")]
+    pub readiness_max_active_e3_idle_secs: u64,
     /// Logical CPUs reserved for Actix, libp2p, and RPC (not used by the Rayon compute pool).
     #[serde(default = "default_multithread_reserve_threads")]
     pub multithread_reserve_threads: usize,
@@ -62,6 +81,13 @@ pub struct NodeDefinition {
     /// `E3_NODE__MULTITHREAD_CONCURRENT_JOBS`, or a named profile with
     /// `E3_NODES__<NAME>__MULTITHREAD_CONCURRENT_JOBS`.
     pub multithread_concurrent_jobs: Option<usize>,
+    /// Maximum wait for a fair Rayon admission permit before the request fails.
+    #[serde(default = "default_multithread_admission_timeout_secs")]
+    pub multithread_admission_timeout_secs: u64,
+    /// Hard wall-clock budget for one CPU job. Because running Rayon closures cannot be safely
+    /// interrupted, exceeding this deadline terminates the process and lets the OS reclaim them.
+    #[serde(default = "default_multithread_execution_timeout_secs")]
+    pub multithread_execution_timeout_secs: u64,
     /// Hard deadline for construction and initial synchronization. A node that cannot reach live
     /// protocol operation before this deadline exits non-zero instead of remaining falsely alive.
     #[serde(default = "default_startup_timeout_secs")]
@@ -86,6 +112,14 @@ fn default_multithread_reserve_threads() -> usize {
     1
 }
 
+fn default_multithread_admission_timeout_secs() -> u64 {
+    60
+}
+
+fn default_multithread_execution_timeout_secs() -> u64 {
+    15 * 60
+}
+
 fn default_startup_timeout_secs() -> u64 {
     30 * 60
 }
@@ -100,6 +134,30 @@ fn default_max_buffered_net_events() -> usize {
 
 fn default_max_buffered_net_bytes() -> usize {
     256 * 1024 * 1024
+}
+
+fn default_readiness_min_peers() -> usize {
+    1
+}
+
+fn default_readiness_max_rpc_poll_age_secs() -> u64 {
+    30
+}
+
+fn default_readiness_max_chain_head_age_secs() -> u64 {
+    120
+}
+
+fn default_readiness_max_sync_lag_blocks() -> u64 {
+    2
+}
+
+fn default_readiness_max_outbox_age_secs() -> u64 {
+    300
+}
+
+fn default_readiness_max_active_e3_idle_secs() -> u64 {
+    20 * 60
 }
 
 impl Default for NodeDefinition {
@@ -118,8 +176,16 @@ impl Default for NodeDefinition {
             autopassword: false,
             autowallet: false,
             dashboard_port: None,
+            readiness_min_peers: default_readiness_min_peers(),
+            readiness_max_rpc_poll_age_secs: default_readiness_max_rpc_poll_age_secs(),
+            readiness_max_chain_head_age_secs: default_readiness_max_chain_head_age_secs(),
+            readiness_max_sync_lag_blocks: default_readiness_max_sync_lag_blocks(),
+            readiness_max_outbox_age_secs: default_readiness_max_outbox_age_secs(),
+            readiness_max_active_e3_idle_secs: default_readiness_max_active_e3_idle_secs(),
             multithread_reserve_threads: default_multithread_reserve_threads(),
             multithread_concurrent_jobs: None,
+            multithread_admission_timeout_secs: default_multithread_admission_timeout_secs(),
+            multithread_execution_timeout_secs: default_multithread_execution_timeout_secs(),
             startup_timeout_secs: default_startup_timeout_secs(),
             max_buffered_evm_events: default_max_buffered_evm_events(),
             max_buffered_net_events: default_max_buffered_net_events(),
@@ -212,6 +278,12 @@ impl AppConfig {
         if node.startup_timeout_secs == 0 {
             bail!("node.startup_timeout_secs must be greater than zero");
         }
+        if node.multithread_admission_timeout_secs == 0 {
+            bail!("node.multithread_admission_timeout_secs must be greater than zero");
+        }
+        if node.multithread_execution_timeout_secs == 0 {
+            bail!("node.multithread_execution_timeout_secs must be greater than zero");
+        }
         if node.max_buffered_evm_events == 0 {
             bail!("node.max_buffered_evm_events must be greater than zero");
         }
@@ -220,6 +292,21 @@ impl AppConfig {
         }
         if node.max_buffered_net_bytes == 0 {
             bail!("node.max_buffered_net_bytes must be greater than zero");
+        }
+        if node.readiness_min_peers == 0 {
+            bail!("node.readiness_min_peers must be greater than zero");
+        }
+        if node.readiness_max_rpc_poll_age_secs == 0 {
+            bail!("node.readiness_max_rpc_poll_age_secs must be greater than zero");
+        }
+        if node.readiness_max_chain_head_age_secs == 0 {
+            bail!("node.readiness_max_chain_head_age_secs must be greater than zero");
+        }
+        if node.readiness_max_outbox_age_secs == 0 {
+            bail!("node.readiness_max_outbox_age_secs must be greater than zero");
+        }
+        if node.readiness_max_active_e3_idle_secs == 0 {
+            bail!("node.readiness_max_active_e3_idle_secs must be greater than zero");
         }
 
         let config_dir_override = (node.config_dir != PathBuf::new())
@@ -395,6 +482,30 @@ impl AppConfig {
         self.node_def().dashboard_port
     }
 
+    pub fn readiness_min_peers(&self) -> usize {
+        self.node_def().readiness_min_peers
+    }
+
+    pub fn readiness_max_rpc_poll_age_secs(&self) -> u64 {
+        self.node_def().readiness_max_rpc_poll_age_secs
+    }
+
+    pub fn readiness_max_chain_head_age_secs(&self) -> u64 {
+        self.node_def().readiness_max_chain_head_age_secs
+    }
+
+    pub fn readiness_max_sync_lag_blocks(&self) -> u64 {
+        self.node_def().readiness_max_sync_lag_blocks
+    }
+
+    pub fn readiness_max_outbox_age_secs(&self) -> u64 {
+        self.node_def().readiness_max_outbox_age_secs
+    }
+
+    pub fn readiness_max_active_e3_idle_secs(&self) -> u64 {
+        self.node_def().readiness_max_active_e3_idle_secs
+    }
+
     /// CPUs reserved for non-compute work (Actix, networking, RPC).
     pub fn multithread_reserve_threads(&self) -> usize {
         self.node_def().multithread_reserve_threads
@@ -404,6 +515,14 @@ impl AppConfig {
     /// [`Self::multithread_reserve_threads`].
     pub fn multithread_concurrent_jobs(&self) -> Option<usize> {
         self.node_def().multithread_concurrent_jobs
+    }
+
+    pub fn multithread_admission_timeout_secs(&self) -> u64 {
+        self.node_def().multithread_admission_timeout_secs
+    }
+
+    pub fn multithread_execution_timeout_secs(&self) -> u64 {
+        self.node_def().multithread_execution_timeout_secs
     }
 
     /// Maximum time allowed for construction and initial synchronization.
@@ -556,7 +675,82 @@ mod tests {
     use super::*;
     use crate::program_config::Risc0Config;
     use crate::rpc::RpcAuth;
+    use e3_events::EvmEventConfigChain;
     use figment::Jail;
+
+    fn render_release_config(source: &str) -> String {
+        let address = "0x1111111111111111111111111111111111111111";
+        [
+            ("${ADDRESS}", address),
+            ("${NODE_ADDRESS}", address),
+            ("${QUIC_PORT}", "37173"),
+            ("${READINESS_PORT}", "50506"),
+            ("${READINESS_MIN_PEERS}", "1"),
+            ("${READINESS_MAX_RPC_POLL_AGE_SECS}", "30"),
+            ("${READINESS_MAX_CHAIN_HEAD_AGE_SECS}", "120"),
+            ("${READINESS_MAX_SYNC_LAG_BLOCKS}", "2"),
+            ("${READINESS_MAX_OUTBOX_AGE_SECS}", "300"),
+            ("${READINESS_MAX_ACTIVE_E3_IDLE_SECS}", "1200"),
+            ("${NETWORK}", "sepolia"),
+            ("${CHAIN_ID}", "11155111"),
+            ("${REORG_CONFIRMATIONS}", "64"),
+            ("${RPC_URL}", "wss://example.invalid"),
+            ("${INTERFOLD_CONTRACT}", address),
+            ("${CIPHERNODE_REGISTRY_CONTRACT}", address),
+            ("${BONDING_REGISTRY_CONTRACT}", address),
+            ("${SLASHING_MANAGER_CONTRACT}", address),
+            ("${INTERFOLD_DEPLOY_BLOCK}", "1"),
+            ("${CIPHERNODE_REGISTRY_DEPLOY_BLOCK}", "2"),
+            ("${BONDING_REGISTRY_DEPLOY_BLOCK}", "3"),
+            ("${SLASHING_MANAGER_DEPLOY_BLOCK}", "4"),
+            ("${SEPOLIA_INTERFOLD_ADDRESS}", address),
+            ("${SEPOLIA_CIPHERNODE_REGISTRY_ADDRESS}", address),
+            ("${SEPOLIA_BONDING_REGISTRY}", address),
+            ("${SEPOLIA_SLASHING_MANAGER_ADDRESS}", address),
+            ("${SEPOLIA_INTERFOLD_DEPLOY_BLOCK}", "1"),
+            ("${SEPOLIA_CIPHERNODE_REGISTRY_DEPLOY_BLOCK}", "2"),
+            ("${SEPOLIA_BONDING_REGISTRY_DEPLOY_BLOCK}", "3"),
+            ("${SEPOLIA_SLASHING_MANAGER_DEPLOY_BLOCK}", "4"),
+        ]
+        .into_iter()
+        .fold(source.to_owned(), |rendered, (key, value)| {
+            rendered.replace(key, value)
+        })
+    }
+
+    #[test]
+    fn shipped_v04_configs_include_required_chain_safety_and_writers() -> Result<()> {
+        let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+        let paths = [
+            "dappnode/config.template.yaml",
+            "deploy/cn1.yaml",
+            "deploy/cn2.yaml",
+            "deploy/cn3.yaml",
+            "deploy/cn4.yaml",
+        ];
+
+        for relative in paths {
+            let source = std::fs::read_to_string(root.join(relative))?;
+            let unscoped: UnscopedAppConfig = serde_yaml::from_str(&render_release_config(&source))
+                .with_context(|| format!("failed to parse shipped config {relative}"))?;
+            let config = unscoped.into_scoped_with_defaults(
+                "_default",
+                &PathBuf::from("/tmp/interfold-data"),
+                &PathBuf::from("/tmp/interfold-config"),
+                &root,
+            )?;
+            let chain = config
+                .chains()
+                .first()
+                .with_context(|| format!("{relative} has no chain"))?;
+            assert_eq!(chain.chain_id, Some(11_155_111), "{relative}");
+            assert_eq!(chain.reorg_confirmations, Some(64), "{relative}");
+            assert!(chain.contracts.slashing_manager.is_some(), "{relative}");
+            EvmEventConfigChain::try_from(chain)
+                .with_context(|| format!("{relative} is not viable for remote ingestion"))?;
+        }
+        Ok(())
+    }
 
     #[test]
     fn test_deserialization() -> Result<()> {
@@ -810,6 +1004,8 @@ chains:
 node:
   multithread_reserve_threads: 2
   multithread_concurrent_jobs: 4
+  multithread_admission_timeout_secs: 12
+  multithread_execution_timeout_secs: 34
 "#;
         let unscoped: UnscopedAppConfig = serde_yaml::from_str(config_str)?;
         let config = unscoped.into_scoped_with_defaults(
@@ -820,6 +1016,8 @@ node:
         )?;
         assert_eq!(config.multithread_reserve_threads(), 2);
         assert_eq!(config.multithread_concurrent_jobs(), Some(4));
+        assert_eq!(config.multithread_admission_timeout_secs(), 12);
+        assert_eq!(config.multithread_execution_timeout_secs(), 34);
         Ok(())
     }
 
@@ -902,6 +1100,8 @@ node:
             &PathBuf::from("/my/cwd"),
         )?;
         assert_eq!(default.startup_timeout_secs(), 30 * 60);
+        assert_eq!(default.multithread_admission_timeout_secs(), 60);
+        assert_eq!(default.multithread_execution_timeout_secs(), 15 * 60);
         assert_eq!(default.max_buffered_evm_events(), 100_000);
         assert_eq!(default.max_buffered_net_events(), 1_024);
         assert_eq!(default.max_buffered_net_bytes(), 256 * 1024 * 1024);
@@ -927,6 +1127,30 @@ node:
         assert!(error
             .to_string()
             .contains("startup_timeout_secs must be greater than zero"));
+        Ok(())
+    }
+
+    #[test]
+    fn test_zero_multithread_timeouts_are_rejected() -> Result<()> {
+        for field in [
+            "multithread_admission_timeout_secs",
+            "multithread_execution_timeout_secs",
+        ] {
+            let yaml = format!("node:\n  {field}: 0\n");
+            let unscoped: UnscopedAppConfig = serde_yaml::from_str(&yaml)?;
+            let error = unscoped
+                .into_scoped_with_defaults(
+                    "_default",
+                    &PathBuf::from("/default/data"),
+                    &PathBuf::from("/default/config"),
+                    &PathBuf::from("/my/cwd"),
+                )
+                .expect_err("zero multithread timeout must fail configuration");
+            assert!(
+                error.to_string().contains(field),
+                "unexpected validation error for {field}: {error}"
+            );
+        }
         Ok(())
     }
 
@@ -965,6 +1189,33 @@ node:
                     &PathBuf::from("/my/cwd"),
                 )
                 .expect_err("zero network buffer limit must fail configuration");
+            assert!(
+                error.to_string().contains(field),
+                "unexpected validation error for {field}: {error}"
+            );
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn test_zero_readiness_minimum_and_timeouts_are_rejected() -> Result<()> {
+        for field in [
+            "readiness_min_peers",
+            "readiness_max_rpc_poll_age_secs",
+            "readiness_max_chain_head_age_secs",
+            "readiness_max_outbox_age_secs",
+            "readiness_max_active_e3_idle_secs",
+        ] {
+            let yaml = format!("node:\n  {field}: 0\n");
+            let unscoped: UnscopedAppConfig = serde_yaml::from_str(&yaml)?;
+            let error = unscoped
+                .into_scoped_with_defaults(
+                    "_default",
+                    &PathBuf::from("/default/data"),
+                    &PathBuf::from("/default/config"),
+                    &PathBuf::from("/my/cwd"),
+                )
+                .expect_err("zero readiness safety threshold must fail configuration");
             assert!(
                 error.to_string().contains(field),
                 "unexpected validation error for {field}: {error}"

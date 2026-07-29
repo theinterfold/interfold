@@ -106,8 +106,7 @@ mod tests {
     use actix::{Actor, Context, Handler};
     use e3_data::{DataStore, InMemStore, RepositoriesFactory};
     use e3_events::{
-        hlc_factory::HlcFactory, E3id, EventBus, EventBusConfig, Seed, Sequencer,
-        StoreEventRequested,
+        hlc_factory::HlcFactory, E3id, EventBus, EventBusConfig, PersistEvent, Seed, Sequencer,
     };
     use e3_request::{ContextRepositoryFactory, E3ContextParams, E3Meta};
     use e3_utils::ArcBytes;
@@ -119,10 +118,12 @@ mod tests {
         type Context = Context<Self>;
     }
 
-    impl Handler<StoreEventRequested> for StoreSink {
-        type Result = ();
+    impl Handler<PersistEvent> for StoreSink {
+        type Result = anyhow::Result<Option<InterfoldEvent>>;
 
-        fn handle(&mut self, _: StoreEventRequested, _: &mut Self::Context) {}
+        fn handle(&mut self, _: PersistEvent, _: &mut Self::Context) -> Self::Result {
+            Ok(None)
+        }
     }
 
     fn test_bus() -> BusHandle {

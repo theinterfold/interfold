@@ -17,7 +17,9 @@ mod adapters;
 mod contracts;
 mod domain;
 mod messages;
+mod operational;
 mod operator_status;
+mod outbox;
 mod repo;
 
 pub mod helpers;
@@ -29,5 +31,7 @@ pub use actors::*;
 pub use domain::encode_attestation_evidence;
 pub use helpers::*;
 pub use messages::*;
+pub use operational::*;
 pub use operator_status::*;
+pub use outbox::*;
 pub use repo::*;

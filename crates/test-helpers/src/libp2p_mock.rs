@@ -52,20 +52,30 @@ impl Libp2pMock {
                         correlation_id,
                         ..
                     }) => {
+                        let message_id =
+                            MessageId::new(&format!("{correlation_id:?}").into_bytes());
                         // Broadcast to all other nodes
                         let peers = nodes.read().await;
                         for (id, peer) in peers.iter() {
                             if *id == self_peer_id {
                                 continue;
                             }
-                            if let Err(e) = peer.event_tx().send(NetEvent::GossipData(data.clone()))
-                            {
+                            let event = match data.clone() {
+                                data @ e3_net::events::GossipData::ProtocolEvent(_) => {
+                                    NetEvent::AuthenticatedGossip {
+                                        author: self_peer_id,
+                                        propagation_source: self_peer_id,
+                                        message_id: message_id.clone(),
+                                        data,
+                                    }
+                                }
+                                data => NetEvent::GossipData(data),
+                            };
+                            if let Err(e) = peer.event_tx().send(event) {
                                 error!("Libp2pMock: failed to forward GossipData to {id}: {e}");
                             }
                         }
 
-                        let message_id =
-                            MessageId::new(&format!("{correlation_id:?}").into_bytes());
                         if let Err(e) = src_event_tx.send(NetEvent::GossipPublished {
                             correlation_id,
                             message_id,

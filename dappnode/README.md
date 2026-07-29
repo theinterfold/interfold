@@ -29,7 +29,7 @@ dappnode/
 ├── dappnode_package.json # Package metadata (name, version, links, backup, etc.)
 ├── setup-wizard.yml      # DAppNode UI form -> configuration and credential upload
 ├── entrypoint.sh         # Startup script (validates env, renders config, runs interfold)
-├── healthcheck.sh        # Local process, credential, config, and QUIC listener checks
+├── healthcheck.sh        # Local process, persistence, QUIC, and protocol-readiness checks
 ├── config.template.yaml  # Interfold config template (filled via envsubst)
 ├── releases.json         # Release metadata used by DAppNode
 └── avatar-default.png    # Icon shown in the DAppNode UI
@@ -49,6 +49,8 @@ Once this package is published to the DAppStore:
 2. Search for **“Interfold Ciphernode”** and install the package.
 3. The **setup wizard** will prompt you for:
    - `RPC_URL` – WebSocket RPC endpoint (e.g. `wss://ethereum-sepolia-rpc.publicnode.com`)
+   - `CHAIN_ID` – expected numeric chain ID for that RPC (Sepolia: `11155111`)
+   - `REORG_CONFIRMATIONS` – positive finality depth (Sepolia default: `64`)
    - `NETWORK` – e.g. `sepolia`, `mainnet`, `localhost`
    - Contract addresses + deploy blocks
    - A required ciphernode credentials JSON file
@@ -75,17 +77,32 @@ You’ll typically:
 
 #### 1. Build the package
 
-From the `dappnode/` directory:
+Build the exact candidate binary first, create the same normalized archive used by the release
+workflow, and provide its checksum to Compose:
 
 ```bash
+cargo build --locked --release --bin interfold
+CANDIDATE_EPOCH=$(git show -s --format=%ct HEAD)
+tar --format=ustar --sort=name --mtime="@${CANDIDATE_EPOCH}" \
+  --owner=0 --group=0 --numeric-owner -C target/release -cf - interfold \
+  | gzip -n > dappnode/interfold-linux-x86_64.tar.gz
+export DAPPNODE_UPSTREAM_BINARY_SHA256=$(
+  sha256sum dappnode/interfold-linux-x86_64.tar.gz | awk '{print $1}'
+)
+./dappnode/verify-candidate-binary.sh \
+  dappnode/interfold-linux-x86_64.tar.gz 0.4.0 "$DAPPNODE_UPSTREAM_BINARY_SHA256"
+
 cd dappnode
-npx @dappnode/dappnodesdk@latest build -p remote
+npm ci --ignore-scripts
+./node_modules/.bin/dappnodesdk build --provider dappnode
 ```
 
 This will:
 
+- Reject a binary whose checksum, version, archive layout, readiness route, or readiness metric does
+  not match the package.
 - Validate `docker-compose.yml`, `setup-wizard.yml`, and `dappnode_package.json`
-- Build a multi-arch Docker image for `ciphernode.interfold-ciphernode.public.dappnode.eth`
+- Build the Linux x86-64 Docker image for `ciphernode.interfold-ciphernode.public.dappnode.eth`
 - Upload the release to the DAppNode IPFS node
 - Print an `/ipfs/<hash>` you can use to install the package
 
@@ -111,7 +128,7 @@ Fill in the wizard fields, then install.
 - Edit `entrypoint.sh`, `config.template.yaml`, or `setup-wizard.yml` locally, then rebuild with:
 
   ```bash
-  npx @dappnode/dappnodesdk@latest build -p remote
+  ./node_modules/.bin/dappnodesdk build --provider dappnode
   ```
 
 - Reinstall with the new IPFS hash.
@@ -124,6 +141,10 @@ Non-secret runtime configuration is provided through environment variables:
 
 - **`RPC_URL`** (required) WebSocket RPC endpoint for the chain (e.g.
   `wss://ethereum-sepolia-rpc.publicnode.com`).
+- **`CHAIN_ID`** (required) Numeric chain ID that the RPC must report. Startup fails if it is
+  missing or mismatched.
+- **`REORG_CONFIRMATIONS`** (required) Positive number of blocks an EVM event must be buried before
+  ingestion. The shipped Sepolia configuration uses `64`.
 
 - **`NETWORK`** Logical network name written into the Interfold config (e.g. `sepolia`, `mainnet`,
   `localhost`).
@@ -146,9 +167,11 @@ Used to populate the `chains[0].contracts` section in `config.yaml`:
 - `INTERFOLD_CONTRACT`
 - `CIPHERNODE_REGISTRY_CONTRACT`
 - `BONDING_REGISTRY_CONTRACT`
+- `SLASHING_MANAGER_CONTRACT`
 - `INTERFOLD_DEPLOY_BLOCK`
 - `CIPHERNODE_REGISTRY_DEPLOY_BLOCK`
 - `BONDING_REGISTRY_DEPLOY_BLOCK`
+- `SLASHING_MANAGER_DEPLOY_BLOCK`
 
 These are all required in the setup wizard so that the node can index chain events from the correct
 block heights.
@@ -166,16 +189,16 @@ Create a local JSON file containing the password and operator key:
 
 Upload it in the setup wizard as **Ciphernode Credentials JSON**. DAppNode copies it to
 `/run/secrets/secrets.json` before starting the container. The entrypoint validates a maximum size
-of 16 KiB, required fields, and key encodings, then runs the exact commands supported by the pinned
-Interfold v0.2.3 image. Any failed command aborts startup. The wallet command atomically derives and
-stores both the Ethereum and libp2p identities. Both keys are encrypted in `/data`; v0.2.3 stores
-its password key there as a mode-`0400` file. After successful persistence, the entrypoint removes
-the combined plaintext upload. Provisioning sends the secrets through the CLI's hidden TTY prompts
-over stdin; plaintext credentials are never placed in process arguments or container environment
-variables.
+of 16 KiB, required fields, a minimum 16-byte password, and key encodings, then runs the exact
+commands supported by the pinned Interfold v0.4.0 image. Any failed command aborts startup. The
+wallet command atomically derives and stores both the Ethereum and libp2p identities. Both keys are
+encrypted in `/data`; the password key is stored separately with mode `0400`. After successful
+persistence, the entrypoint removes the combined plaintext upload. Provisioning sends the secrets
+through the CLI's hidden TTY prompts over stdin; plaintext credentials are never placed in process
+arguments or container environment variables.
 
 Legacy three-field files containing `network_private_key` are accepted for upgrade compatibility,
-but v0.2.3 ignores that obsolete field on a fresh setup. When encrypted identity state already
+but v0.4.0 ignores that obsolete field on a fresh setup. When encrypted identity state already
 exists, a matching upload is removed without rewriting either identity; a password mismatch fails
 closed.
 
@@ -223,32 +246,36 @@ At container startup, `entrypoint.sh`:
    ```
 
 The state and databases live under `/data` inside the container, which is backed by the
-`ciphernode_data` Docker volume and listed as a backup target in `dappnode_package.json`. Because
-that volume includes the password key, DAppNode backups of `/data` must be encrypted and
-access-controlled even though the wallet and network keys inside the volume are encrypted.
+`ciphernode_data` Docker volume and listed as a backup target in `dappnode_package.json`. The
+password key lives separately at `/run/interfold/key` on `ciphernode_secrets` and is deliberately
+excluded from that encrypted-state backup. Securely escrow the password outside DAppNode; restoring
+only `/data` cannot unlock the node. New ciphertext uses a versioned envelope with a fresh random
+Argon2id salt, while legacy ciphertext is read only for migration and is upgraded on its next write.
 
-### Required v0.1.8 upgrade bridge
+### Legacy upgrade boundary
 
 DAppNode package v0.2.3 is the required bridge from the shipped v0.1.8 package to later binaries. On
 its first start it atomically renames the custom-config state root from `/data/.enclave` to
 `/data/.interfold`, refusing to proceed if both roots exist. The v0.2.3 binary then stamps schema
-version 1 using its release-era compatibility behavior. Later fail-closed binaries can therefore
-verify the marker instead of rejecting the old unversioned datastore. Do not skip this package when
-upgrading an existing v0.1.8 node, and keep a verified backup of `/data` until the bridge has
-started successfully.
+version 1 using its release-era compatibility behavior. Interfold v0.4.0 uses schema version 2 and
+intentionally rejects schema 1 because keyshare state changed incompatibly. There is no in-place
+v0.2.3-to-v0.4.0 state migration: finish or canonically fail active E3s, keep a verified backup, and
+perform a controlled fresh resync. Never wipe in-flight threshold-share state as an upgrade
+shortcut.
 
 ## Health semantics
 
-Interfold v0.2.3 does not expose a local readiness endpoint. The package health check therefore uses
-the strongest non-invasive local signals available in that release: PID 1 must be the expected
-`interfold start` command using `/data/config.yaml`, the protected config/password files must exist,
-the v0.2.3 Sled/event-log directories must be initialized, and the configured QUIC UDP listener must
-be bound. This detects the old false-positive case where an unrelated process matched `pgrep`, as
-well as missing credentials, uninitialized persistence, and a dead network listener.
+PID 1 must be the exact `interfold start` command using `/data/config.yaml`; the protected
+config/password files and initialized Sled/event-log paths must exist; and the configured QUIC UDP
+listener must be bound. The probe then calls the loopback `/health/ready` endpoint. A stale or
+wrong-chain RPC, lagged confirmed cursor, missing writer, disabled effects, aged durable outbox,
+lost peer quorum, stalled active E3, schema failure, or disk/EventStore failure marks the container
+unhealthy.
 
-This remains a liveness/startup check, not proof of canonical chain sync, healthy RPC responses,
-honest peers, registration, or safe protocol participation. Operators must inspect logs and on-chain
-status before treating the node as protocol-ready.
+The readiness endpoint is served on `READINESS_PORT` (default `50506`) and is not published outside
+the container. Threshold environment variables mirror the `node.readiness_*` configuration. See the
+[Protocol Readiness Runbook](https://docs.interfold.network/ciphernode-operators/readiness-runbook)
+for defaults, Prometheus alerts, and safe response procedures.
 
 ## Data & Ports
 
@@ -266,7 +293,7 @@ If you change `QUIC_PORT` in the config, you must also adjust the `ports:` mappi
 To publish this package to the public DAppStore so others can install it:
 
 ```bash
-npx @dappnode/dappnodesdk@latest publish \
+./node_modules/.bin/dappnodesdk publish \
   --type=<patch|minor|major> \
   --eth-provider=<your ETH RPC> \
   --content-provider=<your IPFS API> \
@@ -282,4 +309,4 @@ new package version.
 - [DAppNode Package Development – Single Configuration](https://docs.dappnode.io/docs/dev/package-development/single-configuration/)
 - [DAppNode Docker Compose Reference](https://docs.dappnode.io/docs/dev/references/docker-compose/)
 - [DAppNode Setup Wizard Reference](https://docs.dappnode.io/docs/dev/references/setup-wizard/)
-- [Interfold GitHub Repository](https://github.com/gnosisguild/interfold)
+- [Interfold GitHub Repository](https://github.com/theinterfold/interfold)

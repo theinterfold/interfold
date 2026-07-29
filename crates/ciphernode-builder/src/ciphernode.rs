@@ -8,7 +8,8 @@ use actix::Addr;
 use anyhow::{Context, Result};
 use e3_data::{DataStore, InMemStore, StoreAddr};
 use e3_events::{BusHandle, HistoryCollector, InterfoldEvent};
-use e3_net::{NetChannelBridge, NetworkStatus};
+use e3_evm::{EvmIngestionStatus, EvmWriterProbe};
+use e3_net::{NetChannelBridge, NetworkStatus, NetworkTaskExit, NetworkTaskSupervisor};
 use libp2p::PeerId;
 use std::{future::Future, time::Duration};
 use tracing::info;
@@ -66,8 +67,11 @@ pub struct CiphernodeHandle {
     pub peer_id: PeerId,
     pub net_interface: NetInterfaceKind,
     pub network_status: NetworkStatus,
+    pub network_supervisor: NetworkTaskSupervisor,
     pub eventstore: EventStoreReader,
     pub aggregate_ids: Vec<usize>,
+    pub evm_ingestion: Vec<EvmIngestionStatus>,
+    pub evm_writers: Vec<EvmWriterProbe>,
 }
 
 impl PartialEq for CiphernodeHandle {
@@ -99,12 +103,28 @@ impl CiphernodeHandle {
         self.network_status.clone()
     }
 
+    pub fn network_supervisor(&self) -> NetworkTaskSupervisor {
+        self.network_supervisor.clone()
+    }
+
+    pub async fn wait_for_network_exit(&self) -> Result<NetworkTaskExit> {
+        self.network_supervisor.wait_for_exit().await
+    }
+
     pub fn eventstore(&self) -> EventStoreReader {
         self.eventstore.clone()
     }
 
     pub fn aggregate_ids(&self) -> &[usize] {
         &self.aggregate_ids
+    }
+
+    pub fn evm_ingestion(&self) -> &[EvmIngestionStatus] {
+        &self.evm_ingestion
+    }
+
+    pub fn evm_writers(&self) -> &[EvmWriterProbe] {
+        &self.evm_writers
     }
 
     pub fn store(&self) -> &DataStore {
@@ -133,6 +153,15 @@ impl CiphernodeHandle {
     /// is flushed and closed.
     pub async fn shutdown(self, deadline: Duration) -> Result<()> {
         enforce_shutdown_deadline(deadline, async move {
+            info!(
+                stage = "network-stop",
+                "Ciphernode shutdown barrier started"
+            );
+            self.network_supervisor
+                .shutdown_and_wait()
+                .await
+                .context("failed to stop the network interface")?;
+
             info!(stage = "actor-drain", "Ciphernode shutdown barrier started");
             self.bus
                 .publish_shutdown_and_wait()

@@ -3,7 +3,17 @@
 
 node:
   address: '${NODE_ADDRESS}'
+  # Kept on a separate volume so encrypted-state backups do not contain their
+  # own unwrap password.
+  key_file: '/run/interfold/key'
   quic_port: ${QUIC_PORT}
+  dashboard_port: ${READINESS_PORT}
+  readiness_min_peers: ${READINESS_MIN_PEERS}
+  readiness_max_rpc_poll_age_secs: ${READINESS_MAX_RPC_POLL_AGE_SECS}
+  readiness_max_chain_head_age_secs: ${READINESS_MAX_CHAIN_HEAD_AGE_SECS}
+  readiness_max_sync_lag_blocks: ${READINESS_MAX_SYNC_LAG_BLOCKS}
+  readiness_max_outbox_age_secs: ${READINESS_MAX_OUTBOX_AGE_SECS}
+  readiness_max_active_e3_idle_secs: ${READINESS_MAX_ACTIVE_E3_IDLE_SECS}
   # Credentials are provisioned from /run/secrets/secrets.json before start.
   # Fail closed if required credential state is absent instead of generating a
   # different identity during a restart or maintenance CLI invocation.
@@ -13,6 +23,8 @@ node:
 
 chains:
   - name: '${NETWORK}'
+    chain_id: ${CHAIN_ID}
+    reorg_confirmations: ${REORG_CONFIRMATIONS}
     rpc_url: '${RPC_URL}'
     contracts:
       interfold:
@@ -24,3 +36,6 @@ chains:
       bonding_registry:
         address: '${BONDING_REGISTRY_CONTRACT}'
         deploy_block: ${BONDING_REGISTRY_DEPLOY_BLOCK}
+      slashing_manager:
+        address: '${SLASHING_MANAGER_CONTRACT}'
+        deploy_block: ${SLASHING_MANAGER_DEPLOY_BLOCK}

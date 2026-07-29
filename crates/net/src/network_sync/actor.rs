@@ -40,6 +40,7 @@ use crate::{
         await_event, GossipData, IncomingRequest, NetCommand, NetEvent, PeerTarget,
         ProtocolResponse,
     },
+    NetworkAuthorizationState, ProtocolAdmission, ProtocolSigner,
 };
 
 /// Maximum time to wait for a `ConnectionEstablished` event after all dials
@@ -121,6 +122,8 @@ pub struct NetSyncManager {
     net_ready: bool,
     /// Guard so the post-restart re-broadcast fires at most once per process.
     rebroadcast_started: bool,
+    protocol_signer: ProtocolSigner,
+    protocol_authorization: NetworkAuthorizationState,
 }
 
 impl NetSyncManager {
@@ -130,6 +133,8 @@ impl NetSyncManager {
         rx: &Arc<broadcast::Receiver<NetEvent>>,
         eventstore: Recipient<EventStoreQueryBy<TsAgg>>,
         topic: &str,
+        protocol_signer: ProtocolSigner,
+        protocol_authorization: NetworkAuthorizationState,
     ) -> Self {
         Self {
             bus: bus.clone(),
@@ -143,6 +148,8 @@ impl NetSyncManager {
             rebroadcast_query_ids: HashSet::new(),
             net_ready: false,
             rebroadcast_started: false,
+            protocol_signer,
+            protocol_authorization,
         }
     }
 }

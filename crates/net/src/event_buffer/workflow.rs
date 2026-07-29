@@ -14,7 +14,7 @@ pub(crate) enum BufferDecision {
     /// The event was buffered until syncing completes.
     Buffered,
     /// The event should be forwarded immediately.
-    Forward(NetEvent),
+    Forward(Box<NetEvent>),
 }
 
 /// Pure state machine controlling whether incoming [`NetEvent`]s are buffered while the node is
@@ -74,7 +74,7 @@ impl NetEventBufferState {
                 *buffered_bytes = next_bytes;
                 Ok(BufferDecision::Buffered)
             }
-            Self::Running => Ok(BufferDecision::Forward(event)),
+            Self::Running => Ok(BufferDecision::Forward(Box::new(event))),
             Self::Failed(reason) => bail!("network startup buffer already failed: {reason}"),
         }
     }

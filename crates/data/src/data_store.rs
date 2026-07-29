@@ -119,7 +119,7 @@ impl DataStore {
     where
         T: for<'de> Deserialize<'de>,
     {
-        let Some(bytes) = self.get.send(Get::new(&self.scope)).await? else {
+        let Some(bytes) = self.get.send(Get::new(&self.scope)).await?? else {
             return Ok(None);
         };
 
@@ -205,6 +205,19 @@ impl DataStore {
             self.flush.send(Flush).await??;
         }
         Ok(inserted)
+    }
+
+    /// Verify that the backing store actor is alive and can flush durable state.
+    ///
+    /// This is an operational readiness probe. It does not mutate protocol state, but Sled also
+    /// reports any earlier asynchronous write failure so a node cannot remain ready after a lost
+    /// persistence operation.
+    pub async fn health_check(&self) -> Result<()> {
+        self.flush
+            .send(Flush)
+            .await
+            .context("data store stopped during health check")??;
+        Ok(())
     }
 
     /// Drain the snapshot buffer and durably close the backing store.

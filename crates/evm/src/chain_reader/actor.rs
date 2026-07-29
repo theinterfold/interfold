@@ -11,6 +11,7 @@ use crate::domain::backoff::Backoff;
 use crate::helpers::{EthProvider, ProviderFactory};
 use crate::messages::HistoricalSyncComplete;
 use crate::messages::{EvmEventProcessor, InterfoldEvmEvent};
+use crate::EvmIngestionStatus;
 use actix::prelude::*;
 use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::B256;
@@ -117,6 +118,8 @@ pub struct EvmReadInterface<P> {
     bus: BusHandle,
     /// Filters to configure when to seek from
     filters: Filters,
+    /// Read-only progress status consumed by the readiness endpoint.
+    ingestion_status: EvmIngestionStatus,
 }
 
 impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
@@ -126,7 +129,11 @@ impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
         bus: &BusHandle,
         filters: Filters,
     ) -> Addr<Self> {
-        Self::setup_with_factory(provider, None, next, bus, filters)
+        let status = EvmIngestionStatus::new(
+            format!("chain-{}", provider.chain_id()),
+            provider.chain_id(),
+        );
+        Self::setup_with_factory(provider, None, next, bus, filters, status)
     }
 
     pub fn setup_with_factory(
@@ -135,6 +142,7 @@ impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
         next: impl Into<EvmEventProcessor>,
         bus: &BusHandle,
         filters: Filters,
+        ingestion_status: EvmIngestionStatus,
     ) -> Addr<Self> {
         let (shutdown_tx, shutdown_rx) = oneshot::channel();
         let reader = Self {
@@ -145,6 +153,7 @@ impl<P: Provider + Clone + 'static> EvmReadInterface<P> {
             next: next.into(),
             bus: bus.clone(),
             filters,
+            ingestion_status,
         };
 
         let addr = reader.start();

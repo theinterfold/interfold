@@ -2,7 +2,9 @@
 set -Eeuo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
-TEST_ROOT=$(mktemp -d)
+TEST_TMP_PARENT=${TMPDIR:-/tmp}
+mkdir -p "$TEST_TMP_PARENT"
+TEST_ROOT=$(mktemp -d "$TEST_TMP_PARENT/interfold-hardening.XXXXXX")
 trap 'rm -rf "$TEST_ROOT"' EXIT
 
 fail() {
@@ -37,7 +39,7 @@ make_mock_interfold() {
         '  *) operation=unexpected ;;' \
         'esac' \
         'printf "%s\n" "$operation" >> "$CALL_LOG"' \
-        'tr "\0" " " < /proc/$$/cmdline >> "$ARGV_LOG"' \
+        'printf "%q " "$@" >> "$ARGV_LOG"' \
         'printf "\n" >> "$ARGV_LOG"' \
         '[ "${FAIL_ON:-}" != "$operation" ] || exit 42' \
         '[ "$operation" != unexpected ]' \
@@ -100,18 +102,22 @@ run_entrypoint() {
         CALL_LOG="$case_dir/calls" \
         ARGV_LOG="$case_dir/argv" \
         RPC_URL="ws://127.0.0.1:8545" \
+        CHAIN_ID=31337 \
+        REORG_CONFIRMATIONS=1 \
         NODE_ADDRESS="0x3333333333333333333333333333333333333333" \
         INTERFOLD_CONTRACT="0x4444444444444444444444444444444444444444" \
         CIPHERNODE_REGISTRY_CONTRACT="0x5555555555555555555555555555555555555555" \
         BONDING_REGISTRY_CONTRACT="0x6666666666666666666666666666666666666666" \
+        SLASHING_MANAGER_CONTRACT="0x7777777777777777777777777777777777777777" \
         INTERFOLD_DEPLOY_BLOCK=1 \
         CIPHERNODE_REGISTRY_DEPLOY_BLOCK=2 \
         BONDING_REGISTRY_DEPLOY_BLOCK=3 \
+        SLASHING_MANAGER_DEPLOY_BLOCK=4 \
         PRIVATE_KEY="${TEST_PRIVATE_KEY:-}" \
         "$@" bash "$ROOT_DIR/entrypoint.sh" > "$case_dir/output" 2>&1
 }
 
-# Successful provisioning uses the v0.2.3 atomic wallet command, removes the
+# Successful provisioning uses the atomic wallet command, removes the
 # plaintext upload, and starts only after every credential command succeeds.
 success_dir="$TEST_ROOT/success"
 mkdir -p "$success_dir/secrets"
@@ -155,7 +161,7 @@ run_entrypoint "$matching_dir"
 [ "$(tr '\n' ' ' < "$matching_dir/calls")" = "start " ] || fail "matching persisted state was re-provisioned"
 [ ! -e "$matching_dir/secrets/secrets.json" ] || fail "matching upload was not removed"
 
-# Legacy three-field uploads remain accepted; v0.2.3 derives the libp2p key
+# Legacy three-field uploads remain accepted; the CLI derives the libp2p key
 # atomically from the wallet key and ignores the obsolete separate network key.
 legacy_credentials_dir="$TEST_ROOT/legacy-credentials"
 mkdir -p "$legacy_credentials_dir/secrets"
@@ -179,6 +185,16 @@ if run_entrypoint "$missing_dir"; then
 fi
 [ ! -s "$missing_dir/calls" ] || fail "missing credentials invoked Interfold"
 
+weak_dir="$TEST_ROOT/weak-password"
+mkdir -p "$weak_dir/secrets"
+printf '%s\n' \
+    '{"password":"too-short","private_key":"0x1111111111111111111111111111111111111111111111111111111111111111"}' \
+    > "$weak_dir/secrets/secrets.json"
+if run_entrypoint "$weak_dir"; then
+    fail "weak first-start password was accepted"
+fi
+[ ! -s "$weak_dir/calls" ] || fail "weak password invoked Interfold"
+
 # A normal restart may reuse credentials already encrypted in the persistent
 # /data volume without requiring the one-time plaintext upload again.
 restart_dir="$TEST_ROOT/restart"
@@ -187,6 +203,19 @@ printf '%s' 'persisted-password' > "$restart_dir/data/password"
 chmod 400 "$restart_dir/data/password"
 run_entrypoint "$restart_dir"
 [ "$(tr '\n' ' ' < "$restart_dir/calls")" = "start " ] || fail "persisted restart unexpectedly re-provisioned credentials"
+
+# Existing co-located passwords migrate once into the separate secret volume,
+# leaving encrypted-state backups without their own unwrap key.
+separation_dir="$TEST_ROOT/password-separation"
+legacy_password="$separation_dir/data/.interfold/config/_default/key"
+separated_password="$separation_dir/secrets-volume/key"
+mkdir -p "$(dirname "$legacy_password")"
+printf '%s' 'persisted-password' > "$legacy_password"
+run_entrypoint "$separation_dir" \
+    PASSWORD_FILE="$separated_password" \
+    LEGACY_PASSWORD_FILE="$legacy_password"
+[ -s "$separated_password" ] || fail "legacy password was not moved to the secret volume"
+[ ! -e "$legacy_password" ] || fail "legacy password remained co-located with encrypted state"
 
 # The 0.1.8 -> 0.2.3 bridge moves the complete custom-config namespace in one
 # rename, preserving the unversioned DB/event log for v0.2.3 to stamp schema 1.
@@ -221,9 +250,55 @@ fi
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--password "$password"'
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--private-key "$private_key"'
 assert_not_contains "$ROOT_DIR/entrypoint.sh" '--net-keypair "$network_private_key"'
-assert_contains "$ROOT_DIR/dappnode_package.json" '"version": "0.2.3"'
-assert_contains "$ROOT_DIR/docker-compose.yml" 'UPSTREAM_VERSION: 0.2.3'
+assert_contains "$ROOT_DIR/dappnode_package.json" '"version": "0.4.0"'
+assert_contains "$ROOT_DIR/docker-compose.yml" 'UPSTREAM_VERSION: 0.4.0'
+assert_contains "$ROOT_DIR/docker-compose.yml" 'DAPPNODE_UPSTREAM_BINARY_SHA256:?stage and verify the exact candidate binary first'
+assert_contains "$ROOT_DIR/Dockerfile" 'echo "${UPSTREAM_BINARY_SHA256}  /tmp/interfold.tar.gz" | sha256sum --check --strict'
+assert_contains "$ROOT_DIR/Dockerfile" "grep -aFq '/health/ready' /usr/local/bin/interfold"
+assert_contains "$ROOT_DIR/Dockerfile" "grep -aFq 'interfold_ready' /usr/local/bin/interfold"
+assert_not_contains "$ROOT_DIR/Dockerfile" 'releases/download'
+assert_not_contains "$ROOT_DIR/Dockerfile" 'gnosisguild/ciphernode'
+assert_not_contains "$ROOT_DIR/Dockerfile" 'debian:stable-slim'
+assert_contains "$ROOT_DIR/config.template.yaml" 'slashing_manager:'
+assert_contains "$success_dir/data/config.yaml" '0x7777777777777777777777777777777777777777'
 assert_contains "$ROOT_DIR/healthcheck.sh" '/data/.interfold/data/_default/db'
+assert_contains "$ROOT_DIR/healthcheck.sh" '/run/interfold/key'
+assert_contains "$ROOT_DIR/config.template.yaml" "key_file: '/run/interfold/key'"
+assert_contains "$ROOT_DIR/docker-compose.yml" 'ciphernode_secrets:/run/interfold'
+assert_not_contains "$ROOT_DIR/dappnode_package.json" '/run/interfold'
+
+# Candidate packaging must accept only an exact-version, exact-hash binary that contains the
+# readiness route and metric required by the DAppNode health contract.
+candidate_dir="$TEST_ROOT/candidate-binary"
+mkdir -p "$candidate_dir/good" "$candidate_dir/missing-readiness"
+printf '%s\n' \
+    '#!/bin/sh' \
+    '# /health/ready' \
+    '# interfold_ready' \
+    'printf "interfold 0.4.0\n"' \
+    > "$candidate_dir/good/interfold"
+chmod +x "$candidate_dir/good/interfold"
+tar -czf "$candidate_dir/good.tar.gz" -C "$candidate_dir/good" interfold
+candidate_sha=$(sha256sum "$candidate_dir/good.tar.gz" | awk '{print $1}')
+"$ROOT_DIR/verify-candidate-binary.sh" \
+    "$candidate_dir/good.tar.gz" 0.4.0 "$candidate_sha" >/dev/null \
+    || fail 'valid candidate binary was rejected'
+if "$ROOT_DIR/verify-candidate-binary.sh" \
+    "$candidate_dir/good.tar.gz" 0.4.0 "$(printf '0%.0s' {1..64})" >/dev/null 2>&1; then
+    fail 'candidate binary with a mismatched checksum was accepted'
+fi
+printf '%s\n' \
+    '#!/bin/sh' \
+    'printf "interfold 0.4.0\n"' \
+    > "$candidate_dir/missing-readiness/interfold"
+chmod +x "$candidate_dir/missing-readiness/interfold"
+tar -czf "$candidate_dir/missing-readiness.tar.gz" \
+    -C "$candidate_dir/missing-readiness" interfold
+missing_readiness_sha=$(sha256sum "$candidate_dir/missing-readiness.tar.gz" | awk '{print $1}')
+if "$ROOT_DIR/verify-candidate-binary.sh" \
+    "$candidate_dir/missing-readiness.tar.gz" 0.4.0 "$missing_readiness_sha" >/dev/null 2>&1; then
+    fail 'candidate binary without protocol readiness was accepted'
+fi
 
 # Health probe regression: require the exact process/config, protected files,
 # and bound QUIC listener rather than accepting an arbitrary matching PID.
@@ -243,7 +318,12 @@ printf '%s\n' \
     '#!/bin/sh' \
     'printf "%s\n" "${STAT_MODE:-600}"' \
     > "$health_dir/bin/stat"
-chmod +x "$health_dir/bin/ss" "$health_dir/bin/stat"
+printf '%s\n' \
+    '#!/bin/sh' \
+    '[ "${READINESS_READY:-1}" = 1 ] || exit 22' \
+    'printf "{\"ready\":true}\n"' \
+    > "$health_dir/bin/curl"
+chmod +x "$health_dir/bin/ss" "$health_dir/bin/stat" "$health_dir/bin/curl"
 
 PROC_ROOT="$health_dir/proc" \
 CONFIG_FILE="$health_dir/data/config.yaml" \
@@ -252,6 +332,7 @@ DB_PATH="$health_dir/data/db" \
 EVENT_LOG_PATH="$health_dir/data/log.0" \
 SS_BIN="$health_dir/bin/ss" \
 STAT_BIN="$health_dir/bin/stat" \
+CURL_BIN="$health_dir/bin/curl" \
 sh "$ROOT_DIR/healthcheck.sh" || fail "healthy local state was rejected"
 
 if PROC_ROOT="$health_dir/proc" \
@@ -261,6 +342,7 @@ if PROC_ROOT="$health_dir/proc" \
     EVENT_LOG_PATH="$health_dir/data/log.0" \
     SS_BIN="$health_dir/bin/ss" \
     STAT_BIN="$health_dir/bin/stat" \
+    CURL_BIN="$health_dir/bin/curl" \
     SS_READY=0 sh "$ROOT_DIR/healthcheck.sh"; then
     fail "missing QUIC listener was considered healthy"
 fi
@@ -272,6 +354,7 @@ if PROC_ROOT="$health_dir/proc" \
     EVENT_LOG_PATH="$health_dir/data/log.0" \
     SS_BIN="$health_dir/bin/ss" \
     STAT_BIN="$health_dir/bin/stat" \
+    CURL_BIN="$health_dir/bin/curl" \
     STAT_MODE=644 sh "$ROOT_DIR/healthcheck.sh"; then
     fail "insecure credential permissions were considered healthy"
 fi
@@ -284,6 +367,7 @@ if PROC_ROOT="$health_dir/proc" \
     EVENT_LOG_PATH="$health_dir/data/log.0" \
     SS_BIN="$health_dir/bin/ss" \
     STAT_BIN="$health_dir/bin/stat" \
+    CURL_BIN="$health_dir/bin/curl" \
     sh "$ROOT_DIR/healthcheck.sh"; then
     fail "unrelated PID 1 was considered healthy"
 fi
@@ -297,8 +381,22 @@ if PROC_ROOT="$health_dir/proc" \
     EVENT_LOG_PATH="$health_dir/data/log.0" \
     SS_BIN="$health_dir/bin/ss" \
     STAT_BIN="$health_dir/bin/stat" \
+    CURL_BIN="$health_dir/bin/curl" \
     sh "$ROOT_DIR/healthcheck.sh"; then
     fail "uninitialized event persistence was considered healthy"
+fi
+
+mkdir "$health_dir/data/log.0"
+if PROC_ROOT="$health_dir/proc" \
+    CONFIG_FILE="$health_dir/data/config.yaml" \
+    PASSWORD_FILE="$health_dir/data/password" \
+    DB_PATH="$health_dir/data/db" \
+    EVENT_LOG_PATH="$health_dir/data/log.0" \
+    SS_BIN="$health_dir/bin/ss" \
+    STAT_BIN="$health_dir/bin/stat" \
+    CURL_BIN="$health_dir/bin/curl" \
+    READINESS_READY=0 sh "$ROOT_DIR/healthcheck.sh"; then
+    fail "failed protocol readiness was considered healthy"
 fi
 
 printf 'PASS: DAppNode credential and health hardening regressions\n'

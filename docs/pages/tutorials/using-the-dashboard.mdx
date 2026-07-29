@@ -38,13 +38,24 @@ E3_DASHBOARD_PORT=8080
 Restart your node. You'll see:
 
 ```text
-Dashboard available at http://0.0.0.0:8080
+node dashboard listening on http://127.0.0.1:8080
 ```
 
-Open `http://localhost:8080` (or `http://<your-server-ip>:8080` for remote access) in your browser.
+Open `http://localhost:8080` in your browser.
 
-> **Security note:** The dashboard has no authentication and binds to all interfaces (`0.0.0.0`). If
-> your node is on a public server, restrict access via firewall rules or an SSH tunnel.
+> **Security note:** The dashboard has no authentication and exposes detailed protocol data. It
+> binds only to loopback (`127.0.0.1`); use an SSH tunnel for remote access.
+
+The same port exposes operational endpoints for automation:
+
+| Endpoint        | Meaning                                                                         |
+| --------------- | ------------------------------------------------------------------------------- |
+| `/health/live`  | HTTP task liveness only; never use it as protocol readiness                     |
+| `/health/ready` | `200` when every protocol gate passes, otherwise `503` with structured failures |
+| `/metrics`      | Prometheus metrics for the same readiness snapshot                              |
+
+See the [Protocol Readiness Runbook](/ciphernode-operators/readiness-runbook) for gate definitions,
+alerts, and recovery steps.
 
 ---
 
@@ -160,14 +171,13 @@ ssh -L 8080:localhost:8080 user@your-server
 
 Then open `http://localhost:8080` locally. This keeps the dashboard private.
 
-### Direct Access
-
-If you open the port in your firewall, the dashboard is accessible at `http://<server-ip>:8080`.
-Since there's no authentication, only do this on trusted networks.
+The server intentionally does not support direct remote access. If an authenticated reverse proxy is
+required, bind the proxy to the public interface and keep the dashboard itself on loopback.
 
 ---
 
 ## Related
 
 - [Running a Ciphernode](/ciphernode-operators/running) — setup and deployment methods
+- [Protocol Readiness Runbook](/ciphernode-operators/readiness-runbook) — health gates and alerts
 - [Troubleshoot Your Node](./operator-troubleshooting) — common issues and fixes

@@ -50,22 +50,146 @@ impl Handler<IncomingNetEvent> for NetEventBuffer {
     type Result = ();
 
     fn handle(&mut self, msg: IncomingNetEvent, ctx: &mut Self::Context) {
+        let event = match msg.0 {
+            NetEvent::AuthenticatedGossip {
+                author,
+                propagation_source,
+                message_id,
+                data: GossipData::ProtocolEvent(envelope),
+            } => {
+                let admission = crate::unix_time_secs()
+                    .map_err(|error| crate::AdmissionRejection {
+                        reason: error.to_string(),
+                        quarantine: false,
+                    })
+                    .and_then(|now| {
+                        self.protocol_admission
+                            .authorize(author, envelope, now)
+                            .map(|authorized| (authorized, now))
+                    });
+                match admission {
+                    Ok((authorized, now)) => {
+                        let authenticated_peer = AuthenticatedPeerAdmission {
+                            peer_id: author.to_string(),
+                            signer: authorized.signer.to_string(),
+                            e3_id: authorized.e3_id.to_string(),
+                            authenticated_at_ms: now.saturating_mul(1_000),
+                        };
+                        self.submit_net_commands(
+                            vec![NetCommand::GossipValidation {
+                                propagation_source,
+                                message_id,
+                                acceptance: GossipAcceptance::Accept,
+                            }],
+                            Some(NetEvent::AuthorizedGossip(Box::new(authorized.event))),
+                            Some(authenticated_peer),
+                            ctx,
+                        );
+                        return;
+                    }
+                    Err(rejection) => {
+                        let mut commands = vec![NetCommand::GossipValidation {
+                            propagation_source,
+                            message_id,
+                            acceptance: GossipAcceptance::Reject,
+                        }];
+                        if rejection.quarantine {
+                            commands.push(NetCommand::QuarantinePeer { peer_id: author });
+                            warn!(%author, reason=%rejection.reason, "Quarantining unauthorized protocol-gossip author");
+                        } else {
+                            tracing::trace!(%author, reason=%rejection.reason, "Rejecting protocol gossip before startup buffering");
+                        }
+                        self.submit_net_commands(commands, None, None, ctx);
+                        return;
+                    }
+                }
+            }
+            NetEvent::AuthenticatedGossip {
+                propagation_source,
+                message_id,
+                ..
+            } => {
+                self.submit_net_commands(
+                    vec![NetCommand::GossipValidation {
+                        propagation_source,
+                        message_id,
+                        acceptance: GossipAcceptance::Reject,
+                    }],
+                    None,
+                    None,
+                    ctx,
+                );
+                return;
+            }
+            event => event,
+        };
+        self.process_net_event(event, ctx);
+    }
+}
+
+impl NetEventBuffer {
+    fn submit_net_commands(
+        &mut self,
+        commands: Vec<NetCommand>,
+        admitted: Option<NetEvent>,
+        authenticated_peer: Option<AuthenticatedPeerAdmission>,
+        ctx: &mut actix::Context<Self>,
+    ) {
+        let tx = self.net_commands.clone();
+        ctx.wait(
+            async move {
+                for command in commands {
+                    tx.send(command).await?;
+                }
+                Ok::<_, mpsc::error::SendError<NetCommand>>(())
+            }
+            .into_actor(self)
+            .map(move |result, actor, ctx| match result {
+                Ok(()) => {
+                    if let Some(peer) = authenticated_peer {
+                        actor.network_status.protocol_authenticated(
+                            peer.peer_id,
+                            peer.signer,
+                            peer.e3_id,
+                            peer.authenticated_at_ms,
+                        );
+                    }
+                    if let Some(event) = admitted {
+                        actor.process_net_event(event, ctx);
+                    }
+                }
+                Err(error) => actor.fail_closed(
+                    anyhow!("network command channel closed during gossip admission: {error}"),
+                    ctx,
+                ),
+            }),
+        );
+    }
+
+    fn process_net_event(&mut self, event: NetEvent, ctx: &mut actix::Context<Self>) {
         let event_bytes = if self.state.is_running() {
             0
         } else {
-            msg.0.buffered_size_bytes()
+            event.buffered_size_bytes()
         };
         let result = self
             .state
-            .observe(msg.0, event_bytes, self.max_events, self.max_bytes)
+            .observe(event, event_bytes, self.max_events, self.max_bytes)
             .and_then(|decision| match decision {
                 BufferDecision::Buffered => Ok(()),
-                BufferDecision::Forward(event) => self.forward_event(event),
+                BufferDecision::Forward(event) => self.forward_event(*event),
             });
         if let Err(error) = result {
             self.fail_closed(error, ctx);
         }
     }
+}
+
+struct AuthenticatedPeerAdmission {
+    peer_id: String,
+    signer: String,
+    e3_id: String,
+    authenticated_at_ms: u64,
 }
 
 impl Handler<NetInputLagged> for NetEventBuffer {
@@ -123,6 +247,9 @@ mod tests {
             max_events: 8,
             max_bytes: 1_024,
             readiness: Some(readiness),
+            net_commands: mpsc::channel(1).0,
+            protocol_admission: ProtocolAdmission::default(),
+            network_status: NetworkStatus::default(),
         }
         .start();
 

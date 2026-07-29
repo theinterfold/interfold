@@ -7,15 +7,15 @@
 use crate::domain::chain_sync_state::SyncStatus;
 use crate::messages::HistoricalSyncComplete;
 use crate::messages::InterfoldEvmEvent;
-use actix::{Actor, ActorContext, Handler};
+use actix::{Actor, ActorContext, AsyncContext, Handler};
 use actix::{Addr, Recipient};
 use anyhow::{bail, Context, Result};
 use e3_events::EType;
+use e3_events::Event;
 use e3_events::{
     BusHandle, ErrorDispatcher, EventSubscriber, EventType, HistoricalEvmEventsReceived,
     HistoricalEvmSyncStart, InterfoldEvent, InterfoldEventData, SyncEnded, Unsequenced,
 };
-use e3_events::{Event, EventPublisher};
 use e3_utils::MAILBOX_LIMIT;
 use tokio::sync::oneshot;
 use tracing::warn;
@@ -113,7 +113,9 @@ impl EvmChainGateway {
         self.status.fail(reason.clone());
         self.signal_startup(Err(reason.clone()));
         self.bus.err(EType::Evm, anyhow::anyhow!(reason));
-        ctx.stop();
+        // Stop on the next actor turn so the current mailbox request can receive
+        // its acknowledgement before the mailbox closes.
+        ctx.run_later(std::time::Duration::ZERO, |_, ctx| ctx.stop());
     }
 
     fn handle_sync_start(&mut self, msg: HistoricalEvmSyncStart) -> Result<()> {
@@ -123,7 +125,8 @@ impl EvmChainGateway {
         let (mut buffer, pending_sync_complete) = self.status.forward_to_sync_actor(sender)?;
 
         for evt in buffer.drain(..) {
-            self.process_evm_event(evt)?;
+            let publish = self.process_evm_event(evt)?;
+            debug_assert!(publish.is_none());
         }
 
         // HistoricalSyncComplete may have arrived before HistoricalEvmSyncStart
@@ -134,29 +137,21 @@ impl EvmChainGateway {
         Ok(())
     }
 
-    fn handle_sync_ended(&mut self, _: SyncEnded) -> Result<()> {
-        let buffer = self.status.live()?;
-        for evt in buffer {
-            self.publish_evm_event(evt)?;
-        }
-        self.signal_startup(Ok(()));
-        Ok(())
+    fn handle_sync_ended(&mut self, _: SyncEnded) -> Result<Vec<InterfoldEvent<Unsequenced>>> {
+        self.status.begin_draining()
     }
 
-    fn publish_evm_event(&mut self, msg: InterfoldEvent<Unsequenced>) -> Result<()> {
-        self.bus.naked_dispatch(msg);
-        Ok(())
-    }
-
-    fn handle_evm_event(&mut self, msg: InterfoldEvmEvent) -> Result<()> {
+    fn handle_evm_event(
+        &mut self,
+        msg: InterfoldEvmEvent,
+    ) -> Result<Option<InterfoldEvent<Unsequenced>>> {
         match msg {
             InterfoldEvmEvent::HistoricalSyncComplete(e) => {
                 self.forward_historical_sync_complete(e)?;
-                Ok(())
+                Ok(None)
             }
             InterfoldEvmEvent::Event(event) => {
-                self.process_evm_event(event.into_interfold_event(&self.bus)?)?;
-                Ok(())
+                self.process_evm_event(event.into_interfold_event(&self.bus)?)
             }
             InterfoldEvmEvent::Log(_) => {
                 bail!("EvmChainGateway received an unparsed EVM log")
@@ -197,12 +192,16 @@ impl EvmChainGateway {
         Ok(())
     }
 
-    fn process_evm_event(&mut self, msg: InterfoldEvent<Unsequenced>) -> Result<()> {
+    fn process_evm_event(
+        &mut self,
+        msg: InterfoldEvent<Unsequenced>,
+    ) -> Result<Option<InterfoldEvent<Unsequenced>>> {
         if matches!(self.status, SyncStatus::Live) {
-            return self.publish_evm_event(msg);
+            return Ok(Some(msg));
         }
         self.status
-            .add_buffered_event(msg, self.max_buffered_events)
+            .add_buffered_event(msg, self.max_buffered_events)?;
+        Ok(None)
     }
 }
 

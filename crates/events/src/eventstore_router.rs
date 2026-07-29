@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 use crate::eventstore::EventStore;
 use crate::{
-    events::{EventStoreQueryResponse, FlushEventStores, StoreEventRequested},
+    events::{EventStoreQueryResponse, FlushEventStores, PersistEvent},
     AggregateId, EventContextAccessors, EventLog, SequenceIndex,
 };
 use crate::{CorrelationId, Die, EventStoreQueryBy, InterfoldEvent, Seq, SeqAgg, Ts, TsAgg};
@@ -115,19 +115,6 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
         Self { stores }
     }
 
-    pub fn handle_store_event_requested(&mut self, msg: StoreEventRequested) {
-        debug!("Handling store event requested....");
-        let aggregate_id = msg.event.aggregate_id();
-        let store_addr = self.stores.get(&aggregate_id).unwrap_or_else(|| {
-            self.stores
-                .get(&AggregateId::new(0))
-                .expect("Default EventStore for AggregateId(0) not found")
-        });
-        let event = msg.event;
-        let sender = msg.sender;
-        store_addr.do_send(StoreEventRequested::new(event, sender));
-    }
-
     pub fn handle_event_store_query_ts(
         &mut self,
         msg: EventStoreQueryBy<TsAgg>,
@@ -230,11 +217,23 @@ impl<I: SequenceIndex, L: EventLog> Actor for EventStoreRouter<I, L> {
     }
 }
 
-impl<I: SequenceIndex, L: EventLog> Handler<StoreEventRequested> for EventStoreRouter<I, L> {
-    type Result = ();
+impl<I: SequenceIndex, L: EventLog> Handler<PersistEvent> for EventStoreRouter<I, L> {
+    type Result = ResponseFuture<Result<Option<InterfoldEvent>>>;
 
-    fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) -> Self::Result {
-        self.handle_store_event_requested(msg);
+    fn handle(&mut self, msg: PersistEvent, _: &mut Self::Context) -> Self::Result {
+        let aggregate_id = msg.0.aggregate_id();
+        let store = self
+            .stores
+            .get(&aggregate_id)
+            .or_else(|| self.stores.get(&AggregateId::new(0)))
+            .cloned();
+        Box::pin(async move {
+            let store = store.context("default EventStore for AggregateId(0) is missing")?;
+            store
+                .send(msg)
+                .await
+                .context("target EventStore stopped before persistence acknowledgement")?
+        })
     }
 }
 

@@ -11,6 +11,7 @@ alloy.workspace = true
 anyhow.workspace = true
 e3-ciphernode-builder.workspace = true
 e3-config.workspace = true
+e3-data.workspace = true
 e3-events.workspace = true
 e3-evm.workspace = true
 e3-logger = { workspace = true }

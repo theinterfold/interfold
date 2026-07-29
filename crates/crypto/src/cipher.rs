@@ -30,12 +30,14 @@ const ARGON2_OUTPUT_LEN: usize = 32;
 const ARGON2_ALGORITHM: Algorithm = Algorithm::Argon2id;
 const ARGON2_VERSION: Version = Version::V0x13;
 
-// AES PARAMS
-// const AES_SALT_LEN: usize = 32;
+// ENVELOPE / AES PARAMS
+const ENVELOPE_MAGIC: [u8; 4] = *b"IFC\x01";
+const KDF_SALT_LEN: usize = 32;
 const AES_NONCE_LEN: usize = 12;
 
-// TODO: Currently using a fixed salt to make encryption faster. Was ~300ms now ~30ms This should be revised.
-const APP_SALT: [u8; 32] = *b">>THE_INTERFOLD_SYS_SALT_2026!<<";
+// Read-only compatibility for ciphertext written before the versioned envelope.
+// New ciphertext never uses this global salt.
+const LEGACY_APP_SALT: [u8; 32] = *b">>THE_INTERFOLD_SYS_SALT_2026!<<";
 
 fn argon2_derive_key(
     password_bytes: &Zeroizing<Vec<u8>>,
@@ -56,7 +58,7 @@ fn argon2_derive_key(
     Ok(derived_key)
 }
 
-fn encrypt_data(derived_key: &Zeroizing<Vec<u8>>, data: &mut Vec<u8>) -> Result<Vec<u8>> {
+fn encrypt_with_key(derived_key: &Zeroizing<Vec<u8>>, data: &mut Vec<u8>) -> Result<Vec<u8>> {
     let start = Instant::now();
 
     // Generate a random nonce for AES-GCM
@@ -83,7 +85,7 @@ fn encrypt_data(derived_key: &Zeroizing<Vec<u8>>, data: &mut Vec<u8>) -> Result<
     Ok(output)
 }
 
-fn decrypt_data(derived_key: &Zeroizing<Vec<u8>>, encrypted_data: &[u8]) -> Result<Vec<u8>> {
+fn decrypt_with_key(derived_key: &Zeroizing<Vec<u8>>, encrypted_data: &[u8]) -> Result<Vec<u8>> {
     const AES_HEADER_LEN: usize = AES_NONCE_LEN;
     if encrypted_data.len() < AES_HEADER_LEN {
         return Err(anyhow!("Invalid encrypted data length"));
@@ -105,7 +107,7 @@ fn decrypt_data(derived_key: &Zeroizing<Vec<u8>>, encrypted_data: &[u8]) -> Resu
 }
 
 pub struct Cipher {
-    key: Zeroizing<Vec<u8>>,
+    password: Zeroizing<Vec<u8>>,
 }
 
 impl Cipher {
@@ -113,11 +115,8 @@ impl Cipher {
     where
         P: PasswordManager,
     {
-        // Get the key from the password manager when created
-        let key = pm.get_key().await?;
-        // Derive key using Argon2
-        let key = argon2_derive_key(&key, &APP_SALT)?;
-        Ok(Self { key })
+        let password = pm.get_key().await?;
+        Ok(Self { password })
     }
 
     pub async fn from_password(value: &str) -> Result<Self> {
@@ -134,17 +133,39 @@ impl Cipher {
 
     /// Encrypt the given data and zeroize the data after encryption
     pub fn encrypt_data(&self, data: &mut Vec<u8>) -> Result<Vec<u8>> {
-        encrypt_data(&self.key, data)
+        let mut salt = [0_u8; KDF_SALT_LEN];
+        rand::rng().fill_bytes(&mut salt);
+        let key = argon2_derive_key(&self.password, &salt)?;
+        let encrypted = encrypt_with_key(&key, data)?;
+
+        let mut envelope = Vec::with_capacity(ENVELOPE_MAGIC.len() + salt.len() + encrypted.len());
+        envelope.extend_from_slice(&ENVELOPE_MAGIC);
+        envelope.extend_from_slice(&salt);
+        envelope.extend_from_slice(&encrypted);
+        Ok(envelope)
     }
 
     pub fn decrypt_data(&self, encrypted_data: &[u8]) -> Result<Vec<u8>> {
-        decrypt_data(&self.key, encrypted_data)
+        if encrypted_data.starts_with(&ENVELOPE_MAGIC) {
+            let header_len = ENVELOPE_MAGIC.len() + KDF_SALT_LEN;
+            if encrypted_data.len() < header_len + AES_NONCE_LEN {
+                return Err(anyhow!("Invalid versioned encrypted data length"));
+            }
+            let salt = &encrypted_data[ENVELOPE_MAGIC.len()..header_len];
+            let key = argon2_derive_key(&self.password, salt)?;
+            return decrypt_with_key(&key, &encrypted_data[header_len..]);
+        }
+
+        // Lazy migration path for pre-envelope state. Any subsequent write uses
+        // a random-salt v1 envelope.
+        let legacy_key = argon2_derive_key(&self.password, &LEGACY_APP_SALT)?;
+        decrypt_with_key(&legacy_key, encrypted_data)
     }
 }
 
 impl Zeroize for Cipher {
     fn zeroize(&mut self) {
-        self.key.zeroize();
+        self.password.zeroize();
     }
 }
 
@@ -226,6 +247,28 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn same_password_uses_distinct_kdf_salts() -> Result<()> {
+        let cipher = Cipher::from_password("correct horse battery staple").await?;
+        let first = cipher.encrypt_data(&mut b"one".to_vec())?;
+        let second = cipher.encrypt_data(&mut b"two".to_vec())?;
+
+        let salt_range = ENVELOPE_MAGIC.len()..ENVELOPE_MAGIC.len() + KDF_SALT_LEN;
+        assert_eq!(&first[..ENVELOPE_MAGIC.len()], &ENVELOPE_MAGIC);
+        assert_ne!(&first[salt_range.clone()], &second[salt_range]);
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn decrypts_legacy_global_salt_ciphertext_for_migration() -> Result<()> {
+        let cipher = Cipher::from_password("legacy-password").await?;
+        let legacy_key = argon2_derive_key(&cipher.password, &LEGACY_APP_SALT)?;
+        let legacy = encrypt_with_key(&legacy_key, &mut b"legacy-state".to_vec())?;
+
+        assert_eq!(cipher.decrypt_data(&legacy)?, b"legacy-state");
+        Ok(())
+    }
+
+    #[tokio::test]
     async fn test_binary_data() -> Result<()> {
         let cipher = Cipher::from_password("test_password").await?;
 
@@ -279,8 +322,10 @@ mod tests {
 
         let mut encrypted = cipher.encrypt_data(&mut data.to_vec()).unwrap();
 
-        // Corrupt the ciphertext portion (after salt and nonce)
-        if let Some(byte) = encrypted.get_mut(AES_NONCE_LEN) {
+        // Corrupt the authenticated ciphertext portion after the envelope,
+        // salt, and nonce.
+        let ciphertext_offset = ENVELOPE_MAGIC.len() + KDF_SALT_LEN + AES_NONCE_LEN;
+        if let Some(byte) = encrypted.get_mut(ciphertext_offset) {
             *byte ^= 0xFF;
         }
 

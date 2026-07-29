@@ -11,9 +11,8 @@ SECRETS_FILE="${SECRETS_FILE:-/run/secrets/secrets.json}"
 CREDENTIAL_PROVISIONER="${CREDENTIAL_PROVISIONER:-/opt/provision-credentials.exp}"
 LEGACY_STATE_DIR="${LEGACY_STATE_DIR:-$CONFIG_DIR/.enclave}"
 CURRENT_STATE_DIR="${CURRENT_STATE_DIR:-$CONFIG_DIR/.interfold}"
-# Interfold v0.2.3 resolves a relative `key_file: key` beside a discovered
-# /data/config.yaml to this path for the default node profile.
-PASSWORD_FILE="${PASSWORD_FILE:-$CURRENT_STATE_DIR/config/_default/key}"
+PASSWORD_FILE="${PASSWORD_FILE:-/run/interfold/key}"
+LEGACY_PASSWORD_FILE="${LEGACY_PASSWORD_FILE:-$CURRENT_STATE_DIR/config/_default/key}"
 
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$1"; }
 fail() {
@@ -34,6 +33,25 @@ fi
 # Validate RPC URL (required).
 [ -n "${RPC_URL:-}" ] || fail "RPC_URL is required; set it in the DAppNode package configuration"
 [[ "$RPC_URL" =~ ^wss?:// ]] || fail "RPC_URL must be a WebSocket URL (ws:// or wss://)"
+[ -n "${CHAIN_ID:-}" ] || fail "CHAIN_ID is required; set the expected numeric RPC chain ID"
+[[ "$CHAIN_ID" =~ ^[1-9][0-9]*$ ]] || fail "CHAIN_ID must be a positive decimal integer"
+[ -n "${REORG_CONFIRMATIONS:-}" ] \
+    || fail "REORG_CONFIRMATIONS is required for non-local RPC finality"
+[[ "$REORG_CONFIRMATIONS" =~ ^[1-9][0-9]*$ ]] \
+    || fail "REORG_CONFIRMATIONS must be a positive decimal integer"
+
+for contract_var in INTERFOLD_CONTRACT CIPHERNODE_REGISTRY_CONTRACT \
+    BONDING_REGISTRY_CONTRACT SLASHING_MANAGER_CONTRACT; do
+    contract_value=${!contract_var:-}
+    [[ "$contract_value" =~ ^0x[0-9a-fA-F]{40}$ ]] \
+        || fail "$contract_var must be a 20-byte hexadecimal address"
+done
+for block_var in INTERFOLD_DEPLOY_BLOCK CIPHERNODE_REGISTRY_DEPLOY_BLOCK \
+    BONDING_REGISTRY_DEPLOY_BLOCK SLASHING_MANAGER_DEPLOY_BLOCK; do
+    block_value=${!block_var:-}
+    [[ "$block_value" =~ ^[1-9][0-9]*$ ]] \
+        || fail "$block_var must be a positive deployment block"
+done
 
 [ -r "$TEMPLATE_FILE" ] || fail "configuration template is not readable: $TEMPLATE_FILE"
 mkdir -p "$CONFIG_DIR"
@@ -52,7 +70,7 @@ migrate_legacy_state() {
         fail "both legacy and current state directories exist; refusing an ambiguous upgrade"
     fi
     if [ -d "$LEGACY_STATE_DIR" ]; then
-        log "Migrating the v0.1.8 state namespace to Interfold v0.2.3..."
+        log "Migrating the legacy state namespace to Interfold..."
         mv -- "$LEGACY_STATE_DIR" "$CURRENT_STATE_DIR" \
             || fail "could not migrate legacy state into $CURRENT_STATE_DIR"
     fi
@@ -60,11 +78,43 @@ migrate_legacy_state() {
 
 migrate_legacy_state
 
+# Move the legacy co-located password into the separately mounted secret
+# volume. Refuse ambiguity rather than guessing which key protects the state.
+if [ -e "$PASSWORD_FILE" ] && [ -e "$LEGACY_PASSWORD_FILE" ] \
+    && [ "$PASSWORD_FILE" != "$LEGACY_PASSWORD_FILE" ]; then
+    fail "both separated and legacy password files exist; refusing ambiguous credential state"
+fi
+if [ ! -e "$PASSWORD_FILE" ] && [ -f "$LEGACY_PASSWORD_FILE" ] \
+    && [ "$PASSWORD_FILE" != "$LEGACY_PASSWORD_FILE" ]; then
+    mkdir -p "$(dirname "$PASSWORD_FILE")"
+    mv -- "$LEGACY_PASSWORD_FILE" "$PASSWORD_FILE" \
+        || fail "could not separate the legacy password from encrypted node state"
+fi
+
 # Set non-secret defaults.
 export NETWORK="${NETWORK:-sepolia}"
 export QUIC_PORT="${QUIC_PORT:-37173}"
+export READINESS_PORT="${READINESS_PORT:-50506}"
+export READINESS_MIN_PEERS="${READINESS_MIN_PEERS:-1}"
+export READINESS_MAX_RPC_POLL_AGE_SECS="${READINESS_MAX_RPC_POLL_AGE_SECS:-30}"
+export READINESS_MAX_CHAIN_HEAD_AGE_SECS="${READINESS_MAX_CHAIN_HEAD_AGE_SECS:-120}"
+export READINESS_MAX_SYNC_LAG_BLOCKS="${READINESS_MAX_SYNC_LAG_BLOCKS:-2}"
+export READINESS_MAX_OUTBOX_AGE_SECS="${READINESS_MAX_OUTBOX_AGE_SECS:-300}"
+export READINESS_MAX_ACTIVE_E3_IDLE_SECS="${READINESS_MAX_ACTIVE_E3_IDLE_SECS:-1200}"
 export NODE_ADDRESS="${NODE_ADDRESS:-}"
 export LOG_LEVEL="${LOG_LEVEL:-info}"
+
+for readiness_integer in READINESS_PORT READINESS_MIN_PEERS \
+    READINESS_MAX_RPC_POLL_AGE_SECS READINESS_MAX_CHAIN_HEAD_AGE_SECS \
+    READINESS_MAX_SYNC_LAG_BLOCKS READINESS_MAX_OUTBOX_AGE_SECS \
+    READINESS_MAX_ACTIVE_E3_IDLE_SECS; do
+    [[ "${!readiness_integer}" =~ ^[0-9]+$ ]] \
+        || fail "$readiness_integer must be a non-negative decimal integer"
+done
+[ "$READINESS_PORT" -ge 1 ] && [ "$READINESS_PORT" -le 65535 ] \
+    || fail "READINESS_PORT must be between 1 and 65535"
+[ "$READINESS_MIN_PEERS" -ge 1 ] \
+    || fail "READINESS_MIN_PEERS must be greater than zero"
 
 case "$LOG_LEVEL" in
     info|debug|trace) ;;
@@ -90,7 +140,7 @@ validate_secret_file() {
         type == "object" and
         ((keys | sort == ["password", "private_key"]) or
             (keys | sort == ["network_private_key", "password", "private_key"])) and
-        (.password | type == "string" and length > 0 and length <= 1024 and
+        (.password | type == "string" and length >= 16 and length <= 1024 and
             test("^[^\\r\\n\\u0000]+$") and . == gsub("^\\s+|\\s+$"; "")) and
         (.private_key | type == "string" and test("^0x[0-9a-fA-F]{64}$")) and
         ((has("network_private_key") | not) or
@@ -125,8 +175,8 @@ configure_credentials() {
         || fail "one or more credential commands failed"
 
     # DAppNode copies fileUpload content into this container before startup.
-    # Wallet/network keys are encrypted in /data and v0.2.3 stores the password
-    # key there with mode 0400. Remove the combined plaintext upload.
+    # Wallet/network keys are encrypted in /data while the password is stored
+    # on the separate /run/interfold volume. Remove the combined plaintext upload.
     rm -f "$SECRETS_FILE"
     log "Credential setup completed."
 }

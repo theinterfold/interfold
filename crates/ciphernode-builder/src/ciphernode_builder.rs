@@ -23,24 +23,27 @@ use e3_events::{
 };
 use e3_evm::{
     fetch_accusation_vote_validity, fetch_dkg_fold_attestation_verifier, BondingRegistrySolReader,
-    CiphernodeRegistrySol, CiphernodeRegistrySolReader, EvmChainGatewayHandle, InterfoldSolReader,
-    InterfoldSolWriter, ProviderConfig, SlashingManagerSolReader, SlashingManagerSolWriter,
+    CiphernodeRegistrySol, CiphernodeRegistrySolReader, EvmChainGatewayHandle, EvmIngestionStatus,
+    EvmWriterProbe, InterfoldSolReader, InterfoldSolWriter, ProviderConfig,
+    SlashingManagerSolReader, SlashingManagerSolWriter,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
 use e3_logger::attach_protocol_logger;
-use e3_multithread::{Multithread, MultithreadReport, TaskPool};
+use e3_multithread::{Multithread, MultithreadReport, TaskPool, TaskPoolPolicy};
 use e3_net::{
     create_channel_bridge, setup_libp2p_keypair, setup_net_interface, setup_net_with_limits,
-    NetRepositoryFactory,
+    NetRepositoryFactory, NetworkAuthorizationState, NetworkTaskSupervisor, ProtocolGossipIdentity,
+    ProtocolSigner,
 };
 use e3_request::E3Router;
 use e3_request::{E3LifecycleCoordinator, E3LifecycleRepositoryFactory};
 use e3_slashing::{AccusationManagerExtension, CommitmentConsistencyCheckerExtension};
 use e3_sortition::{
-    CiphernodeSelector, CiphernodeSelectorFactory, EmitPersistedAggregatorState,
-    FinalizedCommitteeRetention, FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory,
-    Sortition, SortitionBackend, SortitionRepositoryFactory,
+    AggregatorFailoverRepositoryFactory, CiphernodeSelector, CiphernodeSelectorFactory,
+    EmitPersistedAggregatorState, FinalizedCommitteeRetention,
+    FinalizedCommitteesRepositoryFactory, NodeStateRepositoryFactory, Sortition, SortitionBackend,
+    SortitionRepositoryFactory,
 };
 use e3_sync::{preflight_schema_version, sync};
 use e3_utils::SharedRng;
@@ -48,7 +51,7 @@ use e3_zk_prover::{setup_zk_actors, ZkActorRecovery, ZkBackend};
 use libp2p::PeerId;
 use std::time::Duration;
 use std::{collections::HashMap, path::PathBuf, sync::Arc};
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 #[derive(Clone, Debug)]
 enum EventSystemType {
@@ -80,6 +83,7 @@ pub struct CiphernodeBuilder {
     multithread_cache: Option<Addr<Multithread>>,
     multithread_concurrent_jobs: Option<usize>,
     multithread_report: Option<Addr<MultithreadReport>>,
+    task_pool_policy: TaskPoolPolicy,
     proof_aggregation_enabled: bool,
     pubkey_agg: bool,
     rng: SharedRng,
@@ -149,6 +153,7 @@ impl CiphernodeBuilder {
             multithread_cache: None,
             multithread_concurrent_jobs: None,
             multithread_report: None,
+            task_pool_policy: TaskPoolPolicy::default(),
             proof_aggregation_enabled: true,
             pubkey_agg: false,
             rng,
@@ -384,6 +389,17 @@ impl CiphernodeBuilder {
         self
     }
 
+    /// Set bounded admission and hard execution deadlines for CPU work. The production policy is
+    /// fail-stop because an already-running Rayon closure cannot be safely cancelled in-process.
+    pub fn with_multithread_deadlines(
+        mut self,
+        admission_timeout: Duration,
+        execution_timeout: Duration,
+    ) -> Self {
+        self.task_pool_policy = TaskPoolPolicy::fail_stop(admission_timeout, execution_timeout);
+        self
+    }
+
     /// This will save the given number of threads from being used by the rayon threadpool
     pub fn with_max_threads_minus(mut self, threads: usize) -> Self {
         self.threads = Some(Multithread::get_max_threads_minus(threads));
@@ -572,7 +588,9 @@ impl CiphernodeBuilder {
         E3LifecycleCoordinator::attach(&bus, store.clone()).await?;
 
         // Setup EVM contract event listeners
-        let (evm_config, evm_gateways) = self.setup_evm_system(&mut provider_cache, &bus).await?;
+        let (evm_config, evm_gateways, evm_ingestion, evm_writers) = self
+            .setup_evm_system(&mut provider_cache, &bus, &repositories)
+            .await?;
 
         // Fetch on-chain ZK/slashing configuration
         let (dkg_fold_verifier_by_chain, accusation_vote_validity_by_chain) =
@@ -596,30 +614,61 @@ impl CiphernodeBuilder {
 
         // Setup networking
         let topic = "interfold-gossip";
-        let (peer_id, interface, net_kind) = self.setup_networking(&store, topic).await?;
+        let (peer_id, interface, net_kind, network_supervisor) =
+            self.setup_networking(&store, topic).await?;
+        let committees = repositories
+            .finalized_committees()
+            .read()
+            .await?
+            .unwrap_or_default();
+        let expelled = repositories
+            .ciphernode_selector()
+            .read()
+            .await?
+            .unwrap_or_default()
+            .expelled;
+        let network_authorization = NetworkAuthorizationState::new(committees, expelled);
+        let protocol_signer = ProtocolSigner::new(provider_cache.ensure_signer().await?, peer_id);
         let network_status = interface.status();
         let net_buffer = setup_net_with_limits(
             topic,
             bus.clone(),
             eventstore.ts(),
             interface,
+            ProtocolGossipIdentity::new(protocol_signer, network_authorization),
             self.max_buffered_net_events,
             self.max_buffered_net_bytes,
         )?;
 
         // Run the sync routine
         let seq_eventstore = eventstore.seq();
-        tokio::try_join!(
-            sync(
-                &bus,
-                &evm_config,
-                &repositories,
-                &aggregate_config,
-                &seq_eventstore,
-            ),
-            wait_for_evm_gateways(evm_gateways),
-            net_buffer.wait_until_running(),
-        )?;
+        {
+            let readiness = async {
+                tokio::try_join!(
+                    sync(
+                        &bus,
+                        &evm_config,
+                        &repositories,
+                        &aggregate_config,
+                        &seq_eventstore,
+                    ),
+                    wait_for_evm_gateways(evm_gateways),
+                    net_buffer.wait_until_running(),
+                )?;
+                anyhow::Ok(())
+            };
+            tokio::pin!(readiness);
+            tokio::select! {
+                biased;
+                exit = network_supervisor.wait_for_exit(), if network_supervisor.is_managed() => {
+                    let exit = exit?;
+                    anyhow::bail!("required network interface exited before node readiness: {}", exit.reason);
+                }
+                result = &mut readiness => {
+                    result?;
+                }
+            }
+        }
 
         Ok(CiphernodeHandle {
             address: addr.to_owned(),
@@ -630,8 +679,11 @@ impl CiphernodeBuilder {
             peer_id,
             net_interface: net_kind,
             network_status,
+            network_supervisor,
             eventstore,
             aggregate_ids: aggregate_config.indexed_ids(),
+            evm_ingestion,
+            evm_writers,
         })
     }
 
@@ -679,8 +731,13 @@ impl CiphernodeBuilder {
         repositories: &e3_data::Repositories,
         addr: &str,
     ) -> Result<(Addr<Sortition>, Addr<CiphernodeSelector>)> {
-        let ciphernode_selector =
-            CiphernodeSelector::attach(bus, repositories.ciphernode_selector(), addr).await?;
+        let ciphernode_selector = CiphernodeSelector::attach(
+            bus,
+            repositories.ciphernode_selector(),
+            repositories.aggregator_failover(),
+            addr,
+        )
+        .await?;
         let committees_repo = repositories.finalized_committees();
         let mut committees = committees_repo.read().await?.unwrap_or_default();
         let lifecycle = repositories
@@ -713,7 +770,13 @@ impl CiphernodeBuilder {
         &self,
         provider_cache: &mut ProviderCache<WriteEnabled>,
         bus: &BusHandle,
-    ) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
+        repositories: &e3_data::Repositories,
+    ) -> Result<(
+        EvmEventConfig,
+        Vec<EvmChainGatewayHandle>,
+        Vec<EvmIngestionStatus>,
+        Vec<EvmWriterProbe>,
+    )> {
         setup_evm_system(
             &self.chains,
             provider_cache,
@@ -721,6 +784,7 @@ impl CiphernodeBuilder {
             &self.contract_components,
             self.pubkey_agg,
             self.max_buffered_evm_events,
+            repositories,
         )
         .await
     }
@@ -917,18 +981,23 @@ impl CiphernodeBuilder {
         &self,
         store: &e3_data::DataStore,
         topic: &str,
-    ) -> Result<(PeerId, e3_net::NetInterfaceHandle, NetInterfaceKind)> {
+    ) -> Result<(
+        PeerId,
+        e3_net::NetInterfaceHandle,
+        NetInterfaceKind,
+        NetworkTaskSupervisor,
+    )> {
         if let Some(ref net_config) = self.net_config {
             let repositories = store.repositories();
             let keypair = setup_libp2p_keypair(repositories.libp2p_keypair(), &self.cipher).await?;
             let peer_id = keypair.peer_id();
-            let interface = setup_net_interface(
+            let (interface, supervisor) = setup_net_interface(
                 topic,
                 keypair,
                 net_config.peers.clone(),
                 net_config.quic_port,
             )?;
-            Ok((peer_id, interface, NetInterfaceKind::Libp2p))
+            Ok((peer_id, interface, NetInterfaceKind::Libp2p, supervisor))
         } else {
             let (interface, channel_bridge) = create_channel_bridge();
             let peer_id = PeerId::random();
@@ -936,6 +1005,7 @@ impl CiphernodeBuilder {
                 peer_id,
                 interface,
                 NetInterfaceKind::ChannelBridge(channel_bridge),
+                NetworkTaskSupervisor::external(),
             ))
         }
     }
@@ -951,7 +1021,7 @@ impl CiphernodeBuilder {
             let pool_threads = self.threads.unwrap_or(1);
             let concurrent_jobs = self.multithread_concurrent_jobs.unwrap_or(1);
             let pool_threads = concurrent_jobs.min(pool_threads).max(1);
-            Multithread::create_taskpool(pool_threads, concurrent_jobs)
+            TaskPool::new_with_policy(pool_threads, concurrent_jobs, self.task_pool_policy)
         });
 
         let addr = if let Some(ref backend) = self.zk_backend {
@@ -1000,13 +1070,20 @@ fn parse_env_u64(name: &str, default_val: u64) -> u64 {
 
 /// Validate chain ID matches expected configuration
 fn validate_chain_id(chain: &ChainConfig, actual_chain_id: u64) -> Result<()> {
-    if let Some(expected_chain_id) = chain.chain_id {
-        if actual_chain_id != expected_chain_id {
-            return Err(anyhow::anyhow!(
-                "Chain '{}' validation failed: expected chain_id {}, but provider returned chain_id {}",
-                chain.name, expected_chain_id, actual_chain_id
-            ));
-        }
+    let expected_chain_id = chain.chain_id.ok_or_else(|| {
+        anyhow::anyhow!(
+            "Chain '{}' is enabled but has no chain_id; set the expected chain ID explicitly so \
+             the RPC endpoint cannot silently bind this node to a different chain",
+            chain.name
+        )
+    })?;
+    if actual_chain_id != expected_chain_id {
+        return Err(anyhow::anyhow!(
+            "Chain '{}' validation failed: expected chain_id {}, but provider returned chain_id {}",
+            chain.name,
+            expected_chain_id,
+            actual_chain_id
+        ));
     }
     Ok(())
 }
@@ -1025,12 +1102,18 @@ fn create_aggregate_delays(
     let mut delays = HashMap::new();
 
     for (chain, actual_chain_id) in chain_providers.iter().cloned() {
-        // Validate chain_id if specified in configuration
+        // Bind every enabled configuration to its intended RPC chain.
         validate_chain_id(&chain, actual_chain_id)?;
 
         // Add delay if configured
         let (aggregate_id, delay_us) = create_aggregate_delay(&chain, actual_chain_id);
-        delays.insert(aggregate_id, delay_us);
+        if delays.insert(aggregate_id, delay_us).is_some() {
+            anyhow::bail!(
+                "Duplicate enabled chain_id {actual_chain_id}: chain '{}' would overwrite an \
+                 existing aggregate configuration",
+                chain.name
+            );
+        }
     }
 
     Ok(delays)
@@ -1043,12 +1126,26 @@ async fn setup_evm_system(
     contract_components: &ContractComponents,
     pubkey_agg: bool,
     max_buffered_evm_events: usize,
-) -> Result<(EvmEventConfig, Vec<EvmChainGatewayHandle>)> {
+    repositories: &e3_data::Repositories,
+) -> Result<(
+    EvmEventConfig,
+    Vec<EvmChainGatewayHandle>,
+    Vec<EvmIngestionStatus>,
+    Vec<EvmWriterProbe>,
+)> {
     let mut evm_config = EvmEventConfig::new();
     let mut gateways = Vec::new();
+    let mut ingestion_statuses = Vec::new();
+    let mut writer_probes = Vec::new();
     for chain in chains.iter().filter(|chain| chain.enabled.unwrap_or(true)) {
         let provider = provider_cache.ensure_read_provider(chain).await?;
         let chain_id = provider.chain_id();
+        let expected_chain_id = chain.chain_id.ok_or_else(|| {
+            anyhow::anyhow!(
+                "enabled chain '{}' has no expected chain_id for readiness",
+                chain.name
+            )
+        })?;
         evm_config.insert(chain_id, chain.try_into()?);
 
         let rpc_url = chain.rpc_url()?;
@@ -1057,13 +1154,21 @@ async fn setup_evm_system(
 
         let mut system = EvmSystemChainBuilder::new(bus, &provider);
         system
+            .with_chain_identity(chain.name.clone(), expected_chain_id)
             .with_provider_factory(provider_factory)
             .with_buffer_limit(max_buffered_evm_events);
 
         if contract_components.interfold {
             let write_provider = provider_cache.ensure_write_provider(chain).await?;
             let contract = &chain.contracts.interfold;
-            InterfoldSolWriter::attach(bus, write_provider.clone(), contract.address()?);
+            let writer = InterfoldSolWriter::attach(
+                bus,
+                write_provider.clone(),
+                contract.address()?,
+                repositories,
+            )
+            .await?;
+            writer_probes.push(EvmWriterProbe::new(writer.recipient()));
             system.with_contract(contract.address()?, move |next| {
                 InterfoldSolReader::setup(&next).recipient()
             });
@@ -1091,30 +1196,30 @@ async fn setup_evm_system(
                 CiphernodeRegistrySolReader::setup(&next).recipient()
             });
 
-            // TODO: Should we not let this pass and just use '?'?
-            // Above if we include interfold in the config and we don't have a wallet it will fail
-            match provider_cache
+            let write_provider =
+                provider_cache
                     .ensure_write_provider(chain)
                     .await
-                {
-                    Ok(write_provider) => {
-                        CiphernodeRegistrySol::attach_writer(
-                            bus,
-                            write_provider.clone(),
-                            contract.address()?,
-                        );
-                        info!("CiphernodeRegistrySolWriter attached for publishing committees");
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "CiphernodeRegistry writer is required for enabled chain '{}': {e}",
+                            chain.name
+                        )
+                    })?;
+            let writer = CiphernodeRegistrySol::attach_writer(
+                bus,
+                write_provider.clone(),
+                contract.address()?,
+                repositories,
+            )
+            .await?;
+            writer_probes.push(EvmWriterProbe::new(writer.recipient()));
+            info!("CiphernodeRegistrySolWriter attached for publishing committees");
 
-                        if pubkey_agg {
-                            info!("Attaching CommitteeFinalizer for score sortition");
-                            CommitteeFinalizer::attach(bus);
-                        }
-                    }
-                    Err(e) => error!(
-                        "Failed to create write provider (likely no wallet configured), skipping writer attachment: {}",
-                        e
-                    )
-                }
+            if pubkey_agg {
+                info!("Attaching CommitteeFinalizer for score sortition");
+                CommitteeFinalizer::attach(bus);
+            }
         }
 
         if contract_components.slashing_manager {
@@ -1131,35 +1236,41 @@ async fn setup_evm_system(
                 SlashingManagerSolReader::setup(&next).recipient()
             });
 
-            // Writer: submit proposeSlash transactions
-            match provider_cache.ensure_write_provider(chain).await {
-                Ok(write_provider) => {
-                    match SlashingManagerSolWriter::attach(
-                        bus,
-                        write_provider.clone(),
-                        contract_addr,
-                    )
+            // Writer: submit proposeSlash transactions. This is a required component whenever
+            // slashing is enabled; partial startup would advertise readiness without a fault path.
+            let write_provider =
+                provider_cache
+                    .ensure_write_provider(chain)
                     .await
-                    {
-                        Ok(_) => {
-                            info!("SlashingManagerSolWriter attached for fault submission");
-                        }
-                        Err(e) => {
-                            error!("Failed to attach SlashingManagerSolWriter, skipping: {}", e)
-                        }
-                    }
-                }
-                Err(e) => error!(
-                    "Failed to create write provider for SlashingManager, skipping: {}",
-                    e
-                ),
-            }
+                    .map_err(|e| {
+                        anyhow::anyhow!(
+                            "SlashingManager writer is required for enabled chain '{}': {e}",
+                            chain.name
+                        )
+                    })?;
+            let writer = SlashingManagerSolWriter::attach(
+                bus,
+                write_provider.clone(),
+                contract_addr,
+                repositories,
+            )
+            .await
+            .map_err(|e| {
+                anyhow::anyhow!(
+                    "Failed to attach required SlashingManager writer for chain '{}': {e}",
+                    chain.name
+                )
+            })?;
+            writer_probes.push(EvmWriterProbe::new(writer.recipient()));
+            info!("SlashingManagerSolWriter attached for fault submission");
         }
 
-        gateways.push(system.build_with_readiness());
+        let (gateway, ingestion_status) = system.build_with_readiness();
+        gateways.push(gateway);
+        ingestion_statuses.push(ingestion_status);
     }
 
-    Ok((evm_config, gateways))
+    Ok((evm_config, gateways, ingestion_statuses, writer_probes))
 }
 
 async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<()> {
@@ -1174,7 +1285,7 @@ async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<(
 
 #[cfg(test)]
 mod tests {
-    use super::create_aggregate_delay;
+    use super::{create_aggregate_delay, create_aggregate_delays, validate_chain_id};
     use e3_config::{
         chain_config::ChainConfig,
         contract::{Contract, ContractAddresses},
@@ -1219,5 +1330,36 @@ mod tests {
         let (_, delay) = create_aggregate_delay(&chain_with_finalization_ms(None), 1);
 
         assert_eq!(delay, Duration::ZERO);
+    }
+
+    #[test]
+    fn enabled_chain_requires_an_explicit_chain_id() {
+        let mut chain = chain_with_finalization_ms(None);
+        chain.chain_id = None;
+
+        let error = validate_chain_id(&chain, 1).unwrap_err();
+
+        assert!(error.to_string().contains("has no chain_id"));
+    }
+
+    #[test]
+    fn rpc_chain_must_match_the_configured_chain_id() {
+        let chain = chain_with_finalization_ms(None);
+
+        let error = validate_chain_id(&chain, 2).unwrap_err();
+
+        assert!(error.to_string().contains("expected chain_id 1"));
+        assert!(error.to_string().contains("returned chain_id 2"));
+    }
+
+    #[test]
+    fn duplicate_actual_chain_ids_are_rejected() {
+        let first = chain_with_finalization_ms(Some(10));
+        let mut second = chain_with_finalization_ms(Some(20));
+        second.name = "duplicate".to_owned();
+
+        let error = create_aggregate_delays(&[(first, 1), (second, 1)]).unwrap_err();
+
+        assert!(error.to_string().contains("Duplicate enabled chain_id 1"));
     }
 }

@@ -9,9 +9,9 @@ repository = "https://github.com/theinterfold/interfold/crates/net"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+alloy = { workspace = true }
 async-trait = { workspace = true }
 bincode = { workspace = true }
-bloom = { workspace = true }
 chrono = { workspace = true }
 derivative = { workspace = true }
 futures = { workspace = true }

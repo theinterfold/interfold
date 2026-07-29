@@ -6,6 +6,13 @@ concurrency:
 
 on:
   workflow_dispatch:
+  workflow_call:
+    inputs:
+      release_candidate:
+        description: Run every release-critical CI job for the caller's exact commit.
+        required: false
+        type: boolean
+        default: false
   pull_request:
     branches:
       - main
@@ -29,6 +36,30 @@ permissions:
   packages: write
 
 jobs:
+  dappnode_hardening:
+    timeout-minutes: 5
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Install test dependencies
+        run: sudo apt-get update -y && sudo apt-get install -y jq
+
+      - name: Test DAppNode packaging hardening
+        run: ./dappnode/tests/test-hardening.sh
+
+      - name: Test immutable release inputs
+        run: ./scripts/check-release-reproducibility.sh
+
+      - name: Test atomic release promotion graph
+        run: ./scripts/check-release-promotion.sh
+
+      - name: Test protected release candidate ancestry
+        run: ./scripts/test-release-candidate-ancestry.sh
+
+      - name: Test idempotent NPM publication recovery
+        run: ./scripts/test-publish-npm-idempotent.sh
+
   detect_changes:
     timeout-minutes: 5
     runs-on: 'ubuntu-latest'
@@ -53,6 +84,7 @@ jobs:
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
       - uses: dorny/paths-filter@6852f92c20ea7fd3b0c25de3b5112db3a98da050 # v3
+        if: ${{ !inputs.release_candidate }}
         id: filter
         with:
           filters: |
@@ -95,7 +127,7 @@ jobs:
           INTEGRATION="${{ steps.filter.outputs.integration_tests }}"
           DOCKER="${{ steps.filter.outputs.docker }}"
           CI="${{ steps.filter.outputs.ci }}"
-          FORCE="${{ github.event_name == 'workflow_dispatch' }}"
+          FORCE="${{ github.event_name == 'workflow_dispatch' || inputs.release_candidate }}"
 
           any() { for v in "$@"; do [ "$v" = "true" ] && echo "true" && return; done; echo "false"; }
 
@@ -112,7 +144,7 @@ jobs:
           echo "net=$(any $FORCE $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "init=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CI)" >> $GITHUB_OUTPUT
           echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $SDK $CI)" >> $GITHUB_OUTPUT
-          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
+          echo "build_circuits=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "zk_prover_integration=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP $CI)" >> $GITHUB_OUTPUT
@@ -167,6 +199,13 @@ jobs:
 
       - name: Run Unit Tests
         run: 'cargo test --lib && cargo test --doc'
+
+      - name: Reject ignored Rust tests
+        run: |
+          if rg --pcre2 --line-number '#\s*\[\s*ignore\b' crates --glob '*.rs'; then
+            echo 'Release-critical Rust tests may not be ignored.' >&2
+            exit 1
+          fi
 
       - name: Cancel workflow on failure
         if: failure()
@@ -228,9 +267,20 @@ jobs:
 
       - name: Run Integration Tests
         env:
-          CIPHERNODE_SKIP_PROOF_AGGREGATION: 'true'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
-        run: 'cargo test --test integration -- --nocapture'
+          BENCHMARK_SUMMARY_OUTPUT: ${{ github.workspace }}/proof-integration/integration_summary.json
+        run: |
+          mkdir -p proof-integration
+          cargo test --test integration -- --nocapture
+          test -s proof-integration/integration_summary.json
+
+      - name: Upload real proof-aggregation result
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: proof-aggregation-summary
+          path: proof-integration/integration_summary.json
+          retention-days: 1
+          if-no-files-found: error
 
   zk_prover_integration:
     needs: [detect_changes]
@@ -486,6 +536,8 @@ jobs:
         run: 'pnpm install --frozen-lockfile'
 
       - name: 'Run prebuild'
+        env:
+          CIPHERNODE_SKIP_PROOF_AGGREGATION: 'false'
         run: 'pnpm test:integration prebuild'
 
       - name: 'Verify build artifacts exist'
@@ -493,6 +545,7 @@ jobs:
           echo "Checking for build artifacts:"
           ls -la target/debug/fake_encrypt || echo "fake_encrypt not found"
           ls -la target/debug/pack_e3_params || echo "pack_e3_params not found"
+          test -s tests/integration/.interfold/noir/circuits/insecure-512/minimum/default/recursive_aggregation/decryption_aggregator/decryption_aggregator.json
 
       - name: 'Upload build artifacts'
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -910,7 +963,9 @@ jobs:
         run: bb --version
 
       - name: Check formatting
-        run: ./scripts/lint-circuits.sh
+        run: |
+          nargo --version
+          ./scripts/lint-circuits.sh
 
       - name: Test Noir circuits
         run: ./scripts/test-circuits.sh
@@ -949,6 +1004,60 @@ jobs:
         run: gh run cancel ${{ github.run_id }}
         env:
           GH_TOKEN: ${{ github.token }}
+
+  proof_aggregation_integration:
+    needs: [detect_changes, rust_integration_tests, build_circuits]
+    if: >-
+      always() && needs.detect_changes.outputs.rust_integration_tests == 'true' && needs.detect_changes.outputs.build_circuits == 'true' &&
+      needs.rust_integration_tests.result == 'success' && needs.build_circuits.result == 'success'
+    timeout-minutes: 20
+    runs-on: 'ubuntu-latest'
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: pnpm-setup
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+
+      - name: Setup node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Download real folded proofs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: proof-aggregation-summary
+          path: proof-integration/
+
+      - name: Download source-aligned circuit artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: compiled-circuits
+          path: circuits/bin/
+
+      - name: Require real folded proof verification
+        working-directory: packages/interfold-contracts
+        env:
+          REQUIRE_BFV_PROOF_INTEGRATION: '1'
+          BFV_VK_BINDING_FOLDED_ARTIFACTS: ${{ github.workspace }}/proof-integration/integration_summary.json
+        run: |
+          test -s "$BFV_VK_BINDING_FOLDED_ARTIFACTS"
+          pnpm hardhat test test/BfvVkBindingIntegration.spec.ts | tee "$RUNNER_TEMP/bfv-proof-integration.log"
+          if rg --pcre2 --line-number '\b[1-9][0-9]* pending\b' "$RUNNER_TEMP/bfv-proof-integration.log"; then
+            echo 'Required proof integration tests were skipped.' >&2
+            exit 1
+          fi
+
+      - name: Publish proof-aggregation coverage
+        run: |
+          echo '## Proof aggregation integration' >> "$GITHUB_STEP_SUMMARY"
+          echo '✅ Full Rust DKG/decryption aggregation and on-chain folded proof verification passed; no artifact skip was permitted.' >> "$GITHUB_STEP_SUMMARY"
+          echo 'Skip counts: 0 ignored Rust tests; 0 pending verifier tests.' >> "$GITHUB_STEP_SUMMARY"
 
   zk_prover_e2e:
     needs: [detect_changes, build_circuits]

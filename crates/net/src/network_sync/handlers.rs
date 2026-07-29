@@ -148,32 +148,53 @@ impl Handler<IncomingRequest> for NetSyncManager {
 
 /// Receive Events from EventStore
 impl Handler<EventStoreQueryResponse> for NetSyncManager {
-    type Result = ();
+    type Result = ResponseFuture<()>;
     fn handle(&mut self, msg: EventStoreQueryResponse, _: &mut Self::Context) -> Self::Result {
         let response_id = msg.id();
         let is_rebroadcast = self.rebroadcast_query_ids.remove(&response_id);
-        trap(EType::Net, &self.bus.clone(), || {
-            let events = match msg.into_events() {
-                Ok(events) => events,
-                Err(error) => {
-                    if !is_rebroadcast {
-                        if let Some(pending) = self.requests.remove(&response_id) {
+        let events = match msg.into_events() {
+            Ok(events) => events,
+            Err(error) => {
+                if !is_rebroadcast {
+                    if let Some(pending) = self.requests.remove(&response_id) {
+                        if let Err(response_error) =
                             pending.responder.respond(ProtocolResponse::Error(
                                 "historical sync storage unavailable".to_string(),
-                            ))?;
+                            ))
+                        {
+                            self.bus.err(EType::Net, response_error);
                         }
                     }
-                    return Err(error);
                 }
-            };
-
-            // Post-restart re-broadcast response (own forwardable artifacts) — handled separately from
-            // peer sync-request responses.
-            if is_rebroadcast {
-                self.handle_rebroadcast_response(events);
-                return Ok(());
+                self.bus.err(EType::Net, error);
+                return Box::pin(async {});
             }
+        };
 
+        // Post-restart re-broadcast response (own forwardable artifacts) — handled separately from
+        // peer sync-request responses. Await bounded-channel capacity so none are dropped.
+        if is_rebroadcast {
+            let tx = self.tx.clone();
+            let topic = self.topic.clone();
+            let signer = self.protocol_signer.clone();
+            let authorization = self.protocol_authorization.clone();
+            let bus = self.bus.clone();
+            return Box::pin(async move {
+                if let Err(error) = NetSyncManager::rebroadcast_own_artifacts(
+                    tx,
+                    topic,
+                    signer,
+                    authorization,
+                    events,
+                )
+                .await
+                {
+                    bus.err(EType::Net, error);
+                }
+            });
+        }
+
+        trap(EType::Net, &self.bus.clone(), || {
             info!("Received response from eventstore.");
             let Some(pending) = self.requests.remove(&response_id) else {
                 bail!("responder not found for {response_id}");
@@ -186,7 +207,8 @@ impl Handler<EventStoreQueryResponse> for NetSyncManager {
             }
 
             Ok(())
-        })
+        });
+        Box::pin(async {})
     }
 }
 

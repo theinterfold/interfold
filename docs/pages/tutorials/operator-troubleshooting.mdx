@@ -218,6 +218,11 @@ node:
 Then open `http://localhost:8080` to see live events, filter by E3 ID or severity, and inspect error
 details.
 
+For automation, query `/health/ready`, not `/health/live`. A `503` response includes the failed
+schema, disk, EventStore, peer, chain, writer/outbox, or active-E3 gate. Follow the
+[Protocol Readiness Runbook](/ciphernode-operators/readiness-runbook) before returning the node to
+service.
+
 ---
 
 ## Still Stuck?

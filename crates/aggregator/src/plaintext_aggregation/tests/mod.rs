@@ -107,6 +107,10 @@ fn generating_c7_state() -> ThresholdPlaintextAggregatorState {
 }
 
 fn collecting_state() -> ThresholdPlaintextAggregatorState {
+    collecting_state_with_deadline(u64::MAX)
+}
+
+fn collecting_state_with_deadline(deadline_unix_ms: u64) -> ThresholdPlaintextAggregatorState {
     ThresholdPlaintextAggregatorState::Collecting(Collecting {
         threshold_m: 1,
         threshold_n: 2,
@@ -115,13 +119,29 @@ fn collecting_state() -> ThresholdPlaintextAggregatorState {
         seed: Seed([0u8; 32]),
         ciphertext_output: vec![ArcBytes::from_bytes(&[9])],
         params: test_params(),
+        deadline_unix_ms,
+        timeout_context: test_ctx(E3Failed {
+            e3_id: E3id::new("42", 1),
+            failed_at_stage: E3Stage::CiphertextReady,
+            reason: FailureReason::None,
+        }),
     })
+}
+
+#[test]
+fn collection_timeout_uses_only_remaining_absolute_budget() {
+    assert_eq!(
+        remaining_collection_timeout(1_500, 1_000),
+        Duration::from_millis(500)
+    );
+    assert_eq!(remaining_collection_timeout(999, 1_000), Duration::ZERO);
 }
 
 fn start_sortition(bus: &BusHandle) -> Addr<Sortition> {
     let selector = CiphernodeSelector::new(
         bus,
         test_persistable(CiphernodeSelectorState::default()),
+        test_persistable(Default::default()),
         "node-1",
     )
     .start();

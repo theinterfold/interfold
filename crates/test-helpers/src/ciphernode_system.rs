@@ -405,8 +405,11 @@ mod tests {
             peer_id: PeerId::random(),
             net_interface: NetInterfaceKind::Libp2p,
             network_status: NetworkStatus::default(),
+            network_supervisor: e3_net::NetworkTaskSupervisor::external(),
             eventstore,
             aggregate_ids: vec![],
+            evm_ingestion: vec![],
+            evm_writers: vec![],
         })
     }
 

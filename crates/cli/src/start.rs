@@ -10,7 +10,7 @@ use crate::{
     cli::{Cli, RemoteCli},
     owo,
 };
-use anyhow::Result;
+use anyhow::{bail, Result};
 use e3_ciphernode_builder::CiphernodeHandle;
 use e3_config::AppConfig;
 use e3_console::Console;
@@ -30,12 +30,10 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
     owo();
 
     // Cross-host fence: ensure only one instance runs against this data directory.
-    // Acquired *before* binding the control port or spawning background work so a second
-    // instance fails fast instead of racing on the shared data directory.
+    // Acquired before spawning background work so a second instance fails fast
+    // instead of racing on the shared data directory.
     // Held for the lifetime of this function (the running process); released on exit.
     let _fence = e3_entrypoint::fence::ProcessFence::acquire(&config.db_file(), &config.name())?;
-
-    launch_socket_server(config.ctrl_port());
 
     let node = tokio::select! {
         // build the ciphernode and if it completes first return the result
@@ -46,6 +44,10 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
             return Ok(());
         }
     }?;
+
+    // A listening control socket is a service-availability signal. Do not bind
+    // it until all required Ciphernode startup/readiness gates have succeeded.
+    launch_socket_server(config.ctrl_port());
 
     if let Some(dashboard_port) = config.dashboard_port() {
         let chains = node
@@ -79,6 +81,25 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
             node.aggregate_ids().to_vec(),
             node.network_status(),
             config.chains().clone(),
+            e3_dashboard::ReadinessSources::new(
+                node.store().clone(),
+                node.evm_ingestion().to_vec(),
+                node.evm_writers().to_vec(),
+                e3_dashboard::ReadinessPolicy {
+                    min_connected_peers: config.readiness_min_peers(),
+                    max_rpc_poll_age_ms: config
+                        .readiness_max_rpc_poll_age_secs()
+                        .saturating_mul(1_000),
+                    max_chain_head_age_ms: config
+                        .readiness_max_chain_head_age_secs()
+                        .saturating_mul(1_000),
+                    max_sync_lag_blocks: config.readiness_max_sync_lag_blocks(),
+                    max_outbox_age_ms: config.readiness_max_outbox_age_secs().saturating_mul(1_000),
+                    max_active_e3_idle_ms: config
+                        .readiness_max_active_e3_idle_secs()
+                        .saturating_mul(1_000),
+                },
+            ),
         );
         tokio::task::spawn_local(async move {
             if let Err(error) = e3_dashboard::start_dashboard(dashboard_port, state).await {
@@ -95,7 +116,23 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
         node.peer_id
     );
 
-    shutdown.await;
+    let network_supervisor = node.network_supervisor();
+    let network_failure = tokio::select! {
+        _ = &mut shutdown => None,
+        exit = network_supervisor.wait_for_exit(), if network_supervisor.is_managed() => {
+            Some(exit?)
+        }
+    };
+    if let Some(exit) = network_failure {
+        if let Err(shutdown_error) = graceful_shutdown(Some(node)).await {
+            error!(%shutdown_error, "Graceful cleanup after network failure also failed");
+        }
+        bail!(
+            "required network interface exited after readiness: {}",
+            exit.reason
+        );
+    }
+
     graceful_shutdown(Some(node)).await?;
 
     Ok(())

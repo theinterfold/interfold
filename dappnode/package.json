@@ -1,0 +1,7 @@
+{
+  "name": "interfold-dappnode-build",
+  "private": true,
+  "devDependencies": {
+    "@dappnode/dappnodesdk": "0.3.53"
+  }
+}

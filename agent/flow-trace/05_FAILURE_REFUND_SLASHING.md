@@ -85,7 +85,17 @@ Specific triggers:
 Runtime note: `processE3Failure()` is a permissionless cleanup path. The Rust `InterfoldSolWriter`
 may auto-submit it from any effects-enabled node on the same chain, and it must not depend on
 active-aggregator designation because failures can happen before committee finalization or while the
-current aggregator is offline.
+current aggregator is offline. The writer first persists the semantic intent, then locally signs and
+persists the exact raw transaction, nonce, and hash before RPC dispatch. It reconciles the receipt,
+payment-zero preflight, or an unknown transaction after restart; a disappeared hash rebroadcasts the
+same bytes. Slash proposals use the same durable state machine after ranked-submitter admission.
+
+Aggregator exhaustion reaches this path without an external keeper: the selector emits a durable
+`AggregatorFailoverExhausted` only after all canonical standby leases and the authoritative stage
+deadline have elapsed. Every same-chain Interfold writer persists a `markE3Failed` effect, retries
+during `FailureConditionNotMet` or the caller grace window, and relies on the contract's single-shot
+stage transition to contain overlapping submitters. The resulting confirmed `E3Failed` event then
+queues the existing permissionless `processE3Failure` refund effect below.
 
 ```
 Anyone calls: Interfold.processE3Failure(e3Id)
@@ -334,6 +344,12 @@ ProofVerificationFailed OR CommitmentConsistencyViolation event arrives
     │
     └─ 8. Check for immediate quorum (if threshold_m == 1)
 ```
+
+The accusation and vote signatures below authenticate the slashing evidence itself. In addition,
+their protocol-gossip envelopes bind the gossipsub author to a recovered EVM address. Network
+ingress checks that address against the current chain/E3 committee, expulsion state, and the event's
+declared `accuser` or `voter` before startup buffering or durable publication; replay/rate failures
+are rejected and repeated invalid authors are quarantined.
 
 #### Step 2: Incoming Accusation Handling
 

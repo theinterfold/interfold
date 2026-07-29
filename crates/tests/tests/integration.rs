@@ -20,9 +20,9 @@ use e3_events::{
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
-use e3_multithread::{Multithread, MultithreadReport, ToReport};
-use e3_net::events::{GossipData, NetEvent};
-use e3_net::NetEventTranslator;
+use e3_multithread::{Multithread, MultithreadReport, TaskPool, TaskPoolPolicy, ToReport};
+use e3_net::events::NetEvent;
+use e3_net::{Libp2pKeypair, NetEventTranslator, NetworkAuthorizationState, ProtocolSigner};
 use e3_sortition::{calculate_buffer_size, RegisteredNode, ScoreSortition, Ticket};
 use e3_test_helpers::ciphernode_system::{
     CiphernodeHistory, CiphernodeSystem, CiphernodeSystemBuilder,
@@ -39,7 +39,7 @@ use e3_zk_prover::{VersionInfo, ZkBackend};
 use fhe::bfv::PublicKey;
 use fhe_traits::{DeserializeParametrized, Serialize};
 use num_bigint::BigUint;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
@@ -779,20 +779,6 @@ pub fn save_snapshot(file_name: &str, bytes: &[u8]) {
     fs::write(format!("tests/{file_name}"), bytes).unwrap();
 }
 
-/// Compute placeholder scores for a committee.
-/// Uses ticket_id=0 for each address with the given e3_id and seed.
-fn compute_committee_scores(committee: &[String], e3_id: &E3id, seed: Seed) -> Vec<String> {
-    use e3_sortition::hash_to_score;
-    committee
-        .iter()
-        .map(|addr| {
-            let address: Address = addr.parse().unwrap();
-            let score = hash_to_score(address, 0, e3_id.clone(), seed);
-            U256::from_be_slice(&score.to_bytes_be()).to_string()
-        })
-        .collect()
-}
-
 /// Determines the committee for a given E3 request using deterministic sortition.
 ///
 /// This function runs the same sortition algorithm that the ciphernodes use internally,
@@ -1391,7 +1377,17 @@ async fn test_trbfv_actor() -> Result<()> {
     let slashing_manager_addr = benchmark_slashing_manager_address();
     let max_threadroom = Multithread::get_max_threads_minus(1);
     let pool_threads = concurrent_jobs.min(max_threadroom).max(1);
-    let task_pool = Multithread::create_taskpool(pool_threads, concurrent_jobs);
+    // Proof requests arrive in lifecycle-sized batches. Keep admission bounded by the same
+    // end-to-end budget as the DKG flow so a deliberately serial benchmark pool does not reject
+    // later work merely because earlier valid proofs are still running.
+    let task_pool = TaskPool::new_with_policy(
+        pool_threads,
+        concurrent_jobs,
+        TaskPoolPolicy::fail_stop(
+            benchmark_params.pubkey_flow_timeout,
+            Duration::from_secs(15 * 60),
+        ),
+    );
     let multithread_report = MultithreadReport::new(pool_threads, concurrent_jobs).start();
 
     // Minimal chain config for in-process benchmarks (no RPC needed).
@@ -2287,7 +2283,9 @@ async fn test_trbfv_actor() -> Result<()> {
 
 #[actix::test]
 async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
-    use e3_events::{CiphernodeSelected, InterfoldEvent, TakeEvents, Unsequenced};
+    use e3_events::{
+        CiphernodeSelected, Committee, EffectsEnabled, InterfoldEvent, TakeEvents, Unsequenced,
+    };
     use e3_net::events::GossipData;
     use e3_net::{events::NetEvent, NetEventTranslator};
     use std::sync::Arc;
@@ -2301,8 +2299,36 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
     let bus = system.handle()?.enable("test");
     let history_collector = bus.history();
     let event_rx = Arc::new(event_tx.subscribe());
-    // Pas cmd and event channels to NetEventTranslator
-    NetEventTranslator::setup(&bus, &cmd_tx, &event_rx, "my-topic");
+    // Pass command and event channels to NetEventTranslator.
+    let signer = PrivateKeySigner::random();
+    let protocol_signer = ProtocolSigner::new(signer.clone(), Libp2pKeypair::generate().peer_id());
+    let authorization = NetworkAuthorizationState::new(
+        HashMap::from([
+            (
+                E3id::new("1235", 1),
+                Committee::new(vec![signer.address().to_string()]),
+            ),
+            (
+                E3id::new("1236", 1),
+                Committee::new(vec![signer.address().to_string()]),
+            ),
+        ]),
+        HashMap::new(),
+    );
+    let translator = NetEventTranslator::setup(
+        &bus,
+        &cmd_tx,
+        &event_rx,
+        "my-topic",
+        protocol_signer,
+        authorization,
+    );
+    translator
+        .send(
+            bus.event_from(EffectsEnabled::new(), None)?
+                .into_sequenced(0),
+        )
+        .await?;
 
     // Capture messages from output on msgs vec
     let msgs: Arc<Mutex<Vec<InterfoldEventData>>> = Arc::new(Mutex::new(Vec::new()));
@@ -2319,11 +2345,13 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
                 e3_net::events::NetCommand::GossipPublish { data, .. } => Some(data),
                 _ => None,
             } {
-                if let GossipData::GossipBytes(_) = msg {
+                if let GossipData::ProtocolEvent(_) = msg {
                     let event: InterfoldEvent<Unsequenced> = msg.clone().try_into().unwrap();
-                    let (data, _) = event.split();
+                    let (data, _) = event.clone().split();
                     msgs_loop.lock().await.push(data);
-                    event_tx.send(NetEvent::GossipData(msg)).unwrap();
+                    event_tx
+                        .send(NetEvent::AuthorizedGossip(Box::new(event)))
+                        .unwrap();
                 }
             }
             // if this  manages to broadcast an event to the
@@ -2390,7 +2418,23 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
     let bus = system.handle()?.enable("test");
     let history_collector = bus.history();
 
-    NetEventTranslator::setup(&bus, &cmd_tx, &Arc::new(event_rx), "mytopic");
+    let signer = PrivateKeySigner::random();
+    let protocol_signer = ProtocolSigner::new(signer.clone(), Libp2pKeypair::generate().peer_id());
+    let authorization = NetworkAuthorizationState::new(
+        HashMap::from([(
+            E3id::new("1235", 1),
+            e3_events::Committee::new(vec![signer.address().to_string()]),
+        )]),
+        HashMap::new(),
+    );
+    NetEventTranslator::setup(
+        &bus,
+        &cmd_tx,
+        &Arc::new(event_rx),
+        "mytopic",
+        protocol_signer,
+        authorization,
+    );
 
     // Capture messages from output on msgs vec
     // Only protocol artifacts may cross the gossip trust boundary. Requests originate from the
@@ -2402,8 +2446,8 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
     };
 
     // lets send an event from the network
-    let _ = event_tx.send(NetEvent::GossipData(GossipData::GossipBytes(
-        bus.event_from(event.clone(), None)?.to_bytes()?,
+    let _ = event_tx.send(NetEvent::AuthorizedGossip(Box::new(
+        bus.event_from(event.clone(), None)?,
     )));
 
     // check the history of the event bus
@@ -2423,433 +2467,6 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
     Ok(())
 }
 
-// ============================================================================
-// Legacy Tests Pending Port to trBFV
-// ============================================================================
-
-/// Test that stopped keyshares retain their state after restart.
-/// This test needs to be ported to the new trBFV system once Sync is completed.
-// XXX: ENABLE THIS!!
-#[actix::test]
-#[ignore = "Needs to be ported to trBFV system after Sync is completed"]
-async fn test_stopped_keyshares_retain_state() -> Result<()> {
-    use e3_bfv_client::{decode_bytes_to_vec_u64, decode_plaintext_to_vec_u64};
-    use e3_data::{GetDump, InMemStore};
-    use e3_events::{EventBus, EventBusConfig, GetEvents, Shutdown, TakeEvents};
-    use e3_test_helpers::{create_random_eth_addrs, get_common_setup, simulate_libp2p_net};
-    use fhe::{
-        bfv::PublicKey,
-        mbfv::{AggregateIter, PublicKeyShare},
-    };
-    use fhe_traits::Serialize;
-    use std::time::Duration;
-    use tokio::time::sleep;
-
-    async fn setup_local_ciphernode(
-        bus: &BusHandle,
-        rng: &e3_utils::SharedRng,
-        logging: bool,
-        _addr: &str,
-        store: Option<actix::Addr<InMemStore>>,
-        cipher: &Arc<Cipher>,
-        zk_backend: ZkBackend,
-    ) -> Result<e3_ciphernode_builder::CiphernodeHandle> {
-        let mut builder = CiphernodeBuilder::new(rng.clone(), cipher.clone())
-            .with_trbfv()
-            .with_zkproof(zk_backend)
-            .with_signer(PrivateKeySigner::random())
-            .with_forked_bus(bus.event_bus())
-            .with_history_collector()
-            .with_error_collector()
-            .with_pubkey_aggregation()
-            .with_threshold_plaintext_aggregation()
-            .with_sortition_score();
-
-        if let Some(ref in_mem_store) = store {
-            builder = builder.with_in_mem_datastore(in_mem_store);
-        }
-
-        if logging {
-            builder = builder.with_logging()
-        }
-
-        let node = builder.build().await?;
-        Ok(node)
-    }
-
-    async fn create_local_ciphernodes(
-        bus: &BusHandle,
-        rng: &e3_utils::SharedRng,
-        count: u32,
-        cipher: &Arc<Cipher>,
-        zk_backend: ZkBackend,
-    ) -> Result<Vec<e3_ciphernode_builder::CiphernodeHandle>> {
-        let eth_addrs = create_random_eth_addrs(count);
-        let mut result = vec![];
-        for addr in &eth_addrs {
-            println!("Setting up eth addr: {}", addr);
-            let tuple =
-                setup_local_ciphernode(bus, rng, true, addr, None, cipher, zk_backend.clone())
-                    .await?;
-            result.push(tuple);
-        }
-        simulate_libp2p_net(&result).await;
-        Ok(result)
-    }
-
-    let (zk_backend, _zk_temp) =
-        setup_test_zk_backend(select_benchmark_params().preset_subdir).await?;
-
-    let e3_id = E3id::new("1234", 1);
-    let (rng, cn1_address, cn1_data, cn2_address, cn2_data, cipher, history, params, crpoly) = {
-        let (bus, rng, seed, params, crpoly, _, _) = get_common_setup(None)?;
-        let cipher = Arc::new(Cipher::from_password("Don't tell anyone my secret").await?);
-        let ciphernodes =
-            create_local_ciphernodes(&bus, &rng, 2, &cipher, zk_backend.clone()).await?;
-        let eth_addrs = ciphernodes.iter().map(|n| n.address()).collect::<Vec<_>>();
-
-        setup_score_sortition_environment(&bus, &eth_addrs, 1).await?;
-
-        let [cn1, cn2] = &ciphernodes.as_slice() else {
-            panic!("Not enough elements")
-        };
-
-        // Send e3request
-        bus.publish_without_context(E3Requested {
-            e3_id: e3_id.clone(),
-            threshold_m: 2,
-            threshold_n: 2,
-            seed,
-            params: ArcBytes::from_bytes(&encode_bfv_params(&params)),
-            ..E3Requested::default()
-        })?;
-
-        bus.publish_without_context(CommitteeFinalized {
-            e3_id: e3_id.clone(),
-            committee: eth_addrs.clone(),
-            scores: compute_committee_scores(&eth_addrs, &e3_id, seed),
-            chain_id: 1,
-        })?;
-
-        let history_collector = cn1.history().unwrap();
-        let error_collector = cn1.errors().unwrap();
-        let history = history_collector
-            .send(TakeEvents::<e3_events::InterfoldEvent>::new(14))
-            .await?;
-        let errors = error_collector.send(GetEvents::new()).await?;
-
-        assert_eq!(errors.len(), 0);
-
-        // SEND SHUTDOWN!
-        bus.publish_without_context(Shutdown)?;
-
-        // This is probably overkill but required to ensure that all the data is written
-        sleep(Duration::from_secs(1)).await;
-
-        // Unwrap does not matter as we are in a test
-        let cn1_dump = cn1.in_mem_store().unwrap().send(GetDump).await??;
-        let cn2_dump = cn2.in_mem_store().unwrap().send(GetDump).await??;
-
-        (
-            rng,
-            cn1.address(),
-            cn1_dump,
-            cn2.address(),
-            cn2_dump,
-            cipher,
-            history,
-            params,
-            crpoly,
-        )
-    };
-
-    let bus = EventSystem::in_mem()
-        .with_event_bus(
-            EventBus::<e3_events::InterfoldEvent>::new(EventBusConfig { deduplicate: true })
-                .start(),
-        )
-        .handle()?
-        .enable("cn2");
-    let cn1 = setup_local_ciphernode(
-        &bus,
-        &rng,
-        true,
-        &cn1_address,
-        Some(InMemStore::from_dump(cn1_data, true)?.start()),
-        &cipher,
-        zk_backend.clone(),
-    )
-    .await?;
-    let cn2 = setup_local_ciphernode(
-        &bus,
-        &rng,
-        true,
-        &cn2_address,
-        Some(InMemStore::from_dump(cn2_data, true)?.start()),
-        &cipher,
-        zk_backend.clone(),
-    )
-    .await?;
-    let history_collector = cn1.history().unwrap();
-    simulate_libp2p_net(&[cn1, cn2]).await;
-
-    println!("getting collector from cn1.6");
-
-    // get the public key from history.
-    let pubkey: PublicKey = history
-        .events
-        .iter()
-        .filter_map(|evt| match evt.get_data() {
-            InterfoldEventData::KeyshareCreated(data) => {
-                PublicKeyShare::deserialize(&data.pubkey, &params, crpoly.clone()).ok()
-            }
-            _ => None,
-        })
-        .aggregate()?;
-
-    // Publish the ciphertext
-    use e3_test_helpers::encrypt_ciphertext;
-    let raw_plaintext = vec![vec![4, 5]];
-    let (ciphertext, expected) = encrypt_ciphertext(&params, pubkey, raw_plaintext)?;
-    bus.publish_without_context(CiphertextOutputPublished {
-        ciphertext_output: ciphertext
-            .iter()
-            .map(|ct| ArcBytes::from_bytes(&ct.to_bytes()))
-            .collect(),
-        e3_id: e3_id.clone(),
-        ciphertext_commitment: [0u8; 32],
-    })?;
-
-    let history = history_collector
-        .send(TakeEvents::<e3_events::InterfoldEvent>::new(5))
-        .await?;
-
-    let actual = history
-        .events
-        .into_iter()
-        .filter_map(|e| match e.into_data() {
-            InterfoldEventData::PlaintextAggregated(data) => Some(data),
-            _ => None,
-        })
-        .collect::<Vec<_>>()
-        .first()
-        .unwrap()
-        .clone();
-
-    assert_eq!(
-        actual
-            .decrypted_output
-            .iter()
-            .map(|b| decode_bytes_to_vec_u64(b).unwrap())
-            .collect::<Vec<Vec<u64>>>(),
-        expected
-            .iter()
-            .map(|p| decode_plaintext_to_vec_u64(p).unwrap())
-            .collect::<Vec<Vec<u64>>>()
-    );
-
-    Ok(())
-}
-
-/// Test that duplicate E3 IDs work correctly with different chain IDs.
-/// This test needs to be ported to use trBFV instead of legacy keyshare.
-#[actix::test]
-#[ignore = "Needs to be ported to trBFV system"]
-async fn test_duplicate_e3_id_with_different_chain_id() -> Result<()> {
-    use e3_events::{OrderedSet, PublicKeyAggregated, TakeEvents};
-    use e3_test_helpers::{
-        create_random_eth_addrs, create_shared_rng_from_u64, get_common_setup, simulate_libp2p_net,
-    };
-    use fhe::{
-        bfv::{BfvParameters, PublicKey, SecretKey},
-        mbfv::{AggregateIter, CommonRandomPoly, PublicKeyShare},
-    };
-    use fhe_traits::Serialize;
-
-    type PkSkShareTuple = (PublicKeyShare, SecretKey, String);
-
-    async fn setup_local_ciphernode(
-        bus: &BusHandle,
-        rng: &e3_utils::SharedRng,
-        logging: bool,
-        _addr: &str,
-        store: Option<actix::Addr<e3_data::InMemStore>>,
-        cipher: &Arc<Cipher>,
-        zk_backend: ZkBackend,
-    ) -> Result<e3_ciphernode_builder::CiphernodeHandle> {
-        let mut builder = CiphernodeBuilder::new(rng.clone(), cipher.clone())
-            .with_trbfv()
-            .with_zkproof(zk_backend)
-            .with_signer(PrivateKeySigner::random())
-            .with_forked_bus(bus.event_bus())
-            .with_history_collector()
-            .with_error_collector()
-            .with_pubkey_aggregation()
-            .with_threshold_plaintext_aggregation()
-            .with_sortition_score();
-
-        if let Some(ref in_mem_store) = store {
-            builder = builder.with_in_mem_datastore(in_mem_store);
-        }
-
-        if logging {
-            builder = builder.with_logging()
-        }
-
-        let node = builder.build().await?;
-        Ok(node)
-    }
-
-    async fn create_local_ciphernodes(
-        bus: &BusHandle,
-        rng: &e3_utils::SharedRng,
-        count: u32,
-        cipher: &Arc<Cipher>,
-        zk_backend: ZkBackend,
-    ) -> Result<Vec<e3_ciphernode_builder::CiphernodeHandle>> {
-        let eth_addrs = create_random_eth_addrs(count);
-        let mut result = vec![];
-        for addr in &eth_addrs {
-            println!("Setting up eth addr: {}", addr);
-            let tuple =
-                setup_local_ciphernode(bus, rng, true, addr, None, cipher, zk_backend.clone())
-                    .await?;
-            result.push(tuple);
-        }
-        simulate_libp2p_net(&result).await;
-        Ok(result)
-    }
-
-    fn generate_pk_share(
-        params: &Arc<BfvParameters>,
-        crp: &CommonRandomPoly,
-        rng: &e3_utils::SharedRng,
-        addr: &str,
-    ) -> Result<PkSkShareTuple> {
-        let sk = SecretKey::random(params, &mut *rng.lock().unwrap());
-        let pk = PublicKeyShare::new(&sk, crp.clone(), &mut *rng.lock().unwrap())?;
-        Ok((pk, sk, addr.to_owned()))
-    }
-
-    fn generate_pk_shares(
-        params: &Arc<BfvParameters>,
-        crp: &CommonRandomPoly,
-        rng: &e3_utils::SharedRng,
-        eth_addrs: &Vec<String>,
-    ) -> Result<Vec<PkSkShareTuple>> {
-        let mut result = vec![];
-        for addr in eth_addrs {
-            result.push(generate_pk_share(params, crp, rng, addr)?);
-        }
-        Ok(result)
-    }
-
-    fn aggregate_public_key(shares: &[PkSkShareTuple]) -> Result<PublicKey> {
-        Ok(shares.iter().map(|(pk, _, _)| pk.clone()).aggregate()?)
-    }
-
-    // Setup
-    let (bus, rng, seed, params, crpoly, _, _) = get_common_setup(None)?;
-    let cipher = Arc::new(Cipher::from_password("Don't tell anyone my secret").await?);
-    let (zk_backend, _zk_temp) =
-        setup_test_zk_backend(select_benchmark_params().preset_subdir).await?;
-
-    // Setup actual ciphernodes and dispatch add events
-    let ciphernodes = create_local_ciphernodes(&bus, &rng, 3, &cipher, zk_backend.clone()).await?;
-    let eth_addrs = ciphernodes.iter().map(|tup| tup.address()).collect();
-
-    setup_score_sortition_environment(&bus, &eth_addrs, 1).await?;
-    setup_score_sortition_environment(&bus, &eth_addrs, 2).await?;
-
-    // Send the computation requested event
-    bus.publish_without_context(E3Requested {
-        e3_id: E3id::new("1234", 1),
-        threshold_m: 2,
-        threshold_n: 5,
-        seed,
-        params: ArcBytes::from_bytes(&encode_bfv_params(&params)),
-        ..E3Requested::default()
-    })?;
-
-    bus.publish_without_context(CommitteeFinalized {
-        e3_id: E3id::new("1234", 1),
-        committee: eth_addrs.clone(),
-        scores: compute_committee_scores(&eth_addrs, &E3id::new("1234", 1), seed),
-        chain_id: 1,
-    })?;
-
-    // Generate the test shares and pubkey
-    let rng_test = create_shared_rng_from_u64(42);
-    let test_pubkey = aggregate_public_key(&generate_pk_shares(
-        &params, &crpoly, &rng_test, &eth_addrs,
-    )?)?;
-    let history_collector = ciphernodes.last().unwrap().history().unwrap();
-    let history = history_collector
-        .send(TakeEvents::<e3_events::InterfoldEvent>::new(28))
-        .await?;
-
-    let actual_pubkey_agg_1 = match history.events.last().cloned().unwrap().into_data() {
-        e3_events::InterfoldEventData::PublicKeyAggregated(ev) => ev,
-        other => panic!("expected PublicKeyAggregated, got {other:?}"),
-    };
-    assert_eq!(
-        history.events.last().cloned().unwrap().into_data(),
-        PublicKeyAggregated {
-            pubkey: ArcBytes::from_bytes(&test_pubkey.to_bytes()),
-            e3_id: E3id::new("1234", 1),
-            nodes: OrderedSet::from(eth_addrs.clone()),
-            committee_addresses: actual_pubkey_agg_1.committee_addresses.clone(),
-            honest_committee_addresses: actual_pubkey_agg_1.honest_committee_addresses.clone(),
-            pk_commitment: actual_pubkey_agg_1.pk_commitment,
-            dkg_aggregator_proof: None,
-            dkg_attestation_bundle: None,
-        }
-        .into()
-    );
-
-    // Send the computation requested event
-    bus.publish_without_context(E3Requested {
-        e3_id: E3id::new("1234", 2),
-        threshold_m: 2,
-        threshold_n: 5,
-        seed,
-        params: ArcBytes::from_bytes(&encode_bfv_params(&params)),
-        ..E3Requested::default()
-    })?;
-
-    bus.publish_without_context(CommitteeFinalized {
-        e3_id: E3id::new("1234", 2),
-        committee: eth_addrs.clone(),
-        scores: compute_committee_scores(&eth_addrs, &E3id::new("1234", 2), seed),
-        chain_id: 2,
-    })?;
-
-    let test_pubkey = aggregate_public_key(&generate_pk_shares(
-        &params, &crpoly, &rng_test, &eth_addrs,
-    )?)?;
-
-    let history = history_collector
-        .send(TakeEvents::<e3_events::InterfoldEvent>::new(8))
-        .await?;
-
-    let actual_pubkey_agg_2 = match history.events.last().cloned().unwrap().into_data() {
-        e3_events::InterfoldEventData::PublicKeyAggregated(ev) => ev,
-        other => panic!("expected PublicKeyAggregated, got {other:?}"),
-    };
-    assert_eq!(
-        history.events.last().cloned().unwrap().into_data(),
-        PublicKeyAggregated {
-            pubkey: ArcBytes::from_bytes(&test_pubkey.to_bytes()),
-            e3_id: E3id::new("1234", 2),
-            nodes: OrderedSet::from(eth_addrs.clone()),
-            committee_addresses: actual_pubkey_agg_2.committee_addresses.clone(),
-            honest_committee_addresses: actual_pubkey_agg_2.honest_committee_addresses.clone(),
-            pk_commitment: actual_pubkey_agg_2.pk_commitment,
-            dkg_aggregator_proof: None,
-            dkg_attestation_bundle: None,
-        }
-        .into()
-    );
-
-    Ok(())
-}
+// The two ignored legacy-BFV scenarios that previously lived here targeted actors and message
+// shapes removed by the trBFV migration. The supported `test_trbfv_actor` lifecycle above is now
+// the release-blocking integration path; no port-pending test is silently excluded.

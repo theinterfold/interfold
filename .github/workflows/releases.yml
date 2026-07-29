@@ -2,8 +2,13 @@ name: Release
 
 permissions:
   id-token: write
+  attestations: write
   contents: write
   packages: write
+
+concurrency:
+  group: release-promotion-${{ github.repository }}
+  cancel-in-progress: false
 
 on:
   push:
@@ -16,6 +21,12 @@ env:
   SUPPORT_DOCKERFILE_PATH: crates/support/Dockerfile
   CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
   SUPPORT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/e3-support
+  NODE_VERSION: 22.23.1
+  NPM_VERSION: 11.18.0
+  RUST_TOOLCHAIN: 1.91.1
+  SOLC_VERSION: 0.8.27
+  SOLC_STATIC_LINUX_SHA256: b9977d500c17cba6f0032ca939ef98c4decf6363f19f386d05fb02f708115264
+  SOLC_MACOS_SHA256: 8c406fa5cab9bd0a175da02c652072f814c3d06205a2fd6d92bc152599a6aabb
   NOIR_TOOLCHAIN: v1.0.0-beta.16
   MNEMONIC: 'test test test test test test test test test test test junk'
   INFURA_API_KEY: 'zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz'
@@ -24,15 +35,27 @@ env:
 jobs:
   validate-and-prepare:
     name: Validate Tag and Prepare Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.get_version.outputs.version }}
       is_prerelease: ${{ steps.get_version.outputs.is_prerelease }}
+      candidate_sha: ${{ steps.verify_candidate.outputs.candidate_sha }}
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
+
+      - name: Verify immutable release inputs
+        run: ./scripts/check-release-reproducibility.sh
+
+      - name: Verify tag target is on protected main
+        id: verify_candidate
+        run: |
+          git fetch --no-tags origin \
+            +refs/heads/main:refs/remotes/origin/main
+          ./scripts/verify-release-candidate.sh \
+            "$GITHUB_REF" refs/remotes/origin/main "$GITHUB_SHA"
 
       - name: Get version from tag
         id: get_version
@@ -71,36 +94,103 @@ jobs:
             fi
           fi
 
+          for package_json in \
+            packages/interfold-config/package.json \
+            packages/interfold-contracts/package.json \
+            crates/wasm/package.json \
+            packages/interfold-sdk/package.json \
+            packages/interfold-react/package.json \
+            packages/interfold-mcp/package.json; do
+            PACKAGE_VERSION=$(node -p "require('./${package_json}').version")
+            if [ "$PACKAGE_VERSION" != "$VERSION" ]; then
+              echo "❌ $package_json version ($PACKAGE_VERSION) doesn't match tag ($VERSION)"
+              exit 1
+            fi
+          done
+
+          DAPPNODE_VERSION=$(node -p "require('./dappnode/dappnode_package.json').version")
+          DAPPNODE_UPSTREAM=$(node -p "require('./dappnode/dappnode_package.json').upstreamVersion")
+          if [ "$DAPPNODE_VERSION" != "$VERSION" ] || [ "$DAPPNODE_UPSTREAM" != "$VERSION" ]; then
+            echo "❌ DAppNode package/upstream versions must both match tag $VERSION"
+            exit 1
+          fi
+
           echo "✅ All versions match: $VERSION"
+
+  candidate-ci:
+    name: Validate Exact Release Candidate
+    needs: validate-and-prepare
+    uses: ./.github/workflows/ci.yml
+    with:
+      release_candidate: true
+    secrets: inherit
+
+  verify-ciphernode-reproducibility:
+    name: Verify reproducible ciphernode image
+    runs-on: ubuntu-24.04
+    needs: [validate-and-prepare, candidate-ci]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build twice without shared cache
+        run: |
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
+          export SOURCE_DATE_EPOCH
+          docker buildx build --no-cache \
+            --provenance=false \
+            --sbom=false \
+            --build-arg SOURCE_DATE_EPOCH \
+            --output "type=oci,dest=$RUNNER_TEMP/ciphernode-one.tar" \
+            --file crates/Dockerfile .
+          docker buildx build --no-cache \
+            --provenance=false \
+            --sbom=false \
+            --build-arg SOURCE_DATE_EPOCH \
+            --output "type=oci,dest=$RUNNER_TEMP/ciphernode-two.tar" \
+            --file crates/Dockerfile .
+
+      - name: Compare isolated OCI outputs
+        run: |
+          mkdir "$RUNNER_TEMP/ciphernode-one" "$RUNNER_TEMP/ciphernode-two"
+          tar -xf "$RUNNER_TEMP/ciphernode-one.tar" -C "$RUNNER_TEMP/ciphernode-one"
+          tar -xf "$RUNNER_TEMP/ciphernode-two.tar" -C "$RUNNER_TEMP/ciphernode-two"
+          diff --recursive --no-dereference \
+            "$RUNNER_TEMP/ciphernode-one" "$RUNNER_TEMP/ciphernode-two"
+          sha256sum "$RUNNER_TEMP/ciphernode-one/index.json" \
+            "$RUNNER_TEMP/ciphernode-two/index.json"
 
   build-ciphernode-image-release:
     name: Build & Push ciphernode (release)
-    runs-on: ubuntu-latest
-    needs: validate-and-prepare
+    runs-on: ubuntu-24.04
+    needs: [validate-and-prepare, release-candidate-gate]
     env:
       CIPHERNODE_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/ciphernode
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push ciphernode release image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: .
           file: crates/Dockerfile
           push: true
+          provenance: mode=max
+          sbom: true
           tags: |
             ${{ env.CIPHERNODE_IMAGE_NAME }}:${{ needs.validate-and-prepare.outputs.version }}
-            ${{ env.CIPHERNODE_IMAGE_NAME }}:latest
           cache-from: |
             type=gha,scope=ciphernode
           cache-to: |
@@ -108,32 +198,33 @@ jobs:
 
   build-e3-support-release:
     name: Build & Push e3-support (release)
-    runs-on: ubuntu-latest
-    needs: validate-and-prepare
+    runs-on: ubuntu-24.04
+    needs: [validate-and-prepare, release-candidate-gate]
     env:
       SUPPORT_IMAGE_NAME: ghcr.io/${{ github.repository_owner }}/e3-support
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Log in to GitHub Container Registry
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build & push e3-support release image
-        uses: docker/build-push-action@v5
+        uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
           context: ./crates/support
           file: ${{ env.SUPPORT_DOCKERFILE_PATH }}
           push: true
+          provenance: mode=max
+          sbom: true
           tags: |
             ${{ env.SUPPORT_IMAGE_NAME }}:${{ needs.validate-and-prepare.outputs.version }}
-            ${{ env.SUPPORT_IMAGE_NAME }}:latest
           cache-from: |
             type=gha,scope=e3-support
           cache-to: |
@@ -141,15 +232,15 @@ jobs:
 
   build-nix-flake:
     name: Build Nix Flake
-    runs-on: ubuntu-latest
-    needs: validate-and-prepare
+    runs-on: ubuntu-24.04
+    needs: [validate-and-prepare, candidate-ci]
     steps:
-      - uses: actions/checkout@v6
-      - uses: cachix/install-nix-action@v30
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: cachix/install-nix-action@08dcb3a5e62fa31e2da3d490afc4176ef55ecd72 # v30
         with:
           extra_nix_config: |
             experimental-features = nix-command flakes
-      - uses: cachix/cachix-action@v15
+      - uses: cachix/cachix-action@ad2ddac53f961de1989924296a1f236fcfbaa4fc # v15
         with:
           name: interfold
           authToken: '${{ secrets.CACHIX_AUTH_TOKEN }}'
@@ -163,43 +254,53 @@ jobs:
   build-binaries:
     name: Build Binaries (${{ matrix.os_name }}-${{ matrix.arch }})
     runs-on: ${{ matrix.os }}
-    needs: validate-and-prepare
+    needs: [validate-and-prepare, candidate-ci]
     strategy:
       matrix:
         include:
-          - os: ubuntu-latest
+          - os: ubuntu-24.04
             target: x86_64-unknown-linux-gnu
             os_name: linux
             arch: x86_64
-          - os: macos-latest
+          - os: macos-14
             target: aarch64-apple-darwin
             os_name: macos
             arch: aarch64
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
         with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
           targets: ${{ matrix.target }}
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
         with:
           key: ${{ matrix.target }}
 
       - name: Install solc (Linux)
-        if: matrix.os == 'ubuntu-latest'
+        if: matrix.os == 'ubuntu-24.04'
         run: |
-          sudo add-apt-repository -y ppa:ethereum/ethereum
-          sudo apt-get update
-          sudo apt-get install -y solc
+          curl --fail --show-error --silent --location \
+            --output "$RUNNER_TEMP/solc" \
+            "https://github.com/argotorg/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux"
+          echo "${SOLC_STATIC_LINUX_SHA256}  $RUNNER_TEMP/solc" | sha256sum --check --strict
+          sudo install -m 0755 "$RUNNER_TEMP/solc" /usr/local/bin/solc
+          solc --version
 
       - name: Install solc (macOS)
-        if: matrix.os == 'macos-latest'
-        run: brew install solidity
+        if: matrix.os == 'macos-14'
+        run: |
+          curl --fail --show-error --silent --location \
+            --output "$RUNNER_TEMP/solc" \
+            "https://github.com/argotorg/solidity/releases/download/v${SOLC_VERSION}/solc-macos"
+          echo "${SOLC_MACOS_SHA256}  $RUNNER_TEMP/solc" | shasum --algorithm 256 --check
+          sudo install -m 0755 "$RUNNER_TEMP/solc" /usr/local/bin/solc
+          solc --version
 
       - name: Build interfold binary
         run: cargo build --locked --release --target ${{ matrix.target }} --bin interfold
@@ -211,6 +312,7 @@ jobs:
         shell: bash
         run: |
           mkdir -p dist
+          SOURCE_DATE_EPOCH=$(git show -s --format=%ct HEAD)
 
           # Get the correct binary extension
           if [[ "${{ matrix.target }}" == *"windows"* ]]; then
@@ -219,37 +321,70 @@ jobs:
             EXT=""
           fi
 
+          create_archive() {
+            local binary=$1
+            local archive=$2
+
+            if [[ "$RUNNER_OS" == "Linux" ]]; then
+              touch --date="@$SOURCE_DATE_EPOCH" "$binary"
+              tar --format=ustar --sort=name --mtime="@$SOURCE_DATE_EPOCH" \
+                --owner=0 --group=0 --numeric-owner -cf - "$binary" | gzip -n > "$archive"
+            else
+              local touch_timestamp
+              touch_timestamp=$(date -u -r "$SOURCE_DATE_EPOCH" +%Y%m%d%H%M.%S)
+              touch -t "$touch_timestamp" "$binary"
+              COPYFILE_DISABLE=1 tar --format=ustar --uid 0 --gid 0 \
+                --uname root --gname root -cf - "$binary" | gzip -n > "$archive"
+            fi
+          }
+
           # Create interfold archive
           cp "target/${{ matrix.target }}/release/interfold${EXT}" "./interfold${EXT}"
-          tar -czf "dist/interfold-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" "interfold${EXT}"
+          create_archive "interfold${EXT}" \
+            "dist/interfold-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz"
           rm "interfold${EXT}"
 
           # Create interfoldup archive
           cp "target/${{ matrix.target }}/release/interfoldup${EXT}" "./interfoldup${EXT}"
-          tar -czf "dist/interfoldup-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz" "interfoldup${EXT}"
+          create_archive "interfoldup${EXT}" \
+            "dist/interfoldup-${{ matrix.os_name }}-${{ matrix.arch }}.tar.gz"
           rm "interfoldup${EXT}"
 
+      - name: Generate binary SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0
+        with:
+          path: dist
+          format: spdx-json
+          output-file: dist/interfold-${{ matrix.os_name }}-${{ matrix.arch }}.spdx.json
+          upload-artifact: false
+
+      - name: Attest binary provenance
+        uses: actions/attest-build-provenance@977bb373ede98d70efdf65b84cb5f73e068dcc2a # v3
+        with:
+          subject-path: dist/*
+
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: interfold-binaries-${{ matrix.os_name }}-${{ matrix.arch }}
           path: dist/
 
   publish-rust-crates:
     name: Publish Rust Crates
-    runs-on: ubuntu-latest
-    needs: validate-and-prepare
-    continue-on-error: true
+    runs-on: ubuntu-24.04
+    needs: [validate-and-prepare, release-candidate-gate, build-ciphernode-image-release, build-e3-support-release]
     # Publish ALL versions to crates.io (including pre-releases)
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
 
       - name: Cache Rust dependencies
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
 
       - name: Publish to crates.io
         env:
@@ -265,38 +400,36 @@ jobs:
           fi
 
           cargo install cargo-workspaces@0.3.6 --locked
-          cargo workspaces publish --from-git --yes
+          cargo workspaces publish --from-git --skip-published --yes
 
   publish-npm-packages:
     name: Publish NPM Packages
-    runs-on: ubuntu-latest
-    needs: validate-and-prepare
+    runs-on: ubuntu-24.04
+    needs: [validate-and-prepare, release-candidate-gate, publish-rust-crates]
     permissions:
       contents: read
       id-token: write
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
           registry-url: 'https://registry.npmjs.org'
 
-      - name: Upgrade npm
-        run: |
-          npm install -g npm@latest
-          echo "npm version: $(npm --version)"
-
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Install trusted-publishing npm CLI
+        run: npm install --global npm@${NPM_VERSION}
 
       # `pnpm build:ts` builds the SDK, whose prebuild compiles the threshold
       # circuits via `nargo` (packages/interfold-sdk/scripts/compile-circuits.sh).
       # Without nargo on PATH the build fails with "nargo is not installed".
       - name: Install Nargo
-        uses: noir-lang/noirup@v0.1.4
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
         with:
           toolchain: ${{ env.NOIR_TOOLCHAIN }}
 
@@ -321,46 +454,40 @@ jobs:
           fi
 
       - name: Publish @interfold/config
-        working-directory: packages/interfold-config
-        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+        run: ./scripts/publish-npm-idempotent.sh packages/interfold-config ${{ steps.npm_tag.outputs.tag }}
 
       - name: Publish @interfold/contracts
-        working-directory: packages/interfold-contracts
-        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+        run: ./scripts/publish-npm-idempotent.sh packages/interfold-contracts ${{ steps.npm_tag.outputs.tag }}
 
       - name: Publish @interfold/wasm
-        working-directory: crates/wasm
-        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+        run: ./scripts/publish-npm-idempotent.sh crates/wasm ${{ steps.npm_tag.outputs.tag }}
 
       - name: Publish @interfold/sdk
-        working-directory: packages/interfold-sdk
-        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+        run: ./scripts/publish-npm-idempotent.sh packages/interfold-sdk ${{ steps.npm_tag.outputs.tag }}
 
       - name: Publish @interfold/react
-        working-directory: packages/interfold-react
-        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+        run: ./scripts/publish-npm-idempotent.sh packages/interfold-react ${{ steps.npm_tag.outputs.tag }}
 
       - name: Publish @interfold/mcp
-        working-directory: packages/interfold-mcp
-        run: npm publish --access public --tag ${{ steps.npm_tag.outputs.tag }} --provenance
+        run: ./scripts/publish-npm-idempotent.sh packages/interfold-mcp ${{ steps.npm_tag.outputs.tag }}
 
   download-circuits:
     name: Download Circuit Artifacts
-    runs-on: ubuntu-latest
-    needs: validate-and-prepare
+    runs-on: ubuntu-24.04
+    needs: [validate-and-prepare, candidate-ci]
     outputs:
       found: ${{ steps.pull.outputs.found }}
       source_hash: ${{ steps.pull.outputs.source_hash }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
-          node-version: '22'
+          node-version: ${{ env.NODE_VERSION }}
 
-      - uses: pnpm/action-setup@v4
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
 
       - run: pnpm install --frozen-lockfile
 
@@ -376,6 +503,8 @@ jobs:
             echo "found=true" >> $GITHUB_OUTPUT
           else
             echo "found=false" >> $GITHUB_OUTPUT
+            echo "::error::Required circuit-artifacts branch is missing."
+            exit 1
           fi
 
       # Guard against shipping stale or wrong-layout artifacts. The `circuit-artifacts`
@@ -421,7 +550,7 @@ jobs:
           cd dist
           tar -czvf circuits-${{ needs.validate-and-prepare.outputs.version }}.tar.gz circuits/
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: steps.pull.outputs.found == 'true'
         with:
           name: noir-circuits
@@ -430,9 +559,161 @@ jobs:
             dist/circuits/SHA256SUMS
             dist/circuits/checksums.json
 
+  validate-rust-packages:
+    name: Validate Rust Package Set
+    runs-on: ubuntu-24.04
+    needs: [validate-and-prepare, candidate-ci]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # stable
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Package every publishable crate without uploading
+        run: |
+          cargo install cargo-workspaces@0.3.6 --locked
+          cargo workspaces publish --from-git --dry-run --yes
+
+  validate-npm-packages:
+    name: Validate NPM Package Set
+    runs-on: ubuntu-24.04
+    needs: [validate-and-prepare, candidate-ci]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          registry-url: 'https://registry.npmjs.org'
+
+      - uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
+
+      - name: Install trusted-publishing npm CLI
+        run: npm install --global npm@${NPM_VERSION}
+
+      - name: Install Nargo
+        uses: noir-lang/noirup@7dbe69ccc78877f0200ffa5a40836c953d2cfd8f # v0.1.4
+        with:
+          toolchain: ${{ env.NOIR_TOOLCHAIN }}
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm build:ts
+      - run: pnpm prepare-publish
+
+      - name: Dry-run every NPM package
+        run: |
+          for package_dir in \
+            packages/interfold-config \
+            packages/interfold-contracts \
+            crates/wasm \
+            packages/interfold-sdk \
+            packages/interfold-react \
+            packages/interfold-mcp; do
+            (
+              cd "$package_dir"
+              npm publish --dry-run --access public
+            )
+          done
+
+  build-dappnode-candidate:
+    name: Build DAppNode from Exact Candidate Binary
+    runs-on: ubuntu-24.04
+    needs: [validate-and-prepare, candidate-ci, build-binaries]
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          persist-credentials: false
+
+      - name: Download candidate Linux binary
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: interfold-binaries-linux-x86_64
+          path: dappnode
+
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+          cache-dependency-path: dappnode/package-lock.json
+
+      - name: Install locked DAppNode SDK
+        run: npm ci --ignore-scripts --prefix dappnode
+
+      - name: Verify candidate binary identity and readiness capability
+        id: candidate
+        run: |
+          ARCHIVE=dappnode/interfold-linux-x86_64.tar.gz
+          SHA256=$(sha256sum "$ARCHIVE" | awk '{print $1}')
+          ./dappnode/verify-candidate-binary.sh \
+            "$ARCHIVE" "${{ needs.validate-and-prepare.outputs.version }}" "$SHA256"
+          echo "sha256=$SHA256" >> "$GITHUB_OUTPUT"
+
+      - name: Build candidate DAppNode package
+        working-directory: dappnode
+        env:
+          DAPPNODE_UPSTREAM_BINARY_SHA256: ${{ steps.candidate.outputs.sha256 }}
+        run: ./node_modules/.bin/dappnodesdk build --skip-save --timeout 120min
+
+  release-candidate-gate:
+    name: Approve Fully Validated Candidate
+    runs-on: ubuntu-24.04
+    needs:
+      [
+        validate-and-prepare,
+        candidate-ci,
+        verify-ciphernode-reproducibility,
+        build-nix-flake,
+        build-binaries,
+        download-circuits,
+        validate-rust-packages,
+        validate-npm-packages,
+        build-dappnode-candidate,
+      ]
+    environment: release
+    steps:
+      - name: Record immutable candidate approval
+        run: |
+          echo "Approved release candidate ${{ needs.validate-and-prepare.outputs.candidate_sha }}"
+          echo "Version ${{ needs.validate-and-prepare.outputs.version }}"
+
+  publication-gate:
+    name: Verify Every Registry Publication
+    runs-on: ubuntu-24.04
+    needs: [build-ciphernode-image-release, build-e3-support-release, publish-rust-crates, publish-npm-packages]
+    if: ${{ always() && !cancelled() }}
+    steps:
+      - name: Require every publication to succeed
+        env:
+          CIPHERNODE_RESULT: ${{ needs.build-ciphernode-image-release.result }}
+          SUPPORT_RESULT: ${{ needs.build-e3-support-release.result }}
+          CRATES_RESULT: ${{ needs.publish-rust-crates.result }}
+          NPM_RESULT: ${{ needs.publish-npm-packages.result }}
+        run: |
+          failed=0
+          for result in \
+            "$CIPHERNODE_RESULT" \
+            "$SUPPORT_RESULT" \
+            "$CRATES_RESULT" \
+            "$NPM_RESULT"; do
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
+          if [ "$failed" != "0" ]; then
+            echo "::error::At least one required registry publication did not succeed."
+            exit 1
+          fi
+          echo "Every required registry publication succeeded for $GITHUB_SHA"
+
   create-github-release:
     name: Create GitHub Release
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     needs:
       [
         validate-and-prepare,
@@ -443,23 +724,67 @@ jobs:
         publish-npm-packages,
         download-circuits,
         build-nix-flake,
+        publication-gate,
       ]
-    if: always() && needs.validate-and-prepare.result == 'success' && needs.build-binaries.result == 'success'
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
-      - name: Download all binary artifacts
-        uses: actions/download-artifact@v4
+      - name: Download candidate binary artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
-          path: dist/
+          pattern: interfold-binaries-*
+          merge-multiple: true
+          path: dist/binaries
+
+      - name: Download candidate circuit artifacts
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: noir-circuits
+          path: dist/circuits
+
+      - name: Promote stable container aliases
+        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GitHub Container Registry
+        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Point stable container aliases at the published version
+        if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
+        run: |
+          VERSION="${{ needs.validate-and-prepare.outputs.version }}"
+          docker buildx imagetools create \
+            --tag "${CIPHERNODE_IMAGE_NAME}:latest" \
+            "${CIPHERNODE_IMAGE_NAME}:${VERSION}"
+          docker buildx imagetools create \
+            --tag "${SUPPORT_IMAGE_NAME}:latest" \
+            "${SUPPORT_IMAGE_NAME}:${VERSION}"
 
       - name: Prepare release assets
         run: |
           mkdir -p release-assets
           find dist/ -name "*.tar.gz" -exec cp {} release-assets/ \;
+          jq --null-input \
+            --arg tag "$GITHUB_REF_NAME" \
+            --arg candidateSha "${{ needs.validate-and-prepare.outputs.candidate_sha }}" \
+            --arg runId "$GITHUB_RUN_ID" \
+            --arg runAttempt "$GITHUB_RUN_ATTEMPT" \
+            --arg circuitSourceHash "${{ needs.download-circuits.outputs.source_hash }}" \
+            '{
+              tag: $tag,
+              candidateSha: $candidateSha,
+              workflowRunId: $runId,
+              workflowRunAttempt: $runAttempt,
+              circuitSourceHash: $circuitSourceHash
+            }' > release-assets/release-provenance.json
           ls -la release-assets/
 
       - name: Generate Release Notes
@@ -471,6 +796,8 @@ jobs:
           # Create release notes
           cat > release_notes.md << EOF
           ## 🚀 Release v${VERSION}
+
+          Candidate commit: \`${{ needs.validate-and-prepare.outputs.candidate_sha }}\`
 
           EOF
 
@@ -588,7 +915,7 @@ jobs:
           fi
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
         with:
           tag_name: v${{ needs.validate-and-prepare.outputs.version }}
           name: v${{ needs.validate-and-prepare.outputs.version }}
@@ -603,6 +930,12 @@ jobs:
       - name: Update stable tag (for stable releases only)
         if: needs.validate-and-prepare.outputs.is_prerelease == 'false'
         run: |
-          git tag -f stable
-          git push origin stable --force
-          echo "✅ Updated 'stable' tag to point to v${{ needs.validate-and-prepare.outputs.version }}"
+          CANDIDATE_SHA="${{ needs.validate-and-prepare.outputs.candidate_sha }}"
+          git tag -f stable "$CANDIDATE_SHA"
+          git push origin refs/tags/stable --force
+          REMOTE_STABLE=$(git ls-remote origin refs/tags/stable | awk '{print $1}')
+          if [[ "$REMOTE_STABLE" != "$CANDIDATE_SHA" ]]; then
+            echo "::error::stable resolved to $REMOTE_STABLE, expected $CANDIDATE_SHA"
+            exit 1
+          fi
+          echo "✅ Updated 'stable' tag to candidate $CANDIDATE_SHA"

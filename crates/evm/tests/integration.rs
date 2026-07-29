@@ -15,12 +15,16 @@ use alloy::{
 };
 use anyhow::Result;
 use e3_ciphernode_builder::{EventSystem, EvmSystemChainBuilder};
+use e3_data::{Repositories, Repository};
 use e3_events::{
     prelude::*, trap, BusHandle, EType, EvmEventConfig, EvmEventConfigChain, GetEvents,
     HistoricalEvmEventsReceived, HistoricalEvmSyncStart, InterfoldEvent, InterfoldEventData,
     SyncEnded, TestEvent,
 };
-use e3_evm::{helpers::EthProvider, EvmEventProcessor, EvmParser};
+use e3_evm::{
+    helpers::EthProvider, send_prepared_transaction, EvmEffectOutbox, EvmEffectOutboxState,
+    EvmEffectStatus, EvmEventProcessor, EvmParser, OutboxAdmission,
+};
 use std::{sync::Arc, time::Duration};
 use tokio::time::sleep;
 
@@ -62,6 +66,54 @@ impl TestEventParser {
 
 struct FakeSyncActor {
     bus: BusHandle,
+}
+
+#[actix::test]
+async fn prepared_transaction_is_durable_before_receipt() -> Result<()> {
+    let anvil = Anvil::new().block_time(1).try_spawn()?;
+    let provider = EthProvider::new(
+        ProviderBuilder::new()
+            .wallet(PrivateKeySigner::from_slice(&anvil.keys()[0].to_bytes())?)
+            .connect_ws(WsConnect::new(anvil.ws_endpoint()))
+            .await?,
+    )
+    .await?;
+    let contract = EmitLogs::deploy(provider.provider()).await?;
+    let repositories = Repositories::in_mem();
+    let repository: Repository<EvmEffectOutboxState<Vec<u8>>> = Repository::new(
+        repositories
+            .store
+            .scope("//test/prepared_transaction_outbox"),
+    );
+    let outbox = EvmEffectOutbox::load(repository.clone()).await?;
+    let key = "set_value/1";
+    assert_eq!(
+        outbox.admit(key.into(), b"durable".to_vec()).await?,
+        OutboxAdmission::Inserted
+    );
+
+    let request = contract
+        .setValue("durable".into())
+        .into_transaction_request();
+    let pending = send_prepared_transaction(&provider, request, &outbox, key).await?;
+
+    let reloaded = EvmEffectOutbox::load(repository).await?;
+    let EvmEffectStatus::Dispatched {
+        tx_hash,
+        raw_transaction,
+        ..
+    } = reloaded.status(key).await?
+    else {
+        anyhow::bail!("transaction was not durably marked dispatched");
+    };
+    assert_eq!(tx_hash, pending.tx_hash().as_slice());
+    assert!(!raw_transaction.is_empty());
+
+    let receipt = pending.get_receipt().await?;
+    assert!(receipt.status());
+    reloaded.mark_terminal(key).await?;
+    assert!(reloaded.pending().await.is_empty());
+    Ok(())
 }
 
 impl Actor for FakeSyncActor {

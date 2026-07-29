@@ -5,6 +5,9 @@
   "running": {
     "title": "Running a Ciphernode"
   },
+  "readiness-runbook": {
+    "title": "Protocol Readiness Runbook"
+  },
   "registration": {
     "title": "Registration & Licensing"
   },

@@ -7,6 +7,7 @@
 use e3_data::{Repositories, Repository};
 use e3_events::StoreKeys;
 
+use crate::EvmEffectOutboxState;
 use crate::EvmReadInterfaceState;
 
 pub trait EthPrivateKeyRepositoryFactory {
@@ -51,6 +52,27 @@ impl BondingRegistryReaderRepositoryFactory for Repositories {
         Repository::new(
             self.store
                 .scope(StoreKeys::bonding_registry_reader(chain_id)),
+        )
+    }
+}
+
+pub trait EvmEffectOutboxRepositoryFactory {
+    fn evm_effect_outbox<T>(
+        &self,
+        writer: &str,
+        chain_id: u64,
+    ) -> Repository<EvmEffectOutboxState<T>>;
+}
+
+impl EvmEffectOutboxRepositoryFactory for Repositories {
+    fn evm_effect_outbox<T>(
+        &self,
+        writer: &str,
+        chain_id: u64,
+    ) -> Repository<EvmEffectOutboxState<T>> {
+        Repository::new(
+            self.store
+                .scope(StoreKeys::evm_effect_outbox(writer, chain_id)),
         )
     }
 }

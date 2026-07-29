@@ -3,8 +3,19 @@ node:
   quic_port: ${QUIC_PORT}
 chains:
   - name: 'sepolia'
+    chain_id: 11155111
+    reorg_confirmations: 64
     rpc_url: '${RPC_URL}'
     contracts:
-      interfold: '${SEPOLIA_INTERFOLD_ADDRESS}'
-      ciphernode_registry: '${SEPOLIA_CIPHERNODE_REGISTRY_ADDRESS}'
-      bonding_registry: '${SEPOLIA_BONDING_REGISTRY}'
+      interfold:
+        address: '${SEPOLIA_INTERFOLD_ADDRESS}'
+        deploy_block: ${SEPOLIA_INTERFOLD_DEPLOY_BLOCK}
+      ciphernode_registry:
+        address: '${SEPOLIA_CIPHERNODE_REGISTRY_ADDRESS}'
+        deploy_block: ${SEPOLIA_CIPHERNODE_REGISTRY_DEPLOY_BLOCK}
+      bonding_registry:
+        address: '${SEPOLIA_BONDING_REGISTRY}'
+        deploy_block: ${SEPOLIA_BONDING_REGISTRY_DEPLOY_BLOCK}
+      slashing_manager:
+        address: '${SEPOLIA_SLASHING_MANAGER_ADDRESS}'
+        deploy_block: ${SEPOLIA_SLASHING_MANAGER_DEPLOY_BLOCK}

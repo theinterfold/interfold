@@ -49,8 +49,18 @@ pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
 
     let reserve = config.multithread_reserve_threads();
     let concurrent_jobs = config.multithread_concurrent_jobs();
+    let admission_timeout = Duration::from_secs(config.multithread_admission_timeout_secs());
+    let execution_timeout = Duration::from_secs(config.multithread_execution_timeout_secs());
+    anyhow::ensure!(
+        !admission_timeout.is_zero(),
+        "multithread_admission_timeout_secs must be positive"
+    );
+    anyhow::ensure!(
+        !execution_timeout.is_zero(),
+        "multithread_execution_timeout_secs must be positive"
+    );
     info!(
-        "Ciphernode multithread: reserve_threads={reserve}, concurrent_jobs={}",
+        "Ciphernode multithread: reserve_threads={reserve}, concurrent_jobs={}, admission_timeout={admission_timeout:?}, execution_timeout={execution_timeout:?}",
         concurrent_jobs
             .map(|n| n.to_string())
             .unwrap_or_else(|| "auto (CPUs - reserve)".to_string())
@@ -71,6 +81,7 @@ pub async fn execute(config: &AppConfig) -> Result<CiphernodeHandle> {
         .with_contract_interfold_full()
         .with_contract_bonding_registry()
         .with_multithread_config(reserve, concurrent_jobs)
+        .with_multithread_deadlines(admission_timeout, execution_timeout)
         .with_max_buffered_evm_events(config.max_buffered_evm_events())
         .with_network_buffer_limits(
             config.max_buffered_net_events(),

@@ -16,6 +16,10 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use crate::PROTOCOL_GOSSIP_REPLAY_WINDOW_SECS;
+
+const PROTOCOL_AUTHENTICATION_TTL_MS: u64 = PROTOCOL_GOSSIP_REPLAY_WINDOW_SECS * 1_000;
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct ConnectedPeer {
     pub peer_id: String,
@@ -25,10 +29,20 @@ pub struct ConnectedPeer {
     pub connected_at_ms: u64,
 }
 
+/// A connected transport peer that recently passed protocol-level EVM and committee checks.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct AuthenticatedPeer {
+    pub peer_id: String,
+    pub signer: String,
+    pub e3_id: String,
+    pub authenticated_at_ms: u64,
+}
+
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
 pub struct NetworkSnapshot {
     pub configured_peers: usize,
     pub connected_peers: Vec<ConnectedPeer>,
+    pub authenticated_peers: Vec<AuthenticatedPeer>,
     pub listen_addresses: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
@@ -38,6 +52,7 @@ pub struct NetworkSnapshot {
 struct NetworkState {
     configured_peers: usize,
     connected_peers: BTreeMap<String, ConnectedPeer>,
+    authenticated_peers: BTreeMap<String, AuthenticatedPeer>,
     listen_addresses: Vec<String>,
     last_error: Option<String>,
 }
@@ -94,9 +109,35 @@ impl NetworkStatus {
         if let Ok(mut state) = self.0.write() {
             if remaining_connections == 0 {
                 state.connected_peers.remove(peer_id);
+                state.authenticated_peers.remove(peer_id);
             } else if let Some(peer) = state.connected_peers.get_mut(peer_id) {
                 peer.connections = remaining_connections;
             }
+        }
+    }
+
+    /// Record a successful protocol-gossip admission for a transport peer.
+    ///
+    /// Readiness only exposes this record while the transport remains connected and the
+    /// authentication is recent. It is observability evidence, never protocol authority.
+    pub fn protocol_authenticated(
+        &self,
+        peer_id: impl Into<String>,
+        signer: impl Into<String>,
+        e3_id: impl Into<String>,
+        authenticated_at_ms: u64,
+    ) {
+        let peer_id = peer_id.into();
+        if let Ok(mut state) = self.0.write() {
+            state.authenticated_peers.insert(
+                peer_id.clone(),
+                AuthenticatedPeer {
+                    peer_id,
+                    signer: signer.into(),
+                    e3_id: e3_id.into(),
+                    authenticated_at_ms,
+                },
+            );
         }
     }
 
@@ -131,11 +172,22 @@ impl NetworkStatus {
     }
 
     pub fn snapshot(&self) -> NetworkSnapshot {
+        let now_ms = now_ms();
         self.0
             .read()
             .map(|state| NetworkSnapshot {
                 configured_peers: state.configured_peers,
                 connected_peers: state.connected_peers.values().cloned().collect(),
+                authenticated_peers: state
+                    .authenticated_peers
+                    .values()
+                    .filter(|peer| {
+                        state.connected_peers.contains_key(&peer.peer_id)
+                            && now_ms.saturating_sub(peer.authenticated_at_ms)
+                                <= PROTOCOL_AUTHENTICATION_TTL_MS
+                    })
+                    .cloned()
+                    .collect(),
                 listen_addresses: state.listen_addresses.clone(),
                 last_error: state.last_error.clone(),
             })
@@ -158,6 +210,7 @@ mod tests {
     fn tracks_connections_without_resetting_first_seen_time() {
         let status = NetworkStatus::new(2);
         status.connected("peer-a", "/ip4/127.0.0.1", "outbound", 1);
+        status.protocol_authenticated("peer-a", "0x1234", "1:7", now_ms());
         let first_seen = status.snapshot().connected_peers[0].connected_at_ms;
 
         status.connected("peer-a", "/ip4/127.0.0.1", "outbound", 2);
@@ -167,11 +220,29 @@ mod tests {
         assert_eq!(snapshot.connected_peers.len(), 1);
         assert_eq!(snapshot.connected_peers[0].connections, 2);
         assert_eq!(snapshot.connected_peers[0].connected_at_ms, first_seen);
+        assert_eq!(snapshot.authenticated_peers.len(), 1);
 
         status.stopped_listening(["/ip4/127.0.0.1/udp/9090/quic-v1"]);
         assert!(status.snapshot().listen_addresses.is_empty());
 
         status.disconnected("peer-a", 0);
         assert!(status.snapshot().connected_peers.is_empty());
+        assert!(status.snapshot().authenticated_peers.is_empty());
+    }
+
+    #[test]
+    fn excludes_disconnected_and_expired_protocol_authentication() {
+        let status = NetworkStatus::new(2);
+        let current = now_ms();
+        status.protocol_authenticated("not-connected", "0x1", "1:1", current);
+        status.connected("expired", "/ip4/127.0.0.1", "inbound", 1);
+        status.protocol_authenticated(
+            "expired",
+            "0x2",
+            "1:2",
+            current.saturating_sub(PROTOCOL_AUTHENTICATION_TTL_MS + 1),
+        );
+
+        assert!(status.snapshot().authenticated_peers.is_empty());
     }
 }

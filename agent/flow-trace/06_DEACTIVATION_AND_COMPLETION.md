@@ -184,8 +184,8 @@ publishPlaintextOutput() succeeds
     │   → Removes e3_id from node_state.e3_committees map
     │   → Removes the durable finalized-committee and pending-expulsion records
     │
-    ├─ CiphernodeSelector: removes e3_id from e3_cache, committee, expelled set,
-    │  and persisted aggregator designation for the E3
+    ├─ CiphernodeSelector: removes e3_id from e3_cache, committee, expelled/unresponsive sets,
+    │  persisted aggregator designation, and the separate aggregator failover lease
     │
     ├─ Per-E3 actors receive Die / shutdown on completion:
     │   ├─ ThresholdKeyshare: state = Completed, actor stops
@@ -202,19 +202,28 @@ publishPlaintextOutput() succeeds
 
 ## Rust-Side: Node Shutdown
 
+The libp2p event loop is a required supervised task. Startup races protocol readiness against its
+exit, and the running CLI races the shutdown signal against the same one-shot exit status; an
+unexpected interface exit records a live network error, drains the node, and returns non-zero.
+Normal shutdown first sends `NetCommand::Shutdown` and awaits the interface loop before actor,
+event-log, snapshot, and backing-store barriers, preventing new network ingress during the drain.
+
 ```
 interfold start → running node
 │
 ├─ Ctrl+C / SIGINT / SIGTERM
 │
 └─ graceful_shutdown():
-    ├─ Persists Shutdown and waits for acknowledged EventBus fanout
+    ├─ Persists Shutdown and waits for every subscribed shutdown handler to complete
     ├─ Flushes the sequencer and event-store pipeline
+    │  → Event-log flush includes `sync_all` for every segment/index and the log directory
     ├─ Drains open snapshot batches, flushes the backing store, and closes it
     ├─ Enforces a 30-second deadline and exits unsuccessfully on failure
     └─ Flushes the optional operational JSON log collector
 
 On restart:
+├─ Sled reads preserve the distinction between a missing key and a database/read failure
+│  → read errors abort hydration; `load_or_default` never overwrites recovery state after an error
 ├─ Event-log open:
 │   → validates physical frames against the commitlog index
 │   → truncates only a CRC/length-invalid suffix after the final indexed record
@@ -236,24 +245,34 @@ On restart:
 │      → ThresholdPlaintextAggregatorExtension records this role in the E3 context
 │        so a plaintext buffer created later by CiphertextOutputPublished starts
 │        with the correct active-aggregator flag
+│      → The separate failover repository restores phase/deadline/active-party state;
+│        any source chain event lacking a derived lease remains queued in the Interfold outbox
 │   3. Replay EventStore events since last snapshot (effects still disabled)
 │      → Read each aggregate in 1,024-event pages, sort bounded temporary runs,
 │        and perform a bounded-fan-in global merge by HLC timestamp
-│      → Each concurrent EventBus fanout is acknowledged before the next event;
-│        an unavailable or blocked listener aborts recovery after a bounded wait
+│      → Each EventBus fanout receives bounded mailbox admission before the next event;
+│        a closed or full listener fails recovery instead of being bypassed
 │      → Structured progress is emitted every 10,000 EventBus-handled events
 │   4. Fetch historical EVM events from last known block
+│      → completion waits on exact membership for its referenced final event;
+│        probabilistic Bloom membership cannot open the effects barrier
 │   5. Historical libp2p sync retries failed aggregate fetches after reconnects
 │      and also on bounded retry intervals even without a new connection event
+│      → outbound artifacts await bounded network-channel capacity and enter exact FIFO dedup
+│        only after acceptance; restart re-broadcast uses the same backpressure boundary
 │   6. Sort & publish merged events by HLC timestamp
 │      → A logical event returned by a peer with its source changed from Local to Net is
 │        idempotent when timestamp, stable event ID, and payload match the stored record;
 │        a different payload at the same timestamp still fails closed as a collision
+│      → Event IDs are domain-separated SHA-256 over fixed-width, little-endian bincode payloads;
+│        they do not collapse identity through Rust's 64-bit `DefaultHasher`
 │      → ComputeEffectGate has already subscribed and buffers ComputeRequest
 │        effects, deduplicating semantic retries while replay is in progress
 │   7. Enable effects (writers may submit only after this point)
 │      → Gate cancels work for terminal E3s and releases only the newest
 │        pending request for each in-flight semantic compute operation
+│      → EVM writers drain synchronously-persisted ticket/finalize/committee/plaintext/
+│        failure/slashing intents; signed raw transaction+nonce+hash records reconcile before retry
 │   8. SyncEnded → live operations begin
 └─ Node resumes from where it left off
 ```
@@ -273,12 +292,80 @@ disables gossip translation, document notifications, or historical-sync/readines
 buffering window remains a fail-closed readiness error because those skipped events cannot yet be
 reconciled safely.
 
+Protocol-event gossip is authenticated before that startup-buffer accounting: the buffer's ingress
+recovers the EVM signer from an envelope bound to the gossipsub author, checks the current chain/E3
+committee, expulsion and event role, and applies per-peer/per-E3 event and byte quotas. Only
+accepted events enter the startup queue. Invalid input is reported to gossipsub immediately, and a
+repeatedly invalid author is blacklisted and disconnected, so an outsider cannot exhaust the startup
+budget or reach the durable bus with unique protocol-shaped payloads.
+
+## Runtime Protocol Readiness
+
+After startup returns a `CiphernodeHandle`, the CLI starts the loopback dashboard with live handles
+for storage, networking, each EVM reader, and every required EVM writer. The endpoints have distinct
+meanings:
+
+```
+/health/live
+└─ HTTP task responds (liveness only)
+
+/health/ready
+├─ startup schema preflight was compatible
+├─ durable backing-store flush succeeds
+├─ all configured EventStore aggregates answer a bounded paged query
+├─ configured peer quorum exists
+│  ├─ idle: connected libp2p peers count
+│  └─ active E3: only connected peers with recent successful protocol authorization count
+├─ every EVM reader reports the expected chain ID
+├─ RPC head poll and block timestamp are fresh
+├─ confirmed head minus ingestion cursor is within the configured block threshold
+├─ every required writer actor responds with effects enabled
+├─ the oldest non-terminal durable outbox intent is within its age threshold
+└─ every active E3 has recent durable-event progress
+   → all pass: HTTP 200 and ready=true
+   → any fail: HTTP 503 and component-level details
+
+/metrics
+└─ Prometheus rendering of the same readiness snapshot
+```
+
+The peer authentication record is refreshed only after an envelope passes its EVM signature,
+libp2p-author binding, current committee, expulsion, claimed-role, and replay checks. It expires and
+is removed on disconnect. This record is an operational signal; every protocol event is still
+authorized independently against current state.
+
+Reader progress refreshes from the raw head even when no logs arrive. Writer status includes
+effects-enabled state, in-flight work, pending durable intent count, and oldest admission age.
+Storage readiness issues an actual flush, so an earlier asynchronous Sled write failure also revokes
+readiness. The DAppNode health check requires `/health/ready` in addition to exact PID/config,
+protected-file, persistence-path, and QUIC-listener checks. Alert thresholds and safe recovery steps
+are documented in the operator readiness runbook; operators must preserve the durable outbox and
+active-E3 state while diagnosing a failure.
+
+Correctness-sensitive publishers use the acknowledged publication path. Its success boundary is: the
+sequencer has assigned the event, the target EventStore has appended and synchronously flushed it,
+and every current EventBus subscriber's bounded mailbox has admitted it. EventBus does not wait for
+an ordinary handler's full computation—recursive proof handlers can legitimately take minutes— but
+mailbox FIFO preserves event order per subscriber. `Shutdown` is the explicit stronger case and
+waits for every shutdown handler to complete. EventBus inserts the event ID into its exact bounded
+deduplication set only after admission succeeds, so a failed delivery remains retriable. Remote
+libp2p ingress does not mark its own exact deduplication set until the same durable/admission
+acknowledgement returns. Live EVM ingress uses that path as well. At `SyncEnded`, the EVM gateway
+first releases the EventBus callback to avoid a circular wait, remains in a bounded `Draining`
+state, and reports Live only after all buffered batches (including events arriving during the drain)
+have crossed the acknowledged path. Fire-and-forget `EventPublisher` methods expose only bounded
+mailbox admission and are not a durability acknowledgement.
+
+`ComputeEffectGate` likewise records a semantic compute key only after its target recipient accepts
+the request. A full or closed target mailbox therefore leaves the key retriable, both during normal
+operation and while draining replay-buffered effects.
+
 EventStore replay uses a disk-backed external merge: per-aggregate pages are sorted into secure
 temporary runs, then compacted and merged with bounded file-descriptor fan-in. Replay waits for
-concurrent EventBus listener acceptance for each event. A listener that is unavailable or cannot
-accept within the timeout fails recovery instead of being silently skipped. Snapshot routing still
-contains asynchronous edges, so this does not claim that every downstream actor is synchronously
-durable at each replay step.
+bounded EventBus listener admission for each event. A listener that is unavailable or whose mailbox
+is full fails recovery instead of being silently skipped. Snapshot routing and handler execution
+remain asynchronous, so this does not claim that every downstream actor is synchronously durable at
+each replay step.
 
 `interfold node validate` detects a recoverable uncommitted event-log tail without changing it. With
 the node stopped, `interfold node validate --repair` applies the same boundary-checked tail recovery
@@ -375,6 +462,13 @@ the E3 context and retries plaintext actor creation when `PublicKeyAggregated` o
 `CommitteePublished` supplies the missing facts; the router's existing recipient buffer then drains
 any ciphertext/decryption-share events into the newly-created plaintext path.
 
+Plaintext share collection records its absolute Unix-millisecond deadline and the originating
+`CiphertextOutputPublished` event context in the persisted `Collecting` state. A hydrated actor
+schedules only the remaining duration (or fires immediately when the deadline has passed), so a
+restart cannot renew the collection budget. The timeout publishes `E3Failed(DecryptionTimeout)`
+through acknowledged EventBus delivery before stopping, and its causal parent does not depend on a
+later decryption share having arrived.
+
 `ShareVerificationActor` gates C1/C6 proof verification behind `CommitmentConsistencyCheckRequested`
 / `CommitmentConsistencyCheckComplete`. The per-E3 `CommitmentConsistencyChecker` is therefore
 restart-critical even though it has no durable state of its own: after context hydration,
@@ -442,7 +536,8 @@ live or from replay.
 The node-operator dashboard uses the same replay property. It pages every configured EventStore
 aggregate and incrementally derives E3 stages, committees, tickets, failures, and rewards. The
 projection is disposable and is rebuilt on restart; EventStore remains the only durable protocol
-history.
+history. The readiness probe makes the same bounded page path observable, so a closed or stalled
+EventStore revokes protocol readiness rather than leaving a process-only health signal green.
 
 ---
 

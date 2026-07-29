@@ -6,7 +6,7 @@
 
 use anyhow::{bail, Result};
 use e3_config::AppConfig;
-use e3_crypto::{FilePasswordManager, PasswordManager};
+use e3_crypto::{validate_new_password, FilePasswordManager, PasswordManager};
 use zeroize::Zeroizing;
 
 use crate::helpers::rand::generate_random_bytes;
@@ -32,6 +32,9 @@ pub async fn execute(config: &AppConfig, input: Zeroizing<String>) -> Result<()>
 }
 
 pub async fn execute_bytes(config: &AppConfig, input: Zeroizing<Vec<u8>>) -> Result<()> {
+    // Validate before deleting an existing key so a rejected rotation cannot
+    // destroy the only password capable of decrypting persisted state.
+    validate_new_password(&input)?;
     let key_file = config.key_file();
     let mut pm = FilePasswordManager::new(key_file);
 

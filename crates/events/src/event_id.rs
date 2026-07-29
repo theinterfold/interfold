@@ -4,24 +4,36 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use bincode::Options;
 use derivative::Derivative;
 use e3_utils::{AsBytesSerde, BytesSerde};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
-use std::{
-    fmt,
-    hash::{DefaultHasher, Hash, Hasher},
-};
+use std::fmt;
+
+const EVENT_ID_DOMAIN: &[u8] = b"interfold:event-id:v1\0";
 
 #[derive(Derivative, BytesSerde, Clone, Copy, PartialEq, Eq, Hash)]
 #[derivative(Debug)]
 pub struct EventId(#[derivative(Debug(format_with = "e3_utils::formatters::hexf"))] pub [u8; 32]);
 
 impl EventId {
-    pub fn hash<T: Hash>(value: T) -> Self {
+    /// Hash a deterministic, versioned bincode representation of an event payload.
+    ///
+    /// Fixed-width little-endian encoding makes the byte representation independent
+    /// of the target architecture. Production callers hash `InterfoldEventData`, whose
+    /// enum discriminant provides the event type domain and whose payload includes its
+    /// chain/E3 identifiers.
+    pub fn hash<T: Serialize>(value: T) -> Self {
+        let canonical = bincode::DefaultOptions::new()
+            .with_fixint_encoding()
+            .with_little_endian()
+            .serialize(&value)
+            .expect("event identity values must support deterministic bincode serialization");
         let mut hasher = Sha256::new();
-        let mut std_hasher = DefaultHasher::new();
-        value.hash(&mut std_hasher);
-        hasher.update(std_hasher.finish().to_le_bytes());
+        hasher.update(EVENT_ID_DOMAIN);
+        hasher.update((canonical.len() as u64).to_le_bytes());
+        hasher.update(canonical);
         let result = hasher.finalize();
         EventId(result.into())
     }
@@ -53,6 +65,17 @@ mod tests {
     fn test_debug_format() {
         let event_id = EventId::hash("test");
         println!("{:?}", event_id);
-        // This will now print: EventId("0x124abccd...")
+    }
+
+    #[test]
+    fn canonical_hash_has_a_stable_golden_vector() {
+        assert_eq!(
+            EventId::hash("test").0,
+            [
+                0xef, 0x64, 0x93, 0xab, 0x8b, 0x80, 0xe4, 0xa2, 0xe1, 0x35, 0x8f, 0xb3, 0xf1, 0x2e,
+                0x40, 0x73, 0x91, 0x4c, 0x78, 0xb6, 0xcc, 0x81, 0x71, 0xf2, 0xf0, 0x44, 0xdf, 0x7e,
+                0x98, 0x24, 0x42, 0x8d,
+            ]
+        );
     }
 }

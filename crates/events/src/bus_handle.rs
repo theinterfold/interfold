@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use actix::{Actor, Addr, Handler, Recipient};
-use anyhow::Result;
+use anyhow::{Context, Result};
 use derivative::Derivative;
 use e3_utils::{actix::channel::oneshot, MAILBOX_LIMIT};
 use std::{
@@ -30,8 +30,8 @@ use crate::{
         EventFactory, EventPublisher, EventSubscriber,
     },
     EType, ErrorEvent, EventBus, EventBusBarrier, EventContextManager, EventSource, EventType,
-    FlushEventStores, HistoryCollector, InterfoldEvent, InterfoldEventData, Sequenced,
-    SequencerBarrier, Shutdown, Subscribe, Unsequenced, Unsubscribe,
+    FlushEventStores, HistoryCollector, InterfoldEvent, InterfoldEventData, PublishEvent,
+    Sequenced, SequencerBarrier, Shutdown, Subscribe, Unsequenced, Unsubscribe,
 };
 
 /// Typestate marker indicating the BusHandle has not yet been enabled with an HLC clock.
@@ -251,14 +251,43 @@ impl EventPublisher<InterfoldEvent<Unsequenced>> for BusHandle<Enabled> {
             warn!("Dropping an internal event because node shutdown has closed admission");
             return;
         };
-        self.sequencer.do_send(event);
+        if let Err(error) = self.sequencer.try_send(event) {
+            error!(%error, "Internal event was not admitted by the sequencer");
+        }
     }
 }
 
 impl BusHandle<Enabled> {
     pub async fn naked_dispatch_async(&self, event: InterfoldEvent<Unsequenced>) -> Result<()> {
         let _admission = self.admission.enter()?;
-        self.sequencer.send(event).await?;
+        self.sequencer.send(PublishEvent(event)).await??;
+        Ok(())
+    }
+
+    /// Publish locally after durable persistence and bounded admission by every live subscriber.
+    pub async fn publish_and_wait(
+        &self,
+        data: impl Into<InterfoldEventData>,
+        caused_by: Option<EventContext<Sequenced>>,
+    ) -> Result<()> {
+        let _admission = self.admission.enter()?;
+        let event = self.event_from(data, caused_by)?;
+        self.sequencer.send(PublishEvent(event)).await??;
+        Ok(())
+    }
+
+    /// Publish remotely after durable persistence and bounded admission by every live subscriber.
+    pub async fn publish_from_remote_and_wait(
+        &self,
+        data: impl Into<InterfoldEventData>,
+        remote_ts: u128,
+        caused_by: Option<EventContext<Sequenced>>,
+        block: Option<u64>,
+        source: EventSource,
+    ) -> Result<()> {
+        let _admission = self.admission.enter()?;
+        let event = self.event_from_remote_source(data, caused_by, remote_ts, block, source)?;
+        self.sequencer.send(PublishEvent(event)).await??;
         Ok(())
     }
 
@@ -275,7 +304,7 @@ impl BusHandle<Enabled> {
         // all admitted work and before every rejected late arrival.
         self.admission.close_and_wait().await;
         let event = self.event_from(Shutdown, None)?;
-        self.sequencer.send(event).await?;
+        self.sequencer.send(PublishEvent(event)).await??;
 
         let shutdown = response.await?;
         // Awaiting this mailbox operation also proves the EventBus has
@@ -306,7 +335,9 @@ impl BusHandle<Enabled> {
     ) -> Result<()> {
         let _admission = self.admission.enter()?;
         let evt = self.event_from_remote_source(data, caused_by, remote_ts, block, source)?;
-        self.sequencer.do_send(evt);
+        self.sequencer
+            .try_send(evt)
+            .context("sequencer rejected remote event admission")?;
         Ok(())
     }
     fn publish_local(
@@ -316,7 +347,9 @@ impl BusHandle<Enabled> {
     ) -> Result<()> {
         let _admission = self.admission.enter()?;
         let evt = self.event_from(data, caused_by)?;
-        self.sequencer.do_send(evt);
+        self.sequencer
+            .try_send(evt)
+            .context("sequencer rejected local event admission")?;
         Ok(())
     }
 }
@@ -328,7 +361,11 @@ impl<S> ErrorDispatcher<InterfoldEvent<Unsequenced>> for BusHandle<S> {
             return;
         };
         match self.event_from_error(err_type, error, self.get_ctx()) {
-            Ok(evt) => self.sequencer.do_send(evt),
+            Ok(evt) => {
+                if let Err(error) = self.sequencer.try_send(evt) {
+                    error!(%error, "Error event was not admitted by the sequencer");
+                }
+            }
             Err(e) => error!("{e}"),
         }
     }

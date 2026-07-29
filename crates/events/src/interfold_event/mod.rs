@@ -9,6 +9,8 @@ mod accusation_vote;
 mod aggregation_proof_pending;
 mod aggregation_proof_signed;
 mod aggregator_changed;
+mod aggregator_failover_exhausted;
+mod aggregator_lease_updated;
 mod ciphernode_added;
 mod ciphernode_deregistration_requested;
 mod ciphernode_removed;
@@ -86,6 +88,8 @@ pub use accusation_vote::*;
 pub use aggregation_proof_pending::*;
 pub use aggregation_proof_signed::*;
 pub use aggregator_changed::*;
+pub use aggregator_failover_exhausted::*;
+pub use aggregator_lease_updated::*;
 pub use ciphernode_added::*;
 pub use ciphernode_deregistration_requested::*;
 pub use ciphernode_removed::*;
@@ -341,6 +345,9 @@ pub enum InterfoldEventData {
     CommitteeActivationChanged(CommitteeActivationChanged),
     CommitteeViabilityUpdated(CommitteeViabilityUpdated),
     EvmLogObserved(EvmLogObserved),
+    // Append new variants to preserve persisted bincode discriminants.
+    AggregatorLeaseUpdated(AggregatorLeaseUpdated),
+    AggregatorFailoverExhausted(AggregatorFailoverExhausted),
 }
 
 impl InterfoldEventData {
@@ -661,6 +668,8 @@ impl InterfoldEventData {
             InterfoldEventData::CommitteeActivationChanged(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CommitteeViabilityUpdated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::EvmLogObserved(ref data) => data.e3_id.clone(),
+            InterfoldEventData::AggregatorLeaseUpdated(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::AggregatorFailoverExhausted(ref data) => Some(data.e3_id.clone()),
             _ => None,
         }
     }
@@ -769,7 +778,9 @@ impl_event_types!(
     CommitteeFormationFailed,
     CommitteeActivationChanged,
     CommitteeViabilityUpdated,
-    EvmLogObserved
+    EvmLogObserved,
+    AggregatorLeaseUpdated,
+    AggregatorFailoverExhausted
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

@@ -1,14 +1,14 @@
 {
   "name": "interfold-ciphernode.public.dappnode.eth",
-  "version": "0.2.3",
-  "upstreamVersion": "0.2.3",
+  "version": "0.4.0",
+  "upstreamVersion": "0.4.0",
   "upstreamArg": "UPSTREAM_VERSION",
   "upstreamRepo": "theinterfold/interfold",
   "shortDescription": "Interfold Ciphernode - Run a node for confidential computing",
   "description": "Run an Interfold ciphernode to participate in the E3 (Encrypted Execution Environments) network.",
   "type": "service",
   "mainService": "ciphernode",
-  "author": "Gnosis Guild <https://github.com/gnosisguild>",
+  "author": "Interfold <https://interfold.network>",
   "categories": ["Blockchain", "Developer tools"],
   "keywords": ["interfold", "fhe", "mpc", "ciphernode", "threshold", "encryption"],
   "links": {

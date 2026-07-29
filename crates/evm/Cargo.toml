@@ -14,7 +14,6 @@ alloy-primitives = { workspace = true }
 anyhow = { workspace = true }
 async-trait = { workspace = true }
 base64 = { workspace = true }
-bloom = { workspace = true }
 e3-config = { workspace = true }
 e3-crypto = { workspace = true }
 e3-data = { workspace = true }

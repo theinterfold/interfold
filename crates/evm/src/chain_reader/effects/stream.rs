@@ -15,21 +15,32 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
     mut shutdown: oneshot::Receiver<()>,
     bus: &BusHandle,
     filters: Filters,
+    ingestion_status: crate::EvmIngestionStatus,
 ) {
     let chain_id = provider.chain_id();
+    ingestion_status.configure(chain_id, filters.confirmations());
     let mut timestamp_tracker = TimestampTracker::new();
     let mut backoff = Backoff::new(MAX_RECONNECT_DELAY_SECS);
 
     // ── Phase 1: Historical sync (must succeed, fatal on failure) ──
 
-    let latest_block = match provider.provider().get_block_number().await {
-        Ok(bn) => crate::domain::reorg::confirmed_head(bn, filters.confirmations()),
+    let (raw_head, head_timestamp_secs) = match read_rpc_head(&provider).await {
+        Ok(head) => head,
         Err(e) => {
+            ingestion_status.record_error(format!("failed to read RPC head: {e}"));
             error!(chain_id, error = %e, "Failed to get latest block number");
             bus.err(EType::Evm, anyhow!(e));
             return;
         }
     };
+    let latest_block = crate::domain::reorg::confirmed_head(raw_head, filters.confirmations());
+    ingestion_status.record_progress(
+        chain_id,
+        filters.confirmations(),
+        raw_head,
+        filters.start_block.saturating_sub(1).min(latest_block),
+        head_timestamp_secs,
+    );
 
     let last_id = match fetch_logs_chunked(
         provider.provider(),
@@ -43,10 +54,18 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
     .await
     {
         Ok(id) => {
+            ingestion_status.record_progress(
+                chain_id,
+                filters.confirmations(),
+                raw_head,
+                latest_block,
+                head_timestamp_secs,
+            );
             info!(chain_id, "Historical sync succeeded");
             id
         }
         Err(e) => {
+            ingestion_status.record_error(format!("historical sync failed: {e:#}"));
             error!(chain_id, error = %e, "Failed to fetch historical events — node cannot operate without full state, exiting");
             bus.err(EType::Evm, anyhow!(e));
             return;
@@ -81,10 +100,44 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
         .await
         {
             Ok(_) => {
+                if let Err(error) = refresh_rpc_progress(
+                    &current_provider,
+                    &ingestion_status,
+                    last_block,
+                    filters.confirmations(),
+                )
+                .await
+                {
+                    ingestion_status.record_error(format!("RPC progress check failed: {error:#}"));
+                    consecutive_failures += 1;
+                    warn!(chain_id, %error, consecutive_failures, "RPC progress check failed");
+                    if consecutive_failures >= MAX_RETRIES_BEFORE_RECREATE {
+                        let Some(p) = get_new_provider_or_exit(
+                            &provider_factory,
+                            &mut shutdown,
+                            chain_id,
+                            &mut backoff,
+                            bus,
+                            &ingestion_status,
+                        )
+                        .await
+                        else {
+                            return;
+                        };
+                        current_provider = p;
+                        consecutive_failures = 0;
+                        continue;
+                    }
+                    if sleep_or_shutdown(backoff.next_delay(), &mut shutdown).await {
+                        return;
+                    }
+                    continue;
+                }
                 backoff.reset();
                 consecutive_failures = 0;
             }
             Err(e) => {
+                ingestion_status.record_error(format!("confirmed backfill failed: {e:#}"));
                 consecutive_failures += 1;
                 warn!(chain_id, error = %e, consecutive_failures, "Backfill failed");
                 if consecutive_failures >= MAX_RETRIES_BEFORE_RECREATE {
@@ -94,6 +147,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                         chain_id,
                         &mut backoff,
                         bus,
+                        &ingestion_status,
                     )
                     .await
                     else {
@@ -141,6 +195,9 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                                         &mut timestamp_tracker, &mut last_block,
                                         filters.confirmations(),
                                     ).await {
+                                        ingestion_status.record_error(format!(
+                                            "live log processing failed: {error:#}"
+                                        ));
                                         consecutive_failures += 1;
                                         warn!(
                                             chain_id,
@@ -153,13 +210,14 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                                 }
                                 None => {
                                     // Stream ended (server-side close, idle timeout, etc.)
+                                    ingestion_status.record_error("live event stream ended");
                                     consecutive_failures += 1;
                                     warn!(chain_id, consecutive_failures, "Live event stream ended, will reconnect");
                                     break;
                                 }
                             }
                         }
-                        _ = confirmation_poll.tick(), if filters.confirmations() > 0 => {
+                        _ = confirmation_poll.tick() => {
                             if let Err(error) = backfill_to_head(
                                 current_provider.provider(),
                                 &filters.current,
@@ -169,6 +227,9 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                                 &mut last_block,
                                 filters.confirmations(),
                             ).await {
+                                ingestion_status.record_error(format!(
+                                    "confirmed live-log backfill failed: {error:#}"
+                                ));
                                 consecutive_failures += 1;
                                 warn!(
                                     chain_id,
@@ -176,6 +237,19 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                                     consecutive_failures,
                                     "Confirmed live-log backfill failed; reconnecting"
                                 );
+                                break;
+                            }
+                            if let Err(error) = refresh_rpc_progress(
+                                &current_provider,
+                                &ingestion_status,
+                                last_block,
+                                filters.confirmations(),
+                            ).await {
+                                ingestion_status.record_error(format!(
+                                    "RPC progress check failed: {error:#}"
+                                ));
+                                consecutive_failures += 1;
+                                warn!(chain_id, %error, consecutive_failures, "RPC progress check failed");
                                 break;
                             }
                         }
@@ -194,6 +268,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                         chain_id,
                         &mut backoff,
                         bus,
+                        &ingestion_status,
                     )
                     .await
                     else {
@@ -208,6 +283,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                 }
             }
             Err(e) => {
+                ingestion_status.record_error(format!("live subscription failed: {e:#}"));
                 consecutive_failures += 1;
                 error!(chain_id, error = %e, consecutive_failures, "Failed to subscribe to live events");
                 if consecutive_failures >= MAX_RETRIES_BEFORE_RECREATE {
@@ -217,6 +293,7 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
                         chain_id,
                         &mut backoff,
                         bus,
+                        &ingestion_status,
                     )
                     .await
                     else {
@@ -233,4 +310,33 @@ pub(in crate::actors::evm_read_interface) async fn stream_from_evm<
             }
         }
     }
+}
+
+async fn read_rpc_head<P: Provider + Clone>(
+    provider: &EthProvider<P>,
+) -> anyhow::Result<(u64, u64)> {
+    let raw_head = provider.provider().get_block_number().await?;
+    let block = provider
+        .provider()
+        .get_block_by_number(raw_head.into())
+        .await?
+        .ok_or_else(|| anyhow!("RPC returned no block at head {raw_head}"))?;
+    Ok((raw_head, block.header.timestamp))
+}
+
+async fn refresh_rpc_progress<P: Provider + Clone>(
+    provider: &EthProvider<P>,
+    status: &crate::EvmIngestionStatus,
+    cursor: u64,
+    confirmations: u64,
+) -> anyhow::Result<()> {
+    let (raw_head, head_timestamp_secs) = read_rpc_head(provider).await?;
+    status.record_progress(
+        provider.chain_id(),
+        confirmations,
+        raw_head,
+        cursor,
+        head_timestamp_secs,
+    );
+    Ok(())
 }

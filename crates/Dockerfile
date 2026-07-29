@@ -1,4 +1,4 @@
-FROM node:22 AS evm-builder
+FROM node:22.23.1-bookworm-slim@sha256:6c74791e557ce11fc957704f6d4fe134a7bc8d6f5ca4403205b2966bd488f6b3 AS evm-builder
 
 WORKDIR /build
 COPY crates/wasm/package.json ./crates/wasm/package.json
@@ -10,14 +10,22 @@ COPY package.json .
 COPY pnpm-workspace.yaml .
 COPY pnpm-lock.yaml .
 
-RUN npm install -g corepack
 RUN corepack enable
 
 # We just need the contracts to be compiled here
-RUN cd packages/interfold-contracts && pnpm install && pnpm compile:contracts
+RUN cd packages/interfold-contracts && pnpm install --frozen-lockfile && pnpm compile:contracts
 
 # Build stage
-FROM rust:1.91 AS ciphernode-builder
+FROM rust:1.91.1-bookworm@sha256:c1e5f19e773b7878c3f7a805dd00a495e747acbdc76fb2337a4ebf0418896b33 AS ciphernode-builder
+
+ARG DEBIAN_SNAPSHOT=20260720T202350Z
+ARG DEBIAN_SECURITY_SNAPSHOT=20260720T143120Z
+RUN sed -ri \
+        "s|https?://security\.debian\.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}|g; \
+         s|https?://deb\.debian\.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}|g; \
+         s|https?://deb\.debian\.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99snapshot
 
 # Force incremental 
 ENV CARGO_INCREMENTAL=1
@@ -26,9 +34,13 @@ ENV CARGO_BUILD_JOBS=8
 
 # Install deps
 RUN apt-get update && apt-get install -y --no-install-recommends jq protobuf-compiler
-RUN wget https://github.com/argotorg/solidity/releases/download/v0.8.27/solc-static-linux \
-    && chmod +x solc-static-linux \
-    && mv solc-static-linux /usr/local/bin/solc \
+ARG SOLC_VERSION=0.8.27
+ARG SOLC_STATIC_LINUX_SHA256=b9977d500c17cba6f0032ca939ef98c4decf6363f19f386d05fb02f708115264
+RUN wget --output-document=/tmp/solc-static-linux \
+        "https://github.com/argotorg/solidity/releases/download/v${SOLC_VERSION}/solc-static-linux" \
+    && echo "${SOLC_STATIC_LINUX_SHA256}  /tmp/solc-static-linux" | sha256sum --check --strict \
+    && install -m 0755 /tmp/solc-static-linux /usr/local/bin/solc \
+    && rm /tmp/solc-static-linux \
     && solc --version
 
 # Create build directory
@@ -121,7 +133,16 @@ RUN find . -name "*.rs" -exec touch {} +
 RUN cargo build --locked --release -p e3-cli
 
 # Runtime stage
-FROM debian:stable-slim
+FROM debian:12.15-slim@sha256:7b140f374b289a7c2befc338f42ebe6441b7ea838a042bbd5acbfca6ec875818
+
+ARG DEBIAN_SNAPSHOT=20260720T202350Z
+ARG DEBIAN_SECURITY_SNAPSHOT=20260720T143120Z
+RUN sed -ri \
+        "s|https?://security\.debian\.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}|g; \
+         s|https?://deb\.debian\.org/debian-security|http://snapshot.debian.org/archive/debian-security/${DEBIAN_SECURITY_SNAPSHOT}|g; \
+         s|https?://deb\.debian\.org/debian|http://snapshot.debian.org/archive/debian/${DEBIAN_SNAPSHOT}|g" \
+        /etc/apt/sources.list.d/debian.sources \
+    && printf 'Acquire::Check-Valid-Until "false";\n' > /etc/apt/apt.conf.d/99snapshot
 
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends iptables dnsutils iputils-ping ca-certificates jq && \

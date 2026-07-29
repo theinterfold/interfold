@@ -21,7 +21,9 @@ use alloy::primitives::Address;
 use anyhow::{anyhow, ensure, Result};
 use async_trait::async_trait;
 use e3_data::{AutoPersist, Persistable, RepositoriesFactory};
-use e3_events::{prelude::*, CiphernodeSelected, CiphertextOutputPublished, E3id};
+use e3_events::{
+    prelude::*, CiphernodeSelected, CiphertextOutputPublished, E3id, EventContext, Sequenced,
+};
 use e3_events::{BusHandle, EType, InterfoldEvent, InterfoldEventData};
 use e3_fhe::ext::FHE_KEY;
 use e3_fhe::Fhe;
@@ -43,6 +45,10 @@ pub const HONEST_COMMITTEE_ADDRESSES_KEY: TypedKey<Vec<Address>> =
 const ACTIVE_AGGREGATOR_KEY: TypedKey<bool> = TypedKey::new("active_aggregator");
 const PENDING_CIPHERTEXT_OUTPUT_KEY: TypedKey<CiphertextOutputPublished> =
     TypedKey::new("pending_ciphertext_output");
+const PENDING_CIPHERTEXT_CONTEXT_KEY: TypedKey<EventContext<Sequenced>> =
+    TypedKey::new("pending_ciphertext_context");
+const PENDING_CIPHERTEXT_DEADLINE_KEY: TypedKey<u64> =
+    TypedKey::new("pending_ciphertext_deadline_unix_ms");
 const HONEST_PARTY_IDS_KEY: TypedKey<BTreeSet<u64>> = TypedKey::new("honest_party_ids");
 
 pub struct PublicKeyAggregatorExtension {
@@ -231,6 +237,23 @@ impl ThresholdPlaintextAggregatorExtension {
             return true;
         }
 
+        let Some(timeout_context) = ctx.get_dependency(PENDING_CIPHERTEXT_CONTEXT_KEY).cloned()
+        else {
+            tracing::warn!(
+                e3_id = %data.e3_id,
+                "Deferring ThresholdPlaintextAggregator creation: ciphertext causal context is not ready"
+            );
+            return false;
+        };
+        let Some(deadline_unix_ms) = ctx.get_dependency(PENDING_CIPHERTEXT_DEADLINE_KEY).copied()
+        else {
+            tracing::warn!(
+                e3_id = %data.e3_id,
+                "Deferring ThresholdPlaintextAggregator creation: ciphertext collection deadline is not ready"
+            );
+            return false;
+        };
+
         let Some(meta) = ctx.get_dependency(META_KEY) else {
             self.bus.err(
                 EType::PlaintextAggregation,
@@ -269,6 +292,8 @@ impl ThresholdPlaintextAggregatorExtension {
             meta.seed,
             data.ciphertext_output.clone(),
             meta.params.clone(),
+            deadline_unix_ms,
+            timeout_context,
         )));
 
         ctx.set_event_recipient(
@@ -581,6 +606,11 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
             return;
         };
         ctx.set_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY, data.clone());
+        ctx.set_dependency(PENDING_CIPHERTEXT_CONTEXT_KEY, evt.get_ctx().clone());
+        ctx.set_dependency(
+            PENDING_CIPHERTEXT_DEADLINE_KEY,
+            crate::decryption_collection_deadline(),
+        );
         self.try_start_plaintext(ctx, data);
     }
 

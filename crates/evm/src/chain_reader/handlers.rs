@@ -14,6 +14,7 @@ impl<P: Provider + Clone + 'static> Actor for EvmReadInterface<P> {
         let next = self.next.clone();
         let filters = self.filters.clone();
         let provider_factory = self.provider_factory.take();
+        let ingestion_status = self.ingestion_status.clone();
 
         let Some(provider) = self.provider.take() else {
             error!("Could not start event reader as provider has already been used.");
@@ -27,7 +28,16 @@ impl<P: Provider + Clone + 'static> Actor for EvmReadInterface<P> {
 
         ctx.spawn(
             async move {
-                stream_from_evm(provider, provider_factory, next, shutdown, &bus, filters).await
+                stream_from_evm(
+                    provider,
+                    provider_factory,
+                    next,
+                    shutdown,
+                    &bus,
+                    filters,
+                    ingestion_status,
+                )
+                .await
             }
             .into_actor(self),
         );

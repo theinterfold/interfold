@@ -8,23 +8,25 @@
 //! until the event it references has been observed.
 
 use crate::messages::{HistoricalSyncComplete, InterfoldEvmEvent};
-use bloom::{BloomFilter, ASMS};
 use e3_events::CorrelationId;
+use std::collections::HashSet;
 use tracing::debug;
 
 /// Buffers a `HistoricalSyncComplete` that references a not-yet-seen event and
 /// releases it once that event flows through. All other events are forwarded
-/// immediately while their ids are tracked in a bloom filter.
+/// immediately while their IDs are tracked exactly. A probabilistic set is not
+/// safe here because one false positive can release startup before the final
+/// referenced historical event has arrived.
 pub(crate) struct HistoricalOrderFixer {
     pending_sync_complete: Option<InterfoldEvmEvent>,
-    seen_ids: BloomFilter,
+    seen_ids: HashSet<CorrelationId>,
 }
 
 impl HistoricalOrderFixer {
     pub(crate) fn new() -> Self {
         Self {
             pending_sync_complete: None,
-            seen_ids: BloomFilter::with_rate(0.001, 10_000_000),
+            seen_ids: HashSet::new(),
         }
     }
 
@@ -76,14 +78,16 @@ impl HistoricalOrderFixer {
         {
             if self.seen_ids.contains(id) {
                 debug!("Forwarding historical send complete event");
-                return self.pending_sync_complete.take();
+                let ready = self.pending_sync_complete.take();
+                self.seen_ids.clear();
+                return ready;
             }
         }
         None
     }
 
     fn track_id(&mut self, id: CorrelationId) {
-        self.seen_ids.insert(&id);
+        self.seen_ids.insert(id);
     }
 }
 
@@ -148,5 +152,27 @@ mod tests {
         ));
 
         assert_eq!(fixer.process(rejected.clone()), vec![rejected]);
+    }
+
+    #[test]
+    fn unrelated_ids_cannot_release_the_exact_barrier() {
+        let mut fixer = HistoricalOrderFixer::new();
+        let referenced = CorrelationId::new();
+        let sync = InterfoldEvmEvent::HistoricalSyncComplete(HistoricalSyncComplete::new(
+            1,
+            Some(referenced),
+        ));
+        assert!(fixer.process(sync.clone()).is_empty());
+
+        for _ in 0..100_000 {
+            assert!(fixer
+                .process(InterfoldEvmEvent::Processed(CorrelationId::new()))
+                .is_empty());
+        }
+
+        assert_eq!(
+            fixer.process(InterfoldEvmEvent::Processed(referenced)),
+            vec![sync]
+        );
     }
 }

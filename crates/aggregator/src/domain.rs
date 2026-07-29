@@ -10,5 +10,3 @@
 pub mod committee;
 #[path = "committee_hash.rs"]
 pub mod committee_hash;
-#[path = "failover.rs"]
-pub mod failover;

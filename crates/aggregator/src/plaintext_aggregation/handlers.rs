@@ -8,13 +8,18 @@ impl Actor for ThresholdPlaintextAggregator {
     type Context = Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
-        // Bound the decryption-share collection phase so a missing honest member cannot stall the
-        // round indefinitely. On expiry the round is failed loudly (see the timeout handler).
-        let timeout = decryption_collection_timeout();
+        // The absolute deadline and causal context are persisted with `Collecting`, so hydration
+        // cannot reset the collection budget or lose the ability to publish the terminal event.
+        let Some(ThresholdPlaintextAggregatorState::Collecting(collecting)) = self.state.get()
+        else {
+            return;
+        };
+        let timeout = remaining_collection_timeout(collecting.deadline_unix_ms, unix_time_millis());
         info!(
             e3_id = %self.e3_id,
             ?timeout,
-            "ThresholdPlaintextAggregator started; scheduling decryption-share collection timeout"
+            deadline_unix_ms = collecting.deadline_unix_ms,
+            "ThresholdPlaintextAggregator started; scheduling remaining decryption-share collection window"
         );
         self.pending.timeout_handle = Some(ctx.notify_later(DecryptionCollectionTimeout, timeout));
     }
@@ -24,6 +29,11 @@ impl Handler<DecryptionCollectionTimeout> for ThresholdPlaintextAggregator {
     type Result = ();
     fn handle(&mut self, _: DecryptionCollectionTimeout, ctx: &mut Self::Context) -> Self::Result {
         self.pending.timeout_handle = None;
+
+        if self.pending.timeout_firing {
+            debug!(e3_id = %self.e3_id, "Decryption timeout publish is already in flight");
+            return;
+        }
 
         // Only fail while still collecting shares; once we have transitioned past `Collecting`
         // (VerifyingC6/Computing/…) the round is progressing and the timer is a no-op.
@@ -45,31 +55,36 @@ impl Handler<DecryptionCollectionTimeout> for ThresholdPlaintextAggregator {
             "Decryption-share collection timed out with {collected}/{required} honest shares; failing E3 round (DecryptionTimeout)"
         );
 
-        let Some(ec) = self.pending.timeout_ec.clone() else {
-            warn!(
-                e3_id = %self.e3_id,
-                "No event context captured for decryption timeout; cannot emit E3Failed. Stopping aggregator."
-            );
-            ctx.stop();
-            return;
+        let ec = collecting.timeout_context;
+        let failure = E3Failed {
+            e3_id: self.e3_id.clone(),
+            failed_at_stage: E3Stage::CiphertextReady,
+            reason: FailureReason::DecryptionTimeout,
         };
+        let bus = self.bus.clone();
+        let e3_id = self.e3_id.clone();
+        self.pending.timeout_firing = true;
 
-        if let Err(e) = self.bus.publish(
-            E3Failed {
-                e3_id: self.e3_id.clone(),
-                failed_at_stage: E3Stage::CiphertextReady,
-                reason: FailureReason::DecryptionTimeout,
-            },
-            ec,
-        ) {
-            warn!(
-                e3_id = %self.e3_id,
-                error = %e,
-                "Failed to publish E3Failed on decryption-share collection timeout"
-            );
-        }
-
-        ctx.stop();
+        // Spawn, rather than wait, so acknowledged EventBus fanout can deliver the terminal event
+        // through this actor's own routing path without a circular mailbox wait.
+        ctx.spawn(
+            async move { bus.publish_and_wait(failure, Some(ec)).await }
+                .into_actor(self)
+                .map(move |result, _, ctx| {
+                    match result {
+                        Ok(()) => info!(
+                            e3_id = %e3_id,
+                            "Durably published decryption timeout failure"
+                        ),
+                        Err(error) => warn!(
+                            e3_id = %e3_id,
+                            %error,
+                            "Failed to durably publish decryption timeout failure"
+                        ),
+                    }
+                    ctx.stop();
+                }),
+        );
     }
 }
 
@@ -172,9 +187,6 @@ impl Handler<E3CommitteeContainsResponse<TypedEvent<DecryptionshareCreated>>>
                     ec,
                 ) = msg.into_inner().into_components();
 
-                // Capture the latest context so a subsequent collection timeout can emit
-                // `E3Failed` with a sensible causal parent.
-                self.pending.timeout_ec = Some(ec.clone());
                 self.add_share(party_id, decryption_share, signed_decryption_proofs, &ec)?;
 
                 // If we transitioned to VerifyingC6, dispatch C6 verification

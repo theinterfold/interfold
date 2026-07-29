@@ -51,6 +51,7 @@ enum PhysicalFrame {
 
 pub struct CommitLogEventLog {
     log: CommitLog,
+    path: PathBuf,
 }
 
 impl CommitLogEventLog {
@@ -96,9 +97,14 @@ impl CommitLogEventLog {
             }
             log.flush()
                 .context("failed to flush repaired event-log tail")?;
+            sync_commitlog_path(path)
+                .context("failed to sync repaired event-log tail to stable storage")?;
         }
 
-        let opened = Self { log };
+        let opened = Self {
+            log,
+            path: path.to_path_buf(),
+        };
         opened
             .read_from_checked(1)
             .context("event log integrity check failed during open")?;
@@ -471,6 +477,46 @@ fn apply_tail_recovery(plan: &TailRecoveryPlan) -> Result<()> {
     Ok(())
 }
 
+/// Sync every commitlog data/index file and the containing directory.
+///
+/// `commitlog 0.2.0`'s `CommitLog::flush` flushes Rust buffers and the index
+/// mmap but does not call `File::sync_all`. The event pipeline treats a
+/// successful [`EventLog::flush`] as its durability acknowledgement, so the
+/// wrapper must provide the stronger stable-media boundary itself.
+fn sync_commitlog_path(path: &Path) -> Result<()> {
+    for entry in fs::read_dir(path)
+        .with_context(|| format!("failed to list event-log directory {}", path.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let file_path = entry.path();
+        let is_commitlog_file = matches!(
+            file_path
+                .extension()
+                .and_then(|extension| extension.to_str()),
+            Some("log" | "index")
+        );
+        if !is_commitlog_file {
+            continue;
+        }
+        OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(&file_path)
+            .with_context(|| format!("failed to open {} for stable sync", file_path.display()))?
+            .sync_all()
+            .with_context(|| format!("failed to sync {}", file_path.display()))?;
+    }
+
+    File::open(path)
+        .with_context(|| format!("failed to open event-log directory {}", path.display()))?
+        .sync_all()
+        .with_context(|| format!("failed to sync event-log directory {}", path.display()))?;
+    Ok(())
+}
+
 impl EventLog for CommitLogEventLog {
     fn append(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<u64> {
         let bytes = bincode::serialize(event)?;
@@ -479,6 +525,7 @@ impl EventLog for CommitLogEventLog {
 
     fn flush(&mut self) -> Result<()> {
         self.log.flush().context("Failed to flush event log")?;
+        sync_commitlog_path(&self.path).context("Failed to sync event log to stable storage")?;
         Ok(())
     }
 

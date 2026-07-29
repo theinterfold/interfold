@@ -4,12 +4,13 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::{ensure, Result};
-use bloom::{BloomFilter, ASMS};
-use e3_events::{prelude::*, Event, InterfoldEvent, InterfoldEventData, SeqState, Unsequenced};
+use anyhow::Result;
+use e3_events::{Event, EventId, InterfoldEvent, InterfoldEventData, SeqState};
+use std::collections::{HashSet, VecDeque};
 use tracing::{trace, warn};
 
 use crate::events::GossipData;
+use crate::{NetworkAuthorizationState, ProtocolAdmission, ProtocolSigner};
 
 /// Pure translation/dedup logic backing the `NetEventTranslator` actor.
 ///
@@ -18,16 +19,28 @@ use crate::events::GossipData;
 ///
 /// Holds no actix/bus/channel state — the actor performs the actual publish I/O.
 pub struct EventTranslationService {
-    sent_events: BloomFilter,
+    sent_events: HashSet<EventId>,
+    sent_order: VecDeque<EventId>,
+    dedup_capacity: usize,
     topic: String,
+    admission: ProtocolAdmission,
 }
 
+const SENT_EVENT_DEDUP_CAPACITY: usize = 10_000;
+
 impl EventTranslationService {
-    pub fn new(topic: &str) -> Self {
+    pub fn new(topic: &str, authorization: NetworkAuthorizationState) -> Self {
         Self {
-            sent_events: BloomFilter::with_rate(0.001, 10_000),
+            sent_events: HashSet::new(),
+            sent_order: VecDeque::new(),
+            dedup_capacity: SENT_EVENT_DEDUP_CAPACITY,
             topic: topic.to_string(),
+            admission: ProtocolAdmission::new(authorization),
         }
+    }
+
+    pub fn observe(&mut self, event: &InterfoldEvent) {
+        self.admission.observe(event);
     }
 
     pub fn topic(&self) -> &str {
@@ -53,7 +66,11 @@ impl EventTranslationService {
     ///
     /// Returns `Some(GossipData)` to publish over the network, or `None` when the event is not
     /// forwardable or has already been broadcast.
-    pub fn prepare_outbound(&mut self, event: InterfoldEvent) -> Result<Option<GossipData>> {
+    pub fn prepare_outbound(
+        &self,
+        event: InterfoldEvent,
+        signer: &ProtocolSigner,
+    ) -> Result<Option<(EventId, GossipData)>> {
         if !Self::is_forwardable_event(&event) {
             let id = event.event_id();
             trace!(evt_id=%id, "Local events should not be rebroadcast so ignoring");
@@ -65,35 +82,51 @@ impl EventTranslationService {
             trace!(evt_id=%id, "Have seen event before not rebroadcasting!");
             return Ok(None);
         }
-        self.sent_events.insert(&id);
-
         warn!("GossipPublish event: {}", event.event_type());
-        let data: GossipData = event.try_into()?;
-        Ok(Some(data))
+        self.admission
+            .authorize_local_event(signer.address(), &event)?;
+        let data = GossipData::ProtocolEvent(signer.sign_event(event)?);
+        Ok(Some((id, data)))
     }
 
-    /// Decode an inbound gossip payload into the internal event to publish locally, recording it
-    /// for dedup so it is not later rebroadcast.
-    pub fn prepare_inbound(&mut self, data: GossipData) -> Result<InterfoldEvent<Unsequenced>> {
-        let event: InterfoldEvent<Unsequenced> = data.try_into()?;
-        ensure!(
-            Self::is_forwardable_event(&event),
-            "inbound gossip event type {} is not allowed on the protocol gossip channel",
-            event.event_type()
-        );
-        let id = event.id();
-        self.sent_events.insert(&id);
-        Ok(event)
+    /// Record an event only after the downstream command/bus has accepted it.
+    pub fn mark_accepted(&mut self, id: EventId) {
+        if !self.sent_events.insert(id) {
+            return;
+        }
+        self.sent_order.push_back(id);
+        while self.sent_order.len() > self.dedup_capacity {
+            if let Some(expired) = self.sent_order.pop_front() {
+                self.sent_events.remove(&expired);
+            }
+        }
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::signers::local::PrivateKeySigner;
     use e3_events::{
-        E3id, EventConstructorWithTimestamp, EventSource, PlaintextAggregated, TestEvent,
+        AggregatorLeaseUpdated, AggregatorPhase, Committee, E3id, EventConstructorWithTimestamp,
+        EventSource, PlaintextAggregated, TestEvent, Unsequenced,
     };
     use e3_utils::ArcBytes;
+    use libp2p::PeerId;
+    use std::collections::HashMap;
+
+    fn protocol_fixture(e3_id: &E3id) -> (ProtocolSigner, NetworkAuthorizationState) {
+        let signer = PrivateKeySigner::random();
+        let protocol_signer = ProtocolSigner::new(signer.clone(), PeerId::random());
+        let authorization = NetworkAuthorizationState::new(
+            HashMap::from([(
+                e3_id.clone(),
+                Committee::new(vec![signer.address().to_string()]),
+            )]),
+            HashMap::new(),
+        );
+        (protocol_signer, authorization)
+    }
 
     fn local_test_event() -> InterfoldEvent {
         let unsequenced: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
@@ -123,6 +156,23 @@ mod tests {
     }
 
     #[test]
+    fn chain_derived_failover_leases_are_never_gossip_admissible() {
+        let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
+            AggregatorLeaseUpdated {
+                e3_id: E3id::new("1", 7),
+                phase: AggregatorPhase::AwaitingPublicKey,
+                stage_deadline: 1_000,
+            }
+            .into(),
+            None,
+            42,
+            None,
+            EventSource::Local,
+        );
+        assert!(!EventTranslationService::is_forwardable_event(&event));
+    }
+
+    #[test]
     fn test_events_are_not_forwardable() {
         assert!(!EventTranslationService::is_forwardable_event(
             &local_test_event()
@@ -131,33 +181,29 @@ mod tests {
 
     #[test]
     fn non_forwardable_events_produce_no_gossip() {
-        let mut svc = EventTranslationService::new("topic");
-        assert!(svc.prepare_outbound(local_test_event()).unwrap().is_none());
+        let (signer, authorization) = protocol_fixture(&E3id::new("1", 1));
+        let svc = EventTranslationService::new("topic", authorization);
+        assert!(svc
+            .prepare_outbound(local_test_event(), &signer)
+            .unwrap()
+            .is_none());
     }
 
     #[test]
-    fn inbound_gossip_rejects_non_forwardable_internal_events() {
-        let mut svc = EventTranslationService::new("topic");
-        let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
-            TestEvent::new("fish", 7).into(),
-            None,
-            99,
-            None,
-            EventSource::Local,
-        );
-        let data: GossipData = event.clone().into_sequenced(3).try_into().unwrap();
-        let error = svc.prepare_inbound(data).unwrap_err();
-        assert!(error.to_string().contains("TestEvent"));
-    }
+    fn outbound_dedup_advances_only_after_acceptance() {
+        let event = local_forwardable_event();
+        let (signer, authorization) = protocol_fixture(&event.get_e3_id().unwrap());
+        let mut svc = EventTranslationService::new("topic", authorization);
+        let (id, _) = svc
+            .prepare_outbound(event.clone(), &signer)
+            .unwrap()
+            .unwrap();
 
-    #[test]
-    fn inbound_gossip_accepts_forwardable_protocol_events() {
-        let mut svc = EventTranslationService::new("topic");
-        let expected = local_forwardable_event();
-        let data: GossipData = expected.clone().try_into().unwrap();
-
-        let decoded = svc.prepare_inbound(data).unwrap();
-
-        assert_eq!(decoded.get_data(), expected.get_data());
+        assert!(svc
+            .prepare_outbound(event.clone(), &signer)
+            .unwrap()
+            .is_some());
+        svc.mark_accepted(id);
+        assert!(svc.prepare_outbound(event, &signer).unwrap().is_none());
     }
 }

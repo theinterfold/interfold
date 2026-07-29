@@ -16,8 +16,8 @@ use e3_data::{
 use e3_events::hlc_factory::HlcFactory;
 use e3_events::{
     AggregateConfig, BusHandle, Disabled, EventBus, EventBusConfig, EventStore, EventStoreRouter,
-    EventSubscriber, EventType, InsertBatch, InterfoldEvent, Sequencer, SnapshotBuffer,
-    StoreEventRequested, UpdateDestination,
+    EventSubscriber, EventType, InsertBatch, InterfoldEvent, PersistEvent, Sequencer,
+    SnapshotBuffer, UpdateDestination,
 };
 use e3_utils::enumerate_path;
 use once_cell::sync::OnceCell;
@@ -337,7 +337,7 @@ impl EventSystem {
     }
 
     /// Get an EventStoreRouter Recipient
-    pub fn eventstore_router(&self) -> Result<Recipient<StoreEventRequested>> {
+    pub fn eventstore_router(&self) -> Result<Recipient<PersistEvent>> {
         let eventstores = self.eventstore_addrs()?;
         match &eventstores {
             EventStoreAddrs::InMem(_) => Ok(self.in_mem_eventstore_router()?.recipient()),

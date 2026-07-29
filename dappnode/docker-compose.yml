@@ -4,13 +4,16 @@ services:
     build:
       context: .
       args:
-        UPSTREAM_VERSION: 0.2.3
-    image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.2.3'
+        UPSTREAM_VERSION: 0.4.0
+        UPSTREAM_BINARY_SOURCE: '${DAPPNODE_UPSTREAM_BINARY_SOURCE:-interfold-linux-x86_64.tar.gz}'
+        UPSTREAM_BINARY_SHA256: '${DAPPNODE_UPSTREAM_BINARY_SHA256:?stage and verify the exact candidate binary first}'
+    image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.4.0'
     restart: unless-stopped
     # Allow the node's 30-second durability barrier to finish before Docker sends SIGKILL.
     stop_grace_period: 45s
     volumes:
       - 'ciphernode_data:/data'
+      - 'ciphernode_secrets:/run/interfold'
     ports:
       - 37173:37173/udp
     environment:
@@ -18,8 +21,17 @@ services:
       RPC_URL: ''
       # Network & node config
       NETWORK: 'sepolia'
+      CHAIN_ID: '11155111'
+      REORG_CONFIRMATIONS: '64'
       NODE_ADDRESS: ''
       QUIC_PORT: '37173'
+      READINESS_PORT: '50506'
+      READINESS_MIN_PEERS: '1'
+      READINESS_MAX_RPC_POLL_AGE_SECS: '30'
+      READINESS_MAX_CHAIN_HEAD_AGE_SECS: '120'
+      READINESS_MAX_SYNC_LAG_BLOCKS: '2'
+      READINESS_MAX_OUTBOX_AGE_SECS: '300'
+      READINESS_MAX_ACTIVE_E3_IDLE_SECS: '1200'
       PEERS: ''
       LOG_LEVEL: 'info'
       EXTRA_OPTS: ''
@@ -27,9 +39,11 @@ services:
       INTERFOLD_CONTRACT: ''
       CIPHERNODE_REGISTRY_CONTRACT: ''
       BONDING_REGISTRY_CONTRACT: ''
+      SLASHING_MANAGER_CONTRACT: ''
       INTERFOLD_DEPLOY_BLOCK: '0'
       CIPHERNODE_REGISTRY_DEPLOY_BLOCK: '0'
       BONDING_REGISTRY_DEPLOY_BLOCK: '0'
+      SLASHING_MANAGER_DEPLOY_BLOCK: '0'
     security_opt:
       - no-new-privileges:true
     healthcheck:
@@ -41,3 +55,4 @@ services:
 
 volumes:
   ciphernode_data: {}
+  ciphernode_secrets: {}

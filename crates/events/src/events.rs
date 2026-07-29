@@ -16,25 +16,18 @@ pub enum EventStoreFilter {
     Source(EventSource),
 }
 
-/// Direct event received by the EventStore to store an event
+/// Acknowledged persistence request used by the production event pipeline.
+/// The response is returned only after the append/index have crossed the
+/// event-log flush boundary. `None` means an exact duplicate already existed.
 #[derive(Message, Debug)]
-#[rtype("()")]
-pub struct StoreEventRequested {
-    pub event: InterfoldEvent<Unsequenced>,
-    pub sender: Recipient<StoreEventResponse>,
-}
+#[rtype("Result<Option<InterfoldEvent<Sequenced>>>")]
+pub struct PersistEvent(pub InterfoldEvent<Unsequenced>);
 
-impl StoreEventRequested {
-    pub fn new(
-        event: InterfoldEvent<Unsequenced>,
-        sender: impl Into<Recipient<StoreEventResponse>>,
-    ) -> Self {
-        Self {
-            event,
-            sender: sender.into(),
-        }
-    }
-}
+/// End-to-end acknowledged publication request for callers that must know the
+/// event was durably stored and accepted by every live EventBus subscriber.
+#[derive(Message, Debug)]
+#[rtype("Result<()>")]
+pub struct PublishEvent(pub InterfoldEvent<Unsequenced>);
 
 /// The response of a request to get all EventStore events by either sequence or timestamp
 #[derive(Message, Debug)]
@@ -68,17 +61,6 @@ impl EventStoreQueryResponse {
     }
 }
 
-/// Direct event received by the Sequencer once an event has been stored
-#[derive(Message, Debug)]
-#[rtype("()")]
-pub struct StoreEventResponse(pub InterfoldEvent<Sequenced>);
-
-impl StoreEventResponse {
-    pub fn into_event(self) -> InterfoldEvent<Sequenced> {
-        self.0
-    }
-}
-
 /// Flush every event store after all previously routed appends have completed.
 /// Used by the clean-shutdown barrier; failures must reach the caller.
 #[derive(Message, Debug)]
@@ -86,13 +68,13 @@ impl StoreEventResponse {
 pub struct FlushEventStores;
 
 /// A no-op sequencer mailbox fence. Once its response arrives, every earlier
-/// store response has been forwarded to the EventBus.
+/// persistence and bounded subscriber-mailbox admission has completed.
 #[derive(Message, Debug)]
 #[rtype(result = "()")]
 pub struct SequencerBarrier;
 
-/// A no-op EventBus mailbox fence. Once handled, every earlier event has been
-/// processed by every live downstream subscriber.
+/// A no-op EventBus mailbox fence. Once handled, every earlier ordinary event has been admitted
+/// by every live downstream subscriber. `Shutdown` is stronger: its handlers have completed.
 #[derive(Message, Debug)]
 #[rtype(result = "()")]
 pub struct EventBusBarrier;

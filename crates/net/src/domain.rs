@@ -33,5 +33,5 @@ pub(crate) mod wire;
 pub use document_publishing::{datetime_to_instant_from_now, DocumentPublishingService};
 pub use event_conversion::{EventConversionService, IncomingDocument};
 pub use event_translation::EventTranslationService;
-pub use network_status::{ConnectedPeer, NetworkSnapshot, NetworkStatus};
+pub use network_status::{AuthenticatedPeer, ConnectedPeer, NetworkSnapshot, NetworkStatus};
 pub use sync_coordinator::{build_sync_batch, NetReadiness, ReadinessDecision, SyncBatchOutcome};
