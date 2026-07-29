@@ -91,3 +91,41 @@ pub(in crate::actors::interfold_sol_writer) async fn process_e3_failure<
     require_successful_receipt("process E3 failure", &receipt)?;
     Ok(receipt)
 }
+
+pub(in crate::actors::interfold_sol_writer) async fn should_process_e3_failure<
+    P: Provider + WalletProvider + Clone,
+>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    e3_id: E3id,
+) -> Result<bool> {
+    let e3_id: U256 = e3_id.try_into()?;
+    let contract = IInterfold::new(contract_address, provider.provider());
+    match contract.processE3Failure(e3_id).call().await {
+        Ok(_) => Ok(true),
+        Err(err) => {
+            let err = anyhow::Error::from(err);
+            let decoded = crate::domain::error_decoder::decode_error_from_str(&format!("{err:?}"));
+            if decoded.as_deref().is_some_and(failure_retry_is_terminal) {
+                return Ok(false);
+            }
+            Err(err)
+        }
+    }
+}
+
+fn failure_retry_is_terminal(message: &str) -> bool {
+    message.contains("NoPaymentToRefund")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::failure_retry_is_terminal;
+
+    #[test]
+    fn failure_preflight_only_suppresses_an_already_processed_refund() {
+        assert!(failure_retry_is_terminal("NoPaymentToRefund(7)"));
+        assert!(!failure_retry_is_terminal("E3NotFailed(7)"));
+        assert!(!failure_retry_is_terminal("RpcTransportError"));
+    }
+}

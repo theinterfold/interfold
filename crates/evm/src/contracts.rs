@@ -95,6 +95,7 @@ sol! {
 
         // ── View functions ──────────────────────────────────────────────────
         function ciphernodeRegistry() external view returns (address);
+        function evidenceConsumed(bytes32 evidenceKey) external view returns (bool);
 
         // ── Events ──────────────────────────────────────────────────────────
         event SlashExecuted(

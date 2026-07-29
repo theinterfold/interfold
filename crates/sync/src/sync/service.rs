@@ -10,16 +10,17 @@ use crate::domain::{
     decide_schema_version, CollectOutcome, HistoricalEvmCollector, SchemaVersionDecision,
     SnapshotMeta, SyncPlanner, SCHEMA_VERSION,
 };
+use crate::open_effects::detect_open_effects;
 use crate::replay_spool::ReplaySpool;
 use crate::SyncRepositoryFactory;
 use actix::{Message, Recipient};
 use anyhow::{bail, Context, Result};
 use e3_data::Repositories;
 use e3_events::{
-    AggregateConfig, BusHandle, CorrelationId, EffectsEnabled, Event, EventPublisher,
-    EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType, EvmEventConfig,
-    HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart, InterfoldEvent,
-    InterfoldEventData, SeqAgg, StoreKeys, SyncEnded, Unsequenced,
+    AggregateConfig, BusHandle, CorrelationId, EffectRetry, EffectsEnabled, Event, EventFactory,
+    EventPublisher, EventStoreQueryBy, EventStoreQueryResponse, EventSubscriber, EventType,
+    EvmEventConfig, HistoricalEvmEventsReceived, HistoricalEvmSyncStart, HistoricalNetSyncStart,
+    InterfoldEvent, InterfoldEventData, SeqAgg, StoreKeys, SyncEnded, Unsequenced,
 };
 #[cfg(test)]
 use e3_events::{EventBusBarrier, EventBusFanout, EventContextAccessors};
@@ -30,6 +31,7 @@ use tracing::info;
 
 #[cfg(test)]
 const REPLAY_PROGRESS_INTERVAL: usize = 10_000;
+const EFFECT_RETRY_FLUSH_BATCH_SIZE: usize = 1_024;
 
 pub async fn sync(
     bus: &BusHandle,
@@ -54,6 +56,16 @@ pub async fn sync(
     info!(
         "Snapshot metadata loaded for {} aggregates.",
         snapshot.aggregates().len()
+    );
+
+    // The snapshot cursor can advance beyond an effect intent even when its completion never
+    // arrived. Scan the append-only source of truth from sequence one so those pre-snapshot open
+    // loops are recoverable too; the scan is paged and retains only currently-open intents.
+    info!("Scanning durable history for incomplete effects...");
+    let open_effects = detect_open_effects(eventstore, snapshot.aggregates()).await?;
+    info!(
+        open_effects = open_effects.len(),
+        "Incomplete effect scan finished."
     );
 
     // 1b. Restore the HLC ordering floor from the highest persisted aggregate
@@ -84,32 +96,6 @@ pub async fn sync(
     //    receives it, the gateway stays in BufferUntilLive and all live EVM events are lost.
     let replayed = replay_spool.replay(bus).await?;
     info!(replayed_events = replayed, "Events replayed.");
-
-    // Loose ends after a crash:
-    //
-    // Terminal E3 work that *completed while this node was down* is recovered by the
-    // historical EVM re-fetch in step 5 below: the terminal on-chain events
-    // (PlaintextOutputPublished / E3Failed / committee completion) are re-delivered once
-    // effects are enabled, which re-drives the Sortition release path and frees any tickets
-    // the node was still holding. So "an E3 finished while we were offline" needs no special
-    // handling here — it is reconciled by replaying the canonical chain state.
-    //
-    // What is intentionally NOT auto-re-driven *here in sync* is this node's *own* in-flight
-    // request work by replaying the originating request events. Blindly re-publishing the
-    // originating request event is a no-op: the event bus dedups by EventId (payload hash), so
-    // the replayed event is dropped. Forcibly minting a fresh EventId to force re-execution is
-    // unsafe on a value-bearing protocol (it can double-emit or race the canonical chain state)
-    // and is therefore deliberately left out of the sync path.
-    //
-    // Note: this is *not* a global absence of restart recovery. Actors that hold determined,
-    // idempotent in-flight results re-drive themselves when `EffectsEnabled` is broadcast at the
-    // end of this sync (e.g. `ThresholdKeyshare::resume_in_flight_work` re-publishes a computed
-    // keyshare / decryption share). What sync deliberately avoids is replaying *request* events.
-    //
-    // Detection of loose ends that cannot be locally re-driven is exposed offline and
-    // non-destructively via `interfold node validate`, which cross-checks the persisted committee
-    // slots against terminal events in the log and reports orphaned tickets. See
-    // `crates/entrypoint/src/validate.rs`.
 
     // 5. Load the historical evm events to memory from all chains
     info!("Loading historical blockchain events...");
@@ -155,7 +141,7 @@ pub async fn sync(
     // 8-10. Enable effects, publish canonical history, then enter live mode. Each phase is fenced
     // through durable storage and EventBus fanout so aggregate-specific EventStore response order
     // cannot move history ahead of EffectsEnabled or SyncEnded ahead of history.
-    publish_reconciled_history(bus, historical).await?;
+    publish_reconciled_history(bus, open_effects, historical).await?;
     // normal live operations
 
     Ok(())
@@ -163,12 +149,28 @@ pub async fn sync(
 
 async fn publish_reconciled_history(
     bus: &BusHandle,
+    open_effects: Vec<InterfoldEventData>,
     historical: Vec<InterfoldEvent<Unsequenced>>,
 ) -> Result<()> {
     info!("Enabling effects...");
     bus.publish_without_context(EffectsEnabled::new())?;
     bus.flush_event_pipeline().await?;
     info!("Effects enabled.");
+
+    // A distinct internal envelope targets effect executors without replaying the original
+    // domain event into state-building actors. Each retry is persisted before fanout, so another
+    // crash simply leaves the original loop open for the next bounded scan.
+    let retry_count = open_effects.len();
+    for (index, effect) in open_effects.into_iter().enumerate() {
+        let retry = EffectRetry::new(effect)?;
+        let event = bus.event_from(retry, None)?;
+        bus.naked_dispatch_async(event).await?;
+        if (index + 1).is_multiple_of(EFFECT_RETRY_FLUSH_BATCH_SIZE) {
+            bus.flush_event_pipeline().await?;
+        }
+    }
+    bus.flush_event_pipeline().await?;
+    info!(retry_count, "Incomplete effects re-driven.");
 
     info!("Publishing historical events to actors...");
     for event in historical {

@@ -44,8 +44,8 @@ exercise so production responsibility size remains visible.
 - Ephemeral effect state: correlation IDs, collector addresses, timer handles, early-arrival
   buffers, and in-flight submission guards. These are grouped and named rather than mixed into
   protocol state.
-- External authority: EVM contract state. Writer preflights provide cross-restart idempotency where
-  no durable local outbox exists.
+- External authority: EVM contract state. Writer preflights provide cross-restart idempotency, and
+  startup pairs durable effect intents with their completion events before re-driving open loops.
 
 `Persistable::try_mutate` now accepts the snapshot write into the bounded store mailbox before it
 exposes the new value in memory. This does not turn snapshots into an external-effect outbox; the
@@ -59,7 +59,8 @@ construction, and cohesive FHE/math algorithms may exceed 300 lines. Large non-a
 infrastructure coordinators—notably `CiphernodeBuilder`, `NetInterface`, and the multithread task
 pool—need their own behavior-preserving projects if their responsibilities are changed.
 
-The remaining architectural gap is durable effect intent. Transaction submission and some
-cryptographic work still rely on replay plus external preflight instead of a versioned local
-intent/result outbox. That is a schema and recovery change, not a safe file-movement refactor, and
-must be implemented with migration and crash-matrix tests.
+The append-only event log now supplies durable effect intent: startup scans it in bounded pages,
+pairs supported intents with completion/terminal events, and emits internal `EffectRetry`
+envelopes only after `EffectsEnabled`. This closes the snapshot-advanced/open-loop loss mode.
+There is still no atomic transaction/receipt outbox or full EVM reorg rollback; contract simulation
+and canonical backfill remain the authority when a crash lands between submission and observation.

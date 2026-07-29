@@ -205,7 +205,10 @@ CiphernodeSelector receives WithSortitionTicket<E3Requested>
 ```
 CiphernodeRegistrySolWriter receives TicketGenerated event
 │
-└─ Calls contract.submitTicket(e3Id, ticketNumber).send()
+├─ Simulates the exact submitTicket(e3Id, ticketNumber) call
+│   └─ Treats already-submitted/finalized/deadline/ineligible states as terminal no-ops
+│
+└─ If simulation succeeds, calls contract.submitTicket(e3Id, ticketNumber).send()
     │
     │  ┌─── ON-CHAIN (CiphernodeRegistryOwnable) ──────────────┐
     │  │                                                         │
@@ -250,6 +253,11 @@ CiphernodeRegistrySolWriter receives TicketGenerated event
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```
+
+On restart, the sync service pairs each durable local `TicketGenerated` intent with
+`TicketSubmitted`, `CommitteeFinalized`, or `CommitteeFormationFailed`. An unmatched intent is
+wrapped in an internal `EffectRetry` after `EffectsEnabled`; the simulation above is the final
+idempotency check when a pre-crash transaction landed but its completion log was not persisted.
 
 ---
 

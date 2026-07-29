@@ -85,7 +85,9 @@ Specific triggers:
 Runtime note: `processE3Failure()` is a permissionless cleanup path. The Rust `InterfoldSolWriter`
 may auto-submit it from any effects-enabled node on the same chain, and it must not depend on
 active-aggregator designation because failures can happen before committee finalization or while the
-current aggregator is offline.
+current aggregator is offline. Before a recovered submission it simulates the exact contract call;
+`NoPaymentToRefund` proves the refund was already processed and suppresses the transaction, while
+other failures remain visible and retryable on later recovery.
 
 ```
 Anyone calls: Interfold.processE3Failure(e3Id)
@@ -448,7 +450,11 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 ├─ 1. EFFECT AND REPLAY GATE:
 │     Before EffectsEnabled (startup replay), retain the intent without sending a transaction
 │     Coalesce by the contract replay tuple (chainId, e3Id, accused, proofType)
+│     A replayed SlashProposed observation closes the matching deferred tuple
 │     After EffectsEnabled, release each retained intent once and track it in flight
+│     A full-log scan emits EffectRetry for an unmatched pre-snapshot intent
+│     Before sending, read evidenceConsumed(keccak256(chainId,e3Id,accused,proofType))
+│     and skip when a pre-crash or primary-submitter transaction already landed
 │
 ├─ 2. STAGGERED SUBMISSION (fallback submitters):
 │     Rank all agreeing voters by address (sorted ascending)

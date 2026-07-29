@@ -84,6 +84,17 @@ pub(in crate::actors::slashing_manager_sol_writer) async fn submit_slash_proposa
     .await
 }
 
+pub(in crate::actors::slashing_manager_sol_writer) async fn slash_evidence_consumed<
+    P: Provider + WalletProvider + Clone,
+>(
+    provider: EthProvider<P>,
+    contract_address: Address,
+    key: &SlashIntentKey,
+) -> Result<bool> {
+    let contract = ISlashingManager::new(contract_address, provider.provider());
+    Ok(contract.evidenceConsumed(key.evidence_key()).call().await?)
+}
+
 async fn resolve_party_id_for_operator<P: Provider + WalletProvider + Clone>(
     provider: EthProvider<P>,
     contract_address: Address,

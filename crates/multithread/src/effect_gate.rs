@@ -8,8 +8,8 @@
 
 use actix::{Actor, Context, Handler, Recipient};
 use e3_events::{
-    ComputeRequestKind, E3Stage, E3id, Event, EventContextAccessors, EventSubscriber, EventType,
-    InterfoldEvent, InterfoldEventData,
+    ComputeRequestKind, CorrelationId, E3Stage, E3id, Event, EventContextAccessors,
+    EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
 };
 use e3_utils::MAILBOX_LIMIT;
 use std::collections::{HashMap, HashSet};
@@ -36,6 +36,7 @@ pub(crate) struct ComputeEffectGate {
     enabled: bool,
     pending: HashMap<RequestKey, InterfoldEvent>,
     forwarded: HashSet<RequestKey>,
+    correlations: HashMap<(E3id, CorrelationId), RequestKey>,
 }
 
 impl ComputeEffectGate {
@@ -45,6 +46,7 @@ impl ComputeEffectGate {
             enabled: false,
             pending: HashMap::new(),
             forwarded: HashSet::new(),
+            correlations: HashMap::new(),
         }
     }
 
@@ -77,6 +79,9 @@ impl ComputeEffectGate {
         bus.subscribe_all(
             &[
                 EventType::ComputeRequest,
+                EventType::ComputeResponse,
+                EventType::ComputeRequestError,
+                EventType::EffectRetry,
                 EventType::EffectsEnabled,
                 EventType::E3RequestComplete,
                 EventType::E3Failed,
@@ -91,6 +96,8 @@ impl ComputeEffectGate {
             return;
         };
         let key = (request.e3_id.clone(), request.request.clone());
+        self.correlations
+            .insert((request.e3_id.clone(), request.correlation_id), key.clone());
         match self.pending.entry(key) {
             std::collections::hash_map::Entry::Occupied(mut entry)
                 if event.ts() > entry.get().ts() =>
@@ -120,6 +127,17 @@ impl ComputeEffectGate {
             .retain(|(pending_id, _), _| pending_id != e3_id);
         self.forwarded
             .retain(|(forwarded_id, _)| forwarded_id != e3_id);
+        self.correlations
+            .retain(|(correlation_e3_id, _), _| correlation_e3_id != e3_id);
+    }
+
+    fn complete(&mut self, e3_id: &E3id, correlation_id: CorrelationId) {
+        let Some(key) = self.correlations.remove(&(e3_id.clone(), correlation_id)) else {
+            return;
+        };
+        self.pending.remove(&key);
+        self.forwarded.remove(&key);
+        self.correlations.retain(|_, mapped| mapped != &key);
     }
 }
 
@@ -138,6 +156,18 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
         match event.get_data() {
             InterfoldEventData::ComputeRequest(_) if self.enabled => {
                 self.forward(event);
+            }
+            InterfoldEventData::EffectRetry(retry)
+                if self.enabled && retry.effect().is_compute() =>
+            {
+                self.forward(event);
+            }
+            InterfoldEventData::ComputeResponse(response) => {
+                self.complete(&response.e3_id, response.correlation_id)
+            }
+            InterfoldEventData::ComputeRequestError(error) => {
+                let request = error.request();
+                self.complete(&request.e3_id, request.correlation_id);
             }
             InterfoldEventData::ComputeRequest(_) => self.queue(event),
             InterfoldEventData::EffectsEnabled(_) => self.enable(),
@@ -158,9 +188,9 @@ mod tests {
     use super::*;
     use actix::{Message, ResponseFuture};
     use e3_events::{
-        ComputeRequest, CorrelationId, E3RequestComplete, EffectsEnabled,
-        EventConstructorWithTimestamp, EventSource, InterfoldEvent, PkBfvProofRequest, Unsequenced,
-        ZkRequest,
+        ComputeRequest, ComputeRequestError, ComputeRequestErrorKind, CorrelationId,
+        E3RequestComplete, EffectsEnabled, EventConstructorWithTimestamp, EventSource,
+        InterfoldEvent, PkBfvProofRequest, Unsequenced, ZkError, ZkRequest,
     };
     use e3_fhe_params::BfvPreset;
     use e3_utils::ArcBytes;
@@ -241,6 +271,25 @@ mod tests {
         .into_sequenced(2)
     }
 
+    fn compute_error(correlation_id: CorrelationId) -> InterfoldEvent {
+        let InterfoldEventData::ComputeRequest(request) = compute(correlation_id, 10).into_data()
+        else {
+            unreachable!();
+        };
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkError::InvalidParams("test".to_owned())),
+                request,
+            )
+            .into(),
+            None,
+            20,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(2)
+    }
+
     #[actix::test]
     async fn buffers_until_enabled_and_keeps_newest_semantic_retry() {
         let recorder = Recorder::default().start();
@@ -263,6 +312,19 @@ mod tests {
 
         gate.send(compute(CorrelationId::new(), 10)).await.unwrap();
         gate.send(completed()).await.unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+
+        assert!(recorder.send(Received).await.unwrap().is_empty());
+    }
+
+    #[actix::test]
+    async fn completed_compute_is_not_released_after_replay() {
+        let recorder = Recorder::default().start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient()).start();
+        let correlation_id = CorrelationId::new();
+
+        gate.send(compute(correlation_id, 10)).await.unwrap();
+        gate.send(compute_error(correlation_id)).await.unwrap();
         gate.send(effects_enabled()).await.unwrap();
 
         assert!(recorder.send(Received).await.unwrap().is_empty());

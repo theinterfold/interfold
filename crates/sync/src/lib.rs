@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 mod domain;
+mod open_effects;
 mod replay_spool;
 mod repo;
 mod runtime;

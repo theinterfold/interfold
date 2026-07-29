@@ -92,6 +92,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> CiphernodeRegistrySolWriter
                 EventType::PublicKeyAggregated,
                 EventType::CommitteeFinalizeRequested,
                 EventType::TicketGenerated,
+                EventType::EffectRetry,
                 EventType::E3RequestComplete,
                 EventType::Shutdown,
             ],

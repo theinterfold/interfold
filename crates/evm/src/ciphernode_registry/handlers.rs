@@ -39,6 +39,24 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                     ctx.notify(data);
                 }
             }
+            InterfoldEventData::EffectRetry(retry) => match retry.into_effect() {
+                InterfoldEventData::PublicKeyAggregated(data)
+                    if self.provider.chain_id() == data.e3_id.chain_id() =>
+                {
+                    ctx.notify(data);
+                }
+                InterfoldEventData::CommitteeFinalizeRequested(data)
+                    if self.provider.chain_id() == data.e3_id.chain_id() =>
+                {
+                    ctx.notify(data);
+                }
+                InterfoldEventData::TicketGenerated(data)
+                    if self.provider.chain_id() == data.e3_id.chain_id() =>
+                {
+                    ctx.notify(data);
+                }
+                _ => {}
+            },
             InterfoldEventData::E3RequestComplete(data) => self.notify_sync(ctx, data),
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
             _ => (),
@@ -101,6 +119,29 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<TicketGenerated>
 
                 Box::pin(async move {
                     info!("Submitting ticket {} for E3 {:?}", ticket_id, e3_id);
+
+                    match should_submit_ticket(
+                        provider.clone(),
+                        contract_address,
+                        e3_id.clone(),
+                        ticket_id,
+                    )
+                    .await
+                    {
+                        Ok(false) => {
+                            info!(e3_id = %e3_id, "Skipping submitTicket; on-chain state already makes the intent terminal");
+                            return;
+                        }
+                        Err(err) => {
+                            error!(
+                                "Failed to preflight submitTicket: {}",
+                                format_evm_error(&err)
+                            );
+                            bus.err(EType::Evm, err);
+                            return;
+                        }
+                        Ok(true) => {}
+                    }
 
                     let result =
                         submit_ticket_to_registry(provider, contract_address, e3_id, ticket_id)
