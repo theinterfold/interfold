@@ -3,7 +3,13 @@
 // This file is provided WITHOUT ANY WARRANTY;
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
-import { getBytes, hexlify, zeroPadValue } from "ethers";
+import {
+  ContractTransactionReceipt,
+  ContractTransactionResponse,
+  getBytes,
+  hexlify,
+  zeroPadValue,
+} from "ethers";
 import fs from "fs";
 import type { HardhatRuntimeEnvironment } from "hardhat/types/hre";
 import { fileURLToPath } from "node:url";
@@ -664,4 +670,24 @@ export const updateE3Config = (
 
   fs.writeFileSync(pathToConfigFile, lines.join("\n"), "utf8");
   console.log("\n✓ interfold.config.yaml updated successfully!");
+};
+
+/**
+ * Awaits a contract call being *mined*, not merely sent.
+ *
+ * `await contract.setX(...)` resolves when the transaction is dispatched — the receipt only exists
+ * after `.wait()`. On an auto-mining local node the difference is invisible, which is why the bug
+ * survives; against a real network a run of back-to-back writes silently loses whichever ones do
+ * not land, and the script reports success regardless.
+ */
+export const send = async (
+  call: Promise<ContractTransactionResponse>,
+  label?: string,
+): Promise<ContractTransactionReceipt> => {
+  const tx = await call;
+  const receipt = await tx.wait();
+  const what = label ?? "transaction";
+  if (!receipt) throw new Error(`${what} ${tx.hash}: no receipt`);
+  if (receipt.status !== 1) throw new Error(`${what} reverted: ${tx.hash}`);
+  return receipt;
 };

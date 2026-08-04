@@ -23,7 +23,7 @@ import { deployAndSavePoseidonT3 } from "./deployAndSave/poseidonT3";
 import { deployAndSaveSlashingManager } from "./deployAndSave/slashingManager";
 import { deployAndSaveAllVerifiers } from "./deployAndSave/verifiers";
 import { deployMocks } from "./deployMocks";
-import { isLocalDeploymentChain } from "./utils";
+import { isLocalDeploymentChain, send } from "./utils";
 
 // BFV parameter presets — hardcoded from crates/fhe-params/src/constants.rs
 // to avoid a cyclic dependency on @interfold/sdk.
@@ -353,7 +353,10 @@ export const deployInterfold = async (
   console.log("E3RefundManager deployed to:", e3RefundManagerAddress);
 
   console.log("Setting E3RefundManager in Interfold...");
-  await interfold.setE3RefundManager(e3RefundManagerAddress);
+  await send(
+    interfold.setE3RefundManager(e3RefundManagerAddress),
+    "interfold.setE3RefundManager",
+  );
 
   ///////////////////////////////////////////
   // Configure cross-contract dependencies
@@ -362,43 +365,79 @@ export const deployInterfold = async (
   console.log("Configuring cross-contract dependencies...");
 
   console.log("Setting Interfold address in CiphernodeRegistry...");
-  await ciphernodeRegistry.setInterfold(interfoldAddress);
+  await send(
+    ciphernodeRegistry.setInterfold(interfoldAddress),
+    "ciphernodeRegistry.setInterfold",
+  );
 
   console.log("Setting BondingRegistry address in CiphernodeRegistry...");
-  await ciphernodeRegistry.setBondingRegistry(bondingRegistryAddress);
+  await send(
+    ciphernodeRegistry.setBondingRegistry(bondingRegistryAddress),
+    "ciphernodeRegistry.setBondingRegistry",
+  );
 
   console.log("Setting Submission Window in CiphernodeRegistry...");
   console.log("SORTITION_SUBMISSION_WINDOW:", SORTITION_SUBMISSION_WINDOW);
-  await ciphernodeRegistry.setSortitionSubmissionWindow(
-    SORTITION_SUBMISSION_WINDOW,
+  await send(
+    ciphernodeRegistry.setSortitionSubmissionWindow(
+      SORTITION_SUBMISSION_WINDOW,
+    ),
+    "ciphernodeRegistry.setSortitionSubmissionWindow",
   );
 
   console.log("Setting BondingRegistry address in InterfoldTicketToken...");
-  await interfoldTicketToken.setRegistry(bondingRegistryAddress);
+  await send(
+    interfoldTicketToken.setRegistry(bondingRegistryAddress),
+    "interfoldTicketToken.setRegistry",
+  );
 
   console.log("Setting CiphernodeRegistry address in BondingRegistry...");
-  await bondingRegistry.setRegistry(ciphernodeRegistryAddress);
+  await send(
+    bondingRegistry.setRegistry(ciphernodeRegistryAddress),
+    "bondingRegistry.setRegistry",
+  );
 
   console.log("Setting Interfold address in SlashingManager...");
-  await slashingManager.setInterfold(interfoldAddress);
+  await send(
+    slashingManager.setInterfold(interfoldAddress),
+    "slashingManager.setInterfold",
+  );
 
   console.log("Setting BondingRegistry address in SlashingManager...");
-  await slashingManager.setBondingRegistry(bondingRegistryAddress);
+  await send(
+    slashingManager.setBondingRegistry(bondingRegistryAddress),
+    "slashingManager.setBondingRegistry",
+  );
 
   console.log("Setting CiphernodeRegistry address in SlashingManager...");
-  await slashingManager.setCiphernodeRegistry(ciphernodeRegistryAddress);
+  await send(
+    slashingManager.setCiphernodeRegistry(ciphernodeRegistryAddress),
+    "slashingManager.setCiphernodeRegistry",
+  );
 
   console.log("Setting E3RefundManager address in SlashingManager...");
-  await slashingManager.setE3RefundManager(e3RefundManagerAddress);
+  await send(
+    slashingManager.setE3RefundManager(e3RefundManagerAddress),
+    "slashingManager.setE3RefundManager",
+  );
 
   console.log("Setting SlashingManager address in Interfold...");
-  await interfold.setSlashingManager(slashingManagerAddress);
+  await send(
+    interfold.setSlashingManager(slashingManagerAddress),
+    "interfold.setSlashingManager",
+  );
 
   console.log("Setting SlashingManager address in BondingRegistry...");
-  await bondingRegistry.setSlashingManager(slashingManagerAddress);
+  await send(
+    bondingRegistry.setSlashingManager(slashingManagerAddress),
+    "bondingRegistry.setSlashingManager",
+  );
 
   console.log("Setting SlashingManager address in CiphernodeRegistry...");
-  await ciphernodeRegistry.setSlashingManager(slashingManagerAddress);
+  await send(
+    ciphernodeRegistry.setSlashingManager(slashingManagerAddress),
+    "ciphernodeRegistry.setSlashingManager",
+  );
 
   if (shouldDeployMocks) {
     console.log("Configuring local SlashingManager slash policies...");
@@ -435,26 +474,44 @@ export const deployInterfold = async (
   console.log("SLASHER_ROLE granted.");
 
   console.log("Setting Interfold as reward distributor in BondingRegistry...");
-  await bondingRegistry.setRewardDistributor(interfoldAddress);
+  await send(
+    bondingRegistry.setRewardDistributor(interfoldAddress),
+    "bondingRegistry.setRewardDistributor",
+  );
 
   // E3RefundManager already has correct interfold from deployment
 
   // Initialize committee size thresholds [quorum, total] (H, N)
   console.log("Setting committee thresholds...");
   // Minimum: H=2, N=3 (T=1)
-  await interfold.setCommitteeThresholds(0, [2, 3]);
+  await send(
+    interfold.setCommitteeThresholds(0, [2, 3]),
+    "interfold.setCommitteeThresholds(Minimum)",
+  );
   // Micro: H=5, N=9 (T=4)
-  await interfold.setCommitteeThresholds(1, [5, 9]);
+  await send(
+    interfold.setCommitteeThresholds(1, [5, 9]),
+    "interfold.setCommitteeThresholds(Micro)",
+  );
   // Small: H=10, N=19 (T=9)
-  await interfold.setCommitteeThresholds(2, [10, 19]);
+  await send(
+    interfold.setCommitteeThresholds(2, [10, 19]),
+    "interfold.setCommitteeThresholds(Small)",
+  );
   console.log(
     "Committee thresholds set (Minimum=[2,3], Micro=[5,9], Small=[10,19])",
   );
 
   // Register BFV param sets
   console.log("Registering BFV param sets...");
-  await interfold.setParamSet(0, encodedInsecure); // ParamSet.Insecure512
-  await interfold.setParamSet(1, encodedSecure); // ParamSet.Secure8192
+  await send(
+    interfold.setParamSet(0, encodedInsecure),
+    "interfold.setParamSet(Insecure512)",
+  );
+  await send(
+    interfold.setParamSet(1, encodedSecure),
+    "interfold.setParamSet(Secure8192)",
+  );
   console.log("ParamSet.Insecure512 registered");
   console.log("ParamSet.Secure8192 registered");
 
@@ -463,23 +520,26 @@ export const deployInterfold = async (
   // Set pricing config with protocol treasury
   const protocolTreasury = process.env.PROTOCOL_TREASURY || ownerAddress;
   console.log("Setting pricing config...");
-  await interfold.setPricingConfig({
-    keyGenFixedPerNode: 100000, // 0.10 USDC
-    keyGenPerEncryptionProof: 50000, // 0.05 USDC
-    coordinationPerPair: 10000, // 0.01 USDC
-    availabilityPerNodePerSec: 50, // 0.00005 USDC
-    decryptionPerNode: 300000, // 0.30 USDC
-    publicationBase: 1000000, // 1.00 USDC
-    verificationPerProof: 5000, // 0.005 USDC
-    protocolTreasury: protocolTreasury,
-    marginBps: 1000, // 10%
-    protocolShareBps: 182, // 1.82% gross ~= 20% of 10% margin
-    dkgUtilizationBps: 2500, // 25%
-    computeUtilizationBps: 5000, // 50%
-    decryptUtilizationBps: 2500, // 25%
-    minCommitteeSize: 0,
-    minThreshold: 0,
-  });
+  await send(
+    interfold.setPricingConfig({
+      keyGenFixedPerNode: 100000, // 0.10 USDC
+      keyGenPerEncryptionProof: 50000, // 0.05 USDC
+      coordinationPerPair: 10000, // 0.01 USDC
+      availabilityPerNodePerSec: 50, // 0.00005 USDC
+      decryptionPerNode: 300000, // 0.30 USDC
+      publicationBase: 1000000, // 1.00 USDC
+      verificationPerProof: 5000, // 0.005 USDC
+      protocolTreasury: protocolTreasury,
+      marginBps: 1000, // 10%
+      protocolShareBps: 182, // 1.82% gross ~= 20% of 10% margin
+      dkgUtilizationBps: 2500, // 25%
+      computeUtilizationBps: 5000, // 50%
+      decryptUtilizationBps: 2500, // 25%
+      minCommitteeSize: 0,
+      minThreshold: 0,
+    }),
+    "interfold.setPricingConfig",
+  );
   console.log("Pricing config set (treasury:", protocolTreasury, ")");
 
   if (shouldDeployMocks) {
@@ -631,6 +691,104 @@ export const deployInterfold = async (
   const decryptionVerifierAddress =
     await interfold.decryptionVerifiers(encryptionSchemeId);
   const pkVerifierAddress = await interfold.pkVerifiers(encryptionSchemeId);
+
+  ///////////////////////////////////////////
+  // Verify the wiring actually landed
+  ///////////////////////////////////////////
+  //
+  // Every setter above is a separate transaction, and a deploy is judged by whether the script
+  // exited zero. That is not the same thing: a dropped write leaves a contract pointing at
+  // `address(0)`, the script still reports success, and the failure only surfaces much later as an
+  // opaque revert from deep inside an unrelated call. Reading the values back costs a handful of
+  // eth_calls and turns that into a named failure here.
+  console.log("Verifying cross-contract wiring...");
+  const wiring: Array<[string, Promise<string>, string]> = [
+    [
+      "interfold.ciphernodeRegistry",
+      interfold.ciphernodeRegistry(),
+      ciphernodeRegistryAddress,
+    ],
+    [
+      "interfold.bondingRegistry",
+      interfold.bondingRegistry(),
+      bondingRegistryAddress,
+    ],
+    [
+      "interfold.e3RefundManager",
+      interfold.e3RefundManager(),
+      e3RefundManagerAddress,
+    ],
+    [
+      "interfold.slashingManager",
+      interfold.slashingManager(),
+      slashingManagerAddress,
+    ],
+    [
+      "ciphernodeRegistry.interfold",
+      ciphernodeRegistry.interfold(),
+      interfoldAddress,
+    ],
+    [
+      "ciphernodeRegistry.bondingRegistry",
+      ciphernodeRegistry.bondingRegistry(),
+      bondingRegistryAddress,
+    ],
+    [
+      "ciphernodeRegistry.slashingManager",
+      ciphernodeRegistry.slashingManager(),
+      slashingManagerAddress,
+    ],
+    [
+      "bondingRegistry.registry",
+      bondingRegistry.registry(),
+      ciphernodeRegistryAddress,
+    ],
+    [
+      "bondingRegistry.slashingManager",
+      bondingRegistry.slashingManager(),
+      slashingManagerAddress,
+    ],
+    [
+      "ticketToken.registry",
+      interfoldTicketToken.registry(),
+      bondingRegistryAddress,
+    ],
+    [
+      "slashingManager.interfold",
+      slashingManager.interfold(),
+      interfoldAddress,
+    ],
+    [
+      "slashingManager.bondingRegistry",
+      slashingManager.bondingRegistry(),
+      bondingRegistryAddress,
+    ],
+    [
+      "slashingManager.ciphernodeRegistry",
+      slashingManager.ciphernodeRegistry(),
+      ciphernodeRegistryAddress,
+    ],
+    [
+      "slashingManager.e3RefundManager",
+      slashingManager.e3RefundManager(),
+      e3RefundManagerAddress,
+    ],
+  ];
+
+  const wiringErrors: string[] = [];
+  for (const [label, actualPromise, expected] of wiring) {
+    const actual = await actualPromise;
+    if (actual.toLowerCase() !== expected.toLowerCase()) {
+      wiringErrors.push(`${label}: expected ${expected}, got ${actual}`);
+    }
+  }
+  if (wiringErrors.length > 0) {
+    throw new Error(
+      `Deployment finished with ${wiringErrors.length} unwired reference(s):\n  ` +
+        wiringErrors.join("\n  "),
+    );
+  }
+  console.log("Cross-contract wiring verified.");
 
   console.log(`
     ============================================
