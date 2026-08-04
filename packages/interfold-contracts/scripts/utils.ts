@@ -684,9 +684,21 @@ export const send = async (
   call: Promise<ContractTransactionResponse>,
   label?: string,
 ): Promise<ContractTransactionReceipt> => {
-  const tx = await call;
-  const receipt = await tx.wait();
   const what = label ?? "transaction";
+  let tx: ContractTransactionResponse;
+  try {
+    tx = await call;
+  } catch (error) {
+    throw new Error(`${what} failed to send`, { cause: error });
+  }
+  let receipt: ContractTransactionReceipt | null;
+  try {
+    receipt = await tx.wait();
+  } catch (error) {
+    throw new Error(`${what} failed while mining: ${tx.hash}`, {
+      cause: error,
+    });
+  }
   if (!receipt) throw new Error(`${what} ${tx.hash}: no receipt`);
   if (receipt.status !== 1) throw new Error(`${what} reverted: ${tx.hash}`);
   return receipt;

@@ -749,6 +749,11 @@ export const deployInterfold = async (
       slashingManagerAddress,
     ],
     [
+      "bondingRegistry.licenseToken",
+      bondingRegistry.licenseToken(),
+      interfoldTokenAddress,
+    ],
+    [
       "ticketToken.registry",
       interfoldTicketToken.registry(),
       bondingRegistryAddress,
@@ -781,6 +786,14 @@ export const deployInterfold = async (
     if (actual.toLowerCase() !== expected.toLowerCase()) {
       wiringErrors.push(`${label}: expected ${expected}, got ${actual}`);
     }
+  }
+
+  // The reward distributor is an authorization flag, not an address slot, so it needs its own
+  // read-back rather than an entry in the address table above.
+  if (!(await bondingRegistry.authorizedDistributors(interfoldAddress))) {
+    wiringErrors.push(
+      `bondingRegistry.authorizedDistributors: ${interfoldAddress} is not authorized`,
+    );
   }
   if (wiringErrors.length > 0) {
     throw new Error(
