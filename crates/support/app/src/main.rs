@@ -44,7 +44,11 @@ async fn call_webhook(callback_url: &str, payload: &WebhookPayload) -> anyhow::R
 
     println!("Sending webhook to: {}", callback_url);
 
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to build webhook client: {e}"))?;
+    let response = client
         .post(callback_url)
         .json(payload)
         .send()
