@@ -8,10 +8,8 @@ use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Result a
 use anyhow::Context;
 use e3_compute_provider::FHEInputs;
 use e3_support_types::{ComputeRequest, WebhookPayload};
-use reqwest::header::HOST;
 use serde::Serialize;
-use std::net::IpAddr;
-use std::sync::OnceLock;
+use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
 
 #[derive(Serialize, Debug)]
@@ -23,19 +21,22 @@ struct ProcessingResponse {
 #[derive(Clone, Debug)]
 struct ValidatedCallback {
     url: reqwest::Url,
-    host_header: Option<String>,
+    pinned_resolve: Option<(String, SocketAddr)>,
 }
 
-fn webhook_client() -> &'static reqwest::Client {
-    static CLIENT: OnceLock<reqwest::Client> = OnceLock::new();
-    CLIENT.get_or_init(|| {
-        reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(5))
-            .timeout(Duration::from_secs(30))
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .expect("failed to build webhook client")
-    })
+fn build_webhook_client(callback: &ValidatedCallback) -> anyhow::Result<reqwest::Client> {
+    let mut builder = reqwest::Client::builder()
+        .connect_timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(30))
+        .redirect(reqwest::redirect::Policy::none());
+
+    if let Some((host, addr)) = &callback.pinned_resolve {
+        builder = builder.resolve(host.as_str(), *addr);
+    }
+
+    builder
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to build webhook client: {e}"))
 }
 
 async fn call_webhook(callback: &ValidatedCallback, payload: &WebhookPayload) -> anyhow::Result<()> {
@@ -65,13 +66,8 @@ async fn call_webhook(callback: &ValidatedCallback, payload: &WebhookPayload) ->
 
     println!("Sending webhook to: {}", callback.url);
 
-    let mut request = webhook_client()
-        .post(callback.url.clone())
-        .json(payload);
-    if let Some(host) = &callback.host_header {
-        request = request.header(HOST, host);
-    }
-    let response = request.send().await?;
+    let client = build_webhook_client(callback)?;
+    let response = client.post(callback.url.clone()).json(payload).send().await?;
 
     println!("Webhook response status: {}", response.status());
     if !response.status().is_success() {
@@ -107,12 +103,22 @@ fn host_is_loopback(host: &str) -> bool {
         return true;
     }
     host.parse::<IpAddr>()
-        .map(|ip| ip.is_loopback())
+        .map(|ip| canonicalize_ip(ip).is_loopback())
         .unwrap_or(false)
 }
 
-fn ip_is_private_or_reserved(ip: IpAddr) -> bool {
+fn canonicalize_ip(ip: IpAddr) -> IpAddr {
     match ip {
+        IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map(IpAddr::V4)
+            .unwrap_or(IpAddr::V6(v6)),
+        IpAddr::V4(v4) => IpAddr::V4(v4),
+    }
+}
+
+fn ip_is_private_or_reserved(ip: IpAddr) -> bool {
+    match canonicalize_ip(ip) {
         IpAddr::V4(v4) => {
             v4.is_private()
                 || v4.is_link_local()
@@ -131,10 +137,12 @@ fn ip_is_private_or_reserved(ip: IpAddr) -> bool {
 }
 
 fn ip_is_safe_public_destination(ip: IpAddr) -> bool {
+    let ip = canonicalize_ip(ip);
     !ip.is_loopback() && !ip_is_private_or_reserved(ip)
 }
 
 fn ip_is_safe_host_gateway_destination(ip: IpAddr) -> bool {
+    let ip = canonicalize_ip(ip);
     ip.is_loopback() || ip_is_private_or_reserved(ip)
 }
 
@@ -142,7 +150,7 @@ async fn resolve_host(host: &str, port: u16) -> anyhow::Result<Vec<IpAddr>> {
     let addrs: Vec<_> = tokio::net::lookup_host((host, port))
         .await
         .with_context(|| format!("failed to resolve callback host {host}"))?
-        .map(|addr| addr.ip())
+        .map(|addr| canonicalize_ip(addr.ip()))
         .collect();
     anyhow::ensure!(
         !addrs.is_empty(),
@@ -151,14 +159,21 @@ async fn resolve_host(host: &str, port: u16) -> anyhow::Result<Vec<IpAddr>> {
     Ok(addrs)
 }
 
-fn pin_callback_url(mut url: reqwest::Url, ip: IpAddr) -> anyhow::Result<reqwest::Url> {
-    let pinned_host = match ip {
-        IpAddr::V4(v4) => v4.to_string(),
-        IpAddr::V6(v6) => format!("[{v6}]"),
-    };
-    url.set_host(Some(&pinned_host))
-        .map_err(|_| anyhow::anyhow!("failed to pin callback URL to resolved address"))?;
-    Ok(url)
+fn pinned_callback(url: reqwest::Url, resolve_host: &str, ip: IpAddr, port: u16) -> ValidatedCallback {
+    ValidatedCallback {
+        url,
+        pinned_resolve: Some((
+            resolve_host.to_string(),
+            SocketAddr::new(canonicalize_ip(ip), port),
+        )),
+    }
+}
+
+fn unpinned_callback(url: reqwest::Url) -> ValidatedCallback {
+    ValidatedCallback {
+        url,
+        pinned_resolve: None,
+    }
 }
 
 async fn validated_callback_url(
@@ -168,7 +183,8 @@ async fn validated_callback_url(
     let mut url = parse_http_url(callback_url, "callback URL")?;
     let host = url
         .host_str()
-        .ok_or_else(|| anyhow::anyhow!("callback URL must contain a host"))?;
+        .ok_or_else(|| anyhow::anyhow!("callback URL must contain a host"))?
+        .to_string();
 
     anyhow::ensure!(
         url.fragment().is_none(),
@@ -179,32 +195,27 @@ async fn validated_callback_url(
 
     if skip_localhost_rewrite {
         anyhow::ensure!(
-            host_is_loopback(host),
+            host_is_loopback(host.as_str()),
             "callback URL must target localhost in host networking mode"
         );
 
         let ips = if let Ok(ip) = host.parse::<IpAddr>() {
-            vec![ip]
+            vec![canonicalize_ip(ip)]
         } else {
-            resolve_host(host, port).await?
+            resolve_host(host.as_str(), port).await?
         };
         anyhow::ensure!(
             ips.iter().all(|ip| ip.is_loopback()),
             "callback URL must resolve to loopback addresses in host networking mode"
         );
 
-        let host_header = if host.parse::<IpAddr>().is_err() {
-            Some(host.to_string())
-        } else {
-            None
-        };
-        return Ok(ValidatedCallback {
-            url: pin_callback_url(url, ips[0])?,
-            host_header,
-        });
+        if host.parse::<IpAddr>().is_ok() {
+            return Ok(unpinned_callback(url));
+        }
+        return Ok(pinned_callback(url, host.as_str(), ips[0], port));
     }
 
-    if host_is_loopback(host) {
+    if host_is_loopback(host.as_str()) {
         url.set_host(Some("host.local"))
             .map_err(|_| anyhow::anyhow!("invalid localhost rewrite host"))?;
         let ips = resolve_host("host.local", port).await?;
@@ -212,22 +223,16 @@ async fn validated_callback_url(
             ips.iter().all(|ip| ip_is_safe_host_gateway_destination(*ip)),
             "callback URL must resolve to a host-gateway address"
         );
-        return Ok(ValidatedCallback {
-            url: pin_callback_url(url, ips[0])?,
-            host_header: Some("host.local".to_string()),
-        });
+        return Ok(pinned_callback(url, "host.local", ips[0], port));
     }
 
     if host == "host.local" {
-        let ips = resolve_host(host, port).await?;
+        let ips = resolve_host(host.as_str(), port).await?;
         anyhow::ensure!(
             ips.iter().all(|ip| ip_is_safe_host_gateway_destination(*ip)),
             "callback URL must resolve to a host-gateway address"
         );
-        return Ok(ValidatedCallback {
-            url: pin_callback_url(url, ips[0])?,
-            host_header: Some("host.local".to_string()),
-        });
+        return Ok(pinned_callback(url, host.as_str(), ips[0], port));
     }
 
     if let Ok(ip) = host.parse::<IpAddr>() {
@@ -235,22 +240,16 @@ async fn validated_callback_url(
             ip_is_safe_public_destination(ip),
             "callback URL must not target private or reserved addresses"
         );
-        return Ok(ValidatedCallback {
-            url,
-            host_header: None,
-        });
+        return Ok(unpinned_callback(url));
     }
 
-    let ips = resolve_host(host, port).await?;
+    let ips = resolve_host(host.as_str(), port).await?;
     anyhow::ensure!(
         ips.iter().all(|ip| ip_is_safe_public_destination(*ip)),
         "callback URL must not resolve to private, loopback, or reserved addresses"
     );
 
-    Ok(ValidatedCallback {
-        url: pin_callback_url(url, ips[0])?,
-        host_header: Some(host.to_string()),
-    })
+    Ok(pinned_callback(url, host.as_str(), ips[0], port))
 }
 
 async fn run_computation_async(
@@ -402,6 +401,18 @@ mod callback_tests {
         assert!(ip_is_safe_host_gateway_destination(ip));
     }
 
+    #[test]
+    fn ipv4_mapped_loopback_is_not_safe_public() {
+        let ip: IpAddr = "::ffff:127.0.0.1".parse().unwrap();
+        assert!(!ip_is_safe_public_destination(ip));
+    }
+
+    #[test]
+    fn ipv4_mapped_private_is_not_safe_public() {
+        let ip: IpAddr = "::ffff:10.0.0.1".parse().unwrap();
+        assert!(!ip_is_safe_public_destination(ip));
+    }
+
     #[tokio::test]
     async fn rejects_private_literal_callback() {
         let err = validated_callback_url("http://10.0.0.1/callback", false)
@@ -419,13 +430,24 @@ mod callback_tests {
     }
 
     #[tokio::test]
-    async fn host_mode_pins_localhost() {
+    async fn host_mode_accepts_loopback_literal() {
+        let callback = validated_callback_url("http://127.0.0.1:8080/callback", true)
+            .await
+            .unwrap();
+        assert_eq!(callback.url.host_str(), Some("127.0.0.1"));
+        assert_eq!(callback.url.port(), Some(8080));
+        assert!(callback.pinned_resolve.is_none());
+    }
+
+    #[tokio::test]
+    async fn host_mode_localhost_hostname_pins_resolve() {
         let callback = validated_callback_url("http://localhost:8080/callback", true)
             .await
             .unwrap();
-        assert_eq!(callback.url.port(), Some(8080));
-        assert!(callback.url.host().is_some());
-        assert!(callback.url.host().unwrap().is_loopback());
-        assert_eq!(callback.host_header.as_deref(), Some("localhost"));
+        assert_eq!(callback.url.host_str(), Some("localhost"));
+        let (host, addr) = callback.pinned_resolve.as_ref().unwrap();
+        assert_eq!(host, "localhost");
+        assert!(addr.ip().is_loopback());
+        assert_eq!(addr.port(), 8080);
     }
 }
