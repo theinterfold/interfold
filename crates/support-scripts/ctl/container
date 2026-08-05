@@ -40,29 +40,77 @@ else
     TTY_FLAGS=""
 fi
 
-if docker ps -q -f name="$CONTAINER_NAME" | grep -q .; then
-    echo "Running exec $IMAGE..."
-    docker exec $TTY_FLAGS "$CONTAINER_NAME" bash -c "$*"
-else
-    echo "Running start $IMAGE..."
-    # --network=host does not work on macos for allowing the container to access 
-    # the local machine. `--add-host...` is adding host.local to the hosts file 
-    # in the docker container we can then replace localhost and 127.0.0.1 
-    # from the input callback url so calls redirect to gateway.
-    # This should in theory be crossplatform
-    # However on linux the user must allow incoming connections from Docker's bridge network 172.17.0.0/16 through their firewall.
-    docker run $TTY_FLAGS  --rm \
-        --name "$CONTAINER_NAME" \
-        --platform linux/amd64 \
-        --add-host=host.local:host-gateway \
-        -p 13151:13151 \
-        -v "$(pwd)/.interfold/generated/contracts:/app/contracts:rw" \
-        -v "$(pwd)/tests:/app/tests" \
-        -v "$(pwd)/.interfold/caches/target:/app/target" \
-        -v "$(pwd)/.interfold/caches/registry:/home/devuser/.cargo/registry" \
-        -v "$(pwd)/.interfold/caches/git:/home/devuser/.cargo/git" \
-        -v "$(pwd)/.interfold/caches/risc0-cache:/home/devuser/.risc0/cache" \
-        -v "$(pwd)/.interfold/caches/risc0-circuits:/home/devuser/.risc0/circuits" \
-        -v "${CACHE_PREFIX}-cargo-cache:/usr/local/cargo" \
-        "$IMAGE" bash -c "$*"
+# Peel networking mode before forwarding remaining args into the container.
+LINUX_NETWORK_HOST_MODE=0
+INNER_ARGS=()
+for arg in "$@"; do
+    if [[ "$arg" == "--linux-network-host-mode" ]]; then
+        LINUX_NETWORK_HOST_MODE=1
+    else
+        INNER_ARGS+=("$arg")
+    fi
+done
+set -- "${INNER_ARGS[@]}"
+
+if [[ "$LINUX_NETWORK_HOST_MODE" == "1" && "$(uname -s)" != "Linux" ]]; then
+    echo "Error: --linux-network-host-mode needs Linux. Detected $(uname -s)." >&2
+    echo "Docker Desktop does not enable --network=host by default, and the container" >&2
+    echo "port would not be published. Start again without the flag." >&2
+    exit 1
 fi
+
+container_linux_network_host_mode() {
+    local network_mode skip_rewrite
+    network_mode=$(docker inspect -f '{{.HostConfig.NetworkMode}}' "$CONTAINER_NAME" 2>/dev/null) || return 1
+    skip_rewrite=$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "$CONTAINER_NAME" 2>/dev/null \
+        | grep -c '^INTERFOLD_SKIP_LOCALHOST_REWRITE=1$' || true)
+    [[ "$network_mode" == "host" && "$skip_rewrite" -eq 1 ]]
+}
+
+if docker ps -q -f name="$CONTAINER_NAME" | grep -q .; then
+    EXISTING_LINUX_NETWORK_HOST_MODE=0
+    if container_linux_network_host_mode; then
+        EXISTING_LINUX_NETWORK_HOST_MODE=1
+    fi
+
+    if [[ "$EXISTING_LINUX_NETWORK_HOST_MODE" != "$LINUX_NETWORK_HOST_MODE" ]]; then
+        echo "Existing container network mode does not match requested mode. Recreating container..." >&2
+        docker stop "$CONTAINER_NAME" >/dev/null 2>&1 || true
+    else
+        echo "Running exec $IMAGE..."
+        docker exec $TTY_FLAGS "$CONTAINER_NAME" bash -c "$*"
+        exit 0
+    fi
+fi
+
+echo "Running start $IMAGE..."
+# Default (cross-platform): `--add-host=host.local:host-gateway` plus rewriting
+# localhost/127.0.0.1 in callback URLs so the container can reach the host.
+# On Linux that requires allowing Docker's bridge network (172.17.0.0/16) through
+# the firewall. `--linux-network-host-mode` uses Docker `--network=host` instead
+# so localhost callbacks work without rewrite or firewall changes.
+# Note: `--network=host` is not useful on macOS Docker Desktop.
+DOCKER_NET_ARGS=(--add-host=host.local:host-gateway -p 13151:13151)
+DOCKER_ENV_ARGS=()
+if [[ "$LINUX_NETWORK_HOST_MODE" == "1" ]]; then
+    echo "Using Docker --network=host (linux network host mode)"
+    # Keep host.local→127.0.0.1 so older support images that still rewrite
+    # localhost callbacks keep working under host networking.
+    DOCKER_NET_ARGS=(--network=host --add-host=host.local:127.0.0.1)
+    DOCKER_ENV_ARGS=(-e INTERFOLD_SKIP_LOCALHOST_REWRITE=1)
+fi
+
+docker run $TTY_FLAGS  --rm \
+    --name "$CONTAINER_NAME" \
+    --platform linux/amd64 \
+    "${DOCKER_NET_ARGS[@]}" \
+    "${DOCKER_ENV_ARGS[@]}" \
+    -v "$(pwd)/.interfold/generated/contracts:/app/contracts:rw" \
+    -v "$(pwd)/tests:/app/tests" \
+    -v "$(pwd)/.interfold/caches/target:/app/target" \
+    -v "$(pwd)/.interfold/caches/registry:/home/devuser/.cargo/registry" \
+    -v "$(pwd)/.interfold/caches/git:/home/devuser/.cargo/git" \
+    -v "$(pwd)/.interfold/caches/risc0-cache:/home/devuser/.risc0/cache" \
+    -v "$(pwd)/.interfold/caches/risc0-circuits:/home/devuser/.risc0/circuits" \
+    -v "${CACHE_PREFIX}-cargo-cache:/usr/local/cargo" \
+    "$IMAGE" bash -c "$*"

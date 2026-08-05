@@ -148,6 +148,15 @@ interfold program start
 This starts the Docker container running `e3-support-app` on port 13151. If Boundless config is
 present, it will submit proofs to the Boundless market. Otherwise it falls back to dev mode.
 
+On Linux, if Docker bridge networking requires firewall rules for host callbacks, use:
+
+```bash
+interfold program start --linux-network-host-mode
+```
+
+This runs the container with `--network=host` so `localhost` callback URLs work without
+`host.local` rewriting. Not needed in `--dev` mode (no Docker) and not useful on macOS Docker Desktop.
+
 ### Step 6: Submit an E3 Request
 
 The E3 request is submitted on-chain by the instigator (e.g., CRISP coordination server):

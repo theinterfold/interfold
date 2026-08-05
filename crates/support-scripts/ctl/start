@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 
 unset RISC0_DEV_MODE RPC_URL PRIVATE_KEY PINATA_JWT PROGRAM_URL BOUNDLESS_ONCHAIN
+LINUX_NETWORK_HOST_MODE=0
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -27,6 +28,10 @@ while [[ $# -gt 0 ]]; do
     --boundless-onchain)
       BOUNDLESS_ONCHAIN="$2"
       shift 2
+      ;;
+    --linux-network-host-mode)
+      LINUX_NETWORK_HOST_MODE=1
+      shift
       ;;
     *)
       echo "Unknown argument: $1"
@@ -60,6 +65,10 @@ fi
 
 if [[ -n "$BOUNDLESS_ONCHAIN" ]]; then
   CONTAINER_ARGS+=("--boundless-onchain" "$BOUNDLESS_ONCHAIN")
+fi
+
+if [[ "$LINUX_NETWORK_HOST_MODE" == "1" ]]; then
+  CONTAINER_ARGS+=("--linux-network-host-mode")
 fi
 
 exec "$SCRIPT_DIR/container" "${CONTAINER_ARGS[@]}"
