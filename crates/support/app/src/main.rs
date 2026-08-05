@@ -5,9 +5,11 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Result as ActixResult};
+use anyhow::Context;
 use e3_compute_provider::FHEInputs;
 use e3_support_types::{ComputeRequest, WebhookPayload};
 use serde::Serialize;
+use std::net::IpAddr;
 
 #[derive(Serialize, Debug)]
 struct ProcessingResponse {
@@ -61,6 +63,80 @@ async fn call_webhook(callback_url: &str, payload: &WebhookPayload) -> anyhow::R
     response.error_for_status()?;
     println!("✓ Webhook called successfully for E3 {}", e3_id);
     Ok(())
+}
+
+fn parse_http_url(value: &str, label: &str) -> anyhow::Result<reqwest::Url> {
+    let url = reqwest::Url::parse(value).with_context(|| format!("invalid {label}"))?;
+    anyhow::ensure!(
+        matches!(url.scheme(), "http" | "https"),
+        "{label} must use http or https"
+    );
+    anyhow::ensure!(url.host_str().is_some(), "{label} must contain a host");
+    anyhow::ensure!(
+        url.username().is_empty() && url.password().is_none(),
+        "{label} must not contain credentials"
+    );
+    Ok(url)
+}
+
+fn host_is_loopback(host: &str) -> bool {
+    if host == "localhost" {
+        return true;
+    }
+    host.parse::<IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
+fn host_is_private_or_reserved(host: &str) -> bool {
+    if host_is_loopback(host) {
+        return false;
+    }
+
+    let Ok(ip) = host.parse::<IpAddr>() else {
+        return false;
+    };
+
+    ip.is_private()
+        || ip.is_link_local()
+        || ip.is_multicast()
+        || ip.is_unspecified()
+        || matches!(ip, IpAddr::V4(v4) if v4.octets() == [169, 254, 169, 254])
+}
+
+fn validated_callback_url(
+    callback_url: &str,
+    skip_localhost_rewrite: bool,
+) -> anyhow::Result<String> {
+    let mut url = parse_http_url(callback_url, "callback URL")?;
+    let host = url
+        .host_str()
+        .ok_or_else(|| anyhow::anyhow!("callback URL must contain a host"))?;
+
+    anyhow::ensure!(
+        url.fragment().is_none(),
+        "callback URL must not contain a fragment"
+    );
+
+    if skip_localhost_rewrite {
+        anyhow::ensure!(
+            host_is_loopback(host),
+            "callback URL must target localhost in host networking mode"
+        );
+        return Ok(url.to_string());
+    }
+
+    if host_is_loopback(host) {
+        url.set_host(Some("host.local"))
+            .map_err(|_| anyhow::anyhow!("invalid localhost rewrite host"))?;
+    } else {
+        anyhow::ensure!(
+            !host_is_private_or_reserved(host),
+            "callback URL must not target private or reserved addresses"
+        );
+    }
+
+    Ok(url.to_string())
 }
 
 async fn run_computation_async(
@@ -147,18 +223,11 @@ async fn handle_compute(req: web::Json<ComputeRequest>) -> ActixResult<HttpRespo
     };
 
     println!("fhe_inputs.params = {:?}", fhe_inputs.params);
-    let callback_url = if std::env::var("INTERFOLD_SKIP_LOCALHOST_REWRITE")
+    let skip_localhost_rewrite = std::env::var("INTERFOLD_SKIP_LOCALHOST_REWRITE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-    {
-        // Docker --network=host: localhost in the container is the host.
-        callback_url
-    } else {
-        // Bridge networking: rewrite so callbacks reach the host via host-gateway.
-        callback_url
-            .replace("localhost", "host.local")
-            .replace("127.0.0.1", "host.local")
-    };
+        .unwrap_or(false);
+    let callback_url = validated_callback_url(&callback_url, skip_localhost_rewrite)
+        .map_err(|e| actix_web::error::ErrorBadRequest(e.to_string()))?;
 
     // Process computation in background
     tokio::spawn(async move {
