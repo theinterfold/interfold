@@ -251,6 +251,17 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   hashes. — INDEX concern #21
 - CLI secrets are passed over **stdin only** — never argv or environment; private keys are never
   stored in plaintext. — `flow-trace/00`, `01`
+- **Deployment writes must be mined, not only sent.** Every configuration transaction in
+  `scripts/deployInterfold.ts` goes through the `send()` helper in `scripts/utils.ts`, which awaits
+  the receipt and fails on a missing receipt or a non-success status. `send()` also labels a
+  rejection from the send or the mining stage and keeps the original error as its `cause`. A bare
+  `await contract.setX(...)` resolves when the transaction is dispatched, so on a real network a
+  dropped write leaves the reference at `address(0)` while the script still exits zero.
+- **A deployment must end with a verified wiring graph.** After configuration, `deployInterfold.ts`
+  reads back every cross-contract reference (Interfold, CiphernodeRegistry, BondingRegistry,
+  InterfoldTicketToken, SlashingManager, E3RefundManager, FOLD as the BondingRegistry license token)
+  plus the BondingRegistry reward-distributor authorization for Interfold, and throws with the full
+  list of mismatches. Add a read-back for each new cross-contract setter.
 
 ## Known open issues (check before assuming current behavior is correct)
 
