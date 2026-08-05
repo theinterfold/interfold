@@ -28,8 +28,8 @@ impl ProgramSupportApi for ProgramSupportDev {
     }
     async fn start(&self, linux_network_host_mode: bool) -> Result<()> {
         if linux_network_host_mode {
-            eprintln!(
-                "warning: --linux-network-host-mode has no effect in --dev mode (Docker is not used)"
+            tracing::warn!(
+                "--linux-network-host-mode has no effect in --dev mode (Docker is not used)"
             );
         }
         let cwd = env::current_dir()?;

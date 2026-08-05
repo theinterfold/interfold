@@ -52,6 +52,13 @@ for arg in "$@"; do
 done
 set -- "${INNER_ARGS[@]}"
 
+if [[ "$LINUX_NETWORK_HOST_MODE" == "1" && "$(uname -s)" != "Linux" ]]; then
+    echo "Error: --linux-network-host-mode needs Linux. Detected $(uname -s)." >&2
+    echo "Docker Desktop does not enable --network=host by default, and the container" >&2
+    echo "port would not be published. Start again without the flag." >&2
+    exit 1
+fi
+
 if docker ps -q -f name="$CONTAINER_NAME" | grep -q .; then
     echo "Running exec $IMAGE..."
     docker exec $TTY_FLAGS "$CONTAINER_NAME" bash -c "$*"
