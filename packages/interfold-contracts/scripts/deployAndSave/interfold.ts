@@ -29,6 +29,7 @@ export interface InterfoldArgs {
   e3RefundManager?: string;
   feeToken?: string;
   timeoutConfig?: E3TimeoutConfig;
+  initialE3Program: string;
   hre: HardhatRuntimeEnvironment;
 }
 
@@ -45,9 +46,16 @@ export const deployAndSaveInterfold = async ({
   e3RefundManager,
   feeToken,
   timeoutConfig,
+  initialE3Program,
   hre,
 }: InterfoldArgs): Promise<{ interfold: Interfold }> => {
   const { ethers } = await hre.network.connect();
+
+  if ((await ethers.provider.getCode(initialE3Program)) === "0x") {
+    throw new Error(
+      `initialE3Program has no deployed code: ${initialE3Program}`,
+    );
+  }
 
   const [signer] = await ethers.getSigners();
 
@@ -68,7 +76,7 @@ export const deployAndSaveInterfold = async ({
       preDeployedArgs?.constructorArgs?.bondingRegistry === bondingRegistry &&
       preDeployedArgs?.constructorArgs?.e3RefundManager === e3RefundManager &&
       preDeployedArgs?.constructorArgs?.feeToken === feeToken &&
-      true)
+      preDeployedArgs?.constructorArgs?.initialE3Program === initialE3Program)
   ) {
     if (!preDeployedArgs?.address) {
       throw new Error("Interfold address not found, it must be deployed first");
@@ -145,6 +153,7 @@ export const deployAndSaveInterfold = async ({
       minCommitteeSize: 0,
       minThreshold: 0,
     },
+    initialE3Program,
   ]);
 
   const ProxyCF = await ethers.getContractFactory(
@@ -166,6 +175,7 @@ export const deployAndSaveInterfold = async ({
         feeToken,
         maxDuration,
         timeoutConfig: JSON.stringify(timeoutConfig),
+        initialE3Program,
       },
       libraries: {
         InterfoldLifecycle: lifecycleLibAddress,

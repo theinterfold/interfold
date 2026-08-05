@@ -83,6 +83,32 @@ fn backwards_transition_is_rejected() {
 }
 
 #[test]
+fn failure_is_terminal_and_reachable_from_active_dkg() {
+    let failed = KeyshareState::Failed {
+        failed_at_stage: E3Stage::CommitteeFinalized,
+        reason: FailureReason::DKGTimeout,
+    };
+
+    assert!(KeyshareState::CollectingEncryptionKeys(cek())
+        .next(failed.clone())
+        .is_ok());
+    assert!(failed.next(failed.clone()).is_ok());
+    assert!(failed
+        .next(KeyshareState::Failed {
+            failed_at_stage: E3Stage::CiphertextReady,
+            reason: FailureReason::DecryptionTimeout,
+        })
+        .is_err());
+    assert!(failed.next(KeyshareState::Init).is_err());
+    assert!(KeyshareState::Completed
+        .next(KeyshareState::Failed {
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGTimeout,
+        })
+        .is_err());
+}
+
+#[test]
 fn new_state_preserves_metadata_and_advances_phase() {
     let s = base_state(KeyshareState::Init);
     let next = s

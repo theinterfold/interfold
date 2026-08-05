@@ -180,7 +180,14 @@ function validateConfig(config: ProtocolConfigFile): void {
     config.interfold.pricing.protocolTreasury,
     "interfold.pricing.protocolTreasury",
   );
-  for (const program of config.e3Programs ?? []) address(program, "e3Program");
+  if (!Array.isArray(config.e3Programs) || config.e3Programs.length !== 1) {
+    throw new Error("Exactly one initial E3 Program is required");
+  }
+  const initialE3Program = address(config.e3Programs[0], "e3Programs[0]");
+  if (initialE3Program === ZERO) {
+    throw new Error("e3Programs[0] must not be the zero address");
+  }
+  config.e3Programs = [initialE3Program];
   optionalAddress(config.verifiers?.decryptionVerifier, "decryptionVerifier");
   optionalAddress(config.verifiers?.pkVerifier, "pkVerifier");
   optionalAddress(

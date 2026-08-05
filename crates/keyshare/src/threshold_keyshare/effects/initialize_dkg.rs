@@ -173,7 +173,8 @@ impl ThresholdKeyshare {
             | KeyshareState::ReadyForDecryption(_)
             | KeyshareState::Decrypting(_)
             | KeyshareState::GeneratingDecryptionProof(_)
-            | KeyshareState::Completed => {
+            | KeyshareState::Completed
+            | KeyshareState::Failed { .. } => {
                 info!(
                     state = state.variant_name(),
                     "Ignoring replayed GenPkShareAndSkSss response after DKG advanced"

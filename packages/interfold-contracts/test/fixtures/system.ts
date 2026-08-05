@@ -145,6 +145,8 @@ export interface DeployInterfoldSystemOptions {
    *  - `"large"`   → degree 2048 (used by integration tests)
    */
   bfvParams?: "default" | "large";
+  /** Program registered atomically by `Interfold.initialize`. */
+  initialE3Program?: string;
   /**
    * If `true`, also deploys the `MockCircuitVerifier` used by slashing
    * proof-based lanes. Defaults to `false`.
@@ -393,6 +395,16 @@ export async function deployInterfoldSystem(
   // Fix the BondingRegistry licenseToken placeholder.
   await bondingRegistry.setLicenseToken(await licenseToken.getAddress());
 
+  // Deploy the default program before Interfold so initialization can validate it.
+  const { mockE3Program: _mockE3Program } =
+    await ignition.deploy(MockE3ProgramModule);
+  const e3Program = MockE3ProgramFactory.connect(
+    await _mockE3Program.getAddress(),
+    owner,
+  );
+  const initialE3Program =
+    opts.initialE3Program ?? (await e3Program.getAddress());
+
   // ── Interfold ────────────────────────────────────────────────────────────────
   const {
     interfold: _interfold,
@@ -408,6 +420,7 @@ export async function deployInterfoldSystem(
         e3RefundManager: ADDRESS_ONE, // placeholder — overridden below
         feeToken: await usdcToken.getAddress(),
         timeoutConfig,
+        initialE3Program,
       },
     },
   });
@@ -485,13 +498,6 @@ export async function deployInterfoldSystem(
     owner,
   );
 
-  const { mockE3Program: _mockE3Program } =
-    await ignition.deploy(MockE3ProgramModule);
-  const e3Program = MockE3ProgramFactory.connect(
-    await _mockE3Program.getAddress(),
-    owner,
-  );
-
   let circuitVerifier: MockCircuitVerifier | undefined;
   if (opts.deployCircuitVerifier) {
     const { mockCircuitVerifier: _mockCircuitVerifier } = await ignition.deploy(
@@ -503,7 +509,9 @@ export async function deployInterfoldSystem(
     );
   }
 
-  await interfold.registerE3Program(await e3Program.getAddress());
+  if (!(await interfold.e3Programs(await e3Program.getAddress()))) {
+    await interfold.registerE3Program(await e3Program.getAddress());
+  }
   await interfold.setParamSet(0, bfvParams);
   await interfold.setDecryptionVerifier(
     ENCRYPTION_SCHEME_ID,

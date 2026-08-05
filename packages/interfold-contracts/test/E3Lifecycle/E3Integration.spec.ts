@@ -686,6 +686,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator2,
         operator3,
         setupOperator,
+        e3Program,
       } = await loadFixture(setup);
 
       await setupOperator(operator1);
@@ -704,6 +705,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
             bondingRegistry: await interfold.bondingRegistry(),
             e3RefundManager: addressOne,
             feeToken: await interfold.feeToken(),
+            initialE3Program: await e3Program.getAddress(),
           },
         },
       });

@@ -123,10 +123,14 @@ EncryptionKeyCollector waits for EncryptionKeyCreated from ALL N parties
 │
 ├─ On TIMEOUT (derived DKG-phase cutoff):
 │   └─ Send EncryptionKeyCollectionFailed to parent ThresholdKeyshare
+│      ├─ ThresholdKeyshare persists KeyshareState::Failed {
+│      │    failed_at_stage: CommitteeFinalized,
+│      │    reason: DKGTimeout
+│      │  }
 │      ├─ ThresholdKeyshare republishes EncryptionKeyCollectionFailed for telemetry
 │      ├─ ThresholdKeyshare emits E3Failed {
 │      │    failed_at_stage: CommitteeFinalized,
-│      │    reason: InsufficientCommitteeMembers
+│      │    reason: DKGTimeout
 │      │  }
 │      └─ ThresholdKeyshare actor stops
 │
@@ -347,10 +351,14 @@ ThresholdShareCollector waits for ThresholdShareCreated from ALL N parties
 │
 ├─ On TIMEOUT (derived DKG-phase cutoff):
 │   └─ Send ThresholdShareCollectionFailed to parent ThresholdKeyshare
+│      ├─ ThresholdKeyshare persists KeyshareState::Failed {
+│      │    failed_at_stage: CommitteeFinalized,
+│      │    reason: DKGTimeout
+│      │  }
 │      ├─ ThresholdKeyshare republishes ThresholdShareCollectionFailed for telemetry
 │      ├─ ThresholdKeyshare emits E3Failed {
 │      │    failed_at_stage: CommitteeFinalized,
-│      │    reason: InsufficientCommitteeMembers
+│      │    reason: DKGTimeout
 │      │  }
 │      └─ ThresholdKeyshare actor stops
 │
@@ -532,6 +540,14 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 ├─ 5. COLLECT C4 SHARES FROM ALL PARTIES:
 │     ThresholdKeyshare waits for DecryptionKeyShared from ALL N parties
 │     │
+│     ├─ On timeout:
+│     │  ├─ Persist KeyshareState::Failed {
+│     │  │    failed_at_stage: CommitteeFinalized,
+│     │  │    reason: DecryptionTimeout
+│     │  │  }
+│     │  ├─ Emit the matching E3Failed event
+│     │  └─ Stop the ThresholdKeyshare actor
+│     │
 │     └─ When all collected → AllDecryptionKeySharesCollected
 │
 ├─ 6. C4 VERIFICATION:
@@ -557,6 +573,12 @@ ThresholdKeyshare receives AllThresholdSharesCollected
      }
     → Broadcast to committee members via P2P
 ```
+
+Each fatal collector path commits `KeyshareState::Failed` before it publishes `E3Failed`. A later
+transition cannot change the saved stage or reason. If the process stops between these operations,
+startup hydrates the terminal state. `EffectsEnabled` then publishes the same failure payload.
+Event-ID deduplication makes this redrive idempotent, and the actor cannot resume an earlier DKG
+phase.
 
 ---
 

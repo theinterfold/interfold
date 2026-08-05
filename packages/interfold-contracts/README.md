@@ -87,6 +87,12 @@ pnpm protocol --network sepolia --action deploy --config packages/interfold-cont
 pnpm protocol --network sepolia --action validate --config packages/interfold-contracts/deploy/protocol/sepolia-protocol.config.json
 ```
 
+Set `e3Programs` in the protocol configuration to one deployed E3 program
+contract. The deploy action rejects any other list length or an address without
+contract code. It registers the program in `Interfold.initialize` before
+ownership transfers to the Safe. Later registrations require an owner
+transaction.
+
 The canonical outputs live under `packages/interfold-contracts/deploy/`. The
 scripts also mirror addresses into `deployed_contracts.json` for older tasks and
 verification.

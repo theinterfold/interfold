@@ -62,7 +62,7 @@ export interface ProtocolConfigFile {
     pkVerifier?: string;
     dkgFoldAttestationVerifier?: string;
   };
-  e3Programs?: string[];
+  e3Programs: [string];
 }
 
 export interface ProtocolDeployment {

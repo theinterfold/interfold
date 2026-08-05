@@ -131,12 +131,4 @@ function appendVerifierTxs(
       ),
     );
   }
-  for (const program of config.e3Programs ?? []) {
-    txs.push(
-      safeTx(
-        c.interfold,
-        i.interfold.encodeFunctionData("registerE3Program", [program]),
-      ),
-    );
-  }
 }

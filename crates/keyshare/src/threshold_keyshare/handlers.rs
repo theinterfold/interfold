@@ -4,6 +4,21 @@
 
 use super::*;
 
+impl ThresholdKeyshare {
+    fn persist_terminal_failure(
+        &mut self,
+        failed_at_stage: E3Stage,
+        reason: FailureReason,
+    ) -> Result<()> {
+        self.state.try_mutate_without_context(|state| {
+            state.new_state(KeyshareState::Failed {
+                failed_at_stage,
+                reason,
+            })
+        })
+    }
+}
+
 impl Handler<TypedEvent<DecryptionShareProofSigned>> for ThresholdKeyshare {
     type Result = ();
     fn handle(
@@ -127,6 +142,8 @@ impl Handler<EncryptionKeyCollectionFailed> for ThresholdKeyshare {
             // Clear the collector reference since it's stopped
             self.encryption_key_collector = None;
 
+            self.persist_terminal_failure(E3Stage::CommitteeFinalized, FailureReason::DKGTimeout)?;
+
             // Publish failure event to event bus for sync tracking
             self.bus.publish_without_context(msg.clone())?;
 
@@ -160,6 +177,8 @@ impl Handler<ThresholdShareCollectionFailed> for ThresholdKeyshare {
 
             // Clear the collector reference since it's stopped
             self.decryption_key_collector = None;
+
+            self.persist_terminal_failure(E3Stage::CommitteeFinalized, FailureReason::DKGTimeout)?;
 
             // Publish failure event to event bus for sync tracking
             self.bus.publish_without_context(msg.clone())?;
@@ -211,6 +230,11 @@ impl Handler<DecryptionKeySharedCollectionFailed> for ThresholdKeyshare {
             );
 
             self.decryption_key_shared_collector = None;
+
+            self.persist_terminal_failure(
+                E3Stage::CommitteeFinalized,
+                FailureReason::DecryptionTimeout,
+            )?;
 
             self.bus.publish_without_context(E3Failed {
                 e3_id: msg.e3_id.clone(),

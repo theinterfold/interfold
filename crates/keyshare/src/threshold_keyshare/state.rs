@@ -14,7 +14,9 @@
 use anyhow::{anyhow, Result};
 use e3_committee_hash::DecryptionDomainContext;
 use e3_crypto::SensitiveBytes;
-use e3_events::{CiphernodeSelected, E3id, EncryptionKey, PartyId, SignedProofPayload};
+use e3_events::{
+    CiphernodeSelected, E3Stage, E3id, EncryptionKey, FailureReason, PartyId, SignedProofPayload,
+};
 use e3_trbfv::{
     shares::{Encrypted, SharedSecret},
     TrBFVConfig,
@@ -126,6 +128,11 @@ pub enum KeyshareState {
     GeneratingDecryptionProof(GeneratingDecryptionProof),
     // Finished
     Completed,
+    // This terminal state preserves the failure across a restart.
+    Failed {
+        failed_at_stage: E3Stage,
+        reason: FailureReason,
+    },
 }
 
 impl KeyshareState {
@@ -133,9 +140,14 @@ impl KeyshareState {
         use KeyshareState as K;
         // The following can be used to check that we are transitioning to a valid state
         let valid = {
+            // A persisted failure can only be written again with the same payload.
+            if matches!(self, K::Failed { .. }) {
+                self == &new_state
             // If we are in the same branch the new state is valid
-            if mem::discriminant(self) == mem::discriminant(&new_state) {
+            } else if mem::discriminant(self) == mem::discriminant(&new_state) {
                 true
+            } else if matches!(&new_state, K::Failed { .. }) {
+                !matches!(self, K::Completed)
             } else {
                 matches!(
                     (self, &new_state),
@@ -176,6 +188,7 @@ impl KeyshareState {
             Self::Decrypting(_) => "Decrypting",
             Self::GeneratingDecryptionProof(_) => "GeneratingDecryptionProof",
             Self::Completed => "Completed",
+            Self::Failed { .. } => "Failed",
         }
     }
 }

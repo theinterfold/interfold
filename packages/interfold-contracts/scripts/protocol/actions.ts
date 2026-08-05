@@ -30,6 +30,7 @@ async function assertPreconditions(
       config.bondingRegistryProxyAdmin,
       "bondingRegistryProxyAdmin",
     ),
+    requireContract(ethers.provider, config.e3Programs[0], "e3Programs[0]"),
   ]);
 
   const proxyAdmin = new ethersLib.Contract(

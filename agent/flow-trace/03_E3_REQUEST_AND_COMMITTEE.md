@@ -438,6 +438,11 @@ The registry must finalize a ready committee.
    `submitTicket` is still sent by the operator key. Sortition hashes, eligibility snapshots,
    committee membership, and party IDs never use the bond-owner address.
 
+9. **E3 program bootstrap and governance**: The production deploy requires one deployed E3 program.
+   `Interfold.initialize` registers it before it transfers ownership to the Safe. Every registration
+   rejects an address without runtime code. After initialization, only the owner can append another
+   program.
+
 ---
 
 ## Cluster 7 audit additions (post-fix semantics)

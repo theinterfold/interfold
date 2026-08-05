@@ -601,6 +601,7 @@ interface IInterfold {
     function isFeeTokenAllowed(IERC20 token) external view returns (bool);
 
     /// @notice Register an E3 Program. Append-only — programs cannot be deregistered.
+    /// @dev Only the owner can register a program after initialization.
     /// @param e3Program The address of the E3 Program.
     function registerE3Program(IE3Program e3Program) external;
 

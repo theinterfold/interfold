@@ -83,6 +83,7 @@ export async function deployProtocolContracts(
       BigInt(config.interfold.maxDuration),
       timeoutConfig(config.interfold.timeoutConfig),
       pricingConfig(config.interfold.pricing),
+      config.e3Programs[0],
     ]),
   );
 

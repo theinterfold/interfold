@@ -180,6 +180,7 @@ export function syncProtocolDeploymentRecords(
         ),
       },
       pricingConfig(config.interfold.pricing),
+      config.e3Programs[0],
     ],
   );
   storeDeploymentArgs(
@@ -195,6 +196,7 @@ export function syncProtocolDeploymentRecords(
         maxDuration: config.interfold.maxDuration,
         timeoutConfig: JSON.stringify(config.interfold.timeoutConfig),
         pricingConfig: JSON.stringify(config.interfold.pricing),
+        initialE3Program: config.e3Programs[0],
       },
       libraries: {
         InterfoldLifecycle: deployment.interfoldLifecycle,

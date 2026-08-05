@@ -120,12 +120,12 @@ impl ThresholdKeyshare {
     ///
     /// Invoked when `EffectsEnabled` is broadcast at the end of boot sync, *after* this
     /// actor has been hydrated from its persisted state. The dangerous, value-bearing
-    /// concern with re-driving is double-emission; this is safe here because every output
-    /// re-emitted below is deduplicated downstream by `party_id`:
+    /// concern with re-driving is double-emission. Re-emission is safe here because:
     ///   * `KeyshareCreated` — `PublicKeyAggregation::add_keyshare` ignores a `party_id`
     ///     that already submitted (idempotent), and
     ///   * `DecryptionshareCreated` — threshold plaintext aggregation keys shares by
-    ///     `party_id` (re-insert overwrites with the identical deterministic share).
+    ///     `party_id` (re-insert overwrites with the identical deterministic share), and
+    ///   * `E3Failed` — the event bus deduplicates the identical payload by `EventId`.
     ///
     /// Only states where the local result is already determined are re-driven. Earlier
     /// phases depend on peer gossip that cannot be reconstructed locally and are surfaced
@@ -160,6 +160,23 @@ impl ThresholdKeyshare {
                 );
                 self.publish_keyshare_created(ec.clone())?;
                 self.issue_decryption_share_request(ec)?;
+            }
+            KeyshareState::Failed {
+                failed_at_stage,
+                reason,
+            } => {
+                info!(
+                    e3_id = %state.e3_id,
+                    "Resuming terminal keyshare failure"
+                );
+                self.bus.publish(
+                    E3Failed {
+                        e3_id: state.e3_id.clone(),
+                        failed_at_stage: failed_at_stage.clone(),
+                        reason: reason.clone(),
+                    },
+                    ec,
+                )?;
             }
             other => {
                 trace!(

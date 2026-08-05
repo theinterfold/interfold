@@ -328,6 +328,11 @@ export const deployInterfold = async (
     );
   }
 
+  const mockDeployments = shouldDeployMocks ? await deployMocks() : undefined;
+  if (!mockDeployments) {
+    throw new Error("An initial E3 Program deployment is required");
+  }
+
   console.log("Deploying Interfold...");
   const { interfold } = await deployAndSaveInterfold({
     owner: ownerAddress,
@@ -337,6 +342,7 @@ export const deployInterfold = async (
     e3RefundManager: addressOne, // placeholder, will be updated
     feeToken: feeTokenAddress,
     timeoutConfig: DEFAULT_TIMEOUT_CONFIG,
+    initialE3Program: mockDeployments.e3ProgramAddress,
     hre,
   });
   const interfoldAddress = await interfold.getAddress();
@@ -542,12 +548,12 @@ export const deployInterfold = async (
   );
   console.log("Pricing config set (treasury:", protocolTreasury, ")");
 
-  if (shouldDeployMocks) {
+  if (mockDeployments) {
     const {
       decryptionVerifierAddress: mockDecryptionVerifierAddress,
       pkVerifierAddress: mockPkVerifierAddress,
       e3ProgramAddress,
-    } = await deployMocks();
+    } = mockDeployments;
 
     console.log("encryptionSchemeId", encryptionSchemeId);
 
@@ -583,9 +589,13 @@ export const deployInterfold = async (
       }
     }
 
-    const tx = await interfold.registerE3Program(e3ProgramAddress);
-    await tx.wait();
-    console.log(`Successfully enabled E3 Program in Interfold contract`);
+    if (await interfold.e3Programs(e3ProgramAddress)) {
+      console.log(`E3 Program already enabled in Interfold contract`);
+    } else {
+      const tx = await interfold.registerE3Program(e3ProgramAddress);
+      await tx.wait();
+      console.log(`Successfully enabled E3 Program in Interfold contract`);
+    }
   }
 
   let verifierDeployments: Record<string, string> = {};

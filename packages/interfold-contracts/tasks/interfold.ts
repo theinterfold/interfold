@@ -153,16 +153,11 @@ export const requestCommittee = task(
       const connection = await hre.network.connect();
       const { ethers } = connection;
 
-      const { deployAndSaveInterfold } = await import(
-        "../scripts/deployAndSave/interfold"
-      );
       const { deployAndSaveMockStableToken } = await import(
         "../scripts/deployAndSave/mockStableToken"
       );
 
-      const { interfold } = await deployAndSaveInterfold({
-        hre,
-      });
+      const { interfold } = await getInterfoldConnection(hre);
 
       const { mockStableToken: mockUSDC } = await deployAndSaveMockStableToken({
         hre,
@@ -276,15 +271,33 @@ export const enableE3 = task("interfold:enableE3", "Enable an E3 program")
   })
   .setAction(async () => ({
     default: async ({ e3Address }, hre) => {
-      const { deployAndSaveInterfold } = await import(
-        "../scripts/deployAndSave/interfold"
-      );
+      const { ethers, interfold } = await getInterfoldConnection(hre);
 
-      const { interfold } = await deployAndSaveInterfold({
-        hre,
-      });
+      if (await interfold.e3Programs(e3Address)) {
+        console.log(`E3 program already enabled: ${e3Address}`);
+        return;
+      }
 
-      const tx = await interfold.registerE3Program(e3Address);
+      const ownerAddress = (await interfold.owner()).toLowerCase();
+      const signers = await ethers.getSigners();
+      const ownerSigner = (
+        await Promise.all(
+          signers.map(async (signer: any) => ({
+            address: (await signer.getAddress()).toLowerCase(),
+            signer,
+          })),
+        )
+      ).find(({ address }) => address === ownerAddress)?.signer;
+
+      if (!ownerSigner) {
+        throw new Error(
+          `Interfold owner ${ownerAddress} is not an available signer. Submit registerE3Program through the owner Safe.`,
+        );
+      }
+
+      const tx = await interfold
+        .connect(ownerSigner)
+        .registerE3Program(e3Address);
 
       console.log("Enabling E3 program... ", tx.hash);
       await tx.wait();
@@ -548,13 +561,7 @@ export const publishCiphertext = task(
       },
       hre,
     ) => {
-      const { deployAndSaveInterfold } = await import(
-        "../scripts/deployAndSave/interfold"
-      );
-
-      const { interfold } = await deployAndSaveInterfold({
-        hre,
-      });
+      const { interfold } = await getInterfoldConnection(hre);
 
       let dataToSend = data;
 
@@ -632,13 +639,7 @@ export const publishPlaintext = task(
   })
   .setAction(async () => ({
     default: async ({ e3Id, data, dataFile, proof, proofFile }, hre) => {
-      const { deployAndSaveInterfold } = await import(
-        "../scripts/deployAndSave/interfold"
-      );
-
-      const { interfold } = await deployAndSaveInterfold({
-        hre,
-      });
+      const { interfold } = await getInterfoldConnection(hre);
 
       let dataToSend = data;
 
