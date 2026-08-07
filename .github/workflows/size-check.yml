@@ -9,8 +9,10 @@ jobs:
     steps:
       - name: Check if should skip
         id: should_skip
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
         run: |
-          if echo "${{ github.event.pull_request.title }}" | grep -qi "\[skip-line-limit\]"; then
+          if echo "$PR_TITLE" | grep -qi "\[skip-line-limit\]"; then
             echo "skip=true" >> $GITHUB_OUTPUT
             echo "✓ Skipping line limit check (found [skip-line-limit] in PR title)"
           else
@@ -22,10 +24,12 @@ jobs:
           fetch-depth: 0
       - name: Check PR size
         if: steps.should_skip.outputs.skip == 'false'
+        env:
+          BASE_REF: ${{ github.base_ref }}
         run: |
-          git fetch origin ${{ github.base_ref }}
+          git fetch origin "$BASE_REF"
           # Count changed lines excluding whitespace, comments, and lock files
-          CHANGED_LINES=$(bash ./scripts/check-size.sh ${{ github.base_ref }})
+          CHANGED_LINES=$(bash ./scripts/check-size.sh "$BASE_REF")
           echo "Changed lines (excluding whitespace, comments, and lock files): ${CHANGED_LINES}"
           echo "Maximum allowed: $MAX_LINES"
           if [ "${CHANGED_LINES}" -gt "$MAX_LINES" ]; then
