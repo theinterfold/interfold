@@ -1337,13 +1337,21 @@ jobs:
         run: |
           ls -la ~/.cargo/bin/interfold || echo "interfold binary not found"
       - name: Interfold init
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          HEAD_REF: ${{ github.head_ref }}
+          REF_NAME: ${{ github.ref_name }}
+          HEAD_REPO_URL: ${{ github.event.pull_request.head.repo.clone_url }}
+          UPSTREAM_REPO_URL: ${{ github.server_url }}/${{ github.repository }}.git
         run: |
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            BRANCH="${{ github.head_ref }}"
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            BRANCH="$HEAD_REF"
+            TEMPLATE_REPO="$HEAD_REPO_URL"
           else
-            BRANCH="${{ github.ref_name }}"
+            BRANCH="$REF_NAME"
+            TEMPLATE_REPO="$UPSTREAM_REPO_URL"
           fi
-          interfold init mycitest --verbose --template=${{ github.server_url }}/${{ github.repository }}.git#${BRANCH}:templates/default
+          interfold init mycitest --verbose --template="${TEMPLATE_REPO}#${BRANCH}:templates/default"
 
   contrib-readme-job:
     timeout-minutes: 10
