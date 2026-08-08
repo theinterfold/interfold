@@ -183,8 +183,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 ### DKG / threshold structure
 
 - SK splits into N shares; any **M+1** reconstruct/decrypt. — `flow-trace/04`
-- `party_id` derives from the finalized committee normalized by ascending address; 1-indexed,
-  strictly increasing. Active aggregator = lowest non-expelled `party_id`. — `ARCHITECTURE.md`;
+- DKG runtime and NodeFold `party_id` derives from the finalized committee normalized by ascending
+  address; it is zero-indexed and strictly increasing. Active aggregator = lowest non-expelled
+  `party_id`. Decryption-aggregator Shamir coordinates are a separate 1-indexed circuit format and
+  translate to zero-indexed registry slots at the wrapper boundary. — `ARCHITECTURE.md`;
   `flow-trace/04`
 - DKG aggregation receives **exactly H** canonical honest NodeFold proofs (unique in-range party
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert

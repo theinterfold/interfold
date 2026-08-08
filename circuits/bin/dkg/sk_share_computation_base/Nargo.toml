@@ -1,0 +1,7 @@
+[package]
+name = "sk_share_computation_base"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+lib = { path = "../../../lib" }

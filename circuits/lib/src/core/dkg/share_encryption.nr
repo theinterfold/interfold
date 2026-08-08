@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_ciphertext_commitment, compute_share_encryption_challenge,
-    compute_share_encryption_commitment_from_message,
+    compute_ciphertext_commitment, compute_sc_party_share_root_from_polynomial,
+    compute_share_encryption_challenge,
 };
 use crate::math::commitments::compute_dkg_pk_commitment;
 use crate::math::helpers::flatten;
@@ -89,9 +89,11 @@ impl<let L: u32> Configs<L> {
 /// **Consumes:** `expected_pk_commitment` (C0); `expected_message_commitment` (C2 sk or C2 e_sm).
 ///
 /// **Produces:** Public `ct_commitment` (hash of ct0/ct1 limbs) for cross-phase binding; witness ct0/ct1 feed C4 off-transcript.
-pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_P1: u32, let BIT_P2: u32> {
+pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_P1: u32, let BIT_P2: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
     /// Circuit parameters
     configs: Configs<L>,
+    party_idx: u32,
+    mod_idx: u32,
     /// Expected commitment to the DKG public key (from C0: pk).
     /// (public witness)
     expected_pk_commitment: Field,
@@ -130,11 +132,13 @@ pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: 
     p2is: [Polynomial<N - 1>; L],
 }
 
-impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_P1: u32, let BIT_P2: u32> ShareEncryption<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E0, BIT_E1, BIT_MSG, BIT_R1, BIT_R2, BIT_P1, BIT_P2> {
+impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_E1: u32, let BIT_MSG: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_P1: u32, let BIT_P2: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> ShareEncryption<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E0, BIT_E1, BIT_MSG, BIT_R1, BIT_R2, BIT_P1, BIT_P2, N_CHUNKS, CHUNK_SIZE> {
     pub fn new(
         configs: Configs<L>,
         expected_pk_commitment: Field,
         expected_message_commitment: Field,
+        party_idx: u32,
+        mod_idx: u32,
         pk0is: [Polynomial<N>; L],
         pk1is: [Polynomial<N>; L],
         ct0is: [Polynomial<N>; L],
@@ -152,6 +156,8 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     ) -> Self {
         ShareEncryption {
             configs,
+            party_idx,
+            mod_idx,
             expected_pk_commitment,
             expected_message_commitment,
             pk0is,
@@ -191,7 +197,11 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// a forged share, will cause this assertion to fail.
     fn verify_message_commitment(self) {
         assert(
-            compute_share_encryption_commitment_from_message::<N, BIT_MSG>(self.message)
+            compute_sc_party_share_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_MSG>(
+                self.party_idx,
+                self.mod_idx,
+                self.message,
+            )
                 == self.expected_message_commitment,
             "Message commitment mismatch",
         );

@@ -13,7 +13,7 @@ use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::{H, N_PARTIES};
 
 pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
-pub global C2AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C2_PUBLIC_LEN);
+pub global C2AB_FOLD_PUBLIC_LEN: u32 = 5 + (2 * C2_PUBLIC_LEN);
 /// Must match `c3ab_fold::C3AB_FOLD_PUBLIC_LEN` (one C3 slot per party and CRT limb).
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 1 + (6 * C3_SLOTS);
@@ -21,7 +21,7 @@ pub global C4_PUBLIC_LEN: u32 = (H * L_THRESHOLD) + 1;
 pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_PUBLIC_LEN);
 
 /// Must match `node_fold::NODE_FOLD_PUBLIC_LEN`.
-pub global NODE_FOLD_PUBLIC_LEN: u32 = 11 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
+pub global NODE_FOLD_PUBLIC_LEN: u32 = 13 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 
 /// Same shape as `c6_fold`: 4 pub parameters + `H` full `node_fold` public rows (flattened).
 pub global NODES_FOLD_PUBLIC_LEN: u32 = 4 + (H * NODE_FOLD_PUBLIC_LEN);

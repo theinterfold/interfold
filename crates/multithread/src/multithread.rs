@@ -65,17 +65,19 @@ use e3_zk_helpers::circuits::threshold::pk_generation::circuit::{
     PkGenerationCircuit, PkGenerationCircuitData,
 };
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::dkg::share_computation::{ShareComputationCircuit, ShareComputationCircuitData};
+use e3_zk_helpers::dkg::share_computation::ShareComputationCircuitData;
 use e3_zk_helpers::dkg::share_decryption::{ShareDecryptionCircuit, ShareDecryptionCircuitData};
 use e3_zk_helpers::dkg::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
 use e3_zk_helpers::CiphernodesCommittee;
 use e3_zk_helpers::CiphernodesCommitteeSize;
+use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
 use e3_zk_prover::{
-    generate_nodes_fold_step, prove_decryption_aggregation_jobs, prove_dkg_aggregation,
-    prove_node_dkg_fold, CircuitVariant, DecryptionAggregationJob, DkgAggregationInput,
-    NodeDkgFoldInput, NodeDkgFoldProveResult, Provable, ZkBackend, ZkError, ZkProver,
+    generate_nodes_fold_step, prove_chunked_share_computation, prove_decryption_aggregation_jobs,
+    prove_dkg_aggregation, prove_node_dkg_fold, CircuitVariant, DecryptionAggregationJob,
+    DkgAggregationInput, NodeDkgFoldInput, NodeDkgFoldProveResult, Provable, ZkBackend, ZkError,
+    ZkProver,
 };
 use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::mbfv::PublicKeyShare;
@@ -659,7 +661,7 @@ fn handle_zk_request(
             handle_pk_generation_proof(&prover, &cipher, req, request.clone())
         }),
         ZkRequest::ShareComputation(req) => timefunc("zk_share_computation", id, || {
-            handle_share_computation_proof(&prover, &cipher, req, request.clone())
+            handle_share_computation_proof(&prover, &cipher, req, request.clone(), report.clone())
         }),
         ZkRequest::ShareEncryption(req) => timefunc("zk_share_encryption", id, || {
             handle_share_encryption_proof(&prover, &cipher, req, request.clone())
@@ -877,6 +879,7 @@ fn handle_share_computation_proof(
     cipher: &Cipher,
     req: ShareComputationProofRequest,
     request: ComputeRequest,
+    report: Option<Addr<MultithreadReport>>,
 ) -> Result<ComputeResponse, ComputeRequestError> {
     // 1. Build BFV threshold parameters
     let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
@@ -927,6 +930,7 @@ fn handle_share_computation_proof(
         parity_matrix,
         n_parties: committee.n as u32,
         threshold: committee.threshold as u32,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
     };
 
     let bb_work = zk_bb_work_id(&request);
@@ -934,22 +938,30 @@ fn handle_share_computation_proof(
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
 
-    // 7. Inner C2 proof (sk_share_computation or e_sm_share_computation)
-    let circuit = ShareComputationCircuit;
-    let proof = circuit
-        .prove(
-            prover,
-            &req.params_preset,
-            &circuit_data,
-            &inner_job_id,
-            &artifacts_dir,
+    // 7. Chunk proofs and terminal C2 projection. The production path uses the compiled default
+    // chunk size; the `zk_cli --chunk-size` option does not reach this handler.
+    let result = prove_chunked_share_computation(
+        prover,
+        req.params_preset,
+        &circuit_data,
+        &inner_job_id,
+        &artifacts_dir,
+    )
+    .map_err(|e| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+            request.clone(),
         )
-        .map_err(|e| {
-            ComputeRequestError::new(
-                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
-                request.clone(),
-            )
-        })?;
+    })?;
+    if let Some(report) = report {
+        for step in result.step_timings {
+            report.do_send(TrackDuration::new(
+                format!("ZkShareComputation/{}", step.step),
+                Duration::from_secs_f64(step.seconds),
+            ));
+        }
+    }
+    let proof = result.proof;
 
     Ok(ComputeResponse::zk(
         ZkResponse::ShareComputation(ShareComputationProofResponse {
@@ -1099,7 +1111,7 @@ fn handle_share_encryption_proof(
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
     // 1. Build DKG params from threshold preset
-    let (_threshold_params, dkg_params) = build_pair_for_preset(req.params_preset)
+    let (threshold_params, dkg_params) = build_pair_for_preset(req.params_preset)
         .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
 
     // 2. Decrypt sensitive witness data
@@ -1138,10 +1150,38 @@ fn handle_share_encryption_proof(
     let e1_rns = try_poly_ntt_from_bytes(&e1_rns_bytes, &dkg_params)
         .map_err(|e| make_zk_error(&request, format!("e1_rns: {}", e)))?;
 
+    let committee_n = req.committee_size.values().n;
+    if req.recipient_party_id >= committee_n {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "recipient_party_id {} is outside committee size {}",
+                req.recipient_party_id, committee_n
+            ),
+        ));
+    }
+    // C3 encrypts one threshold Shamir row per proof. The ciphertext itself uses DKG parameters,
+    // but row_index belongs to the threshold secret's modulus domain.
+    let n_moduli = threshold_params.moduli().len();
+    if req.row_index >= n_moduli {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "row_index {} is outside modulus count {}",
+                req.row_index, n_moduli
+            ),
+        ));
+    }
+    let party_idx = u32::try_from(req.recipient_party_id)
+        .map_err(|e| make_zk_error(&request, format!("recipient_party_id: {e}")))?;
+    let mod_idx = u32::try_from(req.row_index)
+        .map_err(|e| make_zk_error(&request, format!("row_index: {e}")))?;
+
     // 4. Dummy SecretKey (not used by Inputs::compute)
     let dummy_sk = SecretKey::random(&dkg_params, &mut rand::rng());
 
     // 5. Build circuit data
+    let committee_val = req.committee_size.values();
     let circuit_data = ShareEncryptionCircuitData {
         plaintext,
         ciphertext,
@@ -1151,6 +1191,10 @@ fn handle_share_encryption_proof(
         e0_rns,
         e1_rns,
         dkg_input_type: req.dkg_input_type,
+        party_idx,
+        mod_idx,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+        committee: committee_val,
     };
 
     // 6. Generate proof (preset = threshold preset; Inputs::compute derives DKG internally)
@@ -1211,6 +1255,15 @@ fn handle_dkg_share_decryption_proof(
             format!(
                 "own_plaintext_idx {} out of range (num_honest_parties={})",
                 req.own_plaintext_idx, h
+            ),
+        ));
+    }
+    if req.recipient_party_id >= req.committee_size.values().n as u64 {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "recipient_party_id {} is outside committee N",
+                req.recipient_party_id
             ),
         ));
     }
@@ -1296,8 +1349,11 @@ fn handle_dkg_share_decryption_proof(
     let circuit_data = ShareDecryptionCircuitData {
         secret_key,
         honest_ciphertexts,
+        recipient_party_id: req.recipient_party_id,
         own_plaintext_share,
         dkg_input_type: req.dkg_input_type,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+        committee: req.committee_size.values(),
     };
 
     let circuit = ShareDecryptionCircuit;

@@ -87,20 +87,20 @@ export function getRepoRoot(): string {
 
 /**
  * <generated-committee-doc>
- * Default insecure-512 / minimum committee layout for BFV aggregator verifiers.
+ * Active secure-8192 / micro committee layout for BFV aggregator verifiers.
  * Must match `lib::configs::default::{H, T}` in compiled circuits.
- * Minimum committee: N=3, T=1, H=2.
+ * Micro committee: N=9, T=4, H=5.
  * </generated-committee-doc>
  */
-export const BFV_DKG_H = 2;
-export const BFV_THRESHOLD_T = 1;
-export const ACTIVE_BFV_PARAM_SET = 0;
-export const ACTIVE_BFV_COMMITTEE_SIZE = 0;
-export const ACTIVE_BFV_COMMITTEE_N = 3;
+export const BFV_DKG_H = 5;
+export const BFV_THRESHOLD_T = 4;
+export const ACTIVE_BFV_PARAM_SET = 1;
+export const ACTIVE_BFV_COMMITTEE_SIZE = 1;
+export const ACTIVE_BFV_COMMITTEE_N = 9;
 
 /** `dkg_aggregator` EVM public-input count for honest-set size `h`. */
 export function bfvPkExpectedPublicInputsLen(h: number): number {
-  return 3 * h + 6;
+  return 3 * h + 8;
 }
 
 /** `publicInputs` indices for `committee_hash_hi` / `committee_hash_lo` (matches `BfvPkVerifier`). */
@@ -159,6 +159,14 @@ export function getBfvPkSubCircuitVkHashPaths() {
       root,
       "circuits/bin/threshold/target/pk_aggregation.vk_recursive_hash",
     ),
+    skC2Chunk: path.join(
+      root,
+      "circuits/bin/dkg/target/sk_share_computation_chunk.vk_recursive_hash",
+    ),
+    esmC2Chunk: path.join(
+      root,
+      "circuits/bin/dkg/target/esm_share_computation_chunk.vk_recursive_hash",
+    ),
   } as const;
 }
 
@@ -202,6 +210,8 @@ export function readVkRecursiveHash(filePath: string): string {
 export interface BfvPkVerifierVkReader {
   expectedNodesFoldKeyHash(): Promise<string>;
   expectedC5KeyHash(): Promise<string>;
+  expectedSkC2ChunkKeyHash(): Promise<string>;
+  expectedESmC2ChunkKeyHash(): Promise<string>;
 }
 
 /** On-chain `BfvDecryptionVerifier` sub-circuit VK immutables (for deploy-time staleness checks). */
@@ -222,19 +232,35 @@ export async function assertBfvPkVerifierSubCircuitVkHashes(
     getBfvPkSubCircuitVkHashPaths().nodesFold,
   );
   const expectedC5 = readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().c5);
-  const [onChainNodesFold, onChainC5] = await Promise.all([
-    verifier.expectedNodesFoldKeyHash(),
-    verifier.expectedC5KeyHash(),
-  ]);
+  const expectedSkC2Chunk = readVkRecursiveHash(
+    getBfvPkSubCircuitVkHashPaths().skC2Chunk,
+  );
+  const expectedESmC2Chunk = readVkRecursiveHash(
+    getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
+  );
+  const [onChainNodesFold, onChainC5, onChainSkC2Chunk, onChainESmC2Chunk] =
+    await Promise.all([
+      verifier.expectedNodesFoldKeyHash(),
+      verifier.expectedC5KeyHash(),
+      verifier.expectedSkC2ChunkKeyHash(),
+      verifier.expectedESmC2ChunkKeyHash(),
+    ]);
 
-  if (onChainNodesFold === expectedNodesFold && onChainC5 === expectedC5) {
+  if (
+    onChainNodesFold === expectedNodesFold &&
+    onChainC5 === expectedC5 &&
+    onChainSkC2Chunk === expectedSkC2Chunk &&
+    onChainESmC2Chunk === expectedESmC2Chunk
+  ) {
     return;
   }
 
   throw new Error(
     `BfvPkVerifier at ${address} has stale sub-circuit VK immutables. ` +
       `On-chain nodes_fold=${onChainNodesFold} expected=${expectedNodesFold}; ` +
-      `on-chain c5=${onChainC5} expected=${expectedC5}. ` +
+      `on-chain c5=${onChainC5} expected=${expectedC5}; ` +
+      `on-chain sk_c2_chunk=${onChainSkC2Chunk} expected=${expectedSkC2Chunk}; ` +
+      `on-chain esm_c2_chunk=${onChainESmC2Chunk} expected=${expectedESmC2Chunk}. ` +
       `Redeploy after pnpm compile:circuits or remove the stale entry from deployed_contracts.json.`,
   );
 }

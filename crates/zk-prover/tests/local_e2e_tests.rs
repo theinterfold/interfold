@@ -21,8 +21,11 @@ use std::sync::Arc;
 use ark_bn254::Fr;
 use ark_ff::{BigInteger, PrimeField, Zero};
 use common::{
-    extract_field, extract_field_from_end, find_bb, require_minimum_circuits,
-    setup_compiled_circuit, setup_test_prover,
+    active_bin_preset, compiled_circuit_artifacts_available, extract_field, extract_field_from_end,
+    find_bb, recursive_circuit_artifacts_available, require_minimum_circuits,
+    require_minimum_circuits_for_preset, setup_compiled_circuit, setup_compiled_circuit_for_preset,
+    setup_recursive_aggregation_fold_circuit, setup_recursive_aggregation_fold_circuit_for_preset,
+    setup_test_prover,
 };
 use e3_events::CircuitName;
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
@@ -32,7 +35,7 @@ use e3_zk_helpers::circuits::dkg::pk::circuit::PkCircuitData;
 use e3_zk_helpers::circuits::{
     commitments::{
         compute_aggregated_shares_commitment, compute_dkg_pk_commitment,
-        compute_threshold_decryption_share_commitment,
+        compute_sc_sk_secret_root_commitment, compute_threshold_decryption_share_commitment,
     },
     threshold::decrypted_shares_aggregation::MAX_MSG_NON_ZERO_COEFFS,
     CircuitComputation,
@@ -56,10 +59,7 @@ use e3_zk_helpers::threshold::{
     },
 };
 use e3_zk_helpers::CiphernodesCommitteeSize;
-use e3_zk_helpers::{
-    compute_pk_aggregation_commitment, compute_share_computation_sk_commitment,
-    compute_threshold_pk_commitment,
-};
+use e3_zk_helpers::{compute_pk_aggregation_commitment, compute_threshold_pk_commitment};
 use e3_zk_prover::{CircuitVariant, Provable, ZkBackend, ZkProver};
 use fhe::trbfv::TRBFV;
 
@@ -230,8 +230,11 @@ async fn setup_share_computation_sk_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "sk_share_computation").await;
-    setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation").await;
+    setup_compiled_circuit(&backend, "dkg", "sk_share_computation_base").await;
+    setup_compiled_circuit(&backend, "dkg", "sk_share_computation_chunk").await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkBatch).await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::SkC2ChunkFinalize).await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2abChunkFold).await;
 
     let sample =
         ShareComputationCircuitData::generate_sample(preset, committee, DkgInputType::SecretKey)
@@ -264,8 +267,11 @@ async fn setup_share_computation_e_sm_test() -> Option<(
     require_minimum_circuits()?;
     let (backend, temp) = setup_test_prover(&bb).await;
 
-    setup_compiled_circuit(&backend, "dkg", "sk_share_computation").await;
-    setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation").await;
+    setup_compiled_circuit(&backend, "dkg", "e_sm_share_computation_base").await;
+    setup_compiled_circuit(&backend, "dkg", "esm_share_computation_chunk").await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2ChunkBatch).await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::ESmC2ChunkFinalize).await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C2abChunkFold).await;
 
     let sample = ShareComputationCircuitData::generate_sample(
         preset,
@@ -501,8 +507,6 @@ macro_rules! e2e_proof_tests {
 e2e_proof_tests! {
     (pk_generation, setup_pk_generation_test(), CircuitVariant::Recursive),
     (pk, setup_pk_test(), CircuitVariant::Recursive),
-    (share_computation_sk, setup_share_computation_sk_test(), CircuitVariant::Recursive),
-    (share_computation_e_sm, setup_share_computation_e_sm_test(), CircuitVariant::Recursive),
     (share_encryption_sk, setup_share_encryption_sk_test(), CircuitVariant::Recursive),
     (share_encryption_e_sm, setup_share_encryption_e_sm_test(), CircuitVariant::Recursive),
     (share_decryption, setup_share_decryption_test(), CircuitVariant::Recursive),
@@ -532,9 +536,10 @@ async fn test_pk_generation_commitment_consistency() {
     let pk_commitment_from_proof = extract_field_from_end(&proof.public_signals, 1);
 
     // Recompute commitments from the witness
-    let sk_commitment_expected = compute_share_computation_sk_commitment(
+    let sk_commitment_expected = compute_sc_sk_secret_root_commitment(
         &computation_output.inputs.sk,
         computation_output.bits.sk_bit,
+        512,
     );
     let pk_commitment_expected = compute_threshold_pk_commitment(
         &computation_output.inputs.pk0is,
@@ -597,8 +602,8 @@ async fn test_pk_bfv_commitment_consistency() {
 }
 
 #[tokio::test]
-async fn test_share_computation_sk_commitment_consistency() {
-    let Some((_backend, _temp, prover, circuit, sample, preset, e3_id)) =
+async fn test_chunked_share_computation_proof() {
+    let Some((_backend, _temp, prover, _circuit, sample, preset, e3_id)) =
         setup_share_computation_sk_test().await
     else {
         println!("skipping: bb not found");
@@ -607,32 +612,48 @@ async fn test_share_computation_sk_commitment_consistency() {
 
     let artifacts_dir =
         preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
-    let proof = circuit
-        .prove(&prover, &preset, &sample, e3_id, &artifacts_dir)
-        .expect("inner sk_share_computation proof should succeed");
+    let result = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        preset,
+        &sample,
+        e3_id,
+        &artifacts_dir,
+    )
+    .expect("chunked C2 proof generation should succeed");
 
+    assert_eq!(result.proof.circuit, CircuitName::SkC2ChunkFinalize);
+    assert_eq!(result.chunk_count, 1);
+    let chunk_vk = e3_zk_prover::test_utils::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
+        CircuitName::SkShareComputationChunk,
+    )
+    .expect("SK C2 chunk VK");
+    let chunk_key_hash = Fr::from_be_bytes_mod_order(
+        &hex::decode(chunk_vk.key_hash.trim_start_matches("0x")).expect("chunk VK hash"),
+    );
     assert_eq!(
-        proof.circuit,
-        CircuitName::SkShareComputation,
-        "expected SkShareComputation inner circuit tag"
+        public_signals_to_fields(&result.proof.public_signals)[0],
+        chunk_key_hash
     );
-    assert!(
-        !proof.public_signals.is_empty() && proof.public_signals.len() % 32 == 0,
-        "inner C2 public signals should be non-empty 32-byte field chunks"
-    );
-
-    let fields = public_signals_to_fields(&proof.public_signals);
-    assert!(
-        fields.iter().any(|f| !f.is_zero()),
-        "inner share computation public signals should not all be zero"
-    );
+    let expected_fields =
+        2 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
+    assert_eq!(result.proof.public_signals.len() / 32, expected_fields);
+    assert!(prover
+        .verify_proof_with_variant(
+            &result.proof,
+            e3_id,
+            1,
+            CircuitVariant::Recursive,
+            &artifacts_dir,
+        )
+        .expect("chunked C2 terminal proof verification should succeed"));
 
     prover.cleanup(e3_id).unwrap();
 }
 
 #[tokio::test]
-async fn test_share_computation_e_sm_commitment_consistency() {
-    let Some((_backend, _temp, prover, circuit, sample, preset, e3_id)) =
+async fn test_chunked_esm_share_computation_proof() {
+    let Some((_backend, _temp, prover, _circuit, sample, preset, e3_id)) =
         setup_share_computation_e_sm_test().await
     else {
         println!("skipping: bb not found");
@@ -641,26 +662,156 @@ async fn test_share_computation_e_sm_commitment_consistency() {
 
     let artifacts_dir =
         preset.artifacts_dir_for_committee(CiphernodesCommitteeSize::Minimum.as_str());
-    let proof = circuit
-        .prove(&prover, &preset, &sample, e3_id, &artifacts_dir)
-        .expect("inner e_sm_share_computation proof should succeed");
+    let result = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        preset,
+        &sample,
+        e3_id,
+        &artifacts_dir,
+    )
+    .expect("chunked ESM C2 proof generation should succeed");
 
-    assert_eq!(
-        proof.circuit,
-        CircuitName::ESmShareComputation,
-        "expected ESmShareComputation inner circuit tag"
+    assert_eq!(result.proof.circuit, CircuitName::ESmC2ChunkFinalize);
+    assert_eq!(result.chunk_count, 1);
+    let fields = public_signals_to_fields(&result.proof.public_signals);
+    let chunk_vk = e3_zk_prover::test_utils::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
+        CircuitName::ESmShareComputationChunk,
+    )
+    .expect("ESM C2 chunk VK");
+    let chunk_key_hash = Fr::from_be_bytes_mod_order(
+        &hex::decode(chunk_vk.key_hash.trim_start_matches("0x")).expect("chunk VK hash"),
     );
-    assert!(
-        !proof.public_signals.is_empty() && proof.public_signals.len() % 32 == 0,
-        "inner C2 public signals should be non-empty 32-byte field chunks"
-    );
+    assert_eq!(fields[0], chunk_key_hash);
+    let expected_fields =
+        2 + CiphernodesCommitteeSize::Minimum.values().n * preset.metadata().num_moduli;
+    assert_eq!(fields.len(), expected_fields);
+    assert!(prover
+        .verify_proof_with_variant(
+            &result.proof,
+            e3_id,
+            1,
+            CircuitVariant::Recursive,
+            &artifacts_dir,
+        )
+        .expect("chunked ESM C2 terminal proof verification should succeed"));
 
-    let fields = public_signals_to_fields(&proof.public_signals);
-    assert!(
-        fields.iter().any(|f| !f.is_zero()),
-        "inner share computation public signals should not all be zero"
-    );
+    prover.cleanup(e3_id).unwrap();
+}
 
+async fn setup_secure_chunked_share_computation_test(
+    input_type: DkgInputType,
+    e3_id: &'static str,
+) -> Option<(
+    ZkBackend,
+    tempfile::TempDir,
+    ZkProver,
+    ShareComputationCircuitData,
+    BfvPreset,
+    &'static str,
+)> {
+    if active_bin_preset().as_deref() != Some("secure-8192") {
+        println!("skipping: secure-8192 circuit artifacts are not active");
+        return None;
+    }
+    let committee = CiphernodesCommitteeSize::Minimum.values();
+    let preset = BfvPreset::SecureThreshold8192;
+    let bb = find_bb().await?;
+    if require_minimum_circuits_for_preset(preset).is_none() {
+        return None;
+    }
+    if ["sk_share_computation_chunk", "esm_share_computation_chunk"]
+        .iter()
+        .any(|circuit| !compiled_circuit_artifacts_available("dkg", circuit))
+        || [
+            CircuitName::C2ChunkBatch,
+            CircuitName::SkC2ChunkFinalize,
+            CircuitName::ESmC2ChunkFinalize,
+        ]
+        .iter()
+        .any(|circuit| !recursive_circuit_artifacts_available(*circuit))
+    {
+        println!("skipping: secure-8192 circuit artifacts are not staged");
+        return None;
+    }
+    let (backend, temp) = setup_test_prover(&bb).await;
+
+    for circuit in ["sk_share_computation_chunk", "esm_share_computation_chunk"] {
+        setup_compiled_circuit_for_preset(&backend, "dkg", circuit, preset, "minimum").await;
+    }
+    for circuit in [
+        CircuitName::C2ChunkBatch,
+        CircuitName::SkC2ChunkFinalize,
+        CircuitName::ESmC2ChunkFinalize,
+    ] {
+        setup_recursive_aggregation_fold_circuit_for_preset(&backend, circuit, preset, "minimum")
+            .await;
+    }
+
+    let sample =
+        ShareComputationCircuitData::generate_sample(preset, committee, input_type).ok()?;
+    let prover = ZkProver::new(&backend);
+    Some((backend, temp, prover, sample, preset, e3_id))
+}
+
+#[tokio::test]
+async fn test_secure_chunked_share_computation_proof() {
+    let Some((_backend, _temp, prover, sample, preset, e3_id)) =
+        setup_secure_chunked_share_computation_test(DkgInputType::SecretKey, "secure-sk").await
+    else {
+        return;
+    };
+    let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
+    let result = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        preset,
+        &sample,
+        e3_id,
+        &artifacts_dir,
+    )
+    .expect("secure chunked C2a proof generation should succeed");
+    assert_eq!(result.proof.circuit, CircuitName::SkC2ChunkFinalize);
+    assert_eq!(result.chunk_count, 16);
+    assert!(prover
+        .verify_proof_with_variant(
+            &result.proof,
+            e3_id,
+            1,
+            CircuitVariant::Recursive,
+            &artifacts_dir,
+        )
+        .expect("secure chunked C2a terminal proof verification should succeed"));
+    prover.cleanup(e3_id).unwrap();
+}
+
+#[tokio::test]
+async fn test_secure_chunked_esm_share_computation_proof() {
+    let Some((_backend, _temp, prover, sample, preset, e3_id)) =
+        setup_secure_chunked_share_computation_test(DkgInputType::SmudgingNoise, "secure-esm")
+            .await
+    else {
+        return;
+    };
+    let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
+    let result = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        preset,
+        &sample,
+        e3_id,
+        &artifacts_dir,
+    )
+    .expect("secure chunked C2b proof generation should succeed");
+    assert_eq!(result.proof.circuit, CircuitName::ESmC2ChunkFinalize);
+    assert_eq!(result.chunk_count, 16);
+    assert!(prover
+        .verify_proof_with_variant(
+            &result.proof,
+            e3_id,
+            1,
+            CircuitVariant::Recursive,
+            &artifacts_dir,
+        )
+        .expect("secure chunked C2b terminal proof verification should succeed"));
     prover.cleanup(e3_id).unwrap();
 }
 

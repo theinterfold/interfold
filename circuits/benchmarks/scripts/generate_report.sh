@@ -624,8 +624,8 @@ EOF
 
 emit_circuit_row "C0" "/dkg/pk"
 emit_circuit_row "C1" "/threshold/pk_generation"
-emit_circuit_row "C2a" "/dkg/sk_share_computation"
-emit_circuit_row "C2b" "/dkg/e_sm_share_computation"
+emit_circuit_row "C2a chunk (SK)" "/dkg/sk_share_computation_chunk"
+emit_circuit_row "C2b chunk (ESM)" "/dkg/esm_share_computation_chunk"
 emit_circuit_row "C3a" "/dkg/share_encryption"
 emit_circuit_row "C3b" "/dkg/share_encryption"
 emit_circuit_row "C4a" "/dkg/share_decryption"
@@ -647,7 +647,7 @@ artifact_metrics "Π_DKG" "/threshold/pk_aggregation" "$(verify_gas_for_artifact
 artifact_metrics "Π_user" "user_data_encryption" "$(verify_gas_for_artifact Π_user)"
 artifact_metrics "Π_dec" "/threshold/decrypted_shares_aggregation" "$(verify_gas_for_artifact Π_dec)"
 
-p1=$(sum_phase_metrics "/dkg/pk /threshold/pk_generation /dkg/sk_share_computation /dkg/e_sm_share_computation /dkg/share_encryption /dkg/share_encryption /dkg/share_decryption /dkg/share_decryption /recursive_aggregation/c2ab_fold /recursive_aggregation/c3ab_fold /recursive_aggregation/c4ab_fold /recursive_aggregation/node_fold")
+p1=$(sum_phase_metrics "/dkg/pk /threshold/pk_generation /dkg/sk_share_computation_chunk /dkg/esm_share_computation_chunk /dkg/share_encryption /dkg/share_encryption /dkg/share_decryption /dkg/share_decryption /recursive_aggregation/c2ab_chunk_fold /recursive_aggregation/c3ab_fold /recursive_aggregation/c4ab_fold /recursive_aggregation/node_fold")
 p2=$(sum_phase_metrics "/threshold/pk_aggregation")
 p3=$(sum_phase_metrics "/threshold/user_data_encryption_ct0 /threshold/user_data_encryption_ct1")
 p4n=$(sum_phase_metrics "/threshold/share_decryption")
@@ -779,7 +779,7 @@ if [ -n "$INTEGRATION_BLOB" ]; then
         fold_rows=$(
             jq -r '
               .operation_timings[]?
-              | select(.name | startswith("NodeDkgFold/"))
+              | select(.name | test("^(NodeDkgFold|ZkShareComputation)/"))
               | [.name, .avg_seconds, .runs, .total_seconds]
               | @tsv
             ' <<<"$INTEGRATION_BLOB"
@@ -787,7 +787,7 @@ if [ -n "$INTEGRATION_BLOB" ]; then
         if [ -n "$fold_rows" ]; then
             {
                 echo ""
-                echo "### NodeDkgFold sub-steps (\`tracked_job_wall\`, per fold prove)"
+                echo "### Operation sub-steps (\`tracked_job_wall\`)"
                 echo ""
                 echo "| Step | Avg (s) | Runs | Total (s) |"
                 echo "|------|---------|------|-----------|"
@@ -795,6 +795,7 @@ if [ -n "$INTEGRATION_BLOB" ]; then
             while IFS=$'\t' read -r name avgr runs tot; do
                 [ -z "$name" ] && continue
                 step="${name#NodeDkgFold/}"
+                step="${step#ZkShareComputation/}"
                 echo "| $step | $(format_s "$avgr") | $runs | $(format_s "$tot") |" >> "$OUTPUT_FILE"
             done <<<"$fold_rows"
         fi

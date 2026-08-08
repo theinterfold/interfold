@@ -1086,9 +1086,9 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
             operator
         ];
-        proposal.holdsBaseReward = !_distributions[e3Id].calculated;
+        proposal.holdsBaseReward = true;
         entitlement.pendingExpulsions++;
-        if (proposal.holdsBaseReward) entitlement.baseRiskExpulsions++;
+        entitlement.baseRiskExpulsions++;
         emit ExpulsionProposalStatusChanged(
             e3Id,
             proposalId,

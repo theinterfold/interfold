@@ -37,6 +37,10 @@ pub use circuits::aggregation::node_dkg_fold::{
 pub use circuits::aggregation::nodes_fold_accumulator::{
     generate_nodes_fold_step, generate_sequential_nodes_fold,
 };
+pub use circuits::dkg::share_computation::{
+    prove_chunked_share_computation, prove_chunked_share_computation_with_chunk_size,
+    ChunkedShareComputationProofs, DEFAULT_C2_CHUNK_SIZE,
+};
 pub use config::{verify_checksum, BbTarget, CircuitInfo, VersionInfo, ZkConfig};
 pub use dkg_attestation_bundle::encode_dkg_attestation_bundle;
 pub use e3_events::CircuitVariant;

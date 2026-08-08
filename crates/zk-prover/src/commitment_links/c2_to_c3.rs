@@ -10,8 +10,8 @@
 //! `commit_to_party_shares`. C3 claims `expected_message_commitment` which must
 //! match the commitment C2 produced for the share being encrypted.
 //!
-//! The signed C2 proof is the **inner** circuit proof (SkShareComputation /
-//! ESmShareComputation, `CircuitVariant::Recursive`). Its public signals layout:
+//! The signed C2 proof is the **inner** terminal proof (SkC2ChunkFinalize /
+//! ESmC2ChunkFinalize, `CircuitVariant::Recursive`). Its public signals layout:
 //!   - field 0: `expected_secret_commitment` (public input, skip)
 //!   - fields 1..(N_PARTIES × L_THRESHOLD): share commitments from `commit_to_party_shares`
 //!
@@ -20,7 +20,7 @@
 //! Fault is attributed to C3 when its `expected_message_commitment` does not
 //! appear anywhere in C2's share commitment section.
 //!
-//! C2a/C3a and C2b/C3b use the same Noir circuits (`ShareComputation` /
+//! C2a/C3a and C2b/C3b use the same Noir circuits (`ShareComputationChunk` /
 //! `ShareEncryption`) but different [`ProofType`] values, so we register two links.
 
 use super::{CommitmentLink, FieldValue, LinkScope};

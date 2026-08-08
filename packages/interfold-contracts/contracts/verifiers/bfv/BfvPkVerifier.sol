@@ -24,9 +24,12 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *        [2 .. 2+H)         = party_ids                 (H slots)
  *        [2+H]              = committee_hash_hi
  *        [3+H]              = committee_hash_lo
- *        [4+H .. 4+3H)      = expected_pk               (2*H slots)
- *        [4+3H]             = pk_commitment
- *        Total: expectedPublicInputsLen = 3*H + 6.
+ *        [4+H]              = DKG return VK hash
+ *        [5+H]              = expected SK C2 chunk VK hash
+ *        [6+H]              = expected ESM C2 chunk VK hash
+ *        [7+H .. 7+3H)      = expected SK/ESM anchors   (2*H slots)
+ *        [7+3H]             = pk_commitment
+ *        Total: expectedPublicInputsLen = 3*H + 8.
  *
  *      The two VK-hash slots are checked against contract immutables set at
  *      construction; this anchors the recursive aggregation trust and
@@ -60,6 +63,12 @@ contract BfvPkVerifier is IPkVerifier {
     /// @dev Index of `pkCommitment` (last return field).
     uint256 internal immutable pkCommitmentIdx;
 
+    /// @notice Canonical SK C2 chunk VK hash.
+    bytes32 public immutable expectedSkC2ChunkKeyHash;
+
+    /// @notice Canonical ESM C2 chunk VK hash.
+    bytes32 public immutable expectedESmC2ChunkKeyHash;
+
     /// @notice Underlying Honk verifier for the DkgAggregator circuit.
     ICircuitVerifier public immutable circuitVerifier;
 
@@ -78,6 +87,8 @@ contract BfvPkVerifier is IPkVerifier {
         address _circuitVerifier,
         bytes32 _expectedNodesFoldKeyHash,
         bytes32 _expectedC5KeyHash,
+        bytes32 _expectedSkC2ChunkKeyHash,
+        bytes32 _expectedESmC2ChunkKeyHash,
         uint256 _h
     ) {
         require(_h > 0, "BfvPkVerifier: h=0");
@@ -86,17 +97,21 @@ contract BfvPkVerifier is IPkVerifier {
         }
         if (
             _expectedNodesFoldKeyHash == bytes32(0) ||
-            _expectedC5KeyHash == bytes32(0)
+            _expectedC5KeyHash == bytes32(0) ||
+            _expectedSkC2ChunkKeyHash == bytes32(0) ||
+            _expectedESmC2ChunkKeyHash == bytes32(0)
         ) revert InvalidVerificationKeyHash();
         h = _h;
         committeeHashHiIdx = 2 + _h;
         committeeHashLoIdx = 3 + _h;
-        expectedPublicInputsLen = (3 * _h) + 6;
+        expectedPublicInputsLen = (3 * _h) + 8;
         pkCommitmentIdx = expectedPublicInputsLen - 1;
 
         circuitVerifier = ICircuitVerifier(_circuitVerifier);
         expectedNodesFoldKeyHash = _expectedNodesFoldKeyHash;
         expectedC5KeyHash = _expectedC5KeyHash;
+        expectedSkC2ChunkKeyHash = _expectedSkC2ChunkKeyHash;
+        expectedESmC2ChunkKeyHash = _expectedESmC2ChunkKeyHash;
     }
 
     /// @inheritdoc IPkVerifier
@@ -122,6 +137,12 @@ contract BfvPkVerifier is IPkVerifier {
             revert VkHashMismatch();
         }
         if (publicInputs[1] != expectedC5KeyHash) {
+            revert VkHashMismatch();
+        }
+        if (publicInputs[5 + h] != expectedSkC2ChunkKeyHash) {
+            revert VkHashMismatch();
+        }
+        if (publicInputs[6 + h] != expectedESmC2ChunkKeyHash) {
             revert VkHashMismatch();
         }
 

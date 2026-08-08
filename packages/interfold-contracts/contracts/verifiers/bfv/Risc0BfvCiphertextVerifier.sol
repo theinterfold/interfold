@@ -28,7 +28,10 @@ contract Risc0BfvCiphertextVerifier is ICiphertextVerifier {
     bytes32 public immutable imageId;
 
     constructor(IRisc0Verifier verifier, bytes32 guestImageId) {
-        if (address(verifier) == address(0)) revert InvalidVerifier();
+        if (
+            address(verifier) == address(0) ||
+            address(verifier).code.length == 0
+        ) revert InvalidVerifier();
         if (guestImageId == bytes32(0)) revert InvalidImageId();
         risc0Verifier = verifier;
         imageId = guestImageId;

@@ -74,19 +74,33 @@ impl DkgProofCollectionState {
     ///
     /// Callers must ensure [`is_ready`](Self::is_ready) is `true` first; this
     /// method panics if any expected `seq` is missing.
-    pub(crate) fn build_fold_request(&self) -> NodeDkgFoldRequest {
+    pub(crate) fn build_fold_request(&self) -> Result<NodeDkgFoldRequest, String> {
         let meta = &self.meta;
         let c3_total_slots = meta.committee_n * meta.n_moduli;
         let slots_a: Vec<u32> = meta
             .sk_share_encryption_requests
             .iter()
-            .map(|r| r.c3_slot_index(meta.n_moduli))
-            .collect();
+            .map(|r| {
+                r.c3_slot_index(meta.n_moduli).ok_or_else(|| {
+                    format!(
+                        "C3a slot does not fit u32: recipient={}, row={}, moduli={}",
+                        r.recipient_party_id, r.row_index, meta.n_moduli
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
         let slots_b: Vec<u32> = meta
             .e_sm_share_encryption_requests
             .iter()
-            .map(|r| r.c3_slot_index(meta.n_moduli))
-            .collect();
+            .map(|r| {
+                r.c3_slot_index(meta.n_moduli).ok_or_else(|| {
+                    format!(
+                        "C3b slot does not fit u32: recipient={}, row={}, moduli={}",
+                        r.recipient_party_id, r.row_index, meta.n_moduli
+                    )
+                })
+            })
+            .collect::<Result<_, _>>()?;
 
         let sk = meta.sk_enc_count;
         let esm = meta.e_sm_enc_count;
@@ -113,7 +127,7 @@ impl DkgProofCollectionState {
         let c4a_proof = get(c4a_seq);
         let c4b_proof = get(c4a_seq + 1);
 
-        NodeDkgFoldRequest {
+        Ok(NodeDkgFoldRequest {
             c0_proof,
             c1_proof,
             c2a_proof,
@@ -128,7 +142,7 @@ impl DkgProofCollectionState {
             party_id: meta.party_id,
             params_preset: meta.params_preset,
             committee_size: meta.committee_size,
-        }
+        })
     }
 }
 
@@ -195,7 +209,7 @@ mod tests {
             state.buffer.insert(seq, dummy_proof(seq as u8));
         }
         assert!(state.is_ready());
-        let req = state.build_fold_request();
+        let req = state.build_fold_request().unwrap();
         assert_eq!(req.c0_proof, dummy_proof(0));
         assert_eq!(req.c1_proof, dummy_proof(1));
         assert_eq!(req.c2a_proof, dummy_proof(2));

@@ -281,6 +281,34 @@ pub fn polynomial_to_toml_json(polynomial: &Polynomial) -> serde_json::Value {
     poly_coefficients_to_toml_json(polynomial.coefficients())
 }
 
+/// Verify that a CRT polynomial has exactly `l` limbs, each with exactly `degree` coefficients.
+///
+/// Returns an error when the shape does not match so that zipped computations fail closed
+/// instead of silently truncating mismatched limbs.
+pub fn validate_crt_shape(crt: &CrtPolynomial, l: usize, degree: usize) -> anyhow::Result<()> {
+    if crt.limbs.len() != l {
+        anyhow::bail!("expected {l} CRT limbs, got {}", crt.limbs.len());
+    }
+    for (i, limb) in crt.limbs.iter().enumerate() {
+        if limb.coefficients().len() != degree {
+            anyhow::bail!(
+                "CRT limb {i} has {} coefficients; expected {degree}",
+                limb.coefficients().len()
+            );
+        }
+    }
+    Ok(())
+}
+
+/// Verify that every CRT polynomial in `crts` matches the expected `(l, degree)` shape.
+pub fn verify_crt_shapes(crts: &[&CrtPolynomial], l: usize, degree: usize) -> anyhow::Result<()> {
+    for (i, crt) in crts.iter().enumerate() {
+        validate_crt_shape(crt, l, degree)
+            .map_err(|e| anyhow::Error::msg(format!("CRT polynomial at index {i}: {e}")))?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

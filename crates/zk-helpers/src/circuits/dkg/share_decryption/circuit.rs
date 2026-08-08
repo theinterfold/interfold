@@ -8,6 +8,7 @@
 
 use crate::computation::DkgInputType;
 use crate::registry::Circuit;
+use crate::CiphernodesCommittee;
 use e3_fhe_params::ParameterType;
 use fhe::bfv::Ciphertext;
 use fhe::bfv::SecretKey;
@@ -34,10 +35,16 @@ pub struct ShareDecryptionCircuitData {
     /// party does not self-encrypt during DKG); `Some(cts)` carries one ciphertext per
     /// CRT modulus for an external honest party.
     pub honest_ciphertexts: Vec<Option<Vec<Ciphertext>>>,
+    /// Recipient party ID whose share row is decrypted.
+    pub recipient_party_id: u64,
     /// Own party's plaintext share row per modulus, shape `[L][N]` (length L, each
     /// inner Vec length N). Spliced into the H-sized list at the `None` slot when
     /// computing commitments and decrypted-share inputs.
     pub own_plaintext_share: Vec<Vec<u64>>,
     /// Which input type (SecretKey or SmudgingNoise) to resolve circuit path.
     pub dkg_input_type: DkgInputType,
+    /// Share-root chunk size (must equal `SHARE_COMPUTATION_CHUNK_SIZE` in Noir).
+    pub chunk_size: u32,
+    /// Committee this data was generated for (validated against the canonical table).
+    pub committee: CiphernodesCommittee,
 }

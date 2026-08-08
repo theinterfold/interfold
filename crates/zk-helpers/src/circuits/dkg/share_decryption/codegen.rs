@@ -46,12 +46,14 @@ pub fn generate_toml(inputs: &Inputs) -> Result<CodegenToml, CircuitsErrors> {
 }
 
 /// Builds the configs.nr string (N, L, bit parameters, and ShareDecryptionConfigs) for the Noir prover.
-pub fn generate_configs(preset: BfvPreset, configs: &Configs) -> CodegenConfigs {
+pub fn generate_configs(_preset: BfvPreset, configs: &Configs) -> CodegenConfigs {
     let prefix = <ShareDecryptionCircuit as Circuit>::PREFIX;
 
     format!(
         r#"pub global N: u32 = {};
 pub global L: u32 = {};
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = {};
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = {};
 
 /************************************
 -------------------------------------
@@ -63,8 +65,10 @@ share_decryption_e_sm (CIRCUIT 4b - BFV DECRYPTION E_SM)
 pub global {}_BIT_MSG: u32 = {};
 pub global {}_BIT_AGG: u32 = {};
 "#,
-        preset.dkg_counterpart().unwrap().metadata().degree,
-        preset.dkg_counterpart().unwrap().metadata().num_moduli,
+        configs.n,
+        configs.l,
+        configs.chunk_size,
+        configs.n / configs.chunk_size,
         prefix,
         configs.bits.msg_bit,
         prefix,

@@ -12,7 +12,7 @@ use e3_events::{CircuitName, DkgFoldAggCommits, Proof};
 
 /// Total public field count for `node_fold` at committee size `n`, honest `h`, threshold moduli `l`.
 pub fn node_fold_public_field_count(n: usize, h: usize, l: usize) -> usize {
-    11 + n + 2 * (n + h) * l
+    13 + n + 2 * (n + h) * l
 }
 
 fn field_hex_to_bytes32(field: &str) -> Result<[u8; 32], ZkError> {

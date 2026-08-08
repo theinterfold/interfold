@@ -2,8 +2,8 @@
   "circuits": [
     { "name": "config", "modes": ["secure"] },
     "dkg/pk",
-    "dkg/sk_share_computation",
-    "dkg/e_sm_share_computation",
+    "dkg/sk_share_computation_chunk",
+    "dkg/esm_share_computation_chunk",
     "dkg/share_encryption",
     "dkg/share_decryption",
     "threshold/user_data_encryption_ct0",

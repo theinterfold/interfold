@@ -64,6 +64,7 @@ impl C3FoldVks {
 fn generate_c3_fold_kernel_genesis_proof(
     prover: &ZkProver,
     inner: &Proof,
+    slot_index: u32,
     total_slots: usize,
     artifacts_dir: &str,
     job_id: &str,
@@ -91,7 +92,7 @@ fn generate_c3_fold_kernel_genesis_proof(
         inner_key_hash: inner_vk.key_hash,
         acc_key_hash: kernel_vk.key_hash,
         is_first_step: true,
-        slot_index: 0,
+        slot_index,
     };
 
     let circuit_path = prover
@@ -115,8 +116,8 @@ fn generate_c3_fold_kernel_genesis_proof(
     Ok(proof)
 }
 
-/// Inner C3 public transcript: two inputs + `ct_commitment` output.
-fn share_encryption_inner_public_inputs(proof: &Proof) -> Result<[String; 3], ZkError> {
+/// Inner C3 public transcript: two commitments, two slot indices, and `ct_commitment`.
+fn share_encryption_inner_public_inputs(proof: &Proof) -> Result<[String; 5], ZkError> {
     if proof.circuit != CircuitName::ShareEncryption {
         return Err(ZkError::InvalidInput(format!(
             "expected ShareEncryption inner proof, got {}",
@@ -124,18 +125,21 @@ fn share_encryption_inner_public_inputs(proof: &Proof) -> Result<[String; 3], Zk
         )));
     }
     let ctx = "C3 inner ShareEncryption proof";
-    Ok([
+    let fields = [
         extract_single_field(proof, "input", field_keys::EXPECTED_PK_COMMITMENT, ctx)?,
         extract_single_field(proof, "input", field_keys::EXPECTED_MESSAGE_COMMITMENT, ctx)?,
+        extract_single_field(proof, "input", "party_idx", ctx)?,
+        extract_single_field(proof, "input", "mod_idx", ctx)?,
         extract_single_field(proof, "output", field_keys::CT_COMMITMENT, ctx)?,
-    ])
+    ];
+    Ok(fields)
 }
 
 #[derive(Serialize)]
 struct C3FoldStepInput {
     inner_vk: Vec<String>,
     inner_proof: Vec<String>,
-    c3_public_inputs: [String; 3],
+    c3_public_inputs: [String; 5],
     acc_vk: Vec<String>,
     acc_proof: Vec<String>,
     acc_public_inputs: Vec<String>,
@@ -175,6 +179,7 @@ fn generate_c3_fold_step_with_vks(
         let kernel_proof = generate_c3_fold_kernel_genesis_proof(
             prover,
             inner,
+            slot_index,
             total_slots,
             artifacts_dir,
             &kernel_job_id,

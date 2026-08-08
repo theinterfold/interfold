@@ -19,11 +19,19 @@ export default buildModule("BfvPkVerifier", (m) => {
     getBfvPkSubCircuitVkHashPaths().nodesFold,
   );
   const c5KeyHash = readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().c5);
+  const skC2ChunkKeyHash = readVkRecursiveHash(
+    getBfvPkSubCircuitVkHashPaths().skC2Chunk,
+  );
+  const esmC2ChunkKeyHash = readVkRecursiveHash(
+    getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
+  );
 
   const bfvPkVerifier = m.contract("BfvPkVerifier", [
     dkgAggregatorVerifier,
     nodesFoldKeyHash,
     c5KeyHash,
+    skC2ChunkKeyHash,
+    esmC2ChunkKeyHash,
     BFV_DKG_H,
   ]);
 

@@ -88,6 +88,7 @@ case "$ACTIVE_COMMITTEE" in
   minimum) EXPECTED_SIZE=0 ;;
   micro) EXPECTED_SIZE=1 ;;
   small) EXPECTED_SIZE=2 ;;
+  *) fail "unknown committee '$ACTIVE_COMMITTEE' in $ACTIVE_NR" ;;
 esac
 if [[ "$SOL_H" != "$EXPECTED_H" || "$SOL_T" != "$EXPECTED_T" || "$SOL_N" != "$EXPECTED_N" || "$SOL_SIZE" != "$EXPECTED_SIZE" ]]; then
   fail "drift: $ACTIVE_SOL has (size=$SOL_SIZE, N=$SOL_N, T=$SOL_T, H=$SOL_H), expected (size=$EXPECTED_SIZE, N=$EXPECTED_N, T=$EXPECTED_T, H=$EXPECTED_H)"

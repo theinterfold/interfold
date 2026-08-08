@@ -266,6 +266,13 @@ impl Computation for Inputs {
         let ct0 = CrtPolynomial::from_fhe_polynomial(&data.ciphertext[0]);
         let ct1 = CrtPolynomial::from_fhe_polynomial(&data.ciphertext[1]);
 
+        crate::utils::verify_crt_shapes(
+            &[&ct0, &ct1, &data.s, &data.e, &data.d_share],
+            moduli.len(),
+            n as usize,
+        )
+        .map_err(|e| CircuitsErrors::Other(format!("C6 CRT shape mismatch: {e}")))?;
+
         // Create cyclotomic polynomial x^N + 1
         let mut cyclo = vec![BigInt::from(0u64); (n + 1) as usize];
         cyclo[0] = BigInt::from(1u64); // constant (x^0) term

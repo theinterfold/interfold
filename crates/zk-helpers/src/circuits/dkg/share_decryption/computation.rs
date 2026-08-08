@@ -19,7 +19,7 @@
 //!   aggregate hashing. Emitted as `SHARE_DECRYPTION_BIT_AGG`; the Noir C4 circuit uses it for
 //!   `compute_aggregated_shares_commitment` on the sum (per-share verification still uses `BIT_MSG`).
 
-use crate::circuits::commitments::compute_share_encryption_commitment_from_message;
+use crate::circuits::commitments::compute_sc_party_share_root_commitment;
 use crate::dkg::share_decryption::ShareDecryptionCircuit;
 use crate::dkg::share_decryption::ShareDecryptionCircuitData;
 use crate::math::plaintext_poly_u64;
@@ -71,6 +71,8 @@ pub struct Configs {
     pub n: usize,
     /// Number of CRT moduli (L).
     pub l: usize,
+    /// Share computation chunk size (matches SHARE_COMPUTATION_CHUNK_SIZE).
+    pub chunk_size: usize,
     /// Number of honest parties (H).
     pub h: usize,
     pub bits: Bits,
@@ -102,6 +104,8 @@ pub struct Inputs {
     pub expected_commitments: Vec<Vec<BigInt>>, // [H][L]
     /// Decrypted share coefficients per party and modulus: [party_idx][mod_idx][coeff_idx].
     pub decrypted_shares: Vec<Vec<Vec<BigInt>>>, // [H][L][N]
+    /// Zero-based recipient party index used in the C2 commitment domain.
+    pub recipient_party_idx: u64,
 }
 
 impl Computation for Configs {
@@ -123,6 +127,7 @@ impl Computation for Configs {
         Ok(Configs {
             n,
             l,
+            chunk_size: data.chunk_size as usize,
             h,
             bits,
             bounds,
@@ -166,6 +171,23 @@ impl Computation for Inputs {
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
         let threshold_l = threshold_params.moduli().len();
 
+        let canonical =
+            crate::ciphernodes_committee::canonical_committee_for_circuit(&data.committee)
+                .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
+        if data.honest_ciphertexts.len() != canonical.h {
+            return Err(CircuitsErrors::Other(format!(
+                "honest_ciphertexts has {} slots but canonical H is {}",
+                data.honest_ciphertexts.len(),
+                canonical.h
+            )));
+        }
+        if data.recipient_party_id as usize >= canonical.n {
+            return Err(CircuitsErrors::Other(format!(
+                "C4 recipient_party_id {} out of range: committee N is {}",
+                data.recipient_party_id, canonical.n
+            )));
+        }
+
         let mut expected_commitments: Vec<Vec<BigInt>> = Vec::new();
         let mut decrypted_shares: Vec<Vec<Vec<BigInt>>> = Vec::new();
 
@@ -183,6 +205,12 @@ impl Computation for Inputs {
 
         // Iterate H slots in ascending honest-party order: external slots BFV-decrypt and
         // commit; the own slot uses the supplied plaintext directly.
+        let chunk_size = data.chunk_size as usize;
+        if chunk_size == 0 {
+            return Err(CircuitsErrors::Sample(
+                "C4 chunk size must be greater than zero".to_string(),
+            ));
+        }
         for slot in data.honest_ciphertexts.iter() {
             let mut party_commitments = Vec::with_capacity(threshold_l);
             let mut party_shares = Vec::with_capacity(threshold_l);
@@ -208,9 +236,12 @@ impl Computation for Inputs {
                         // Reverse to match C3's reversed commitment convention.
                         let mut reversed_coeffs = share_coeffs.clone();
                         reversed_coeffs.reverse();
-                        party_commitments.push(compute_share_encryption_commitment_from_message(
+                        party_commitments.push(compute_sc_party_share_root_commitment(
+                            data.recipient_party_id as usize,
+                            mod_idx,
                             &Polynomial::from_u64_vector(reversed_coeffs),
                             msg_bit,
+                            chunk_size,
                         ));
                         party_shares.push(
                             share_coeffs
@@ -226,9 +257,12 @@ impl Computation for Inputs {
                         // Same reverse-then-commit as the BFV-decrypted branch.
                         let mut reversed_coeffs = share_coeffs.clone();
                         reversed_coeffs.reverse();
-                        party_commitments.push(compute_share_encryption_commitment_from_message(
+                        party_commitments.push(compute_sc_party_share_root_commitment(
+                            data.recipient_party_id as usize,
+                            mod_idx,
                             &Polynomial::from_u64_vector(reversed_coeffs),
                             msg_bit,
+                            chunk_size,
                         ));
                         party_shares.push(
                             share_coeffs
@@ -247,6 +281,7 @@ impl Computation for Inputs {
         Ok(Inputs {
             expected_commitments,
             decrypted_shares,
+            recipient_party_idx: data.recipient_party_id,
         })
     }
 
@@ -269,6 +304,7 @@ impl Computation for Inputs {
         let json = serde_json::json!({
             "expected_commitments": expected_commitments,
             "decrypted_shares": decrypted_shares,
+            "recipient_party_idx": self.recipient_party_idx,
         });
 
         Ok(json)
@@ -379,9 +415,12 @@ mod tests {
                 // with C2's commit_to_party_shares (highest-degree-first convention).
                 let mut reversed = share_coeffs.clone();
                 reversed.reverse();
-                let direct_commitment = compute_share_encryption_commitment_from_message(
+                let direct_commitment = compute_sc_party_share_root_commitment(
+                    inputs.recipient_party_idx as usize,
+                    mod_idx,
                     &Polynomial::from_u64_vector(reversed),
                     msg_bit,
+                    512,
                 );
                 assert_eq!(
                     inputs.expected_commitments[party_idx][mod_idx], direct_commitment,

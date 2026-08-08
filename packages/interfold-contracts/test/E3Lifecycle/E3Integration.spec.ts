@@ -1697,9 +1697,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         ));
       expect(recipientClaims).to.equal(ethers.parseUnits("50", 6));
 
-      await e3RefundManager
-        .connect(requester)
-        .claimHonestNodeReward(0, await operator1.getAddress());
+      await expect(
+        e3RefundManager
+          .connect(requester)
+          .claimHonestNodeReward(0, await operator1.getAddress()),
+      ).to.not.be.reverted;
     });
 
     it("holds an accused member's base reward and reallocates it after expulsion", async function () {

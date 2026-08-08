@@ -151,9 +151,12 @@ impl ShareDecryptionCircuitData {
 
         Ok(ShareDecryptionCircuitData {
             honest_ciphertexts,
+            recipient_party_id: 0,
             own_plaintext_share,
             secret_key: dkg_secret_key,
             dkg_input_type,
+            chunk_size: 512,
+            committee,
         })
     }
 }

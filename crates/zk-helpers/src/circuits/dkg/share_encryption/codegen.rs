@@ -47,7 +47,7 @@ pub fn generate_toml(inputs: &Inputs) -> Result<CodegenToml, CircuitsErrors> {
 }
 
 /// Builds the configs.nr string (N, L, bit parameters, bounds, and ShareEncryptionConfigs) for the Noir prover.
-pub fn generate_configs(preset: BfvPreset, configs: &Configs) -> CodegenConfigs {
+pub fn generate_configs(_preset: BfvPreset, configs: &Configs) -> CodegenConfigs {
     let prefix = <ShareEncryptionCircuit as Circuit>::PREFIX;
 
     let qis_str = join_display(&configs.moduli, ", ");
@@ -64,6 +64,8 @@ pub fn generate_configs(preset: BfvPreset, configs: &Configs) -> CodegenConfigs 
 
 pub global N: u32 = {};
 pub global L: u32 = {};
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = {};
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = {};
 pub global QIS: [Field; L] = [{}];
 pub global PLAINTEXT_MODULUS: Field = {};
 pub global Q_MOD_T: Field = {};
@@ -116,8 +118,10 @@ pub global {}_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryptionConfigs::new(
     {}_MSG_BOUND,
 );
 "#,
-        preset.dkg_counterpart().unwrap().metadata().degree,
-        preset.dkg_counterpart().unwrap().metadata().num_moduli,
+        configs.n,
+        configs.l,
+        configs.chunk_size,
+        configs.n / configs.chunk_size,
         qis_str,
         configs.t,
         configs.q_mod_t,
@@ -243,5 +247,44 @@ mod tests {
             .configs
             .contains(format!("{}_BIT_MSG: u32 = {}", prefix, bits.msg_bit).as_str()));
         assert!(artifacts.configs.contains("SHARE_ENCRYPTION_CONFIGS"));
+    }
+
+    #[test]
+    fn test_codegen_secure_preset_configs_match_dkg_params() {
+        let committee = CiphernodesCommitteeSize::Small.values();
+        let sd = BfvPreset::SecureThreshold8192.search_defaults().unwrap();
+        let sample = ShareEncryptionCircuitData::generate_sample(
+            BfvPreset::SecureThreshold8192,
+            committee.clone(),
+            DkgInputType::SecretKey,
+            sd.z,
+        )
+        .unwrap();
+
+        let artifacts = ShareEncryptionCircuit
+            .codegen(BfvPreset::SecureThreshold8192, &sample)
+            .unwrap();
+
+        let (_, dkg_params) =
+            e3_fhe_params::build_pair_for_preset(BfvPreset::SecureThreshold8192).unwrap();
+        let n = dkg_params.degree();
+        let l = dkg_params.moduli().len();
+
+        assert!(artifacts
+            .configs
+            .contains(format!("N: u32 = {}", n).as_str()));
+        assert!(artifacts
+            .configs
+            .contains(format!("L: u32 = {}", l).as_str()));
+        assert!(artifacts.configs.contains(
+            format!("SHARE_COMPUTATION_CHUNK_SIZE: u32 = {}", sample.chunk_size).as_str()
+        ));
+        assert!(artifacts.configs.contains(
+            format!(
+                "SHARE_COMPUTATION_N_CHUNKS: u32 = {}",
+                n / sample.chunk_size as usize
+            )
+            .as_str()
+        ));
     }
 }

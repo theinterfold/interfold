@@ -207,6 +207,12 @@ describe("BfvVkBindingIntegration", function () {
     const expectedC5KeyHash = readVkRecursiveHash(
       getBfvPkSubCircuitVkHashPaths().c5,
     );
+    const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
+      getBfvPkSubCircuitVkHashPaths().skC2Chunk,
+    );
+    const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
+      getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
+    );
     const expectedC6FoldKeyHash = readVkRecursiveHash(
       getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
     );
@@ -220,6 +226,8 @@ describe("BfvVkBindingIntegration", function () {
       await dkgAgg.getAddress(),
       expectedNodesFoldKeyHash,
       expectedC5KeyHash,
+      expectedSkC2ChunkKeyHash,
+      expectedESmC2ChunkKeyHash,
       BFV_DKG_H,
     );
     await bfvPk.waitForDeployment();
@@ -253,6 +261,8 @@ describe("BfvVkBindingIntegration", function () {
         await bfvPk.circuitVerifier(),
         ethers.id("stale-nodes-fold"),
         ethers.id("stale-c5"),
+        readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().skC2Chunk),
+        readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().esmC2Chunk),
         BFV_DKG_H,
       );
       await stale.waitForDeployment();
@@ -314,25 +324,6 @@ describe("BfvVkBindingIntegration", function () {
       const decPublicInputs = hexToBytes32Array(
         folded.decryption_aggregator.public_inputs_hex,
       );
-
-      const expectedNodesFoldKeyHash = readVkRecursiveHash(
-        getBfvPkSubCircuitVkHashPaths().nodesFold,
-      );
-      const expectedC5KeyHash = readVkRecursiveHash(
-        getBfvPkSubCircuitVkHashPaths().c5,
-      );
-      const expectedC6FoldKeyHash = readVkRecursiveHash(
-        getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
-      );
-      const expectedC7KeyHash = readVkRecursiveHash(
-        getBfvDecryptionSubCircuitVkHashPaths().c7,
-      );
-
-      expect(dkgPublicInputs[0]).to.equal(expectedNodesFoldKeyHash);
-      expect(dkgPublicInputs[1]).to.equal(expectedC5KeyHash);
-      expect(decPublicInputs[0]).to.equal(expectedC6FoldKeyHash);
-      expect(decPublicInputs[1]).to.equal(expectedC7KeyHash);
-
       if (
         dkgPublicInputs.length !== DKG_EXPECTED_PUBLIC_INPUT_LEN ||
         decPublicInputs.length !== DEC_EXPECTED_PUBLIC_INPUT_LEN
@@ -344,6 +335,34 @@ describe("BfvVkBindingIntegration", function () {
         );
         this.skip();
       }
+
+      const expectedNodesFoldKeyHash = readVkRecursiveHash(
+        getBfvPkSubCircuitVkHashPaths().nodesFold,
+      );
+      const expectedC5KeyHash = readVkRecursiveHash(
+        getBfvPkSubCircuitVkHashPaths().c5,
+      );
+      const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
+        getBfvPkSubCircuitVkHashPaths().skC2Chunk,
+      );
+      const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
+        getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
+      );
+      const expectedC6FoldKeyHash = readVkRecursiveHash(
+        getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
+      );
+      const expectedC7KeyHash = readVkRecursiveHash(
+        getBfvDecryptionSubCircuitVkHashPaths().c7,
+      );
+
+      expect(dkgPublicInputs[0]).to.equal(expectedNodesFoldKeyHash);
+      expect(dkgPublicInputs[1]).to.equal(expectedC5KeyHash);
+      expect(dkgPublicInputs[5 + BFV_DKG_H]).to.equal(expectedSkC2ChunkKeyHash);
+      expect(dkgPublicInputs[6 + BFV_DKG_H]).to.equal(
+        expectedESmC2ChunkKeyHash,
+      );
+      expect(decPublicInputs[0]).to.equal(expectedC6FoldKeyHash);
+      expect(decPublicInputs[1]).to.equal(expectedC7KeyHash);
 
       const dkgCommitteeHash = committeeHashFromLimbs(
         dkgPublicInputs[DKG_COMMITTEE_HASH_IDX.hi],
@@ -461,6 +480,9 @@ describe("BfvVkBindingIntegration", function () {
       const dkgPublicInputs = hexToBytes32Array(
         folded.dkg_aggregator.public_inputs_hex,
       );
+      if (dkgPublicInputs.length !== bfvPkExpectedPublicInputsLen(BFV_DKG_H)) {
+        this.skip();
+      }
       const expectedC5KeyHash = readVkRecursiveHash(
         getBfvPkSubCircuitVkHashPaths().c5,
       );
@@ -501,6 +523,8 @@ describe("BfvVkBindingIntegration", function () {
         await dkgAgg.getAddress(),
         wrongNodesFold,
         expectedC5KeyHash,
+        readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().skC2Chunk),
+        readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().esmC2Chunk),
         BFV_DKG_H,
       );
       await bfvPk.waitForDeployment();

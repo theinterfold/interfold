@@ -208,7 +208,7 @@ REQUESTER claims:
 ├─ Transfer requesterAmount in the per-E3 fee token
 └─ Emit RefundClaimed(e3Id, requester, amount)
 
-HONEST NODE'S BOND OWNER claims:
+FROZEN REWARD RECIPIENT claims an honest-node reward:
   E3RefundManager.claimHonestNodeReward(e3Id, operator)
 │
 ├─ require(distribution calculated)

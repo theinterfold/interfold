@@ -43,8 +43,14 @@ pub fn default_links(preset: BfvPreset) -> Vec<Box<dyn CommitmentLink>> {
         Box::new(c1_to_c5::C1ToC5PkCommitmentLink),
         Box::new(c2_to_c3::C3aToC2aShareEncryptionLink),
         Box::new(c2_to_c3::C3bToC2bShareEncryptionLink),
-        Box::new(c2_to_c4::C2aToC4aShareCommitmentLink { l }),
-        Box::new(c2_to_c4::C2bToC4bShareCommitmentLink { l }),
+        Box::new(c2_to_c4::C2aToC4aShareCommitmentLink {
+            l,
+            source_prefix_fields: 2,
+        }),
+        Box::new(c2_to_c4::C2bToC4bShareCommitmentLink {
+            l,
+            source_prefix_fields: 2,
+        }),
         Box::new(c6_to_c7::C6ToC7DCommitmentLink),
         Box::new(c4a_to_c6::C4aToC6SkCommitmentLink),
         Box::new(c4b_to_c6::C4bToC6ESmCommitmentLink),

@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Per-node fold: C0, C1, `c2ab_fold`, `c3ab_fold`, `c4ab_fold` with same-party assertions.
+//! Per-node fold: C0, C1, `c2ab_chunk_fold`, `c3ab_fold`, `c4ab_fold` with same-party assertions.
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
@@ -15,7 +15,7 @@ use lib::configs::default::{H, N_PARTIES};
 use lib::math::commitments::compute_vk_hash;
 
 pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
-pub global C2AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C2_PUBLIC_LEN);
+pub global C2AB_FOLD_PUBLIC_LEN: u32 = 5 + (2 * C2_PUBLIC_LEN);
 /// One slot per (party, threshold-modulus) pair - must match `c3ab_fold::C3AB_FOLD_PUBLIC_LEN`.
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 1 + (6 * C3_SLOTS);
@@ -24,7 +24,7 @@ pub global C3AB_PREFIX_LEN: u32 = C3AB_FOLD_PUBLIC_LEN - (6 * C3_SLOTS);
 pub global C4_PUBLIC_LEN: u32 = (H * L_THRESHOLD) + 1;
 pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_PUBLIC_LEN);
 
-/// Key-hash prefix length in `c2ab_fold` / `c4ab_fold` flattened public IO.
+/// Key-hash prefix length in `c2ab_chunk_fold` / `c4ab_fold` flattened public IO.
 pub global C2AB_PREFIX_LEN: u32 = C2AB_FOLD_PUBLIC_LEN - (2 * C2_PUBLIC_LEN);
 pub global C4AB_PREFIX_LEN: u32 = C4AB_FOLD_PUBLIC_LEN - (2 * C4_PUBLIC_LEN);
 
@@ -47,7 +47,7 @@ pub global C3AB_PK_B_START: u32 = C3AB_PREFIX_LEN + (3 * C3_SLOTS);
 pub global C3AB_MSG_B_START: u32 = C3AB_PREFIX_LEN + (4 * C3_SLOTS);
 
 /// Total public parameters + outputs for `node_fold`.
-pub global NODE_FOLD_PUBLIC_LEN: u32 = 11 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
+pub global NODE_FOLD_PUBLIC_LEN: u32 = 13 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 
 fn main(
     c0_vk: UltraHonkVerificationKey,
@@ -72,7 +72,7 @@ fn main(
     c2ab_key_hash: pub Field,
     c3ab_key_hash: pub Field,
     c4ab_key_hash: pub Field,
-    ) -> pub (Field, Field, Field, [Field; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; H], [[Field; L_THRESHOLD]; H], Field, Field) {
+    ) -> pub (Field, Field, Field, Field, Field, [Field; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; N_PARTIES], [[Field; L_THRESHOLD]; H], [[Field; L_THRESHOLD]; H], Field, Field) {
     verify_honk_proof(c0_vk, c0_proof, c0_public, c0_key_hash);
     verify_honk_proof(c1_vk, c1_proof, c1_public, c1_key_hash);
     verify_honk_proof_non_zk(c2ab_vk, c2ab_proof, c2ab_public, c2ab_key_hash);
@@ -151,5 +151,8 @@ fn main(
     let sk_agg = c4ab_public[SK_AGG_INDEX];
     let esm_agg = c4ab_public[ESM_AGG_INDEX];
 
-    (key_hash, c0_pk, c1_pk, c3_pk, c2a, c2b, c4a_exp, c4b_exp, sk_agg, esm_agg)
+    (
+        key_hash, c2ab_public[3], c2ab_public[4], c0_pk, c1_pk, c3_pk, c2a, c2b, c4a_exp, c4b_exp,
+        sk_agg, esm_agg,
+    )
 }

@@ -9,20 +9,13 @@ mod helpers;
 #[allow(dead_code)]
 pub use helpers::*;
 
+use e3_fhe_params::BfvPreset;
+
 /// Call at the top of any setup function that hard-codes `CiphernodesCommitteeSize::Minimum`.
-/// Returns `None` (causing the test to skip) when the compiled circuits were built for a
-/// non-minimum committee — the Minimum-sized samples would not satisfy the circuit ABI.
+/// Returns `None` when the compiled circuits use a different preset or committee.
 #[allow(dead_code)]
 pub fn require_minimum_circuits() -> Option<()> {
-    if circuits_compiled_for_minimum() {
-        Some(())
-    } else {
-        println!(
-            "skipping: circuits not compiled for minimum committee. \
-             Rebuild with `pnpm build:circuits --committee minimum` to run this test."
-        );
-        None
-    }
+    require_minimum_circuits_for_preset(BfvPreset::InsecureThreshold512)
 }
 
 use std::path::PathBuf;

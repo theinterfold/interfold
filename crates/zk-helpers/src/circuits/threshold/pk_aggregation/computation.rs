@@ -155,6 +155,18 @@ impl Computation for Inputs {
         let (threshold_params, _) =
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Other(e.to_string()))?;
 
+        let canonical =
+            crate::ciphernodes_committee::canonical_committee_for_circuit(&data.committee)
+                .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
+        if data.pk0_shares.len() < canonical.h {
+            return Err(CircuitsErrors::Other(format!(
+                "pk0_shares has {} shares but canonical H is {}",
+                data.pk0_shares.len(),
+                canonical.h
+            )));
+        }
+        let h = canonical.h;
+
         let bit_pk = compute_modulus_bit(&threshold_params);
 
         let mut pk0: Vec<CrtPolynomial> = data.pk0_shares.clone();
@@ -166,7 +178,7 @@ impl Computation for Inputs {
 
         let mut expected_threshold_pk_commitments = Vec::new();
 
-        for pk in pk0.iter_mut().take(data.committee.h) {
+        for pk in pk0.iter_mut().take(h) {
             pk.reverse();
             pk.center(threshold_params.moduli())?;
 

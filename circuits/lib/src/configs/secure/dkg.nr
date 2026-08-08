@@ -42,6 +42,10 @@ share_computation_sk (CIRCUIT 2a)
 // share_computation_sk - bit parameters
 pub global SHARE_COMPUTATION_BIT_SHARE: u32 = 58;
 pub global SHARE_COMPUTATION_SK_BIT_SECRET: u32 = 1;
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = 512;
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = 16;
+pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = 4;
+pub global SHARE_COMPUTATION_N_BATCHES: u32 = 4;
 
 // share_computation_sk - configs
 pub global SHARE_COMPUTATION_SK_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =

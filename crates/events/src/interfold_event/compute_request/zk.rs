@@ -37,7 +37,7 @@ pub enum ZkRequest {
     ThresholdShareDecryption(ThresholdShareDecryptionProofRequest),
     /// Generate proof for decrypted shares aggregation (C7).
     DecryptedSharesAggregation(DecryptedSharesAggregationProofRequest),
-    /// Per-node DKG recursive fold (C2abFold → … → NodeFold).
+    /// Per-node DKG recursive fold (C2abChunkFold → … → NodeFold).
     NodeDkgFold(NodeDkgFoldRequest),
     /// Single step of the streaming cross-node nodes_fold accumulation.
     NodesFoldStep(NodesFoldStepRequest),
@@ -189,8 +189,31 @@ impl ShareEncryptionProofRequest {
     /// This is a protocol invariant shared between the proof-request producer and the C3 fold
     /// driver; it is defined here (next to the request type) so all callers reference one
     /// formula.
-    pub fn c3_slot_index(&self, n_moduli: usize) -> u32 {
-        (self.recipient_party_id as u32) * (n_moduli as u32) + (self.row_index as u32)
+    pub fn c3_slot_index(&self, n_moduli: usize) -> Option<u32> {
+        checked_c3_slot_index(self.recipient_party_id, n_moduli, self.row_index)
+    }
+}
+
+fn checked_c3_slot_index(
+    recipient_party_id: usize,
+    n_moduli: usize,
+    row_index: usize,
+) -> Option<u32> {
+    let slot = recipient_party_id
+        .checked_mul(n_moduli)?
+        .checked_add(row_index)?;
+    u32::try_from(slot).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::checked_c3_slot_index;
+
+    #[test]
+    fn c3_slot_index_rejects_unrepresentable_values() {
+        assert_eq!(checked_c3_slot_index(3, 2, 1), Some(7));
+        assert_eq!(checked_c3_slot_index(usize::MAX, 2, 0), None);
+        assert_eq!(checked_c3_slot_index(u32::MAX as usize, 2, 0), None);
     }
 }
 
@@ -216,6 +239,8 @@ pub struct DkgShareDecryptionProofRequest {
     /// Position of the own party within the H ascending-party_id ordering. The prover
     /// splices `own_share_raw` into this slot when assembling C4 inputs.
     pub own_plaintext_idx: usize,
+    /// Zero-based recipient party ID whose share row each C4 proof decrypts.
+    pub recipient_party_id: u64,
     /// Bincode-serialised `Vec<Vec<u64>>` of shape `[L][N]` — the own party's plaintext
     /// share row per modulus (witness — encrypted at rest).
     pub own_share_raw: SensitiveBytes,

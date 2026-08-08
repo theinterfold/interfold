@@ -27,6 +27,14 @@ library InterfoldLifecycle {
     // keccak256(abi.encode(uint256(keccak256("interfold.storage.CiphertextVerifier")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant CIPHERTEXT_VERIFIER_STORAGE_SLOT =
         0xfc399dd26441dab88259cd69fffcf8b5f96dd87f2db63f29285d86101a4d1500;
+    // ERC-7201 slot for "interfold.storage.CiphertextPublication".
+    // keccak256(abi.encode(uint256(keccak256(namespace)) - 1)) & ~bytes32(uint256(0xff))
+    bytes32 private constant CIPHERTEXT_PUBLICATION_STORAGE_SLOT =
+        0x8cf8f319e286c91067df5865ff01615e7f3fced906e24ea85acdc2dfd6704200;
+
+    struct CiphertextPublicationLayout {
+        mapping(uint256 e3Id => bool inProgress) inProgress;
+    }
 
     /// @notice Validates finalization and freezes committee reward recipients.
     function validateAndSnapshotCommitteeFinalization(
@@ -158,14 +166,10 @@ library InterfoldLifecycle {
             revert IInterfold.InputDeadlineNotReached(e3Id, e3.inputWindow[1]);
         if (e3.ciphertextOutput != bytes32(0))
             revert IInterfold.CiphertextOutputAlreadyPublished(e3Id);
+        _beginCiphertextPublication(e3Id);
         _requireViableCommittee(registryAddress, e3Id);
 
         bytes32 ciphertextOutputHash = keccak256(ciphertextOutput);
-        e3.ciphertextOutput = ciphertextOutputHash;
-        e3.ciphertextCommitment = ciphertextCommitment;
-        stages[e3Id] = IInterfold.E3Stage.CiphertextReady;
-        deadlines[e3Id].decryptionDeadline = block.timestamp + decryptionWindow;
-
         _verifyCiphertext(
             e3,
             e3Id,
@@ -174,6 +178,12 @@ library InterfoldLifecycle {
             ciphertextOutput,
             proof
         );
+
+        _endCiphertextPublication(e3Id);
+        e3.ciphertextOutput = ciphertextOutputHash;
+        e3.ciphertextCommitment = ciphertextCommitment;
+        stages[e3Id] = IInterfold.E3Stage.CiphertextReady;
+        deadlines[e3Id].decryptionDeadline = block.timestamp + decryptionWindow;
 
         emit IInterfold.CiphertextOutputPublished(
             e3Id,
@@ -274,6 +284,31 @@ library InterfoldLifecycle {
         assembly {
             state.slot := slot
         }
+    }
+
+    function _ciphertextPublicationLayout()
+        private
+        pure
+        returns (CiphertextPublicationLayout storage state)
+    {
+        bytes32 slot = CIPHERTEXT_PUBLICATION_STORAGE_SLOT;
+        assembly {
+            state.slot := slot
+        }
+    }
+
+    function _beginCiphertextPublication(uint256 e3Id) private {
+        CiphertextPublicationLayout
+            storage publication = _ciphertextPublicationLayout();
+        require(
+            !publication.inProgress[e3Id],
+            "Ciphertext publication is already in progress"
+        );
+        publication.inProgress[e3Id] = true;
+    }
+
+    function _endCiphertextPublication(uint256 e3Id) private {
+        _ciphertextPublicationLayout().inProgress[e3Id] = false;
     }
 
     /// @notice Checks whether an E3 stage can enter the failure path.

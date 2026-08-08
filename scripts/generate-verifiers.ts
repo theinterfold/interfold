@@ -445,12 +445,10 @@ class VerifierGenerator {
     if (solidity.split(errorMarker).length !== 2) {
       throw new Error('Expected one generated Errors.ConsistencyCheckFailed declaration')
     }
-    solidity = solidity.replace(
-      errorMarker,
-      `${errorMarker}\n    error VerificationKeyConfigurationMismatch();`,
-    )
+    solidity = solidity.replace(errorMarker, `${errorMarker}\n    error VerificationKeyConfigurationMismatch();`)
 
-    const constructorPattern = /(constructor\(uint256 _N, uint256 _logN, uint256 _vkHash, uint256 _numPublicInputs\)\s*\{[\s\S]*?\n\s*\})(\s*function verify\s*\()/
+    const constructorPattern =
+      /(constructor\(uint256 _N, uint256 _logN, uint256 _vkHash, uint256 _numPublicInputs\)\s*\{[\s\S]*?\n\s*\})(\s*function verify\s*\()/
     if (!constructorPattern.test(solidity)) {
       throw new Error('Expected generated Honk verifier base constructor')
     }

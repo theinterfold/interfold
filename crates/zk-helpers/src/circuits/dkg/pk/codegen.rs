@@ -8,7 +8,7 @@
 
 use crate::circuits::dkg::pk::circuit::PkCircuit;
 use crate::circuits::dkg::pk::circuit::PkCircuitData;
-use crate::circuits::dkg::pk::computation::{Bits, Inputs, PkComputationOutput};
+use crate::circuits::dkg::pk::computation::{Bits, Configs, Inputs, PkComputationOutput};
 use crate::Artifacts;
 use crate::Circuit;
 use crate::CircuitCodegen;
@@ -28,9 +28,10 @@ impl CircuitCodegen for PkCircuit {
 
     fn codegen(&self, preset: Self::Preset, data: &Self::Data) -> Result<Artifacts, Self::Error> {
         let PkComputationOutput { inputs, bits, .. } = PkCircuit::compute(preset, data)?;
+        let configs_data = Configs::compute(preset, &())?;
 
         let toml = generate_toml(inputs)?;
-        let configs = generate_configs(preset, &bits);
+        let configs = generate_configs(&configs_data, &bits);
 
         Ok(Artifacts { toml, configs })
     }
@@ -44,7 +45,7 @@ pub fn generate_toml(inputs: Inputs) -> Result<CodegenToml, CircuitsErrors> {
 }
 
 /// Builds the configs.nr string (N, L, bit parameters) for the Noir prover.
-pub fn generate_configs(preset: BfvPreset, bits: &Bits) -> CodegenConfigs {
+pub fn generate_configs(configs: &Configs, bits: &Bits) -> CodegenConfigs {
     format!(
         r#"pub global N: u32 = {};
 pub global L: u32 = {};
@@ -58,8 +59,8 @@ pk (CIRCUIT 0 - DKG BFV PUBLIC KEY)
 // pk - bit parameters
 pub global {}_BIT_PK: u32 = {};
 "#,
-        preset.dkg_counterpart().unwrap().metadata().degree,
-        preset.dkg_counterpart().unwrap().metadata().num_moduli,
+        configs.n,
+        configs.l,
         <PkCircuit as Circuit>::PREFIX,
         bits.pk_bit,
     )

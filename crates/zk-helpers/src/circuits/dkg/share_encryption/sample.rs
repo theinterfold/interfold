@@ -113,6 +113,10 @@ impl ShareEncryptionCircuitData {
             e0_rns,
             e1_rns,
             dkg_input_type,
+            party_idx: 0,
+            mod_idx: 0,
+            chunk_size: 512,
+            committee,
         })
     }
 }
