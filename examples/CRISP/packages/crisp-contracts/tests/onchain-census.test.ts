@@ -10,7 +10,6 @@ import { expect } from 'chai'
 import { deployCRISPProgram, deployHonkVerifier, deployMockInterfold, deployOnchainHonkVerifier, ethers } from './utils'
 import type { CRISPProgram, HonkVerifier, MockInterfold } from '../types'
 
-const CONSTANT = 0
 const CUSTOM = 1
 const ONCHAIN = 2
 
