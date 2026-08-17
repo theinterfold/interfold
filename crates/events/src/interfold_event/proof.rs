@@ -128,6 +128,10 @@ pub enum CircuitName {
     C3Fold,
     /// Bootstrap circuit for [`CircuitName::C3Fold`] genesis accumulator proof (same ABI, no acc verify).
     C3FoldKernel,
+    /// I5 PoC (not shipped): batched non-recursive c3 fold, 1 leaf verified over the kernel genesis.
+    C3FoldBatchN2,
+    /// I5 PoC (not shipped): batched non-recursive c3 fold, 2 leaves verified over the kernel genesis.
+    C3FoldBatchN3,
     /// Sequential C6 fold: inner ZK + prior `c6_fold` non-ZK proof (phase-7 aggregator).
     C6Fold,
     /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
@@ -164,6 +168,8 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => "decrypted_shares_aggregation",
             CircuitName::C3Fold => "c3_fold",
             CircuitName::C3FoldKernel => "c3_fold_kernel",
+            CircuitName::C3FoldBatchN2 => "c3_fold_batch_n2",
+            CircuitName::C3FoldBatchN3 => "c3_fold_batch_n3",
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
             CircuitName::C2abFold => "c2ab_fold",
@@ -199,6 +205,8 @@ impl CircuitName {
             | CircuitName::NodesFold
             | CircuitName::NodesFoldKernel
             | CircuitName::DkgAggregator
+            | CircuitName::C3FoldBatchN2
+            | CircuitName::C3FoldBatchN3
             | CircuitName::DecryptionAggregator => "recursive_aggregation",
         }
     }
@@ -236,6 +244,8 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => CircuitOutputLayout::None,
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
+            | CircuitName::C3FoldBatchN2
+            | CircuitName::C3FoldBatchN3
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold
