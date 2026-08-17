@@ -92,10 +92,10 @@ export const COMMITTEE_PARAMS: Record<CircuitCommittee, CommitteeParams> = {
 }
 
 /**
- * Every `(preset, committee)` pair is supported because the parity matrices are now regenerated
- * automatically from the BFV preset's `QIS` and the committee's `(N, T)` by the
+ * Every `(preset, committee)` pair is supported because committee-dependent circuit artifacts are
+ * regenerated automatically from the BFV presets and the committee's `(N, T)` by the
  * `generate_parity_matrices` Rust binary, invoked from `scripts/build-circuits.ts` whenever
- * the committee is set. The matrix files on disk are derived artifacts, not hand-tuned data.
+ * the committee is set. The parity matrices and smudging constants are derived artifacts.
  *
  * This constant is kept for future use (e.g. if a particular pair is ever known-broken at
  * a higher level than the parity matrix) and currently returns the full Cartesian product.

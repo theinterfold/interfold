@@ -1,0 +1,7 @@
+[package]
+name = "dummy_c3_inner"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+lib = { path = "../../../lib" }

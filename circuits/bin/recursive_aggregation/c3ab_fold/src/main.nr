@@ -14,13 +14,13 @@ use lib::math::commitments::compute_vk_hash;
 /// Must match `c3_fold`: one slot per (party, threshold-modulus) pair.
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
 
-/// Must match `c3_fold`: `4 + 3*C3_SLOTS` public fields per final proof.
-pub global C3_FOLD_PUBLIC_LEN: u32 = 4 + (3 * C3_SLOTS);
+/// Must match `c3_fold`: `6 + 3*C3_SLOTS` public fields per final proof.
+pub global C3_FOLD_PUBLIC_LEN: u32 = 6 + (3 * C3_SLOTS);
 
 pub global C3_FOLD_PREFIX_LEN: u32 = C3_FOLD_PUBLIC_LEN - (3 * C3_SLOTS);
 
 /// Total public fields for `c3ab_fold` (two key hashes + flattened return tuple).
-pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 1 + (6 * C3_SLOTS);
+pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 2 + (6 * C3_SLOTS);
 
 fn main(
     c3a_vk: UltraHonkVerificationKey,
@@ -31,12 +31,25 @@ fn main(
     c3b_public: [Field; C3_FOLD_PUBLIC_LEN],
     c3a_key_hash: pub Field,
     c3b_key_hash: pub Field,
-    ) -> pub (Field, [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS]) {
+    ) -> pub (Field, [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS], Field) {
     verify_honk_proof_non_zk(c3a_vk, c3a_proof, c3a_public, c3a_key_hash);
     verify_honk_proof_non_zk(c3b_vk, c3b_proof, c3b_public, c3b_key_hash);
 
     let vk_hashes = [c3a_key_hash, c3b_key_hash].as_vector();
     let key_hash = compute_vk_hash(vk_hashes);
+    let vk_manifest = compute_vk_hash([
+        c3a_key_hash,
+        c3b_key_hash,
+        c3a_public[0],
+        c3b_public[0],
+        c3a_public[1],
+        c3b_public[1],
+        c3a_public[4],
+        c3b_public[4],
+        c3a_public[5],
+        c3b_public[5],
+    ]
+        .as_vector());
 
     let mut pk_a: [Field; C3_SLOTS] = [0; C3_SLOTS];
     let mut msg_a: [Field; C3_SLOTS] = [0; C3_SLOTS];
@@ -54,5 +67,5 @@ fn main(
         ct_b[j] = c3b_public[C3_FOLD_PREFIX_LEN + C3_SLOTS + C3_SLOTS + j];
     }
 
-    (key_hash, pk_a, msg_a, ct_a, pk_b, msg_b, ct_b)
+    (key_hash, pk_a, msg_a, ct_a, pk_b, msg_b, ct_b, vk_manifest)
 }

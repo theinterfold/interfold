@@ -183,7 +183,7 @@ curl -X POST http://localhost:13151/run_compute \
     "chain_id": 31337,
     "interfold_address": "0x1111111111111111111111111111111111111111",
     "encryption_scheme_id": "0x...",
-    "committee_public_key": "0x...",
+    "committee_public_key_hash": "0x...",
     "params": "0x...",
     "ciphertext_inputs": [["0x...", 0], ["0x...", 1]],
     "callback_url": "http://host.local:4000/state/add-result"

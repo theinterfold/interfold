@@ -5,7 +5,7 @@
   "proof_aggregation": true,
   "multithread_jobs": 13,
   "verbose": true,
-  "nodes_spawned": 20,
+  "nodes_spawned": 16,
   "committee_size_n": 9,
   "committee_size_h": 5,
   "committee_threshold_t": 4,

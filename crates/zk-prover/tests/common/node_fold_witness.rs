@@ -20,6 +20,7 @@ use e3_zk_helpers::dkg::share_encryption::ShareEncryptionCircuitData;
 use e3_zk_helpers::threshold::pk_generation::PkGenerationCircuitData;
 use e3_zk_helpers::CiphernodesCommittee;
 use e3_zk_helpers::CircuitsErrors;
+use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
 use fhe::bfv::Encoding;
 use fhe::bfv::SecretKey;
 use fhe::mbfv::PublicKeyShare;
@@ -141,6 +142,7 @@ pub fn share_computation_sk_from_pk(
         parity_matrix,
         n_parties: committee.n as u32,
         threshold: committee.threshold as u32,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
     })
 }
 
@@ -184,6 +186,7 @@ pub fn share_computation_esm_from_esi(
         parity_matrix,
         n_parties: committee.n as u32,
         threshold: committee.threshold as u32,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
     })
 }
 
@@ -195,6 +198,7 @@ pub fn share_encryption_for_slot(
     share_inputs: &ShareComputationInputs,
     slot: usize,
     dkg_input_type: DkgInputType,
+    committee: CiphernodesCommittee,
 ) -> Result<ShareEncryptionCircuitData, CircuitsErrors> {
     let (_, dkg_params) =
         build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
@@ -237,5 +241,9 @@ pub fn share_encryption_for_slot(
         e0_rns,
         e1_rns,
         dkg_input_type,
+        party_idx: party as u32,
+        mod_idx: mod_ix as u32,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+        committee,
     })
 }

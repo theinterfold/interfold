@@ -21,8 +21,8 @@ use crate::witness::{CompiledCircuit, WitnessGenerator};
 use e3_events::{CircuitName, CircuitVariant, Proof};
 use serde::Serialize;
 
-/// Public-signal layout of `nodes_fold`: 4-field prefix, then `node_fold_fields`-wide tail.
-const NODES_FOLD_PREFIX_LEN: usize = 4;
+/// Public-signal layout of `nodes_fold`: 6-field prefix, then `node_fold_fields`-wide tail.
+const NODES_FOLD_PREFIX_LEN: usize = 6;
 
 fn node_fold_statement_field_count(proof: &Proof) -> Result<usize, ZkError> {
     if proof.circuit != CircuitName::NodeFold {
@@ -41,7 +41,7 @@ fn node_fold_statement_field_count(proof: &Proof) -> Result<usize, ZkError> {
 }
 
 fn nodes_fold_acc_public_len(node_fold_fields: usize, total_slots: usize) -> usize {
-    4 + total_slots * node_fold_fields
+    6 + total_slots * node_fold_fields
 }
 
 #[derive(Serialize)]
@@ -56,6 +56,8 @@ struct NodesFoldStepInput {
     acc_key_hash: String,
     is_first_step: bool,
     slot_index: u32,
+    expected_kernel_key_hash: String,
+    expected_fold_key_hash: String,
 }
 
 struct NodesFoldVks {
@@ -120,9 +122,15 @@ fn generate_nodes_fold_kernel_genesis_proof(
         acc_proof: acc_pf,
         acc_public_inputs: acc_pi,
         inner_key_hash: inner_vk.key_hash,
-        acc_key_hash: kernel_vk.key_hash,
+        acc_key_hash: kernel_vk.key_hash.clone(),
         is_first_step: true,
         slot_index,
+        expected_kernel_key_hash: kernel_vk.key_hash,
+        expected_fold_key_hash: vk::load_vk_artifacts(
+            &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+            CircuitName::NodesFold,
+        )?
+        .key_hash,
     };
 
     let circuit_path = prover
@@ -231,6 +239,8 @@ fn generate_nodes_fold_step_with_vks(
         acc_key_hash: acc_vk_hash,
         is_first_step,
         slot_index,
+        expected_kernel_key_hash: vks.kernel_vk.key_hash.clone(),
+        expected_fold_key_hash: vks.fold_vk.key_hash.clone(),
     };
 
     let circuit_path = prover
@@ -308,4 +318,30 @@ pub fn generate_sequential_nodes_fold(
             )
         },
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn nodes_fold_kernel_witness_includes_accumulator_binding_parameters() {
+        let value = serde_json::to_value(NodesFoldStepInput {
+            inner_vk: Vec::new(),
+            inner_proof: Vec::new(),
+            node_fold_public_inputs: Vec::new(),
+            acc_vk: Vec::new(),
+            acc_proof: Vec::new(),
+            acc_public_inputs: Vec::new(),
+            inner_key_hash: "0".to_string(),
+            acc_key_hash: "0".to_string(),
+            is_first_step: true,
+            slot_index: 0,
+            expected_kernel_key_hash: "0".to_string(),
+            expected_fold_key_hash: "0".to_string(),
+        })
+        .unwrap();
+        assert!(value.get("expected_kernel_key_hash").is_some());
+        assert!(value.get("expected_fold_key_hash").is_some());
+    }
 }

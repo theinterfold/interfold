@@ -12,13 +12,15 @@ fn make_field(val: u8) -> [u8; 32] {
     f
 }
 
-/// C2 inner signals: [expected_secret_commitment] + share commitments (row-major: party, mod).
+/// C2 terminal signals: [child VK hash, secret root] + share commitments + batch VK hash.
 fn c2_signals(share_commits: &[[u8; 32]]) -> Vec<u8> {
     let mut v = Vec::new();
-    v.extend_from_slice(&make_field(0xFF)); // expected_secret_commitment (skipped)
+    v.extend_from_slice(&make_field(0xFE)); // child VK hash (skipped)
+    v.extend_from_slice(&make_field(0xFF)); // secret root (skipped)
     for c in share_commits {
         v.extend_from_slice(c);
     }
+    v.extend_from_slice(&make_field(0xFD)); // batch VK hash (skipped)
     v
 }
 
@@ -36,7 +38,10 @@ fn c4_signals(rows: &[Vec<[u8; 32]>], aggregated: [u8; 32]) -> Vec<u8> {
 
 #[test]
 fn extract_share_commitments_from_c2() {
-    let link = C2aToC4aShareCommitmentLink { l: 2 };
+    let link = C2aToC4aShareCommitmentLink {
+        l: 2,
+        source_prefix_fields: 2,
+    };
     // C2 with 3 parties × 2 moduli = 6 share commits
     let commits: Vec<[u8; 32]> = (1u8..=6).map(make_field).collect();
     let c2 = c2_signals(&commits);
@@ -48,7 +53,10 @@ fn extract_share_commitments_from_c2() {
 
 #[test]
 fn extract_skips_secret_commitment() {
-    let link = C2aToC4aShareCommitmentLink { l: 2 };
+    let link = C2aToC4aShareCommitmentLink {
+        l: 2,
+        source_prefix_fields: 2,
+    };
     let c2 = c2_signals(&[make_field(1), make_field(2)]);
     let values = link.extract_source_values(&c2);
     assert_eq!(values.len(), 2);
@@ -63,7 +71,10 @@ fn extract_skips_secret_commitment() {
 #[test]
 fn consistency_passes_precise_l_way_check() {
     let l = 2;
-    let link = C2aToC4aShareCommitmentLink { l };
+    let link = C2aToC4aShareCommitmentLink {
+        l,
+        source_prefix_fields: 2,
+    };
 
     // C2 from sender X=1: 3 parties × 2 moduli
     let c2 = c2_signals(&[
@@ -92,7 +103,10 @@ fn consistency_passes_precise_l_way_check() {
 #[test]
 fn consistency_fails_when_wrong_modulus_commitment() {
     let l = 2;
-    let link = C2aToC4aShareCommitmentLink { l };
+    let link = C2aToC4aShareCommitmentLink {
+        l,
+        source_prefix_fields: 2,
+    };
 
     let c2 = c2_signals(&[
         make_field(10),
@@ -119,7 +133,10 @@ fn consistency_fails_when_wrong_modulus_commitment() {
 #[test]
 fn consistency_fails_when_wrong_party_slot() {
     let l = 2;
-    let link = C2aToC4aShareCommitmentLink { l };
+    let link = C2aToC4aShareCommitmentLink {
+        l,
+        source_prefix_fields: 2,
+    };
 
     let c2 = c2_signals(&[
         make_field(10),
@@ -139,7 +156,10 @@ fn consistency_fails_when_wrong_party_slot() {
 #[test]
 fn consistency_does_not_match_aggregated_output() {
     let l = 1;
-    let link = C2aToC4aShareCommitmentLink { l };
+    let link = C2aToC4aShareCommitmentLink {
+        l,
+        source_prefix_fields: 2,
+    };
 
     // C2: 1 party × 1 modulus = commit 99
     let c2 = c2_signals(&[make_field(99)]);
@@ -154,7 +174,10 @@ fn consistency_does_not_match_aggregated_output() {
 
 #[test]
 fn short_or_empty_signals() {
-    let link = C2aToC4aShareCommitmentLink { l: 2 };
+    let link = C2aToC4aShareCommitmentLink {
+        l: 2,
+        source_prefix_fields: 2,
+    };
     assert!(link.extract_source_values(&[0u8; 32]).is_empty());
     assert!(!link.check_consistency(&[], &[0u8; 256], 0, 0));
     assert!(!link.check_consistency(&[make_field(1)], &[0u8; 16], 0, 0));
@@ -163,7 +186,10 @@ fn short_or_empty_signals() {
 #[test]
 fn c2b_to_c4b_variant() {
     let l = 2;
-    let link = C2bToC4bShareCommitmentLink { l };
+    let link = C2bToC4bShareCommitmentLink {
+        l,
+        source_prefix_fields: 2,
+    };
     let c2 = c2_signals(&[make_field(7), make_field(8)]);
     let source_values = link.extract_source_values(&c2);
 

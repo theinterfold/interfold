@@ -13,6 +13,7 @@ GAS_JSON=""
 INTEGRATION_SUMMARY_FILE=""
 RUN_META_FILE=""
 BENCHMARK_MODE_OVERRIDE=""
+COMMITTEE_OVERRIDE=""
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 BENCHMARKS_DIR="$(dirname "$SCRIPT_DIR")"
 REPO_ROOT="$(cd "${BENCHMARKS_DIR}/../.." && pwd)"
@@ -27,12 +28,13 @@ while [[ $# -gt 0 ]]; do
         --integration-summary) INTEGRATION_SUMMARY_FILE="$2"; shift 2 ;;
         --run-meta) RUN_META_FILE="$2"; shift 2 ;;
         --benchmark-mode) BENCHMARK_MODE_OVERRIDE="$2"; shift 2 ;;
+        --committee) COMMITTEE_OVERRIDE="$2"; shift 2 ;;
         *) echo "Unknown option: $1"; exit 1 ;;
     esac
 done
 
 if [ -z "$INPUT_DIR" ] || [ -z "$OUTPUT_FILE" ]; then
-    echo "Usage: $0 --input-dir <dir> --output <file> [--git-commit <hash>] [--git-branch <branch>] [--gas-json <file>] [--integration-summary <timings.json>]"
+    echo "Usage: $0 --input-dir <dir> --output <file> [--git-commit <hash>] [--git-branch <branch>] [--gas-json <file>] [--integration-summary <timings.json>] [--run-meta <file>] [--committee <name>]"
     exit 1
 fi
 
@@ -404,7 +406,11 @@ artifact_size_pair_from_gas() {
 load_protocol_params() {
     # shellcheck source=load_default_committee.sh
     source "${SCRIPT_DIR}/load_default_committee.sh"
-    load_default_committee "${REPO_ROOT}/circuits/lib/src/configs/default/mod.nr" "${REPO_ROOT}"
+    if [ -n "$COMMITTEE_OVERRIDE" ]; then
+        load_committee_by_name "$COMMITTEE_OVERRIDE" "$REPO_ROOT"
+    else
+        load_default_committee "${REPO_ROOT}/circuits/lib/src/configs/default/mod.nr" "${REPO_ROOT}"
+    fi
     echo "${COMMITTEE_H}|${COMMITTEE_N}|${COMMITTEE_T}"
 }
 
@@ -530,7 +536,7 @@ emit_run_configuration_section() {
         network_model=$(jq -r '.benchmark_config.network_model // empty' <<<"$blob")
         testmode_harness=$(jq -r 'if .benchmark_config.testmode_harness != null then .benchmark_config.testmode_harness else empty end' <<<"$blob")
         if [ -n "$nodes_spawned" ] && [ "$nodes_spawned" != "null" ]; then
-            echo "| Nodes spawned (builder) | $nodes_spawned |"
+            echo "| Nodes spawned (integration) | $nodes_spawned |"
         fi
         if [ -n "$network_model" ] && [ "$network_model" != "null" ]; then
             echo "| Network model | \`$network_model\` |"
@@ -624,8 +630,8 @@ EOF
 
 emit_circuit_row "C0" "/dkg/pk"
 emit_circuit_row "C1" "/threshold/pk_generation"
-emit_circuit_row "C2a" "/dkg/sk_share_computation"
-emit_circuit_row "C2b" "/dkg/e_sm_share_computation"
+emit_circuit_row "C2a chunk (SK)" "/dkg/sk_share_computation_chunk"
+emit_circuit_row "C2b chunk (ESM)" "/dkg/esm_share_computation_chunk"
 emit_circuit_row "C3a" "/dkg/share_encryption"
 emit_circuit_row "C3b" "/dkg/share_encryption"
 emit_circuit_row "C4a" "/dkg/share_decryption"
@@ -647,7 +653,7 @@ artifact_metrics "Π_DKG" "/threshold/pk_aggregation" "$(verify_gas_for_artifact
 artifact_metrics "Π_user" "user_data_encryption" "$(verify_gas_for_artifact Π_user)"
 artifact_metrics "Π_dec" "/threshold/decrypted_shares_aggregation" "$(verify_gas_for_artifact Π_dec)"
 
-p1=$(sum_phase_metrics "/dkg/pk /threshold/pk_generation /dkg/sk_share_computation /dkg/e_sm_share_computation /dkg/share_encryption /dkg/share_encryption /dkg/share_decryption /dkg/share_decryption /recursive_aggregation/c2ab_fold /recursive_aggregation/c3ab_fold /recursive_aggregation/c4ab_fold /recursive_aggregation/node_fold")
+p1=$(sum_phase_metrics "/dkg/pk /threshold/pk_generation /dkg/sk_share_computation_chunk /dkg/esm_share_computation_chunk /dkg/share_encryption /dkg/share_encryption /dkg/share_decryption /dkg/share_decryption /recursive_aggregation/c2ab_chunk_fold /recursive_aggregation/c3ab_fold /recursive_aggregation/c4ab_fold /recursive_aggregation/node_fold")
 p2=$(sum_phase_metrics "/threshold/pk_aggregation")
 p3=$(sum_phase_metrics "/threshold/user_data_encryption_ct0 /threshold/user_data_encryption_ct1")
 p4n=$(sum_phase_metrics "/threshold/share_decryption")
@@ -772,14 +778,24 @@ if [ -n "$INTEGRATION_BLOB" ]; then
             echo "| $name | $(format_s "$avgr") | $runs | $(format_s "$tot") |" >> "$OUTPUT_FILE"
         done < <(jq -r '.operation_timings[]? | [.name, .avg_seconds, .runs, .total_seconds] | @tsv' <<<"$INTEGRATION_BLOB")
         ott=$(jq -r '.operation_timings_total_seconds // empty' <<<"$INTEGRATION_BLOB")
+        top_level_total=$(jq -r '
+          [.operation_timings[]? | select(.name | contains("/") | not) | .total_seconds]
+          | add // 0
+        ' <<<"$INTEGRATION_BLOB")
+        nested_total=$(jq -r '
+          [.operation_timings[]? | select(.name | contains("/")) | .total_seconds]
+          | add // 0
+        ' <<<"$INTEGRATION_BLOB")
         if [ -n "$ott" ] && [ "$ott" != "null" ]; then
             echo "" >> "$OUTPUT_FILE"
-            echo "Sum of tracked job wall time: **$(format_s "$ott") s** — **not** end-to-end latency (jobs run in parallel up to \`BENCHMARK_MULTITHREAD_JOBS\`)." >> "$OUTPUT_FILE"
+            echo "Raw sum of tracked timing rows: **$(format_s "$ott") s** — includes nested sub-steps and overlapping jobs; it is **not** elapsed time." >> "$OUTPUT_FILE"
+            echo "Top-level tracked job sum (excluding nested sub-steps): **$(format_s "$top_level_total") s** — jobs still run in parallel up to \`BENCHMARK_MULTITHREAD_JOBS\`." >> "$OUTPUT_FILE"
+            echo "Nested sub-step rows reported separately: **$(format_s "$nested_total") s**." >> "$OUTPUT_FILE"
         fi
         fold_rows=$(
             jq -r '
               .operation_timings[]?
-              | select(.name | startswith("NodeDkgFold/"))
+              | select(.name | test("^(NodeDkgFold|ZkShareComputation)/"))
               | [.name, .avg_seconds, .runs, .total_seconds]
               | @tsv
             ' <<<"$INTEGRATION_BLOB"
@@ -787,7 +803,7 @@ if [ -n "$INTEGRATION_BLOB" ]; then
         if [ -n "$fold_rows" ]; then
             {
                 echo ""
-                echo "### NodeDkgFold sub-steps (\`tracked_job_wall\`, per fold prove)"
+                echo "### Operation sub-steps (\`tracked_job_wall\`)"
                 echo ""
                 echo "| Step | Avg (s) | Runs | Total (s) |"
                 echo "|------|---------|------|-----------|"
@@ -795,6 +811,7 @@ if [ -n "$INTEGRATION_BLOB" ]; then
             while IFS=$'\t' read -r name avgr runs tot; do
                 [ -z "$name" ] && continue
                 step="${name#NodeDkgFold/}"
+                step="${step#ZkShareComputation/}"
                 echo "| $step | $(format_s "$avgr") | $runs | $(format_s "$tot") |" >> "$OUTPUT_FILE"
             done <<<"$fold_rows"
         fi

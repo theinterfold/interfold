@@ -43,37 +43,43 @@ full cryptographic specification, see the
 
 ## Circuit Map
 
-| ID      | Circuit                      | Phase  | Proves                                                                                       | Source → Target            |
-| ------- | ---------------------------- | ------ | -------------------------------------------------------------------------------------------- | -------------------------- |
-| **C0**  | `PkBfv`                      | P1 DKG | Commits to individual BFV public key (binding for C3)                                        | Each node → all peers      |
-| **C1**  | `PkGeneration`               | P1 DKG | Public key share correctly derived from secret key contribution (Schwartz-Zippel on BFV eq.) | Each node → all peers      |
-| **C2a** | `SkShareComputation`         | P1 DKG | Secret key Shamir shares consistent with C1 commitment and satisfy Reed-Solomon parity       | Each node → all peers      |
-| **C2b** | `ESmShareComputation`        | P1 DKG | Smudging noise Shamir shares consistent with C1 commitment and satisfy Reed-Solomon parity   | Each node → all peers      |
-| **C3a** | `ShareEncryption` (sk)       | P1 DKG | BFV encryption of secret key share uses correct share (C2) and correct recipient pk (C0)     | Per sender → per recipient |
-| **C3b** | `ShareEncryption` (e_sm)     | P1 DKG | BFV encryption of smudging noise share uses correct share (C2) and correct recipient pk (C0) | Per sender → per recipient |
-| **C4a** | `DkgShareDecryption` (sk)    | P1 DKG | Decrypted shares match C2 commitments; aggregated into local secret key share                | Each node → all peers      |
-| **C4b** | `DkgShareDecryption` (e_sm)  | P1 DKG | Decrypted shares match C2 commitments; aggregated into local smudging noise share            | Each node → all peers      |
-| **C5**  | `PkAggregation`              | P2 Agg | Sum of all pk shares (verified against C1 commitments) equals published threshold public key | Aggregator → on-chain      |
-| **C6**  | `ThresholdShareDecryption`   | P4 Dec | Partial decryption uses correct secret key share and smudging noise share from C4            | Each node → aggregator     |
-| **C7**  | `DecryptedSharesAggregation` | P4 Dec | Lagrange interpolation + CRT reconstruction + decoding is correct                            | Aggregator → on-chain      |
+| ID      | Circuit                      | Phase  | Proves                                                                                               | Source → Target            |
+| ------- | ---------------------------- | ------ | ---------------------------------------------------------------------------------------------------- | -------------------------- |
+| **C0**  | `PkBfv`                      | P1 DKG | Commits to individual BFV public key (binding for C3)                                                | Each node → all peers      |
+| **C1**  | `PkGeneration`               | P1 DKG | Public key share correctly derived from secret key contribution (Schwartz-Zippel on BFV eq.)         | Each node → all peers      |
+| **C2a** | `SkShareComputationChunk`    | P1 DKG | Secret key Shamir shares (chunked) consistent with C1 commitment and satisfy Reed-Solomon parity     | Each node → all peers      |
+| **C2b** | `ESmShareComputationChunk`   | P1 DKG | Smudging noise Shamir shares (chunked) consistent with C1 commitment and satisfy Reed-Solomon parity | Each node → all peers      |
+| **C3a** | `ShareEncryption` (sk)       | P1 DKG | BFV encryption of secret key share uses correct share (C2) and correct recipient pk (C0)             | Per sender → per recipient |
+| **C3b** | `ShareEncryption` (e_sm)     | P1 DKG | BFV encryption of smudging noise share uses correct share (C2) and correct recipient pk (C0)         | Per sender → per recipient |
+| **C4a** | `DkgShareDecryption` (sk)    | P1 DKG | Decrypted shares match C2 commitments; aggregated into local secret key share                        | Each node → all peers      |
+| **C4b** | `DkgShareDecryption` (e_sm)  | P1 DKG | Decrypted shares match C2 commitments; aggregated into local smudging noise share                    | Each node → all peers      |
+| **C5**  | `PkAggregation`              | P2 Agg | Sum of all pk shares (verified against C1 commitments) equals published threshold public key         | Aggregator → on-chain      |
+| **C6**  | `ThresholdShareDecryption`   | P4 Dec | Partial decryption uses correct secret key share and smudging noise share from C4                    | Each node → aggregator     |
+| **C7**  | `DecryptedSharesAggregation` | P4 Dec | Lagrange interpolation + CRT reconstruction + decoding is correct                                    | Aggregator → on-chain      |
 
 ### Proof Count Per E3
 
 For a committee of **N** nodes with **L** CRT moduli:
 
-| Circuit | Count per node      | Total across committee |
-| ------- | ------------------- | ---------------------- |
-| C0      | 1                   | N                      |
-| C1      | 1                   | N                      |
-| C2a     | 1                   | N                      |
-| C2b     | 1                   | N                      |
-| C3a     | (N-1) × L           | N × (N-1) × L          |
-| C3b     | (N-1) × L × ESI     | N × (N-1) × L × ESI    |
-| C4a     | 1                   | N                      |
-| C4b     | 1                   | N                      |
-| C5      | 1 (aggregator only) | 1                      |
-| C6      | 1                   | N                      |
-| C7      | 1 (aggregator only) | 1                      |
+| Circuit | Count per node                                                                   | Total across committee                |
+| ------- | -------------------------------------------------------------------------------- | ------------------------------------- |
+| C0      | 1                                                                                | N                                     |
+| C1      | 1                                                                                | N                                     |
+| C2a     | `degree/chunk_size` chunks + `chunk_count/chunks_per_batch` batches + 1 finalize | N × (chunk + batch + finalize proofs) |
+| C2b     | `degree/chunk_size` chunks + `chunk_count/chunks_per_batch` batches + 1 finalize | N × (chunk + batch + finalize proofs) |
+| C3a     | (N-1) × L                                                                        | N × (N-1) × L                         |
+| C3b     | (N-1) × L × ESI                                                                  | N × (N-1) × L × ESI                   |
+| C4a     | 1                                                                                | N                                     |
+| C4b     | 1                                                                                | N                                     |
+| C5      | 1 (aggregator only)                                                              | 1                                     |
+| C6      | 1                                                                                | N                                     |
+| C7      | 1 (aggregator only)                                                              | 1                                     |
+
+C2a/C2b are chunked: each node emits `degree / chunk_size` chunk proofs, folds
+`chunk_count / chunks_per_batch` batches, then one finalize proof. With the default
+`chunk_size = 512` and `chunks_per_batch = 4`, the insecure preset (`degree = 512`) produces
+`1 + 1 + 1 = 3` proofs per node and the secure preset (`degree = 8192`) produces `16 + 4 + 1 = 21`
+proofs per node.
 
 C3 is by far the most proof-intensive circuit. With N=3 and L=4 (secure params), each node generates
 8 C3a proofs alone. This is why proof generation runs on a multithread pool.

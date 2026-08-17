@@ -30,7 +30,7 @@ use lib::configs::secure::dkg::{
 
 use lib::configs::secure::threshold::{
     // Structural parameters
-    N as THRESHOLD_N, L as THRESHOLD_L, PARAMS_SEARCH_N, PARAMS_SEARCH_Z as N_CIPHERTEXTS,
+    N as THRESHOLD_N, L as THRESHOLD_L, PARAMS_SEARCH_Z as N_CIPHERTEXTS,
     // Moduli
     QIS as THRESHOLD_QIS,
     // Derived values
@@ -376,15 +376,16 @@ fn verify_pk_generation_bounds() {
 ///
 /// The smudging noise bound is critical for threshold decryption security.
 /// It's computed as: e_sm_bound = 2^lambda * N_CIPHERTEXTS * (b_fresh + Q_MOD_T)
-/// where b_fresh = N * e_norm + b_enc + N * b_e * sk_norm and lambda = 80.
+/// where b_fresh = N * e_norm + b_enc + N * b_e * sk_norm and lambda = 50.
 ///
-/// The 2^80 factor provides 80 bits of statistical security, ensuring that
+/// The 2^50 factor provides 50 bits of statistical security, ensuring that
 /// decryption shares don't leak secret key information.
 fn verify_e_sm_bound() {
     let n: Field = THRESHOLD_N as Field;
-    let e_norm: Field = 20;
+    let committee_n: Field = N_PARTIES as Field;
+    let e_norm: Field = committee_n * 20;
     let b_e: Field = 20;
-    let sk_norm: Field = PARAMS_SEARCH_N as Field;
+    let sk_norm: Field = committee_n;
     let num_ciphertexts: Field = N_CIPHERTEXTS as Field;
 
     // b_fresh = N * e_norm + b_enc + N * b_e * sk_norm
@@ -393,11 +394,11 @@ fn verify_e_sm_bound() {
     // b_c = N_CIPHERTEXTS * (b_fresh + Q_MOD_T)
     let b_c = num_ciphertexts * (b_fresh + THRESHOLD_Q_MOD_T);
 
-    // 2^60
-    let two_pow_60: Field = 0x1000000000000000;
+    // 2^50
+    let two_pow_50: Field = 0x4000000000000;
 
-    // e_sm_bound = 2^60 * b_c
-    let expected_e_sm_bound = two_pow_60 * b_c;
+    // e_sm_bound = 2^50 * b_c
+    let expected_e_sm_bound = two_pow_50 * b_c;
 
     assert(expected_e_sm_bound == PK_GENERATION_E_SM_BOUND, "PK_GENERATION_E_SM_BOUND mismatch");
 }

@@ -14,7 +14,10 @@ cd circuits
 DIRS=(
   "lib"
   "bin/config"
-  "bin/recursive_aggregation/c2ab_fold"
+  "bin/recursive_aggregation/c2_chunk_batch"
+  "bin/recursive_aggregation/sk_c2_chunk_finalize"
+  "bin/recursive_aggregation/esm_c2_chunk_finalize"
+  "bin/recursive_aggregation/c2ab_chunk_fold"
   "bin/recursive_aggregation/c3_fold"
   "bin/recursive_aggregation/c3_fold_kernel"
   "bin/recursive_aggregation/c6_fold"
@@ -24,9 +27,11 @@ DIRS=(
   "bin/recursive_aggregation/node_fold"
   "bin/recursive_aggregation/nodes_fold"
   "bin/recursive_aggregation/nodes_fold_kernel"
+  "bin/recursive_aggregation/dummy_nodes_inner"
   "bin/recursive_aggregation/dkg_aggregator"
   "bin/recursive_aggregation/decryption_aggregator"
   "bin/dkg"
+  "bin/dkg/dummy_c3_inner"
   "bin/threshold"
 )
 

@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 pub use crate::configs::secure::threshold::{
-    L as L_THRESHOLD, QIS as QIS_THRESHOLD,
-    THRESHOLD_SHARE_DECRYPTION_BIT_SK as SHARE_DECRYPTION_BIT_AGG,
+    L as L_THRESHOLD, PK_GENERATION_BIT_E_SM as SHARE_COMPUTATION_E_SM_BIT_SECRET,
+    QIS as QIS_THRESHOLD, THRESHOLD_SHARE_DECRYPTION_BIT_SK as SHARE_DECRYPTION_BIT_AGG,
 };
 use crate::core::dkg::share_computation::Configs as ShareComputationConfigs;
 use crate::core::dkg::share_encryption::Configs as ShareEncryptionConfigs;
@@ -42,6 +42,10 @@ share_computation_sk (CIRCUIT 2a)
 // share_computation_sk - bit parameters
 pub global SHARE_COMPUTATION_BIT_SHARE: u32 = 58;
 pub global SHARE_COMPUTATION_SK_BIT_SECRET: u32 = 1;
+pub global SHARE_COMPUTATION_CHUNK_SIZE: u32 = 512;
+pub global SHARE_COMPUTATION_N_CHUNKS: u32 = 16;
+pub global SHARE_COMPUTATION_CHUNKS_PER_BATCH: u32 = 4;
+pub global SHARE_COMPUTATION_N_BATCHES: u32 = 4;
 
 // share_computation_sk - configs
 pub global SHARE_COMPUTATION_SK_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
@@ -52,9 +56,6 @@ pub global SHARE_COMPUTATION_SK_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =
 share_computation_e_sm (CIRCUIT 2b)
 -------------------------------------
 ************************************/
-
-// share_computation_e_sm - bit parameters
-pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 143;
 
 // verify_shares - configs
 pub global SHARE_COMPUTATION_E_SM_CONFIGS: ShareComputationConfigs<L_THRESHOLD> =

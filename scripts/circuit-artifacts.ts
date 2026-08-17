@@ -22,7 +22,7 @@ async function push() {
     process.exit(1)
   }
 
-  const hash = run('pnpm tsx scripts/build-circuits.ts hash')
+  const hash = run('pnpm tsx scripts/build-circuits.ts hash --preset insecure-512 --committee all')
   const remote = run('git remote get-url origin')
   const tmp = join(ROOT, '.tmp-circuits')
 

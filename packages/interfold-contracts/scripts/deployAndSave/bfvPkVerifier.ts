@@ -13,6 +13,7 @@ import {
   BFV_DKG_H,
   assertBfvPkVerifierSubCircuitVkHashes,
   getBfvPkSubCircuitVkHashPaths,
+  getBfvPkVkBindingHashPaths,
   readDeploymentArgs,
   readVkRecursiveHash,
   storeDeploymentArgs,
@@ -55,10 +56,18 @@ export const deployAndSaveBfvPkVerifier = async (
           "Redeploy after the circuit verifier changes.",
       );
     }
-    await assertBfvPkVerifierSubCircuitVkHashes(
-      bfvPkVerifier,
-      existing.address,
-    );
+    try {
+      await assertBfvPkVerifierSubCircuitVkHashes(
+        bfvPkVerifier,
+        existing.address,
+      );
+    } catch (error) {
+      throw new Error(
+        `BfvPkVerifier at ${existing.address} is incompatible with the current VK-anchor ABI. ` +
+          "Redeploy the verifier before reuse.",
+        { cause: error },
+      );
+    }
     return { bfvPkVerifier };
   }
 
@@ -68,12 +77,23 @@ export const deployAndSaveBfvPkVerifier = async (
   const expectedC5KeyHash = readVkRecursiveHash(
     getBfvPkSubCircuitVkHashPaths().c5,
   );
+  const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
+    getBfvPkSubCircuitVkHashPaths().skC2Chunk,
+  );
+  const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
+    getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
+  );
+  const expectedVkBinding =
+    getBfvPkVkBindingHashPaths().map(readVkRecursiveHash);
 
   const bfvPkVerifierFactory = await ethers.getContractFactory("BfvPkVerifier");
   const bfvPkVerifier = await bfvPkVerifierFactory.deploy(
     circuitVerifierArgs.address,
     expectedNodesFoldKeyHash,
     expectedC5KeyHash,
+    expectedSkC2ChunkKeyHash,
+    expectedESmC2ChunkKeyHash,
+    expectedVkBinding,
     BFV_DKG_H,
   );
 

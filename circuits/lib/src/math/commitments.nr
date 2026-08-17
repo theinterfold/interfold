@@ -30,6 +30,13 @@ pub global DS_SHARE_COMPUTATION: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
+// Domain separator - "SHARE_COMPUTATION_CHUNK"
+pub global DS_SHARE_COMPUTATION_CHUNK: [u8; 64] = [
+    0x53, 0x48, 0x41, 0x52, 0x45, 0x5f, 0x43, 0x4f, 0x4d, 0x50, 0x55, 0x54, 0x41, 0x54, 0x49, 0x4f,
+    0x4e, 0x5f, 0x43, 0x48, 0x55, 0x4e, 0x4b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
 // Domain separator - "SHARE_ENCRYPTION"
 pub global DS_SHARE_ENCRYPTION: [u8; 64] = [
     0x53, 0x48, 0x41, 0x52, 0x45, 0x5f, 0x45, 0x4e, 0x43, 0x52, 0x59, 0x50, 0x54, 0x49, 0x4f, 0x4e,
@@ -195,6 +202,149 @@ pub fn compute_share_encryption_commitment_from_message<let N: u32, let BIT_MSG:
 ) -> Field {
     let payload = single_polynomial_payload::<N, BIT_MSG>([].as_vector(), message);
     compute_commitment(payload, DS_SHARE_ENCRYPTION)
+}
+
+/// Compute a domain-separated commitment for one secret chunk.
+pub fn compute_sc_secret_chunk_commitment<let CHUNK_SIZE: u32, let BIT: u32>(
+    kind_tag: Field,
+    chunk_idx: u32,
+    n: u32,
+    chunk_poly: Polynomial<CHUNK_SIZE>,
+) -> Field {
+    let mut payload =
+        [0, kind_tag, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
+    payload = single_polynomial_payload::<CHUNK_SIZE, BIT>(payload, chunk_poly);
+    compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
+}
+
+/// Compute a domain-separated commitment for one ESM chunk across all CRT limbs.
+pub fn compute_sc_esm_secret_chunk_commitment<let CHUNK_SIZE: u32, let L: u32, let BIT: u32>(
+    chunk_idx: u32,
+    n: u32,
+    polynomials: [Polynomial<CHUNK_SIZE>; L],
+) -> Field {
+    let mut payload = [0, 1, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
+    payload = multiple_polynomial_payload::<CHUNK_SIZE, L, BIT>(payload, polynomials);
+    compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
+}
+
+/// Compute a domain-separated commitment for one party share chunk.
+pub fn compute_sc_party_share_chunk_commitment<let CHUNK_SIZE: u32, let BIT: u32>(
+    party_idx: u32,
+    mod_idx: u32,
+    chunk_idx: u32,
+    n: u32,
+    chunk_poly: Polynomial<CHUNK_SIZE>,
+) -> Field {
+    let mut payload = [
+        0,
+        2,
+        party_idx as Field,
+        mod_idx as Field,
+        chunk_idx as Field,
+        n as Field,
+        CHUNK_SIZE as Field,
+    ]
+        .as_vector();
+    payload = single_polynomial_payload::<CHUNK_SIZE, BIT>(payload, chunk_poly);
+    compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
+}
+
+/// Compute the root commitment for secret chunk commitments.
+pub fn compute_sc_secret_chunk_root_commitment(
+    kind_tag: Field,
+    n: u32,
+    chunk_size: u32,
+    chunk_commitments: [Field],
+) -> Field {
+    let mut payload = [1, kind_tag, n as Field, chunk_size as Field].as_vector();
+    for i in 0..chunk_commitments.len() {
+        payload = payload.push_back(chunk_commitments[i]);
+    }
+    compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
+}
+
+/// Compute the root commitment for one party share and CRT modulus.
+pub fn compute_sc_party_share_chunk_root_commitment(
+    party_idx: u32,
+    mod_idx: u32,
+    n: u32,
+    chunk_size: u32,
+    chunk_commitments: [Field],
+) -> Field {
+    let mut payload =
+        [1, 2, party_idx as Field, mod_idx as Field, n as Field, chunk_size as Field].as_vector();
+    for i in 0..chunk_commitments.len() {
+        payload = payload.push_back(chunk_commitments[i]);
+    }
+    compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
+}
+
+/// Compute the SK root from the C1 polynomial orientation.
+pub fn compute_sc_sk_secret_root_from_polynomial<let N: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BIT: u32>(
+    sk: Polynomial<N>,
+) -> Field {
+    let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
+    for chunk_idx in 0..N_CHUNKS {
+        let start = N - ((chunk_idx + 1) * CHUNK_SIZE);
+        let mut coefficients: [Field; CHUNK_SIZE] = [0; CHUNK_SIZE];
+        for offset in 0..CHUNK_SIZE {
+            coefficients[offset] = sk.coefficients[start + offset];
+        }
+        chunks[chunk_idx] = compute_sc_secret_chunk_commitment::<CHUNK_SIZE, BIT>(
+            0,
+            chunk_idx,
+            N,
+            Polynomial::new(coefficients),
+        );
+    }
+    compute_sc_secret_chunk_root_commitment(0, N, CHUNK_SIZE, chunks)
+}
+
+/// Compute the ESM root from the C1 polynomial orientation.
+pub fn compute_sc_esm_secret_root_from_polynomial<let N: u32, let L: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BIT: u32>(
+    e_sm: [Polynomial<N>; L],
+) -> Field {
+    let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
+    for chunk_idx in 0..N_CHUNKS {
+        let start = N - ((chunk_idx + 1) * CHUNK_SIZE);
+        let mut polynomials: [Polynomial<CHUNK_SIZE>; L] = [Polynomial::new([0; CHUNK_SIZE]); L];
+        for mod_idx in 0..L {
+            let mut coefficients: [Field; CHUNK_SIZE] = [0; CHUNK_SIZE];
+            for offset in 0..CHUNK_SIZE {
+                coefficients[offset] = e_sm[mod_idx].coefficients[start + offset];
+            }
+            polynomials[mod_idx] = Polynomial::new(coefficients);
+        }
+        let mut payload = [0, 1, chunk_idx as Field, N as Field, CHUNK_SIZE as Field].as_vector();
+        payload = multiple_polynomial_payload::<CHUNK_SIZE, L, BIT>(payload, polynomials);
+        chunks[chunk_idx] = compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK);
+    }
+    compute_sc_secret_chunk_root_commitment(1, N, CHUNK_SIZE, chunks)
+}
+
+/// Compute a share root from a C3/C4 message polynomial.
+pub fn compute_sc_party_share_root_from_polynomial<let N: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BIT: u32>(
+    party_idx: u32,
+    mod_idx: u32,
+    message: Polynomial<N>,
+) -> Field {
+    let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
+    for chunk_idx in 0..N_CHUNKS {
+        let start = N - ((chunk_idx + 1) * CHUNK_SIZE);
+        let mut coefficients: [Field; CHUNK_SIZE] = [0; CHUNK_SIZE];
+        for offset in 0..CHUNK_SIZE {
+            coefficients[offset] = message.coefficients[start + offset];
+        }
+        chunks[chunk_idx] = compute_sc_party_share_chunk_commitment::<CHUNK_SIZE, BIT>(
+            party_idx,
+            mod_idx,
+            chunk_idx,
+            N,
+            Polynomial::new(coefficients),
+        );
+    }
+    compute_sc_party_share_chunk_root_commitment(party_idx, mod_idx, N, CHUNK_SIZE, chunks)
 }
 
 pub fn compute_aggregated_shares_commitment<let N: u32, let L: u32, let BIT_MSG: u32>(

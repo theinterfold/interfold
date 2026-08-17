@@ -78,6 +78,7 @@ fn dkg_share_decryption_req() -> DkgShareDecryptionProofRequest {
         num_honest_parties: 0,
         num_moduli: 0,
         own_plaintext_idx: 0,
+        recipient_party_id: 0,
         own_share_raw: sensitive(),
         dkg_input_type: DkgInputType::SecretKey,
         params_preset: BfvPreset::default(),

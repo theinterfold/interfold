@@ -5,10 +5,11 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use lib::configs::default::dkg::{
-    L, N, SHARE_ENCRYPTION_BIT_CT, SHARE_ENCRYPTION_BIT_E0, SHARE_ENCRYPTION_BIT_E1,
-    SHARE_ENCRYPTION_BIT_MSG, SHARE_ENCRYPTION_BIT_P1, SHARE_ENCRYPTION_BIT_P2,
-    SHARE_ENCRYPTION_BIT_PK, SHARE_ENCRYPTION_BIT_R1, SHARE_ENCRYPTION_BIT_R2,
-    SHARE_ENCRYPTION_BIT_U, SHARE_ENCRYPTION_CONFIGS,
+    L, N, SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS, SHARE_ENCRYPTION_BIT_CT,
+    SHARE_ENCRYPTION_BIT_E0, SHARE_ENCRYPTION_BIT_E1, SHARE_ENCRYPTION_BIT_MSG,
+    SHARE_ENCRYPTION_BIT_P1, SHARE_ENCRYPTION_BIT_P2, SHARE_ENCRYPTION_BIT_PK,
+    SHARE_ENCRYPTION_BIT_R1, SHARE_ENCRYPTION_BIT_R2, SHARE_ENCRYPTION_BIT_U,
+    SHARE_ENCRYPTION_CONFIGS,
 };
 use lib::core::dkg::share_encryption::ShareEncryption;
 use lib::math::polynomial::Polynomial;
@@ -16,6 +17,8 @@ use lib::math::polynomial::Polynomial;
 fn main(
     expected_pk_commitment: pub Field,
     expected_message_commitment: pub Field,
+    party_idx: pub u32,
+    mod_idx: pub u32,
     pk0is: [Polynomial<N>; L],
     pk1is: [Polynomial<N>; L],
     ct0is: [Polynomial<N>; L],
@@ -31,10 +34,12 @@ fn main(
     p1is: [Polynomial<(2 * N) - 1>; L],
     p2is: [Polynomial<N - 1>; L],
 ) -> pub Field {
-    let share_encryption: ShareEncryption<N, L, SHARE_ENCRYPTION_BIT_PK, SHARE_ENCRYPTION_BIT_CT, SHARE_ENCRYPTION_BIT_U, SHARE_ENCRYPTION_BIT_E0, SHARE_ENCRYPTION_BIT_E1, SHARE_ENCRYPTION_BIT_MSG, SHARE_ENCRYPTION_BIT_R1, SHARE_ENCRYPTION_BIT_R2, SHARE_ENCRYPTION_BIT_P1, SHARE_ENCRYPTION_BIT_P2> = ShareEncryption::new(
+    let share_encryption: ShareEncryption<N, L, SHARE_ENCRYPTION_BIT_PK, SHARE_ENCRYPTION_BIT_CT, SHARE_ENCRYPTION_BIT_U, SHARE_ENCRYPTION_BIT_E0, SHARE_ENCRYPTION_BIT_E1, SHARE_ENCRYPTION_BIT_MSG, SHARE_ENCRYPTION_BIT_R1, SHARE_ENCRYPTION_BIT_R2, SHARE_ENCRYPTION_BIT_P1, SHARE_ENCRYPTION_BIT_P2, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> = ShareEncryption::new(
         SHARE_ENCRYPTION_CONFIGS,
         expected_pk_commitment,
         expected_message_commitment,
+        party_idx,
+        mod_idx,
         pk0is,
         pk1is,
         ct0is,

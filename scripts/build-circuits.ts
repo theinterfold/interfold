@@ -215,21 +215,17 @@ class NoirCircuitBuilder {
       '/// `configs::{insecure,secure}::dkg` re-exports the relevant one as `PARITY_MATRIX`.',
       `pub use crate::configs::committee::${committee}::parity_insecure::PARITY_MATRIX as PARITY_MATRIX_INSECURE;`,
       `pub use crate::configs::committee::${committee}::parity_secure::PARITY_MATRIX as PARITY_MATRIX_SECURE;`,
+      `pub use crate::configs::committee::${committee}::smudging::{`,
+      '    INSECURE_E_SM_BIT, INSECURE_E_SM_BOUND, SECURE_E_SM_BIT, SECURE_E_SM_BOUND,',
+      '};',
       '',
     ].join('\n')
     writeFileSync(activeNrPath, content)
     console.log(`   📋 Set Noir committee to: ${committee}`)
   }
 
-  /**
-   * Regenerates `circuits/lib/src/configs/committee/<committee>/parity_{insecure,secure}.nr`
-   * by invoking the Rust `generate_parity_matrices` binary. The Reed-Solomon parity matrix is
-   * a deterministic function of `(N, T, QIS)` — committing the output keeps `nargo check`
-   * working standalone, but the build script always overwrites it so a change in committee
-   * or BFV preset constants can never silently desync the on-disk literal from what the
-   * prover would compute at witness time.
-   */
-  private regenerateParityMatrices(committee: CircuitCommittee): void {
+  /** Regenerates the active committee's derived Noir artifacts with the Rust generator. */
+  private regenerateCommitteeArtifacts(committee: CircuitCommittee): void {
     const libDir = join(this.rootDir, 'circuits', 'lib')
     try {
       execSync(`cargo run --quiet --release --bin generate_parity_matrices -- --committee ${committee}`, {
@@ -237,10 +233,10 @@ class NoirCircuitBuilder {
         stdio: ['ignore', 'pipe', 'inherit'],
       })
       execSync('nargo fmt', { cwd: libDir, stdio: ['ignore', 'pipe', 'inherit'] })
-      console.log(`   📋 Regenerated parity_{insecure,secure}.nr for committee: ${committee}`)
+      console.log(`   📋 Regenerated parity and smudging artifacts for committee: ${committee}`)
     } catch (err: any) {
       throw new Error(
-        `Failed to regenerate parity matrices for committee=${committee}: ${err.message}\n` +
+        `Failed to regenerate committee artifacts for committee=${committee}: ${err.message}\n` +
           `   Try: cargo run --release --bin generate_parity_matrices -- --committee ${committee}`,
       )
     }
@@ -411,12 +407,10 @@ library ActiveCryptoConfig {
    * - the Rust integration tests (cross-checked against `INTERFOLD_COMMITTEE_SIZE`).
    * A drift between this stamp and what the consumer expects fails fast.
    */
-  private writeActiveBinPresetStamp(preset: string, sourceHash: string): void {
+  private writeActiveBinPresetStamp(preset: string, committee: CircuitCommittee, sourceHash: string): void {
     const stamp: PresetBuildStamp = {
       preset,
-      // Narrow out 'all': this runs per resolved preset/committee, so 'all' is meaningless here
-      // and must never be persisted into the stamp that --skip-if-built later compares against.
-      committee: this.options.committee === 'all' ? undefined : this.options.committee,
+      committee,
       sourceHash,
       builtAt: new Date().toISOString(),
     }
@@ -459,7 +453,7 @@ library ActiveCryptoConfig {
     }
 
     console.log(`   Copied ${copied} artifact file(s) into circuits/bin targets.`)
-    this.writeActiveBinPresetStamp(preset, sourceHash)
+    this.writeActiveBinPresetStamp(preset, committee as CircuitCommittee, sourceHash)
   }
 
   private requiredDistMarkers(preset: string, committee: string): string[] {
@@ -537,7 +531,7 @@ library ActiveCryptoConfig {
     this.setNoirConfigPreset(modNrPath, preset)
     if (committee) {
       this.setNoirCommittee(committee)
-      this.regenerateParityMatrices(committee)
+      this.regenerateCommitteeArtifacts(committee)
       this.patchUtilsTs(preset, committee)
       this.writeActiveCryptoConfig(preset, committee)
     }
@@ -566,12 +560,12 @@ library ActiveCryptoConfig {
         return result
       }
 
-      const sourceHash = this.computeSourceHash(preset)
-      result.sourceHash = sourceHash
-
       if (modNrPath) {
         this.syncPresetAndCommittee(modNrPath, preset, committee)
       }
+
+      const sourceHash = this.computeSourceHash(preset, committee)
+      result.sourceHash = sourceHash
 
       if (this.options.hydrateBinOnly) {
         if (!this.isDistPresetUpToDate(preset, committee, sourceHash)) {
@@ -623,7 +617,7 @@ library ActiveCryptoConfig {
       this.copyArtifacts(result.compiled, presetOutputDir, preset)
       if (result.errors.length === 0) {
         this.writePresetStamp(preset, committee, sourceHash)
-        this.writeActiveBinPresetStamp(preset, sourceHash)
+        this.writeActiveBinPresetStamp(preset, committee, sourceHash)
       }
       console.log(`\n✅ Built ${result.compiled.length} circuits for preset: ${preset}/${committee}`)
       if (result.errors.length > 0) {
@@ -798,7 +792,9 @@ library ActiveCryptoConfig {
   }
 
   private isFoldOrAggregation(circuit: CircuitInfo): boolean {
-    return circuit.group === CIRCUIT_GROUPS.AGGREGATION
+    // C2 terminal projections are ZK leaves for C2abChunkFold, not non-ZK accumulators.
+    const name = basename(circuit.path)
+    return circuit.group === CIRCUIT_GROUPS.AGGREGATION && !['sk_c2_chunk_finalize', 'esm_c2_chunk_finalize'].includes(name)
   }
 
   /** Aggregation circuits that are also published on-chain as EVM verifiable proofs. */
@@ -1041,20 +1037,27 @@ library ActiveCryptoConfig {
     return outputDir
   }
 
-  computeSourceHash(preset?: CircuitPreset): string {
+  computeSourceHash(preset?: CircuitPreset, committee?: CircuitCommittee): string {
     const hash = createHash('sha256')
-    if (preset !== undefined) {
-      hash.update(`preset:${preset}\n`)
-      const tier = PRESET_NOIR_CONFIG[preset]
+    const presets = preset ? [preset] : this.options.preset === 'all' ? ALL_PRESETS : [this.options.preset ?? CIRCUIT_PRESETS.INSECURE_512]
+    for (const selectedPreset of presets) {
+      hash.update(`preset:${selectedPreset}\n`)
+      const tier = PRESET_NOIR_CONFIG[selectedPreset]
       hash.update(`noir_config:${tier}\n`)
-      // Hash the contents of the preset's Noir config, not just its name: the baked crypto
-      // constants (e.g. PK_GENERATION_E_SM_BOUND) live here and must invalidate --skip-if-built
-      // when they change. Otherwise a bound update silently reuses a stale compiled circuit.
+      // Hash the preset's baked cryptographic constants, not only the preset name.
       const tierConfigDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', tier)
       if (existsSync(tierConfigDir)) this.hashDir(tierConfigDir, hash)
     }
-    if (this.options.committee) {
-      hash.update(`committee:${this.options.committee}\n`)
+    const committees = committee
+      ? [committee]
+      : this.options.committee === 'all'
+        ? ALL_COMMITTEES
+        : [this.options.committee ?? CIRCUIT_COMMITTEES.MINIMUM]
+    for (const selectedCommittee of committees) {
+      hash.update(`committee:${selectedCommittee}\n`)
+      // Committee artifacts include parity matrices and smudging bounds.
+      const committeeConfigDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', 'committee', selectedCommittee)
+      if (existsSync(committeeConfigDir)) this.hashDir(committeeConfigDir, hash)
     }
     const circuits = this.discoverCircuits().sort((a, b) => `${a.group}/${a.name}`.localeCompare(`${b.group}/${b.name}`))
     for (const c of circuits) this.hashDir(c.path, hash)
@@ -1137,7 +1140,8 @@ async function main() {
 
   if (command === 'hash') {
     const preset = options.preset === 'all' ? undefined : options.preset
-    const hash = builder.computeSourceHash(preset)
+    const committee = options.committee === 'all' ? undefined : options.committee
+    const hash = builder.computeSourceHash(preset, committee)
     console.log(hash)
     if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `source_hash=${hash}\n`)
   } else {

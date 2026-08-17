@@ -5,8 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_share_computation_e_sm_commitment, compute_share_computation_sk_commitment,
-    compute_share_encryption_commitment_from_message,
+    compute_sc_esm_secret_root_from_polynomial, compute_sc_party_share_root_from_polynomial,
+    compute_sc_sk_secret_root_from_polynomial,
 };
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
@@ -32,7 +32,7 @@ impl<let L: u32> Configs<L> {
 /// 4. Parity check: H[j] * y[i][j]^T == 0 mod q_j for all i, j
 ///
 /// For SK: sk_secret is the trinary coefficients
-pub struct SecretKeyShareComputation<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> {
+pub struct SecretKeyShareComputation<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
     configs: Configs<L>,
     /// Expected commitment to secret (from C1)
     /// (public witness)
@@ -61,7 +61,7 @@ pub struct SecretKeyShareComputation<let N: u32, let L: u32, let N_PARTIES: u32,
 /// 4. Parity check: H[j] * y[i][j]^T == 0 mod q_j for all i, j
 ///
 /// For ESM: e_sm[j] is the RNS representation at modulus j
-pub struct SmudgingNoiseShareComputation<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> {
+pub struct SmudgingNoiseShareComputation<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
     configs: Configs<L>,
     /// Expected commitment to secret (from C1)
     /// This is computed from all L RNS polynomials (matching
@@ -79,7 +79,7 @@ pub struct SmudgingNoiseShareComputation<let N: u32, let L: u32, let N_PARTIES: 
     h: [[[Field; N_PARTIES + 1]; N_PARTIES - T]; L],
 }
 
-impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> SecretKeyShareComputation<N, L, N_PARTIES, T, BIT_SECRET, BIT_SHARE> {
+impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> SecretKeyShareComputation<N, L, N_PARTIES, T, BIT_SECRET, BIT_SHARE, N_CHUNKS, CHUNK_SIZE> {
     pub fn new(
         configs: Configs<L>,
         expected_secret_commitment: Field,
@@ -105,7 +105,7 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
         verify_parity_check::<N, L, N_PARTIES, T>(self.configs.qis, self.h, self.y);
 
         // Step 5: Commit to shares for each party and modulus
-        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y)
+        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE, N_CHUNKS, CHUNK_SIZE>(self.y)
     }
 
     /// Verifies that secret hashes to expected_secret_commitment.
@@ -120,7 +120,9 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
         }
         let reversed_sk = Polynomial::new(reversed_coeffs);
         assert(
-            compute_share_computation_sk_commitment::<N, BIT_SECRET>(reversed_sk)
+            compute_sc_sk_secret_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SECRET>(
+                reversed_sk,
+            )
                 == self.expected_secret_commitment,
             "SK commitment mismatch",
         );
@@ -149,7 +151,7 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
     }
 }
 
-impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32> SmudgingNoiseShareComputation<N, L, N_PARTIES, T, BIT_SECRET, BIT_SHARE> {
+impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32, let BIT_SHARE: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> SmudgingNoiseShareComputation<N, L, N_PARTIES, T, BIT_SECRET, BIT_SHARE, N_CHUNKS, CHUNK_SIZE> {
     pub fn new(
         configs: Configs<L>,
         expected_secret_commitment: Field,
@@ -175,7 +177,7 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
         verify_parity_check::<N, L, N_PARTIES, T>(self.configs.qis, self.h, self.y);
 
         // Step 5: Commit to shares for each party and modulus
-        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y)
+        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE, N_CHUNKS, CHUNK_SIZE>(self.y)
     }
 
     /// Verifies that secret hashes to expected_secret_commitment.
@@ -201,7 +203,9 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
             normalized[j] = Polynomial::new(coeffs);
         }
         assert(
-            compute_share_computation_e_sm_commitment::<N, L, BIT_SECRET>(normalized)
+            compute_sc_esm_secret_root_from_polynomial::<N, L, N_CHUNKS, CHUNK_SIZE, BIT_SECRET>(
+                normalized,
+            )
                 == self.expected_secret_commitment,
             "ESM commitment mismatch",
         );
@@ -302,8 +306,8 @@ pub fn verify_parity_check<let N: u32, let L: u32, let N_PARTIES: u32, let T: u3
 /// Commits to shares for each party and modulus.
 ///
 /// Returns `[[Field; L]; N_PARTIES]` where `commitments[party_idx][mod_idx]`
-/// equals `compute_share_encryption_commitment_from_message(share_polynomial)`.
-pub fn commit_to_party_shares<let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SHARE: u32>(
+/// equals the root commitment for the reversed share polynomial.
+pub fn commit_to_party_shares<let N: u32, let L: u32, let N_PARTIES: u32, let BIT_SHARE: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32>(
     y: [[[Field; N_PARTIES + 1]; L]; N],
 ) -> [[Field; L]; N_PARTIES] {
     let mut commitments: [[Field; L]; N_PARTIES] = [[0; L]; N_PARTIES];
@@ -319,8 +323,11 @@ pub fn commit_to_party_shares<let N: u32, let L: u32, let N_PARTIES: u32, let BI
             }
 
             let share_poly = Polynomial::new(share_coeffs);
-            commitments[party_idx][mod_idx] =
-                compute_share_encryption_commitment_from_message::<N, BIT_SHARE>(share_poly);
+            commitments[party_idx][mod_idx] = compute_sc_party_share_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SHARE>(
+                party_idx,
+                mod_idx,
+                share_poly,
+            );
         }
     }
 

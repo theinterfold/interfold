@@ -28,28 +28,21 @@ pub struct OutputField {
 ///
 /// `fields` lists them in the order they appear in `public_signals`,
 /// which is the same order as the Noir `-> pub (A, B, C)` tuple.
-///
-/// Circuits whose output count depends on runtime parameters (e.g.
-/// `SkShareComputation` / `ESmShareComputation` whose return is `[[Field; L]; N]`)
-/// use [`CircuitOutputLayout::Dynamic`].
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum CircuitOutputLayout {
     /// Fixed number of `Field`-sized outputs, names known at compile time.
     Fixed { fields: &'static [OutputField] },
     /// The circuit returns no public values (void).
     None,
-    /// Output count depends on runtime parameters — callers must supply the
-    /// element count themselves.
-    Dynamic,
 }
 
 impl CircuitOutputLayout {
-    /// Number of fixed output fields, or `None` for dynamic / void layouts.
+    /// Number of fixed output fields. Void layouts report `Some(0)`, because no arm
+    /// returns `None`.
     pub fn field_count(&self) -> Option<usize> {
         match self {
             CircuitOutputLayout::Fixed { fields } => Some(fields.len()),
             CircuitOutputLayout::None => Some(0),
-            CircuitOutputLayout::Dynamic => None,
         }
     }
 
@@ -57,7 +50,7 @@ impl CircuitOutputLayout {
     pub fn field_index(&self, name: &str) -> Option<usize> {
         match self {
             CircuitOutputLayout::Fixed { fields } => fields.iter().position(|f| f.name == name),
-            _ => None,
+            CircuitOutputLayout::None => None,
         }
     }
 
@@ -68,7 +61,7 @@ impl CircuitOutputLayout {
     pub fn extract_field<'a>(&self, public_signals: &'a [u8], name: &str) -> Option<&'a [u8]> {
         let fields = match self {
             CircuitOutputLayout::Fixed { fields } => fields,
-            _ => return None,
+            CircuitOutputLayout::None => return None,
         };
         let idx = fields.iter().position(|f| f.name == name)?;
         let total_output_bytes = fields.len() * FIELD_BYTE_LEN;
@@ -90,7 +83,6 @@ impl CircuitOutputLayout {
         let fields = match self {
             CircuitOutputLayout::Fixed { fields } => fields,
             CircuitOutputLayout::None => return Some(Vec::new()),
-            CircuitOutputLayout::Dynamic => return None,
         };
         let total_output_bytes = fields.len() * FIELD_BYTE_LEN;
         if public_signals.len() < total_output_bytes {
@@ -150,6 +142,8 @@ pub const THRESHOLD_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("d_commitment
 pub const SHARE_ENCRYPTION_INPUTS: &[OutputField] = &[
     f("expected_pk_commitment"),
     f("expected_message_commitment"),
+    f("party_idx"),
+    f("mod_idx"),
 ];
 
 /// Describes the public input layout of a circuit.
@@ -269,13 +263,6 @@ mod tests {
     }
 
     #[test]
-    fn extract_from_dynamic_circuit_returns_none() {
-        let layout = CircuitOutputLayout::Dynamic;
-        let signals = vec![0u8; 256];
-        assert!(layout.extract_field(&signals, "anything").is_none());
-    }
-
-    #[test]
     fn signals_too_short_returns_none() {
         let layout = CircuitOutputLayout::Fixed {
             fields: PK_GENERATION_OUTPUTS,
@@ -313,7 +300,6 @@ mod tests {
             Some(3)
         );
         assert_eq!(CircuitOutputLayout::None.field_count(), Some(0));
-        assert_eq!(CircuitOutputLayout::Dynamic.field_count(), None);
     }
 
     #[test]
@@ -441,7 +427,7 @@ mod tests {
                 fields: SHARE_ENCRYPTION_INPUTS
             }
             .field_count(),
-            Some(2)
+            Some(4)
         );
         assert_eq!(CircuitInputLayout::None.field_count(), Some(0));
     }

@@ -57,8 +57,8 @@ impl ProofType {
         match self {
             ProofType::C0PkBfv => vec![CircuitName::PkBfv],
             ProofType::C1PkGeneration => vec![CircuitName::PkGeneration],
-            ProofType::C2aSkShareComputation => vec![CircuitName::SkShareComputation],
-            ProofType::C2bESmShareComputation => vec![CircuitName::ESmShareComputation],
+            ProofType::C2aSkShareComputation => vec![CircuitName::SkC2ChunkFinalize],
+            ProofType::C2bESmShareComputation => vec![CircuitName::ESmC2ChunkFinalize],
             ProofType::C3aSkShareEncryption => vec![CircuitName::ShareEncryption],
             ProofType::C3bESmShareEncryption => vec![CircuitName::ShareEncryption],
             ProofType::C4aSkShareDecryption | ProofType::C4bESmShareDecryption => {
@@ -405,11 +405,11 @@ mod tests {
         );
         assert_eq!(
             ProofType::C2aSkShareComputation.circuit_names(),
-            vec![CircuitName::SkShareComputation]
+            vec![CircuitName::SkC2ChunkFinalize]
         );
         assert_eq!(
             ProofType::C2bESmShareComputation.circuit_names(),
-            vec![CircuitName::ESmShareComputation]
+            vec![CircuitName::ESmC2ChunkFinalize]
         );
         assert_eq!(
             ProofType::C6ThresholdShareDecryption.circuit_names(),

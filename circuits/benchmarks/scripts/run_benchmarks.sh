@@ -361,7 +361,7 @@ jq -n \
       proof_aggregation: $proof_agg,
       multithread_jobs: $multithread_jobs,
       verbose: $verbose,
-      nodes_spawned: 20,
+      nodes_spawned: null,
       committee_size_n: $committee_size_n,
       committee_size_h: $committee_size_h,
       committee_threshold_t: $committee_threshold_t,
@@ -374,6 +374,10 @@ jq -n \
 INTEGRATION_SNAPSHOT="${BENCHMARKS_DIR}/${OUTPUT_DIR}/integration_summary.json"
 if [ -f "${GAS_JSON_FILE}" ] && jq -e '.integration_summary != null' "${GAS_JSON_FILE}" >/dev/null 2>&1; then
     jq '.integration_summary' "${GAS_JSON_FILE}" > "${INTEGRATION_SNAPSHOT}"
+    jq --argfile summary "${INTEGRATION_SNAPSHOT}" \
+        '.nodes_spawned = ($summary.benchmark_config.nodes_spawned // null)' \
+        "${RUN_META_FILE}" > "${RUN_META_FILE}.tmp"
+    mv "${RUN_META_FILE}.tmp" "${RUN_META_FILE}"
     echo "✓ Wrote integration summary snapshot: ${INTEGRATION_SNAPSHOT}"
 fi
 

@@ -1,0 +1,7 @@
+[package]
+name = "dummy_nodes_inner"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+lib = { path = "../../../lib" }

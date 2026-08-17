@@ -61,12 +61,12 @@ get_zk_args() {
             echo "pk"
             return
             ;;
-        dkg/sk_share_computation)
-            echo "share-computation secret-key"
+        dkg/sk_share_computation_chunk)
+            echo "share-computation-chunk secret-key"
             return
             ;;
-        dkg/e_sm_share_computation)
-            echo "share-computation smudging-noise"
+        dkg/esm_share_computation_chunk)
+            echo "share-computation-chunk smudging-noise"
             return
             ;;
         dkg/share_encryption)

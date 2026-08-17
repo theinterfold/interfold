@@ -11,7 +11,7 @@ pragma solidity 0.8.28;
  * @dev The DkgAggregator circuit internally verifies the node-fold and C5
  *      (pk_aggregation) sub-proofs; this on-chain wrapper verifies the final
  *      EVM proof and enforces:
- *        - the immutable recursive sub-circuit VK hashes
+ *        - the immutable recursive sub-circuit VK hashes and VK manifest
  *        - the aggregated public-key commitment slot
  *        - a domain-binding slot binding the proof to
  *          (chainId, this, e3Id, committeeRoot, sortedNodes, pkCommitment)
@@ -25,8 +25,8 @@ interface IPkVerifier {
     ///         verifier rejected it. Used in place of a `bool false` return.
     error InvalidProof();
     /// @notice `publicInputs` is shorter than the layout the wrapper expects
-    ///         (must hold at least the two VK-hash slots, the domain-binding slot
-    ///         and the pk-commitment slot).
+    ///         (must hold the VK-hash slots, the VK manifest, the domain-binding
+    ///         slots, and the pk-commitment slot).
     error InvalidPublicInputsLength();
     /// @notice One of the recursive-aggregation sub-circuit VK hashes embedded
     ///         in the proof does not match the immutable value committed at

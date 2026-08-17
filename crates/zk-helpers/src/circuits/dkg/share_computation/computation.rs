@@ -12,7 +12,7 @@
 
 use crate::bigint_3d_to_json_values;
 use crate::circuits::commitments::{
-    compute_share_computation_e_sm_commitment, compute_share_computation_sk_commitment,
+    compute_sc_esm_secret_root_commitment, compute_sc_sk_secret_root_commitment,
 };
 use crate::computation::DkgInputType;
 use crate::dkg::share_computation::ShareComputationCircuit;
@@ -198,11 +198,30 @@ impl Computation for Inputs {
         let mut secret_crt = data.secret.clone();
         let sss = &data.secret_sss;
 
-        if data.dkg_input_type == DkgInputType::SmudgingNoise {
-            // Normalize secret_crt to [0, q_j) per limb so it matches what we put in y and what the circuit expects (e_sm_secret[j][i] == y[i][j][0]).
+        // The threshold polynomial degree is authoritative for C2 chunking. The emitted
+        // SHARE_COMPUTATION_CHUNK_SIZE / SHARE_COMPUTATION_N_CHUNKS globals, the y vector, and
+        // the secret root commitments are all derived from it (see codegen.rs). Guard the
+        // secret limb length up front so a mismatched secret fails here instead of panicking
+        // in the commitment helper.
+        if secret_crt
+            .limbs
+            .first()
+            .is_none_or(|limb| limb.coefficients().len() != degree)
+        {
+            return Err(CircuitsErrors::Sample(format!(
+                "C2 secret limb length must equal polynomial degree {degree}"
+            )));
+        }
+
+        // Normalize both secret types to [0, q_j) so the chunk and normal circuits use the same
+        // field representation before they center values for the root commitment.
+        secret_crt
+            .reduce(moduli)
+            .map_err(|e| CircuitsErrors::Sample(format!("secret_crt reduce: {:?}", e)))?;
+        if data.dkg_input_type == DkgInputType::SecretKey {
             secret_crt
-                .reduce(moduli)
-                .map_err(|e| CircuitsErrors::Sample(format!("secret_crt reduce: {:?}", e)))?;
+                .center(moduli)
+                .map_err(|e| CircuitsErrors::Sample(format!("secret_crt center: {:?}", e)))?;
         }
 
         // y[coeff_idx][mod_idx][0] = secret_crt[mod_idx][coeff_idx] (already in [0, q_j)); y[coeff_idx][mod_idx][1+party] = share in [0, q_j).
@@ -224,6 +243,20 @@ impl Computation for Inputs {
 
         let bounds = Bounds::compute(preset, data)?;
         let bits = Bits::compute(preset, &bounds)?;
+        let chunk_size = data.chunk_size as usize;
+        if chunk_size == 0 {
+            return Err(CircuitsErrors::Sample(
+                "C2 chunk size must be greater than zero".to_string(),
+            ));
+        }
+        // Validate against the same authoritative threshold degree used by codegen.rs to emit
+        // SHARE_COMPUTATION_CHUNK_SIZE / SHARE_COMPUTATION_N_CHUNKS, so the runtime chunk size
+        // can never disagree with the compiled chunk count.
+        if !degree.is_multiple_of(chunk_size) {
+            return Err(CircuitsErrors::Sample(format!(
+                "C2 chunk size {chunk_size} must divide polynomial degree {degree}"
+            )));
+        }
         // Reverse+center before committing to match C1 (PkGeneration)'s convention:
         // C1 applies reverse then center to sk/e_sm before computing the commitment.
         // For SK the values are already centered ({-1,0,1}) so centering is a no-op.
@@ -232,7 +265,7 @@ impl Computation for Inputs {
             DkgInputType::SecretKey => {
                 let mut reversed = secret_crt.limb(0).clone();
                 reversed.reverse();
-                compute_share_computation_sk_commitment(&reversed, bits.bit_sk_secret)
+                compute_sc_sk_secret_root_commitment(&reversed, bits.bit_sk_secret, chunk_size)
             }
             DkgInputType::SmudgingNoise => {
                 let centered_reversed_crt = e3_polynomial::CrtPolynomial::new(
@@ -249,9 +282,10 @@ impl Computation for Inputs {
                         })
                         .collect(),
                 );
-                compute_share_computation_e_sm_commitment(
+                compute_sc_esm_secret_root_commitment(
                     &centered_reversed_crt,
                     bits.bit_e_sm_secret,
+                    chunk_size,
                 )
             }
         };
@@ -314,6 +348,31 @@ mod tests {
         let expected_sk_bits = calculate_bit_width(BigInt::from(bounds.sk_bound.clone()));
 
         assert_eq!(bits.bit_sk_secret, expected_sk_bits);
+    }
+
+    #[test]
+    fn insecure_smudging_ranges_match_pk_generation() {
+        let preset = BfvPreset::InsecureThreshold512;
+        for (size, expected_bits) in [
+            (CiphernodesCommitteeSize::Minimum, 28),
+            (CiphernodesCommitteeSize::Micro, 30),
+            (CiphernodesCommitteeSize::Small, 31),
+        ] {
+            let committee = size.values();
+            let sample = ShareComputationCircuitData::generate_sample(
+                preset,
+                committee.clone(),
+                DkgInputType::SmudgingNoise,
+            )
+            .unwrap();
+            let c2_bounds = Bounds::compute(preset, &sample).unwrap();
+            let c2_bits = Bits::compute(preset, &c2_bounds).unwrap();
+            let c1 = crate::threshold::pk_generation::Configs::compute(preset, &committee).unwrap();
+
+            assert_eq!(c1.bounds.e_sm_bound, c2_bounds.e_sm_bound);
+            assert_eq!(c1.bits.e_sm_bit, c2_bits.bit_e_sm_secret);
+            assert_eq!(c1.bits.e_sm_bit, expected_bits);
+        }
     }
 
     #[test]

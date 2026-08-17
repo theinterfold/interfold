@@ -17,32 +17,26 @@ mod node_fold_witness;
 use std::path::PathBuf;
 
 use common::{
-    find_bb, require_minimum_circuits, setup_compiled_circuit,
-    setup_recursive_aggregation_fold_circuit, setup_test_prover,
+    active_bin_preset, compiled_circuit_artifacts_available, find_bb,
+    recursive_circuit_artifacts_available, require_minimum_circuits_for_preset,
+    setup_compiled_circuit_for_preset, setup_recursive_aggregation_fold_circuit_for_preset,
+    setup_test_prover,
 };
-use e3_events::{CircuitName, Proof};
+use e3_events::CircuitName;
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::computation::Computation;
 use e3_zk_helpers::computation::DkgInputType;
 use e3_zk_helpers::dkg::pk::circuit::{PkCircuit, PkCircuitData};
-use e3_zk_helpers::dkg::share_computation::{
-    Inputs as ShareComputationInputs, ShareComputationCircuit,
-};
+use e3_zk_helpers::dkg::share_computation::Inputs as ShareComputationInputs;
 use e3_zk_helpers::dkg::share_decryption::{ShareDecryptionCircuit, ShareDecryptionCircuitData};
 use e3_zk_helpers::dkg::share_encryption::ShareEncryptionCircuit;
 use e3_zk_helpers::threshold::pk_generation::PkGenerationCircuit;
 use e3_zk_helpers::CiphernodesCommitteeSize;
-use e3_zk_prover::test_utils::{
-    fold_witness_field_strings, fold_witness_input_map, load_vk_artifacts,
-};
-use e3_zk_prover::{generate_sequential_c3_fold, CircuitVariant, Provable, ZkProver};
-use e3_zk_prover::{CompiledCircuit, WitnessGenerator};
+use e3_zk_prover::{CircuitVariant, NodeDkgFoldInput, Provable, ZkProver};
 use node_fold_witness::{
     pk_generation_sample_with_esi, share_computation_esm_from_esi, share_computation_sk_from_pk,
     share_encryption_for_slot,
 };
-use serde::Serialize;
-use serde_json::json;
 
 fn recursive_aggregation_compiled_json_path(circuit: CircuitName) -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -73,51 +67,11 @@ fn c3_fold_total_slots_from_compiled_json() -> usize {
                 .and_then(|p| p.get("type")?.get("length")?.as_u64())
         })
         .expect("c3_fold acc_public_inputs length") as usize;
-    (len - 4) / 3
-}
-
-fn field_str_zero() -> String {
-    format!("0x{}", hex::encode([0u8; 32]))
-}
-
-fn proof_public_fields(proof: &Proof) -> Vec<String> {
-    fold_witness_field_strings(proof.public_signals.as_ref()).expect("public_signals as fields")
-}
-
-#[derive(Serialize)]
-struct C2abFoldWitness {
-    c2a_vk: Vec<String>,
-    c2a_proof: Vec<String>,
-    c2a_public: Vec<String>,
-    c2b_vk: Vec<String>,
-    c2b_proof: Vec<String>,
-    c2b_public: Vec<String>,
-    c2a_key_hash: String,
-    c2b_key_hash: String,
-}
-
-#[derive(Serialize)]
-struct C3abFoldWitness {
-    c3a_vk: Vec<String>,
-    c3a_proof: Vec<String>,
-    c3a_public: Vec<String>,
-    c3b_vk: Vec<String>,
-    c3b_proof: Vec<String>,
-    c3b_public: Vec<String>,
-    c3a_key_hash: String,
-    c3b_key_hash: String,
-}
-
-#[derive(Serialize)]
-struct C4abFoldWitness {
-    c4a_vk: Vec<String>,
-    c4a_proof: Vec<String>,
-    c4a_public: Vec<String>,
-    c4b_vk: Vec<String>,
-    c4b_proof: Vec<String>,
-    c4b_public: Vec<String>,
-    c4a_key_hash: String,
-    c4b_key_hash: String,
+    assert!(
+        len >= 6 && (len - 6).is_multiple_of(3),
+        "unexpected acc_public_inputs length {len} (expected 6 + 3 * slots)"
+    );
+    (len - 6) / 3
 }
 
 fn triplicate_honest_rows(mut d: ShareDecryptionCircuitData) -> ShareDecryptionCircuitData {
@@ -128,14 +82,13 @@ fn triplicate_honest_rows(mut d: ShareDecryptionCircuitData) -> ShareDecryptionC
     d
 }
 
-#[tokio::test]
-async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
+async fn run_node_fold_correlated_sparse_self_slot(preset: BfvPreset) {
     let Some(bb) = find_bb().await else {
         println!("skipping: bb not found");
         return;
     };
 
-    if require_minimum_circuits().is_none() {
+    if require_minimum_circuits_for_preset(preset).is_none() {
         return;
     }
 
@@ -153,7 +106,6 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     }
 
     let committee = CiphernodesCommitteeSize::Minimum.values();
-    let preset = BfvPreset::InsecureThreshold512;
 
     let (backend, temp) = setup_test_prover(&bb).await;
     let prover = ZkProver::new(&backend);
@@ -162,32 +114,28 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
 
     for g in [
         "pk",
-        "sk_share_computation",
-        "e_sm_share_computation",
+        "sk_share_computation_chunk",
+        "esm_share_computation_chunk",
         "share_encryption",
         "share_decryption",
     ] {
-        let name = match g {
-            "pk" => "pk",
-            "sk_share_computation" => "sk_share_computation",
-            "e_sm_share_computation" => "e_sm_share_computation",
-            "share_encryption" => "share_encryption",
-            "share_decryption" => "share_decryption",
-            _ => unreachable!(),
-        };
-        setup_compiled_circuit(&backend, "dkg", name).await;
+        setup_compiled_circuit_for_preset(&backend, "dkg", g, preset, "minimum").await;
     }
-    setup_compiled_circuit(&backend, "threshold", "pk_generation").await;
+    setup_compiled_circuit_for_preset(&backend, "threshold", "pk_generation", preset, "minimum")
+        .await;
 
     for c in [
-        CircuitName::C2abFold,
+        CircuitName::C2ChunkBatch,
+        CircuitName::SkC2ChunkFinalize,
+        CircuitName::ESmC2ChunkFinalize,
+        CircuitName::C2abChunkFold,
         CircuitName::C3Fold,
         CircuitName::C3FoldKernel,
         CircuitName::C3abFold,
         CircuitName::C4abFold,
         CircuitName::NodeFold,
     ] {
-        setup_recursive_aggregation_fold_circuit(&backend, c).await;
+        setup_recursive_aggregation_fold_circuit_for_preset(&backend, c, preset, "minimum").await;
     }
 
     let (pk_gen, esi, pk_secret_key) = pk_generation_sample_with_esi(preset, committee.clone())
@@ -203,9 +151,6 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     let pk_bfv_data = PkCircuitData::generate_sample(preset).expect("C0 pk sample");
     let c0_e3 = "e3-nf-c0";
     let c1_e3 = "e3-nf-c1";
-    let c2a_e3 = "e3-nf-c2a";
-    let c2b_e3 = "e3-nf-c2b";
-    let c2ab_e3 = "e3-nf-c2ab";
 
     let c0_proof = PkCircuit
         .prove_with_variant(
@@ -228,79 +173,14 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         )
         .expect("C1 pk_generation proof");
 
-    let c2a_proof = ShareComputationCircuit
-        .prove_with_variant(
-            &prover,
-            &preset,
-            &share_sk,
-            c2a_e3,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("C2a proof");
-    let c2b_proof = ShareComputationCircuit
-        .prove_with_variant(
-            &prover,
-            &preset,
-            &share_esm,
-            c2b_e3,
-            CircuitVariant::Recursive,
-            &artifacts_dir,
-        )
-        .expect("C2b proof");
-
-    let c2a_vk = load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
-        CircuitName::SkShareComputation,
-    )
-    .expect("c2a vk");
-    let c2b_vk = load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
-        CircuitName::ESmShareComputation,
-    )
-    .expect("c2b vk");
-
-    let c2a_pub = proof_public_fields(&c2a_proof);
-    let c2b_pub = proof_public_fields(&c2b_proof);
-    let c2ab = C2abFoldWitness {
-        c2a_vk: c2a_vk.verification_key,
-        c2a_proof: fold_witness_field_strings(&c2a_proof.data).expect("c2a proof fields"),
-        c2a_public: c2a_pub.clone(),
-        c2b_vk: c2b_vk.verification_key,
-        c2b_proof: fold_witness_field_strings(&c2b_proof.data).expect("c2b proof fields"),
-        c2b_public: c2b_pub.clone(),
-        c2a_key_hash: c2a_vk.key_hash.clone(),
-        c2b_key_hash: c2b_vk.key_hash.clone(),
-    };
-
-    let c2ab_json = serde_json::to_value(&c2ab).expect("c2ab json");
-    let c2ab_map = fold_witness_input_map(&c2ab_json).expect("c2ab input map");
-    let c2ab_compiled = CompiledCircuit::from_file(
-        &prover
-            .circuits_dir(CircuitVariant::Default, &artifacts_dir)
-            .join(CircuitName::C2abFold.dir_path())
-            .join(format!("{}.json", CircuitName::C2abFold.as_str())),
-    )
-    .expect("c2ab compiled");
-    let c2ab_witness = WitnessGenerator::new()
-        .generate_witness(&c2ab_compiled, c2ab_map)
-        .expect("c2ab witness");
-    let c2ab_proof = prover
-        .generate_recursive_aggregation_bin_proof(
-            CircuitName::C2abFold,
-            &c2ab_witness,
-            c2ab_e3,
-            &artifacts_dir,
-        )
-        .expect("c2ab_fold proof");
-
     let (_dkg_th, dkg_dkg) = e3_fhe_params::build_pair_for_preset(preset).expect("pair");
     let mut rng = rand::rng();
     let dkg_sk = fhe::bfv::SecretKey::random(&dkg_dkg, &mut rng);
     let dkg_pk = fhe::bfv::PublicKey::new(&dkg_sk, &mut rng);
 
     let total_slots = c3_fold_total_slots_from_compiled_json();
-    assert_eq!(total_slots, 6, "Micro / insecure preset uses 3×2 C3 slots");
+    let expected_slots = committee.n * preset.metadata().num_moduli;
+    assert_eq!(total_slots, expected_slots);
     let slots_per_party = total_slots / committee.n;
     let own_party_id = 0usize;
 
@@ -319,6 +199,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
             &sk_inputs,
             slot,
             DkgInputType::SecretKey,
+            committee.clone(),
         )
         .expect("C3a slot encrypt");
         let db = share_encryption_for_slot(
@@ -328,6 +209,7 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
             &esm_inputs,
             slot,
             DkgInputType::SmudgingNoise,
+            committee.clone(),
         )
         .expect("C3b slot encrypt");
 
@@ -357,83 +239,10 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         );
         slot_indices.push(slot as u32);
     }
-    assert_eq!(slot_indices, vec![2, 3, 4, 5]);
-
-    let c3a_folded = generate_sequential_c3_fold(
-        &prover,
-        &c3a_inners,
-        &slot_indices,
-        total_slots,
-        "e3-nf-c3fold-a",
-        &artifacts_dir,
-    )
-    .expect("c3 fold sk chain");
-    let c3b_folded = generate_sequential_c3_fold(
-        &prover,
-        &c3b_inners,
-        &slot_indices,
-        total_slots,
-        "e3-nf-c3fold-b",
-        &artifacts_dir,
-    )
-    .expect("c3 fold e_sm chain");
-
-    let c3a_vk = load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, &artifacts_dir),
-        CircuitName::C3Fold,
-    )
-    .expect("c3a fold vk");
-    let c3b_vk = load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, &artifacts_dir),
-        CircuitName::C3Fold,
-    )
-    .expect("c3b fold vk");
-
-    let c3a_pub = proof_public_fields(&c3a_folded);
-    let c3b_pub = proof_public_fields(&c3b_folded);
-    let c3_prefix_len = c3a_pub.len() - (3 * total_slots);
-    for slot in 0..slots_per_party {
-        assert_eq!(c3a_pub[c3_prefix_len + slot], field_str_zero());
-        assert_eq!(
-            c3a_pub[c3_prefix_len + total_slots + slot],
-            field_str_zero()
-        );
-        assert_eq!(c3b_pub[c3_prefix_len + slot], field_str_zero());
-        assert_eq!(
-            c3b_pub[c3_prefix_len + total_slots + slot],
-            field_str_zero()
-        );
-    }
-    let c3ab = C3abFoldWitness {
-        c3a_vk: c3a_vk.verification_key,
-        c3a_proof: fold_witness_field_strings(&c3a_folded.data).expect("c3a fold proof"),
-        c3a_public: c3a_pub,
-        c3b_vk: c3b_vk.verification_key,
-        c3b_proof: fold_witness_field_strings(&c3b_folded.data).expect("c3b fold proof"),
-        c3b_public: c3b_pub,
-        c3a_key_hash: c3a_vk.key_hash.clone(),
-        c3b_key_hash: c3b_vk.key_hash.clone(),
-    };
-    let c3ab_json = serde_json::to_value(&c3ab).expect("c3ab json");
-    let c3ab_map = fold_witness_input_map(&c3ab_json).expect("c3ab map");
-    let c3ab_compiled = CompiledCircuit::from_file(
-        &prover
-            .circuits_dir(CircuitVariant::Default, &artifacts_dir)
-            .join(CircuitName::C3abFold.dir_path())
-            .join(format!("{}.json", CircuitName::C3abFold.as_str())),
-    )
-    .expect("c3ab compiled");
-    let c3ab_witness = WitnessGenerator::new()
-        .generate_witness(&c3ab_compiled, c3ab_map)
-        .expect("c3ab witness");
-    let c3ab_proof = prover
-        .generate_recursive_aggregation_bin_proof(
-            CircuitName::C3abFold,
-            &c3ab_witness,
-            "e3-nf-c3ab",
-            &artifacts_dir,
-        )
-        .expect("c3ab_fold proof");
+    let expected_slot_indices: Vec<u32> = (slots_per_party..total_slots)
+        .map(|slot| slot as u32)
+        .collect();
+    assert_eq!(slot_indices, expected_slot_indices);
 
     let c4a_sample = ShareDecryptionCircuitData::generate_sample(
         preset,
@@ -473,116 +282,103 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
         )
         .expect("C4b");
 
-    let c4a_vk = load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
-        CircuitName::DkgShareDecryption,
+    let c2a_chunked = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        preset,
+        &share_sk,
+        "e3-nf-c2a-chunked",
+        &artifacts_dir,
     )
-    .expect("c4a vk");
-    let c4b_vk = load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
-        CircuitName::DkgShareDecryption,
+    .expect("chunked C2a proof");
+    let c2b_chunked = e3_zk_prover::prove_chunked_share_computation(
+        &prover,
+        preset,
+        &share_esm,
+        "e3-nf-c2b-chunked",
+        &artifacts_dir,
     )
-    .expect("c4b vk");
+    .expect("chunked C2b proof");
+    assert_eq!(c2a_chunked.proof.circuit, CircuitName::SkC2ChunkFinalize);
+    assert_eq!(c2b_chunked.proof.circuit, CircuitName::ESmC2ChunkFinalize);
+    let expected_chunk_count = preset.metadata().degree / 512;
+    assert_eq!(c2a_chunked.chunk_count, expected_chunk_count);
+    assert_eq!(c2b_chunked.chunk_count, expected_chunk_count);
 
-    let c4ab = C4abFoldWitness {
-        c4a_vk: c4a_vk.verification_key,
-        c4a_proof: fold_witness_field_strings(&c4a_proof.data).expect("c4a"),
-        c4a_public: proof_public_fields(&c4a_proof),
-        c4b_vk: c4b_vk.verification_key,
-        c4b_proof: fold_witness_field_strings(&c4b_proof.data).expect("c4b"),
-        c4b_public: proof_public_fields(&c4b_proof),
-        c4a_key_hash: c4a_vk.key_hash.clone(),
-        c4b_key_hash: c4b_vk.key_hash.clone(),
-    };
-    let c4ab_json = serde_json::to_value(&c4ab).expect("c4ab json");
-    let c4ab_map = fold_witness_input_map(&c4ab_json).expect("c4ab map");
-    let c4ab_compiled = CompiledCircuit::from_file(
-        &prover
-            .circuits_dir(CircuitVariant::Default, &artifacts_dir)
-            .join(CircuitName::C4abFold.dir_path())
-            .join(format!("{}.json", CircuitName::C4abFold.as_str())),
+    let chunked_node = e3_zk_prover::prove_node_dkg_fold(
+        &prover,
+        &NodeDkgFoldInput {
+            c0_proof: &c0_proof,
+            c1_proof: &c1_proof,
+            c2a_proof: &c2a_chunked.proof,
+            c2b_proof: &c2b_chunked.proof,
+            c3a_inner_proofs: &c3a_inners,
+            c3b_inner_proofs: &c3b_inners,
+            c3_slot_indices_a: &slot_indices,
+            c3_slot_indices_b: &slot_indices,
+            c3_total_slots: total_slots,
+            c4a_proof: &c4a_proof,
+            c4b_proof: &c4b_proof,
+            party_id: own_party_id as u64,
+        },
+        "e3-nf-node-chunked",
+        &artifacts_dir,
     )
-    .expect("c4ab compiled");
-    let c4ab_witness = WitnessGenerator::new()
-        .generate_witness(&c4ab_compiled, c4ab_map)
-        .expect("c4ab witness");
-    let c4ab_proof = prover
-        .generate_recursive_aggregation_bin_proof(
-            CircuitName::C4abFold,
-            &c4ab_witness,
-            "e3-nf-c4ab",
+    .expect("chunked node fold proof");
+    assert!(chunked_node
+        .step_timings
+        .iter()
+        .any(|step| step.step == CircuitName::C2abChunkFold.as_str()));
+    assert!(prover
+        .verify_fold_proof(
+            &chunked_node.proof,
+            "e3-nf-node-chunked-nodefold",
+            0,
             &artifacts_dir,
         )
-        .expect("c4ab_fold proof");
-
-    let c0_vk = load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
-        CircuitName::PkBfv,
-    )
-    .expect("c0 vk");
-    let c1_vk = load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Recursive, &artifacts_dir),
-        CircuitName::PkGeneration,
-    )
-    .expect("c1 vk");
-    let c2ab_fold_vk = load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, &artifacts_dir),
-        CircuitName::C2abFold,
-    )
-    .expect("c2ab fold vk");
-    let c3ab_fold_vk = load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, &artifacts_dir),
-        CircuitName::C3abFold,
-    )
-    .expect("c3ab fold vk");
-    let c4ab_fold_vk = load_vk_artifacts(
-        &prover.circuits_dir(CircuitVariant::Default, &artifacts_dir),
-        CircuitName::C4abFold,
-    )
-    .expect("c4ab fold vk");
-
-    let nf = json!({
-        "c0_vk": c0_vk.verification_key,
-        "c0_proof": fold_witness_field_strings(&c0_proof.data).expect("c0 proof"),
-        "c0_public": proof_public_fields(&c0_proof),
-        "c1_vk": c1_vk.verification_key,
-        "c1_proof": fold_witness_field_strings(&c1_proof.data).expect("c1 proof"),
-        "c1_public": proof_public_fields(&c1_proof),
-        "c2ab_vk": c2ab_fold_vk.verification_key,
-        "c2ab_proof": fold_witness_field_strings(&c2ab_proof.data).expect("c2ab"),
-        "c2ab_public": proof_public_fields(&c2ab_proof),
-        "c3ab_vk": c3ab_fold_vk.verification_key,
-        "c3ab_proof": fold_witness_field_strings(&c3ab_proof.data).expect("c3ab"),
-        "c3ab_public": proof_public_fields(&c3ab_proof),
-        "c4ab_vk": c4ab_fold_vk.verification_key,
-        "c4ab_proof": fold_witness_field_strings(&c4ab_proof.data).expect("c4ab"),
-        "c4ab_public": proof_public_fields(&c4ab_proof),
-        "party_id": field_str_zero(),
-        "c0_key_hash": c0_vk.key_hash,
-        "c1_key_hash": c1_vk.key_hash,
-        "c2ab_key_hash": c2ab_fold_vk.key_hash,
-        "c3ab_key_hash": c3ab_fold_vk.key_hash,
-        "c4ab_key_hash": c4ab_fold_vk.key_hash,
-    });
-
-    let nf_map = fold_witness_input_map(&nf).expect("node_fold map");
-    let nf_compiled = CompiledCircuit::from_file(&gate).expect("node_fold compiled");
-    let nf_witness = WitnessGenerator::new()
-        .generate_witness(&nf_compiled, nf_map)
-        .expect("node_fold witness");
-    let nf_proof = prover
-        .generate_recursive_aggregation_bin_proof(
-            CircuitName::NodeFold,
-            &nf_witness,
-            "e3-nf-node",
-            &artifacts_dir,
-        )
-        .expect("node_fold proof");
-
-    let ok = prover
-        .verify_fold_proof(&nf_proof, "e3-nf-node", 0, &artifacts_dir)
-        .expect("verify node_fold");
-    assert!(ok, "node_fold should verify");
+        .expect("verify chunked node_fold"));
 
     drop(temp);
+}
+
+#[tokio::test]
+async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
+    run_node_fold_correlated_sparse_self_slot(BfvPreset::InsecureThreshold512).await;
+}
+
+#[tokio::test]
+async fn node_fold_correlated_secure_multi_chunk_proves_and_verifies() {
+    if active_bin_preset().as_deref() != Some("secure-8192") {
+        println!("skipping: secure-8192 circuit artifacts are not active");
+        return;
+    }
+    let dkg_circuits = [
+        "pk",
+        "sk_share_computation_chunk",
+        "esm_share_computation_chunk",
+        "share_encryption",
+        "share_decryption",
+    ];
+    let recursive_circuits = [
+        CircuitName::C2ChunkBatch,
+        CircuitName::SkC2ChunkFinalize,
+        CircuitName::ESmC2ChunkFinalize,
+        CircuitName::C2abChunkFold,
+        CircuitName::C3Fold,
+        CircuitName::C3FoldKernel,
+        CircuitName::C3abFold,
+        CircuitName::C4abFold,
+        CircuitName::NodeFold,
+    ];
+    if dkg_circuits
+        .iter()
+        .any(|circuit| !compiled_circuit_artifacts_available("dkg", circuit))
+        || !compiled_circuit_artifacts_available("threshold", "pk_generation")
+        || recursive_circuits
+            .iter()
+            .any(|circuit| !recursive_circuit_artifacts_available(*circuit))
+    {
+        println!("skipping: secure-8192 circuit artifacts are not staged");
+        return;
+    }
+    run_node_fold_correlated_sparse_self_slot(BfvPreset::SecureThreshold8192).await;
 }

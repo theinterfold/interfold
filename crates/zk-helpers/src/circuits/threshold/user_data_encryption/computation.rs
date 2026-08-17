@@ -402,6 +402,11 @@ impl Computation for Inputs {
 
         e0.center(moduli)?;
 
+        crate::utils::verify_crt_shapes(&[&ct0, &ct1, &pk0, &pk1, &e0], moduli.len(), n as usize)
+            .map_err(|e| {
+            CircuitsErrors::Other(format!("user-data-encryption CRT shape mismatch: {e}"))
+        })?;
+
         let CrtPolynomial { limbs: ct0_limbs } = ct0;
         let CrtPolynomial { limbs: ct1_limbs } = ct1;
         let CrtPolynomial { limbs: pk0_limbs } = pk0;

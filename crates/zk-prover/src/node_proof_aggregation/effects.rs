@@ -158,7 +158,39 @@ impl NodeProofAggregator {
             return;
         }
 
-        let req = state.build_fold_request();
+        let req = match state.build_fold_request() {
+            Ok(req) => req,
+            Err(err) => {
+                let ec = state.last_ec.clone();
+                let party_id = state.meta.party_id;
+                error!(
+                    "NodeProofAggregator: invalid C3 slot metadata for E3 {} party {}: {}",
+                    e3_id, party_id, err
+                );
+                // Publish the terminal event before dropping the aggregation state;
+                // only drop the state once the failure was actually published, so a
+                // transient bus failure does not lose the terminal event.
+                match self.bus.publish(
+                    E3Failed {
+                        e3_id: e3_id.clone(),
+                        failed_at_stage: E3Stage::CommitteeFinalized,
+                        reason: FailureReason::DKGInvalidShares,
+                    },
+                    ec,
+                ) {
+                    Ok(_) => {
+                        self.states.remove(e3_id);
+                    }
+                    Err(err) => {
+                        error!(
+                            "NodeProofAggregator: failed to publish E3Failed for E3 {} — retaining state for retry: {err}",
+                            e3_id
+                        );
+                    }
+                }
+                return;
+            }
+        };
         let corr = CorrelationId::new();
         let ec = state.last_ec.clone();
         let party_id = state.meta.party_id;

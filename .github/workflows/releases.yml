@@ -367,7 +367,7 @@ jobs:
       - name: Pull circuit artifacts
         id: pull
         run: |
-          SOURCE_HASH=$(pnpm tsx scripts/build-circuits.ts hash)
+          SOURCE_HASH=$(pnpm tsx scripts/build-circuits.ts hash --preset insecure-512 --committee all)
           echo "source_hash=$SOURCE_HASH" >> $GITHUB_OUTPUT
 
           if git fetch origin circuit-artifacts 2>/dev/null; then

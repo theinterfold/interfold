@@ -67,7 +67,7 @@ fn build_and_prove_recursive_bin<W: Serialize>(
 }
 
 #[derive(Serialize)]
-struct C2abFoldWitness {
+struct C2abChunkFoldWitness {
     c2a_vk: Vec<String>,
     c2a_proof: Vec<String>,
     c2a_public: Vec<String>,
@@ -164,9 +164,9 @@ fn push_step(timings: &mut Vec<FoldProveStepTiming>, step: &str, started: Instan
     });
 }
 
-/// Run C2abFold || (C3a fold || C3b fold) → C3abFold → C4abFold → NodeFold; returns a [`CircuitName::NodeFold`] proof.
+/// Run C2abChunkFold || (C3a fold || C3b fold) → C3abFold → C4abFold → NodeFold; returns a [`CircuitName::NodeFold`] proof.
 ///
-/// C2abFold and the two C3 fold chains are mutually independent and run concurrently via
+/// C2abChunkFold and the two C3 fold chains are mutually independent and run concurrently via
 /// `rayon::join`. C3a and C3b are also independent of each other and run as a nested join.
 pub fn prove_node_dkg_fold(
     prover: &ZkProver,
@@ -175,16 +175,33 @@ pub fn prove_node_dkg_fold(
     artifacts_dir: &str,
 ) -> Result<NodeDkgFoldProveResult, ZkError> {
     let mut step_timings = Vec::with_capacity(6);
+    let c2a_circuit = match input.c2a_proof.circuit {
+        CircuitName::SkC2ChunkFinalize => input.c2a_proof.circuit,
+        other => {
+            return Err(ZkError::InvalidInput(format!(
+                "invalid C2a proof circuit {other}"
+            )))
+        }
+    };
+    let c2b_circuit = match input.c2b_proof.circuit {
+        CircuitName::ESmC2ChunkFinalize => input.c2b_proof.circuit,
+        other => {
+            return Err(ZkError::InvalidInput(format!(
+                "invalid C2b proof circuit {other}"
+            )))
+        }
+    };
     let c2a_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::SkShareComputation,
+        c2a_circuit,
     )?;
     let c2b_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
-        CircuitName::ESmShareComputation,
+        c2b_circuit,
     )?;
+    let c2ab_circuit = CircuitName::C2abChunkFold;
 
-    let c2ab = C2abFoldWitness {
+    let c2ab = C2abChunkFoldWitness {
         c2a_vk: c2a_vk.verification_key.clone(),
         c2a_proof: proof_field_strings(input.c2a_proof)?,
         c2a_public: proof_public_field_strings(input.c2a_proof)?,
@@ -195,7 +212,7 @@ pub fn prove_node_dkg_fold(
         c2b_key_hash: c2b_vk.key_hash.clone(),
     };
 
-    // c2ab_fold is independent of the c3 chains; c3a and c3b are independent of each other.
+    // c2ab_chunk_fold is independent of the c3 chains; c3a and c3b are independent of each other.
     // Run all three concurrently: c2ab || (c3a || c3b).
     let ((c2ab_result, c2ab_elapsed), ((c3a_result, c3a_elapsed), (c3b_result, c3b_elapsed))) =
         rayon::join(
@@ -203,7 +220,7 @@ pub fn prove_node_dkg_fold(
                 let t = Instant::now();
                 let r = build_and_prove_recursive_bin(
                     prover,
-                    CircuitName::C2abFold,
+                    c2ab_circuit,
                     &c2ab,
                     &format!("{e3_id}-c2ab"),
                     artifacts_dir,
@@ -242,7 +259,7 @@ pub fn prove_node_dkg_fold(
 
     let c2ab_proof = c2ab_result?;
     step_timings.push(FoldProveStepTiming {
-        step: "c2ab_fold".to_string(),
+        step: c2ab_circuit.as_str().to_string(),
         seconds: c2ab_elapsed.as_secs_f64(),
     });
     let c3a_folded = c3a_result?;
@@ -316,7 +333,7 @@ pub fn prove_node_dkg_fold(
     )?;
     let c2ab_fold_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
-        CircuitName::C2abFold,
+        c2ab_circuit,
     )?;
     let c3ab_fold_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
@@ -405,6 +422,7 @@ fn validate_dkg_aggregation_shape(
     }
 
     let mut seen = HashSet::with_capacity(party_ids.len());
+    let mut prev: Option<u64> = None;
     for &party_id in party_ids {
         let party_index = usize::try_from(party_id).map_err(|_| {
             ZkError::InvalidInput(format!(
@@ -422,6 +440,16 @@ fn validate_dkg_aggregation_shape(
                 "DkgAggregator party id {party_id} is duplicated"
             )));
         }
+        // The dkg_aggregator circuit requires strictly increasing party ids; reject an
+        // unsorted input here instead of failing later inside the circuit.
+        if let Some(prev_id) = prev {
+            if prev_id >= party_id {
+                return Err(ZkError::InvalidInput(format!(
+                    "DkgAggregator party ids must be strictly increasing, got {party_id} after {prev_id}"
+                )));
+            }
+        }
+        prev = Some(party_id);
     }
     Ok(())
 }
@@ -440,6 +468,7 @@ struct DkgAggregatorWitness {
     committee_members: Vec<String>,
     committee_hash_hi: String,
     committee_hash_lo: String,
+    vk_binding: Vec<String>,
 }
 
 /// [`CircuitName::DkgAggregator`] over sequential [`CircuitName::NodesFold`] + C5, proved with
@@ -482,6 +511,70 @@ pub fn prove_dkg_aggregation(
         &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
         CircuitName::PkAggregation,
     )?;
+    let node_fold_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::NodeFold,
+    )?;
+    let c0_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::PkBfv,
+    )?;
+    let c1_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::PkGeneration,
+    )?;
+    let c2ab_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C2abChunkFold,
+    )?;
+    let c3ab_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C3abFold,
+    )?;
+    let c4ab_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C4abFold,
+    )?;
+    let c2a_finalize_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::SkC2ChunkFinalize,
+    )?;
+    let c2b_finalize_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::ESmC2ChunkFinalize,
+    )?;
+    let c2_batch_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C2ChunkBatch,
+    )?;
+    let c2a_chunk_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::SkShareComputationChunk,
+    )?;
+    let c2b_chunk_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::ESmShareComputationChunk,
+    )?;
+    let c3_fold_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C3Fold,
+    )?;
+    let share_encryption_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::ShareEncryption,
+    )?;
+    let c4_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
+        CircuitName::DkgShareDecryption,
+    )?;
+    let c3_fold_kernel_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::C3FoldKernel,
+    )?;
+    let nodes_fold_kernel_vk = vk::load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Default, artifacts_dir),
+        CircuitName::NodesFoldKernel,
+    )?;
 
     let party_id_fields: Vec<String> = input
         .party_ids
@@ -512,6 +605,24 @@ pub fn prove_dkg_aggregation(
         committee_members,
         committee_hash_hi,
         committee_hash_lo,
+        vk_binding: vec![
+            node_fold_vk.key_hash,
+            c0_vk.key_hash,
+            c1_vk.key_hash,
+            c2ab_vk.key_hash,
+            c3ab_vk.key_hash,
+            c4ab_vk.key_hash,
+            c2a_finalize_vk.key_hash,
+            c2b_finalize_vk.key_hash,
+            c2_batch_vk.key_hash,
+            c2a_chunk_vk.key_hash,
+            c2b_chunk_vk.key_hash,
+            c3_fold_vk.key_hash,
+            share_encryption_vk.key_hash,
+            c4_vk.key_hash,
+            c3_fold_kernel_vk.key_hash,
+            nodes_fold_kernel_vk.key_hash,
+        ],
     };
 
     let json =
@@ -712,5 +823,13 @@ mod tests {
             validate_dkg_aggregation_shape(2, &[0, 3], 3, CiphernodesCommitteeSize::Minimum)
                 .unwrap_err();
         assert!(out_of_range.to_string().contains("outside committee N=3"));
+    }
+
+    #[test]
+    fn dkg_aggregation_rejects_unsorted_party_ids() {
+        let unsorted =
+            validate_dkg_aggregation_shape(2, &[1, 0], 3, CiphernodesCommitteeSize::Minimum)
+                .unwrap_err();
+        assert!(unsorted.to_string().contains("strictly increasing"));
     }
 }

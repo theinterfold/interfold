@@ -260,6 +260,9 @@ describe("Governance — access control, bounds & events", function () {
         await circuitVerifier.getAddress(),
         vkHashA,
         vkHashB,
+        vkHashA,
+        vkHashB,
+        Array(16).fill(vkHashA),
         5,
       ]);
       const wrongDecryptionVerifier = await ethers.deployContract(

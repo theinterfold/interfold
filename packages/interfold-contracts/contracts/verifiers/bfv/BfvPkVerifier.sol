@@ -24,13 +24,17 @@ import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
  *        [2 .. 2+H)         = party_ids                 (H slots)
  *        [2+H]              = committee_hash_hi
  *        [3+H]              = committee_hash_lo
- *        [4+H .. 4+3H)      = expected_pk               (2*H slots)
- *        [4+3H]             = pk_commitment
- *        Total: expectedPublicInputsLen = 3*H + 6.
+ *        [4+H .. 20+H)      = recursive VK binding manifest (16 fields)
+ *        [20+H]             = DKG return VK hash
+ *        [21+H]             = expected SK C2 chunk VK hash
+ *        [22+H]             = expected ESM C2 chunk VK hash
+ *        [23+H .. 23+3H)    = expected SK/ESM anchors (2*H slots)
+ *        [23+3H]            = pk_commitment
+ *        Total: expectedPublicInputsLen = 3*H + 24.
  *
- *      The two VK-hash slots are checked against contract immutables set at
- *      construction; this anchors the recursive aggregation trust and
- *      prevents a malicious aggregator from substituting a forged sub-VK.
+ *      The direct VK slots and the recursive VK binding manifest are checked
+ *      against deployment-time values. This anchors the complete recursive
+ *      aggregation trust chain.
  *
  *      NOTE — domain binding relaxation: wrapper-level chainId/deployment/e3Id
  *      binding requires a dedicated circuit public input. The current circuits
@@ -60,6 +64,15 @@ contract BfvPkVerifier is IPkVerifier {
     /// @dev Index of `pkCommitment` (last return field).
     uint256 internal immutable pkCommitmentIdx;
 
+    /// @notice Canonical SK C2 chunk VK hash.
+    bytes32 public immutable expectedSkC2ChunkKeyHash;
+
+    /// @notice Canonical ESM C2 chunk VK hash.
+    bytes32 public immutable expectedESmC2ChunkKeyHash;
+
+    /// @notice Canonical recursive VK hashes used by the DKG proof pipeline.
+    bytes32[16] public expectedVkBinding;
+
     /// @notice Underlying Honk verifier for the DkgAggregator circuit.
     ICircuitVerifier public immutable circuitVerifier;
 
@@ -78,6 +91,9 @@ contract BfvPkVerifier is IPkVerifier {
         address _circuitVerifier,
         bytes32 _expectedNodesFoldKeyHash,
         bytes32 _expectedC5KeyHash,
+        bytes32 _expectedSkC2ChunkKeyHash,
+        bytes32 _expectedESmC2ChunkKeyHash,
+        bytes32[16] memory _expectedVkBinding,
         uint256 _h
     ) {
         require(_h > 0, "BfvPkVerifier: h=0");
@@ -86,17 +102,28 @@ contract BfvPkVerifier is IPkVerifier {
         }
         if (
             _expectedNodesFoldKeyHash == bytes32(0) ||
-            _expectedC5KeyHash == bytes32(0)
+            _expectedC5KeyHash == bytes32(0) ||
+            _expectedSkC2ChunkKeyHash == bytes32(0) ||
+            _expectedESmC2ChunkKeyHash == bytes32(0)
         ) revert InvalidVerificationKeyHash();
+        for (uint256 i = 0; i < _expectedVkBinding.length; i++) {
+            if (_expectedVkBinding[i] == bytes32(0)) {
+                revert InvalidVerificationKeyHash();
+            }
+            expectedVkBinding[i] = _expectedVkBinding[i];
+        }
         h = _h;
         committeeHashHiIdx = 2 + _h;
         committeeHashLoIdx = 3 + _h;
-        expectedPublicInputsLen = (3 * _h) + 6;
+        // The generated Honk VK includes eight pairing-point slots outside the public-input array.
+        expectedPublicInputsLen = (3 * _h) + 24;
         pkCommitmentIdx = expectedPublicInputsLen - 1;
 
         circuitVerifier = ICircuitVerifier(_circuitVerifier);
         expectedNodesFoldKeyHash = _expectedNodesFoldKeyHash;
         expectedC5KeyHash = _expectedC5KeyHash;
+        expectedSkC2ChunkKeyHash = _expectedSkC2ChunkKeyHash;
+        expectedESmC2ChunkKeyHash = _expectedESmC2ChunkKeyHash;
     }
 
     /// @inheritdoc IPkVerifier
@@ -122,6 +149,17 @@ contract BfvPkVerifier is IPkVerifier {
             revert VkHashMismatch();
         }
         if (publicInputs[1] != expectedC5KeyHash) {
+            revert VkHashMismatch();
+        }
+        for (uint256 i = 0; i < expectedVkBinding.length; i++) {
+            if (publicInputs[4 + h + i] != expectedVkBinding[i]) {
+                revert VkHashMismatch();
+            }
+        }
+        if (publicInputs[21 + h] != expectedSkC2ChunkKeyHash) {
+            revert VkHashMismatch();
+        }
+        if (publicInputs[22 + h] != expectedESmC2ChunkKeyHash) {
             revert VkHashMismatch();
         }
 

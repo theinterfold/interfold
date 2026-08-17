@@ -9,7 +9,7 @@
 //! compiled `c3_fold` / `c6_fold` JSON, and artifact staging under [`CircuitVariant::Default`]
 //! (`noir-recursive-no-zk` VKs — see `scripts/build-circuits.ts`).
 //!
-//! Loads compiled JSON for the node-fold **pipeline** ([`CircuitName::C2abFold`] … [`CircuitName::NodeFold`])
+//! Loads compiled JSON for the node-fold **pipeline** ([`CircuitName::C2abChunkFold`] … [`CircuitName::NodeFold`])
 //! and stages those artifacts; it does **not** run a full correlated `node_fold` proof — use
 //! `node_fold_correlated_e2e_tests.rs` for that.
 //!
@@ -58,15 +58,15 @@ fn recursive_aggregation_compiled_json_path(circuit: CircuitName) -> PathBuf {
         .join(format!("{}.json", circuit.as_str()))
 }
 
-/// `c2ab_fold` → `c3ab_fold` → `c4ab_fold` → inputs to `node_fold` (see `node_fold/src/main.nr`).
+/// `c2ab_chunk_fold` → `c3ab_fold` → `c4ab_fold` → inputs to `node_fold` (see `node_fold/src/main.nr`).
 const NODE_FOLD_PIPELINE: &[CircuitName] = &[
-    CircuitName::C2abFold,
+    CircuitName::C2abChunkFold,
     CircuitName::C3abFold,
     CircuitName::C4abFold,
     CircuitName::NodeFold,
 ];
 
-/// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `4 + 3 * C3_SLOTS`).
+/// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `6 + 3 * C3_SLOTS`).
 fn c3_fold_total_slots_from_compiled_json() -> usize {
     let path = c3_fold_json_path();
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
@@ -89,11 +89,11 @@ fn c3_fold_total_slots_from_compiled_json() -> usize {
         })
         .expect("c3_fold.json: abi.parameters.acc_public_inputs.length") as usize;
     assert!(
-        len >= 4 && (len - 4).is_multiple_of(3),
-        "unexpected acc_public_inputs length {} (expected 4 + 3 * slots)",
+        len >= 6 && (len - 6).is_multiple_of(3),
+        "unexpected acc_public_inputs length {} (expected 6 + 3 * slots)",
         len
     );
-    (len - 4) / 3
+    (len - 6) / 3
 }
 
 /// Reads slot count from the compiled `c6_fold` ABI

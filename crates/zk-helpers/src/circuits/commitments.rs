@@ -50,6 +50,14 @@ const DS_SHARE_COMPUTATION: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
+/// String: "SHARE_COMPUTATION_CHUNK"
+const DS_SHARE_COMPUTATION_CHUNK: [u8; 64] = [
+    0x53, 0x48, 0x41, 0x52, 0x45, 0x5f, 0x43, 0x4f, 0x4d, 0x50, 0x55, 0x54, 0x41, 0x54, 0x49, 0x4f,
+    0x4e, 0x5f, 0x43, 0x48, 0x55, 0x4e, 0x4b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
 /// String: "SHARE_ENCRYPTION"
 const DS_SHARE_ENCRYPTION: [u8; 64] = [
     0x53, 0x48, 0x41, 0x52, 0x45, 0x5f, 0x45, 0x4e, 0x43, 0x52, 0x59, 0x50, 0x54, 0x49, 0x4f, 0x4e,
@@ -344,6 +352,144 @@ pub fn compute_share_computation_e_sm_commitment(e_sm: &CrtPolynomial, bit_e_sm:
     let commitment_field = compute_commitments(payload, DS_SHARE_COMPUTATION, io_pattern)[0];
     let commitment_bytes = commitment_field.into_bigint().to_bytes_le();
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
+}
+
+fn field_to_bigint(field: Field) -> BigInt {
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &field.into_bigint().to_bytes_le())
+}
+
+fn compute_chunk_commitment(payload: Vec<Field>) -> BigInt {
+    let input_size = payload.len() as u32;
+    field_to_bigint(
+        compute_commitments(
+            payload,
+            DS_SHARE_COMPUTATION_CHUNK,
+            [0x80000000 | input_size, 1],
+        )[0],
+    )
+}
+
+fn chunk_polynomial(polynomial: &Polynomial, chunk_idx: usize, chunk_size: usize) -> Polynomial {
+    let coefficients = polynomial.coefficients();
+    let start = coefficients.len() - ((chunk_idx + 1) * chunk_size);
+    Polynomial::new(coefficients[start..start + chunk_size].to_vec())
+}
+
+/// Compute the SK root for the C1 polynomial orientation.
+pub fn compute_sc_sk_secret_root_commitment(
+    sk: &Polynomial,
+    bit_sk: u32,
+    chunk_size: usize,
+) -> BigInt {
+    assert!(chunk_size > 0 && sk.coefficients().len().is_multiple_of(chunk_size));
+    let chunk_count = sk.coefficients().len() / chunk_size;
+    let mut leaves = Vec::with_capacity(chunk_count);
+    for chunk_idx in 0..chunk_count {
+        let chunk = chunk_polynomial(sk, chunk_idx, chunk_size);
+        let mut payload = vec![
+            Field::from(0u64),
+            Field::from(0u64),
+            Field::from(chunk_idx as u64),
+            Field::from(sk.coefficients().len() as u64),
+            Field::from(chunk_size as u64),
+        ];
+        payload = flatten(payload, std::slice::from_ref(&chunk), bit_sk);
+        leaves.push(compute_chunk_commitment(payload));
+    }
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(0u64),
+        Field::from(sk.coefficients().len() as u64),
+        Field::from(chunk_size as u64),
+    ];
+    payload.extend(leaves.into_iter().map(|leaf| field_from_bigint(&leaf)));
+    compute_chunk_commitment(payload)
+}
+
+/// Compute the ESM root for the C1 polynomial orientation.
+pub fn compute_sc_esm_secret_root_commitment(
+    e_sm: &CrtPolynomial,
+    bit_e_sm: u32,
+    chunk_size: usize,
+) -> BigInt {
+    assert!(!e_sm.limbs.is_empty());
+    assert!(
+        chunk_size > 0
+            && e_sm.limbs[0]
+                .coefficients()
+                .len()
+                .is_multiple_of(chunk_size)
+    );
+    let degree = e_sm.limbs[0].coefficients().len();
+    let chunk_count = degree / chunk_size;
+    let mut leaves = Vec::with_capacity(chunk_count);
+    for chunk_idx in 0..chunk_count {
+        let mut payload = vec![
+            Field::from(0u64),
+            Field::from(1u64),
+            Field::from(chunk_idx as u64),
+            Field::from(degree as u64),
+            Field::from(chunk_size as u64),
+        ];
+        let chunks = e_sm
+            .limbs
+            .iter()
+            .map(|limb| chunk_polynomial(limb, chunk_idx, chunk_size))
+            .collect::<Vec<_>>();
+        payload = flatten(payload, &chunks, bit_e_sm);
+        leaves.push(compute_chunk_commitment(payload));
+    }
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(1u64),
+        Field::from(degree as u64),
+        Field::from(chunk_size as u64),
+    ];
+    payload.extend(leaves.into_iter().map(|leaf| field_from_bigint(&leaf)));
+    compute_chunk_commitment(payload)
+}
+
+/// Compute a recipient share root from its C3/C4 polynomial orientation.
+pub fn compute_sc_party_share_root_commitment(
+    party_idx: usize,
+    mod_idx: usize,
+    message: &Polynomial,
+    bit_share: u32,
+    chunk_size: usize,
+) -> BigInt {
+    assert!(chunk_size > 0 && message.coefficients().len().is_multiple_of(chunk_size));
+    let degree = message.coefficients().len();
+    let chunk_count = degree / chunk_size;
+    let mut leaves = Vec::with_capacity(chunk_count);
+    for chunk_idx in 0..chunk_count {
+        let chunk = chunk_polynomial(message, chunk_idx, chunk_size);
+        let mut payload = vec![
+            Field::from(0u64),
+            Field::from(2u64),
+            Field::from(party_idx as u64),
+            Field::from(mod_idx as u64),
+            Field::from(chunk_idx as u64),
+            Field::from(degree as u64),
+            Field::from(chunk_size as u64),
+        ];
+        payload = flatten(payload, std::slice::from_ref(&chunk), bit_share);
+        leaves.push(compute_chunk_commitment(payload));
+    }
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(2u64),
+        Field::from(party_idx as u64),
+        Field::from(mod_idx as u64),
+        Field::from(degree as u64),
+        Field::from(chunk_size as u64),
+    ];
+    payload.extend(leaves.into_iter().map(|leaf| field_from_bigint(&leaf)));
+    compute_chunk_commitment(payload)
+}
+
+fn field_from_bigint(value: &BigInt) -> Field {
+    let (_, bytes) = value.to_bytes_le();
+    Field::from_le_bytes_mod_order(&bytes)
 }
 
 /// Compute share encryption commitment from message polynomial.

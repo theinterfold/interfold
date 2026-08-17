@@ -27,6 +27,9 @@ pub use actors::{
 pub use domain::commitment_links::default_links;
 
 pub use backend::{SetupStatus, ZkBackend};
+pub use circuits::aggregation::c2_terminal_validation::{
+    validate_c2_terminal_proof, C2TerminalAnchors,
+};
 pub use circuits::aggregation::c3_accumulator::generate_sequential_c3_fold;
 pub use circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
 pub use circuits::aggregation::node_dkg_fold::{
@@ -37,6 +40,11 @@ pub use circuits::aggregation::node_dkg_fold::{
 pub use circuits::aggregation::nodes_fold_accumulator::{
     generate_nodes_fold_step, generate_sequential_nodes_fold,
 };
+pub use circuits::dkg::share_computation::{
+    prove_chunked_share_computation, prove_chunked_share_computation_with_chunk_size,
+    ChunkedShareComputationProofs, DEFAULT_C2_CHUNK_SIZE,
+};
+pub use circuits::utils::inputs_json_to_input_map;
 pub use config::{verify_checksum, BbTarget, CircuitInfo, VersionInfo, ZkConfig};
 pub use dkg_attestation_bundle::encode_dkg_attestation_bundle;
 pub use e3_events::CircuitVariant;

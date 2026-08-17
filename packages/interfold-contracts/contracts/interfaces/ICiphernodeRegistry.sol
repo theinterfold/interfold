@@ -75,6 +75,7 @@ interface ICiphernodeRegistry {
     /// @param threshold The viability threshold and total member count [H, N].
     /// @param requestBlock Block number for snapshot validation.
     /// @param committeeDeadline Deadline for committee formation (ticket submission).
+    /// @param ticketPrice Ticket price frozen for this E3 sortition.
     event CommitteeRequested(
         uint256 indexed e3Id,
         uint256 entropyBlock,

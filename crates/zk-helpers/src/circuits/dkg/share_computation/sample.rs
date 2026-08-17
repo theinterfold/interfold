@@ -121,6 +121,7 @@ impl ShareComputationCircuitData {
             dkg_input_type,
             n_parties: committee.n as u32,
             threshold: committee.threshold as u32,
+            chunk_size: 512,
             secret,
             secret_sss,
             parity_matrix,

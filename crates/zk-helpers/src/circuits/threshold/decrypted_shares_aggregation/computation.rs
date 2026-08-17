@@ -217,14 +217,60 @@ impl Computation for Inputs {
 
         let d_share_polys: Vec<Poly<PowerBasis>> = data.d_share_polys.clone();
 
-        if d_share_polys.len() < threshold + 1 {
+        let dropped_non_zero = data
+            .message_vec
+            .iter()
+            .enumerate()
+            .skip(max_msg_non_zero_coeffs)
+            .filter(|(_, v)| **v != 0)
+            .count();
+        if dropped_non_zero > 0 {
             return Err(CircuitsErrors::Other(format!(
-                "d_share_polys.len() {} < threshold + 1 ({}); need at least {} polynomials",
+                "message_vec has {} non-zero coefficient(s) at index >= MAX_MSG_NON_ZERO_COEFFS ({}); they would be silently dropped by truncation",
+                dropped_non_zero, max_msg_non_zero_coeffs
+            )));
+        }
+
+        if d_share_polys.len() != threshold + 1 {
+            return Err(CircuitsErrors::Other(format!(
+                "d_share_polys.len() {} != threshold + 1 ({}); the C7 circuit requires exactly T + 1 shares",
                 d_share_polys.len(),
-                threshold + 1,
                 threshold + 1
             )));
         }
+        let reconstructing_parties = &data.reconstructing_parties;
+        if reconstructing_parties.len() != threshold + 1 {
+            return Err(CircuitsErrors::Other(format!(
+                "reconstructing_parties.len() {} != threshold + 1 ({}); must match the d_share_polys count",
+                reconstructing_parties.len(),
+                threshold + 1
+            )));
+        }
+        {
+            let mut seen = std::collections::BTreeSet::new();
+            for &party in reconstructing_parties {
+                if party == 0 {
+                    return Err(CircuitsErrors::Other(
+                        "reconstructing_parties must be 1-based; found 0".to_string(),
+                    ));
+                }
+                if party > data.committee.n {
+                    return Err(CircuitsErrors::Other(format!(
+                        "reconstructing party {party} exceeds committee size N={}",
+                        data.committee.n
+                    )));
+                }
+                if !seen.insert(party) {
+                    return Err(CircuitsErrors::Other(format!(
+                        "reconstructing party {party} appears more than once"
+                    )));
+                }
+            }
+        }
+        // Validate committee shape against the canonical table (T, N, H must match the
+        // compiled Noir committee).
+        crate::ciphernodes_committee::canonical_committee_for_circuit(&data.committee)
+            .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
 
         // Decryption shares: one CrtPolynomial per party (from_fhe + reduce)
         let mut decryption_shares: Vec<CrtPolynomial> = Vec::with_capacity(d_share_polys.len());

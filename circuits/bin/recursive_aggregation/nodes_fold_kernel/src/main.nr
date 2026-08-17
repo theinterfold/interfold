@@ -13,18 +13,18 @@ use lib::configs::default::dkg::L_THRESHOLD;
 use lib::configs::default::{H, N_PARTIES};
 
 pub global C2_PUBLIC_LEN: u32 = 1 + (N_PARTIES * L_THRESHOLD);
-pub global C2AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C2_PUBLIC_LEN);
+pub global C2AB_FOLD_PUBLIC_LEN: u32 = 6 + (2 * C2_PUBLIC_LEN);
 /// Must match `c3ab_fold::C3AB_FOLD_PUBLIC_LEN` (one C3 slot per party and CRT limb).
 pub global C3_SLOTS: u32 = N_PARTIES * L_THRESHOLD;
-pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 1 + (6 * C3_SLOTS);
+pub global C3AB_FOLD_PUBLIC_LEN: u32 = 2 + 2 + (6 * C3_SLOTS);
 pub global C4_PUBLIC_LEN: u32 = (H * L_THRESHOLD) + 1;
 pub global C4AB_FOLD_PUBLIC_LEN: u32 = 3 + (2 * C4_PUBLIC_LEN);
 
 /// Must match `node_fold::NODE_FOLD_PUBLIC_LEN`.
-pub global NODE_FOLD_PUBLIC_LEN: u32 = 11 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
+pub global NODE_FOLD_PUBLIC_LEN: u32 = 14 + N_PARTIES + (2 * (N_PARTIES + H) * L_THRESHOLD);
 
-/// Same shape as `nodes_fold`: 4 pub parameters + `H` full `node_fold` public rows (flattened).
-pub global NODES_FOLD_PUBLIC_LEN: u32 = 4 + (H * NODE_FOLD_PUBLIC_LEN);
+/// Same shape as `nodes_fold`: 6 pub parameters + `H` full `node_fold` public rows (flattened).
+pub global NODES_FOLD_PUBLIC_LEN: u32 = 6 + (H * NODE_FOLD_PUBLIC_LEN);
 
 fn main(
     inner_vk: UltraHonkVerificationKey,
@@ -37,6 +37,8 @@ fn main(
     acc_key_hash: pub Field,
     is_first_step: pub bool,
     slot_index: pub u32,
+    expected_kernel_key_hash: pub Field,
+    expected_fold_key_hash: pub Field,
 ) -> pub [[Field; NODE_FOLD_PUBLIC_LEN]; H] {
     assert(slot_index < H);
 
@@ -48,9 +50,10 @@ fn main(
     );
 
     // Signature parity with `nodes_fold`: see `c3_fold_kernel`.
-    let _ = (acc_vk, acc_proof, acc_key_hash, acc_public_inputs);
+    let _ = (acc_vk, acc_proof, acc_key_hash, acc_public_inputs, expected_fold_key_hash);
 
     assert(is_first_step);
+    assert(acc_key_hash == expected_kernel_key_hash);
 
     let mut out: [[Field; NODE_FOLD_PUBLIC_LEN]; H] = [[0; NODE_FOLD_PUBLIC_LEN]; H];
 

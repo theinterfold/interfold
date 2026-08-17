@@ -80,6 +80,7 @@ GR=( "${SCRIPT_DIR}/generate_report.sh"
     --git-branch "$GIT_BRANCH"
     --gas-json "$GAS_JSON"
     --benchmark-mode "$MODE"
+    --committee "$OUTPUT_COMMITTEE"
 )
 if [ -f "$RUN_META" ]; then
     GR+=(--run-meta "$RUN_META")

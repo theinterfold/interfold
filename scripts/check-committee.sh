@@ -88,6 +88,7 @@ case "$ACTIVE_COMMITTEE" in
   minimum) EXPECTED_SIZE=0 ;;
   micro) EXPECTED_SIZE=1 ;;
   small) EXPECTED_SIZE=2 ;;
+  *) fail "unknown committee '$ACTIVE_COMMITTEE' in $ACTIVE_NR" ;;
 esac
 if [[ "$SOL_H" != "$EXPECTED_H" || "$SOL_T" != "$EXPECTED_T" || "$SOL_N" != "$EXPECTED_N" || "$SOL_SIZE" != "$EXPECTED_SIZE" ]]; then
   fail "drift: $ACTIVE_SOL has (size=$SOL_SIZE, N=$SOL_N, T=$SOL_T, H=$SOL_H), expected (size=$EXPECTED_SIZE, N=$EXPECTED_N, T=$EXPECTED_T, H=$EXPECTED_H)"
@@ -139,22 +140,28 @@ $COMMITTEE_RS has (N=$rust_n, T=$rust_t, H=$rust_h) for $capitalized"
   fi
 done
 
-# 7. Parity matrices for every committee must match what `generate_parity_matrices` would
-#    write right now. Hand-edits to parity_*.nr would slip past every other check, so verify
-#    them by regenerating into a tempdir and diffing. On-disk files are kept `nargo fmt`-clean
+# 7. Derived Noir artifacts for every committee must match what `generate_parity_matrices` would
+#    write right now. Hand-edits would slip past every other check, so verify them by
+#    regenerating into a tempdir and diffing. On-disk files are kept `nargo fmt`-clean
 #    (see `scripts/lint-circuits.sh`), so we format the generator output before comparing.
 #    Skipped when the binary is unavailable (fresh clone before `cargo build`); the build step
 #    will re-emit them anyway.
 GEN_BIN="target/release/generate_parity_matrices"
 NOIR_LIB="circuits/lib"
-format_parity_matrices_for_committee() {
+for c in minimum micro small; do
+  for artifact in parity_insecure.nr parity_secure.nr smudging.nr; do
+    [[ -f "$NOIR_LIB/src/configs/committee/$c/$artifact" ]] || fail "missing generated committee artifact: $c/$artifact"
+  done
+done
+
+format_committee_artifacts() {
   local committee="$1"
   local tmp="$2"
   local variant live fresh backup formatted
   local -a swapped_live=()
   local -a swapped_backup=()
 
-  _restore_swapped_parity_live() {
+  _restore_swapped_committee_live() {
     local i
     for i in "${!swapped_live[@]}"; do
       if [[ -f "${swapped_backup[$i]}" ]]; then
@@ -163,7 +170,7 @@ format_parity_matrices_for_committee() {
     done
   }
 
-  trap '_restore_swapped_parity_live' ERR
+  trap '_restore_swapped_committee_live' ERR
 
   for variant in insecure secure; do
     live="$NOIR_LIB/src/configs/committee/$committee/parity_${variant}.nr"
@@ -177,13 +184,23 @@ format_parity_matrices_for_committee() {
     swapped_backup+=("$backup")
   done
 
+  live="$NOIR_LIB/src/configs/committee/$committee/smudging.nr"
+  fresh="$tmp/$committee/smudging.nr"
+  if [[ -f "$live" && -f "$fresh" ]]; then
+    backup="$tmp/$committee/smudging.live.bak"
+    cp "$live" "$backup"
+    cp "$fresh" "$live"
+    swapped_live+=("$live")
+    swapped_backup+=("$backup")
+  fi
+
   if ((${#swapped_live[@]} == 0)); then
     trap - ERR
     return 0
   fi
 
   if ! (cd "$NOIR_LIB" && nargo fmt) >/dev/null; then
-    _restore_swapped_parity_live
+    _restore_swapped_committee_live
     trap - ERR
     return 1
   fi
@@ -198,38 +215,48 @@ format_parity_matrices_for_committee() {
     cp "$backup" "$live"
     cp "$formatted" "$fresh"
   done
+  live="$NOIR_LIB/src/configs/committee/$committee/smudging.nr"
+  fresh="$tmp/$committee/smudging.nr"
+  backup="$tmp/$committee/smudging.live.bak"
+  formatted="$tmp/$committee/smudging.formatted.nr"
+  if [[ -f "$backup" ]]; then
+    cp "$live" "$formatted"
+    cp "$backup" "$live"
+    cp "$formatted" "$fresh"
+  fi
 
   trap - ERR
 }
 
-if [[ -x "$GEN_BIN" ]]; then
-  if ! command -v nargo >/dev/null 2>&1; then
-    echo "  (skipping parity-matrix drift check: nargo not found. Install nargo to enable formatted parity comparison.)" >&2
-  else
-    RAN_PARITY_CHECK=true
-    TMP=$(mktemp -d)
-    trap 'rm -rf "$TMP"' EXIT
-    # Mirror the committee dir layout so the bin can write into <tmp>/<committee>/.
-    for c in minimum micro small; do
-      if [[ -d "circuits/lib/src/configs/committee/$c" ]]; then
-        mkdir -p "$TMP/$c"
-      fi
-    done
-    for c in minimum micro small; do
-      [[ -d "$TMP/$c" ]] || continue
-      "$GEN_BIN" --committee "$c" --output-root "$TMP" >/dev/null
-      format_parity_matrices_for_committee "$c" "$TMP"
-      for variant in insecure secure; do
-        live="circuits/lib/src/configs/committee/$c/parity_${variant}.nr"
-        fresh="$TMP/$c/parity_${variant}.nr"
-        if [[ -f "$live" && -f "$fresh" ]] && ! diff -q "$live" "$fresh" >/dev/null; then
-          fail "$live drift vs generator output. Run: pnpm build:circuits --committee $c"
-        fi
-      done
-    done
+command -v nargo >/dev/null 2>&1 || fail "nargo is required to verify generated committee artifacts"
+cargo build --quiet --release -p e3-zk-helpers --bin generate_parity_matrices
+RAN_PARITY_CHECK=true
+TMP=$(mktemp -d)
+trap 'rm -rf "$TMP"' EXIT
+# Mirror the committee dir layout so the bin can write into <tmp>/<committee>/.
+for c in minimum micro small; do
+  if [[ -d "circuits/lib/src/configs/committee/$c" ]]; then
+    mkdir -p "$TMP/$c"
   fi
-else
-  echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`cargo build -p e3-zk-helpers --bin generate_parity_matrices --release\` to enable.)" >&2
-fi
+done
+for c in minimum micro small; do
+  [[ -d "$TMP/$c" ]] || continue
+  "$GEN_BIN" --committee "$c" --output-root "$TMP" >/dev/null
+  format_committee_artifacts "$c" "$TMP"
+  for variant in insecure secure; do
+    live="circuits/lib/src/configs/committee/$c/parity_${variant}.nr"
+    fresh="$TMP/$c/parity_${variant}.nr"
+    [[ -f "$fresh" ]] || fail "$GEN_BIN did not generate $fresh"
+    if ! diff -q "$live" "$fresh" >/dev/null; then
+      fail "$live drift vs generator output. Run: pnpm build:circuits --committee $c"
+    fi
+  done
+  live="circuits/lib/src/configs/committee/$c/smudging.nr"
+  fresh="$TMP/$c/smudging.nr"
+  [[ -f "$fresh" ]] || fail "$GEN_BIN did not generate $fresh"
+  if ! diff -q "$live" "$fresh" >/dev/null; then
+    fail "$live drift vs generator output. Run: pnpm build:circuits --committee $c"
+  fi
+done
 
-echo "✓ check:committee: $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) consistent across active.nr, ActiveCryptoConfig.sol, utils.ts, Rust committee rows$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) consistent across active.nr, ActiveCryptoConfig.sol, utils.ts, Rust committee rows$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', generated committee artifacts')"

@@ -269,6 +269,8 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
   public-input layout and must be redeployed on committee change.
 - Parity matrices (`parity_{insecure,secure}.nr`) are derived artifacts regenerated from preset
   `QIS` + committee `(N, T)`; hand-edits are caught by regenerate-and-diff.
+- Smudging constants (`smudging.nr`) are derived artifacts regenerated from the BFV preset and
+  committee size. C1 and C2b use the same generated bit width.
 
 ### Noir / Barretenberg compatibility
 
@@ -287,8 +289,10 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 ### DKG / threshold structure
 
 - SK splits into N shares; any **M+1** reconstruct/decrypt. — `flow-trace/04`
-- `party_id` derives from the finalized committee normalized by ascending address; 1-indexed,
-  strictly increasing. Active aggregator = lowest non-expelled `party_id`. — `ARCHITECTURE.md`;
+- DKG runtime and NodeFold `party_id` derives from the finalized committee normalized by ascending
+  address; it is zero-indexed and strictly increasing. Active aggregator = lowest non-expelled
+  `party_id`. Decryption-aggregator Shamir coordinates are a separate 1-indexed circuit format and
+  translate to zero-indexed registry slots at the wrapper boundary. — `ARCHITECTURE.md`;
   `flow-trace/04`
 - DKG aggregation receives **exactly H** canonical honest NodeFold proofs (unique in-range party
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert
@@ -326,6 +330,16 @@ skip-proof feature containment (`pnpm check:invariants`, baselines in
 - **No proof-disabled bypass (C-02):** both final verifier calls are mandatory in production;
   `skip_proof_aggregation` works only under the `test-only-skip-proof-aggregation` Cargo feature;
   production verifiers reject placeholder C5/C7 proofs. — INDEX concern #32
+- **Complete DKG recursive VK binding:** the DKG proof carries the canonical `NodeFold` VK hash and
+  a recursive VK manifest. The manifest binds the C0/C1, C2 chunk/batch/finalizer/C2AB, C3
+  leaf/fold/kernel/C3AB, C4 leaf/C4AB, and NodesFold kernel VK hashes. NodesFold and C3Fold bind
+  both the current accumulator VK and each prior accumulator's expected kernel or fold VK hash, and
+  every fold step asserts the accumulator's child-VK hash equals the inner proof's VK hash (IF-005);
+  a substituted inner VK fails witness generation. C2 terminal proofs
+  (`SkC2ChunkFinalize`/`ESmC2ChunkFinalize`) are bound to the deployment-time chunk-leaf and
+  `C2ChunkBatch` VK anchors before generic verification (IF-006). `BfvPkVerifier` checks these
+  values against deployment-time anchors before it calls the Honk verifier. — `dkg_aggregator`,
+  `BfvPkVerifier`
 - Circuit soundness fixes to preserve: `ModU64::div_mod` verifies
   `result*divisor == dividend (mod modulus)` (IF-001); C7 compares **every** decoded coefficient,
   including zeros, to the claimed message (IF-002).
