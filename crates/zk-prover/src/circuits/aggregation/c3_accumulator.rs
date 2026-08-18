@@ -61,7 +61,8 @@ impl C3FoldVks {
 ///
 /// Uses work dir `job_id` (caller should use a suffix of the fold `e3_id` so jobs stay distinct).
 /// Removes that work dir after the proof is returned.
-fn generate_c3_fold_kernel_genesis_proof(
+#[allow(unused)]
+pub(crate) fn generate_c3_fold_kernel_genesis_proof(
     prover: &ZkProver,
     inner: &Proof,
     total_slots: usize,
