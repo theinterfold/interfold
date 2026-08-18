@@ -318,3 +318,102 @@ pub fn generate_sequential_c3_fold(
         },
     )
 }
+
+/// Batched c3 fold (I5 productionization, drop-in alternative to ``generate_sequential_c3_fold``):
+/// proves the ``c3_fold_batch_n{K+1}`` circuit once for ``K = inner_proofs.len() - 1`` leaves over
+/// a fresh kernel genesis, instead of ``K`` sequential ``c3_fold`` steps.
+///
+/// Semantics mirror the sequential API with ``slot_indices = [0, 1, ..., K]``:
+/// ``inner_proofs[0]`` anchors slot 0 (kernel genesis) and the remaining proofs fill slots
+/// 1..=K. The returned fold proof verifies the inner proofs against the same accumulator layout
+/// as ``generate_sequential_c3_fold``, landing on the identical slot state.
+///
+/// Constraint: 2..=4 inners (circuits n2/n3/n4 exist; larger trees need the batched-root
+/// composition, not a single deeper circuit).
+pub fn generate_batched_c3_fold(
+    prover: &ZkProver,
+    inner_proofs: &[Proof],
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    match inner_proofs.len() {
+        2 => CircuitName::C3FoldBatchN2,
+        3 => CircuitName::C3FoldBatchN3,
+        4 => CircuitName::C3FoldBatchN4,
+        _ => {
+            return Err(ZkError::InvalidInput(format!(
+                "generate_batched_c3_fold: {} inners not supported (need 2..=4; batch the rest at the tree level)",
+                inner_proofs.len()
+            )))
+        }
+    };
+    let circuit_name = match inner_proofs.len() {
+        2 => CircuitName::C3FoldBatchN2,
+        _ => match inner_proofs.len() {
+            3 => CircuitName::C3FoldBatchN3,
+            _ => CircuitName::C3FoldBatchN4,
+        },
+    };
+
+    let vks = C3FoldVks::load(prover, artifacts_dir)?;
+
+    // Fresh kernel genesis: anchor = first inner proof fills slot 0 (same convention as the
+    // sequential chain's first step).
+    let anchor = generate_c3_fold_kernel_genesis_proof(
+        prover,
+        &inner_proofs[0],
+        total_slots,
+        artifacts_dir,
+        &format!("{e3_id}-kernel"),
+    )?;
+
+    // Batch noir inputs: avk/aproof/api = kernel genesis; ivk/iprf/c3pi/ikh per leaf.
+    let mut out = serde_json::Map::new();
+    let mut push = |name: &str, v: serde_json::Value| out.insert(name.to_string(), v);
+    for (k, leaf) in inner_proofs[1..].iter().enumerate() {
+        let kk = k.to_string();
+        push(&format!("ivk{kk}"), serde_json::to_value(&vks.inner_vk.verification_key).unwrap());
+        push(
+            &format!("iprf{kk}"),
+            serde_json::to_value(&bytes_to_field_strings(&leaf.data)?).unwrap(),
+        );
+        push(
+            &format!("c3pi{kk}"),
+            serde_json::to_value(&[
+                extract_single_field(leaf, "input", field_keys::EXPECTED_PK_COMMITMENT, "inner ShareEncryption proof")?,
+                extract_single_field(leaf, "input", field_keys::EXPECTED_MESSAGE_COMMITMENT, "inner ShareEncryption proof")?,
+                extract_single_field(leaf, "output", field_keys::CT_COMMITMENT, "inner ShareEncryption proof")?,
+            ])
+            .unwrap(),
+        );
+        push(&format!("ikh{kk}"), serde_json::to_value(&vks.inner_vk.key_hash).unwrap());
+    }
+    push("avk", serde_json::to_value(&vks.kernel_vk.verification_key).unwrap());
+    push("aproof", serde_json::to_value(&bytes_to_field_strings(&anchor.data)?).unwrap());
+    push(
+        "api",
+        serde_json::to_value(&bytes_to_field_strings(anchor.public_signals.as_ref())?).unwrap(),
+    );
+    push("akh", serde_json::to_value(&vks.kernel_vk.key_hash).unwrap());
+    push("gen_hash0", serde_json::json!("0"));
+    push("gen_hash1", serde_json::json!("0"));
+    drop(push); // (closure borrows `out`; JSON object is built above before this fns below)
+
+    let circuit_path = prover
+        .circuits_dir(CircuitVariant::Default, artifacts_dir)
+        .join(circuit_name.dir_path())
+        .join(format!("{}.json", circuit_name.as_str()));
+    let compiled = CompiledCircuit::from_file(&circuit_path)?;
+
+    let json = serde_json::Value::Object(out);
+    let input_map = inputs_json_to_input_map(&json)?;
+    let witness = WitnessGenerator::new().generate_witness(&compiled, input_map)?;
+
+    prover.generate_recursive_aggregation_bin_proof(
+        circuit_name,
+        &witness,
+        e3_id,
+        artifacts_dir,
+    )
+}
