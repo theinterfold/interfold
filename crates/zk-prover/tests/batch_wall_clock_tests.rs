@@ -27,7 +27,8 @@ use e3_zk_prover::test_utils::{
     fold_witness_input_map, load_vk_artifacts,
 };
 use e3_zk_prover::{
-    generate_sequential_c3_fold, CompiledCircuit, Provable, ZkProver, WitnessGenerator,
+    generate_batched_c3_fold, generate_sequential_c3_fold, CompiledCircuit, Provable, ZkProver,
+    WitnessGenerator,
 };
 use serde_json::{json, Value};
 
