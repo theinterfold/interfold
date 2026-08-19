@@ -244,12 +244,25 @@ async fn r9_production_fit_batched_c3_fold_equivalence() {
     );
     assert!(eq, "serial and production-fit batch folds must land on the same slot array");
 
-    // Gate-side model (RAN `bb gates` on this box, earlier in this round):
+    // Gate-side model, all RAN `bb gates` on this box (noir-recursive-no-zk, C3_SLOTS=6):
+    //   c3_fold recursive step = 1,448,866 (reproduces round 4 — anchor OK)
+    //   b2 batch gate          = 2,215,183 (one one-time non-ZK anchor verify + 2 ZK verifies)
+    //   b3 batch gate          = 2,981,374 (one one-time non-ZK anchor verify + 3 ZK verifies)
+    //   => marginal cost per ADDED new-leaf = (b3 - b2) = 766,191 gates  (vs 1,448,866 serial
+    //      per step) = -47.1% per covered step; scales linearly in B (one
+    //      non-ZK anchor + B x ZK verifies), so the saving grows with B.
+    //
+    // Wall (this box, debug) — same shape as the r8 apples-to-apples: SERIAL wall
+    // includes the kernel genesis; BATCH wall = kernel + one b2 gate. Kernel is
+    // shared, identical object in both arms.
+    let batch_wall_total = kernel_wall + bat_wall;
+    let save = seq_wall - batch_wall_total;
     println!(
-        "  gates [RAN bb gates]: serial 2 c3_fold steps = 2,897,732 vs one b2 gate = 2,215,183 (-23.5%)"
+        "  gates [RAN]: serial step 1,448,866 vs batch marginal +new-leaf 766,191 (-47.1%; b2=2,215,183, b3=2,981,374)"
     );
     println!(
-        "  WALLS [RAN this box, debug]: serial 3 steps = {seq_wall:.1}s vs kernel + one b2 gate = {bat_wall:.1}s"
+        "  WALL [RAN, debug]: fold layer serial = {seq_wall:.1}s | fold layer batch (kernel + b2) = {batch_wall_total:.1}s | saving = {save:.1}s ({:.1}%), classify shape = same public ABI as c3_fold",
+        100.0 * save / seq_wall
     );
     println!("=================================================");
 
