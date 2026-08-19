@@ -1,0 +1,15 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.53s
+     Running tests/batch_wall_clock_tests_r11.rs (target/debug/deps/batch_wall_clock_tests_r11-1bb7f898f9b89a64)
+
+running 1 test
+=== I5 r11 b3 DROP-IN (4 inners, C3_SLOTS=6) ===
+test r11_b3_dropin_equivalence has been running for over 60 seconds
+  serial    wall = 53.7s  verify = PASS  (4 top-level proves: 1 kernel + 3 c3_fold)
+  batched   wall = 30.1s  verify = PASS  (2 top-level proves: 1 kernel + 1 b3 gate)
+  IDENTICAL ACCUMULATOR SLOT TAIL (18 fields): true  [RAN]
+  SAVING = 23.7s  (44.0% of serial wall)
+  Gates (RAN r9): serial c3_fold step 1,448,866; b3 gate 2,981,374 (one-time non-ZK anchor + 3 leaf verifies). Fold-layer top-level proves: serial 4 -> b3 2.
+test r11_b3_dropin_equivalence ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 96.33s
+
