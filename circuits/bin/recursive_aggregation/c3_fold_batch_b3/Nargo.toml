@@ -1,0 +1,9 @@
+[package]
+name = "c3_fold_batch_b3"
+type = "bin"
+authors = ["Gnosis Guild / Interfold (I5 r9 PoC)"]
+
+[dependencies]
+lib = { path = "../../../lib" }
+c3_fold_batch_lib = { path = "../c3_fold_batch_lib" }
+bb_proof_verification = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v5.1.0", directory = "barretenberg/noir/bb_proof_verification" }

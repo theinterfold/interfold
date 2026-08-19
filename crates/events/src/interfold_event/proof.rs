@@ -134,6 +134,11 @@ pub enum CircuitName {
     C3FoldBatchN3,
     /// I5 PoC (not shipped): batched non-recursive c3 fold, 3 leaves verified over the kernel genesis.
     C3FoldBatchN4,
+    /// I5 r9 (not shipped): production-fit batched non-recursive c3 fold, 2 leaves,
+    /// same public ABI as `c3_fold` (4-field prefix + 3*C3_SLOTS), runtime slots.
+    C3FoldBatchB2,
+    /// I5 r9 (not shipped): production-fit batched non-recursive c3 fold, 3 leaves.
+    C3FoldBatchB3,
     /// Sequential C6 fold: inner ZK + prior `c6_fold` non-ZK proof (phase-7 aggregator).
     C6Fold,
     /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
@@ -173,6 +178,8 @@ impl CircuitName {
             CircuitName::C3FoldBatchN2 => "c3_fold_batch_n2",
             CircuitName::C3FoldBatchN3 => "c3_fold_batch_n3",
             CircuitName::C3FoldBatchN4 => "c3_fold_batch_n4",
+            CircuitName::C3FoldBatchB2 => "c3_fold_batch_b2",
+            CircuitName::C3FoldBatchB3 => "c3_fold_batch_b3",
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
             CircuitName::C2abFold => "c2ab_fold",
@@ -211,6 +218,8 @@ impl CircuitName {
             | CircuitName::C3FoldBatchN2
             | CircuitName::C3FoldBatchN3
             | CircuitName::C3FoldBatchN4
+            | CircuitName::C3FoldBatchB2
+            | CircuitName::C3FoldBatchB3
             | CircuitName::DecryptionAggregator => "recursive_aggregation",
         }
     }
@@ -251,6 +260,8 @@ impl CircuitName {
             | CircuitName::C3FoldBatchN2
             | CircuitName::C3FoldBatchN3
             | CircuitName::C3FoldBatchN4
+            | CircuitName::C3FoldBatchB2
+            | CircuitName::C3FoldBatchB3
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold
