@@ -252,10 +252,10 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         // Use message commitment instead of full message
         inputs = inputs.push_back(self.expected_message_commitment);
 
-        // Include computed k1 in payload
-        for i in 0..N {
-            inputs = inputs.push_back(k1.coefficients[i]);
-        }
+        // (I3) The raw k1 push was removed: k1 = f(message) via compute_scaled_message
+        // and `message` is commitment-bound via verify_message_commitment, so k1 is
+        // transitively bound to the publicly pinned expected_message_commitment.
+        // Pushing all N raw k1 coefficients into the sponge was redundant.
 
         inputs = flatten::<_, _, BIT_R1>(inputs, self.r1is);
         inputs = flatten::<_, _, BIT_R2>(inputs, self.r2is);
