@@ -1,8 +1,14 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 //
-//! I5 r9 PoC bin: B=3-leaf production-fit c3 fold gate.
+//! I5 r9 PoC bin (r11: 4-prefix production ABI): B=3-leaf production-fit c3 fold gate.
 //! Public ABI == `c3_fold` return: 3 x C3_SLOTS pub fields + acc_key_hash /
-//! is_first_step / slots pub params (key-hash chain preserved).
+//! is_first_step / slot0 / slot1 pub params (key-hash chain preserved).
+//!
+//! r11: `slot2` is a private param now (was `pub`, 5-prefix ABI). `c3_batch` takes the
+//! slot list privately and asserts in-range + pairwise-distinct + zero-covered-in-anchor
+//! in-circuit, so nothing is lost in soundness by not pinning it further; the emitted
+//! public tuple is `c3_fold`'s `([SLOTS];[SLOTS];[SLOTS])` — the same public ABI
+//! `c3ab_fold` binds against (4 + 3*C3_SLOTS fields, slot array at offset 4).
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof,
@@ -34,7 +40,7 @@ fn main(
     is_first_step: pub bool,
     slot0: pub u32,
     slot1: pub u32,
-    slot2: pub u32,
+    slot2: u32,
 ) -> pub ([Field; C3_SLOTS], [Field; C3_SLOTS], [Field; C3_SLOTS]) {
     let inners: [C3Inner; 3] = [
         C3Inner { vk: vk0, proof: proof0, c3_public_inputs: c3a, key_hash: kh0 },

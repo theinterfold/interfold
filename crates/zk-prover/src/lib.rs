@@ -28,7 +28,7 @@ pub use domain::commitment_links::default_links;
 
 pub use backend::{SetupStatus, ZkBackend};
 pub use circuits::aggregation::c3_accumulator::{
-    generate_batched_c3_fold, generate_batched_c3_fold_b2, generate_sequential_c3_fold,
+    generate_batched_c3_fold, generate_batched_c3_fold_b2, generate_batched_c3_fold_b3, generate_sequential_c3_fold,
 };
 pub use circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
 pub use circuits::aggregation::node_dkg_fold::{
