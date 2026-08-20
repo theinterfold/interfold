@@ -238,12 +238,17 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Uses commitments in place of full pk and message polynomials to reduce
     /// constraint count while preserving binding properties. The computed k1 is
     /// included explicitly since it is derived, not directly committed.
-    fn payload(self, k1: Polynomial<N>) -> [Field] {
+    fn payload(self, k1: Polynomial<N>, ct_commitment: Field) -> [Field] {
         // Use pk commitment instead of full pk polynomials
         let mut inputs = [self.expected_pk_commitment].as_vector();
 
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0is);
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct1is);
+        // (I14 variant) ct0/ct1 are bound to the public output
+        // `return_value` = compute_ciphertext_commitment(ct0is, ct1is), which the
+        // proof attests and the aggregator re-derives; the packed raw ct limbs in
+        // the challenge were redundant (I3 pattern: bind via the commitment).
+        // ct_commitment (one Field) is pushed instead of 2*N*L packed carriers;
+        // it is computed ONCE in execute() and threaded in here.
+        inputs = inputs.push_back(ct_commitment);
 
         inputs = flatten::<_, _, BIT_E0>(inputs, [self.e0]);
         inputs = flatten::<_, _, BIT_E1>(inputs, [self.e1]);
@@ -302,12 +307,15 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         let k1 = self.compute_scaled_message();
 
         // Step 6: Generate Fiat-Shamir challenges
-        let gammas = self.generate_challenge(k1);
+        // (I14 variant) compute ct_commitment once; it is both the public output
+        // and the ct binding in the challenge transcript.
+        let ct_commitment = compute_ciphertext_commitment::<N, L, BIT_CT>(self.ct0is, self.ct1is);
+        let gammas = self.generate_challenge(k1, ct_commitment);
 
         // Step 7: Verify encryption constraints
         self.verify_evaluations(gammas, k1);
 
-        compute_ciphertext_commitment::<N, L, BIT_CT>(self.ct0is, self.ct1is)
+        ct_commitment
     }
 
     /// Performs range checks on all secret witness polynomial coefficients.
@@ -354,8 +362,8 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Returns 2*L challenge values: one primary gamma at index 0 for evaluating all
     /// polynomials, L-1 weights at indices 1..L-1 for batching ct0 equations across
     /// moduli, and L weights at indices L..2L-1 for batching ct1 equations.
-    fn generate_challenge(self, k1: Polynomial<N>) -> [Field] {
-        let inputs = self.payload(k1);
+    fn generate_challenge(self, k1: Polynomial<N>, ct_commitment: Field) -> [Field] {
+        let inputs = self.payload(k1, ct_commitment);
 
         compute_share_encryption_challenge::<L>(inputs)
     }
