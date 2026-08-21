@@ -1,8 +1,9 @@
 # Building with the Interfold
 
 The Interfold smart contract acts as the central coordinator for all E3 operations. It manages
-computation requests, input validation, Ciphernode Committees (CiCos), and result publication while
-maintaining the security and privacy guarantees of the protocol.
+computation requests, Ciphernode Committees (CiCos), and result publication while maintaining the
+security and privacy guarantees of the protocol. Each E3 program validates its own requests, inputs,
+and outputs.
 
 ## The Interfold Smart Contract
 
@@ -10,10 +11,12 @@ maintaining the security and privacy guarantees of the protocol.
 
 - Manage E3 computation requests
 - Coordinate Ciphernode Committees
-- Handle encrypted input submission
-- Manage Merkle trees for input verification
+- Store E3 program references and invoke their request-validation and output-verification hooks
 - Publish computation results
 - Emit events for off-chain services
+
+Input submission and the input Merkle tree belong to each E3 program, not to Interfold. See
+`IE3Program.publishInput`.
 
 ### Key State Variables
 
@@ -47,7 +50,7 @@ contract Interfold {
   // Mapping of E3 payment amounts.
   mapping(uint256 e3Id => uint256 amount) public e3Payments;
 
-  // Maximum allowed duration for an E3's input window.
+  // Maximum allowed worst-case request-to-decryption duration.
   uint256 public maxDuration;
 
   // Auto-incrementing E3 identifier.
@@ -61,9 +64,9 @@ Each computation is tracked by an `E3` struct:
 
 ```solidity
 struct E3 {
-  uint256 seed; // Random seed for committee selection
+  uint256 seed; // Random seed for the E3 computation
   CommitteeSize committeeSize; // Committee size enum (Minimum, Micro, Small)
-  uint256 requestBlock; // Block when E3 was requested
+  uint256 requestBlock; // Request timestamp, despite the name
   uint256[2] inputWindow; // [start, end] timestamps for input acceptance
   bytes32 encryptionSchemeId; // Encryption scheme identifier
   IE3Program e3Program; // E3 Program contract address
@@ -75,6 +78,7 @@ struct E3 {
   bytes32 ciphertextOutput; // Hash of encrypted output
   bytes plaintextOutput; // Decrypted final result
   address requester; // Entity that requested computation
+  bytes32 ciphertextCommitment; // SAFE commitment to the decoded BFV ciphertext
 }
 ```
 
@@ -82,15 +86,15 @@ struct E3 {
 
 Each E3 progresses through these stages:
 
-| Stage                | Value | Description                                     |
-| -------------------- | ----- | ----------------------------------------------- |
-| `None`               | 0     | E3 does not exist                               |
-| `Requested`          | 1     | E3 submitted, committee selection initiated     |
-| `CommitteeFinalized` | 2     | Sortition complete, DKG started                 |
-| `KeyPublished`       | 3     | Committee public key published, inputs accepted |
-| `CiphertextReady`    | 4     | Encrypted output published, awaiting decryption |
-| `Complete`           | 5     | Plaintext output published, rewards distributed |
-| `Failed`             | 6     | Timeout or fault detected, refund initiated     |
+| Stage                | Value | Description                                                              |
+| -------------------- | ----- | ------------------------------------------------------------------------ |
+| `None`               | 0     | E3 does not exist                                                        |
+| `Requested`          | 1     | E3 submitted, committee selection initiated                              |
+| `CommitteeFinalized` | 2     | Sortition complete, DKG started                                          |
+| `KeyPublished`       | 3     | Committee public key published; the E3 program controls input acceptance |
+| `CiphertextReady`    | 4     | Encrypted output published, awaiting decryption                          |
+| `Complete`           | 5     | Plaintext output published, rewards distributed                          |
+| `Failed`             | 6     | Failure recorded. `processE3Failure` calculates refunds                  |
 
 ### View Functions
 
@@ -104,14 +108,7 @@ function getE3(uint256 e3Id) external view returns (E3 memory e3);
 function getE3Stage(uint256 e3Id) external view returns (E3Stage stage);
 
 // Estimate the fee for an E3 request
-function getE3Quote(
-  CommitteeSize committeeSize,
-  uint256[2] calldata inputWindow,
-  IE3Program e3Program,
-  uint8 paramSet,
-  bytes calldata computeProviderParams,
-  bytes calldata customParams
-) external view returns (uint256 fee);
+function getE3Quote(E3RequestParams calldata e3Params) external view returns (uint256 fee);
 
 // Quotes are cost-plus: modeled ciphernode costs plus marginBps. On success,
 // the treasury receives protocolShareBps of the gross E3 fee and the active
@@ -141,26 +138,22 @@ function getTimeoutConfig() external view returns (E3TimeoutConfig memory config
 
 ### Request Flow
 
-1. Users submit the request parameters: committee size, timing windows, program references, BFV
-   parameter set, and optional custom params.
+1. Users submit one `E3RequestParams` value. It carries the committee size, the input window, the
+   program reference, the BFV parameter set, the application params, and the fee bounds the
+   requester accepts.
 
    ```solidity
    function request(
-     CommitteeSize committeeSize,
-     uint256[2] calldata inputWindow,
-     IE3Program e3Program,
-     uint8 paramSet,
-     bytes calldata computeProviderParams,
-     bytes calldata customParams
-   ) external returns (uint256 e3Id);
+     E3RequestParams calldata requestParams
+   ) external returns (uint256 e3Id, E3 memory e3);
    ```
 
-2. Contract validates the parameters, estimates the fee, and stores an `E3` record with the shared
-   seed used for deterministic ticket scoring.
+2. Contract validates the parameters, quotes the fee, and stores an `E3` record with a seed for the
+   computation. The registry derives a separate committee seed after the request is final.
 3. The E3 program's `validate` hook returns the encryption scheme ID, which is persisted on the `E3`
    struct.
 4. Committee selection is delegated to the `ciphernodeRegistry` via `requestCommittee`.
-5. `E3Requested(e3Id, e3, e3ProgramAddress)` is emitted for off-chain watchers.
+5. `E3Requested(e3Id, e3, cryptoConfigId)` is emitted for off-chain watchers.
 
 ## Committee and Ciphernode Management
 
@@ -180,8 +173,10 @@ Distributed Key Generation (DKG) to produce a shared public key. When the aggreg
 published, the CiphernodeRegistry calls `onCommitteePublished()` on the Interfold contract, which
 transitions the E3 to the `KeyPublished` stage.
 
-Once the E3 reaches the `KeyPublished` stage and the input window opens
-(`block.timestamp >= inputWindow[0]`), Data Providers can submit inputs to the computation.
+Interfold does not gate input submission. Each E3 program does, in its own `publishInput`. The
+recommended gate is the `KeyPublished` stage plus both bounds of `inputWindow`. The default template
+checks only `inputWindow[1]`, so it accepts inputs from the `Requested` stage onward. `CRISPProgram`
+checks the stage and both bounds.
 
 ## Input Publication
 
@@ -197,15 +192,17 @@ function publishInput(
 Inputs can be accumulated incrementally into a Merkle tree (LazyIMT, or ultimately chosen by the
 program implementation). This allows you to:
 
-1. Use the published Merkle root as part of your E3 Program's Secure Process to ensure all published
-   inputs are processed by the Compute Provider.
+1. Use the published Merkle root as part of your E3 Program's Secure Process to ensure no published
+   input is substituted or dropped from the tree the proof commits to. Which of those inputs the
+   computation runs over is a separate choice, made by the program's input policy.
 2. Prevent input tampering or omission.
 3. Anchor proofs for correct execution.
 
 ### Merkle Tree Construction
 
-The Interfold uses a Lean Merkle Tree implementation. Each input is hashed using the PoseidonT3 Hash
-function, and the root is updated with each new input.
+The input tree belongs to the E3 program, not to Interfold. The default template uses
+`InternalLazyIMT` from `@zk-kit/lazy-imt.sol`. It inserts each SAFE ciphertext commitment directly
+as a leaf, and PoseidonT3 combines node pairs as the tree grows.
 
 Your E3 program should:
 
@@ -236,11 +233,15 @@ the E3's public key. It is also recommended to bundle in proofs to validate:
 **Interfold Contract Events:**
 
 ```solidity
-event E3Requested(uint256 e3Id, E3 e3, IE3Program indexed e3Program);
+event E3Requested(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId);
 
 event E3StageChanged(uint256 indexed e3Id, E3Stage previousStage, E3Stage newStage);
 
-event CiphertextOutputPublished(uint256 indexed e3Id, bytes ciphertextOutput);
+event CiphertextOutputPublished(
+  uint256 indexed e3Id,
+  bytes ciphertextOutput,
+  bytes32 ciphertextCommitment
+);
 
 event PlaintextOutputPublished(uint256 indexed e3Id, bytes plaintextOutput, bytes proof);
 
@@ -252,14 +253,15 @@ event RewardsDistributed(uint256 indexed e3Id, address[] nodes, uint256[] amount
 **Program Contract Events:**
 
 ```solidity
-event InputPublished(uint256 indexed e3Id, bytes data, uint256 inputHash, uint256 index);
+event InputPublished(uint256 indexed e3Id, bytes data, uint256 index);
 ```
 
 ### Result Publication Flow
 
-1. The Compute Provider submits a proof and ciphertext output.
-2. The Interfold uses the E3 Program contract to verify the proof and emits
-   `CiphertextOutputPublished`.
+1. The Compute Provider returns the proof and ciphertext output to a callback server, which submits
+   them to Interfold.
+2. Interfold verifies the proof twice. The request-time protocol verifier runs first, then the E3
+   program verifier. Both checks must pass before Interfold emits `CiphertextOutputPublished`.
 3. Ciphernodes decrypt the ciphertext output.
 4. The plaintext result is then published and the Decryption Verifier validates the decryption
    proof.
@@ -274,15 +276,24 @@ event InputPublished(uint256 indexed e3Id, bytes data, uint256 inputHash, uint25
 const interfoldContract = new ethers.Contract(interfoldAddress, interfoldAbi, signer)
 
 const requestParams = {
-  threshold: [3, 5],
+  committeeSize,
   inputWindow: [inputWindowStart, inputWindowEnd],
   e3Program: e3ProgramAddress,
-  e3ProgramParams,
+  paramSet,
   computeProviderParams,
   customParams: '0x',
+  expectedFeeToken,
+  expectedCryptoConfigId,
+  maxFee: 0n, // replaced below, once the quote is known
 }
 
-const tx = await interfoldContract.request(requestParams)
+// `request` pulls the fee with `transferFrom`, so quote it and approve it first.
+const feeTokenContract = new ethers.Contract(expectedFeeToken, erc20Abi, signer)
+const fee = await interfoldContract.getE3Quote(requestParams)
+await (await feeTokenContract.approve(interfoldAddress, fee)).wait()
+
+// `request` reverts with `FeeExceedsMaximum` when the quote is above `maxFee`.
+const tx = await interfoldContract.request({ ...requestParams, maxFee: fee })
 const receipt = await tx.wait()
 const e3Id = receipt.logs
   .map((log) => interfoldContract.interface.parseLog(log))

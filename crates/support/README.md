@@ -44,8 +44,8 @@ graph TD
   fulfillment.
 - **`types/`** — Shared request, webhook, proof-domain, guest-input, and journal types.
 - **`methods/`** — RISC Zero build crate. Compiles the guest program.
-- **`guest/`** — The RISC Zero zkVM guest program. Runs `fhe_processor` (homomorphic ciphertext
-  summation) and commits the domain-bound `ComputeJournal`.
+- **`methods/guest/`** — The RISC Zero zkVM guest program. Runs `fhe_processor` (homomorphic
+  ciphertext summation) and commits the domain-bound `ComputeJournal`.
 - **`program/`** — The FHE processor (`fhe_processor`): sums BFV ciphertexts homomorphically.
 
 ## Webhook Payload Format
@@ -57,7 +57,7 @@ The callback server receives a tagged-enum JSON payload:
 ```json
 {
   "status": "completed",
-  "e3_id": 123,
+  "e3_id": "123",
   "ciphertext": "0x...",
   "ciphertext_commitment": "0x...",
   "proof": "0x..."
@@ -67,7 +67,7 @@ The callback server receives a tagged-enum JSON payload:
 **Failure:**
 
 ```json
-{ "status": "failed", "e3_id": 123, "error": "Computation failed: ..." }
+{ "status": "failed", "e3_id": "123", "error": "Computation failed: ..." }
 ```
 
 This matches the format expected by CRISP and `E3ProgramServer` in `crates/program-server`.
@@ -84,6 +84,10 @@ This matches the format expected by CRISP and `E3ProgramServer` in `crates/progr
 4. **Boundless wallet** — an Ethereum private key with ETH (for gas) and ZKC (for collateral) on the
    Boundless-supported chain
 5. **Interfold CLI** — `cargo install --locked --path ./crates/cli --bin interfold -f`
+6. **An Interfold project** — `interfold init <path>`, then work from that directory. The steps
+   below run against a project, not against a checkout of this repository. Without one,
+   `interfold program compile` exits with `Configuration file not found`, because `interfold init`
+   is what writes `.interfold/support/ctl`, the scripts every `program` subcommand shells out to.
 
 ### Step 1: Configure `interfold.config.yaml`
 
@@ -98,13 +102,14 @@ program:
       pinata_jwt: '${PINATA_JWT}'
       program_url: 'https://gateway.pinata.cloud/ipfs/Qm...' # after upload (Step 3)
       onchain: true
-      # Optional — custom auction params (defaults shown):
-      # min_price_eth: 0.001
-      # max_price_eth: 0.03
-      # timeout_secs: 1200
-      # lock_timeout_secs: 600
-      # ramp_up_secs: 120
-      # lock_collateral_zkc: 5.0
+      # Built-in auction defaults, shown for reference. Leave these fields unset.
+      # If you set one, `interfold program start` fails. See #1812.
+      # min_price_eth: 0.00005
+      # max_price_eth: 0.002
+      # timeout_secs: 600
+      # lock_timeout_secs: 300
+      # ramp_up_secs: 60
+      # lock_collateral_zkc: 2.0
 ```
 
 ### Step 2: Compile the RISC Zero Guest Program
@@ -115,6 +120,11 @@ interfold program compile
 
 This builds the guest ELF binary inside the Docker container. Output goes to
 `./target/riscv-guest/methods/guests/riscv32im-risc0-zkvm-elf/release/program.bin`.
+
+The guest runs the `fhe_processor` and `policy` from `crates/support/program`, which
+`methods/guest/Cargo.toml` names as `e3-user-program`. Another E3 program needs a guest built
+against its own crate of that name: the policy decides the input-tree leaf, and a leaf that differs
+from the one the program's contract built produces a root the round cannot publish.
 
 ### Changing the guest, and the pin that decides which code it runs
 
@@ -180,8 +190,10 @@ This boots the ciphernodes, which listen for E3 requests, perform DKG, and await
 interfold program start
 ```
 
-This starts the Docker container running `e3-support-app` on port 13151. If Boundless config is
-present, it will submit proofs to the Boundless market. Otherwise it falls back to dev mode.
+This starts the Docker container that runs `e3-support-app` on port 13151. The `risc0_dev_mode`
+value selects the proving backend, as shown in Step 1. `0` submits proofs to the Boundless market.
+`1` returns fake proofs. The default is `1` when the field is unset. A Boundless request with
+missing credentials fails instead of using dev mode.
 
 ### Step 6: Submit an E3 Request
 
@@ -189,19 +201,22 @@ The E3 request is submitted on-chain by the instigator (e.g., CRISP coordination
 
 ```solidity
 // On-chain: Interfold.request(params)
-interfold.request(E3RequestParams({
-    threshold: [M, N],
+interfold.request(IInterfold.E3RequestParams({
+    committeeSize: IInterfold.CommitteeSize.Minimum,
     inputWindow: [start, end],
-    e3Program: crispProgramAddress,
-    e3ProgramParams: encodedParams,
+    e3Program: IE3Program(crispProgramAddress),
+    paramSet: paramSetIndex, // registered via setParamSet
     computeProviderParams: "",
-    customParams: ""
+    customParams: encodedRoundConfig, // CRISPProgram decodes seven values from this
+    expectedFeeToken: IERC20(feeTokenAddress),
+    expectedCryptoConfigId: cryptoConfigId,
+    maxFee: maxFee
 }));
 ```
 
 This triggers:
 
-1. Fee payment (1 USDC)
+1. Payment of the quoted fee in the active fee token
 2. Committee selection via sortition
 3. DKG (C0-C5 proofs) → committee public key published on-chain
 4. Stage → `KeyPublished`
@@ -215,11 +230,11 @@ server:
 curl -X POST http://localhost:13151/run_compute \
   -H "Content-Type: application/json" \
   -d '{
-    "e3_id": 1,
+    "e3_id": "1",
     "chain_id": 31337,
     "interfold_address": "0x1111111111111111111111111111111111111111",
     "encryption_scheme_id": "0x...",
-    "committee_public_key": "0x...",
+    "committee_public_key_hash": "0x...",
     "params": "0x...",
     "ciphertext_inputs": [["0x...", 0], ["0x...", 1]],
     "callback_url": "http://host.local:4000/state/add-result"
@@ -228,12 +243,15 @@ curl -X POST http://localhost:13151/run_compute \
 
 The program server:
 
-1. Returns `{"status":"processing","e3_id":1}` immediately
+1. Returns `{"status":"processing","e3_id":"1"}` immediately
 2. Runs FHE computation (homomorphic sum) locally → ciphertext output
 3. Submits proof request to Boundless market
 4. Waits for a prover to fulfill the request
 5. Sends webhook callback with
-   `{"status":"completed","e3_id":1,"ciphertext":"0x...","ciphertext_commitment":"0x...","proof":"0x..."}`
+   `{"status":"completed","e3_id":"1","ciphertext":"0x...","ciphertext_commitment":"0x...","proof":"0x..."}`
+
+Steps 3 and 4 belong to the Boundless path that Step 1 configures. With `risc0_dev_mode: 1` the
+server runs the same computation and returns a fake proof instead.
 
 ### Step 8: Webhook Handler Publishes On-Chain
 
@@ -243,9 +261,11 @@ The callback server (e.g., CRISP) receives the webhook and calls:
 interfold.publishCiphertextOutput(e3Id, ciphertextOutput, ciphertextCommitment, proof);
 ```
 
-The proof binds the chain, Interfold contract, E3, encryption scheme, committee key, output, and
-SAFE commitment. The protocol verifier checks these fields before the application verifier. Both
-checks must pass before the E3 can remain in `CiphertextReady`.
+The proof binds nine values. Five identify the context: the chain, the Interfold contract, the E3,
+the encryption scheme, and the committee key hash. Four come from the computation: the output hash,
+the SAFE commitment, the parameter hash, and the input root. The protocol verifier checks these
+fields before the E3 program verifier. Both checks must pass before the E3 can remain in
+`CiphertextReady`.
 
 ### Step 9: Decryption & Completion
 
@@ -257,7 +277,7 @@ rewards distributed.
 
 ## Boundless Offer Parameters
 
-All parameters are configurable via environment variables (or `interfold.config.yaml`). Defaults:
+`build_offer()` reads these environment variables. Defaults:
 
 | Parameter    | Env Var                         | Default   | Description                  |
 | ------------ | ------------------------------- | --------- | ---------------------------- |
@@ -268,15 +288,12 @@ All parameters are configurable via environment variables (or `interfold.config.
 | Ramp-up      | `BOUNDLESS_RAMP_UP_SECS`        | `60`      | Price ramp-up period (sec)   |
 | Collateral   | `BOUNDLESS_LOCK_COLLATERAL_ZKC` | `2.0`     | ZKC locked per request       |
 
-These can also be set in `interfold.config.yaml` under `program.risc0.boundless`:
+`interfold program start` always uses these defaults. Neither route to change them works today: the
+`program.risc0.boundless` fields make the launcher exit, and the environment variables never reach
+the container. See #1812.
 
-```yaml
-boundless:
-  min_price_eth: 0.002
-  max_price_eth: 0.05
-  timeout_secs: 1800
-  # ...
-```
+To use other values, open a shell in the container, export the variables there, and start
+`e3-support-app` yourself. `./scripts/dev.sh` opens such a shell.
 
 ---
 
@@ -290,7 +307,8 @@ boundless:
 ./scripts/build.sh --push
 ```
 
-The container is also built by the GitHub workflow at `.github/workflows/support-docker.yml`.
+CI builds the container in the `build_e3_support_risc0` job of `.github/workflows/ci.yml`. The
+`build-e3-support-release` job in `.github/workflows/releases.yml` builds release images.
 
 ## Development
 
@@ -313,6 +331,9 @@ cargo run --bin e3-support-app
 # Test the HTTP endpoint with a fixture payload
 ./curl_test.sh
 ```
+
+`fixtures/payload.json` is out of date and the request fails to deserialize. Use the Step 7 body
+until the fixture is refreshed.
 
 NOTE: This is outside of the main workspace because it needs to be run within its own context in
 order to isolate risc0.
