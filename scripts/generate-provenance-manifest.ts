@@ -103,42 +103,36 @@ function pinnedRevisions(): Record<string, string[]> {
 }
 
 /**
- * The builder tag `risc0-build` will actually use, read from the pinned crate.
- *
- * Not derived from `RISC0_VERSION`. `risc0-build` has its own `DEFAULT_DOCKER_TAG`, which does not
- * track the release version — 3.0.3 defaults to `r0.1.88.0`, not `v3.0.3` — so deriving it from the
- * Dockerfile names an image the build never pulled, and the manifest would record a builder nobody
- * used.
- *
- * Returns null when the crate source is not on this machine, which leaves the manifest incomplete
- * and fails the release rather than recording a guess.
- */
-function defaultBuilderTag(): string | null {
-  const pinned = firstMatch(readIfPresent(path.join(SUPPORT, 'Cargo.toml')), /risc0-build = \{ version = "=([0-9.]+)"/)
-  if (!pinned) return null
-
-  // The vendored source, which is present wherever the guest can be built at all.
-  const root = path.join(process.env.CARGO_HOME ?? path.join(process.env.HOME ?? '', '.cargo'), 'registry', 'src')
-  if (!fs.existsSync(root)) return null
-
-  for (const registry of fs.readdirSync(root)) {
-    const lib = path.join(root, registry, `risc0-build-${pinned}`, 'src', 'lib.rs')
-    const tag = firstMatch(readIfPresent(lib), /DEFAULT_DOCKER_TAG: &str = "([^"]+)"/)
-    if (tag) return tag
-  }
-  return null
-}
-
-/**
  * Resolves the RISC Zero guest builder image.
  *
- * The builder is selected by a mutable tag, and `RISC0_DOCKER_CONTAINER_TAG` overrides it, so the
- * tag alone does not identify a build. Record the resolved digest whenever Docker can supply it.
+ * `risc0-build` reads a bare tag, not an image reference: `docker_container_tag()` returns
+ * `RISC0_DOCKER_CONTAINER_TAG`, else the value the caller set on `DockerOptions`, else its own
+ * `DEFAULT_DOCKER_TAG` (`risc0-build-3.0.3/src/config.rs:59-70`), and `docker.rs:145-149` then
+ * builds `risczero/risc0-guest-builder:<tag>` from it. Both sources here are therefore suffixes,
+ * and the repository prefix belongs on the outside of the choice.
+ *
+ * `crates/support/methods/build.rs:90-95` always sets the second, from `ARG RISC0_TOOLCHAIN` in
+ * `crates/support/Dockerfile`, so `DEFAULT_DOCKER_TAG` is unreachable from this repository.
+ * Reading it would record `r0.1.88.0` against a build that pulled `r0.1.91.1` — a builder nobody
+ * used, which is the outcome this function exists to avoid.
+ *
+ * The tag is mutable and does not identify a build on its own, so record the resolved digest
+ * whenever Docker can supply it.
+ *
+ * Without a toolchain there is no builder to name, override or not. `guest_builder_tag` panics on a
+ * missing `ARG RISC0_TOOLCHAIN` and asserts on an empty one (`build.rs:67-80`), and it runs only
+ * inside `if use_docker()` (`build.rs:90-95`). A tree that cannot supply one therefore either
+ * failed the Docker build before `risc0-build` read the variable, or built locally and pulled no
+ * image at all. Reporting the override there would name a builder nothing used; leaving the field
+ * unresolved says what is true and keeps the manifest incomplete.
  */
-function builderImage() {
-  const fromCrate = defaultBuilderTag()
-  const tag = process.env.RISC0_DOCKER_CONTAINER_TAG ?? (fromCrate ? `risczero/risc0-guest-builder:${fromCrate}` : null)
-  if (!tag) return { tag: null, digest: null }
+function builderImage(guestToolchain: string | null) {
+  // Trim before the check, not after, matching the assert at `build.rs:71-77`. A whitespace-only
+  // value would otherwise name the image `risczero/risc0-guest-builder:r0.`.
+  const toolchain = guestToolchain?.trim() || null
+  if (!toolchain) return { tag: null, digest: null }
+  const suffix = process.env.RISC0_DOCKER_CONTAINER_TAG?.trim() || `r0.${toolchain}`
+  const tag = `risczero/risc0-guest-builder:${suffix}`
   const digest = sh('docker', ['image', 'inspect', '--format', '{{index .RepoDigests 0}}', tag])
   return { tag, digest }
 }
@@ -161,9 +155,9 @@ function guestElf() {
 /**
  * How long a single RPC call may take before it counts as unresolved.
  *
- * `fetch` has no default timeout, and this runs in the release job. An endpoint that accepts the
- * connection and never answers would hang the release rather than failing it, which is the one
- * outcome a fail-closed gate must not have.
+ * `fetch` has no default timeout. An endpoint that accepts the connection and never answers would
+ * hang instead of leaving the field unresolved, and a record that never finishes says less than one
+ * that names what it could not reach.
  */
 const RPC_TIMEOUT_MS = 15_000
 
@@ -264,7 +258,7 @@ async function main() {
       risc0Version,
       risc0GuestToolchain: risc0Toolchain,
       hostToolchain: firstMatch(readIfPresent(path.join(REPO_ROOT, 'rust-toolchain.toml')), /channel = "([^"]+)"/),
-      builderImage: builderImage(),
+      builderImage: builderImage(risc0Toolchain),
       pinnedRevisions: pinnedRevisions(),
       // Why the guest is pinned where it is, and what that pin does and does not certify. A
       // consumer reading only a commit hash would reasonably assume the code behind it was
@@ -334,7 +328,8 @@ async function main() {
   if (unresolved.length > 0) {
     console.error(
       `\n⚠️  incomplete manifest. Unresolved: ${unresolved.join(', ')}\n` +
-        `   A release manifest must be complete. See docs/pages/verifying-the-compute-provider.mdx.`,
+        `   An incomplete manifest records an unfinished verification, not a passing result.\n` +
+        `   See docs/pages/verifying-the-compute-provider.mdx.`,
     )
   }
 }
