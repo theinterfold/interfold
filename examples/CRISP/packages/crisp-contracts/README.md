@@ -39,7 +39,7 @@ pnpm deploy:contracts:full     # also deploy Interfold stack (no ZK unless ENABL
 
 This is the main logic of CRISP - an interfold program for secure voting.
 
-It exposes two main functions:
+It exposes three main functions:
 
 - `validate` - that is called when a new E3 instance is requested on Interfold
   (`Interfold.request`).
@@ -47,10 +47,15 @@ It exposes two main functions:
   (`Interfold.publishCiphertextOutput`). This function ensures that the ciphertext output is valid.
   CRISP uses Risc0 as the compute provider for running the FHE program, thus the proof will be a
   Risc0 proof.
-- `validateInput` - validate the input data that is submitted to the E3 instance. It is called by
-  the Interfold contract when a new input is published (`Interfold.publishInput`). In CRISP, the
-  data providers (the ones submitting the inputs) are the voters, and the input submitted is the
-  vote itself. The logic checks that gating conditions are satisfied and that the ciphertext is
-  constructed correctly using
-  [Greco](https://github.com/gnosisguild/interfold/tree/main/circuits/crates/libs/greco). See the
-  Greco [paper](https://eprint.iacr.org/2024/594).
+- `publishInput` - accepts an input for the E3 instance. Data providers call it on this contract
+  directly. In CRISP, the data providers are the voters and the input is the vote itself. The
+  function checks the stage and the input window, resolves the voter's eligibility from the census,
+  and verifies a Noir proof over nine public inputs, which is what establishes that the ciphertext
+  was encrypted correctly under the committee public key
+  (`examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol:493-554`, paths from the
+  repository root). The verifier is the one the round's census selects: `CRISPVerifier.sol` for a
+  census posted as a Merkle root, `CRISPOnchainVerifier.sol` for one read from token balances on
+  chain. Both files declare a contract named `HonkVerifier`, which is why they are named by file.
+  The Greco relations that proof checks are built by
+  `crates/zk-helpers/src/circuits/threshold/user_data_encryption/` and proved by the circuits under
+  `circuits/bin/threshold/`. See the Greco [paper](https://eprint.iacr.org/2024/594).

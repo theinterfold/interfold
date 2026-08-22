@@ -107,11 +107,13 @@ voting rounds. The main contract is
 which orchestrates the entire voting process.
 
 When a new voting round is initialized, the `validate()` function sets up round parameters and
-initializes a Merkle tree to store votes efficiently. As votes are submitted, `validateInput()`
-processes each encrypted vote by verifying its Noir zero-knowledge proof through the CRISPVerifier
-contract, ensuring votes are correctly encrypted and voters are eligible. Votes are stored in the
-Merkle tree with slot addresses mapping to vote indices, allowing updates while maintaining
-uniqueness.
+initializes a Merkle tree to store votes efficiently. As votes are submitted, `publishInput()`
+processes each encrypted vote by verifying its Noir zero-knowledge proof, ensuring votes are
+correctly encrypted and voters are eligible. The round's census decides which verifier that is:
+`CRISPVerifier.sol` for a census posted as a Merkle root, and `CRISPOnchainVerifier.sol` for one
+read from token balances on chain. Both declare a contract named `HonkVerifier`, so they are
+distinguished by file. Votes are stored in the Merkle tree with slot addresses mapping to vote
+indices, allowing updates while maintaining uniqueness.
 
 After the voting period ends and FHE computation completes, the `verify()` function validates the
 RISC Zero proof attesting to the correctness of the homomorphic tally computation, verifying it
