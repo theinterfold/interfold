@@ -105,19 +105,7 @@ export class EventListener implements SDKEventEmitter {
             for (let i = 0; i < logs.length; i++) {
               const log = logs[i]
               if (!log) break
-              const event: InterfoldEvent<T> = {
-                type: eventType,
-                data: (log as unknown as { args: unknown }).args as T extends InterfoldEventTypeT
-                  ? InterfoldEventData[T]
-                  : T extends RegistryEventTypeT
-                    ? RegistryEventData[T]
-                    : unknown,
-                log,
-                timestamp: new Date(),
-                blockNumber: log.blockNumber ?? BigInt(0),
-                transactionHash: log.transactionHash ?? '0x',
-              }
-              emitter.emit(event)
+              emitter.emit(emitter.buildEvent(eventType, log))
             }
           },
         })
@@ -126,6 +114,21 @@ export class EventListener implements SDKEventEmitter {
       } catch (error) {
         throw new SDKError(`Failed to watch contract event ${eventType} on ${address}: ${error}`, 'WATCH_EVENT_FAILED')
       }
+    }
+  }
+
+  private buildEvent<T extends AllEventTypes>(eventType: T, log: Log): InterfoldEvent<T> {
+    return {
+      type: eventType,
+      data: (log as unknown as { args: unknown }).args as T extends InterfoldEventTypeT
+        ? InterfoldEventData[T]
+        : T extends RegistryEventTypeT
+          ? RegistryEventData[T]
+          : unknown,
+      log,
+      timestamp: new Date(),
+      blockNumber: log.blockNumber ?? BigInt(0),
+      transactionHash: log.transactionHash ?? '0x',
     }
   }
 
@@ -249,11 +252,21 @@ export class EventListener implements SDKEventEmitter {
     while (this.isPolling) {
       try {
         const currentBlock = await this.publicClient.getBlockNumber()
-
+  
         if (currentBlock > this.lastBlockNumber) {
+          const fromBlock = this.lastBlockNumber + BigInt(1)
+  
+          for (const eventType of this.listeners.keys()) {
+            const logs = await this.getHistoricalEvents(eventType, fromBlock, currentBlock)
+  
+            for (const log of logs) {
+              this.emit(this.buildEvent(eventType, log))
+            }
+          }
+  
           this.lastBlockNumber = currentBlock
         }
-
+  
         await sleep(this.config.pollingInterval || 5000)
       } catch (error) {
         console.error('Error during polling:', error)
@@ -261,4 +274,3 @@ export class EventListener implements SDKEventEmitter {
       }
     }
   }
-}
