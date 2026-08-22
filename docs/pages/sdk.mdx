@@ -105,13 +105,13 @@ ciphertext will be encrypted under the wrong parameters and decryption will fail
 
 ```ts
 const hash = await sdk.requestE3({
-  threshold: [2, 3],
+  committeeSize: 0, // CommitteeSize.Minimum (N=3)
   inputWindow: [
     BigInt(Math.floor(Date.now() / 1000)),
     BigInt(Math.floor(Date.now() / 1000) + 5 * 60),
   ],
   e3Program: '0x...',
-  e3ProgramParams: '0x',
+  paramSet: 1, // ParamSet.Secure8192
   computeProviderParams: '0x',
   customParams: '0x',
 })
