@@ -42,10 +42,10 @@ impl ProgramSupportApi for ProgramSupport {
             ProgramSupport::Risc0(s) => s.compile().await,
         }
     }
-    async fn start(&self) -> Result<()> {
+    async fn start(&self, linux_network_host_mode: bool) -> Result<()> {
         match self {
-            ProgramSupport::Dev(s) => s.start().await,
-            ProgramSupport::Risc0(s) => s.start().await,
+            ProgramSupport::Dev(s) => s.start(linux_network_host_mode).await,
+            ProgramSupport::Risc0(s) => s.start(linux_network_host_mode).await,
         }
     }
 

@@ -12,3 +12,4 @@ tokio.workspace = true
 duct.workspace = true
 async-trait.workspace = true
 e3-config.workspace = true
+tracing = { workspace = true }

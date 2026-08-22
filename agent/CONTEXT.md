@@ -63,6 +63,7 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | Integration tests           | `pnpm test:integration [name]` (`--no-prebuild` to skip binary build)                                              |
 | Lint / format               | `pnpm lint` · `pnpm format` / `pnpm format:check`                                                                  |
 | Build circuits              | `pnpm build:circuits [--preset …] [--committee …]` (needs `nargo` + `bb`; `interfold noir setup` installs them)    |
+| Start the support app       | `interfold program start` (`--linux-network-host-mode` uses Docker host networking and is Linux-only)              |
 | Generate Solidity verifiers | `pnpm generate:verifiers [--check\|--write]`                                                                       |
 | Circuit artifact cache      | `pnpm store:circuits push\|pull` (orphan branch `circuit-artifacts`)                                               |
 | Consistency checks          | `pnpm check:committee` · `check:docs` · `check:invariants` · `check:ciphernode bond` · `check:pnpm` · `check:size` |

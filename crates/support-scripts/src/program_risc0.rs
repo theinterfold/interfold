@@ -25,7 +25,7 @@ impl ProgramSupportApi for ProgramSupportRisc0 {
     }
 
     /// Run the docker container start script
-    async fn start(&self) -> Result<()> {
+    async fn start(&self, linux_network_host_mode: bool) -> Result<()> {
         let cwd = env::current_dir()?;
         let script = cwd.join(".interfold/support/ctl/start");
         ensure_script_exists(&script).await?;
@@ -38,6 +38,10 @@ impl ProgramSupportApi for ProgramSupportRisc0 {
             "--risc0-dev-mode".into(),
             risc0_config.risc0_dev_mode.to_string(),
         ];
+
+        if linux_network_host_mode {
+            args.push("--linux-network-host-mode".into());
+        }
 
         // Boundless support
         if let Some(boundless) = &risc0_config.boundless {

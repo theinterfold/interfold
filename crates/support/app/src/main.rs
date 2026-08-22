@@ -45,11 +45,11 @@ async fn call_webhook(callback_url: &str, payload: &WebhookPayload) -> anyhow::R
 
     println!("Sending webhook to: {}", callback_url);
 
-    let response = reqwest::Client::new()
-        .post(callback_url)
-        .json(payload)
-        .send()
-        .await?;
+    let client = reqwest::Client::builder()
+        .redirect(reqwest::redirect::Policy::none())
+        .build()
+        .map_err(|e| anyhow::anyhow!("failed to build webhook client: {e}"))?;
+    let response = client.post(callback_url).json(payload).send().await?;
 
     println!("Webhook response status: {}", response.status());
     if !response.status().is_success() {
@@ -382,9 +382,18 @@ async fn handle_compute(req: web::Json<ComputeRequest>) -> ActixResult<HttpRespo
     .map_err(actix_web::error::ErrorBadRequest)?;
 
     println!("fhe_inputs.params = {:?}", fhe_inputs.params);
-    let callback_url = callback_url
-        .replace("localhost", "host.local")
-        .replace("127.0.0.1", "host.local");
+    let callback_url = if std::env::var("INTERFOLD_SKIP_LOCALHOST_REWRITE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+    {
+        // Docker --network=host: localhost in the container is the host.
+        callback_url
+    } else {
+        // Bridge networking: rewrite so callbacks reach the host via host-gateway.
+        callback_url
+            .replace("localhost", "host.local")
+            .replace("127.0.0.1", "host.local")
+    };
 
     // Process computation in background
     let background_e3_id = e3_id.clone();
