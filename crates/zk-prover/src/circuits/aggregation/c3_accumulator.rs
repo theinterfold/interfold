@@ -372,9 +372,11 @@ fn generate_c3_fold_batch_gate(
     let b = match gate {
         CircuitName::C3FoldBatchB2 => 2,
         CircuitName::C3FoldBatchB3 => 3,
+        CircuitName::C3FoldBatchB6 => 6,
+        CircuitName::C3FoldBatchB10 => 10,
         other => {
             return Err(ZkError::InvalidInput(format!(
-                "generate_c3_fold_batch_gate: circuit {other:?} is not a batch gate (b2/b3)"
+                "generate_c3_fold_batch_gate: circuit {other:?} is not a batch gate (b2/b3/b6/b10)"
             )))
         }
     };
@@ -630,6 +632,180 @@ for b in 0..n_gates {
     )?;
 }
 Ok(cur)
+}
+
+/// N=19 tree-split (I5a, r51/r52) — production-ABI batched C3 fold over the B=10 sub-gate:
+/// ONE `c3_fold_batch_b10` gate (8,344,772 gates, RAN r51) over a fresh kernel genesis instead
+/// of 10 sequential `c3_fold` steps.
+///
+/// Same contract as [`generate_batched_c3_fold_b3`]: `inner_proofs[0]` anchors slot 0 (kernel
+/// genesis); the 10 remaining inners fill `slot_indices[1..=10]` inside the single gate. The
+/// emitted proof is a `C3FoldBatchB10` proof with `c3_fold`'s public ABI
+/// (`4 + 3*C3_SLOTS` fields: acc_key_hash / is_first_step / slot0 / slot1 + 3 slot arrays),
+/// so downstream circuits are VK-rebuild-only.
+///
+/// Constraint: EXACTLY 11 inners (1 kernel anchor + 10 leaves) and `total_slots` (C3_SLOTS) >=
+/// 11 — the gate covers all 10 fresh slots at once, so committees with C3_SLOTS < 11 (minimum:
+/// 6) cannot witness it; micro (N=9/L=2, C3_SLOTS=18) is the smallest fitting committee.
+pub fn generate_batched_c3_fold_b10(
+    prover: &ZkProver,
+    inner_proofs: &[Proof],
+    slot_indices: &[u32],
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    if inner_proofs.len() != slot_indices.len() {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_batched_c3_fold_b10: inner_proofs and slot_indices length mismatch ({} vs {})",
+            inner_proofs.len(),
+            slot_indices.len(),
+        )));
+    }
+    if inner_proofs.len() != 11 {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_batched_c3_fold_b10: expected exactly 11 inners (1 kernel anchor + 10 b10 leaves), got {}",
+            inner_proofs.len()
+        )));
+    }
+    if total_slots < 11 {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_batched_c3_fold_b10: total_slots must be >= 11 (B=10 gate covers 10 fresh slots + the kernel slot), got {total_slots}"
+        )));
+    }
+    let mut seen = vec![false; total_slots];
+    for &s in slot_indices {
+        let idx = s as usize;
+        if idx >= total_slots {
+            return Err(ZkError::InvalidInput(format!(
+                "generate_batched_c3_fold_b10: slot index {s} out of range (total_slots={total_slots})"
+            )));
+        }
+        if seen[idx] {
+            return Err(ZkError::InvalidInput(format!(
+                "generate_batched_c3_fold_b10: duplicate slot index {s}"
+            )));
+        }
+        seen[idx] = true;
+    }
+    let acc = generate_c3_fold_kernel_genesis_proof(
+        prover,
+        &inner_proofs[0],
+        total_slots,
+        artifacts_dir,
+        &format!("{e3_id}-kernel"),
+    )?;
+    // Single b10 gate over the kernel genesis: inners 1..=10 inside one 8.34M-gate circuit.
+    let mut inners_refs: Vec<&Proof> = Vec::with_capacity(10);
+    for p in &inner_proofs[1..] {
+        inners_refs.push(p);
+    }
+    b10_gate_over_genesis(
+        prover,
+        &acc,
+        &inners_refs,
+        slot_indices,
+        total_slots,
+        e3_id,
+        artifacts_dir,
+    )
+}
+
+/// Witness + prove for the B=6 / B=10 production-ABI gates over a prior accumulator.
+///
+/// The shared [`generate_c3_fold_batch_gate`] caps at 3 slots (b2/b3 ABI); the b6/b10 bins
+/// take `slot0..slot{B-1}` (all `B` of them, `slot0`/`slot1` public + the rest private), so
+/// this builder mirrors its input-map construction with `B` leaves and `B` slot entries.
+fn b10_gate_over_genesis(
+    prover: &ZkProver,
+    acc: &Proof,
+    inners: &[&Proof],
+    slot_indices: &[u32],
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    const BYTES_PER_FIELD: usize = 32;
+    let expected_fields = 4 + 3 * total_slots;
+    if inners.len() != 10 {
+        return Err(ZkError::InvalidInput(format!(
+            "c3_fold_batch_b10 gate: expected 10 inners, got {}",
+            inners.len()
+        )));
+    }
+    if slot_indices.len() != 11 {
+        return Err(ZkError::InvalidInput(format!(
+            "c3_fold_batch_b10 gate: expected 11 slot indices (kernel anchor + 10 covered), got {}",
+            slot_indices.len()
+        )));
+    }
+    if acc.public_signals.len() / BYTES_PER_FIELD != expected_fields {
+        return Err(ZkError::InvalidInput(format!(
+            "c3_fold_batch_b10 gate: prior accumulator public field count {} != expected {expected_fields}",
+            acc.public_signals.len() / BYTES_PER_FIELD
+        )));
+    }
+    let vks = C3FoldBatchVks::load(prover, artifacts_dir, CircuitName::C3FoldBatchB10)?;
+    // c3 leaf-name suffixes in the b10 ABI: c3a..c3j (leaf order 0..=9 = inners 1..=10).
+    const C3_NAMES: [&str; 10] = ["c3a", "c3b", "c3c", "c3d", "c3e", "c3f", "c3g", "c3h", "c3i", "c3j"];
+    let mut out = serde_json::Map::<String, serde_json::Value>::new();
+    for (idx, leaf) in inners.iter().enumerate() {
+        let c3_public_inputs = share_encryption_inner_public_inputs(leaf)?;
+        out.insert(
+            format!("vk{idx}"),
+            serde_json::to_value(&vks.inner_vk.verification_key).unwrap(),
+        );
+        out.insert(
+            format!("proof{idx}"),
+            serde_json::to_value(&bytes_to_field_strings(&leaf.data)?).unwrap(),
+        );
+        out.insert(
+            C3_NAMES[idx].to_string(),
+            serde_json::to_value(&c3_public_inputs).unwrap(),
+        );
+        out.insert(format!("kh{idx}"), serde_json::to_value(&vks.inner_vk.key_hash).unwrap());
+    }
+    // The gate anchors the KERNEL GENESIS proof (kernel VK) — gate 0 of the chain.
+    out.insert(
+        "acc_vk".to_string(),
+        serde_json::to_value(&vks.kernel_vk.verification_key).unwrap(),
+    );
+    out.insert(
+        "acc_proof".to_string(),
+        serde_json::to_value(&bytes_to_field_strings(&acc.data)?).unwrap(),
+    );
+    out.insert(
+        "acc_public_inputs".to_string(),
+        serde_json::to_value(&bytes_to_field_strings(acc.public_signals.as_ref())?).unwrap(),
+    );
+    out.insert(
+        "acc_key_hash".to_string(),
+        serde_json::to_value(&vks.kernel_vk.key_hash).unwrap(),
+    );
+    out.insert("is_first_step".to_string(), serde_json::json!(false));
+    // The b10 ABI's slot_i = the slot of the (i+1)-th inner (inner 0 is the kernel-anchored
+    // slot 0, not a gate param): slot_i = slot_indices[i+1] for i in 0..9.
+    for idx in 0..10 {
+        out.insert(
+            format!("slot{idx}"),
+            serde_json::json!(slot_indices[idx as usize + 1]),
+        );
+    }
+
+    let circuit_name = CircuitName::C3FoldBatchB10;
+    let circuit_path = prover
+        .circuits_dir(CircuitVariant::Default, artifacts_dir)
+        .join(circuit_name.dir_path())
+        .join(format!("{}.json", circuit_name.as_str()));
+    let compiled = CompiledCircuit::from_file(&circuit_path)?;
+    let input_map = inputs_json_to_input_map(&serde_json::Value::Object(out))?;
+    let witness = WitnessGenerator::new().generate_witness(&compiled, input_map)?;
+    prover.generate_recursive_aggregation_bin_proof(
+        circuit_name,
+        &witness,
+        &format!("{e3_id}-b10g0"),
+        artifacts_dir,
+    )
 }
 
 /// Batched c3 fold (I5 productionization, drop-in alternative to ``generate_sequential_c3_fold``):
