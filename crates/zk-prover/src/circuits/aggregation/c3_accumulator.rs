@@ -808,6 +808,210 @@ fn b10_gate_over_genesis(
     )
 }
 
+/// Witness + prove for the B=6 production-ABI gate over a prior accumulator.
+/// Mirror of [`b10_gate_over_genesis`] for the 6-cover ABI (`slot0..slot5`,
+/// leaf order = inners 1..=6, b6 c3-name suffixes c3a..c3f).
+fn b6_gate_over_genesis(
+    prover: &ZkProver,
+    acc: &Proof,
+    inners: &[&Proof],
+    slot_indices: &[u32],
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    const BYTES_PER_FIELD: usize = 32;
+    let expected_fields = 4 + 3 * total_slots;
+    if inners.len() != 6 {
+        return Err(ZkError::InvalidInput(format!(
+            "c3_fold_batch_b6 gate: expected 6 inners, got {}",
+            inners.len()
+        )));
+    }
+    if slot_indices.len() != 7 {
+        return Err(ZkError::InvalidInput(
+            "c3_fold_batch_b6 gate: expected 7 slot indices (kernel anchor + 6 covered), got {}"
+                .to_string(),
+        ));
+    }
+    if acc.public_signals.len() / BYTES_PER_FIELD != expected_fields {
+        return Err(ZkError::InvalidInput(format!(
+            "c3_fold_batch_b6 gate: prior accumulator public field count {} != expected {expected_fields}",
+            acc.public_signals.len() / BYTES_PER_FIELD
+        )));
+    }
+    let vks = C3FoldBatchVks::load(prover, artifacts_dir, CircuitName::C3FoldBatchB6)?;
+    const C3_NAMES: [&str; 6] = ["c3a", "c3b", "c3c", "c3d", "c3e", "c3f"];
+    let mut out = serde_json::Map::<String, serde_json::Value>::new();
+    for (idx, leaf) in inners.iter().enumerate() {
+        let c3_public_inputs = share_encryption_inner_public_inputs(leaf)?;
+        out.insert(
+            format!("vk{idx}"),
+            serde_json::to_value(&vks.inner_vk.verification_key).unwrap(),
+        );
+        out.insert(
+            format!("proof{idx}"),
+            serde_json::to_value(&bytes_to_field_strings(&leaf.data)?).unwrap(),
+        );
+        out.insert(C3_NAMES[idx].to_string(), serde_json::to_value(&c3_public_inputs).unwrap());
+        out.insert(format!("kh{idx}"), serde_json::to_value(&vks.inner_vk.key_hash).unwrap());
+    }
+    out.insert(
+        "acc_vk".to_string(),
+        serde_json::to_value(&vks.kernel_vk.verification_key).unwrap(),
+    );
+    out.insert(
+        "acc_proof".to_string(),
+        serde_json::to_value(&bytes_to_field_strings(&acc.data)?).unwrap(),
+    );
+    out.insert(
+        "acc_public_inputs".to_string(),
+        serde_json::to_value(&bytes_to_field_strings(acc.public_signals.as_ref())?).unwrap(),
+    );
+    out.insert("acc_key_hash".to_string(), serde_json::to_value(&vks.kernel_vk.key_hash).unwrap());
+    out.insert("is_first_step".to_string(), serde_json::json!(false));
+    // b6 ABI's slot_i = the slot of the (i+1)-th inner (inner 0 = kernel-anchored slot 0).
+    for idx in 0..6 {
+        out.insert(format!("slot{idx}"), serde_json::json!(slot_indices[idx + 1]));
+    }
+    let circuit_name = CircuitName::C3FoldBatchB6;
+    let circuit_path = prover
+        .circuits_dir(CircuitVariant::Default, artifacts_dir)
+        .join(circuit_name.dir_path())
+        .join(format!("{}.json", circuit_name.as_str()));
+    let compiled = CompiledCircuit::from_file(&circuit_path)?;
+    let input_map = inputs_json_to_input_map(&serde_json::Value::Object(out))?;
+    let witness = WitnessGenerator::new().generate_witness(&compiled, input_map)?;
+    prover.generate_recursive_aggregation_bin_proof(
+        circuit_name,
+        &witness,
+        &format!("{e3_id}-b6g0"),
+        artifacts_dir,
+    )
+}
+
+/// N=19 tree-split (I5a r53) — MERGE tier M1: ONE `c3_fold_batch_merge_m1` gate that
+/// in-circuit-verifies a b6 sub-gate proof (and the prior accumulator) and folds the b6
+/// covered range into the combined 3 x C3_SLOTS state — the production merge's building
+/// block (r53 M-tier: M1 = M0 + 1 in-circuit sub-gate verify).
+///
+/// `inner_proofs[0]` anchors slot `slot_indices[0]` via a fresh kernel genesis; the next 6
+/// inners form the b6 sub-gate (slots `slot_indices[1..=6]`); the M1 gate then anchors that
+/// kernel genesis and replaces the 6-step c3_fold tail the sub-gate covers.
+///
+/// Constraint: EXACTLY 7 inners (1 kernel anchor + 6 b6 leaves) and `total_slots` >= 7.
+pub fn generate_c3_merge_m1(
+    prover: &ZkProver,
+    inner_proofs: &[Proof],
+    slot_indices: &[u32],
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    if inner_proofs.len() != 7 {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_c3_merge_m1: expected exactly 7 inners (1 kernel anchor + 6 b6 leaves), got {}",
+            inner_proofs.len()
+        )));
+    }
+    if slot_indices.len() != 7 {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_c3_merge_m1: expected 7 slot indices, got {}",
+            slot_indices.len()
+        )));
+    }
+    if total_slots < 7 {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_c3_merge_m1: total_slots must be >= 7 (b6 covers 6 fresh slots + the kernel slot), got {total_slots}"
+        )));
+    }
+    // Kernel genesis anchors inner 0 at slot_indices[0].
+    let acc = generate_c3_fold_kernel_genesis_proof(
+        prover,
+        &inner_proofs[0],
+        total_slots,
+        artifacts_dir,
+        &format!("{e3_id}-kernel"),
+    )?;
+    // b6 sub-gate over the kernel genesis: inners 1..=6 cover slot_indices[1..=6].
+    let mut inners_refs: Vec<&Proof> = Vec::with_capacity(6);
+    for p in &inner_proofs[1..] {
+        inners_refs.push(p);
+    }
+    let sub = b6_gate_over_genesis(
+        prover,
+        &acc,
+        &inners_refs,
+        slot_indices,
+        total_slots,
+        e3_id,
+        artifacts_dir,
+    )?;
+    // M1 merge gate: in-circuit-verify the b6 sub-gate PROOF + the anchor, fold the
+    // covered range [slot1, slot1+6) from the sub's public tail, pass through the rest.
+    let expected_fields = 4 + 3 * total_slots;
+    if sub.public_signals.len() / 32 != expected_fields {
+        return Err(ZkError::InvalidInput(format!(
+            "c3 merge m1: sub-gate public field count {} != expected {expected_fields}",
+            sub.public_signals.len() / 32
+        )));
+    }
+    let sub_vks = C3FoldBatchVks::load(prover, artifacts_dir, CircuitName::C3FoldBatchB6)?;
+    let merge_vks =
+        C3FoldBatchVks::load(prover, artifacts_dir, CircuitName::C3FoldBatchMergeM1)?;
+    let mut out = serde_json::Map::<String, serde_json::Value>::new();
+    out.insert(
+        "sub_vk".to_string(),
+        serde_json::to_value(&sub_vks.batch_vk.verification_key).unwrap(),
+    );
+    out.insert(
+        "sub_proof".to_string(),
+        serde_json::to_value(&bytes_to_field_strings(&sub.data)?).unwrap(),
+    );
+    out.insert(
+        "sub_public".to_string(),
+        serde_json::to_value(&bytes_to_field_strings(sub.public_signals.as_ref())?).unwrap(),
+    );
+    out.insert("sub_key_hash".to_string(), serde_json::to_value(&sub_vks.batch_vk.key_hash).unwrap());
+    out.insert(
+        "slot1".to_string(),
+        serde_json::json!(slot_indices[1]),
+    );
+    out.insert(
+        "acc_vk".to_string(),
+        serde_json::to_value(&merge_vks.kernel_vk.verification_key).unwrap(),
+    );
+    out.insert(
+        "acc_proof".to_string(),
+        serde_json::to_value(&bytes_to_field_strings(&acc.data)?).unwrap(),
+    );
+    out.insert(
+        "acc_public_inputs".to_string(),
+        serde_json::to_value(&bytes_to_field_strings(acc.public_signals.as_ref())?).unwrap(),
+    );
+    out.insert(
+        "acc_key_hash".to_string(),
+        serde_json::to_value(&merge_vks.kernel_vk.key_hash).unwrap(),
+    );
+    out.insert("is_first_step".to_string(), serde_json::json!(true));
+    out.insert("slot0".to_string(), serde_json::json!(slot_indices[0]));
+
+    let circuit_name = CircuitName::C3FoldBatchMergeM1;
+    let circuit_path = prover
+        .circuits_dir(CircuitVariant::Default, artifacts_dir)
+        .join(circuit_name.dir_path())
+        .join(format!("{}.json", circuit_name.as_str()));
+    let compiled = CompiledCircuit::from_file(&circuit_path)?;
+    let input_map = inputs_json_to_input_map(&serde_json::Value::Object(out))?;
+    let witness = WitnessGenerator::new().generate_witness(&compiled, input_map)?;
+    prover.generate_recursive_aggregation_bin_proof(
+        circuit_name,
+        &witness,
+        &format!("{e3_id}-m1g0"),
+        artifacts_dir,
+    )
+}
+
 /// Batched c3 fold (I5 productionization, drop-in alternative to ``generate_sequential_c3_fold``):
 /// proves the ``c3_fold_batch_n{K+1}`` circuit once for ``K = inner_proofs.len() - 1`` leaves over
 /// a fresh kernel genesis, instead of ``K`` sequential ``c3_fold`` steps.

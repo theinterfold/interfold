@@ -145,6 +145,10 @@ pub enum CircuitName {
     /// I5 r51 (not shipped): production-fit batched non-recursive c3 fold, 10 leaves
     /// (N=19 tree-split sub-gate; requires C3_SLOTS >= 11, e.g. micro committee).
     C3FoldBatchB10,
+    /// I5a r53 (not shipped): MERGE tier M1 — anchor + 1 b6 sub-gate verify
+    /// (in-circuit verifies the b6 sub-gate's non-ZK proof; emits c3_fold's exact
+    /// 4+3*C3_SLOTS public ABI over the combined slot array).
+    C3FoldBatchMergeM1,
     /// Sequential C6 fold: inner ZK + prior `c6_fold` non-ZK proof (phase-7 aggregator).
     C6Fold,
     /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
@@ -188,6 +192,7 @@ impl CircuitName {
             CircuitName::C3FoldBatchB3 => "c3_fold_batch_b3",
             CircuitName::C3FoldBatchB6 => "c3_fold_batch_b6",
             CircuitName::C3FoldBatchB10 => "c3_fold_batch_b10",
+            CircuitName::C3FoldBatchMergeM1 => "c3_fold_batch_merge_m1",
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
             CircuitName::C2abFold => "c2ab_fold",
@@ -230,6 +235,7 @@ impl CircuitName {
             | CircuitName::C3FoldBatchB3
             | CircuitName::C3FoldBatchB6
             | CircuitName::C3FoldBatchB10
+            | CircuitName::C3FoldBatchMergeM1
             | CircuitName::DecryptionAggregator => "recursive_aggregation",
         }
     }
@@ -274,6 +280,7 @@ impl CircuitName {
             | CircuitName::C3FoldBatchB3
             | CircuitName::C3FoldBatchB6
             | CircuitName::C3FoldBatchB10
+            | CircuitName::C3FoldBatchMergeM1
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold
