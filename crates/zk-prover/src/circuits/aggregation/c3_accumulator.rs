@@ -433,7 +433,10 @@ fn generate_c3_fold_batch_gate(
     );
     out.insert("acc_key_hash".into(), serde_json::to_value(&anchor_vk.key_hash).unwrap());
     out.insert("is_first_step".into(), serde_json::json!(false));
-    for idx in 0..3 {
+    // Inject exactly the `b` public slot params this gate declares: b2 -> slot0/slot1,
+    // b3 -> slot0/slot1/slot2. The ABI declares exactly `b` of them (b2 has 2, b3 has 3),
+    // so over-injecting (the old hardcoded 0..3) yields `UnexpectedParams` on the b2 gate.
+    for idx in 0..b {
         out.insert(format!("slot{idx}").into(), serde_json::json!(slots[idx as usize]));
     }
 
