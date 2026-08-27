@@ -714,6 +714,73 @@ pub fn generate_batched_c3_fold_b10(
     )
 }
 
+/// N=19 tree-split (I5a) — B=6 batch drop-in over 7 inners: 1 kernel genesis
+/// (anchors `inner_proofs[0]` at `slot_indices[0]`) + ONE b6 gate covering
+/// `slot_indices[1..=6]` — byte-equal in public tail to the kernel + 6 serial
+/// `c3_fold` steps (r59 leg asserts it).
+pub fn generate_batched_c3_fold_b6(
+    prover: &ZkProver,
+    inner_proofs: &[Proof],
+    slot_indices: &[u32],
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    if inner_proofs.len() != slot_indices.len() {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_batched_c3_fold_b6: inner_proofs and slot_indices length mismatch ({} vs {})",
+            inner_proofs.len(),
+            slot_indices.len(),
+        )));
+    }
+    if inner_proofs.len() != 7 {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_batched_c3_fold_b6: expected exactly 7 inners (1 kernel anchor + 6 b6 leaves), got {}",
+            inner_proofs.len()
+        )));
+    }
+    if total_slots < 7 {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_batched_c3_fold_b6: total_slots must be >= 7 (B=6 gate covers 6 fresh slots + the kernel slot), got {total_slots}"
+        )));
+    }
+    let mut seen = vec![false; total_slots];
+    for &s in slot_indices {
+        let idx = s as usize;
+        if idx >= total_slots {
+            return Err(ZkError::InvalidInput(format!(
+                "generate_batched_c3_fold_b6: slot index {s} out of range (total_slots={total_slots})"
+            )));
+        }
+        if seen[idx] {
+            return Err(ZkError::InvalidInput(format!(
+                "generate_batched_c3_fold_b6: duplicate slot index {s}"
+            )));
+        }
+        seen[idx] = true;
+    }
+    let acc = generate_c3_fold_kernel_genesis_proof(
+        prover,
+        &inner_proofs[0],
+        total_slots,
+        artifacts_dir,
+        &format!("{e3_id}-kernel"),
+    )?;
+    let mut inners_refs: Vec<&Proof> = Vec::with_capacity(6);
+    for p in &inner_proofs[1..] {
+        inners_refs.push(p);
+    }
+    b6_gate_over_genesis(
+        prover,
+        &acc,
+        &inners_refs,
+        slot_indices,
+        total_slots,
+        e3_id,
+        artifacts_dir,
+    )
+}
+
 /// Witness + prove for the B=6 / B=10 production-ABI gates over a prior accumulator.
 ///
 /// The shared [`generate_c3_fold_batch_gate`] caps at 3 slots (b2/b3 ABI); the b6/b10 bins
