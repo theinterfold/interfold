@@ -116,11 +116,22 @@ fn secs(t: &Instant) -> f64 {
     t.elapsed().as_secs_f64()
 }
 
-/// Tail field `s` (3 x 32-byte block) of a c3_fold-layout proof's public signals.
+/// Tail field `s` (3 x 32-byte: pk, msg, ct at row `s`) of a c3_fold-layout
+/// proof's public signals.
+///
+/// RAN r58b layout probe (batch_merge_diag / r58b): the flat public tail is the
+/// THREE CONTIGUOUS arrays `[pk[0..S]][msg[0..S]][ct[0..S]]` (nonzero field set
+/// `{4,5,6, 61,62,63, 118,119,120}` at S=57), NOT row-interleaved. The old
+/// stride-3 96-byte window read `pk[s..s+3]` across block boundaries — the r57
+/// leg's byte-identity "failure" rows were this oracle, not a fold defect.
 fn tail_field(proof: &Proof, s: usize, total_slots: usize) -> Vec<u8> {
     assert!(proof.public_signals.len() / BYTES_PER_FIELD == 4 + 3 * total_slots);
-    let base = (4 + s) * BYTES_PER_FIELD;
-    proof.public_signals[base..base + 3 * BYTES_PER_FIELD].to_vec()
+    let mut out = Vec::with_capacity(3 * BYTES_PER_FIELD);
+    for arr in 0..3usize {
+        let base = (4 + arr * total_slots + s) * BYTES_PER_FIELD;
+        out.extend_from_slice(&proof.public_signals[base..base + BYTES_PER_FIELD]);
+    }
+    out
 }
 
 #[tokio::test]
@@ -246,6 +257,11 @@ async fn r55_m7_production_prove_equivalence() {
         .unwrap_or_else(|e| panic!("sub b10 {j}: {e}"));
         subs.push((j, sub));
     }
+    // r58 fix: mirror the crate's two b2 blocks — block 5 -> rows 51,52 (inners 51,52),
+    // block 6 -> rows 53,54 (inners 53,54). The old `50 + 2 * (j - 5)` already stepped by
+    // 2 (j-5 in {0,1} -> 50/52) so this line was in fact CORRECT for rows 51..54; the row
+    // 53/54 mismatch at r57 came from the CRATE's `50 + j` (re-covered 52 twice, left 54
+    // empty) — the merged fold and this recon only agreed on the rows the crate DID write.
     for j in 5..7usize {
         let blk_start = 50 + 2 * (j - 5); // row 51+2(j-5), 52+2(j-5) => inner idx +1 offset
         let batch: Vec<Proof> = std::iter::once(inners[0].clone())

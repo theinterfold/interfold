@@ -1152,9 +1152,13 @@ fn m7_gate_over_genesis(
         )?;
         subs.push((CircuitName::C3FoldBatchB10, sub));
     }
-    // 3) Two B2 sub-gates over the genesis (block 5 -> row 51, block 6 -> row 52).
+    // 3) Two B2 sub-gates over the genesis (block 5 -> rows 51,52; block 6 -> rows 53,54).
+    //    NOTE (r58, RAN-verified): the stride is 2, not 1 — the legacy `50 + j` made block 6
+    //    re-cover row 52 (double-leaf) and never fold row 54 (the last C3b row); the
+    //    in-circuit zero-overwrite assert cannot catch that (the genesis is zero there).
+    //    Surfaced by the r57 M7 byte-identity leg.
     for j in 0..2usize {
-        let blk_start = 50 + j;
+        let blk_start = 50 + 2 * j;
         let blk: Vec<&Proof> = inners[blk_start..blk_start + 2].to_vec();
         let sub = generate_c3_fold_batch_gate(
             prover,
