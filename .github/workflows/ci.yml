@@ -1299,7 +1299,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: support-scripts-artifacts
-          path: templates/default/target/
+          # Only the binary. template_integration is the one consumer and needs nothing else from
+          # the cargo target directory.
+          path: templates/default/target/debug/e3-support-scripts-dev
           retention-days: 1
           if-no-files-found: error
 
@@ -1490,7 +1492,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: support-scripts-artifacts
-          path: templates/default/target/
+          path: templates/default/target/debug/
 
       - name: Download SDK artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
