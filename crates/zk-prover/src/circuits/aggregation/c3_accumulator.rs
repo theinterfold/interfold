@@ -1569,6 +1569,23 @@ fn m7x_gate_over_genesis(
         "acc_key_hash".to_string(),
         serde_json::to_value(&merge_vks.kernel_vk.key_hash).unwrap(),
     );
+    // c3_fold-EXACT 4-scalar pub prefix (the 175-field wire contract; r62 layout fix —
+    // r61 over-published 54 `slot_i` params as pub = 226 fields, byte-breaking c3ab's
+    // `c3b_public: [Field; 175]`). Values: the c3_fold fold public prefix
+    // (inner_key_hash, acc_key_hash, is_first_step=false, slot_index=anchor).
+    out.insert(
+        "inner_key_hash".to_string(),
+        serde_json::to_value(&sub_vks_b10.batch_vk.key_hash).unwrap(),
+    );
+    out.insert(
+        "acc_key_hash".to_string(),
+        serde_json::to_value(&merge_vks.kernel_vk.key_hash).unwrap(),
+    );
+    out.insert("is_first_step".to_string(), serde_json::json!(false));
+    out.insert(
+        "anchor_slot".to_string(),
+        serde_json::json!(slot_indices[0] as u32),
+    );
     for s in 0..54u32 {
         out.insert(format!("slot{s}"), serde_json::json!(slot_indices[s as usize]));
     }
