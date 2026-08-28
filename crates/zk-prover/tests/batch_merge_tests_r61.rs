@@ -146,6 +146,28 @@ async fn r61_m7x_schedule_aware_equivalence() {
         "this test requires the SECURE-8192/SMALL M7x artifact (C3_SLOTS=57); got {total_slots}"
     );
 
+    // r63 guard: the SERIAL arm's staged c3_fold base must be the SAME C3_SLOTS=57 build.
+    // r62 hit exactly this class (stale micro C3_SLOTS=18 target read mid-run, after all
+    // inners + the merge arm had proved) — fail fast instead of ~15 min into the run.
+    let c3_json = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.json");
+    let v: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&c3_json).unwrap_or_else(|e| {
+            panic!("cannot read staged c3_fold.json: {e} — run poc/r61_stage.sh (and r63_c3fold_stage.sh) first")
+        })).unwrap();
+    let c3_slots = v["abi"]["parameters"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p.get("name") == Some(&serde_json::Value::String("acc_public_inputs".into())))
+        .and_then(|p| p.get("type")?.get("length")?.as_u64())
+        .map(|len| (len - 4) / 3)
+        .unwrap() as usize;
+    assert_eq!(
+        c3_slots, 57,
+        "staged c3_fold base is C3_SLOTS={c3_slots}, not 57 — the SERIAL arm would TypeMismatch mid-run; re-stage (poc/r63_c3fold_stage.sh)"
+    );
+
     let Some(bb) = find_bb().await else {
         println!("skipping: bb not found");
         return;
