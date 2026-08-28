@@ -1,0 +1,22 @@
+[package]
+name = "e3-trckks"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+e3-utils.workspace = true
+fhe-math.workspace = true
+fhe-traits.workspace = true
+fhe.workspace = true
+ndarray.workspace = true
+num-bigint.workspace = true
+rand.workspace = true
+serde.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+tokio.workspace = true

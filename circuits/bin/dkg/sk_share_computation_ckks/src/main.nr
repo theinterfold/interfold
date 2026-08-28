@@ -1,0 +1,29 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+use lib::configs::ckks_dkg::{
+    CKKS_DKG_L, CKKS_DKG_N, CKKS_DKG_N_PARTIES, CKKS_DKG_T, CKKS_PARITY_MATRIX,
+    CKKS_SHARE_COMPUTATION_BIT_SHARE, CKKS_SHARE_COMPUTATION_SK_BIT_SECRET,
+    CKKS_SHARE_COMPUTATION_SK_CONFIGS,
+};
+use lib::core::dkg::share_computation::SecretKeyShareComputation;
+use lib::math::polynomial::Polynomial;
+
+fn main(
+    expected_secret_commitment: pub Field,
+    sk_secret: Polynomial<CKKS_DKG_N>,
+    y: [[[Field; CKKS_DKG_N_PARTIES + 1]; CKKS_DKG_L]; CKKS_DKG_N],
+) -> pub [[Field; CKKS_DKG_L]; CKKS_DKG_N_PARTIES] {
+    let computation: SecretKeyShareComputation<CKKS_DKG_N, CKKS_DKG_L, CKKS_DKG_N_PARTIES, CKKS_DKG_T, CKKS_SHARE_COMPUTATION_SK_BIT_SECRET, CKKS_SHARE_COMPUTATION_BIT_SHARE> = SecretKeyShareComputation::new(
+        CKKS_SHARE_COMPUTATION_SK_CONFIGS,
+        expected_secret_commitment,
+        sk_secret,
+        y,
+        CKKS_PARITY_MATRIX,
+    );
+
+    computation.execute()
+}

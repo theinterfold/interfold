@@ -1,0 +1,101 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+//! Code generation for the CKKS Decrypted Shares Aggregation circuit:
+//! Prover.toml and configs fragment.
+
+use crate::circuits::computation::Computation;
+use crate::threshold::decrypted_shares_aggregation_ckks::circuit::{
+    DecryptedSharesAggregationCkksCircuit, DecryptedSharesAggregationCkksCircuitData,
+};
+use crate::threshold::decrypted_shares_aggregation_ckks::computation::{Configs, Inputs};
+use crate::threshold::user_data_encryption_ckks::CkksPreset;
+use crate::Circuit;
+use crate::CircuitCodegen;
+use crate::CircuitsErrors;
+use crate::{Artifacts, CodegenConfigs, CodegenToml};
+
+impl CircuitCodegen for DecryptedSharesAggregationCkksCircuit {
+    type Preset = CkksPreset;
+    type Data = DecryptedSharesAggregationCkksCircuitData;
+    type Error = CircuitsErrors;
+
+    fn codegen(&self, preset: Self::Preset, data: &Self::Data) -> Result<Artifacts, Self::Error> {
+        let inputs = Inputs::compute(preset.clone(), data)?;
+        let configs = Configs::compute(preset, &())?;
+
+        let toml = generate_toml(inputs)?;
+        let configs_str = generate_configs(&configs);
+
+        Ok(Artifacts {
+            toml,
+            configs: configs_str,
+        })
+    }
+}
+
+pub fn generate_toml(inputs: Inputs) -> Result<CodegenToml, CircuitsErrors> {
+    let json = inputs.to_json().map_err(CircuitsErrors::SerdeJson)?;
+    Ok(toml::to_string(&json)?)
+}
+
+/// Generates the decrypted_shares_aggregation_ckks config fragment.
+///
+/// The emitted `QIS` are the preset's LEVEL-0 moduli (what `Configs::compute`
+/// derives). The current pipeline decrypts at level 0; for a rescaled
+/// ciphertext the witnesses carry fewer limbs than `L` here, so the configs
+/// must be regenerated from the shares' level before proving — `nargo
+/// execute` fails loudly on the shape mismatch otherwise.
+pub fn generate_configs(configs: &Configs) -> CodegenConfigs {
+    let prefix = <DecryptedSharesAggregationCkksCircuit as Circuit>::PREFIX;
+    let qis_str = configs
+        .moduli
+        .iter()
+        .map(|q| q.to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    format!(
+        r#"use crate::core::threshold::decrypted_shares_aggregation_ckks::Configs as DecryptedSharesAggregationCkksConfigs;
+
+/************************************
+-------------------------------------
+decrypted_shares_aggregation_ckks (CIRCUIT 7-CKKS)
+-------------------------------------
+************************************/
+
+pub global {prefix}_L: u32 = {};
+pub global {prefix}_QIS: [Field; {prefix}_L] = [{}];
+pub global {prefix}_BIT_D_NATIVE: u32 = {};
+
+pub global {prefix}_CONFIGS: DecryptedSharesAggregationCkksConfigs<{prefix}_L>
+     = DecryptedSharesAggregationCkksConfigs::new({prefix}_QIS);
+"#,
+        configs.l, qis_str, configs.bits.d_native_bit,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::threshold::user_data_encryption_ckks::insecure_512_ckks;
+
+    #[test]
+    fn test_configs_generation() {
+        let preset = insecure_512_ckks().unwrap();
+        let configs = Configs::compute(preset, &()).unwrap();
+        let prefix: &str = <DecryptedSharesAggregationCkksCircuit as Circuit>::PREFIX;
+
+        let codegen_configs = generate_configs(&configs);
+
+        assert!(codegen_configs.contains("decrypted_shares_aggregation_ckks"));
+        assert!(codegen_configs.contains(&format!(
+            "{}_BIT_D_NATIVE: u32 = {}",
+            prefix, configs.bits.d_native_bit
+        )));
+        assert!(codegen_configs.contains(&format!("{prefix}_CONFIGS:")));
+    }
+}

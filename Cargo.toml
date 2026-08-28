@@ -40,6 +40,7 @@ members = [
   "crates/test-helpers",
   "crates/tests",
   "crates/trbfv",
+  "crates/trckks",
   "crates/utils",
   "crates/utils-derive",
   "crates/wasm",
@@ -113,6 +114,7 @@ e3-sync = { version = "0.14.0", path = "./crates/sync" }
 e3-test-helpers = { version = "0.14.0", path = "./crates/test-helpers" }
 e3-tests = { version = "0.14.0", path = "./crates/tests" }
 e3-trbfv = { version = "0.14.0", path = "./crates/trbfv" }
+e3-trckks = { version = "0.14.0", path = "./crates/trckks" }
 e3-utils = { version = "0.14.0", path = "./crates/utils" }
 e3-utils-derive = { version = "0.14.0", path = "./crates/utils-derive" }
 e3-safe = { version = "0.14.0", path = "./crates/safe" }
@@ -221,3 +223,12 @@ libp2p = { version = "=0.56.0", features = [
   "cbor"
 ]}
 zeroize = "=1.8.2"
+
+# DEV ONLY (feat/ckks-user-data-encryption): use the local fhe.rs checkout with
+# the CKKS module until the feat/ckks-encryption branch is released as a tag.
+# Remove before merging; replace with a version bump of the tag above.
+[patch."https://github.com/gnosisguild/fhe.rs"]
+fhe = { path = "../fhe.rs/crates/fhe" }
+fhe-traits = { path = "../fhe.rs/crates/fhe-traits" }
+fhe-math = { path = "../fhe.rs/crates/fhe-math" }
+fhe-util = { path = "../fhe.rs/crates/fhe-util" }

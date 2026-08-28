@@ -6,5 +6,8 @@
 
 pub mod default;
 pub mod committee;
+pub mod ckks;
+pub mod ckks_aggregation;
+pub mod ckks_dkg;
 pub mod insecure;
 pub mod secure;

@@ -36,6 +36,7 @@
     "test:circuit-tooling": "tsx --test scripts/circuit-artifacts.test.ts",
     "test": "pnpm evm:test && pnpm rust:test && pnpm sdk:test && pnpm noir:test",
     "test:integration": "cd ./tests/integration && ./test.sh",
+    "test:ckks-e2e": "./scripts/ckks-e2e.sh",
     "coverage": "pnpm evm:coverage",
     "prepare": "husky",
     "interfold": "cd crates && ./scripts/launch.sh",
