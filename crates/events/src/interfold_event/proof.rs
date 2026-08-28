@@ -154,6 +154,13 @@ pub enum CircuitName {
     /// + slot-fold into the combined 3 x C3_SLOTS state (C3_SLOTS = N_PARTIES * L_THRESHOLD);
     /// emits c3_fold's exact 4+3*C3_SLOTS public ABI (c3ab_fold / node_fold VK-rebuild-only).
     C3FoldBatchMergeM7,
+    /// I5a r61 (not shipped): PRODUCTION-SCHEDULE MERGE tier M7x — anchor (slot0, parameterized)
+    /// + 6 in-circuit sub-gate verifies (5 x B10 + 1 x B3 = 53 covered slots, a public
+    /// slot-index array) + membership slot-fold of the combined 3 x C3_SLOTS state; covers the
+    /// production C3b geometry (N=19, L=3, C3_SLOTS = 57, per-node scheduled slots W_P =
+    /// {0..57}\{3P, 3P+1, 3P+2}); emits c3_fold's exact 4+3*C3_SLOTS public ABI
+    /// (c3ab_fold / node_fold VK-rebuild-only).
+    C3FoldBatchMergeM7x,
     /// Sequential C6 fold: inner ZK + prior `c6_fold` non-ZK proof (phase-7 aggregator).
     C6Fold,
     /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
@@ -199,6 +206,7 @@ impl CircuitName {
             CircuitName::C3FoldBatchB10 => "c3_fold_batch_b10",
             CircuitName::C3FoldBatchMergeM1 => "c3_fold_batch_merge_m1",
             CircuitName::C3FoldBatchMergeM7 => "c3_fold_batch_merge_m7",
+            CircuitName::C3FoldBatchMergeM7x => "c3_fold_batch_merge_m7x",
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
             CircuitName::C2abFold => "c2ab_fold",
@@ -243,6 +251,7 @@ impl CircuitName {
             | CircuitName::C3FoldBatchB10
             | CircuitName::C3FoldBatchMergeM1
             | CircuitName::C3FoldBatchMergeM7
+            | CircuitName::C3FoldBatchMergeM7x
             | CircuitName::DecryptionAggregator => "recursive_aggregation",
         }
     }
@@ -289,6 +298,7 @@ impl CircuitName {
             | CircuitName::C3FoldBatchB10
             | CircuitName::C3FoldBatchMergeM1
             | CircuitName::C3FoldBatchMergeM7
+            | CircuitName::C3FoldBatchMergeM7x
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold

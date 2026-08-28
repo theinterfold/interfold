@@ -30,7 +30,7 @@ pub use backend::{SetupStatus, ZkBackend};
 pub use circuits::aggregation::c3_accumulator::{
     generate_batched_c3_fold, generate_batched_c3_fold_b10, generate_batched_c3_fold_b2,
     generate_batched_c3_fold_b3, generate_batched_c3_fold_b6, generate_c3_merge_m1,
-    generate_c3_merge_m7, generate_sequential_c3_fold,
+    generate_c3_merge_m7, generate_c3_merge_m7x, generate_sequential_c3_fold,
 };
 pub use circuits::aggregation::c6_accumulator::generate_sequential_c6_fold;
 pub use circuits::aggregation::node_dkg_fold::{

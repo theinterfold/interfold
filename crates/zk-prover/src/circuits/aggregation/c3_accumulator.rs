@@ -69,6 +69,22 @@ pub(crate) fn generate_c3_fold_kernel_genesis_proof(
     artifacts_dir: &str,
     job_id: &str,
 ) -> Result<Proof, ZkError> {
+    generate_c3_fold_kernel_genesis_at(prover, inner, total_slots, artifacts_dir, job_id, 0)
+}
+
+/// [`generate_c3_fold_kernel_genesis_proof`] with an explicit anchor slot: the kernel circuit
+/// stamps the genesis accumulator at `slot_index` (its `slot_index` witness param), so the
+/// production C3b schedule (which anchors `W_P[0]`, not slot 0) can mint its genesis — the
+/// circuit supported this all along; the crate just hardcoded 0 (surfaced by the r60 premise
+/// kill of the M7 drop-in).
+pub(crate) fn generate_c3_fold_kernel_genesis_at(
+    prover: &ZkProver,
+    inner: &Proof,
+    total_slots: usize,
+    artifacts_dir: &str,
+    job_id: &str,
+    slot_index: u32,
+) -> Result<Proof, ZkError> {
     let inner_vk = vk::load_vk_artifacts(
         &prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir),
         CircuitName::ShareEncryption,
@@ -92,7 +108,7 @@ pub(crate) fn generate_c3_fold_kernel_genesis_proof(
         inner_key_hash: inner_vk.key_hash,
         acc_key_hash: kernel_vk.key_hash,
         is_first_step: true,
-        slot_index: 0,
+        slot_index,
     };
 
     let circuit_path = prover
@@ -1373,6 +1389,254 @@ pub fn generate_c3_merge_m7(
         e3_id,
         artifacts_dir,
     )
+}
+
+/// Witness + prove for the PRODUCTION-SCHEDULE MERGE tier M7x (`c3_fold_batch_merge_m7x`) over a
+/// KERNEL GENESIS accumulator that anchors `inner[0]` at `slot_indices[0]` (any slot — the
+/// production C3b chain anchors `W_P[0]`, not slot 0). 5 x B10 sub-gates cover
+/// `slot_indices[1..51]` in row order (block j covers rows 1+10j..=10+10j) + 1 x B3 sub-gate
+/// covers `slot_indices[51..54]`; all 6 sub-gates anchor the SAME kernel genesis (disjoint
+/// covers, asserted in-circuit by the sub-gates; the M7x circuit re-asserts pairwise
+/// disjointness across sub-gate covered-sets + zero-overwrite on the genesis). ONE in-circuit
+/// M7x verify-and-fold then unions the covered rows (read from each sub's public tail) with
+/// the genesis pass-through (anchor row + the node's own un-computed 3-slot block).
+///
+/// Returns a `CircuitName::C3FoldBatchMergeM7x` proof with c3_fold's exact 4+3*C3_SLOTS public
+/// layout => byte-identical slot state to `generate_sequential_c3_fold` over the same inners +
+/// slot schedule (the I5a-fix-test e2e arm verifies exactly that), so `c3ab_fold` / `node_fold`
+/// / onchain are VK-rebuild-only.
+fn m7x_gate_over_genesis(
+    prover: &ZkProver,
+    acc: &Proof,
+    inners: &[&Proof],
+    slot_indices: &[u32],
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    if inners.len() != 53 {
+        return Err(ZkError::InvalidInput(format!(
+            "c3_fold_batch_merge_m7x gate: expected 53 chain inners (the C3b leaves after the \
+             kernel anchor), got {}",
+            inners.len()
+        )));
+    }
+    if slot_indices.len() != 54 {
+        return Err(ZkError::InvalidInput(format!(
+            "c3_fold_batch_merge_m7x gate: expected 54 slot indices (anchor + 53 covered), got \
+             {}",
+            slot_indices.len()
+        )));
+    }
+    for (i, &s) in slot_indices.iter().enumerate() {
+        if s as usize >= total_slots {
+            return Err(ZkError::InvalidInput(format!(
+                "c3_fold_batch_merge_m7x gate: slot {s} (index {i}) out of range \
+                 (total_slots={total_slots})"
+            )));
+        }
+    }
+    for i in 0..slot_indices.len() {
+        for j in i + 1..slot_indices.len() {
+            if slot_indices[i] == slot_indices[j] {
+                return Err(ZkError::InvalidInput(format!(
+                    "c3_fold_batch_merge_m7x gate: duplicate slot {} (indices {i}, {})",
+                    slot_indices[i],
+                    j
+                )));
+            }
+        }
+    }
+    // The artifact's C3_SLOTS = N_PARTIES * L_THRESHOLD of the STAGED circuit build; the
+    // compiled json is the single source of truth (mirrors the M7 builder, r55).
+    let slots: usize = {
+        let circuit_name = CircuitName::C3FoldBatchMergeM7x;
+        let jpath = prover
+            .circuits_dir(CircuitVariant::Default, artifacts_dir)
+            .join(circuit_name.dir_path())
+            .join(format!("{}.json", circuit_name.as_str()));
+        let v: serde_json::Value = serde_json::from_slice(
+            &std::fs::read(&jpath)
+                .map_err(|e| ZkError::SerializationError(format!("read M7x json: {e}")))?,
+        )
+        .map_err(|e| ZkError::SerializationError(e.to_string()))?;
+        let len = v["abi"]["parameters"]
+            .as_array()
+            .and_then(|ps| {
+                ps.iter().find(|p| {
+                    p.get("name") == Some(&serde_json::Value::String("acc_public_inputs".into()))
+                })
+            })
+            .and_then(|p| p.get("type")?.get("length")?.as_u64())
+            .ok_or_else(|| {
+                ZkError::InvalidInput("M7x json abi: acc_public_inputs length not found".into())
+            })?;
+        (len - 4) as usize / 3
+    };
+    if slots != total_slots {
+        return Err(ZkError::InvalidInput(format!(
+            "c3_fold_batch_merge_m7x gate: staged circuit C3_SLOTS ({slots}) != total_slots \
+             ({total_slots}) — rebuild the artifact at the same committee"
+        )));
+    }
+    let sub_vks_b10 = C3FoldBatchVks::load(prover, artifacts_dir, CircuitName::C3FoldBatchB10)?;
+    let sub_vks_b3 = C3FoldBatchVks::load(prover, artifacts_dir, CircuitName::C3FoldBatchB3)?;
+    let merge_vks = C3FoldBatchVks::load(prover, artifacts_dir, CircuitName::C3FoldBatchMergeM7x)?;
+    debug_assert_eq!(sub_vks_b10.kernel_vk.key_hash, sub_vks_b3.kernel_vk.key_hash);
+    if acc.public_signals.len() / 32 != 4 + 3 * slots {
+        return Err(ZkError::InvalidInput(format!(
+            "c3_fold_batch_merge_m7x gate: kernel genesis public field count {} != {}",
+            acc.public_signals.len() / 32,
+            4 + 3 * slots
+        )));
+    }
+    // 1) Five B10 sub-gates over the genesis (block j covers rows 1+10j..=10+10j):
+    //    sub witness slot vector = (anchor, row 1+10j, ..., row 10+10j) — 11 entries,
+    //    the b10 ABI convention (slot_i = slot_indices[i+1]).
+    let mut subs: Vec<(CircuitName, Proof)> = Vec::with_capacity(6);
+    for j in 0..5usize {
+        let blk: Vec<&Proof> = inners[j * 10..j * 10 + 10].to_vec();
+        let mut slots11 = Vec::with_capacity(11);
+        slots11.push(slot_indices[0]);
+        for k in 0..10 {
+            slots11.push(slot_indices[1 + j * 10 + k]);
+        }
+        let sub =
+            b10_gate_over_genesis(prover, &acc, &blk, &slots11, slots, e3_id, artifacts_dir)?;
+        subs.push((CircuitName::C3FoldBatchB10, sub));
+    }
+    // 2) One B3 sub-gate over the genesis (rows 51,52,53): 4-entry witness vector
+    //    (kernel anchor + 3 covered), the b3 ABI convention.
+    {
+        let blk: Vec<&Proof> = inners[50..53].to_vec();
+        let sub = generate_c3_fold_batch_gate(
+            prover,
+            CircuitName::C3FoldBatchB3,
+            &acc,
+            &sub_vks_b3.kernel_vk,
+            &blk,
+            [
+                slot_indices[51],
+                slot_indices[52],
+                slot_indices[53],
+            ],
+            slots,
+            &format!("{e3_id}-b3g5"),
+            artifacts_dir,
+        )?;
+        subs.push((CircuitName::C3FoldBatchB3, sub));
+    }
+    // 3) The M7x merge gate: in-circuit-verify all 6 sub-gate proofs + the genesis, fold the
+    //    53 covered rows from each sub's public tail (exact-slot membership), pass the other
+    //    rows (anchor + the node's own block) through from the genesis.
+    let mut out = serde_json::Map::<String, serde_json::Value>::new();
+    for (idx, (c_name, sub)) in subs.iter().enumerate() {
+        let sub_vks = match c_name {
+            CircuitName::C3FoldBatchB10 => &sub_vks_b10,
+            CircuitName::C3FoldBatchB3 => &sub_vks_b3,
+            _ => unreachable!("m7x subs are b10/b3"),
+        };
+        out.insert(
+            format!("vk{idx}"),
+            serde_json::to_value(&sub_vks.batch_vk.verification_key).unwrap(),
+        );
+        out.insert(
+            format!("proof{idx}"),
+            serde_json::to_value(&bytes_to_field_strings(&sub.data)?).unwrap(),
+        );
+        out.insert(
+            format!("public{idx}"),
+            serde_json::to_value(&bytes_to_field_strings(sub.public_signals.as_ref())?).unwrap(),
+        );
+        out.insert(
+            format!("kh{idx}"),
+            serde_json::to_value(&sub_vks.batch_vk.key_hash).unwrap(),
+        );
+    }
+    out.insert(
+        "acc_vk".to_string(),
+        serde_json::to_value(&merge_vks.kernel_vk.verification_key).unwrap(),
+    );
+    out.insert(
+        "acc_proof".to_string(),
+        serde_json::to_value(&bytes_to_field_strings(&acc.data)?).unwrap(),
+    );
+    out.insert(
+        "acc_public_inputs".to_string(),
+        serde_json::to_value(&bytes_to_field_strings(acc.public_signals.as_ref())?).unwrap(),
+    );
+    out.insert(
+        "acc_key_hash".to_string(),
+        serde_json::to_value(&merge_vks.kernel_vk.key_hash).unwrap(),
+    );
+    for s in 0..54u32 {
+        out.insert(format!("slot{s}"), serde_json::json!(slot_indices[s as usize]));
+    }
+    let circuit_name = CircuitName::C3FoldBatchMergeM7x;
+    let circuit_path = prover
+        .circuits_dir(CircuitVariant::Default, artifacts_dir)
+        .join(circuit_name.dir_path())
+        .join(format!("{}.json", circuit_name.as_str()));
+    let compiled = CompiledCircuit::from_file(&circuit_path)?;
+    let input_map = inputs_json_to_input_map(&serde_json::Value::Object(out))?;
+    let witness = WitnessGenerator::new().generate_witness(&compiled, input_map)?;
+    prover.generate_recursive_aggregation_bin_proof(
+        circuit_name,
+        &witness,
+        &format!("{e3_id}-m7xg0"),
+        artifacts_dir,
+    )
+}
+
+/// N=19 C3b production-schedule tree split as ONE M7x merge (I5a-fix, r61) — the crate
+/// surface for the `c3_fold_batch_merge_m7x` circuit.
+///
+/// `inner_proofs` (exactly 54, POSITIONALLY the production C3b fan-out order): index 0 anchors
+/// `slot_indices[0]` (the kernel genesis — for node P this is `W_P[0]`, ANY slot, unlike the
+/// legacy `generate_c3_merge_m7` which required slot 0); indices 1..=53 cover
+/// `slot_indices[1..=53]` (the public slot array the M7x circuit reads, e.g.
+/// `W_P[1..] = W_P \ {W_P[0]}` ascending — the scattered schedule with the node's own 3-slot
+/// hole and, for P <= 17, the out-of-window slots 55/56). The sub-block partition is FIXED in
+/// the circuit (5 x B10 + 1 x B3 over the 53 covered rows) and is schedule-INDEPENDENT: the
+/// covered slots' absolute addresses ride the public `slot_i` params.
+///
+/// Returns a `CircuitName::C3FoldBatchMergeM7x` proof: 1 kernel + 6 sub-gates + 1 M7x (8
+/// top-level proves) replacing the 54-step `c3_fold` chain, byte-identical combined slot state
+/// (membership routing + in-circuit disjointness/zero-overwrite asserts).
+pub fn generate_c3_merge_m7x(
+    prover: &ZkProver,
+    inner_proofs: &[Proof],
+    slot_indices: &[u32],
+    total_slots: usize,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    if inner_proofs.len() != 54 {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_c3_merge_m7x: expected exactly 54 inner proofs (anchor + 53 covered), \
+             got {}",
+            inner_proofs.len()
+        )));
+    }
+    if slot_indices.len() != 54 {
+        return Err(ZkError::InvalidInput(format!(
+            "generate_c3_merge_m7x: expected exactly 54 slot indices (anchor + 53 covered), \
+             got {}",
+            slot_indices.len()
+        )));
+    }
+    // Kernel genesis anchoring inner 0 at slot_indices[0] (the circuit stamps the genesis at
+    // the given slot; the legacy slot-0 path is the wrapper default).
+    let acc = generate_c3_fold_kernel_genesis_at(
+        prover,
+        &inner_proofs[0],
+        total_slots,
+        artifacts_dir,
+        &format!("{e3_id}-kernel"),
+        slot_indices[0],
+    )?;
+    let refs: Vec<&Proof> = inner_proofs[1..].iter().collect();
+    m7x_gate_over_genesis(prover, &acc, &refs, slot_indices, total_slots, e3_id, artifacts_dir)
 }
 
 /// Batched c3 fold (I5 productionization, drop-in alternative to ``generate_sequential_c3_fold``):
