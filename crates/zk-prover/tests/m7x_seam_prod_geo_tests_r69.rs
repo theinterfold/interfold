@@ -10,27 +10,26 @@
 //! and node_dkg_fold folds C3b via M7x + C3a via the SEQUENTIAL 54-step fold. This leg
 //! RANs that production per-node wall: 108 inners + c3b M7x + c3a 54-step serial + c3ab.
 //!
-//! (Base: the r67 P=0 anchor=3 seam, reproduced verbatim apart from the c3a count + the
-//! c3a slot schedule, both raised to production geometry.)
+//! (Base: the r67 P=0 anchor=3 seam, edited to the r69 production data: c3b/c3a inners
+//! both raised to 54 over the SAME scattered W_P, c3a fold count to 54 — and the node
+//! run is P=1 (NODE_P), NOT P=0: the merged c3b wall cross-checks the r63/r65 P=1 M7x
+//! anchor, and the r67 P=0 RAN arm + box-width-only schedule-invariance (r67 landing)
+//! cover the P=2..18 arm arithmetically — one code path, the merge wall is
+//! box-width-only, so the P=1 number IS the per-node number for every node.)
 //!
-//! r65 RAN-verified the P=1 arm; this round closes the source-derived DRAFT-structural
-//! byte-identity leg by exercising the SAME production wiring (M7x c3b arm + c3ab VK pin)
-//! at the P=0 geometry (W_0 = {0..57}\{0,1,2}, anchor = W_0[0] = 3 — the crux premise of
-//! the seam arm: `generate_c3_merge_m7x` mints the kernel genesis at `slot_indices[0]`,
-//! and M7x's circuit passes the anchor row + the node's own block through from genesis).
-//!
-//!   c3b arm = `generate_c3_merge_m7x` over W_0 (kernel at 3 + 53 covered) -> M7x circuit
-//!   c3a arm = `generate_sequential_c3_fold` over the SAME 30-slot block {3..33} as r65
-//!             (the c3a arm is schedule-independent; only that c3ab consumes BOTH arms)
+//!   c3b arm = `generate_c3_merge_m7x` over W_1 (kernel at 0 + 53 covered) -> M7x circuit
+//!   c3a arm = `generate_sequential_c3_fold` over W_1 (production 54-slot scatter; the
+//!             r65/r67 30-slot contiguous {3..33} block was "shape not under test")
 //!   c3ab seam = witness built exactly as `C3abFoldWitness` does, c3b pinned to the M7x
 //!               VK, c3a to the c3_fold VK — artifact UNRECOMPILED; verify + corruption
 //!               checks (column tails all 57 rows, pinned key-hash publics).
 //!
-//! Identical shape to r65 (same staged artifacts; slot arrays are witness inputs, so NO
-//! circuit rebuild is needed for the P=0 rotation). Run:
-//!   cargo test --release -p e3-zk-prover --test m7x_seam_p0_tests_r67 -- --nocapture
-//!   (quiet box, release profile, UNCONTESTED; ~84 secure inners dominate ~70 min on 4c —
-//!    r65 RAN 1:11:55 total, maxrss 7.47 GiB, Swaps 0 on this 4c/7.8 GiB + 8 GiB swap box.)
+//! identical shape to r65 (same staged artifacts; slot arrays are witness inputs, so NO
+//! circuit rebuild is needed for the production geometry). Run:
+//!   cargo test --release -p e3-zk-prover --test m7x_seam_prod_geo_tests_r69 -- --nocapture
+//!   (quiet box, release profile, UNCONTESTED; ~108 secure inners dominate ~90 min on 4c —
+//!    r65 RAN 1:11:55 total for the 84-inner class, maxrss 7.47 GiB, Swaps 0 on this
+//!    4c/7.8 GiB + 8 GiB swap box.)
 
 mod common;
 use std::path::PathBuf;
@@ -52,8 +51,11 @@ use e3_zk_prover::{
 };
 
 const COMMITTEE: &str = "small";
-/// Node P=0 production C3b chain: W_0 = {0..57}\{0,1,2} ascending (54 slots),
-/// anchor W_0[0] = 3 — the P=0 rotation of r65's P=1 arm (W_1, anchor 0).
+/// Node P=1 production C3 chain: W_1 = {0..57}\{3,4,5} ascending (54 slots), anchor
+/// W_1[0] = 0 — the r63/r65 RAN P=1 arm, so this leg's c3b M7x wall cross-checks the
+/// r63 @8c and r65 @4c anchors directly. (Production C3 covers every node's W_P; the
+/// merged wall is box-width-only by r67's schedule-invariance RAN, so the P=1 number
+/// is the per-node number for all 19.)
 const NODE_P: u32 = 1;
 /// PRODUCTION c3 (one node) = C3a(SkLane) + C3b(SmudgeLane), each 54 inners (skipped
 /// own party × L=3). Node P=1: W_1 = {0..57}\\{3,4,5}, anchor W_1[0] = 0 (the r65/r63

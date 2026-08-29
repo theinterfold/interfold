@@ -45,3 +45,51 @@ set is not built here (14.7 GiB compile OOM wall) => its RAN wall needs box-2.
 ## Verdict
 N=19 DKG wall table ESTABLISHED ON DISK (committed, RAN-runnable `python3 model.py`). Per-node
 c3-bulk is RAN; non-c3 remainder is DRAFT + box-2-gated. The M7x fold cut = RAN-anchored lever.
+
+## ROUND-69 LANDING APPENDIX (2026-08-29) — production-geometry per-node c3-bulk wall, RAN
+
+The r69 leg (systemd unit `r69_prod_geo`, test `m7x_seam_prod_geo_tests_r69`, 453 lines,
+secure-8192/small, commit 017adef) RAN the CORRECTED production per-node chain on this 4c box:
+108 inners (54 sk-lane `DkgInputType::SecretKey` + 54 esm-lane `SmudgingNoise`, serial,
+scattered W_1) + c3b M7x merge + c3a 54-step sequential fold + c3ab seam (c3b pinned to the
+M7x VK, c3a to the c3_fold VK, c3ab artifact UNRECOMPILED). Unit Result=success, RC-TEST=0,
+wall 1:28:41, maxrss 7,822,760 kB (7.47 GiB), Swaps 0, 278% CPU. Output: /tmp/r69_prod_geo_out.txt
++ durable copy poc/r69/r69_prod_geo_out.txt. All 7 asserts RAN-green: c3b circuit identity M7x,
+c3a circuit identity C3Fold, 175 fields each arm, c3ab verify PASS, pinned key-hash publics ==
+VK key_hashes (c3a 0x08fa9e2d…164b / c3b 0x26ed7ef3…3a52), c3ab columns == arm tails all 57 rows
+(0 mismatches both columns-sets).
+
+| per-node component | wall (s) @4c | % of node | label | vs r68 model-derived |
+|---|---:|---:|---|---|
+| 108 inners (54 sk + 54 esm) | 4196.3 | 78.9% | RAN (r69) | 4420.4 (model: 38.85 vs 40.93 s/inner unit) |
+| c3b M7x fold (8 top-level proves) | 479.5 | 9.0% | RAN (r69) | 497.7 (r66 as-run; −3.7% new measurement) |
+| c3a 54-step sequential fold | 634.4 | 11.9% | RAN (r69) | 614.7 (r66 unit 12.27 s/step × 54) |
+| c3ab seam | 11.4 | 0.2% | RAN (r69) | 11.8 |
+| **PER-NODE PRODUCTION c3-bulk @4c** | **5321.6** | 100% | **RAN (r69)** | 5592.2 (model was the conservative bound, +5.1% above RAN) |
+
+Headline: **one production node's c3-bulk DKG = 5321.6 s = 88.7 min @4c / 3187.4 s = 53.1 min @8c
+[DRAFT, core-ratio 1.670 of the RAN@4c anchor]; the 19-node ceremony wall ~= one node's wall
+(nodes independent/parallel) ⇒ ~88.7 min @4c / ~53.1 min @8c c3-bulk, BEFORE the DRAFT non-c3
+remainder (C0/C1/C2/C4 leaves + node_fold + comm; the box-2 ask stands ≥16 GiB) that r45/46
+establish as not compilable here (14.7 GiB class). Cross-checks: per-inner 38.85 s @4c between
+r65 40.93 s/inner @4c and r63 32.66 s/inner @8c — box-width-only wall, no regression. M7x wall
+479.5 vs r65 497.7 / r67 484.5 @4c — box-width-only, schedule-invariant (P=1 arm here, as r63/r65).
+
+New lever surfaced by the RAN numbers: the **c3a lane is SERIAL BY PRODUCTION WIRING**
+(node_dkg_fold folds c3a always sequential; only c3b was routed to M7x). It is 634.4 s = 11.9% of
+the per-node wall vs c3b-M7x 479.5 s. An M7x-routing of the c3a lane is a DRAFT est. of
+~155 s/node @4c (479.5-class merge replacing the 634.4 serial) — the box-2 follow-up is the
+M7x-on-c3a pole (new idea, p2, filed in STATE). The c3b fold cut re-anchored at the r69 M7x wall:
+−36.1% @4c (M7x 479.5 RAN vs serial 749.8 DRAFT@4c = 449.1 RAN@8c × 1.67); −33.6% @8c (both RAN,
+r63) remains the headline RAN cut.
+
+Test-doc bug found and fixed this round (REEVAL per the r67 template, doc-only): the committed
+r69 test header/const comments claimed the leg runs at P=0 / W_0 (NODE_P doc) while the CODE
+runs NODE_P=1 / W_1 — the code is correct (matches the r63/r65 P=1 RAN anchor and the 108-inner
+production geometry); the docs were stale r67 template carries. Fixed in the r69-landing commit
+(no runtime effect; the leg's RAN numbers stand as printed — they were produced by the code,
+which was correct). `cargo check -p e3-zk-prover --tests` RC 0 (14.54 s) — gate met (doc-only change).
+
+**Updated fair prices:** I5a card CLOSED (r67) + r69 RAN put the per-node production c3-bulk on
+the ledger as a RAN number (88.7 min @4c / 53.1 min @8c c3-bulk; 108 inners 78.9% = the bulk;
+c3a serial = 11.9% = next lever). The box-2 ask unchanged: ≥16 GiB for the full 19-node E2E RAN.

@@ -127,18 +127,56 @@ pc3a = P_C3A_STE * per_c3a_unit
 p4c  = pi + R66_C3B_M7X_4C + pc3a + R66_C3AB_4C
 p8c  = p4c / CORE_4V8
 
+# ==================== ROUND-69 LANDING: PRODUCTION c3 geometry, RAN (r69 leg) ====================
+# The r69 leg (unit r69_prod_geo, 2026-08-29, launched 20:00:13 UTC, landed 21:28:54,
+# Result=success, RC-TEST=0, wall 1:28:41, maxrss 7,822,760 kB = 7.47 GiB, Swaps 0,
+# 278% CPU; output /tmp/r69_prod_geo_out.txt + durable poc/r69/) RAN the production
+# per-node c3-bulk chain on THIS 4c box: 108 secure-8192/small inners over the scattered
+# W_1 (54 sk-lane DkgInputType::SecretKey + 54 esm-lane SmudgingNoise) + c3b M7x +
+# c3a 54-step sequential + c3ab seam (c3b pinned to the M7x VK, c3a to the c3_fold VK,
+# c3ab UNRECOMPILED):
+R69_INNERS_108_4C = 4196.3   # 108 inners (54 sk + 54 esm) serial @4c, s
+R69_C3B_M7X_4C    = 479.5    # c3b M7x (8 top-level proves), fields 175, circuit M7x, s
+R69_C3A_SERIAL_4C = 634.4    # c3a 1 kernel + 53 c3_fold steps over W_1, fields 175, s
+R69_C3AB_4C       = 11.4     # c3ab seam prove, verify PASS, s
+R69_TOTAL_4C      = 5321.6   # per-node PRODUCTION c3-bulk @4c, s (leg printed total)
+
 print("\n" + "=" * W)
-print("ROUND-69 CORRECTION - production c3 geometry (source RAN; walls RAN-derived)")
+print("ROUND-69 LANDING - production per-node c3-bulk wall (RAN, r69 leg @4c, 453-line test)")
 print("=" * W)
-print(f"  Test-shape anchor (r66 as run)   : 84 inners + c3a 30-step + c3b M7x + c3ab = {R66_TOTAL_C3_4C:.1f} s @4c = {R66_TOTAL_C3_4C/60.0:.1f} min  [RAN]")
-print(f"  Production (source RAN/[RAN-der]): {P_INNERS} inners + c3a {P_C3A_STE}-step serial + c3b M7x + c3ab")
-print(f"     per-inner  = {R66_INNERS_84_4C:.1f}/84 = {per_inner:.3f} s   [RAN unit]")
-print(f"     per c3 step = {R66_C3A_SERIAL_4C:.1f}/30 = {per_c3a_unit:.3f} s   [RAN unit]")
-print(f"  PRODUCTION per-node c3-bulk @4c  : {pi:.1f}(inners) + {R66_C3B_M7X_4C:.1f}(c3b M7x,RAN) + {pc3a:.1f}(c3a serial) + {R66_C3AB_4C:.1f}(c3ab,RAN) = {p4c:.1f} s = {p4c/60.0:.1f} min")
-print(f"     @8c ref = {p8c:.1f} s = {p8c/60.0:.1f} min  (core-ratio {CORE_4V8:.2f})")
-print(f"  c3b fold cut (M7x vs serial) UNCHANGED: {cut8:+.1f}% @8c [RAN] / {cut4:+.1f}% @4c [RAN-anchored]")
-print(f"  VERDICT: committed 71.9 min/node was TEST-shaped (54+30); production = {p4c/60.0:.1f} min/node @4c ({100*(p4c-R66_TOTAL_C3_4C)/R66_TOTAL_C3_4C:+.1f}%) -")
-print(f"    the c3a lane runs 54 sequential steps (not 30) and the esm lane runs 54 inners (not 30).")
-print(f"    Same 19-node parallelism: wall ~= one node ~= {p4c/60.0:.1f} min c3-bulk @4c / ~{p8c/60.0:.1f} min @8c (before DRAFT non-c3 leaves).")
-# The production number is RAN-derived (ratio of RAN per-unit inputs); the r69 leg
-# (test m7x_seam_prod_geo_tests_r69) RAN-confirms it on this box (108 inners + arms).
+r69_rec = R69_INNERS_108_4C + R69_C3B_M7X_4C + R69_C3A_SERIAL_4C + R69_C3AB_4C
+print(f"  self-check re-summation : {r69_rec:.1f} s vs leg-printed {R69_TOTAL_4C:.1f} s  "
+      + ("OK" if abs(r69_rec - R69_TOTAL_4C) < 1.0 else "FAIL"))
+print(f"  108 inners (54 sk + 54 esm, W_1 scatter) {R69_INNERS_108_4C:7.1f} s = "
+      f"{R69_INNERS_108_4C/R69_TOTAL_4C*100:4.1f}%  ({R69_INNERS_108_4C/108:.2f} s/inner)   [RAN]")
+print(f"  c3b M7x fold (8 top-level proves)       {R69_C3B_M7X_4C:7.1f} s = "
+      f"{R69_C3B_M7X_4C/R69_TOTAL_4C*100:4.1f}%   [RAN]")
+print(f"  c3a 54-step sequential fold             {R69_C3A_SERIAL_4C:7.1f} s = "
+      f"{R69_C3A_SERIAL_4C/R69_TOTAL_4C*100:4.1f}%   [RAN]")
+print(f"  c3ab seam (verify PASS)                 {R69_C3AB_4C:7.1f} s = "
+      f"{R69_C3AB_4C/R69_TOTAL_4C*100:4.1f}%   [RAN]")
+print(f"  ==> PER-NODE PRODUCTION c3-bulk @4c  = {R69_TOTAL_4C:.1f} s = {R69_TOTAL_4C/60.0:.1f} min  [RAN]")
+p8 = R69_TOTAL_4C / CORE_4V8
+print(f"      @8c ref = {R69_TOTAL_4C:.1f}/{CORE_4V8:.2f} = {p8:.1f} s = {p8/60.0:.1f} min  "
+      f"[DRAFT, core-ratio of the RAN@4c]")
+# r69-RAN vs r69-model-derived: the model (r66 units x production counts) predicted 5592.2 s:
+model_derived = 108 * per_inner + R66_C3B_M7X_4C + 54 * per_c3a_unit + R66_C3AB_4C
+print(f"  model-derived (r66 units x counts) = {model_derived:.1f} s; RAN = {R69_TOTAL_4C:.1f} s "
+      f"= RAN is {100.0*(model_derived-R69_TOTAL_4C)/R69_TOTAL_4C:+.1f}% vs the model "
+      f"(r69 per-inner {R69_INNERS_108_4C/108:.2f} s vs r66-composition {per_inner:.2f} s; "
+      f"r69 c3-step {R69_C3A_SERIAL_4C/54:.2f} s vs r66 {per_c3a_unit:.2f} s) — model was the "
+      f"conservative bound; the RAN number is the wall")
+# c3b fold cut now RAN-anchored at BOTH box widths (M7x RAN@4c/r69; serial RAN@8c/r63 x core-ratio):
+ser4 = R63_C3B_SERIAL_8C * CORE_4V8
+print(f"  c3b fold cut @4c: M7x {R69_C3B_M7X_4C:.1f} (RAN r69) vs serial {ser4:.1f} "
+      f"(DRAFT = {R63_C3B_SERIAL_8C:.1f} RAN@8c x {CORE_4V8:.2f}) = {pct(R69_C3B_M7X_4C, ser4):+.1f}%")
+print(f"  c3a lane is SERIAL by production wiring (node_dkg_fold folds c3a always sequential):")
+print(f"      {R69_C3A_SERIAL_4C:.1f} s = {R69_C3A_SERIAL_4C/R69_TOTAL_4C*100:.1f}% of the per-node c3-bulk wall [RAN]")
+print(f"      => M7x-on-c3a-lane is the natural next lever (DRAFT est: ~{R69_C3A_SERIAL_4C-R69_C3B_M7X_4C:.0f} s/node @4c).")
+# 19-node headline (uke = one node; nodes independent/parallel):
+print("=" * W)
+print("19-NODE HEADLINE INTO THE LEDGER (RAN):")
+print(f"  one production node's c3-bulk DKG = {R69_TOTAL_4C:.1f} s = {R69_TOTAL_4C/60.0:.1f} min @4c "
+      f"({R69_INNERS_108_4C/60.0:.1f} of it the 108 inners = 78.9%); the 19-node ceremony wall ~= one node's")
+print(f"  wall (independent/parallel) => ~{R69_TOTAL_4C/60.0:.1f} min @4c / ~{p8/60.0:.1f} min @8c c3-bulk, BEFORE the")
+print(f"  DRAFT non-c3 remainder (C0/C1/C2/C4 leaves + node_fold + comm; box-2 ask stands >=16 GiB).")
