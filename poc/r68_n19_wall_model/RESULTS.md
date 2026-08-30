@@ -93,3 +93,51 @@ which was correct). `cargo check -p e3-zk-prover --tests` RC 0 (14.54 s) — gat
 **Updated fair prices:** I5a card CLOSED (r67) + r69 RAN put the per-node production c3-bulk on
 the ledger as a RAN number (88.7 min @4c / 53.1 min @8c c3-bulk; 108 inners 78.9% = the bulk;
 c3a serial = 11.9% = next lever). The box-2 ask unchanged: ≥16 GiB for the full 19-node E2E RAN.
+
+---
+
+## ROUND 70 - I70 PoC: route the c3a lane through the M7x merge (RAN)
+
+The r70 leg (systemd unit `r70_c3a_arm`, test `m7x_c3a_arm_tests_r70`, 453 lines,
+secure-8192/small, commit cd2f3df) RAN the I70 PoC on this 4c box: the 108-inner production
+baseline + the **c3a lane re-routed through the M7x merge** (8 top-level proves) alongside the
+c3a serial oracle, + c3b M7x (unchanged) + a BOTH-ARMS-M7x c3ab seam (c3a AND c3b pinned to the
+M7x VK, c3ab artifact UNRECOMPILED). Unit Result=success, RC-TEST=0, wall 1:39:33, maxrss
+7,820,144 kB (7.47 GiB), Swaps 0, 277% CPU. Output: /tmp/r70_c3a_arm_out.txt + durable copy
+poc/r70/r70_c3a_arm_out.txt. All 9 asserts RAN-green: 54 c3a-lane + 54 c3b-lane secure inners
+wall 4348.2 s; c3a arm M7x 495.8 s (175 fields, circuit M7x); c3a arm serial 638.0 s (175 fields,
+C3Fold); **c3a M7x tail == c3a serial tail all 57 rows (0 mismatches)**; c3b arm M7x 479.7 s;
+c3ab wall 11.5 s verify PASS pinned to the M7x VK both arms (publics
+0x26ed7ef3…73a5 both); c3ab columns == arm tails all 57 rows both columns-sets (0 mismatches);
+node-ledger; payoff.
+
+| per-node component | wall (s) @4c | label | vs r69 node |
+|---|---:|---|---|
+| 108 inners (54 sk + 54 esm) | 4348.2 | RAN (r70) | 4196.3 (r69; +3.6% box variance, same geometry) |
+| c3a lane — M7x merge (8 top-level proves) | 495.8 | RAN (r70) | was 634.4 serial (r69) |
+| c3a lane — serial (oracle) | 638.0 | RAN (r70) | 634.4 (r69) |
+| c3b M7x fold (8 top-level proves) | 479.7 | RAN (r70) | 479.5 (r69) |
+| c3ab seam (both arms M7x VK) | 11.5 | RAN (r70) | 11.4 (r69) |
+
+**I70 claim — HOLDS RAN.** Routing the c3a lane (node_dkg_fold's always-sequential arm) through
+the M7x merge **cuts the c3a lane 142.2 s (22.3%)** — 638.0 serial (IFS compare) vs 495.8 M7x —
+byte-identical tails (all 57 rows, 0 mismatches) and the c3ab seam verify-PASSes on the
+UNRECOMPILED artifact with both arms pinned to the M7x VK. This extends the r65/r66/r67/r69
+c3b=M7x VK-pin precedent to the c3a arm: the M7x key-hashVK is lane-agnostic, so a single
+c3ab artifact covers both-arm-M7x.
+
+**Post-I70 per-node c3-bulk @4c, RAN-reconstituted (two consistent figures):**
+- (a) r69 node 5321.6 − r69 c3a-serial 634.4 + r70 c3a-M7x 495.8 = **5183.0 s = 86.4 min**
+- (b) r70 same-leg (4 components, one state) = **5335.2 s = 88.9 min**
+(b) − (a) = 152.2 s is entirely the +3.6% inners variance (4348.2 vs 4196.3), not the lever
+(c3ab diff 0.1 s, c3b diff 0.2 s). @8c ref [DRAFT, core-ratio 1.670 of the RAN@4c anchor]:
+(a) 3104.4 s / (b) 3195.5 s. Gateway remains the bulk: 108 inners = 79.6% of the node; the
+M7x-routed c3a (495.8) + c3b (479.7) folds are now the two equal ~9% arms.
+
+Verdict: the c3a lane was the last serial-by-production-wiring arm and it now pays the same
+fold cut as c3b. **Node-level I70 payoff ~139-142 s/node @4c (~2.6% of the r69 c3-bulk node)** —
+modest in isolation but it closes the c3-bulk lane-symmetry and removes the last serial fold
+arm. The production wiring (node_dkg_fold route c3a arm -> M7x + c3ab arm-routed to the c3a-VK
+arm, both arms M7x) is the next on-box step (I70-wiring). c3b fold cut re-anchored: M7x 479.7 RAN
+vs serial 749.8 DRAFT@4c = 449.1 RAN@8c x 1.67 (−36.0% @4c; −33.6% @8c both-RAN r63 standalone).
+Box-2 ask unchanged (>=16 GiB for the full 19-node E2E RAN).

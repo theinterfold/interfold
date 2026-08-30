@@ -175,8 +175,71 @@ print(f"      {R69_C3A_SERIAL_4C:.1f} s = {R69_C3A_SERIAL_4C/R69_TOTAL_4C*100:.1
 print(f"      => M7x-on-c3a-lane is the natural next lever (DRAFT est: ~{R69_C3A_SERIAL_4C-R69_C3B_M7X_4C:.0f} s/node @4c).")
 # 19-node headline (uke = one node; nodes independent/parallel):
 print("=" * W)
-print("19-NODE HEADLINE INTO THE LEDGER (RAN):")
+print("19-NODE HEADLINE INTO THE LEDGER (RAN, r69 baseline):")
 print(f"  one production node's c3-bulk DKG = {R69_TOTAL_4C:.1f} s = {R69_TOTAL_4C/60.0:.1f} min @4c "
       f"({R69_INNERS_108_4C/60.0:.1f} of it the 108 inners = 78.9%); the 19-node ceremony wall ~= one node's")
 print(f"  wall (independent/parallel) => ~{R69_TOTAL_4C/60.0:.1f} min @4c / ~{p8/60.0:.1f} min @8c c3-bulk, BEFORE the")
 print(f"  DRAFT non-c3 remainder (C0/C1/C2/C4 leaves + node_fold + comm; box-2 ask stands >=16 GiB).")
+
+# ==================== ROUND-70 LANDING: I70 c3a-lane M7x, RAN (r70 leg @4c) ====================
+# The r70 leg (unit r70_c3a_arm, 2026-08-30, launched 02:43:04 UTC, landed 04:22:37,
+# Result=success, RC-TEST=0, wall 1:39:33, maxrss 7,820,144 kB = 7.47 GiB, Swaps 0,
+# 277% CPU; output /tmp/r70_c3a_arm_out.txt + durable poc/r70/) RAN the I70 PoC on THIS
+# 4c box: 108 secure-8192/small inners over scattered W_1 (54 sk-lane SecretKey/C3a +
+# 54 esm-lane SmudgingNoise/C3b) with the C3a lane routed BOTH ways - through the M7x merge
+# (under test) and the getCurrent production 54-step sequential fold (the byte-identity
+# oracle) - plus a BOTH-ARMS-M7x c3ab seam (c3a AND c3b pinned to the M7x VK, c3ab
+# artifact UNRECOMPILED):
+R70_INNERS_108_4C   = 4348.2   # 108 inners (54 sk + 54 esm) serial @4c, s
+R70_C3A_M7X_4C      = 495.8    # c3a M7x (8 top-level proves), fields 175, circuit M7x, s
+R70_C3A_SERIAL_4C   = 638.0    # c3a 1 kernel + 53 c3_fold steps over W_1 (oracle), s
+R70_C3B_M7X_4C      = 479.7    # c3b M7x (8 top-level proves), fields 175, circuit M7x, s
+R70_C3AB_4C         = 11.5     # c3ab seam (BOTH arms -> M7x VK), verify PASS, s
+R70_TEST_WALL_4C    = 5973.39  # test "finished in" (s); wall clock of the leg
+
+print("\n" + "=" * W)
+print("ROUND-70 LANDING - I70: c3a lane through the M7x merge (RAN, r70 leg @4c)")
+print("=" * W)
+r70_armsum = (R70_INNERS_108_4C + R70_C3A_M7X_4C + R70_C3A_SERIAL_4C
+              + R70_C3B_M7X_4C + R70_C3AB_4C)
+print(f"  self-check: sum of the 5 arm walls = {r70_armsum:.1f} s vs test-report "
+      f"{R70_TEST_WALL_4C:.1f} s  "
+      + ("OK" if abs(r70_armsum - R70_TEST_WALL_4C) < 1.0 else "FAIL"))
+print(f"  108 inners (54 sk + 54 esm, W_1 scatter)  {R70_INNERS_108_4C:7.1f} s  "
+      f"({R70_INNERS_108_4C/108:.2f} s/inner)   [RAN r70]")
+print(f"  c3a M7x (8 top-level proves)              {R70_C3A_M7X_4C:7.1f} s   "
+      f"[RAN r70]  <-- UNDER TEST (the I70 route)")
+print(f"  c3a serial (1 kernel + 53 steps)          {R70_C3A_SERIAL_4C:7.1f} s   "
+      f"[RAN r70]  <-- the CURRENT production wiring (oracle)")
+print(f"  c3b M7x (8 top-level proves)              {R70_C3B_M7X_4C:7.1f} s   [RAN r70]")
+print(f"  c3ab (both arms -> M7x VK), verify PASS   {R70_C3AB_4C:7.1f} s   [RAN r70]")
+# RAN-ROBUST HEADLINE: the c3a-lane cut, SAME-LEG r70 (both terms RAN, one box state):
+c3a_cut = R70_C3A_M7X_4C - R70_C3A_SERIAL_4C
+print("-" * W)
+print(f"  I70 LEVER (RAN-robust, r70 same-leg): c3a M7x {R70_C3A_M7X_4C:.1f}s vs serial "
+      f"{R70_C3A_SERIAL_4C:.1f}s = {c3a_cut:.1f} s = {100.0*c3a_cut/R70_C3A_SERIAL_4C:+.1f}% "
+      f"of the c3a lane")
+print(f"        c3a-M7x tail == c3a-serial tail, ALL 57 rows, 0 mismatches [RAN r70] "
+      f"= the load-bearing equivalence claim holds")
+print(f"        BOTH-ARMS-M7x c3ab seam verify PASS on the UNRECOMPILED artifact [RAN r70] "
+      f"(extends the r65/r66/r67/r69 c3b=M7x VK-pin precedent to the c3a arm)")
+# NODE RECONSTRUCTION (RAN-reconstituted; each term a RAN measurement). Two provenances:
+#  (a) r69 production baseline node, c3a term swapped to the r70 RAN c3a-M7x (mixed-leg):
+node_r69base = R69_TOTAL_4C - R69_C3A_SERIAL_4C + R70_C3A_M7X_4C
+#  (b) r70 same-leg: all 4 post-I70 production components from ONE leg/box-state:
+node_r70leg = R70_INNERS_108_4C + R70_C3B_M7X_4C + R70_C3A_M7X_4C + R70_C3AB_4C
+print(f"  post-I70 per-node c3-bulk @4c, RAN-reconstituted:")
+print(f"     (a) r69 node {R69_TOTAL_4C:.1f} - r69 c3a-serial {R69_C3A_SERIAL_4C:.1f} "
+      f"+ r70 c3a-M7x {R70_C3A_M7X_4C:.1f} = {node_r69base:.1f} s = {node_r69base/60.0:.1f} min")
+print(f"     (b) r70 same-leg (4 components, one state) = {node_r70leg:.1f} s = "
+      f"{node_r70leg/60.0:.1f} min  (r70 inners ran {100.0*(R70_INNERS_108_4C-R69_INNERS_108_4C)/R69_INNERS_108_4C:+.1f}% "
+      f"vs r69 -> the (b)-(a) gap is inners variance, not the lever)")
+print(f"     @8c ref [DRAFT, core-ratio {CORE_4V8:.2f} of the RAN@4c]: (a) {node_r69base/CORE_4V8:.1f} s "
+      f"/ (b) {node_r70leg/CORE_4V8:.1f} s")
+print("-" * W)
+print("  RAN-ROBUST HEADLINE (r70): routing the c3a lane through the M7x merge cuts the c3a")
+print(f"    lane {abs(c3a_cut):.1f}s ({100.0*abs(c3a_cut)/R70_C3A_SERIAL_4C:.1f}%), byte-identical, with the c3ab seam "
+      f"verify-PASS on the un-recompiled artifact => the I70 PoC claim holds RAN. Node-level payoff "
+      f"~{abs(R70_C3A_M7X_4C-R69_C3A_SERIAL_4C):.0f}-{abs(c3a_cut):.0f} s/node @4c "
+      f"({100.0*abs(R70_C3A_M7X_4C-R69_C3A_SERIAL_4C)/R69_TOTAL_4C:.1f}% of the r69 c3-bulk node). The production "
+      f"wiring (node_dkg_fold c3a arm -> M7x + c3ab c3a-VK arm switch) is the next on-box step (I70-wiring).")
