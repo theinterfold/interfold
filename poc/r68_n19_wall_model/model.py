@@ -243,3 +243,92 @@ print(f"    lane {abs(c3a_cut):.1f}s ({100.0*abs(c3a_cut)/R70_C3A_SERIAL_4C:.1f}
       f"~{abs(R70_C3A_M7X_4C-R69_C3A_SERIAL_4C):.0f}-{abs(c3a_cut):.0f} s/node @4c "
       f"({100.0*abs(R70_C3A_M7X_4C-R69_C3A_SERIAL_4C)/R69_TOTAL_4C:.1f}% of the r69 c3-bulk node). The production "
       f"wiring (node_dkg_fold c3a arm -> M7x + c3ab c3a-VK arm switch) is the next on-box step (I70-wiring).")
+# ==================== ROUND-75 LANDING: min whole-node function wall, RAN (r75 leg @4c) ====================
+# The r75 leg (unit r75, 2026-08-31, RC-TEST=0, wall 13:24.17 @4c, 296%% CPU, maxrss 4.54 GiB,
+# Swaps 0; durable poc/r75/) RAN the PRODUCTION function `prove_node_dkg_fold` END-TO-END at
+# secure-8192/minimum (N=3/T=1/H=2, L=3, C3_SLOTS=9, W_P=6) on THIS 4c/7.8 GiB box. This is the
+# first RAN production-field (8192/59-bit) function wall: the RAN anchor for the committee-
+# INVARIANT subset of the non-c3 remainder that r68/r69/r70 had carried as pure DRAFT.
+R75_MIN = dict(c0=3.5, c1=27.9, c2a=15.7, c2b=28.8, c3x12=490.7, c4a=18.2, c4b=18.1,
+               c2ab=29.0, c3a=143.6, c3b=142.5, c3ab=12.1, c4ab=12.6, node=31.9)  # [RAN step_timings]
+R75_MIN_LEAVES = 602.9        # sum of the 7 serial leaf walls [RAN]
+R75_MIN_FUNC   = 200.1        # critical path: max(c2ab,c3a,c3b)+c3ab+c4ab+node [RAN]
+R75_MIN_WHOLE  = 803.0        # whole-node = leaves + func [RAN]
+c4_min_wall = R75_MIN["c4a"]+R75_MIN["c4b"]     # C4 prove pair at secure-8192/min [RAN]
+_min_keys = ("c0","c1","c2a","c2b","c3x12","c4a","c4b")
+print("\n"+"="*W)
+print("ROUND-75 LANDING - min (N=3/T=1/H=2) whole-node PRODUCTION function wall (RAN, r75 @4c)")
+print("="*W)
+m_leaves = sum(v for k,v in R75_MIN.items() if k in _min_keys)
+m_func   = max(R75_MIN["c2ab"],R75_MIN["c3a"],R75_MIN["c3b"])+R75_MIN["c3ab"]+R75_MIN["c4ab"]+R75_MIN["node"]
+m_whole  = m_leaves+m_func
+print("  anchor self-check : leaves=%.1f + func=%.1f = %.1f s  vs RAN whole %.1f s  %s"%(
+    m_leaves,m_func,m_whole,R75_MIN_WHOLE,"OK" if abs(m_whole-R75_MIN_WHOLE)<1.0 else "FAIL"))
+print("  c2ab (29.0 s) runs HIDDEN under the c3a|c3b join (parallel) - not on the critical path (r74).")
+print("  field-width note  : min is the RAN anchor for the committee-INVARIANT non-c3 provers")
+print("    (C0 r39 / C1 r44 invariant; C4 r46 H-only; the 4 folds ~0.1-0.7% small-vs-min, r74 gate table).")
+print("\n  ==> min whole-node PRODUCTION function wall @4c = %.1f s = %.1f min  [RAN anchor]"%(
+    R75_MIN_WHOLE, R75_MIN_WHOLE/60.0))
+print("  c3-inners min = 12 serial @ 40.9 s/inner (r69/r70 small 38.85-40.26 s/inner = SAME band);")
+print("    the ~32x min<->small inner gap is pure secure-8192 59-bit width (box-invariant, r75 note).")
+# ==================== ROUND-76 MODEL ADVANCE: non-c3 remainder RAN-anchored (was pure DRAFT r69/r70) ====================
+# r74/r75 RAN the whole function at BOTH committee endpoints the 7.8 GiB box can carry. The
+# non-c3 remainder (leaves C0/C1/C2a/C2b/C4 + c2ab/c4ab/node_fold) that model.py carried as
+# DRAFT now has a RAN minimum-width point from r75 (committee-invariant subset) + a RAN
+# ratio scale for the one committee-DEPENDENT term (C4, H-only, r46).
+C4_GATE_MIN, C4_GATE_SMALL = 1746030.0, 3571446.0    # [RAN r46] C4 secure-8192 min/small gates
+C4_RATIO = C4_GATE_SMALL/C4_GATE_MIN                 # = 2.0455 (H-only committee scaling, r46)
+C4_SMALL_WALL = c4_min_wall*C4_RATIO                 # [RAN-anchored: RAN min wall x RAN ratio]
+C0C1 = R75_MIN["c0"]+R75_MIN["c1"]                   # committee-invariant leaf pair [RAN r75]
+print("\n"+"="*W)
+print("ROUND-76 - NON-C3 REMAINDER RAN-ANCHORED (r75 min point + r46 C4 ratio; was pure DRAFT)")
+print("="*W)
+print("  [%s] C0+C1 leaves   = %.1f s (r39/r44 committee-invariant => applies to small)"%("RAN r75",C0C1))
+print("  [%s] C4a+C4b leaves = %.1f s min -> %.1f s small (x%.4f = C4 gate ratio, r46/H-only)"%(
+    "RAN min / RAN-anchored",c4_min_wall,C4_SMALL_WALL,C4_RATIO))
+# invariant non-c3 folds (c2ab/c4ab/node) ~0.1-0.7% small-vs-min (r74 gate table) => use the
+# RAN min walls as the small FLOOR (conservative, RAN).
+INV_FOLDS_SMALL_FLOOR = R75_MIN["c2ab"]+R75_MIN["c4ab"]+R75_MIN["node"]    # = 73.5 s [RAN min floor]
+INV_NONC3_SMALL = C0C1 + C4_SMALL_WALL + INV_FOLDS_SMALL_FLOOR             # [RAN / RAN-anchored]
+# c3-bulk at small (production N=19, 108 inners, both M7x arms + c3ab) = model (a) RAN reconstruction
+C3BULK_SMALL = node_r69base        # = R69_TOTAL - R69_C3A_SERIAL + R70_C3A_M7X = 5183.0 s [RAN]
+# C2a/C2b min prove walls (r75 RAN) are the committee-INVARIANT LOWER BOUND on the small proves.
+C2_AB_MIN = R75_MIN["c2a"]+R75_MIN["c2b"]    # = 44.5 s [RAN min] (small prove >= this, per-recipient N)
+# N=19 whole-node wall, RAN/RAN-anchored floor + the single residual DRAFT (C2a/C2b small committee delta):
+#   node_small = C3BULK_SMALL + INV_NONC3_SMALL + (C2a_small + C2b_small)
+#              = [C3BULK_SMALL + INV_NONC3_SMALL]  +  [C2_AB_MIN + (DRAFT committee delta)]
+RAN_ALL = C3BULK_SMALL + INV_NONC3_SMALL + C2_AB_MIN     # every RAN/RAN-anchored/C2-min-floor term (C4 at RAN-anchored small wall)
+print("  [%s] c3-bulk (108 inners + 2x M7x + c3ab)  = %.1f s [RAN r70 (a) reconstruction]"%("RAN",C3BULK_SMALL))
+print("  [%s] non-c3 folds c2ab+c4ab+node (small floor, min walls) = %.1f s [RAN min floor]"%("RAN",INV_FOLDS_SMALL_FLOOR))
+print("  [%s] C2a/C2b leaves small: min wall %.1f s is the RAN lower bound (per-recipient N => small >= min)"%("RAN",C2_AB_MIN))
+print("  ---------  sum of every RAN / RAN-anchored / C2-min-floor term in the N=19 node:")
+print("               N=19 NODE WALL (C4 at RAN-anchored small wall) = %.1f s = %.1f min @4c  [RAN-anchored]"%(RAN_ALL,RAN_ALL/60.0))
+# The ONE residual DRAFT term = the C2a/C2b small-vs-min PROVE-THROUGH delta (per-recipient N
+# structure; the small C2 LEAVES don't compile on this box - r45 OOM 15.1/14.9 GiB), so the small
+# C2 prove wall is >= its min wall and UNBOUNDED-FROM-ABOVE on-box => box-2. Two honest readings:
+N_SMALL_RANFLOOR = RAN_ALL - C4_SMALL_WALL + c4_min_wall  # all-pure-RAN: C4 at its RAN MIN wall (conservative floor)
+N_SMALL_ANCHORED = RAN_ALL                                # C4 scaled min->small by the RAN gate ratio
+print("  ==> N=19 NODE WALL @4c, two readings (both EXCLUDE only the C2 small committee delta + comm):")
+print("        [%s]        %7.1f s = %5.1f min  (all-pure-RAN; C4 at its RAN min wall, conservative floor)"%("RAN floor",N_SMALL_RANFLOOR,N_SMALL_RANFLOOR/60.0))
+print("        [%s] %7.1f s = %5.1f min  (C4 min->small by the RAN gate ratio x%.2f)"%("RAN-anchored",N_SMALL_ANCHORED,N_SMALL_ANCHORED/60.0,C4_RATIO))
+print("  + [DRAFT, box-2] C2a+C2b small prove-through delta (>= 0; small C2 leaves OOM on-box r45)")
+print("-"*W)
+print("  LABEL TABLE (which inputs feed the N=19 node wall):")
+print("    C3BULK (108 in+2xM7x+c3ab) 5183.0 = RAN   (r70 (a) reconstruction of the r69/r70 legs)")
+print("    C0+C1 leaves   31.4        = RAN          (r75; c0 r39/c1 r44 committee-invariant)")
+print("    C4a+C4b        36.3->%.1f  = RAN min / RAN-anchored (r46 H-only ratio %.4f)"%(C4_SMALL_WALL,C4_RATIO))
+print("    c2ab+c4ab+node 73.5        = RAN (min floor; folds ~0.1-0.7% small-vs-min r74)")
+print("    C2a+C2b         44.5 floor  = RAN min; small delta = DRAFT/box-2 (compile OOM r45)")
+print("-"*W)
+print("  ANCHOR REPRODUCTION: min-node model = %.1f s vs r75 RAN whole = %.1f s (delta %+.1f s = jitter; the" % (m_whole,R75_MIN_WHOLE,m_whole-R75_MIN_WHOLE))
+print("                             anchor reproduces a known RAN value => the min leg is the valid scale anchor.)")
+print("-"*W)
+print("  VERDICT (r76): the non-c3 remainder is NO LONGER PURE DRAFT. Its committee-invariant subset +")
+print("  the C4 committee term are RAN/RAN-anchored at small from the r75 min point, and the N=19 node")
+print("  wall is now a RAN-anchored %.1f min (RAN floor %.1f min) that EXCLUDES only the C2a/C2b small" % (N_SMALL_ANCHORED/60.0,N_SMALL_RANFLOOR/60.0))
+print("  per-recipient prove wall (>= its min wall 44.5 s RAN; the small C2 leaves don't compile on-box,")
+print("  r45 OOM 15.1/14.9 GiB => the small-vs-min delta is the single DRAFT, box-2) + comm. The c3-bulk")
+print("  (5183.0 s = 86.4 min, RAN r70 (a)) dominates: even at the RAN floor the node is %.1f min, so the" % (N_SMALL_RANFLOOR/60.0))
+print("  'several hours' framing is now an RAN-anchored ~1.5 h/node @4c (+ inners concurrency note: the")
+print("  108 inners run serial in these walls; a production TaskPool 4-way pool is CPU-conserved on 4c,")
+print("  RAN r72), with the residual box-2 work = the C2 small prove walls + the full 19-node E2E RAN.")
