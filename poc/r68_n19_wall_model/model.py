@@ -374,3 +374,39 @@ for k in ("c2a", "c2b"):
 print("      small C2 LEAVES OOM on-box (r45: C2a 15.1 GiB / C2b 14.9 GiB, swap non-rescuing) => box-2 >=24 GiB,")
 print("      UNCHANGED. The residual DRAFT (C2 small per-recipient PROVE wall in the N=19 node table)")
 print("      stays a PROVE-wall DRAFT on box-2; its GATE-COUNT side is now RAN min + RAN micro anchored above.")
+# ==================== ROUND-81 LANDING: C2a/C2b secure-8192/micro recompile legs RAN ====================
+# r76 (08-31) ran both micro legs (artifacts on-disk, sha-pinned) but its log entry never recorded the
+# compile wall/peak (placeholders; /tmp logs wiped by the 09-01 reboot). r80's supplementary c2a
+# recompile was kernel-OOM'd ~9.9 min in (RAN datum). r81 (2026-09-01, near-quiet 4c/7.8 GiB box,
+# no competing compiles) re-ran BOTH legs with the r45/r76 crash-safe pattern (secure/micro swap,
+# nargo compile --force under /usr/bin/time -v, sha gate, config byte-restore). LEGS RAN GREEN.
+C2R = {  # secure-8192, C2 micro (N=9/T=4/H=5) RAN compile legs, r81 (nargo beta.26, 4c, near-quiet)
+  "c2a": dict(wall_s=910.65,  peak_rss_kb=7693692, swaps=0, rc=0),
+  "c2b": dict(wall_s=1179.75, peak_rss_kb=7747896, swaps=0, rc=0),
+}
+RTAG = "ROUND-81 - C2a/C2b MICRO compile legs RAN (fills r76's wall/placeholder; corrects r80's 'recompile DRAFT')"
+print("\n" + "=" * W)
+print(RTAG)
+print("=" * W)
+for k in ("c2a", "c2b"):
+    r = C2R[k]
+    assert r["rc"] == 0
+    print("  [RAN] %s micro compile: RC=0  wall %.2f s  peakRSS %s kB (=%.2f GiB)  Swaps=%d" % (
+        k, r["wall_s"], format(r["peak_rss_kb"], ","), r["peak_rss_kb"] / 1048576.0, r["swaps"]))
+    assert r["peak_rss_kb"] < 8131776
+    print("        peak %.2f GiB < box RAM 7.8 GiB (8,131,776 kB) with Swaps=0; headroom %.2f GiB" % (
+        r["peak_rss_kb"] / 1048576.0, (8131776 - r["peak_rss_kb"]) / 1048576.0))
+print("  [RAN] DETERMINISM: both r81 recompiles' sha256 = the r76 on-disk artifact pins DIGIT-EXACT")
+print("        (c2a %s... / c2b %s... = the r80 recovered pins) => the compile->gates pipeline is" % (
+        C2G["c2a"]["micro_sha"], C2G["c2b"]["micro_sha"]))
+print("        BIT-REPRODUCIBLE (same class as the r52 min re-anchor) => the r76/r80 gate digits are")
+print("        the durable RAN census inputs; a re-run is verification, not new data.")
+print("  [RAN] r80's supplementary c2a recompile OOM (~9.9 min) did NOT reproduce: same compile, same")
+print("        box class, RC 0 at 7.34 GiB peak. Read: micro C2 compile is BOX-1 (fits 7.8 GiB); r80's")
+print("        kill was box-state-at-launch, not a deterministic compile memory wall. (The SMALL C2")
+print("        leaves remain box-2: r45 OOM 15.1/14.9 GiB, unchanged.)")
+print("  [RAN-anchored] box-2 compile-wall anchor (DRAFT scale for the small arms): wall ratio c2b/c2a = %.4f" % (
+    C2R["c2b"]["wall_s"] / C2R["c2a"]["wall_s"]))
+print("        vs gate ratio %.4f => the micro compile wall is ~linear in gates; small-arm compile walls" % (
+    C2G["c2b"]["micro"] / C2G["c2a"]["micro"]))
+print("        remain a box-2 DRAFT (their compilation OOMs on-box r45).")
