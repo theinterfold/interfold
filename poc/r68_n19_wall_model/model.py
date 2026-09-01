@@ -410,3 +410,55 @@ print("  [RAN-anchored] box-2 compile-wall anchor (DRAFT scale for the small arm
 print("        vs gate ratio %.4f => the micro compile wall is ~linear in gates; small-arm compile walls" % (
     C2G["c2b"]["micro"] / C2G["c2a"]["micro"]))
 print("        remain a box-2 DRAFT (their compilation OOMs on-box r45).")
+# ==================== ROUND-82 LANDING: C2a/C2b secure-8192/micro PROVE legs RAN ====================
+# The C2 per-recipient PROVE curve's second RAN point. r75 RAN the min (N=3) endpoints: c2a 15.7 s /
+# c2b 28.8 s @4c (R75_MIN, step timings, the r75_secure-min function leg's leaf walls). r80 RAN the
+# micro GATE endpoints (C2G) and r81 RAN the micro COMPILE walls (C2R) - but the micro PROVE wall was
+# never measured, so the N=19 node table's single residual DRAFT (the C2 small per-recipient PROVE
+# delta, printed in the ROUND-76 block above) stayed ">= min floor, unbounded above on-box". r82
+# RAN-converts it: a 2pt RAN PROVE curve at min + micro (quiet 4c/7.8 GiB box, commit de998cc, tree
+# clean; stage tree = the r76/r81 sha-pinned micro C2 jsons + freshly write_vk'd noir-recursive VKs,
+# poc/r82/stage_micro.sh; leg = c2_micro_prove_tests_r82, RC_TEST=0, both proofs verify=true).
+C2P = {  # secure-8192 C2 per-lane PROVE curve, wall_s @4c [RAN]  {committee: wall}
+  "c2a": dict(min=15.7, micro=44.3),
+  "c2b": dict(min=28.8, micro=58.5),
+}
+C2P_MICRO_PEAK_KB = 7436780   # whole-leg maxrss (c2a|c2b proves), Swaps=0, 289% CPU (r82 /usr/bin/time -v)
+print("\n" + "=" * W)
+print("ROUND-82 - C2 per-recipient PROVE curve: second RAN point (micro) LANDED RAN")
+print("=" * W)
+assert C2P_MICRO_PEAK_KB < 8131776
+print("  [RAN] micro (N=9) PROVE legs @4c, both verify_proof=true (recursive, staged sha-pinned jsons):")
+for k in ("c2a", "c2b"):
+    m, u = C2P[k]["min"], C2P[k]["micro"]
+    ga, gb = C2G[k]["min"], C2G[k]["micro"]
+    print("    %s: min %.1f s (r75) -> micro %.1f s  [gates %s -> %s = x%.3f; wall x%.3f]" % (
+        k, m, u, format(ga, ","), format(gb, ","), gb / ga, u / m))
+print("    whole-leg maxrss %s kB = %.2f GiB, Swaps=0  => the micro C2 PROVES are BOX-1" % (
+    format(C2P_MICRO_PEAK_KB, ","), C2P_MICRO_PEAK_KB / 1048576.0))
+print("    (the r70 5.94M-gate M7x class 7.47 GiB ceiling covered c2b's 5.73M gates; c2a 4.28M sat below it.)")
+_da = C2P["c2a"]["micro"] - C2P["c2a"]["min"]
+_db = C2P["c2b"]["micro"] - C2P["c2b"]["min"]
+print("  [RAN] per-recipient PROVE slope, dN=6 (min->micro): c2a +%.1f s = %.3f s/recipient ; c2b +%.1f s = %.3f s/recipient" % (_da, _da / 6.0, _db, _db / 6.0))
+print("  [DRAFT] small (N=19) PROVE endpoint, 2-pt linear on the RAN min->micro PROVE line (same linear-")
+print("      extrapolation class as the r80 GATE curve - the ONE DRAFT assumption; the small C2 LEAVES")
+print("      still OOM-compile on-box (r45 15.1/14.9 GiB) so the endpoint itself stays box-2-gated):")
+_c2a_small_p = C2P["c2a"]["min"] + 16.0 * _da / 6.0
+_c2b_small_p = C2P["c2b"]["min"] + 16.0 * _db / 6.0
+print("     c2a_small~ %.1f s   c2b_small~ %.1f s   (sum %.1f s vs the RAN min floor %.1f s)" % (
+    _c2a_small_p, _c2b_small_p, _c2a_small_p + _c2b_small_p, C2_AB_MIN))
+
+# Node-level conversion (the ROUND-76 "single residual DRAFT" C2 small committee delta is now
+# RAN-anchored): delta = 200.0 (r82 2-pt DRAFT small C2 prove, LANE-SUMMED) - 44.5 (RAN min floor).
+_r82_delta = (_c2a_small_p + _c2b_small_p) - C2_AB_MIN
+print("  [RAN-anchored] N=19 node wall DRAFT-CONVERTED at its last residual (the C2 small PROVE delta):")
+print("     C2 small committee delta = %.1f s (DRAFT 2-pt, linearity assumption maps the r81-class inputs)" % _r82_delta)
+print("     node @4c, C2 at RAN-anchored small prove (EXCL. comm):")
+print("        [RAN floor]      %.1f s = %.1f min  (C4 at its RAN min wall)" % (
+    N_SMALL_RANFLOOR + _r82_delta, (N_SMALL_RANFLOOR + _r82_delta) / 60.0))
+print("        [RAN-anchored]   %.1f s = %.1f min  (C4 min->small by the RAN gate ratio x%.4f)" % (
+    N_SMALL_ANCHORED + _r82_delta, (N_SMALL_ANCHORED + _r82_delta) / 60.0, C4_RATIO))
+print("  [DRAFT] residual = ONLY the 2-pt linearity assumption on the C2 PROVE line (exactly the class of")
+print("      the r80 GATE curve RAN min->micro 472,913 g/recipient lane-invariant) + comm. The small C2")
+print("      COMPILE walls remain a r81-anchored box-2 DRAFT (15.1/14.9 GiB OOM r45; ~2.1x/1.83x the micro")
+print("      RAN compile walls 910.65/1179.75 s). All three arms of the queue-0 box-2 card carry RAN anchors.")
