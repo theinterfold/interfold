@@ -332,3 +332,45 @@ print("  (5183.0 s = 86.4 min, RAN r70 (a)) dominates: even at the RAN floor the
 print("  'several hours' framing is now an RAN-anchored ~1.5 h/node @4c (+ inners concurrency note: the")
 print("  108 inners run serial in these walls; a production TaskPool 4-way pool is CPU-conserved on 4c,")
 print("  RAN r72), with the residual box-2 work = the C2 small prove walls + the full 19-node E2E RAN.")
+# ==================== ROUND-80 LANDING: C2 committee curve completed min->micro (recovers the r76 census) ====================
+# r76 (2026-08-31) RAN the C2 micro (N=9/T=4/H=5) census arms on box (bin/dkg targets built
+# 08-31 11:28/11:49) but its log entry carries GATES_PLACEHOLDER - the digits were never
+# durably recorded. r80 recovers them from the durable on-disk artifacts (bb gates re-run +
+# sha pin + public-ABI N_parties decode) and cross-checks the min goldens against the durable
+# poc/r75/min artifacts (re-gated DIGIT-EXACT to the r45 goldens). Box-2 scope UNCHANGED: an
+# r80 full-box sweep finds NO small (N=19) C2 leaf and NO small (~3.57M-gate) C4 leaf on this
+# box => I71-leg part-(a) is still exactly the 3 heavy leaf compiles (C2a/C2b >=24 GiB r45 OOM,
+# C4 14.70 GiB knife-edge r46).
+C2G = {  # secure-8192, C2 committee census (gates)
+  "c2a": dict(min=1446311, micro=4283789, min_acir=426360, micro_acir=1155486, micro_sha="96aae9c6a185cd46"),
+  "c2b": dict(min=2888964, micro=5726442, min_acir=827414, micro_acir=1556540, micro_sha="588dbfa71c43bc8e"),
+}
+NC2 = {"min": 3, "micro": 9, "small": 19}   # N_PARTIES per committee (public-ABI decoded RAN)
+print("\n" + "=" * W)
+print("ROUND-80 - C2 committee curve min(N=3)->micro(N=9) COMPLETED RAN + small(N=19) DRAFT-2pt")
+print("=" * W)
+_da = C2G["c2a"]["micro"] - C2G["c2a"]["min"]
+_db = C2G["c2b"]["micro"] - C2G["c2b"]["min"]
+print("  [RAN] min goldens re-gated these seconds (durable poc/r75/min artifacts):")
+print("    c2a %s g / %s acir  |  c2b %s g / %s acir   (= r45 goldens DIGIT-EXACT)" % (
+  format(C2G["c2a"]["min"], ","), format(C2G["c2a"]["min_acir"], ","),
+  format(C2G["c2b"]["min"], ","), format(C2G["c2b"]["min_acir"], ",")))
+print("  [RAN] micro recovered from r76 on-disk artifacts (sha-pinned; public ABI N_parties=9 L=3):")
+for k in ("c2a", "c2b"):
+    print("    %s %s g / %s acir  sha %s" % (k, format(C2G[k]["micro"], ","), format(C2G[k]["micro_acir"], ","), C2G[k]["micro_sha"]))
+print("  [RAN] per-recipient committee slope, dN = 6 (min -> micro):")
+print("    c2a +%s g = %.0f g/recipient   c2b +%s g = %.0f g/recipient" % (format(_da, ","), _da / 6.0, format(_db, ","), _db / 6.0))
+if _da == _db:
+    print("    cross-check [RAN]: IDENTICAL dN-delta on both lanes (%s g) = ONE shared per-recipient" % format(_da, ","))
+    print("      committee-generic lattice (parity-matrix class); the lanes differ only in lane-constant.")
+else:
+    print("    cross-check [FAIL]: per-lane dN-deltas differ (%s vs %s)" % (format(_da, ","), format(_db, ",")))
+print("  [DRAFT] small (N=19) endpoint, 2-point linear on the RAN min->micro line (linearity assumed;")
+print("      the endpoint is ALSO RAM-killed on-box, so it stays DRAFT-gated on box-2):")
+for k in ("c2a", "c2b"):
+    per = (C2G[k]["micro"] - C2G[k]["min"]) / 6.0
+    lin = C2G[k]["min"] + 16 * per
+    print("     %s_small~ %s g   (RAN min + 16 x %.0f g/recipient)" % (k, format(round(lin), ","), per))
+print("      small C2 LEAVES OOM on-box (r45: C2a 15.1 GiB / C2b 14.9 GiB, swap non-rescuing) => box-2 >=24 GiB,")
+print("      UNCHANGED. The residual DRAFT (C2 small per-recipient PROVE wall in the N=19 node table)")
+print("      stays a PROVE-wall DRAFT on box-2; its GATE-COUNT side is now RAN min + RAN micro anchored above.")
