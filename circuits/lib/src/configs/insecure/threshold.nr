@@ -12,6 +12,10 @@ use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncrypt
 use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
 use crate::math::polynomial::Polynomial;
 
+pub use crate::configs::committee::active::{
+    INSECURE_E_SM_BIT as PK_GENERATION_BIT_E_SM, INSECURE_E_SM_BOUND as PK_GENERATION_E_SM_BOUND,
+};
+
 // Global configs for threshold insecure preset
 pub global N: u32 = 64;
 pub global L: u32 = 3;
@@ -230,18 +234,14 @@ pk_generation (CIRCUIT 1 - PUBLIC KEY THRESHOLD BFV)
 
 pub global PK_GENERATION_BIT_EEK: u32 = 5;
 pub global PK_GENERATION_BIT_SK: u32 = 1;
-pub global PK_GENERATION_BIT_E_SM: u32 = 26;
-pub global PK_GENERATION_BIT_E_SM_LIFTED: u32 = 48;
-pub global PK_GENERATION_BIT_E_SM_QUOTIENT: u32 = 21;
-pub global PK_GENERATION_BIT_R: u32 = 6;
-pub global PK_GENERATION_BIT_PK: u32 = 26;
+pub global PK_GENERATION_BIT_R1: u32 = 9;
+pub global PK_GENERATION_BIT_R2: u32 = 35;
+pub global PK_GENERATION_BIT_PK: u32 = 35;
 
 pub global PK_GENERATION_EEK_BOUND: Field = 20;
 pub global PK_GENERATION_SK_BOUND: Field = 1;
-pub global PK_GENERATION_E_SM_BOUND: Field = 255488870400000;
-pub global PK_GENERATION_E_SM_LIMB_BOUNDS: [Field; L] = [67108544, 67107840, 67107776];
-pub global PK_GENERATION_E_SM_QUOTIENT_BOUNDS: [Field; L] = [1903549, 1903569, 1903571];
-pub global PK_GENERATION_R_BOUNDS: [Field; L] = [32, 32, 32];
+pub global PK_GENERATION_R1_BOUNDS: [Field; L] = [256, 256];
+pub global PK_GENERATION_R2_BOUNDS: [Field; L] = [34359701504, 34359615488];
 
 pub global PK_GENERATION_B_ENC: Field = 194560;
 

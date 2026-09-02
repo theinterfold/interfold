@@ -57,6 +57,13 @@ for required_file in \
   [[ -f "$required_file" ]] || fail "missing $required_file"
 done
 
+for committee in minimum micro small; do
+  for artifact in parity_insecure.nr parity_secure.nr smudging.nr; do
+    [[ -f "circuits/lib/src/configs/committee/$committee/$artifact" ]] \
+      || fail "missing generated committee artifact: $committee/$artifact"
+  done
+done
+
 # 1. Extract committee name from active.nr (matches "crate::configs::committee::<name>::N_PARTIES").
 if [[ ! -f "$ACTIVE_NR" ]]; then
   fail "missing $ACTIVE_NR"
@@ -392,10 +399,120 @@ $COMMITTEE_RS has (N=$rust_n, T=$rust_t, H=$rust_h) for $capitalized"
   fi
 done
 
-# 9. The Rust build owner renders and formats a temporary library copy, without swapping live files.
-if command -v nargo >/dev/null 2>&1; then
-  pnpm --silent build:circuits check --committee all || fail "generated committee configuration differs from the Rust build owner"
-  RAN_PARITY_CHECK=true
+# 9. Parity matrices for every committee must match what `generate_parity_matrices` would
+#    write right now. Hand-edits to parity_*.nr would slip past every other check, so verify
+#    them by regenerating into a tempdir and diffing. On-disk files are kept `nargo fmt`-clean
+#    (see `scripts/lint-circuits.sh`), so we format the generator output before comparing.
+#    Skipped when the binary is unavailable (fresh clone before `cargo build`); the build step
+#    will re-emit them anyway.
+GEN_BIN="target/release/generate_parity_matrices"
+NOIR_LIB="circuits/lib"
+format_parity_matrices_for_committee() {
+  local committee="$1"
+  local tmp="$2"
+  local variant live fresh backup formatted
+  local -a swapped_live=()
+  local -a swapped_backup=()
+
+  _restore_swapped_parity_live() {
+    local i
+    for i in "${!swapped_live[@]}"; do
+      if [[ -f "${swapped_backup[$i]}" ]]; then
+        cp "${swapped_backup[$i]}" "${swapped_live[$i]}"
+      fi
+    done
+  }
+
+  trap '_restore_swapped_parity_live' ERR
+
+  for variant in insecure secure; do
+    live="$NOIR_LIB/src/configs/committee/$committee/parity_${variant}.nr"
+    fresh="$tmp/$committee/parity_${variant}.nr"
+    [[ -f "$live" && -f "$fresh" ]] || continue
+    backup="$tmp/$committee/parity_${variant}.live.bak"
+    formatted="$tmp/$committee/parity_${variant}.formatted.nr"
+    cp "$live" "$backup"
+    cp "$fresh" "$live"
+    swapped_live+=("$live")
+    swapped_backup+=("$backup")
+  done
+
+  live="$NOIR_LIB/src/configs/committee/$committee/smudging.nr"
+  fresh="$tmp/$committee/smudging.nr"
+  if [[ -f "$live" && -f "$fresh" ]]; then
+    backup="$tmp/$committee/smudging.live.bak"
+    cp "$live" "$backup"
+    cp "$fresh" "$live"
+    swapped_live+=("$live")
+    swapped_backup+=("$backup")
+  fi
+
+  if ((${#swapped_live[@]} == 0)); then
+    trap - ERR
+    return 0
+  fi
+
+  if ! (cd "$NOIR_LIB" && nargo fmt) >/dev/null; then
+    _restore_swapped_parity_live
+    trap - ERR
+    return 1
+  fi
+
+  for variant in insecure secure; do
+    live="$NOIR_LIB/src/configs/committee/$committee/parity_${variant}.nr"
+    fresh="$tmp/$committee/parity_${variant}.nr"
+    backup="$tmp/$committee/parity_${variant}.live.bak"
+    formatted="$tmp/$committee/parity_${variant}.formatted.nr"
+    [[ -f "$backup" ]] || continue
+    cp "$live" "$formatted"
+    cp "$backup" "$live"
+    cp "$formatted" "$fresh"
+  done
+  live="$NOIR_LIB/src/configs/committee/$committee/smudging.nr"
+  fresh="$tmp/$committee/smudging.nr"
+  backup="$tmp/$committee/smudging.live.bak"
+  formatted="$tmp/$committee/smudging.formatted.nr"
+  if [[ -f "$backup" ]]; then
+    cp "$live" "$formatted"
+    cp "$backup" "$live"
+    cp "$formatted" "$fresh"
+  fi
+
+  trap - ERR
+}
+
+if [[ -x "$GEN_BIN" ]]; then
+  if ! command -v nargo >/dev/null 2>&1; then
+    echo "  (skipping parity-matrix drift check: nargo not found. Install nargo to enable formatted parity comparison.)" >&2
+  else
+    RAN_PARITY_CHECK=true
+    TMP=$(mktemp -d)
+    trap 'rm -rf "$TMP"' EXIT
+    # Mirror the committee dir layout so the bin can write into <tmp>/<committee>/.
+    for c in minimum micro small; do
+      if [[ -d "circuits/lib/src/configs/committee/$c" ]]; then
+        mkdir -p "$TMP/$c"
+      fi
+    done
+    for c in minimum micro small; do
+      [[ -d "$TMP/$c" ]] || continue
+      "$GEN_BIN" --committee "$c" --output-root "$TMP" >/dev/null
+      format_parity_matrices_for_committee "$c" "$TMP"
+      for variant in insecure secure; do
+        live="circuits/lib/src/configs/committee/$c/parity_${variant}.nr"
+        fresh="$TMP/$c/parity_${variant}.nr"
+        if [[ -f "$live" && -f "$fresh" ]] && ! diff -q "$live" "$fresh" >/dev/null; then
+          fail "$live drift vs generator output. Run: pnpm build:circuits --committee $c"
+        fi
+      done
+      live="circuits/lib/src/configs/committee/$c/smudging.nr"
+      fresh="$TMP/$c/smudging.nr"
+      [[ -f "$fresh" ]] || fail "$GEN_BIN did not generate $fresh"
+      if ! diff -q "$live" "$fresh" >/dev/null; then
+        fail "$live drift vs generator output. Run: pnpm build:circuits --committee $c"
+      fi
+    done
+  fi
 else
   echo "  (skipping generated committee check: nargo not found.)" >&2
 fi

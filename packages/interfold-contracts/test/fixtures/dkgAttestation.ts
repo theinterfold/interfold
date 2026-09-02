@@ -28,14 +28,14 @@ export function encodeMockDkgProofForAttestation(
 ): string {
   const h = partyIds.length;
   const publicInputs: string[] = Array.from(
-    { length: 6 + 3 * h },
+    { length: 24 + 3 * h },
     () => ethers.ZeroHash,
   );
   publicInputs[publicInputs.length - 1] = pkCommitment;
   for (let i = 0; i < h; i++) {
     publicInputs[2 + i] = ethers.zeroPadValue(ethers.toBeHex(partyIds[i]), 32);
-    publicInputs[5 + h + i] = skCommits[i];
-    publicInputs[5 + 2 * h + i] = esmCommits[i];
+    publicInputs[23 + h + i] = skCommits[i];
+    publicInputs[23 + 2 * h + i] = esmCommits[i];
   }
   return ethers.AbiCoder.defaultAbiCoder().encode(
     ["bytes", "bytes32[]"],

@@ -26,3 +26,6 @@ pub global H: u32 = crate::configs::committee::minimum::H;
 /// `configs::{insecure,secure}::dkg` re-exports the relevant one as `PARITY_MATRIX`.
 pub use crate::configs::committee::minimum::parity_insecure::PARITY_MATRIX as PARITY_MATRIX_INSECURE;
 pub use crate::configs::committee::minimum::parity_secure::PARITY_MATRIX as PARITY_MATRIX_SECURE;
+pub use crate::configs::committee::minimum::smudging::{
+    INSECURE_E_SM_BIT, INSECURE_E_SM_BOUND, SECURE_E_SM_BIT, SECURE_E_SM_BOUND,
+};

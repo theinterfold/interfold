@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::math::commitments::{
-    compute_share_computation_e_sm_commitment, compute_share_computation_sk_commitment,
+    compute_sc_esm_secret_root_from_polynomial, compute_sc_sk_secret_root_from_polynomial,
     compute_threshold_pk_challenge, compute_threshold_pk_commitment,
 };
 use crate::math::helpers::flatten;
@@ -64,7 +64,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 /// - `commit(sk)` -> C2a (share computation).
 /// - `commit(pk_trbfv)` -> C5 (pk aggregation).
 /// - `commit(e_sm)` -> C2b (share computation).
-pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_E_SM_LIFTED: u32, let BIT_E_SM_QUOTIENT: u32, let BIT_R: u32, let BIT_PK: u32> {
+pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
     /// Cryptographic parameters including bounds, moduli, and constants.
     configs: Configs<N, L>,
 
@@ -104,7 +104,7 @@ pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u3
     pk0: [Polynomial<N>; L],
 }
 
-impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_E_SM_LIFTED: u32, let BIT_E_SM_QUOTIENT: u32, let BIT_R: u32, let BIT_PK: u32> PkGeneration<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_E_SM_LIFTED, BIT_E_SM_QUOTIENT, BIT_R, BIT_PK> {
+impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> PkGeneration<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_R1, BIT_R2, BIT_PK, N_CHUNKS, CHUNK_SIZE> {
     pub fn new(
         configs: Configs<N, L>,
         a: [Polynomial<N>; L],
@@ -150,13 +150,12 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         // Step 1: Range-check secret witnesses (sk, eek, e_sm, quotients).
         self.perform_range_checks();
 
-        // Step 2: Tie the committed e_sm residues to the bounded lifted value.
-        self.verify_e_sm_crt_consistency();
-
-        // Step 3: Derive commitments for the FS transcript.
-        let sk_commitment = compute_share_computation_sk_commitment::<N, BIT_SK>(self.sk);
-        let e_sm_commitment =
-            compute_share_computation_e_sm_commitment::<N, L, BIT_E_SM>(self.e_sm);
+        // Step 2: Derive commitments for the FS transcript.
+        let sk_commitment =
+            compute_sc_sk_secret_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SK>(self.sk);
+        let e_sm_commitment = compute_sc_esm_secret_root_from_polynomial::<N, L, N_CHUNKS, CHUNK_SIZE, BIT_E_SM>(
+            self.e_sm,
+        );
         let pk_commitment = compute_threshold_pk_commitment::<N, L, BIT_PK>(self.pk0);
 
         // Step 4: Fiat-Shamir challenge and per-modulus evaluation checks.

@@ -460,8 +460,11 @@ fn verify_pk_generation_bounds() {
 /// Verifies e_sm_bound (smudging noise bound).
 ///
 /// The smudging noise bound is critical for threshold decryption security.
-/// The bound is 2^(lambda + 1) * degree * B_C, where B_C includes the
-/// encryption error and the threshold committee's key and public-key errors.
+/// It's computed as: e_sm_bound = 2^lambda * N_CIPHERTEXTS * (b_fresh + Q_MOD_T)
+/// where b_fresh = N * e_norm + b_enc + N * b_e * sk_norm and lambda = 50.
+///
+/// The 2^50 factor provides 50 bits of statistical security, ensuring that
+/// decryption shares don't leak secret key information.
 fn verify_e_sm_bound() {
     let n: Field = THRESHOLD_N as Field;
     let committee_n: Field = N_PARTIES as Field;
@@ -476,9 +479,11 @@ fn verify_e_sm_bound() {
     // b_c = N_CIPHERTEXTS * (b_fresh + Q_MOD_T)
     let b_c = num_ciphertexts * (b_fresh + THRESHOLD_Q_MOD_T);
 
-    // lambda = 45 for the secure preset.
-    let two_pow_lambda_plus_one: Field = 0x400000000000;
-    let expected_e_sm_bound = two_pow_lambda_plus_one * n * b_c;
+    // 2^50
+    let two_pow_50: Field = 0x4000000000000;
+
+    // e_sm_bound = 2^50 * b_c
+    let expected_e_sm_bound = two_pow_50 * b_c;
 
     assert(expected_e_sm_bound == PK_GENERATION_E_SM_BOUND, "PK_GENERATION_E_SM_BOUND mismatch");
 }

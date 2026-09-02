@@ -9,11 +9,14 @@
 //! from the compiled `c3_fold` / `c6_fold` ABI and artifacts staged under [`CircuitVariant::Default`]
 //! (`noir-recursive-no-zk` VKs — see `crates/zk/build`).
 //!
-//! The node-fold pipeline ([`CircuitName::C2abFold`] … [`CircuitName::NodeFold`]) is proven in
-//! `node_fold_correlated_e2e_tests.rs`.
+//! Loads compiled JSON for the node-fold **pipeline** ([`CircuitName::C2abChunkFold`] … [`CircuitName::NodeFold`])
+//! and stages those artifacts; it does **not** run a full correlated `node_fold` proof — use
+//! `node_fold_correlated_e2e_tests.rs` for that.
 //!
 //! - [`c3_fold_sequential_proves_and_verifies`]: two inner `ShareEncryption` proofs → [`generate_sequential_c3_fold`].
 //! - [`c6_fold_sequential_proves_and_verifies`]: two inner `ThresholdShareDecryption` proofs → [`generate_sequential_c6_fold`].
+//! - [`node_fold_pipeline_compiled_json_load`] / [`node_fold_pipeline_recursive_aggregation_artifacts_staged`]:
+//!   pipeline circuits load + staged artifacts for C2abChunk/C3ab/C4ab/NodeFold.
 
 mod common;
 #[path = "common/recursive_vk_substitution.rs"]
@@ -52,7 +55,15 @@ fn c6_fold_json_path() -> PathBuf {
         .join("circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json")
 }
 
-/// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `5 + 3 * C3_SLOTS`).
+/// `c2ab_chunk_fold` → `c3ab_fold` → `c4ab_fold` → inputs to `node_fold` (see `node_fold/src/main.nr`).
+const NODE_FOLD_PIPELINE: &[CircuitName] = &[
+    CircuitName::C2abChunkFold,
+    CircuitName::C3abFold,
+    CircuitName::C4abFold,
+    CircuitName::NodeFold,
+];
+
+/// Reads `C3_SLOTS` from the compiled `c3_fold` ABI (`acc_public_inputs` length is `6 + 3 * C3_SLOTS`).
 fn c3_fold_total_slots_from_compiled_json() -> usize {
     let path = c3_fold_json_path();
     let raw = std::fs::read_to_string(&path).unwrap_or_else(|e| {
@@ -75,11 +86,11 @@ fn c3_fold_total_slots_from_compiled_json() -> usize {
         })
         .expect("c3_fold.json: abi.parameters.acc_public_inputs.length") as usize;
     assert!(
-        len >= 5 && (len - 5).is_multiple_of(3),
-        "unexpected acc_public_inputs length {} (expected 5 + 3 * slots)",
+        len >= 6 && (len - 6).is_multiple_of(3),
+        "unexpected acc_public_inputs length {} (expected 6 + 3 * slots)",
         len
     );
-    (len - 5) / 3
+    (len - 6) / 3
 }
 
 /// Reads slot count from the compiled `c6_fold` ABI

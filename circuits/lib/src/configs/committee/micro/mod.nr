@@ -16,3 +16,4 @@ pub global H: u32 = 5;
 
 pub mod parity_insecure;
 pub mod parity_secure;
+pub mod smudging;

@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 //! Public IO layout for [`CircuitName::NodeFold`] (must stay aligned with `node_fold/src/main.nr`).
+//! The final field is the recursive VK manifest after the SK/ESM aggregate commitments.
 
 use crate::circuits::utils::bytes_to_field_strings;
 use crate::error::ZkError;
@@ -12,7 +13,7 @@ use e3_events::{CircuitName, DkgFoldAggCommits, Proof};
 
 /// Total public field count for `node_fold` at committee size `n`, honest `h`, threshold moduli `l`.
 pub fn node_fold_public_field_count(n: usize, h: usize, l: usize) -> usize {
-    11 + n + 2 * (n + h) * l
+    14 + n + 2 * (n + h) * l
 }
 
 fn field_hex_to_bytes32(field: &str) -> Result<[u8; 32], ZkError> {
@@ -59,8 +60,8 @@ pub fn extract_node_fold_agg_commits(
         )));
     }
     let party_id = field_hex_to_u64(&fields[0])?;
-    let sk_agg_commit = field_hex_to_bytes32(&fields[fields.len() - 2])?;
-    let esm_agg_commit = field_hex_to_bytes32(&fields[fields.len() - 1])?;
+    let sk_agg_commit = field_hex_to_bytes32(&fields[fields.len() - 3])?;
+    let esm_agg_commit = field_hex_to_bytes32(&fields[fields.len() - 2])?;
     Ok((
         party_id,
         DkgFoldAggCommits {
@@ -86,8 +87,8 @@ mod tests {
 
         let mut fields = vec![[0u8; 32]; field_count];
         fields[0][31] = 2; // party_id = 2
-        fields[field_count - 2] = [0x11; 32];
-        fields[field_count - 1] = [0x22; 32];
+        fields[field_count - 3] = [0x11; 32];
+        fields[field_count - 2] = [0x22; 32];
 
         let mut public_signals = Vec::with_capacity(field_count * 32);
         for f in fields {

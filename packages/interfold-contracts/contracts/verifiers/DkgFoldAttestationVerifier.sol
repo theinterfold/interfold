@@ -183,10 +183,10 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         bytes32[] memory publicInputs
     ) private pure returns (uint256 h) {
         require(
-            publicInputs.length >= 6 && (publicInputs.length - 6) % 3 == 0,
+            publicInputs.length >= 27 && (publicInputs.length - 24) % 3 == 0,
             ICiphernodeRegistry.InvalidFoldAttestation()
         );
-        h = (publicInputs.length - 6) / 3;
+        h = (publicInputs.length - 24) / 3;
         // Defense in depth: the BFV pk-verifier already rejects `h == 0`, but
         // a zero-honest-party proof would otherwise pass this verifier with no
         // attestations to check and write empty anchors to the registry.
@@ -243,8 +243,8 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         );
 
         uint256 partyIdOffset = 2;
-        uint256 skOffset = 5 + data.h;
-        uint256 esmOffset = 5 + (2 * data.h);
+        uint256 skOffset = 23 + data.h;
+        uint256 esmOffset = 23 + (2 * data.h);
 
         slot = _partySlot(
             data.publicInputs,

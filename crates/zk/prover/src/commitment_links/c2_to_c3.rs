@@ -10,18 +10,20 @@
 //! `commit_to_party_shares`. C3 claims `expected_message_commitment` which must
 //! match the commitment C2 produced for the share being encrypted.
 //!
-//! The signed C2 proof is the **inner** circuit proof (SkShareComputation /
-//! ESmShareComputation, `CircuitVariant::Recursive`). Its public signals layout:
-//!   - field 0: `expected_secret_commitment` (public input, skip)
-//!   - fields 1..(N_PARTIES × L_THRESHOLD): share commitments from `commit_to_party_shares`
+//! The signed C2 proof is the **inner** terminal proof (SkC2ChunkFinalize /
+//! ESmC2ChunkFinalize, `CircuitVariant::Recursive`). Its public signals layout:
+//!   - field 0: recursive child VK hash (skip)
+//!   - field 1: secret root commitment (skip)
+//!   - fields 2..: share commitments from the chunk finalizer
 //!
 //! Source is C3 (the claimant — it declares what commitment it encrypts).
 //! Target is C2 (the provider — it produced the actual share commitments).
 //! Fault is attributed to C3 when its `expected_message_commitment` does not
 //! appear anywhere in C2's share commitment section.
 //!
-//! C2a/C3a and C2b/C3b use the same Noir circuits (`ShareComputation` /
-//! `ShareEncryption`) but different [`ProofType`] values, so we register two links.
+//! C2a/C3a and C2b/C3b use the same Noir circuits (`sk_share_computation_chunk` /
+//! `esm_share_computation_chunk`, `ShareEncryption`) but different [`ProofType`]
+//! values, so we register two links.
 
 use super::{CommitmentLink, FieldValue, LinkScope};
 use e3_events::{CircuitName, ProofType};
@@ -105,9 +107,10 @@ fn extract_message_commitment(public_signals: &[u8]) -> Vec<FieldValue> {
 /// Check whether `source_values[0]` (from a C3 proof) appears in the share
 /// commitment section of a C2 inner proof's public signals.
 ///
-/// C2 inner circuit public signals layout:
-///   - field 0:       `expected_secret_commitment` (public input, skipped)
-///   - fields 1..:    `commit_to_party_shares[party_idx][mod_idx]` outputs
+/// C2 terminal public signals layout:
+///   - field 0:       recursive child VK hash (skipped)
+///   - field 1:       secret root commitment (skipped)
+///   - fields 2..:    per-party share root commitments
 ///
 /// Barretenberg's `noir-recursive` variant sometimes doubles the signal
 /// buffer (448 = 2×224 bytes for a 7-field circuit).  We detect and
@@ -118,11 +121,13 @@ fn commitment_in_c2_outputs(source_values: &[FieldValue], target_public_signals:
     }
     let expected = &source_values[0];
     let signals = deduplicate(target_public_signals);
-    // Skip first field (expected_secret_commitment public input).
-    if signals.len() < 2 * FIELD_BYTE_LEN {
+    // Skip the child VK hash and secret root commitment.
+    if signals.len() < 4 * FIELD_BYTE_LEN {
         return false;
     }
-    signals[FIELD_BYTE_LEN..]
+    // The final field is the batch VK hash. It is part of the recursive VK
+    // manifest, not part of the share commitment section.
+    signals[2 * FIELD_BYTE_LEN..signals.len() - FIELD_BYTE_LEN]
         .chunks(FIELD_BYTE_LEN)
         .any(|chunk| chunk == expected.as_slice())
 }
@@ -157,13 +162,16 @@ mod tests {
         v
     }
 
-    /// C2 inner signals: [expected_secret_commitment] + N share commitments.
+    /// C2 terminal signals: [child VK hash, secret root] + N share commitments.
     fn c2_signals(commitments: &[[u8; 32]]) -> Vec<u8> {
-        let mut v = vec![0u8; 32 + commitments.len() * 32];
-        v[0..32].copy_from_slice(&make_field(0xFF)); // expected_secret_commitment
+        let mut v = vec![0u8; 96 + commitments.len() * 32];
+        v[0..32].copy_from_slice(&make_field(0xFE)); // child VK hash
+        v[32..64].copy_from_slice(&make_field(0xFF)); // secret root commitment
         for (i, c) in commitments.iter().enumerate() {
-            v[32 + i * 32..32 + (i + 1) * 32].copy_from_slice(c);
+            v[64 + i * 32..64 + (i + 1) * 32].copy_from_slice(c);
         }
+        let batch_start = 64 + commitments.len() * 32;
+        v[batch_start..batch_start + 32].copy_from_slice(&make_field(0xFD));
         v
     }
 
@@ -194,11 +202,19 @@ mod tests {
 
     #[test]
     fn consistency_ignores_first_field_secret_commitment() {
-        // The first field is expected_secret_commitment and must not be matched.
+        // The first two fields are not share commitments and must not be matched.
         let link = C3aToC2aShareEncryptionLink;
         let msg = make_field(0xFF); // same value as the secret_commitment placeholder
         let c2 = c2_signals(&[make_field(1)]); // share commitments don't include 0xFF
         assert!(!link.check_signals(&[msg], &c2));
+    }
+
+    #[test]
+    fn consistency_ignores_batch_vk_field() {
+        let link = C3aToC2aShareEncryptionLink;
+        let batch_vk = make_field(0xFD);
+        let c2 = c2_signals(&[make_field(1)]);
+        assert!(!link.check_signals(&[batch_vk], &c2));
     }
 
     #[test]

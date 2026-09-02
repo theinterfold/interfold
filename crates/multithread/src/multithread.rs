@@ -40,7 +40,35 @@ use e3_trbfv::TrBFVFailure;
 use e3_trbfv::{TrBFVError, TrBFVRequest};
 use e3_utils::SharedRng;
 use e3_utils::MAILBOX_LIMIT;
-use e3_zk_prover::{execute_zk_request, zk_operation_name, ZkBackend, ZkProver};
+use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
+use e3_zk_helpers::circuits::dkg::share_computation::utils::compute_parity_matrix;
+use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::circuit::{
+    DecryptedSharesAggregationCircuit, DecryptedSharesAggregationCircuitData,
+};
+use e3_zk_helpers::circuits::threshold::pk_generation::circuit::{
+    PkGenerationCircuit, PkGenerationCircuitData,
+};
+use e3_zk_helpers::computation::DkgInputType;
+use e3_zk_helpers::dkg::share_computation::ShareComputationCircuitData;
+use e3_zk_helpers::dkg::share_decryption::{ShareDecryptionCircuit, ShareDecryptionCircuitData};
+use e3_zk_helpers::dkg::share_encryption::{ShareEncryptionCircuit, ShareEncryptionCircuitData};
+use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
+use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
+use e3_zk_helpers::CiphernodesCommittee;
+use e3_zk_helpers::CiphernodesCommitteeSize;
+use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
+use e3_zk_prover::{
+    generate_nodes_fold_step, prove_chunked_share_computation, prove_decryption_aggregation_jobs,
+    prove_dkg_aggregation, prove_node_dkg_fold, validate_c2_terminal_proof, C2TerminalAnchors,
+    CircuitVariant, DecryptionAggregationJob, DkgAggregationInput, NodeDkgFoldInput,
+    NodeDkgFoldProveResult, Provable, ZkBackend, ZkError, ZkProver,
+};
+use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
+use fhe::mbfv::PublicKeyShare;
+use fhe_math::rq::PowerBasis;
+use fhe_traits::{DeserializeParametrized, FheEncoder};
+use ndarray::Array2;
+use num_bigint::BigInt;
 use rand::Rng;
 use tracing::{debug, error, info, warn};
 
@@ -889,16 +917,870 @@ fn handle_compute_request(
                         )),
                         request,
                     )),
-                    Duration::ZERO,
-                );
-            };
-            timefunc(zk_operation_name(kind), id, || {
-                execute_zk_request(&prover, &cipher, request, &mut |step| {
-                    if let Some(report) = report.as_ref() {
-                        report.do_send(TrackDuration::new(
-                            format!("NodeDkgFold/{}", step.step),
-                            Duration::from_secs_f64(step.seconds),
-                        ));
+                    request,
+                )),
+            },
+        ),
+        TrBFVRequest::CalculateThresholdDecryption(req) => timefunc(
+            "calculate_threshold_decryption",
+            id,
+            || match calculate_threshold_decryption(req) {
+                Ok(o) => Ok(ComputeResponse::trbfv(
+                    TrBFVResponse::CalculateThresholdDecryption(o),
+                    request.correlation_id,
+                    request.e3_id,
+                )),
+                Err(e) => Err(ComputeRequestError::new(
+                    ComputeRequestErrorKind::TrBFV(TrBFVError::CalculateThresholdDecryption(
+                        TrBFVFailure::from_error(&e),
+                    )),
+                    request,
+                )),
+            },
+        ),
+    }
+}
+
+fn handle_zk_request(
+    cipher: Arc<Cipher>,
+    zk_prover: Option<Arc<ZkProver>>,
+    zk_req: ZkRequest,
+    request: ComputeRequest,
+    id: u8,
+    report: Option<Addr<MultithreadReport>>,
+) -> (Result<ComputeResponse, ComputeRequestError>, Duration) {
+    let Some(prover) = zk_prover else {
+        return (
+            Err(ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(
+                    "ZK prover not configured".to_string(),
+                )),
+                request,
+            )),
+            Duration::ZERO,
+        );
+    };
+
+    match zk_req {
+        ZkRequest::PkBfv(req) => timefunc("zk_pk_bfv", id, || {
+            handle_pk_bfv_proof(&prover, req, request.clone())
+        }),
+        ZkRequest::PkGeneration(req) => timefunc("zk_pk_generation", id, || {
+            handle_pk_generation_proof(&prover, &cipher, req, request.clone())
+        }),
+        ZkRequest::ShareComputation(req) => timefunc("zk_share_computation", id, || {
+            handle_share_computation_proof(&prover, &cipher, req, request.clone())
+        }),
+        ZkRequest::ShareEncryption(req) => timefunc("zk_share_encryption", id, || {
+            handle_share_encryption_proof(&prover, &cipher, req, request.clone())
+        }),
+        ZkRequest::DkgShareDecryption(req) => timefunc("zk_dkg_share_decryption", id, || {
+            handle_dkg_share_decryption_proof(&prover, &cipher, req, request.clone())
+        }),
+        ZkRequest::VerifyShareProofs(req) => timefunc("zk_verify_share_proofs", id, || {
+            handle_verify_share_proofs(&prover, req, request.clone())
+        }),
+        ZkRequest::VerifyShareDecryptionProofs(req) => {
+            timefunc("zk_verify_share_decryption_proofs", id, || {
+                handle_verify_share_decryption_proofs(&prover, req, request.clone())
+            })
+        }
+        ZkRequest::PkAggregation(req) => timefunc("zk_pk_aggregation", id, || {
+            handle_pk_aggregation_proof(&prover, req, request.clone())
+        }),
+        ZkRequest::ThresholdShareDecryption(req) => {
+            timefunc("zk_threshold_share_decryption", id, || {
+                handle_threshold_share_decryption_proof(&prover, &cipher, req, request.clone())
+            })
+        }
+        ZkRequest::DecryptedSharesAggregation(req) => {
+            timefunc("zk_decrypted_shares_aggregation", id, || {
+                handle_decrypted_shares_aggregation_proof(&prover, req, request.clone())
+            })
+        }
+        ZkRequest::NodeDkgFold(req) => timefunc("zk_node_dkg_fold", id, || {
+            handle_node_dkg_fold_proof(&prover, req, request.clone(), report.clone())
+        }),
+        ZkRequest::NodesFoldStep(req) => timefunc("zk_nodes_fold_step", id, || {
+            handle_nodes_fold_step_proof(&prover, req, request.clone())
+        }),
+        ZkRequest::DkgAggregation(req) => timefunc("zk_dkg_aggregation", id, || {
+            handle_dkg_aggregation_proof(&prover, req, request.clone())
+        }),
+        ZkRequest::DecryptionAggregation(req) => timefunc("zk_decryption_aggregation", id, || {
+            handle_decryption_aggregation_proof(&prover, req, request.clone())
+        }),
+    }
+}
+
+fn handle_node_dkg_fold_proof(
+    prover: &ZkProver,
+    req: NodeDkgFoldRequest,
+    request: ComputeRequest,
+    report: Option<Addr<MultithreadReport>>,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let job_id = zk_bb_work_id(&request);
+    let input = NodeDkgFoldInput {
+        c0_proof: &req.c0_proof,
+        c1_proof: &req.c1_proof,
+        c2a_proof: &req.c2a_proof,
+        c2b_proof: &req.c2b_proof,
+        c3a_inner_proofs: &req.c3a_inner_proofs,
+        c3b_inner_proofs: &req.c3b_inner_proofs,
+        c3_slot_indices_a: &req.c3_slot_indices_a,
+        c3_slot_indices_b: &req.c3_slot_indices_b,
+        c3_total_slots: req.c3_total_slots,
+        c4a_proof: &req.c4a_proof,
+        c4b_proof: &req.c4b_proof,
+        party_id: req.party_id,
+    };
+    let NodeDkgFoldProveResult {
+        proof,
+        step_timings,
+    } = prove_node_dkg_fold(prover, &input, &job_id, &artifacts_dir).map_err(|e| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+            request.clone(),
+        )
+    })?;
+    if let Some(report) = report {
+        for step in step_timings {
+            report.do_send(TrackDuration::new(
+                format!("NodeDkgFold/{}", step.step),
+                Duration::from_secs_f64(step.seconds),
+            ));
+        }
+    }
+    Ok(ComputeResponse::zk(
+        ZkResponse::NodeDkgFold(NodeDkgFoldResponse { proof }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_nodes_fold_step_proof(
+    prover: &ZkProver,
+    req: NodesFoldStepRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let accumulator_proof = generate_nodes_fold_step(
+        prover,
+        &req.inner_proof,
+        req.prior_accumulator.as_ref(),
+        req.slot_index,
+        req.total_slots,
+        &format!("{}-nodesfold-step-{}", req.e3_id, req.slot_index),
+        artifacts_dir.as_str(),
+    )
+    .map_err(|e| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+            request.clone(),
+        )
+    })?;
+    Ok(ComputeResponse::zk(
+        ZkResponse::NodesFoldStep(NodesFoldStepResponse { accumulator_proof }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_dkg_aggregation_proof(
+    prover: &ZkProver,
+    req: DkgAggregationRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    let job_id = zk_bb_work_id(&request);
+    let input = DkgAggregationInput {
+        node_fold_proofs: &req.node_fold_proofs,
+        nodes_fold_proof: req.nodes_fold_proof.as_ref(),
+        c5_proof: &req.c5_proof,
+        party_ids: &req.party_ids,
+        committee_addresses: &req.committee_addresses,
+    };
+    let proof = prove_dkg_aggregation(
+        prover,
+        &input,
+        &job_id,
+        req.params_preset,
+        req.committee_size,
+    )
+    .map_err(|e| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+            request.clone(),
+        )
+    })?;
+    Ok(ComputeResponse::zk(
+        ZkResponse::DkgAggregation(DkgAggregationResponse { proof }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_decryption_aggregation_proof(
+    prover: &ZkProver,
+    req: DecryptionAggregationRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    let job_id = zk_bb_work_id(&request);
+    let jobs: Vec<DecryptionAggregationJob> = req
+        .jobs
+        .iter()
+        .map(|j| DecryptionAggregationJob {
+            c6_inner_proofs: &j.c6_inner_proofs,
+            c6_slot_indices: &j.c6_slot_indices,
+            c7_proof: &j.c7_proof,
+        })
+        .collect();
+    let proofs = prove_decryption_aggregation_jobs(
+        prover,
+        req.c6_total_slots,
+        &jobs,
+        &req.committee_addresses,
+        &job_id,
+        req.params_preset,
+        req.committee_size,
+    )
+    .map_err(|e| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+            request.clone(),
+        )
+    })?;
+    Ok(ComputeResponse::zk(
+        ZkResponse::DecryptionAggregation(DecryptionAggregationResponse { proofs }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+/// Helper to reduce boilerplate for ZK errors
+fn make_zk_error(request: &ComputeRequest, msg: String) -> ComputeRequestError {
+    ComputeRequestError::new(
+        ComputeRequestErrorKind::Zk(ZkEventError::InvalidParams(msg)),
+        request.clone(),
+    )
+}
+
+/// Barretenberg work subdirectory under `work_dir`: must be unique for concurrent jobs that share
+/// the same [`E3id`] (e.g. three ciphernodes proving C0 in parallel).
+///
+/// Avoids `:` (from [`E3id`]'s `Display`) and `/` in path segments — some platforms / tooling are
+/// picky about those in directory names.
+fn zk_bb_work_id(request: &ComputeRequest) -> String {
+    format!("{}_{}", request.e3_id, request.correlation_id)
+        .chars()
+        .map(|c| match c {
+            ':' | '/' | '\\' => '_',
+            c => c,
+        })
+        .collect()
+}
+
+fn handle_share_computation_proof(
+    prover: &ZkProver,
+    cipher: &Cipher,
+    req: ShareComputationProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    // 1. Build BFV threshold parameters
+    let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
+        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+
+    // 2. Decrypt sensitive witness fields
+    let secret_bytes = req
+        .secret_raw
+        .access_raw(cipher)
+        .map_err(|e| make_zk_error(&request, format!("secret_raw decrypt: {}", e)))?;
+    let secret_sss_bytes = req
+        .secret_sss_raw
+        .access_raw(cipher)
+        .map_err(|e| make_zk_error(&request, format!("secret_sss_raw decrypt: {}", e)))?;
+
+    // 3. Deserialize secret polynomial
+    let secret_poly = try_poly_pb_from_bytes(&secret_bytes, &threshold_params)
+        .map_err(|e| make_zk_error(&request, format!("secret_raw: {}", e)))?;
+    let mut secret = CrtPolynomial::from_fhe_polynomial(&secret_poly);
+    if req.dkg_input_type == DkgInputType::SecretKey {
+        secret
+            .center(threshold_params.moduli())
+            .map_err(|e| make_zk_error(&request, format!("Failed to center polynomial: {}", e)))?;
+    }
+
+    // 4. Deserialize Shamir shares (bincode-encoded SharedSecret)
+    let shared_secret: SharedSecret = bincode::deserialize(&secret_sss_bytes)
+        .map_err(|e| make_zk_error(&request, format!("secret_sss_raw deserialize: {}", e)))?;
+
+    // Convert Vec<Array2<u64>> → Vec<Array2<BigInt>>
+    let secret_sss: Vec<Array2<BigInt>> = shared_secret
+        .moduli_data()
+        .iter()
+        .map(|arr| arr.mapv(BigInt::from))
+        .collect();
+
+    // 5. Compute parity matrix
+    let committee = req.committee_size.values();
+    let parity_matrix =
+        compute_parity_matrix(threshold_params.moduli(), committee.n, committee.threshold)
+            .map_err(|e| make_zk_error(&request, format!("compute_parity_matrix: {}", e)))?;
+
+    // 6. Build circuit data
+    let circuit_data = ShareComputationCircuitData {
+        dkg_input_type: req.dkg_input_type,
+        secret,
+        secret_sss,
+        parity_matrix,
+        n_parties: committee.n as u32,
+        threshold: committee.threshold as u32,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+    };
+
+    let bb_work = zk_bb_work_id(&request);
+    let inner_job_id = format!("{bb_work}_c2_inner");
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+
+    // 7. Chunk proofs and terminal C2 projection. The production path uses the compiled default
+    // chunk size; the `zk_cli --chunk-size` option does not reach this handler.
+    let proof = prove_chunked_share_computation(
+        prover,
+        req.params_preset,
+        &circuit_data,
+        &inner_job_id,
+        &artifacts_dir,
+    )
+    .map(|result| result.proof)
+    .map_err(|e| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+            request.clone(),
+        )
+    })?;
+
+    Ok(ComputeResponse::zk(
+        ZkResponse::ShareComputation(ShareComputationProofResponse {
+            proof,
+            dkg_input_type: req.dkg_input_type,
+        }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_pk_generation_proof(
+    prover: &ZkProver,
+    cipher: &Cipher,
+    req: PkGenerationProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    // 1. Build BFV parameters from the threshold preset
+    let params = BfvParamSet::from(req.params_preset).build_arc();
+
+    // 2. Decrypt sensitive witness fields
+    let sk_bytes = req
+        .sk
+        .access_raw(cipher)
+        .map_err(|e| make_zk_error(&request, format!("sk decrypt: {}", e)))?;
+    let eek_bytes = req
+        .eek
+        .access_raw(cipher)
+        .map_err(|e| make_zk_error(&request, format!("eek decrypt: {}", e)))?;
+    let e_sm_bytes = req
+        .e_sm
+        .access_raw(cipher)
+        .map_err(|e| make_zk_error(&request, format!("e_sm decrypt: {}", e)))?;
+
+    // 3. Deserialize raw polynomial bytes → Poly
+    let pk0_share_poly = try_poly_ntt_from_bytes(&req.pk0_share, &params)
+        .map_err(|e| make_zk_error(&request, format!("pk0_share: {}", e)))?;
+
+    let sk_poly = try_poly_pb_from_bytes(&sk_bytes, &params)
+        .map_err(|e| make_zk_error(&request, format!("sk: {}", e)))?;
+
+    let eek_poly = try_poly_ntt_from_bytes(&eek_bytes, &params)
+        .map_err(|e| make_zk_error(&request, format!("eek: {}", e)))?;
+
+    let e_sm_poly = try_poly_pb_from_bytes(&e_sm_bytes, &params)
+        .map_err(|e| make_zk_error(&request, format!("e_sm: {}", e)))?;
+
+    // 3. Convert Poly → CrtPolynomial
+    let pk0_share = CrtPolynomial::from_fhe_polynomial(&pk0_share_poly);
+    let sk = CrtPolynomial::from_fhe_polynomial(&sk_poly);
+    let eek = CrtPolynomial::from_fhe_polynomial(&eek_poly);
+    let e_sm = CrtPolynomial::from_fhe_polynomial(&e_sm_poly);
+
+    // 4. Build circuit data
+    let committee = req.committee_size.values();
+    let circuit_data = PkGenerationCircuitData {
+        committee,
+        pk0_share,
+        eek,
+        e_sm,
+        sk,
+    };
+
+    // 5. Generate proof via Provable trait
+    let circuit = PkGenerationCircuit;
+    let bb_work = zk_bb_work_id(&request);
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+
+    let proof = circuit
+        .prove(
+            prover,
+            &req.params_preset,
+            &circuit_data,
+            &bb_work,
+            &artifacts_dir,
+        )
+        .map_err(|e| {
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+                request.clone(),
+            )
+        })?;
+
+    Ok(ComputeResponse::zk(
+        ZkResponse::PkGeneration(PkGenerationProofResponse::new(proof)),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_pk_bfv_proof(
+    prover: &ZkProver,
+    req: PkBfvProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    // NOTE: req.params_preset is expected to contain a DKG preset (e.g., InsecureDkg512)
+    // because the proof is for the DKG circuit. This preset is converted to BFV parameters.
+    let params = BfvParamSet::from(req.params_preset).build_arc();
+    let pk_bfv = PublicKey::from_bytes(&req.pk_bfv, &params).map_err(|e| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::InvalidParams(format!(
+                "Failed to deserialize pk_bfv: {:?}",
+                e
+            ))),
+            request.clone(),
+        )
+    })?;
+
+    let circuit = PkCircuit;
+    let circuit_data = PkCircuitData { public_key: pk_bfv };
+    let bb_work = zk_bb_work_id(&request);
+    let preset_counterpart = req
+        .params_preset
+        .threshold_counterpart()
+        .unwrap_or(BfvPreset::InsecureThreshold512);
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    // But here we have to pass the InsecureThreshold512 preset because the underlaying witness generator
+    // builds both params, but will only use the DKG one
+    let proof = circuit
+        .prove(
+            prover,
+            &preset_counterpart,
+            &circuit_data,
+            &bb_work,
+            &artifacts_dir,
+        )
+        .map_err(|e| {
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+                request.clone(),
+            )
+        })?;
+
+    Ok(ComputeResponse::zk(
+        ZkResponse::PkBfv(PkBfvProofResponse::new(proof)),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_share_encryption_proof(
+    prover: &ZkProver,
+    cipher: &Cipher,
+    req: ShareEncryptionProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    // 1. Build DKG params from threshold preset
+    let (threshold_params, dkg_params) = build_pair_for_preset(req.params_preset)
+        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+
+    // 2. Decrypt sensitive witness data
+    let share_row_bytes = req
+        .share_row_raw
+        .access_raw(cipher)
+        .map_err(|e| make_zk_error(&request, format!("share_row decrypt: {}", e)))?;
+    let u_rns_bytes = req
+        .u_rns_raw
+        .access_raw(cipher)
+        .map_err(|e| make_zk_error(&request, format!("u_rns decrypt: {}", e)))?;
+    let e0_rns_bytes = req
+        .e0_rns_raw
+        .access_raw(cipher)
+        .map_err(|e| make_zk_error(&request, format!("e0_rns decrypt: {}", e)))?;
+    let e1_rns_bytes = req
+        .e1_rns_raw
+        .access_raw(cipher)
+        .map_err(|e| make_zk_error(&request, format!("e1_rns decrypt: {}", e)))?;
+
+    // 3. Deserialize share row and re-encode as Plaintext
+    let share_row: Vec<u64> = bincode::deserialize(&share_row_bytes)
+        .map_err(|e| make_zk_error(&request, format!("share_row: {}", e)))?;
+    let plaintext = Plaintext::try_encode(&share_row, Encoding::poly(), &dkg_params)
+        .map_err(|e| make_zk_error(&request, format!("plaintext encode: {:?}", e)))?;
+
+    // 4. Deserialize ciphertext, public key, polys using DKG params
+    let ciphertext = Ciphertext::from_bytes(&req.ciphertext_raw, &dkg_params)
+        .map_err(|e| make_zk_error(&request, format!("ciphertext: {:?}", e)))?;
+    let public_key = PublicKey::from_bytes(&req.recipient_pk_raw, &dkg_params)
+        .map_err(|e| make_zk_error(&request, format!("recipient_pk: {:?}", e)))?;
+    let u_rns = try_poly_ntt_from_bytes(&u_rns_bytes, &dkg_params)
+        .map_err(|e| make_zk_error(&request, format!("u_rns: {}", e)))?;
+    let e0_rns = try_poly_ntt_from_bytes(&e0_rns_bytes, &dkg_params)
+        .map_err(|e| make_zk_error(&request, format!("e0_rns: {}", e)))?;
+    let e1_rns = try_poly_ntt_from_bytes(&e1_rns_bytes, &dkg_params)
+        .map_err(|e| make_zk_error(&request, format!("e1_rns: {}", e)))?;
+
+    let committee_n = req.committee_size.values().n;
+    if req.recipient_party_id >= committee_n {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "recipient_party_id {} is outside committee size {}",
+                req.recipient_party_id, committee_n
+            ),
+        ));
+    }
+    // C3 encrypts one threshold Shamir row per proof. The ciphertext itself uses DKG parameters,
+    // but row_index belongs to the threshold secret's modulus domain.
+    let n_moduli = threshold_params.moduli().len();
+    if req.row_index >= n_moduli {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "row_index {} is outside modulus count {}",
+                req.row_index, n_moduli
+            ),
+        ));
+    }
+    let party_idx = u32::try_from(req.recipient_party_id)
+        .map_err(|e| make_zk_error(&request, format!("recipient_party_id: {e}")))?;
+    let mod_idx = u32::try_from(req.row_index)
+        .map_err(|e| make_zk_error(&request, format!("row_index: {e}")))?;
+
+    // 4. Dummy SecretKey (not used by Inputs::compute)
+    let dummy_sk = SecretKey::random(&dkg_params, &mut rand::rng());
+
+    // 5. Build circuit data
+    let committee_val = req.committee_size.values();
+    let circuit_data = ShareEncryptionCircuitData {
+        plaintext,
+        ciphertext,
+        public_key,
+        secret_key: dummy_sk,
+        u_rns,
+        e0_rns,
+        e1_rns,
+        dkg_input_type: req.dkg_input_type,
+        party_idx,
+        mod_idx,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+        committee: committee_val,
+    };
+
+    // 6. Generate proof (preset = threshold preset; Inputs::compute derives DKG internally)
+    let circuit = ShareEncryptionCircuit;
+    let bb_work = zk_bb_work_id(&request);
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let proof = circuit
+        .prove(
+            prover,
+            &req.params_preset,
+            &circuit_data,
+            &bb_work,
+            &artifacts_dir,
+        )
+        .map_err(|e| {
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+                request.clone(),
+            )
+        })?;
+
+    Ok(ComputeResponse::zk(
+        ZkResponse::ShareEncryption(ShareEncryptionProofResponse {
+            proof,
+            dkg_input_type: req.dkg_input_type,
+            recipient_party_id: req.recipient_party_id,
+            row_index: req.row_index,
+            esi_index: req.esi_index,
+        }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+fn handle_dkg_share_decryption_proof(
+    prover: &ZkProver,
+    cipher: &Cipher,
+    req: DkgShareDecryptionProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    let (_threshold_params, dkg_params) = build_pair_for_preset(req.params_preset)
+        .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
+
+    let sk_bytes = req
+        .sk_bfv
+        .access_raw(cipher)
+        .map_err(|e| make_zk_error(&request, format!("sk_bfv decrypt: {}", e)))?;
+    let secret_key = deserialize_secret_key(&sk_bytes, &dkg_params)
+        .map_err(|e| make_zk_error(&request, format!("sk_bfv deserialize: {}", e)))?;
+
+    // External slots = (H - 1), each carrying L ciphertexts.
+    let h = req.num_honest_parties;
+    let l = req.num_moduli;
+    if req.own_plaintext_idx >= h {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "own_plaintext_idx {} out of range (num_honest_parties={})",
+                req.own_plaintext_idx, h
+            ),
+        ));
+    }
+    if req.recipient_party_id >= req.committee_size.values().n as u64 {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "recipient_party_id {} is outside committee N",
+                req.recipient_party_id
+            ),
+        ));
+    }
+    let expected_external_cts = h.saturating_sub(1) * l;
+    if req.honest_ciphertexts_raw.len() != expected_external_cts {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "Expected {} external ciphertexts ((H-1)={} * L={}), got {}",
+                expected_external_cts,
+                h.saturating_sub(1),
+                l,
+                req.honest_ciphertexts_raw.len()
+            ),
+        ));
+    }
+
+    // Deserialize external ciphertexts → [(H-1)][L]
+    let num_external = h.saturating_sub(1);
+    let mut external_ciphertexts: Vec<Vec<Ciphertext>> = Vec::with_capacity(num_external);
+    for ext_idx in 0..num_external {
+        let mut party_cts = Vec::with_capacity(l);
+        for mod_idx in 0..l {
+            let raw = &req.honest_ciphertexts_raw[ext_idx * l + mod_idx];
+            let ct = Ciphertext::from_bytes(raw, &dkg_params).map_err(|e| {
+                make_zk_error(
+                    &request,
+                    format!("ciphertext[{}][{}] deserialize: {:?}", ext_idx, mod_idx, e),
+                )
+            })?;
+            party_cts.push(ct);
+        }
+        external_ciphertexts.push(party_cts);
+    }
+
+    // Splice None at `own_plaintext_idx` so the H-sized vector matches ascending honest party_id order.
+    let mut honest_ciphertexts: Vec<Option<Vec<Ciphertext>>> = Vec::with_capacity(h);
+    let mut external_iter = external_ciphertexts.into_iter();
+    for slot in 0..h {
+        if slot == req.own_plaintext_idx {
+            honest_ciphertexts.push(None);
+        } else {
+            honest_ciphertexts.push(Some(
+                external_iter
+                    .next()
+                    .expect("external_iter exhausted: lengths validated above"),
+            ));
+        }
+    }
+
+    // Own-plaintext share rows: bincode `Vec<Vec<u64>>` shape [L][N].
+    let own_share_bytes = req
+        .own_share_raw
+        .access_raw(cipher)
+        .map_err(|e| make_zk_error(&request, format!("own_share decrypt: {}", e)))?;
+    let own_plaintext_share: Vec<Vec<u64>> = bincode::deserialize(&own_share_bytes)
+        .map_err(|e| make_zk_error(&request, format!("own_share deserialize: {}", e)))?;
+    if own_plaintext_share.len() != l {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "own_plaintext_share has {} moduli, expected {}",
+                own_plaintext_share.len(),
+                l
+            ),
+        ));
+    }
+    let n = dkg_params.degree();
+    for (row_idx, row) in own_plaintext_share.iter().enumerate() {
+        if row.len() != n {
+            return Err(make_zk_error(
+                &request,
+                format!(
+                    "own_plaintext_share[{}] has {} coefficients, expected {}",
+                    row_idx,
+                    row.len(),
+                    n
+                ),
+            ));
+        }
+    }
+
+    let circuit_data = ShareDecryptionCircuitData {
+        secret_key,
+        honest_ciphertexts,
+        recipient_party_id: req.recipient_party_id,
+        own_plaintext_share,
+        dkg_input_type: req.dkg_input_type,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+        committee: req.committee_size.values(),
+    };
+
+    let circuit = ShareDecryptionCircuit;
+    let bb_work = zk_bb_work_id(&request);
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let proof = circuit
+        .prove(
+            prover,
+            &req.params_preset,
+            &circuit_data,
+            &bb_work,
+            &artifacts_dir,
+        )
+        .map_err(|e| {
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(e.to_string())),
+                request.clone(),
+            )
+        })?;
+
+    Ok(ComputeResponse::zk(
+        ZkResponse::DkgShareDecryption(DkgShareDecryptionProofResponse {
+            proof,
+            dkg_input_type: req.dkg_input_type,
+        }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+/// ZK-verify a share proof (inner recursive circuits).
+fn zk_verify_share_proof_bundle(
+    prover: &ZkProver,
+    proof: &Proof,
+    e3_id_str: &str,
+    party_id: u64,
+    artifacts_dir: &str,
+) -> Result<bool, ZkError> {
+    prover.verify_proof(proof, e3_id_str, party_id, artifacts_dir)
+}
+
+fn handle_verify_share_proofs(
+    prover: &ZkProver,
+    req: VerifyShareProofsRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    let e3_id_str = request.e3_id.to_string();
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+
+    // ECDSA validation (signature recovery, signer consistency, e3_id match)
+    // is handled by ShareVerificationActor before dispatching to multithread.
+    // This function performs ZK-only proof verification.
+    let party_results: Vec<PartyVerificationResult> = req
+        .party_proofs
+        .into_iter()
+        .map(|party| {
+            let sender = party.sender_party_id;
+
+            for signed_proof in &party.signed_proofs {
+                // 1. Validate CircuitName matches expected circuits for this ProofType
+                let expected_circuits = signed_proof.payload.proof_type.circuit_names();
+                if !expected_circuits.contains(&signed_proof.payload.proof.circuit) {
+                    info!(
+                        "Circuit name mismatch for party {} ({:?}): expected {:?}, got {:?}",
+                        sender,
+                        signed_proof.payload.proof_type,
+                        expected_circuits,
+                        signed_proof.payload.proof.circuit
+                    );
+                    return PartyVerificationResult {
+                        sender_party_id: sender,
+                        all_verified: false,
+                        failed_signed_payload: Some(signed_proof.clone()),
+                        recovered_address: None,
+                    };
+                }
+
+                // Bind C2 terminal proofs to their deployment-time VK anchors
+                // before generic proof verification. A failure marks the signed
+                // proof invalid, like any other ZK failure.
+                let proof_type = signed_proof.payload.proof_type;
+                if matches!(
+                    proof_type,
+                    e3_events::ProofType::C2aSkShareComputation
+                        | e3_events::ProofType::C2bESmShareComputation
+                ) {
+                    let anchor_result = C2TerminalAnchors::load(prover, proof_type, &artifacts_dir)
+                        .and_then(|anchors| {
+                            validate_c2_terminal_proof(
+                                req.params_preset,
+                                req.committee_size,
+                                proof_type,
+                                &signed_proof.payload.proof,
+                                &anchors,
+                            )
+                        });
+                    if let Err(error) = anchor_result {
+                        info!(
+                            "C2 terminal proof VK binding failed for party {sender} ({proof_type:?}): {error}"
+                        );
+                        return PartyVerificationResult {
+                            sender_party_id: sender,
+                            all_verified: false,
+                            failed_signed_payload: Some(signed_proof.clone()),
+                            recovered_address: None,
+                        };
+                    }
+                }
+
+                // ZK proof verification
+                let proof = &signed_proof.payload.proof;
+                let result =
+                    zk_verify_share_proof_bundle(prover, proof, &e3_id_str, sender, &artifacts_dir);
+                match result {
+                    Ok(true) => continue,
+                    Ok(false) | Err(_) => {
+                        info!(
+                            "ZK proof verification failed for party {} ({:?})",
+                            sender, signed_proof.payload.proof_type
+                        );
+                        return PartyVerificationResult {
+                            sender_party_id: sender,
+                            all_verified: false,
+                            failed_signed_payload: Some(signed_proof.clone()),
+                            recovered_address: None,
+                        };
                     }
                 })
             })

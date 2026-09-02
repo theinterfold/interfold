@@ -17,9 +17,11 @@ use e3_zk_config::DkgInputType;
 use e3_zk_witness::dkg::share_computation::{
     Inputs as ShareComputationInputs, ShareComputationCircuitData,
 };
-use e3_zk_witness::dkg::share_encryption::ShareEncryptionCircuitData;
-use e3_zk_witness::threshold::pk_generation::PkGenerationCircuitData;
-use e3_zk_witness::WitnessError;
+use e3_zk_helpers::dkg::share_encryption::ShareEncryptionCircuitData;
+use e3_zk_helpers::threshold::pk_generation::PkGenerationCircuitData;
+use e3_zk_helpers::CiphernodesCommittee;
+use e3_zk_helpers::CircuitsErrors;
+use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
 use fhe::bfv::Encoding;
 use fhe::bfv::SecretKey;
 use fhe::mbfv::PublicKeyShare;
@@ -129,6 +131,10 @@ pub fn share_computation_sk_from_pk(
         dkg_input_type: DkgInputType::SecretKey,
         secret: pk.sk.clone(),
         secret_sss,
+        parity_matrix,
+        n_parties: committee.n as u32,
+        threshold: committee.threshold as u32,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
     })
 }
 
@@ -162,6 +168,10 @@ pub fn share_computation_esm_from_esi(
         dkg_input_type: DkgInputType::SmudgingNoise,
         secret: pk.e_sm.clone(),
         secret_sss,
+        parity_matrix,
+        n_parties: committee.n as u32,
+        threshold: committee.threshold as u32,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
     })
 }
 
@@ -172,7 +182,11 @@ pub fn share_encryption_for_slot(
     share_inputs: &ShareComputationInputs,
     slot: usize,
     dkg_input_type: DkgInputType,
-) -> Result<ShareEncryptionCircuitData, WitnessError> {
+    committee: CiphernodesCommittee,
+) -> Result<ShareEncryptionCircuitData, CircuitsErrors> {
+    let (_, dkg_params) =
+        build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
+
     let (threshold_params, _) = build_pair_for_preset(preset)
         .map_err(|e| WitnessError::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
     let l = threshold_params.moduli().len();
@@ -206,8 +220,14 @@ pub fn share_encryption_for_slot(
         plaintext: pt,
         ciphertext: ct,
         public_key: dkg_pk.clone(),
-        u_rns: encryption.randomness().clone(),
-        e0_rns: encryption.error_0().clone(),
-        e1_rns: encryption.error_1().clone(),
+        secret_key: dkg_sk.clone(),
+        u_rns,
+        e0_rns,
+        e1_rns,
+        dkg_input_type,
+        party_idx: party as u32,
+        mod_idx: mod_ix as u32,
+        chunk_size: DEFAULT_C2_CHUNK_SIZE as u32,
+        committee,
     })
 }

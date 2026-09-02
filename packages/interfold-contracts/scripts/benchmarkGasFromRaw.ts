@@ -20,6 +20,7 @@ import {
   committeeHashFromLimbs,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
+  getBfvPkVkBindingHashPaths,
   getRepoRoot,
   readVkRecursiveHash,
 } from "./utils";
@@ -429,6 +430,15 @@ async function main() {
     getBfvPkSubCircuitVkHashPaths(benchmarkConfig).c5,
     benchmarkConfig,
   );
+  const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
+    getBfvPkSubCircuitVkHashPaths().skC2Chunk,
+  );
+  const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
+    getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
+  );
+  const expectedVkBinding = getBfvPkVkBindingHashPaths().map((filePath) =>
+    readVkRecursiveHash(filePath),
+  );
   const expectedC6FoldKeyHash = readVkRecursiveHash(
     getBfvDecryptionSubCircuitVkHashPaths(benchmarkConfig).c6Fold,
     benchmarkConfig,
@@ -440,10 +450,15 @@ async function main() {
 
   if (
     dkgPublicInputs[0] !== expectedNodesFoldKeyHash ||
-    dkgPublicInputs[1] !== expectedC5KeyHash
+    dkgPublicInputs[1] !== expectedC5KeyHash ||
+    dkgPublicInputs[21 + BFV_DKG_H] !== expectedSkC2ChunkKeyHash ||
+    dkgPublicInputs[22 + BFV_DKG_H] !== expectedESmC2ChunkKeyHash ||
+    expectedVkBinding.some(
+      (value, index) => dkgPublicInputs[4 + BFV_DKG_H + index] !== value,
+    )
   ) {
     throw new Error(
-      "DKG aggregator publicInputs[0..1] do not match the nodes VK-tree anchor and C5 VK hash",
+      "DKG aggregator proof public inputs do not match nodes_fold, pk_aggregation, sk_share_computation_chunk, or esm_share_computation_chunk .vk_recursive_hash artifacts",
     );
   }
   if (
@@ -484,7 +499,10 @@ async function main() {
     dkgAggAddress,
     expectedNodesFoldKeyHash,
     expectedC5KeyHash,
-    benchmarkConfig.h,
+    expectedSkC2ChunkKeyHash,
+    expectedESmC2ChunkKeyHash,
+    expectedVkBinding,
+    BFV_DKG_H,
   );
   await bfvPk.waitForDeployment();
 

@@ -3,7 +3,6 @@ members = [
     "pk",
     "share_encryption",
     "share_decryption",
-    "sk_share_computation",
-    "e_sm_share_computation",
+    "sk_share_computation_chunk",
+    "esm_share_computation_chunk",
 ]
-

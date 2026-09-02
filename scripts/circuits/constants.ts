@@ -93,7 +93,15 @@ export const COMMITTEE_PARAMS: Record<CircuitCommittee, CommitteeParams> = {
   [CIRCUIT_COMMITTEES.SMALL]: { n: 19, t: 9, h: 14 },
 }
 
-/** Build policy shared with the Rust circuit builder. Manifest order defines build order. */
+/**
+ * Every `(preset, committee)` pair is supported because committee-dependent circuit artifacts are
+ * regenerated automatically from the BFV presets and the committee's `(N, T)` by the
+ * `generate_parity_matrices` Rust binary, invoked from `scripts/build-circuits.ts` whenever
+ * the committee is set. The parity matrices and smudging constants are derived artifacts.
+ *
+ * This constant is kept for future use (e.g. if a particular pair is ever known-broken at
+ * a higher level than the parity matrix) and currently returns the full Cartesian product.
+ */
 export const SUPPORTED_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
   preset: CircuitPreset
   committee: CircuitCommittee

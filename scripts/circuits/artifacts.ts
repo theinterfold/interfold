@@ -17,10 +17,55 @@ const BRANCH = 'circuit-artifacts'
 const ROOT = resolve(__dirname, '../..')
 const DIST = join(ROOT, 'dist', 'circuits')
 const METADATA_FILES = new Set(['.git', 'SOURCE_HASH', 'SHA256SUMS', 'checksums.json'])
-// The release matrix is the file that the Rust installer requires, so both read the same pairs.
-export const RELEASE_REQUIRED_PAIRS = supportedConfigurations.map(
-  ([preset, committee]) => [preset as CircuitPreset, committee as CircuitCommittee] as const,
-)
+export const RELEASE_REQUIRED_PAIRS = SUPPORTED_PRESET_COMMITTEE_PAIRS.map(({ preset, committee }) => [preset, committee] as const)
+
+const REQUIRED_BASE_CIRCUITS = [
+  'dkg/esm_share_computation_chunk/esm_share_computation_chunk',
+  'dkg/pk/pk',
+  'dkg/share_decryption/share_decryption',
+  'dkg/share_encryption/share_encryption',
+  'dkg/sk_share_computation_chunk/sk_share_computation_chunk',
+  'threshold/decrypted_shares_aggregation/decrypted_shares_aggregation',
+  'threshold/pk_aggregation/pk_aggregation',
+  'threshold/pk_generation/pk_generation',
+  'threshold/share_decryption/share_decryption',
+  'threshold/user_data_encryption/user_data_encryption',
+  'threshold/user_data_encryption_ct0/user_data_encryption_ct0',
+  'threshold/user_data_encryption_ct1/user_data_encryption_ct1',
+  'recursive_aggregation/esm_c2_chunk_finalize/esm_c2_chunk_finalize',
+  'recursive_aggregation/sk_c2_chunk_finalize/sk_c2_chunk_finalize',
+] as const
+
+const REQUIRED_AGGREGATION_CIRCUITS = [
+  'recursive_aggregation/c2_chunk_batch/c2_chunk_batch',
+  'recursive_aggregation/c2ab_chunk_fold/c2ab_chunk_fold',
+  'recursive_aggregation/c3_fold/c3_fold',
+  'recursive_aggregation/c3_fold_kernel/c3_fold_kernel',
+  'recursive_aggregation/c3ab_fold/c3ab_fold',
+  'recursive_aggregation/c4ab_fold/c4ab_fold',
+  'recursive_aggregation/c6_fold/c6_fold',
+  'recursive_aggregation/c6_fold_kernel/c6_fold_kernel',
+  'recursive_aggregation/decryption_aggregator/decryption_aggregator',
+  'recursive_aggregation/dkg_aggregator/dkg_aggregator',
+  'recursive_aggregation/node_fold/node_fold',
+  'recursive_aggregation/nodes_fold/nodes_fold',
+  'recursive_aggregation/nodes_fold_kernel/nodes_fold_kernel',
+] as const
+
+const REQUIRED_EVM_AGGREGATION_CIRCUITS = [
+  'recursive_aggregation/decryption_aggregator/decryption_aggregator',
+  'recursive_aggregation/dkg_aggregator/dkg_aggregator',
+] as const
+
+const REQUIRED_VARIANT_CIRCUITS = [
+  ...REQUIRED_BASE_CIRCUITS.map((circuit) => join('default', circuit)),
+  ...REQUIRED_AGGREGATION_CIRCUITS.map((circuit) => join('default', circuit)),
+  ...REQUIRED_BASE_CIRCUITS.map((circuit) => join('evm', circuit)),
+  ...REQUIRED_EVM_AGGREGATION_CIRCUITS.map((circuit) => join('evm', circuit)),
+  ...REQUIRED_BASE_CIRCUITS.map((circuit) => join('recursive', circuit)),
+] as const
+
+const REQUIRED_ARTIFACT_EXTENSIONS = ['.json', '.vk', '.vk_hash'] as const
 
 const run = (cmd: string, cwd = ROOT) => execSync(cmd, { encoding: 'utf-8', cwd, stdio: 'pipe' }).trim()
 const runV = (cmd: string, cwd = ROOT) => execSync(cmd, { cwd, stdio: 'inherit' })

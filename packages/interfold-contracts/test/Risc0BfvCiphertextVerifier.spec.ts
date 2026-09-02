@@ -16,6 +16,17 @@ describe("Risc0BfvCiphertextVerifier", function () {
   const paramsHash = `0x${"77".repeat(32)}`;
   const inputRoot = `0x${"88".repeat(32)}`;
 
+  it("rejects an EOA as the RISC Zero verifier", async function () {
+    const [signer] = await ethers.getSigners();
+    const factory = await ethers.getContractFactory(
+      "Risc0BfvCiphertextVerifier",
+    );
+
+    await expect(
+      factory.deploy(await signer.getAddress(), imageId),
+    ).to.be.revertedWithCustomError(factory, "InvalidVerifier");
+  });
+
   function encodeVec32(value: string) {
     const encoded = [32, 0, 0, 0];
     for (const byte of ethers.getBytes(value)) encoded.push(byte, 0, 0, 0);

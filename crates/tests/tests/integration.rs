@@ -440,9 +440,21 @@ async fn setup_test_zk_backend(
                 .join("recursive_aggregation")
                 .join("c6_fold_kernel")
                 .join("target");
-            let c2ab_fold_target = circuits_build_root
+            let c2_chunk_batch_target = circuits_build_root
                 .join("recursive_aggregation")
-                .join("c2ab_fold")
+                .join("c2_chunk_batch")
+                .join("target");
+            let sk_c2_chunk_finalize_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("sk_c2_chunk_finalize")
+                .join("target");
+            let esm_c2_chunk_finalize_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("esm_c2_chunk_finalize")
+                .join("target");
+            let c2ab_chunk_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("c2ab_chunk_fold")
                 .join("target");
             let c3ab_fold_target = circuits_build_root
                 .join("recursive_aggregation")
@@ -546,20 +558,20 @@ async fn setup_test_zk_backend(
                 ".vk_noir_hash",
             )
             .await?;
-            // C2a (sk_share_computation)
+            // C2a chunk (sk_share_computation_chunk)
             copy_circuit(
                 &dkg_target,
-                &rv.join("dkg/sk_share_computation"),
-                "sk_share_computation",
+                &rv.join("dkg/sk_share_computation_chunk"),
+                "sk_share_computation_chunk",
                 ".vk_noir",
                 ".vk_noir_hash",
             )
             .await?;
-            // C2b (e_sm_share_computation)
+            // C2b chunk (esm_share_computation_chunk)
             copy_circuit(
                 &dkg_target,
-                &rv.join("dkg/e_sm_share_computation"),
-                "e_sm_share_computation",
+                &rv.join("dkg/esm_share_computation_chunk"),
+                "esm_share_computation_chunk",
                 ".vk_noir",
                 ".vk_noir_hash",
             )
@@ -658,9 +670,33 @@ async fn setup_test_zk_backend(
             )
             .await?;
             copy_circuit(
-                &c2ab_fold_target,
-                &dv.join("recursive_aggregation/c2ab_fold"),
-                "c2ab_fold",
+                &c2_chunk_batch_target,
+                &dv.join("recursive_aggregation/c2_chunk_batch"),
+                "c2_chunk_batch",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &sk_c2_chunk_finalize_target,
+                &dv.join("recursive_aggregation/sk_c2_chunk_finalize"),
+                "sk_c2_chunk_finalize",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &esm_c2_chunk_finalize_target,
+                &dv.join("recursive_aggregation/esm_c2_chunk_finalize"),
+                "esm_c2_chunk_finalize",
+                ".vk_recursive",
+                ".vk_recursive_hash",
+            )
+            .await?;
+            copy_circuit(
+                &c2ab_chunk_fold_target,
+                &dv.join("recursive_aggregation/c2ab_chunk_fold"),
+                "c2ab_chunk_fold",
                 ".vk_recursive",
                 ".vk_recursive_hash",
             )

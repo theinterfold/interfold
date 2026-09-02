@@ -43,20 +43,19 @@ how phases, commitments, and circuit IDs line up end to end, read
 [Cryptography](https://docs.theinterfold.com/learn/cryptography) (source:
 [`docs/pages/learn/cryptography.mdx`](../docs/pages/learn/cryptography.mdx)).
 
-**C2** uses **inner** recursive proofs plus an optional **wrapper**: `sk_share_computation`
-(**C2a**) and `e_sm_share_computation` (**C2b**) prove the Shamir-share computation; the wrapper
-`recursive_aggregation/wrapper/dkg/share_computation` (`CircuitName::ShareComputation`) re-verifies
-a single inner C2 proof at a time and compresses public inputs for folding / aggregation. Gossip and
-threshold signing use the **inner** proof; the wrapper is produced separately when node proof
-aggregation is enabled.
+**C2** uses chunk proofs and recursive aggregation: `sk_share_computation_chunk` (**C2a**) and
+`esm_share_computation_chunk` (**C2b**) prove the Shamir-share computation one coefficient chunk at a
+time. `c2_chunk_batch` groups chunk proofs, and the type-bound finalizer circuits reconstruct the
+root commitments used by the remaining fold pipeline. Gossip and threshold signing use one terminal
+C2 proof per type.
 
 ### DKG (`bin/dkg/`)
 
 | Path                     | ID  | `CircuitName`         | Role                                          |
 | ------------------------ | --- | --------------------- | --------------------------------------------- |
 | `pk`                     | C0  | `PkBfv`               | Commit to individual BFV public key           |
-| `sk_share_computation`   | C2a | `SkShareComputation`  | Secret-key track Shamir shares (`y`)          |
-| `e_sm_share_computation` | C2b | `ESmShareComputation` | Smudging-noise track Shamir shares (`y`)      |
+| `sk_share_computation_chunk`   | C2a | `SkShareComputationChunk`  | Secret-key track Shamir-share coefficient chunk (`y`) |
+| `esm_share_computation_chunk` | C2b | `ESmShareComputationChunk` | Smudging-noise track coefficient chunk (`y`)          |
 | `share_encryption`       | C3  | `ShareEncryption`     | BFV encryption of shares under recipient keys |
 | `share_decryption`       | C4  | `DkgShareDecryption`  | Decrypt shares; aggregate; commitments for P4 |
 

@@ -25,6 +25,7 @@ import {
   committeeHashFromLimbs,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
+  getBfvPkVkBindingHashPaths,
   readVkRecursiveHash,
 } from "../scripts/utils";
 import type {
@@ -46,6 +47,8 @@ const INSECURE_INTEGRATION_SUMMARY = path.join(
   repoRoot,
   "circuits/benchmarks/results_insecure_minimum/integration_summary.json",
 );
+const readExpectedVkBinding = () =>
+  getBfvPkVkBindingHashPaths().map((filePath) => readVkRecursiveHash(filePath));
 
 type FoldedArtifacts = {
   dkg_aggregator: { proof_hex: string; public_inputs_hex: string };
@@ -81,7 +84,13 @@ const readFoldedArtifactsFromFile = (
   return isValidFoldedArtifacts(parsed) ? parsed : null;
 };
 
-/** Prefer the committed fixture; use benchmark output only when the fixture is absent. */
+const hasExpectedFoldedLayout = (value: FoldedArtifacts): boolean =>
+  hexToBytes32Array(value.dkg_aggregator.public_inputs_hex).length ===
+    bfvPkExpectedPublicInputsLen(BFV_DKG_H) &&
+  hexToBytes32Array(value.decryption_aggregator.public_inputs_hex).length ===
+    bfvDecExpectedPublicInputsLen(BFV_THRESHOLD_T);
+
+/** Prefer env override, then current-layout benchmark output, then the committed fixture. */
 const resolveFoldedArtifacts = (): FoldedArtifacts | null => {
   const envPath = process.env.BFV_VK_BINDING_FOLDED_ARTIFACTS;
   if (envPath) {
@@ -90,8 +99,8 @@ const resolveFoldedArtifacts = (): FoldedArtifacts | null => {
   const committed = readFoldedArtifactsFromFile(
     COMMITTED_FOLDED_ARTIFACTS_FIXTURE,
   );
-  if (committed !== null) {
-    return committed;
+  if (fromBenchmark !== null && hasExpectedFoldedLayout(fromBenchmark)) {
+    return fromBenchmark;
   }
   return readFoldedArtifactsFromFile(INSECURE_INTEGRATION_SUMMARY);
 };
@@ -207,6 +216,13 @@ describe("BfvVkBindingIntegration", function () {
     const expectedC5KeyHash = readVkRecursiveHash(
       getBfvPkSubCircuitVkHashPaths().c5,
     );
+    const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
+      getBfvPkSubCircuitVkHashPaths().skC2Chunk,
+    );
+    const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
+      getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
+    );
+    const expectedVkBinding = readExpectedVkBinding();
     const expectedC6FoldKeyHash = readVkRecursiveHash(
       getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
     );
@@ -220,6 +236,9 @@ describe("BfvVkBindingIntegration", function () {
       await dkgAgg.getAddress(),
       expectedNodesFoldKeyHash,
       expectedC5KeyHash,
+      expectedSkC2ChunkKeyHash,
+      expectedESmC2ChunkKeyHash,
+      expectedVkBinding,
       BFV_DKG_H,
     );
     await bfvPk.waitForDeployment();
@@ -247,12 +266,16 @@ describe("BfvVkBindingIntegration", function () {
     it("rejects BfvPkVerifier with stale immutables", async function () {
       const { bfvPk } = await loadFixture(deployHonkAndBfv);
       const address = await bfvPk.getAddress();
+      const expectedVkBinding = readExpectedVkBinding();
       const stale = await (
         await ethers.getContractFactory("BfvPkVerifier")
       ).deploy(
         await bfvPk.circuitVerifier(),
         ethers.id("stale-nodes-fold"),
         ethers.id("stale-c5"),
+        readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().skC2Chunk),
+        readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().esmC2Chunk),
+        expectedVkBinding,
         BFV_DKG_H,
       );
       await stale.waitForDeployment();
@@ -314,25 +337,6 @@ describe("BfvVkBindingIntegration", function () {
       const decPublicInputs = hexToBytes32Array(
         folded.decryption_aggregator.public_inputs_hex,
       );
-
-      const expectedNodesFoldKeyHash = readVkRecursiveHash(
-        getBfvPkSubCircuitVkHashPaths().nodesFold,
-      );
-      const expectedC5KeyHash = readVkRecursiveHash(
-        getBfvPkSubCircuitVkHashPaths().c5,
-      );
-      const expectedC6FoldKeyHash = readVkRecursiveHash(
-        getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
-      );
-      const expectedC7KeyHash = readVkRecursiveHash(
-        getBfvDecryptionSubCircuitVkHashPaths().c7,
-      );
-
-      expect(dkgPublicInputs[0]).to.equal(expectedNodesFoldKeyHash);
-      expect(dkgPublicInputs[1]).to.equal(expectedC5KeyHash);
-      expect(decPublicInputs[0]).to.equal(expectedC6FoldKeyHash);
-      expect(decPublicInputs[1]).to.equal(expectedC7KeyHash);
-
       if (
         dkgPublicInputs.length !== DKG_EXPECTED_PUBLIC_INPUT_LEN ||
         decPublicInputs.length !== DEC_EXPECTED_PUBLIC_INPUT_LEN
@@ -344,6 +348,40 @@ describe("BfvVkBindingIntegration", function () {
         );
         this.skip();
       }
+
+      const expectedNodesFoldKeyHash = readVkRecursiveHash(
+        getBfvPkSubCircuitVkHashPaths().nodesFold,
+      );
+      const expectedC5KeyHash = readVkRecursiveHash(
+        getBfvPkSubCircuitVkHashPaths().c5,
+      );
+      const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
+        getBfvPkSubCircuitVkHashPaths().skC2Chunk,
+      );
+      const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
+        getBfvPkSubCircuitVkHashPaths().esmC2Chunk,
+      );
+      const expectedVkBinding = readExpectedVkBinding();
+      const expectedC6FoldKeyHash = readVkRecursiveHash(
+        getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
+      );
+      const expectedC7KeyHash = readVkRecursiveHash(
+        getBfvDecryptionSubCircuitVkHashPaths().c7,
+      );
+
+      expect(dkgPublicInputs[0]).to.equal(expectedNodesFoldKeyHash);
+      expect(dkgPublicInputs[1]).to.equal(expectedC5KeyHash);
+      expectedVkBinding.forEach((expected, index) => {
+        expect(dkgPublicInputs[4 + BFV_DKG_H + index]).to.equal(expected);
+      });
+      expect(dkgPublicInputs[21 + BFV_DKG_H]).to.equal(
+        expectedSkC2ChunkKeyHash,
+      );
+      expect(dkgPublicInputs[22 + BFV_DKG_H]).to.equal(
+        expectedESmC2ChunkKeyHash,
+      );
+      expect(decPublicInputs[0]).to.equal(expectedC6FoldKeyHash);
+      expect(decPublicInputs[1]).to.equal(expectedC7KeyHash);
 
       const dkgCommitteeHash = committeeHashFromLimbs(
         dkgPublicInputs[DKG_COMMITTEE_HASH_IDX.hi],
@@ -498,6 +536,94 @@ describe("BfvVkBindingIntegration", function () {
           verifyOverrides,
         ),
       ).to.be.revertedWithCustomError(bfvDec, "DomainBindingMismatch");
+    },
+  );
+
+  (runFoldedProofIntegration ? it : it.skip)(
+    "rejects verify when expectedNodesFoldKeyHash is wrong by one byte",
+    async function () {
+      this.timeout(120_000);
+
+      const folded = loadFoldedArtifacts();
+      if (folded === null) {
+        this.skip();
+      }
+      const [testSigner] = await ethers.getSigners();
+
+      const dkgPublicInputs = hexToBytes32Array(
+        folded.dkg_aggregator.public_inputs_hex,
+      );
+      if (dkgPublicInputs.length !== bfvPkExpectedPublicInputsLen(BFV_DKG_H)) {
+        this.skip();
+      }
+      const expectedC5KeyHash = readVkRecursiveHash(
+        getBfvPkSubCircuitVkHashPaths().c5,
+      );
+
+      const libFactory = await ethers.getContractFactory(
+        "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib",
+      );
+      const zkTranscriptLib = await libFactory.deploy();
+      await zkTranscriptLib.waitForDeployment();
+      const relationsLibFactory = await ethers.getContractFactory(
+        "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib",
+      );
+      const relationsLib = await relationsLibFactory.deploy();
+      await relationsLib.waitForDeployment();
+
+      const dkgAgg = await (
+        await ethers.getContractFactory(
+          "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
+          {
+            libraries: {
+              "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:ZKTranscriptLib":
+                await zkTranscriptLib.getAddress(),
+              "project/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:RelationsLib":
+                await relationsLib.getAddress(),
+            },
+          },
+        )
+      ).deploy();
+      await dkgAgg.waitForDeployment();
+
+      const nodesFoldBuf = Buffer.from(dkgPublicInputs[0].slice(2), "hex");
+      nodesFoldBuf[0] ^= 0xff;
+      const wrongNodesFold = `0x${nodesFoldBuf.toString("hex")}`;
+
+      const bfvPk = await (
+        await ethers.getContractFactory("BfvPkVerifier")
+      ).deploy(
+        await dkgAgg.getAddress(),
+        wrongNodesFold,
+        expectedC5KeyHash,
+        readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().skC2Chunk),
+        readVkRecursiveHash(getBfvPkSubCircuitVkHashPaths().esmC2Chunk),
+        readExpectedVkBinding(),
+        BFV_DKG_H,
+      );
+      await bfvPk.waitForDeployment();
+
+      const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+      const dkgEncoded = abiCoder.encode(
+        ["bytes", "bytes32[]"],
+        [folded.dkg_aggregator.proof_hex, dkgPublicInputs],
+      );
+      const pkCommitment = dkgPublicInputs[dkgPublicInputs.length - 1];
+      const dkgCommitteeHash = committeeHashFromLimbs(
+        dkgPublicInputs[DKG_COMMITTEE_HASH_IDX.hi],
+        dkgPublicInputs[DKG_COMMITTEE_HASH_IDX.lo],
+      );
+
+      await expect(
+        bfvPk.verify.staticCall(
+          1n,
+          BigInt(ethers.id("test-root")),
+          [testSigner.address],
+          pkCommitment,
+          dkgCommitteeHash,
+          dkgEncoded,
+        ),
+      ).to.be.revertedWithCustomError(bfvPk, "VkHashMismatch");
     },
   );
 });
