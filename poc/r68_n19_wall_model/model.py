@@ -462,3 +462,72 @@ print("  [DRAFT] residual = ONLY the 2-pt linearity assumption on the C2 PROVE l
 print("      the r80 GATE curve RAN min->micro 472,913 g/recipient lane-invariant) + comm. The small C2")
 print("      COMPILE walls remain a r81-anchored box-2 DRAFT (15.1/14.9 GiB OOM r45; ~2.1x/1.83x the micro")
 print("      RAN compile walls 910.65/1179.75 s). All three arms of the queue-0 box-2 card carry RAN anchors.")
+# ==================== ROUND-83 LANDING: C4 secure-8192/micro PROVE + COMPILE legs RAN ====================
+# The C4 per-H PROVE curve's second RAN point (min->micro, the r82 analogue for C4). r75 RAN the
+# min (H=2) endpoints c4a 18.2 s / c4b 18.1 s @4c (R75_MIN leaf walls). r48 RAN the micro GATE
+# point (C4G_M = 2,418,273 g / 655,396 ACIR, addb3d4-era toolchain) but the micro PROVE wall was
+# NEVER measured, and the ROUND-76 C4 min->small scaling (C4_SMALL_WALL = c4_min_wall x C4_RATIO
+# 2.0455) was a 1-point RAN gate-ratio extrapolation with no second anchor on the PROVE side.
+# r83 RAN both legs on this quiet 4c/7.8 GiB box (leg c4_micro_prove_tests_r83, commit dcee5a7,
+# RC_TEST=0, both verify_proof=true; compile leg poc/r83/r83_c4_micro_compile.sh):
+#   (A) premise RAN: the on-disk insecure-512/min json re-gated 77,969 g DIGIT-EXACT (r73/r77 class)
+#       before the swap - toolchain reproducibility on the current commit.
+#   (B) compile RAN: secure-8192/micro C4 gates 2,418,273 / ACIR 655,396 = DIGIT-EXACT r48, and the
+#       artifact sha256 eb8dc842135eea2b BIT-REPRODUCES r48's own on-disk json sha (10-generation
+#       toolchain + commit drift; determinism datum, the r81 class). wall 406.56 s @4c, peak
+#       7,713,516 kB = 7.36 GiB, Swaps 0 => C4 micro COMPILE is BOX-1 (fits 7.8 GiB; r46's OOM was
+#       the SMALL arm 14.70 GiB, unchanged). (r48 on the 8c box: 6:23.42 wall / 8.98 GiB peak -
+#       box-state class for the delta; the RAN anchor is this box's quiet number.)
+#   (C) prove RAN: c4a 25.4 s / c4b 25.2 s @4c, whole leg 53.39 s, maxrss 3,556,656 kB = 3.39 GiB,
+#       Swaps 0, 304% CPU => the micro C4 PROVES are BOX-1 with a 4.4 GiB headroom margin.
+C4P = {  # secure-8192 C4 per-lane PROVE curve, wall_s @4c [RAN]  {committee: wall}
+  "c4a": dict(min=18.2, micro=25.4),
+  "c4b": dict(min=18.1, micro=25.2),
+}
+C4P_MICRO_PEAK_KB = 3556656   # whole-leg maxrss (c4a|c4b proves), Swaps=0, 304% CPU (r83 /usr/bin/time -v)
+C4G_MICRO = 2418273.0         # [RAN r83, DIGIT-EXACT r48; sha eb8dc842135eea2b bit-reproducible]
+C4_MICRO_COMPILE = dict(wall_s=406.56, peak_kb=7713516, swaps=0)   # [RAN r83, 4c quiet]
+assert C4P_MICRO_PEAK_KB < 8131776 and C4_MICRO_COMPILE["peak_kb"] < 8131776
+print("\n" + "=" * W)
+print("ROUND-83 - C4 per-H PROVE curve: second RAN point (micro) LANDED RAN (+ micro COMPILE RAN)")
+print("=" * W)
+for k in ("c4a", "c4b"):
+    m, u = C4P[k]["min"], C4P[k]["micro"]
+    print("    %s: min %.1f s (r75, H=2) -> micro %.1f s  [H 2->5; gate x%.4f on the same axis (r46/r48)]" % (
+        k, m, u, C4G_MICRO / C4_GATE_MIN))
+print("    whole-leg maxrss %s kB = %.2f GiB, Swaps=0  => the micro C4 PROVES are BOX-1 (r46 OOM was small)" % (
+    format(C4P_MICRO_PEAK_KB, ","), C4P_MICRO_PEAK_KB / 1048576.0))
+print("    micro COMPILE RAN: wall %.2f s @4c, peak %s kB = %.2f GiB, Swaps=0  => BOX-1 too (r48 8c: 383.4 s / 8.98 GiB)" % (
+    C4_MICRO_COMPILE["wall_s"], format(C4_MICRO_COMPILE["peak_kb"], ","), C4_MICRO_COMPILE["peak_kb"] / 1048576.0))
+_da4 = C4P["c4a"]["micro"] - C4P["c4a"]["min"]
+_db4 = C4P["c4b"]["micro"] - C4P["c4b"]["min"]
+print("  [RAN] per-H PROVE slope, dH=3 (min->micro): c4a +%.2f s = %.3f s/H ; c4b +%.2f s = %.3f s/H (lane-near-invariant, r80/r82 class)" % (
+    _da4, _da4 / 3.0, _db4, _db4 / 3.0))
+_wall_min, _wall_micro = C4P["c4a"]["min"] + C4P["c4b"]["min"], C4P["c4a"]["micro"] + C4P["c4b"]["micro"]
+print("  [RAN] linearity probe (lane-sum): wall ratio %.4f vs gate ratio %.4f (deltas agree %.2f%%) => C4 PROVE wall ~linear in gates (r81 class)" % (
+    _wall_micro / _wall_min, C4G_MICRO / C4_GATE_MIN,
+    100.0 * abs(_wall_micro / _wall_min - C4G_MICRO / C4_GATE_MIN) / (C4G_MICRO / C4_GATE_MIN)))
+# THE r83 cross-validation: two INDEPENDENT extrapolations of the C4 small (H=10) PROVE wall -
+#   (i)   RAN-anchored 1-pt gate ratio (ROUND-76): C4_SMALL_WALL = c4_min x C4_RATIO = 74.25 s
+#   (ii)  2-pt RAN PROVE line min->micro (r83, this block):        c4_ab_small = 74.4 s
+_c4_small_2pt = _wall_min + 8.0 * (_wall_micro - _wall_min) / 3.0
+print("  [RAN-anchored] C4 small (H=10) PROVE wall, TWO independent readings (both anchored to RAN points):")
+print("     (i)   1-pt gate-ratio (r76):        %.2f s   (x%.4f on the RAN min wall %.1f s)" % (
+    C4_SMALL_WALL, C4_RATIO, c4_min_wall))
+print("     (ii) 2-pt RAN PROVE line (min->micro r83): %.2f s   (slope (%.1f-%.1f)/3 s/H x dH=8)" % (
+    _c4_small_2pt, _wall_micro, _wall_min))
+print("     agreement: delta %.2f s = %.2f%%  => the ROUND-76 C4 min->small term is NO LONGER a 1-pt" % (
+    abs(_c4_small_2pt - C4_SMALL_WALL), 100.0 * abs(_c4_small_2pt - C4_SMALL_WALL) / C4_SMALL_WALL))
+print("     extrapolation: it is a 2-pt RAN-anchored curve point, cross-validated by the 3-pt RAN gate curve (r46/r48).")
+# Node-level: replace the ROUND-82 "RAN-anchored" reading's C4 term with the r83 cross-validated value
+# (the RAN floor reading is unchanged - it keeps C4 at its RAN min wall 36.3 s by construction).
+_node_anchor_r83 = N_SMALL_ANCHORED - C4_SMALL_WALL + _c4_small_2pt
+print("  [RAN-anchored] N=19 node wall @4c EXCL. comm, r83-updated C4 term:")
+print("        [RAN floor]      %.1f s = %.1f min  (C4 at its RAN min wall; C2 at its r82 RAN-anchored small)" % (
+    N_SMALL_RANFLOOR + _r82_delta, (N_SMALL_RANFLOOR + _r82_delta) / 60.0))
+print("        [RAN-anchored]   %.1f s = %.1f min  (C4 at the r83 2-pt cross-validated small wall %.2f s; C2 r82)" % (
+    _node_anchor_r83, _node_anchor_r83 / 60.0, _c4_small_2pt))
+print("  [DRAFT] residual shrinks again: the C4 min->small scale is now 2-pt-RAN-anchored (cross-validated"),
+print("      within %.2f%% by two independent RAN-based lines) - the DRAFT remainder = the 2-pt linearity" % (
+    100.0 * abs(_c4_small_2pt - C4_SMALL_WALL) / C4_SMALL_WALL))
+print("      assumption on BOTH committee curves (C2 dN=16 / C4 dH=8, both small-arms box-2) + comm.")
