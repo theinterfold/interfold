@@ -21,7 +21,8 @@
 //!   E3_R78_STAGE_ROOT=/home/dev/interfold-research/poc/r77/root
 //!   cargo test --release -p e3-zk-prover --test node_fold_function_tests_r78 -- --nocapture
 //! Expected (DRAFT from RAN anchors — model, not a promise): verify_fold_proof(node_fold)=true;
-//! node_fold public fields = 223 (11+19+2*(19+10)*3, the node_fold_public.rs formula, asserted);
+//! node_fold public fields = 204 = 11 + 19 + 2*(19+10)*3 (NODE_FOLD_PUBLIC_LEN, main.nr:50, reduced;
+//! ABI-gated RAN r85: the on-disk small node_fold public_parameters = 204 — the r84 typo 223 fixed);
 //! wall dominated by 108 inners (r69 4196.3 s @4c class) + M7x merges (r70 495.8/479.7 s class)
 //! + the six r39-cited folds (node_fold 3,719,958 g DIGIT-EXACT, staged r73/r77).
 
@@ -235,9 +236,11 @@ async fn node_fold_function_end_to_end_small() {
     let nf_pf = |label: &str| (res.proof.public_signals.len() / 32, label.to_string());
     let (n_pub, _) = nf_pf("node_fold publics");
     println!(
-        "R78-fn node_fold public fields = {n_pub} (NODE_FOLD_PUBLIC_LEN secure-small = 11+19+2*(19+10)*3 = 223)  RAN"
+        "R78-fn node_fold public fields = {n_pub} (NODE_FOLD_PUBLIC_LEN secure-small = 11+19+2*(19+10)*3 = 204)  RAN"
     );
-    assert_eq!(n_pub, 223, "node_fold public layout must be the secure-8192 small committee shape (11+19+2*(19+10)*3)");
+    // 204 = 6 pub inputs + 5 + N + 2*(N+H)*L pub outputs (NODE_FOLD_PUBLIC_LEN, main.nr:50,
+    // reduced for N=19/H=10/L=3); fixes the r84-found arithmetic typo (223 -> 204, 2026-09-02).
+    assert_eq!(n_pub, 204, "node_fold public layout must be the secure-8192 small committee shape (11+19+2*(19+10)*3)");
 
     let mut fn_steps = String::new();
     for s in &res.step_timings {

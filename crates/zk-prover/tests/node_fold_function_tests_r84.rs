@@ -12,8 +12,12 @@
 //! Premises (source RAN, r84): the M7x 54/54 guard (node_dkg_fold.rs:219/253) stays INERT at
 //! micro (W_P = 24 inners/slots, not 54) => sequential c3_fold arms, exactly as r75; the
 //! witness chain is fully committee-parametric (r74/r75 RAN precedent; Micro.values() =
-//! (9,4,5) CiphernodesCommitteeSize). node_fold public surface = node_fold_public_field_count
-//! (9,5,3) = 11+9+2*(9+5)*3 = 128.
+//! (9,4,5) CiphernodesCommitteeSize). node_fold public surface = 104 = 11 + N + 2*(N+H)*L with
+//! N=9/H=5/L=3 (NODE_FOLD_PUBLIC_LEN, main.nr:50, reduced; ABI-gated RAN r85: staged micro
+//! node_fold public_parameters = 104; the r84-attempt-1 host-side assert typo was 128). RAN-r84
+//! attempt-1 note: the first leg (2026-09-02 09:16-10:01 UTC) proved the WHOLE function incl. the
+//! 48 serial inners (wall 44:21, maxrss 7,630,824 kB, Swaps 0) and died ONLY on that assert; the
+//! proof itself is re-run by the relaunch (no proof cache) — this constant is the only fix owed.
 //!
 //! Artifacts: stage tree root/secure-8192/micro/{evm,default,recursive}/... (r84_stage.sh;
 //! C3 leaf + 6 folds = fresh micro compiles r84-compile; C2a/C2b/C4 = sha-pinned durables
@@ -229,9 +233,12 @@ async fn node_fold_function_end_to_end_micro() {
     let nf_pf = |label: &str| (res.proof.public_signals.len() / 32, label.to_string());
     let (n_pub, _) = nf_pf("node_fold publics");
     println!(
-        "R84-fn node_fold public fields = {n_pub} (node_fold_public_field_count(9,5,3) = 11+9+2*(9+5)*3 = 128)  RAN"
+        "R84-fn node_fold public fields = {n_pub} (node_fold_public_field_count(9,5,3) = 11+9+2*(9+5)*3 = 104)  RAN"
     );
-    assert_eq!(n_pub, 128, "node_fold public layout must be the secure-8192 micro committee shape");
+    // 104 = 6 pub inputs (party_id + 5 key hashes) + 5 + N + 2*(N+H)*L pub outputs; matches
+    // NODE_FOLD_PUBLIC_LEN (main.nr:50, reduced for N=9/H=5/L=3) and the crate helper
+    // node_fold_public_field_count(9,5,3).
+    assert_eq!(n_pub, 104, "node_fold public layout must be the secure-8192 micro committee shape");
 
     let mut fn_steps = String::new();
     for s in &res.step_timings {
