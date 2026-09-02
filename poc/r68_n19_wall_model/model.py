@@ -531,3 +531,67 @@ print("  [DRAFT] residual shrinks again: the C4 min->small scale is now 2-pt-RAN
 print("      within %.2f%% by two independent RAN-based lines) - the DRAFT remainder = the 2-pt linearity" % (
     100.0 * abs(_c4_small_2pt - C4_SMALL_WALL) / C4_SMALL_WALL))
 print("      assumption on BOTH committee curves (C2 dN=16 / C4 dH=8, both small-arms box-2) + comm.")
+# ==================== ROUND-84 LANDING: secure-8192/micro (N=9/T=4/H=5) whole-node function leg, RAN ====================
+# The r84 leg LANDED GREEN (RC_TEST=0, wall 43:41.07 @4c, 293% CPU, maxrss 7,573,376 kB = 7.22 GiB,
+# Swaps 0; durable poc/r84/run/out_r84.txt). It RAN the PRODUCTION function `prove_node_dkg_fold`
+# END-TO-END at secure-8192/micro - the LAST box-1 FUNCTION GRID cell (r74 insecure-min 171.33 s +
+# r75 secure-min 803.0 s + r84 secure-micro; small N=19 = the box-2 card, 3 heavy leaves OOM r45/r46).
+# Premise source-RAN (r85): the 54/54 M7x guard is INERT at micro (W_P=24 inners != 54) so both c3
+# arms run the sequential c3_fold (r75-identical shape); node_fold public surface =
+# node_fold_public_field_count(9,5,3) = 11+9+2*(9+5)*3 = 104 [RAN; the r85 attempt-1 `assert 128`
+# typo = this same corpus at the reduced-for-N=9 circuit const NODE_FOLD_PUBLIC_LEN].
+R84_MICRO = dict(c0=3.6, c1=28.9, c2a=44.6, c2b=57.8, c3in48=1871.8, c4a=25.3, c4b=25.2,
+                 c2ab=27.5, c3a=507.1, c3b=507.0, c3ab=11.6, c4ab=12.0, node=29.1)  # [RAN step_timings]
+R84_MICRO_LEAVES = 2057.2    # sum of the 7 serial leaf walls [RAN]
+R84_MICRO_FUNC   = 559.7     # critical path: max(c2ab,c3a,c3b)+c3ab+c4ab+node [RAN printed]
+R84_MICRO_WHOLE  = R84_MICRO_LEAVES + R84_MICRO_FUNC   # = 2616.9 s [RAN re-summation]
+R84_MICRO_HARNESS = 2621.04  # test-bench wall "finished in" [RAN]
+R84_MICRO_PEAK_KB = 7573376  # maxrss, Swaps=0, 293% CPU [RAN /usr/bin/time -v]
+R84_MICRO_PUBLICS = 104      # [RAN] node_fold public fields = 11+9+2*(9+5)*3 (formula-anchored, r85)
+assert R84_MICRO_PEAK_KB < 8131776
+assert abs(R84_MICRO_WHOLE - (R84_MICRO_LEAVES + R84_MICRO_FUNC)) < 1.0
+assert abs(R84_MICRO_HARNESS - R84_MICRO_WHOLE) < 5.0   # 4.1 s = test overhead jitter
+
+print("\n" + "=" * W)
+print("ROUND-84 - secure-8192/micro (N=9/T=4/H=5) whole-node PRODUCTION function wall (RAN, @4c)")
+print("=" * W)
+print("  [RAN] node_fold public surface = %d fields = 11+9+2*(9+5)*3 = node_fold_public_field_count(9,5,3)" % R84_MICRO_PUBLICS)
+print("  [RAN] the 54/54 M7x guard is INERT at micro (W_P=24 inners != 54) => BOTH c3 arms sequential")
+print("        (r75-identical shape; the M7x firing is a small/N=19 path property, box-2).")
+print("  [RAN] leaves (serial) = %.1f s   func (c2ab hidden under c3a|c3b join) = %.1f s" % (R84_MICRO_LEAVES, R84_MICRO_FUNC))
+print("  [RAN] whole-node @4c = %.1f s = %.1f min   (maxrss %.2f GiB, Swaps 0, 293%% CPU)" % (
+    R84_MICRO_WHOLE, R84_MICRO_WHOLE / 60.0, R84_MICRO_PEAK_KB / 1048576.0))
+print("  anchor self-check: leaves + func(cp) = %.1f s vs harness wall %.1f s  (delta %.1f s = test overhead)" % (
+    R84_MICRO_LEAVES + R84_MICRO_FUNC, R84_MICRO_HARNESS, R84_MICRO_HARNESS - (R84_MICRO_LEAVES + R84_MICRO_FUNC)))
+print("  box-1 FUNCTION GRID now COMPLETE (secure-8192): r74 insecure-min 171.33 | r75 secure-min 803.0 |")
+print("        r84 secure-MICRO %.1f   |  small (N=19) = the box-2 card (3 heavy leaves OOM r45/r46).  [%s]" % (
+    R84_MICRO_WHOLE, "RAN"))
+
+# Committee-scaling cross-validation against the RAN min->micro curve points (r75/r82/r83).
+# The c3-inners rate is committee-near-INVARIANT at PROVE level: min 490.7/12 = 40.89 s/inner
+# (r75) vs micro 1871.8/48 = 39.00 s/inner (r84) => the per-inner secure-8192 wall is box-width,
+# not committee (min and micro are the SAME secure lane; the r69/r70 small 38.85-40.26 s/inner
+# is the same band, the ~32x min<->small gap being pure 59-bit secure width, r75 note).
+print("  [RAN] c3-inners: min 12 @ 40.89 s/inner (r75) -> micro 48 @ 39.00 s/inner (r84): the per-inner")
+print("        secure-8192 PROVE wall is committee-INVARIANT (same band as r69/r70 small 38.85-40.26).")
+print("  [RAN] leaf PROVE endpoints micro match the r82/r83 RAN anchors within box-width: c2a %.1f (r82 44.3)," % R84_MICRO["c2a"])
+print("        c2b %.1f (r82 58.5), c4a %.1f (r83 25.4), c4b %.1f (r83 25.2); c0 3.6 / c1 28.9 match the r75" % (
+    R84_MICRO["c2b"], R84_MICRO["c4a"], R84_MICRO["c4b"]))
+print("        committee-invariant pair (c0 r39 / c1 r44) within box jitter.")
+# 2-pt RAN whole-node function line min(N=3) -> micro(N=9), extrapolated to small(N=19) [DRAFT].
+_r84_slope = (R84_MICRO_WHOLE - R75_MIN_WHOLE) / (9 - 3)          # s per party, RAN endpoints
+_r84_small_pred = R84_MICRO_WHOLE + _r84_slope * (19 - 9)          # box-2 small (N=19) whole-node
+_m7x_cut = R69_C3A_SERIAL_4C - R70_C3A_M7X_4C   # = 634.4 - 495.8 = 138.6 s/node [RAN r70]
+_r84_pred_m7x = _r84_small_pred - _m7x_cut        # the test runs SEQUENTIAL c3; prod N=19 takes M7x (r71/r70)
+print("  [DRAFT, box-2] 2-pt RAN whole-node function line min->micro: slope %.1f s/party => small (N=19)" % _r84_slope)
+print("        whole-node (SEQUENTIAL c3, the test's shape) = %.1f s = %.1f min [DRAFT linearity extrapolation]" % (
+    _r84_small_pred, _r84_small_pred / 60.0))
+print("        prod N=19 takes the M7x c3a arm (r71 wiring; the -%.1f s/node cut is RAN r70) => %.1f s = %.1f min," % (
+    _m7x_cut, _r84_pred_m7x, _r84_pred_m7x / 60.0))
+print("        which brackets the r83 component-wise RAN-anchored small node 5406.8 s = 90.1 min within %.1f%%." % (
+    100.0 * abs(_r84_pred_m7x - 5406.8) / 5406.8))
+print("  VERDICT: the r84 function leg CLOSES the box-1 FUNCTION GRID (insecure-min/secure-min/secure-micro all")
+print("        RAN end-to-end) and gives the N=19 node wall a SECOND, independently-RAN-anchored construction")
+print("        (raw whole-node line + M7x cut ~= r70/r82/r83 per-component sum) that agrees to within %.1f%% - the" % (
+    100.0 * abs(_r84_pred_m7x - 5406.8) / 5406.8))
+print("        box-2 card's header number (90.1 min/node @4c, EXCL. comm) is now cross-validated, not single-sourced.")
