@@ -104,9 +104,18 @@ async fn node_fold_function_end_to_end_small() {
     let preset_tree = root.join("secure-8192").join(COMMITTEE);
     assert!(preset_tree.is_dir(), "stage tree {preset_tree:?} missing — see r77/r78 staging");
     // Box-2 part-(a) prereq: the 3 heavy small leaves' dkg slots must be filled by then.
-    // (Checked cheaply up front so a run on an un-part-(a) tree fails fast, not after 108 inners.)
-    for leaf in ["sk_share_computation", "e_sm_share_computation", "share_decryption"] {
-        let p = preset_tree.join("default").join("dkg").join(leaf);
+        // (Checked cheaply up front so a run on an un-part-(a) tree fails fast, not after 108 inners.)
+        // r90 (premise fix): the leg proves EVERY leaf with CircuitVariant::Recursive
+        // (prove_with_variant(..., CircuitVariant::Recursive, ...)) and the production function
+        // prove_node_dkg_fold loads the C2a/C2b/C4 leaf VKs from the RECURSIVE dir
+        // (node_dkg_fold.rs:180-185 / 398-398, vk::load_vk_artifacts(circuits_dir(Recursive), …)).
+        // The r78 original guard checked the DEFAULT dir — a different variant tree — so on a
+        // runbook that leaves leaves only in default/ it stays GREEN (r87/r88/bracket class)
+        // while the leg dies later at the recursive VK load, AFTER some inners. The RAN-GREEN
+        // r84 micro function tree stages each heavy leaf in all 3 variant dirs (recursive/
+        // included, verified this round). The guard must check the dir the leg ACTUALLY loads.
+        for leaf in ["«redacted:sk_…»", "e_sm_share_computation", "share_decryption"] {
+            let p = preset_tree.join("recursive").join("dkg").join(leaf);
         assert!(p.join("share_computation.json").is_file() || p.join(format!("{leaf}.json")).is_file(),
             "part-(a) leaf slot not filled: {p:?} (box-2 24 GiB compiles C2a/C2b/C4 first — RAN r45/r46)");
     }
