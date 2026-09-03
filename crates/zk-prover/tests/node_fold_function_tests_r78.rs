@@ -30,6 +30,13 @@
 //! r91 fixed the committee param (Minimum->Small with an invariant assert) — the r78 test was a
 //! 1:1 copy of the r75 template whose committee line was re-parameterized everywhere EXCEPT
 //! the witness-chain committee (CommitteeSize::Minimum = N=3/T=1 had silently survived).
+//! r92 fixed the part-(a) guard's first leaf token: on disk it was a 15-byte non-ASCII
+//! transport-redaction artifact (the lossy authoring channel redacts sk_-prefixed key
+//! dir names) instead of the real 20-byte C2a leaf dir name - so the RAN-gated guard
+//! (the box-2 fail-fast that must PASS a part-(a)-complete tree) could NEVER pass: the
+//! leg would die at the guard even after the 3 box-2 compiles landed. Fixed byte-exact
+//! (on-disk token == sk_ C2a leaf dir, RAN: real name 20-byte sha-prefix-end "omputation");
+//! guard re-verified RAN on the two real trees (r84 micro = PASS, r77 small = FIRE).
 
 mod common;
 #[path = "common/node_fold_witness.rs"]
@@ -119,7 +126,7 @@ async fn node_fold_function_end_to_end_small() {
         // while the leg dies later at the recursive VK load, AFTER some inners. The RAN-GREEN
         // r84 micro function tree stages each heavy leaf in all 3 variant dirs (recursive/
         // included, verified this round). The guard must check the dir the leg ACTUALLY loads.
-        for leaf in ["«redacted:sk_…»", "e_sm_share_computation", "share_decryption"] {
+        for leaf in ["sk_share_computation", "e_sm_share_computation", "share_decryption"] {
             let p = preset_tree.join("recursive").join("dkg").join(leaf);
         assert!(p.join("share_computation.json").is_file() || p.join(format!("{leaf}.json")).is_file(),
             "part-(a) leaf slot not filled: {p:?} (box-2 24 GiB compiles C2a/C2b/C4 first — RAN r45/r46)");
