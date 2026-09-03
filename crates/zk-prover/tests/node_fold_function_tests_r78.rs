@@ -126,11 +126,47 @@ async fn node_fold_function_end_to_end_small() {
         // while the leg dies later at the recursive VK load, AFTER some inners. The RAN-GREEN
         // r84 micro function tree stages each heavy leaf in all 3 variant dirs (recursive/
         // included, verified this round). The guard must check the dir the leg ACTUALLY loads.
-        for leaf in ["sk_share_computation", "e_sm_share_computation", "share_decryption"] {
-            let p = preset_tree.join("recursive").join("dkg").join(leaf);
-        assert!(p.join("share_computation.json").is_file() || p.join(format!("{leaf}.json")).is_file(),
-            "part-(a) leaf slot not filled: {p:?} (box-2 24 GiB compiles C2a/C2b/C4 first — RAN r45/r46)");
-    }
+        // r93 (premise fix, RAN): r85/r90/r91/r92 each fixed ONE latent kill in this
+        // leg's fast-fail, one spot at a time. r93 re-verified the leg's COMPLETE
+        // on-disk load surface (poc/r93/audit_load_surface_r93.py, RAN PASS) = the 14
+        // (variant, circuit) dirs that prove_node_dkg_fold + its M7x subsystems actually
+        // load; the real poc/r77 small tree lacks EXACTLY the 3 box-2 heavy leaves (C2a/C2b/C4
+        // under recursive/dkg/) and nothing else. So the single fail-fast invariant is:
+        // every one of those 14 dirs is present. Enum-driven (dir_path/as_str from
+        // CircuitName) so NO circuit-name literal is typed here - the r92 transport-
+        // redaction class struck precisely a typed C2a dir name, so this guard derives
+        // every path at compile time instead (structurally immune to that channel). A
+        // mis-staged or missing fold artifact (any of the 14) now dies in 0 s, not after
+        // the 108-inner burn. NOTE: C3Fold is deliberately NOT one of the 14 - at small
+        // (54 inners / 54 slots) both c3 arms take the M7x route (kernel + 5xB10 + 1xB3 +
+        // M7x, r78/r79 premise), so c3_fold is never loaded; the sequential c3_fold path
+        // is only the non-54/54 fallback and is not this leg's shape.
+        for (var, circ) in [
+            (CircuitVariant::Recursive, e3_events::CircuitName::PkBfv),
+            (CircuitVariant::Recursive, e3_events::CircuitName::PkGeneration),
+            (CircuitVariant::Recursive, e3_events::CircuitName::SkShareComputation),
+            (CircuitVariant::Recursive, e3_events::CircuitName::ESmShareComputation),
+            (CircuitVariant::Recursive, e3_events::CircuitName::ShareEncryption),
+            (CircuitVariant::Recursive, e3_events::CircuitName::DkgShareDecryption),
+            (CircuitVariant::Default, e3_events::CircuitName::C2abFold),
+            (CircuitVariant::Default, e3_events::CircuitName::C3FoldKernel),
+            (CircuitVariant::Default, e3_events::CircuitName::C3FoldBatchB10),
+            (CircuitVariant::Default, e3_events::CircuitName::C3FoldBatchB3),
+            (CircuitVariant::Default, e3_events::CircuitName::C3FoldBatchMergeM7x),
+            (CircuitVariant::Default, e3_events::CircuitName::C3abFold),
+            (CircuitVariant::Default, e3_events::CircuitName::C4abFold),
+            (CircuitVariant::Default, e3_events::CircuitName::NodeFold),
+        ] {
+            let d = preset_tree.join(var.as_str()).join(circ.dir_path());
+            for ext in [".json", ".vk", ".vk_hash"] {
+                let f = d.join(format!("{}{}", circ.as_str(), ext));
+                assert!(
+                    f.is_file(),
+                    "box-2 stage incomplete: {} missing (RAN load-surface r93: the 3 heavy small leaves C2a/C2b/C4 are the >=24 GiB compiles r45/r46; the other 11 dirs are sha-pinned in the durable tree)",
+                    f.display(),
+                );
+            }
+        }
 
     let (backend, _temp) = setup_test_prover(&bb).await;
     // Hand the whole pre-built secure-8192/small tree into this run's backend (isolate; no on-disk bin writes).
