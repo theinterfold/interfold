@@ -25,6 +25,11 @@
 //! ABI-gated RAN r85: the on-disk small node_fold public_parameters = 204 — the r84 typo 223 fixed);
 //! wall dominated by 108 inners (r69 4196.3 s @4c class) + M7x merges (r70 495.8/479.7 s class)
 //! + the six r39-cited folds (node_fold 3,719,958 g DIGIT-EXACT, staged r73/r77).
+//! DE-RISK HISTORY (box-1 RAN, zero compute): r85 fixed the publics assert (223->204, typo);
+//! r90 fixed the part-(a) guard to check the RECURSIVE leaf dir the function actually loads;
+//! r91 fixed the committee param (Minimum->Small with an invariant assert) — the r78 test was a
+//! 1:1 copy of the r75 template whose committee line was re-parameterized everywhere EXCEPT
+//! the witness-chain committee (CommitteeSize::Minimum = N=3/T=1 had silently survived).
 
 mod common;
 #[path = "common/node_fold_witness.rs"]
@@ -130,7 +135,15 @@ async fn node_fold_function_end_to_end_small() {
     .expect("stage tree handoff");
 
     let preset = BfvPreset::SecureThreshold8192;
-    let committee = CiphernodesCommitteeSize::Minimum.values();
+    // r91 fix: this leg is the secure-8192/SMALL committee — the r75 template copy carried
+    // CiphernodesCommitteeSize::Minimum (N=3/T=1) past the committee re-parameterization
+    // (its own asserts below pin (57,3), W_P={3..=56}, and 204 publics, all small). The
+    // minimum-width witness chain is rejected by the small circuit's committee gate (or its
+    // parity-share sizing) before any expensive prove — but the leg had no guard, so the
+    // silent misfit survived 3 rounds. Invariant assert keeps it dead forever.
+    let committee = CiphernodesCommitteeSize::Small.values();
+    assert_eq!((committee.n, committee.h, committee.threshold), (19, 10, 9),
+        "r78 leg committee must be secure-8192/small (N=19/T=9/H=10)");
     let prover = ZkProver::new(&backend);
     let ad = preset.artifacts_dir_for_committee(COMMITTEE);
     assert_eq!(ad, format!("secure-8192/{COMMITTEE}"));
