@@ -121,6 +121,26 @@ pub struct ThresholdKeyshareParams {
     pub share_enc_preset: BfvPreset,
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
+    /// Node-local directory for CKKS artifacts (joint relin keys land in
+    /// `<dir>/relin-keys/<e3_id>/`). `None` = no persistent data dir
+    /// (in-process tests); keys are then not written.
+    pub ckks_artifacts_dir: Option<std::path::PathBuf>,
+    /// ZK backend circuits directory for the fail-closed CKKS artifact
+    /// gate (`None` = no backend; presence check skipped).
+    pub zk_circuits_dir: Option<std::path::PathBuf>,
+    /// Durable per-chunk log of received `RelinCeremonyShare` events for
+    /// this E3 plus the chunks it held at hydrate (replayed into the
+    /// rebuilt machine on `EffectsEnabled`). `None` = no durable log
+    /// (in-process tests); a restart mid-ceremony then cannot resume.
+    pub ckks_ceremony: Option<CkksCeremonyRecovery>,
+}
+
+/// The ceremony chunk log and the chunks recovered from it at hydrate.
+pub struct CkksCeremonyRecovery {
+    /// The durable log (records new chunks as they arrive).
+    pub log: effects::ckks_ceremony_log::CeremonyChunkLog,
+    /// Chunks recorded before the restart, to replay once.
+    pub replay: Vec<effects::ckks_ceremony_log::StoredChunk>,
 }
 
 /// Process-local bridge data rebuilt from the versioned keyshare recovery record.
@@ -152,6 +172,16 @@ pub struct ThresholdKeyshare {
     share_enc_preset: BfvPreset,
     interfold_address: Address,
     pending: PendingKeyshareWork,
+    /// CKKS branch runtime (fhe adaptor + pure state machine). `Some` only
+    /// when `state.scheme == E3Scheme::Ckks`; rebuilt on hydrate from the
+    /// recovery record's machine snapshot.
+    ckks: Option<effects::ckks_shell::CkksRuntime>,
+    /// See [`ThresholdKeyshareParams::ckks_artifacts_dir`].
+    ckks_artifacts_dir: Option<std::path::PathBuf>,
+    /// See [`ThresholdKeyshareParams::zk_circuits_dir`].
+    zk_circuits_dir: Option<std::path::PathBuf>,
+    /// See [`ThresholdKeyshareParams::ckks_ceremony`].
+    ckks_ceremony: Option<CkksCeremonyRecovery>,
 }
 
 impl ThresholdKeyshare {
@@ -192,6 +222,12 @@ impl ThresholdKeyshare {
                 keyshare_publish: recovered.keyshare_publish_authorized,
                 ..Default::default()
             },
+            // Rebuilt lazily: hydrate() re-runs init_ckks_runtime with the
+            // persisted machine snapshot for CKKS E3s.
+            ckks: None,
+            ckks_artifacts_dir: params.ckks_artifacts_dir,
+            zk_circuits_dir: params.zk_circuits_dir,
+            ckks_ceremony: params.ckks_ceremony,
         }
     }
 
@@ -257,10 +293,14 @@ impl Actor for ThresholdKeyshare {
 }
 
 #[path = "effects/mod.rs"]
-mod effects;
+pub(crate) mod effects;
 #[path = "handlers.rs"]
 mod handlers;
 
 #[cfg(test)]
 #[path = "tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "ckks_shell_tests.rs"]
+mod ckks_shell_tests;

@@ -137,6 +137,7 @@ pub(crate) fn label_for(kind: &VerificationKind) -> &'static str {
         VerificationKind::ThresholdDecryptionProofs => "C6",
         VerificationKind::PkGenerationProofs => "C1",
         VerificationKind::DecryptionProofs => "C4",
+        VerificationKind::RelinRound1Proofs => "C8",
     }
 }
 

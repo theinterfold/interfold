@@ -39,22 +39,44 @@ export const ALL_VARIANTS: CircuitVariant[] = [CIRCUIT_VARIANTS.DEFAULT, CIRCUIT
  * Circuit parameter presets identify which BFV parameter set the circuits were compiled for.
  * Named as `{security_tier}-{degree}`. Threshold and DKG presets at the same degree share
  * the same compiled circuit artifacts.
+ *
+ * `insecure-dkg-wide-512` is the WIDE DKG transport (Rust `BfvPreset::InsecureDkgWide512`,
+ * `artifacts_dir() = "insecure-dkg-wide-512"`): the insecure-512 threshold side paired with a
+ * 2 × 52-bit DKG modulus and a 46-bit plaintext modulus, the transport every CKKS ladder E3
+ * (ParamSet 2) escalates to. Its DKG-side circuits (C0 `pk`, C3, C4) have a different shape,
+ * so they get their own artifact directory; the threshold circuits are byte-identical to
+ * `insecure-512`'s.
  */
 export const CIRCUIT_PRESETS = {
   INSECURE_512: 'insecure-512',
+  INSECURE_DKG_WIDE_512: 'insecure-dkg-wide-512',
   SECURE_8192: 'secure-8192',
 } as const
 
 export type CircuitPreset = (typeof CIRCUIT_PRESETS)[keyof typeof CIRCUIT_PRESETS]
 
-export const ALL_PRESETS: CircuitPreset[] = [CIRCUIT_PRESETS.INSECURE_512, CIRCUIT_PRESETS.SECURE_8192]
+export const ALL_PRESETS: CircuitPreset[] = [CIRCUIT_PRESETS.INSECURE_512, CIRCUIT_PRESETS.INSECURE_DKG_WIDE_512, CIRCUIT_PRESETS.SECURE_8192]
 
 /**
  * Maps each preset to the Noir config module it re-exports from `circuits/lib/src/configs/default/mod.nr`.
  */
-export const PRESET_NOIR_CONFIG: Record<CircuitPreset, 'insecure' | 'secure'> = {
+export const PRESET_NOIR_CONFIG: Record<CircuitPreset, 'insecure' | 'insecure_wide' | 'secure'> = {
   [CIRCUIT_PRESETS.INSECURE_512]: 'insecure',
+  [CIRCUIT_PRESETS.INSECURE_DKG_WIDE_512]: 'insecure_wide',
   [CIRCUIT_PRESETS.SECURE_8192]: 'secure',
+}
+
+/**
+ * Presets that are a WIDE DKG transport over another preset's threshold side. Build tooling that
+ * writes the on-chain BFV constants (`ActiveCryptoConfig.sol`, `utils.ts`) treats them as the
+ * base preset: the chain only ever sees the threshold parameters.
+ */
+export const PRESET_BASE: Partial<Record<CircuitPreset, CircuitPreset>> = {
+  [CIRCUIT_PRESETS.INSECURE_DKG_WIDE_512]: CIRCUIT_PRESETS.INSECURE_512,
+}
+
+export function basePreset(preset: CircuitPreset): CircuitPreset {
+  return PRESET_BASE[preset] ?? preset
 }
 
 /**

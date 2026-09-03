@@ -1,0 +1,67 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: LGPL-3.0-only -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>ckks-zk-inputs browser smoke</title>
+  </head>
+  <body>
+    <pre id="log"></pre>
+    <script type="module">
+      // Browser smoke (ct1_ps3 circuit_size 65268 -> srs 2^18 suffices; bb.js caches
+      // the CRS in IndexedDB and a 2^21 CRS exceeds Chrome's per-value cap): wasm encrypt + witness for value 0.42 under the ps3
+      // test pk, solve ct1_ps3 with noir_js, prove + verify with bb.js
+      // UltraHonk (multi-threaded worker backend when cross-origin
+      // isolation headers are served; single-threaded otherwise).
+      //
+      // Served by scripts/browser-smoke.mjs, which maps
+      //   /vendor/noir_js  -> node_modules/@noir-lang/noir_js/lib/index.js (browser build)
+      //   /vendor/bb.js    -> node_modules/@aztec/bb.js/dest/browser/index.js
+      //   /circuits/<n>.json -> circuits/bin/threshold/target/<n>.json
+      const log = (m) => {
+        document.getElementById('log').textContent += m + '\n'
+        console.log(m)
+      }
+      const timings = {}
+      const timed = async (label, fn) => {
+        const t0 = performance.now()
+        const r = await fn()
+        timings[label] = Math.round(performance.now() - t0)
+        log(`${label}: ${timings[label]} ms`)
+        return r
+      }
+      window.__smokeTimings = timings
+
+      try {
+        const wasm = await timed('wasm load', () => import('./main.js'))
+        const pk = new Uint8Array(await (await fetch('./fixtures/pubkey_ps3.bin')).arrayBuffer())
+        const bundle = await timed('wasm encryptAndWitness', () => wasm.encryptAndWitness(3, pk, 0.42, 1.0, true, undefined))
+        log(`ciphertext ${bundle.ciphertext_hex.length / 2} bytes; u_commitment ${bundle.u_commitment_hex}`)
+
+        const { Noir } = await import('/vendor/noir_js')
+        const { Barretenberg, UltraHonkBackend } = await import('/vendor/bb.js')
+        const circuit = await (await fetch('/circuits/user_data_encryption_ckks_ct1_ps3.json')).json()
+
+        const noir = new Noir(circuit)
+        const { witness, returnValue } = await timed('noir_js execute ct1_ps3', () => noir.execute(bundle.ct1_inputs))
+        const outputs = Array.isArray(returnValue) ? returnValue : Object.values(returnValue)
+        const norm = (h) => `0x${BigInt(h).toString(16).padStart(64, '0')}`
+        if (norm(outputs[2]) !== bundle.u_commitment_hex) throw new Error('u_commitment mismatch')
+
+        if (!new URLSearchParams(location.search).has('skip-prove')) {
+          const api = await timed('bb.js Barretenberg.new', () => Barretenberg.new({ srsSize: 2 ** 18 }))
+          const backend = new UltraHonkBackend(circuit.bytecode, api)
+          const proof = await timed('bb.js generateProof ct1_ps3', () => backend.generateProof(witness))
+          const ok = await timed('bb.js verifyProof ct1_ps3', () => backend.verifyProof(proof))
+          if (!ok) throw new Error('verifyProof false')
+          log(`crossOriginIsolated=${self.crossOriginIsolated} hardwareConcurrency=${navigator.hardwareConcurrency}`)
+        }
+        window.__wasmSmoke = 'ok'
+        log('ok')
+      } catch (err) {
+        window.__wasmSmoke = `error: ${err?.message ?? err}`
+        log(String(err?.stack ?? err))
+      }
+    </script>
+  </body>
+</html>

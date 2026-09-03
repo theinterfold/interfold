@@ -187,6 +187,10 @@ impl ThresholdKeyshare {
         let e3_id = state.get_e3_id();
 
         match msg.kind {
+            VerificationKind::RelinRound1Proofs => {
+                // CKKS C8 round complete: open or fail the ceremony gate.
+                self.ckks_handle_relin_round1_verification_complete(&msg.dishonest_parties, ec)
+            }
             VerificationKind::ShareProofs => {
                 // C2/C3 verification complete
                 if msg.dishonest_parties.is_empty() {

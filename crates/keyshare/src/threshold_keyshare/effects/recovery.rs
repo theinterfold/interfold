@@ -173,6 +173,53 @@ impl ThresholdKeyshare {
         let ec = recovery.last_ec.clone().unwrap_or(effects_context);
         let state = self.state.try_get()?;
 
+        // CKKS branch: rebuild the runtime + machine snapshot, then replay
+        // buffered broadcasts into the machine (idempotent by design).
+        if state.scheme == crate::E3Scheme::Ckks {
+            let selected = recovery
+                .ciphernode_selected
+                .clone()
+                .ok_or_else(|| anyhow!("missing CiphernodeSelected recovery input (CKKS)"))?;
+            let machine = recovery
+                .ckks_machine
+                .as_deref()
+                .map(bincode::deserialize)
+                .transpose()
+                .map_err(|e| anyhow!("corrupt CKKS machine snapshot: {e}"))?;
+            let had_snapshot = machine.is_some();
+            self.init_ckks_runtime(&selected, machine, "restart")?;
+            if !had_snapshot {
+                // Never got past init: re-announce our ephemeral key.
+                return self.ckks_handle_ciphernode_selected(selected);
+            }
+            // Replay recorded peer broadcasts; the machine ignores
+            // duplicates and rejects out-of-phase events, so replay is
+            // safe whatever point we crashed at.
+            for event in recovery.encryption_keys.clone().values() {
+                let (msg, key_ec) = event.clone().into_components();
+                let _ = self.ckks_handle_encryption_key(&msg.key, key_ec);
+            }
+            for event in recovery.threshold_shares.clone().values() {
+                let (msg, share_ec) = event.clone().into_components();
+                let _ = self.ckks_handle_threshold_share(msg.share, share_ec);
+            }
+            // Relin ceremony: the machine's chunk buffers are NOT snapshot
+            // (see `CkksKeyshareMachine::r1_chunks`); re-feed every chunk
+            // the durable chunk log recorded before the crash, then
+            // release our own round 1 if pk consensus was already
+            // confirmed. Own chunks are also in the log (local loopback),
+            // so our contribution is restored too.
+            let replayed = self.ckks_replay_ceremony_chunks(ec.clone())?;
+            if replayed > 0 {
+                info!(
+                    e3_id = %state.e3_id,
+                    replayed,
+                    "CKKS relin ceremony chunks replayed from the durable log"
+                );
+            }
+            return self.ckks_release_relin_round_1_if_pending(ec);
+        }
+
         match state.state {
             KeyshareState::Init => {
                 let selected = recovery

@@ -54,6 +54,20 @@ pub fn build_pair_for_preset(
 
             Ok((params_threshold, params_dkg))
         }
+        // The WIDE DKG transport pairs the insecure-512 THRESHOLD params (the CKKS
+        // ladder E3s share ParamSet 0's BFV encoding) with the wide DKG transport.
+        // Lets the DKG-circuit codegen (C0/C2/C3/C4) run at the wide shape.
+        BfvPreset::InsecureDkgWide512 => {
+            let (params_threshold, _) = build_pair_for_preset(BfvPreset::InsecureThreshold512)?;
+            let params_dkg = BfvParametersBuilder::new()
+                .set_degree(insecure_512::DEGREE)
+                .set_plaintext_modulus(insecure_512::dkg_wide::PLAINTEXT_MODULUS)
+                .set_moduli(insecure_512::dkg_wide::MODULI)
+                .set_variance(insecure_512::dkg_wide::VARIANCE as usize)
+                .build_arc()
+                .unwrap();
+            Ok((params_threshold, params_dkg))
+        }
         other => Err(PresetError::MissingPair(other.name())),
     }
 }

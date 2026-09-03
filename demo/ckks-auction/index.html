@@ -1,0 +1,376 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: LGPL-3.0-only -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Threshold-CKKS Sealed-Bid Auction — Live Demo</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131824; --panel2: #0f1420;
+    --text: #d6dce8; --muted: #7a8699; --line: #232c3d;
+    --accent: #5eead4; --accent2: #818cf8; --warn: #fbbf24;
+    --good: #34d399; --bad: #f87171;
+    font-size: 15px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, "Helvetica Neue", sans-serif;
+    line-height: 1.45;
+  }
+  header {
+    padding: 22px 28px 14px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 1.25rem; font-weight: 650; }
+  header .sub { color: var(--muted); font-size: .85rem; }
+  #env {
+    margin-left: auto; display: flex; gap: 14px; font-size: .8rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+         margin-right: 5px; background: var(--bad); }
+  .dot.on { background: var(--good); }
+  main { max-width: 1180px; margin: 0 auto; padding: 22px 28px 60px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px 18px;
+  }
+  .card h2 {
+    margin: 0 0 4px; font-size: .95rem; font-weight: 650;
+    display: flex; align-items: center; gap: 9px;
+  }
+  .card .why { color: var(--muted); font-size: .8rem; margin: 0 0 12px; }
+  .stepnum {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 21px; height: 21px; border-radius: 50%; font-size: .72rem;
+    background: var(--panel2); border: 1px solid var(--line); color: var(--muted);
+    flex-shrink: 0;
+  }
+  .card.done .stepnum { background: var(--good); color: #06281c; border-color: var(--good); }
+  .card.active .stepnum { background: var(--accent2); color: #101331; border-color: var(--accent2); }
+  button {
+    background: var(--accent2); color: #101331; border: 0; border-radius: 7px;
+    padding: 8px 15px; font-size: .85rem; font-weight: 650; cursor: pointer;
+  }
+  button:disabled { background: var(--panel2); color: var(--muted); cursor: default; }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  input[type=number] {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 7px; padding: 7px 9px; width: 90px; font-size: .85rem;
+  }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; }
+  .kv { color: var(--muted); }
+  .kv b { color: var(--text); font-weight: 600; }
+  .hexchip {
+    display: inline-block; background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 5px; padding: 2px 7px; margin: 2px 0;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    vertical-align: bottom;
+  }
+  .spin {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid var(--line); border-top-color: var(--accent);
+    animation: r 0.8s linear infinite; vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes r { to { transform: rotate(360deg); } }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  td, th { padding: 5px 9px; border-bottom: 1px solid var(--line); font-size: .82rem; text-align: left; }
+  th { color: var(--muted); font-weight: 600; }
+  .bidrow input { width: 80px; }
+  .pill {
+    display: inline-block; border-radius: 20px; padding: 1px 9px; font-size: .72rem;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  .pill.win { border-color: var(--good); color: var(--good); }
+  .pill.lose { border-color: var(--line); color: var(--muted); }
+  #bracket { display: flex; gap: 26px; align-items: center; flex-wrap: wrap; margin-top: 10px; }
+  .pairbox {
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 9px;
+    padding: 10px 14px; min-width: 150px;
+  }
+  .pairbox .vs { color: var(--muted); font-size: .7rem; margin: 3px 0; }
+  .pairbox .sign { font-family: ui-monospace, Menlo, monospace; font-size: .78rem; margin-top: 6px; color: var(--accent); }
+  #logcard { margin-top: 18px; }
+  #log {
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+    height: 210px; overflow-y: auto; padding: 10px 12px; margin-top: 10px;
+  }
+  #log div { font-family: ui-monospace, Menlo, monospace; font-size: .74rem; padding: 1px 0; }
+  #log .st { color: var(--accent2); }
+  .note {
+    border-left: 3px solid var(--warn); background: var(--panel2);
+    padding: 8px 12px; border-radius: 0 7px 7px 0; font-size: .78rem;
+    color: var(--muted); margin-top: 12px;
+  }
+  .flowline { color: var(--muted); font-size: .78rem; margin-top: 8px; }
+  .flowline b { color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Threshold-CKKS Sealed-Bid Auction</h1>
+  <span class="sub">real chain · real ciphernodes · real encryption — nothing simulated</span>
+  <div id="env">
+    <span><span class="dot" id="dot-chain"></span>anvil <span id="chain-block" class="kv"></span></span>
+    <span><span class="dot" id="dot-nodes"></span><span id="node-count">0</span> ciphernodes</span>
+    <span><span class="dot" id="dot-prog"></span>CKKS program</span>
+  </div>
+</header>
+<main>
+  <div style="border-left:3px solid #fbbf24; background:#231a0e; color:#fbd38d; padding:8px 14px; border-radius:0 7px 7px 0; font-size:.8rem; margin-bottom:10px">
+    TODO — bids here are still encrypted by the demo bridge and published WITHOUT the
+    on-chain Greco verification gate. The salary-survey demo already runs the verified
+    flow (participants encrypt+prove in their own <span style="font-family:ui-monospace,monospace">ckks_participant</span>
+    processes; every submission is Honk-verified and duplicate-rejected on-chain via
+    <span style="font-family:ui-monospace,monospace">CkksE3Program</span>). Porting the auction needs the ParamSet 2
+    verifier pair deployed + this bridge rewired the same way — not done yet.
+  </div>
+  <div class="flowline">
+    program address ⇒ protocol: requesting through the CKKS program binds
+    <b>keccak256("fhe.rs:CKKS")</b> on-chain — a requester picks only committee size and params.
+  </div>
+
+  <div class="grid" style="margin-top:16px">
+
+    <div class="card" id="c1">
+      <h2><span class="stepnum">1</span> Request committee via CKKS program</h2>
+      <p class="why">One on-chain tx. Sortition selects 3 of the 5 registered ciphernode processes; the E3 program's address selects the FHE scheme.</p>
+      <button id="btn-request">Request committee</button>
+      <button id="btn-reset" class="ghost" style="margin-left:8px">Reset demo</button>
+      <div class="mono" id="o1" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" id="c2">
+      <h2><span class="stepnum">2</span> Distributed key generation</h2>
+      <p class="why">The 3 selected node processes run the CKKS DKG over libp2p: ephemeral keys → BFV-encrypted dealt Shamir rows → C2-checked broadcast → byte-identical joint public key, published on-chain.</p>
+      <div class="mono" id="o2"><span class="kv">waiting for step 1…</span></div>
+    </div>
+
+    <div class="card" id="c3">
+      <h2><span class="stepnum">3</span> Submit encrypted bids</h2>
+      <p class="why">Each bid is a genuine CKKS encryption under the committee's joint pk (fresh randomness, slot-replicated). No party — including the nodes — can read an individual bid.</p>
+      <table><tbody id="bids-body"></tbody></table>
+      <div style="margin-top:10px">
+        <button id="btn-addbid" class="ghost">+ bidder</button>
+        <button id="btn-encrypt" disabled>Encrypt &amp; submit bids</button>
+      </div>
+      <div class="mono" id="o3" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" id="c4">
+      <h2><span class="stepnum">4</span> Homomorphic auction round</h2>
+      <p class="why">Leak-free ITERATED SIGN EXTRACTION computed ON the ciphertexts: every i&lt;j pair difference is packed into ONE ciphertext (normalized by the bid cap), then a cubic sign map f(y)=1.5y−0.5y³ is iterated 12× slot-wise (two relinearized ct×ct products per iteration, using the committee's multiparty relin-ceremony keys) until every slot saturates at exactly ±1. One evaluation, ONE threshold opening, and the winner falls out of the dominance matrix. Bid values AND gap magnitudes are never revealed — only ±1 comparison bits ever come out.</p>
+      <div id="bracket"></div>
+      <div style="margin-top:10px">
+        <button id="btn-eval" disabled>Evaluate round</button>
+        <button id="btn-publish" disabled style="margin-left:8px">Publish ciphertext on-chain</button>
+      </div>
+      <div class="mono" id="o4" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" id="c5" style="grid-column: 1 / -1">
+      <h2><span class="stepnum">5</span> Threshold decryption &amp; on-chain result</h2>
+      <p class="why">Seeing the ciphertext on-chain, each committee node computes a decryption share (secret share + smudging noise). Any t+1 = 2 shares reconstruct — the aggregator publishes canonical fixed-point bytes via <span class="mono">publishPlaintextOutput</span>.</p>
+      <div class="mono" id="o5"><span class="kv">waiting for step 4…</span></div>
+      <div id="result"></div>
+    </div>
+  </div>
+
+  <div class="card" id="logcard">
+    <h2>Event log</h2>
+    <div id="log"></div>
+    <div class="note">
+      Demo caveats (also in the code): insecure 512-degree parameters; mock on-chain verifiers;
+      CKKS ZK proof <i>emission</i> not wired yet (C2 witnesses are checked node-side before any
+      share leaves). The winner-vs-cleartext check exists only in this dashboard for verification —
+      a real auction never sees the cleartext bids.
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = async (method, path, body) => {
+  const r = await fetch(path, {
+    method, headers: { "content-type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error ?? r.statusText);
+  return j;
+};
+const chip = (s, n = 26) =>
+  `<span class="hexchip" title="${s}">${s.length > n ? s.slice(0, n) + "…" : s}</span>`;
+
+let pollTimer = null, logSeen = 0;
+
+// ── environment status ────────────────────────────────────────────────
+async function refreshStatus() {
+  try {
+    const s = await api("GET", "/api/status");
+    $("dot-chain").classList.toggle("on", s.chain.up);
+    $("chain-block").textContent = s.chain.up ? "#" + s.chain.block : "";
+    $("dot-nodes").classList.toggle("on", s.ciphernodes >= 5);
+    $("node-count").textContent = s.ciphernodes;
+    $("dot-prog").classList.toggle("on", !!s.ckksProgram);
+    for (const entry of s.state.log.slice(logSeen)) {
+      const d = document.createElement("div");
+      d.innerHTML = `<span class="st">[${entry.stage}]</span> ${entry.message}`;
+      $("log").appendChild(d);
+    }
+    if (s.state.log.length > logSeen) $("log").scrollTop = $("log").scrollHeight;
+    logSeen = s.state.log.length;
+  } catch { $("dot-chain").classList.remove("on"); }
+}
+setInterval(refreshStatus, 2500);
+refreshStatus();
+
+const mark = (n, cls) => {
+  const c = $("c" + n);
+  c.classList.remove("active", "done");
+  if (cls) c.classList.add(cls);
+};
+
+// ── step 1: request ───────────────────────────────────────────────────
+$("btn-request").onclick = async () => {
+  $("btn-request").disabled = true;
+  mark(1, "active");
+  $("o1").innerHTML = `<span class="spin"></span>submitting request tx…`;
+  try {
+    const r = await api("POST", "/api/request-committee");
+    $("o1").innerHTML =
+      `<div class="kv">E3 id: <b>${r.e3Id.slice(0, 12)}…</b></div>` +
+      `<div class="kv">program: ${chip(r.program, 40)}</div>` +
+      `<div class="kv">scheme: <b>fhe.rs:CKKS</b> (bound by program address)</div>`;
+    mark(1, "done"); mark(2, "active");
+    pollPubkey();
+  } catch (e) {
+    $("o1").innerHTML = `<span style="color:var(--bad)">${e.message}</span>`;
+    $("btn-request").disabled = false; mark(1);
+  }
+};
+
+// ── step 2: DKG poll ──────────────────────────────────────────────────
+async function pollPubkey() {
+  $("o2").innerHTML = `<span class="spin"></span>3 node processes running the DKG (keys → dealt shares → joint pk)…`;
+  const t = setInterval(async () => {
+    try {
+      const r = await api("GET", "/api/pubkey");
+      if (r.ready) {
+        clearInterval(t);
+        $("o2").innerHTML =
+          `<div class="kv">joint CKKS pk on-chain: ${chip(r.pubkey, 44)}</div>` +
+          `<div class="kv">size: <b>${(r.pubkey.length - 2) / 2} bytes</b> · identical on every node (consensus-checked)</div>`;
+        mark(2, "done"); mark(3, "active");
+        $("btn-encrypt").disabled = false;
+      }
+    } catch { /* keep polling */ }
+  }, 2000);
+}
+
+// ── step 3: bids ──────────────────────────────────────────────────────
+const defaultBids = [50, 80, 120, 30];
+function renderBidInputs() {
+  $("bids-body").innerHTML = defaultBids
+    .map((v, i) =>
+      `<tr class="bidrow"><td class="kv">bidder ${i}</td>` +
+      `<td><input type="number" min="1" step="any" value="${v}" data-i="${i}"></td><td class="mono kv" id="bid-ct-${i}"></td></tr>`)
+    .join("");
+}
+renderBidInputs();
+$("btn-addbid").onclick = () => {
+  if (defaultBids.length >= 8) return;
+  defaultBids.push(Math.round(Math.random() * 150 + 10));
+  renderBidInputs();
+};
+$("btn-encrypt").onclick = async () => {
+  const bids = [...document.querySelectorAll("#bids-body input")].map((i) => Number(i.value));
+  $("btn-encrypt").disabled = true;
+  $("o3").innerHTML = `<span class="spin"></span>running ckks_encrypt per bid…`;
+  try {
+    const r = await api("POST", "/api/bids", { bids });
+    r.bids.forEach((b) =>
+      ($("bid-ct-" + b.bidder).textContent = `${b.ciphertextBytes} B ciphertext`));
+    $("o3").innerHTML = `<div class="kv"><b>${r.bids.length}</b> real CKKS ciphertexts · <b>${r.pairs.length}</b> pairwise comparisons packed into ONE ciphertext (single-shot mode)</div>`;
+    mark(3, "done"); mark(4, "active");
+    $("bracket").innerHTML = r.pairs
+      .map((p, i) =>
+        `<div class="pairbox" id="pair-${i}" style="padding:8px 10px"><b>${p[0]}</b><div class="vs">vs</div><b>${p[1]}</b><div class="sign kv">slot ${i}</div></div>`)
+      .join("");
+    $("btn-eval").disabled = false;
+  } catch (e) {
+    $("o3").innerHTML = `<span style="color:var(--bad)">${e.message}</span>`;
+    $("btn-encrypt").disabled = false;
+  }
+};
+
+// ── step 4: evaluate + publish ────────────────────────────────────────
+$("btn-eval").onclick = async () => {
+  $("btn-eval").disabled = true;
+  $("o4").innerHTML = `<span class="spin"></span>homomorphic sign extraction (12 cubic iterations)…`;
+  try {
+    const r = await api("POST", "/api/evaluate");
+    $("o4").innerHTML =
+      `<div class="kv">evaluated ciphertext: <b>${r.bytes} bytes</b></div>` +
+      `<div class="kv">keccak commitment: ${chip(r.commitmentHex, 40)}</div>`;
+    $("btn-publish").disabled = false;
+  } catch (e) {
+    $("o4").innerHTML = `<span style="color:var(--bad)">${e.message}</span>`;
+    $("btn-eval").disabled = false;
+  }
+};
+$("btn-publish").onclick = async () => {
+  $("btn-publish").disabled = true;
+  $("o4").innerHTML += `<div><span class="spin"></span>publishing on-chain…</div>`;
+  try {
+    await api("POST", "/api/publish");
+    mark(4, "done"); mark(5, "active");
+    pollPlaintext();
+  } catch (e) {
+    $("o4").innerHTML += `<div style="color:var(--bad)">${e.message}</div>`;
+    $("btn-publish").disabled = false;
+  }
+};
+
+// ── step 5: decryption result ─────────────────────────────────────────
+async function pollPlaintext() {
+  $("o5").innerHTML = `<span class="spin"></span>committee nodes threshold-decrypting (t+1 = 2 of 3 shares)…`;
+  const t = setInterval(async () => {
+    try {
+      const r = await api("GET", "/api/plaintext");
+      if (!r.ready) return;
+      clearInterval(t);
+      $("o5").innerHTML = `<div class="kv">on-chain fixed-point output: <b>${r.signs.length}</b> comparison signs from ONE threshold opening</div>`;
+      r.signs.forEach((s, i) => {
+        const box = $("pair-" + i);
+        if (!box) return;
+        box.querySelector(".sign").innerHTML =
+          `<b style="color:${s > 0 ? "var(--good)" : "var(--bad)"}">${s > 0 ? "+" : "−"}</b>`;
+      });
+      $("result").innerHTML =
+        `<div style="font-size:1.3rem;margin:6px 0 10px"><span class="pill win" style="font-size:1.1rem;padding:6px 14px">🏆 WINNER: bidder ${r.champion}</span>` +
+        ` <span class="kv" style="margin-left:10px">runner-up: bidder ${r.second}</span></div>` +
+        `<table><tr><th>bidder</th><th>comparisons won</th></tr>` +
+        r.wins.map((w, i) =>
+          `<tr${i === r.champion ? ' style="font-weight:700"' : ""}><td>bidder ${i}${i === r.champion ? " 🏆" : i === r.second ? " ②" : ""}</td><td class="mono">${w} / ${r.wins.length - 1}</td></tr>`).join("") +
+        `</table>` +
+        `<div style="margin-top:10px" class="kv">winning bid value stays encrypted — only comparison signs were decrypted. ` +
+        `Verification vs submitted bids (dashboard-only): ` +
+        `<b style="color:${r.correct ? "var(--good)" : "var(--bad)"}">${r.correct ? "✓ homomorphic winner matches" : "✗ MISMATCH"}</b></div>`;
+      mark(5, "done");
+    } catch { /* keep polling */ }
+  }, 2000);
+}
+
+// ── reset ─────────────────────────────────────────────────────────────
+$("btn-reset").onclick = async () => {
+  await api("POST", "/api/reset");
+  location.reload();
+};
+</script>
+</body>
+</html>

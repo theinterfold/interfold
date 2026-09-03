@@ -19,8 +19,16 @@
 //!   message polynomial `m` with the symmetric bound `m_bound >= delta * B`,
 //!   where `B` bounds the magnitude of the encoded values. This is the
 //!   coefficient-domain input-validity check.
-//! - `m` gets the same CRT-consistency treatment as `e0` (per-limb `mis`
-//!   plus quotients), because `m` mod Q must be consistent across limbs.
+//! - `e0` and `m` enter the per-limb identity DIRECTLY: both are
+//!   range-checked small (`e0_bound`, `m_bound` < (qi-1)/2 for every
+//!   limb, enforced by codegen), so their centered residues mod every
+//!   `qi` are the polynomials themselves — no per-limb copies exist.
+//!   (An earlier draft carried BFV-style `e0is/mis` + CRT quotients;
+//!   those witnesses were neither absorbed into the Fiat–Shamir
+//!   transcript nor range-checked, and the native-field CRT check is
+//!   vacuous over BN254 since `qi` is invertible — a malicious prover
+//!   could solve for them after the challenge and prove arbitrary
+//!   `ct0is`. Removing them closes the hole and shrinks the circuit.)
 //!
 //! The ct1 leg is scheme-independent (no message term) and reuses
 //! `user_data_encryption_ct1` unchanged.
@@ -79,12 +87,8 @@ pub struct UserDataEncryptionCkksCt0<let N: u32, let L: u32, let BIT_PK: u32, le
     ct0is: [Polynomial<N>; L],
     u: Polynomial<N>,
     e0: Polynomial<N>,
-    e0is: [Polynomial<N>; L],
-    e0_quotients: [Polynomial<N>; L],
-    /// The scaled message polynomial `m` (mod Q, centered).
+    /// The scaled message polynomial (small: `|m| <= m_bound < qi/2`).
     m: Polynomial<N>,
-    mis: [Polynomial<N>; L],
-    m_quotients: [Polynomial<N>; L],
     r1is: [Polynomial<(2 * N) - 1>; L],
     r2is: [Polynomial<N - 1>; L],
 }
@@ -97,46 +101,11 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         ct0is: [Polynomial<N>; L],
         u: Polynomial<N>,
         e0: Polynomial<N>,
-        e0is: [Polynomial<N>; L],
-        e0_quotients: [Polynomial<N>; L],
         m: Polynomial<N>,
-        mis: [Polynomial<N>; L],
-        m_quotients: [Polynomial<N>; L],
         r1is: [Polynomial<(2 * N) - 1>; L],
         r2is: [Polynomial<N - 1>; L],
     ) -> Self {
-        UserDataEncryptionCkksCt0 {
-            configs,
-            pk0is,
-            ct0is,
-            u,
-            e0,
-            e0is,
-            e0_quotients,
-            m,
-            mis,
-            m_quotients,
-            r1is,
-            r2is,
-        }
-    }
-
-    /// `x[j] == xis[i][j] + quotients[i][j] * qi` for `x` in `{e0, m}`.
-    fn check_crt_consistency(self) {
-        for i in 0..L {
-            for j in 0..N {
-                assert(
-                    self.e0.coefficients[j]
-                        == self.e0is[i].coefficients[j]
-                            + self.e0_quotients[i].coefficients[j] * self.configs.qis[i],
-                );
-                assert(
-                    self.m.coefficients[j]
-                        == self.mis[i].coefficients[j]
-                            + self.m_quotients[i].coefficients[j] * self.configs.qis[i],
-                );
-            }
-        }
+        UserDataEncryptionCkksCt0 { configs, pk0is, ct0is, u, e0, m, r1is, r2is }
     }
 
     fn check_range_bounds(self) {
@@ -197,18 +166,22 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         let gamma = gammas[0];
         let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
         let u_at_gamma = self.u.eval(gamma);
+        // e0 and m are the SAME small polynomial in every limb (their
+        // magnitudes are range-checked under every qi/2), and both are
+        // bound into the transcript (e0 flattened, m via m_commitment)
+        // BEFORE gamma is derived.
+        let e0_at_gamma = self.e0.eval(gamma);
+        let m_at_gamma = self.m.eval(gamma);
 
         let mut sum = (0, 0);
         for i in 0..L {
             let pk0is_at_gamma = self.pk0is[i].eval(gamma);
             let r1i_at_gamma = self.r1is[i].eval(gamma);
             let r2i_at_gamma = self.r2is[i].eval(gamma);
-            let e0is_at_gamma = self.e0is[i].eval(gamma);
-            let mis_at_gamma = self.mis[i].eval(gamma);
 
-            // ct0i = pk0i*u + e0i + mi + r1i*qi + r2i*cyclo
-            let mut ct0_rhs = pk0is_at_gamma * u_at_gamma + e0is_at_gamma;
-            ct0_rhs += mis_at_gamma;
+            // ct0i = pk0i*u + e0 + m + r1i*qi + r2i*cyclo
+            let mut ct0_rhs = pk0is_at_gamma * u_at_gamma + e0_at_gamma;
+            ct0_rhs += m_at_gamma;
             ct0_rhs += r1i_at_gamma * self.configs.qis[i];
             ct0_rhs += r2i_at_gamma * cyclo_at_gamma;
 
@@ -223,9 +196,9 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
     /// Returns `(pk0_commitment, ct0_commitment, m_commitment, u_commitment)`.
     pub fn execute(self) -> (Field, Field, Field, Field) {
-        // Step 1: Witness bounds and CRT consistency of `e0` and `m`.
+        // Step 1: Witness bounds (e0/m smallness makes their residues
+        // limb-independent; no CRT decomposition exists to check).
         self.check_range_bounds();
-        self.check_crt_consistency();
 
         // Step 2: Domain-separated commitments for the FS transcript.
         let (pk0_commitment, ct0_commitment, m_commitment, u_commitment) =

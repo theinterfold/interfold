@@ -35,6 +35,24 @@ fn new_initialises_defaults_and_records_dkg_start() {
     assert_eq!(s.get_threshold_n(), 3);
     assert_eq!(s.get_party_id(), 0);
     assert_eq!(s.get_address(), "0xabc");
+    assert_eq!(s.scheme, E3Scheme::Bfv);
+}
+
+#[test]
+fn pre_ckks_persisted_state_deserializes_with_bfv_scheme() {
+    // A state serialized BEFORE the `scheme` field existed (simulated by
+    // stripping the field from JSON) must load as Bfv — the wire/disk
+    // backward-compat contract of `#[serde(default)]`.
+    let s = base_state(KeyshareState::Init).with_scheme(E3Scheme::Ckks);
+    let mut v: serde_json::Value = serde_json::to_value(&s).unwrap();
+    v.as_object_mut().unwrap().remove("scheme");
+    let restored: ThresholdKeyshareState = serde_json::from_value(v).unwrap();
+    assert_eq!(restored.scheme, E3Scheme::Bfv);
+
+    // And a state that DOES carry the field round-trips it.
+    let json = serde_json::to_string(&s).unwrap();
+    let back: ThresholdKeyshareState = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.scheme, E3Scheme::Ckks);
 }
 
 #[test]

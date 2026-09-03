@@ -967,11 +967,21 @@ impl CiphernodeBuilder {
             }
 
             info!("Setting up ThresholdKeyshareExtension");
-            e3_builder = e3_builder.with(ThresholdKeyshareExtension::create(
+            // CKKS ceremony outputs live beside the node's KV store, per
+            // node: `<data_dir>/<name>/ckks/`. In-memory nodes have none.
+            let ckks_artifacts_dir = match &self.event_system {
+                EventSystemType::Persisted { kv_path, .. } => {
+                    kv_path.parent().map(|dir| dir.join("ckks"))
+                }
+                _ => None,
+            };
+            e3_builder = e3_builder.with(ThresholdKeyshareExtension::create_with_circuits(
                 bus,
                 &self.cipher,
                 addr,
                 interfold_addresses,
+                ckks_artifacts_dir,
+                Some(backend.circuits_dir.clone()),
             ));
 
             info!("Setting up ZK actors");
@@ -992,7 +1002,11 @@ impl CiphernodeBuilder {
 
             info!("Setting up PublicKeyAggregationExtension");
             let _ = self.ensure_multithread(bus);
-            e3_builder = e3_builder.with(PublicKeyAggregatorExtension::create(bus));
+            let aggregator_circuits_dir = self.zk_backend.as_ref().map(|b| b.circuits_dir.clone());
+            e3_builder = e3_builder.with(PublicKeyAggregatorExtension::create_with_circuits(
+                bus,
+                aggregator_circuits_dir,
+            ));
 
             if self.keyshare.is_none() {
                 let backend = self
@@ -1507,6 +1521,7 @@ mod tests {
             params_preset: BfvPreset::InsecureThreshold512,
             params: ArcBytes::default(),
             error_size: ArcBytes::default(),
+            scheme: Default::default(),
         };
         let committee = Committee::new(vec![
             "0x1111111111111111111111111111111111111111".to_string()
@@ -1554,6 +1569,7 @@ mod tests {
             params_preset: BfvPreset::InsecureThreshold512,
             params: ArcBytes::from_bytes(&[1, 2]),
             error_size: ArcBytes::from_bytes(&[3, 4]),
+            scheme: Default::default(),
         };
         let selector = CiphernodeSelectorState {
             e3_cache: HashMap::from([(e3_id.clone(), metadata.clone())]),
@@ -1589,6 +1605,7 @@ mod tests {
                     params_preset: BfvPreset::InsecureThreshold512,
                     params: ArcBytes::default(),
                     error_size: ArcBytes::default(),
+                    scheme: Default::default(),
                 },
             )]),
             committees: HashMap::from([(

@@ -1,0 +1,29 @@
+{
+  "name": "@ckks-auction/sdk",
+  "version": "0.1.0-insecure.0",
+  "type": "module",
+  "license": "LGPL-3.0-only",
+  "description": "CKKS sealed-bid auction client SDK: browser CKKS encryption, three-leg proving (Greco ct0/ct1 + bid<=balance), balance Merkle tree, sender-bound publishInput envelope.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./circuits": "./src/circuits.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "5.1.0",
+    "@interfold/ckks-zk-inputs": "file:../../../ckks-common/packages/ckks-zk-inputs",
+    "@noir-lang/noir_js": "1.0.0-beta.26",
+    "poseidon-lite": "^0.3.0",
+    "viem": "2.38.6"
+  },
+  "devDependencies": {
+    "@types/node": "22.7.5",
+    "typescript": "5.8.3",
+    "vitest": "^1.6.1"
+  }
+}

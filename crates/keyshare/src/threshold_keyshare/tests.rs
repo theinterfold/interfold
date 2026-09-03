@@ -94,6 +94,9 @@ async fn start_actor_with_state(
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
         recovery: test_recovery(),
+        ckks_artifacts_dir: None,
+        zk_circuits_dir: None,
+        ckks_ceremony: None,
     })
     .start();
 

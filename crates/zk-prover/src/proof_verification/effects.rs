@@ -46,6 +46,25 @@ impl ProofVerificationActor {
             );
             return;
         };
+        // C0 proof-free posture (`CkksProofPosture::c0`, computed from the
+        // E3's own params at CiphernodeSelected — never from the message):
+        // accept the key without a proof. The C2 share gate still verifies
+        // the dealt material itself.
+        if self.is_c0_proof_free(&msg.e3_id) {
+            if msg.key.proof.is_some() || msg.key.signed_payload.is_some() {
+                warn!(
+                    e3_id = %msg.e3_id,
+                    party_id = msg.key.party_id,
+                    "proof-free-posture key unexpectedly carries a proof — ignoring the proof"
+                );
+            }
+            info!(
+                "CKKS transport key from party {} accepted proof-free (committee slot {})",
+                msg.key.party_id, expected_signer
+            );
+            self.publish_key_created(msg.e3_id, msg.key, ec);
+            return;
+        }
         let validated = match validate_external_key(
             &msg.e3_id,
             &expected_signer,

@@ -23,6 +23,9 @@ e3-request = { workspace = true }
 e3-trbfv = { workspace = true }
 e3-utils = { workspace = true }
 e3-zk-helpers = { workspace = true }
+e3-zk-prover = { workspace = true }
+e3-polynomial = { workspace = true }
+num-bigint = { workspace = true }
 alloy = { workspace = true }
 fhe = { workspace = true }
 fhe-traits = { workspace = true }
@@ -33,3 +36,6 @@ serde = { workspace = true }
 tracing = { workspace = true }
 ndarray = { workspace = true }
 zeroize = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }

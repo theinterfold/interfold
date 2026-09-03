@@ -399,6 +399,133 @@ design citation alone does not establish current runtime behavior.
   — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
 - All C0–C7 proofs must complete before `ThresholdShareCreated` is published. — `flow-trace/04`
 
+### Threshold CKKS (scheme-bound E3s; explicit, tested postures — not gaps)
+
+- **Committee-wide CKKS decisions are pure functions of the on-chain `ParamSet`, never node
+  configuration.** `crates/fhe-params/src/ckks_presets.rs` is the single source: the CKKS params
+  (`ckks_params_for_on_chain_param_set`), their inverse (`ckks_on_chain_param_set_for`), the DKG
+  transport preset (`ckks_dkg_transport_preset` — standard `t_dkg` if every CKKS modulus fits,
+  else the deterministic WIDE escalation `InsecureDkgWide512`), the relin-ceremony plan
+  (`relin_ceremony_plan_for_param_set` → `RelinCeremonyPlan`: set 0 `None`, set 2 `Hybrid`, set
+  3 `PerLevel([0])`), and the proof posture (`CkksProofPosture`). Every consumer (keyshare `ext.rs` +
+  `ckks_shell.rs`, zk-prover `proof_verification` + `dkg_proofs`, aggregator
+  `verify_decryption_shares`) derives from the request-carried `E3Meta.params` /
+  `CiphernodeSelected.params`; no `CKKS_RELIN_*` env var is read for protocol decisions
+  (`CKKS_RELIN_KEY_DIR` only relocates the joint-key OUTPUT directory for tooling; the default is
+  `<data_dir>/<node>/ckks/relin-keys/<e3_id>`). — `flow-trace/04` §CKKS
+- **ParamSet 2 is HYBRID: one ceremony, one key, every level.** Its params carry `k = 3` 60-bit
+  special primes (`SIGN_EXTRACTION_SPECIAL_MODULI_BITS`, `dnum = 13`); the committee runs ONE
+  two-round `CkksHybridRelinKeyGenerator` ceremony and writes ONE joint key,
+  `<relin-keys dir>/<e3_id>/rlk_hybrid.bin` (`CkksHybridRelinKey::to_bytes`), which relinearizes
+  at ALL 24 sign-map levels (`sign_extraction_mult_levels`). Per-level plans keep
+  `rlk_level_{L}.bin`. The plan and the params MUST agree
+  (`relin_plan_matches_params`: hybrid ⇔ `hybrid_enabled()`); the shell `bail!`s on skew. The
+  special primes are PUBLIC key-material moduli that never travel through the DKG (dealt shares
+  are over `Q` only), so the transport bound `q_i ≤ t_dkg` is checked on `moduli()` alone and the
+  transport preset is unchanged. On-chain ParamSet-2 param BYTES changed (proto fields 5/6); the
+  deploy registers them, and nothing hardcodes the old hex. ParamSet 3 (L = 3) stays per-level:
+  at that depth a hybrid key is larger than the one RNS key (`2·dnum·(L+k)` vs `2·L²`). Pinned
+  by `relin_ceremony_plan_is_derived_from_the_param_set`, `machine_network_hybrid_ceremony_ladder`
+  (byte-identical keys, forced multi-chunk, corrupted chunk, restart mid-R2, deep-level relin +
+  threshold decrypt) and `e2e_sign_extraction_policy` (hybrid key, 12 iterations, saturated
+  ±1). — `flow-trace/04` §CKKS
+- **Hybrid ceremony shares reuse the per-level chunk transport unchanged.** `RelinCeremonyShare`
+  keeps its shape (APPEND-ONLY events enum untouched): a hybrid chunk travels with
+  `level = u32::MAX` (`HYBRID_RELIN_LEVEL`), round ∈ {1, 2}, one payload per round. A hybrid
+  machine's only ceremony slot is the sentinel — a real level is rejected at the envelope, and a
+  per-level machine rejects the sentinel — so mixed-mode chunks fail attributably before decode.
+  `max_relin_share_bytes` sizes the hybrid payload as `2·dnum·(L+k)·N·8` (+25 %).
+  — `flow-trace/04` §CKKS
+- **Every CKKS proof posture is PROVEN; proof-free is NOT an accepted state.**
+  `CkksProofPosture::from_bytes` is `Proven` for C0/C1/C6/C7/ceremony on every known param set
+  (0/2/3); the ONLY proof-free path is the explicit operator knob `CKKS_ALLOW_PROOF_FREE=1`
+  (`CKKS_ALLOW_PROOF_FREE_ENV`, default OFF, committee-wide, demo-only), which flips every
+  entry with `PROOF_FREE_OVERRIDE_REASON`. The node FAILS CLOSED at `CiphernodeSelected`
+  (keyshare) and at aggregator construction:
+  `e3_zk_prover::ckks_artifacts::check_ckks_artifacts_for_e3` refuses the E3 with an error
+  naming every missing artifact (`required_ckks_artifacts`: C0 `pk` under the transport
+  preset's own dir, `pk_generation_ckks_ps<N>`, `share_decryption_ckks[_ps<N>]`,
+  `decrypted_shares_aggregation_ckks[_ps<N>]` under the THRESHOLD preset dir, plus
+  `relin_round1_hybrid_ckks_digit` for hybrid sets). Never add a hardcoded
+  `ckks_params_for_on_chain_param_set(0)` path — every prover resolves params from the
+  request's `ckks_params`. The posture line reads `c0=proven c1=proven c6=proven c7=proven
+  ceremony=proven`. Pinned by `proof_posture_is_explicit_per_param_set`,
+  `from_bytes_is_proven_unless_the_knob_is_explicitly_on`,
+  `check_fails_closed_naming_the_missing_artifact`,
+  `ckks_node_refuses_e3_when_a_required_artifact_is_missing`. — `flow-trace/04` §CKKS
+- **CKKS rogue-key gate: no pk share is summed without a verified C1-CKKS proof.** The CKKS
+  shell routes `PublishKeyshareCreated { c1_witness }` through `PkGenerationCkksProofPending`
+  so `KeyshareCreated` carries `signed_pk_generation_proof: Some(..)`; the aggregator dispatches
+  CKKS through the SAME `PkGenerationProofs` ShareVerification round as BFV and then runs
+  `check_c1_ckks_keyshare_commitments` (proof `pk_commitment` == 
+  `compute_ckks_pk_commitment_from_share_bytes(received share, CRP)` — the witness builder's own
+  derivation, pinned by `pk_commitment_from_share_bytes_matches_witness_builder`). A missing
+  proof, verifier rejection, or commitment mismatch → `SignedProofFailed(C1PkGeneration)` +
+  `E3Failed(DKGInvalidShares)`: CKKS machines aggregate the dealt secret over EVERY dealer, so
+  a subset joint key is never published. Pinned by `tests/ckks_rogue_key.rs` (dispatch instead
+  of bypass; good proofs aggregate all N; mismatch reported + E3 failed; too few honest → E3
+  failed). — `flow-trace/04` §CKKS
+- **C6-CKKS shares are anchored to the bytes they prove.** The aggregator's CKKS branch runs
+  `verify_ckks_shares_match_c6_commitments` after the ShareVerification round: the C6-CKKS
+  `d_commitment` output must equal `compute_threshold_decryption_share_commitment(received
+  share at the ciphertext's level, d_native_bit, N)` — the exact witness derivation
+  (`d_native_trunc` over ALL N coefficients). Mismatch excludes the party; ≤ t honest fails the
+  round. Undecodable params/ciphertext mark every party mismatched (fail closed). Pinned by
+  `ckks_d_commitment_cross_check_accepts_the_proven_share_and_rejects_others` (sets 0 and 3).
+  — `flow-trace/04` §CKKS
+- **C8 gate: a hybrid round-1 share is aggregated only after its `dnum` digit proofs are bound
+  and verified.** Under `RelinProofGate::Required` (hybrid plan + proven ceremony posture) the
+  machine holds R1 aggregation until, for EVERY party, its `RelinCeremonyProofSigned` bundle
+  (exactly `dnum` `C8RelinRound1` proofs on `relin_round1_hybrid_ckks_digit`) satisfies
+  `check_relin_round_1_bindings` against the REASSEMBLED share — `digit == j`; `s_commitment`
+  identical across digits AND equal to the party's C1-CKKS sk commitment (recorded from its
+  `KeyshareCreated` proof; same `compute_share_computation_sk_commitment` at `sk_bit` in both
+  builders); `u_commitment` identical across digits; `share_commitment` ==
+  `digit_share_commitments_from_bytes(share)[j]` — and the `RelinRound1Proofs`
+  ShareVerification round (APPEND-ONLY `VerificationKind` variant) reports no dishonest party.
+  Any failure → `RelinCeremonyFailed { party_id, reason }` → `E3Failed(DKGInvalidShares)`; the
+  ceremony never completes. Per-level plans stay verify-by-determinism (gate `Off`); the slashing
+  link `C1-CKKS->C8 sk/s_commitment` is registered in `default_links`. Pinned by
+  `c8_gate_tests::*` (holds until bound+verified; inconsistent digit → attributable failure;
+  anchor mismatch / missing anchor / Honk rejection → failure; gate off ignores bundles) and
+  `digit_witnesses_slice_the_whole_share_witness`. — `flow-trace/04` §CKKS
+- **CKKS per-param-set artifacts resolve under the THRESHOLD preset directory.** The shell's
+  `ckks_proof_artifacts_preset()` (threshold counterpart of the share-transport preset) is the
+  `params_preset` on every C1/C6/C8 proof request and on the `RelinRound1Proofs` dispatch; the
+  aggregator's `PkGenerationProofs`/`ThresholdDecryptionProofs` dispatches carry the same
+  threshold preset. Only C0 (the transport key) resolves under the transport preset's own dir.
+  — `flow-trace/04` §CKKS
+- **Party-id bases at the CKKS boundary**: bus events / `ThresholdKeyshareState` carry the 0-based
+  committee slot (`party_id_chain`); the pure machine speaks 1-based Shamir x-coordinates
+  (`party_id_machine`). The conversion exists only in `ckks_shell.rs::{party_id_machine,
+  party_id_chain}` and in the aggregator's CKKS branch (`+1`). `RelinCeremonyShare.party_id` is
+  machine-based (the net layer rejects 0). — `flow-trace/04` §CKKS
+- **Relin-ceremony ordering**: DKG completion emits only `KeyshareCreated`; R1 shares are
+  COMPUTED and published on the chain-observed pk-consensus signal (`CommitteePublished`, with
+  `PublicKeyAggregated` as an idempotent second trigger; `pk_confirmed` is persisted so a
+  confirmation that races DKG completion still releases). R2 never advances before own R1 is
+  published. — `flow-trace/04` §CKKS
+- **Chunk transport is bounded and attributable**: chunks are ≤ 8 MiB (`CKKS_RELIN_CHUNK_BYTES`),
+  `chunk_count` is capped by `RelinChunkBounds::for_params` (payload ceiling derived from the E3's
+  degree/moduli, never from the sender), one partial buffer per (party, level) per round, keccak
+  of the reassembled payload verified before use, equivocation (a second keccak for the same
+  (party, round, level)) is a hard `bail!` naming the party. Pinned by the corruption /
+  equivocation / oversize legs of `machine_network_relin_ceremony` and the net-layer envelope test
+  `relin_ceremony_document_envelope_is_validated_at_the_wire`. — `flow-trace/04` §CKKS
+- **Recovery through the ceremony**: the machine snapshot excludes chunk buffers (`serde(skip)` —
+  re-serializing ~100 MB per event filled disks live); received chunks are logged per chunk in
+  the `CeremonyChunkLog` repository (`//threshold_keyshare_ckks_ceremony/v1/{e3}/c/{round}/
+  {level}/{party}/{idx}`) and replayed into the rebuilt machine on `EffectsEnabled`, before the network
+  re-serves the rest. Pinned by `ckks_node_recovers_mid_ceremony_from_chunk_log` (actor) and the
+  snapshot/restore leg of `machine_network_relin_ceremony` (machine). — `CRATES_ARCHITECTURE.md`
+  replay section; `flow-trace/04` §CKKS
+- **`e_sm` is single-use**: the machine pins the keccak of the served ciphertext in `Decrypting`;
+  a second, different ciphertext is refused. — `flow-trace/04` §CKKS
+- **Timing instrumentation is machine-readable**: every DKG / ceremony / decrypt phase emits one
+  `tracing` event with target `ckks_timing` and `key=value` fields (`phase`, `t_ms`, `dt_ms`,
+  `dur_ms`, `level`, `bytes`, `count`); `scripts/ckks-timing-report.sh <log>` renders the table.
+  Keep the field names stable — the script depends on them.
+
 ### Proof binding / domain separation (audit-fix invariants — do not regress)
 
 - **PK domain binding (C-08):** `BfvPkVerifier.verify` checks

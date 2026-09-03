@@ -49,6 +49,10 @@ pub enum BfvPreset {
     /// a standard BFV key-pair to encrypt secret shares. These are temporary keys used
     /// only during the key generation process.
     InsecureDkg512,
+    /// Insecure WIDE DKG transport parameters (degree 512) - DO NOT USE IN
+    /// PRODUCTION. 46-bit plaintext modulus so CKKS ladders with up-to-45-bit
+    /// limbs (sign extraction) survive dealt-share transport.
+    InsecureDkgWide512,
     /// Secure threshold BFV parameters (degree 8192) - PRODUCTION READY
     ///
     /// Used for threshold encryption (GRECO) and threshold decryption operations.
@@ -70,6 +74,17 @@ impl BfvPreset {
         match value {
             0 => Some(BfvPreset::InsecureThreshold512),
             1 => Some(BfvPreset::SecureThreshold8192),
+            // CKKS sign-extraction ladder: SAME BFV encoding (and therefore
+            // the same on-chain crypto-config id) as ParamSet 0 — only the
+            // CKKS side differs (see `ckks_presets`). The DKG transport is
+            // escalated to `InsecureDkgWide512` by the keyshare layer when
+            // the CKKS moduli exceed the standard counterpart's plaintext
+            // modulus.
+            2 => Some(BfvPreset::InsecureThreshold512),
+            // CKKS statistics preset (relinearized sum-of-squares): SAME
+            // BFV encoding as ParamSet 0; its 3-limb CKKS moduli all fit
+            // the STANDARD `InsecureDkg512` transport, so no escalation.
+            3 => Some(BfvPreset::InsecureThreshold512),
             _ => None,
         }
     }
@@ -299,6 +314,7 @@ impl BfvPreset {
         match normalized.as_str() {
             "INSECURE_THRESHOLD_512" => Ok(Self::InsecureThreshold512),
             "INSECURE_DKG_512" => Ok(Self::InsecureDkg512),
+            "INSECURE_DKG_WIDE_512" => Ok(Self::InsecureDkgWide512),
             "SECURE_THRESHOLD_8192" => Ok(Self::SecureThreshold8192),
             "SECURE_DKG_8192" => Ok(Self::SecureDkg8192),
             _ => Err(PresetError::UnknownPreset(name.to_string())),
@@ -309,14 +325,20 @@ impl BfvPreset {
         match self {
             BfvPreset::InsecureThreshold512 => "INSECURE_THRESHOLD_512",
             BfvPreset::InsecureDkg512 => "INSECURE_DKG_512",
+            BfvPreset::InsecureDkgWide512 => "INSECURE_DKG_WIDE_512",
             BfvPreset::SecureThreshold8192 => "SECURE_THRESHOLD_8192",
             BfvPreset::SecureDkg8192 => "SECURE_DKG_8192",
         }
     }
 
-    /// Parses "insecure"|"secure" or λ (e.g. 2|80) into the threshold preset. Uses [`PAIR_PRESETS`] and [`PresetMetadata`].
+    /// Parses "insecure"|"secure" or λ (e.g. 2|80) into the threshold preset, or "wide" into the
+    /// WIDE DKG transport preset (`InsecureDkgWide512`, its own `(threshold, dkg)` pair). Uses
+    /// [`PAIR_PRESETS`] and [`PresetMetadata`].
     pub fn from_security_config_name(name: &str) -> Result<Self, PresetError> {
         let s = name.trim();
+        if s.eq_ignore_ascii_case("wide") || s.eq_ignore_ascii_case("insecure-dkg-wide-512") {
+            return Ok(BfvPreset::InsecureDkgWide512);
+        }
         if let Ok(lambda) = s.parse::<usize>() {
             return Self::PAIR_PRESETS
                 .iter()
@@ -362,11 +384,16 @@ impl BfvPreset {
     ///
     /// Used when you have a threshold preset (e.g. for encryption/decryption) and need
     /// the corresponding DKG parameters (e.g. for share encryption during key generation).
-    /// Returns `None` when called on a DKG preset.
+    /// Returns `None` when called on a DKG preset — except the WIDE transport, which is
+    /// its own DKG side: the DKG-circuit codegen (C0/C2/C3/C4) is keyed by the pair
+    /// `(threshold, dkg)` and the wide preset names that pair
+    /// (`build_pair_for_preset(InsecureDkgWide512)`), so the CKKS ladder's C0 circuit can be
+    /// generated at the wide shape.
     pub fn dkg_counterpart(self) -> Option<BfvPreset> {
         match self {
             BfvPreset::InsecureThreshold512 => Some(BfvPreset::InsecureDkg512),
             BfvPreset::SecureThreshold8192 => Some(BfvPreset::SecureDkg8192),
+            BfvPreset::InsecureDkgWide512 => Some(BfvPreset::InsecureDkgWide512),
             BfvPreset::InsecureDkg512 | BfvPreset::SecureDkg8192 => None,
         }
     }
@@ -379,6 +406,7 @@ impl BfvPreset {
     pub fn threshold_counterpart(self) -> Option<BfvPreset> {
         match self {
             BfvPreset::InsecureDkg512 => Some(BfvPreset::InsecureThreshold512),
+            BfvPreset::InsecureDkgWide512 => Some(BfvPreset::InsecureThreshold512),
             BfvPreset::SecureDkg8192 => Some(BfvPreset::SecureThreshold8192),
             BfvPreset::InsecureThreshold512 | BfvPreset::SecureThreshold8192 => None,
         }
@@ -399,6 +427,15 @@ impl BfvPreset {
                 name: self.name(),
                 degree: insecure_512::DEGREE,
                 num_moduli: insecure_512::dkg::MODULI.len(),
+                num_parties: insecure_512::NUM_PARTIES,
+                lambda: DEFAULT_INSECURE_LAMBDA,
+                parameter_type: ParameterType::DKG,
+                security: SecurityTier::INSECURE,
+            },
+            BfvPreset::InsecureDkgWide512 => PresetMetadata {
+                name: self.name(),
+                degree: insecure_512::DEGREE,
+                num_moduli: insecure_512::dkg_wide::MODULI.len(),
                 num_parties: insecure_512::NUM_PARTIES,
                 lambda: DEFAULT_INSECURE_LAMBDA,
                 parameter_type: ParameterType::DKG,
@@ -453,8 +490,14 @@ impl BfvPreset {
     }
 
     /// Returns the base directory name for circuit artifacts (e.g. `"insecure-512"`, `"secure-8192"`).
-    /// Threshold and DKG presets at the same degree share the same compiled circuits.
+    /// Threshold and DKG presets at the same degree share the same compiled circuits — except
+    /// the WIDE DKG transport, whose DKG-side circuits (C0/C3/C4) have a different shape
+    /// (2 × 52-bit limbs, 46-bit `t`) and are built by `pnpm build:circuits --preset
+    /// insecure-dkg-wide-512` into their own directory.
     pub fn artifacts_dir(&self) -> String {
+        if *self == BfvPreset::InsecureDkgWide512 {
+            return "insecure-dkg-wide-512".to_string();
+        }
         let meta = self.metadata();
         format!("{}-{}", meta.security.as_config_str(), meta.degree)
     }
@@ -485,6 +528,10 @@ impl BfvPreset {
                 b: B,
                 b_chi: B_CHI,
             }),
+            // The wide transport shares the insecure-512 threshold side (see
+            // `build_pair_for_preset`), so its smudging/search defaults are the
+            // threshold pair's — the DKG-circuit codegen at the wide shape needs them.
+            BfvPreset::InsecureDkgWide512 => BfvPreset::InsecureThreshold512.search_defaults(),
             _ => None,
         }
     }
@@ -508,6 +555,12 @@ impl From<BfvPreset> for BfvParamSet {
                 moduli: insecure_512::dkg::MODULI,
                 plaintext_modulus: insecure_512::dkg::PLAINTEXT_MODULUS,
                 error1_variance: Some(insecure_512::dkg::ERROR1_VARIANCE),
+            },
+            BfvPreset::InsecureDkgWide512 => BfvParamSet {
+                degree: insecure_512::DEGREE,
+                moduli: insecure_512::dkg_wide::MODULI,
+                plaintext_modulus: insecure_512::dkg_wide::PLAINTEXT_MODULUS,
+                error1_variance: Some(insecure_512::dkg_wide::ERROR1_VARIANCE),
             },
             BfvPreset::SecureThreshold8192 => BfvParamSet {
                 degree: secure_8192::DEGREE,
@@ -659,6 +712,27 @@ mod tests {
         // DKG presets don't have search defaults
         assert!(BfvPreset::InsecureDkg512.search_defaults().is_none());
         assert!(BfvPreset::SecureDkg8192.search_defaults().is_none());
+        // The wide transport codegens the DKG circuits against the insecure threshold side.
+        assert_eq!(
+            BfvPreset::InsecureDkgWide512.search_defaults().unwrap().z,
+            INSECURE_SEARCH_Z
+        );
+    }
+
+    #[test]
+    fn wide_transport_pair_and_artifacts_dir() {
+        let (threshold, dkg) = build_pair_for_preset(BfvPreset::InsecureDkgWide512).unwrap();
+        assert_eq!(threshold.moduli(), insecure_512::threshold::MODULI);
+        assert_eq!(dkg.moduli(), insecure_512::dkg_wide::MODULI);
+        assert_eq!(dkg.plaintext(), insecure_512::dkg_wide::PLAINTEXT_MODULUS);
+        assert_eq!(
+            BfvPreset::InsecureDkgWide512.dkg_counterpart(),
+            Some(BfvPreset::InsecureDkgWide512)
+        );
+        assert_eq!(
+            BfvPreset::InsecureDkgWide512.artifacts_dir(),
+            "insecure-dkg-wide-512"
+        );
     }
 
     #[test]

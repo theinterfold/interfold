@@ -4,9 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-// One-off: generate Prover.toml for the ckks ct0 bin circuit from real witnesses.
+// One-off: generate Prover.toml for the ckks ct0 AND ct1 bin circuits from
+// real witnesses (the codegen toml carries both legs' keys; nargo ignores
+// keys a circuit does not declare).
 fn main() {
-    use e3_zk_helpers::circuits::codegen::CircuitCodegen;
     let mut rng = rand::rng();
     let preset = e3_zk_helpers::threshold::user_data_encryption_ckks::insecure_512_ckks().unwrap();
     let sk = fhe::ckks::CkksSecretKey::random(&preset.params, &mut rng);
@@ -16,14 +17,30 @@ fn main() {
             public_key: pk,
             values: vec![42.5, -17.25, 99.99, 0.001, std::f64::consts::PI],
         };
-    let artifacts =
-        e3_zk_helpers::threshold::user_data_encryption_ckks::UserDataEncryptionCkksCircuit
-            .codegen(preset, &data)
+    // ONE compute: encryption randomness must match between the witness
+    // toml and the persisted ciphertext (a second compute re-encrypts).
+    use e3_zk_helpers::circuits::computation::Computation;
+    let inputs =
+        e3_zk_helpers::threshold::user_data_encryption_ckks::Inputs::compute(preset, &data)
             .unwrap();
+    std::fs::write("/tmp/greco-ciphertext-v2.bin", &inputs.ciphertext).unwrap();
+    let toml = e3_zk_helpers::threshold::user_data_encryption_ckks::generate_toml(inputs).unwrap();
+    let artifacts = e3_zk_helpers::circuits::codegen::Artifacts {
+        toml,
+        configs: String::new(),
+    };
     std::fs::write(
         "circuits/bin/threshold/user_data_encryption_ckks_ct0/Prover.toml",
         &artifacts.toml,
     )
     .unwrap();
-    println!("Prover.toml written ({} bytes)", artifacts.toml.len());
+    std::fs::write(
+        "circuits/bin/threshold/user_data_encryption_ckks_ct1/Prover.toml",
+        &artifacts.toml,
+    )
+    .unwrap();
+    println!(
+        "Prover.toml written for ct0 + ct1 ({} bytes each)",
+        artifacts.toml.len()
+    );
 }

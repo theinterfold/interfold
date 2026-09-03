@@ -17,6 +17,7 @@ e3-fhe-params = { workspace = true }
 fhe = { workspace = true }
 fhe-math = { workspace = true }
 fhe-traits = { workspace = true }
+fhe-util = { workspace = true }
 hex = { workspace = true }
 num-bigint = { workspace = true }
 num-integer = { workspace = true }
@@ -30,6 +31,12 @@ toml = { workspace = true }
 itertools = "0.14.0"
 ndarray = { workspace = true }
 e3-parity-matrix = { workspace = true }
+# Circom-compatible Poseidon for the auction balance tree (matches the Noir
+# `poseidon::bn254::hash_2` the app circuit uses). light-poseidon 0.2 is
+# pinned to arkworks 0.4, so it gets its own renamed ark crates.
+light-poseidon = "=0.2.0"
+ark-bn254-04 = { package = "ark-bn254", version = "=0.4.0" }
+ark-ff-04 = { package = "ark-ff", version = "=0.4.2" }
 
 [dev-dependencies]
 tempfile = { workspace = true }

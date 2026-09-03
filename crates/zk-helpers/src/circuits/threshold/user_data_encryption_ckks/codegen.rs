@@ -47,6 +47,8 @@ pub fn generate_configs(preset: &CkksPreset, configs: &Configs) -> CodegenConfig
     let r1_low_bounds_str = join_display(&configs.bounds.r1_low_bounds, ", ");
     let r1_up_bounds_str = join_display(&configs.bounds.r1_up_bounds, ", ");
     let r2_bounds_str = join_display(&configs.bounds.r2_bounds, ", ");
+    let p1_bounds_str = join_display(&configs.bounds.p1_bounds, ", ");
+    let p2_bounds_str = join_display(&configs.bounds.p2_bounds, ", ");
 
     format!(
         r#"// SPDX-License-Identifier: LGPL-3.0-only
@@ -61,6 +63,7 @@ pub fn generate_configs(preset: &CkksPreset, configs: &Configs) -> CodegenConfig
 // CKKS dev preset: N={}, L={}, scale=2^{}, input_bound={}.
 
 use crate::core::threshold::user_data_encryption_ckks_ct0::Configs as UserDataEncryptionCkksCt0Configs;
+use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
 
 // Global configs for the CKKS User Data Encryption circuit
 pub global CKKS_N: u32 = {};
@@ -74,6 +77,9 @@ pub global {}_BIT_E0: u32 = {};
 pub global {}_BIT_M: u32 = {};
 pub global {}_BIT_R1: u32 = {};
 pub global {}_BIT_R2: u32 = {};
+pub global {}_BIT_E1: u32 = {};
+pub global {}_BIT_P1: u32 = {};
+pub global {}_BIT_P2: u32 = {};
 
 pub global {}_E0_BOUND: Field = {};
 pub global {}_U_BOUND: Field = {};
@@ -81,6 +87,9 @@ pub global {}_M_BOUND: Field = {};
 pub global {}_R1_LOW_BOUNDS: [Field; CKKS_L] = [{}];
 pub global {}_R1_UP_BOUNDS: [Field; CKKS_L] = [{}];
 pub global {}_R2_BOUNDS: [Field; CKKS_L] = [{}];
+pub global {}_E1_BOUND: Field = {};
+pub global {}_P1_BOUNDS: [Field; CKKS_L] = [{}];
+pub global {}_P2_BOUNDS: [Field; CKKS_L] = [{}];
 
 pub global {}_CT0_CONFIGS: UserDataEncryptionCkksCt0Configs<CKKS_N, CKKS_L>
      = UserDataEncryptionCkksCt0Configs::new(
@@ -92,6 +101,16 @@ pub global {}_CT0_CONFIGS: UserDataEncryptionCkksCt0Configs<CKKS_N, CKKS_L>
         {}_R1_UP_BOUNDS,
         {}_R2_BOUNDS,
     );
+
+// ct1 leg (P3-style): ct1 = pk1*u + e1. Reuses the scheme-generic
+// `UserDataEncryptionCt1` core with CKKS moduli and bounds.
+pub global {}_CT1_CONFIGS: UserDataEncryptionCt1Configs<CKKS_N, CKKS_L> = UserDataEncryptionCt1Configs::new(
+    CKKS_QIS,
+    {}_E1_BOUND,
+    {}_U_BOUND,
+    {}_P1_BOUNDS,
+    {}_P2_BOUNDS,
+);
 "#,
         configs.n,
         configs.l,
@@ -115,6 +134,12 @@ pub global {}_CT0_CONFIGS: UserDataEncryptionCkksCt0Configs<CKKS_N, CKKS_L>
         prefix,
         configs.bits.r2_bit,
         prefix,
+        configs.bits.e1_bit,
+        prefix,
+        configs.bits.p1_bit,
+        prefix,
+        configs.bits.p2_bit,
+        prefix,
         configs.bounds.e0_bound,
         prefix,
         configs.bounds.u_bound,
@@ -126,6 +151,17 @@ pub global {}_CT0_CONFIGS: UserDataEncryptionCkksCt0Configs<CKKS_N, CKKS_L>
         r1_up_bounds_str,
         prefix,
         r2_bounds_str,
+        prefix,
+        configs.bounds.e1_bound,
+        prefix,
+        p1_bounds_str,
+        prefix,
+        p2_bounds_str,
+        prefix,
+        prefix,
+        prefix,
+        prefix,
+        prefix,
         prefix,
         prefix,
         prefix,
@@ -159,19 +195,7 @@ mod tests {
             .unwrap();
 
         let parsed: toml::Value = artifacts.toml.parse().unwrap();
-        for key in [
-            "pk0is",
-            "ct0is",
-            "u",
-            "e0",
-            "e0is",
-            "e0_quotients",
-            "m",
-            "mis",
-            "m_quotients",
-            "r1is",
-            "r2is",
-        ] {
+        for key in ["pk0is", "ct0is", "u", "e0", "m", "r1is", "r2is"] {
             assert!(
                 parsed.get(key).is_some(),
                 "missing key {key} in Prover.toml"

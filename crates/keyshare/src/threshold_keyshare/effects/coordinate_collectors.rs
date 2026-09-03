@@ -194,6 +194,21 @@ impl ThresholdKeyshare {
         self_addr: Addr<Self>,
     ) -> Result<()> {
         let state = self.state.try_get()?;
+        // CKKS branch: the machine consumes EVERY member's broadcast (the
+        // dealt rows are per-recipient encrypted, so no target filter).
+        if state.scheme == crate::E3Scheme::Ckks {
+            // Record BEFORE processing: restart replay feeds these back.
+            self.record_threshold_share(&msg)?;
+            let (msg, ec) = msg.into_components();
+            if state.expelled_parties.contains(&msg.share.party_id) {
+                info!(
+                    "Dropping CKKS ThresholdShareCreated from expelled party {}",
+                    msg.share.party_id
+                );
+                return Ok(());
+            }
+            return self.ckks_handle_threshold_share(msg.share, ec);
+        }
         if !matches!(
             state.state,
             KeyshareState::CollectingEncryptionKeys(_)
@@ -242,6 +257,21 @@ impl ThresholdKeyshare {
         self_addr: Addr<Self>,
     ) -> Result<()> {
         let state = self.state.try_get()?;
+        // CKKS branch: feed the machine directly (no collector actor —
+        // the machine does its own counting and idempotency).
+        if state.scheme == crate::E3Scheme::Ckks {
+            // Record BEFORE processing: restart replay feeds these back.
+            self.record_encryption_key(&msg)?;
+            let (msg, ec) = msg.into_components();
+            if state.expelled_parties.contains(&msg.key.party_id) {
+                info!(
+                    "Dropping CKKS EncryptionKeyCreated from expelled party {}",
+                    msg.key.party_id
+                );
+                return Ok(());
+            }
+            return self.ckks_handle_encryption_key(&msg.key, ec);
+        }
         if !matches!(
             state.state,
             KeyshareState::Init | KeyshareState::CollectingEncryptionKeys(_)

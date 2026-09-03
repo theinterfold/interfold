@@ -1,0 +1,7 @@
+[package]
+name = "ckks_auction_validity_ps2"
+type = "bin"
+authors = [""]
+
+[dependencies]
+lib = { path = "../../../lib" }

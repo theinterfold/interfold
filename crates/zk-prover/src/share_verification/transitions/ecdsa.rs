@@ -69,6 +69,15 @@ impl ShareVerifier {
                         signed.payload.proof_type == ProofType::C6ThresholdShareDecryption
                     })
             }
+            VerificationKind::RelinRound1Proofs => {
+                // One C8 proof per gadget digit; the exact count (`dnum`)
+                // and the digit bindings are checked by the CKKS keyshare
+                // machine against the E3's own params.
+                !signed_proofs.is_empty()
+                    && signed_proofs
+                        .iter()
+                        .all(|signed| signed.payload.proof_type == ProofType::C8RelinRound1)
+            }
         }
     }
 

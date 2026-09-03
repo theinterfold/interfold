@@ -65,10 +65,27 @@ impl E3RequestedWithChainId {
             )
         })?;
 
-        // Build BFV parameters from the preset
+        // Program-bound scheme: resolve BEFORE params encoding, because a
+        // CKKS E3 carries protobuf CKKS params in `E3Requested.params`
+        // while BFV keeps the ABI encoding (program address => protocol).
+        let scheme = scheme_from_id(self.0.e3.encryptionSchemeId)?;
+
+        // Build BFV parameters from the preset. The crypto-config binding
+        // stays keyed to the BFV encoding for BOTH schemes: the on-chain
+        // `ActiveCryptoConfig.CONFIG_ID` is derived from the active BFV
+        // param set, and the CKKS preset is paired to the same ParamSet
+        // enum value (its DKG transport runs over these BFV params).
         let params_arc = BfvParamSet::from(params_preset).build_arc();
-        let params_bytes = encode_bfv_params(&params_arc);
-        let expected_config_id = crypto_config_id(&params_bytes);
+        let bfv_params_bytes = encode_bfv_params(&params_arc);
+        let params_bytes = match scheme {
+            e3_events::E3Scheme::Bfv => bfv_params_bytes.clone(),
+            e3_events::E3Scheme::Ckks => {
+                use fhe_traits::Serialize as _;
+                e3_fhe_params::ckks_presets::ckks_params_for_on_chain_param_set(param_set_value)?
+                    .to_bytes()
+            }
+        };
+        let expected_config_id = crypto_config_id(&bfv_params_bytes);
         if self.0.cryptoConfigId != expected_config_id {
             anyhow::bail!(
                 "Unsupported crypto configuration {} for E3 {}; this ciphernode was built for {}",
@@ -114,7 +131,28 @@ impl E3RequestedWithChainId {
             request_block: self.0.e3.requestBlock.to(),
             error_size,
             e3_id: E3id::new(self.0.e3Id.to_string(), self.1),
+            scheme,
         })
+    }
+}
+
+/// Map the on-chain `encryptionSchemeId` (bytes32) to the node's scheme
+/// enum. `B256::ZERO` is accepted as BFV for pre-scheme-id deployments
+/// (mock/test fixtures emit it). An UNKNOWN id is a hard error: the node
+/// must not guess a scheme and participate wrongly.
+fn scheme_from_id(id: alloy::primitives::B256) -> anyhow::Result<e3_events::E3Scheme> {
+    use alloy::primitives::keccak256;
+    if id == alloy::primitives::B256::ZERO
+        || id == keccak256(e3_events::E3Scheme::Bfv.scheme_id_preimage())
+    {
+        Ok(e3_events::E3Scheme::Bfv)
+    } else if id == keccak256(e3_events::E3Scheme::Ckks.scheme_id_preimage()) {
+        Ok(e3_events::E3Scheme::Ckks)
+    } else {
+        anyhow::bail!(
+            "Unknown encryptionSchemeId {id} — this node does not support the E3 program's \
+             scheme (version skew?); refusing to participate."
+        )
     }
 }
 

@@ -31,6 +31,9 @@ pub struct E3Meta {
     pub params_preset: BfvPreset,
     pub params: ArcBytes,
     pub error_size: ArcBytes,
+    /// FHE scheme bound by the E3 program on-chain.
+    #[serde(default)]
+    pub scheme: e3_events::E3Scheme,
 }
 
 pub struct E3MetaExtension;
@@ -66,6 +69,7 @@ impl E3Extension for E3MetaExtension {
             params_preset,
             params,
             error_size,
+            scheme,
             ..
         } = data.clone();
 
@@ -77,6 +81,7 @@ impl E3Extension for E3MetaExtension {
             params_preset,
             params,
             error_size,
+            scheme,
         };
         ctx.repositories().meta(&e3_id).write(&meta);
         ctx.set_dependency(META_KEY, meta);

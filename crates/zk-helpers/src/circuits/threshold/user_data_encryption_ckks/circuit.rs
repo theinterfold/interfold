@@ -49,14 +49,46 @@ pub struct UserDataEncryptionCkksCircuitData {
 /// degree and sizes, so this preset is reproducible across builds — which the
 /// regenerate-and-diff codegen guard relies on.
 pub fn insecure_512_ckks() -> Result<CkksPreset, crate::CircuitsErrors> {
-    let params = fhe::ckks::CkksParametersBuilder::new()
-        .set_degree(512)
-        .set_moduli_sizes(&[36, 36])
-        .set_scale(2f64.powi(26))
-        .build_arc()
+    // Canonical insecure-512 CKKS params from e3-fhe-params: EXACT moduli
+    // (not size-derived) so circuit constants match the runtime and the
+    // DKG transport bound (q_i <= t_dkg). Size-derived moduli drifted from
+    // the runtime's and violated the transport bound.
+    let params = e3_fhe_params::ckks_presets::ckks_params_for_on_chain_param_set(0)
         .map_err(|e| crate::CircuitsErrors::Other(e.to_string()))?;
     Ok(CkksPreset {
         params,
         input_bound: 100.0,
+    })
+}
+
+/// The Greco preset for an on-chain `ParamSet` value, pairing the
+/// canonical CKKS parameters with the application-level input bound `B`
+/// the circuit's message bound derives from (`m_bound = ceil(delta*B)+1`).
+///
+/// * `0` — dev insecure-512 preset (`B = 100`, matches [`insecure_512_ckks`]).
+/// * `2` — auction sign-extraction ladder. The demo encrypts RAW bids up
+///   to the public bid cap (1000), so `B = 1000`.
+/// * `3` — statistics preset. The survey encrypts CAP-NORMALIZED salaries
+///   (`salary / cap <= 1`), so `B = 1`.
+///
+/// Every participant and every verifier must derive the SAME bound from
+/// the param set — it is baked into the circuit configs (codegen) and the
+/// on-chain verifier VKs.
+pub fn ckks_preset_for_param_set(param_set: u8) -> Result<CkksPreset, crate::CircuitsErrors> {
+    let input_bound = match param_set {
+        0 => 100.0,
+        2 => 1000.0,
+        3 => 1.0,
+        other => {
+            return Err(crate::CircuitsErrors::Other(format!(
+                "no Greco CKKS preset for on-chain ParamSet {other}"
+            )))
+        }
+    };
+    let params = e3_fhe_params::ckks_presets::ckks_params_for_on_chain_param_set(param_set)
+        .map_err(|e| crate::CircuitsErrors::Other(e.to_string()))?;
+    Ok(CkksPreset {
+        params,
+        input_bound,
     })
 }

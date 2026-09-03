@@ -25,14 +25,17 @@ use e3_events::{
     prelude::*, CiphernodeSelected, CiphertextOutputPublished, E3id, EventContext, Sequenced,
 };
 use e3_events::{BusHandle, EType, InterfoldEvent, InterfoldEventData};
+use e3_fhe::ckks_runtime::CkksFhe;
 use e3_fhe::ext::FHE_KEY;
 use e3_keyshare::ThresholdKeyshareRepositoryFactory;
 use e3_request::{
-    E3Context, E3ContextSnapshot, E3Extension, TypedKey, DKG_FOLD_ATTESTATION_CONTEXT_KEY, META_KEY,
+    E3Context, E3ContextSnapshot, E3Extension, E3Meta, TypedKey, DKG_FOLD_ATTESTATION_CONTEXT_KEY,
+    META_KEY,
 };
 use e3_sortition::Sortition;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::collections::{BTreeSet, HashMap};
+use std::sync::Arc;
 
 /// Full finalized committee (`PublicKeyAggregated.committee_addresses`, length `N`)
 /// for `committee_hash_*` binding in downstream ZK requests.
@@ -79,11 +82,25 @@ impl E3Extension for AggregatorRoleExtension {
 
 pub struct PublicKeyAggregatorExtension {
     bus: BusHandle,
+    /// ZK backend circuits directory for the fail-closed CKKS artifact gate
+    /// at aggregator construction (`None` = no backend; check skipped).
+    zk_circuits_dir: Option<std::path::PathBuf>,
 }
 
 impl PublicKeyAggregatorExtension {
     pub fn create(bus: &BusHandle) -> Box<Self> {
-        Box::new(Self { bus: bus.clone() })
+        Self::create_with_circuits(bus, None)
+    }
+
+    /// [`Self::create`] with the ZK backend's circuits directory.
+    pub fn create_with_circuits(
+        bus: &BusHandle,
+        zk_circuits_dir: Option<std::path::PathBuf>,
+    ) -> Box<Self> {
+        Box::new(Self {
+            bus: bus.clone(),
+            zk_circuits_dir,
+        })
     }
 }
 
@@ -102,13 +119,6 @@ impl E3Extension for PublicKeyAggregatorExtension {
             return;
         }
 
-        let Some(fhe) = ctx.get_dependency(FHE_KEY).cloned() else {
-            self.bus.err(
-                EType::PublickeyAggregation,
-                anyhow!(ERROR_PUBKEY_FHE_MISSING),
-            );
-            return;
-        };
         let CiphernodeSelected {
             e3_id,
             threshold_n,
@@ -116,8 +126,36 @@ impl E3Extension for PublicKeyAggregatorExtension {
             seed,
             params_preset,
             committee,
+            scheme,
             ..
         } = data.clone();
+        // Scheme is bound on-chain by the E3 program (program address =>
+        // protocol). BFV E3s require the BFV runtime; CKKS E3s build the
+        // CKKS runtime from the event's params + public seed instead.
+        let (fhe, ckks) = match scheme {
+            e3_events::E3Scheme::Bfv => {
+                let Some(fhe) = ctx.get_dependency(FHE_KEY).cloned() else {
+                    self.bus.err(
+                        EType::PublickeyAggregation,
+                        anyhow!(ERROR_PUBKEY_FHE_MISSING),
+                    );
+                    return;
+                };
+                (Some(fhe), None)
+            }
+            e3_events::E3Scheme::Ckks => {
+                match build_ckks_runtime_for_aggregator(data, self.zk_circuits_dir.as_deref()) {
+                    Ok(ckks) => (None, Some(Arc::new(ckks))),
+                    Err(e) => {
+                        self.bus.err(
+                            EType::PublickeyAggregation,
+                            anyhow!("Failed to build CKKS runtime for E3 {}: {e}", data.e3_id),
+                        );
+                        return;
+                    }
+                }
+            }
+        };
         let dkg_fold_attestation_context = ctx
             .get_dependency(DKG_FOLD_ATTESTATION_CONTEXT_KEY)
             .copied();
@@ -168,6 +206,7 @@ impl E3Extension for PublicKeyAggregatorExtension {
         let value = create_publickey_aggregator(
             PublicKeyAggregatorParams {
                 fhe,
+                ckks,
                 bus: self.bus.clone(),
                 e3_id,
                 params_preset,
@@ -219,14 +258,6 @@ impl E3Extension for PublicKeyAggregatorExtension {
         );
 
         // Get deps
-        let Some(fhe) = ctx.get_dependency(FHE_KEY) else {
-            self.bus.err(
-                EType::PublickeyAggregation,
-                anyhow!(ERROR_PUBKEY_FHE_MISSING),
-            );
-
-            return Ok(());
-        };
         let Some(meta) = ctx.get_dependency(META_KEY) else {
             self.bus.err(
                 EType::PublickeyAggregation,
@@ -245,9 +276,27 @@ impl E3Extension for PublicKeyAggregatorExtension {
                     )
                 },
             )?;
+        // Scheme-aware runtime rebuild (program-bound scheme from E3Meta).
+        let (fhe, ckks) = match meta.scheme {
+            e3_events::E3Scheme::Bfv => {
+                let Some(fhe) = ctx.get_dependency(FHE_KEY) else {
+                    self.bus.err(
+                        EType::PublickeyAggregation,
+                        anyhow!(ERROR_PUBKEY_FHE_MISSING),
+                    );
+                    return Ok(());
+                };
+                (Some(fhe.clone()), None)
+            }
+            e3_events::E3Scheme::Ckks => {
+                let ckks = build_ckks_runtime_from_meta(meta, ctx.e3_id.clone())?;
+                (None, Some(Arc::new(ckks)))
+            }
+        };
         let value = create_publickey_aggregator(
             PublicKeyAggregatorParams {
-                fhe: fhe.clone(),
+                fhe,
+                ckks,
                 bus: self.bus.clone(),
                 e3_id: ctx.e3_id.clone(),
                 params_preset: meta.params_preset,
@@ -267,6 +316,66 @@ impl E3Extension for PublicKeyAggregatorExtension {
 
         Ok(())
     }
+}
+
+/// Build the CKKS pk-aggregation runtime from a `CiphernodeSelected` event.
+///
+/// The aggregator only AGGREGATES public bytes (share-sum over the same
+/// CRP); it never samples secrets, so the rng is entropy-seeded purely to
+/// satisfy the constructor. The CRP derives from the E3's public seed —
+/// the same derivation every keyshare node uses in `ckks_shell.rs`.
+fn build_ckks_runtime_for_aggregator(
+    data: &CiphernodeSelected,
+    zk_circuits_dir: Option<&std::path::Path>,
+) -> Result<CkksFhe> {
+    // FAIL CLOSED at aggregator construction: every artifact the E3's
+    // proof posture needs (C1/C6/C7 per param set, C0 wide, C8 digit)
+    // must be staged; a missing one refuses the E3 naming it.
+    let posture = e3_zk_prover::ckks_artifacts::check_ckks_artifacts_for_e3(
+        zk_circuits_dir,
+        data.params_preset,
+        &data.params,
+        data.threshold_m,
+        data.threshold_n,
+    )
+    .map_err(|e| anyhow!("CKKS E3 {} refused by the aggregator: {e}", data.e3_id))?;
+    tracing::info!(
+        e3_id = %data.e3_id,
+        "CKKS proof posture (aggregator): {}",
+        posture.summary()
+    );
+    build_ckks_runtime(
+        &data.params,
+        data.seed.into(),
+        data.threshold_n,
+        data.threshold_m,
+    )
+}
+
+/// Rebuild the CKKS runtime on hydrate from persisted `E3Meta`.
+fn build_ckks_runtime_from_meta(meta: &E3Meta, e3_id: E3id) -> Result<CkksFhe> {
+    build_ckks_runtime(
+        &meta.params,
+        meta.seed.into(),
+        meta.threshold_n,
+        meta.threshold_m,
+    )
+    .map_err(|e| anyhow!("Failed to rebuild CKKS runtime for E3 {e3_id}: {e}"))
+}
+
+fn build_ckks_runtime(
+    params: &[u8],
+    crp_seed: [u8; 32],
+    n_parties: usize,
+    threshold: usize,
+) -> Result<CkksFhe> {
+    let mut entropy = [0u8; 32];
+    rand_core::TryRngCore::try_fill_bytes(&mut rand::rngs::OsRng, &mut entropy)
+        .map_err(|e| anyhow!("OS entropy unavailable: {e}"))?;
+    let rng = std::sync::Arc::new(std::sync::Mutex::new(
+        <rand_chacha::ChaCha20Rng as rand::SeedableRng>::from_seed(entropy),
+    ));
+    CkksFhe::from_encoded(params, crp_seed, n_parties, threshold, rng)
 }
 
 fn create_publickey_aggregator(
@@ -364,6 +473,7 @@ impl ThresholdPlaintextAggregatorExtension {
             Some(create_decryptionshare_buffer(
                 ThresholdPlaintextAggregator::new(
                     ThresholdPlaintextAggregatorParams {
+                        scheme: meta.scheme,
                         bus: self.bus.clone(),
                         sortition: self.sortition.clone(),
                         e3_id: e3_id.clone(),
@@ -738,6 +848,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
 
         let value = ThresholdPlaintextAggregator::new(
             ThresholdPlaintextAggregatorParams {
+                scheme: meta.scheme,
                 bus: self.bus.clone(),
                 sortition: self.sortition.clone(),
                 e3_id: ctx.e3_id.clone(),
@@ -905,6 +1016,7 @@ mod tests {
                 params_preset: BfvPreset::InsecureThreshold512,
                 params: ArcBytes::from_bytes(&[]),
                 error_size: ArcBytes::from_bytes(&[]),
+                scheme: Default::default(),
             },
         );
 

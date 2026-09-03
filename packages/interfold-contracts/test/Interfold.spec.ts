@@ -223,8 +223,15 @@ describe("Interfold", function () {
       await expect(interfold.setParamSet(1, BFV_PARAMS_SECURE))
         .to.emit(interfold, "ParamSetRegistered")
         .withArgs(1, BFV_PARAMS_SECURE);
+      // 2..5 are the CKKS demo sets (admitted on local/testnet chains, on the
+      // insecure BFV bytes); 6 is the first value nothing claims.
       await expect(
-        interfold.setParamSet(2, BFV_PARAMS_DEFAULT),
+        interfold.setParamSet(6, BFV_PARAMS_DEFAULT),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+      // A CKKS demo set with the SECURE bytes is rejected: they ride on the
+      // insecure BFV parameters only.
+      await expect(
+        interfold.setParamSet(2, BFV_PARAMS_SECURE),
       ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
     });
 

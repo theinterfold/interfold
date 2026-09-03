@@ -22,7 +22,7 @@ pub use encryption_key_collector::{
     AllEncryptionKeysCollected, EncryptionKeyCollector, ExpelPartyFromKeyCollection,
 };
 pub use threshold_keyshare::{
-    AllThresholdSharesCollected, GenEsiSss, GenPkShareAndSkSss, ThresholdKeyshare,
-    ThresholdKeyshareParams, ThresholdKeyshareRecoveryState,
+    AllThresholdSharesCollected, CkksCeremonyRecovery, GenEsiSss, GenPkShareAndSkSss,
+    ThresholdKeyshare, ThresholdKeyshareParams, ThresholdKeyshareRecoveryState,
     THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
 };

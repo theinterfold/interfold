@@ -1,0 +1,8 @@
+[package]
+name = "user_data_encryption_ckks_ct1_ps2"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+
+[dependencies]
+lib = { path = "../../../lib" }

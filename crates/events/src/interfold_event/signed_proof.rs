@@ -49,6 +49,9 @@ pub enum ProofType {
     C6ThresholdShareDecryption = 9,
     /// C7 — Decrypted shares aggregation proof (Proof 7).
     C7DecryptedSharesAggregation = 10,
+    /// C8 — CKKS hybrid relin-ceremony round-1 share proof, one per gadget
+    /// digit (APPEND-ONLY: the discriminant is signed into every payload).
+    C8RelinRound1 = 11,
 }
 
 impl ProofType {
@@ -56,19 +59,36 @@ impl ProofType {
     pub fn circuit_names(&self) -> Vec<CircuitName> {
         match self {
             ProofType::C0PkBfv => vec![CircuitName::PkBfv],
-            ProofType::C1PkGeneration => vec![CircuitName::PkGeneration],
-            ProofType::C2aSkShareComputation => vec![CircuitName::SkShareComputation],
-            ProofType::C2bESmShareComputation => vec![CircuitName::ESmShareComputation],
+            ProofType::C1PkGeneration => {
+                let mut names = vec![CircuitName::PkGeneration];
+                names.extend(CircuitName::all_pk_generation_ckks());
+                names
+            }
+            ProofType::C2aSkShareComputation => vec![
+                CircuitName::SkShareComputation,
+                CircuitName::SkShareComputationCkks,
+            ],
+            ProofType::C2bESmShareComputation => vec![
+                CircuitName::ESmShareComputation,
+                CircuitName::ESmShareComputationCkks,
+            ],
             ProofType::C3aSkShareEncryption => vec![CircuitName::ShareEncryption],
             ProofType::C3bESmShareEncryption => vec![CircuitName::ShareEncryption],
             ProofType::C4aSkShareDecryption | ProofType::C4bESmShareDecryption => {
                 vec![CircuitName::DkgShareDecryption]
             }
-            ProofType::C6ThresholdShareDecryption => vec![CircuitName::ThresholdShareDecryption],
+            ProofType::C6ThresholdShareDecryption => {
+                let mut names = vec![CircuitName::ThresholdShareDecryption];
+                names.extend(CircuitName::all_share_decryption_ckks());
+                names
+            }
             ProofType::C7DecryptedSharesAggregation => {
-                vec![CircuitName::DecryptedSharesAggregation]
+                let mut names = vec![CircuitName::DecryptedSharesAggregation];
+                names.extend(CircuitName::all_decrypted_shares_aggregation_ckks());
+                names
             }
             ProofType::C5PkAggregation => vec![CircuitName::PkAggregation],
+            ProofType::C8RelinRound1 => vec![CircuitName::RelinRound1HybridCkksDigit],
         }
     }
 
@@ -86,6 +106,7 @@ impl ProofType {
             ProofType::C6ThresholdShareDecryption => "E3_BAD_DECRYPTION_PROOF",
             ProofType::C7DecryptedSharesAggregation => "E3_BAD_AGGREGATION_PROOF",
             ProofType::C5PkAggregation => "E3_BAD_PK_AGGREGATION_PROOF",
+            ProofType::C8RelinRound1 => "E3_BAD_RELIN_CEREMONY_PROOF",
         }
     }
 
@@ -390,7 +411,12 @@ mod tests {
         assert_eq!(ProofType::C0PkBfv.circuit_names(), vec![CircuitName::PkBfv]);
         assert_eq!(
             ProofType::C1PkGeneration.circuit_names(),
-            vec![CircuitName::PkGeneration]
+            vec![
+                CircuitName::PkGeneration,
+                CircuitName::PkGenerationCkksPs0,
+                CircuitName::PkGenerationCkksPs2,
+                CircuitName::PkGenerationCkksPs3,
+            ]
         );
         assert_eq!(
             ProofType::C3aSkShareEncryption.circuit_names(),
@@ -408,21 +434,62 @@ mod tests {
             ProofType::C4bESmShareDecryption.circuit_names(),
             vec![CircuitName::DkgShareDecryption]
         );
+        // Scheme-agnostic ProofTypes accept either scheme's circuit; the
+        // verifier pins the actual artifact.
         assert_eq!(
             ProofType::C2aSkShareComputation.circuit_names(),
-            vec![CircuitName::SkShareComputation]
+            vec![
+                CircuitName::SkShareComputation,
+                CircuitName::SkShareComputationCkks
+            ]
         );
         assert_eq!(
             ProofType::C2bESmShareComputation.circuit_names(),
-            vec![CircuitName::ESmShareComputation]
+            vec![
+                CircuitName::ESmShareComputation,
+                CircuitName::ESmShareComputationCkks
+            ]
         );
         assert_eq!(
             ProofType::C6ThresholdShareDecryption.circuit_names(),
-            vec![CircuitName::ThresholdShareDecryption]
+            vec![
+                CircuitName::ThresholdShareDecryption,
+                CircuitName::ThresholdShareDecryptionCkks,
+                CircuitName::ShareDecryptionCkksPs2,
+                CircuitName::ShareDecryptionCkksPs3,
+            ]
         );
         assert_eq!(
             ProofType::C7DecryptedSharesAggregation.circuit_names(),
-            vec![CircuitName::DecryptedSharesAggregation]
+            vec![
+                CircuitName::DecryptedSharesAggregation,
+                CircuitName::DecryptedSharesAggregationCkks,
+                CircuitName::DecryptedSharesAggregationCkksPs2,
+                CircuitName::DecryptedSharesAggregationCkksPs3,
+            ]
         );
+        assert_eq!(
+            ProofType::C8RelinRound1.circuit_names(),
+            vec![CircuitName::RelinRound1HybridCkksDigit]
+        );
+        // Per-param-set resolution is total over the known CKKS sets and
+        // fails closed on anything else.
+        for set in [0u8, 2, 3] {
+            assert!(CircuitName::pk_generation_ckks(set).is_some());
+            assert!(CircuitName::share_decryption_ckks(set).is_some());
+            assert!(CircuitName::decrypted_shares_aggregation_ckks(set).is_some());
+        }
+        assert!(CircuitName::pk_generation_ckks(1).is_none());
+        assert!(CircuitName::share_decryption_ckks(7).is_none());
+        assert_eq!(
+            CircuitName::share_decryption_ckks(2).unwrap().as_str(),
+            "share_decryption_ckks_ps2"
+        );
+        assert_eq!(
+            CircuitName::RelinRound1HybridCkksDigit.as_str(),
+            "relin_round1_hybrid_ckks_digit"
+        );
+        // C8 discriminant is stable (signed into every payload).
+        assert_eq!(ProofType::C8RelinRound1 as u8, 11);
     }
 }

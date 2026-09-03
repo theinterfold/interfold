@@ -9,6 +9,7 @@
 use super::*;
 
 mod aggregation_proofs;
+mod ckks_proofs;
 mod decryption_key_proofs;
 mod decryption_share_proofs;
 mod dkg_proofs;

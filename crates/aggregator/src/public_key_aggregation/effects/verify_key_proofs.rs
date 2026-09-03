@@ -38,6 +38,27 @@ impl PublicKeyAggregator {
         c1_proofs: &[Option<SignedProofPayload>],
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
+        // CKKS E3s go through the SAME C1 round (the rogue-key gate): the
+        // verifier resolves `pk_generation_ckks_ps<N>` from the proof's
+        // circuit name, and `handle_c1_verification_complete` runs the
+        // CKKS commitment twin before summing honest shares. The ONLY
+        // proof-free path is the explicit operator off-switch
+        // (`CkksProofPosture::c1`), decided from the E3's own params.
+        if self.ckks.is_some() && self.ckks_c1_proof_free() {
+            let no_proofs = c1_proofs.iter().all(|p| p.is_none());
+            if !no_proofs {
+                warn!(
+                    e3_id = %self.e3_id,
+                    "CKKS pk shares carry C1 proofs under the proof-free off-switch — ignoring them"
+                );
+            }
+            info!(
+                e3_id = %self.e3_id,
+                "CKKS pk shares aggregated proof-free (explicit operator off-switch)"
+            );
+            return self.ckks_aggregate_and_publish(ec, std::collections::BTreeSet::new());
+        }
+
         let C1Dispatch {
             party_proofs,
             no_proof_parties,
@@ -58,6 +79,24 @@ impl PublicKeyAggregator {
         }
 
         if party_proofs.is_empty() {
+            if self.ckks.is_some() {
+                // Every party is already dishonest (no proof at all): the
+                // completion handler fails the E3 attributably instead of
+                // stalling in VerifyingC1.
+                warn!(
+                    e3_id = %self.e3_id,
+                    "No CKKS pk share carries a C1-CKKS proof — failing the E3 (rogue-key gate)"
+                );
+                self.bus.publish(
+                    E3Failed {
+                        e3_id: self.e3_id.clone(),
+                        failed_at_stage: E3Stage::CommitteeFinalized,
+                        reason: FailureReason::DKGInvalidShares,
+                    },
+                    ec,
+                )?;
+                return Ok(());
+            }
             return Err(anyhow::anyhow!(
                 "No C1 proofs to verify — all keyshares must include a signed C1 proof"
             ));
@@ -140,7 +179,11 @@ impl PublicKeyAggregator {
 
         // Cross-check: verify each party's keyshare matches their C1 pk_commitment.
         // Parties that fail are marked dishonest and reported via SignedProofFailed.
-        let audit = check_c1_keyshare_commitments(&honest_entries, &self.fhe);
+        let audit = match (self.ckks.as_ref(), self.fhe.as_ref()) {
+            (Some(ckks), _) => check_c1_ckks_keyshare_commitments(&honest_entries, ckks),
+            (None, Some(bfv_fhe)) => check_c1_keyshare_commitments(&honest_entries, bfv_fhe),
+            (None, None) => return Err(anyhow::anyhow!("no FHE runtime on the aggregator")),
+        };
         for party_id in &audit.missing_proof {
             dishonest_parties.insert(*party_id);
         }
@@ -177,6 +220,45 @@ impl PublicKeyAggregator {
             // Re-filter honest_entries after commitment check
             honest_entries.retain(|(pid, _, _, _)| !dishonest_parties.contains(pid));
         }
+
+        if self.ckks.is_some() {
+            // CKKS: no C5/DKG fold stage, and NO honest-subset key: every
+            // CKKS machine aggregates the dealt secret over ALL N dealers
+            // (`finalize_from_threshold_shares`), so a joint pk summed over
+            // a strict subset would not match the aggregated sk and every
+            // decryption would silently fail. The rogue-key gate is
+            // therefore all-or-nothing: one rejected share fails the E3
+            // (attributably — SignedProofFailed was emitted above).
+            let honest_count = honest_entries.len();
+            if !dishonest_parties.is_empty() || honest_count < collected {
+                warn!(
+                    e3_id = %self.e3_id,
+                    honest = honest_count,
+                    collected,
+                    dishonest = ?dishonest_parties,
+                    "C1-CKKS rejected pk share(s) — failing the E3 (CKKS joint key needs every dealer's proven share)"
+                );
+                self.bus.publish(
+                    E3Failed {
+                        e3_id: self.e3_id.clone(),
+                        failed_at_stage: E3Stage::CommitteeFinalized,
+                        reason: FailureReason::DKGInvalidShares,
+                    },
+                    ec,
+                )?;
+                return Ok(());
+            }
+            info!(
+                e3_id = %self.e3_id,
+                "C1-CKKS verified for all {} pk shares — aggregating the joint key",
+                honest_count
+            );
+            return self.ckks_aggregate_and_publish(ec, dishonest_parties);
+        }
+        let bfv_fhe = self
+            .fhe
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("BFV runtime missing on BFV E3"))?;
 
         // Sort, fail-closed below H, cap to the H lowest party_ids, and fail when
         // <= threshold_m remain. All pure decision logic lives in the service; the
@@ -223,7 +305,7 @@ impl PublicKeyAggregator {
             honest_keyshares.len()
         );
         let honest_keyshares_set = OrderedSet::from(honest_keyshares.clone());
-        let pubkey = self.fhe.get_aggregate_public_key(GetAggregatePublicKey {
+        let pubkey = bfv_fhe.get_aggregate_public_key(GetAggregatePublicKey {
             keyshares: honest_keyshares_set.clone(),
         })?;
 

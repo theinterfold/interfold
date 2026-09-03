@@ -1,0 +1,10 @@
+node_modules
+dist
+target
+client/public/circuits
+server/database
+server/.env
+*.log
+test/.sdk.transpiled.mjs
+database
+.dev-logs

@@ -553,6 +553,24 @@ export const deployInterfold = async (
   );
   console.log(`Active BFV parameter set ${activeParamSet} registered`);
 
+  // CKKS sign-extraction ladder ParamSet (insecure demo config only): the
+  // SAME BFV parameter bytes (same crypto-config binding); the CKKS
+  // modulus ladder is derived node-side from the ParamSet value.
+  if (ACTIVE_BFV_PARAM_SET === 0) {
+    await send(
+      interfold.setParamSet(2, activeParams),
+      "interfold.setParamSet(ckks ladder)",
+    );
+    console.log("CKKS sign-extraction ladder parameter set 2 registered");
+    // CKKS statistics preset (relinearized sum-of-squares): same BFV
+    // parameter bytes; the 3-limb CKKS moduli are derived node-side.
+    await send(
+      interfold.setParamSet(3, activeParams),
+      "interfold.setParamSet(ckks statistics)",
+    );
+    console.log("CKKS statistics parameter set 3 registered");
+  }
+
   const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes("fhe.rs:BFV"));
 
   // Set pricing config with protocol treasury
@@ -650,6 +668,62 @@ export const deployInterfold = async (
       const tx = await interfold.registerE3Program(e3ProgramAddress);
       await tx.wait();
       console.log(`Successfully enabled E3 Program in Interfold contract`);
+    }
+
+    // CKKS program => protocol mapping: register the CKKS program and key
+    // the SAME mock verifiers under the CKKS scheme id (mock verifiers are
+    // scheme-agnostic; production deployments register CKKS-specific ones).
+    const { ckksProgramAddress } = mockDeployments;
+    const ckksSchemeId = ethers.keccak256(ethers.toUtf8Bytes("fhe.rs:CKKS"));
+    if (!shouldHaveZKVerification && ckksProgramAddress) {
+      if (mockDecryptionVerifierAddress) {
+        const tx = await interfold.setDecryptionVerifier(
+          ckksSchemeId,
+          mockDecryptionVerifierAddress,
+        );
+        await tx.wait();
+      }
+      if (mockPkVerifierAddress) {
+        const tx = await interfold.setPkVerifier(
+          ckksSchemeId,
+          mockPkVerifierAddress,
+        );
+        await tx.wait();
+      }
+      if (mockCiphertextVerifierAddress) {
+        const tx = await interfold.setCiphertextVerifier(
+          ckksSchemeId,
+          mockCiphertextVerifierAddress,
+        );
+        await tx.wait();
+      }
+      if (await interfold.e3Programs(ckksProgramAddress)) {
+        console.log(`CKKS E3 Program already enabled in Interfold contract`);
+      } else {
+        const tx = await interfold.registerE3Program(ckksProgramAddress);
+        await tx.wait();
+        console.log(
+          `Successfully enabled CKKS E3 Program (scheme ${ckksSchemeId})`,
+        );
+      }
+
+      // Greco-gated CKKS program (ParamSet 3 statistics verifiers): the
+      // salary-survey demo requests through THIS address so every
+      // participant input must pass the on-chain Honk verification gate.
+      const { ckksVerifiedProgramPs3Address } = mockDeployments;
+      if (ckksVerifiedProgramPs3Address) {
+        if (await interfold.e3Programs(ckksVerifiedProgramPs3Address)) {
+          console.log(`CkksE3ProgramPs3 already enabled in Interfold contract`);
+        } else {
+          const tx = await interfold.registerE3Program(
+            ckksVerifiedProgramPs3Address,
+          );
+          await tx.wait();
+          console.log(
+            `Successfully enabled Greco-gated CkksE3ProgramPs3 (scheme ${ckksSchemeId})`,
+          );
+        }
+      }
     }
   }
 

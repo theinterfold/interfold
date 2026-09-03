@@ -45,6 +45,79 @@ pub enum ZkRequest {
     DkgAggregation(DkgAggregationRequest),
     /// Phase-7 decryption aggregator (C6Fold + C7 + DecryptionAggregator).
     DecryptionAggregation(DecryptionAggregationRequest),
+    // ── APPEND-ONLY below (bincode indexes variants by position). ──
+    /// Generate the C1-CKKS pk-share proof (`pk_generation_ckks_ps<N>`).
+    PkGenerationCkks(PkGenerationCkksProofRequest),
+    /// Generate the C8-CKKS hybrid relin round-1 proofs, one per gadget
+    /// digit (`relin_round1_hybrid_ckks_digit`).
+    RelinRound1Ckks(RelinRound1CkksProofRequest),
+}
+
+/// Request to generate the C1-CKKS proof: `pk_share = -a*s + e` over the
+/// CKKS moduli of the E3's on-chain param set. Outputs mirror BFV C1
+/// (`sk_commitment`, `pk_commitment`, `e_sm_commitment`).
+#[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derivative(Debug)]
+pub struct PkGenerationCkksProofRequest {
+    /// Serialized CKKS params (the E3's `params` bytes) — the prover
+    /// resolves the on-chain param set and the circuit from them.
+    #[derivative(Debug(format_with = "e3_utils::formatters::hexf"))]
+    pub ckks_params: ArcBytes,
+    /// Public CRP seed of the E3 (`CiphernodeSelected.seed`).
+    pub crp_seed: [u8; 32],
+    /// Serialized `p0` share polynomial (NTT form, level 0) — the public
+    /// statement, byte-identical to `KeyshareCreated.pubkey`.
+    #[derivative(Debug(format_with = "e3_utils::formatters::hexf"))]
+    pub pk_share: ArcBytes,
+    /// Bincode `Vec<i64>` secret coefficients (witness, encrypted at rest).
+    pub sk_coeffs: SensitiveBytes,
+    /// Bincode `Vec<i64>` pk-share error coefficients (witness).
+    pub eek_coeffs: SensitiveBytes,
+    /// Bincode `Vec<i64>` smudging coefficients (witness; committed as
+    /// `e_sm_commitment`, the C2b anchor).
+    pub e_sm_coeffs: SensitiveBytes,
+    /// Share-transport preset (selects the artifact directory).
+    pub params_preset: BfvPreset,
+    pub committee_size: CiphernodesCommitteeSize,
+}
+
+/// Response carrying the generated C1-CKKS proof.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct PkGenerationCkksProofResponse {
+    pub proof: Proof,
+}
+
+/// Request to generate the C8-CKKS hybrid round-1 proofs for ONE party's
+/// share: one proof per gadget digit, each binding `s_commitment`,
+/// `u_commitment`, `digit_index` and the per-digit `share_commitment`.
+#[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derivative(Debug)]
+pub struct RelinRound1CkksProofRequest {
+    /// Serialized CKKS params (hybrid-enabled).
+    #[derivative(Debug(format_with = "e3_utils::formatters::hexf"))]
+    pub ckks_params: ArcBytes,
+    /// Public CRP seed of the E3 (the `Q·P` CRPs derive from it).
+    pub crp_seed: [u8; 32],
+    /// The published round-1 share bytes (hybrid wire framing).
+    #[derivative(Debug = "ignore")]
+    pub share: ArcBytes,
+    /// Bincode `Vec<i64>` secret-key coefficients (witness).
+    pub sk_coeffs: SensitiveBytes,
+    /// Bincode `Vec<i64>` ephemeral `u` coefficients (witness).
+    pub u_coeffs: SensitiveBytes,
+    /// Bincode `Vec<Vec<i64>>` h0-leg errors, one per digit (witness).
+    pub e0_coeffs: SensitiveBytes,
+    /// Bincode `Vec<Vec<i64>>` h1-leg errors, one per digit (witness).
+    pub e1_coeffs: SensitiveBytes,
+    pub params_preset: BfvPreset,
+    pub committee_size: CiphernodesCommitteeSize,
+}
+
+/// Response carrying the C8-CKKS proofs, indexed by gadget digit.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RelinRound1CkksProofResponse {
+    /// `proofs[j]` proves digit `j`.
+    pub proofs: Vec<Proof>,
 }
 
 /// Inputs for a single ciphertext index inside [`ZkRequest::DecryptionAggregation`].
@@ -139,6 +212,10 @@ pub struct PkAggregationProofRequest {
 #[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[derivative(Debug)]
 pub struct ShareComputationProofRequest {
+    /// Program-bound scheme: selects the witness pipeline and circuit
+    /// artifact (BFV or CKKS variant). Serde-default keeps old payloads.
+    #[serde(default)]
+    pub scheme: crate::E3Scheme,
     /// Raw secret polynomial bytes (sk or e_sm — witness, encrypted at rest).
     pub secret_raw: SensitiveBytes,
     /// Bincode-serialized SharedSecret containing Shamir shares (witness, encrypted at rest).
@@ -322,6 +399,11 @@ pub enum ZkResponse {
     DkgAggregation(DkgAggregationResponse),
     /// Output of [`ZkRequest::DecryptionAggregation`].
     DecryptionAggregation(DecryptionAggregationResponse),
+    // ── APPEND-ONLY below. ──
+    /// Output of [`ZkRequest::PkGenerationCkks`].
+    PkGenerationCkks(PkGenerationCkksProofResponse),
+    /// Output of [`ZkRequest::RelinRound1Ckks`].
+    RelinRound1Ckks(RelinRound1CkksProofResponse),
 }
 
 /// Response from [`ZkRequest::NodeDkgFold`].
@@ -359,6 +441,9 @@ pub struct PkAggregationProofResponse {
 #[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[derivative(Debug)]
 pub struct ThresholdShareDecryptionProofRequest {
+    /// Program-bound scheme (see [`ShareComputationProofRequest::scheme`]).
+    #[serde(default)]
+    pub scheme: crate::E3Scheme,
     /// Serialized ciphertext bytes, one per output index.
     pub ciphertext_bytes: Vec<ArcBytes>,
     /// Serialized aggregated PublicKey bytes.
@@ -375,6 +460,11 @@ pub struct ThresholdShareDecryptionProofRequest {
     pub params_preset: BfvPreset,
     /// Committee size for per-committee circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
+    /// CKKS E3s: the E3's serialized CKKS params. The C6-CKKS prover
+    /// resolves the on-chain param set (and so the per-set circuit) from
+    /// them — never from a hardcoded set. `None` for BFV.
+    #[serde(default)]
+    pub ckks_params: Option<ArcBytes>,
 }
 
 /// Response containing generated proofs for threshold share decryption (C6).
@@ -532,6 +622,9 @@ pub struct VerifyShareDecryptionProofsResponse {
 #[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[derivative(Debug)]
 pub struct DecryptedSharesAggregationProofRequest {
+    /// Program-bound scheme (see [`ShareComputationProofRequest::scheme`]).
+    #[serde(default)]
+    pub scheme: crate::E3Scheme,
     /// Decryption shares per party: (party_id, shares_per_ct_index).
     pub d_share_polys: Vec<(u64, Vec<ArcBytes>)>,
     /// Decoded plaintext per ciphertext index.
@@ -544,6 +637,10 @@ pub struct DecryptedSharesAggregationProofRequest {
     pub threshold_n: u64,
     /// Committee size for per-committee circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
+    /// CKKS E3s: the E3's serialized CKKS params (see
+    /// [`ThresholdShareDecryptionProofRequest::ckks_params`]).
+    #[serde(default)]
+    pub ckks_params: Option<ArcBytes>,
 }
 
 /// Response containing generated proofs for decrypted shares aggregation (C7).

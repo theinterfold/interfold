@@ -26,14 +26,17 @@ e3-request = { workspace = true }
 e3-sdk = { workspace = true }
 e3-net = { workspace = true }
 e3-trbfv = { workspace = true }
+e3-trckks = { workspace = true }
 e3-utils = { workspace = true }
 e3-sortition = { workspace = true }
+e3-zk-helpers = { workspace = true }
 fhe = { workspace = true }
 fhe-traits = { workspace = true }
 hex = { workspace = true }
 libp2p = { workspace = true }
 rand = { workspace = true }
 rand_chacha = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }

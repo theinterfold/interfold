@@ -12,7 +12,7 @@ use crate::core::dkg::share_computation::Configs as ShareComputationConfigs;
 
 pub global CKKS_DKG_N: u32 = 512;
 pub global CKKS_DKG_L: u32 = 2;
-pub global CKKS_DKG_QIS: [Field; CKKS_DKG_L] = [68719464449, 68719446017];
+pub global CKKS_DKG_QIS: [Field; CKKS_DKG_L] = [68719403009, 68719230977];
 pub global CKKS_DKG_N_PARTIES: u32 = 3;
 pub global CKKS_DKG_T: u32 = 1;
 
@@ -23,6 +23,6 @@ pub global CKKS_SHARE_COMPUTATION_SK_CONFIGS: ShareComputationConfigs<CKKS_DKG_L
     ShareComputationConfigs::new(CKKS_DKG_QIS);
 
 pub global CKKS_PARITY_MATRIX: [[[Field; CKKS_DKG_N_PARTIES + 1]; CKKS_DKG_N_PARTIES - CKKS_DKG_T]; CKKS_DKG_L] = [
-    [[1, 68719464447, 1, 0], [2, 68719464446, 0, 1]],
-    [[1, 68719446015, 1, 0], [2, 68719446014, 0, 1]],
+    [[1, 68719403007, 1, 0], [2, 68719403006, 0, 1]],
+    [[1, 68719230975, 1, 0], [2, 68719230974, 0, 1]],
 ];

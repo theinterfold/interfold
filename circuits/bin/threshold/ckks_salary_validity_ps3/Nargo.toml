@@ -1,0 +1,7 @@
+[package]
+name = "ckks_salary_validity_ps3"
+type = "bin"
+authors = [""]
+
+[dependencies]
+lib = { path = "../../../lib" }

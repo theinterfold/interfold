@@ -18,11 +18,7 @@ fn main(
     ct0is: [Polynomial<CKKS_N>; CKKS_L],
     u: Polynomial<CKKS_N>,
     e0: Polynomial<CKKS_N>,
-    e0is: [Polynomial<CKKS_N>; CKKS_L],
-    e0_quotients: [Polynomial<CKKS_N>; CKKS_L],
     m: Polynomial<CKKS_N>,
-    mis: [Polynomial<CKKS_N>; CKKS_L],
-    m_quotients: [Polynomial<CKKS_N>; CKKS_L],
     r1is: [Polynomial<(2 * CKKS_N) - 1>; CKKS_L],
     r2is: [Polynomial<CKKS_N - 1>; CKKS_L],
 ) -> pub (Field, Field, Field, Field) {
@@ -32,11 +28,7 @@ fn main(
         ct0is,
         u,
         e0,
-        e0is,
-        e0_quotients,
         m,
-        mis,
-        m_quotients,
         r1is,
         r2is,
     );

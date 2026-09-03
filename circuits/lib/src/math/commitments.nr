@@ -176,6 +176,18 @@ pub fn compute_threshold_pk_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
     compute_commitment(payload, DS_PK_GENERATION)
 }
 
+/// CKKS threshold public-key SHARE commitment (C1-CKKS): binds `pk0 || a` under
+/// `DS_PK_GENERATION`. Unlike BFV C1, the CKKS CRP `a` is a per-E3 witness
+/// (seed-derived), so the share commitment must carry it.
+pub fn compute_ckks_threshold_pk_commitment<let N: u32, let L: u32, let BIT_PK: u32>(
+    pk0: [Polynomial<N>; L],
+    a: [Polynomial<N>; L],
+) -> Field {
+    let mut payload = multiple_polynomial_payload::<N, L, BIT_PK>([].as_vector(), pk0);
+    payload = multiple_polynomial_payload::<N, L, BIT_PK>(payload, a);
+    compute_commitment(payload, DS_PK_GENERATION)
+}
+
 pub fn compute_share_computation_sk_commitment<let N: u32, let BIT_SK: u32>(
     sk: Polynomial<N>,
 ) -> Field {

@@ -384,5 +384,233 @@
         "implementationAddress": "0x4FF6e77A10E8f06C11a4DD2A71b6AB55394640e4"
       }
     }
+  },
+  "localhost": {
+    "PoseidonT3": {
+      "blockNumber": 7,
+      "address": "0x3333333C0A88F9BE4fd23ed0536F9B6c427e3B93"
+    },
+    "MockUSDC": {
+      "constructorArgs": {
+        "initialSupply": "1000000"
+      },
+      "blockNumber": 8,
+      "address": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
+    },
+    "InterfoldTicketToken": {
+      "constructorArgs": {
+        "baseToken": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+        "registry": "0x0000000000000000000000000000000000000001",
+        "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+      },
+      "blockNumber": 9,
+      "address": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0"
+    },
+    "SlashingEvidenceLib": {
+      "blockNumber": 10,
+      "address": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+    },
+    "SlashingManager": {
+      "constructorArgs": {
+        "initialDelay": "172800",
+        "admin": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+      },
+      "libraries": {
+        "SlashingEvidenceLib": "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
+      },
+      "blockNumber": 11,
+      "address": "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
+    },
+    "CiphernodeRegistryOwnable": {
+      "constructorArgs": {
+        "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "submissionWindow": "60"
+      },
+      "proxyRecords": {
+        "initData": "0xcd6dc687000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266000000000000000000000000000000000000000000000000000000000000003c",
+        "initialOwner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "proxyAddress": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+        "proxyAdminAddress": "0x9bd03768a7DCc129555dE410FF8E85528A4F88b5",
+        "implementationAddress": "0x0165878A594ca255338adfa4d48449f69242Eb8F"
+      },
+      "libraries": {
+        "PoseidonT3": "0x3333333C0A88F9BE4fd23ed0536F9B6c427e3B93",
+        "RegistrySortitionLib": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
+      },
+      "blockNumber": 13,
+      "address": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
+    },
+    "RegistrySortitionLib": {
+      "address": "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707",
+      "blockNumber": 13
+    },
+    "BondingAssetLib": {
+      "address": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
+      "blockNumber": 14
+    },
+    "BondingEligibilityLib": {
+      "address": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+      "blockNumber": 14
+    },
+    "BondingSlashingLib": {
+      "address": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788",
+      "blockNumber": 14
+    },
+    "BondingRegistrationLib": {
+      "address": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
+      "blockNumber": 14
+    },
+    "BondingOwnershipLib": {
+      "address": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0",
+      "blockNumber": 14
+    },
+    "BondingRegistry": {
+      "constructorArgs": {
+        "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "ticketToken": "0x9fE46736679d2D9a65F0992F2272dE9f3c7fa6e0",
+        "ciphernodeBondToken": "0x0000000000000000000000000000000000000000",
+        "registry": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+        "slashedFundsTreasury": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "ticketPrice": "10000000",
+        "requiredCiphernodeBond": "100000000000000000000",
+        "ticketTokenDecimals": "6",
+        "ciphernodeBondTokenDecimals": "0",
+        "minTicketBalance": "1",
+        "exitDelay": "604800"
+      },
+      "libraries": {
+        "BondingAssetLib": "0x2279B7A0a67DB372996a5FaB50D91eAA73d2eBe6",
+        "BondingEligibilityLib": "0x8A791620dd6260079BF849Dc5567aDC3F2FdC318",
+        "BondingSlashingLib": "0x610178dA211FEF7D417bC0e6FeD39F05609AD788",
+        "BondingRegistrationLib": "0xB7f8BC63BbcaD18155201308C8f3540b07f84F5e",
+        "BondingOwnershipLib": "0xA51c1fc2f0D1a1b8494Ed1FE312d7C3a78Ed91C0"
+      },
+      "proxyRecords": {
+        "initData": "0x571f8259000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb922660000000000000000000000009fe46736679d2d9a65f0992f2272de9f3c7fa6e0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009896800000000000000000000000000000000000000000000000056bc75e2d6310000000000000000000000000000000000000000000000000000000000000000000060000000000000000000000000000000000000000000000000000000000000000000000000000000000000000a513e6e4b8f2a923d98304ec87f64353c4d5c853000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb9226600000000000000000000000000000000000000000000000000000000000000010000000000000000000000000000000000000000000000000000000000093a80",
+        "initialOwner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "proxyAddress": "0x9A676e781A523b5d0C0e43731313A708CB607508",
+        "proxyAdminAddress": "0x8e80FFe6Dc044F4A766Afd6e5a8732Fe0977A493",
+        "implementationAddress": "0x0DCd1Bf9A1b36cE34237eEaFef220932846BCD82"
+      },
+      "blockNumber": 14,
+      "address": "0x9A676e781A523b5d0C0e43731313A708CB607508"
+    },
+    "InterfoldToken": {
+      "constructorArgs": {
+        "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "ccaStart": "1788362681",
+        "ccaEnd": "1788967481",
+        "noMoreLocks": "1921159481",
+        "bondingRegistry": "0x9A676e781A523b5d0C0e43731313A708CB607508"
+      },
+      "blockNumber": 23,
+      "address": "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1"
+    },
+    "BondedCheckpoints": {
+      "constructorArgs": {
+        "registry": "0x9A676e781A523b5d0C0e43731313A708CB607508"
+      },
+      "blockNumber": 26,
+      "address": "0xc6e7DF5E7b4f2A278906862b61205850344D4e7d"
+    },
+    "BondedVotes": {
+      "constructorArgs": {
+        "token": "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1",
+        "votesSource": "0x959922bE3CAee4b8Cd9a407cc3ac1C251C2007B1",
+        "checkpoints": "0xc6e7DF5E7b4f2A278906862b61205850344D4e7d"
+      },
+      "blockNumber": 27,
+      "address": "0x59b670e9fA9D0A427751Af201D676719a970857b"
+    },
+    "MockComputeProvider": {
+      "blockNumber": 29,
+      "address": "0x322813Fd9A801c5507c9de605d63CEA4f2CE6c44"
+    },
+    "MockDecryptionVerifier": {
+      "blockNumber": 30,
+      "address": "0xa85233C63b9Ee964Add6F2cffe00Fd84eb32338f"
+    },
+    "MockCiphertextVerifier": {
+      "address": "0x4A679253410272dd5232B3Ff7cF5dbB88f295319",
+      "blockNumber": 31
+    },
+    "MockPkVerifier": {
+      "blockNumber": 32,
+      "address": "0x7a2088a1bFc9d81c55368AE168C2C02570cB814F"
+    },
+    "MockE3Program": {
+      "blockNumber": 33,
+      "address": "0x09635F643e140090A9A8Dcd712eD6285858ceBef"
+    },
+    "MockCkksE3Program": {
+      "blockNumber": 34,
+      "address": "0xc5a5C42992dECbae36851359345FE25997F5C42d"
+    },
+    "CkksE3Program": {
+      "blockNumber": 41,
+      "address": "0x1613beB3B2C4f22Ee086B2b38C1476A3cE7f78E8"
+    },
+    "CkksE3ProgramPs3": {
+      "blockNumber": 48,
+      "address": "0x99bbA657f2BbC93c02D617f8bA121cB8Fc104Acf"
+    },
+    "CkksSalaryE3Program": {
+      "blockNumber": 58,
+      "address": "0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575"
+    },
+    "CkksAuctionE3Program": {
+      "blockNumber": 68,
+      "address": "0xB0D4afd8879eD9F52b28595d31B441D079B2Ca07"
+    },
+    "InterfoldPricing": {
+      "address": "0x162A433068F51e18b7d13932F27e66a3f99E6890",
+      "blockNumber": 71
+    },
+    "InterfoldLifecycle": {
+      "address": "0x922D6956C99E12DFeB3224DEA977D0939758A1Fe",
+      "blockNumber": 71
+    },
+    "Interfold": {
+      "constructorArgs": {
+        "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "registry": "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853",
+        "bondingRegistry": "0x9A676e781A523b5d0C0e43731313A708CB607508",
+        "e3RefundManager": "0x0000000000000000000000000000000000000001",
+        "feeToken": "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512",
+        "feeTokenDecimals": "6",
+        "maxDuration": "2592000",
+        "timeoutConfig": "{\"dkgWindow\":7200,\"computeWindow\":86400,\"decryptionWindow\":3600}",
+        "initialE3Program": "0x09635F643e140090A9A8Dcd712eD6285858ceBef"
+      },
+      "libraries": {
+        "InterfoldLifecycle": "0x922D6956C99E12DFeB3224DEA977D0939758A1Fe",
+        "InterfoldPricing": "0x162A433068F51e18b7d13932F27e66a3f99E6890"
+      },
+      "proxyRecords": {
+        "initData": "0xef9e81ad000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266000000000000000000000000a513e6e4b8f2a923d98304ec87f64353c4d5c8530000000000000000000000009a676e781a523b5d0c0e43731313a708cb6075080000000000000000000000000000000000000000000000000000000000000001000000000000000000000000e7f1725e7734ce288f8367e1bb143e90bb3f0512000000000000000000000000000000000000000000000000000000000000000600000000000000000000000000000000000000000000000000000000000186a0000000000000000000000000000000000000000000000000000000000000c3500000000000000000000000000000000000000000000000000000000000002710000000000000000000000000000000000000000000000000000000000000003200000000000000000000000000000000000000000000000000000000000493e000000000000000000000000000000000000000000000000000000000000f42400000000000000000000000000000000000000000000000000000000000001388000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000003e8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000009c4000000000000000000000000000000000000000000000000000000000000138800000000000000000000000000000000000000000000000000000000000009c4000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000278d000000000000000000000000000000000000000000000000000000000000001c2000000000000000000000000000000000000000000000000000000000000151800000000000000000000000000000000000000000000000000000000000000e1000000000000000000000000009635f643e140090a9a8dcd712ed6285858cebef",
+        "initialOwner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "proxyAddress": "0x1fA02b2d6A771842690194Cf62D91bdd92BfE28d",
+        "proxyAdminAddress": "0xf6cB1Bc71F7ed659E64C8a56dA5759494480e333",
+        "implementationAddress": "0x5081a39b8A5f0E35a8D959395a630b68B74Dd30f"
+      },
+      "blockNumber": 71,
+      "address": "0x1fA02b2d6A771842690194Cf62D91bdd92BfE28d"
+    },
+    "E3RefundManager": {
+      "constructorArgs": {
+        "owner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "interfold": "0x1fA02b2d6A771842690194Cf62D91bdd92BfE28d",
+        "treasury": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266"
+      },
+      "proxyRecords": {
+        "initData": "0xc0c53b8b000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb922660000000000000000000000001fa02b2d6a771842690194cf62d91bdd92bfe28d000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+        "initialOwner": "0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266",
+        "proxyAddress": "0x04C89607413713Ec9775E14b954286519d836FEf",
+        "proxyAdminAddress": "0xB5d064b44960FdedA1072f983C3E8f1e123cE154",
+        "implementationAddress": "0xdbC43Ba45381e02825b14322cDdd15eC4B3164E6"
+      },
+      "blockNumber": 73,
+      "address": "0x04C89607413713Ec9775E14b954286519d836FEf"
+    }
   }
 }

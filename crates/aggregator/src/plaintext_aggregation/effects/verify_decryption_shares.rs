@@ -24,6 +24,7 @@ impl ThresholdPlaintextAggregator {
                 share.clone(),
                 signed_decryption_proofs.clone(),
                 required_shares,
+                self.scheme == e3_events::E3Scheme::Bfv,
             )
         })
     }
@@ -45,6 +46,55 @@ impl ThresholdPlaintextAggregator {
         c6_proofs: BTreeMap<u64, Vec<SignedProofPayload>>,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
+        // CKKS E3s: the E3's proof posture (`CkksProofPosture::c6`, a
+        // pure function of its params) decides the path. Proven posture:
+        // shares carry signed C6-CKKS proofs and go through the SAME
+        // ShareVerificationActor round as BFV. Proof-free posture
+        // (non-canonical param sets without a compiled C6 circuit): no
+        // proofs are expected; aggregate directly. Under the proven
+        // posture with no proofs at all (in-process test path without the
+        // zk stack) the direct path is also taken, logged as such.
+        if self.scheme == e3_events::E3Scheme::Ckks {
+            let state: VerifyingC6 = self
+                .state
+                .get()
+                .ok_or_else(|| anyhow!("Expected VerifyingC6 state"))?
+                .try_into()?;
+            let standard = self
+                .params_preset
+                .dkg_counterpart()
+                .unwrap_or(self.params_preset);
+            let posture =
+                e3_fhe_params::ckks_presets::CkksProofPosture::from_bytes(standard, &state.params)?;
+            let no_proofs = c6_proofs.values().all(|v| v.is_empty());
+            match posture.c6 {
+                e3_fhe_params::ckks_presets::ProofPosture::ProofFree(reason) => {
+                    if !no_proofs {
+                        warn!(
+                            e3_id = %self.e3_id,
+                            "CKKS shares carry C6 proofs under a proof-free posture — ignoring \
+                             them ({reason})"
+                        );
+                    }
+                    info!(
+                        e3_id = %self.e3_id,
+                        param_set = posture.param_set,
+                        "CKKS decryption shares aggregated proof-free: {reason}"
+                    );
+                    return self.ckks_aggregate_and_publish(ec, BTreeSet::new(), false);
+                }
+                e3_fhe_params::ckks_presets::ProofPosture::Proven if no_proofs => {
+                    info!(
+                        e3_id = %self.e3_id,
+                        "CKKS decryption shares carry no C6 proofs (in-process test path) — \
+                         aggregating without verification"
+                    );
+                    return self.ckks_aggregate_and_publish(ec, BTreeSet::new(), false);
+                }
+                e3_fhe_params::ckks_presets::ProofPosture::Proven => {}
+            }
+        }
+
         let party_proofs = ThresholdPlaintextAggregation::plan_c6_dispatch(c6_proofs);
 
         self.bus.publish(
@@ -107,6 +157,64 @@ impl ThresholdPlaintextAggregator {
                 state.threshold_m + 1
             );
             return self.fail_decryption_round(ec);
+        }
+
+        // CKKS: verification filtered dishonest parties; aggregate the
+        // honest shares synchronously (pure Rust) and dispatch the C7-CKKS
+        // proof over them. The BFV path below routes through the trbfv
+        // compute pipeline instead.
+        if self.scheme == e3_events::E3Scheme::Ckks {
+            // d_commitment cross-check (CKKS twin): the received share
+            // bytes must be the ones the verified C6-CKKS proof committed
+            // to. Skipped only when NO party carried a proof (the
+            // proof-free off-switch / in-process paths never reach here
+            // — they aggregate directly in `dispatch_c6_verification`).
+            let any_proofs = state.c6_proofs.values().any(|v| !v.is_empty());
+            if any_proofs {
+                let mismatch =
+                    ThresholdPlaintextAggregation::verify_ckks_shares_match_c6_commitments(
+                        &state.params,
+                        &state.ciphertext_output,
+                        &honest_shares,
+                        &state.c6_proofs,
+                    );
+                if !mismatch.is_empty() {
+                    warn!(
+                        "C6-CKKS share-commitment mismatch for {} parties: {:?} — excluding from aggregation",
+                        mismatch.len(),
+                        mismatch,
+                    );
+                    dishonest_parties.extend(&mismatch);
+                    honest_shares.retain(|(id, _)| !mismatch.contains(id));
+                    if honest_shares.len() <= state.threshold_m as usize {
+                        warn!(
+                            "Not enough honest CKKS shares after d_commitment check: {} honest, {} required",
+                            honest_shares.len(),
+                            state.threshold_m + 1
+                        );
+                        return self.fail_decryption_round(ec);
+                    }
+                }
+            }
+            // Retain honest C6 proofs for the publication record.
+            let honest_c6: Vec<(u64, Vec<Proof>)> = state
+                .c6_proofs
+                .iter()
+                .filter(|(id, _)| !dishonest_parties.contains(id))
+                .map(|(id, signed)| {
+                    (
+                        *id,
+                        signed.iter().map(|s| s.payload.proof.clone()).collect(),
+                    )
+                })
+                .collect();
+            self.pending.honest_c6_proofs_for_agg = Some(honest_c6.clone());
+            self.recovery.try_mutate(&ec, |mut recovery| {
+                recovery.honest_c6_proofs = honest_c6.clone();
+                recovery.last_ec = Some(ec.clone());
+                Ok(recovery)
+            })?;
+            return self.ckks_aggregate_and_publish(ec, dishonest_parties, true);
         }
 
         // Verify each honest party's raw decryption share matches the

@@ -1,0 +1,32 @@
+{
+  "name": "@interfold/ckks-salary-client",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "LGPL-3.0-only",
+  "scripts": {
+    "dev": "vite --no-open --host --port 5174",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview --port 5174",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "5.1.0",
+    "@interfold/ckks-salary-sdk": "workspace:*",
+    "@interfold/ckks-zk-inputs": "link:../../ckks-common/packages/ckks-zk-inputs",
+    "@noir-lang/noir_js": "1.0.0-beta.26",
+    "@tanstack/react-query": "^5.74.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.3",
+    "viem": "2.38.6"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "@vitejs/plugin-react": "^4.2.1",
+    "typescript": "5.8.3",
+    "vite": "^5.2.0",
+    "vite-plugin-top-level-await": "^1.4.1"
+  }
+}

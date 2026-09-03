@@ -28,6 +28,21 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                     });
                     Ok(s)
                 });
+                // CKKS relin ceremony defers its round-1 work until pk
+                // consensus is confirmed; release it now.
+                if let Err(err) = self.ckks_handle_public_key_aggregated(ec) {
+                    tracing::error!("Failed to release CKKS relin round 1: {err}");
+                }
+            }
+            // The chain-observed committee publication carries the same
+            // fact as the gossiped PublicKeyAggregated and reaches EVERY
+            // node (the gossip only reliably reaches the aggregator's own
+            // bus) — fire the CKKS ceremony release on it too; the machine
+            // handler is idempotent, so double delivery is free.
+            InterfoldEventData::CommitteePublished(_) => {
+                if let Err(err) = self.ckks_handle_public_key_aggregated(ec) {
+                    tracing::error!("Failed to release CKKS relin round 1: {err}");
+                }
             }
             InterfoldEventData::ThresholdShareCreated(data) => {
                 let _ =
@@ -158,6 +173,27 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                     }
                 }
             }
+            InterfoldEventData::KeyshareCreated(data) => {
+                // CKKS C8 anchor: record each party's C1-CKKS sk
+                // commitment (no-op on BFV E3s / gate off).
+                if let Err(err) = self.ckks_handle_keyshare_created(&data, ec) {
+                    error!("Failed to record CKKS C1 sk commitment: {err}");
+                }
+            }
+            InterfoldEventData::RelinCeremonyProofSigned(data) => {
+                // CKKS C8: a party's signed per-digit round-1 proofs.
+                if let Err(err) = self.ckks_handle_relin_ceremony_proofs(&data, ec) {
+                    error!("Failed to handle RelinCeremonyProofSigned: {err}");
+                }
+            }
+            InterfoldEventData::RelinCeremonyShare(data) => {
+                // CKKS relin-key ceremony broadcast (round 1 or 2). The
+                // machine ignores duplicates; own broadcasts loop back via
+                // the local bus and count as our contribution.
+                if let Err(err) = self.ckks_handle_relin_ceremony_share(&data, ec) {
+                    error!("Failed to handle RelinCeremonyShare: {err}");
+                }
+            }
             InterfoldEventData::DecryptionShareProofSigned(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
@@ -178,6 +214,8 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 // in-flight work that a crash may have interrupted (idempotent downstream).
                 if let Err(err) = self.resume_in_flight_work(ec, ctx.address()) {
                     warn!("resume_in_flight_work failed: {err}");
+                    #[cfg(test)]
+                    eprintln!("resume_in_flight_work failed: {err:#}");
                 }
             }
             _ => (),

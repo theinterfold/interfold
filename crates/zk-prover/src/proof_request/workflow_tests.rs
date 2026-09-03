@@ -31,6 +31,7 @@ fn full_share() -> Arc<ThresholdShare> {
 
 fn share_computation_req() -> ShareComputationProofRequest {
     ShareComputationProofRequest {
+        scheme: e3_events::E3Scheme::Bfv,
         secret_raw: sensitive(),
         secret_sss_raw: sensitive(),
         dkg_input_type: DkgInputType::SecretKey,

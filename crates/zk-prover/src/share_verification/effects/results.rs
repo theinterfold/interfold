@@ -21,7 +21,8 @@ impl ShareVerificationActor {
             (
                 VerificationKind::ShareProofs
                 | VerificationKind::ThresholdDecryptionProofs
-                | VerificationKind::PkGenerationProofs,
+                | VerificationKind::PkGenerationProofs
+                | VerificationKind::RelinRound1Proofs,
                 ComputeResponseKind::Zk(ZkResponse::VerifyShareProofs(r)),
             ) => r.party_results,
             (

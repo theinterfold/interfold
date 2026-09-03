@@ -29,6 +29,19 @@ pub mod insecure_512 {
         pub const ERROR1_VARIANCE: &str = "10";
         pub const VARIANCE: u32 = 3;
     }
+
+    /// WIDE DKG transport parameters: 46-bit plaintext modulus so CKKS
+    /// modulus ladders with limbs up to 45 bits (the sign-extraction
+    /// ladder's 45-bit base + 40-bit rescale limbs) fit dealt-share
+    /// coefficients without wrapping (`q_i <= t_dkg` transport rule).
+    /// Q = two 52-bit limbs keeps BFV decrypt correctness headroom
+    /// (Q/2t ~ 2^57). NTT-friendly primes: p % 1024 == 1.
+    pub mod dkg_wide {
+        pub const PLAINTEXT_MODULUS: u64 = 0x3fffffff6401;
+        pub const MODULI: &[u64] = &[0xffffffffff001, 0xfffffffffe801];
+        pub const ERROR1_VARIANCE: &str = "10";
+        pub const VARIANCE: u32 = 3;
+    }
 }
 
 /// Secure preset constants (degree 8192) - PRODUCTION READY

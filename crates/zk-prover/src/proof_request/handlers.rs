@@ -39,6 +39,12 @@ impl Handler<InterfoldEvent> for ProofRequestActor {
             InterfoldEventData::AggregationProofPending(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::PkGenerationCkksProofPending(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::RelinRound1ProofPending(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             _ => (),
         }
     }
@@ -137,5 +143,29 @@ impl Handler<TypedEvent<AggregationProofPending>> for ProofRequestActor {
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         self.handle_aggregation_proof_pending(msg)
+    }
+}
+
+impl Handler<TypedEvent<PkGenerationCkksProofPending>> for ProofRequestActor {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<PkGenerationCkksProofPending>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        self.handle_pk_generation_ckks_proof_pending(msg)
+    }
+}
+
+impl Handler<TypedEvent<RelinRound1ProofPending>> for ProofRequestActor {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<RelinRound1ProofPending>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        self.handle_relin_round1_proof_pending(msg)
     }
 }

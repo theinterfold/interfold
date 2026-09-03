@@ -1,0 +1,28 @@
+{
+  "name": "@ckks-auction/client",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "LGPL-3.0-only",
+  "scripts": {
+    "dev": "vite --no-open --host --port 5173",
+    "build": "tsc && vite build",
+    "typecheck": "tsc --noEmit",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@ckks-auction/sdk": "workspace:*",
+    "@tanstack/react-query": "^5.74.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "react-router-dom": "^6.22.3",
+    "viem": "2.38.6"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.66",
+    "@types/react-dom": "^18.2.22",
+    "@vitejs/plugin-react": "^4.2.1",
+    "typescript": "5.8.3",
+    "vite": "^5.2.0"
+  }
+}

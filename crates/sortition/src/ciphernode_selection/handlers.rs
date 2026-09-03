@@ -209,6 +209,7 @@ impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {
                             params: e3_meta.params.clone(),
                             seed: e3_meta.seed,
                             committee: msg.committee.clone(),
+                            scheme: e3_meta.scheme,
                         },
                         ec.clone(),
                     )?;

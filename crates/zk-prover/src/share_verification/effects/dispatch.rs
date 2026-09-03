@@ -22,7 +22,8 @@ impl ShareVerificationActor {
         match msg.kind {
             VerificationKind::ShareProofs
             | VerificationKind::ThresholdDecryptionProofs
-            | VerificationKind::PkGenerationProofs => {
+            | VerificationKind::PkGenerationProofs
+            | VerificationKind::RelinRound1Proofs => {
                 let kind = msg.kind.clone();
                 self.verify_proofs(
                     e3_id,

@@ -158,6 +158,73 @@ pub fn generate_ckks_smudging_share_data(
     })
 }
 
+/// Verify that circuit data satisfies the C2 constraints the Noir circuit
+/// enforces: secret consistency (`y[i][j][0] == secret`), share range
+/// (`[0, q_j)`), and the Reed–Solomon parity check `H·y == 0 mod q_j`.
+///
+/// This is the pre-flight check a node runs before emitting a C2 proof
+/// request built from dealt material: witnesses that fail here would fail
+/// `nargo execute`, so rejecting early gives an attributable error instead
+/// of a failed proof.
+pub fn verify_ckks_share_constraints(
+    preset: &CkksPreset,
+    data: &ShareComputationCircuitData,
+) -> Result<(), CircuitsErrors> {
+    use e3_parity_matrix::math::matrix_vector_mult_mod;
+    use num_bigint::BigUint;
+    use num_traits::Zero;
+
+    let moduli = preset.params.moduli();
+    let degree = preset.params.degree();
+    let n_parties = data.n_parties as usize;
+
+    if data.secret_sss.len() != moduli.len() || data.parity_matrix.len() != moduli.len() {
+        return Err(CircuitsErrors::Sample(format!(
+            "share data has {} sss / {} parity matrices, params have {} moduli",
+            data.secret_sss.len(),
+            data.parity_matrix.len(),
+            moduli.len()
+        )));
+    }
+
+    for (mod_idx, &qi) in moduli.iter().enumerate() {
+        let q_big = BigUint::from(qi);
+        let q_int = BigInt::from(qi);
+        let h = &data.parity_matrix[mod_idx];
+        let h_data: Vec<Vec<BigUint>> = h.data().to_vec();
+        for coeff_idx in 0..degree {
+            let secret = &data.secret.limb(mod_idx).coefficients()[coeff_idx];
+            let secret_mod = ((secret % &q_int) + &q_int) % &q_int;
+            let mut codeword: Vec<BigUint> = vec![secret_mod.to_biguint().ok_or_else(|| {
+                CircuitsErrors::Sample("secret coefficient not reducible".into())
+            })?];
+            for party in 0..n_parties {
+                let share = &data.secret_sss[mod_idx][[party, coeff_idx]];
+                // Range: shares must already be in [0, q_j).
+                if share.sign() == num_bigint::Sign::Minus || *share >= q_int {
+                    return Err(CircuitsErrors::Sample(format!(
+                        "share out of range at modulus {mod_idx} party {party} \
+                         coeff {coeff_idx}"
+                    )));
+                }
+                codeword.push(
+                    share
+                        .to_biguint()
+                        .ok_or_else(|| CircuitsErrors::Sample("share not convertible".into()))?,
+                );
+            }
+            let product = matrix_vector_mult_mod(&h_data, &codeword, &q_big);
+            if !product.iter().all(|x| x.is_zero()) {
+                return Err(CircuitsErrors::Sample(format!(
+                    "Reed-Solomon parity check failed at modulus {mod_idx} \
+                     coeff {coeff_idx}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
 /// Build the C2a/C2b witness `Inputs` (y tensor + commitment) from CKKS
 /// data. Mirrors the BFV `Inputs::compute` exactly, but takes all geometry
 /// (degree, moduli) from the CKKS preset instead of a `BfvPreset`.

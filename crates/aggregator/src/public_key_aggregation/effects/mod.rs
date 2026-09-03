@@ -11,6 +11,7 @@ use alloy::primitives::Address;
 
 mod aggregate_dkg_proofs;
 mod aggregate_public_key;
+mod ckks;
 mod fold_node_proofs;
 mod handle_compute_results;
 mod publish_result;

@@ -37,7 +37,7 @@ use serde::{Deserialize, Serialize};
 
 /// Low-degree native \([0, q)\) CRT limbs for `d_commitment`, matching C7's `from_fhe` truncation.
 /// In each limb, `d` is reversed+centered (witness layout); native coeff `j` is `uncenter(d[N-1-j])`.
-fn d_native_trunc_from_centered_d(
+pub(crate) fn d_native_trunc_from_centered_d(
     d: &CrtPolynomial,
     moduli: &[u64],
     degree: usize,

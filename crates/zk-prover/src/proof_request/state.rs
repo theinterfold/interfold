@@ -184,6 +184,26 @@ pub(crate) struct PendingShareDecryptionProof {
     pub(crate) ec: EventContext<Sequenced>,
 }
 
+/// Pending C1-CKKS (pk share) proof generation state: what
+/// `KeyshareCreated` will carry once the signed proof returns.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingPkGenerationCkksProof {
+    pub(crate) party_id: u64,
+    pub(crate) node: String,
+    pub(crate) pk_share: ArcBytes,
+    pub(crate) ec: EventContext<Sequenced>,
+}
+
+/// Pending C8-CKKS (relin round-1 digit proofs) generation state.
+#[derive(Clone, Debug)]
+pub(crate) struct PendingRelinRound1Proof {
+    /// 1-based Shamir id (the ceremony's party-id base).
+    pub(crate) party_id: u64,
+    pub(crate) node: String,
+    pub(crate) level: u32,
+    pub(crate) ec: EventContext<Sequenced>,
+}
+
 /// Pending C7 (DecryptedSharesAggregation) proof generation state.
 #[derive(Clone, Debug)]
 pub(crate) struct PendingAggregationProof {

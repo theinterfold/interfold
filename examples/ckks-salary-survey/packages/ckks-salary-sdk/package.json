@@ -1,0 +1,24 @@
+{
+  "name": "@interfold/ckks-salary-sdk",
+  "version": "0.1.0",
+  "type": "module",
+  "license": "LGPL-3.0-only",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "build": "tsc --noEmit",
+    "lint": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "5.1.0",
+    "@interfold/ckks-zk-inputs": "link:../../../ckks-common/packages/ckks-zk-inputs",
+    "@noir-lang/noir_js": "1.0.0-beta.26"
+  },
+  "devDependencies": {
+    "@types/node": "22.7.5",
+    "typescript": "5.8.3"
+  }
+}

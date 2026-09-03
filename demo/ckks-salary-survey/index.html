@@ -1,0 +1,392 @@
+<!doctype html>
+<!-- SPDX-License-Identifier: LGPL-3.0-only -->
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Threshold-CKKS Private Salary Survey — Live Demo</title>
+<style>
+  :root {
+    --bg: #0b0e14; --panel: #131824; --panel2: #0f1420;
+    --text: #d6dce8; --muted: #7a8699; --line: #232c3d;
+    --accent: #5eead4; --accent2: #818cf8; --warn: #fbbf24;
+    --good: #34d399; --bad: #f87171;
+    font-size: 15px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: ui-sans-serif, system-ui, "Helvetica Neue", sans-serif;
+    line-height: 1.45;
+  }
+  header {
+    padding: 22px 28px 14px; border-bottom: 1px solid var(--line);
+    display: flex; align-items: baseline; gap: 16px; flex-wrap: wrap;
+  }
+  header h1 { margin: 0; font-size: 1.25rem; font-weight: 650; }
+  header .sub { color: var(--muted); font-size: .85rem; }
+  #env {
+    margin-left: auto; display: flex; gap: 14px; font-size: .8rem;
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  }
+  .dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%;
+         margin-right: 5px; background: var(--bad); }
+  .dot.on { background: var(--good); }
+  main { max-width: 1180px; margin: 0 auto; padding: 22px 28px 60px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 16px 18px;
+  }
+  .card h2 {
+    margin: 0 0 4px; font-size: .95rem; font-weight: 650;
+    display: flex; align-items: center; gap: 9px;
+  }
+  .card .why { color: var(--muted); font-size: .8rem; margin: 0 0 12px; }
+  .stepnum {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 21px; height: 21px; border-radius: 50%; font-size: .72rem;
+    background: var(--panel2); border: 1px solid var(--line); color: var(--muted);
+    flex-shrink: 0;
+  }
+  .card.done .stepnum { background: var(--good); color: #06281c; border-color: var(--good); }
+  .card.active .stepnum { background: var(--accent2); color: #101331; border-color: var(--accent2); }
+  button {
+    background: var(--accent2); color: #101331; border: 0; border-radius: 7px;
+    padding: 8px 15px; font-size: .85rem; font-weight: 650; cursor: pointer;
+  }
+  button:disabled { background: var(--panel2); color: var(--muted); cursor: default; }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); }
+  input[type=number] {
+    background: var(--panel2); border: 1px solid var(--line); color: var(--text);
+    border-radius: 7px; padding: 7px 9px; width: 110px; font-size: .85rem;
+  }
+  .mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .78rem; }
+  .kv { color: var(--muted); }
+  .kv b { color: var(--text); font-weight: 600; }
+  .hexchip {
+    display: inline-block; background: var(--panel2); border: 1px solid var(--line);
+    border-radius: 5px; padding: 2px 7px; margin: 2px 0;
+    max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    vertical-align: bottom;
+  }
+  .spin {
+    display: inline-block; width: 12px; height: 12px; border-radius: 50%;
+    border: 2px solid var(--line); border-top-color: var(--accent);
+    animation: r 0.8s linear infinite; vertical-align: -2px; margin-right: 6px;
+  }
+  @keyframes r { to { transform: rotate(360deg); } }
+  table { border-collapse: collapse; width: 100%; margin-top: 8px; }
+  td, th { padding: 5px 9px; border-bottom: 1px solid var(--line); font-size: .82rem; text-align: left; }
+  th { color: var(--muted); font-weight: 600; }
+  .statbox {
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 9px;
+    padding: 12px 18px; min-width: 150px; display: inline-block; margin: 6px 10px 0 0;
+  }
+  .statbox .lbl { color: var(--muted); font-size: .72rem; }
+  .statbox .val { font-family: ui-monospace, Menlo, monospace; font-size: 1.15rem; color: var(--accent); margin-top: 3px; }
+  #logcard { margin-top: 18px; }
+  #log {
+    background: var(--panel2); border: 1px solid var(--line); border-radius: 8px;
+    height: 210px; overflow-y: auto; padding: 10px 12px; margin-top: 10px;
+  }
+  #log div { font-family: ui-monospace, Menlo, monospace; font-size: .74rem; padding: 1px 0; }
+  #log .st { color: var(--accent2); }
+  .note {
+    border-left: 3px solid var(--warn); background: var(--panel2);
+    padding: 8px 12px; border-radius: 0 7px 7px 0; font-size: .78rem;
+    color: var(--muted); margin-top: 12px;
+  }
+  .flowline { color: var(--muted); font-size: .78rem; margin-top: 8px; }
+  .flowline b { color: var(--accent); font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Threshold-CKKS Private Salary Survey</h1>
+  <span class="sub">real chain · real ciphernodes · real encryption — individual salaries never decrypt</span>
+  <div id="env">
+    <span><span class="dot" id="dot-chain"></span>anvil <span id="chain-block" class="kv"></span></span>
+    <span><span class="dot" id="dot-nodes"></span><span id="node-count">0</span> ciphernodes</span>
+    <span><span class="dot" id="dot-prog"></span>CKKS program</span>
+  </div>
+</header>
+<main>
+  <div class="flowline">
+    program address ⇒ protocol: requesting through the CKKS program binds
+    <b>keccak256("fhe.rs:CKKS")</b> on-chain — this survey uses ParamSet 3
+    (statistics: one genuine ct×ct multiplication level, standard DKG transport).
+  </div>
+
+  <div class="grid" style="margin-top:16px">
+
+    <div class="card" id="c1">
+      <h2><span class="stepnum">1</span> Request committee via CKKS program</h2>
+      <p class="why">One on-chain tx. Sortition selects 3 of the 5 registered ciphernode processes; the E3 program's address selects the FHE scheme; ParamSet 3 selects the statistics parameters.</p>
+      <button id="btn-request">Request committee</button>
+      <button id="btn-reset" class="ghost" style="margin-left:8px">Reset demo</button>
+      <div class="mono" id="o1" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" id="c2">
+      <h2><span class="stepnum">2</span> DKG + relin-key ceremony</h2>
+      <p class="why">The selected node processes run the CKKS DKG over libp2p (joint public key on-chain), then the two-round multiparty RELINEARIZATION ceremony for level 0 — the joint key that lets the sum-of-squares ct×ct product be relinearized without any party holding the secret.</p>
+      <div class="mono" id="o2"><span class="kv">waiting for step 1…</span></div>
+    </div>
+
+    <div class="card" id="c3">
+      <h2><span class="stepnum">3</span> Participants encrypt, prove &amp; submit — verified on-chain</h2>
+      <p class="why">Each participant runs the <span class="mono">ckks_participant</span> CLI in their OWN process: cap-normalize, CKKS-encrypt under the joint pk (fresh witnessed randomness, slot-replicated) and prove BOTH Greco legs (nargo + bb). The bridge only relays the resulting <span class="mono">submission.json</span>; the on-chain program verifies both Honk proofs and rejects duplicates before the ciphertext counts.</p>
+      <div id="insecure-banner" style="display:none; border-left:3px solid var(--bad); background:#2a1416; color:#fca5a5; padding:8px 12px; border-radius:0 7px 7px 0; font-size:.78rem; margin-bottom:10px">
+        DEMO_INSECURE=1 — the legacy server-side plaintext path is enabled. Salaries typed here cross the bridge in clear. Do not use outside local demos.
+      </div>
+      <table><thead><tr><th>participant</th><th>salary</th><th>status</th></tr></thead><tbody id="salaries-body"></tbody></table>
+      <div style="margin-top:10px">
+        <button id="btn-add" class="ghost">+ participant</button>
+        <button id="btn-encrypt" disabled>Run participants &amp; verify on-chain</button>
+        <button id="btn-replay" class="ghost" disabled style="margin-left:8px" title="Re-submit participant 0's exact submission.json — the on-chain gate must reject it">Replay submission 0 (expect reject)</button>
+      </div>
+      <div class="mono" id="o3" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" id="c4">
+      <h2><span class="stepnum">4</span> Homomorphic statistics</h2>
+      <p class="why">Computed ON the ciphertexts: the homomorphic <b>sum</b> lands in slot 0 and the <b>sum of squares</b> — a GENUINE ct×ct multiplication per participant, relinearized with the committee's joint ceremony key — in slot 1 of ONE output ciphertext. One evaluation, ONE threshold opening; mean, variance and std-dev are derived client-side from the two aggregates. Individual salaries are never decrypted.</p>
+      <div style="margin-top:10px">
+        <button id="btn-eval" disabled>Evaluate statistics</button>
+        <button id="btn-publish" disabled style="margin-left:8px">Publish ciphertext on-chain</button>
+      </div>
+      <div class="mono" id="o4" style="margin-top:10px"></div>
+    </div>
+
+    <div class="card" id="c5" style="grid-column: 1 / -1">
+      <h2><span class="stepnum">5</span> Threshold decryption &amp; survey result</h2>
+      <p class="why">Seeing the ciphertext on-chain, each committee node computes a decryption share (secret share + smudging noise). Any t+1 = 2 shares reconstruct — the aggregator publishes canonical fixed-point bytes via <span class="mono">publishPlaintextOutput</span>. The opening contains exactly TWO aggregate values and nothing else.</p>
+      <div class="mono" id="o5"><span class="kv">waiting for step 4…</span></div>
+      <div id="result"></div>
+    </div>
+  </div>
+
+  <div class="card" id="logcard">
+    <h2>Event log</h2>
+    <div id="log"></div>
+    <div class="note">
+      Demo caveats (also in the code): insecure 512-degree parameters; mock on-chain verifiers;
+      ParamSet 3 has no compiled C6-CKKS decryption circuit, so shares publish proof-free
+      (same posture as the auction's ladder params). Precision note: the salary cap is an
+      encoding device — variance precision degrades if values exceed the encoder range.
+      The statistics-vs-cleartext check exists only in this dashboard for verification —
+      a real survey never sees individual salaries.
+    </div>
+  </div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const api = async (method, path, body) => {
+  const r = await fetch(path, {
+    method, headers: { "content-type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const j = await r.json();
+  if (!r.ok) throw new Error(j.error ?? r.statusText);
+  return j;
+};
+const chip = (s, n = 26) =>
+  `<span class="hexchip" title="${s}">${s.length > n ? s.slice(0, n) + "…" : s}</span>`;
+const money = (v) => v.toLocaleString(undefined, { maximumFractionDigits: 0 });
+
+let logSeen = 0, salaryCap = 500000;
+
+// ── environment status ────────────────────────────────────────────────
+async function refreshStatus() {
+  try {
+    const s = await api("GET", "/api/status");
+    $("dot-chain").classList.toggle("on", s.chain.up);
+    $("chain-block").textContent = s.chain.up ? "#" + s.chain.block : "";
+    $("dot-nodes").classList.toggle("on", s.ciphernodes >= 5);
+    $("node-count").textContent = s.ciphernodes;
+    $("dot-prog").classList.toggle("on", !!s.ckksProgram);
+    salaryCap = s.salaryCap ?? salaryCap;
+    $("insecure-banner").style.display = s.demoInsecure ? "block" : "none";
+    for (const entry of s.state.log.slice(logSeen)) {
+      const d = document.createElement("div");
+      d.innerHTML = `<span class="st">[${entry.stage}]</span> ${entry.message}`;
+      $("log").appendChild(d);
+    }
+    if (s.state.log.length > logSeen) $("log").scrollTop = $("log").scrollHeight;
+    logSeen = s.state.log.length;
+  } catch { $("dot-chain").classList.remove("on"); }
+}
+setInterval(refreshStatus, 2500);
+refreshStatus();
+
+const mark = (n, cls) => {
+  const c = $("c" + n);
+  c.classList.remove("active", "done");
+  if (cls) c.classList.add(cls);
+};
+
+// ── step 1: request ───────────────────────────────────────────────────
+$("btn-request").onclick = async () => {
+  $("btn-request").disabled = true;
+  mark(1, "active");
+  $("o1").innerHTML = `<span class="spin"></span>submitting request tx…`;
+  try {
+    const r = await api("POST", "/api/request-committee");
+    $("o1").innerHTML =
+      `<div class="kv">E3 id: <b>${r.e3Id.slice(0, 12)}…</b></div>` +
+      `<div class="kv">program: ${chip(r.program, 40)}</div>` +
+      `<div class="kv">scheme: <b>fhe.rs:CKKS</b> · paramSet: <b>3 (statistics)</b></div>`;
+    mark(1, "done"); mark(2, "active");
+    pollPubkey();
+  } catch (e) {
+    $("o1").innerHTML = `<span style="color:var(--bad)">${e.message}</span>`;
+    $("btn-request").disabled = false; mark(1);
+  }
+};
+
+// ── step 2: DKG poll ──────────────────────────────────────────────────
+async function pollPubkey() {
+  $("o2").innerHTML = `<span class="spin"></span>node processes running the DKG + level-0 relin ceremony…`;
+  const t = setInterval(async () => {
+    try {
+      const r = await api("GET", "/api/pubkey");
+      if (r.ready) {
+        clearInterval(t);
+        $("o2").innerHTML =
+          `<div class="kv">joint CKKS pk on-chain: ${chip(r.pubkey, 44)}</div>` +
+          `<div class="kv">size: <b>${(r.pubkey.length - 2) / 2} bytes</b> · identical on every node (consensus-checked)</div>` +
+          `<div class="kv">joint relin key: written by the ceremony to CKKS_RELIN_KEY_DIR (level 0)</div>`;
+        mark(2, "done"); mark(3, "active");
+        $("btn-encrypt").disabled = false;
+      }
+    } catch { /* keep polling */ }
+  }, 2000);
+}
+
+// ── step 3: participants (separate CLI processes + on-chain verify) ──
+const defaultSalaries = [52000, 61000, 48500, 75000, 58000];
+let lastSubmissions = []; // {participant, submission} for the replay demo
+function renderInputs() {
+  $("salaries-body").innerHTML = defaultSalaries
+    .map((v, i) =>
+      `<tr><td class="kv">participant ${i}</td>` +
+      `<td><input type="number" min="1" step="any" value="${v}" data-i="${i}"></td><td class="mono kv" id="sal-ct-${i}"></td></tr>`)
+    .join("");
+}
+renderInputs();
+$("btn-add").onclick = () => {
+  if (defaultSalaries.length >= 8) return;
+  defaultSalaries.push(Math.round(Math.random() * 60000 + 35000));
+  renderInputs();
+};
+$("btn-encrypt").onclick = async () => {
+  const salaries = [...document.querySelectorAll("#salaries-body input")].map((i) => Number(i.value));
+  $("btn-encrypt").disabled = true;
+  lastSubmissions = [];
+  try {
+    let lastCmd = "";
+    for (let i = 0; i < salaries.length; i++) {
+      $("sal-ct-" + i).innerHTML = `<span class="spin"></span>encrypt + prove (own process)…`;
+      $("o3").innerHTML = `<span class="spin"></span>participant ${i}: ckks_participant CLI running as a separate process…`;
+      const p = await api("POST", "/api/simulate-participant", { value: salaries[i] });
+      lastCmd = p.command;
+      $("sal-ct-" + i).innerHTML = `proved · u ${p.uCommitment.slice(0, 12)}…`;
+      $("o3").innerHTML = `<span class="spin"></span>participant ${i}: on-chain verification (2 Honk proofs)…`;
+      const s = await api("POST", "/api/submit-encrypted", { submission: p.submission });
+      lastSubmissions.push({ participant: i, submission: p.submission });
+      $("sal-ct-" + i).innerHTML =
+        `<span style="color:var(--good)">✓ verified on-chain</span> · tx ${s.tx ? s.tx.slice(0, 12) + "…" : "?"} · u ${p.uCommitment.slice(0, 12)}…`;
+    }
+    $("o3").innerHTML =
+      `<div class="kv"><b>${salaries.length}</b> submissions verified on-chain (VerifiedInputPublished) · count n is public, values are not</div>` +
+      `<div class="kv" style="margin-top:6px">a remote participant runs exactly:</div>` +
+      `<div>${chip(lastCmd, 999)}</div>`;
+    mark(3, "done"); mark(4, "active");
+    $("btn-eval").disabled = false;
+    $("btn-replay").disabled = lastSubmissions.length === 0;
+  } catch (e) {
+    $("o3").innerHTML = `<span style="color:var(--bad)">${e.message}</span>`;
+    $("btn-encrypt").disabled = false;
+  }
+};
+$("btn-replay").onclick = async () => {
+  if (!lastSubmissions.length) return;
+  $("btn-replay").disabled = true;
+  $("o3").innerHTML += `<div><span class="spin"></span>replaying participant 0's exact submission…</div>`;
+  try {
+    await api("POST", "/api/submit-encrypted", { submission: lastSubmissions[0].submission });
+    $("o3").innerHTML += `<div style="color:var(--bad)">UNEXPECTED: duplicate was accepted — dedup broken!</div>`;
+  } catch (e) {
+    $("o3").innerHTML += `<div style="color:var(--good)">✓ on-chain gate rejected the replay: ${e.message}</div>`;
+  }
+  $("btn-replay").disabled = false;
+};
+
+// ── step 4: evaluate + publish ────────────────────────────────────────
+$("btn-eval").onclick = async () => {
+  $("btn-eval").disabled = true;
+  $("o4").innerHTML = `<span class="spin"></span>homomorphic sum + relinearized sum-of-squares…`;
+  try {
+    const r = await api("POST", "/api/evaluate");
+    $("o4").innerHTML =
+      `<div class="kv">evaluated ciphertext: <b>${r.bytes} bytes</b> (both aggregates packed in one)</div>` +
+      `<div class="kv">keccak commitment: ${chip(r.commitmentHex, 40)}</div>`;
+    $("btn-publish").disabled = false;
+  } catch (e) {
+    $("o4").innerHTML = `<span style="color:var(--bad)">${e.message}</span>`;
+    $("btn-eval").disabled = false;
+  }
+};
+$("btn-publish").onclick = async () => {
+  $("btn-publish").disabled = true;
+  $("o4").innerHTML += `<div><span class="spin"></span>publishing on-chain…</div>`;
+  try {
+    await api("POST", "/api/publish");
+    mark(4, "done"); mark(5, "active");
+    pollPlaintext();
+  } catch (e) {
+    $("o4").innerHTML += `<div style="color:var(--bad)">${e.message}</div>`;
+    $("btn-publish").disabled = false;
+  }
+};
+
+// ── step 5: decryption result ─────────────────────────────────────────
+async function pollPlaintext() {
+  $("o5").innerHTML = `<span class="spin"></span>committee nodes threshold-decrypting (t+1 = 2 of 3 shares)…`;
+  const t = setInterval(async () => {
+    try {
+      const r = await api("GET", "/api/plaintext");
+      if (!r.ready) return;
+      clearInterval(t);
+      $("o5").innerHTML = `<div class="kv">on-chain fixed-point output: <b>2 aggregate slots</b> from ONE threshold opening — nothing else was decrypted</div>`;
+      $("result").innerHTML =
+        `<div>` +
+        `<div class="statbox"><div class="lbl">participants (public)</div><div class="val">${r.count}</div></div>` +
+        `<div class="statbox"><div class="lbl">mean salary</div><div class="val">${money(r.mean)}</div></div>` +
+        `<div class="statbox"><div class="lbl">variance</div><div class="val">${money(r.variance)}</div></div>` +
+        `<div class="statbox"><div class="lbl">std deviation</div><div class="val">${money(r.stddev)}</div></div>` +
+        `</div>` +
+        `<div style="margin-top:12px" class="kv">derived client-side from the two opened aggregates ` +
+        `(sum &amp; sum-of-squares). Individual salaries stayed encrypted end-to-end. ` +
+        (r.checked
+          ? `Verification vs simulated values (dashboard-only): ` +
+            `<b style="color:${r.correct ? "var(--good)" : "var(--bad)"}">${r.correct ? "✓ homomorphic statistics match" : "✗ MISMATCH"}</b>` +
+            ` <span class="mono">(mean err ${(r.meanErr * 100).toFixed(4)}%, var err ${(r.varErr * 100).toFixed(2)}%)</span>`
+          : `No cleartext cross-check: submissions were produced outside this dashboard.`) +
+        `</div>`;
+      mark(5, "done");
+    } catch { /* keep polling */ }
+  }, 2000);
+}
+
+// ── reset ─────────────────────────────────────────────────────────────
+$("btn-reset").onclick = async () => {
+  await api("POST", "/api/reset");
+  location.reload();
+};
+</script>
+</body>
+</html>

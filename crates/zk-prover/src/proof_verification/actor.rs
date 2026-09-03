@@ -62,6 +62,12 @@ pub struct ProofVerificationActor {
     /// Canonical finalized committee in party-id order. A C0 signer must own the party slot whose
     /// BFV key it advertises; recovering any valid ECDSA address is not sufficient.
     committees: HashMap<E3id, Vec<Address>>,
+    /// E3s whose CKKS proof posture makes C0 proof-free (the DKG
+    /// transport escalated to `InsecureDkgWide512`, which has no compiled
+    /// C0 circuit). Derived from `CkksProofPosture` over the E3's own
+    /// params — never from the sender — so every actor on every node
+    /// agrees.
+    c0_proof_free: std::collections::HashSet<E3id>,
 }
 
 impl ProofVerificationActor {
@@ -77,14 +83,16 @@ impl ProofVerificationActor {
             pending: HashMap::new(),
             presets: HashMap::new(),
             committees: HashMap::new(),
+            c0_proof_free: std::collections::HashSet::new(),
         };
         for (e3_id, meta) in persisted_e3_metadata {
             actor.store_preset(
-                e3_id,
+                e3_id.clone(),
                 meta.params_preset,
                 meta.threshold_m,
                 meta.threshold_n,
             );
+            actor.record_c0_posture(e3_id, meta.scheme, meta.params_preset, &meta.params);
         }
         for (e3_id, committee) in persisted_committees {
             actor.store_committee(e3_id, committee.members());
@@ -127,6 +135,48 @@ impl ProofVerificationActor {
                 );
             }
         }
+    }
+
+    /// Derive + cache this E3's C0 posture from its CKKS params (the same
+    /// `CkksProofPosture` the keyshare shell logs at CiphernodeSelected).
+    pub(in crate::actors::proof_verification) fn store_c0_posture(
+        &mut self,
+        data: &e3_events::CiphernodeSelected,
+    ) {
+        self.record_c0_posture(
+            data.e3_id.clone(),
+            data.scheme,
+            data.params_preset,
+            &data.params,
+        );
+    }
+
+    fn record_c0_posture(
+        &mut self,
+        e3_id: E3id,
+        scheme: e3_events::E3Scheme,
+        params_preset: BfvPreset,
+        params: &[u8],
+    ) {
+        if scheme != e3_events::E3Scheme::Ckks {
+            return;
+        }
+        let standard = params_preset.dkg_counterpart().unwrap_or(params_preset);
+        match e3_fhe_params::ckks_presets::CkksProofPosture::from_bytes(standard, params) {
+            Ok(posture) => {
+                if let e3_fhe_params::ckks_presets::ProofPosture::ProofFree(reason) = posture.c0 {
+                    info!(%e3_id, "C0 keys for this CKKS E3 are accepted proof-free: {reason}");
+                    self.c0_proof_free.insert(e3_id);
+                }
+            }
+            Err(error) => {
+                error!(%e3_id, %error, "could not derive the CKKS proof posture");
+            }
+        }
+    }
+
+    pub(in crate::actors::proof_verification) fn is_c0_proof_free(&self, e3_id: &E3id) -> bool {
+        self.c0_proof_free.contains(e3_id)
     }
 
     fn store_committee(&mut self, e3_id: E3id, members: &[String]) {

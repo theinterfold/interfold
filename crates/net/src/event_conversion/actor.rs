@@ -7,8 +7,8 @@ use actix::prelude::*;
 use anyhow::Result;
 use e3_events::{
     prelude::*, trap, BusHandle, DecryptionKeyShared, DocumentReceived, EType,
-    EncryptionKeyCreated, EventType, InterfoldEvent, InterfoldEventData, ThresholdShareCreated,
-    TypedEvent,
+    EncryptionKeyCreated, EventType, InterfoldEvent, InterfoldEventData, RelinCeremonyShare,
+    ThresholdShareCreated, TypedEvent,
 };
 use e3_utils::NotifySync;
 
@@ -34,6 +34,7 @@ impl EventConverter {
         bus.subscribe(EventType::ThresholdShareCreated, addr.clone().into());
         bus.subscribe(EventType::EncryptionKeyCreated, addr.clone().into());
         bus.subscribe(EventType::DecryptionKeyShared, addr.clone().into());
+        bus.subscribe(EventType::RelinCeremonyShare, addr.clone().into());
         bus.subscribe(EventType::DocumentReceived, addr.clone().into());
         addr
     }
@@ -62,6 +63,14 @@ impl EventConverter {
         Ok(())
     }
 
+    fn handle_relin_ceremony_share(&self, msg: TypedEvent<RelinCeremonyShare>) -> Result<()> {
+        let (msg, ctx) = msg.into_components();
+        if let Some(request) = EventConversionService::relin_share_to_request(msg)? {
+            self.bus.publish(request, ctx)?;
+        }
+        Ok(())
+    }
+
     /// Convert received document to internal events.
     /// Note: Filtering already happened in DocumentPublisher before DHT fetch.
     fn handle_document_received(&self, msg: TypedEvent<DocumentReceived>) -> Result<()> {
@@ -74,6 +83,9 @@ impl EventConverter {
                 self.bus.publish(evt, ctx)?;
             }
             IncomingDocument::DecryptionKey(evt) => {
+                self.bus.publish(evt, ctx)?;
+            }
+            IncomingDocument::RelinShare(evt) => {
                 self.bus.publish(evt, ctx)?;
             }
         }
@@ -97,6 +109,9 @@ impl Handler<InterfoldEvent> for EventConverter {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::DecryptionKeyShared(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::RelinCeremonyShare(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::DocumentReceived(data) => {
@@ -163,6 +178,21 @@ impl Handler<TypedEvent<DocumentReceived>> for EventConverter {
             EType::DocumentPublishing,
             &self.bus.with_ec(msg.get_ctx()),
             || self.handle_document_received(msg),
+        )
+    }
+}
+
+impl Handler<TypedEvent<RelinCeremonyShare>> for EventConverter {
+    type Result = ();
+    fn handle(
+        &mut self,
+        msg: TypedEvent<RelinCeremonyShare>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        trap(
+            EType::DocumentPublishing,
+            &self.bus.with_ec(msg.get_ctx()),
+            || self.handle_relin_ceremony_share(msg),
         )
     }
 }

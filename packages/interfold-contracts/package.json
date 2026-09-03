@@ -188,6 +188,7 @@
     "committee:get-public-key": "hardhat committee:getPublicKey",
     "committee:get-active-aggregator": "hardhat committee:getActiveAggregator",
     "e3:get-plaintext": "hardhat e3:getPlaintext",
+    "e3:get-ckks-plaintext": "hardhat e3:getCkksPlaintext",
     "lint": "solhint --disc --max-warnings 10 \"contracts/**/*.sol\"",
     "prettier:check": "prettier --check \"**/*.{js,json,md,sol,ts,yml}\"",
     "prettier:write": "prettier --write \"**/*.{js,json,md,sol,ts,yml}\"",

@@ -1,0 +1,21 @@
+[package]
+name = "ckks-salary-program"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "Packed CKKS statistics policy (sum + relinearized sum of squares) for the salary survey"
+
+[[bin]]
+name = "ckks-salary-program"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+e3-fhe-params.workspace = true
+e3-trckks.workspace = true
+e3-utils.workspace = true
+fhe.workspace = true
+fhe-traits.workspace = true
+hex.workspace = true
+alloy-primitives.workspace = true

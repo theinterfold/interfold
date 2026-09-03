@@ -5,7 +5,10 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import hre from "hardhat";
 
+import { deployAndSaveCkksAppProgram } from "./deployAndSave/ckksAppProgram";
+import { deployAndSaveCkksProgram } from "./deployAndSave/ckksProgram";
 import { deployAndSaveMockCiphertextVerifier } from "./deployAndSave/mockCiphertextVerifier";
+import { deployAndSaveMockCkksProgram } from "./deployAndSave/mockCkksProgram";
 import { deployAndSaveMockComputeProvider } from "./deployAndSave/mockComputeProvider";
 import { deployAndSaveMockDecryptionVerifier } from "./deployAndSave/mockDecryptionVerifier";
 import { deployAndSaveMockPkVerifier } from "./deployAndSave/mockPkVerifier";
@@ -18,6 +21,14 @@ export interface MockDeployments {
   ciphertextVerifierAddress: string;
   pkVerifierAddress: string;
   e3ProgramAddress: string;
+  /** CKKS E3 program (program address => protocol: binds fhe.rs:CKKS). */
+  ckksProgramAddress: string;
+  /** Greco-gated CKKS program (canonical dev ParamSet 0 verifiers). */
+  ckksVerifiedProgramAddress: string;
+  /** Greco-gated CKKS program wired to the ParamSet 3 (statistics) verifiers. */
+  ckksVerifiedProgramPs3Address: string;
+  ckksSalaryProgramAddress: string;
+  ckksAuctionProgramAddress: string;
 }
 
 /**
@@ -49,6 +60,31 @@ export const deployMocks = async (): Promise<MockDeployments> => {
 
   const e3ProgramAddress = await e3Program.getAddress();
 
+  console.log("Deploying CKKS E3 Program");
+  const { ckksProgramAddress } = await deployAndSaveMockCkksProgram({ hre });
+
+  console.log("Deploying Greco-gated CKKS E3 Program (with Honk verifiers)");
+  const { ckksVerifiedProgramAddress } = await deployAndSaveCkksProgram({
+    hre,
+  });
+
+  console.log(
+    "Deploying Greco-gated CKKS E3 Program for ParamSet 3 (statistics)",
+  );
+  const { ckksVerifiedProgramAddress: ckksVerifiedProgramPs3Address } =
+    await deployAndSaveCkksProgram({ hre, paramSet: 3 });
+
+  // Three-leg app programs (Greco + app-validity). Caps mirror the demos:
+  // demo/ckks-salary-survey SALARY_CAP=500000, demo/ckks-auction BID_CAP=1000
+  // (the auction encrypts RAW bids, cap 1 — the bid cap is the Greco input
+  // bound, not the normalization cap).
+  console.log("Deploying CKKS salary-survey app program (ParamSet 3)");
+  const { programAddress: ckksSalaryProgramAddress } =
+    await deployAndSaveCkksAppProgram({ hre, app: "salary", cap: 500_000n });
+  console.log("Deploying CKKS auction app program (ParamSet 2)");
+  const { programAddress: ckksAuctionProgramAddress } =
+    await deployAndSaveCkksAppProgram({ hre, app: "auction", cap: 1n });
+
   console.log(`
         MockDeployments:
         ----------------------------------------------------------------------
@@ -57,6 +93,11 @@ export const deployMocks = async (): Promise<MockDeployments> => {
         MockCiphertextVerifier:${ciphertextVerifierAddress}
         MockPkVerifier:${pkVerifierAddress}
         MockE3Program:${e3ProgramAddress}
+        MockCkksE3Program:${ckksProgramAddress}
+        CkksE3Program:${ckksVerifiedProgramAddress}
+        CkksE3ProgramPs3:${ckksVerifiedProgramPs3Address}
+        CkksSalaryE3Program:${ckksSalaryProgramAddress}
+        CkksAuctionE3Program:${ckksAuctionProgramAddress}
         `);
 
   return {
@@ -65,5 +106,10 @@ export const deployMocks = async (): Promise<MockDeployments> => {
     ciphertextVerifierAddress,
     pkVerifierAddress,
     e3ProgramAddress,
+    ckksProgramAddress,
+    ckksVerifiedProgramAddress,
+    ckksVerifiedProgramPs3Address,
+    ckksSalaryProgramAddress,
+    ckksAuctionProgramAddress,
   };
 };

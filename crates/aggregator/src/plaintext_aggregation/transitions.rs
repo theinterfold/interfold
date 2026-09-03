@@ -17,6 +17,7 @@ impl ThresholdPlaintextAggregation {
         share: Vec<ArcBytes>,
         signed_decryption_proofs: Vec<SignedProofPayload>,
         required_shares: u64,
+        proofs_required: bool,
     ) -> Result<ThresholdPlaintextAggregatorState> {
         info!("Adding share for party_id={}", party_id);
         let current: Collecting = state.try_into()?;
@@ -26,8 +27,10 @@ impl ThresholdPlaintextAggregation {
             "party {party_id} supplied {} decryption shares for {expected_outputs} ciphertext outputs",
             share.len()
         );
+        // CKKS shares are proof-less until CKKS proof emission lands
+        // (`proofs_required = false`); BFV keeps the strict pairing.
         ensure!(
-            signed_decryption_proofs.len() == expected_outputs,
+            !proofs_required || signed_decryption_proofs.len() == expected_outputs,
             "party {party_id} supplied {} C6 proofs for {expected_outputs} ciphertext outputs",
             signed_decryption_proofs.len()
         );
@@ -242,6 +245,108 @@ impl ThresholdPlaintextAggregation {
             }
         }
 
+        mismatched
+    }
+
+    /// CKKS twin of [`Self::verify_shares_match_c6_commitments`]: the
+    /// C6-CKKS `d_commitment` public output must equal the commitment of
+    /// the RECEIVED decryption-share bytes, computed exactly as the
+    /// witness builder does (`share_decryption_ckks::Inputs::compute`:
+    /// native `[0, q)` limbs at the ciphertext's level, ALL N coefficients,
+    /// `Bits::d_native_bit`). Catches a node that proves share `d_A` but
+    /// broadcasts `d_B`. `params` are the E3's encoded CKKS params; the
+    /// ciphertext fixes the level the shares live at.
+    pub(crate) fn verify_ckks_shares_match_c6_commitments(
+        params: &[u8],
+        ciphertext_output: &[ArcBytes],
+        honest_shares: &[(u64, Vec<ArcBytes>)],
+        c6_proofs: &BTreeMap<u64, Vec<SignedProofPayload>>,
+    ) -> BTreeSet<u64> {
+        use e3_zk_helpers::threshold::share_decryption_ckks::{
+            Bits as C6CkksBits, Bounds as C6CkksBounds,
+        };
+        use e3_zk_helpers::threshold::user_data_encryption_ckks::CkksPreset;
+        use fhe::ckks::{CkksCiphertext, CkksParameters};
+        use fhe_math::rq::{Poly, PowerBasis};
+        use fhe_traits::{
+            Deserialize as _, DeserializeParametrized as _, DeserializeWithContext as _,
+        };
+
+        let mut mismatched = BTreeSet::new();
+        let all_mismatched = |reason: &str| -> BTreeSet<u64> {
+            warn!(
+                "CKKS d_commitment check: {reason} — marking every party mismatched (fail closed)"
+            );
+            honest_shares.iter().map(|(id, _)| *id).collect()
+        };
+        let Ok(params) = CkksParameters::try_deserialize(params).map(std::sync::Arc::new) else {
+            return all_mismatched("could not decode CKKS params");
+        };
+        let Some(ct_bytes) = ciphertext_output.first() else {
+            return all_mismatched("no ciphertext output");
+        };
+        let Ok(ct) = CkksCiphertext::from_bytes(ct_bytes, &params) else {
+            return all_mismatched("could not decode the ciphertext");
+        };
+        let Ok(ctx) = params.context_at_level(ct.level) else {
+            return all_mismatched("no context at the ciphertext level");
+        };
+        let preset = CkksPreset {
+            params: params.clone(),
+            input_bound: 1.0,
+        };
+        let Ok(bounds) = C6CkksBounds::compute(preset.clone(), &()) else {
+            return all_mismatched("could not compute C6-CKKS bounds");
+        };
+        let Ok(bits) = C6CkksBits::compute(preset, &bounds) else {
+            return all_mismatched("could not compute C6-CKKS bits");
+        };
+        let n = params.degree();
+        let layout = CircuitName::ThresholdShareDecryptionCkks.output_layout();
+
+        for (party_id, shares) in honest_shares {
+            let Some(first_proof) = c6_proofs.get(party_id).and_then(|p| p.first()) else {
+                warn!("No C6-CKKS proof for party {party_id} — marking as mismatched");
+                mismatched.insert(*party_id);
+                continue;
+            };
+            let Some(c6_d_bytes) =
+                layout.extract_field(&first_proof.payload.proof.public_signals, "d_commitment")
+            else {
+                warn!(
+                    "No d_commitment in C6-CKKS proof for party {party_id} — marking as mismatched"
+                );
+                mismatched.insert(*party_id);
+                continue;
+            };
+            let Some(share_bytes) = shares.first() else {
+                mismatched.insert(*party_id);
+                continue;
+            };
+            let Ok(poly) = Poly::<PowerBasis>::from_bytes(share_bytes, ctx) else {
+                warn!("Could not decode CKKS share for party {party_id} — marking as mismatched");
+                mismatched.insert(*party_id);
+                continue;
+            };
+            let crt = e3_polynomial::CrtPolynomial::from_fhe_polynomial(&poly);
+            // Same as the witness builder: native limbs, ALL N coefficients.
+            let computed =
+                compute_threshold_decryption_share_commitment(&crt, bits.d_native_bit, n);
+            let (_, be_bytes) = computed.to_bytes_be();
+            let mut computed_padded = [0u8; 32];
+            let start = 32usize.saturating_sub(be_bytes.len());
+            computed_padded[start..].copy_from_slice(&be_bytes[..be_bytes.len().min(32)]);
+            if computed_padded != c6_d_bytes {
+                warn!(
+                    "CKKS d_commitment mismatch for party {party_id}: received share differs from the C6-CKKS proof output"
+                );
+                mismatched.insert(*party_id);
+            } else {
+                info!(
+                    "C6-CKKS d_commitment verified against the received share for party {party_id}"
+                );
+            }
+        }
         mismatched
     }
 }

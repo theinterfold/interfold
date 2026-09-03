@@ -23,13 +23,23 @@ import {
   enableE3,
   getActiveAggregator,
   getCommitteePublicKey,
+  getCkksPlaintextOutput,
   getPlaintextOutput,
   publishCiphertext,
   publishCommittee,
   publishPlaintext,
   requestCommittee,
 } from "./tasks/interfold";
-import { publishInput, setMockProgramInterfold } from "./tasks/program";
+import {
+  publishAppInputFromSubmission,
+  setAuctionBalanceRoot,
+} from "./tasks/ckksApp";
+import {
+  publishInput,
+  publishInputFromSubmission,
+  publishVerifiedInput,
+  setMockProgramInterfold,
+} from "./tasks/program";
 import { cleanDeploymentsTask } from "./tasks/utils";
 
 dotenv.config();
@@ -100,8 +110,13 @@ const config: HardhatUserConfig = {
     publishPlaintext,
     publishCiphertext,
     publishCommittee,
-    getPlaintextOutput,
+    getCkksPlaintextOutput,
+  getPlaintextOutput,
     publishInput,
+    publishInputFromSubmission,
+    publishAppInputFromSubmission,
+    publishVerifiedInput,
+    setAuctionBalanceRoot,
     setMockProgramInterfold,
     enableE3,
     cleanDeploymentsTask,

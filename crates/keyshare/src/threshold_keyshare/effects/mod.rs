@@ -9,6 +9,8 @@
 use super::*;
 
 mod calculate_decryption_key;
+pub(crate) mod ckks_ceremony_log;
+pub(crate) mod ckks_shell;
 mod coordinate_collectors;
 mod create_decryption_share;
 mod generate_threshold_share;

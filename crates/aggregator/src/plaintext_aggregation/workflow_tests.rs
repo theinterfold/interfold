@@ -38,9 +38,15 @@ fn collecting(threshold_m: u64, threshold_n: u64) -> ThresholdPlaintextAggregato
 #[test]
 fn add_share_below_required_stays_collecting() {
     let state = collecting(1, 3);
-    let next =
-        ThresholdPlaintextAggregation::add_share(state, 0, vec![ab(10)], vec![c6_proof(10)], 3)
-            .unwrap();
+    let next = ThresholdPlaintextAggregation::add_share(
+        state,
+        0,
+        vec![ab(10)],
+        vec![c6_proof(10)],
+        3,
+        true,
+    )
+    .unwrap();
     match next {
         ThresholdPlaintextAggregatorState::Collecting(c) => {
             assert_eq!(c.shares.len(), 1);
@@ -60,6 +66,7 @@ fn add_share_reaching_required_transitions_to_verifying_c6() {
             vec![ab(pid as u8)],
             vec![c6_proof(pid as u8)],
             3,
+            true,
         )
         .unwrap();
     }
@@ -81,7 +88,7 @@ fn add_share_wrong_state_errors() {
         ciphertext_output: vec![ab(1)],
         params: ab(2),
     });
-    let res = ThresholdPlaintextAggregation::add_share(state, 0, vec![ab(0)], vec![], 3);
+    let res = ThresholdPlaintextAggregation::add_share(state, 0, vec![ab(0)], vec![], 3, true);
     assert!(res.is_err());
 }
 
@@ -95,6 +102,7 @@ fn handle_member_expelled_removes_share_and_stays_collecting() {
             vec![ab(pid as u8)],
             vec![c6_proof(pid as u8)],
             3,
+            true,
         )
         .unwrap();
     }
@@ -119,6 +127,7 @@ fn handle_member_expelled_transitions_when_enough_remain() {
             vec![ab(pid as u8)],
             vec![c6_proof(pid as u8)],
             3,
+            true,
         )
         .unwrap();
     }
@@ -168,13 +177,19 @@ fn handle_member_expelled_wrong_state_is_noop() {
 
 #[test]
 fn add_share_rejects_c6_share_or_proof_count_mismatch() {
-    let missing_share =
-        ThresholdPlaintextAggregation::add_share(collecting(1, 3), 0, vec![], vec![c6_proof(1)], 3)
-            .expect_err("one decryption share is required for one ciphertext");
+    let missing_share = ThresholdPlaintextAggregation::add_share(
+        collecting(1, 3),
+        0,
+        vec![],
+        vec![c6_proof(1)],
+        3,
+        true,
+    )
+    .expect_err("one decryption share is required for one ciphertext");
     assert!(missing_share.to_string().contains("decryption shares"));
 
     let missing_proof =
-        ThresholdPlaintextAggregation::add_share(collecting(1, 3), 0, vec![ab(1)], vec![], 3)
+        ThresholdPlaintextAggregation::add_share(collecting(1, 3), 0, vec![ab(1)], vec![], 3, true)
             .expect_err("one C6 proof is required for one ciphertext");
     assert!(missing_proof.to_string().contains("C6 proofs"));
 }

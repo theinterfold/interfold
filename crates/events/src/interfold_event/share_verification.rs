@@ -29,6 +29,11 @@ pub enum VerificationKind {
     ThresholdDecryptionProofs,
     /// C1 PK generation proof verification (after all KeyshareCreated collected).
     PkGenerationProofs,
+    /// C8-CKKS per-digit hybrid relin round-1 proofs (every committee
+    /// member verifies every party's bundle before aggregating round 1).
+    /// APPEND-ONLY position: this enum is persisted in keyshare recovery
+    /// records.
+    RelinRound1Proofs,
 }
 
 /// ThresholdKeyshare → ShareVerificationActor: verify party proofs.

@@ -1,0 +1,57 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+// C6-CKKS: proves a CKKS threshold decryption share is well-formed:
+//   d = ct0 + ct1*sk + e_sm  (mod q_j, mod x^N+1)  for every CKKS limb,
+// with sk/e_sm bound to the DKG commitments and d bound to the published
+// share. Reuses the generic ShareDecryption gadget (the BFV C6 core) with
+// CKKS moduli/bounds; MAX_MSG_NON_ZERO_COEFFS spans all N slots because a
+// CKKS plaintext occupies the full coefficient vector, so d_native_trunc
+// binds every coefficient (no sparse-message truncation like BFV).
+
+use lib::configs::ckks_share_decryption::{
+    SHARE_DECRYPTION_CKKS_BIT_CT, SHARE_DECRYPTION_CKKS_BIT_D, SHARE_DECRYPTION_CKKS_BIT_D_NATIVE,
+    SHARE_DECRYPTION_CKKS_BIT_E_SM, SHARE_DECRYPTION_CKKS_BIT_R1, SHARE_DECRYPTION_CKKS_BIT_R2,
+    SHARE_DECRYPTION_CKKS_BIT_SK, SHARE_DECRYPTION_CKKS_CONFIGS, SHARE_DECRYPTION_CKKS_L,
+    SHARE_DECRYPTION_CKKS_N,
+};
+use lib::core::threshold::share_decryption::ShareDecryption;
+use lib::math::polynomial::Polynomial;
+
+fn main(
+    expected_sk_commitment: pub Field,
+    expected_e_sm_commitment: pub Field,
+    ct_commitment: pub Field,
+    domain_hi: pub Field,
+    domain_lo: pub Field,
+    ct0: [Polynomial<SHARE_DECRYPTION_CKKS_N>; SHARE_DECRYPTION_CKKS_L],
+    ct1: [Polynomial<SHARE_DECRYPTION_CKKS_N>; SHARE_DECRYPTION_CKKS_L],
+    sk: [Polynomial<SHARE_DECRYPTION_CKKS_N>; SHARE_DECRYPTION_CKKS_L],
+    e_sm: [Polynomial<SHARE_DECRYPTION_CKKS_N>; SHARE_DECRYPTION_CKKS_L],
+    r1: [Polynomial<(2 * SHARE_DECRYPTION_CKKS_N) - 1>; SHARE_DECRYPTION_CKKS_L],
+    r2: [Polynomial<SHARE_DECRYPTION_CKKS_N - 1>; SHARE_DECRYPTION_CKKS_L],
+    d: [Polynomial<SHARE_DECRYPTION_CKKS_N>; SHARE_DECRYPTION_CKKS_L],
+    d_native_trunc: [Polynomial<SHARE_DECRYPTION_CKKS_N>; SHARE_DECRYPTION_CKKS_L],
+) -> pub Field {
+    // Bind the E3 decryption domain (see BFV C6 for rationale): a public
+    // input of this secret-bearing proof authorizes this exact context.
+    let _ = (domain_hi, domain_lo);
+    let share_decryption: ShareDecryption<SHARE_DECRYPTION_CKKS_N, SHARE_DECRYPTION_CKKS_N, SHARE_DECRYPTION_CKKS_L, SHARE_DECRYPTION_CKKS_BIT_CT, SHARE_DECRYPTION_CKKS_BIT_SK, SHARE_DECRYPTION_CKKS_BIT_E_SM, SHARE_DECRYPTION_CKKS_BIT_R1, SHARE_DECRYPTION_CKKS_BIT_R2, SHARE_DECRYPTION_CKKS_BIT_D, SHARE_DECRYPTION_CKKS_BIT_D_NATIVE> = ShareDecryption::new(
+        SHARE_DECRYPTION_CKKS_CONFIGS,
+        expected_sk_commitment,
+        expected_e_sm_commitment,
+        ct_commitment,
+        ct0,
+        ct1,
+        sk,
+        e_sm,
+        r1,
+        r2,
+        d,
+        d_native_trunc,
+    );
+    share_decryption.execute()
+}

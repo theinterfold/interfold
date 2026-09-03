@@ -10,7 +10,7 @@ VERSIONS_JSON="${ROOT_DIR}/crates/zk-prover/versions.json"
 echo ""
 echo "PREBUILDING BINARIES..."
 echo ""
-(cd "$ROOT_DIR/crates" && cargo build --bin fake_encrypt --bin pack_e3_params)
+(cd "$ROOT_DIR/crates" && cargo build --bin fake_encrypt --bin pack_e3_params --bin ckks_encrypt --bin pack_ckks_params --bin ckks_auction_eval)
 echo ""
 echo "FINISHED PREBUILDING BINARIES"
 echo ""

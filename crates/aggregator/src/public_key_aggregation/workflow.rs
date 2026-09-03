@@ -39,8 +39,8 @@ pub use state::{
 };
 pub(crate) use transitions::{C1Dispatch, HonestSelection, PublicKeyAggregation};
 pub(crate) use validation::{
-    check_c1_keyshare_commitments, committee_h_for, extract_pk_commitment,
-    verify_dkg_fold_attestation,
+    check_c1_ckks_keyshare_commitments, check_c1_keyshare_commitments, committee_h_for,
+    extract_pk_commitment, verify_dkg_fold_attestation,
 };
 
 #[cfg(test)]

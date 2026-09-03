@@ -24,6 +24,9 @@ pub struct CiphernodeSelected {
     pub party_id: u64,
     /// Full finalized committee in stable party-ID order.
     pub committee: Vec<String>,
+    /// FHE scheme (chain-bound via the E3 program's `encryptionSchemeId`).
+    #[serde(default)]
+    pub scheme: crate::E3Scheme,
 }
 
 impl Default for CiphernodeSelected {
@@ -38,6 +41,7 @@ impl Default for CiphernodeSelected {
             seed: Seed([0u8; 32]),
             threshold_m: 0,
             threshold_n: 0,
+            scheme: crate::E3Scheme::default(),
         }
     }
 }

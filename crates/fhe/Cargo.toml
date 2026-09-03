@@ -24,3 +24,7 @@ serde = { workspace = true }
 tracing = { workspace = true }
 e3-bfv-client = { workspace = true }
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
+fhe-math = { workspace = true }
+e3-zk-helpers = { workspace = true }
+zeroize = { workspace = true }
+ndarray = { workspace = true }

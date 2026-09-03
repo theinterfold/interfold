@@ -8,16 +8,17 @@ mod actors;
 mod domain;
 pub mod ext;
 mod repo;
+pub mod threshold_keyshare_ckks;
 
 pub use actors::{
-    AllEncryptionKeysCollected, AllThresholdSharesCollected, EncryptionKeyCollector,
-    ExpelPartyFromKeyCollection, GenEsiSss, GenPkShareAndSkSss, ThresholdKeyshare,
-    ThresholdKeyshareParams, ThresholdKeyshareRecoveryState,
+    AllEncryptionKeysCollected, AllThresholdSharesCollected, CkksCeremonyRecovery,
+    EncryptionKeyCollector, ExpelPartyFromKeyCollection, GenEsiSss, GenPkShareAndSkSss,
+    ThresholdKeyshare, ThresholdKeyshareParams, ThresholdKeyshareRecoveryState,
     THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
 };
 pub use domain::{
-    AggregatingDecryptionKey, CollectingEncryptionKeysData, Decrypting, GeneratingDecryptionProof,
-    GeneratingThresholdShareData, KeyshareState, ProofRequestData, ReadyForDecryption,
-    ThresholdKeyshareState,
+    AggregatingDecryptionKey, CollectingEncryptionKeysData, Decrypting, E3Scheme,
+    GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState, ProofRequestData,
+    ReadyForDecryption, ThresholdKeyshareState,
 };
 pub use repo::*;

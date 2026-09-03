@@ -27,6 +27,8 @@ use e3_zk_helpers::threshold::share_decryption::{Bits as C6Bits, Bounds as C6Bou
 use e3_zk_helpers::Computation;
 use tracing::{info, warn};
 
+#[path = "ckks.rs"]
+pub mod ckks;
 #[path = "intents.rs"]
 mod intents;
 #[path = "state.rs"]

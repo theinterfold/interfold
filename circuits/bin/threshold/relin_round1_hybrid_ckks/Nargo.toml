@@ -1,0 +1,8 @@
+[package]
+name = "relin_round1_hybrid_ckks"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+
+[dependencies]
+lib = { path = "../../../lib" }

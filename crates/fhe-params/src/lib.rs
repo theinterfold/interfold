@@ -7,6 +7,7 @@
 //! Preset definitions and builders for BFV FHE parameters.
 
 pub mod builder;
+pub mod ckks_presets;
 pub mod constants;
 pub mod crp;
 #[cfg(feature = "abi-encoding")]

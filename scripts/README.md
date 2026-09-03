@@ -236,7 +236,10 @@ the generator would produce.
 
 ### Options
 
-- `--preset <name>` - Parameter preset: `insecure-512` (default), `secure-8192`, or `all`
+- `--preset <name>` - Parameter preset: `insecure-512` (default), `insecure-dkg-wide-512` (the
+  CKKS ladder's WIDE DKG transport — `BfvPreset::InsecureDkgWide512`; same threshold circuits and
+  on-chain constants as `insecure-512`, wide-shape C0/C3/C4 under `dist/circuits/insecure-dkg-wide-512/`),
+  `secure-8192`, or `all`
 - `--committee <name>` - Committee size: `minimum` (default), `micro`, `small`
 - `--skip-utils-patch` - Skip rewriting committee values and BFV configuration hashes in
   `packages/interfold-contracts/scripts/utils.ts`

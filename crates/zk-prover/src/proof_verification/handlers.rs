@@ -16,11 +16,12 @@ impl Handler<InterfoldEvent> for ProofVerificationActor {
         match msg {
             InterfoldEventData::CiphernodeSelected(data) => {
                 self.store_preset(
-                    data.e3_id,
+                    data.e3_id.clone(),
                     data.params_preset,
                     data.threshold_m,
                     data.threshold_n,
                 );
+                self.store_c0_posture(&data);
             }
             InterfoldEventData::CommitteeFinalized(mut data) => {
                 // The EVM decoder already emits canonical address order, but sorting again keeps
@@ -35,6 +36,7 @@ impl Handler<InterfoldEvent> for ProofVerificationActor {
                 let e3_id = data.e3_id;
                 self.presets.remove(&e3_id);
                 self.committees.remove(&e3_id);
+                self.c0_proof_free.remove(&e3_id);
                 self.pending
                     .retain(|(pending_e3, _), _| pending_e3 != &e3_id);
             }

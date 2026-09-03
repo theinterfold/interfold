@@ -120,7 +120,8 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
         verifying_c1_non_square_state(&fhe, &e3_id)?;
     let mut aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
-            fhe,
+            fhe: Some(fhe),
+            ckks: None,
             bus,
             e3_id: e3_id.clone(),
             params_preset: BfvPreset::InsecureThreshold512,
@@ -182,7 +183,8 @@ async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Resul
 
     let mut aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
-            fhe,
+            fhe: Some(fhe),
+            ckks: None,
             bus,
             e3_id: e3_id.clone(),
             params_preset: BfvPreset::InsecureThreshold512,

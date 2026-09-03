@@ -10,6 +10,35 @@ impl ProofRequestActor {
         msg: TypedEvent<EncryptionKeyPending>,
     ) {
         let (msg, ec) = msg.into_components();
+
+        // C0 posture: the key's transport preset alone decides C0
+        // (`CkksProofPosture::c0` depends only on the transport, so any
+        // param set yields the same answer for this preset). The
+        // verification actor accepts proof-less keys for exactly the E3s
+        // whose posture says so and nothing else.
+        let c0_posture = e3_fhe_params::ckks_presets::CkksProofPosture::new(
+            e3_fhe_params::ckks_presets::CKKS_CANONICAL_PARAM_SET,
+            msg.params_preset,
+        )
+        .c0;
+        if let e3_fhe_params::ckks_presets::ProofPosture::ProofFree(reason) = c0_posture {
+            info!(
+                "Publishing party {}'s encryption key WITHOUT a C0 proof: {reason}",
+                msg.key.party_id
+            );
+            if let Err(err) = self.bus.publish(
+                EncryptionKeyCreated {
+                    e3_id: msg.e3_id,
+                    key: msg.key,
+                    external: false,
+                },
+                ec,
+            ) {
+                error!("Failed to publish EncryptionKeyCreated: {err}");
+            }
+            return;
+        }
+
         let correlation_id = CorrelationId::new();
         self.pending.insert(
             correlation_id,
@@ -162,6 +191,15 @@ impl ProofRequestActor {
             }
             ComputeResponseKind::Zk(ZkResponse::DecryptedSharesAggregation(resp)) => {
                 self.handle_aggregation_proof_response(&msg.correlation_id, resp.proofs.clone());
+            }
+            ComputeResponseKind::Zk(ZkResponse::PkGenerationCkks(resp)) => {
+                self.handle_pk_generation_ckks_proof_response(
+                    &msg.correlation_id,
+                    resp.proof.clone(),
+                );
+            }
+            ComputeResponseKind::Zk(ZkResponse::RelinRound1Ckks(resp)) => {
+                self.handle_relin_round1_proof_response(&msg.correlation_id, resp.proofs.clone());
             }
             _ => {}
         }

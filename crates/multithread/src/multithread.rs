@@ -387,6 +387,9 @@ fn handle_threshold_share_decryption_proof(
     req: ThresholdShareDecryptionProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
+    if req.scheme == e3_events::E3Scheme::Ckks {
+        return handle_threshold_share_decryption_proof_ckks(prover, cipher, req, request);
+    }
     // 1. Build threshold BFV parameters from preset
     let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
         .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
@@ -488,6 +491,143 @@ fn handle_threshold_share_decryption_proof(
                 )
             })?;
 
+        proofs.push(proof);
+    }
+
+    Ok(ComputeResponse::zk(
+        ZkResponse::ThresholdShareDecryption(ThresholdShareDecryptionProofResponse { proofs }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+/// C6-CKKS: prove `d = ct0 + ct1*sk + e_sm` per limb over the CKKS moduli.
+/// Mirrors the BFV branch above; params come from the E3's encoded CKKS
+/// params (protobuf) rather than a BfvPreset, and the share polynomials are
+/// projected to the ciphertext's level before witness extraction (post-
+/// rescale ciphertexts carry fewer limbs).
+fn handle_threshold_share_decryption_proof_ckks(
+    prover: &ZkProver,
+    cipher: &Cipher,
+    req: ThresholdShareDecryptionProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    use e3_zk_helpers::circuits::threshold::share_decryption_ckks::{
+        verify_ckks_share_decryption_constraints, CkksShareDecryptionCircuit,
+        CkksShareDecryptionData,
+    };
+    use fhe::ckks::CkksCiphertext;
+    use fhe::trckks::TRCKKS;
+    use fhe_math::rq::{Poly, PowerBasis};
+    use fhe_traits::{DeserializeParametrized, DeserializeWithContext};
+
+    // CKKS params come from the E3 (the request carries its params bytes);
+    // the on-chain param set — and so the per-set circuit artifact — is
+    // derived from them, never hardcoded. The request's preset field is
+    // BFV-typed and selects only the artifact directory.
+    let preset = ckks_preset_from_request(&request, req.ckks_params.as_deref(), "C6-CKKS")?;
+    let params = preset.params.clone();
+    let level0 = params
+        .context_at_level(0)
+        .map_err(|e| make_zk_error(&request, format!("ckks level0 ctx: {e}")))?;
+
+    // Decrypt the aggregated share polynomials (encrypted at rest).
+    let sk_bytes = req
+        .sk_poly_sum
+        .access(cipher)
+        .map_err(|e| make_zk_error(&request, format!("sk_poly_sum decrypt: {e}")))?;
+    let sk_poly = Poly::<PowerBasis>::from_bytes(&sk_bytes, level0)
+        .map_err(|e| make_zk_error(&request, format!("sk_poly decode: {e}")))?;
+
+    if req.es_poly_sum.is_empty() {
+        return Err(make_zk_error(&request, "empty es_poly_sum".to_string()));
+    }
+    let num_indices = req.ciphertext_bytes.len();
+    if req.d_share_bytes.len() < num_indices {
+        return Err(make_zk_error(
+            &request,
+            format!(
+                "d_share_bytes too short: {} < {}",
+                req.d_share_bytes.len(),
+                num_indices
+            ),
+        ));
+    }
+
+    let mut proofs = Vec::with_capacity(num_indices);
+    let bb_work_base = zk_bb_work_id(&request);
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+
+    for i in 0..num_indices {
+        let ciphertext = CkksCiphertext::from_bytes(&req.ciphertext_bytes[i], &params)
+            .map_err(|e| make_zk_error(&request, format!("ckks ct[{i}] decode: {e}")))?;
+        // Project shares to the ciphertext's level (rescale drops limbs).
+        // Committee shape does not matter for projection; the minimum
+        // constructible shell is (3, 1).
+        let trckks = TRCKKS::new(3, 1, params.clone())
+            .map_err(|e| make_zk_error(&request, format!("trckks: {e}")))?;
+        let sk_at = trckks
+            .project_share_to_level(&sk_poly, ciphertext.level)
+            .map_err(|e| make_zk_error(&request, format!("sk project: {e}")))?;
+
+        let es_idx = i % req.es_poly_sum.len();
+        let es_bytes = req.es_poly_sum[es_idx]
+            .clone()
+            .access(cipher)
+            .map_err(|e| make_zk_error(&request, format!("es_poly_sum[{i}] decrypt: {e}")))?;
+        let es_poly = Poly::<PowerBasis>::from_bytes(&es_bytes, level0)
+            .map_err(|e| make_zk_error(&request, format!("es_poly decode: {e}")))?;
+        let es_at = trckks
+            .project_share_to_level(&es_poly, ciphertext.level)
+            .map_err(|e| make_zk_error(&request, format!("es project: {e}")))?;
+
+        let ct_ctx = params
+            .context_at_level(ciphertext.level)
+            .map_err(|e| make_zk_error(&request, format!("ct ctx: {e}")))?;
+        let d_share = Poly::<PowerBasis>::from_bytes(&req.d_share_bytes[i], ct_ctx)
+            .map_err(|e| make_zk_error(&request, format!("d_share[{i}] decode: {e}")))?;
+
+        let numeric_e3_id = request
+            .e3_id
+            .clone()
+            .try_into()
+            .map_err(|e| make_zk_error(&request, format!("invalid numeric E3 id: {e}")))?;
+        let domain = e3_committee_hash::decryption_domain_limbs(
+            request.e3_id.chain_id(),
+            numeric_e3_id,
+            req.decryption_domain,
+            keccak256(&req.ciphertext_bytes[i][..]),
+        );
+
+        let circuit_data = CkksShareDecryptionData {
+            ciphertext,
+            sk_poly: sk_at,
+            es_poly: es_at,
+            d_share,
+            domain_hi: domain.hi,
+            domain_lo: domain.lo,
+        };
+
+        // Native pre-check: attributable failure on a bad share, before bb.
+        verify_ckks_share_decryption_constraints(&preset, &circuit_data)
+            .map_err(|e| make_zk_error(&request, format!("C6-CKKS pre-check[{i}]: {e}")))?;
+
+        let circuit = CkksShareDecryptionCircuit;
+        let idx_work_id = format!("{bb_work_base}_c6ckks_{i}");
+        // Recursive variant, like BFV C6: the C4-style verification round
+        // (`handle_verify_share_decryption_proofs`) verifies with the
+        // Recursive artifacts.
+        let proof = circuit
+            .prove(prover, &preset, &circuit_data, &idx_work_id, &artifacts_dir)
+            .map_err(|e| {
+                ComputeRequestError::new(
+                    ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(format!(
+                        "C6-CKKS proof[{i}]: {e}"
+                    ))),
+                    request.clone(),
+                )
+            })?;
         proofs.push(proof);
     }
 
@@ -700,7 +840,185 @@ fn handle_zk_request(
         ZkRequest::DecryptionAggregation(req) => timefunc("zk_decryption_aggregation", id, || {
             handle_decryption_aggregation_proof(&prover, req, request.clone())
         }),
+        ZkRequest::PkGenerationCkks(req) => timefunc("zk_pk_generation_ckks", id, || {
+            handle_pk_generation_proof_ckks(&prover, &cipher, req, request.clone())
+        }),
+        ZkRequest::RelinRound1Ckks(req) => timefunc("zk_relin_round1_ckks", id, || {
+            handle_relin_round1_proof_ckks(&prover, &cipher, req, request.clone())
+        }),
     }
+}
+
+/// Decode a CKKS E3's params bytes into the zk-helpers preset, resolving
+/// the on-chain param set (so the per-set circuit artifact follows) —
+/// never a hardcoded set. Errors name the missing/unknown params.
+fn ckks_preset_from_request(
+    request: &ComputeRequest,
+    ckks_params: Option<&[u8]>,
+    what: &str,
+) -> Result<
+    e3_zk_helpers::circuits::threshold::user_data_encryption_ckks::CkksPreset,
+    ComputeRequestError,
+> {
+    let bytes = ckks_params.ok_or_else(|| {
+        make_zk_error(
+            request,
+            format!("{what}: CKKS request carries no ckks_params (version skew?)"),
+        )
+    })?;
+    let set = e3_fhe_params::ckks_presets::ckks_on_chain_param_set_from_bytes(bytes)
+        .map_err(|e| make_zk_error(request, format!("{what}: ckks param set: {e}")))?;
+    e3_zk_helpers::circuits::threshold::user_data_encryption_ckks::ckks_preset_for_param_set(set)
+        .map_err(|e| make_zk_error(request, format!("{what}: ckks preset: {e}")))
+}
+
+/// Decode a bincode `Vec<i64>` witness stored encrypted at rest.
+fn sensitive_i64s(
+    request: &ComputeRequest,
+    cipher: &Cipher,
+    bytes: e3_crypto::SensitiveBytes,
+    what: &str,
+) -> Result<Vec<i64>, ComputeRequestError> {
+    let raw = bytes
+        .access(cipher)
+        .map_err(|e| make_zk_error(request, format!("{what} decrypt: {e}")))?;
+    bincode::deserialize(&raw).map_err(|e| make_zk_error(request, format!("{what} decode: {e}")))
+}
+
+/// C1-CKKS: prove `pk_share = -a*sk + e` over the E3's CKKS moduli
+/// (`pk_generation_ckks_ps<N>`). Native pre-check first so a bad share
+/// fails attributably.
+fn handle_pk_generation_proof_ckks(
+    prover: &ZkProver,
+    cipher: &Cipher,
+    req: e3_events::PkGenerationCkksProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    use e3_zk_helpers::circuits::threshold::pk_generation_ckks::{
+        verify_ckks_pk_generation_constraints, CkksPkGenerationCircuit, CkksPkGenerationData,
+    };
+    use fhe::trckks::{CkksCrp, CkksPublicKeyShare};
+    use fhe_traits::DeserializeWithContext;
+
+    let preset = ckks_preset_from_request(&request, Some(&req.ckks_params), "C1-CKKS")?;
+    let params = preset.params.clone();
+    let crp = CkksCrp::from_seed(&params, req.crp_seed)
+        .map_err(|e| make_zk_error(&request, format!("C1-CKKS crp: {e}")))?;
+    let ctx = params
+        .context_at_level(0)
+        .map_err(|e| make_zk_error(&request, format!("C1-CKKS level0 ctx: {e}")))?;
+    let p0 = fhe_math::rq::Poly::<fhe_math::rq::Ntt>::from_bytes(&req.pk_share, ctx)
+        .map_err(|e| make_zk_error(&request, format!("C1-CKKS pk share decode: {e}")))?;
+    let pk_share = CkksPublicKeyShare::from_parts(params.clone(), p0, crp.clone());
+
+    let data = CkksPkGenerationData {
+        crp,
+        pk_share,
+        sk_coeffs: sensitive_i64s(&request, cipher, req.sk_coeffs, "C1-CKKS sk")?,
+        e_coeffs: sensitive_i64s(&request, cipher, req.eek_coeffs, "C1-CKKS e")?,
+        e_sm_coeffs: sensitive_i64s(&request, cipher, req.e_sm_coeffs, "C1-CKKS e_sm")?,
+    };
+    verify_ckks_pk_generation_constraints(&preset, &data)
+        .map_err(|e| make_zk_error(&request, format!("C1-CKKS pre-check: {e}")))?;
+
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let work_id = format!("{}_c1ckks", zk_bb_work_id(&request));
+    let proof = CkksPkGenerationCircuit
+        .prove(prover, &preset, &data, &work_id, &artifacts_dir)
+        .map_err(|e| {
+            ComputeRequestError::new(
+                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(format!(
+                    "C1-CKKS proof: {e}"
+                ))),
+                request.clone(),
+            )
+        })?;
+    Ok(ComputeResponse::zk(
+        ZkResponse::PkGenerationCkks(e3_events::PkGenerationCkksProofResponse { proof }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+/// C8-CKKS (hybrid): one `relin_round1_hybrid_ckks_digit` proof per gadget
+/// digit of this party's round-1 share. The whole-share native pre-check
+/// runs once; each digit proof binds `(s_commitment, u_commitment, j,
+/// share_commitment_j)`.
+fn handle_relin_round1_proof_ckks(
+    prover: &ZkProver,
+    cipher: &Cipher,
+    req: e3_events::RelinRound1CkksProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    use e3_zk_helpers::circuits::threshold::relin_round1_hybrid_ckks::{
+        verify_ckks_hybrid_relin_round1_constraints, CkksHybridRelinRound1Data,
+    };
+    use e3_zk_helpers::circuits::threshold::relin_round1_hybrid_ckks_digit::CkksHybridRelinRound1DigitCircuit;
+    use e3_zk_prover::CkksHybridRelinRound1DigitData;
+    use fhe::trckks::{CkksCrp, CkksHybridRelinKeyShare, R1};
+
+    let preset = ckks_preset_from_request(&request, Some(&req.ckks_params), "C8-CKKS")?;
+    let params = preset.params.clone();
+    let crp = CkksCrp::vec_from_seed_qp(&params, req.crp_seed)
+        .map_err(|e| make_zk_error(&request, format!("C8-CKKS crp: {e}")))?;
+    let share = CkksHybridRelinKeyShare::<R1>::from_bytes(&req.share, &params)
+        .map_err(|e| make_zk_error(&request, format!("C8-CKKS share decode: {e}")))?;
+    let e0: Vec<Vec<i64>> = {
+        let raw = req
+            .e0_coeffs
+            .access(cipher)
+            .map_err(|e| make_zk_error(&request, format!("C8-CKKS e0 decrypt: {e}")))?;
+        bincode::deserialize(&raw)
+            .map_err(|e| make_zk_error(&request, format!("C8-CKKS e0 decode: {e}")))?
+    };
+    let e1: Vec<Vec<i64>> = {
+        let raw = req
+            .e1_coeffs
+            .access(cipher)
+            .map_err(|e| make_zk_error(&request, format!("C8-CKKS e1 decrypt: {e}")))?;
+        bincode::deserialize(&raw)
+            .map_err(|e| make_zk_error(&request, format!("C8-CKKS e1 decode: {e}")))?
+    };
+    let data = Arc::new(CkksHybridRelinRound1Data {
+        crp,
+        share,
+        sk_coeffs: sensitive_i64s(&request, cipher, req.sk_coeffs, "C8-CKKS sk")?,
+        u_coeffs: sensitive_i64s(&request, cipher, req.u_coeffs, "C8-CKKS u")?,
+        e0_coeffs: e0,
+        e1_coeffs: e1,
+    });
+    verify_ckks_hybrid_relin_round1_constraints(&preset, &data)
+        .map_err(|e| make_zk_error(&request, format!("C8-CKKS pre-check: {e}")))?;
+
+    let artifacts_dir =
+        prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let base = zk_bb_work_id(&request);
+    let dnum = params.dnum();
+    let mut proofs = Vec::with_capacity(dnum);
+    for digit in 0..dnum {
+        let digit_data = CkksHybridRelinRound1DigitData {
+            share: data.clone(),
+            digit,
+        };
+        let work_id = format!("{base}_c8ckks_{digit}");
+        let proof = CkksHybridRelinRound1DigitCircuit
+            .prove(prover, &preset, &digit_data, &work_id, &artifacts_dir)
+            .map_err(|e| {
+                ComputeRequestError::new(
+                    ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(format!(
+                        "C8-CKKS digit {digit} proof: {e}"
+                    ))),
+                    request.clone(),
+                )
+            })?;
+        proofs.push(proof);
+    }
+    Ok(ComputeResponse::zk(
+        ZkResponse::RelinRound1Ckks(e3_events::RelinRound1CkksProofResponse { proofs }),
+        request.correlation_id,
+        request.e3_id,
+    ))
 }
 
 fn handle_node_dkg_fold_proof(
@@ -1507,6 +1825,9 @@ fn handle_decrypted_shares_aggregation_proof(
     mut req: DecryptedSharesAggregationProofRequest,
     request: ComputeRequest,
 ) -> Result<ComputeResponse, ComputeRequestError> {
+    if req.scheme == e3_events::E3Scheme::Ckks {
+        return handle_decrypted_shares_aggregation_proof_ckks(prover, req, request);
+    }
     // 1. Build threshold BFV parameters from preset
     let (threshold_params, _dkg_params) = build_pair_for_preset(req.params_preset)
         .map_err(|e| make_zk_error(&request, format!("build_pair_for_preset: {}", e)))?;
@@ -1609,6 +1930,106 @@ fn handle_decrypted_shares_aggregation_proof(
     }
 
     // 5. Return response
+    Ok(ComputeResponse::zk(
+        ZkResponse::DecryptedSharesAggregation(DecryptedSharesAggregationProofResponse { proofs }),
+        request.correlation_id,
+        request.e3_id,
+    ))
+}
+
+/// C7-CKKS: prove Lagrange reconstruction of the CKKS decryption shares.
+/// Shares are proven at the ciphertext's level context; party ids are
+/// 1-based Shamir x-coordinates (the aggregator's CKKS seam converts from
+/// chain slots before this request is built).
+fn handle_decrypted_shares_aggregation_proof_ckks(
+    prover: &ZkProver,
+    mut req: DecryptedSharesAggregationProofRequest,
+    request: ComputeRequest,
+) -> Result<ComputeResponse, ComputeRequestError> {
+    use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation_ckks::{
+        DecryptedSharesAggregationCkksCircuit, DecryptedSharesAggregationCkksCircuitData,
+    };
+    use fhe_traits::DeserializeWithContext;
+
+    let preset = ckks_preset_from_request(&request, req.ckks_params.as_deref(), "C7-CKKS")?;
+    let params = preset.params.clone();
+
+    // Circuit requires strictly increasing party ids and exactly T+1 shares.
+    req.d_share_polys.sort_by_key(|(id, _)| *id);
+    let required = req.threshold_m as usize + 1;
+    if req.d_share_polys.len() > required {
+        req.d_share_polys.truncate(required);
+    }
+
+    let num_indices = req.plaintext.len();
+    let mut proofs = Vec::with_capacity(num_indices);
+    let artifacts_dir = req
+        .params_preset
+        .artifacts_dir_for_committee(req.committee_size.as_str());
+
+    for i in 0..num_indices {
+        // The CKKS witness builder derives the level from the polys' RNS
+        // context; shares travel at the evaluated ciphertext's level.
+        // Try each level context until deserialization succeeds (rescaled
+        // ciphertexts drop limbs, and the request does not carry the level).
+        let mut d_share_polys = Vec::with_capacity(req.d_share_polys.len());
+        for (pid, shares) in &req.d_share_polys {
+            let bytes = &shares[i % shares.len()];
+            let mut decoded = None;
+            for level in 0..params.moduli().len() {
+                if let Ok(ctx) = params.context_at_level(level) {
+                    if let Ok(p) =
+                        fhe_math::rq::Poly::<fhe_math::rq::PowerBasis>::from_bytes(bytes, ctx)
+                    {
+                        decoded = Some(p);
+                        break;
+                    }
+                }
+            }
+            let poly = decoded.ok_or_else(|| {
+                make_zk_error(
+                    &request,
+                    format!("ckks d_share (party {pid}, idx {i}) decodes at no level"),
+                )
+            })?;
+            d_share_polys.push(poly);
+        }
+        // 1-based Shamir x-coordinates: the CKKS aggregation seam already
+        // converted chain slots, so ids arrive 1-based — use them directly.
+        let reconstructing_parties: Vec<usize> = req
+            .d_share_polys
+            .iter()
+            .map(|(id, _)| *id as usize)
+            .collect();
+
+        let circuit_data = DecryptedSharesAggregationCkksCircuitData {
+            threshold: req.threshold_m as usize,
+            d_share_polys,
+            reconstructing_parties,
+        };
+
+        let circuit = DecryptedSharesAggregationCkksCircuit;
+        let idx_work_id = format!("{}_c7ckks_{}", zk_bb_work_id(&request), i);
+        let proof = circuit
+            .prove_with_variant(
+                prover,
+                &preset,
+                &circuit_data,
+                &idx_work_id,
+                CircuitVariant::Default,
+                &artifacts_dir,
+            )
+            .map_err(|e| {
+                ComputeRequestError::new(
+                    ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(format!(
+                        "C7-CKKS proof[{i}]: {e}"
+                    ))),
+                    request.clone(),
+                )
+            })?;
+        proofs.push(proof);
+    }
+
     Ok(ComputeResponse::zk(
         ZkResponse::DecryptedSharesAggregation(DecryptedSharesAggregationProofResponse { proofs }),
         request.correlation_id,

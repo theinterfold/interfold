@@ -18,12 +18,14 @@ impl ThresholdPlaintextAggregator {
             AggregationProofPending {
                 e3_id: self.e3_id.clone(),
                 proof_request: DecryptedSharesAggregationProofRequest {
+                    scheme: e3_events::E3Scheme::Bfv,
                     d_share_polys: shares.clone(),
                     plaintext: plaintext.clone(),
                     params_preset: self.params_preset,
                     threshold_m,
                     threshold_n,
                     committee_size: self.committee_size,
+                    ckks_params: None,
                 },
                 plaintext,
                 shares,
@@ -89,6 +91,20 @@ impl ThresholdPlaintextAggregator {
         if self.pending.decryption_aggregator_proofs.is_some()
             || self.pending.decryption_aggregation_correlation.is_some()
         {
+            return Ok(());
+        }
+        // CKKS: no recursive DecryptionAggregator fold circuit exists for
+        // the CKKS moduli — the C7-CKKS proof itself is published as the
+        // aggregation proof (real proof, verified against the C7-CKKS vk;
+        // production would add a CKKS fold circuit and EVM verifier).
+        if self.scheme == e3_events::E3Scheme::Ckks {
+            self.pending.decryption_aggregator_proofs = self.pending.c7_proofs_pending.clone();
+            let proofs = self.pending.decryption_aggregator_proofs.clone();
+            self.recovery.try_mutate(ec, |mut recovery| {
+                recovery.decryption_aggregator_proofs = proofs;
+                recovery.last_ec = Some(ec.clone());
+                Ok(recovery)
+            })?;
             return Ok(());
         }
         if !self.proof_aggregation_enabled {

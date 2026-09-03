@@ -96,7 +96,14 @@ impl ThresholdPlaintextAggregator {
 
         info!("C7 + decryption_aggregator proofs ready — publishing PlaintextAggregated");
 
-        let decrypted_output = format_decrypted_plaintext(&state.plaintext);
+        // CKKS plaintexts are already the canonical fixed-point bytes; the
+        // BFV formatter pads/truncates to MAX_MSG_NON_ZERO_COEFFS*8 which
+        // would corrupt them (appended zero-words decode as extra values).
+        let decrypted_output = if self.scheme == e3_events::E3Scheme::Ckks {
+            state.plaintext.clone()
+        } else {
+            format_decrypted_plaintext(&state.plaintext)
+        };
 
         let decryption_aggregator_proofs = self
             .pending

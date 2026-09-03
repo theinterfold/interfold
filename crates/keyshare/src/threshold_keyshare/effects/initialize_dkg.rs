@@ -22,6 +22,18 @@ impl ThresholdKeyshare {
             return Ok(());
         }
 
+        // Scheme dispatch on the chain-bound program scheme (the E3
+        // program's `encryptionSchemeId`, mapped by the EVM reader): a
+        // requester picks the scheme by picking the PROGRAM. The params
+        // bytes are no longer sniffed — `SchemeParams` stays as a
+        // validation utility only.
+        if msg.scheme == crate::E3Scheme::Ckks {
+            info!("CiphernodeSelected (CKKS program) received.");
+            self.state
+                .try_mutate(&ec, |s| Ok(s.with_scheme(crate::E3Scheme::Ckks)))?;
+            return self.ckks_handle_ciphernode_selected(TypedEvent::new(msg, ec));
+        }
+
         info!("CiphernodeSelected received.");
         // Ensure the collectors are created
         let _ = self.ensure_collector(address.clone());

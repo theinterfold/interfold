@@ -1303,6 +1303,145 @@ ACTIVE AGGREGATOR collects PK_share₁ + PK_share₂ + PK_share₃
   → Anyone can encrypt, only committee can decrypt
 ```
 
+## Threshold CKKS variant (scheme-bound E3s)
+
+An E3 whose program returns `encryptionSchemeId == keccak256("fhe.rs:CKKS")` runs the same
+phases with a CKKS keyshare machine. Everything below is derived from the request-carried
+`ParamSet` (`E3Requested` → `E3Meta.params` → `CiphernodeSelected.params`); nodes read NO
+configuration to agree. See `INVARIANTS.md` §"Threshold CKKS".
+
+**Files**: `crates/fhe-params/src/ckks_presets.rs` (param sets, transport escalation, relin
+levels, `CkksProofPosture`), `crates/keyshare/src/threshold_keyshare_ckks/{machine,timing}.rs`
+(pure machine + timeline), `crates/keyshare/src/threshold_keyshare/effects/{ckks_shell,
+ckks_ceremony_log,recovery}.rs` (actor splice, durable chunk log, restart), `crates/net/src/
+event_conversion/workflow.rs` (`RelinCeremonyShare` envelope validation), `crates/zk-prover/src/
+proof_verification/*.rs` + `proof_request/effects/dkg_proofs.rs` (C0 posture), `crates/aggregator/
+src/plaintext_aggregation/effects/verify_decryption_shares.rs` (C6 posture).
+
+### CKKS Step 1: CiphernodeSelected → runtime + posture
+
+- `ext.rs::share_enc_preset_for_meta` picks the DKG transport: the standard preset if every
+  CKKS modulus ≤ `t_dkg`, else `InsecureDkgWide512` (ParamSet 2's 45-bit ladder base needs it).
+- `ckks_shell::init_ckks_runtime` builds `CkksFhe` from the params, samples the secret RNG from
+  `OsRng` (never the public seed), derives `relin_ceremony_plan_for_param_set(set)` (`None` /
+  `Hybrid` / `PerLevel(levels)`), checks it against the params bytes
+  (`relin_plan_matches_params`: hybrid ⇔ special primes present — `bail!` on skew), and
+  constructs the machine with `with_relin_plan` + `RelinChunkBounds::for_params` (a
+  `chunk_count` ceiling from the deepest per-level share, or from the hybrid share
+  `2·dnum·(L+k)·N·8` when the params are hybrid).
+- FAIL CLOSED: `e3_zk_prover::ckks_artifacts::check_ckks_artifacts_for_e3(circuits_dir, …)`
+  derives the posture (PROVEN for every known set; `CKKS_ALLOW_PROOF_FREE=1` is the ONLY
+  proof-free path, default OFF) and refuses the E3 with an error NAMING each missing circuit
+  artifact (`pk_generation_ckks_ps<N>`, `share_decryption_ckks[_ps<N>]`,
+  `decrypted_shares_aggregation_ckks[_ps<N>]`, `pk` under the wide transport dir,
+  `relin_round1_hybrid_ckks_digit` for hybrid sets). The aggregator runs the same gate at its
+  own construction (`build_ckks_runtime_for_aggregator`).
+- Logged ONCE: `CKKS proof posture: param_set=… transport=… c0=proven c1=proven c6=proven
+  c7=proven ceremony=proven` (plus `c8_gate=Required` for hybrid sets). The same posture is
+  recomputed (not trusted from the wire) by the zk-prover verification actor (C0 accept-set)
+  and the aggregator (C1 and C6 paths).
+- `ckks_timing` mark `dkg.selected` starts the node's timeline.
+
+### CKKS Step 2–4: DKG over BFV transport (unchanged event types)
+
+`EncryptionKeyPending` → (C0 proof, or proof-free under a WIDE transport) →
+`EncryptionKeyCreated` collected N times (`dkg.encryption_keys_collected`) → dealt Shamir shares
+of sk + smudging polys travel encrypted in the existing `ThresholdShareCreated` per recipient
+(`dkg.threshold_share_generated/published`; the C2 constraint gate runs natively before
+dispatch) → `finalize_from_threshold_shares` (`dkg.threshold_shares_collected`,
+`dkg.finalized`) → `PublishKeyshareCreated { pk_share, c1_witness }` → the shell publishes
+`PkGenerationCkksProofPending` (`dkg.c1_proof_requested`) → ProofRequestActor →
+multithread proves `pk_generation_ckks_ps<N>` (`zk_pk_generation_ckks`) → signed C1-CKKS proof →
+`KeyshareCreated { signed_pk_generation_proof: Some(..) }`. Party ids: 0-based on the bus,
+1-based inside the machine (`party_id_machine`/`party_id_chain`).
+
+**Rogue-key gate (aggregator)**: `verify_key_proofs.rs::dispatch_c1_verification` sends the CKKS
+proofs through the SAME `ShareVerificationDispatched { kind: PkGenerationProofs }` round as BFV
+(the verifier resolves the circuit from the proof's `CircuitName`, artifacts under the THRESHOLD
+preset dir); `handle_c1_verification_complete` then runs
+`check_c1_ckks_keyshare_commitments` — `pk_commitment` public output must equal
+`compute_ckks_pk_commitment_from_share_bytes(received pk share, CRP)` (the witness builder's own
+derivation; log line `C1-CKKS pk_commitment verified against the received share for party N`).
+A missing proof, a verifier rejection, or a commitment mismatch emits `SignedProofFailed`
+(C1PkGeneration) and `E3Failed(DKGInvalidShares)` — CKKS aggregates the dealt secret over
+EVERY dealer, so no subset key is published. Only after `C1-CKKS verified for all N pk shares`
+does `ckks_aggregate_and_publish` sum the shares.
+
+### CKKS Step 5: relin ceremony (only when the plan is not `None`)
+
+Two plans share ONE machine path. A per-level plan (ParamSet 3: `[0]`) runs the RNS-decomposition
+protocol once per level. The HYBRID plan (ParamSet 2: special primes, `dnum = 13`) runs the same
+two rounds ONCE over `Q·P` (`CkksFhe::hybrid_relin_round_1/2`, `hybrid_relin_aggregate_round_1/2`
+→ fhe.rs `CkksHybridRelinKeyGenerator`) and yields ONE `CkksHybridRelinKey` for every level. The
+hybrid ceremony occupies the single slot `HYBRID_RELIN_LEVEL = u32::MAX` in the per-(round, level)
+chunk transport — `RelinCeremonyShare` is unchanged (`level` carries the sentinel) — and the
+timing marks are `ceremony.hybrid_r1_generated bytes=` / `hybrid_r1_complete` /
+`hybrid_r2_generated bytes=` / `hybrid_r2_complete` (no level).
+
+1. DKG completion parks the machine in `RelinRound1 { r1_published: false }` — nothing bulky
+   is computed inside DKG finalization (the event loop must not block: the swarm dropped nodes
+   that did).
+2. Release trigger = chain-observed `CommitteePublished` (every node sees it) and, idempotently,
+   `PublicKeyAggregated`. `pk_confirmed` is persisted so a signal that arrives before DKG
+   completes still releases. `ckks_handle_public_key_aggregated` → `on_public_key_aggregated`
+   computes R1 per slot (`ceremony.r1_level_generated level= bytes=`, or the one
+   `ceremony.hybrid_r1_generated bytes=`) and emits
+   `PublishRelinRound1` → one `RelinCeremonyShare` per ≤ 8 MiB chunk (`ceremony.r1_published
+   count=`), published as unfiltered DHT documents.
+3. Inbound chunks: net validates the envelope (round ∈ {1,2}, index < count, party > 0,
+   non-empty) → shell logs the chunk in `CeremonyChunkLog` → machine collector enforces
+   bounds (chunk_count ≤ max, chunk ≤ wire cap, one partial buffer per party/level, keccak of the
+   reassembly, equivocation `bail!`). `ceremony.r1_level_complete level=` when a level has all
+   N parties; `try_advance_relin` refuses to advance until own R1 is published.
+3b. **C8 gate (hybrid plan, `RelinProofGate::Required`)**: alongside its R1 chunks each party
+   publishes `RelinRound1ProofPending` (`ceremony.c8_proofs_requested`) → ProofRequestActor →
+   multithread proves `dnum` `relin_round1_hybrid_ckks_digit` proofs (`zk_relin_round1_ckks`)
+   → signed bundle gossiped as `RelinCeremonyProofSigned` (net-forwardable). Every receiver's
+   machine (`on_relin_round_1_proofs`) stores the bundle (exact `dnum` count, round 1, sentinel
+   level, equivocation `bail!`) and, once the party's share is reassembled, checks the NATIVE
+   bindings (`check_relin_round_1_bindings`): `digit == j`, `s_commitment` identical across
+   digits AND equal to the party's C1-CKKS sk commitment (recorded from its `KeyshareCreated`
+   proof via `on_c1_sk_commitment`), `u_commitment` identical across digits,
+   `share_commitment` == `digit_share_commitments_from_bytes(reassembled share)[j]`. When all N
+   parties are bound: `VerifyRelinRound1Proofs` → `ShareVerificationDispatched { kind:
+   RelinRound1Proofs }` (`C8-CKKS bindings hold for every party — dispatching digit proofs for
+   Honk verification`) → `ShareVerificationComplete` → `on_relin_round_1_proofs_verified`:
+   empty dishonest set opens the gate (`C8-CKKS digit proofs verified for every party — relin
+   round 1 may aggregate`); any failure → `RelinCeremonyFailed { party_id, reason }` →
+   `E3Failed(DKGInvalidShares)` (`CKKS relin ceremony FAILED (C8 gate): …`). R1 is NEVER
+   aggregated while the gate is closed. Per-level plans keep verify-by-determinism (gate `Off`).
+   The slashing-side link `C1-CKKS->C8 sk/s_commitment` (`commitment_links/c1ckks_to_c8.rs`)
+   makes the same equality slashable evidence.
+4. R2 mirrors R1 (`ceremony.r2_level_generated/published/complete`); completion aggregates
+   the joint key(s), zeroizes `sk_coeffs`/`u_seed`, emits `RelinKeysReady` → keys written to
+   `<data_dir>/<node>/ckks/relin-keys/<e3_id>/rlk_level_{level}.bin` (per-level) or the ONE
+   `rlk_hybrid.bin` (hybrid) (`ceremony.keys_written count= bytes=`) and the chunk log is
+   cleared. Consumers (`ckks_auction_eval --mode winner`, the auction server's evaluator) load
+   through `e3_trckks::policy::RelinKeys::load_from_dir` — hybrid params REQUIRE the hybrid file.
+5. Restart mid-ceremony: `resume_in_flight_work` rebuilds the runtime from the recovery record,
+   restores the machine snapshot (chunk buffers excluded), replays the chunk log
+   (`ceremony.chunks_replayed count=`), re-releases R1 if pk was confirmed, and lets network
+   sync re-serve the remaining documents.
+
+### CKKS Step 6–7: decryption share + aggregation
+
+`CiphertextOutputPublished` → `on_ciphertext_output` (pins the ct keccak: `e_sm` single-use) →
+`decrypt.share_generated dur_ms=` → `ShareDecryptionProofPending` (`decrypt.c6_proof_requested`;
+`ckks_params` = the E3's own params, artifact under the threshold preset dir for the E3's param
+set) → C6-CKKS proof → `DecryptionshareCreated`. Only under the explicit `CKKS_ALLOW_PROOF_FREE=1`
+off-switch does `DecryptionshareCreated` publish directly (`decrypt.share_published`). The
+aggregator recomputes the posture from `VerifyingC6.params`, runs the ShareVerification round,
+then the CKKS `d_commitment` cross-check `verify_ckks_shares_match_c6_commitments` (C6-CKKS
+`d_commitment` output == commitment of the RECEIVED share bytes at the ciphertext's level, all
+N coefficients, `Bits::d_native_bit`; log `C6-CKKS d_commitment verified against the received
+share for party N`; a mismatch excludes the party, below t+1 fails the round) before
+`aggregate_ckks_plaintext` (canonical fixed-point bytes on-chain).
+
+### Timing
+
+`scripts/ckks-timing-report.sh <data_dir>/*/ciphernode.jsonl` renders every `ckks_timing`
+event into a per-phase min/median/max table with per-node compute totals.
+
 ## Durable flow tracing
 
 The dashboard renders event ID, causation ID, origin ID, HLC timestamp, block watermark, aggregate,

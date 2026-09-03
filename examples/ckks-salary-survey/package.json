@@ -1,0 +1,22 @@
+{
+  "name": "@interfold/ckks-salary-survey",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "license": "LGPL-3.0-only",
+  "scripts": {
+    "stage:circuits": "node scripts/stage-circuits.mjs",
+    "build:sdk": "pnpm -C packages/ckks-salary-sdk build",
+    "build:client": "pnpm -C client build",
+    "build": "pnpm stage:circuits && pnpm build:sdk && pnpm build:client",
+    "dev": "./scripts/dev.sh",
+    "dev:server": "./scripts/dev_server.sh",
+    "dev:client": "pnpm -C client dev",
+    "lint": "pnpm -C client lint && pnpm -C packages/ckks-salary-sdk lint",
+    "test:e2e": "node test/e2e.mjs"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.52.0",
+    "playwright": "1.52.0"
+  }
+}

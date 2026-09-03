@@ -8,6 +8,7 @@ mod actor_system;
 mod actors;
 mod backend;
 mod circuits;
+pub mod ckks_artifacts;
 mod config;
 mod dkg_attestation_bundle;
 mod domain;
@@ -37,6 +38,7 @@ pub use circuits::aggregation::node_dkg_fold::{
 pub use circuits::aggregation::nodes_fold_accumulator::{
     generate_nodes_fold_step, generate_sequential_nodes_fold,
 };
+pub use circuits::threshold::CkksHybridRelinRound1DigitData;
 pub use config::{verify_checksum, BbTarget, CircuitInfo, VersionInfo, ZkConfig};
 pub use dkg_attestation_bundle::encode_dkg_attestation_bundle;
 pub use e3_events::CircuitVariant;

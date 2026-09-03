@@ -7,7 +7,7 @@
 use anyhow::{ensure, Context, Result};
 use e3_events::{
     DecryptionKeyShared, DocumentKind, DocumentMeta, EncryptionKeyCreated, EncryptionKeyReceived,
-    Filter, PublishDocumentRequested, ThresholdShareCreated,
+    Filter, PublishDocumentRequested, RelinCeremonyShare, ThresholdShareCreated,
 };
 use e3_utils::ArcBytes;
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,7 @@ pub enum ReceivableDocument {
     ThresholdShareCreated(ThresholdShareCreated),
     EncryptionKeyCreated(EncryptionKeyCreated),
     DecryptionKeyShared(DecryptionKeyShared),
+    RelinCeremonyShare(RelinCeremonyShare),
 }
 
 impl ReceivableDocument {
@@ -40,6 +41,7 @@ impl ReceivableDocument {
             Self::ThresholdShareCreated(event) => &event.e3_id,
             Self::EncryptionKeyCreated(event) => &event.e3_id,
             Self::DecryptionKeyShared(event) => &event.e3_id,
+            Self::RelinCeremonyShare(event) => &event.e3_id,
         }
     }
 
@@ -68,6 +70,33 @@ impl ReceivableDocument {
                 meta.filter.is_empty(),
                 "broadcast key document metadata must not contain party filters"
             ),
+            Self::RelinCeremonyShare(event) => {
+                ensure!(
+                    meta.filter.is_empty(),
+                    "relin ceremony document metadata must not contain party filters"
+                );
+                // Wire-level envelope sanity before the keyshare machine
+                // sees the chunk: round, index/count, and non-empty body.
+                ensure!(
+                    event.round == 1 || event.round == 2,
+                    "relin ceremony document names round {}; only 1 and 2 exist",
+                    event.round
+                );
+                ensure!(
+                    event.chunk_count > 0 && event.chunk_index < event.chunk_count,
+                    "relin ceremony document chunk {}/{} is malformed",
+                    event.chunk_index,
+                    event.chunk_count
+                );
+                ensure!(
+                    event.party_id > 0,
+                    "relin ceremony document party id 0 is not a Shamir coordinate"
+                );
+                ensure!(
+                    event.chunk.size() > 0,
+                    "relin ceremony document carries an empty chunk"
+                );
+            }
         }
 
         Ok(())
@@ -81,6 +110,7 @@ pub enum IncomingDocument {
     ThresholdShare(ThresholdShareCreated),
     EncryptionKey(EncryptionKeyReceived),
     DecryptionKey(DecryptionKeyShared),
+    RelinShare(RelinCeremonyShare),
 }
 
 /// Pure converter between internal events and network document payloads.
@@ -144,6 +174,20 @@ impl EventConversionService {
         Ok(Some(PublishDocumentRequested::new(meta, value)))
     }
 
+    /// Convert a local relin-ceremony broadcast to a DHT publication
+    /// (unfiltered broadcast: every committee member aggregates all
+    /// parties' shares).
+    pub fn relin_share_to_request(
+        msg: RelinCeremonyShare,
+    ) -> Result<Option<PublishDocumentRequested>> {
+        if msg.external {
+            return Ok(None);
+        }
+        let meta = DocumentMeta::new(msg.e3_id.clone(), DocumentKind::TrBFV, vec![], None);
+        let value = encode(&ReceivableDocument::RelinCeremonyShare(msg))?;
+        Ok(Some(PublishDocumentRequested::new(meta, value)))
+    }
+
     /// Validate that independently-gossiped metadata describes the content-addressed DHT payload.
     pub fn validate_received(meta: &DocumentMeta, bytes: &[u8]) -> Result<()> {
         let receivable = Self::decode_and_validate(meta, bytes)?;
@@ -186,6 +230,16 @@ impl EventConversionService {
             ReceivableDocument::DecryptionKeyShared(evt) => {
                 debug!("Received DecryptionKeyShared from party {}", evt.party_id);
                 IncomingDocument::DecryptionKey(DecryptionKeyShared {
+                    external: true,
+                    ..evt
+                })
+            }
+            ReceivableDocument::RelinCeremonyShare(evt) => {
+                debug!(
+                    "Received RelinCeremonyShare round {} from party {}",
+                    evt.round, evt.party_id
+                );
+                IncomingDocument::RelinShare(RelinCeremonyShare {
                     external: true,
                     ..evt
                 })
@@ -261,5 +315,50 @@ mod tests {
 
         let error = EventConversionService::validate_received(&filtered, &bytes).unwrap_err();
         assert!(error.to_string().contains("must not contain party filters"));
+    }
+
+    fn relin_document(e3_id: E3id) -> RelinCeremonyShare {
+        RelinCeremonyShare {
+            e3_id,
+            party_id: 2,
+            node: "n".into(),
+            round: 1,
+            level: 0,
+            chunk_index: 0,
+            chunk_count: 1,
+            payload_keccak: [7u8; 32],
+            chunk: ArcBytes::from_bytes(b"chunk"),
+            external: false,
+        }
+    }
+
+    #[test]
+    fn relin_ceremony_document_envelope_is_validated_at_the_wire() {
+        let e3_id = E3id::new("9", 1);
+        let ok = ReceivableDocument::RelinCeremonyShare(relin_document(e3_id.clone()))
+            .to_bytes()
+            .unwrap();
+        EventConversionService::validate_received(&meta(e3_id.clone()), &ok).unwrap();
+
+        let cases: Vec<(&str, Box<dyn Fn(&mut RelinCeremonyShare)>)> = vec![
+            ("only 1 and 2 exist", Box::new(|d| d.round = 3)),
+            ("is malformed", Box::new(|d| d.chunk_count = 0)),
+            ("is malformed", Box::new(|d| d.chunk_index = d.chunk_count)),
+            ("not a Shamir coordinate", Box::new(|d| d.party_id = 0)),
+            (
+                "empty chunk",
+                Box::new(|d| d.chunk = ArcBytes::from_bytes(b"")),
+            ),
+        ];
+        for (needle, mutate) in cases {
+            let mut doc = relin_document(e3_id.clone());
+            mutate(&mut doc);
+            let bytes = ReceivableDocument::RelinCeremonyShare(doc)
+                .to_bytes()
+                .unwrap();
+            let error = EventConversionService::validate_received(&meta(e3_id.clone()), &bytes)
+                .unwrap_err();
+            assert!(error.to_string().contains(needle), "{needle}: {error}");
+        }
     }
 }

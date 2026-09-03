@@ -55,6 +55,15 @@ impl E3Extension for FheExtension {
 
         let E3Requested { params, e3_id, .. } = data.clone();
 
+        // CKKS E3s don't build the BFV `Fhe` runtime: the scheme is bound
+        // on-chain by the E3 program (program address => protocol) and the
+        // CKKS runtime lives in the keyshare/aggregator CKKS branches,
+        // constructed from `E3Meta.params` + the E3 seed. Attempting the
+        // BFV decode here would just raise a spurious bus error.
+        if data.scheme == e3_events::E3Scheme::Ckks {
+            return;
+        }
+
         let Ok(fhe_inner) = Fhe::from_encoded(&params, self.rng.clone()) else {
             self.bus
                 .err(EType::KeyGeneration, anyhow!(ERROR_FHE_FAILED_TO_DECODE));

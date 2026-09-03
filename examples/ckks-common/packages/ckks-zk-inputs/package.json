@@ -1,0 +1,57 @@
+{
+  "name": "@interfold/ckks-zk-inputs",
+  "type": "module",
+  "description": "CKKS client-side encryption + Greco witness inputs for the CKKS user-data-encryption circuits (WASM/JavaScript bindings).",
+  "version": "0.1.0-insecure.0",
+  "license": "LGPL-3.0-only",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/theinterfold/interfold",
+    "directory": "examples/ckks-common/packages/ckks-zk-inputs"
+  },
+  "main": "main.js",
+  "module": "main.js",
+  "types": "dist/web/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/web/index.d.ts",
+      "import": "./main.js",
+      "default": "./main.js"
+    },
+    "./init": {
+      "types": "./init.d.ts",
+      "node": "./init_node.js",
+      "browser": "./init_web.js",
+      "default": "./init_web.js"
+    },
+    "./node": {
+      "types": "./dist/node/index.d.ts",
+      "default": "./dist/node/index.js"
+    }
+  },
+  "files": [
+    "dist/",
+    "main.js",
+    "init_node.js",
+    "init_web.js",
+    "init.d.ts"
+  ],
+  "publishConfig": {
+    "access": "public"
+  },
+  "scripts": {
+    "build": "rm -rf dist && node scripts/build.js",
+    "fixtures": "cargo run --release --manifest-path ../../Cargo.toml -p ckks-zk-inputs-wasm --bin ckks_test_pubkey -- 3 fixtures 42",
+    "test:node": "node scripts/node-smoke.mjs",
+    "test:browser": "node scripts/browser-smoke.mjs"
+  },
+  "devDependencies": {
+    "@aztec/bb.js": "5.1.0",
+    "@noir-lang/noir_js": "1.0.0-beta.26",
+    "execa": "^8.0.1",
+    "playwright": "1.52.0",
+    "replace-in-file": "^7.2.0",
+    "wasm-pack": "^0.15.0",
+    "esbuild": "^0.21.5"
+  }
+}

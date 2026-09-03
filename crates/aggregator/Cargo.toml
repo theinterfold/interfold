@@ -7,6 +7,11 @@ description = "E3 - Interfold Ciphernode Aggregators"
 repository.workspace = true
 
 [dependencies]
+fhe = { workspace = true }
+fhe-traits = { workspace = true }
+rand = { workspace = true }
+rand_chacha = { workspace = true }
+rand_core = { workspace = true }
 alloy = { workspace = true }
 actix = { workspace = true }
 anyhow = { workspace = true }
@@ -17,6 +22,7 @@ e3-data = { workspace = true }
 e3-events = { workspace = true }
 e3-evm = { workspace = true }
 e3-fhe = { workspace = true }
+e3-trckks = { workspace = true }
 e3-fhe-params = { workspace = true }
 e3-keyshare = { workspace = true }
 e3-multithread = { workspace = true }

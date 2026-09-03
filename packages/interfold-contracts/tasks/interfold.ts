@@ -33,6 +33,28 @@ function ensureParentDir(filePath: string): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
 }
 
+/**
+ * Decode CKKS canonical fixed-point output: big-endian int128 words at
+ * `decimals` places (mirror of `CkksFixedPointLib.sol` / Rust
+ * `decode_fixed_point_output`).
+ */
+function decodeCkksPlaintextToCsv(bytes: Uint8Array, decimals: number): string {
+  if (bytes.length % 16 !== 0) {
+    throw new Error("CKKS plaintext output length must be a multiple of 16 bytes");
+  }
+  const values: string[] = [];
+  for (let index = 0; index < bytes.length; index += 16) {
+    let value = 0n;
+    for (let offset = 0; offset < 16; offset++) {
+      value = (value << 8n) | BigInt(bytes[index + offset]!);
+    }
+    // two's complement int128
+    if (value >= 1n << 127n) value -= 1n << 128n;
+    values.push((Number(value) / 10 ** decimals).toString());
+  }
+  return values.join(",");
+}
+
 function decodePlaintextBytesToCsv(bytes: Uint8Array): string {
   if (bytes.length % 8 !== 0) {
     throw new Error("Plaintext output length must be a multiple of 8 bytes");
@@ -237,6 +259,13 @@ export const requestCommittee = task(
     defaultValue: ZeroAddress,
     type: ArgumentType.STRING,
   })
+  .addOption({
+    name: "paramSet",
+    description:
+      "on-chain ParamSet (0=Insecure512, 1=Secure8192, 2=CKKS sign-extraction ladder, 3=CKKS statistics)",
+    defaultValue: 0,
+    type: ArgumentType.INT,
+  })
   .setAction(async () => ({
     default: async (
       {
@@ -247,6 +276,7 @@ export const requestCommittee = task(
         e3Params: _e3Params,
         computeParams,
         customParams,
+        paramSet: paramSetOption,
       },
       hre,
     ) => {
@@ -296,8 +326,8 @@ export const requestCommittee = task(
         hre.globalOptions.network,
       );
 
-      // paramSet: 0 = Insecure512, 1 = Secure8192
-      const paramSet = 0;
+      // paramSet: 0 = Insecure512, 1 = Secure8192, 2 = CKKS sign-extraction ladder, 3 = CKKS statistics
+      const paramSet = paramSetOption;
 
       let computeProviderParams = computeParams;
       const mockDecryptionVerifierArgs = readDeploymentArgs(
@@ -814,6 +844,52 @@ export const publishPlaintext = task(
       await tx.wait();
 
       console.log(`Plaintext published`);
+    },
+  }))
+  .build();
+
+export const getCkksPlaintextOutput = task(
+  "e3:getCkksPlaintext",
+  "Read the published CKKS fixed-point plaintext output for an E3",
+)
+  .addOption({
+    name: "e3Id",
+    description: "Id of the E3 program",
+    defaultValue: "0",
+    type: ArgumentType.STRING,
+  })
+  .addOption({
+    name: "outFile",
+    description: "file to write the decoded plaintext CSV output to",
+    defaultValue: "",
+    type: ArgumentType.STRING,
+  })
+  .addOption({
+    name: "decimals",
+    description: "fixed-point decimal places (protocol constant, default 2)",
+    defaultValue: 2,
+    type: ArgumentType.INT,
+  })
+  .setAction(async () => ({
+    default: async ({ e3Id, outFile, decimals }, hre) => {
+      const { ethers, interfold } = await getInterfoldConnection(hre);
+      const e3 = await interfold.getE3(e3Id);
+
+      if (!e3.plaintextOutput || e3.plaintextOutput === "0x") {
+        throw new Error(`Plaintext output not published for e3Id=${e3Id}`);
+      }
+
+      const decoded = decodeCkksPlaintextToCsv(
+        ethers.getBytes(e3.plaintextOutput),
+        decimals,
+      );
+
+      if (outFile) {
+        ensureParentDir(outFile);
+        fs.writeFileSync(outFile, decoded);
+      }
+
+      console.log(decoded);
     },
   }))
   .build();

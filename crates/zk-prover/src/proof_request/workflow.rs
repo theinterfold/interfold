@@ -30,8 +30,9 @@ mod transitions;
 
 pub(crate) use state::{
     DecryptionProofKind, NodeAggregationMeta, PendingAggregationProof, PendingDecryptionProofs,
-    PendingPkAggregationProof, PendingProofRequest, PendingShareDecryptionProof,
-    PendingThresholdProofs, ThresholdProofKind,
+    PendingPkAggregationProof, PendingPkGenerationCkksProof, PendingProofRequest,
+    PendingRelinRound1Proof, PendingShareDecryptionProof, PendingThresholdProofs,
+    ThresholdProofKind,
 };
 pub(crate) use transitions::{plan_decryption_dispatch, plan_threshold_dispatch};
 

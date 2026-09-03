@@ -1589,6 +1589,7 @@ async fn test_trbfv_actor() -> Result<()> {
         error_size,
         params_preset: benchmark_params.bfv_preset,
         params,
+        scheme: Default::default(),
     };
 
     bus.publish_without_context(CommitteeRequested {

@@ -12,6 +12,7 @@
 pub mod c0_to_c3;
 pub mod c1_to_c2;
 pub mod c1_to_c5;
+pub mod c1ckks_to_c8;
 pub mod c2_to_c3;
 pub mod c2_to_c4;
 pub mod c4a_to_c6;
@@ -48,5 +49,8 @@ pub fn default_links(preset: BfvPreset) -> Vec<Box<dyn CommitmentLink>> {
         Box::new(c6_to_c7::C6ToC7DCommitmentLink),
         Box::new(c4a_to_c6::C4aToC6SkCommitmentLink),
         Box::new(c4b_to_c6::C4bToC6ESmCommitmentLink),
+        // CKKS: the DKG secret C1-CKKS commits to is the hybrid ceremony
+        // secret every C8 digit proof commits to (`s_commitment`).
+        Box::new(c1ckks_to_c8::C1CkksToC8SkCommitmentLink),
     ]
 }

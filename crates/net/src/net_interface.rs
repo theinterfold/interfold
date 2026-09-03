@@ -62,7 +62,15 @@ use tracing::{debug, error, info, trace, warn};
 
 const MAX_KADEMLIA_PAYLOAD_BYTES: usize = 26 * 1024 * 1024;
 const DHT_MAX_RECORDS: usize = 1024;
-const DHT_MAX_RECORDS_PER_PEER: usize = 64;
+/// Per-peer inbound record quota. Must absorb a full CKKS relin ceremony:
+/// every committee member broadcasts one document per (round, level,
+/// chunk) — 48+ documents each at the 24-level sign-extraction ladder —
+/// and Kademlia replication makes peers re-serve OTHERS' records under
+/// their own source id, so a peer can legitimately deliver most of the
+/// record set. 64 starved the ceremony live (puts failed QuorumFailed
+/// once the quota tripped); the global DHT_MAX_RECORDS cap still bounds
+/// total memory.
+const DHT_MAX_RECORDS_PER_PEER: usize = 512;
 const DHT_MAX_TTL: Duration = Duration::from_secs(31 * 24 * 60 * 60);
 const DHT_MAX_PROVIDERS_PER_KEY: usize = 20;
 const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 3;

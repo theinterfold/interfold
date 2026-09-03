@@ -67,6 +67,9 @@ pub struct ThresholdPlaintextAggregator {
     sortition: Addr<Sortition>,
     e3_id: E3id,
     params_preset: BfvPreset,
+    /// Chain-bound program scheme (program address => protocol). CKKS
+    /// shares arrive proof-less and are aggregated directly (no C6/C7).
+    scheme: e3_events::E3Scheme,
     committee_size: CiphernodesCommitteeSize,
     proof_aggregation_enabled: bool,
     state: Persistable<ThresholdPlaintextAggregatorState>,
@@ -88,6 +91,7 @@ pub struct ThresholdPlaintextAggregatorParams {
     pub sortition: Addr<Sortition>,
     pub e3_id: E3id,
     pub params_preset: BfvPreset,
+    pub scheme: e3_events::E3Scheme,
     pub committee_size: CiphernodesCommitteeSize,
     pub proof_aggregation_enabled: bool,
     pub initial_is_aggregator: bool,
@@ -138,6 +142,7 @@ impl ThresholdPlaintextAggregator {
             sortition: params.sortition,
             e3_id: params.e3_id,
             params_preset: params.params_preset,
+            scheme: params.scheme,
             committee_size: params.committee_size,
             proof_aggregation_enabled: params.proof_aggregation_enabled,
             state,

@@ -10,7 +10,11 @@ use e3_events::{
     ThresholdShareCreated, ThresholdSharePending, TypedEvent,
 };
 
-pub const THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION: u32 = 1;
+/// v2: added `ckks_machine` (CKKS actor-shell splice). The field is
+/// `#[serde(default)]`, so v1 records DESERIALIZE cleanly; the version
+/// gate in `ext.rs::hydrate` still rejects them (repo policy: in-flight
+/// E3s do not survive a schema bump).
+pub const THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThresholdKeyshareRecoveryState {
@@ -26,6 +30,11 @@ pub struct ThresholdKeyshareRecoveryState {
     pub decryption_verification_complete: Option<TypedEvent<ShareVerificationComplete>>,
     pub keyshare_publish_authorized: bool,
     pub last_ec: Option<EventContext<Sequenced>>,
+    /// Bincode snapshot of the CKKS keyshare state machine
+    /// (`threshold_keyshare_ckks::machine::CkksKeyshareMachine`), written
+    /// after every CKKS transition. `None` on BFV E3s.
+    #[serde(default)]
+    pub ckks_machine: Option<Vec<u8>>,
 }
 
 impl Default for ThresholdKeyshareRecoveryState {
@@ -43,6 +52,7 @@ impl Default for ThresholdKeyshareRecoveryState {
             decryption_verification_complete: None,
             keyshare_publish_authorized: false,
             last_ec: None,
+            ckks_machine: None,
         }
     }
 }

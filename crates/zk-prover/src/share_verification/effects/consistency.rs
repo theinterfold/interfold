@@ -42,7 +42,8 @@ impl ShareVerificationActor {
         let (request, dispatched_party_ids) = match pending.kind {
             VerificationKind::ShareProofs
             | VerificationKind::ThresholdDecryptionProofs
-            | VerificationKind::PkGenerationProofs => {
+            | VerificationKind::PkGenerationProofs
+            | VerificationKind::RelinRound1Proofs => {
                 let Some((passed, ids)) =
                     filter_consistent(pending.ecdsa_passed_share_proofs, inconsistent, |p| {
                         p.sender_party_id

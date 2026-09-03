@@ -10,11 +10,12 @@
 // CKKS dev preset: N=512, L=2, scale=2^26, input_bound=100.
 
 use crate::core::threshold::user_data_encryption_ckks_ct0::Configs as UserDataEncryptionCkksCt0Configs;
+use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
 
 // Global configs for the CKKS User Data Encryption circuit
 pub global CKKS_N: u32 = 512;
 pub global CKKS_L: u32 = 2;
-pub global CKKS_QIS: [Field; CKKS_L] = [68719464449, 68719446017];
+pub global CKKS_QIS: [Field; CKKS_L] = [68719403009, 68719230977];
 
 pub global USER_DATA_ENCRYPTION_CKKS_BIT_PK: u32 = 35;
 pub global USER_DATA_ENCRYPTION_CKKS_BIT_CT: u32 = 35;
@@ -23,13 +24,19 @@ pub global USER_DATA_ENCRYPTION_CKKS_BIT_E0: u32 = 5;
 pub global USER_DATA_ENCRYPTION_CKKS_BIT_M: u32 = 33;
 pub global USER_DATA_ENCRYPTION_CKKS_BIT_R1: u32 = 9;
 pub global USER_DATA_ENCRYPTION_CKKS_BIT_R2: u32 = 35;
+pub global USER_DATA_ENCRYPTION_CKKS_BIT_E1: u32 = 5;
+pub global USER_DATA_ENCRYPTION_CKKS_BIT_P1: u32 = 9;
+pub global USER_DATA_ENCRYPTION_CKKS_BIT_P2: u32 = 35;
 
 pub global USER_DATA_ENCRYPTION_CKKS_E0_BOUND: Field = 20;
 pub global USER_DATA_ENCRYPTION_CKKS_U_BOUND: Field = 1;
 pub global USER_DATA_ENCRYPTION_CKKS_M_BOUND: Field = 6710886401;
 pub global USER_DATA_ENCRYPTION_CKKS_R1_LOW_BOUNDS: [Field; CKKS_L] = [257, 257];
 pub global USER_DATA_ENCRYPTION_CKKS_R1_UP_BOUNDS: [Field; CKKS_L] = [257, 257];
-pub global USER_DATA_ENCRYPTION_CKKS_R2_BOUNDS: [Field; CKKS_L] = [34359732224, 34359723008];
+pub global USER_DATA_ENCRYPTION_CKKS_R2_BOUNDS: [Field; CKKS_L] = [34359701504, 34359615488];
+pub global USER_DATA_ENCRYPTION_CKKS_E1_BOUND: Field = 20;
+pub global USER_DATA_ENCRYPTION_CKKS_P1_BOUNDS: [Field; CKKS_L] = [256, 256];
+pub global USER_DATA_ENCRYPTION_CKKS_P2_BOUNDS: [Field; CKKS_L] = [34359701504, 34359615488];
 
 pub global USER_DATA_ENCRYPTION_CKKS_CT0_CONFIGS: UserDataEncryptionCkksCt0Configs<CKKS_N, CKKS_L>
      = UserDataEncryptionCkksCt0Configs::new(
@@ -41,3 +48,13 @@ pub global USER_DATA_ENCRYPTION_CKKS_CT0_CONFIGS: UserDataEncryptionCkksCt0Confi
         USER_DATA_ENCRYPTION_CKKS_R1_UP_BOUNDS,
         USER_DATA_ENCRYPTION_CKKS_R2_BOUNDS,
     );
+
+// ct1 leg (P3-style): ct1 = pk1*u + e1. Reuses the scheme-generic
+// `UserDataEncryptionCt1` core with CKKS moduli and bounds.
+pub global USER_DATA_ENCRYPTION_CKKS_CT1_CONFIGS: UserDataEncryptionCt1Configs<CKKS_N, CKKS_L> = UserDataEncryptionCt1Configs::new(
+    CKKS_QIS,
+    USER_DATA_ENCRYPTION_CKKS_E1_BOUND,
+    USER_DATA_ENCRYPTION_CKKS_U_BOUND,
+    USER_DATA_ENCRYPTION_CKKS_P1_BOUNDS,
+    USER_DATA_ENCRYPTION_CKKS_P2_BOUNDS,
+);

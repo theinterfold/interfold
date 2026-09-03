@@ -10,6 +10,12 @@ impl ThresholdKeyshare {
         &mut self,
         msg: TypedEvent<CiphertextOutputPublished>,
     ) -> Result<()> {
+        let state = self.state.try_get()?;
+        // CKKS branch: the machine computes the decryption share directly.
+        if state.scheme == crate::E3Scheme::Ckks {
+            let (msg, ec) = msg.into_components();
+            return self.ckks_handle_ciphertext_output(&msg, ec);
+        }
         let (msg, ec) = msg.into_components();
         let ciphertext_output = msg.ciphertext_output;
 
@@ -163,6 +169,7 @@ impl ThresholdKeyshare {
             node: state.address.clone(),
             decryption_share: d_share_poly.clone(),
             proof_request: ThresholdShareDecryptionProofRequest {
+                scheme: e3_events::E3Scheme::Bfv,
                 ciphertext_bytes: decrypting.ciphertext_output,
                 aggregated_pk_bytes,
                 sk_poly_sum: decrypting.sk_poly_sum,
@@ -171,6 +178,7 @@ impl ThresholdKeyshare {
                 decryption_domain,
                 params_preset: threshold_preset,
                 committee_size,
+                ckks_params: None,
             },
         };
         self.recovery.try_mutate(&ec, |mut recovery| {

@@ -30,6 +30,11 @@ use std::{
 
 use crate::domain::timeout_policy::now_unix_secs;
 
+/// Which FHE scheme this E3 runs — the chain-bound fact from the E3
+/// program's `encryptionSchemeId`, carried on `CiphernodeSelected` and
+/// persisted here so recovery does not re-derive it.
+pub use e3_events::E3Scheme;
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CollectingEncryptionKeysData {
     pub(crate) sk_bfv: SensitiveBytes,
@@ -218,6 +223,10 @@ pub struct ThresholdKeyshareState {
     /// authorization, so resume-after-crash must only re-publish when this is set;
     /// otherwise it could emit a keyshare that never passed C4 filtering.
     pub keyshare_published: bool,
+    /// FHE scheme for this E3. Defaults to `Bfv` so pre-CKKS persisted
+    /// states deserialize unchanged.
+    #[serde(default)]
+    pub scheme: E3Scheme,
 }
 
 impl ThresholdKeyshareState {
@@ -245,7 +254,15 @@ impl ThresholdKeyshareState {
             honest_parties: None,
             dkg_started_at_unix_secs: Some(now_unix_secs()),
             keyshare_published: false,
+            scheme: E3Scheme::default(),
         }
+    }
+
+    /// Set the scheme (builder-style; used by the extension after decoding
+    /// the E3 params).
+    pub fn with_scheme(mut self, scheme: E3Scheme) -> Self {
+        self.scheme = scheme;
+        self
     }
 
     /// Return a valid Self based on a new state struct.

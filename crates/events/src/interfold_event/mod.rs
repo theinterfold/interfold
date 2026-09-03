@@ -17,6 +17,7 @@ mod ciphernode_deregistration_requested;
 mod ciphernode_removed;
 mod ciphernode_selected;
 mod ciphertext_output_published;
+mod ckks_proof_events;
 mod commitment_consistency;
 mod committee_activation_changed;
 mod committee_finalize_requested;
@@ -40,6 +41,7 @@ mod dkg_recursive_aggregation_complete;
 mod e3_failed;
 mod e3_request_complete;
 mod e3_requested;
+mod e3_scheme;
 mod e3_stage_changed;
 mod enable_effects;
 mod encryption_key_collection_failed;
@@ -64,6 +66,7 @@ mod proof_verification_failed;
 mod proof_verification_passed;
 mod publickey_aggregated;
 mod publish_document;
+mod relin_ceremony_share;
 mod reward_claimed;
 mod reward_credited;
 mod rewards_distributed;
@@ -98,6 +101,7 @@ pub use ciphernode_deregistration_requested::*;
 pub use ciphernode_removed::*;
 pub use ciphernode_selected::*;
 pub use ciphertext_output_published::*;
+pub use ckks_proof_events::*;
 pub use commitment_consistency::*;
 pub use committee_activation_changed::*;
 pub use committee_finalize_requested::*;
@@ -121,6 +125,7 @@ pub use dkg_recursive_aggregation_complete::*;
 pub use e3_failed::*;
 pub use e3_request_complete::*;
 pub use e3_requested::*;
+pub use e3_scheme::*;
 pub use e3_stage_changed::*;
 use e3_utils::{colorize, colorize_event_ids, Color};
 pub use enable_effects::*;
@@ -146,6 +151,7 @@ pub use proof_verification_failed::*;
 pub use proof_verification_passed::*;
 pub use publickey_aggregated::*;
 pub use publish_document::*;
+pub use relin_ceremony_share::*;
 pub use reward_claimed::*;
 pub use reward_credited::*;
 pub use rewards_distributed::*;
@@ -354,6 +360,10 @@ pub enum InterfoldEventData {
     // Append new durable variants to preserve existing enum discriminants in persisted logs.
     CommitteeMemberExcluded(CommitteeMemberExcluded),
     AggregationInputsReady(AggregationInputsReady),
+    RelinCeremonyShare(RelinCeremonyShare),
+    PkGenerationCkksProofPending(PkGenerationCkksProofPending),
+    RelinRound1ProofPending(RelinRound1ProofPending),
+    RelinCeremonyProofSigned(RelinCeremonyProofSigned),
 }
 
 impl InterfoldEventData {
@@ -620,6 +630,10 @@ impl InterfoldEventData {
             InterfoldEventData::PublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CiphertextOutputPublished(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionKeyShared(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::RelinCeremonyShare(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::PkGenerationCkksProofPending(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::RelinRound1ProofPending(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::RelinCeremonyProofSigned(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionshareCreated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::PlaintextAggregated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::PkGenerationProofSigned(ref data) => Some(data.e3_id.clone()),
@@ -791,7 +805,11 @@ impl_event_types!(
     BondOwnerSet,
     DkgFoldAttestationContextEstablished,
     CommitteeMemberExcluded,
-    AggregationInputsReady
+    AggregationInputsReady,
+    RelinCeremonyShare,
+    PkGenerationCkksProofPending,
+    RelinRound1ProofPending,
+    RelinCeremonyProofSigned
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

@@ -116,13 +116,21 @@ else
   echo ""
 fi
 
-# ── Stage 3: node integration (e3-trckks) ────────────────────────────────────
+# ── Stage 3: node integration (e3-trckks + keyshare workflow) ────────────────
 if [ "$RUN_NODE" = true ]; then
   say "Stage 3/5: Node integration — e3-trckks job-payload pipeline"
   info "serialized DKG dealing -> share exchange -> aggregation -> policy"
   info "compute -> decryption shares -> threshold decryption, for all three"
   info "policies (sum, statistics, auction)"
   (cd "$REPO_ROOT" && cargo test -p e3-trckks --release 2>&1 \
+    | grep -E "^test |test result: ok" )
+  echo ""
+
+  say "Stage 3/5: Keyshare-capability workflow (actor-facing seam)"
+  info "scheme dispatch + committee DKG + full E3 lifecycle (sum, auction)"
+  info "+ encrypted share transport + C2 proof gate + state-machine network"
+  info "through crates/keyshare threshold_keyshare_ckks"
+  (cd "$REPO_ROOT" && cargo test -p e3-keyshare threshold_keyshare_ckks --release 2>&1 \
     | grep -E "^test |test result: ok" )
   echo ""
 else

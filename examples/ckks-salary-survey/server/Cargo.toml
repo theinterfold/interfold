@@ -1,0 +1,52 @@
+[package]
+name = "ckks-salary-survey"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "CKKS salary-survey coordinator: indexer + relayer + evaluator (actix-web + sled)"
+
+[[bin]]
+name = "server"
+path = "src/server/main.rs"
+
+[[bin]]
+name = "cli"
+path = "src/cli/main.rs"
+
+[dependencies]
+# Web framework
+actix-cors.workspace = true
+actix-web.workspace = true
+
+# Async / chain
+tokio.workspace = true
+alloy.workspace = true
+alloy-primitives.workspace = true
+alloy-sol-types.workspace = true
+async-trait.workspace = true
+
+# Interfold
+e3-sdk = { workspace = true, features = ["evm", "indexer"] }
+ckks-salary-program.workspace = true
+
+# CLI
+clap.workspace = true
+
+# Serialization
+serde.workspace = true
+serde_json.workspace = true
+eyre.workspace = true
+anyhow.workspace = true
+thiserror.workspace = true
+hex.workspace = true
+chrono.workspace = true
+
+# Database
+sled.workspace = true
+
+# Logging / config
+env_logger.workspace = true
+log.workspace = true
+once_cell.workspace = true
+config.workspace = true
+dotenvy.workspace = true

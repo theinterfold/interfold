@@ -182,6 +182,7 @@ async fn build_plaintext_aggregator_with_role(
     let e3_id = E3id::new("42", 1);
     let aggregator = ThresholdPlaintextAggregator::new(
         ThresholdPlaintextAggregatorParams {
+            scheme: e3_events::E3Scheme::Bfv,
             bus: bus.clone(),
             sortition: start_sortition(&bus),
             e3_id: e3_id.clone(),
@@ -269,5 +270,6 @@ async fn standby_persists_and_resumes_plaintext_work() -> Result<()> {
     Ok(())
 }
 
+mod ckks_d_commitment;
 mod completion;
 mod failures;

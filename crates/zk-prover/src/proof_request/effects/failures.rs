@@ -72,6 +72,31 @@ impl ProofRequestActor {
             return;
         }
 
+        if let Some(e3_id) = self
+            .pk_generation_ckks_correlation
+            .remove(msg.correlation_id())
+        {
+            error!(
+                "C1-CKKS proof request failed for E3 {}: {err} — KeyshareCreated will not be \
+                 published without proof",
+                e3_id
+            );
+            self.pending_pk_generation_ckks.remove(&e3_id);
+            self.fail_dkg_round(e3_id, &ec, "C1-CKKS proof request error");
+            return;
+        }
+
+        if let Some(e3_id) = self.relin_round1_correlation.remove(msg.correlation_id()) {
+            error!(
+                "C8-CKKS proof request failed for E3 {}: {err} — RelinCeremonyProofSigned will \
+                 not be published; the ceremony cannot complete with this party",
+                e3_id
+            );
+            self.pending_relin_round1.remove(&e3_id);
+            self.fail_dkg_round(e3_id, &ec, "C8-CKKS proof request error");
+            return;
+        }
+
         if let Some(e3_id) = self.aggregation_correlation.remove(msg.correlation_id()) {
             error!(
                 "C7 proof request failed for E3 {}: {err} — AggregationProofSigned will not be published",

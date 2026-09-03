@@ -1,0 +1,15 @@
+[package]
+name = "ckks-auction-program"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "CKKS sealed-bid auction policy: leak-free winner via iterated sign extraction (plain-Rust E3 program)"
+
+[dependencies]
+anyhow.workspace = true
+e3-fhe-params.workspace = true
+e3-trckks.workspace = true
+e3-utils.workspace = true
+fhe.workspace = true
+fhe-traits.workspace = true
+serde.workspace = true

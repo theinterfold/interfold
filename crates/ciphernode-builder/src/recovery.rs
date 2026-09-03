@@ -303,6 +303,7 @@ pub(crate) fn recovered_ciphernode_selections(
             params: meta.params.clone(),
             party_id,
             committee: committee.members().to_vec(),
+            scheme: meta.scheme,
         });
     }
     selections.sort_by(|left, right| {

@@ -209,6 +209,7 @@ pub(crate) fn build_shares_generated_plan(
 
     // Build C2a request (SkShareComputation)
     let sk_share_computation_request = ShareComputationProofRequest {
+        scheme: e3_events::E3Scheme::Bfv,
         secret_raw: proof_request_data.sk_raw.clone(),
         secret_sss_raw: sk_sss_raw,
         dkg_input_type: DkgInputType::SecretKey,
@@ -218,6 +219,7 @@ pub(crate) fn build_shares_generated_plan(
 
     // Build C2b request (ESmShareComputation)
     let e_sm_share_computation_request = ShareComputationProofRequest {
+        scheme: e3_events::E3Scheme::Bfv,
         secret_raw: e_sm_raw.clone(),
         secret_sss_raw: esi_sss_raw
             .into_iter()

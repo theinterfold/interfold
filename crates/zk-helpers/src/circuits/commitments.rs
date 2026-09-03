@@ -140,6 +140,14 @@ const DS_CLG_SHARE_DECRYPTION: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
+/// String: "USER_DATA_ENCRYPTION_COMMITMENT"
+const DS_USER_DATA_ENCRYPTION_COMMITMENT: [u8; 64] = [
+    0x55, 0x53, 0x45, 0x52, 0x5f, 0x44, 0x41, 0x54, 0x41, 0x5f, 0x45, 0x4e, 0x43, 0x52, 0x59, 0x50,
+    0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x43, 0x4f, 0x4d, 0x4d, 0x49, 0x54, 0x4d, 0x45, 0x4e, 0x54, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
 // ============================================================================
 // WRAPPERS
 // ============================================================================
@@ -258,6 +266,34 @@ pub fn compute_dkg_pk_commitment_from_public_key_bytes(
 pub fn compute_threshold_pk_commitment(pk0: &CrtPolynomial, bit_pk: u32) -> BigInt {
     let mut payload = Vec::new();
     payload = flatten(payload, &pk0.limbs, bit_pk);
+
+    let input_size = payload.len() as u32;
+    let io_pattern = [0x80000000 | input_size, 1];
+
+    let commitment_field = compute_commitments(payload, DS_PK_GENERATION, io_pattern)[0];
+    let commitment_bytes = commitment_field.into_bigint().to_bytes_le();
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
+}
+
+/// CKKS threshold public-key SHARE commitment (C1-CKKS): `pk0 || a` under
+/// `DS_PK_GENERATION`.
+///
+/// This matches the Noir `compute_ckks_threshold_pk_commitment` function
+/// exactly. The CKKS CRP `a` is derived from the E3 seed (a witness, not a
+/// baked constant), so the share commitment binds it alongside `pk0`.
+///
+/// # Arguments
+/// * `pk0` - First component of the public-key share (CRT limbs, reversed + centered)
+/// * `a` - The CRP limbs (reversed + centered)
+/// * `bit_pk` - The bit width for coefficient bounds (widest `(q_i - 1) / 2`)
+pub fn compute_ckks_threshold_pk_commitment(
+    pk0: &CrtPolynomial,
+    a: &CrtPolynomial,
+    bit_pk: u32,
+) -> BigInt {
+    let mut payload = Vec::new();
+    payload = flatten(payload, &pk0.limbs, bit_pk);
+    payload = flatten(payload, &a.limbs, bit_pk);
 
     let input_size = payload.len() as u32;
     let io_pattern = [0x80000000 | input_size, 1];
@@ -451,6 +487,21 @@ pub fn compute_ciphertext_commitment(
     let commitment_field = compute_commitments(inputs, DS_CIPHERTEXT, io)[0];
     let commitment_bytes = commitment_field.into_bigint().to_bytes_le();
 
+    BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
+}
+
+/// Compute the user-data-encryption message commitment
+/// `m_commitment = SAFE(DS_USER_DATA_ENCRYPTION_COMMITMENT, flatten(m, BIT_M))`.
+///
+/// Matches the Noir `compute_single_polynomial_commitment::<N, BIT_M>(m,
+/// DS_USER_DATA_ENCRYPTION_COMMITMENT)` the CKKS ct0 leg AND the CKKS app
+/// legs emit — the value the on-chain gate equates across legs.
+pub fn compute_user_data_encryption_m_commitment(m: &Polynomial, bit_m: u32) -> BigInt {
+    let payload = flatten(Vec::new(), from_ref(m), bit_m);
+    let io_pattern = [0x80000000 | payload.len() as u32, 1];
+    let commitment_field =
+        compute_commitments(payload, DS_USER_DATA_ENCRYPTION_COMMITMENT, io_pattern)[0];
+    let commitment_bytes = commitment_field.into_bigint().to_bytes_le();
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
 }
 

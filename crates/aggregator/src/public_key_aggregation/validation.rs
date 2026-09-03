@@ -141,6 +141,63 @@ pub(crate) fn check_c1_keyshare_commitments(
     }
 }
 
+/// CKKS twin of [`check_c1_keyshare_commitments`]: recompute each party's
+/// C1-CKKS `pk_commitment` from the pk-share bytes it published
+/// (`KeyshareCreated.pubkey`) with the SAME derivation as the witness
+/// builder (`e3_zk_helpers::...::pk_generation_ckks::compute_ckks_pk_commitment_from_share_bytes`)
+/// and compare it with the `pk_commitment` public signal of the party's
+/// signed proof. A missing proof or a mismatch makes the party dishonest
+/// — the rogue-key gate: a share that was not proven well-formed
+/// (`pk0 = -a*sk + e`, small `sk`/`e`) is never summed into the joint key.
+pub(crate) fn check_c1_ckks_keyshare_commitments(
+    entries: &[(u64, String, ArcBytes, Option<SignedProofPayload>)],
+    ckks: &e3_fhe::ckks_runtime::CkksFhe,
+) -> C1CommitmentAudit {
+    use e3_zk_helpers::circuits::threshold::pk_generation_ckks::compute_ckks_pk_commitment_from_share_bytes;
+    use e3_zk_helpers::circuits::threshold::user_data_encryption_ckks::CkksPreset;
+    let mut mismatched = Vec::new();
+    let mut missing_proof = Vec::new();
+    // The witness builder's bits/bounds depend only on the params; the
+    // input bound is a Greco-side constant that C1 does not read.
+    let preset = CkksPreset {
+        params: ckks.params.clone(),
+        input_bound: 1.0,
+    };
+    for (party_id, _node, ks, c1) in entries {
+        let Some(signed_proof) = c1.as_ref() else {
+            warn!(
+                "Party {} has no C1-CKKS proof — rogue-key gate marks it dishonest",
+                party_id
+            );
+            missing_proof.push(*party_id);
+            continue;
+        };
+        let ok = match compute_ckks_pk_commitment_from_share_bytes(&preset, &ckks.crp, ks) {
+            Ok(computed) => signed_proof
+                .payload
+                .proof
+                .extract_output("pk_commitment")
+                .is_some_and(|extracted| extracted[..] == computed[..]),
+            Err(e) => {
+                warn!(
+                    "Failed to compute CKKS pk_commitment for party {}: {}",
+                    party_id, e
+                );
+                false
+            }
+        };
+        if ok {
+            info!("C1-CKKS pk_commitment verified against the received share for party {party_id}");
+        } else {
+            mismatched.push((*party_id, signed_proof.clone()));
+        }
+    }
+    C1CommitmentAudit {
+        mismatched,
+        missing_proof,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

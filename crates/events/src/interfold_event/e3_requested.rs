@@ -33,6 +33,11 @@ pub struct E3Requested {
     /// ABI-encoded BFV parameters (derived from `params_preset`).
     /// Kept for downstream code that needs the raw bytes (e.g. `TrBFVConfig`).
     pub params: ArcBytes,
+    /// FHE scheme, mapped from the on-chain `encryptionSchemeId` the E3
+    /// program bound at request time. Defaults to `Bfv` for events
+    /// serialized before this field existed.
+    #[serde(default)]
+    pub scheme: crate::E3Scheme,
 }
 
 impl Default for E3Requested {
@@ -46,6 +51,7 @@ impl Default for E3Requested {
             request_block: 0,
             threshold_m: 0,
             threshold_n: 0,
+            scheme: crate::E3Scheme::default(),
         }
     }
 }

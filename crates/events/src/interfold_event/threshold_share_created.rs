@@ -20,6 +20,14 @@ use std::{
 /// Each party broadcasts their encrypted shares to all other parties.
 /// Each recipient can only decrypt the share meant for them using their
 /// BFV secret key.
+///
+/// SCHEME NOTE: this event is scheme-agnostic transport. For CKKS E3s
+/// (`e3_keyshare::E3Scheme::Ckks`) the same struct carries the CKKS dealt
+/// rows (built by `threshold_keyshare_ckks::encrypted_dkg`): `esi_sss` has
+/// exactly ONE entry (one smudging secret per member, vs one per BFV
+/// decryption), and the C3a/C3b proof slots on `ThresholdShareCreated`
+/// stay empty until the C3 circuit config for CKKS moduli lands (the
+/// encryption witnesses are already captured; see the CKKS splice plan).
 #[derive(Derivative, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[derivative(Debug)]
 pub struct ThresholdShare {

@@ -1,0 +1,42 @@
+[workspace]
+members = ["crates/ckks-zk-inputs-wasm"]
+resolver = "2"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "LGPL-3.0-only"
+repository = "https://github.com/theinterfold/interfold"
+
+[workspace.dependencies]
+e3-zk-helpers = { path = "../../crates/zk-helpers" }
+e3-fhe-params = { path = "../../crates/fhe-params" }
+e3-polynomial = { path = "../../crates/polynomial", features = ["serde"] }
+fhe = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
+fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
+fhe-math = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
+fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.145"
+toml = "=0.8.23"
+rand = "=0.9.2"
+rand_chacha = "=0.9.0"
+num-bigint = "=0.4.6"
+num-traits = "=0.2.19"
+hex = "=0.4.3"
+ark-bn254 = "0.5.0"
+ark-ff = "0.5.0"
+
+# Same DEV-ONLY patch as the interfold root Cargo.toml: the CKKS module lives
+# on the local fhe.rs checkout until it is released as a tag. Both workspaces
+# MUST resolve to the same source or `CkksParameters` types diverge.
+[patch."https://github.com/gnosisguild/fhe.rs"]
+fhe = { path = "../../../fhe.rs/crates/fhe" }
+fhe-traits = { path = "../../../fhe.rs/crates/fhe-traits" }
+fhe-math = { path = "../../../fhe.rs/crates/fhe-math" }
+fhe-util = { path = "../../../fhe.rs/crates/fhe-util" }
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

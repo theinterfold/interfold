@@ -236,6 +236,7 @@ mod tests {
             params_preset: BfvPreset::InsecureThreshold512,
             params: ArcBytes::default(),
             error_size: ArcBytes::default(),
+            scheme: Default::default(),
         }
     }
 

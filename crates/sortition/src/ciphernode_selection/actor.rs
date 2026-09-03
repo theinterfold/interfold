@@ -46,6 +46,7 @@ fn e3_meta_from(req: &E3Requested) -> E3Meta {
         params_preset: req.params_preset,
         params: req.params.clone(),
         error_size: req.error_size.clone(),
+        scheme: req.scheme,
     }
 }
 

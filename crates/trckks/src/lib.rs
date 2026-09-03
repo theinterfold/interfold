@@ -20,6 +20,9 @@
 pub mod config;
 pub mod dkg;
 pub mod policy;
+pub mod program;
+#[cfg(test)]
+mod program_tests;
 pub mod threshold_decryption;
 
 pub use config::TrCkksConfig;

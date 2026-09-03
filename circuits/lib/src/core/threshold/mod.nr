@@ -5,9 +5,14 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 pub mod pk_generation;
+pub mod pk_generation_ckks;
 pub mod pk_aggregation;
+pub mod relin_round1_ckks;
+pub mod relin_round1_hybrid_ckks;
+pub mod relin_round1_hybrid_ckks_digit;
 pub mod user_data_encryption_ct0;
 pub mod user_data_encryption_ckks_ct0;
+pub mod ckks_app_validity;
 pub mod user_data_encryption_ct1;
 pub mod share_decryption;
 pub mod decrypted_shares_aggregation;

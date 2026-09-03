@@ -88,7 +88,8 @@ async fn build_public_key_aggregator_with_committee(
     let fhe = Arc::new(Fhe::new(params, crp, rng));
     let aggregator = PublicKeyAggregator::new(
         PublicKeyAggregatorParams {
-            fhe,
+            fhe: Some(fhe),
+            ckks: None,
             bus,
             e3_id: e3_id.clone(),
             params_preset: BfvPreset::InsecureThreshold512,
@@ -266,4 +267,5 @@ async fn standby_persists_and_resumes_public_key_work() -> Result<()> {
 }
 
 mod attestations;
+mod ckks_rogue_key;
 mod failures;

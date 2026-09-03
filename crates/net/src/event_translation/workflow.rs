@@ -61,6 +61,10 @@ impl EventTranslationService {
                 | InterfoldEventData::PublicKeyAggregated(_)
                 | InterfoldEventData::ProofFailureAccusation(_)
                 | InterfoldEventData::AccusationVote(_)
+                // CKKS C8: one party's signed per-digit relin round-1 proofs
+                // (a few KB); every committee peer verifies them before
+                // aggregating that party's chunked R1 share (DHT documents).
+                | InterfoldEventData::RelinCeremonyProofSigned(_)
         )
     }
 

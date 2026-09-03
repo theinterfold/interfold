@@ -6,8 +6,8 @@
 
 use crate::domain::committee::committee_addresses_in_party_order;
 use crate::workflow::publickey_aggregation::{
-    check_c1_keyshare_commitments, extract_pk_commitment, verify_dkg_fold_attestation, C1Dispatch,
-    HonestSelection, PublicKeyAggregation,
+    check_c1_ckks_keyshare_commitments, check_c1_keyshare_commitments, extract_pk_commitment,
+    verify_dkg_fold_attestation, C1Dispatch, HonestSelection, PublicKeyAggregation,
 };
 use actix::prelude::*;
 use anyhow::Result;
@@ -41,7 +41,12 @@ pub use crate::workflow::publickey_aggregation::{
 };
 
 pub struct PublicKeyAggregator {
-    fhe: Arc<Fhe>,
+    /// BFV runtime — `None` on CKKS E3s (never constructed for them);
+    /// both use sites are on the BFV-only path behind the CKKS branch.
+    fhe: Option<Arc<Fhe>>,
+    /// CKKS runtime — `Some` only on CKKS E3s (program-bound scheme).
+    /// When set, aggregation skips C1/C5 and runs the CKKS branch.
+    ckks: Option<Arc<e3_fhe::ckks_runtime::CkksFhe>>,
     bus: BusHandle,
     e3_id: E3id,
     state: Persistable<PublicKeyAggregatorState>,
@@ -56,7 +61,9 @@ pub struct PublicKeyAggregator {
 }
 
 pub struct PublicKeyAggregatorParams {
-    pub fhe: Arc<Fhe>,
+    pub fhe: Option<Arc<Fhe>>,
+    /// CKKS runtime for CKKS E3s (None on BFV E3s).
+    pub ckks: Option<Arc<e3_fhe::ckks_runtime::CkksFhe>>,
     pub bus: BusHandle,
     pub e3_id: E3id,
     pub params_preset: BfvPreset,
@@ -77,6 +84,7 @@ impl PublicKeyAggregator {
     ) -> Self {
         PublicKeyAggregator {
             fhe: params.fhe,
+            ckks: params.ckks,
             bus: params.bus,
             e3_id: params.e3_id,
             state,

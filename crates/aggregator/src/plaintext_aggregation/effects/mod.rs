@@ -8,6 +8,7 @@
 
 use super::*;
 
+mod ckks_publish;
 mod prove_plaintext;
 mod publish_result;
 mod recovery;

@@ -142,6 +142,70 @@ where
     })
 }
 
+/// Verifiably encrypt real-valued data under CKKS and produce Greco-style
+/// circuit inputs proving ciphertext well-formedness.
+///
+/// The returned `circuit_inputs` JSON carries the witnesses for BOTH proof
+/// legs (`user_data_encryption_ckks_ct0`: `ct0 = pk0*u + e0 + m`, and
+/// `user_data_encryption_ckks_ct1`: `ct1 = pk1*u + e1`), bound to each
+/// other by the shared `u` commitment public output.
+///
+/// # Arguments
+/// * `values` - Real-valued inputs (at most `N/2` slots), each within the
+///   preset's `input_bound`
+/// * `public_key` - Serialized CKKS public key bytes
+/// * `degree` - Polynomial degree (must match a supported CKKS preset)
+/// * `moduli` - CKKS coefficient moduli (must match the preset)
+///
+/// # Returns
+/// * `VerifiableEncryptionResult` with the serialized ciphertext and the
+///   circuit-input JSON
+pub fn ckks_verifiable_encrypt(
+    values: Vec<f64>,
+    public_key: Vec<u8>,
+    degree: usize,
+    moduli: Vec<u64>,
+) -> Result<VerifiableEncryptionResult> {
+    use e3_zk_helpers::circuits::threshold::user_data_encryption_ckks::circuit::{
+        insecure_512_ckks, UserDataEncryptionCkksCircuitData,
+    };
+    use e3_zk_helpers::circuits::threshold::user_data_encryption_ckks::Inputs as CkksInputs;
+    use fhe::ckks::CkksPublicKey;
+
+    let preset = insecure_512_ckks().map_err(|e| anyhow!("Failed to build CKKS preset: {e:?}"))?;
+    if preset.params.degree() != degree || preset.params.moduli() != moduli.as_slice() {
+        return Err(anyhow!(
+            "Unsupported CKKS parameters for verifiable encryption: degree={degree}, \
+             moduli={moduli:?} (expected degree={}, moduli={:?})",
+            preset.params.degree(),
+            preset.params.moduli(),
+        ));
+    }
+
+    let pk = CkksPublicKey::from_bytes(&public_key, &preset.params)
+        .map_err(|e| anyhow!("Error deserializing CKKS public key: {e}"))?;
+
+    let inputs = CkksInputs::compute(
+        preset,
+        &UserDataEncryptionCkksCircuitData {
+            public_key: pk,
+            values,
+        },
+    )
+    .map_err(|e| anyhow!("Failed to compute CKKS circuit inputs: {e:?}"))?;
+
+    let encrypted_data = inputs.ciphertext.clone();
+    let circuit_inputs = inputs
+        .to_json()
+        .map_err(|e| anyhow!("Failed to serialize circuit inputs: {e}"))?
+        .to_string();
+
+    Ok(VerifiableEncryptionResult {
+        encrypted_data,
+        circuit_inputs,
+    })
+}
+
 /// Generates a new public/secret key pair and returns the public key.
 ///
 /// # Arguments

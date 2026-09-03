@@ -16,7 +16,6 @@
 //!   carry over with the same formulas.
 
 use crate::calculate_bit_width;
-use crate::get_zkp_modulus;
 use crate::math::{cyclotomic_polynomial, decompose_residue};
 use crate::threshold::user_data_encryption_ckks::circuit::CkksPreset;
 use crate::threshold::user_data_encryption_ckks::circuit::UserDataEncryptionCkksCircuit;
@@ -129,10 +128,6 @@ pub struct Inputs {
     pub r2is: CrtPolynomial,
     pub p1is: CrtPolynomial,
     pub p2is: CrtPolynomial,
-    pub e0is: CrtPolynomial,
-    pub e0_quotients: CrtPolynomial,
-    pub mis: CrtPolynomial,
-    pub m_quotients: CrtPolynomial,
     pub e0: Polynomial,
     pub e1: Polynomial,
     pub u: Polynomial,
@@ -172,6 +167,23 @@ impl Computation for Bounds {
             return Err(CircuitsErrors::Other("m_bound overflows f64".into()));
         }
         let m_bound = BigUint::from(delta_b.ceil() as u128) + BigUint::from(1u32);
+
+        // SOUNDNESS PRECONDITION: the circuit feeds e0 and m into the
+        // per-limb identity DIRECTLY (no per-limb residue witnesses). The
+        // proven relation `ct0i = pk0i*u + e0 + m + r1i*qi + r2i*cyclo` is
+        // an INTEGER identity, so wide-delta presets whose m exceeds a
+        // single limb's centered range stay sound — the r1i quotients
+        // absorb the wrap. What must hold is that the centered mod-Q lift
+        // is unique: bound < (Q-1)/2 over the FULL RNS product Q. (The
+        // witness generator lifts e0/m mod Q accordingly.)
+        let q_product = crate::math::compute_q_product(params.moduli());
+        let half_q = (&q_product - BigUint::from(1u32)) / BigUint::from(2u32);
+        if BigUint::from(cbd_bound) >= half_q || m_bound >= half_q {
+            return Err(CircuitsErrors::Other(format!(
+                "e0/m bounds must be < (Q-1)/2 for a unique centered lift: \
+                 e0 {cbd_bound}, m {m_bound}, Q {q_product}"
+            )));
+        }
 
         let mut pk_bounds: Vec<BigInt> = Vec::new();
         let mut r1_low_bounds: Vec<BigInt> = Vec::new();
@@ -282,11 +294,6 @@ impl Computation for Inputs {
 
     fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
         let params = &preset.params;
-        let ctx = params
-            .context_at_level(0)
-            .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
-
-        let modulus_q = BigInt::from(ctx.modulus().clone());
         let moduli = params.moduli();
         let n = params.degree() as u64;
         let cyclo = cyclotomic_polynomial(n);
@@ -302,13 +309,6 @@ impl Computation for Inputs {
             .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
 
         // Reconstruct e0 and m mod Q (centered) for quotient computation.
-        let mut e0_mod_q = Polynomial::from_fhe_polynomial(&e0);
-        e0_mod_q.reverse();
-        e0_mod_q.center(&modulus_q);
-
-        let mut m_mod_q = Polynomial::from_fhe_polynomial(pt.poly());
-        m_mod_q.reverse();
-        m_mod_q.center(&modulus_q);
 
         // Randomness u and error e1: first limb, centered (small polynomials).
         let mut u_poly = CrtPolynomial::from_fhe_polynomial(&u).limb(0).clone();
@@ -319,20 +319,52 @@ impl Computation for Inputs {
         e1_poly.center(&BigInt::from(moduli[0]));
         e1_poly.reverse();
 
-        // CRT limbs of the public inputs and witnesses.
+        // e0 and m enter the circuit as SINGLE polynomials (no per-limb
+        // copies): lift each coefficient from its RNS residues to the
+        // unique centered value mod Q. For narrow-delta presets this
+        // equals the per-limb centered residue; for wide-delta presets
+        // (|m| > qi/2 for some limb) only the mod-Q lift is correct —
+        // the per-limb `r1i` quotients absorb the extra multiples of qi
+        // in `ct0i = pk0i*u + e0 + m + r1i*qi + r2i*cyclo`.
+        let q_product = BigInt::from(crate::math::compute_q_product(moduli));
+        let half_q = (&q_product - BigInt::from(1)) / BigInt::from(2);
+        let lift_mod_q_centered = |crt: &CrtPolynomial| -> Result<Polynomial, CircuitsErrors> {
+            let degree = params.degree();
+            let mut coeffs = Vec::with_capacity(degree);
+            for j in 0..degree {
+                let residues: Vec<u64> = crt
+                    .limbs
+                    .iter()
+                    .map(|limb| {
+                        limb.coefficients()[j].to_u64().ok_or_else(|| {
+                            CircuitsErrors::Other("RNS residue does not fit u64".into())
+                        })
+                    })
+                    .collect::<Result<_, _>>()?;
+                let v = BigInt::from(
+                    crate::threshold::decrypted_shares_aggregation::utils::crt_reconstruct(
+                        &residues, moduli,
+                    )?,
+                );
+                coeffs.push(if v > half_q { v - &q_product } else { v });
+            }
+            let mut poly = Polynomial::new(coeffs);
+            poly.reverse();
+            Ok(poly)
+        };
+        let e0_poly = lift_mod_q_centered(&CrtPolynomial::from_fhe_polynomial(&e0))?;
+        let m_poly = lift_mod_q_centered(&CrtPolynomial::from_fhe_polynomial(pt.poly()))?;
+
+        // CRT limbs of the public inputs.
         let mut ct0 = CrtPolynomial::from_fhe_polynomial(&ct[0]);
         let mut ct1 = CrtPolynomial::from_fhe_polynomial(&ct[1]);
         let mut pk0 = CrtPolynomial::from_fhe_polynomial(&data.public_key.c[0]);
         let mut pk1 = CrtPolynomial::from_fhe_polynomial(&data.public_key.c[1]);
-        let mut e0_crt = CrtPolynomial::from_fhe_polynomial(&e0);
-        let mut m_crt = CrtPolynomial::from_fhe_polynomial(pt.poly());
 
         ct0.reverse();
         ct1.reverse();
         pk0.reverse();
         pk1.reverse();
-        e0_crt.reverse();
-        m_crt.reverse();
 
         ct0.center(moduli)
             .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
@@ -342,81 +374,48 @@ impl Computation for Inputs {
             .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
         pk1.center(moduli)
             .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
-        e0_crt
-            .center(moduli)
-            .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
-        m_crt
-            .center(moduli)
-            .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
 
         let CrtPolynomial { limbs: ct0_limbs } = ct0;
         let CrtPolynomial { limbs: ct1_limbs } = ct1;
         let CrtPolynomial { limbs: pk0_limbs } = pk0;
         let CrtPolynomial { limbs: pk1_limbs } = pk1;
-        let CrtPolynomial { limbs: e0_limbs } = e0_crt;
-        let CrtPolynomial { limbs: m_limbs } = m_crt;
 
         let qi_bigints: Vec<BigInt> = moduli.iter().map(|q| BigInt::from(*q)).collect();
 
-        let mut results: Vec<_> =
-            izip!(qi_bigints, ct0_limbs, ct1_limbs, pk0_limbs, pk1_limbs, e0_limbs, m_limbs,)
-                .enumerate()
-                .par_bridge()
-                .map(|(i, (qi_bigint, ct0i, ct1i, pk0i, pk1i, e0i, mi))| {
-                    // Quotients for CRT consistency: x = xi + quotient * qi.
-                    let qi_poly = Polynomial::constant(qi_bigint.clone());
+        let mut results: Vec<_> = izip!(qi_bigints, ct0_limbs, ct1_limbs, pk0_limbs, pk1_limbs)
+            .enumerate()
+            .par_bridge()
+            .map(|(i, (qi_bigint, ct0i, ct1i, pk0i, pk1i))| {
+                // ct0i_hat = pk0i*u + e0 + m over the INTEGERS: e0/m are
+                // the centered mod-Q lifts, shared by every limb — the
+                // r1i quotient produced by decompose_residue absorbs the
+                // difference to the limb residue.
+                let ct0i_hat = {
+                    let pk0i_u_times = pk0i.mul(&u_poly);
+                    let e0_plus_m = e0_poly.add(&m_poly);
 
-                    let e0_diff = e0_mod_q.sub(&e0i);
-                    let (e0_quotient, e0_rem) =
-                        e0_diff.div(&qi_poly).expect("CRT requires exact division");
-                    assert!(e0_rem.is_zero(), "e0 - e0i must be divisible by qi");
+                    assert_eq!((pk0i_u_times.coefficients().len() as u64) - 1, 2 * (n - 1));
+                    assert_eq!((e0_plus_m.coefficients().len() as u64) - 1, n - 1);
 
-                    let m_diff = m_mod_q.sub(&mi);
-                    let (m_quotient, m_rem) =
-                        m_diff.div(&qi_poly).expect("CRT requires exact division");
-                    assert!(m_rem.is_zero(), "m - mi must be divisible by qi");
+                    pk0i_u_times.add(&e0_plus_m)
+                };
+                assert_eq!((ct0i_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-                    // ct0i_hat = pk0i*u + e0i + mi  (no k1*k0i term in CKKS)
-                    let ct0i_hat = {
-                        let pk0i_u_times = pk0i.mul(&u_poly);
-                        let e0_plus_mi = e0i.add(&mi);
+                let (r1i, r2i) = decompose_residue(&ct0i, &ct0i_hat, &qi_bigint, &cyclo, n);
 
-                        assert_eq!((pk0i_u_times.coefficients().len() as u64) - 1, 2 * (n - 1));
-                        assert_eq!((e0_plus_mi.coefficients().len() as u64) - 1, n - 1);
+                // ct1i_hat = pk1i*u + e1  (identical to BFV)
+                let ct1i_hat = {
+                    let pk1i_u_times = pk1i.mul(&u_poly);
+                    assert_eq!((pk1i_u_times.coefficients().len() as u64) - 1, 2 * (n - 1));
+                    pk1i_u_times.add(&e1_poly)
+                };
+                assert_eq!((ct1i_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-                        pk0i_u_times.add(&e0_plus_mi)
-                    };
-                    assert_eq!((ct0i_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
+                let (p1i, p2i) = decompose_residue(&ct1i, &ct1i_hat, &qi_bigint, &cyclo, n);
 
-                    let (r1i, r2i) = decompose_residue(&ct0i, &ct0i_hat, &qi_bigint, &cyclo, n);
-
-                    // ct1i_hat = pk1i*u + e1  (identical to BFV)
-                    let ct1i_hat = {
-                        let pk1i_u_times = pk1i.mul(&u_poly);
-                        assert_eq!((pk1i_u_times.coefficients().len() as u64) - 1, 2 * (n - 1));
-                        pk1i_u_times.add(&e1_poly)
-                    };
-                    assert_eq!((ct1i_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
-
-                    let (p1i, p2i) = decompose_residue(&ct1i, &ct1i_hat, &qi_bigint, &cyclo, n);
-
-                    (
-                        i,
-                        ct0i,
-                        ct1i,
-                        pk0i,
-                        pk1i,
-                        r1i,
-                        r2i,
-                        p1i,
-                        p2i,
-                        e0i,
-                        e0_quotient,
-                        mi,
-                        m_quotient,
-                    )
-                })
-                .collect();
+                (i, ct0i, ct1i, pk0i, pk1i, r1i, r2i, p1i, p2i)
+            })
+            .collect();
 
         results.sort_by_key(|(i, ..)| *i);
 
@@ -428,14 +427,8 @@ impl Computation for Inputs {
         let mut r2is = Vec::with_capacity(results.len());
         let mut p1is = Vec::with_capacity(results.len());
         let mut p2is = Vec::with_capacity(results.len());
-        let mut e0is = Vec::with_capacity(results.len());
-        let mut e0_quotients = Vec::with_capacity(results.len());
-        let mut mis = Vec::with_capacity(results.len());
-        let mut m_quotients = Vec::with_capacity(results.len());
 
-        for (_, ct0i, ct1i, pk0i, pk1i, r1i, r2i, p1i, p2i, e0i, e0_quotient, mi, m_quotient) in
-            results
-        {
+        for (_, ct0i, ct1i, pk0i, pk1i, r1i, r2i, p1i, p2i) in results {
             pk0is.push(pk0i);
             pk1is.push(pk1i);
             ct0is.push(ct0i);
@@ -444,16 +437,7 @@ impl Computation for Inputs {
             r2is.push(r2i);
             p1is.push(p1i);
             p2is.push(p2i);
-            e0is.push(e0i);
-            e0_quotients.push(e0_quotient);
-            mis.push(mi);
-            m_quotients.push(m_quotient);
         }
-
-        // e0 and m are mod Q (huge); reduce to the proof-system field.
-        let zkp_modulus = get_zkp_modulus();
-        e0_mod_q.reduce(&zkp_modulus);
-        m_mod_q.reduce(&zkp_modulus);
 
         Ok(Inputs {
             pk0is: CrtPolynomial::new(pk0is),
@@ -464,14 +448,10 @@ impl Computation for Inputs {
             r2is: CrtPolynomial::new(r2is),
             p1is: CrtPolynomial::new(p1is),
             p2is: CrtPolynomial::new(p2is),
-            e0is: CrtPolynomial::new(e0is),
-            e0_quotients: CrtPolynomial::new(e0_quotients),
-            mis: CrtPolynomial::new(mis),
-            m_quotients: CrtPolynomial::new(m_quotients),
-            e0: e0_mod_q,
+            e0: e0_poly,
             e1: e1_poly,
             u: u_poly,
-            m: m_mod_q,
+            m: m_poly,
             ciphertext: ct.to_bytes(),
         })
     }
@@ -489,12 +469,8 @@ impl Computation for Inputs {
             "ct1is": crt_polynomial_to_toml_json(&self.ct1is),
             "u": polynomial_to_toml_json(&self.u),
             "e0": polynomial_to_toml_json(&self.e0),
-            "e0is": crt_polynomial_to_toml_json(&self.e0is),
-            "e0_quotients": crt_polynomial_to_toml_json(&self.e0_quotients),
             "e1": polynomial_to_toml_json(&self.e1),
             "m": polynomial_to_toml_json(&self.m),
-            "mis": crt_polynomial_to_toml_json(&self.mis),
-            "m_quotients": crt_polynomial_to_toml_json(&self.m_quotients),
             "r1is": crt_polynomial_to_toml_json(&self.r1is),
             "r2is": crt_polynomial_to_toml_json(&self.r2is),
             "p1is": crt_polynomial_to_toml_json(&self.p1is),
@@ -514,7 +490,7 @@ mod tests {
     fn test_preset() -> CkksPreset {
         let params = CkksParametersBuilder::new()
             .set_degree(512)
-            .set_moduli_sizes(&[36, 36])
+            .set_moduli(&e3_fhe_params::ckks_presets::INSECURE_512_CKKS_MODULI)
             .set_scale(2f64.powi(26))
             .build_arc()
             .unwrap();
@@ -557,22 +533,26 @@ mod tests {
 
         let l = preset.params.moduli().len();
         assert_eq!(inputs.ct0is.limbs.len(), l);
-        assert_eq!(inputs.mis.limbs.len(), l);
-        assert_eq!(inputs.m_quotients.limbs.len(), l);
         assert!(!inputs.ciphertext.is_empty());
 
-        // The message coefficients respect the circuit bound.
+        // The message coefficients are SMALL (limb-independent residues)
+        // and respect the circuit bound — every coefficient, no wrap
+        // exemptions (the per-limb copies are gone; smallness is now a
+        // soundness precondition, so it must hold unconditionally).
         let bounds = Bounds::compute(preset, &()).unwrap();
         let m_bound = BigInt::from(bounds.m_bound);
         for c in inputs.m.coefficients() {
-            // m is reduced mod the zkp modulus: centered magnitude check only
-            // applies to small coefficients; skip wrapped ones.
-            if c.magnitude() < BigInt::from(2u8).pow(200).magnitude() {
-                assert!(
-                    c.abs() <= m_bound.clone(),
-                    "message coefficient {c} exceeds bound {m_bound}"
-                );
-            }
+            assert!(
+                c.abs() <= m_bound.clone(),
+                "message coefficient {c} exceeds bound {m_bound}"
+            );
+        }
+        let e0_bound = BigInt::from(bounds.e0_bound.clone());
+        for c in inputs.e0.coefficients() {
+            assert!(
+                c.abs() <= e0_bound.clone(),
+                "e0 coefficient {c} exceeds bound {e0_bound}"
+            );
         }
     }
 }

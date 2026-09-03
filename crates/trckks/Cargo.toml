@@ -8,6 +8,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+e3-fhe-params.workspace = true
 e3-utils.workspace = true
 fhe-math.workspace = true
 fhe-traits.workspace = true
@@ -19,4 +20,5 @@ serde.workspace = true
 tracing.workspace = true
 
 [dev-dependencies]
+hex = { workspace = true }
 tokio.workspace = true

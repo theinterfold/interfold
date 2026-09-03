@@ -1,0 +1,27 @@
+/* SPDX-License-Identifier: LGPL-3.0-only */
+:root { --bg:#0e1116; --panel:#171c24; --line:#2a3240; --fg:#e6e9ef; --muted:#8b95a7; --accent:#7cc4ff; --ok:#5fd38d; --bad:#ff6b6b; --warn:#ffcf5c; font-family: ui-sans-serif, system-ui, sans-serif; }
+* { box-sizing: border-box; }
+body { margin:0; background:var(--bg); color:var(--fg); }
+.app { max-width: 1040px; margin: 0 auto; padding: 0 20px 40px; }
+nav { display:flex; gap:20px; align-items:center; padding:16px 0; border-bottom:1px solid var(--line); }
+nav a { color:var(--fg); text-decoration:none; font-weight:600; }
+nav a.active { color:var(--accent); }
+nav .spacer { flex:1; }
+main { padding-top: 20px; }
+footer { color:var(--muted); font-size:12px; margin-top:40px; border-top:1px solid var(--line); padding-top:12px; }
+h1 { font-size:26px; margin:0 0 12px; } h2 { font-size:18px; margin:24px 0 8px; } h3 { font-size:15px; margin:16px 0 6px; }
+.panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:16px; margin:12px 0; }
+.muted { color:var(--muted); } .mono { font-family: ui-monospace, Menlo, monospace; font-size:12.5px; word-break: break-all; }
+.grid { display:grid; grid-template-columns: 1fr 1fr; gap:12px; }
+button { background:var(--accent); color:#04121f; border:0; border-radius:8px; padding:9px 14px; font-weight:700; cursor:pointer; }
+button.secondary { background:var(--line); color:var(--fg); }
+button:disabled { opacity:.5; cursor:not-allowed; }
+input, select { background:#0b0e13; color:var(--fg); border:1px solid var(--line); border-radius:8px; padding:8px 10px; font-size:14px; }
+table { border-collapse: collapse; width:100%; } td, th { border-bottom:1px solid var(--line); padding:6px 8px; text-align:left; font-size:13.5px; }
+.badge { display:inline-block; padding:2px 8px; border-radius:999px; font-size:12px; font-weight:700; }
+.badge.ok { background:#123d25; color:var(--ok); } .badge.bad { background:#3d1212; color:var(--bad); } .badge.warn { background:#3d3312; color:var(--warn); } .badge.info { background:#12253d; color:var(--accent); }
+.steps { list-style:none; padding:0; margin:0; } .steps li { padding:6px 0; border-bottom:1px dashed var(--line); display:flex; justify-content:space-between; }
+.signs td.pos { color:var(--ok); font-weight:700; } .signs td.neg { color:var(--bad); font-weight:700; }
+.row { display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+pre { background:#0b0e13; padding:10px; border-radius:8px; overflow:auto; font-size:12px; }
+.winner { font-size:20px; font-weight:800; color:var(--ok); }

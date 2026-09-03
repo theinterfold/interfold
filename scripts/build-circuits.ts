@@ -22,6 +22,7 @@ import {
   COMMITTEE_PARAMS,
   isPresetCommitteeSupported,
   PRESET_NOIR_CONFIG,
+  basePreset,
   type CircuitCommittee,
   type CircuitGroup,
   type CircuitPreset,
@@ -250,6 +251,8 @@ class NoirCircuitBuilder {
 
   private bfvConfig(preset: CircuitPreset, committee: CircuitCommittee) {
     const { h, t, n } = COMMITTEE_PARAMS[committee]
+    // A wide DKG transport shares its base preset's on-chain BFV constants.
+    preset = basePreset(preset)
     const paramSet = preset === CIRCUIT_PRESETS.INSECURE_512 ? 0 : 1
     const committeeSize = ALL_COMMITTEES.indexOf(committee)
     const params = paramSet === 0 ? BFV_PARAMS.insecure512 : BFV_PARAMS.secure8192
@@ -368,6 +371,12 @@ import { IInterfold } from "../interfaces/IInterfold.sol";
 library ActiveCryptoConfig {
     bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
     bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v1");
+    /// @dev CKKS scheme id: allowed alongside BFV. The scheme is bound per
+    ///      E3 by the program's \`validate()\` (program address => protocol);
+    ///      this config allows both, and the per-scheme verifier
+    ///      registries gate which schemes are actually operable.
+    bytes32 internal constant CKKS_ENCRYPTION_SCHEME_ID =
+        keccak256("fhe.rs:CKKS");
 
     bytes32 internal constant INSECURE_CONFIG_ID =
         ${testnet.configId};
@@ -380,6 +389,21 @@ library ActiveCryptoConfig {
     uint8 internal constant SECURE_PARAM_SET = ${production.paramSet};
     bytes32 internal constant SECURE_PARAM_SET_HASH =
         ${production.paramSetHash};
+
+    /// @dev CKKS demo ParamSets. Every one of them shares the INSECURE BFV
+    ///      parameter bytes (same crypto-config id, same DKG transport
+    ///      encoding on-chain); only the node-side CKKS modulus ladder
+    ///      differs. Admitted on testnet/local chains only, like the
+    ///      insecure BFV set they piggyback on.
+    ///      2: sign-extraction ladder (auction), hybrid relin ceremony.
+    ///      3: statistics (relinearised sum-of-squares), level-0 relin.
+    ///      4: credit scoring v2 (5-limb, two-level relin ceremony).
+    ///      5: coefficient inner products (matching / treasury risk /
+    ///         federated averaging), level-0 relin ceremony.
+    uint8 internal constant CKKS_LADDER_PARAM_SET = 2;
+    uint8 internal constant CKKS_STATISTICS_PARAM_SET = 3;
+    uint8 internal constant CKKS_CREDIT_PARAM_SET = 4;
+    uint8 internal constant CKKS_COEFFICIENT_PARAM_SET = 5;
 
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = ${secureMinimum.committeeSize};
     uint32 internal constant MINIMUM_T = ${secureMinimum.t};
@@ -419,11 +443,21 @@ library ActiveCryptoConfig {
         return chainId == 11155111 || chainId == 31337 || chainId == 1337;
     }
 
+    function isCkksDemoParamSet(uint8 paramSet) internal pure returns (bool) {
+        return
+            paramSet == CKKS_LADDER_PARAM_SET ||
+            paramSet == CKKS_STATISTICS_PARAM_SET ||
+            paramSet == CKKS_CREDIT_PARAM_SET ||
+            paramSet == CKKS_COEFFICIENT_PARAM_SET;
+    }
+
     function configIdForParamSet(
         uint8 paramSet
     ) internal pure returns (bytes32) {
         if (paramSet == INSECURE_PARAM_SET) return INSECURE_CONFIG_ID;
         if (paramSet == SECURE_PARAM_SET) return SECURE_CONFIG_ID;
+        // CKKS demo sets carry the insecure BFV bytes, hence its config id.
+        if (isCkksDemoParamSet(paramSet)) return INSECURE_CONFIG_ID;
         revert IInterfold.UnsupportedCryptoConfig();
     }
 
@@ -438,7 +472,9 @@ library ActiveCryptoConfig {
     function isParamSetSupported(uint8 paramSet) internal view returns (bool) {
         if (isTestnetOrLocal()) {
             return
-                paramSet == INSECURE_PARAM_SET || paramSet == SECURE_PARAM_SET;
+                paramSet == INSECURE_PARAM_SET ||
+                paramSet == SECURE_PARAM_SET ||
+                isCkksDemoParamSet(paramSet);
         }
         return paramSet == SECURE_PARAM_SET;
     }
@@ -470,8 +506,10 @@ library ActiveCryptoConfig {
     function validateEncryptionScheme(
         bytes32 encryptionSchemeId
     ) internal pure {
-        if (encryptionSchemeId != ENCRYPTION_SCHEME_ID)
-            revert IInterfold.UnsupportedCryptoConfig();
+        if (
+            encryptionSchemeId != ENCRYPTION_SCHEME_ID &&
+            encryptionSchemeId != CKKS_ENCRYPTION_SCHEME_ID
+        ) revert IInterfold.UnsupportedCryptoConfig();
     }
 
     function validateCommittee(
@@ -489,9 +527,10 @@ library ActiveCryptoConfig {
     ) internal view {
         if (!isParamSetSupported(paramSet))
             revert IInterfold.UnsupportedCryptoConfig();
-        bytes32 expectedHash = paramSet == INSECURE_PARAM_SET
-            ? INSECURE_PARAM_SET_HASH
-            : SECURE_PARAM_SET_HASH;
+        // CKKS demo sets register the insecure BFV bytes.
+        bytes32 expectedHash = paramSet == SECURE_PARAM_SET
+            ? SECURE_PARAM_SET_HASH
+            : INSECURE_PARAM_SET_HASH;
         if (paramSetHash != expectedHash)
             revert IInterfold.UnsupportedCryptoConfig();
     }
@@ -1276,7 +1315,9 @@ Commands: build (default), hash, sync-config
 Options:
   --group <groups>    Circuit groups (comma-separated: dkg,threshold)
   --circuit <name>    Build specific circuit(s)
-  --preset <preset>   Parameter preset: insecure-512 (default), secure-8192, or all
+  --preset <preset>   Parameter preset: insecure-512 (default), insecure-dkg-wide-512
+                      (the CKKS ladder's wide DKG transport: wide C0/C3/C4, same threshold
+                      circuits + on-chain constants as insecure-512), secure-8192, or all
   --committee <name>  Committee size: minimum (default), micro, small, or all
   --skip-utils-patch  Don't rewrite BFV_DKG_H/T in packages/interfold-contracts/scripts/utils.ts
   --skip-vk           Skip verification key generation
