@@ -88,8 +88,11 @@ impl ShareComputationCircuitData {
                 let lambda = preset
                     .lambda()
                     .map_err(|e| CircuitsErrors::Sample(e.to_string()))?;
+                let sd = preset.search_defaults().ok_or_else(|| {
+                    CircuitsErrors::Sample("Preset has no search defaults".into())
+                })?;
                 let esi_coeffs = trbfv
-                    .generate_smudging_error(committee.n, lambda, &mut rng)
+                    .generate_smudging_error(committee.n, sd.mult_depth, lambda, &mut rng)
                     .map_err(|e| {
                         CircuitsErrors::Sample(format!(
                             "Failed to generate smudging error: {:?}",

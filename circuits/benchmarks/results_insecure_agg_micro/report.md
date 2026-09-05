@@ -16,7 +16,7 @@ Settings for this benchmark run (integration test + Nargo circuit benches on the
 | Setting                                               | Value                                        |
 | ----------------------------------------------------- | -------------------------------------------- |
 | Benchmark mode                                        | `insecure`                                   |
-| BFV preset (artifacts)                                | `insecure-512`                               |
+| BFV preset (artifacts)                                | `insecure`                                    |
 | BFV preset (enum)                                     | `InsecureThreshold512`                       |
 | λ (smudging / error)                                  | 2                                            |
 | Nodes spawned (builder)                               | 20                                           |

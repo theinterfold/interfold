@@ -105,56 +105,66 @@ impl fmt::Display for CircuitVariant {
 }
 
 /// Circuit identifiers for ZK proofs.
+///
+/// Bincode encodes this enum by variant order. Do not reorder variants.
+/// Add new circuits at the end. Keep retired circuits for compatibility.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[repr(u32)]
 pub enum CircuitName {
     /// BFV public key proof (C0).
-    PkBfv,
+    PkBfv = 0,
     /// TrBFV public key share proof (C1).
-    PkGeneration,
+    PkGeneration = 1,
     /// Share encryption proof (C3).
-    ShareEncryption,
+    ShareEncryption = 2,
     /// DKG share decryption proof (C4).
-    DkgShareDecryption,
+    DkgShareDecryption = 3,
     /// Public key aggregation proof (C5).
-    PkAggregation,
+    PkAggregation = 4,
     /// Decryption share proof (C6).
-    ThresholdShareDecryption,
+    ThresholdShareDecryption = 5,
     /// Decrypted shares aggregation proof (C7).
-    DecryptedSharesAggregation,
+    DecryptedSharesAggregation = 6,
     /// Sequential C3 fold: inner ZK + optional prior `c3_fold` non-ZK proof.
-    C3Fold,
+    C3Fold = 7,
     /// Bootstrap circuit for [`CircuitName::C3Fold`] genesis accumulator proof (same ABI, no acc verify).
-    C3FoldKernel,
+    C3FoldKernel = 8,
     /// Sequential C6 fold: inner ZK + prior `c6_fold` non-ZK proof (phase-7 aggregator).
-    C6Fold,
+    C6Fold = 9,
     /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
-    C6FoldKernel,
+    C6FoldKernel = 10,
     /// Ad-hoc: final sk `c3_fold` + final e_sm `c3_fold`.
-    C3abFold,
+    C3abFold = 11,
     /// Ad-hoc: C4a + C4b.
-    C4abFold,
+    C4abFold = 12,
     /// Per-node DKG fold (C0..C4 links).
-    NodeFold,
+    NodeFold = 13,
     /// Sequential fold of `H` `node_fold` proofs (non-ZK) before `dkg_aggregator`.
-    NodesFold,
+    NodesFold = 14,
     /// Bootstrap circuit for [`CircuitName::NodesFold`] genesis accumulator proof (same ABI, no acc verify).
-    NodesFoldKernel,
+    NodesFoldKernel = 15,
     /// DKG aggregator (folded `node_fold` via `nodes_fold` + C5).
-    DkgAggregator,
+    DkgAggregator = 16,
     /// Phase-7 decryption aggregator (folded C6 via `c6_fold` + C7).
-    DecryptionAggregator,
+    DecryptionAggregator = 17,
     /// SK coefficient-range proof used by the root-committed chunk pipeline.
-    SkShareComputationChunk,
+    SkShareComputationChunk = 18,
     /// ESM coefficient-range proof used by the root-committed chunk pipeline.
-    ESmShareComputationChunk,
+    ESmShareComputationChunk = 19,
     /// Recursive batch of C2 chunk proofs.
-    C2ChunkBatch,
+    C2ChunkBatch = 20,
     /// Type-bound SK terminal projection from a complete C2 chunk accumulator.
-    SkC2ChunkFinalize,
+    SkC2ChunkFinalize = 21,
     /// Type-bound ESM terminal projection from a complete C2 chunk accumulator.
-    ESmC2ChunkFinalize,
+    ESmC2ChunkFinalize = 22,
     /// Combines type-bound terminal C2a and C2b chunk proofs.
-    C2abChunkFold,
+    C2abChunkFold = 23,
+    /// Legacy Sk share computation (C2a). Retain for bincode compatibility. Do not produce.
+    SkShareComputation = 24,
+    /// Legacy ESM share computation (C2b). Retain for bincode compatibility. Do not produce.
+    ESmShareComputation = 25,
+    /// Legacy ad-hoc aggregation C2a + C2b. Retain for bincode compatibility. Do not produce.
+    C2abFold = 26,
 }
 
 impl CircuitName {
@@ -162,6 +172,8 @@ impl CircuitName {
         match self {
             CircuitName::PkBfv => "pk",
             CircuitName::PkGeneration => "pk_generation",
+            CircuitName::SkShareComputation => "sk_share_computation",
+            CircuitName::ESmShareComputation => "e_sm_share_computation",
             CircuitName::SkShareComputationChunk => "sk_share_computation_chunk",
             CircuitName::ESmShareComputationChunk => "esm_share_computation_chunk",
             CircuitName::C2ChunkBatch => "c2_chunk_batch",
@@ -177,6 +189,7 @@ impl CircuitName {
             CircuitName::C2abChunkFold => "c2ab_chunk_fold",
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
+            CircuitName::C2abFold => "c2ab_fold",
             CircuitName::C3abFold => "c3ab_fold",
             CircuitName::C4abFold => "c4ab_fold",
             CircuitName::NodeFold => "node_fold",
@@ -190,10 +203,12 @@ impl CircuitName {
     pub fn group(&self) -> &'static str {
         match self {
             CircuitName::PkBfv => "dkg",
-            CircuitName::SkShareComputationChunk => "dkg",
-            CircuitName::ESmShareComputationChunk => "dkg",
-            CircuitName::ShareEncryption => "dkg",
-            CircuitName::DkgShareDecryption => "dkg",
+            CircuitName::SkShareComputation
+            | CircuitName::ESmShareComputation
+            | CircuitName::SkShareComputationChunk
+            | CircuitName::ESmShareComputationChunk
+            | CircuitName::ShareEncryption
+            | CircuitName::DkgShareDecryption => "dkg",
             CircuitName::PkGeneration => "threshold",
             CircuitName::ThresholdShareDecryption => "threshold",
             CircuitName::PkAggregation => "threshold",
@@ -206,6 +221,7 @@ impl CircuitName {
             | CircuitName::C2abChunkFold
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
+            | CircuitName::C2abFold
             | CircuitName::C3abFold
             | CircuitName::C4abFold
             | CircuitName::NodeFold
@@ -231,9 +247,12 @@ impl CircuitName {
             CircuitName::PkGeneration => CircuitOutputLayout::Fixed {
                 fields: PK_GENERATION_OUTPUTS,
             },
-            CircuitName::SkShareComputationChunk | CircuitName::ESmShareComputationChunk => {
-                CircuitOutputLayout::None
-            }
+            // Legacy circuits no longer produce proofs. Map to None so old
+            // proofs fail closed on extraction but still decode.
+            CircuitName::SkShareComputation
+            | CircuitName::ESmShareComputation
+            | CircuitName::SkShareComputationChunk
+            | CircuitName::ESmShareComputationChunk => CircuitOutputLayout::None,
             CircuitName::DkgShareDecryption => CircuitOutputLayout::Fixed {
                 fields: DKG_SHARE_DECRYPTION_OUTPUTS,
             },
@@ -255,6 +274,7 @@ impl CircuitName {
             | CircuitName::C2abChunkFold
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
+            | CircuitName::C2abFold
             | CircuitName::C3abFold
             | CircuitName::C4abFold
             | CircuitName::NodeFold
@@ -324,10 +344,33 @@ mod tests {
             (CircuitName::SkC2ChunkFinalize, 21),
             (CircuitName::ESmC2ChunkFinalize, 22),
             (CircuitName::C2abChunkFold, 23),
+            (CircuitName::SkShareComputation, 24),
+            (CircuitName::ESmShareComputation, 25),
+            (CircuitName::C2abFold, 26),
         ];
 
         for (circuit, discriminant) in expected {
             assert_eq!(circuit as u32, discriminant, "{circuit:?}");
+        }
+    }
+
+    #[test]
+    fn circuit_name_legacy_bincode_bytes_decode_to_the_same_variants() {
+        let expected = [
+            ([2u8, 0, 0, 0], CircuitName::ShareEncryption),
+            ([13u8, 0, 0, 0], CircuitName::NodeFold),
+            ([16u8, 0, 0, 0], CircuitName::DkgAggregator),
+            ([17u8, 0, 0, 0], CircuitName::DecryptionAggregator),
+            ([24u8, 0, 0, 0], CircuitName::SkShareComputation),
+            ([25u8, 0, 0, 0], CircuitName::ESmShareComputation),
+            ([26u8, 0, 0, 0], CircuitName::C2abFold),
+        ];
+
+        for (bytes, circuit) in expected {
+            assert_eq!(
+                bincode::deserialize::<CircuitName>(&bytes).unwrap(),
+                circuit
+            );
         }
     }
 

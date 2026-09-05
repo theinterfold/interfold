@@ -36,6 +36,8 @@ pub struct GenPkShareAndSkSssRequest {
     pub lambda: LambdaConfig,
     /// Number of ciphertexts (z) for smudging noise generation.
     pub num_ciphertexts: usize,
+    /// Multiplicative depth for l-BFV smudging noise computation.
+    pub mult_depth: u32,
 }
 
 struct InnerRequest {
@@ -43,6 +45,7 @@ struct InnerRequest {
     pub crp: CommonRandomPoly,
     pub lambda: LambdaConfig,
     pub num_ciphertexts: usize,
+    pub mult_depth: u32,
 }
 
 impl TryFrom<GenPkShareAndSkSssRequest> for InnerRequest {
@@ -55,6 +58,7 @@ impl TryFrom<GenPkShareAndSkSssRequest> for InnerRequest {
             crp,
             lambda: value.lambda,
             num_ciphertexts: value.num_ciphertexts,
+            mult_depth: value.mult_depth,
         })
     }
 }
@@ -134,7 +138,8 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
     let share_manager_for_esm =
         ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
     let lambda = req.lambda.into_lambda()?;
-    let esi_coeffs = trbfv.generate_smudging_error(req.num_ciphertexts, 0, lambda, rng)?;
+    let esi_coeffs =
+        trbfv.generate_smudging_error(req.num_ciphertexts, req.mult_depth, lambda, rng)?;
     let e_sm_rns = share_manager_for_esm.bigints_to_poly(&esi_coeffs)?;
     let e_sm_raw = ArcBytes::from_bytes(&e_sm_rns.deref().to_bytes());
 

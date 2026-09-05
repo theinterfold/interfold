@@ -270,72 +270,53 @@ await sdk.onInterfoldEvent(
 )
 ```
 
-`CommitteePublicKeyAssembler` works as follows:
+### Full encryption method reference
 
-- `add(event.data)` returns an `AssembledCommitteePublicKey` (`e3Id`, `nodes`, `pkCommitment`,
-  `publicKey`) when a candidate is complete and its Keccak-256 hash matches. Otherwise it returns
-  `undefined`.
-- It accepts only the first candidate from each publisher.
-- It rejects keys larger than `MAX_COMMITTEE_PUBLIC_KEY_BYTES` (512 KiB). Each chunk is at most
-  `MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES` (90 KiB).
-- It tracks 128 E3s by default. `clear(e3Id)` removes the state for one E3.
+| Method                             | Description                                           |
+| ---------------------------------- | ----------------------------------------------------- |
+| `generatePublicKey()`              | Generate a BFV public key                             |
+| `computePublicKeyCommitment(pk)`   | Compute a commitment for a public key                 |
+| `encryptNumber(n, pk)`             | Encrypt a single bigint                               |
+| `encryptVector(vec, pk)`           | Encrypt a `BigUint64Array`                            |
+| `encryptNumberAndGenInputs(n, pk)` | Encrypt and return circuit inputs for ZK verification |
+| `encryptNumberAndGenProof(n, pk)`  | Encrypt and generate a ZK proof of valid encryption   |
+| `encryptVectorAndGenInputs(v, pk)` | Vector version of `encryptNumberAndGenInputs`         |
+| `encryptVectorAndGenProof(v, pk)`  | Vector version of `encryptNumberAndGenProof`          |
+| `getThresholdBfvParamsSet()`       | Get the parameter set for the configured preset       |
+| `generateProof(circuitInputs)`     | Generate a ZK proof from circuit inputs directly      |
 
-`sdk.getE3PublicKey(e3Id)` returns the 32-byte public key commitment from the registry. It is not
-the key. The call fails with `GET_E3_PUBLIC_KEY_FAILED` before the committee publishes.
+### Proving: embedded circuits or your own
 
-## Encrypt inputs
+`generateProof()` — and the `*AndGenProof` helpers that call it — run the user-data-encryption (UDE)
+circuits that are embedded in the package. Those artifacts are compiled with
+`--preset insecure --committee minimum` (see
+`packages/interfold-sdk/scripts/compile-circuits.sh`), so they only match `INSECURE_THRESHOLD_512`
+and a minimum-size committee.
 
-The SDK has each encryption function in two forms. The instance method uses the preset from the
-configuration. The standalone function takes the preset name as its last argument.
+This has two consequences:
 
-| Instance method                         | Standalone function                             | Returns                                                                |
-| --------------------------------------- | ----------------------------------------------- | ---------------------------------------------------------------------- |
-| `generatePublicKey()`                   | `generatePublicKey(preset)`                     | A new BFV public key (`Uint8Array`). For tests only.                   |
-| `computePublicKeyCommitment(pk)`        | `computePublicKeyCommitment(pk, preset)`        | The public key commitment (`Uint8Array`).                              |
-| `validatePublicKeyCommitment(pk, c)`    | None                                            | `true` when the commitment of `pk` equals `c`.                         |
-| `computeCiphertextCommitment(ct)`       | `computeCiphertextCommitment(ct, preset)`       | The SAFE commitment of a ciphertext (`Uint8Array`).                    |
-| `encryptNumber(value, pk)`              | `encryptNumber(value, pk, preset)`              | The ciphertext of one `bigint` (`Uint8Array`).                         |
-| `encryptVector(values, pk)`             | `encryptVector(values, pk, preset)`             | The ciphertext of a `BigUint64Array` (`Uint8Array`).                   |
-| `encryptNumberAndGenInputs(value, pk)`  | `encryptNumberAndGenInputs(value, pk, preset)`  | `{ encryptedData, circuitInputs }`                                     |
-| `encryptVectorAndGenInputs(values, pk)` | `encryptVectorAndGenInputs(values, pk, preset)` | `{ encryptedData, circuitInputs }`                                     |
-| `encryptNumberAndGenProof(value, pk)`   | `encryptNumberAndGenProof(value, pk, preset)`   | `{ encryptedData, proof }`                                             |
-| `encryptVectorAndGenProof(values, pk)`  | `encryptVectorAndGenProof(values, pk, preset)`  | `{ encryptedData, proof }`                                             |
-| `getThresholdBfvParamsSet()`            | `getThresholdBfvParamsSet(preset)`              | `BfvParams` (`degree`, `plaintextModulus`, `moduli`, `error1Variance`) |
-| None                                    | `generateProof(circuitInputs)`                  | A `ProofData` proof from `@aztec-foundation/bb.js`.                    |
+- **`generateProof()` is a convenience for the embedded insecure path.** It is enough for local
+  development, for Sepolia, and for tests. Secure (N=8192) artifacts do not ship in the SDK today.
+- **The secure preset gives witnesses the embedded circuits cannot execute.** With
+  `SECURE_THRESHOLD_8192`, `encryptNumberAndGenInputs()` returns N=8192 circuit inputs, while the
+  embedded UDE circuits are N=512. Proof generation fails on the shape mismatch.
 
-A key from `generatePublicKey` is not a committee key. The committee cannot decrypt data that is
-encrypted to it. For the full encrypt and submit flow, see
-[Encrypt and submit](/build/tutorials/encrypt-and-submit).
+**For on-chain Honk verification of encryption, bring your own compiled circuits.** Most E3 programs
+already need a custom proving pipeline on top of Greco — an app circuit and a fold circuit that
+wraps the UDE proof — so compile the UDE, app, and fold circuits for the preset and committee your
+deployment uses, then emit the Solidity verifier from them. `examples/CRISP` shows the whole flow.
+See [Noir Circuits](./noir-circuits) for the build commands and the verifier interface.
 
-### Encryption proofs
+Use `encryptNumberAndGenInputs()` (or `encryptVectorAndGenInputs()`) to get the circuit inputs, and
+feed them to your own prover instead of `generateProof()`.
 
-The `*AndGenProof` functions and `generateProof` use circuits that ship in the SDK. The SDK compiles
-them with the `insecure-64` preset and the `minimum` committee
-(`packages/interfold-sdk/scripts/compile-circuits.sh`). The proofs target recursive verification
-(`noir-recursive-no-zk`), not a Solidity verifier.
+Secure artifacts may ship in the SDK in a later release. Until they do, treat your own compiled
+circuits as the supported path for production.
 
-In Node.js, `generateProof` checks the circuit stamp file (`.active-preset.json`) when it finds one.
-It fails with one of these codes when the stamp does not match:
+## Modular submodule imports
 
-- `SDK_CIRCUIT_STAMP_MISSING` or `SDK_CIRCUIT_STAMP_INVALID`: the stamp file is missing or broken.
-- `SDK_CIRCUIT_COMMITTEE_MISMATCH`: the circuits are not for the `minimum` committee.
-- `SDK_CIRCUIT_PRESET_MISMATCH`: the circuits are not for `insecure-64`.
-
-For another preset, another committee size, or an on-chain verifier, compile your own circuits. Use
-`encryptNumberAndGenInputs` or `encryptVectorAndGenInputs` to get the witness for your prover. See
-[Noir circuits](/build/noir-circuits). The [CRISP repository](https://github.com/theinterfold/CRISP)
-shows a complete custom pipeline.
-
-## Submodule imports
-
-Each subpath exports part of the SDK. The main entry point exports everything, except the type
-`CiphertextOutputReferencePublishedData`, which only `@interfold/sdk/events` exports.
-
-| Import path                | Exports                                                                                                                                                                                                         |
-| -------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `@interfold/sdk/crypto`    | The standalone encryption functions, `generateProof`, `ThresholdBfvParamsPresetNames`, and the types `BfvParams`, `ThresholdBfvParamsPresetName`, `VerifiableEncryptionResult`, `EncryptedValueAndPublicInputs` |
-| `@interfold/sdk/contracts` | `ContractClient`, `E3Stage`, `FailureReason`, and the types `ContractClientConfig`, `ContractAddresses`, `E3`, `E3RequestParams`                                                                                |
-| `@interfold/sdk/events`    | `EventListener`, `InterfoldEventType`, `RegistryEventType`, `RandomnessProviderEventType`, and the event data types                                                                                             |
+The SDK is organized into three submodules (`contracts`, `events`, `crypto`) that can be imported
+independently for tree-shaking:
 
 ```ts
 import { encryptNumber, generatePublicKey } from '@interfold/sdk/crypto'

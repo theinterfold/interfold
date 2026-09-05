@@ -10,6 +10,7 @@ import {
   ADDRESS_TWO as AddressTwo,
   BFV_PARAMS_DEFAULT,
   BFV_PARAMS_SECURE,
+  BFV_PARAMS_SECURE_16384,
   PRODUCTION_CRYPTO_CONFIG_ID,
   buildMockAggregationPublishArgs,
   deployInterfoldSystem,
@@ -241,15 +242,13 @@ describe("Interfold", function () {
       expect(await interfold.paramSetRegistry(0)).to.equal(BFV_PARAMS_DEFAULT);
       await expect(interfold.setParamSet(2, BFV_PARAMS_SECURE))
         .to.emit(interfold, "ParamSetRegistered")
-        .withArgs(2, BFV_PARAMS_SECURE);
-      expect(await interfold.paramSetRegistry(2)).to.equal(BFV_PARAMS_SECURE);
-      expect(await interfold.paramSetRegistry(1)).to.equal("0x");
+        .withArgs(1, BFV_PARAMS_SECURE);
+      await expect(interfold.setParamSet(2, BFV_PARAMS_SECURE_16384))
+        .to.emit(interfold, "ParamSetRegistered")
+        .withArgs(2, BFV_PARAMS_SECURE_16384);
       await expect(
-        interfold.setParamSet(1, BFV_PARAMS_SECURE),
-      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
-      await expect(interfold.setParamSet(2, BFV_PARAMS_SECURE))
-        .to.be.revertedWithCustomError(interfold, "ParamSetAlreadyRegistered")
-        .withArgs(2);
+        interfold.setParamSet(2, BFV_PARAMS_SECURE),
+      ).to.be.revertedWithCustomError(interfold, "ParamSetAlreadyRegistered");
     });
 
     it("does not overwrite the active parameter set", async function () {

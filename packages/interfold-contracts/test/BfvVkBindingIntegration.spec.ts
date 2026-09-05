@@ -119,6 +119,8 @@ const hasCompiledVkArtifacts = (): boolean =>
 const describeDeployTimeVkChecks = hasCompiledVkArtifacts()
   ? describe
   : describe.skip;
+const runFoldedProofIntegration =
+  loadFoldedArtifacts() !== null && hasCompiledVkArtifacts();
 
 function hexToBytes32Array(hex: string): string[] {
   const clean = hex.startsWith("0x") ? hex.slice(2) : hex;
@@ -318,9 +320,6 @@ describe("BfvVkBindingIntegration", function () {
     });
   });
 
-  const runFoldedProofIntegration =
-    loadFoldedArtifacts() !== null && hasCompiledVkArtifacts();
-
   (runFoldedProofIntegration ? it : it.skip)(
     "folded aggregator proofs: artifact VK hashes match publicInputs[0..1] and verify passes",
     async function () {
@@ -328,7 +327,14 @@ describe("BfvVkBindingIntegration", function () {
 
       const folded = loadFoldedArtifacts();
       if (folded === null) {
-        this.skip();
+        throw new Error(
+          "Missing folded BFV artifacts. Run the insecure benchmark or set BFV_VK_BINDING_FOLDED_ARTIFACTS.",
+        );
+      }
+      if (!hasCompiledVkArtifacts()) {
+        throw new Error(
+          "Missing compiled BFV VK artifacts. Run pnpm build:circuits --preset insecure --committee minimum.",
+        );
       }
 
       const dkgPublicInputs = hexToBytes32Array(
@@ -341,12 +347,9 @@ describe("BfvVkBindingIntegration", function () {
         dkgPublicInputs.length !== DKG_EXPECTED_PUBLIC_INPUT_LEN ||
         decPublicInputs.length !== DEC_EXPECTED_PUBLIC_INPUT_LEN
       ) {
-        console.warn(
-          "Skipping folded proof verify: folded artifact public-input layout is stale. " +
-            "Re-run insecure benchmarks (syncs test/fixtures/bfv_vk_binding/folded_artifacts.json) " +
-            "or set BFV_VK_BINDING_FOLDED_ARTIFACTS.",
+        throw new Error(
+          "Folded artifact public-input layout is stale. Re-run insecure benchmarks or set BFV_VK_BINDING_FOLDED_ARTIFACTS.",
         );
-        this.skip();
       }
 
       const expectedNodesFoldKeyHash = readVkRecursiveHash(
@@ -546,7 +549,9 @@ describe("BfvVkBindingIntegration", function () {
 
       const folded = loadFoldedArtifacts();
       if (folded === null) {
-        this.skip();
+        throw new Error(
+          "Missing folded BFV artifacts. Run the insecure benchmark or set BFV_VK_BINDING_FOLDED_ARTIFACTS.",
+        );
       }
       const [testSigner] = await ethers.getSigners();
 
@@ -554,7 +559,9 @@ describe("BfvVkBindingIntegration", function () {
         folded.dkg_aggregator.public_inputs_hex,
       );
       if (dkgPublicInputs.length !== bfvPkExpectedPublicInputsLen(BFV_DKG_H)) {
-        this.skip();
+        throw new Error(
+          "Folded artifact public-input layout is stale. Re-run insecure benchmarks or set BFV_VK_BINDING_FOLDED_ARTIFACTS.",
+        );
       }
       const expectedC5KeyHash = readVkRecursiveHash(
         getBfvPkSubCircuitVkHashPaths().c5,

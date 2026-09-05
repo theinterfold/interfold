@@ -650,20 +650,7 @@ mod tests {
         include_manifest: bool,
         extra_entries: &[(&str, &[u8])],
     ) -> Vec<u8> {
-        circuit_archive_with_manifest(
-            circuit,
-            include_manifest.then(|| fixture_manifest(circuit)),
-            extra_entries,
-            &[],
-        )
-    }
-
-    fn circuit_archive_with_manifest(
-        circuit: &[u8],
-        manifest_files: Option<HashMap<String, String>>,
-        extra_entries: &[(&str, &[u8])],
-        omitted: &[&str],
-    ) -> Vec<u8> {
+        let rel_path = "insecure/minimum/default/dkg/pk/pk.json";
         let encoder = GzEncoder::new(Vec::new(), Compression::default());
         let mut builder = Builder::new(encoder);
         append_global_pax_header(&mut builder);
@@ -1164,11 +1151,11 @@ mod tests {
 
         let installed_circuit = backend
             .circuits_dir
-            .join("insecure-64/minimum/default/dkg/pk/pk.json");
+            .join("insecure/minimum/default/dkg/pk/pk.json");
         write_file(&backend.circuits_dir, "installed.txt", b"installed");
         write_file(
             &backend.circuits_dir,
-            "insecure-64/minimum/default/dkg/pk/pk.json",
+            "insecure/minimum/default/dkg/pk/pk.json",
             b"previous-circuit",
         );
 
@@ -1275,13 +1262,12 @@ mod tests {
         let temp = TempDir::new().unwrap();
         let circuits_dir = temp.path();
         let contents = b"flat";
-        write_file(circuits_dir, "insecure-64/default/dkg/pk/pk.json", contents);
+        write_file(circuits_dir, "insecure/default/dkg/pk/pk.json", contents);
         let hash = sha256_hex(contents);
 
-        let path =
-            locate_manifest_artifact(circuits_dir, "insecure-64/default/dkg/pk/pk.json", &hash)
-                .await
-                .unwrap();
+        let data = read_manifest_file(circuits_dir, "insecure/default/dkg/pk/pk.json", &hash)
+            .await
+            .unwrap();
 
         assert_eq!(fs::read(path).unwrap(), contents);
     }
@@ -1294,23 +1280,15 @@ mod tests {
         let small = b"small";
         write_file(
             circuits_dir,
-            "insecure-64/minimum/default/dkg/pk/pk.json",
+            "insecure/minimum/default/dkg/pk/pk.json",
             minimum,
         );
-        write_file(
-            circuits_dir,
-            "insecure-64/small/default/dkg/pk/pk.json",
-            small,
-        );
+        write_file(circuits_dir, "insecure/small/default/dkg/pk/pk.json", small);
         let small_hash = sha256_hex(small);
 
-        let path = locate_manifest_artifact(
-            circuits_dir,
-            "insecure-64/default/dkg/pk/pk.json",
-            &small_hash,
-        )
-        .await
-        .unwrap();
+        let data = read_manifest_file(circuits_dir, "insecure/default/dkg/pk/pk.json", &small_hash)
+            .await
+            .unwrap();
 
         assert_eq!(fs::read(path).unwrap(), small);
     }
@@ -1322,14 +1300,14 @@ mod tests {
         let contents = b"minimum";
         write_file(
             circuits_dir,
-            "insecure-64/minimum/default/dkg/pk/pk.json",
+            "insecure/minimum/default/dkg/pk/pk.json",
             contents,
         );
         let hash = sha256_hex(contents);
 
         let path = locate_manifest_artifact(
             circuits_dir,
-            "insecure-64/minimum/default/dkg/pk/pk.json",
+            "insecure/minimum/default/dkg/pk/pk.json",
             &hash,
         )
         .await

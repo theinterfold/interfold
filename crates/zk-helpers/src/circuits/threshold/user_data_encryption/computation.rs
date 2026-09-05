@@ -221,12 +221,11 @@ impl Computation for Bounds {
         // CBD bound
         let cbd_bound = (threshold_params.variance() * 2) as u64;
         // Uniform bound
-        let uniform_bound = (threshold_params.get_error1_variance() * BigUint::from(3u32))
-            .sqrt()
-            .to_bigint()
-            .ok_or_else(|| {
-                CircuitsErrors::Other("Failed to convert uniform bound to BigInt".into())
-            })?;
+        let uniform_bound = crate::utils::ceil_sqrt(
+            &(threshold_params.get_error1_variance() * BigUint::from(3u32)),
+        )
+        .to_bigint()
+        .ok_or_else(|| CircuitsErrors::Other("Failed to convert uniform bound to BigInt".into()))?;
 
         let u_bound = SecretKey::sk_bound() as u128; // u_bound is the same as sk_bound
 
@@ -238,12 +237,9 @@ impl Computation for Bounds {
         };
         let e1_bound = cbd_bound; // e1 = e2 in the fhe.rs
 
-        let ptxt_up_bound = (t.clone() - BigInt::from(1)) / BigInt::from(2);
-        let ptxt_low_bound: BigInt = if (t.clone() % BigInt::from(2)) == BigInt::from(1) {
-            -1 * ptxt_up_bound.clone()
-        } else {
-            -1 * ptxt_up_bound.clone() - BigInt::from(1)
-        };
+        // Plaintext coefficients are encoded in [0, t), not centered around zero.
+        let ptxt_low_bound = BigInt::from(0);
+        let ptxt_up_bound = t.clone() - BigInt::from(1);
 
         let k1_low_bound: BigInt = BigInt::from(-1) * ptxt_low_bound.clone();
         let k1_up_bound: BigInt = ptxt_up_bound.clone();
@@ -370,7 +366,6 @@ impl Computation for Inputs {
         let mut k1 = Polynomial::from_u64_vector(k1_u64);
 
         k1.reverse();
-        k1.center(&BigInt::from(t));
 
         // Reconstruct u and e1 as polynomials (only the first limb is needed)
         let mut u = CrtPolynomial::from_fhe_polynomial(&u).limb(0).clone();

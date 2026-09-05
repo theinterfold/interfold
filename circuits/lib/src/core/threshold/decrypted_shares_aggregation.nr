@@ -10,7 +10,7 @@ use crate::math::modulo::U128::{inv_mod_bounded, reduce_mod_bounded};
 use crate::math::polynomial::Polynomial;
 use ::bignum::BigNum;
 use ::bignum::bignum::to_field;
-use ::bignum::SecureThreshold8192;
+use ::bignum::U256;
 
 /// Parameters for decrypted shares aggregation (C7).
 pub struct Configs<let L: u32> {
@@ -164,14 +164,42 @@ fn lagrange_coefficients<let H: u32, let L: u32, let BIT_Q: u32, let BIT_K: u32>
                 denominator *= difference;
             }
         }
-        // The product of the other ids carries the sign of the omitted factors.
-        let negate = (i % 2) == 1;
-        for l in 0..L {
-            let q = qis[l];
-            let inverse = inv_mod_bounded::<BIT_Q, BIT_K>(denominator, q);
-            let magnitude = reduce_mod_bounded::<BIT_Q, BIT_K>(numerator * inverse, q);
-            out[l][i] = if negate {
-                if magnitude == 0 {
+
+        // For centered arithmetic
+        let q_bn = U256::from(q_modulus);
+
+        let q_half_bn = q_bn.udiv(&U256::from(2));
+
+        for coeff_idx in 0..MAX_MSG_NON_ZERO_COEFFS {
+            // Compute (t * u_global) mod Q using BigNum
+            let u_bn = U256::from(self.u_global.coefficients[coeff_idx]);
+            let t_bn = U256::from(self.configs.plaintext_modulus);
+            // Q is at most 208 bits and t is about 10 bits, so t * u fits in BN254.
+            let u_bn_mod_q = u_bn.umod(&q_bn);
+            let t_bn_mod_q = t_bn.umod(&q_bn);
+            let t_times_u_bn_q = (t_bn_mod_q * u_bn_mod_q).umod(&q_bn);
+
+            // t ~ 1000; all inputs < t; quotient < t << 2^64: safe for ModU64.
+            let m = ModU64::new(self.configs.plaintext_modulus as u64);
+
+            // Check if centering is needed
+            let needs_centering = t_times_u_bn_q > q_half_bn;
+
+            let computed_message = if needs_centering {
+                // When (t*u) mod Q >= Q/2: treat as negative in centered form
+                // Centered value is conceptually negative: (t_times_u_mod_q - Q)
+                // -Q^{-1} * (negative) = positive result
+                let centered_positive = q_bn - t_times_u_bn_q;
+                let centered_positive_mod_t = centered_positive.umod(&t_bn);
+                let centered_field = to_field(centered_positive_mod_t);
+                m.mul_mod(self.configs.q_inverse_mod_t, centered_field)
+            } else {
+                // When (t*u) mod Q < Q/2: stays positive in centered form
+                // -Q^{-1} * (positive) = negative result = t - result
+                let t_times_u_bn_t = t_times_u_bn_q.umod(&t_bn);
+                let t_times_u_field = to_field(t_times_u_bn_t);
+                let product = m.mul_mod(self.configs.q_inverse_mod_t, t_times_u_field);
+                if product == 0 {
                     0
                 } else {
                     q - magnitude

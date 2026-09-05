@@ -25,8 +25,7 @@ import {
   readVkRecursiveHash,
 } from "./utils";
 
-const CANONICAL_BFV_PRESET = "insecure-64";
-const CANONICAL_BFV_COMMITTEE: BfvCommittee = "minimum";
+const CANONICAL_BFV_PRESET = "insecure";
 const COMMITTED_HONK_DIR = path.join(
   getRepoRoot(),
   "packages/interfold-contracts/contracts/verifiers/bfv/honk",
@@ -80,26 +79,13 @@ function readBenchmarkPreset(foldedArtifact?: unknown): string {
   }
 }
 
-function committeeFromFoldedArtifact(
-  artifact: unknown,
-): BfvCommittee | undefined {
-  if (!artifact || typeof artifact !== "object") return undefined;
-
-  const doc = artifact as Record<string, unknown>;
-  const benchmarkConfig =
-    doc.benchmark_config && typeof doc.benchmark_config === "object"
-      ? (doc.benchmark_config as Record<string, unknown>)
-      : undefined;
-  const named = doc.committee ?? benchmarkConfig?.committee;
-  if (typeof named === "string" && named.trim().length > 0) {
-    const committee = named.trim();
-    const match = TESTNET_BFV_CONFIGS.find(
-      (config) => config.committee === committee,
-    );
-    if (!match) {
-      throw new Error(`Unknown benchmark committee: ${committee}`);
-    }
-    return match.committee;
+/**
+ * Committed Honk `.sol` files embed the insecure aggregator VK. Secure benchmark
+ * proofs need verifiers generated from the active circuits/bin preset.
+ */
+function ensureHonkVerifierContractDir(preset: string): string {
+  if (preset === CANONICAL_BFV_PRESET) {
+    return COMMITTED_HONK_DIR;
   }
 
   const h = benchmarkConfig?.committee_h;
@@ -478,7 +464,7 @@ async function main() {
     benchmarkConfig.committee !== CANONICAL_BFV_COMMITTEE
   ) {
     console.log(
-      `[benchmarkGasFromRaw] Using ${benchmarkConfig.preset}/${benchmarkConfig.committee} Honk verifiers for this benchmark.`,
+      `[benchmarkGasFromRaw] Using preset ${benchmarkPreset} Honk verifiers (not committed insecure .sol).`,
     );
   }
 

@@ -87,7 +87,7 @@ impl ShareDecryptionCircuitData {
                     }
                     DkgInputType::SmudgingNoise => {
                         let esi_coeffs = trbfv
-                            .generate_smudging_error(sd.z as usize, lambda, &mut rng)
+                            .generate_smudging_error(sd.z as usize, sd.mult_depth, lambda, &mut rng)
                             .map_err(|e| {
                                 CircuitsErrors::Sample(format!(
                                     "Failed to generate smudging error: {:?}",

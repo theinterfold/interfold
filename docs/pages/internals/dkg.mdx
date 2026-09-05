@@ -716,7 +716,14 @@ Both modes refuse to run unless `dist/circuits/<preset>/<committee>/.build-stamp
 `circuits/bin/.active-preset.json` names the same pair. The toolchain versions are pinned in
 `crates/zk/prover/versions.json`.
 
-### Verifier rotation
+**Preset is pinned.** The committed `.sol` files correspond to exactly one BFV preset:
+**`insecure`** (the dev / CI / benchmark default). The recursive VKs are preset-dependent —
+different BFV parameter sets compile to different VKs and therefore different `.sol` bytes — so "the
+committed verifier" is only well-defined for one preset. `pnpm generate:verifiers` refuses to run
+(in both `--check` and `--write` modes) unless `dist/circuits/insecure/.build-stamp.json` exists
+and reports that preset. If `pnpm build:circuits --preset secure-8192` was the last build, the
+generator surfaces this loudly with a fix recipe instead of silently producing wrong VK bytes.
+Production deploys on a non-canonical preset must regenerate locally for that deploy.
 
 Each E3 freezes its registry and its `DkgFoldAttestationVerifier` at request time and announces both
 in `DkgFoldAttestationContextEstablished`. A node restores this context after a restart. A verifier
@@ -727,12 +734,11 @@ works only when no verifier is set. A new verifier applies only to later E3 requ
 
 ### Test-only aggregation bypass
 
-A binary built with the Cargo feature `test-only-skip-proof-aggregation` accepts the node setting
-`skip_proof_aggregation`. The node wraps C5 and C7 proof bytes in payloads for mock verifiers. The
-DKG placeholder carries the final roster, committee hash, and key commitment fields. The decryption
-placeholder carries the verified C6 domain. These fields let confirmed ingestion and the plaintext
-writer keep their admission checks. A production binary rejects this setting at startup, and
-production verifiers reject the placeholder bytes. The contracts still call their verifiers.
+The version pinning lives in `crates/zk-prover/versions.json` (consumed by `interfold noir setup`
+and by the integration test prebuild). If `--check` fails after a clean
+`pnpm build:circuits --preset insecure`, your local toolchain is out of sync with that pin. See
+[`scripts/README.md`](https://github.com/theinterfold/interfold/blob/main/scripts/README.md#verifier-generator)
+for the full contract.
 
 ## Proof lifecycle
 

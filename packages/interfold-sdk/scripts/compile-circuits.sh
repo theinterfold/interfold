@@ -13,7 +13,7 @@ case "${COMMITTEE}" in
     ;;
 esac
 exec pnpm -C "${REPO_ROOT}" build:circuits \
-  --preset insecure-64 \
+  --preset insecure \
   --committee "${COMMITTEE}" \
   --group threshold \
   --circuit user_data_encryption \

@@ -70,8 +70,16 @@ impl ShareEncryptionCircuitData {
                 sk_sss_u64[0].row(0).to_vec()
             }
             DkgInputType::SmudgingNoise => {
+                let sd = preset.search_defaults().ok_or_else(|| {
+                    CircuitsErrors::Sample("Preset has no search defaults".into())
+                })?;
                 let esi_coeffs = trbfv
-                    .generate_smudging_error(num_ciphertexts as usize, lambda, &mut rng)
+                    .generate_smudging_error(
+                        num_ciphertexts as usize,
+                        sd.mult_depth,
+                        lambda,
+                        &mut rng,
+                    )
                     .map_err(|e| {
                         CircuitsErrors::Sample(format!(
                             "Failed to generate smudging error: {:?}",

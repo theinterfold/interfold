@@ -121,7 +121,175 @@ fn c6_fold_total_slots_from_compiled_json() -> usize {
         "unexpected acc_public_inputs length {} (expected 7 + 4 * slots)",
         len
     );
-    (len - 7) / 4
+    (len - 6) / 4
+}
+
+#[test]
+fn c3_fold_compiled_abi_has_consistent_slot_count() {
+    if !c3_fold_json_path().exists() {
+        println!(
+            "skipping: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
+            c3_fold_json_path().display()
+        );
+        return;
+    }
+    let slots = c3_fold_total_slots_from_compiled_json();
+    assert!(slots > 0, "C3_SLOTS inferred from ABI should be positive");
+    let _ =
+        CompiledCircuit::from_file(&c3_fold_json_path()).expect("load compiled c3_fold circuit");
+}
+
+#[test]
+fn c6_fold_compiled_abi_has_consistent_slot_count() {
+    if !c6_fold_json_path().exists() {
+        println!(
+            "skipping: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
+            c6_fold_json_path().display()
+        );
+        return;
+    }
+    let slots = c6_fold_total_slots_from_compiled_json();
+    assert!(slots > 0, "C6 slots inferred from ABI should be positive");
+    let _ =
+        CompiledCircuit::from_file(&c6_fold_json_path()).expect("load compiled c6_fold circuit");
+}
+
+#[test]
+fn node_fold_pipeline_compiled_json_load() {
+    let mut missing = Vec::new();
+    for &c in NODE_FOLD_PIPELINE {
+        let p = recursive_aggregation_compiled_json_path(c);
+        if !p.exists() {
+            missing.push(p);
+        }
+    }
+    if !missing.is_empty() {
+        println!(
+            "skipping: missing compiled JSON(s) (run `pnpm build:circuits --group recursive_aggregation`): {:?}",
+            missing
+        );
+        return;
+    }
+    for &c in NODE_FOLD_PIPELINE {
+        let path = recursive_aggregation_compiled_json_path(c);
+        let _ = CompiledCircuit::from_file(&path)
+            .unwrap_or_else(|e| panic!("load compiled {}: {}", c.as_str(), e));
+    }
+}
+
+#[tokio::test]
+async fn recursive_aggregation_default_artifacts_staged() {
+    let Some(bb) = find_bb().await else {
+        println!("skipping: bb not found");
+        return;
+    };
+    if !c3_fold_json_path().exists() {
+        println!("skipping: {} not found", c3_fold_json_path().display());
+        return;
+    }
+
+    let (backend, temp) = setup_test_prover(&bb).await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C3Fold).await;
+
+    let base = backend
+        .circuits_dir
+        .join("insecure")
+        .join("minimum")
+        .join("default")
+        .join(CircuitName::C3Fold.dir_path());
+    let pkg = CircuitName::C3Fold.as_str();
+    assert!(
+        base.join(format!("{pkg}.json")).exists(),
+        "expected staged {}.json under default/ variant",
+        pkg
+    );
+    assert!(
+        base.join(format!("{pkg}.vk")).exists(),
+        "expected staged {}.vk (noir-recursive-no-zk) under default/ variant",
+        pkg
+    );
+
+    drop(temp);
+}
+
+#[tokio::test]
+async fn recursive_aggregation_c6_fold_kernel_artifacts_staged() {
+    let Some(bb) = find_bb().await else {
+        println!("skipping: bb not found");
+        return;
+    };
+    let kernel_json = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../../circuits/bin/recursive_aggregation/c6_fold_kernel/target/c6_fold_kernel.json");
+    if !kernel_json.exists() {
+        println!("skipping: {} not found", kernel_json.display());
+        return;
+    }
+
+    let (backend, temp) = setup_test_prover(&bb).await;
+    setup_recursive_aggregation_fold_circuit(&backend, CircuitName::C6FoldKernel).await;
+
+    let base = backend
+        .circuits_dir
+        .join("insecure")
+        .join("minimum")
+        .join("default")
+        .join(CircuitName::C6FoldKernel.dir_path());
+    let pkg = CircuitName::C6FoldKernel.as_str();
+    assert!(
+        base.join(format!("{pkg}.json")).exists(),
+        "expected staged {}.json under default/ variant",
+        pkg
+    );
+    assert!(
+        base.join(format!("{pkg}.vk")).exists(),
+        "expected staged {}.vk (noir-recursive-no-zk) under default/ variant",
+        pkg
+    );
+
+    drop(temp);
+}
+
+#[tokio::test]
+async fn node_fold_pipeline_recursive_aggregation_artifacts_staged() {
+    let Some(bb) = find_bb().await else {
+        println!("skipping: bb not found");
+        return;
+    };
+    let gate = recursive_aggregation_compiled_json_path(CircuitName::NodeFold);
+    if !gate.exists() {
+        println!(
+            "skipping: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
+            gate.display()
+        );
+        return;
+    }
+
+    let (backend, temp) = setup_test_prover(&bb).await;
+    for &c in NODE_FOLD_PIPELINE {
+        setup_recursive_aggregation_fold_circuit(&backend, c).await;
+    }
+
+    let preset_base = backend
+        .circuits_dir
+        .join("insecure")
+        .join("minimum")
+        .join("default");
+    for &c in NODE_FOLD_PIPELINE {
+        let base = preset_base.join(c.dir_path());
+        let pkg = c.as_str();
+        assert!(
+            base.join(format!("{pkg}.json")).exists(),
+            "expected staged {}.json under default/ variant",
+            pkg
+        );
+        assert!(
+            base.join(format!("{pkg}.vk")).exists(),
+            "expected staged {}.vk (noir-recursive-no-zk) under default/ variant",
+            pkg
+        );
+    }
+
+    drop(temp);
 }
 
 async fn setup_c3_fold_with_inner_share_encryption() -> Option<(

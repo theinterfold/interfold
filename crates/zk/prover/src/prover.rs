@@ -542,7 +542,7 @@ mod tests {
         let backend = ZkBackend::new(BBPath::Default(bb_binary), circuits_dir, work_dir);
         let prover = ZkProver::new(&backend);
 
-        let result = prover.generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure-64");
+        let result = prover.generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure");
         assert!(matches!(result, Err(ZkError::BbNotInstalled)));
     }
 

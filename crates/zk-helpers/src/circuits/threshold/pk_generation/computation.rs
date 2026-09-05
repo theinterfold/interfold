@@ -194,12 +194,14 @@ impl Computation for Bounds {
         let lambda = preset
             .lambda()
             .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
-        let smudging_config = SmudgingBoundCalculatorConfig::new(
+        let smudging_config = SmudgingBoundCalculatorConfig::new_multiplicative(
             threshold_params.clone(),
             committee_n,
             sd.z as usize,
+            sd.mult_depth,
             lambda,
-        );
+        )
+        .map_err(|e| CircuitsErrors::Other(format!("Failed to create smudging config: {:?}", e)))?;
         let smudging_calculator = SmudgingBoundCalculator::new(smudging_config);
         let e_sm_bound = smudging_calculator.calculate_sm_bound().map_err(|e| {
             CircuitsErrors::Other(format!("Failed to calculate smudging bound: {:?}", e))

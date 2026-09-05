@@ -81,7 +81,7 @@ fn select_benchmark_params() -> BenchmarkParams {
     let preset_subdir = if is_secure_mode {
         "secure-8192"
     } else {
-        "insecure-64"
+        "insecure"
     };
 
     let committee = active_committee(preset_subdir);
@@ -1454,10 +1454,16 @@ async fn test_trbfv_actor() -> Result<()> {
     let lambda = benchmark_params.bfv_preset.lambda()?;
 
     let seed = create_seed_from_u64(123);
+    let mult_depth = benchmark_params
+        .bfv_preset
+        .search_defaults()
+        .ok_or_else(|| anyhow::anyhow!("Failed to get search defaults for preset"))?
+        .mult_depth;
     let error_size = ArcBytes::from_bytes(&BigUint::to_bytes_be(&calculate_error_size(
         params_raw.clone(),
         threshold_n,
         threshold_m,
+        mult_depth,
         lambda,
     )?));
 

@@ -74,19 +74,47 @@ describe("BFV verifier routers", function () {
       router.verify.staticCall(...context, proof);
 
     expect(await router.h()).to.equal(10);
-    expect(await router.routeCount()).to.equal(3);
-    expect(await verify(smallProof)).to.equal(true);
-    expect(await verify(proofWithAnchors(36, HASH_A, HASH_B))).to.equal(false);
-    expect(await verify(proofWithAnchors(12, HASH_A, HASH_B))).to.equal(false);
+    expect(await router.routeCount()).to.equal(2);
+    expect(
+      await router.verify.staticCall(
+        1,
+        2,
+        [],
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        proofWithAnchors(54, HASH_C, HASH_D),
+      ),
+    ).to.equal(true);
+    expect(
+      await router.verify.staticCall(
+        1,
+        2,
+        [],
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        proofWithAnchors(30, HASH_A, HASH_B),
+      ),
+    ).to.equal(false);
 
     await expect(
-      verify(proofWithAnchors(36, HASH_A, HASH_D)),
+      router.verify.staticCall(
+        1,
+        2,
+        [],
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        proofWithAnchors(54, HASH_C, HASH_A),
+      ),
     ).to.be.revertedWithCustomError(router, "VkHashMismatch");
     await expect(
-      verify(proofWithAnchors(36, HASH_C, HASH_A)),
-    ).to.be.revertedWithCustomError(router, "VkHashMismatch");
-    await expect(
-      verify(proofWithAnchors(13, HASH_A, HASH_B)),
+      router.verify.staticCall(
+        1,
+        2,
+        [],
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        proofWithAnchors(31, HASH_A, HASH_B),
+      ),
     ).to.be.revertedWithCustomError(router, "InvalidPublicInputsLength");
   });
 

@@ -182,10 +182,19 @@ The repository scripts call `bb` from your `PATH`. For a source build, add the d
 6.0.0 binary. To use the copy installed by a matching released CLI, add its directory:
 
 ```bash
-export PATH="$HOME/.interfold/noir/bin:$PATH"
+pnpm build:circuits                              # default: --preset insecure --committee minimum
+pnpm build:circuits --preset secure-8192 --committee small
+pnpm check:committee                             # verify active.nr, utils.ts, parity files agree
+./scripts/lint-circuits.sh                       # nargo fmt --check && nargo check (lib + bin areas)
+./scripts/test-circuits.sh                       # nargo test on circuits/lib
 ```
 
-### Check the versions
+**Preset** (`insecure` | `secure-8192`) selects the BFV parameter set; **committee** (`minimum`
+| `micro` | `small`) selects `(N, T, H)` for secret sharing. Always switch committee via
+`pnpm build:circuits --committee <name>` — see
+[`scripts/README.md`](https://github.com/theinterfold/interfold/blob/main/scripts/README.md#circuit-builder)
+and
+[`circuits/benchmarks/README.md`](https://github.com/theinterfold/interfold/blob/main/circuits/benchmarks/README.md).
 
 ```bash
 nargo --version
@@ -315,7 +324,11 @@ Use `--export-toml` only for debug ABI inputs. Samples are not live application 
 `pnpm bench:circuits list` prints the selected leaf cases. The Rust configuration library owns
 static configuration; `pnpm build:circuits sync-preset` writes the selected preset's constants.
 
-## Generate the Solidity verifiers
+The `@interfold/sdk` `generateProof()` helper embeds user-data-encryption circuits built with
+`--preset insecure --committee minimum`. It is a convenience for that path only. For on-chain
+Honk verification, compile your own UDE, app, and fold circuits for the preset and committee your
+deployment uses — see
+[Proving: embedded circuits or your own](./sdk#proving-embedded-circuits-or-your-own).
 
 The Honk verifiers for `dkg_aggregator` and `decryption_aggregator` are committed under
 `packages/interfold-contracts/contracts/verifiers/bfv/honk/`. The files at the top of that directory

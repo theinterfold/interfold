@@ -110,7 +110,7 @@ dependencies = [
  "mime",
  "percent-encoding",
  "pin-project-lite",
- "rand 0.9.5",
+ "rand 0.9.4",
  "sha1",
  "smallvec",
  "tokio",
@@ -717,7 +717,7 @@ dependencies = [
  "keccak-asm",
  "paste",
  "proptest",
- "rand 0.9.5",
+ "rand 0.9.4",
  "ruint",
  "rustc-hash",
  "serde",
@@ -1229,7 +1229,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -1240,7 +1240,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3508,7 +3508,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users 0.5.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -3591,7 +3591,8 @@ dependencies = [
  "fhe-math",
  "fhe-traits",
  "futures",
- "rand 0.9.5",
+ "num-bigint 0.5.1",
+ "rand 0.9.4",
  "serde",
  "tracing",
  "tracing-subscriber",
@@ -3607,7 +3608,7 @@ dependencies = [
  "e3-zk-witness",
  "fhe",
  "fhe-traits",
- "rand 0.9.5",
+ "rand 0.9.4",
  "thiserror 1.0.69",
 ]
 
@@ -3686,7 +3687,7 @@ dependencies = [
  "petname",
  "phf",
  "rand 0.8.5",
- "rand 0.9.5",
+ "rand 0.9.4",
  "reqwest",
  "serde",
  "serde_json",
@@ -3734,10 +3735,9 @@ dependencies = [
  "hex",
  "lean-imt",
  "light-poseidon",
- "num-bigint 0.4.6",
+ "num-bigint 0.5.1",
  "num-traits",
- "openvm-keccak256",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rayon",
  "serde",
@@ -3761,7 +3761,7 @@ dependencies = [
  "hex",
  "path-clean",
  "petname",
- "rand 0.9.5",
+ "rand 0.9.4",
  "serde",
  "serde_yaml",
  "shellexpand",
@@ -3787,7 +3787,7 @@ dependencies = [
  "async-trait",
  "bincode",
  "e3-utils",
- "rand 0.9.5",
+ "rand 0.9.4",
  "serde",
  "tokio",
  "tracing",
@@ -3906,7 +3906,7 @@ dependencies = [
  "libc",
  "libp2p",
  "phf",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "reqwest",
  "serde",
@@ -3965,7 +3965,7 @@ dependencies = [
  "hex",
  "once_cell",
  "proptest",
- "rand 0.9.5",
+ "rand 0.9.4",
  "serde",
  "sha2 0.10.9",
  "strum 0.27.2",
@@ -4051,7 +4051,7 @@ dependencies = [
  "fhe",
  "fhe-traits",
  "fhe-util",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "serde",
  "tracing",
@@ -4069,9 +4069,8 @@ dependencies = [
  "fhe-math",
  "fhe-traits",
  "num-bigint 0.5.1",
- "num-integer",
  "num-traits",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "serde",
  "thiserror 1.0.69",
@@ -4107,7 +4106,7 @@ dependencies = [
  "eyre",
  "fhe",
  "fhe-traits",
- "rand 0.9.5",
+ "rand 0.9.4",
  "serde",
  "thiserror 1.0.69",
  "tokio",
@@ -4162,7 +4161,7 @@ dependencies = [
  "fhe",
  "fhe-traits",
  "ndarray",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
  "serde",
@@ -4213,8 +4212,14 @@ dependencies = [
  "e3-trbfv",
  "e3-utils",
  "e3-zk-prover",
- "rand 0.9.5",
- "rand_chacha 0.9.0",
+ "fhe",
+ "fhe-math",
+ "fhe-traits",
+ "ndarray",
+ "num-bigint 0.5.1",
+ "rand 0.9.4",
+ "rayon",
+ "thiserror 1.0.69",
  "tokio",
  "tracing",
 ]
@@ -4242,7 +4247,7 @@ dependencies = [
  "futures",
  "hex",
  "libp2p",
- "rand 0.9.5",
+ "rand 0.9.4",
  "serde",
  "serde_bytes",
  "serde_json",
@@ -4257,27 +4262,6 @@ dependencies = [
 name = "e3-openvm-host"
 version = "0.20.0-dev.2"
 dependencies = [
- "anyhow",
- "e3-compute-provider",
- "e3-openvm-types",
- "libc",
- "tempfile",
- "tokio",
-]
-
-[[package]]
-name = "e3-openvm-types"
-version = "0.20.0-dev.2"
-dependencies = [
- "bincode",
- "e3-compute-provider",
- "serde",
-]
-
-[[package]]
-name = "e3-parity-matrix"
-version = "0.20.0-dev.2"
-dependencies = [
  "num-bigint 0.5.1",
  "num-traits",
  "proptest",
@@ -4289,8 +4273,10 @@ dependencies = [
 name = "e3-polynomial"
 version = "0.20.0-dev.2"
 dependencies = [
+ "bincode",
+ "criterion",
+ "fhe-math",
  "num-bigint 0.5.1",
- "num-integer",
  "num-traits",
  "serde",
  "thiserror 1.0.69",
@@ -4426,7 +4412,7 @@ dependencies = [
  "e3-utils",
  "num",
  "num-bigint 0.5.1",
- "rand 0.9.5",
+ "rand 0.9.4",
  "serde",
  "tokio",
  "tracing",
@@ -4491,7 +4477,7 @@ dependencies = [
  "fhe-traits",
  "hex",
  "libp2p",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "tokio",
  "tracing",
@@ -4539,10 +4525,8 @@ dependencies = [
  "fhe",
  "fhe-traits",
  "fhe-util",
- "hex",
- "libp2p",
  "num-bigint 0.5.1",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "serde",
  "serde_json",
@@ -4574,7 +4558,7 @@ dependencies = [
  "ndarray",
  "num-bigint 0.5.1",
  "petname",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "serde",
  "tokio",
@@ -4594,7 +4578,7 @@ dependencies = [
  "derivative",
  "e3-utils-derive",
  "hex",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "regex",
  "serde",
@@ -4644,7 +4628,13 @@ dependencies = [
  "e3-zk-witness",
  "fhe",
  "hex",
- "noirc_abi",
+ "itertools 0.14.0",
+ "ndarray",
+ "num-bigint 0.5.1",
+ "num-integer",
+ "num-traits",
+ "rand 0.9.4",
+ "rayon",
  "serde",
  "serde_json",
  "sha2 0.10.9",
@@ -4749,11 +4739,9 @@ dependencies = [
  "ndarray",
  "noirc_abi",
  "num-bigint 0.5.1",
- "num-integer",
  "num-traits",
  "paste",
- "rand 0.9.5",
- "rand_chacha 0.9.0",
+ "rand 0.9.4",
  "rayon",
  "reqwest",
  "serde",
@@ -5008,7 +4996,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5062,7 +5050,7 @@ checksum = "4e7f34442dbe69c60fe8eaf58a8cafff81a1f278816d8ab4db255b3bef4ac3c4"
 dependencies = [
  "getrandom 0.3.4",
  "libm",
- "rand 0.9.5",
+ "rand 0.9.4",
  "siphasher",
 ]
 
@@ -5116,8 +5104,8 @@ dependencies = [
 
 [[package]]
 name = "fhe"
-version = "0.4.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.4.2#873dc69c07eae251f88c4b5cacf6c4453e2c365a"
+version = "0.3.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#c2659bedacf1c8e91f1c5ebea8a020e6ce54ae72"
 dependencies = [
  "bincode",
  "doc-comment",
@@ -5130,7 +5118,7 @@ dependencies = [
  "num-traits",
  "prost 0.14.4",
  "prost-build",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_distr",
  "rayon",
@@ -5142,8 +5130,8 @@ dependencies = [
 
 [[package]]
 name = "fhe-math"
-version = "0.4.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.4.2#873dc69c07eae251f88c4b5cacf6c4453e2c365a"
+version = "0.3.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#c2659bedacf1c8e91f1c5ebea8a020e6ce54ae72"
 dependencies = [
  "ethnum",
  "fhe-traits",
@@ -5156,7 +5144,7 @@ dependencies = [
  "prost 0.14.4",
  "prost-build",
  "pulp",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "serde",
  "sha2 0.10.9",
@@ -5166,21 +5154,21 @@ dependencies = [
 
 [[package]]
 name = "fhe-traits"
-version = "0.4.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.4.2#873dc69c07eae251f88c4b5cacf6c4453e2c365a"
+version = "0.3.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#c2659bedacf1c8e91f1c5ebea8a020e6ce54ae72"
 dependencies = [
- "rand 0.9.5",
+ "rand 0.9.4",
 ]
 
 [[package]]
 name = "fhe-util"
-version = "0.4.1"
-source = "git+https://github.com/gnosisguild/fhe.rs?tag=v0.4.2#873dc69c07eae251f88c4b5cacf6c4453e2c365a"
+version = "0.3.0"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#c2659bedacf1c8e91f1c5ebea8a020e6ce54ae72"
 dependencies = [
  "num-bigint-dig",
  "num-traits",
  "prime_factorization",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_distr",
  "rayon",
 ]
@@ -5795,7 +5783,7 @@ dependencies = [
  "idna",
  "ipnet",
  "once_cell",
- "rand 0.9.5",
+ "rand 0.9.4",
  "ring",
  "socket2 0.5.10",
  "thiserror 2.0.20",
@@ -5818,7 +5806,7 @@ dependencies = [
  "moka",
  "once_cell",
  "parking_lot 0.12.5",
- "rand 0.9.5",
+ "rand 0.9.4",
  "resolv-conf",
  "smallvec",
  "thiserror 2.0.20",
@@ -6215,7 +6203,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "log",
- "rand 0.9.5",
+ "rand 0.9.4",
  "tokio",
  "url",
  "xmltree",
@@ -6434,6 +6422,17 @@ checksum = "c91338f0783edbd6195decb37bae672fd3b165faffb89bf7b9e6942f8b1a731a"
 dependencies = [
  "memchr",
  "serde",
+]
+
+[[package]]
+name = "is-terminal"
+version = "0.4.17"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
+dependencies = [
+ "hermit-abi",
+ "libc",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6658,19 +6657,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 2.0.20",
-]
-
-[[package]]
-name = "jsonrpsee-ws-client"
-version = "0.24.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9df5bd5c38c0906a6e8b3a38c8c22cc8525fda25fd1a03a3fe010686aea66b70"
-dependencies = [
- "http 1.4.0",
- "jsonrpsee-client-transport",
- "jsonrpsee-core 0.24.11",
- "jsonrpsee-types 0.24.11",
- "url",
 ]
 
 [[package]]
@@ -7883,7 +7869,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -7908,7 +7894,6 @@ checksum = "a5e44f723f1133c9deac646763579fdb3ac745e418f2a7af9cd0c431da1f20b9"
 dependencies = [
  "num-integer",
  "num-traits",
- "rand 0.8.5",
 ]
 
 [[package]]
@@ -7919,7 +7904,7 @@ checksum = "93e7820bc0a80a0238e650327316f929ba18d5be054b647490a3a6a339f3e7c0"
 dependencies = [
  "num-integer",
  "num-traits",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_core 0.9.5",
  "serde",
 ]
@@ -7935,7 +7920,7 @@ dependencies = [
  "num-iter",
  "num-traits",
  "once_cell",
- "rand 0.9.5",
+ "rand 0.9.4",
  "serde",
  "smallvec",
 ]
@@ -8261,7 +8246,7 @@ dependencies = [
  "glob",
  "opentelemetry",
  "percent-encoding",
- "rand 0.9.5",
+ "rand 0.9.4",
  "serde_json",
  "thiserror 2.0.20",
  "tokio",
@@ -8381,6 +8366,16 @@ name = "option-ext"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "04744f49eae99ab78e0d5c0b603ab218f515ea8cfe5a456d7629ad883a3b6e7d"
+
+[[package]]
+name = "os_pipe"
+version = "1.2.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7d8fae84b431384b68627d0f9b3b1245fcf9f46f6c0e3dc902e9dce64edd1967"
+dependencies = [
+ "libc",
+ "windows-sys 0.48.0",
+]
 
 [[package]]
 name = "p256"
@@ -8960,7 +8955,7 @@ dependencies = [
  "bit-vec 0.8.0",
  "bitflags 2.10.0",
  "num-traits",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rand_chacha 0.9.0",
  "rand_xorshift 0.4.0",
  "regex-syntax",
@@ -9125,7 +9120,7 @@ dependencies = [
  "fastbloom",
  "getrandom 0.3.4",
  "lru-slab",
- "rand 0.9.5",
+ "rand 0.9.4",
  "ring",
  "rustc-hash",
  "rustls",
@@ -9192,9 +9187,9 @@ dependencies = [
 
 [[package]]
 name = "rand"
-version = "0.9.5"
+version = "0.9.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b9ef1d0d795eb7d84685bca4f72f3649f064e6641543d3a8c415898726a57b41"
+checksum = "44c5af06bb1b7d3216d91932aed5265164bf384dc89cd6ba05cf59a35f5f76ea"
 dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
@@ -9264,7 +9259,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6a8615d50dcf34fa31f7ab52692afec947c4dd0ab803cc87cb3b0b4570ff7463"
 dependencies = [
  "num-traits",
- "rand 0.9.5",
+ "rand 0.9.4",
 ]
 
 [[package]]
@@ -9619,7 +9614,7 @@ dependencies = [
  "primitive-types 0.12.2",
  "proptest",
  "rand 0.8.5",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rlp",
  "ruint-macro",
  "serde_core",
@@ -9728,7 +9723,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys",
- "windows-sys 0.61.2",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11677,7 +11672,7 @@ dependencies = [
  "http 1.4.0",
  "httparse",
  "log",
- "rand 0.9.5",
+ "rand 0.9.4",
  "rustls",
  "rustls-pki-types",
  "sha1",
@@ -12170,7 +12165,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.48.0",
 ]
 
 [[package]]

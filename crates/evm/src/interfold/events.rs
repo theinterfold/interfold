@@ -20,7 +20,7 @@ use e3_events::{
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
 use e3_trbfv::helpers::calculate_error_size;
 use e3_utils::ArcBytes;
-use num_bigint::BigUint;
+use e3_zk_helpers::CiphernodesCommitteeSize;
 use tracing::{info, trace, warn};
 
 struct E3RequestedWithChainId(pub IInterfold::E3Requested, pub u64);
@@ -84,26 +84,30 @@ impl E3RequestedWithChainId {
             .map_err(|e| anyhow::anyhow!("Failed to build lambda for preset: {}", e))?;
         let lambda_value = lambda.value();
 
-        let error_size = match calculate_error_size(params_arc, threshold_n, threshold_m, lambda) {
-            Ok(size) => {
-                let size_bytes = size.to_bytes_be();
-                info!(
-                    "Calculated error_size for E3 (threshold_n={}, threshold_m={}, lambda={}): {} bytes",
-                    threshold_n, threshold_m, lambda_value, size_bytes.len()
-                );
-                ArcBytes::from_bytes(&size_bytes)
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to calculate error_size, using fallback: {}. \
-                    This may cause decryption failures!",
-                    e
-                );
-                ArcBytes::from_bytes(
-                    &BigUint::from(36128399948547143872891754381312u128).to_bytes_be(),
-                )
-            }
-        };
+        let mult_depth = params_preset
+            .search_defaults()
+            .map(|sd| sd.mult_depth)
+            .ok_or_else(|| anyhow::anyhow!("Failed to get search defaults for preset"))?;
+
+        let error_size = calculate_error_size(
+            params_arc,
+            threshold_n,
+            threshold_m,
+            mult_depth,
+            lambda,
+        )
+        .context("failed to calculate the E3 error size")
+        .map(|size| {
+            let size_bytes = size.to_bytes_be();
+            info!(
+                "Calculated error_size for E3 (threshold_n={}, threshold_m={}, lambda={}): {} bytes",
+                threshold_n,
+                threshold_m,
+                lambda_value,
+                size_bytes.len()
+            );
+            ArcBytes::from_bytes(&size_bytes)
+        })?;
 
         Ok(e3_events::E3Requested {
             params_preset,
@@ -558,8 +562,12 @@ mod tests {
                 "0x92c8b373eb72cc3600a5a818cf8599db16e618ee3ece2dadd14f8608c1a43ac9",
             ),
             (
+                1,
+                "0x2af9e43a7b95b11300b6185f3ffaece530facafd2ce98c5e1a1cece8a80ad3cb",
+            ),
+            (
                 2,
-                "0xa174862efd4487031d423ca96516807775ade0191c714e513aab93d0cc289baa",
+                "0x81f3edb4c49db1c2baf578d6ade4aea6839ee6a71d7458c1bfc79670d2ece7cd",
             ),
         ];
 

@@ -63,7 +63,7 @@ const LICENSE_HEADER = `// SPDX-License-Identifier: LGPL-3.0-only
  * The on-chain `DkgAggregatorVerifier.sol` / `DecryptionAggregatorVerifier.sol` bake in the
  * recursive VKs of `dkg_aggregator` / `decryption_aggregator`, which are
  * **preset-dependent**: different BFV parameter sets compile to different VKs and therefore
- * different `.sol` bytes. The root directory is pinned to `insecure-64/minimum` because that is
+ * different `.sol` bytes. The root directory is pinned to `insecure/minimum` because that is
  * the development/CI/benchmark default.
  *
  * Both `--check` and `--write` refuse to run unless
@@ -76,7 +76,7 @@ const LICENSE_HEADER = `// SPDX-License-Identifier: LGPL-3.0-only
  * run the generator when its circuits change. Non-canonical outputs land under
  * `honk/<preset>/<committee>/`, not over the canonical files.
  */
-const CANONICAL_PRESET = 'insecure-64'
+const CANONICAL_PRESET = 'insecure'
 
 /**
  * Canonical committee for the committed Honk Solidity verifiers under
@@ -286,8 +286,8 @@ class VerifierGenerator {
             `     - You ran 'pnpm build:circuits' against a different Noir/bb version, or\n` +
             `     - A circuit / VK changed without regenerating the committed Solidity files.\n` +
             `\n   To fix:\n` +
-            `     1. Verify your Noir/bb versions match (see crates/zk/prover/versions.json).\n` +
-            `     2. Run 'pnpm build:circuits --preset insecure-64' (or the relevant preset).\n` +
+            `     1. Verify your Noir/bb versions match (see crates/zk-prover/versions.json).\n` +
+            `     2. Run 'pnpm build:circuits --preset insecure' (or the relevant preset).\n` +
             `     3. Run 'pnpm generate:verifiers --write' (or omit --check) to refresh the\n` +
             `        committed .sol files, then commit the diff.\n`,
         )
@@ -645,8 +645,8 @@ class VerifierGenerator {
 
   /**
    * Ensure `circuits/bin/` was last populated by `build:circuits` for the same preset.
-   * Without this, a build for one preset could leave its VKs in bin while `--check` diffs
-   * against committed verifier files for another preset.
+   * Without this, a secure benchmark could leave secure VKs in bin while `--check` diffs
+   * against committed insecure `.sol` files.
    */
   private assertCircuitsBinActivePreset(preset: string): void {
     const committee = this.targetCommittee()
@@ -736,7 +736,7 @@ async function main() {
     } else if (arg === '--preset') {
       const value = args[++i]
       if (!value || value.startsWith('--')) {
-        console.error('Error: --preset requires a value (insecure-64 | secure-8192)')
+        console.error('Error: --preset requires a value (insecure | secure-8192 | secure-16384)')
         process.exit(1)
       }
       if (!ALL_PRESETS.includes(value as (typeof ALL_PRESETS)[number])) {
@@ -797,8 +797,8 @@ current circuit VKs is surfaced as a failure rather than a silent rewrite.
 Options:
   --check                Verify committed verifiers match current VKs (no writes).
                          Exits non-zero on drift. Used by test/benchmark/CI flows.
-  --preset <name>        BFV preset for circuits/bin (insecure-64 | secure-8192).
-                         Defaults to insecure-64. Check mode compares the committed verifier
+  --preset <name>        BFV preset for circuits/bin (insecure | secure-8192 | secure-16384).
+                         Defaults to insecure. Check mode compares the committed verifier
                          for the selected preset and committee.
   --committee <name>     Committee size (minimum | micro | small). When omitted, read from
                          circuits/bin/.active-preset.json. Non-canonical pairs write to

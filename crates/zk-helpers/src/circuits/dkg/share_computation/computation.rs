@@ -164,12 +164,16 @@ impl Computation for Bounds {
 
         // Use the same committee size as C1 (pk_generation) so smudging bounds and
         // bit widths match PK_GENERATION_BIT_E_SM / SHARE_COMPUTATION_E_SM_BIT_SECRET.
-        let e_sm_config = SmudgingBoundCalculatorConfig::new(
+        let e_sm_config = SmudgingBoundCalculatorConfig::new_multiplicative(
             threshold_params,
             data.n_parties as usize,
             num_ciphertexts as usize,
+            defaults.mult_depth,
             lambda,
-        );
+        )
+        .map_err(|e| {
+            CircuitsErrors::Sample(format!("Failed to create smudging config: {:?}", e))
+        })?;
 
         let e_sm_calculator = SmudgingBoundCalculator::new(e_sm_config);
 
@@ -349,9 +353,9 @@ mod tests {
     fn insecure_smudging_ranges_match_pk_generation() {
         let preset = BfvPreset::InsecureThreshold512;
         for (size, expected_bits) in [
-            (CiphernodesCommitteeSize::Minimum, 28),
-            (CiphernodesCommitteeSize::Micro, 30),
-            (CiphernodesCommitteeSize::Small, 31),
+            (CiphernodesCommitteeSize::Minimum, 38),
+            (CiphernodesCommitteeSize::Micro, 40),
+            (CiphernodesCommitteeSize::Small, 41),
         ] {
             let committee = size.values();
             let sample = ShareComputationCircuitData::generate_sample(

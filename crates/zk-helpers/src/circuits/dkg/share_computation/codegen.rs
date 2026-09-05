@@ -85,7 +85,7 @@ pub fn generate_configs_with_chunk_size(
         )));
     }
     let chunk_count = degree / chunk_size;
-    let config_name = preset.metadata().security.as_config_str();
+    let config_name = preset.noir_config_module();
     let parity_matrix_str = parity_matrix_constant_string(&threshold_params, n_parties, threshold)?;
     let prefix = <ShareComputationCircuit as Circuit>::PREFIX;
     let configs = format!(

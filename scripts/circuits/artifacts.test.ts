@@ -190,7 +190,7 @@ test('rejects a build stamp that declares a different pair', () => {
   try {
     writeFileSync(
       join(dir, 'secure-8192', 'small', '.build-stamp.json'),
-      JSON.stringify({ preset: 'insecure-64', committee: 'small', sourceHash: sourceHash('secure-8192', 'small') }),
+      JSON.stringify({ preset: 'insecure', committee: 'small', sourceHash: sourceHash('secure-8192', 'small') }),
     )
     assert.throws(() => validateReleaseArtifacts(dir, sourceHash), /Invalid circuit build stamp/)
   } finally {

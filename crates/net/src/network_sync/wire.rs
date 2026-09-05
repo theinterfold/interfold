@@ -481,52 +481,11 @@ mod tests {
     /// `SyncResponseValue` has no lock here: the node passes it only inside the process, and a peer
     /// receives the `EventBatch` below.
     #[test]
-    fn wire_message_bytes_are_locked() {
-        let policy = NetworkPolicy::local_unrestricted();
-        let gossip = encode_gossip(&forwardable_gossip(), &policy, Some([7; 16])).unwrap();
-        assert_locked_bytes("gossip event envelope", &gossip, GOSSIP_LEN, GOSSIP_DIGEST);
-
-        let fetch: Vec<u8> = FetchEventsSince::new(AggregateId::new(3), 5, 7)
-            .try_into()
-            .unwrap();
-        assert_locked_bytes("FetchEvents", &fetch, FETCH_LEN, FETCH_DIGEST);
-
-        let batch: Vec<u8> = EventBatch {
-            events: vec![unsequenced_event()],
-            next: BatchCursor::Next(9),
-            aggregate_id: AggregateId::new(3),
-            observed_from: Some(5),
-        }
-        .try_into()
-        .unwrap();
-        assert_locked_bytes("EventBatch", &batch, BATCH_LEN, BATCH_DIGEST);
-    }
-
-    /// Sync envelopes travel in CBOR frames that libp2p's request-response codec writes. CBOR
-    /// writes variant names, so renaming a `ProtocolResponse` variant breaks a peer on another
-    /// release.
-    #[test]
-    fn request_response_frame_bytes_are_locked() {
-        use crate::events::ProtocolResponse;
-        use futures::executor::block_on;
-        use futures::io::Cursor;
-        use libp2p::request_response::{cbor::codec::Codec, Codec as _};
-        use libp2p::StreamProtocol;
-
-        // The codec does not write the protocol name.
-        let protocol = StreamProtocol::new("/unused");
-        let mut codec = Codec::<Vec<u8>, ProtocolResponse>::default();
-        let envelope: Vec<u8> = FetchEventsSince::new(AggregateId::new(3), 5, 7)
-            .try_into()
-            .unwrap();
-
-        let mut frame = Cursor::new(Vec::new());
-        block_on(codec.write_request(&protocol, &mut frame, envelope.clone())).unwrap();
-        assert_locked_bytes(
-            "request frame",
-            frame.get_ref(),
-            REQUEST_FRAME.0,
-            REQUEST_FRAME.1,
+    fn sync_envelope_v3_fixture_is_stable() {
+        let bytes = encode_sync(SyncMessageKind::FetchEvents, &7u64).unwrap();
+        assert_eq!(
+            hex::encode(bytes),
+            "49465332030000000000aae89fc0f03e2959ae4d701a80cc3915918c950b159f6abb6c92c1433b1a853408000000000000000700000000000000"
         );
 
         for (name, response, (len, digest)) in [

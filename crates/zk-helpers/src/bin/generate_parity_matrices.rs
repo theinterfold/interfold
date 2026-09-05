@@ -69,16 +69,17 @@ fn output_root(args: &Args) -> Result<PathBuf> {
 }
 
 /// Maps a `(preset, committee)` pair to the path of the file that holds its
-/// `PARITY_MATRIX` literal. The `_insecure` / `_secure` suffix is the same naming
-/// that `committee::active::PARITY_MATRIX_INSECURE / _SECURE` re-export from.
+/// `PARITY_MATRIX` literal. The suffix matches the corresponding preset's Noir module.
 fn file_for(root: &Path, committee: &str, preset: BfvPreset) -> PathBuf {
     let suffix = match preset {
         BfvPreset::InsecureThreshold512 => "insecure",
-        BfvPreset::SecureThreshold8192 => "secure",
+        BfvPreset::SecureThreshold8192 => "secure_8192",
         // Codegen runs against the threshold side of each preset family.
         // DKG-only variants don't need their own file.
         BfvPreset::InsecureDkg512 => "insecure",
-        BfvPreset::SecureDkg8192 => "secure",
+        BfvPreset::SecureDkg8192 => "secure_8192",
+        BfvPreset::SecureThreshold16384 => "secure_16384",
+        BfvPreset::SecureDkg16384 => "secure_16384",
     };
     root.join(committee).join(format!("parity_{suffix}.nr"))
 }
@@ -91,8 +92,9 @@ fn smudging_file(root: &Path, committee: &str) -> PathBuf {
 /// stable across regenerations (so the lefthook check can diff against a fresh run).
 fn render(committee: &str, preset_suffix: &str, l_module: &str, matrix_literal: &str) -> String {
     let preset_label = match preset_suffix {
-        "insecure" => "insecure-512 (L_THRESHOLD=2)",
-        "secure" => "secure-8192 (L_THRESHOLD=3)",
+        "insecure" => "insecure (L_THRESHOLD=2)",
+        "secure_8192" => "secure-8192 (L_THRESHOLD=3)",
+        "secure_16384" => "secure-16384 (L_THRESHOLD=5)",
         other => other,
     };
     format!(
@@ -119,6 +121,7 @@ fn render_smudging(
     committee: &str,
     insecure: &PkGenerationConfigs,
     secure: &PkGenerationConfigs,
+    secure_16384: &PkGenerationConfigs,
 ) -> String {
     format!(
         "// SPDX-License-Identifier: LGPL-3.0-only\n\
@@ -134,12 +137,16 @@ fn render_smudging(
 \n\
 pub global INSECURE_E_SM_BIT: u32 = {};\n\
 pub global INSECURE_E_SM_BOUND: Field = {};\n\
-pub global SECURE_E_SM_BIT: u32 = {};\n\
-pub global SECURE_E_SM_BOUND: Field = {};\n",
+pub global SECURE_8192_E_SM_BIT: u32 = {};\n\
+pub global SECURE_8192_E_SM_BOUND: Field = {};\n\
+pub global SECURE_16384_E_SM_BIT: u32 = {};\n\
+pub global SECURE_16384_E_SM_BOUND: Field = {};\n",
         insecure.bits.e_sm_bit,
         insecure.bounds.e_sm_bound,
         secure.bits.e_sm_bit,
         secure.bounds.e_sm_bound,
+        secure_16384.bits.e_sm_bit,
+        secure_16384.bounds.e_sm_bound,
     )
 }
 
@@ -172,7 +179,8 @@ fn main() -> Result<()> {
             })?;
         let (suffix, l_module) = match preset {
             BfvPreset::InsecureThreshold512 => ("insecure", "insecure"),
-            BfvPreset::SecureThreshold8192 => ("secure", "secure"),
+            BfvPreset::SecureThreshold8192 => ("secure_8192", "secure_8192"),
+            BfvPreset::SecureThreshold16384 => ("secure_16384", "secure_16384"),
             _ => continue, // PAIR_PRESETS only carries the threshold variants
         };
         let path = file_for(&root, &args.committee, preset);
@@ -190,9 +198,14 @@ fn main() -> Result<()> {
         .context("computing insecure smudging constants")?;
     let secure = PkGenerationConfigs::compute(BfvPreset::SecureThreshold8192, &params)
         .context("computing secure smudging constants")?;
+    let secure_16384 = PkGenerationConfigs::compute(BfvPreset::SecureThreshold16384, &params)
+        .context("computing secure-16384 smudging constants")?;
     let path = smudging_file(&root, &args.committee);
-    std::fs::write(&path, render_smudging(&args.committee, &insecure, &secure))
-        .with_context(|| format!("writing {}", path.display()))?;
+    std::fs::write(
+        &path,
+        render_smudging(&args.committee, &insecure, &secure, &secure_16384),
+    )
+    .with_context(|| format!("writing {}", path.display()))?;
     println!("✓ {}", path.display());
 
     Ok(())

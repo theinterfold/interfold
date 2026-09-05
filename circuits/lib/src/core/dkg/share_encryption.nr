@@ -311,7 +311,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     ///
     /// Each coefficient is transformed as:
     ///   k1[i] = (Q_mod_t * message[i]) mod t
-    /// The residue stays in [0, t) to match the BFV plaintext encoding.
+    /// The core/lbfv plaintext representation keeps this value uncentered.
     fn compute_scaled_message(self) -> Polynomial<N> {
         let t = self.configs.t;
         // t < 2^62 (plaintext modulus); q_mod_t, msg_i < t: all safe for ModU64.
@@ -321,7 +321,9 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
         for i in 0..N {
             let msg_i: Field = self.message.coefficients[i];
-            k1_coeffs[i] = t_mod.mul_mod(q_mod_t, msg_i);
+            let q_times_m_mod_t = t_mod.mul_mod(q_mod_t, msg_i);
+
+            k1_coeffs[i] = q_times_m_mod_t;
         }
 
         Polynomial { coefficients: k1_coeffs }

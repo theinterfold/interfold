@@ -20,8 +20,8 @@ use ark_ff::PrimeField;
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use e3_safe::SafeSponge;
 use fhe::bfv::BfvParameters;
-use num_bigint::BigInt;
 use num_bigint::Sign;
+use num_bigint::{BigInt, BigUint};
 use num_traits::{ToPrimitive, Zero};
 use std::fmt::Display;
 use std::str::FromStr;
@@ -164,6 +164,16 @@ pub fn calculate_bit_width(bound: BigInt) -> u32 {
     }
 
     bound.bits() as u32
+}
+
+/// Calculate the smallest integer square root that is greater than or equal to `value`.
+pub fn ceil_sqrt(value: &BigUint) -> BigUint {
+    let floor = value.sqrt();
+    if &floor * &floor == *value {
+        floor
+    } else {
+        floor + BigUint::from(1u32)
+    }
 }
 
 /// Computes the bit width of ring elements (coefficients bounded by the coefficient modulus).
@@ -340,6 +350,12 @@ mod tests {
     #[test]
     fn calculate_bit_width_handles_negative_bounds() {
         assert_eq!(calculate_bit_width(BigInt::from(-1)), 1);
+    }
+
+    #[test]
+    fn ceil_sqrt_rounds_non_square_values_up() {
+        assert_eq!(ceil_sqrt(&BigUint::from(9u32)), BigUint::from(3u32));
+        assert_eq!(ceil_sqrt(&BigUint::from(10u32)), BigUint::from(4u32));
     }
 
     #[test]

@@ -46,7 +46,7 @@ contract BfvPkVerifierRouter is IPkVerifier {
             routes.push(
                 Route({
                     verifier: route,
-                    expectedPublicInputsLen: (3 * routeH) + 6,
+                    expectedPublicInputsLen: (3 * routeH) + 24,
                     expectedNodesFoldKeyHash: route.expectedNodesFoldKeyHash(),
                     expectedC5KeyHash: route.expectedC5KeyHash()
                 })

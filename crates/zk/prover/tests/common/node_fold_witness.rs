@@ -80,8 +80,15 @@ pub fn pk_generation_sample_with_esi(
         .map_err(|e| WitnessError::Sample(format!("Failed to create ShareManager: {:?}", e)))?;
 
     let esi_coeffs: Vec<BigInt> = trbfv
-        .generate_smudging_error(num_ciphertexts as usize, 0, lambda, &mut rng)
-        .map_err(|e| WitnessError::Sample(format!("Failed to generate smudging error: {:?}", e)))?;
+        .generate_smudging_error(
+            num_ciphertexts as usize,
+            defaults.mult_depth,
+            lambda,
+            &mut rng,
+        )
+        .map_err(|e| {
+            CircuitsErrors::Sample(format!("Failed to generate smudging error: {:?}", e))
+        })?;
 
     let e_sm_rns_zeroizing = share_manager
         .bigints_to_poly(&esi_coeffs)

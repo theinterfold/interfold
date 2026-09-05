@@ -11,7 +11,7 @@
 // secure-8192 (L_THRESHOLD=3) preset. Dimensions: [L_THRESHOLD][N_PARTIES - T][N_PARTIES + 1].
 
 use crate::configs::committee::micro::{N_PARTIES, T};
-pub use crate::configs::secure::threshold::L as L_THRESHOLD;
+pub use crate::configs::secure_8192::threshold::L as L_THRESHOLD;
 
 pub global PARITY_MATRIX: [[[Field; N_PARTIES + 1]; N_PARTIES - T]; L_THRESHOLD] = [
     [

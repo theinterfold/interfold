@@ -149,6 +149,7 @@ pub struct ThresholdFailure {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum ThresholdFailureKind {
     InvalidPartyId,
+    InvalidPartyCount,
     DuplicatePartyId,
     InvalidThreshold,
     ShareCountMismatch,
@@ -183,6 +184,7 @@ impl ThresholdFailure {
         // explicit decision here rather than silently degrading to an unattributed failure.
         let (kind, party_id) = match t {
             TE::InvalidPartyId { party_id, .. } => (K::InvalidPartyId, Some(*party_id)),
+            TE::InvalidPartyCount { .. } => (K::InvalidPartyCount, None),
             TE::DuplicatePartyId { party_id } => (K::DuplicatePartyId, Some(*party_id)),
             TE::MalformedShares { party_id, .. } => (K::MalformedShares, Some(*party_id)),
             TE::InvalidThreshold { .. } => (K::InvalidThreshold, None),

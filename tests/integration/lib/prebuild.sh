@@ -25,18 +25,7 @@ rm -rf "${INTEGRATION_NOIR}/circuits"
 mkdir -p "${INTEGRATION_NOIR}/circuits" "${INTEGRATION_NOIR}/bin"
 
 if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
-  # Full-proof tests use published artifacts without requiring a local source-hash match.
-  (cd "$ROOT_DIR" && pnpm store:circuits pull --latest)
-  (cd "$ROOT_DIR" && pnpm build:circuits \
-    --preset insecure-64 \
-    --committee minimum \
-    --hydrate-bin-only \
-    --no-clean-targets)
-  for preset in insecure-64 secure-8192; do
-    mkdir -p "${INTEGRATION_NOIR}/circuits/${preset}"
-    cp -R "${ROOT_DIR}/dist/circuits/${preset}/minimum" \
-      "${INTEGRATION_NOIR}/circuits/${preset}/"
-  done
+  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure -o "${INTEGRATION_NOIR}/circuits")
   # `--check`: verify the committed Honk Solidity verifiers in
   # packages/interfold-contracts/contracts/verifiers/bfv/honk/ match the
   # freshly-built circuits' recursive VKs. Fails loudly on drift instead of
@@ -46,7 +35,7 @@ if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
 else
   # C5/C7 final aggregation is skipped, but DKG and decryption leaf proofs
   # still execute. Build only those two source groups for the fast CI profile.
-  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure-64 --group dkg,threshold -o "${INTEGRATION_NOIR}/circuits")
+  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure --group dkg,threshold -o "${INTEGRATION_NOIR}/circuits")
 fi
 
 if ! command -v jq >/dev/null 2>&1; then
@@ -68,12 +57,7 @@ jq -n \
 cp "$(command -v bb)" "${INTEGRATION_NOIR}/bin/bb"
 chmod +x "${INTEGRATION_NOIR}/bin/bb"
 
-# The upgrade reset scenario keeps this output for the candidate. The stamp lets it refuse a noir
-# folder that a released binary's setup replaced.
-source "$SCRIPT_DIR/utils.sh"
-noir_digest "$INTEGRATION_NOIR" >"${INTEGRATION_DIR}/.interfold/prebuild-noir.sha256"
-
-echo "Staged source-aligned integration circuits under ${INTEGRATION_NOIR}/circuits"
+echo "Staged circuits under ${INTEGRATION_NOIR}/circuits/insecure"
 echo "Pinned noir version.json (bb=${REQUIRED_BB}, circuits=${REQUIRED_CIRCUITS})"
 echo ""
 echo "FINISHED BUILDING SOURCE-ALIGNED ZK CIRCUITS"

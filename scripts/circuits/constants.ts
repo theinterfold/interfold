@@ -43,20 +43,22 @@ export const ALL_VARIANTS: CircuitVariant[] = [CIRCUIT_VARIANTS.DEFAULT, CIRCUIT
  * the same compiled circuit artifacts.
  */
 export const CIRCUIT_PRESETS = {
-  INSECURE_64: 'insecure-64',
+  INSECURE_512: 'insecure',
   SECURE_8192: 'secure-8192',
+  SECURE_16384: 'secure-16384',
 } as const
 
 export type CircuitPreset = (typeof CIRCUIT_PRESETS)[keyof typeof CIRCUIT_PRESETS]
 
-export const ALL_PRESETS: CircuitPreset[] = [CIRCUIT_PRESETS.INSECURE_64, CIRCUIT_PRESETS.SECURE_8192]
+export const ALL_PRESETS: CircuitPreset[] = [CIRCUIT_PRESETS.INSECURE_512, CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_PRESETS.SECURE_16384]
 
 /**
  * Maps each preset to the Noir config module it re-exports from `circuits/lib/src/configs/default/mod.nr`.
  */
-export const PRESET_NOIR_CONFIG: Record<CircuitPreset, 'insecure' | 'secure'> = {
-  [CIRCUIT_PRESETS.INSECURE_64]: 'insecure',
-  [CIRCUIT_PRESETS.SECURE_8192]: 'secure',
+export const PRESET_NOIR_CONFIG: Record<CircuitPreset, 'insecure' | 'secure_8192' | 'secure_16384'> = {
+  [CIRCUIT_PRESETS.INSECURE_512]: 'insecure',
+  [CIRCUIT_PRESETS.SECURE_8192]: 'secure_8192',
+  [CIRCUIT_PRESETS.SECURE_16384]: 'secure_16384',
 }
 
 /**
@@ -94,13 +96,10 @@ export const COMMITTEE_PARAMS: Record<CircuitCommittee, CommitteeParams> = {
 }
 
 /**
- * Every `(preset, committee)` pair is supported because committee-dependent circuit artifacts are
- * regenerated automatically from the BFV presets and the committee's `(N, T)` by the
- * `generate_parity_matrices` Rust binary, invoked from `scripts/build-circuits.ts` whenever
- * the committee is set. The parity matrices and smudging constants are derived artifacts.
+ * Every pair can be generated because committee-dependent circuit artifacts are regenerated from
+ * the BFV presets and the committee's `(N, T)` by `generate_parity_matrices`.
  *
- * This constant is kept for future use (e.g. if a particular pair is ever known-broken at
- * a higher level than the parity matrix) and currently returns the full Cartesian product.
+ * Secure-16384 is enabled on Sepolia and local chains. Mainnet remains on secure-8192.
  */
 export const SUPPORTED_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
   preset: CircuitPreset
@@ -119,6 +118,12 @@ export const SUPPORTED_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
     return { preset, committee }
   })
 })()
+
+/** Pairs that a released circuit archive must contain for the current deployment matrix. */
+export const RELEASE_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
+  preset: CircuitPreset
+  committee: CircuitCommittee
+}> = ALL_PRESETS.flatMap((preset) => ALL_COMMITTEES.map((committee) => ({ preset, committee })))
 
 export function isPresetCommitteeSupported(preset: CircuitPreset, committee: CircuitCommittee): boolean {
   return SUPPORTED_PRESET_COMMITTEE_PAIRS.some((p) => p.preset === preset && p.committee === committee)

@@ -1162,16 +1162,14 @@ mod tests {
 
         // The search's smudging bound is the one fhe.rs computes for the built preset.
         let preset = crate::presets::BfvPreset::SecureThreshold8192;
-        let sm_config = fhe::trbfv::SmudgingBoundCalculatorConfig::new(
+        let fhe_b_sm = crate::smudging::calculate_smudging_bound(
             crate::presets::BfvParamSet::from(preset).build_arc(),
             config.n as usize,
             config.z as usize,
+            config.mult_depth,
             preset.lambda().unwrap(),
         )
         .unwrap();
-        let fhe_b_sm = fhe::trbfv::SmudgingBoundCalculator::new(sm_config)
-            .calculate_sm_bound()
-            .unwrap();
         assert_eq!(first.b_sm_min, fhe_b_sm);
     }
 

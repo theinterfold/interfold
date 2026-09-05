@@ -243,12 +243,12 @@ impl Computation for Bounds {
         // CBD bound
         let cbd_bound = (dkg_params.variance() * 2) as u64;
         // Uniform bound
-        let uniform_bound = (dkg_params.get_error1_variance() * BigUint::from(3u32))
-            .sqrt()
-            .to_bigint()
-            .ok_or_else(|| {
-                CircuitsErrors::Other("Failed to convert uniform bound to BigInt".into())
-            })?;
+        let uniform_bound =
+            crate::utils::ceil_sqrt(&(dkg_params.get_error1_variance() * BigUint::from(3u32)))
+                .to_bigint()
+                .ok_or_else(|| {
+                    CircuitsErrors::Other("Failed to convert uniform bound to BigInt".into())
+                })?;
 
         let u_bound = SecretKey::sk_bound() as u128; // u_bound is the same as sk_bound
 
@@ -263,12 +263,10 @@ impl Computation for Bounds {
         // Message bound: message is in [0, t), so bound is t - 1
         let msg_bound = t.clone() - BigInt::from(1);
 
-        let ptxt_up_bound = (t.clone() - BigInt::from(1)) / BigInt::from(2);
-        let ptxt_low_bound: BigInt = if (t.clone() % BigInt::from(2)) == BigInt::from(1) {
-            -1 * ptxt_up_bound.clone()
-        } else {
-            -1 * ptxt_up_bound.clone() - BigInt::from(1)
-        };
+        // The scaled plaintext is uncentered on the core/lbfv path. Use a symmetric bound
+        // because the residue quotient can have either sign after modulus switching.
+        let ptxt_low_bound = -(&t - BigInt::from(1));
+        let ptxt_up_bound = t.clone() - BigInt::from(1);
 
         // Calculate bounds for each CRT basis
         let moduli: Vec<u64> = ctx.moduli_operators().iter().map(|q| **q).collect();
@@ -386,7 +384,6 @@ impl Computation for Inputs {
 
         let mut k1 = Polynomial::from_u64_vector(k1_u64);
         k1.reverse();
-        k1.center(&BigInt::from(t));
 
         let mut message = Polynomial::from_u64_vector(plaintext_poly_u64(&pt)?);
         message.reverse();

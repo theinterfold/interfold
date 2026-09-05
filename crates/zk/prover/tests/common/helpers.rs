@@ -160,7 +160,7 @@ pub async fn setup_compiled_circuit_for_preset(
 ///
 /// `pnpm build:circuits` writes `{package}.vk_recursive` (+ `_hash`) under `circuits/bin/recursive_aggregation/<name>/target/`.
 /// [`CircuitName::DkgAggregator`] also gets `{package}.vk` / `.vk_hash` (`bb write_vk -t evm`); when present, they are
-/// copied into `insecure-64/evm/...` for [`CircuitVariant::Evm`] proving.
+/// copied into `insecure/evm/...` for [`CircuitVariant::Evm`] proving.
 pub async fn setup_recursive_aggregation_fold_circuit(backend: &ZkBackend, circuit: CircuitName) {
     setup_recursive_aggregation_fold_circuit_for_preset(
         backend,

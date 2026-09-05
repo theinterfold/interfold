@@ -509,9 +509,9 @@ the `@crisp-e3/sdk/secure-8192` entry point, or compile your own artifacts.
 
 `generateProof()`, `encryptNumberAndGenProof()`, and `encryptVectorAndGenProof()` run the
 user-data-encryption (UDE) circuits bundled in this package. Those artifacts are compiled with
-`--preset insecure-64 --committee minimum` (`scripts/compile-circuits.sh`), so they only match
-`'INSECURE_THRESHOLD_64'` and a minimum-size committee. With `'SECURE_THRESHOLD_8192'`,
-`encryptNumberAndGenInputs()` returns N=8192 circuit inputs that the bundled N=64 circuits cannot
+`--preset insecure --committee minimum` (`scripts/compile-circuits.sh`), so they only match
+`'INSECURE_THRESHOLD_512'` and a minimum-size committee. With `'SECURE_THRESHOLD_8192'`,
+`encryptNumberAndGenInputs()` returns N=8192 circuit inputs that the bundled N=512 circuits cannot
 execute.
 
 For on-chain Honk verification, compile your own UDE, app, and fold circuits for the preset and

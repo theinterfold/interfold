@@ -9,15 +9,13 @@ import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
 import { join, relative, resolve } from 'path'
-import type { CircuitCommittee, CircuitPreset } from './constants'
-import requiredArtifacts from '../../crates/zk/prover/required-artifacts.json'
-import supportedConfigurations from '../../crates/zk/prover/supported-configurations.json'
+import { RELEASE_PRESET_COMMITTEE_PAIRS } from './circuit-constants'
 
 const BRANCH = 'circuit-artifacts'
 const ROOT = resolve(__dirname, '../..')
 const DIST = join(ROOT, 'dist', 'circuits')
 const METADATA_FILES = new Set(['.git', 'SOURCE_HASH', 'SHA256SUMS', 'checksums.json'])
-export const RELEASE_REQUIRED_PAIRS = SUPPORTED_PRESET_COMMITTEE_PAIRS.map(({ preset, committee }) => [preset, committee] as const)
+export const RELEASE_REQUIRED_PAIRS = RELEASE_PRESET_COMMITTEE_PAIRS.map(({ preset, committee }) => [preset, committee] as const)
 
 const REQUIRED_BASE_CIRCUITS = [
   'dkg/esm_share_computation_chunk/esm_share_computation_chunk',

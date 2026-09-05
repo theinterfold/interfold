@@ -320,6 +320,10 @@ mod tests {
         let expected_key = PublicKey::from_shares(shares).unwrap();
         let substituted_key = PublicKey::new(&SecretKey::random(&params, &mut rng), &mut rng);
         let expected_bytes = expected_key.to_bytes();
+        let normalized_bytes = PublicKey::from_bytes(&expected_bytes, &params)
+            .unwrap()
+            .to_bytes();
+        assert_eq!(normalized_bytes, expected_bytes);
         let expected_commitment = compute_pk_commitment(
             expected_bytes.clone(),
             param_set.degree,

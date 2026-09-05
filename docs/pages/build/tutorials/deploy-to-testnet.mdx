@@ -425,13 +425,12 @@ await sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event
 
 ## Deploy scripts and tasks
 
-| Location                       | Command                                                                                | What it does                                                                                                                   |
-| ------------------------------ | -------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| Template                       | `pnpm dev:all`                                                                         | Runs `scripts/deploy-local.ts` on `localhost`: `deployInterfold(true, false)`, then `deployTemplate()`.                        |
-| Template                       | `pnpm hardhat ciphernode:admin-add --ciphernode-address <address> --network localhost` | Adds a ciphernode with admin privileges. It needs account impersonation (Anvil or Hardhat), so it works only on a local chain. |
-| `packages/interfold-contracts` | `pnpm e3:enable --e3-address <address> --network <name>`                               | Registers an E3 program. The signer must be the owner of the Interfold contract.                                               |
-| `packages/interfold-contracts` | `pnpm run deploy --network <name>`                                                     | Deploys the protocol contracts (`scripts/run.ts`, `deployInterfold`). This is for the protocol owner.                          |
-| CRISP repository               | `pnpm deploy:contracts --network sepolia`                                              | Deploys CRISP and its verifiers, and wires them only when the signer owns the Interfold contract.                              |
+| Issue                       | Possible cause                           | Fix                                                                          |
+| --------------------------- | ---------------------------------------- | ---------------------------------------------------------------------------- |
+| E3 request reverts          | Insufficient fee token approval          | Call `sdk.approveFeeToken()` first                                           |
+| Committee never forms       | Not enough active ciphernodes on Sepolia | Check the registry for active operators                                      |
+| Proof generation fails      | Preset mismatch with the SDK's circuits  | The embedded circuits are `insecure`; compile your own for other presets |
+| Decryption produces garbage | BFV preset mismatch                      | Verify both SDK and E3 request use `INSECURE_THRESHOLD_512` / `paramSet: 0`  |
 
 Outside the Interfold monorepo, the deploy scripts come from the published `@interfold/contracts`
 package. With `ENABLE_ZK_VERIFICATION=true`, the deploy of the BFV ZK verifiers reads the

@@ -12,7 +12,7 @@ cargo run -p e3-zk-helpers --bin zk_cli -- --list_circuits
 cargo run -p e3-zk-helpers --bin zk_cli -- --circuit pk-generation --preset insecure --committee minimum
 
 # C2 chunked configs (default: 512 coefficients)
-cargo run -p e3-zk-helpers --bin zk_cli -- --circuit share-computation --preset secure --inputs secret-key --chunk-size 512
+cargo run -p e3-zk-helpers --bin zk_cli -- --circuit share-computation --preset secure-8192 --inputs secret-key --chunk-size 512
 
 # Micro or small committee (must match active circuits lib selection)
 cargo run -p e3-zk-helpers --bin zk_cli -- --circuit pk-generation --preset insecure --committee micro

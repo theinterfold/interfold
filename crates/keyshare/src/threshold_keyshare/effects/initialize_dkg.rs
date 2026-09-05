@@ -294,6 +294,7 @@ impl ThresholdKeyshare {
                 crp,
                 lambda: threshold_preset.lambda_config(),
                 num_ciphertexts: defaults.z as usize,
+                mult_depth: defaults.mult_depth,
             }),
             CorrelationId::new(),
             e3_id,
