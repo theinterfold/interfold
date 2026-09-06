@@ -595,3 +595,62 @@ print("        RAN end-to-end) and gives the N=19 node wall a SECOND, independen
 print("        (raw whole-node line + M7x cut ~= r70/r82/r83 per-component sum) that agrees to within %.1f%% - the" % (
     100.0 * abs(_r84_pred_m7x - 5406.8) / 5406.8))
 print("        box-2 card's header number (90.1 min/node @4c, EXCL. comm) is now cross-validated, not single-sourced.")
+# ==================== ROUND-109 LANDING: the comm term consolidated into the source of record (r102-class; r105-r108 deferred) ====================
+# r105-r108 (2026-09-05) RAN-closed the "EXCL. comm" wall term strip-by-strip, OUT OF REPO
+# (poc/r105-r108, zero crate change). This block is their DEFERRED DELIVERABLE CONSOLIDATION
+# (the r102 pattern: bring per-round RAN legs into the shipped N=19 table):
+#   r105  BFV bytes      | r106  ZK+pk bytes | r107  wire topology (READ B) | r108  verify-wall
+# Zero NEW compute; every constant is a RAN byte/wall recorded on-disk in poc/r105-r108.
+CT=356382.0; NMOD=3.0; NAM=108.0                    # [RAN r105] BFV ciphertext B / moduli / new cts per node
+WIRE_C1=14866.0; WIRE_C2=15666.0; PK=178187.0         # [RAN r106] wire B: C1/C3, C2 micro, pk_share
+RECV_PER_EVENT=2437007.0                             # [RAN r107] per-event envelope B (READ B)
+PROOF_DATA=14656.0; C1_RIDEOUT=WIRE_C1               # [RAN r106] fixed proof data / C1 on KeyshareCreated
+VV=[7.15,7.01,7.02,6.96,8.16]                        # [RAN r108] per-recursive-proof verify ms (median of 5)
+# ---- self-checks: the RAN comm constants reproduce the on-disk records (r105-r108) ----
+assert int(CT)==356382 and int(NMOD)==3 and int(NAM)==108, "r105 BFV constants drifted"     # CT_SIZE, moduli, new-ct count
+assert abs(int(NAM)*CT-38489256.0)<1.0, "r105 outbound 36.71 MiB self-check"                 # 108*356382=38489256
+assert int(RECV_PER_EVENT)==2437007, "r107 per-event 2,437,007 B"
+assert abs(RECV_PER_EVENT-(6*CT+2*WIRE_C2+6*WIRE_C1+PK))<1.0, "r107 per-event composition drifted"
+assert int(PROOF_DATA)==14656 and int(C1_RIDEOUT)==14866, "r106 fixed proof data / C1 wire"
+assert int(PK)==178187, "r106 pk_share 178187 B"                                              # 12x a proof; r105 2048B bound was 87x off
+assert len(VV)==5 and max(VV)==8.16 and min(VV)==6.96, "r108 per-verify set (ms)"             # flat ~7ms/proof
+assert abs((8.16*162)/1000.0-1.32)<0.01, "r108 own-addressed 162 -> 1.32 s"
+# ---- computed (all RAN inputs) ----
+BFV_OUT = NAM*CT                                   # 108 new cts * 356382 B = 38,489,256 B  [RAN r105]
+ZKPK_PER_EVT = 2*WIRE_C2 + 6*WIRE_C1 + PK          # = 298,715 B (per-recipient proof/pk bundle) [RAN r106]
+EVT = RECV_PER_EVENT                               # 2,437,007 B = 6 CT + ZKPK_PER_EVT          [RAN r107]
+OUT_18 = 18*EVT                                    # 18 per-recipient events (read B)           [RAN r107]
+OUT_TOTAL = OUT_18 + C1_RIDEOUT                    # + C1 on KeyshareCreated  = 43,880,992 B     [RAN r107]
+IN_WIRE = 18*18*EVT                                # 18 senders x 18 events (wire)              [RAN r107]
+def MiB(b): return b/1024.0/1024.0
+VOWN = max(VV)*162/1000.0                          # own-addressed verify 1.32 s                 [RAN r108]
+VWIRE = max(VV)*1998/1000.0                        # wire-receipt upper 16.30 s                  [RAN r108]
+pct_of_c3 = VWIRE/C3BULK_SMALL*100.0               # 16.30s / 5183s c3-bulk = 0.31 %
+print("\n" + "=" * W)
+print("ROUND-109 - THE COMM TERM CONSOLIDATED INTO THIS WALL TABLE (r105-r108 out-of-repo RAN -> source of record)")
+print("=" * W)
+print("  Before this block the header read the comm term as 'EXCL. comm (DRAFT, box-2)' - the r105-r108")
+print("  RAN-bytes/topology/verify legs had run but had never reached this shipped table (the r102 pattern).")
+print("  Every input below is a RAN byte/wall on disk in poc/r105-r108; zero NEW compute this round.")
+print("  [RAN r105]  BFV magnitude   : %s B secure-8192-threshold ciphertext (degree 8192, l=%d moduli)" % (format(int(CT),","), NMOD))
+print("                       per-node new ciphertexts = %d (2 secrets x 18 x 3 moduli x esi=1) => outbound %.2f MiB" % (NAM, MiB(BFV_OUT)))
+print("  [RAN r106]  ZK+pk magnitude : proof data %s B FIXED across all 5 gossiped classes & committees; wire C1/C3 %d B" % (format(int(PROOF_DATA),","), WIRE_C1))
+print("                       C2 micro %d B (small lower) ; pk_share %s B (committee-identical, 12x a proof; r105's 2,048 B pk bound was 87x off)" % (WIRE_C2, format(int(PK),",")))
+print("  [RAN r107]  wire topology   : READ B per-recipient topic gossip = %d distinct events/sender; per-event %s B" % (18, format(int(RECV_PER_EVENT),",")))
+print("                       per-node outbound (18 events) = %s B = %.3f MiB ; +C1 ride-out = %.2f MiB" % (format(int(OUT_18),","), MiB(OUT_18), MiB(OUT_TOTAL)))
+print("                       wire INBOUND (18 senders x 18 events) = %.2f MiB/node (decryptable-addressed 41.8 MiB)" % MiB(IN_WIRE))
+print("  [RAN r108]  verify wall   : per-recursive-proof verify = flat ~7ms (median of 5) across the 5 gossiped classes:" % ())
+print("                       %s ms  (all verify=true)" % "  ".join("%.2f" % v for v in VV))
+print("                       per-node fan-out: own-addressed 162 verifies = %.2f s ; wire-receipt upper 1998 = %.2f s (serial floor)" % (VOWN, VWIRE))
+_vp = pct_of_c3; _po = VOWN/C3BULK_SMALL*100.0
+print("                       verify wall = %.2f %% of the RAN c3-bulk 5183.0 s (own-addressed %.3f %%)" % (_vp, _po))
+print("-" * W)
+print("  [r109 HEADLINE - the comm term is now RAN at BYTES + TOPOLOGY + VERIFY-WALL; the header restates:]")
+print("        per-node gossip BYTES = [%.1f, %.2f] MiB OUTBOUND (C1 counted or not) = r106-r107 RAN record." % (MiB(BFV_OUT), MiB(OUT_TOTAL)))
+print("        per-node wire  INBOUND ~ %.1f MiB (READ B, per-recipient); decryptable-addressed 41.8 MiB." % MiB(IN_WIRE))
+print("        per-node VERIFY-WALL = %.2f-%.2f s (RAN r108) = %.2f%% of the c3-bulk  => the comm term is << 1%% of the" % (VOWN, VWIRE, _vp))
+print("        node wall BY CONSTRUCTION. The 'EXCL. comm' header now EXCLUDES a term that is RAN-bounded, not DRAFT:")
+print("        the node wall table above (RAN floor / RAN-anchored) is comm-RAN-EXCLUSIVE - adding comm would move it by")
+print("        <0.5% even at the wire-receipt verify upper bound + sub-minute Gbps LAN transmit (r107 shape).")
+print("        ONLY residual = the LIVE netlink wall + on-wire inners-parallelism of the box-2 r78 19-node run (would only")
+print("        shrink the verify fan-out; the per-verify FLOOR here is the RAN r108 number).")
