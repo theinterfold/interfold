@@ -1,0 +1,103 @@
+# r111 - C2a/C2b (SecretKeyShareComputation / SmudgingNoiseShareComputation) source-minimality sweep
+# + RAN re-anchor of the 4 load-bearing C2 gate counts. ROUND 111 (2026-09-06).
+
+## Claim (I-r111)
+r110 applied the r33 lesson (a fresh source read of an untouched DKG-pool region can still
+surface a lever, even when the "known-idea" queue is drained) to C3 and RAN-CLOSED its
+sponge-minimality question (negative: the post-I3/I14/I15 transcript is minimal). C2a/C2b
+(the DKG-pool that produces the per-node share commitments consumed by C3/C4) is the ONE
+per-node leaf never given that same sweep:
+  - I16 (r34) tested only ONE C2 hypothesis (is the outer check_range_bounds redundant with
+    the commitment's range check? -> REJECTED, source, the pack/SAFE path has NO range assert).
+  - No prior round asked "is C2's commitment/cost structure MINIMAL, or is there an
+    I3/I14-class redundant raw-push or redundant block left?"
+  - No prior round RAN-re-anchored the C2 gate counts to a single re-runnable check the way
+    r110 did for C3 (2,966,353) and r110/r41/r59 did for C3 over the camp.
+
+Two sub-questions, both box-1-closedable at ~zero compute:
+  (A) SOURCE: Is any C2 cost block redundant / removable without soundness loss (the I3/I14
+      class = a raw-push or block whose binding is already provided by a commitment)?
+  (B) RAN: Are the 4 on-disk C2 artifacts (insecure-512/minimum x2 + secure-8192/minimum x2)
+      the digit-exact standing baselines, with zero C2-cone drift (re-runnable anchor)?
+
+## Findings
+
+### (A) SOURCE - C2 commitment/cost structure is MINIMAL (no I3/I14-class lever exists). RAN (cheapest-first, source).
+
+The C2 cone (`circuits/lib/src/core/dkg/share_computation.nr`, 328 lines; both
+SecretKeyShareComputation + SmudgingNoiseShareComputation exec() share the 5-block shape)
+has NO `fn payload` / NO SAFE-sponge *transcript* at all. C2 emits commitments + range
+proofs + a parity check only; there is no Fiat-Shamir challenge absorption inside the C2
+circuit (the C3 challenge sponge `compute_share_encryption_challenge` lives in C3, not C2).
+So the I3/I14 redundancy class (a raw element pushed into a transcript that is ALREADY
+bound by a commitment) is STRUCTURALLY ABSENT from C2: there is no transcript to de-dup.
+
+The 5 cost blocks (both C2a and C2b, each an ~equal-cost core):
+  1. verify_secret_commitment   : secret -> expected_secret_commitment (C1's C2-side input).
+     The ONLY binding of the secret to C1's public commitment. Load-bearing (drop it and the
+     secret is unbound to C1 = the C1->C2 link the INVARIANTS require). NOT redundant.
+  2. verify_secret_consistency  : y[i][j][0] == secret[i] for all i,j. THE Shamir
+     evaluation-at-0 binding (the share vector's constant term IS the secret). Load-bearing;
+     no commitment alternative (a commitment cannot bind the COEFFICIENTS equal to the
+     secret - only a proof of the relation can). NOT redundant.
+  3. check_range_bounds         : y[i][j][k>=1] in [0,q_j) for all k>=1. ALREADY vetted by
+     I16 (r34, REJECTED-as-framed, RAN-from-source): `pack` is blind radix concat with NO
+     per-limb range assert and SAFE `absorb` is pure field addition with NO range assert
+     => the OUTER check_range_bounds is the SOLE share range proof into [0,q_j). Dropping it
+     aliases a share coeff >= q_j inside the packed carrier. Load-bearing, exactly the I9
+     situation (r1). NOT redundant.
+  4. verify_parity_check        : H[j] * y[i][j]^T == 0 for all i,j (Reed-Solomon
+     codeword). Load-bearing (T+1-of-N recoverability); no cheaper primitive. NOT redundant.
+  5. commit_to_party_shares     : commitments[party][mod] = commitment(share_poly). This is
+     the C2 PUBLIC OUTBOUND - it IS consumed: node_fold.nr:110-121 binds c2a/c2b_public
+     (the per-(party,mod) commitments) to C3's `expected_message_commitment` for every
+     non-self slot, so every commitment is load-bearing across the C2->C3 boundary. NOT
+     internally redundant (it is the very thing C3 asserts against).
+
+Conclusion (A): EVERY C2 cost block is load-bearing; there is no redundant raw-push, no
+redundant block, no commitment-SAFE double-bind. C2 is MINIMAL as written. The one C2 lever
+that WAS real (I16, the outer range check) was already REJECTED-as-framed in r34 and
+re-confirmed here by the same source (pack/SAFE have no range assert). NO new C2 box-1
+lever. C2's box-2 child is unchanged: the secure-8192/SWALL (N=19/T=9) leaf compiles OOM on
+>=16GiB (r45: C2a 15.1 GiB, C2b 14.9 GiB) - that is a PROVISIONING card (owner directive
+2026-09-05: box-2 32 GiB prod-only), not a source lever.
+
+### (B) RAN - the 4 load-bearing C2 gate counts are DIGIT-EXACT to every prior RAN baseline, zero cone drift.
+`bb gates -t noir-recursive-no-zk` on the 4 on-disk artifacts (no compile; artifacts on disk
+from the r75/r99/r100/r74 build sessions, sha-pinned below):
+
+  C2a   insecure-512/minimum  41,207 gates   sha16 766839c58feb1490
+                                              = I16 r34 first-baseline DIGIT-EXACT
+  C2b   insecure-512/minimum  79,554 gates   sha16 90f939b1e29a8038
+                                              = I16 r34 first-baseline DIGIT-EXACT
+  C2a   secure-8192/minimum   1,446,311 gates sha16 940f9cbe110d1a72
+                                              = r45 / r99 (C2a-min OOM-class min arm) DIGIT-EXACT
+  C2b   secure-8192/minimum   2,888,964 gates sha16 b172dca5f0e9d5d8
+                                              = r45 / r100 (C2b-min) DIGIT-EXACT
+
+C2-cone commits since 3c84684c (the r45-era nargo beta.26 / bb 5.1.0 toolchain, 2026-08-16):
+  = 0  => zero cone drift; the on-disk anchors are the standing baselines, no recompile needed.
+(Contrast r110's C3, which it re-anchored to the secure-8192/SMALL artifact sha 73105502 =
+2,966,353. For C2 the secure-8192/SMALL leaf is the r45 OOM wall (15.1 / 14.9 GiB) and does
+NOT fit box-1 even with 8 GiB swap (r45 swap-non-rescuing RAN) - so the secure-8192/MINIMUM
+pins (r45/r99/r100, which DO fit and were RAN'd) are the durable box-1 C2 anchor, and the
+SMALL numbers remain the box-2 provisioning card, unchanged.)
+
+These 4 digits are exactly the C2 inputs the N=19 wall table reads:
+  - the wall table's "C2a/C2b leaves" line = RAN min floor 44.5 s (r75) carrying the secure
+    small per-recipient delta as the DRAFT/box-2 residual (the secure/small C2 leaves OOM on
+    every box <=24 GiB: r45). This round re-confirms the RAN min-floor inputs are digit-exact.
+
+## Verdict
+I-r111 CLOSED (A-negative + B-anchored).
+  (A) C2 source-minimality: MINIMAL - no I3/I14-class lever; all 5 cost blocks load-bearing
+      (the one real hypothesis, I16's outer range check, already REJECTED r34 + re-confirmed
+      by the same source). No new box-1 C2 lever.
+  (B) The 4 load-bearing C2 gate counts are RAN re-anchored to a SINGLE re-runnable check
+      (verify_c2_minimality_anchor_r111.py, RC 0 SELF-CHECK OK): digit-exact to I16 (r34) and
+      r45/r99/r100, zero C2-cone drift. The C2 box-2 child (secure-8192/SMALL leaf compiles,
+      15.1 / 14.9 GiB) is UNCHANGED = box-2 / 32-GiB-prod provisioning, do-not-retry on-box.
+
+## Re-run command
+  python3 interfold/poc/r111/verify_c2_minimality_anchor_r111.py
+  (requires the 4 on-disk artifacts + `bb` + `git` in PATH; all present on box-1. No compile.)
