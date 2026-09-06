@@ -183,13 +183,17 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// # Returns
     /// A vector containing commitments and polynomial coefficients in flattened form,
     /// ready for hashing to generate the Fiat-Shamir challenge.
-    fn payload(self) -> [Field] {
+    fn payload(self, ct_commitment: Field) -> [Field] {
         // Use commitments instead of full polynomials (saves constraints)
         let mut inputs = [self.expected_sk_commitment, self.expected_e_sm_commitment].as_vector();
 
-        // Flatten ciphertext components (witness)
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct0);
-        inputs = flatten::<_, _, BIT_CT>(inputs, self.ct1);
+        // Bind the ciphertext via its commitment: the packed raw ct0/ct1 limbs were
+        // redundant in the challenge (I14 class, as shipped into C3 share_encryption).
+        // The witness ct limbs are already bound to this public `ct_commitment` by
+        // verify_ct_commitment (the SAME compute_ciphertext_commitment payload) and are
+        // relation-bound at the FS-derived gamma by verify_decryption_share_computation,
+        // so the sponge absorbs one field instead of 2*N*L packed carriers.
+        inputs = inputs.push_back(ct_commitment);
 
         // Flatten quotient polynomials (secret witnesses)
         inputs = flatten::<_, _, BIT_R1>(inputs, self.r1);
@@ -222,8 +226,11 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
             self.d_native_trunc,
         );
 
-        // Step 5: Generate Fiat-Shamir challenge from the transcript
-        let gamma = self.generate_challenge();
+        // Step 5: Generate Fiat-Shamir challenge from the transcript.
+        // (I14 variant) the witness ct limbs are bound to the public `ct_commitment`
+        // in step 3 (verify_ct_commitment), so the sponge absorbs that commitment
+        // instead of the raw ct0/ct1 limbs — mirroring the I14 lever shipped into C3.
+        let gamma = self.generate_challenge(self.ct_commitment);
 
         // Step 6: Verify decryption share computation for each CRT basis.
         // cyclo_at_gamma is identical across all bases (same gamma, same N); compute once.
@@ -280,8 +287,8 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     /// # Returns
     /// A single challenge value `gamma` used as the evaluation point for verifying
     /// the decryption share computation formula for all CRT bases.
-    fn generate_challenge(self) -> Field {
-        let inputs = self.payload();
+    fn generate_challenge(self, ct_commitment: Field) -> Field {
+        let inputs = self.payload(ct_commitment);
 
         compute_threshold_share_decryption_challenge::<L>(inputs)
     }
