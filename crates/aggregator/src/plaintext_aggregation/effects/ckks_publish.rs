@@ -96,6 +96,11 @@ impl ThresholdPlaintextAggregator {
         // carry verified C6 proofs, the real C7-CKKS round runs below even
         // if recursive aggregation is disabled (BFV parity: C7 leaf
         // proofs are always generated; only the recursive fold is gated).
+        //
+        // NOTE: the placeholder below is accepted ONLY by MockDecryptionVerifier.
+        // A deployment that registers the real `CkksDecryptionVerifier` for the
+        // CKKS scheme id (which `deployInterfold.ts` now always does) rejects it,
+        // so this branch cannot silently publish an unverified plaintext there.
         if !via_verification {
             let event = PlaintextAggregated {
                 decrypted_output: vec![decrypted.clone()],
@@ -146,6 +151,11 @@ impl ThresholdPlaintextAggregator {
                     threshold_n: state.threshold_n,
                     committee_size: self.committee_size,
                     ckks_params: Some(state.params.clone()),
+                    // Domain binding for the on-chain C7-CKKS check. The
+                    // prover fails closed if this is None — an unbound
+                    // aggregation proof is never emitted.
+                    ckks_decryption_domain: self.ckks_decryption_domain,
+                    ckks_ciphertext_bytes: state.ciphertext_output.clone(),
                 },
                 plaintext: vec![decrypted.clone()],
                 shares: shares_for_state.clone(),

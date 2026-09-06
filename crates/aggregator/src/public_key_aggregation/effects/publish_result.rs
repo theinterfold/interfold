@@ -120,6 +120,9 @@ impl PublicKeyAggregator {
             pk_commitment,
             dkg_aggregator_proof: published_dkg_proof,
             dkg_attestation_bundle,
+            // BFV publishes the recursively folded `dkg_aggregator_proof`; the
+            // per-party CKKS blob is never used on this path.
+            ckks_pk_proof_blob: None,
         };
         self.recovery.try_mutate(&ec, |mut recovery| {
             recovery.pending_publication = Some(event.clone());

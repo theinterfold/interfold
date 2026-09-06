@@ -84,6 +84,10 @@ pub struct ThresholdPlaintextAggregator {
     is_aggregator: bool,
     effects_enabled: bool,
     pending: PendingDecryptionWork,
+    /// CKKS: the E3 decryption domain the C7-CKKS proof is bound to
+    /// (interfold address, committee hash, published-key commitment). The
+    /// C7-CKKS prover FAILS CLOSED when this is `None`.
+    pub(crate) ckks_decryption_domain: Option<e3_committee_hash::DecryptionDomainContext>,
 }
 
 pub struct ThresholdPlaintextAggregatorParams {
@@ -103,6 +107,8 @@ pub struct ThresholdPlaintextAggregatorParams {
     /// (length `H`). Roster for decryption-share collection and sender gating.
     pub honest_committee_addresses: Vec<Address>,
     pub recovery: Persistable<ThresholdPlaintextAggregatorRecoveryState>,
+    /// CKKS C7 decryption domain; `None` for BFV or when not yet resolvable.
+    pub ckks_decryption_domain: Option<e3_committee_hash::DecryptionDomainContext>,
 }
 
 pub(crate) fn new_threshold_plaintext_recovery(
@@ -159,6 +165,7 @@ impl ThresholdPlaintextAggregator {
                 last_ec: recovered.last_ec.clone(),
                 ..Default::default()
             },
+            ckks_decryption_domain: params.ckks_decryption_domain,
         }
     }
 

@@ -130,6 +130,32 @@ Measured (Apple Silicon, salaries 52 000 / 61 000 / 63 700, cap 500 000):
 The variance error is the CKKS approximation (rescale + smudging noise truncated to 2 decimals
 at output scale 10⁴); the mean is exact at the decimal precision published.
 
+## What is verified on-chain
+
+| Stage | Verified on-chain by | Circuit |
+| ----- | -------------------- | ------- |
+| Participant input validity | `CkksAppE3ProgramBase` (three Honk proofs per submission) | `user_data_encryption_ckks_ct0/ct1_ps3` + the app-validity leg |
+| Committee public key | `CkksPkVerifier` — one Honk proof PER committee member | `pk_generation_ckks_ps3` (C1-CKKS) |
+| Decrypted output (the survey statistics) | `CkksDecryptionVerifier` — one Honk proof | `decrypted_shares_aggregation_ckks_ps3` (C7-CKKS) |
+
+No `MockPkVerifier` or `MockDecryptionVerifier` is registered for the CKKS scheme id. The
+committee key is accepted only if EVERY member supplies a C1-CKKS proof that it knows a small
+secret behind its pk share (the rogue-key gate), and the opened output is accepted only if the
+C7-CKKS proof shows the published ring element is the threshold reconstruction of `T+1`
+C6-committed decryption shares.
+
+Bounds worth stating plainly. The on-chain key check does not prove the published aggregate key
+is the SUM of the proven per-party shares (the circuit commits with SAFE/Poseidon over limb
+coefficients, the chain commits with keccak256 over serialised bytes, and neither is recomputable
+from the other in the EVM); the aggregator enforces that link off-chain. The output check does not
+bind the published fixed-point bytes to the proven ring element, because CKKS decode (center mod
+Q, divide by the scale, inverse FFT) is not EVM-tractable. Neither circuit carries a domain slot,
+so there is no on-chain `e3Id`/committee replay binding.
+
+**RISC0 program-correctness proving remains out of scope.** The homomorphic evaluation itself runs
+natively in the server and its ciphertext output is published behind `MockCiphertextVerifier`.
+That is the one honest remaining trust assumption in this demo.
+
 ## Notes / deviations
 
 - `program/` is plain Rust wrapping `e3_trckks::policy::statistics_packed_policy` (RISC Zero is

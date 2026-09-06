@@ -22,6 +22,16 @@
 //! bind the aggregated share polynomials (aggregated-shares commitment
 //! over the CKKS moduli); `ct_commitment` binds the evaluated ciphertext;
 //! the public output is the truncated-`d` commitment C7-CKKS consumes.
+//!
+//! ## Level (opening-level rule)
+//!
+//! The share is computed over the ciphertext the E3 OPENS, which for a
+//! policy that rescales sits at level `ℓ > 0` with `L − ℓ` limbs. Every
+//! constant here (`QIS`, bounds, bit widths, `L`) is therefore derived
+//! from the moduli that REMAIN at that level ([`moduli_at_level`]): the
+//! witness builder uses the ciphertext's own level, and the checked-in
+//! per-set configs are generated at the set's opening level
+//! (`e3_fhe_params::ckks_presets::ckks_opening_level_for_param_set`).
 
 use crate::circuits::commitments::{
     compute_aggregated_shares_commitment, compute_ciphertext_commitment,
@@ -72,6 +82,8 @@ impl crate::registry::Circuit for CkksShareDecryptionCircuit {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Configs {
     pub n: usize,
+    /// Level the configs were derived at (`l` moduli remain there).
+    pub level: usize,
     pub l: usize,
     pub moduli: Vec<u64>,
     pub bits: Bits,
@@ -95,18 +107,25 @@ pub struct Bounds {
     pub r2_bounds: Vec<BigInt>,
 }
 
-impl Computation for Bounds {
-    type Preset = CkksPreset;
-    type Data = ();
-    type Error = CircuitsErrors;
+/// The ciphertext moduli that remain at `level` of `preset`'s chain.
+pub fn moduli_at_level(preset: &CkksPreset, level: usize) -> Result<Vec<u64>, CircuitsErrors> {
+    Ok(preset
+        .params
+        .context_at_level(level)
+        .map_err(|e| CircuitsErrors::Other(format!("no CKKS context at level {level}: {e}")))?
+        .moduli()
+        .to_vec())
+}
 
-    /// Same derivation as BFV C6 (`share_decryption::Bounds`), over the
-    /// CKKS moduli: r2 in ±(q_j-1)/2, r1 from the product bound.
-    fn compute(preset: Self::Preset, _: &Self::Data) -> Result<Self, Self::Error> {
+impl Bounds {
+    /// Same derivation as BFV C6 (`share_decryption::Bounds`) over the
+    /// moduli that remain at `level`: r2 in ±(q_j-1)/2, r1 from the
+    /// product bound.
+    pub fn compute_at_level(preset: &CkksPreset, level: usize) -> Result<Self, CircuitsErrors> {
         let n = BigInt::from(preset.params.degree());
         let mut r1_bounds = Vec::new();
         let mut r2_bounds = Vec::new();
-        for &qi in preset.params.moduli() {
+        for qi in moduli_at_level(preset, level)? {
             let qi_bigint = BigInt::from(qi);
             let qi_bound = (&qi_bigint - BigInt::from(1)) / BigInt::from(2);
             r2_bounds.push(qi_bound.clone());
@@ -119,25 +138,37 @@ impl Computation for Bounds {
     }
 }
 
-impl Computation for Bits {
+impl Computation for Bounds {
     type Preset = CkksPreset;
-    type Data = Bounds;
+    type Data = ();
     type Error = CircuitsErrors;
 
-    fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
-        let r1_bit = data
+    /// Level-0 bounds (the full chain); see [`Bounds::compute_at_level`].
+    fn compute(preset: Self::Preset, _: &Self::Data) -> Result<Self, Self::Error> {
+        Bounds::compute_at_level(&preset, 0)
+    }
+}
+
+impl Bits {
+    /// Bit widths over the moduli that remain at `level`.
+    pub fn compute_at_level(
+        preset: &CkksPreset,
+        bounds: &Bounds,
+        level: usize,
+    ) -> Result<Self, CircuitsErrors> {
+        let r1_bit = bounds
             .r1_bounds
             .iter()
             .map(|b| calculate_bit_width(b.clone()))
             .max()
             .unwrap_or(0);
-        let r2_bit = data
+        let r2_bit = bounds
             .r2_bounds
             .iter()
             .map(|b| calculate_bit_width(b.clone()))
             .max()
             .unwrap_or(0);
-        let d_native_bit = compute_native_crt_coeff_bit(preset.params.moduli());
+        let d_native_bit = compute_native_crt_coeff_bit(&moduli_at_level(preset, level)?);
         Ok(Bits {
             ct_bit: r2_bit,
             sk_bit: r2_bit,
@@ -150,21 +181,42 @@ impl Computation for Bits {
     }
 }
 
+impl Computation for Bits {
+    type Preset = CkksPreset;
+    type Data = Bounds;
+    type Error = CircuitsErrors;
+
+    /// Level-0 bit widths; see [`Bits::compute_at_level`].
+    fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
+        Bits::compute_at_level(&preset, data, 0)
+    }
+}
+
+impl Configs {
+    /// The circuit constants over the moduli that remain at `level`.
+    pub fn compute_at_level(preset: &CkksPreset, level: usize) -> Result<Self, CircuitsErrors> {
+        let bounds = Bounds::compute_at_level(preset, level)?;
+        let bits = Bits::compute_at_level(preset, &bounds, level)?;
+        let moduli = moduli_at_level(preset, level)?;
+        Ok(Configs {
+            n: preset.params.degree(),
+            level,
+            l: moduli.len(),
+            moduli,
+            bits,
+            bounds,
+        })
+    }
+}
+
 impl Computation for Configs {
     type Preset = CkksPreset;
     type Data = ();
     type Error = CircuitsErrors;
 
+    /// Level-0 constants (the full chain); see [`Configs::compute_at_level`].
     fn compute(preset: Self::Preset, _: &Self::Data) -> Result<Self, Self::Error> {
-        let bounds = Bounds::compute(preset.clone(), &())?;
-        let bits = Bits::compute(preset.clone(), &bounds)?;
-        Ok(Configs {
-            n: preset.params.degree(),
-            l: preset.params.moduli().len(),
-            moduli: preset.params.moduli().to_vec(),
-            bits,
-            bounds,
-        })
+        Configs::compute_at_level(&preset, 0)
     }
 }
 
@@ -317,18 +369,15 @@ impl Computation for Inputs {
             d.add_limb(di);
         }
 
-        // Commitments over the CKKS moduli (bit width from the widest
-        // modulus at this level — the CKKS analogue of compute_modulus_bit).
-        let modulus_bit = moduli_u64
-            .iter()
-            .map(|&q| calculate_bit_width(BigInt::from((q - 1) / 2)))
-            .max()
-            .unwrap_or(0);
+        // Every width from the ciphertext's OWN level (the opening-level
+        // rule): the circuit the proof targets was generated there.
+        let bounds = Bounds::compute_at_level(&preset, ct_level)?;
+        let bits = Bits::compute_at_level(&preset, &bounds, ct_level)?;
+        // Commitments over the CKKS moduli at this level (bit width from
+        // the widest modulus — the CKKS analogue of compute_modulus_bit).
+        let modulus_bit = bits.sk_bit;
         let expected_sk_commitment = compute_aggregated_shares_commitment(&sk, modulus_bit);
         let expected_e_sm_commitment = compute_aggregated_shares_commitment(&e_sm, modulus_bit);
-
-        let bounds = Bounds::compute(preset.clone(), &())?;
-        let bits = Bits::compute(preset.clone(), &bounds)?;
         let ct_commitment = compute_ciphertext_commitment(&ct0, &ct1, bits.ct_bit);
 
         // CKKS plaintexts occupy every coefficient slot, so the native
@@ -403,13 +452,25 @@ pub fn bin_package_for_param_set(param_set: u8) -> String {
     }
 }
 
-/// The C6-CKKS circuit constants for an on-chain `ParamSet` at LEVEL 0
-/// (the full modulus chain). The witness builder proves against the
-/// ciphertext's ACTUAL level; a ciphertext opened after `k` rescales has
-/// `L - k` limbs and needs a config generated from that level's moduli.
+/// The C6-CKKS circuit constants for an on-chain `ParamSet` at ITS
+/// OPENING LEVEL (`ckks_opening_level_for_param_set`): the level the E3
+/// output is decrypted at, so `L` is the number of moduli that remain
+/// there. The witness builder proves against the ciphertext's ACTUAL
+/// level, which for a well-formed E3 is this one.
 pub fn configs_for_param_set(param_set: u8) -> Result<Configs, CircuitsErrors> {
+    let level = e3_fhe_params::ckks_presets::ckks_opening_level_for_param_set(param_set)
+        .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
+    configs_for_param_set_at_level(param_set, level)
+}
+
+/// [`configs_for_param_set`] at an explicit level (`--level` of
+/// `gen_ckks_c6_prover`).
+pub fn configs_for_param_set_at_level(
+    param_set: u8,
+    level: usize,
+) -> Result<Configs, CircuitsErrors> {
     let preset = crate::threshold::user_data_encryption_ckks::ckks_preset_for_param_set(param_set)?;
-    Configs::compute(preset, &())
+    Configs::compute_at_level(&preset, level)
 }
 
 /// Codegen for one on-chain `ParamSet`: same global names as the canonical
@@ -444,8 +505,8 @@ pub fn generate_configs_nr_for_param_set(param_set: u8, configs: &Configs) -> St
 // or FITNESS FOR A PARTICULAR PURPOSE.
 //
 // Auto-generated by e3-zk-helpers share_decryption_ckks codegen
-// (example gen_ckks_c6_prover --param-set {param_set}). Do not hand-edit.
-// CKKS on-chain ParamSet {param_set}, level 0: N={n}, L={l}.
+// (example gen_ckks_c6_prover --param-set {param_set} --level {level}). Do not hand-edit.
+// CKKS on-chain ParamSet {param_set}, OPENING level {level}: N={n}, L={l} moduli remain.
 
 use crate::core::threshold::share_decryption::Configs as ShareDecryptionConfigs;
 
@@ -478,6 +539,7 @@ pub global SHARE_DECRYPTION_CKKS_CONFIGS: ShareDecryptionConfigs<SHARE_DECRYPTIO
 "#,
         param_set = param_set,
         n = configs.n,
+        level = configs.level,
         l = configs.l,
         qis = qis,
         ct = configs.bits.ct_bit,
@@ -558,6 +620,7 @@ pub fn verify_ckks_share_decryption_constraints(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::threshold::user_data_encryption_ckks::ckks_preset_for_param_set;
     use fhe::ckks::{CkksEncoder, CkksSecretKey};
     use fhe::trckks::TRCKKS;
 
@@ -566,20 +629,36 @@ mod tests {
     }
 
     /// The per-param-set naming contract the node loads circuits by, and
-    /// the per-set configs' level-0 shape (L limbs of that set).
+    /// the per-set configs' OPENING-LEVEL shape (the limbs that remain
+    /// at the level the set's policy opens at).
     #[test]
     fn per_param_set_packages_and_configs() {
         assert_eq!(bin_package_for_param_set(0), "share_decryption_ckks");
         assert_eq!(config_module_for_param_set(0), "ckks_share_decryption");
         assert_eq!(bin_package_for_param_set(2), "share_decryption_ckks_ps2");
         assert_eq!(config_module_for_param_set(3), "ckks_share_decryption_ps3");
-        for (set, l) in [(0u8, 2usize), (2, 38), (3, 3)] {
+        for (set, level, l) in [(0u8, 0usize, 2usize), (2, 37, 1), (3, 1, 2), (4, 3, 2)] {
             let c = configs_for_param_set(set).unwrap();
+            assert_eq!(c.level, level, "param set {set}");
             assert_eq!(c.l, l, "param set {set}");
+            let full = ckks_preset_for_param_set(set)
+                .unwrap()
+                .params
+                .moduli()
+                .len();
+            assert_eq!(c.l, full - level);
+            assert_eq!(
+                c.moduli,
+                ckks_preset_for_param_set(set).unwrap().params.moduli()[..l]
+            );
             let nr = generate_configs_nr_for_param_set(set, &c);
             assert!(nr.contains(&format!("SHARE_DECRYPTION_CKKS_L: u32 = {l};")));
             assert!(nr.contains(&format!("ParamSet {set}")));
+            assert!(nr.contains(&format!("OPENING level {level}")));
         }
+        // Explicit level 0 is the full chain.
+        assert_eq!(configs_for_param_set_at_level(4, 0).unwrap().l, 5);
+        assert_eq!(configs_for_param_set_at_level(2, 0).unwrap().l, 38);
         // Set 0's per-set codegen IS the canonical entry point's output.
         let c0 = configs_for_param_set(0).unwrap();
         assert_eq!(
@@ -599,7 +678,7 @@ mod tests {
                 .collect::<String>()
                 .replace(",]", "]")
         };
-        for set in [0u8, 2, 3] {
+        for set in [0u8, 2, 3, 4, 5] {
             let c = configs_for_param_set(set).unwrap();
             let module = config_module_for_param_set(set);
             let path = format!("{root}/circuits/lib/src/configs/{module}.nr");
@@ -612,6 +691,73 @@ mod tests {
                 "drift in {path}"
             );
         }
+    }
+
+    /// A ParamSet-4 share over a ciphertext RESCALED to the opening level
+    /// (3 → two limbs) builds a witness whose limb count and bit widths
+    /// are those of the opening-level configs — the ones
+    /// `configs_for_param_set(4)` emits — not the level-0 ones.
+    #[test]
+    fn ckks_decryption_share_witness_at_the_opening_level() {
+        let preset = ckks_preset_for_param_set(4).unwrap();
+        let params = preset.params.clone();
+        let mut rng = rand::rng();
+        let trckks = TRCKKS::new(3, 1, params.clone()).unwrap();
+        let sk = CkksSecretKey::random(&params, &mut rng);
+        let pk = fhe::ckks::CkksPublicKey::new(&sk, &mut rng).unwrap();
+        let sk_mats = trckks
+            .generate_secret_shares_from_poly(
+                trckks.coeffs_to_poly(sk.coeffs.as_ref()).unwrap(),
+                &mut rng,
+            )
+            .unwrap();
+        let es = trckks.generate_smudging_error(20, &mut rng).unwrap();
+        let es_mats = trckks
+            .generate_secret_shares_from_poly(trckks.smudging_to_poly(&es).unwrap(), &mut rng)
+            .unwrap();
+        let mut ct = pk
+            .try_encrypt(
+                &CkksEncoder::new(&params).encode(&[1.5], 0).unwrap(),
+                &mut rng,
+            )
+            .unwrap();
+        let level = e3_fhe_params::ckks_presets::CREDIT_OPENING_LEVEL;
+        ct.mod_switch_to_level(level).unwrap();
+        assert_eq!(ct.level, level);
+        let sk_share = trckks
+            .project_share_to_level(&trckks.share_row_to_poly(&sk_mats, 0).unwrap(), level)
+            .unwrap();
+        let es_share = trckks
+            .project_share_to_level(&trckks.share_row_to_poly(&es_mats, 0).unwrap(), level)
+            .unwrap();
+        let d_share = trckks
+            .decryption_share(&ct, sk_share.clone().into_ntt(), es_share.clone())
+            .unwrap();
+        let data = CkksShareDecryptionData {
+            ciphertext: ct,
+            sk_poly: sk_share,
+            es_poly: es_share,
+            d_share,
+            domain_hi: 1,
+            domain_lo: 2,
+        };
+        verify_ckks_share_decryption_constraints(&preset, &data).expect("ps4 L3 share verifies");
+        let inputs = Inputs::compute(preset.clone(), &data).unwrap();
+        let configs = configs_for_param_set(4).unwrap();
+        assert_eq!(configs.level, level);
+        assert_eq!(inputs.ct0.limbs.len(), configs.l);
+        assert_eq!(inputs.d.limbs.len(), 2);
+        assert_eq!(inputs.r1.limbs.len(), 2);
+        // The commitments were hashed at the opening-level widths.
+        let sk_crt = &inputs.sk;
+        assert_eq!(
+            inputs.expected_sk_commitment,
+            compute_aggregated_shares_commitment(sk_crt, configs.bits.sk_bit)
+        );
+        assert_eq!(
+            inputs.ct_commitment,
+            compute_ciphertext_commitment(&inputs.ct0, &inputs.ct1, configs.bits.ct_bit)
+        );
     }
 
     /// A ParamSet-3 (3-limb) real share verifies through the generalized

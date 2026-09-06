@@ -2,15 +2,15 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 #
 # Stage the CKKS committee-side proof circuits into the node artifact dir so
-# a ciphernode running a CKKS E3 (ParamSet 0/2/3) resolves every artifact the
+# a ciphernode running a CKKS E3 (ParamSet 0/2/3/4) resolves every artifact the
 # fail-closed posture requires (crates/zk-prover/src/ckks_artifacts.rs):
 #
 #   <circuits>/insecure-512/<committee>/recursive/threshold/<name>/<name>.{json,vk}
-#     pk_generation_ckks_ps{0,2,3}            C1-CKKS
-#     share_decryption_ckks[_ps2|_ps3]        C6-CKKS
+#     pk_generation_ckks_ps{0,2,3,4}          C1-CKKS
+#     share_decryption_ckks[_ps2|_ps3|_ps4|_ps5]   C6-CKKS
 #     relin_round1_hybrid_ckks_digit          C8-CKKS (hybrid plans; from the ps2 package)
 #   <circuits>/insecure-512/<committee>/default/threshold/<name>/<name>.{json,vk}
-#     decrypted_shares_aggregation_ckks[_ps2|_ps3]   C7-CKKS
+#     decrypted_shares_aggregation_ckks[_ps2|_ps3|_ps4|_ps5]   C7-CKKS
 #   <circuits>/insecure-dkg-wide-512/<committee>/recursive/dkg/pk/pk.{json,vk}
 #     C0 over the wide DKG transport (ParamSet 2)
 #
@@ -29,10 +29,13 @@ CIRCUITS_DIR="${1:-$ROOT/tests/integration/.interfold/noir/circuits}"
 BIN="$ROOT/circuits/bin/threshold"
 export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
 
-RECURSIVE=(pk_generation_ckks_ps0 pk_generation_ckks_ps2 pk_generation_ckks_ps3
-  share_decryption_ckks share_decryption_ckks_ps2 share_decryption_ckks_ps3)
+RECURSIVE=(pk_generation_ckks_ps0 pk_generation_ckks_ps2 pk_generation_ckks_ps3 pk_generation_ckks_ps4
+  pk_generation_ckks_ps5
+  share_decryption_ckks share_decryption_ckks_ps2 share_decryption_ckks_ps3 share_decryption_ckks_ps4
+  share_decryption_ckks_ps5)
 DEFAULT=(decrypted_shares_aggregation_ckks decrypted_shares_aggregation_ckks_ps2
-  decrypted_shares_aggregation_ckks_ps3)
+  decrypted_shares_aggregation_ckks_ps3 decrypted_shares_aggregation_ckks_ps4
+  decrypted_shares_aggregation_ckks_ps5)
 # package -> staged name
 C8_PKG=relin_round1_hybrid_ckks_digit_ps2
 C8_NAME=relin_round1_hybrid_ckks_digit
@@ -80,11 +83,31 @@ done
 
 # C0 over the wide DKG transport: the BFV `pk` circuit at the wide shape.
 WIDE="$CIRCUITS_DIR/insecure-dkg-wide-512"
+ACTIVE_PRESET="$ROOT/circuits/bin/.active-preset.json"
 if [ ! -d "$WIDE" ]; then
   echo "[stage] wide C0 missing — pnpm build:circuits --preset insecure-dkg-wide-512 --group dkg --circuit pk --committee all (no-clean; ~1-3 min)"
   (cd "$ROOT" && pnpm build:circuits --preset insecure-dkg-wide-512 --group dkg --circuit pk --committee all \
       --no-clean --no-clean-targets --skip-utils-patch --skip-checksums -o "$CIRCUITS_DIR") \
     || { echo "wide C0 build failed — see scripts/build-circuits.ts --help" >&2; exit 1; }
+  # build-circuits compiles IN PLACE under circuits/bin, so the wide run
+  # leaves circuits/bin/dkg/pk holding a 2-limb artifact. Every standard-preset
+  # consumer then breaks (crates/zk-prover local_e2e_tests feeds it a 1-limb
+  # witness → "expected_length: 2, actual_length: 1"). Rebuild dkg/pk at
+  # insecure-512 so the tree rests on the standard shape.
+  echo "[stage] restoring the insecure-512 build of circuits/bin/dkg/pk"
+  (cd "$ROOT" && pnpm build:circuits --preset insecure-512 --group dkg --circuit pk --committee all \
+      --no-clean --no-clean-targets --skip-utils-patch --skip-checksums -o "$CIRCUITS_DIR") \
+    || { echo "WARN: could not restore the insecure-512 dkg/pk artifact — rerun it manually" >&2; }
+fi
+# The wide build stamps circuits/bin/.active-preset.json with the wide preset
+# as a side effect; the resting state of the tree is insecure-512 (what
+# generate-verifiers.ts and the threshold packages expect). Restore it.
+if [ -f "$ACTIVE_PRESET" ] && grep -q '"insecure-dkg-wide-512"' "$ACTIVE_PRESET"; then
+  echo "[stage] restoring $ACTIVE_PRESET to insecure-512"
+  node -e '
+    const fs = require("fs"); const p = process.argv[1];
+    const j = JSON.parse(fs.readFileSync(p, "utf8")); j.preset = "insecure-512";
+    fs.writeFileSync(p, JSON.stringify(j, null, 2) + "\n");' "$ACTIVE_PRESET"
 fi
 for c in "${COMMITTEES[@]}"; do
   [ -f "$WIDE/$c/recursive/dkg/pk/pk.json" ] && echo "[stage] wide C0 present for $c" || echo "[stage] WARN: wide C0 missing for $c under $WIDE" >&2

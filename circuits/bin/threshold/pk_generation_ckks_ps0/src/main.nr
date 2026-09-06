@@ -28,7 +28,15 @@ fn main(
     r2is: [Polynomial<PK_GENERATION_CKKS_N - 1>; PK_GENERATION_CKKS_L],
     pk0is: [Polynomial<PK_GENERATION_CKKS_N>; PK_GENERATION_CKKS_L],
 ) -> pub (Field, Field, Field) {
-    let pk_generation: PkGenerationCkks<PK_GENERATION_CKKS_N, PK_GENERATION_CKKS_L, PK_GENERATION_CKKS_BIT_EEK, PK_GENERATION_CKKS_BIT_SK, PK_GENERATION_CKKS_BIT_E_SM, PK_GENERATION_CKKS_BIT_R1, PK_GENERATION_CKKS_BIT_R2, PK_GENERATION_CKKS_BIT_PK> =
-        PkGenerationCkks::new(PK_GENERATION_CKKS_CONFIGS, a, eek, sk, e_sm, r1is, r2is, pk0is);
+    let pk_generation: PkGenerationCkks<PK_GENERATION_CKKS_N, PK_GENERATION_CKKS_L, PK_GENERATION_CKKS_BIT_EEK, PK_GENERATION_CKKS_BIT_SK, PK_GENERATION_CKKS_BIT_E_SM, PK_GENERATION_CKKS_BIT_R1, PK_GENERATION_CKKS_BIT_R2, PK_GENERATION_CKKS_BIT_PK> = PkGenerationCkks::new(
+        PK_GENERATION_CKKS_CONFIGS,
+        a,
+        eek,
+        sk,
+        e_sm,
+        r1is,
+        r2is,
+        pk0is,
+    );
     pk_generation.execute()
 }

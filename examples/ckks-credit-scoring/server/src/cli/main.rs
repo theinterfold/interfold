@@ -1,0 +1,131 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
+// This file is provided WITHOUT ANY WARRANTY;
+// without even the implied warranty of MERCHANTABILITY
+// or FITNESS FOR A PARTICULAR PURPOSE.
+
+//! Round-opener CLI (CRISP `cli/`): drives the running server's API.
+//!
+//!   cli [--server http://127.0.0.1:8092] open [--snapshot applicants.json] [--model model.json] [--duration 300]
+//!   cli rounds
+//!   cli round <e3_id>
+//!   cli evaluate <e3_id>
+
+use ckks_credit::server::models::Applicant;
+use ckks_credit::server::snapshot::get_mock_applicants;
+use ckks_credit_program::Model;
+use clap::{Parser, Subcommand};
+use std::io::{Read, Write};
+
+#[derive(Parser)]
+#[command(about = "CKKS credit-scoring round-opener CLI")]
+struct Cli {
+    #[arg(long, default_value = "http://127.0.0.1:8092")]
+    server: String,
+    #[command(subcommand)]
+    cmd: Cmd,
+}
+
+#[derive(Subcommand)]
+enum Cmd {
+    /// Open a round with an issuer snapshot + model (defaults to the 5 anvil dev applicants and
+    /// the demo model).
+    Open {
+        #[arg(long)]
+        snapshot: Option<String>,
+        #[arg(long)]
+        model: Option<String>,
+        #[arg(long)]
+        duration: Option<u64>,
+    },
+    Rounds,
+    Round {
+        e3_id: String,
+    },
+    Evaluate {
+        e3_id: String,
+    },
+}
+
+/// The demo model: `|w_j| <= 8`, `|b| <= 8` (the policy's bound).
+pub fn demo_model() -> Model {
+    Model {
+        weights: [1.5, -0.75, 2.0, 1.0, -1.25, 0.5, 0.8, -0.3],
+        bias: -1.2,
+    }
+}
+
+fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let cli = Cli::parse();
+    match cli.cmd {
+        Cmd::Open {
+            snapshot,
+            model,
+            duration,
+        } => {
+            let applicants: Vec<Applicant> = match snapshot {
+                Some(path) => serde_json::from_str(&std::fs::read_to_string(path)?)?,
+                None => get_mock_applicants(),
+            };
+            let model: Model = match model {
+                Some(path) => serde_json::from_str(&std::fs::read_to_string(path)?)?,
+                None => demo_model(),
+            };
+            let body = serde_json::json!({ "snapshot": applicants, "model": model, "durationSecs": duration });
+            println!(
+                "{}",
+                http(
+                    "POST",
+                    &format!("{}/rounds/request", cli.server),
+                    Some(body.to_string())
+                )?
+            );
+        }
+        Cmd::Rounds => println!("{}", http("GET", &format!("{}/rounds", cli.server), None)?),
+        Cmd::Round { e3_id } => println!(
+            "{}",
+            http("GET", &format!("{}/rounds/{e3_id}", cli.server), None)?
+        ),
+        Cmd::Evaluate { e3_id } => println!(
+            "{}",
+            http(
+                "POST",
+                &format!("{}/rounds/{e3_id}/evaluate", cli.server),
+                Some("{}".into())
+            )?
+        ),
+    }
+    Ok(())
+}
+
+/// Minimal blocking HTTP/1.1 over std (the server is local; no reqwest dependency).
+fn http(
+    method: &str,
+    url: &str,
+    body: Option<String>,
+) -> Result<String, Box<dyn std::error::Error>> {
+    let url = url
+        .strip_prefix("http://")
+        .ok_or("only http:// URLs are supported")?;
+    let (host, path) = url
+        .split_once('/')
+        .map(|(h, p)| (h, format!("/{p}")))
+        .unwrap_or((url, "/".into()));
+    let mut stream = std::net::TcpStream::connect(host)?;
+    let body = body.unwrap_or_default();
+    write!(
+        stream,
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len()
+    )?;
+    let mut response = String::new();
+    stream.read_to_string(&mut response)?;
+    let (head, body) = response
+        .split_once("\r\n\r\n")
+        .ok_or("malformed HTTP response")?;
+    let status = head.lines().next().unwrap_or_default();
+    if !status.contains(" 200") {
+        return Err(format!("{status}: {body}").into());
+    }
+    Ok(body.to_string())
+}

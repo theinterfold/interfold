@@ -5,16 +5,20 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { Routes, Route, Navigate } from 'react-router-dom'
+import { EditorialShell } from '@interfold/ckks-editorial'
 import Navbar from '@/components/Navbar'
 import Footer from '@/components/Footer'
 import Home from '@/pages/Home/Home'
 import Rounds from '@/pages/Rounds/Rounds'
 import RoundPage from '@/pages/Round/Round'
 
+/** Palette per app (see @interfold/ckks-editorial README): salary = moss. */
+export const PALETTE = 'moss'
+
 const App = () => (
-  <div className="app">
+  <EditorialShell palette={PALETTE} className="app-shell">
     <Navbar />
-    <main className="main">
+    <main className="app-main">
       <Routes>
         <Route path="/" element={<Home />} />
         <Route path="/rounds" element={<Rounds />} />
@@ -23,7 +27,7 @@ const App = () => (
       </Routes>
     </main>
     <Footer />
-  </div>
+  </EditorialShell>
 )
 
 export default App

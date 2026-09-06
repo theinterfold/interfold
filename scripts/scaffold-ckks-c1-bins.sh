@@ -1,12 +1,12 @@
 #!/usr/bin/env bash
 # SPDX-License-Identifier: LGPL-3.0-only
 #
-# Scaffolds circuits/bin/threshold/pk_generation_ckks_ps{0,2,3}: per-param-set
+# Scaffolds circuits/bin/threshold/pk_generation_ckks_ps{0,2,3,4}: per-param-set
 # bin packages over the generic C1-CKKS core. Idempotent; regenerates the
 # Nargo.toml + src/main.nr of every package from one template so they never drift.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-for SET in 0 2 3; do
+for SET in 0 2 3 4; do
   DIR="$ROOT/circuits/bin/threshold/pk_generation_ckks_ps${SET}"
   mkdir -p "$DIR/src"
   cat > "$DIR/Nargo.toml" <<EOF

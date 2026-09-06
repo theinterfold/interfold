@@ -43,6 +43,17 @@ pub struct PublicKeyAggregated {
     /// ABI-encoded `(Attestation[], PartySlotBinding[])` for on-chain fold attestation verify.
     /// Test/CI skip mode carries a non-empty placeholder accepted only by its mock verifier.
     pub dkg_attestation_bundle: Option<ArcBytes>,
+    /// CKKS ONLY: the pre-encoded `CkksPkVerifier` blob
+    /// `abi.encode(bytes[] partyProofs, bytes32[][] partyPublicInputs, bytes aggregatePublicKey)`
+    /// built by `e3_evm::helpers::encode_ckks_pk_proofs` from every committee
+    /// member's C1-CKKS proof.
+    ///
+    /// CKKS has no recursive pk-aggregation circuit, so `dkg_aggregator_proof`
+    /// (which the BFV path fills with a single folded proof) cannot carry the
+    /// CKKS evidence. When this is `Some`, `publish_committee_to_registry`
+    /// sends it verbatim instead of re-encoding `dkg_aggregator_proof`.
+    /// `None` on every BFV E3.
+    pub ckks_pk_proof_blob: Option<ArcBytes>,
 }
 
 impl Display for PublicKeyAggregated {

@@ -603,7 +603,7 @@ mod tests {
     /// differs for another party's share.
     #[test]
     fn pk_commitment_from_share_bytes_matches_witness_builder() {
-        for set in [0u8, 2, 3] {
+        for set in [0u8, 2, 3, 4, 5] {
             let preset = ckks_preset_for_param_set(set).unwrap();
             let data = sample_data(&preset, [3u8; 32]);
             let inputs = Inputs::compute(preset.clone(), &data).unwrap();
@@ -701,7 +701,7 @@ mod tests {
     /// dealer-secret commitment (same function, domain and bit width).
     #[test]
     fn ckks_pk_generation_witnesses_satisfy_constraints_per_param_set() {
-        for set in [0u8, 2, 3] {
+        for set in [0u8, 2, 3, 4, 5] {
             let preset = ckks_preset_for_param_set(set).unwrap();
             let data = sample_data(&preset, [set; 32]);
             verify_ckks_pk_generation_constraints(&preset, &data)
@@ -755,7 +755,7 @@ mod tests {
                 .collect::<String>()
                 .replace(",]", "]")
         };
-        for set in [0u8, 2, 3] {
+        for set in [0u8, 2, 3, 4, 5] {
             let preset = ckks_preset_for_param_set(set).unwrap();
             let configs = Configs::compute(preset, &()).unwrap();
             let expected = generate_configs_nr(set, &configs);

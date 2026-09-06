@@ -1,0 +1,7 @@
+[package]
+name = "pk_generation_ckks_scale_n2048"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+lib = { path = "../../../lib" }

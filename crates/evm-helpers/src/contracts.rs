@@ -395,6 +395,15 @@ where
         param_set: u8,
         compute_provider_params: Bytes,
     ) -> Result<U256> {
+        let contract = Interfold::new(self.contract_address, &self.provider);
+        // The quote must carry the LIVE fee token and crypto-config id: the
+        // contract's slippage guard compares these against current state and
+        // reverts (`FeeTokenChanged` / `CryptoConfigChanged`) on a mismatch,
+        // and `Address::ZERO` never matches a deployed token. `request_e3`
+        // below reads them the same way — keep the two in step.
+        let fee_token = contract.feeToken().call().await?;
+        let crypto_config_id = contract.activeCryptoConfigId().call().await?;
+
         let e3_request = E3RequestParams {
             committeeSize: committee_size,
             inputWindow: input_window,
@@ -402,12 +411,11 @@ where
             paramSet: param_set,
             computeProviderParams: compute_provider_params,
             customParams: Bytes::new(),
-            expectedFeeToken: Address::ZERO,
-            expectedCryptoConfigId: B256::ZERO,
-            maxFee: U256::ZERO,
+            expectedFeeToken: fee_token,
+            expectedCryptoConfigId: crypto_config_id,
+            maxFee: U256::MAX,
         };
 
-        let contract = Interfold::new(self.contract_address, &self.provider);
         let fee = contract.getE3Quote(e3_request).call().await?;
         Ok(fee)
     }

@@ -107,6 +107,46 @@ pub fn statistics_transport_params() -> Result<Arc<CkksParameters>> {
         .context("failed to build statistics transport CKKS params")
 }
 
+/// DKG-transport-compatible credit-scoring params (on-chain ParamSet 4,
+/// credit v2): five 36-bit NTT-friendly primes ALL ≤ the standard
+/// `InsecureDkg512` plaintext modulus, scale 2^40. The homomorphic
+/// sigmoid policy (`policy::credit_sigmoid_policy`) consumes THREE
+/// levels (one-hot isolation, `z²`, `z²·z` — the last two relinearized
+/// under the multiparty keys of levels 1 and 2) and opens at level 3
+/// with two limbs of headroom. NOT SECURE (N=512) — demo/testing only.
+/// DKG-transport-compatible COEFFICIENT inner-product params (on-chain
+/// ParamSet 5; private matching / treasury risk / federated averaging):
+/// three 36-bit NTT-friendly primes ALL ≤ the standard `InsecureDkg512`
+/// plaintext modulus, scale 2^40, one ct×ct level relinearised at level
+/// 0, opened at level 1. Deliberately a DIFFERENT prime set from the
+/// statistics params: on-chain sets are recognised by parameter equality
+/// and set 5 publishes a coefficient-encoded output. MUST mirror
+/// `e3_fhe_params::ckks_presets::COEFFICIENT_CKKS_MODULI` (pinned by
+/// `on_chain_param_set_5_matches_coefficient_transport_params`).
+pub fn coefficient_transport_params() -> Result<Arc<CkksParameters>> {
+    fhe::ckks::CkksParametersBuilder::new()
+        .set_degree(512)
+        .set_moduli(&[0xffffee001, 0xffffc4001, 0xffffba001])
+        .set_scale(2f64.powi(40))
+        .build_arc()
+        .context("failed to build coefficient transport CKKS params")
+}
+
+pub fn credit_transport_params() -> Result<Arc<CkksParameters>> {
+    fhe::ckks::CkksParametersBuilder::new()
+        .set_degree(512)
+        .set_moduli(&[
+            0xffffee001,
+            0xffffc4001,
+            0xffffbe001,
+            0xffffba001,
+            0xffffb7001,
+        ])
+        .set_scale(2f64.powi(40))
+        .build_arc()
+        .context("failed to build credit transport CKKS params")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,6 +179,34 @@ mod tests {
             ours.to_bytes(),
             on_chain.to_bytes(),
             "ParamSet-3 statistics params drifted from statistics_transport_params"
+        );
+    }
+
+    /// The on-chain ParamSet 5 coefficient preset must stay byte-identical
+    /// to `coefficient_transport_params` — the params the matching /
+    /// treasury / federated-averaging policies run on.
+    #[test]
+    fn on_chain_param_set_5_matches_coefficient_transport_params() {
+        let ours = coefficient_transport_params().unwrap();
+        let on_chain = e3_fhe_params::ckks_presets::ckks_params_for_on_chain_param_set(5).unwrap();
+        assert_eq!(
+            ours.to_bytes(),
+            on_chain.to_bytes(),
+            "ParamSet-5 coefficient params drifted from coefficient_transport_params"
+        );
+    }
+
+    /// The on-chain ParamSet 4 credit preset must stay byte-identical to
+    /// `credit_transport_params` — the params the credit-scoring policy's
+    /// unit test and workflow e2e run on.
+    #[test]
+    fn on_chain_param_set_4_matches_credit_transport_params() {
+        let ours = credit_transport_params().unwrap();
+        let on_chain = e3_fhe_params::ckks_presets::ckks_params_for_on_chain_param_set(4).unwrap();
+        assert_eq!(
+            ours.to_bytes(),
+            on_chain.to_bytes(),
+            "ParamSet-4 credit params drifted from credit_transport_params"
         );
     }
 }

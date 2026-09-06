@@ -176,6 +176,7 @@ fn only_confirmed_committee_publication_advances_the_key_stage() {
             pk_commitment: [0u8; 32],
             dkg_aggregator_proof: None,
             dkg_attestation_bundle: None,
+            ckks_pk_proof_blob: None,
         },
     ));
 

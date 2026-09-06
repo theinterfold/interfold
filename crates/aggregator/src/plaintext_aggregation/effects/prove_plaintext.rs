@@ -26,6 +26,8 @@ impl ThresholdPlaintextAggregator {
                     threshold_n,
                     committee_size: self.committee_size,
                     ckks_params: None,
+                    ckks_decryption_domain: None,
+                    ckks_ciphertext_bytes: Vec::new(),
                 },
                 plaintext,
                 shares,

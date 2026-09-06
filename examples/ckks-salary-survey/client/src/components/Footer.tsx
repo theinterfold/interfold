@@ -6,7 +6,17 @@
 
 const Footer = () => (
   <footer className="footer">
-    Threshold CKKS on Interfold — individual salaries are never decrypted. Encryption + proving happen in your browser.
+    <span className="mono-sm muted">
+      Interfold · threshold CKKS demo · individual salaries are never decrypted; encryption + proving happen in your browser.
+    </span>
+    <span className="links">
+      <a href="https://docs.theinterfold.com" target="_blank" rel="noreferrer">
+        docs
+      </a>
+      <a href="https://github.com/theinterfold/interfold" target="_blank" rel="noreferrer">
+        source
+      </a>
+    </span>
   </footer>
 )
 

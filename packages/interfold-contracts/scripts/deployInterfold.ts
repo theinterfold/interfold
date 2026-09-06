@@ -13,6 +13,8 @@ import { deployAndSaveBondedCheckpoints } from "./deployAndSave/bondedCheckpoint
 import { deployAndSaveBondedVotes } from "./deployAndSave/bondedVotes";
 import { deployAndSaveBondingRegistry } from "./deployAndSave/bondingRegistry";
 import { deployAndSaveCiphernodeRegistryOwnable } from "./deployAndSave/ciphernodeRegistryOwnable";
+import { deployAndSaveCkksDecryptionVerifier } from "./deployAndSave/ckksDecryptionVerifier";
+import { deployAndSaveCkksPkVerifier } from "./deployAndSave/ckksPkVerifier";
 import { deployAndSaveDkgFoldAttestationVerifier } from "./deployAndSave/dkgFoldAttestationVerifier";
 import { deployAndSaveE3RefundManager } from "./deployAndSave/e3RefundManager";
 import { deployAndSaveFaucet } from "./deployAndSave/faucet";
@@ -34,6 +36,7 @@ import {
   ACTIVE_BFV_COMMITTEE_SIZE,
   ACTIVE_BFV_PARAM_SET,
   BFV_DKG_H,
+  BFV_THRESHOLD_T,
   isLocalDeploymentChain,
   send,
 } from "./utils";
@@ -569,6 +572,22 @@ export const deployInterfold = async (
       "interfold.setParamSet(ckks statistics)",
     );
     console.log("CKKS statistics parameter set 3 registered");
+    // CKKS credit-scoring v2 preset (homomorphic sigmoid, slot-encoded):
+    // same BFV parameter bytes; the 5-limb CKKS moduli are derived
+    // node-side. Two-level relin ceremony (levels 1 and 2).
+    await send(
+      interfold.setParamSet(4, activeParams),
+      "interfold.setParamSet(ckks credit)",
+    );
+    console.log("CKKS credit-scoring parameter set 4 registered");
+    // CKKS coefficient inner-product preset (private matching / treasury
+    // risk / federated averaging): same BFV parameter bytes; the 3-limb
+    // CKKS moduli are derived node-side. Level-0 relin ceremony.
+    await send(
+      interfold.setParamSet(5, activeParams),
+      "interfold.setParamSet(ckks coefficient)",
+    );
+    console.log("CKKS coefficient inner-product parameter set 5 registered");
   }
 
   const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes("fhe.rs:BFV"));
@@ -670,25 +689,62 @@ export const deployInterfold = async (
       console.log(`Successfully enabled E3 Program in Interfold contract`);
     }
 
-    // CKKS program => protocol mapping: register the CKKS program and key
-    // the SAME mock verifiers under the CKKS scheme id (mock verifiers are
-    // scheme-agnostic; production deployments register CKKS-specific ones).
+    // CKKS program => protocol mapping. The CKKS scheme id gets its OWN REAL
+    // verifiers (CkksPkVerifier / CkksDecryptionVerifier), never the mocks:
+    // committee keys are checked by N C1-CKKS Honk proofs and decrypted outputs
+    // by one C7-CKKS proof. Both contracts dispatch on the E3's `paramSet`, so a
+    // single registration covers the auction (ps2), salary-survey (ps3) and
+    // credit-scoring (ps4) demos. BFV's wiring above is untouched.
+    // MockCiphertextVerifier stays registered for CKKS: RISC0 program-correctness
+    // proving is deliberately out of scope.
     const { ckksProgramAddress } = mockDeployments;
     const ckksSchemeId = ethers.keccak256(ethers.toUtf8Bytes("fhe.rs:CKKS"));
     if (!shouldHaveZKVerification && ckksProgramAddress) {
-      if (mockDecryptionVerifierAddress) {
+      // The CKKS scheme gets REAL Honk verifiers even on the mock stack: the
+      // committee key is checked by one C1-CKKS proof per party and the
+      // decrypted output by one C7-CKKS proof. Their per-param-set circuit
+      // verifiers are deployed on demand by these helpers (the full
+      // `deployAndSaveAllVerifiers` sweep only runs with ZK verification on).
+      const interfoldAddress = await interfold.getAddress();
+      const { address: ckksPkVerifierAddress } =
+        await deployAndSaveCkksPkVerifier(
+          hre,
+          interfoldAddress,
+          // `Interfold.setPkVerifier` requires the verifier's committee
+          // parameter to equal the configured DKG honest-set size H, not the
+          // full committee N (mismatch reverts VerifierThresholdMismatch).
+          BFV_DKG_H,
+        );
+      const { address: ckksDecryptionVerifierAddress } =
+        await deployAndSaveCkksDecryptionVerifier(
+          hre,
+          interfoldAddress,
+          BFV_THRESHOLD_T,
+        );
+      if (
+        (await interfold.decryptionVerifiers(ckksSchemeId)) !==
+        ckksDecryptionVerifierAddress
+      ) {
         const tx = await interfold.setDecryptionVerifier(
           ckksSchemeId,
-          mockDecryptionVerifierAddress,
+          ckksDecryptionVerifierAddress,
         );
         await tx.wait();
+        console.log(
+          `Successfully set CkksDecryptionVerifier (real Honk) for the CKKS scheme`,
+        );
       }
-      if (mockPkVerifierAddress) {
+      if (
+        (await interfold.pkVerifiers(ckksSchemeId)) !== ckksPkVerifierAddress
+      ) {
         const tx = await interfold.setPkVerifier(
           ckksSchemeId,
-          mockPkVerifierAddress,
+          ckksPkVerifierAddress,
         );
         await tx.wait();
+        console.log(
+          `Successfully set CkksPkVerifier (real Honk) for the CKKS scheme`,
+        );
       }
       if (mockCiphertextVerifierAddress) {
         const tx = await interfold.setCiphertextVerifier(

@@ -1,0 +1,23 @@
+{
+  "name": "@ckks-credit/main",
+  "private": true,
+  "type": "module",
+  "license": "LGPL-3.0-only",
+  "description": "CKKS private credit scoring on Interfold: browser-encrypted (coefficient encoding + per-feature masks), three-leg-proven, sender-bound applications; the committee threshold-decrypts only masked scores",
+  "scripts": {
+    "dev:up": "bash ./scripts/dev.sh",
+    "dev:server": "bash ./scripts/dev_server.sh",
+    "dev:client": "bash ./scripts/dev_client.sh",
+    "build:server": "cargo build --release --manifest-path server/Cargo.toml",
+    "typecheck": "pnpm -C packages/ckks-credit-sdk typecheck && pnpm -C client typecheck",
+    "test:sdk": "pnpm -C packages/ckks-credit-sdk test",
+    "test:e2e": "node scripts/e2e.mjs"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "wait-on": "^8.0.3",
+    "playwright": "1.52.0",
+    "viem": "2.38.6"
+  },
+  "packageManager": "pnpm@10.7.1+sha512.2d92c86b7928dc8284f53494fb4201f983da65f0fb4f0d40baafa5cf628fa31dae3e5968f12466f17df7e97310e30f343a648baea1b9b350685dafafffdf5808"
+}

@@ -1,0 +1,6 @@
+/* SPDX-License-Identifier: LGPL-3.0-only */
+/* App-level overrides only; the design system lives in @interfold/ckks-editorial. */
+html, body, #root { margin: 0; min-height: 100%; }
+body { background: #dcecd6; }
+.app-shell { min-height: 100vh; display: flex; flex-direction: column; }
+.app-main { flex: 1; }

@@ -1,0 +1,29 @@
+{
+  "name": "@ckks-fedavg/sdk",
+  "version": "0.1.0-insecure.0",
+  "type": "module",
+  "license": "LGPL-3.0-only",
+  "description": "CKKS private federated-averaging client SDK: browser coefficient-encoded CKKS encryption of a model update + private sample count, five-leg proving (two Greco ct0/ct1 pairs + fedavg validity), sender-bound publishInput envelope, weighted-mean decoding.",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./circuits": "./src/circuits.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest --run"
+  },
+  "dependencies": {
+    "@aztec/bb.js": "5.1.0",
+    "@interfold/ckks-zk-inputs": "file:../../../ckks-common/packages/ckks-zk-inputs",
+    "@noir-lang/noir_js": "1.0.0-beta.26",
+    "viem": "2.38.6"
+  },
+  "devDependencies": {
+    "@types/node": "22.7.5",
+    "esbuild": "^0.25.0",
+    "typescript": "5.8.3",
+    "vitest": "^1.6.1"
+  }
+}

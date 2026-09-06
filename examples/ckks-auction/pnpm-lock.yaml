@@ -21,6 +21,9 @@ importers:
       playwright:
         specifier: 1.52.0
         version: 1.52.0
+      viem:
+        specifier: 2.38.6
+        version: 2.38.6(typescript@5.8.3)
       wait-on:
         specifier: ^8.0.3
         version: 8.0.5
@@ -30,6 +33,12 @@ importers:
       '@ckks-auction/sdk':
         specifier: workspace:*
         version: link:../packages/ckks-auction-sdk
+      '@interfold/ckks-editorial':
+        specifier: file:../../ckks-common/packages/ckks-editorial
+        version: file:../ckks-common/packages/ckks-editorial(react@18.3.1)
+      '@phosphor-icons/react':
+        specifier: ^2.1.4
+        version: 2.1.10(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@tanstack/react-query':
         specifier: ^5.74.3
         version: 5.102.8(react@18.3.1)
@@ -340,6 +349,11 @@ packages:
   '@hapi/topo@6.0.2':
     resolution: {integrity: sha512-KR3rD5inZbGMrHmgPxsJ9dbi6zEK+C3ZwUwTa+eMwWLz7oijWUTWD2pMSNNYJAU6Qq+65NkxXjqHr/7LM2Xkqg==}
 
+  '@interfold/ckks-editorial@file:../ckks-common/packages/ckks-editorial':
+    resolution: {directory: ../ckks-common/packages/ckks-editorial, type: directory}
+    peerDependencies:
+      react: '>=18'
+
   '@interfold/ckks-zk-inputs@file:../ckks-common/packages/ckks-zk-inputs':
     resolution: {directory: ../ckks-common/packages/ckks-zk-inputs, type: directory}
 
@@ -422,6 +436,13 @@ packages:
 
   '@noir-lang/types@1.0.0-beta.26':
     resolution: {integrity: sha512-TFJMafp32koXf3TFVAfPBirwkVdlRHzSTM1nVAkRJDTQQNnI7qoAjvzXWXjgpE65kwjukQyzcmaucOegruawPw==}
+
+  '@phosphor-icons/react@2.1.10':
+    resolution: {integrity: sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==}
+    engines: {node: '>=10'}
+    peerDependencies:
+      react: '>= 16.8'
+      react-dom: '>= 16.8'
 
   '@remix-run/router@1.23.4':
     resolution: {integrity: sha512-q7j5geK7xs3UJSdm9/iytUNclBnLmYx1EnSeCFXHPeutdqgIMeFeHtUZgS3EhlKxdBEAu8OwtJCwmLrEzpSs7Q==}
@@ -1541,6 +1562,10 @@ snapshots:
     dependencies:
       '@hapi/hoek': 11.0.7
 
+  '@interfold/ckks-editorial@file:../ckks-common/packages/ckks-editorial(react@18.3.1)':
+    dependencies:
+      react: 18.3.1
+
   '@interfold/ckks-zk-inputs@file:../ckks-common/packages/ckks-zk-inputs': {}
 
   '@jest/schemas@29.6.3':
@@ -1609,6 +1634,11 @@ snapshots:
       '@noir-lang/types': 1.0.0-beta.26
 
   '@noir-lang/types@1.0.0-beta.26': {}
+
+  '@phosphor-icons/react@2.1.10(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+    dependencies:
+      react: 18.3.1
+      react-dom: 18.3.1(react@18.3.1)
 
   '@remix-run/router@1.23.4': {}
 

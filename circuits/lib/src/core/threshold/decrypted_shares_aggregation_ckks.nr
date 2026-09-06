@@ -20,7 +20,7 @@
 //! modulus — and is reused for CKKS without modification.
 
 use crate::core::threshold::decrypted_shares_aggregation::{
-    compute_all_lagrange_coeffs, compute_crt_components, verify_crt_reconstruction,
+    compute_all_lagrange_coeffs, compute_crt_components,
 };
 use crate::math::commitments::compute_threshold_decryption_share_commitment;
 use crate::math::polynomial::Polynomial;
@@ -29,11 +29,18 @@ use crate::math::polynomial::Polynomial;
 pub struct Configs<let L: u32> {
     /// CRT moduli: [q_0, q_1, ..., q_{L-1}]
     pub qis: [Field; L],
+    /// `Q_l = prod(qis)` as a field element. MUST fit in the scalar field
+    /// (log2 Q_l < 253); every on-chain CKKS param set satisfies this at the
+    /// opening level (`ckks_presets.rs` pins ≤ 5 limbs ≤ 45 bits).
+    pub q_full: Field,
+    /// `Q_l / q_l` per limb: the exclusive upper bound of the honest CRT
+    /// quotient `r_l = (u_global - u_crts[l]) / q_l`.
+    pub q_over_ql: [Field; L],
 }
 
 impl<let L: u32> Configs<L> {
-    pub fn new(qis: [Field; L]) -> Self {
-        Configs { qis }
+    pub fn new(qis: [Field; L], q_full: Field, q_over_ql: [Field; L]) -> Self {
+        Configs { qis, q_full, q_over_ql }
     }
 }
 
@@ -112,12 +119,56 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_D_NATIVE:
         // Step 3: CRT glue: u^{(l)} + r^{(l)} * q_l = u_global for all l.
         // This IS the final binding: u_global is the public plaintext ring
         // element. No modular decode follows (CKKS decode is off-circuit).
-        verify_crt_reconstruction::<MAX_MSG_NON_ZERO_COEFFS, L>(
-            self.configs.qis,
+        //
+        // SOUNDNESS (C-6): the shared BFV `verify_crt_reconstruction` leaves
+        // `crt_quotients` unconstrained, so the field identity is satisfiable
+        // for ANY u_global (set r_l = (u* - u_crts[l]) * q_l^{-1}). Here we
+        // pin the lift instead: with u_crts[l] in [0, q_l), 0 <= r_l < Q/q_l
+        // and 0 <= u_global < Q, the integer identity has exactly one
+        // solution and the field identity implies it (no term exceeds Q < p).
+        verify_crt_reconstruction_ckks::<MAX_MSG_NON_ZERO_COEFFS, L, BIT_D_NATIVE>(
+            self.configs,
             self.u_global,
             self.crt_quotients,
             u_crts,
         );
+    }
+}
+
+/// Sound CRT glue for CKKS: every operand is range-constrained so that the
+/// scalar-field identity `u_crts[l] + r_l * q_l == u_global` implies the
+/// integer identity, which makes `u_global` the unique CRT lift of the
+/// interpolated residues.
+///
+/// Requires `Q = prod(qis) < 2^BIT_Q` with `BIT_Q = L * BIT_D_NATIVE`, and
+/// `Q < p` (the BN254 scalar field). Both hold at every CKKS opening level in
+/// use (L <= 2, q_l <= 45 bits).
+pub fn verify_crt_reconstruction_ckks<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_D_NATIVE: u32>(
+    configs: Configs<L>,
+    u_global: Polynomial<MAX_MSG_NON_ZERO_COEFFS>,
+    crt_quotients: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
+    u_crts: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
+) {
+    // u_global in [0, Q): the canonical CRT representative.
+    u_global.range_check_standard::<L * BIT_D_NATIVE>(configs.q_full);
+
+    for basis_idx in 0..L {
+        let q_l = configs.qis[basis_idx];
+
+        // r_l in [0, Q/q_l): the honest quotient's exact range.
+        crt_quotients[basis_idx].range_check_standard::<L * BIT_D_NATIVE>(
+            configs.q_over_ql[basis_idx],
+        );
+
+        let r_times_q = crt_quotients[basis_idx].mul_scalar(q_l);
+        let reconstructed = u_crts[basis_idx].add(r_times_q);
+
+        for coeff_idx in 0..MAX_MSG_NON_ZERO_COEFFS {
+            assert(
+                reconstructed.coefficients[coeff_idx] == u_global.coefficients[coeff_idx],
+                "CRT reconstruction verification failed",
+            );
+        }
     }
 }
 
@@ -130,7 +181,8 @@ fn test_ckks_aggregation_reconstructs_shamir_secret() {
     // f(1) = 47, f(2) = 52. Lagrange at 0 with x = [1, 2]:
     // L1 = 2, L2 = -1 -> 2*47 - 52 = 42. CRT trivial (single limb).
     let qis = [97];
-    let configs = Configs::new(qis);
+    // L=1: Q = 97, Q/q_0 = 1 (the only honest quotient is 0).
+    let configs = Configs::new(qis, 97, [1]);
 
     let d1 = [Polynomial::new([47])];
     let d2 = [Polynomial::new([52])];
@@ -146,6 +198,78 @@ fn test_ckks_aggregation_reconstructs_shamir_secret() {
     let crt_quotients = [Polynomial::new([0])];
 
     let circuit: DecryptedSharesAggregationCkks<1, 1, 1, 59> = DecryptedSharesAggregationCkks::new(
+        configs,
+        expected_d_commitments,
+        shares,
+        party_ids,
+        u_global,
+        crt_quotients,
+    );
+    circuit.execute();
+}
+
+/// SOUNDNESS REGRESSION (C-6): the vacuous-CRT attack. With the shared BFV
+/// `verify_crt_reconstruction` the prover could claim ANY `u_global` by
+/// setting `r = (u* - u_crt) * q^{-1}` in the field. The honest
+/// reconstruction is 42; we claim 1000000 with the field-inverse quotient.
+/// The CKKS glue must reject it — the quotient range check fails.
+#[test(should_fail_with = "call to assert_max_bit_size")]
+fn test_ckks_aggregation_rejects_forged_u_global() {
+    let qis = [97];
+    let configs = Configs::new(qis, 97, [1]);
+
+    let d1 = [Polynomial::new([47])];
+    let d2 = [Polynomial::new([52])];
+    let shares = [d1, d2];
+    let party_ids = [1, 2];
+    let expected_d_commitments = [
+        compute_threshold_decryption_share_commitment::<1, 1, 59>(d1),
+        compute_threshold_decryption_share_commitment::<1, 1, 59>(d2),
+    ];
+
+    // Forge: u* = 1000000 != 42. r = (u* - 42) / 97 in the scalar field.
+    let forged: Field = 1000000;
+    let r: Field = (forged - 42) / 97;
+    let u_global = Polynomial::new([forged]);
+    let crt_quotients = [Polynomial::new([r])];
+
+    let circuit: DecryptedSharesAggregationCkks<1, 1, 1, 59> = DecryptedSharesAggregationCkks::new(
+        configs,
+        expected_d_commitments,
+        shares,
+        party_ids,
+        u_global,
+        crt_quotients,
+    );
+    circuit.execute();
+}
+
+/// Two-limb soundness: a forged `u_global` that is a *valid* integer lift of
+/// the wrong residues (u* = u + Q) must also be rejected — u_global must be
+/// the canonical representative in [0, Q).
+#[test(should_fail_with = "call to assert_max_bit_size")]
+fn test_ckks_aggregation_rejects_noncanonical_lift() {
+    // q0 = 97, q1 = 101, Q = 9797. Honest u = 42: residues (42, 42).
+    // Shares of 42 under f(x)=42+5x: mod 97 -> (47, 52); mod 101 -> (47, 52).
+    let qis = [97, 101];
+    let configs = Configs::new(qis, 9797, [101, 97]);
+
+    let d1 = [Polynomial::new([47]), Polynomial::new([47])];
+    let d2 = [Polynomial::new([52]), Polynomial::new([52])];
+    let shares = [d1, d2];
+    let party_ids = [1, 2];
+    let expected_d_commitments = [
+        compute_threshold_decryption_share_commitment::<1, 2, 59>(d1),
+        compute_threshold_decryption_share_commitment::<1, 2, 59>(d2),
+    ];
+
+    // u* = 42 + 9797 = 9839: consistent residues, non-canonical lift.
+    // r0 = (9839 - 42)/97 = 101, r1 = (9839 - 42)/101 = 97 — both integral,
+    // but r0 = 101 >= Q/q0 = 101 and u* >= Q, so the range checks fail.
+    let u_global = Polynomial::new([9839]);
+    let crt_quotients = [Polynomial::new([101]), Polynomial::new([97])];
+
+    let circuit: DecryptedSharesAggregationCkks<1, 2, 1, 59> = DecryptedSharesAggregationCkks::new(
         configs,
         expected_d_commitments,
         shares,

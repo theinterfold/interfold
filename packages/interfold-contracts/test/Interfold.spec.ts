@@ -243,6 +243,26 @@ describe("Interfold", function () {
         .withArgs(0);
     });
 
+    it("admits every CKKS demo ParamSet the deploy script registers", async function () {
+      // Mirrors deployInterfold.ts: on the insecure demo config (PARAM_SET
+      // == 0) the CKKS sets 2/3/4/5 share the active BFV parameter bytes.
+      // A set missing from ActiveCryptoConfig.isAllowedParamSet breaks the
+      // whole stack boot, so this list must track the deploy script.
+      const { interfold } = await loadFixture(setup);
+
+      for (const set of [2, 3, 4, 5]) {
+        await expect(interfold.setParamSet(set, BFV_PARAMS_DEFAULT))
+          .to.emit(interfold, "ParamSetRegistered")
+          .withArgs(set, BFV_PARAMS_DEFAULT);
+        expect(await interfold.paramSetRegistry(set)).to.equal(
+          BFV_PARAMS_DEFAULT,
+        );
+      }
+      await expect(
+        interfold.setParamSet(6, BFV_PARAMS_DEFAULT),
+      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+    });
+
     it("rejects parameter bytes that do not match the active circuit", async function () {
       const { interfold } = await loadFixture(setup);
 

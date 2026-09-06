@@ -1,0 +1,50 @@
+{
+  "description": "Out-of-range feature: x_3 = cap + 1 = 1001, issuer-attested by a leaf that vouches for it (the ONLY check rejecting it is the circuit's own `x_j <= cap`). `nargo execute --package ckks_credit_validity_ps4` on this witness fails in `credit_validity -> assert_cap_range(cap - features[3])` (circuits/lib/src/core/threshold/ckks_credit_validity.nr), so NO proof exists for it and the on-chain gate can never see such a submission. Recorded so the spec asserts the posture from the circuit's inputs: the public-input words below are what the applicant WOULD have published.",
+  "cap": 1000,
+  "features": [
+    520,
+    130,
+    350,
+    1001,
+    0,
+    1,
+    777,
+    42
+  ],
+  "index": 0,
+  "mask": 529664,
+  "model": {
+    "bias": -52429,
+    "weights": [
+      111411,
+      -150733,
+      58982,
+      26214,
+      -72090,
+      170394,
+      -32768,
+      78643
+    ]
+  },
+  "appPublicInputs": [
+    "0x00000000000000000000000000000000000000000000000000000000000003e8",
+    "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "0x25be5920a9d11d9cce8324d32d46091e3ea490befa778b163936455a608c8a8d",
+    "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "0x000000000000000000000000000000000000000000000000000000000001b333",
+    "0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593effdb334",
+    "0x000000000000000000000000000000000000000000000000000000000000e666",
+    "0x0000000000000000000000000000000000000000000000000000000000006666",
+    "0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593effee667",
+    "0x000000000000000000000000000000000000000000000000000000000002999a",
+    "0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593efff8001",
+    "0x0000000000000000000000000000000000000000000000000000000000013333",
+    "0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593efff3334",
+    "0x2c11ecbd504bbf0a1351e695de930df57f7983e3e4226a781fc3399826d569f3",
+    "0x1b570de7121a90d76f5b6a630526c026106e3b632bbb7753b0120f34057daebc"
+  ],
+  "nargoExecute": {
+    "exitCode": 1,
+    "failedAssertion": "Field::assert_max_bit_size::<32> in assert_cap_range(cap - features[j]), called from credit_validity (ckks_credit_validity.nr)"
+  }
+}

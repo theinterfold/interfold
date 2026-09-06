@@ -23,7 +23,8 @@
 
 use super::super::*;
 use alloy::primitives::keccak256;
-use e3_events::{CircuitName, Proof};
+use e3_events::{CircuitName, Proof, SignedProofPayload};
+use e3_evm::helpers::encode_ckks_pk_proofs;
 use e3_fhe::ckks_runtime::GetCkksAggregatePublicKey;
 use e3_fhe_params::ckks_presets::{CkksProofPosture, ProofPosture};
 use std::collections::BTreeSet;
@@ -65,6 +66,7 @@ impl PublicKeyAggregator {
         let PublicKeyAggregatorState::VerifyingC1 {
             submission_order,
             canonical_party_nodes,
+            c1_proofs,
             ..
         } = self
             .state
@@ -81,19 +83,23 @@ impl PublicKeyAggregator {
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("CKKS runtime missing on CKKS E3"))?;
 
-        // Honest set = arrived shares minus the C1-rejected parties.
-        let mut entries: Vec<(u64, String, ArcBytes)> = submission_order
-            .iter()
-            .filter(|(pid, _, _)| !dishonest.contains(pid))
-            .cloned()
-            .collect();
-        entries.sort_by_key(|(pid, _, _)| *pid);
-        let (party_ids, nodes_and_shares): (Vec<u64>, Vec<(String, ArcBytes)>) = entries
-            .into_iter()
-            .map(|(pid, node, ks)| (pid, (node, ks)))
-            .unzip();
-        let (honest_nodes, keyshares): (Vec<String>, Vec<ArcBytes>) =
-            nodes_and_shares.into_iter().unzip();
+        // Honest set = arrived shares minus the C1-rejected parties. Keep each
+        // party's C1-CKKS proof alongside its share: the on-chain
+        // `CkksPkVerifier` needs every one of them.
+        let mut entries: Vec<(u64, String, ArcBytes, Option<SignedProofPayload>)> =
+            submission_order
+                .iter()
+                .cloned()
+                .zip(c1_proofs.iter().cloned())
+                .filter(|((pid, _, _), _)| !dishonest.contains(pid))
+                .map(|((pid, node, ks), c1)| (pid, node, ks, c1))
+                .collect();
+        entries.sort_by_key(|(pid, _, _, _)| *pid);
+        let party_ids: Vec<u64> = entries.iter().map(|(pid, _, _, _)| *pid).collect();
+        let honest_nodes: Vec<String> = entries.iter().map(|(_, n, _, _)| n.clone()).collect();
+        let keyshares: Vec<ArcBytes> = entries.iter().map(|(_, _, ks, _)| ks.clone()).collect();
+        let party_c1_proofs: Vec<Option<SignedProofPayload>> =
+            entries.iter().map(|(_, _, _, c1)| c1.clone()).collect();
 
         // BFV-style aggregation: each node's `KeyshareCreated.pubkey` is
         // its pk SHARE (p0 polynomial over the common CRP); the aggregator
@@ -120,6 +126,44 @@ impl PublicKeyAggregator {
             committee_addresses_in_party_order(&party_ids, &canonical_party_nodes)?;
 
         let nodes = OrderedSet::from(honest_nodes);
+
+        // Build the on-chain `CkksPkVerifier` blob from every committee member's
+        // C1-CKKS proof. FAIL CLOSED: if the proof-free off-switch ran, or any
+        // party's proof is missing, publish NOTHING rather than an empty blob —
+        // the on-chain verifier would reject it after the gas was spent, and a
+        // silently unverified committee key is exactly what this replaces.
+        let ckks_pk_proof_blob = if self.ckks_c1_proof_free() {
+            info!(
+                e3_id = %self.e3_id,
+                "CKKS C1 proof-free off-switch is on — publishing without an on-chain pk proof blob"
+            );
+            None
+        } else {
+            let party_proofs: Vec<Proof> = party_c1_proofs
+                .iter()
+                .enumerate()
+                .map(|(index, signed)| {
+                    signed
+                        .as_ref()
+                        .map(|s| s.payload.proof.clone())
+                        .ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "party at index {index} has no C1-CKKS proof; refusing to publish \
+                                 an unverifiable committee key"
+                            )
+                        })
+                })
+                .collect::<Result<_>>()?;
+            let blob = encode_ckks_pk_proofs(&party_proofs, &pubkey)?;
+            info!(
+                e3_id = %self.e3_id,
+                parties = party_proofs.len(),
+                bytes = blob.len(),
+                "Encoded the CKKS committee-key proof blob for on-chain verification"
+            );
+            Some(ArcBytes::from_bytes(&blob))
+        };
+
         let event = PublicKeyAggregated {
             pubkey: pubkey.clone(),
             e3_id: self.e3_id.clone(),
@@ -127,14 +171,16 @@ impl PublicKeyAggregator {
             committee_addresses: committee_addresses.clone(),
             honest_committee_addresses: honest_committee_addresses.clone(),
             pk_commitment,
-            // Non-empty placeholders accepted only by mock verifiers (the
-            // same convention as the BFV test path in publish_result.rs).
+            // CKKS has no recursive DKG aggregation circuit; the real evidence
+            // travels in `ckks_pk_proof_blob`. These two slots keep the
+            // non-empty placeholders the registry's other gates expect.
             dkg_aggregator_proof: Some(Proof {
                 circuit: CircuitName::DkgAggregator,
                 data: ArcBytes::from_bytes(&[1]),
                 public_signals: ArcBytes::from_bytes(&pk_commitment),
             }),
             dkg_attestation_bundle: Some(ArcBytes::from_bytes(&[1])),
+            ckks_pk_proof_blob,
         };
 
         self.recovery.try_mutate(&ec, |mut recovery| {

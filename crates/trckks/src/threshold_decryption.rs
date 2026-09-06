@@ -116,8 +116,7 @@ pub fn calculate_threshold_decryption(
     let party_ids: Vec<usize> = req.party_ids.iter().map(|&x| x as usize).collect();
 
     let pt = trckks.decrypt(shares, party_ids, &ct)?;
-    let encoder = fhe::ckks::CkksEncoder::new(&params);
-    let values = encoder.decode(&pt)?;
+    let values = crate::program::decode_output_plaintext(&params, &pt)?;
 
     Ok(CalculateThresholdDecryptionResponse { values })
 }

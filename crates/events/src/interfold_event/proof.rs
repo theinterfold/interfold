@@ -184,6 +184,19 @@ pub enum CircuitName {
     /// ([`RELIN_ROUND1_HYBRID_DIGIT_INPUTS`]); public output
     /// `share_commitment` ([`RELIN_ROUND1_HYBRID_DIGIT_OUTPUTS`]).
     RelinRound1HybridCkksDigit,
+    /// C1-CKKS on-chain ParamSet 4 (credit-scoring preset, 4 limbs).
+    PkGenerationCkksPs4,
+    /// C6-CKKS on-chain ParamSet 4 (`share_decryption_ckks_ps4`).
+    ShareDecryptionCkksPs4,
+    /// C7-CKKS on-chain ParamSet 4.
+    DecryptedSharesAggregationCkksPs4,
+    /// C1-CKKS on-chain ParamSet 5 (coefficient inner-product preset, 3 limbs;
+    /// private matching / treasury risk / federated averaging).
+    PkGenerationCkksPs5,
+    /// C6-CKKS on-chain ParamSet 5 (`share_decryption_ckks_ps5`).
+    ShareDecryptionCkksPs5,
+    /// C7-CKKS on-chain ParamSet 5.
+    DecryptedSharesAggregationCkksPs5,
 }
 
 /// Public-input layout of [`CircuitName::RelinRound1HybridCkksDigit`]
@@ -212,6 +225,8 @@ impl CircuitName {
             0 => Some(CircuitName::PkGenerationCkksPs0),
             2 => Some(CircuitName::PkGenerationCkksPs2),
             3 => Some(CircuitName::PkGenerationCkksPs3),
+            4 => Some(CircuitName::PkGenerationCkksPs4),
+            5 => Some(CircuitName::PkGenerationCkksPs5),
             _ => None,
         }
     }
@@ -222,6 +237,8 @@ impl CircuitName {
             0 => Some(CircuitName::ThresholdShareDecryptionCkks),
             2 => Some(CircuitName::ShareDecryptionCkksPs2),
             3 => Some(CircuitName::ShareDecryptionCkksPs3),
+            4 => Some(CircuitName::ShareDecryptionCkksPs4),
+            5 => Some(CircuitName::ShareDecryptionCkksPs5),
             _ => None,
         }
     }
@@ -232,34 +249,42 @@ impl CircuitName {
             0 => Some(CircuitName::DecryptedSharesAggregationCkks),
             2 => Some(CircuitName::DecryptedSharesAggregationCkksPs2),
             3 => Some(CircuitName::DecryptedSharesAggregationCkksPs3),
+            4 => Some(CircuitName::DecryptedSharesAggregationCkksPs4),
+            5 => Some(CircuitName::DecryptedSharesAggregationCkksPs5),
             _ => None,
         }
     }
 
     /// Every C1-CKKS circuit (any param set).
-    pub fn all_pk_generation_ckks() -> [CircuitName; 3] {
+    pub fn all_pk_generation_ckks() -> [CircuitName; 5] {
         [
             CircuitName::PkGenerationCkksPs0,
             CircuitName::PkGenerationCkksPs2,
             CircuitName::PkGenerationCkksPs3,
+            CircuitName::PkGenerationCkksPs4,
+            CircuitName::PkGenerationCkksPs5,
         ]
     }
 
     /// Every C6-CKKS circuit (any param set).
-    pub fn all_share_decryption_ckks() -> [CircuitName; 3] {
+    pub fn all_share_decryption_ckks() -> [CircuitName; 5] {
         [
             CircuitName::ThresholdShareDecryptionCkks,
             CircuitName::ShareDecryptionCkksPs2,
             CircuitName::ShareDecryptionCkksPs3,
+            CircuitName::ShareDecryptionCkksPs4,
+            CircuitName::ShareDecryptionCkksPs5,
         ]
     }
 
     /// Every C7-CKKS circuit (any param set).
-    pub fn all_decrypted_shares_aggregation_ckks() -> [CircuitName; 3] {
+    pub fn all_decrypted_shares_aggregation_ckks() -> [CircuitName; 5] {
         [
             CircuitName::DecryptedSharesAggregationCkks,
             CircuitName::DecryptedSharesAggregationCkksPs2,
             CircuitName::DecryptedSharesAggregationCkksPs3,
+            CircuitName::DecryptedSharesAggregationCkksPs4,
+            CircuitName::DecryptedSharesAggregationCkksPs5,
         ]
     }
 
@@ -302,6 +327,16 @@ impl CircuitName {
                 "decrypted_shares_aggregation_ckks_ps3"
             }
             CircuitName::RelinRound1HybridCkksDigit => "relin_round1_hybrid_ckks_digit",
+            CircuitName::PkGenerationCkksPs4 => "pk_generation_ckks_ps4",
+            CircuitName::ShareDecryptionCkksPs4 => "share_decryption_ckks_ps4",
+            CircuitName::DecryptedSharesAggregationCkksPs4 => {
+                "decrypted_shares_aggregation_ckks_ps4"
+            }
+            CircuitName::PkGenerationCkksPs5 => "pk_generation_ckks_ps5",
+            CircuitName::ShareDecryptionCkksPs5 => "share_decryption_ckks_ps5",
+            CircuitName::DecryptedSharesAggregationCkksPs5 => {
+                "decrypted_shares_aggregation_ckks_ps5"
+            }
         }
     }
 
@@ -327,7 +362,13 @@ impl CircuitName {
             | CircuitName::ShareDecryptionCkksPs3
             | CircuitName::DecryptedSharesAggregationCkksPs2
             | CircuitName::DecryptedSharesAggregationCkksPs3
-            | CircuitName::RelinRound1HybridCkksDigit => "threshold",
+            | CircuitName::RelinRound1HybridCkksDigit
+            | CircuitName::PkGenerationCkksPs4
+            | CircuitName::ShareDecryptionCkksPs4
+            | CircuitName::DecryptedSharesAggregationCkksPs4
+            | CircuitName::PkGenerationCkksPs5
+            | CircuitName::ShareDecryptionCkksPs5
+            | CircuitName::DecryptedSharesAggregationCkksPs5 => "threshold",
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
             | CircuitName::C6Fold
@@ -358,7 +399,9 @@ impl CircuitName {
             CircuitName::PkGeneration
             | CircuitName::PkGenerationCkksPs0
             | CircuitName::PkGenerationCkksPs2
-            | CircuitName::PkGenerationCkksPs3 => CircuitOutputLayout::Fixed {
+            | CircuitName::PkGenerationCkksPs3
+            | CircuitName::PkGenerationCkksPs4
+            | CircuitName::PkGenerationCkksPs5 => CircuitOutputLayout::Fixed {
                 fields: PK_GENERATION_OUTPUTS,
             },
             CircuitName::SkShareComputation
@@ -374,7 +417,9 @@ impl CircuitName {
             CircuitName::ThresholdShareDecryption
             | CircuitName::ThresholdShareDecryptionCkks
             | CircuitName::ShareDecryptionCkksPs2
-            | CircuitName::ShareDecryptionCkksPs3 => CircuitOutputLayout::Fixed {
+            | CircuitName::ShareDecryptionCkksPs3
+            | CircuitName::ShareDecryptionCkksPs4
+            | CircuitName::ShareDecryptionCkksPs5 => CircuitOutputLayout::Fixed {
                 fields: THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
             },
             CircuitName::ShareEncryption => CircuitOutputLayout::Fixed {
@@ -383,7 +428,9 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation
             | CircuitName::DecryptedSharesAggregationCkks
             | CircuitName::DecryptedSharesAggregationCkksPs2
-            | CircuitName::DecryptedSharesAggregationCkksPs3 => CircuitOutputLayout::None,
+            | CircuitName::DecryptedSharesAggregationCkksPs3
+            | CircuitName::DecryptedSharesAggregationCkksPs4
+            | CircuitName::DecryptedSharesAggregationCkksPs5 => CircuitOutputLayout::None,
             CircuitName::RelinRound1HybridCkksDigit => CircuitOutputLayout::Fixed {
                 fields: RELIN_ROUND1_HYBRID_DIGIT_OUTPUTS,
             },
@@ -411,7 +458,9 @@ impl CircuitName {
             CircuitName::ThresholdShareDecryption
             | CircuitName::ThresholdShareDecryptionCkks
             | CircuitName::ShareDecryptionCkksPs2
-            | CircuitName::ShareDecryptionCkksPs3 => CircuitInputLayout::Fixed {
+            | CircuitName::ShareDecryptionCkksPs3
+            | CircuitName::ShareDecryptionCkksPs4
+            | CircuitName::ShareDecryptionCkksPs5 => CircuitInputLayout::Fixed {
                 fields: THRESHOLD_SHARE_DECRYPTION_INPUTS,
             },
             CircuitName::RelinRound1HybridCkksDigit => CircuitInputLayout::Fixed {

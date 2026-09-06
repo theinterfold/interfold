@@ -22,6 +22,7 @@ rand_chacha = { workspace = true }
 
 [dev-dependencies]
 fhe-traits = { workspace = true }
+fhe-math = { workspace = true }
 
 [[bin]]
 name = "search_params"

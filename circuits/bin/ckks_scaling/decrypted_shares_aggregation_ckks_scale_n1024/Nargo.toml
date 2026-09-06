@@ -1,0 +1,7 @@
+[package]
+name = "decrypted_shares_aggregation_ckks_scale_n1024"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+lib = { path = "../../../lib" }

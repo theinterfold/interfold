@@ -157,13 +157,39 @@ headless Chrome, `crossOriginIsolated`, SRS 2²⁰): WASM encrypt+witness ~2.0 s
 ~4.7 s, total ≈ 40 s per bid. The ps2 Greco legs (circuit_size ≈ 836 k) prove in-browser; no
 fallback to native proving was needed.
 
+## What is verified on-chain
+
+| Stage | Verified on-chain by | Circuit |
+| ----- | -------------------- | ------- |
+| Participant input validity | `CkksAppE3ProgramBase` (three Honk proofs per submission) | `user_data_encryption_ckks_ct0/ct1_ps2` + the app-validity leg |
+| Committee public key | `CkksPkVerifier` — one Honk proof PER committee member | `pk_generation_ckks_ps2` (C1-CKKS) |
+| Decrypted output (the winning bid) | `CkksDecryptionVerifier` — one Honk proof | `decrypted_shares_aggregation_ckks_ps2` (C7-CKKS) |
+
+No `MockPkVerifier` or `MockDecryptionVerifier` is registered for the CKKS scheme id. The
+committee key is accepted only if EVERY member supplies a C1-CKKS proof that it knows a small
+secret behind its pk share (the rogue-key gate), and the opened output is accepted only if the
+C7-CKKS proof shows the published ring element is the threshold reconstruction of `T+1`
+C6-committed decryption shares.
+
+Bounds worth stating plainly. The on-chain key check does not prove the published aggregate key
+is the SUM of the proven per-party shares (the circuit commits with SAFE/Poseidon over limb
+coefficients, the chain commits with keccak256 over serialised bytes, and neither is recomputable
+from the other in the EVM); the aggregator enforces that link off-chain. The output check does not
+bind the published fixed-point bytes to the proven ring element, because CKKS decode (center mod
+Q, divide by the scale, inverse FFT) is not EVM-tractable. Neither circuit carries a domain slot,
+so there is no on-chain `e3Id`/committee replay binding.
+
+**RISC0 program-correctness proving remains out of scope.** The homomorphic evaluation itself runs
+natively in the server and its ciphertext output is published behind `MockCiphertextVerifier`.
+That is the one honest remaining trust assumption in this demo.
+
 ## Honest scope / deviations from CRISP
 
 - **No RISC Zero program.** CRISP's `program/` is a zkVM guest with a compute-provider proof; the
   CKKS policy runs natively in the server (`program/` is the plain-Rust wrapper) and the
-  ciphertext output is published with the dev stack's mock ciphertext verifier. Bid VALIDITY is
-  fully proven and verified on-chain; the correctness of the homomorphic evaluation itself is
-  not (same posture as `demo/ckks-auction`).
+  ciphertext output is published with the dev stack's mock ciphertext verifier. Bid VALIDITY,
+  the COMMITTEE KEY and the DECRYPTED OUTPUT are all proven and verified on-chain (see "What is
+  verified on-chain" above); only the correctness of the homomorphic evaluation itself is not.
 - Threshold decryption of the ladder runs proof-free on the nodes (the C6 circuit is compiled for
   ParamSet 0 only; see the skill notes), and the relin ceremony has no ZK proof wired anywhere in
   the stack (verify-by-determinism; a C8 circuit for the hybrid round-1 share,

@@ -1030,11 +1030,28 @@ impl CiphernodeBuilder {
         if self.threshold_plaintext_agg {
             info!("Setting up ThresholdPlaintextAggregatorExtension");
             let _ = self.ensure_multithread(bus);
-            e3_builder = e3_builder.with(ThresholdPlaintextAggregatorExtension::create(
-                bus,
-                sortition,
-                self.proof_aggregation_enabled,
-            ));
+            // Same per-chain Interfold addresses the keyshare uses: the
+            // plaintext aggregator needs them to domain-bind CKKS C7 proofs.
+            let mut interfold_addresses = HashMap::new();
+            for chain in self.chains.iter().filter(|c| c.enabled.unwrap_or(true)) {
+                let provider = provider_cache.ensure_read_provider(chain).await?;
+                let chain_id = provider.chain_id();
+                validate_chain_id(chain, chain_id)?;
+                interfold_addresses.insert(chain_id, chain.contracts.interfold.address()?);
+            }
+            for chain in self.chains.iter().filter(|c| !c.enabled.unwrap_or(true)) {
+                if let Some(chain_id) = chain.chain_id {
+                    interfold_addresses.insert(chain_id, chain.contracts.interfold.address()?);
+                }
+            }
+            e3_builder = e3_builder.with(
+                ThresholdPlaintextAggregatorExtension::create_with_interfold(
+                    bus,
+                    sortition,
+                    self.proof_aggregation_enabled,
+                    interfold_addresses,
+                ),
+            );
         }
 
         // ── Accusation manager ──

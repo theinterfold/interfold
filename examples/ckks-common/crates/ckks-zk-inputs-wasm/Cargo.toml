@@ -34,6 +34,12 @@ js-sys = "0.3"
 getrandom = { version = "0.3", features = ["wasm_js"] }
 getrandom2 = { package = "getrandom", version = "0.2", features = ["js"] }
 
+[dev-dependencies]
+# Native-only: the ParamSet-5 layout helpers the coefficient test checks
+# against (trckks pulls tokio/actix-free crypto only, but keep it out of
+# the wasm build).
+e3-trckks = { workspace = true }
+
 [[bin]]
 name = "ckks_test_pubkey"
 path = "src/bin/ckks_test_pubkey.rs"

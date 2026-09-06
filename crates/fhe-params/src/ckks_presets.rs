@@ -96,12 +96,147 @@ pub const STATISTICS_CKKS_MODULI: [u64; 3] = [0xffffee001, 0xffffc4001, 0xffffbe
 /// rescale) and the smudging noise both sit far below it.
 pub const STATISTICS_CKKS_SCALE_BITS: i32 = 40;
 
+/// CKKS moduli for the credit-scoring preset (ParamSet 4, credit v2):
+/// the three ParamSet-3 primes plus the NEXT TWO NTT-friendly 36-bit
+/// primes below `0xffffbe001` (`fhe_math::zq::primes::generate_prime(36,
+/// 1024, prev)` twice, pinned by
+/// `credit_preset_tail_primes_are_the_next_ntt_primes`). EVERY limb is ≤
+/// the standard `InsecureDkg512` plaintext modulus, so the DKG transport
+/// needs NO wide escalation.
+///
+/// Why FIVE limbs: the credit-v2 policy
+/// (`e3_trckks::policy::credit_sigmoid_policy`) computes the logistic
+/// `σ(z) ≈ 0.5 + 0.197·z − 0.004·z³` HOMOMORPHICALLY, slot-wise, over
+/// the packed logits — one plaintext one-hot isolation level plus TWO
+/// ciphertext × ciphertext products (z², then z²·z), each followed by a
+/// rescale: three rescales in total, so the output opens at level 3 with
+/// two limbs (`Q_3 ≈ 2^72`) above the ~2^66 masked message. The two
+/// relinearizations happen at levels 1 and 2 → `RelinCeremonyPlan::
+/// PerLevel([1, 2])`. MUST mirror `e3_trckks::config::credit_transport_params`
+/// (dependency direction forbids importing it; pinned by a byte-equality
+/// test in e3-trckks).
+pub const CREDIT_CKKS_MODULI: [u64; 5] = [
+    0xffffee001,
+    0xffffc4001,
+    0xffffbe001,
+    0xffffba001,
+    CREDIT_CKKS_FIFTH_MODULUS,
+];
+
+/// The fifth credit limb: `generate_prime(36, 1024, 0xffffba001)`.
+pub const CREDIT_CKKS_FIFTH_MODULUS: u64 = 0xffffb7001;
+
+/// CKKS scale bits for the credit-scoring preset. delta = 2^40: the
+/// applicant's replicated logit (`|z| ≤ 16`) and output mask (`< 2^10`)
+/// encode to `< 2^50` (i64 encoder cap), every intermediate product
+/// stays ≥ 2^40 below its level's `Q_ℓ/2`, and the opening at level 3
+/// carries scale `2^240 / (q_1³ q_2 q_3) ≈ 2^56` — the 20-bit demo
+/// smudging noise lands at ~2^-36 in the decoded score.
+pub const CREDIT_CKKS_SCALE_BITS: i32 = 40;
+
+/// CKKS moduli for the COEFFICIENT-ENCODED inner-product preset
+/// (ParamSet 5) shared by the private-matching, treasury-risk and
+/// federated-averaging apps: the first two ParamSet-3 primes plus the
+/// credit tail's `0xffffba001` as the rescale prime. Same shape and
+/// budget as ParamSet 3 (three 36-bit limbs, one ct×ct level, opens at
+/// level 1) but a DIFFERENT prime set on purpose: on-chain param sets
+/// are recognised by PARAMETER EQUALITY (`ckks_on_chain_param_set_for`),
+/// and set 5 publishes a coefficient-encoded output where set 3
+/// publishes slots — identical params would make the output layout
+/// ambiguous. Every limb is ≤ the standard `InsecureDkg512` plaintext
+/// modulus → no wide transport. MUST mirror
+/// `e3_trckks::config::coefficient_transport_params` (pinned by a
+/// byte-equality test in e3-trckks).
+///
+/// Why coefficient encoding: all three apps open an INNER PRODUCT of two
+/// encrypted vectors. In slot encoding that needs rotations (Galois keys
+/// the committee has no ceremony for); in coefficient encoding a forward
+/// polynomial `Σ a_j t^{j+1}` times a reversed one `Σ b_j t^{N-j-1}` puts
+/// `−⟨a,b⟩` on coefficient 0 (every matched pair meets at `t^N ≡ −1`)
+/// with ONE ct×ct product under the level-0 relin key — proven in fhe.rs
+/// `coefficient_encoding_inner_product` and in
+/// `e3_trckks::policy` e2e tests.
+pub const COEFFICIENT_CKKS_MODULI: [u64; 3] = [0xffffee001, 0xffffc4001, 0xffffba001];
+
+/// CKKS scale bits for ParamSet 5. delta = 2^40: cap-normalised inputs
+/// (`|x| ≤ 1`), integer sample counts `< 2^10` and cross-term masks
+/// `< 2^10` all encode `< 2^50`; the product opens at level 1 with scale
+/// `2^80 / q_2 ≈ 2^44`, so the largest opened coefficient
+/// (`2^10 · 2^4 · n_parties`) sits ≥ 2^12 below `Q_1/2 ≈ 2^71` and the
+/// 20-bit demo smudging lands at ~2^-24 in the decoded values.
+pub const COEFFICIENT_CKKS_SCALE_BITS: i32 = 40;
+
+/// Level the ParamSet-5 policies open at: ONE ct×ct product at level 0
+/// (relinearised under the level-0 key), then ONE rescale.
+pub const COEFFICIENT_OPENING_LEVEL: usize = 1;
+
+/// Levels the credit-v2 policy multiplies ciphertext × ciphertext at
+/// (`z·z` at level 1 after the one-hot isolation rescale, `z²·z` at
+/// level 2) — the per-level relin ceremony keys ParamSet 4 needs.
+pub const CREDIT_RELIN_LEVELS: [usize; 2] = [1, 2];
+
+/// Level the credit-v2 output ciphertext is opened at (three rescales:
+/// one-hot isolation, `z²`, `z³`). C6/C7 witnesses for ParamSet 4 are
+/// built at THIS level (two limbs), never at level 0.
+pub const CREDIT_OPENING_LEVEL: usize = 3;
+
+/// Level the sign-extraction (ParamSet 2) output is opened at: the pack
+/// step rescales once and each of the [`SIGN_EXTRACTION_ITERATIONS`]
+/// cubic iterations rescales three times, so the ladder's final level is
+/// `1 + 3·iterations` — its LAST level (one limb left).
+pub const fn sign_extraction_opening_level(iterations: usize) -> usize {
+    1 + 3 * iterations
+}
+
+/// Level the statistics (ParamSet 3) packed output is opened at: the
+/// policy squares at level 0 and rescales ONCE.
+pub const STATISTICS_OPENING_LEVEL: usize = 1;
+
+/// The level an E3's OUTPUT ciphertext is opened at for one param set —
+/// the level the committee's decryption shares are computed over, and
+/// therefore the level the C6-CKKS (`share_decryption_ckks[_ps<N>]`)
+/// and C7-CKKS (`decrypted_shares_aggregation_ckks[_ps<N>]`) circuit
+/// configs MUST be generated at (their `L` is the number of moduli that
+/// REMAIN at this level, not the full chain). A PURE function of the
+/// param set, mirrored by the policies in `e3_trckks::policy`:
+///
+/// - set 0 (masked-difference auction, `auction_round_policy`): no
+///   rescale → level 0;
+/// - set 2 (sign extraction): `1 + 3·12 = 37` — the ladder's last level;
+/// - set 3 (statistics): level 1;
+/// - set 4 (credit v2): [`CREDIT_OPENING_LEVEL`] = 3;
+/// - set 5 (coefficient inner products): [`COEFFICIENT_OPENING_LEVEL`] = 1.
+pub fn ckks_opening_level_for_param_set(param_set: u8) -> Result<usize> {
+    match param_set {
+        0 => Ok(0),
+        2 => Ok(sign_extraction_opening_level(SIGN_EXTRACTION_ITERATIONS)),
+        3 => Ok(STATISTICS_OPENING_LEVEL),
+        4 => Ok(CREDIT_OPENING_LEVEL),
+        5 => Ok(COEFFICIENT_OPENING_LEVEL),
+        other => bail!("Unknown ParamSet enum value {other} for a CKKS E3 (opening level)"),
+    }
+}
+
+/// Number of ciphertext moduli that remain at the opening level of
+/// `param_set` — the `L` of its C6/C7 circuit configs.
+pub fn ckks_opening_limbs_for_param_set(param_set: u8) -> Result<usize> {
+    let params = ckks_params_for_on_chain_param_set(param_set)?;
+    let level = ckks_opening_level_for_param_set(param_set)?;
+    Ok(params
+        .context_at_level(level)
+        .with_context(|| format!("ParamSet {param_set} has no context at level {level}"))?
+        .moduli()
+        .len())
+}
+
 /// Build the canonical CKKS parameters for an on-chain `ParamSet` value.
 /// `0` = insecure-512 (demo). `2` = insecure-512 sign-extraction ladder
 /// (leak-free auction winner mode; NEEDS the WIDE DKG transport preset —
 /// its 45-bit base exceeds the standard `InsecureDkg512` plaintext
 /// modulus). `3` = statistics 3-limb preset (relinearized sum-of-squares;
-/// fits the STANDARD transport). Secure presets land with their flooding
+/// fits the STANDARD transport). `4` = credit-scoring 4-limb preset
+/// (coefficient-encoded linear scoring; fits the STANDARD transport).
+/// Secure presets land with their flooding
 /// derivation (`CkksSmudgingBoundCalculator`) — rejecting unknown values
 /// keeps version-skewed nodes out of committees they can't serve.
 pub fn ckks_params_for_on_chain_param_set(param_set: u8) -> Result<Arc<CkksParameters>> {
@@ -125,6 +260,18 @@ pub fn ckks_params_for_on_chain_param_set(param_set: u8) -> Result<Arc<CkksParam
             .set_scale(2f64.powi(STATISTICS_CKKS_SCALE_BITS))
             .build_arc()
             .context("failed to build statistics CKKS params"),
+        4 => CkksParametersBuilder::new()
+            .set_degree(512)
+            .set_moduli(&CREDIT_CKKS_MODULI)
+            .set_scale(2f64.powi(CREDIT_CKKS_SCALE_BITS))
+            .build_arc()
+            .context("failed to build credit-scoring CKKS params"),
+        5 => CkksParametersBuilder::new()
+            .set_degree(512)
+            .set_moduli(&COEFFICIENT_CKKS_MODULI)
+            .set_scale(2f64.powi(COEFFICIENT_CKKS_SCALE_BITS))
+            .build_arc()
+            .context("failed to build coefficient inner-product CKKS params"),
         other => bail!(
             "Unknown ParamSet enum value {other} for a CKKS E3 — this node's binary does not \
              recognize this CKKS preset (likely version skew with the on-chain contracts)."
@@ -176,7 +323,7 @@ pub fn ckks_dkg_transport_preset_from_bytes(
 
 /// Every on-chain `ParamSet` value that names a CKKS preset, in
 /// identification order.
-pub const CKKS_ON_CHAIN_PARAM_SETS: [u8; 3] = [0, 2, 3];
+pub const CKKS_ON_CHAIN_PARAM_SETS: [u8; 5] = [0, 2, 3, 4, 5];
 
 /// The canonical CKKS param set (set 0). Its C6/C7 artifacts keep the
 /// un-suffixed names (`share_decryption_ckks`,
@@ -273,12 +420,22 @@ pub fn sign_extraction_mult_levels(iterations: usize) -> Vec<usize> {
 ///   polys vs `2·L² = 18` for the one RNS key the policy needs, and the
 ///   RNS relin noise is already divided by `q_2` in the rescale that
 ///   follows — so set 3 stays on per-level keys and the standard
-///   transport.
+///   transport;
+/// - set 4 (credit scoring v2): PER-LEVEL at levels 1 and 2
+///   ([`CREDIT_RELIN_LEVELS`]) — the sigmoid policy
+///   (`credit_sigmoid_policy`) multiplies ciphertext × ciphertext twice
+///   (`z²` at level 1, `z²·z` at level 2) after the one-hot isolation
+///   rescale; at `L = 5` a hybrid key would again be larger than the two
+///   RNS keys, so set 4 stays per-level on the standard transport.
 pub fn relin_ceremony_plan_for_param_set(param_set: u8) -> Result<RelinCeremonyPlan> {
     match param_set {
         0 => Ok(RelinCeremonyPlan::None),
         2 => Ok(RelinCeremonyPlan::Hybrid),
         3 => Ok(RelinCeremonyPlan::PerLevel(vec![0])),
+        4 => Ok(RelinCeremonyPlan::PerLevel(CREDIT_RELIN_LEVELS.to_vec())),
+        // set 5 (coefficient inner products): ONE ct×ct at level 0, like
+        // set 3 — same per-level key, same reasoning.
+        5 => Ok(RelinCeremonyPlan::PerLevel(vec![0])),
         other => bail!("Unknown ParamSet enum value {other} for a CKKS E3 (relin ceremony plan)"),
     }
 }
@@ -582,6 +739,99 @@ mod tests {
         );
     }
 
+    /// ParamSet 4 (credit scoring v2): five 36-bit limbs, every one ≤ the
+    /// STANDARD `InsecureDkg512` transport modulus (no wide escalation),
+    /// the first three byte-identical to ParamSet 3's, and the params
+    /// round-trip through the wire encoding.
+    #[test]
+    fn credit_preset_fits_standard_transport() {
+        let params = ckks_params_for_on_chain_param_set(4).unwrap();
+        assert_eq!(params.degree(), 512);
+        assert_eq!(params.moduli().len(), 5, "four rescale levels");
+        assert_eq!(params.max_level(), CREDIT_OPENING_LEVEL + 1);
+        assert_eq!(&params.moduli()[..3], &STATISTICS_CKKS_MODULI);
+        assert!(!params.hybrid_enabled());
+        let t_dkg = crate::constants::insecure_512::dkg::PLAINTEXT_MODULUS;
+        for q in params.moduli() {
+            assert!(*q <= t_dkg, "modulus {q:#x} exceeds standard t {t_dkg:#x}");
+            assert_eq!(64 - q.leading_zeros(), 36, "36-bit limb {q:#x}");
+        }
+        assert_eq!(
+            ckks_dkg_transport_preset(crate::BfvPreset::InsecureDkg512, params.moduli()).unwrap(),
+            crate::BfvPreset::InsecureDkg512
+        );
+        let decoded = CkksParameters::try_deserialize(&params.to_bytes()).unwrap();
+        assert_eq!(decoded.moduli(), params.moduli());
+        assert_eq!(decoded.degree(), params.degree());
+        assert_eq!(decoded.scale(), 2f64.powi(CREDIT_CKKS_SCALE_BITS));
+    }
+
+    /// The opening level of every param set is a level its modulus chain
+    /// has, and the C6/C7 config `L` is the limb count that REMAINS
+    /// there: set 0 opens fresh (2 limbs), set 2 at the ladder's last
+    /// level (1 limb of 38), set 3 after one rescale (2 of 3), set 4
+    /// after three (2 of 5).
+    #[test]
+    fn opening_levels_and_remaining_limbs() {
+        assert_eq!(ckks_opening_level_for_param_set(0).unwrap(), 0);
+        assert_eq!(ckks_opening_level_for_param_set(2).unwrap(), 37);
+        assert_eq!(ckks_opening_level_for_param_set(3).unwrap(), 1);
+        assert_eq!(ckks_opening_level_for_param_set(4).unwrap(), 3);
+        assert_eq!(ckks_opening_limbs_for_param_set(0).unwrap(), 2);
+        assert_eq!(ckks_opening_limbs_for_param_set(2).unwrap(), 1);
+        assert_eq!(ckks_opening_limbs_for_param_set(3).unwrap(), 2);
+        assert_eq!(ckks_opening_limbs_for_param_set(4).unwrap(), 2);
+        for set in CKKS_ON_CHAIN_PARAM_SETS {
+            let params = ckks_params_for_on_chain_param_set(set).unwrap();
+            let level = ckks_opening_level_for_param_set(set).unwrap();
+            assert!(level <= params.max_level(), "set {set}");
+            assert_eq!(
+                params.context_at_level(level).unwrap().moduli().len(),
+                params.moduli().len() - level
+            );
+        }
+        assert!(ckks_opening_level_for_param_set(1).is_err());
+        assert_eq!(
+            sign_extraction_opening_level(SIGN_EXTRACTION_ITERATIONS),
+            sign_extraction_moduli_sizes(SIGN_EXTRACTION_ITERATIONS).len() - 1
+        );
+    }
+
+    /// The fourth and fifth credit limbs are EXACTLY what the prime
+    /// generator every preset uses yields for "the next NTT-friendly
+    /// 36-bit prime below the previous one" (modulo `2N = 1024`), twice.
+    #[test]
+    fn credit_preset_tail_primes_are_the_next_ntt_primes() {
+        let upper = STATISTICS_CKKS_MODULI[2];
+        let next = fhe_math::zq::primes::generate_prime(36, 2 * 512, upper).unwrap();
+        assert_eq!(next, CREDIT_CKKS_MODULI[3]);
+        assert_eq!(CREDIT_CKKS_MODULI[3], 0xffffba001);
+        assert!(next < upper);
+        assert_eq!(next % 1024, 1);
+        let fifth = fhe_math::zq::primes::generate_prime(36, 2 * 512, next).unwrap();
+        assert_eq!(fifth, CREDIT_CKKS_MODULI[4]);
+        assert_eq!(fifth, CREDIT_CKKS_FIFTH_MODULUS);
+        assert!(fifth < next);
+        assert_eq!(fifth % 1024, 1);
+        // Every limb is distinct (the RNS chain needs coprime moduli).
+        let mut sorted = CREDIT_CKKS_MODULI.to_vec();
+        sorted.dedup();
+        assert_eq!(sorted.len(), 5);
+    }
+
+    #[test]
+    fn param_set_4_keeps_the_param_set_0_bfv_encoding() {
+        use crate::BfvPreset;
+        assert_eq!(
+            BfvPreset::from_on_chain_param_set(4),
+            Some(BfvPreset::InsecureThreshold512)
+        );
+        assert_eq!(
+            BfvPreset::from_on_chain_param_set(0),
+            BfvPreset::from_on_chain_param_set(4)
+        );
+    }
+
     /// The set identification is the exact inverse of the builder for
     /// every known set, over the wire bytes the node actually receives.
     #[test]
@@ -619,6 +869,15 @@ mod tests {
             relin_ceremony_plan_for_param_set(3).unwrap(),
             RelinCeremonyPlan::PerLevel(vec![0])
         );
+        assert_eq!(
+            relin_ceremony_plan_for_param_set(4).unwrap(),
+            RelinCeremonyPlan::PerLevel(vec![1, 2]),
+            "the sigmoid policy relinearizes at levels 1 and 2"
+        );
+        assert!(relin_ceremony_plan_for_param_set(4)
+            .unwrap()
+            .runs_ceremony());
+        assert_eq!(relin_ceremony_plan_for_param_set(4).unwrap().key_count(), 2);
         assert_eq!(
             relin_ceremony_plan_for_param_set(2).unwrap(),
             RelinCeremonyPlan::Hybrid
@@ -679,6 +938,15 @@ mod tests {
         let set3 = posture(3);
         assert_eq!(set3.transport, BfvPreset::InsecureDkg512);
         assert!(all_proven(&set3));
+
+        let set4 = posture(4);
+        assert_eq!(set4.transport, BfvPreset::InsecureDkg512);
+        assert!(all_proven(&set4));
+        assert_eq!(
+            set4.summary(),
+            "param_set=4 transport=INSECURE_DKG_512 c0=proven c1=proven c6=proven \
+             c7=proven ceremony=proven"
+        );
 
         // Same inputs, same posture (what committee-wide agreement rests on).
         assert_eq!(posture(2), posture(2));

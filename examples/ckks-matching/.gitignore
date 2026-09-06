@@ -1,0 +1,9 @@
+node_modules
+dist
+database
+.interfold
+out
+target
+*.log
+packages/ckks-matching-sdk/.node-bundle/
+scripts/.sdk-node/

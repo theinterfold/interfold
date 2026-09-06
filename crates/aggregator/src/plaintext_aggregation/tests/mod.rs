@@ -194,6 +194,7 @@ async fn build_plaintext_aggregator_with_role(
             committee_addresses: vec![test_committee_address()],
             honest_committee_addresses: vec![test_committee_address()],
             recovery: test_persistable(ThresholdPlaintextAggregatorRecoveryState::default()),
+            ckks_decryption_domain: None,
         },
         test_persistable(initial_state),
     );

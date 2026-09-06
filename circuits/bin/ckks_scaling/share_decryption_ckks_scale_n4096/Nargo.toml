@@ -1,0 +1,7 @@
+[package]
+name = "share_decryption_ckks_scale_n4096"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+lib = { path = "../../../lib" }

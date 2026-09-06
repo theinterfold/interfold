@@ -25,7 +25,7 @@
 use anyhow::{anyhow, bail, Context, Result};
 use e3_events::OrderedSet;
 use e3_utils::{ArcBytes, SharedRng};
-use fhe::ckks::{CkksCiphertext, CkksEncoder, CkksParameters, CkksSecretKey};
+use fhe::ckks::{CkksCiphertext, CkksParameters, CkksSecretKey};
 use fhe::trckks::{
     CkksCrp, CkksHybridRelinKeyGenerator, CkksHybridRelinKeyShare, CkksPublicKeyShare,
     CkksRelinKeyGenerator, CkksRelinKeyShare, R1Aggregated, R2, TRCKKS,
@@ -365,7 +365,7 @@ impl CkksFhe {
             .collect::<Result<Vec<_>>>()?;
         let party_ids: Vec<usize> = msg.party_ids.iter().map(|&x| x as usize).collect();
         let pt = trckks.decrypt(shares, party_ids, &ct)?;
-        let values = CkksEncoder::new(&self.params).decode(&pt)?;
+        let values = e3_trckks::program::decode_output_plaintext(&self.params, &pt)?;
         Ok(bincode::serialize(&values)?)
     }
 

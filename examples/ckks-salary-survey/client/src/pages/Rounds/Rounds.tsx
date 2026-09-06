@@ -5,17 +5,21 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { useState } from 'react'
-import { Link } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { useQueryClient } from '@tanstack/react-query'
+import { RoundCard, SectionHeader, e3Short, e3Num } from '@interfold/ckks-editorial'
 import { useRounds } from '@/hooks/useRounds'
 import { useSurvey } from '@/context/SurveyContext'
 import { statusLabel } from '@/components/StatusTimeline'
 import { fmtTime } from '@/utils/constants'
 
+const statusOf = (s: string): 'live' | 'closed' | 'pending' => (s === 'open' ? 'live' : s === 'requested' ? 'pending' : 'closed')
+
 const Rounds = () => {
   const rounds = useRounds()
   const { api } = useSurvey()
   const qc = useQueryClient()
+  const navigate = useNavigate()
   const [creating, setCreating] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -32,33 +36,66 @@ const Rounds = () => {
     }
   }
 
+  const list = rounds.data ?? []
+
   return (
-    <div className="page">
-      <div className="row between">
-        <h1>Rounds</h1>
-        <button onClick={create} disabled={creating} data-testid="create-round">
-          {creating ? 'Requesting…' : 'New round (admin)'}
-        </button>
-      </div>
-      {error && <div className="err">{error}</div>}
-      {rounds.isLoading && <p className="muted">Loading…</p>}
-      {rounds.isError && <p className="err">Server unreachable: {String(rounds.error)}</p>}
-      {rounds.data && rounds.data.length === 0 && <p className="muted">No rounds yet — request one.</p>}
-      <ul className="rounds" data-testid="rounds-list">
-        {rounds.data?.map((r) => (
-          <li key={r.e3_id} className="card">
-            <Link to={`/rounds/${r.e3_id}`} data-testid={`round-${r.e3_id}`}>
-              <b>Round #{r.e3_id}</b>
-            </Link>
-            <span className={`pill ${r.status}`}>{statusLabel(r.status)}</span>
-            <span className="muted">
-              {r.submission_count} submissions · cap {r.salary_cap.toLocaleString()} · window {fmtTime(r.input_window[0])}–
-              {fmtTime(r.input_window[1])}
-            </span>
-          </li>
-        ))}
-      </ul>
-    </div>
+    <>
+      <section className="pad-section">
+        <SectionHeader num="01" kicker="ROUNDS" title="Survey rounds" meta={`${list.length} on this chain`} />
+        {rounds.isLoading && (
+          <p className="muted" style={{ marginTop: 24 }}>
+            Loading…
+          </p>
+        )}
+        {rounds.isError && (
+          <p className="error" style={{ marginTop: 24 }}>
+            Server unreachable: {String(rounds.error)}
+          </p>
+        )}
+        {rounds.data && rounds.data.length === 0 && (
+          <p className="muted" style={{ marginTop: 24 }}>
+            No rounds yet — request one below.
+          </p>
+        )}
+        <div className="grid-3" style={{ marginTop: 28 }} data-testid="rounds-list">
+          {list.map((r) => (
+            <RoundCard
+              key={r.e3_id}
+              testId={`round-${r.e3_id}`}
+              num={e3Num(r.e3_id)}
+              title={`Round ${e3Short(r.e3_id)}`}
+              status={statusOf(r.status)}
+              endsAtMs={r.input_window[1] * 1000}
+              meta={
+                <span className="col" style={{ gap: 4 }}>
+                  <span>
+                    {r.submission_count} submission{r.submission_count === 1 ? '' : 's'} · cap {r.salary_cap.toLocaleString()}
+                  </span>
+                  <span>
+                    {statusLabel(r.status)} · {fmtTime(r.input_window[0])}–{fmtTime(r.input_window[1])}
+                  </span>
+                </span>
+              }
+              onClick={() => navigate(`/rounds/${r.e3_id}`)}
+            />
+          ))}
+        </div>
+      </section>
+
+      <section className="pad-section">
+        <SectionHeader num="02" kicker="ADMIN" title="Open a round" meta="admin key" />
+        <p className="muted" style={{ marginTop: 20 }}>
+          The server requests an E3 through <span className="mono">CkksSalaryE3Program</span> (ParamSet 3, N=512, 3 limbs). The committee's DKG and
+          relinearisation ceremony run before submissions open.
+        </p>
+        <div className="row" style={{ gap: 12, marginTop: 20 }}>
+          <button type="button" className="btn" onClick={create} disabled={creating} data-testid="create-round">
+            {creating ? 'Requesting…' : 'New round (admin) →'}
+          </button>
+          {error && <span className="error">{error}</span>}
+        </div>
+      </section>
+    </>
   )
 }
 

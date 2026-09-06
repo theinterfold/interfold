@@ -11,6 +11,7 @@ repository = "https://github.com/theinterfold/interfold"
 [workspace.dependencies]
 e3-zk-helpers = { path = "../../crates/zk-helpers" }
 e3-fhe-params = { path = "../../crates/fhe-params" }
+e3-trckks = { path = "../../crates/trckks" }
 e3-polynomial = { path = "../../crates/polynomial", features = ["serde"] }
 fhe = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
 fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }

@@ -2,13 +2,13 @@
 # SPDX-License-Identifier: LGPL-3.0-only
 #
 # Scaffolds the per-ParamSet C6-CKKS / C7-CKKS bin packages
-# (share_decryption_ckks_ps{2,3}, decrypted_shares_aggregation_ckks_ps{2,3}) from
+# (share_decryption_ckks_ps{2,3,4}, decrypted_shares_aggregation_ckks_ps{2,3,4}) from
 # the canonical ps0 packages: identical main.nr bodies, per-set config module.
 # Idempotent. ParamSet 0 keeps its canonical package names.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 BIN="$ROOT/circuits/bin/threshold"
-for SET in 2 3; do
+for SET in 2 3 4 5; do
   for PAIR in "share_decryption_ckks:ckks_share_decryption" "decrypted_shares_aggregation_ckks:ckks_aggregation"; do
     BASE="${PAIR%%:*}"; MODULE="${PAIR##*:}"
     DIR="$BIN/${BASE}_ps${SET}"

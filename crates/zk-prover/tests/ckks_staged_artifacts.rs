@@ -18,7 +18,7 @@ use fhe_traits::Serialize as _;
 fn every_ckks_param_set_is_fully_staged() {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../tests/integration/.interfold/noir/circuits");
-    for set in [0u8, 2, 3] {
+    for set in [0u8, 2, 3, 4, 5] {
         let params = ckks_params_for_on_chain_param_set(set).unwrap();
         let posture = check_ckks_artifacts_for_e3(
             Some(&dir),

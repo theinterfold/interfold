@@ -1,0 +1,34 @@
+{
+  "description": "Out-of-range entry: v_0 = 1.5 (V_0 = 98304 > 2^16), declared honestly by the party. `nargo execute --package ckks_matching_validity_ps5` on this witness fails in `matching_validity -> assert_entry_range(values[0])` (circuits/lib/src/core/threshold/ckks_matching_validity.nr), so NO proof exists for it and the on-chain gate can never see such a submission. The public-input words below are what the party WOULD have published.",
+  "role": 0,
+  "index": 0,
+  "values": [
+    98304,
+    -16384,
+    65536,
+    -65536,
+    8192,
+    0,
+    49152,
+    -32768,
+    19661,
+    -45875,
+    58982,
+    -6554,
+    39322,
+    13107,
+    -26214,
+    3277
+  ],
+  "appPublicInputs": [
+    "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "0x0ad43d6324b16a159f48cc62da28f95fbfacfd578bfca48a76f98ed812fb319a",
+    "0x24bade612f8e59b06bda4531c4c5ef2eab75d57b79605344add4baa458d52909"
+  ],
+  "nargoExecute": {
+    "exitCode": 1,
+    "failedAssertion": "Field::assert_max_bit_size::<18> in assert_entry_range(values[j]), called from matching_validity (ckks_matching_validity.nr)"
+  }
+}

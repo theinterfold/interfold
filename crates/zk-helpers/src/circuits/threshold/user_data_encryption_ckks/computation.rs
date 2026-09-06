@@ -293,19 +293,68 @@ impl Computation for Inputs {
     type Error = CircuitsErrors;
 
     fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
+        // Slot (canonical-embedding) encoding at level 0.
+        let encoder = CkksEncoder::new(&preset.params);
+        let pt = encoder
+            .encode(&data.values, 0)
+            .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
+        Self::compute_from_plaintext(preset, &data.public_key, &pt)
+    }
+
+    // Used as input for Nargo execution. Coefficients are JSON numbers when
+    // they fit in i64, else strings (same convention as the BFV circuit).
+    fn to_json(&self) -> serde_json::Result<serde_json::Value> {
+        use crate::crt_polynomial_to_toml_json;
+        use crate::polynomial_to_toml_json;
+
+        let json = serde_json::json!({
+            "pk0is": crt_polynomial_to_toml_json(&self.pk0is),
+            "pk1is": crt_polynomial_to_toml_json(&self.pk1is),
+            "ct0is": crt_polynomial_to_toml_json(&self.ct0is),
+            "ct1is": crt_polynomial_to_toml_json(&self.ct1is),
+            "u": polynomial_to_toml_json(&self.u),
+            "e0": polynomial_to_toml_json(&self.e0),
+            "e1": polynomial_to_toml_json(&self.e1),
+            "m": polynomial_to_toml_json(&self.m),
+            "r1is": crt_polynomial_to_toml_json(&self.r1is),
+            "r2is": crt_polynomial_to_toml_json(&self.r2is),
+            "p1is": crt_polynomial_to_toml_json(&self.p1is),
+            "p2is": crt_polynomial_to_toml_json(&self.p2is),
+        });
+
+        Ok(json)
+    }
+}
+
+impl Inputs {
+    /// Encrypts an ALREADY-ENCODED level-0 plaintext (slot OR coefficient
+    /// encoding — the Greco relation `ct0 = pk0*u + e0 + m` is
+    /// encoding-agnostic) with witness extraction and builds the circuit
+    /// inputs. Fresh randomness per call: ONE call per submission.
+    pub fn compute_from_plaintext(
+        preset: CkksPreset,
+        public_key: &fhe::ckks::CkksPublicKey,
+        pt: &fhe::ckks::CkksPlaintext,
+    ) -> Result<Self, CircuitsErrors> {
+        Self::compute_from_plaintext_with_rng(preset, public_key, pt, &mut rand::rng())
+    }
+
+    /// [`Inputs::compute_from_plaintext`] with a caller-supplied RNG (a
+    /// seeded stream makes the ciphertext and witness reproducible — the
+    /// WASM parity tests pin byte equality this way).
+    pub fn compute_from_plaintext_with_rng<R: rand::RngCore + rand::CryptoRng>(
+        preset: CkksPreset,
+        public_key: &fhe::ckks::CkksPublicKey,
+        pt: &fhe::ckks::CkksPlaintext,
+        rng: &mut R,
+    ) -> Result<Self, CircuitsErrors> {
         let params = &preset.params;
         let moduli = params.moduli();
         let n = params.degree() as u64;
         let cyclo = cyclotomic_polynomial(n);
 
-        // Encode and encrypt with witness extraction.
-        let encoder = CkksEncoder::new(params);
-        let pt = encoder
-            .encode(&data.values, 0)
-            .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
-        let (ct, u, e0, e1) = data
-            .public_key
-            .try_encrypt_extended(&pt, &mut rand::rng())
+        let (ct, u, e0, e1) = public_key
+            .try_encrypt_extended(pt, rng)
             .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
 
         // Reconstruct e0 and m mod Q (centered) for quotient computation.
@@ -358,8 +407,8 @@ impl Computation for Inputs {
         // CRT limbs of the public inputs.
         let mut ct0 = CrtPolynomial::from_fhe_polynomial(&ct[0]);
         let mut ct1 = CrtPolynomial::from_fhe_polynomial(&ct[1]);
-        let mut pk0 = CrtPolynomial::from_fhe_polynomial(&data.public_key.c[0]);
-        let mut pk1 = CrtPolynomial::from_fhe_polynomial(&data.public_key.c[1]);
+        let mut pk0 = CrtPolynomial::from_fhe_polynomial(&public_key.c[0]);
+        let mut pk1 = CrtPolynomial::from_fhe_polynomial(&public_key.c[1]);
 
         ct0.reverse();
         ct1.reverse();
@@ -454,30 +503,6 @@ impl Computation for Inputs {
             m: m_poly,
             ciphertext: ct.to_bytes(),
         })
-    }
-
-    // Used as input for Nargo execution. Coefficients are JSON numbers when
-    // they fit in i64, else strings (same convention as the BFV circuit).
-    fn to_json(&self) -> serde_json::Result<serde_json::Value> {
-        use crate::crt_polynomial_to_toml_json;
-        use crate::polynomial_to_toml_json;
-
-        let json = serde_json::json!({
-            "pk0is": crt_polynomial_to_toml_json(&self.pk0is),
-            "pk1is": crt_polynomial_to_toml_json(&self.pk1is),
-            "ct0is": crt_polynomial_to_toml_json(&self.ct0is),
-            "ct1is": crt_polynomial_to_toml_json(&self.ct1is),
-            "u": polynomial_to_toml_json(&self.u),
-            "e0": polynomial_to_toml_json(&self.e0),
-            "e1": polynomial_to_toml_json(&self.e1),
-            "m": polynomial_to_toml_json(&self.m),
-            "r1is": crt_polynomial_to_toml_json(&self.r1is),
-            "r2is": crt_polynomial_to_toml_json(&self.r2is),
-            "p1is": crt_polynomial_to_toml_json(&self.p1is),
-            "p2is": crt_polynomial_to_toml_json(&self.p2is),
-        });
-
-        Ok(json)
     }
 }
 

@@ -255,6 +255,36 @@ export interface VerifierDeployments {
  *
  * @returns A mapping of contract names to their deployed addresses.
  */
+/**
+ * Deploys the two shared Honk libraries and ONE named generated verifier,
+ * linked against them. Use when a caller needs a specific circuit verifier
+ * without the full `deployAndSaveAllVerifiers` sweep — the CKKS committee-key
+ * and decryption verifiers need theirs on the mock demo stacks, where ZK
+ * verification (and therefore the sweep) is off.
+ */
+export const deployAndSaveSingleVerifier = async (
+  contractName: string,
+  hre: HardhatRuntimeEnvironment,
+): Promise<{ address: string }> => {
+  const chain = getDeploymentChain(hre);
+  const zkTranscriptLibAddress = await deployHonkLibrary(
+    hre,
+    chain,
+    contractName,
+    "ZKTranscriptLib",
+  );
+  const relationsLibAddress = await deployHonkLibrary(
+    hre,
+    chain,
+    contractName,
+    "RelationsLib",
+  );
+  return deployAndSaveVerifier(contractName, hre, {
+    zkTranscriptLibAddress,
+    relationsLibAddress,
+  });
+};
+
 export const deployAndSaveAllVerifiers = async (
   hre: HardhatRuntimeEnvironment,
 ): Promise<VerifierDeployments> => {

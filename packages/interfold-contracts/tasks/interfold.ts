@@ -262,7 +262,7 @@ export const requestCommittee = task(
   .addOption({
     name: "paramSet",
     description:
-      "on-chain ParamSet (0=Insecure512, 1=Secure8192, 2=CKKS sign-extraction ladder, 3=CKKS statistics)",
+      "on-chain ParamSet (0=Insecure512, 1=Secure8192, 2=CKKS sign-extraction ladder, 3=CKKS statistics, 4=CKKS credit scoring)",
     defaultValue: 0,
     type: ArgumentType.INT,
   })
@@ -326,7 +326,8 @@ export const requestCommittee = task(
         hre.globalOptions.network,
       );
 
-      // paramSet: 0 = Insecure512, 1 = Secure8192, 2 = CKKS sign-extraction ladder, 3 = CKKS statistics
+      // paramSet: 0 = Insecure512, 1 = Secure8192, 2 = CKKS sign-extraction ladder,
+      // 3 = CKKS statistics, 4 = CKKS credit scoring
       const paramSet = paramSetOption;
 
       let computeProviderParams = computeParams;

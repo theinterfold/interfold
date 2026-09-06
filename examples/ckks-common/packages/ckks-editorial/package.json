@@ -1,0 +1,24 @@
+{
+  "name": "@interfold/ckks-editorial",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Interfold editorial design system (the CRISP look) shared by the CKKS demo apps: tokens, primitives and FHE-specific components.",
+  "license": "LGPL-3.0-only",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts",
+    "./styles.css": "./src/editorial.css"
+  },
+  "files": ["src"],
+  "peerDependencies": {
+    "react": ">=18"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.66",
+    "typescript": "^5.8.3"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json"
+  }
+}

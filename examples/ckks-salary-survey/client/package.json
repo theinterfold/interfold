@@ -12,9 +12,11 @@
   },
   "dependencies": {
     "@aztec/bb.js": "5.1.0",
+    "@interfold/ckks-editorial": "file:../../ckks-common/packages/ckks-editorial",
     "@interfold/ckks-salary-sdk": "workspace:*",
     "@interfold/ckks-zk-inputs": "link:../../ckks-common/packages/ckks-zk-inputs",
     "@noir-lang/noir_js": "1.0.0-beta.26",
+    "@phosphor-icons/react": "^2.1.4",
     "@tanstack/react-query": "^5.74.3",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

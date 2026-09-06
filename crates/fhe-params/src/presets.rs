@@ -85,6 +85,11 @@ impl BfvPreset {
             // BFV encoding as ParamSet 0; its 3-limb CKKS moduli all fit
             // the STANDARD `InsecureDkg512` transport, so no escalation.
             3 => Some(BfvPreset::InsecureThreshold512),
+            // CKKS credit-scoring preset (coefficient-encoded linear
+            // scoring, no relin ceremony): SAME BFV encoding as ParamSet
+            // 0; its four 36-bit CKKS moduli all fit the STANDARD
+            // `InsecureDkg512` transport, so no escalation.
+            4 => Some(BfvPreset::InsecureThreshold512),
             _ => None,
         }
     }

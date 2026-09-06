@@ -40,7 +40,8 @@ relinearization ceremony CKKS needs for multiplication (§4).
 The reasoning for why this is sound is not ours: it is Mouchet–Troncoso-
 Pastoriza–Bossuat–Hubaux, *Multiparty Homomorphic Encryption from RLWE*
 (eprint 2020/304), whose Protocols 1 and 2 are stated for a generic RLWE
-scheme and instantiated for both BFV and CKKS in Lattigo; plus the Shamir
+scheme — the paper itself instantiates a multiparty BFV; the CKKS
+instantiation is Lattigo's, not the paper's — plus the Shamir
 layer of Urban–Rambaud (eprint 2024/1285), also RLWE-generic.
 
 ## 2. What is scheme-specific in key generation
@@ -71,11 +72,15 @@ plaintext (no BFV rounding step). Two consequences:
    the decode wall `Q/(2t)` and is otherwise invisible. In CKKS it is an
    additive error of `n·B_sm/Δ` on the decoded reals. The calculator
    (`trckks/smudging.rs`, `CkksSmudgingBoundCalculator`) therefore enforces
-   *three* constraints instead of one:
-   - security floor (same as BFV): `B_sm ≥ 2^λ · B_C` (statistical-distance
-     flooding; Li–Micciancio Eurocrypt'21 is the attack it defends against,
-     Li–Micciancio–Schultz–Sorrell Crypto'22 / "Noah's Ark" eprint 2023/815
-     the bound);
+   *two* correctness walls in place of BFV's single decode wall, on top of
+   the security floor both schemes share:
+   - security floor (same as BFV): `B_sm ≥ 2^λ · B_C` — the standard
+     smudging lemma (Asharov–Jain–López-Alt–Tromer–Vaikuntanathan–Wichs,
+     Eurocrypt'12, via AJW'11 Lemma 2.1), a statistical-distance argument.
+     Li–Micciancio Eurocrypt'21 is the attack it defends against;
+     Li–Micciancio–Schultz–Sorrell Crypto'22 is the tight DP/Gaussian
+     alternative (not the source of this bound), and "Noah's Ark"
+     eprint 2023/815 takes the same statistical route we do;
    - no wrap-around: `Δ·B_msg + B_C + n·B_sm < Q_ℓ/2`;
    - precision: `n·B_sm ≤ precision_loss · Δ` (application-declared).
    If the walls conflict, the parameters cannot support secure threshold
@@ -100,7 +105,7 @@ extraction), so the committee runs a second protocol after the DKG:
 - **Protocol 2 of eprint 2020/304 (`RelinKeyGen`)**, two rounds over a CRP,
   with each party's `s_i` and an ephemeral `u_i`. Implemented per-level in
   `relin_gen.rs` and — the production path — with the **hybrid gadget**
-  (Han–Ki eprint 2019/688 §3; Kim–Polyakov–Zucca eprint 2021/204 for noise) in
+  (Han–Ki eprint 2019/688; Kim–Polyakov–Zucca eprint 2021/204 for noise) in
   `hybrid_gen.rs`: rows `(−a_j·s + P·g_j·s² + e_j, a_j)` over `Q·P`, one key
   for every level.
 - Inputs: the *same* `s_i` from the DKG (the generator takes the party's
@@ -144,7 +149,28 @@ given that the decrypted result is *published* (not just used internally)?
 key-switching-key circular-security assumption, provided RLWE is assessed at
 modulus `Q·P`.* Specific question: any concern with the ephemeral `u_i`
 being sampled from `Poly::small` (CBD, variance 10 ⇒ bound 6) rather than
-the ternary key distribution?
+the ternary key distribution? **Context for that question:** this is NOT a
+CKKS deviation — the shipped BFV reference (`fhe::mbfv::relin_key_gen.rs:94`)
+samples `u` from exactly the same `Poly::small(ctx, par.variance)`, and the
+CKKS generator was ported from it. So the question applies to both schemes'
+Protocol-2 realisations; a "no" answer means changing BFV too.
+
+**C-6 (found by audit, fixed for CKKS, OPEN for BFV).** *The CRT-glue check
+`u_crts[l] + r_l·q_l == u_global` in `decrypted_shares_aggregation.nr`
+(shared C7 body) constrains nothing when the quotient witness `r_l` is
+range-free: over the scalar field `r_l = (u* − u_crts[l])·q_l⁻¹` satisfies it
+for ANY `u*`.* Empirically confirmed with `nargo` (honest 42, claimed
+1 000 000, accepted). Consequences: CKKS C7 was fully vacuous (nothing follows
+the glue); BFV C7 is partially so (`verify_decoding` follows and is
+many-to-one). The CKKS branch fixes its own circuit by range-constraining
+`u_global < Q` and `r_l < Q/q_l` (`verify_crt_reconstruction_ckks`,
+regression tests `test_ckks_aggregation_rejects_forged_u_global` /
+`_rejects_noncanonical_lift`); the BFV circuit is byte-identical to `main`
+and documented in `docs/BFV_C7_CRT_SOUNDNESS_FINDING.md`. Questions: (i) is
+the CKKS bound `BIT = L·BIT_D_NATIVE` with `Q < p` sufficient for the field
+identity to imply the integer one? (ii) how exploitable is the BFV residual
+freedom (a different `u_global` in the same decode class) given nothing
+on-chain binds `u_global` for BFV?
 
 **C-5 (the one that decides deployability).** *The flooding calculator's
 noise model is worst-case sup-norm: `B_C` grows by ×N per multiplication
@@ -158,9 +184,16 @@ canonical-embedding `B_C` acceptable for the flooding bound in the
 published-result (CKKS-D) setting, and under what independence assumptions
 on the evaluation? (ii) is Rényi λ/2 acceptable here? (iii) is opening at a
 doubled scale (skipping the final rescale, +40 bits of `Q_ℓ` headroom) a
-sound way to relax the precision wall? Every measured row so far uses the
-demo value of 20 smudging bits and is marked `used/required` in the report;
-we will not call any deployment secure until this bound closes.
+sound way to relax the precision wall? **Counter-evidence you should weigh
+first:** LMSS Crypto'22 proves that noise tailored to a *given ciphertext's*
+error rather than worst-case error is vulnerable to IND-CPA-D attacks — they
+explicitly refute the claim that accurate per-ciphertext noise estimates
+justify smaller flooding. We read that as permitting a static, circuit-derived
+average-case bound (what OpenFHE/Lattigo ship) but forbidding any bound that
+reads the observed ciphertext; confirm or refute that reading. Every measured
+row so far uses the demo value of 20 smudging bits and is marked
+`used/required` in the report; we will not call any deployment secure until
+this bound closes.
 
 ## 6. Known gaps (so you don't rediscover them)
 

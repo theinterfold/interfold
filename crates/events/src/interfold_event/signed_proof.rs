@@ -416,6 +416,8 @@ mod tests {
                 CircuitName::PkGenerationCkksPs0,
                 CircuitName::PkGenerationCkksPs2,
                 CircuitName::PkGenerationCkksPs3,
+                CircuitName::PkGenerationCkksPs4,
+                CircuitName::PkGenerationCkksPs5,
             ]
         );
         assert_eq!(
@@ -457,6 +459,8 @@ mod tests {
                 CircuitName::ThresholdShareDecryptionCkks,
                 CircuitName::ShareDecryptionCkksPs2,
                 CircuitName::ShareDecryptionCkksPs3,
+                CircuitName::ShareDecryptionCkksPs4,
+                CircuitName::ShareDecryptionCkksPs5,
             ]
         );
         assert_eq!(
@@ -466,6 +470,8 @@ mod tests {
                 CircuitName::DecryptedSharesAggregationCkks,
                 CircuitName::DecryptedSharesAggregationCkksPs2,
                 CircuitName::DecryptedSharesAggregationCkksPs3,
+                CircuitName::DecryptedSharesAggregationCkksPs4,
+                CircuitName::DecryptedSharesAggregationCkksPs5,
             ]
         );
         assert_eq!(
@@ -474,7 +480,7 @@ mod tests {
         );
         // Per-param-set resolution is total over the known CKKS sets and
         // fails closed on anything else.
-        for set in [0u8, 2, 3] {
+        for set in [0u8, 2, 3, 4] {
             assert!(CircuitName::pk_generation_ckks(set).is_some());
             assert!(CircuitName::share_decryption_ckks(set).is_some());
             assert!(CircuitName::decrypted_shares_aggregation_ckks(set).is_some());

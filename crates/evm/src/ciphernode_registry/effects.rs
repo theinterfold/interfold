@@ -225,16 +225,23 @@ pub async fn publish_committee_to_registry<P: Provider + WalletProvider + Clone 
     pk_commitment: [u8; 32],
     dkg_aggregator_proof: Option<&Proof>,
     dkg_attestation_bundle: Option<&[u8]>,
+    ckks_pk_proof_blob: Option<&[u8]>,
 ) -> Result<TxOutcome> {
     let e3_id_u256: U256 = e3_id.clone().try_into()?;
     let pk_commitment_b256 = B256::from(pk_commitment);
 
-    // Skip mode creates non-empty mock-only placeholders before this boundary. An absent payload
-    // is therefore always an internal error, while production verifiers still reject placeholders.
-    let proof = encode_zk_proof(
-        dkg_aggregator_proof
-            .ok_or_else(|| anyhow::anyhow!("mandatory DKG aggregator proof payload missing"))?,
-    )?;
+    // CKKS supplies a pre-encoded per-party blob for `CkksPkVerifier` (no
+    // recursive pk-aggregation circuit exists, so there is no single proof to
+    // encode). BFV keeps the folded `dkg_aggregator_proof` path. Either way an
+    // absent payload is an internal error — never publish an empty blob.
+    let proof =
+        match ckks_pk_proof_blob {
+            Some(blob) if !blob.is_empty() => Bytes::copy_from_slice(blob),
+            Some(_) => anyhow::bail!("CKKS pk proof blob is present but empty"),
+            None => encode_zk_proof(dkg_aggregator_proof.ok_or_else(|| {
+                anyhow::anyhow!("mandatory DKG aggregator proof payload missing")
+            })?)?,
+        };
     let attestation_bundle = Bytes::copy_from_slice(
         dkg_attestation_bundle
             .filter(|bundle| !bundle.is_empty())

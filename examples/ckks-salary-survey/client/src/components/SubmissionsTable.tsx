@@ -5,17 +5,30 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import type { Round } from '@interfold/ckks-salary-sdk'
+import { SectionHeader } from '@interfold/ckks-editorial'
 import { short, EXPLORER_TX } from '@/utils/constants'
 
 export const SubmissionsTable = ({ round }: { round: Round }) => (
-  <section className="card">
-    <h3>
-      Verified submissions <span className="badge" data-testid="submission-count">{round.submissions.length}</span>
-    </h3>
+  <section className="pad-section">
+    <SectionHeader
+      num="03"
+      kicker="LEDGER"
+      title={
+        <>
+          Verified submissions{' '}
+          <span className="tag" data-testid="submission-count">
+            {round.submissions.length}
+          </span>
+        </>
+      }
+      meta={`${round.submissions.length} verified on-chain`}
+    />
     {round.submissions.length === 0 ? (
-      <p className="muted">None yet.</p>
+      <p className="muted" style={{ marginTop: 20 }}>
+        None yet.
+      </p>
     ) : (
-      <table className="subs" data-testid="submissions">
+      <table className="ledger" style={{ marginTop: 20 }} data-testid="submissions">
         <thead>
           <tr>
             <th>#</th>
@@ -28,21 +41,19 @@ export const SubmissionsTable = ({ round }: { round: Round }) => (
         <tbody>
           {round.submissions.map((s) => (
             <tr key={s.u_commitment}>
-              <td>{s.index}</td>
-              <td>
-                <code>{short(s.u_commitment, 12)}</code>
-              </td>
-              <td>
+              <td className="mono">{s.index}</td>
+              <td className="mono">{short(s.u_commitment, 12)}</td>
+              <td className="mono">
                 {EXPLORER_TX ? (
                   <a href={`${EXPLORER_TX}${s.tx_hash}`} target="_blank" rel="noreferrer">
                     {short(s.tx_hash, 10)}
                   </a>
                 ) : (
-                  <code>{short(s.tx_hash, 10)}</code>
+                  short(s.tx_hash, 10)
                 )}
               </td>
-              <td>{s.gas_used?.toLocaleString() ?? '—'}</td>
-              <td>{s.verified ? '✓ on-chain' : '…'}</td>
+              <td className="mono">{s.gas_used?.toLocaleString() ?? '—'}</td>
+              <td>{s.verified ? <span className="tag live">verified on-chain</span> : <span className="tag pending">pending</span>}</td>
             </tr>
           ))}
         </tbody>

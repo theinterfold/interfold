@@ -7,11 +7,13 @@
 #
 # Usage: scripts/ckks-prove-package.sh <package> [<package> ...]
 # Env:   VARIANT=noir-recursive|evm|noir-recursive-no-zk (default noir-recursive)
+#        WS=<nargo workspace dir> (default circuits/bin/threshold; e.g.
+#        circuits/bin/ckks_scaling for the sizing fixtures)
 set -uo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 export PATH="$HOME/.nargo/bin:$HOME/.bb:$PATH"
 VARIANT="${VARIANT:-noir-recursive}"
-WS="$ROOT/circuits/bin/threshold"
+WS="${WS:-$ROOT/circuits/bin/threshold}"
 OUT_ROOT="${OUT_ROOT:-/tmp/ckks-proofs}"
 
 stage() { # name cmd...
@@ -26,6 +28,7 @@ stage() { # name cmd...
   return $rc
 }
 
+cd "$WS" || exit 1  # nargo resolves --package from the cwd's workspace
 for PKG in "$@"; do
   OUT="$OUT_ROOT/$PKG"; mkdir -p "$OUT"
   echo "== $PKG ($VARIANT)"

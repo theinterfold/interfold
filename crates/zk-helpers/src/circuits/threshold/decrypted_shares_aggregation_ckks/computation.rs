@@ -16,6 +16,7 @@ use crate::threshold::decrypted_shares_aggregation::utils;
 use crate::threshold::decrypted_shares_aggregation_ckks::circuit::{
     DecryptedSharesAggregationCkksCircuit, DecryptedSharesAggregationCkksCircuitData,
 };
+use crate::threshold::share_decryption_ckks::moduli_at_level;
 use crate::threshold::user_data_encryption_ckks::CkksPreset;
 use crate::CircuitsErrors;
 use crate::{CircuitComputation, Computation};
@@ -26,8 +27,21 @@ use num_bigint::BigInt;
 use num_traits::Zero;
 use serde::{Deserialize, Serialize};
 
-/// Max message coefficients (matches Noir's MAX_MSG_NON_ZERO_COEFFS).
-pub const MAX_MSG_NON_ZERO_COEFFS: usize = 100;
+/// Coefficient window the C7-CKKS circuit binds.
+///
+/// CKKS has NO sparse-message assumption: `u_global = Δ·m + e` occupies every
+/// one of the N ring coefficients (slot encoding spreads each value over the
+/// whole vector; coefficient encoding uses them directly). So the window is
+/// the ring degree, and it MUST equal the width C6-CKKS hashes into
+/// `d_commitment` (`SHARE_DECRYPTION_CKKS_N` = degree) or the C6→C7 link is
+/// structurally broken: the two circuits would hash different windows of the
+/// same share and `expected_d_commitments` could never match.
+///
+/// The BFV value (100) was inherited here and was wrong for CKKS: it bound
+/// only 100 of 512 coefficients and produced a `d_commitment` C6 never emits.
+pub fn max_msg_non_zero_coeffs_for(preset: &CkksPreset) -> usize {
+    preset.params.degree()
+}
 
 /// Output of [`CircuitComputation::compute`].
 #[derive(Debug)]
@@ -57,27 +71,55 @@ pub struct Bits {
     pub d_native_bit: u32,
 }
 
+impl Bits {
+    /// Native width over the moduli that remain at `level`.
+    pub fn compute_at_level(preset: &CkksPreset, level: usize) -> Result<Self, CircuitsErrors> {
+        let mut d_native_bit = 0u32;
+        for qi in moduli_at_level(preset, level)? {
+            d_native_bit = d_native_bit.max(calculate_bit_width(BigInt::from(qi) - 1));
+        }
+        Ok(Bits { d_native_bit })
+    }
+}
+
 impl Computation for Bits {
     type Preset = CkksPreset;
     type Data = ();
     type Error = CircuitsErrors;
 
+    /// Level-0 width (the full chain); see [`Bits::compute_at_level`].
     fn compute(preset: Self::Preset, _: &Self::Data) -> Result<Self, Self::Error> {
-        let mut d_native_bit = 0u32;
-        for qi in preset.params.moduli() {
-            d_native_bit = d_native_bit.max(calculate_bit_width(BigInt::from(*qi) - 1));
-        }
-        Ok(Bits { d_native_bit })
+        Bits::compute_at_level(&preset, 0)
     }
 }
 
 /// Circuit config: moduli plus bit widths.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Configs {
+    /// Level the configs were derived at (`l` moduli remain there).
+    pub level: usize,
     pub l: usize,
     pub moduli: Vec<u64>,
     pub bits: Bits,
     pub max_msg_non_zero_coeffs: usize,
+}
+
+impl Configs {
+    /// The circuit constants over the moduli that remain at `level` —
+    /// the opening-level rule: C7 proves the reconstruction of shares
+    /// computed over the OPENED ciphertext, whose limbs are those of its
+    /// level, not the full chain.
+    pub fn compute_at_level(preset: &CkksPreset, level: usize) -> Result<Self, CircuitsErrors> {
+        let moduli = moduli_at_level(preset, level)?;
+        let bits = Bits::compute_at_level(preset, level)?;
+        Ok(Configs {
+            level,
+            l: moduli.len(),
+            moduli,
+            bits,
+            max_msg_non_zero_coeffs: max_msg_non_zero_coeffs_for(preset),
+        })
+    }
 }
 
 impl Computation for Configs {
@@ -85,15 +127,9 @@ impl Computation for Configs {
     type Data = ();
     type Error = CircuitsErrors;
 
+    /// Level-0 constants (the full chain); see [`Configs::compute_at_level`].
     fn compute(preset: Self::Preset, _: &Self::Data) -> Result<Self, Self::Error> {
-        let moduli = preset.params.moduli().to_vec();
-        let bits = Bits::compute(preset, &())?;
-        Ok(Configs {
-            l: moduli.len(),
-            moduli,
-            bits,
-            max_msg_non_zero_coeffs: MAX_MSG_NON_ZERO_COEFFS,
-        })
+        Configs::compute_at_level(&preset, 0)
     }
 }
 
@@ -111,6 +147,9 @@ pub struct Inputs {
     pub u_global: Polynomial,
     /// CRT quotient polynomials per modulus (secret witnesses).
     pub crt_quotients: CrtPolynomial,
+    /// E3 decryption domain words (public inputs; see circuit data).
+    pub domain_hi: BigInt,
+    pub domain_lo: BigInt,
 }
 
 fn truncate_to_max_coeffs(v: &[BigInt], max_len: usize) -> Vec<BigInt> {
@@ -132,9 +171,8 @@ impl Computation for Inputs {
     type Error = CircuitsErrors;
 
     fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
-        let configs = Configs::compute(preset.clone(), &())?;
         let threshold = data.threshold;
-        let max_msg_non_zero_coeffs = configs.max_msg_non_zero_coeffs;
+        let max_msg_non_zero_coeffs = max_msg_non_zero_coeffs_for(&preset);
 
         let d_share_polys: Vec<Poly<PowerBasis>> = data.d_share_polys.clone();
         if d_share_polys.len() < threshold + 1 {
@@ -151,6 +189,22 @@ impl Computation for Inputs {
         let moduli: Vec<u64> = share_ctx.moduli().to_vec();
         let num_moduli = moduli.len();
         let degree = share_ctx.degree;
+        // The shares' level is the full chain minus the limbs they drop;
+        // every width below (the `d_commitment` hash) comes from THAT
+        // level's configs so C6 output == C7 input.
+        let full = preset.params.moduli().len();
+        if num_moduli == 0 || num_moduli > full {
+            return Err(CircuitsErrors::Other(format!(
+                "share context has {num_moduli} moduli; params have {full}"
+            )));
+        }
+        let level = full - num_moduli;
+        let configs = Configs::compute_at_level(&preset, level)?;
+        if configs.moduli != moduli {
+            return Err(CircuitsErrors::Other(format!(
+                "share moduli are not the params' level-{level} chain"
+            )));
+        }
 
         let mut decryption_shares: Vec<CrtPolynomial> = Vec::with_capacity(d_share_polys.len());
         for d_share in &d_share_polys {
@@ -243,6 +297,8 @@ impl Computation for Inputs {
             party_ids,
             u_global,
             crt_quotients,
+            domain_hi: BigInt::from(data.domain_hi),
+            domain_lo: BigInt::from(data.domain_lo),
         })
     }
 
@@ -263,6 +319,8 @@ impl Computation for Inputs {
             "party_ids": bigint_1d_to_json_values(&self.party_ids),
             "u_global": polynomial_to_toml_json(&self.u_global),
             "crt_quotients": crt_polynomial_to_toml_json(&self.crt_quotients),
+            "domain_hi": self.domain_hi.to_string(),
+            "domain_lo": self.domain_lo.to_string(),
         }))
     }
 }
@@ -337,17 +395,56 @@ mod tests {
             threshold: THRESHOLD,
             d_share_polys,
             reconstructing_parties: parties,
+            // Test domain words (C6-CKKS tests use the same 1/2 pair).
+            domain_hi: 1,
+            domain_lo: 2,
         };
         let out = DecryptedSharesAggregationCkksCircuit::compute(preset, &data).unwrap();
 
         assert_eq!(out.inputs.decryption_shares.len(), THRESHOLD + 1);
         assert_eq!(out.inputs.expected_d_commitments.len(), THRESHOLD + 1);
-        assert_eq!(
-            out.inputs.u_global.coefficients().len(),
-            MAX_MSG_NON_ZERO_COEFFS
-        );
+        // The window is the full ring degree (C6/C7 hash the same N coeffs).
+        assert_eq!(out.inputs.u_global.coefficients().len(), params.degree());
         assert_eq!(out.inputs.crt_quotients.limbs.len(), params.moduli().len());
         assert!(out.bits.d_native_bit > 0);
+
+        // C6 -> C7 LINK (regression for the structural break): the
+        // `d_commitment` that C6-CKKS emits and the aggregator recomputes
+        // over ALL N coefficients (`transitions.rs`
+        // `verify_ckks_shares_match_c6_commitments`) MUST be the very value
+        // C7 receives as `expected_d_commitments[i]`. With the inherited BFV
+        // window of 100 these could never be equal.
+        for (i, d) in data.d_share_polys.iter().enumerate() {
+            let crt = CrtPolynomial::from_fhe_polynomial(d);
+            let c6_style = compute_threshold_decryption_share_commitment(
+                &crt,
+                out.bits.d_native_bit,
+                params.degree(),
+            );
+            assert_eq!(
+                c6_style, out.inputs.expected_d_commitments[i],
+                "C6 d_commitment != C7 expected_d_commitments for party index {i}"
+            );
+        }
+
+        // Soundness inputs the circuit range-checks: the honest quotients
+        // must lie in [0, Q/q_l) and u_global in [0, Q).
+        let q_full = params
+            .moduli()
+            .iter()
+            .fold(BigInt::from(1), |acc, q| acc * BigInt::from(*q));
+        for u in out.inputs.u_global.coefficients() {
+            assert!(
+                u >= &BigInt::from(0) && u < &q_full,
+                "u_global not canonical"
+            );
+        }
+        for (m, q) in params.moduli().iter().enumerate() {
+            let bound = &q_full / BigInt::from(*q);
+            for r in out.inputs.crt_quotients.limbs[m].coefficients() {
+                assert!(r >= &BigInt::from(0) && r < &bound, "quotient out of range");
+            }
+        }
 
         // Cross-check: the witness generator's Lagrange+CRT reconstruction
         // must agree with the library's own threshold decryption. Compare
@@ -364,7 +461,7 @@ mod tests {
                 .u_global
                 .coefficients()
                 .iter()
-                .take(MAX_MSG_NON_ZERO_COEFFS)
+                .take(params.degree())
                 .enumerate()
             {
                 let expected = BigInt::from(pt_coeffs.row(m)[i]);

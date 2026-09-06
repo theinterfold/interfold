@@ -1,0 +1,16 @@
+[package]
+name = "ckks-credit-program"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "CKKS private credit scoring policy: slot-encoded logit + output mask, sigmoid on the encrypted logit (plain-Rust E3 program)"
+
+[dependencies]
+anyhow.workspace = true
+e3-fhe-params.workspace = true
+e3-trckks.workspace = true
+e3-utils.workspace = true
+fhe.workspace = true
+fhe-traits.workspace = true
+fhe-math.workspace = true
+serde.workspace = true

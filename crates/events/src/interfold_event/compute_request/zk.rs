@@ -641,6 +641,18 @@ pub struct DecryptedSharesAggregationProofRequest {
     /// [`ThresholdShareDecryptionProofRequest::ckks_params`]).
     #[serde(default)]
     pub ckks_params: Option<ArcBytes>,
+    /// CKKS E3s: the E3 decryption domain the C7-CKKS proof is bound to
+    /// (`domain_hi`/`domain_lo` public inputs, derived exactly as for
+    /// C6-CKKS: `decryption_domain_limbs(chain_id, e3_id, domain,
+    /// keccak256(ciphertext))`). Without it a C7 proof for one E3 was
+    /// replayable against any other E3 reconstructing the same `u_global`.
+    /// `None` for BFV. Fail closed: a CKKS request without it is refused.
+    #[serde(default)]
+    pub ckks_decryption_domain: Option<e3_committee_hash::DecryptionDomainContext>,
+    /// CKKS E3s: the output ciphertext(s) the shares decrypt, one per
+    /// plaintext index, hashed into the decryption domain.
+    #[serde(default)]
+    pub ckks_ciphertext_bytes: Vec<ArcBytes>,
 }
 
 /// Response containing generated proofs for decrypted shares aggregation (C7).

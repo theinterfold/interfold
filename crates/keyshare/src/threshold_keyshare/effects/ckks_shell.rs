@@ -423,6 +423,19 @@ impl ThresholdKeyshare {
         state: &ThresholdKeyshareState,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
+        // COMMIT BEFORE DISPATCH. The machine has already transitioned (the
+        // commands are the evidence). Persist its snapshot FIRST, then emit
+        // the side effects: a crash in the dispatch window must never leave
+        // a published effect whose cause is not on disk. The instance that
+        // matters most is `PublishDecryptionShare`: it is emitted together
+        // with the transition to `Decrypting { served_ct_hash }`, the pin
+        // that makes the dealt smudging share single-use (IND-CPA-D). If the
+        // share hit the wire and the pin were lost to a crash, the recovered
+        // machine would sit in `ReadyForDecryption` and flood a SECOND
+        // ciphertext with the SAME e_sm — the exact channel the pin exists
+        // to close. Persisting first turns that into a harmless duplicate
+        // publish of the same share on restart.
+        self.ckks_persist_machine_snapshot(&ec)?;
         for cmd in commands {
             match cmd {
                 CkksCommand::PublishEncryptionKey { .. } => {
@@ -508,13 +521,22 @@ impl ThresholdKeyshare {
                 }
             }
         }
-        // Persist the machine snapshot for restart recovery.
+        // Persist again after dispatch: some commands mutate shell-side
+        // state (chunk log cleared on `RelinKeysReady`) whose machine
+        // counterpart should land with the same `ec`. Idempotent.
+        self.ckks_persist_machine_snapshot(&ec)?;
+        Ok(())
+    }
+
+    /// Write the current CKKS machine snapshot into the recovery record.
+    /// Called BEFORE and after command dispatch (commit-before-dispatch).
+    fn ckks_persist_machine_snapshot(&mut self, ec: &EventContext<Sequenced>) -> Result<()> {
         let snapshot = self
             .ckks
             .as_ref()
             .map(|r| bincode::serialize(&r.machine))
             .transpose()?;
-        self.recovery.try_mutate(&ec, |mut recovery| {
+        self.recovery.try_mutate(ec, |mut recovery| {
             recovery.ckks_machine = snapshot.clone();
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
@@ -1109,13 +1131,22 @@ impl ThresholdKeyshare {
                 return self.ckks_publish_decryption_share_plain(share, state, ec);
             }
             (None, (Some(d), Some(pk))) => (d, pk),
+            // FAIL CLOSED. Under a PROVEN C6 posture a share without a proof
+            // is worthless to the aggregator (it would have to skip
+            // verification to use it), so refusing here loses nothing and
+            // removes the only path that produced proof-less CKKS shares in
+            // production. The domain is set from BOTH the gossiped
+            // `PublicKeyAggregated` and the chain-observed
+            // `CommitteePublished` (route_events.rs), so reaching this arm
+            // means neither was seen — a genuine protocol fault, not a
+            // test convenience. Mirrors the BFV twin, which errors here.
             (None, _) => {
-                info!(
-                    e3_id = %state.e3_id,
-                    "CKKS decryption share: no decryption domain/pk (in-process test path) — \
-                     publishing without a C6 proof"
+                bail!(
+                    "CKKS decryption share for e3 {}: C6 posture is PROVEN but no decryption \
+                     domain / aggregated pk is known (neither PublicKeyAggregated nor \
+                     CommitteePublished was observed) — refusing to publish a proof-less share",
+                    state.e3_id
                 );
-                return self.ckks_publish_decryption_share_plain(share, state, ec);
             }
         };
 

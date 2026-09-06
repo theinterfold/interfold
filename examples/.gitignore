@@ -1,0 +1,8 @@
+# Local environment files for every example app. Populated by each app's
+# scripts/dev.sh from `.env.example`; `.env.deployed` is rewritten on every
+# stack deploy with the fresh contract addresses. They hold the deployer key
+# (anvil account 0 in the demos) and must never be committed — copy the
+# checked-in `.env.example` instead.
+**/.env
+**/.env.*
+!**/.env.example

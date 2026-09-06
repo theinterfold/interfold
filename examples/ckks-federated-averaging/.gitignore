@@ -1,0 +1,8 @@
+node_modules
+dist
+database
+.interfold
+out
+target
+*.log
+packages/ckks-credit-sdk/.node-bundle/

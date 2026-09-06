@@ -75,6 +75,58 @@ pub fn encode_zk_proof(proof: &Proof) -> Result<Bytes> {
     ))
 }
 
+/// ABI-encodes the CKKS committee-key proof blob for `CkksPkVerifier`.
+///
+/// CKKS has no recursive pk-aggregation circuit, so the on-chain verifier
+/// consumes one C1-CKKS leaf proof per committee member instead of a single
+/// folded proof. Format:
+/// `abi.encode(bytes[] partyProofs, bytes32[][] partyPublicInputs, bytes aggregatePublicKey)`
+/// with the party entries in ASCENDING party-id order, matching the
+/// contract's `sortedNodes`.
+///
+/// Fails closed: an empty party list, a party whose public signals are not a
+/// whole number of 32-byte words, or a party carrying no proof data is an
+/// error rather than an empty blob the verifier would reject on-chain after
+/// the gas is already spent.
+pub fn encode_ckks_pk_proofs(party_proofs: &[Proof], aggregate_public_key: &[u8]) -> Result<Bytes> {
+    if party_proofs.is_empty() {
+        anyhow::bail!("CKKS pk proof blob needs at least one party proof");
+    }
+    if aggregate_public_key.is_empty() {
+        anyhow::bail!("CKKS pk proof blob needs the aggregate public key bytes");
+    }
+
+    let mut proofs: Vec<Vec<u8>> = Vec::with_capacity(party_proofs.len());
+    let mut public_inputs: Vec<Vec<[u8; 32]>> = Vec::with_capacity(party_proofs.len());
+    for (index, proof) in party_proofs.iter().enumerate() {
+        if proof.data.is_empty() {
+            anyhow::bail!("CKKS C1 proof for party index {index} has no proof data");
+        }
+        let signals: &[u8] = &proof.public_signals;
+        if signals.is_empty() || !signals.len().is_multiple_of(32) {
+            anyhow::bail!(
+                "CKKS C1 public signals for party index {index} must be a non-zero multiple of 32 bytes, got {}",
+                signals.len()
+            );
+        }
+        proofs.push(proof.data.to_vec());
+        public_inputs.push(
+            signals
+                .chunks_exact(32)
+                .map(|chunk| {
+                    let mut word = [0u8; 32];
+                    word.copy_from_slice(chunk);
+                    word
+                })
+                .collect(),
+        );
+    }
+
+    Ok(Bytes::from(
+        (proofs, public_inputs, aggregate_public_key.to_vec()).abi_encode_params(),
+    ))
+}
+
 pub trait AuthConversions {
     fn to_header_value(&self) -> Option<HeaderValue>;
     fn to_ws_auth(&self) -> Option<Authorization>;
@@ -418,6 +470,84 @@ mod tests {
     use e3_events::{CircuitName, Proof};
     use e3_utils::ArcBytes;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    fn ckks_party_proof(seed: u8, words: usize) -> Proof {
+        Proof::new(
+            CircuitName::PkGenerationCkksPs2,
+            ArcBytes::from_bytes(&[seed; 96]),
+            ArcBytes::from_bytes(&vec![seed; words * 32]),
+        )
+    }
+
+    /// The CKKS blob must decode as `(bytes[], bytes32[][], bytes)` — exactly what
+    /// `CkksPkVerifier.verify` expects.
+    #[test]
+    fn test_encode_ckks_pk_proofs_abi_format() {
+        let parties = vec![
+            ckks_party_proof(1, 3),
+            ckks_party_proof(2, 3),
+            ckks_party_proof(3, 3),
+        ];
+        let public_key = vec![0xAAu8; 128];
+        let encoded = encode_ckks_pk_proofs(&parties, &public_key).expect("encode");
+
+        let decoded = DynSolType::Tuple(vec![
+            DynSolType::Array(Box::new(DynSolType::Bytes)),
+            DynSolType::Array(Box::new(DynSolType::Array(Box::new(
+                DynSolType::FixedBytes(32),
+            )))),
+            DynSolType::Bytes,
+        ])
+        .abi_decode_params(&encoded)
+        .expect("decodes as (bytes[], bytes32[][], bytes)");
+
+        let tuple = decoded.as_tuple().expect("tuple");
+        assert_eq!(tuple[0].as_array().expect("proofs").len(), 3);
+        let inputs = tuple[1].as_array().expect("public inputs");
+        assert_eq!(inputs.len(), 3);
+        for entry in inputs {
+            // C1-CKKS returns (sk_commitment, pk_commitment, e_sm_commitment).
+            assert_eq!(entry.as_array().expect("words").len(), 3);
+        }
+        assert_eq!(tuple[2].as_bytes().expect("public key"), &public_key[..]);
+    }
+
+    /// Fail closed: never emit a blob the on-chain verifier is guaranteed to reject.
+    #[test]
+    fn test_encode_ckks_pk_proofs_rejects_malformed_input() {
+        let public_key = vec![0xAAu8; 128];
+
+        assert!(
+            encode_ckks_pk_proofs(&[], &public_key).is_err(),
+            "an empty committee must not produce a blob"
+        );
+        assert!(
+            encode_ckks_pk_proofs(&[ckks_party_proof(1, 3)], &[]).is_err(),
+            "a missing aggregate public key must not produce a blob"
+        );
+
+        // Public signals that are not a whole number of 32-byte words.
+        let ragged = Proof::new(
+            CircuitName::PkGenerationCkksPs2,
+            ArcBytes::from_bytes(&[1u8; 96]),
+            ArcBytes::from_bytes(&[1u8; 33]),
+        );
+        assert!(
+            encode_ckks_pk_proofs(&[ragged], &public_key).is_err(),
+            "ragged public signals must not produce a blob"
+        );
+
+        // A party carrying no proof data at all.
+        let empty = Proof::new(
+            CircuitName::PkGenerationCkksPs2,
+            ArcBytes::from_bytes(&[]),
+            ArcBytes::from_bytes(&[1u8; 96]),
+        );
+        assert!(
+            encode_ckks_pk_proofs(&[empty], &public_key).is_err(),
+            "a party with no proof data must not produce a blob"
+        );
+    }
 
     /// Verifies encode_zk_proof produces ABI: abi.decode(proof, (bytes, bytes32[]))
     #[test]

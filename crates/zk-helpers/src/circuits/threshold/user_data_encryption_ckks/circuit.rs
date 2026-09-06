@@ -70,15 +70,32 @@ pub fn insecure_512_ckks() -> Result<CkksPreset, crate::CircuitsErrors> {
 ///   to the public bid cap (1000), so `B = 1000`.
 /// * `3` — statistics preset. The survey encrypts CAP-NORMALIZED salaries
 ///   (`salary / cap <= 1`), so `B = 1`.
+/// * `4` — credit-scoring preset (4 limbs, COEFFICIENT encoding). Every
+///   coefficient is a masked feature `x_j + μ_j ∈ [0, 1 + 2^10)`, so
+///   `B = 1025` (`ckks_credit_validity::CREDIT_INPUT_BOUND`); the resulting
+///   `m_bound ≈ 2^50` exceeds one limb's `(q_i − 1)/2 ≈ 2^35` and is
+///   carried by the mod-Q lift (same path as ParamSet 3).
 ///
 /// Every participant and every verifier must derive the SAME bound from
 /// the param set — it is baked into the circuit configs (codegen) and the
 /// on-chain verifier VKs.
 pub fn ckks_preset_for_param_set(param_set: u8) -> Result<CkksPreset, crate::CircuitsErrors> {
+    if param_set == crate::threshold::ckks_credit_validity::CREDIT_PARAM_SET {
+        return crate::threshold::ckks_credit_validity::credit_preset();
+    }
     let input_bound = match param_set {
         0 => 100.0,
         2 => 1000.0,
         3 => 1.0,
+        // ParamSet 5 (coefficient inner products): the per-coefficient
+        // message bound. Cap-normalised vector entries are ≤ 1, but the
+        // cross-term MASK coefficients are uniform in [0, 1024) and the
+        // federated sample count sits on coefficient 0 as an integer
+        // < 1024 — Greco's `m_bound` must admit the LARGEST coefficient
+        // any ParamSet-5 ciphertext carries. Coefficient-encoded, so the
+        // slot→coefficient factor in `m_bound`'s derivation is moot (the
+        // bound is per coefficient directly).
+        5 => 1024.0,
         other => {
             return Err(crate::CircuitsErrors::Other(format!(
                 "no Greco CKKS preset for on-chain ParamSet {other}"

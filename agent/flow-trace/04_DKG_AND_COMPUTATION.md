@@ -1369,7 +1369,9 @@ does `ckks_aggregate_and_publish` sum the shares.
 
 ### CKKS Step 5: relin ceremony (only when the plan is not `None`)
 
-Two plans share ONE machine path. A per-level plan (ParamSet 3: `[0]`) runs the RNS-decomposition
+Two plans share ONE machine path (ParamSets 0 and 4 — masked differences and coefficient-encoded
+linear credit scoring — are `None`: DKG then one threshold decryption, nothing in between). A
+per-level plan (ParamSet 3: `[0]`) runs the RNS-decomposition
 protocol once per level. The HYBRID plan (ParamSet 2: special primes, `dnum = 13`) runs the same
 two rounds ONCE over `Q·P` (`CkksFhe::hybrid_relin_round_1/2`, `hybrid_relin_aggregate_round_1/2`
 → fhe.rs `CkksHybridRelinKeyGenerator`) and yields ONE `CkksHybridRelinKey` for every level. The
@@ -1435,7 +1437,67 @@ then the CKKS `d_commitment` cross-check `verify_ckks_shares_match_c6_commitment
 `d_commitment` output == commitment of the RECEIVED share bytes at the ciphertext's level, all
 N coefficients, `Bits::d_native_bit`; log `C6-CKKS d_commitment verified against the received
 share for party N`; a mismatch excludes the party, below t+1 fails the round) before
-`aggregate_ckks_plaintext` (canonical fixed-point bytes on-chain).
+`aggregate_ckks_plaintext` (canonical fixed-point bytes on-chain). The opened plaintext's
+LAYOUT is a pure function of the params (`e3_trckks::program::output_layout_for`): the credit
+preset (ParamSet 4) is decoded as COEFFICIENTS at 4 decimals (`decode_coefficients`, coefficient
+`16·i` = applicant `i`'s masked score), every other set as slots at 2 decimals — the node
+runtime (`CkksFhe::get_aggregate_plaintext`), the aggregator and the app program
+(`ckks-credit-program::decode_opened_scores`) all derive the same bytes.
+
+### CKKS on-chain verification of the committee key and the opened output
+
+Both gates are REAL Honk verifications; no CKKS E3 registers `MockPkVerifier` or
+`MockDecryptionVerifier`. `Interfold` keys verifiers by encryption scheme, so
+`deployInterfold.ts` registers `CkksPkVerifier` / `CkksDecryptionVerifier` under
+`keccak256("fhe.rs:CKKS")` while BFV keeps its own pair.
+
+Committee key. After `handle_c1_verification_complete` accepts every party's C1-CKKS proof,
+`ckks_aggregate_and_publish` (`public_key_aggregation/effects/ckks.rs`) packs those proofs with
+`e3_evm::helpers::encode_ckks_pk_proofs` into
+`abi.encode(bytes[] partyProofs, bytes32[][] partyPublicInputs, bytes aggregatePublicKey)` —
+ascending party order — and carries it on `PublicKeyAggregated.ckks_pk_proof_blob`.
+`publish_committee_to_registry` sends that blob verbatim as `publishCommittee`'s `proof`
+(the BFV folded-`dkg_aggregator_proof` path is unchanged). On-chain, `CkksPkVerifier` resolves the
+circuit from `interfold.getE3(e3Id).paramSet`, requires one proof per `sortedNodes` entry,
+Honk-verifies each `pk_generation_ckks_ps<N>` proof, rejects duplicate per-party `pk`/`sk`
+commitments, and checks `keccak256(aggregatePublicKey) == pkCommitment`. Missing a party's proof
+is FAIL-CLOSED: the aggregator aborts publication rather than sending an empty blob.
+
+Opened output. The CKKS branch of `maybe_start_decryption_aggregation` already promotes the real
+C7-CKKS proof to `decryption_aggregator_proofs` (no CKKS recursive fold circuit exists), so
+`publishPlaintextOutput` carries it through the existing `encode_zk_proof` path.
+`CkksDecryptionVerifier` Honk-verifies that one `decrypted_shares_aggregation_ckks[_ps<N>]` proof:
+`u_global` is the Lagrange + CRT reconstruction of `T+1` C6-committed shares at strictly
+increasing, non-zero party ids.
+
+Not bound on-chain (trusted, deliberately): the aggregate key is not proven to be the sum of the
+per-party `pk0_i` (SAFE commitment over limbs vs keccak over serialised bytes — off-chain
+`check_c1_ckks_keyshare_commitments` enforces it); the published plaintext is not bound to
+`u_global` (CKKS decode is not EVM-tractable); neither circuit exposes a domain slot, so there is
+no `e3Id`/committee/ciphertext binding. Measured gas: 9,128,457 (3-party key), 2,865,226 (output).
+Pinned by `test/CkksOnchainVerifiers.spec.ts`; fixtures from
+`scripts/ckks-onchain-verifier-fixtures.sh <param-set>`.
+
+### CKKS credit-scoring input flow (examples/ckks-credit-scoring, ParamSet 4)
+
+Applicant side (browser, `@ckks-credit/sdk`): `GET /rounds/{id}/feature-proof/{addr}` (issuer
+leaf + Poseidon path; the server only knows the public snapshot) → sample 8 masks
+`masks[j] ∈ [0, 2^20)` → WASM `encryptCreditAndWitness` (ONE `try_encrypt_extended` of the
+coefficient polynomial `Σ round(Δ·(x_j/cap + masks[j]/2^10)) t^{j+1}`, returns ct + Greco maps +
+the credit-leg map with the SAME `m`) → noir_js execute + bb.js prove `ckks_credit_validity_ps4`,
+`user_data_encryption_ckks_ct1_ps4`, `user_data_encryption_ckks_ct0_ps4` (keccak/`evm` transcript)
+→ wallet `publishInput` (envelope `abi.encode(ct, ct0P, ct0Pub, ct1P, ct1Pub, appP, appPub)`,
+`appPub = [cap, address, root, m_c]`; contract checks cap/sender/root, dedups by `u_commitment`,
+then verifies the three Honk proofs) → masks persist in `localStorage[ckks-credit:masks:{e3}:{addr}]`.
+Server side: `VerifiedInputPublished` raw-log handler fetches the tx calldata and hash-checks the
+ciphertext; at the deadline `evaluate_and_publish` runs `credit_scoring_policy` over the cts in
+submission order and publishes ONE ciphertext (`stage_at: published`); the committee opens it
+(Steps 6–7 above); `PlaintextOutputPublished` → `decode_opened_scores` → `results.opened[i]`.
+The browser recovers `z = opened[i] − ⟨w, masks/2^10⟩`, `σ(z)`; to anyone without the masks
+`opened[i]` is uniform over a ±8·1024 range. Evidence in a live run: server
+`VerifiedInputPublished #i … (3 Honk proofs verified on-chain)`, `evaluate: … published`,
+`PlaintextOutputPublished: N masked score(s) opened`; nodes `CKKS proof posture: param_set=4 …
+c0=proven c1=proven c6=proven c7=proven ceremony=proven`.
 
 ### Timing
 

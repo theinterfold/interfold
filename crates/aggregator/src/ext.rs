@@ -49,6 +49,11 @@ const ACTIVE_AGGREGATOR_KEY: TypedKey<bool> = TypedKey::new("active_aggregator")
 const PENDING_CIPHERTEXT_OUTPUT_KEY: TypedKey<CiphertextOutputPublished> =
     TypedKey::new("pending_ciphertext_output");
 const HONEST_PARTY_IDS_KEY: TypedKey<BTreeSet<u64>> = TypedKey::new("honest_party_ids");
+/// `keccak256(pubkey)` of the published committee key
+/// (`PublicKeyAggregated.pk_commitment`, also recomputable from
+/// `CommitteePublished.public_key`). Third word of the CKKS C7 decryption
+/// domain (`DecryptionDomainContext.committee_public_key`).
+const COMMITTEE_PK_COMMITMENT_KEY: TypedKey<[u8; 32]> = TypedKey::new("committee_pk_commitment");
 
 /// Restores the selector's active-aggregator decision before per-E3 actors hydrate.
 ///
@@ -391,6 +396,12 @@ pub struct ThresholdPlaintextAggregatorExtension {
     bus: BusHandle,
     sortition: Addr<Sortition>,
     proof_aggregation_enabled: bool,
+    /// Interfold deployment per chain id. Needed to build the CKKS C7
+    /// decryption domain (`DecryptionDomainContext.interfold_address`) that
+    /// binds the on-chain aggregation proof to this E3. Same source as the
+    /// keyshare's (`ThresholdKeyshareExtension`). Empty ⇒ CKKS C7 proving
+    /// fails closed with a clear error instead of emitting an unbound proof.
+    interfold_addresses: HashMap<u64, Address>,
 }
 
 impl ThresholdPlaintextAggregatorExtension {
@@ -399,10 +410,22 @@ impl ThresholdPlaintextAggregatorExtension {
         sortition: &Addr<Sortition>,
         proof_aggregation_enabled: bool,
     ) -> Box<Self> {
+        Self::create_with_interfold(bus, sortition, proof_aggregation_enabled, HashMap::new())
+    }
+
+    /// [`Self::create`] with the per-chain Interfold addresses required to
+    /// domain-bind CKKS C7 proofs.
+    pub fn create_with_interfold(
+        bus: &BusHandle,
+        sortition: &Addr<Sortition>,
+        proof_aggregation_enabled: bool,
+        interfold_addresses: HashMap<u64, Address>,
+    ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
             sortition: sortition.clone(),
             proof_aggregation_enabled,
+            interfold_addresses,
         })
     }
 
@@ -494,6 +517,11 @@ impl ThresholdPlaintextAggregatorExtension {
                         proof_aggregation_enabled: self.proof_aggregation_enabled,
                         initial_is_aggregator,
                         effects_enabled: true,
+                        ckks_decryption_domain: load_ckks_decryption_domain(
+                            ctx,
+                            &self.interfold_addresses,
+                            &committee_addresses,
+                        ),
                         committee_addresses,
                         honest_committee_addresses,
                         recovery,
@@ -519,6 +547,29 @@ fn load_committee_addresses(ctx: &E3Context) -> Result<Vec<Address>> {
         return Ok(addrs.clone());
     }
     Err(anyhow!(ERROR_TRBFV_PLAINTEXT_COMMITTEE_MISSING))
+}
+
+/// The CKKS C7 decryption domain for this E3, or `None` when the parts are
+/// not yet known (interfold address for the chain, committee, published key).
+/// The plaintext aggregator passes it to the C7-CKKS prover, which FAILS
+/// CLOSED without it — so a missing domain surfaces as a proving error
+/// naming the missing part, never as an unbound proof.
+fn load_ckks_decryption_domain(
+    ctx: &E3Context,
+    interfold_addresses: &HashMap<u64, Address>,
+    committee_addresses: &[Address],
+) -> Option<e3_committee_hash::DecryptionDomainContext> {
+    let interfold_address = *interfold_addresses.get(&ctx.e3_id.chain_id())?;
+    let pk_commitment = *ctx.get_dependency(COMMITTEE_PK_COMMITMENT_KEY)?;
+    // Committee hash over ascending addresses (== on-chain `topNodes` order
+    // after finalization; == what C6-CKKS bound on the keyshare side).
+    let mut sorted = committee_addresses.to_vec();
+    sorted.sort();
+    Some(e3_committee_hash::DecryptionDomainContext {
+        interfold_address,
+        committee_hash: e3_committee_hash::hash_committee_addresses(&sorted),
+        committee_public_key: pk_commitment.into(),
+    })
 }
 
 fn load_honest_committee_addresses(ctx: &E3Context) -> Result<Vec<Address>> {
@@ -756,6 +807,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
             match addrs {
                 Ok(addrs) => {
                     ctx.set_dependency(COMMITTEE_ADDRESSES_KEY, addrs);
+                    ctx.set_dependency(COMMITTEE_PK_COMMITMENT_KEY, data.pk_commitment);
                     if data.honest_committee_addresses.is_empty() {
                         self.bus.err(
                             EType::PlaintextAggregation,
@@ -783,6 +835,13 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
         if let InterfoldEventData::CommitteePublished(data) = evt.get_data() {
             if let Err(e) = remember_committee_published(ctx, &data.e3_id, &data.nodes) {
                 self.bus.err(EType::PlaintextAggregation, e);
+            }
+            // The chain-observed key is authoritative for the domain word;
+            // same derivation as the public-key aggregator (`keccak256(pubkey)`).
+            if ctx.get_dependency(COMMITTEE_PK_COMMITMENT_KEY).is_none() {
+                let pk_commitment: [u8; 32] =
+                    alloy::primitives::keccak256(&data.public_key[..]).into();
+                ctx.set_dependency(COMMITTEE_PK_COMMITMENT_KEY, pk_commitment);
             }
             if let Some(ciphertext) = ctx.get_dependency(PENDING_CIPHERTEXT_OUTPUT_KEY).cloned() {
                 self.try_start_plaintext(ctx, &ciphertext, evt.get_ctx());
@@ -867,6 +926,11 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
                 proof_aggregation_enabled: self.proof_aggregation_enabled,
                 initial_is_aggregator,
                 effects_enabled: false,
+                ckks_decryption_domain: load_ckks_decryption_domain(
+                    ctx,
+                    &self.interfold_addresses,
+                    &committee_addresses,
+                ),
                 committee_addresses,
                 honest_committee_addresses,
                 recovery,
@@ -1049,6 +1113,7 @@ mod tests {
                     pk_commitment: [0; 32],
                     dkg_aggregator_proof: None,
                     dkg_attestation_bundle: None,
+                    ckks_pk_proof_blob: None,
                 }),
                 ..Default::default()
             })

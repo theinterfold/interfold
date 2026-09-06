@@ -2002,10 +2002,43 @@ fn handle_decrypted_shares_aggregation_proof_ckks(
             .map(|(id, _)| *id as usize)
             .collect();
 
+        // Domain binding (same derivation as C6-CKKS so the two proofs
+        // carry identical `domain_hi`/`domain_lo` words). FAIL CLOSED: a
+        // CKKS C7 request without its domain or ciphertext cannot produce
+        // a proof the on-chain verifier will bind, so refuse rather than
+        // emit an unbound (replayable) proof.
+        let decryption_domain = req.ckks_decryption_domain.ok_or_else(|| {
+            make_zk_error(
+                &request,
+                "C7-CKKS: request carries no decryption domain — refusing to prove an \
+                 unbound aggregation"
+                    .to_string(),
+            )
+        })?;
+        let ct_bytes = req.ckks_ciphertext_bytes.get(i).ok_or_else(|| {
+            make_zk_error(
+                &request,
+                format!("C7-CKKS: request carries no ciphertext for index {i}"),
+            )
+        })?;
+        let numeric_e3_id = request
+            .e3_id
+            .clone()
+            .try_into()
+            .map_err(|e| make_zk_error(&request, format!("invalid numeric E3 id: {e}")))?;
+        let domain = e3_committee_hash::decryption_domain_limbs(
+            request.e3_id.chain_id(),
+            numeric_e3_id,
+            decryption_domain,
+            keccak256(&ct_bytes[..]),
+        );
+
         let circuit_data = DecryptedSharesAggregationCkksCircuitData {
             threshold: req.threshold_m as usize,
             d_share_polys,
             reconstructing_parties,
+            domain_hi: domain.hi,
+            domain_lo: domain.lo,
         };
 
         let circuit = DecryptedSharesAggregationCkksCircuit;

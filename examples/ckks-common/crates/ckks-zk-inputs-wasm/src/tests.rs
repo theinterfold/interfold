@@ -130,6 +130,48 @@ fn ciphertext_decrypts_to_value() {
     }
 }
 
+/// ParamSet 5 (coefficient inner products): the coefficient-encoded
+/// bundle decrypts to EXACTLY the coefficients the app laid out (a forward
+/// vector, a reversed vector, a mask), the placement matches
+/// `e3_trckks::policy::coefficient_layout` by construction (same helpers),
+/// and the ct0/ct1 commitments recompute — so the Greco path is unchanged
+/// for coefficient-encoded messages.
+#[test]
+fn coefficient_bundle_decrypts_to_layout_and_commits() {
+    use e3_trckks::policy::coefficient_layout;
+    let mut rng = ChaCha20Rng::seed_from_u64(7);
+    let (sk, pk) = generate_keypair(5, &mut rng).unwrap();
+    let n = 512usize;
+    let a: Vec<f64> = (0..16).map(|j| (j as f64 - 8.0) / 8.0).collect();
+    let fwd = coefficient_layout::forward(&a, n);
+    let rev = coefficient_layout::reversed(&a, n);
+    let mask: Vec<f64> = (0..128).map(|j| (j * 7 % 1024) as f64).collect();
+    let msk = coefficient_layout::mask(&mask, n);
+
+    let mut rng2 = ChaCha20Rng::seed_from_u64(8);
+    for (coeffs, what) in [(&fwd, "forward"), (&rev, "reversed"), (&msk, "mask")] {
+        let bundle = encrypt_coefficients_and_witness(5, &pk, coeffs, &mut rng2).unwrap();
+        let ct = hex::decode(&bundle.ciphertext_hex).unwrap();
+        let got = decrypt_coefficients(5, &sk, &ct, n).unwrap();
+        for k in 0..n {
+            assert!(
+                (got[k] - coeffs[k]).abs() < 1e-5,
+                "{what}: coefficient {k} decoded {} vs laid out {}",
+                got[k],
+                coeffs[k]
+            );
+        }
+        let (u, m) = commitments_from_inputs_json(5, &bundle.circuit_inputs).unwrap();
+        assert_eq!(u, bundle.u_commitment_hex, "{what}: u commitment");
+        assert_eq!(m, bundle.m_commitment_hex, "{what}: m commitment");
+    }
+    // Wrong length and over-bound entries are rejected before encryption.
+    assert!(encrypt_coefficients_and_witness(5, &pk, &fwd[..100], &mut rng2).is_err());
+    let mut too_big = fwd.clone();
+    too_big[3] = 1025.0;
+    assert!(encrypt_coefficients_and_witness(5, &pk, &too_big, &mut rng2).is_err());
+}
+
 #[test]
 fn commitments_recompute_from_inputs() {
     let pk_bytes = fixture_pk(3);
@@ -250,4 +292,297 @@ fn nargo_acceptance(param_set: u8, suffix: &str) {
     assert_eq!(ct0[3], bundle.u_commitment_hex, "u_commitment (ct0)");
     assert_eq!(ct1[2], bundle.u_commitment_hex, "u_commitment (ct1)");
     assert_eq!(ct0[2], bundle.m_commitment_hex, "m_commitment");
+}
+
+// ---------------------------------------------------------------------
+// Credit scoring v2 (ParamSet 4, slot encoding, logit + output mask)
+// ---------------------------------------------------------------------
+
+const CREDIT_FEATURES_VEC: [u32; 8] = [520, 130, 350, 999, 0, 1, 777, 42];
+const CREDIT_BOB_FEATURES: [u32; 8] = [1, 2, 3, 4, 5, 6, 7, 8];
+const CREDIT_CAP: u32 = 1000;
+const CREDIT_MASK: u32 = 529_664; // 517.25
+const CREDIT_INDEX: u32 = 2;
+const ALICE: &str = "0xf39fd6e51aad88f6f4ce6ab8827279cfffb92266";
+const BOB: &str = "0x70997970c51812dc3a010c7d01b50e0d17dc79c8";
+
+fn credit_model() -> CreditModel {
+    CreditModel::from_f64(&[1.7, -2.3, 0.9, 0.4, -1.1, 2.6, -0.5, 1.2], -0.8)
+}
+
+fn credit_proof() -> CreditFeatureProof {
+    use e3_zk_helpers::threshold::ckks_app_validity::address_to_biguint;
+    use e3_zk_helpers::threshold::ckks_credit_validity::FeatureTree;
+    let alice = address_to_biguint(ALICE).unwrap();
+    let bob = address_to_biguint(BOB).unwrap();
+    let tree = FeatureTree::new(&[
+        (alice.clone(), CREDIT_FEATURES_VEC),
+        (bob, CREDIT_BOB_FEATURES),
+    ])
+    .unwrap();
+    tree.proof(0, &alice, CREDIT_FEATURES_VEC)
+}
+
+/// Same seeded RNG → the WASM path and the zk-helpers reference
+/// (`build_credit_submission`) produce BYTE-IDENTICAL ciphertexts,
+/// Prover.tomls and credit-leg inputs for BOTH encryptions.
+#[test]
+fn credit_bundle_matches_native_builder() {
+    use e3_zk_helpers::threshold::ckks_credit_validity::{
+        build_credit_submission_with_rng, credit_preset,
+    };
+    let pk_bytes = fixture_pk(4);
+    let preset = credit_preset().unwrap();
+    let pk = CkksPublicKey::from_bytes(&pk_bytes, &preset.params).unwrap();
+
+    let mut rng_a = ChaCha20Rng::from_seed(SEED);
+    let (logit, mask, credit_inputs) = encrypt_credit_and_witness(
+        &pk_bytes,
+        credit_proof(),
+        CREDIT_CAP,
+        credit_model(),
+        CREDIT_INDEX,
+        CREDIT_MASK,
+        &mut rng_a,
+    )
+    .unwrap();
+
+    let mut rng_b = ChaCha20Rng::from_seed(SEED);
+    let native = build_credit_submission_with_rng(
+        pk,
+        credit_proof(),
+        CREDIT_CAP,
+        credit_model(),
+        CREDIT_INDEX,
+        CREDIT_MASK,
+        &mut rng_b,
+    )
+    .unwrap();
+    assert_eq!(hex::encode(&native.logit.ciphertext), logit.ciphertext_hex);
+    assert_eq!(hex::encode(&native.mask.ciphertext), mask.ciphertext_hex);
+    assert_eq!(native.logit.greco_toml, logit.prover_toml_ct0);
+    assert_eq!(native.mask.greco_toml, mask.prover_toml_ct0);
+    assert_eq!(native.credit_inputs.to_json(), credit_inputs);
+    assert_eq!(
+        toml::to_string(&credit_inputs).unwrap(),
+        native.credit_toml,
+        "credit Prover.toml bytes"
+    );
+    assert_ne!(logit.ciphertext_hex, mask.ciphertext_hex);
+    assert_eq!(credit_inputs["index"], "2");
+    assert_eq!(credit_inputs["cap"], "1000");
+    assert_eq!(credit_inputs["mask"], CREDIT_MASK.to_string());
+    // Same `m` as the Greco ct0 legs (the JSON carries small coefficients
+    // as numbers, the noir_js maps as strings — compare the values).
+    let stringy = |v: &serde_json::Value| -> Vec<String> {
+        v["coefficients"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|c| match c {
+                serde_json::Value::Number(n) => n.to_string(),
+                serde_json::Value::String(s) => s.clone(),
+                other => panic!("{other}"),
+            })
+            .collect()
+    };
+    assert_eq!(
+        stringy(&credit_inputs["m_z"]),
+        stringy(&logit.ct0_inputs["m"])
+    );
+    assert_eq!(
+        stringy(&credit_inputs["m_m"]),
+        stringy(&mask.ct0_inputs["m"])
+    );
+    assert_eq!(logit.encoded_values, vec![credit_model().logit(&CREDIT_FEATURES_VEC, CREDIT_CAP)]);
+    assert_eq!(mask.encoded_values, vec![517.25]);
+}
+
+/// Both ciphertexts decrypt to the declared slot values at slot `index`
+/// and to 0 everywhere else.
+#[test]
+fn credit_ciphertexts_decrypt_to_the_slot_values() {
+    let mut rng = ChaCha20Rng::seed_from_u64(42);
+    let (sk, pk) = generate_keypair(4, &mut rng).unwrap();
+    let mut rng = ChaCha20Rng::from_seed(SEED);
+    let (logit, mask, _) = encrypt_credit_and_witness(
+        &pk,
+        credit_proof(),
+        CREDIT_CAP,
+        credit_model(),
+        CREDIT_INDEX,
+        CREDIT_MASK,
+        &mut rng,
+    )
+    .unwrap();
+    let z = credit_model().logit(&CREDIT_FEATURES_VEC, CREDIT_CAP);
+    let slots_z = decrypt(4, &sk, &hex::decode(&logit.ciphertext_hex).unwrap()).unwrap();
+    let slots_m = decrypt(4, &sk, &hex::decode(&mask.ciphertext_hex).unwrap()).unwrap();
+    assert!((slots_z[CREDIT_INDEX as usize] - z).abs() < 1e-6, "{}", slots_z[2]);
+    assert!((slots_m[CREDIT_INDEX as usize] - 517.25).abs() < 1e-6);
+    for (i, (a, b)) in slots_z.iter().zip(&slots_m).enumerate() {
+        if i != CREDIT_INDEX as usize {
+            assert!(a.abs() < 1e-6 && b.abs() < 1e-6, "slot {i} not empty");
+        }
+    }
+}
+
+#[test]
+fn credit_rejects_bad_inputs() {
+    let pk = fixture_pk(4);
+    let mut rng = ChaCha20Rng::from_seed(SEED);
+    let mut over = credit_proof();
+    over.features[3] = CREDIT_CAP + 1;
+    let model = credit_model();
+    assert!(
+        encrypt_credit_and_witness(&pk, over, CREDIT_CAP, model, CREDIT_INDEX, CREDIT_MASK, &mut rng)
+            .is_err()
+    );
+    assert!(encrypt_credit_and_witness(
+        &pk,
+        credit_proof(),
+        CREDIT_CAP,
+        model,
+        CREDIT_INDEX,
+        1 << 20,
+        &mut rng
+    )
+    .is_err());
+    assert!(
+        encrypt_credit_and_witness(&pk, credit_proof(), 0, model, CREDIT_INDEX, CREDIT_MASK, &mut rng)
+            .is_err()
+    );
+    assert!(encrypt_credit_and_witness(
+        &pk,
+        credit_proof(),
+        CREDIT_CAP,
+        model,
+        256,
+        CREDIT_MASK,
+        &mut rng
+    )
+    .is_err());
+    let big = CreditModel::from_f64(&[8.5; 8], 0.0);
+    assert!(
+        encrypt_credit_and_witness(&pk, credit_proof(), CREDIT_CAP, big, CREDIT_INDEX, CREDIT_MASK, &mut rng)
+            .is_err()
+    );
+    // A leaf that does not open under its root fails the pre-check.
+    let mut bad_root = credit_proof();
+    bad_root.merkle_root += 1u32;
+    let err = encrypt_credit_and_witness(
+        &pk,
+        bad_root,
+        CREDIT_CAP,
+        model,
+        CREDIT_INDEX,
+        CREDIT_MASK,
+        &mut rng,
+    )
+    .unwrap_err();
+    assert!(err.to_string().contains("root"), "{err}");
+}
+
+/// The local sigmoid mirror equals the policy's constants.
+#[test]
+fn sigmoid_cubic_matches_policy_constants() {
+    for z in [-4.0, -1.5, 0.0, 0.164, 2.0, 5.0] {
+        let want = 0.5 + 0.197 * z - 0.004 * z * z * z;
+        assert!((sigmoid_cubic(z) - want).abs() < 1e-15);
+    }
+    assert!((sigmoid_cubic(0.0) - 0.5).abs() < 1e-15);
+}
+
+/// Acceptance: `nargo execute` solves ALL FIVE ps4 legs on OUR inputs
+/// (Greco ct0/ct1 for both ciphertexts + the credit leg), with the
+/// commitments matching across legs.
+#[test]
+fn credit_bundle_solves_all_five_ps4_legs() {
+    let nargo = std::env::var("NARGO_BIN")
+        .ok()
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".nargo/bin/nargo")
+        });
+    let circuits = interfold_root().join("circuits/bin/threshold");
+    if !nargo.exists()
+        || !circuits
+            .join("target/ckks_credit_validity_ps4.json")
+            .exists()
+    {
+        eprintln!("SKIP nargo credit acceptance: nargo or compiled ps4 circuits missing");
+        return;
+    }
+    let pk = fixture_pk(4);
+    let mut rng = ChaCha20Rng::from_seed(SEED);
+    let (logit, mask, credit_inputs) = encrypt_credit_and_witness(
+        &pk,
+        credit_proof(),
+        CREDIT_CAP,
+        credit_model(),
+        CREDIT_INDEX,
+        CREDIT_MASK,
+        &mut rng,
+    )
+    .unwrap();
+    let credit_toml = toml::to_string(&credit_inputs).unwrap();
+
+    let nonce = format!("wasmcredit_{}", std::process::id());
+    let run = |pkg: &str, toml_body: &str| -> String {
+        let prover = circuits.join(pkg).join(format!("Prover_{nonce}.toml"));
+        std::fs::write(&prover, toml_body).unwrap();
+        let witness = format!("{pkg}_{nonce}");
+        let out = std::process::Command::new(&nargo)
+            .args([
+                "execute",
+                "--package",
+                pkg,
+                "-p",
+                &format!("Prover_{nonce}"),
+                &witness,
+            ])
+            .current_dir(&circuits)
+            .output()
+            .unwrap();
+        let _ = std::fs::remove_file(&prover);
+        let _ = std::fs::remove_file(circuits.join(format!("target/{witness}.gz")));
+        let stdout = String::from_utf8_lossy(&out.stdout).to_string();
+        let stderr = String::from_utf8_lossy(&out.stderr).to_string();
+        assert!(
+            out.status.success(),
+            "nargo execute {pkg} failed:\n{stdout}\n{stderr}"
+        );
+        stdout
+    };
+    let fields = |s: &str| -> Vec<String> {
+        s.split("0x")
+            .skip(1)
+            .map(|h| {
+                format!(
+                    "0x{}",
+                    h.chars()
+                        .take_while(|c| c.is_ascii_hexdigit())
+                        .collect::<String>()
+                )
+            })
+            .collect()
+    };
+    for (which, bundle) in [("logit", &logit), ("mask", &mask)] {
+        let ct0 = fields(&run(
+            "user_data_encryption_ckks_ct0_ps4",
+            &bundle.prover_toml_ct0,
+        ));
+        let ct1 = fields(&run(
+            "user_data_encryption_ckks_ct1_ps4",
+            &bundle.prover_toml_ct1,
+        ));
+        assert_eq!(ct0[3], bundle.u_commitment_hex, "{which} u (ct0)");
+        assert_eq!(ct1[2], bundle.u_commitment_hex, "{which} u (ct1)");
+        assert_eq!(ct0[2], bundle.m_commitment_hex, "{which} m");
+    }
+    let app = fields(&run("ckks_credit_validity_ps4", &credit_toml));
+    // The credit leg prints its public inputs then `(m_commitment_z, m_commitment_m)`.
+    let n = app.len();
+    assert_eq!(app[n - 2], logit.m_commitment_hex, "credit leg m_z: {app:?}");
+    assert_eq!(app[n - 1], mask.m_commitment_hex, "credit leg m_m: {app:?}");
 }

@@ -5,22 +5,22 @@ chains:
     contracts:
       e3_program:
         address: "0x09635F643e140090A9A8Dcd712eD6285858ceBef"
-        deploy_block: 33
+        deploy_block: 32
       interfold:
-        address: "0x1fA02b2d6A771842690194Cf62D91bdd92BfE28d"
-        deploy_block: 71
+        address: "0xF8e31cb472bc70500f08Cd84917E5A1912Ec8397"
+        deploy_block: 110
       ciphernode_registry:
         address: "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
-        deploy_block: 13
+        deploy_block: 12
       bonding_registry:
         address: "0x9A676e781A523b5d0C0e43731313A708CB607508"
-        deploy_block: 14
+        deploy_block: 13
       slashing_manager:
         address: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
-        deploy_block: 11
+        deploy_block: 10
       fee_token:
         address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
-        deploy_block: 8
+        deploy_block: 7
 
 program:
   dev: true

@@ -1,0 +1,16 @@
+[package]
+name = "ckks-fedavg-program"
+version = { workspace = true }
+edition = { workspace = true }
+license = { workspace = true }
+description = "CKKS private federated-averaging policy: coefficient-encoded updates weighted by private sample counts (plain-Rust E3 program)"
+
+[dependencies]
+anyhow.workspace = true
+e3-fhe-params.workspace = true
+e3-trckks.workspace = true
+e3-utils.workspace = true
+fhe.workspace = true
+fhe-traits.workspace = true
+fhe-math.workspace = true
+serde.workspace = true

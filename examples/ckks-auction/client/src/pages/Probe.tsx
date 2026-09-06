@@ -11,6 +11,7 @@
 import { useState } from 'react'
 import { encryptAndProveBid, BalanceTree } from '@ckks-auction/sdk'
 import type { BidSubmission } from '@ckks-auction/sdk'
+import { SectionHeader } from '@interfold/ckks-editorial'
 
 import { ensureCircuits } from '../api'
 
@@ -44,17 +45,36 @@ export const Probe = () => {
   }
 
   return (
-    <>
-      <h1>Browser proving probe</h1>
-      <div className="row">
-        <button data-testid="probe-ok" onClick={() => run(700)}>prove bid 700 (balance 800)</button>
-        <button data-testid="probe-over" className="secondary" onClick={() => run(900)}>prove bid 900 (over balance → must fail)</button>
+    <section className="pad-section">
+      <SectionHeader num="00" kicker="PROBE" title="Browser proving probe" meta="no chain · no server · fixture ParamSet 2 key" />
+      <p className="muted" style={{ marginTop: 20 }}>
+        Encrypts a bid under a fixture public key and runs the complete three-leg pipeline in this tab, to verify the Vite bundle (bb.js
+        workers, WASM, circuits) and measure per-leg proving times.
+      </p>
+      <div className="row" style={{ gap: 12, marginTop: 20 }}>
+        <button type="button" className="btn" data-testid="probe-ok" onClick={() => run(700)}>
+          prove bid 700 (balance 800)
+        </button>
+        <button type="button" className="btn ghost" data-testid="probe-over" onClick={() => run(900)}>
+          prove bid 900 (over balance → must fail)
+        </button>
       </div>
-      <pre data-testid="probe-log">{log.join('\n')}</pre>
-      {error && <p className="badge bad" data-testid="probe-error">{error}</p>}
-      {result && (
-        <pre data-testid="probe-result">{JSON.stringify({ u: result.uCommitment, m: result.mCommitment, ct: (result.ciphertext.length - 2) / 2, timings: result.timings }, null, 1)}</pre>
-      )}
-    </>
+      <div className="card col" style={{ gap: 12, marginTop: 24 }}>
+        <div className="mono muted">Log</div>
+        <pre className="mono-sm" data-testid="probe-log" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+          {log.join('\n')}
+        </pre>
+        {error && (
+          <p className="error" data-testid="probe-error" style={{ margin: 0 }}>
+            {error}
+          </p>
+        )}
+        {result && (
+          <pre className="mono-sm" data-testid="probe-result" style={{ margin: 0, whiteSpace: 'pre-wrap' }}>
+            {JSON.stringify({ u: result.uCommitment, m: result.mCommitment, ct: (result.ciphertext.length - 2) / 2, timings: result.timings }, null, 1)}
+          </pre>
+        )}
+      </div>
+    </section>
   )
 }

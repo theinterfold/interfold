@@ -1,0 +1,28 @@
+{
+  "description": "Over-bound update: the genuine update (squared norm ~2.09) declared against a round bound of 1.0 (the ONLY check rejecting it is the circuit's own `sum G_j^2 <= norm_bound`). `nargo execute --package ckks_fedavg_validity_ps5` on this witness fails in `fedavg_validity -> (norm_bound - norm).assert_max_bit_size::<NORM_BITS>` (circuits/lib/src/core/threshold/ckks_fedavg_validity.nr), so NO proof exists for it and the on-chain gate can never see such a submission. Recorded so the spec asserts the posture from the circuit's inputs: the public-input words below are what the client WOULD have published.",
+  "update": [
+    32768,
+    -16384,
+    49152,
+    -65536,
+    8192,
+    0,
+    -32768,
+    19661
+  ],
+  "squaredNorm": 9580469289,
+  "normBound": 4294967296,
+  "index": 0,
+  "count": 137,
+  "appPublicInputs": [
+    "0x0000000000000000000000000000000000000000000000000000000100000000",
+    "0x000000000000000000000000f39fd6e51aad88f6f4ce6ab8827279cfffb92266",
+    "0x0000000000000000000000000000000000000000000000000000000000000000",
+    "0x10a13fc59b8b09737a706d1fd5807b3f909490ec889cd52f108963b1ad787afe",
+    "0x12de9464d1085aca1ffa79430352003c24974caec73aea04727e6e5dc99a04f6"
+  ],
+  "nargoExecute": {
+    "exitCode": 1,
+    "failedAssertion": "Field::assert_max_bit_size::<40> on (norm_bound - norm), called from fedavg_validity (ckks_fedavg_validity.nr)"
+  }
+}

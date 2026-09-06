@@ -34,4 +34,10 @@ pub struct DecryptedSharesAggregationCkksCircuitData {
     pub d_share_polys: Vec<Poly<PowerBasis>>,
     /// Party IDs (1-based) for the reconstructing parties.
     pub reconstructing_parties: Vec<usize>,
+    /// E3 decryption domain, high 128 bits (public input). Same derivation
+    /// as C6-CKKS: `decryption_domain_limbs(chain_id, e3_id, ctx, keccak(ct))`.
+    /// Binds the proof to one E3 / committee / ciphertext (anti-replay).
+    pub domain_hi: u128,
+    /// E3 decryption domain, low 128 bits (public input).
+    pub domain_lo: u128,
 }

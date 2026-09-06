@@ -37,9 +37,56 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             // The chain-observed committee publication carries the same
             // fact as the gossiped PublicKeyAggregated and reaches EVERY
             // node (the gossip only reliably reaches the aggregator's own
-            // bus) — fire the CKKS ceremony release on it too; the machine
-            // handler is idempotent, so double delivery is free.
-            InterfoldEventData::CommitteePublished(_) => {
+            // bus). It is therefore ALSO the authoritative source of the
+            // decryption domain: a node that never saw the gossip would
+            // otherwise reach decryption with `decryption_domain == None`
+            // and the CKKS shell would degrade to a proof-less share
+            // (fail-open). Set it here from the on-chain facts —
+            // `pk_commitment = keccak256(pubkey)` exactly as the aggregator
+            // computes it (`public_key_aggregation/effects/ckks.rs`) — then
+            // release the CKKS ceremony; the machine handler is idempotent.
+            InterfoldEventData::CommitteePublished(data) => {
+                // The C6 decryption domain hashes the committee in ascending
+                // address order (== party-id order, what `CommitteeHashLib`
+                // hashes on-chain after finalization sorts `topNodes`). Sort
+                // explicitly so this recomputation does not depend on the
+                // order the chain event happens to carry.
+                let mut committee: Vec<alloy::primitives::Address> = Vec::new();
+                for node in &data.nodes {
+                    match node.parse::<alloy::primitives::Address>() {
+                        Ok(a) => committee.push(a),
+                        Err(err) => {
+                            tracing::error!(
+                                "CommitteePublished for {}: invalid node address {node}: {err} — \
+                                 not setting the CKKS decryption domain from this event",
+                                data.e3_id
+                            );
+                            committee.clear();
+                            break;
+                        }
+                    }
+                }
+                if !committee.is_empty() {
+                    committee.sort();
+                    let committee_hash = e3_committee_hash::hash_committee_addresses(&committee);
+                    let pk_commitment: [u8; 32] =
+                        alloy::primitives::keccak256(&data.public_key[..]).into();
+                    let pk = data.public_key.clone();
+                    let _ = self.state.try_mutate(&ec, |mut s| {
+                        if s.aggregated_pk.is_none() {
+                            s.aggregated_pk = Some(pk);
+                        }
+                        if s.decryption_domain.is_none() {
+                            s.decryption_domain =
+                                Some(e3_committee_hash::DecryptionDomainContext {
+                                    interfold_address: self.interfold_address,
+                                    committee_hash,
+                                    committee_public_key: pk_commitment.into(),
+                                });
+                        }
+                        Ok(s)
+                    });
+                }
                 if let Err(err) = self.ckks_handle_public_key_aggregated(ec) {
                     tracing::error!("Failed to release CKKS relin round 1: {err}");
                 }

@@ -1,0 +1,7 @@
+[package]
+name = "user_data_encryption_ckks_ct1_ps4"
+type = "bin"
+authors = [""]
+
+[dependencies]
+lib = { path = "../../../lib" }

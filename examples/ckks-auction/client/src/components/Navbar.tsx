@@ -4,15 +4,36 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { NavLink } from 'react-router-dom'
+import { Link, NavLink } from 'react-router-dom'
 
 import { WalletButton } from './WalletButton'
 
+export const APP_NAME = 'Auction'
+export const APP_KICKER = 'Sealed-bid auction · threshold CKKS'
+
+const PAGES = [
+  { label: 'Rounds', path: '/rounds' },
+  { label: 'How it works', path: '/' },
+]
+
 export const Navbar = () => (
-  <nav>
-    <NavLink to="/" end>CKKS Auction</NavLink>
-    <NavLink to="/rounds">Rounds</NavLink>
-    <span className="spacer" />
-    <WalletButton />
-  </nav>
+  <header className="topbar">
+    <Link to="/" className="brand" style={{ cursor: 'pointer' }}>
+      <span className="glyph" />
+      <span style={{ fontWeight: 500 }}>{APP_NAME}</span>
+      <span className="brand-mono" style={{ marginLeft: 10 }}>
+        {APP_KICKER}
+      </span>
+    </Link>
+    <nav className="topnav">
+      {PAGES.map(({ label, path }) => (
+        <NavLink key={label} to={path} end={path === '/'} className={({ isActive }) => (isActive ? 'active' : '')}>
+          {label}
+        </NavLink>
+      ))}
+    </nav>
+    <div className="topbar-right">
+      <WalletButton />
+    </div>
+  </header>
 )

@@ -52,7 +52,7 @@
 use crate::TrCkksConfig;
 use anyhow::{bail, Context as _, Result};
 use e3_utils::utility_types::ArcBytes;
-use fhe::ckks::{CkksCiphertext, CkksEncoder};
+use fhe::ckks::{CkksCiphertext, CkksEncoder, CkksParameters};
 use fhe_traits::{DeserializeParametrized, Serialize as FheSerialize};
 use rand::Rng;
 use serde::{Deserialize, Serialize};
@@ -272,6 +272,76 @@ pub fn auction_round_policy(
     // negligible relative to the signal (see machine_tests for the same
     // reasoning); the decoder divides by the ciphertext's own scale.
     Ok(ArcBytes::from_bytes(&out.to_bytes()))
+}
+
+/// How an E3 output plaintext is read back and published, a PURE function
+/// of the CKKS parameters (every node/aggregator/client derives the same
+/// layout from the on-chain params without configuration):
+///
+/// * slot-encoded outputs at 2 decimals (ParamSets 0/2/3): `decode`
+///   (canonical embedding) → fixed point at [`SLOT_OUTPUT_DECIMALS`];
+/// * the credit-v2 output (ParamSet 4): ALSO slot-encoded, `σ_cubic(z_i) + m_i`
+///   in slot `i`, but published at [`CREDIT_OUTPUT_DECIMALS`]: the mask is
+///   up to 1024 while the score needs ~1e-3, so two decimals would truncate
+///   the applicant's unmasked probability. The 20-bit demo smudging decodes
+///   to ≈2^-36 at the level-3 scale, far below the 4th decimal.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutputLayout {
+    Slots,
+    CreditSlots,
+    /// ParamSet 5: the output is COEFFICIENT-encoded (an inner product on
+    /// coefficient 0, further results on the following coefficients) and
+    /// published as the first [`COEFFICIENT_OUTPUT_COUNT`] coefficients at
+    /// [`COEFFICIENT_OUTPUT_DECIMALS`].
+    Coefficients,
+}
+
+/// Decimals of the canonical fixed-point encoding for slot outputs.
+pub const SLOT_OUTPUT_DECIMALS: u32 = 2;
+/// Decimals of the canonical fixed-point encoding for the credit output.
+pub const CREDIT_OUTPUT_DECIMALS: u32 = 4;
+/// Decimals of the canonical fixed-point encoding for the coefficient
+/// (ParamSet 5) output. Inner products of cap-normalised vectors and
+/// mask-scaled sums need ~1e-4 resolution; the 20-bit demo smudging
+/// decodes to ~2^-24, well below the 4th decimal.
+pub const COEFFICIENT_OUTPUT_DECIMALS: u32 = 4;
+/// How many leading coefficients the ParamSet-5 output publishes. The
+/// three coefficient policies place their results on coefficients
+/// `0..COEFFICIENT_OUTPUT_COUNT`; everything above is cross-term garbage
+/// (masked) that must NOT be published.
+pub const COEFFICIENT_OUTPUT_COUNT: usize = 64;
+
+/// The output layout for `params` (ParamSet 4 ⇔ credit slots).
+pub fn output_layout_for(params: &CkksParameters) -> OutputLayout {
+    match e3_fhe_params::ckks_presets::ckks_on_chain_param_set_for(params) {
+        Ok(4) => OutputLayout::CreditSlots,
+        Ok(5) => OutputLayout::Coefficients,
+        _ => OutputLayout::Slots,
+    }
+}
+
+/// Decimals the on-chain fixed-point bytes carry for `params`.
+pub fn output_decimals_for(params: &CkksParameters) -> u32 {
+    match output_layout_for(params) {
+        OutputLayout::Slots => SLOT_OUTPUT_DECIMALS,
+        OutputLayout::CreditSlots => CREDIT_OUTPUT_DECIMALS,
+        OutputLayout::Coefficients => COEFFICIENT_OUTPUT_DECIMALS,
+    }
+}
+
+/// Decode a threshold-decrypted output plaintext to the values the
+/// canonical encoding publishes (layout per [`output_layout_for`]).
+pub fn decode_output_plaintext(
+    params: &std::sync::Arc<CkksParameters>,
+    pt: &fhe::ckks::CkksPlaintext,
+) -> Result<Vec<f64>> {
+    let encoder = CkksEncoder::new(params);
+    match output_layout_for(params) {
+        OutputLayout::Slots | OutputLayout::CreditSlots => Ok(encoder.decode(pt)?),
+        OutputLayout::Coefficients => {
+            Ok(encoder.decode_coefficients(pt, COEFFICIENT_OUTPUT_COUNT)?)
+        }
+    }
 }
 
 /// Canonical fixed-point on-chain encoding: big-endian `i128` words at

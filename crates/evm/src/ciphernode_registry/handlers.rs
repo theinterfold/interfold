@@ -442,6 +442,7 @@ mod tests {
             pk_commitment: [7u8; 32],
             dkg_aggregator_proof: None,
             dkg_attestation_bundle: None,
+            ckks_pk_proof_blob: None,
         }
     }
 
@@ -544,6 +545,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPublicKey>
         let pk_commitment = msg.pk_commitment;
         let dkg_aggregator_proof = msg.dkg_aggregator_proof.clone();
         let dkg_attestation_bundle = msg.dkg_attestation_bundle.clone();
+        let ckks_pk_proof_blob = msg.ckks_pk_proof_blob.clone();
         let provider = self.provider.clone();
         let bus = self.bus.clone();
 
@@ -580,6 +582,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPublicKey>
                             pk_commitment,
                             dkg_aggregator_proof.as_ref(),
                             dkg_attestation_bundle.as_ref().map(|b| b.as_ref()),
+                            ckks_pk_proof_blob.as_ref().map(|b| b.as_ref()),
                         )
                         .await?;
                         match outcome.receipt() {

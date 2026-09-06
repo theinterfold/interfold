@@ -23,20 +23,19 @@
 //! enforces byte-equality across two different subsets.
 
 use anyhow::{Context as _, Result};
-use e3_trckks::program::encode_fixed_point_output;
+use e3_trckks::program::{encode_fixed_point_output, output_decimals_for};
 use e3_trckks::threshold_decryption::{
     calculate_threshold_decryption, CalculateThresholdDecryptionRequest,
 };
 use e3_trckks::TrCkksConfig;
 use e3_utils::utility_types::ArcBytes;
 
-/// Protocol constant: decimal places of the canonical fixed-point output.
-/// Must stay below the flooding calculator's declared `precision_loss`
-/// (insecure preset: ~0.3 absolute error >> 1e-6 would violate this; the
-/// demo presets therefore declare precision_loss accordingly — see
-/// `fhe::trckks::CkksSmudgingBoundCalculator`). A production deployment
-/// derives this FROM `precision_loss`: decimals = floor(-log10(loss)).
-pub const CKKS_OUTPUT_DECIMALS: u32 = 2;
+// Output decimals are NOT a constant here: they are resolved from the E3's
+// params by `e3_trckks::program::output_decimals_for` (slot-encoded sets
+// 0/2/3 → `SLOT_OUTPUT_DECIMALS`; the credit set 4 → `CREDIT_OUTPUT_DECIMALS`)
+// so the aggregator, the node runtime and the app can never disagree. The
+// decimals must stay below the flooding calculator's declared
+// `precision_loss` (see `fhe::trckks::CkksSmudgingBoundCalculator`).
 
 /// Combine `t+1` decryption shares for one ciphertext output and encode
 /// the result canonically for on-chain publication.
@@ -63,7 +62,8 @@ pub fn aggregate_ckks_plaintext(
         party_ids,
     })
     .context("CKKS threshold decryption failed")?;
-    let bytes = encode_fixed_point_output(&response.values, CKKS_OUTPUT_DECIMALS)
+    let decimals = output_decimals_for(config.params()?.as_ref());
+    let bytes = encode_fixed_point_output(&response.values, decimals)
         .context("fixed-point encoding failed")?;
     Ok(ArcBytes::from_bytes(&bytes))
 }
@@ -157,8 +157,10 @@ mod tests {
 
         assert_eq!(out_a, out_b, "on-chain bytes must be subset-independent");
 
-        // And they decode to the right value.
-        let values = decode_fixed_point_output(&out_a, CKKS_OUTPUT_DECIMALS).unwrap();
+        // And they decode to the right value — at the decimals the params
+        // resolve to, the same rule the production path uses.
+        let decimals = output_decimals_for(config.params().unwrap().as_ref());
+        let values = decode_fixed_point_output(&out_a, decimals).unwrap();
         assert!((values[0] - 100.0).abs() < 0.01, "decoded {}", values[0]);
     }
 }

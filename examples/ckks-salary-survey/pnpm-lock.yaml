@@ -27,6 +27,9 @@ importers:
       '@aztec/bb.js':
         specifier: 5.1.0
         version: 5.1.0
+      '@interfold/ckks-editorial':
+        specifier: file:../../ckks-common/packages/ckks-editorial
+        version: file:../ckks-common/packages/ckks-editorial(react@18.3.1)
       '@interfold/ckks-salary-sdk':
         specifier: workspace:*
         version: link:../packages/ckks-salary-sdk
@@ -36,6 +39,9 @@ importers:
       '@noir-lang/noir_js':
         specifier: 1.0.0-beta.26
         version: 1.0.0-beta.26
+      '@phosphor-icons/react':
+        specifier: ^2.1.4
+        version: 2.1.10(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
       '@tanstack/react-query':
         specifier: ^5.74.3
         version: 5.102.8(react@18.3.1)
@@ -320,6 +326,11 @@ packages:
     cpu: [x64]
     os: [win32]
 
+  '@interfold/ckks-editorial@file:../ckks-common/packages/ckks-editorial':
+    resolution: {directory: ../ckks-common/packages/ckks-editorial, type: directory}
+    peerDependencies:
+      react: '>=18'
+
   '@jridgewell/gen-mapping@0.3.13':
     resolution: {integrity: sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA==}
 
@@ -396,6 +407,13 @@ packages:
 
   '@noir-lang/types@1.0.0-beta.26':
     resolution: {integrity: sha512-TFJMafp32koXf3TFVAfPBirwkVdlRHzSTM1nVAkRJDTQQNnI7qoAjvzXWXjgpE65kwjukQyzcmaucOegruawPw==}
+
+  '@phosphor-icons/react@2.1.10':
+    resolution: {integrity: sha512-vt8Tvq8GLjheAZZYa+YG/pW7HDbov8El/MANW8pOAz4eGxrwhnbfrQZq0Cp4q8zBEu8NIhHdnr+r8thnfRSNYA==}
+    engines: {node: '>=10'}
+    peerDependencies:
+      react: '>= 16.8'
+      react-dom: '>= 16.8'
 
   '@playwright/test@1.52.0':
     resolution: {integrity: sha512-uh6W7sb55hl7D6vsAeA+V2p5JnlAqzhqFyF0VcJkKZXkgnFcVG9PziERRHQfPLfNGx1C292a4JqbWzhR8L4R1g==}
@@ -1182,6 +1200,10 @@ snapshots:
   '@esbuild/win32-x64@0.21.5':
     optional: true
 
+  '@interfold/ckks-editorial@file:../ckks-common/packages/ckks-editorial(react@18.3.1)':
+    dependencies:
+      react: 18.3.1
+
   '@jridgewell/gen-mapping@0.3.13':
     dependencies:
       '@jridgewell/sourcemap-codec': 1.6.0
@@ -1244,6 +1266,11 @@ snapshots:
       '@noir-lang/types': 1.0.0-beta.26
 
   '@noir-lang/types@1.0.0-beta.26': {}
+
+  '@phosphor-icons/react@2.1.10(react-dom@18.3.1(react@18.3.1))(react@18.3.1)':
+    dependencies:
+      react: 18.3.1
+      react-dom: 18.3.1(react@18.3.1)
 
   '@playwright/test@1.52.0':
     dependencies:

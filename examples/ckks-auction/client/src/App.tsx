@@ -5,18 +5,23 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { Route, Routes } from 'react-router-dom'
+import { EditorialShell } from '@interfold/ckks-editorial'
 
 import { Navbar } from './components/Navbar'
+import { Footer } from './components/Footer'
 import { Home } from './pages/Home'
 import { Rounds } from './pages/Rounds'
 import { Round } from './pages/Round'
 import { Probe } from './pages/Probe'
 
+/** Palette per app (see @interfold/ckks-editorial README): auction = ink. */
+export const PALETTE = 'ink'
+
 export default function App() {
   return (
-    <div className="app">
+    <EditorialShell palette={PALETTE} className="app-shell">
       <Navbar />
-      <main>
+      <main className="app-main">
         <Routes>
           <Route path="/" element={<Home />} />
           <Route path="/rounds" element={<Rounds />} />
@@ -24,7 +29,7 @@ export default function App() {
           <Route path="/probe" element={<Probe />} />
         </Routes>
       </main>
-      <footer>CKKS sealed-bid auction on Interfold · bids are encrypted and proven in this browser; only ±1 comparison signs are ever decrypted.</footer>
-    </div>
+      <Footer />
+    </EditorialShell>
   )
 }

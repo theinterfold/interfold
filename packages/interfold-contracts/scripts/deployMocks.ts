@@ -29,6 +29,11 @@ export interface MockDeployments {
   ckksVerifiedProgramPs3Address: string;
   ckksSalaryProgramAddress: string;
   ckksAuctionProgramAddress: string;
+  /** Three-leg credit-scoring program (ParamSet 4 verifiers). */
+  ckksCreditProgramAddress: string;
+  /** Five-leg federated-averaging program (ParamSet 5 verifiers). */
+  ckksFedAvgProgramAddress: string;
+  ckksMatchingProgramAddress: string;
 }
 
 /**
@@ -84,6 +89,23 @@ export const deployMocks = async (): Promise<MockDeployments> => {
   console.log("Deploying CKKS auction app program (ParamSet 2)");
   const { programAddress: ckksAuctionProgramAddress } =
     await deployAndSaveCkksAppProgram({ hre, app: "auction", cap: 1n });
+  // Credit scoring: features are numerators over FEATURE_CAP=1000 (the
+  // fixture's cap; see `gen_ckks_credit_prover`).
+  console.log("Deploying CKKS credit-scoring app program (ParamSet 4)");
+  const { programAddress: ckksCreditProgramAddress } =
+    await deployAndSaveCkksAppProgram({ hre, app: "credit", cap: 1000n });
+  // Treasury risk (ParamSet 5): exposures are cap-normalised in the browser.
+  console.log("Deploying CKKS treasury-risk app program (ParamSet 5)");
+  const { programAddress: ckksTreasuryProgramAddress } =
+    await deployAndSaveCkksAppProgram({ hre, app: "treasury", cap: 1n });
+  // Federated averaging (ParamSet 5): updates are normalised to [-1, 1] in the browser.
+  console.log("Deploying CKKS federated-averaging app program (ParamSet 5)");
+  const { programAddress: ckksFedAvgProgramAddress } =
+    await deployAndSaveCkksAppProgram({ hre, app: "fedavg", cap: 1n });
+  // Private matching (ParamSet 5): two parties per round, vectors normalised to [-1, 1] in the browser.
+  console.log("Deploying CKKS private-matching app program (ParamSet 5)");
+  const { programAddress: ckksMatchingProgramAddress } =
+    await deployAndSaveCkksAppProgram({ hre, app: "matching", cap: 1n });
 
   console.log(`
         MockDeployments:
@@ -98,6 +120,10 @@ export const deployMocks = async (): Promise<MockDeployments> => {
         CkksE3ProgramPs3:${ckksVerifiedProgramPs3Address}
         CkksSalaryE3Program:${ckksSalaryProgramAddress}
         CkksAuctionE3Program:${ckksAuctionProgramAddress}
+        CkksCreditE3Program:${ckksCreditProgramAddress}
+        CkksTreasuryE3Program:${ckksTreasuryProgramAddress}
+        CkksFedAvgE3Program:${ckksFedAvgProgramAddress}
+        CkksMatchingE3Program:${ckksMatchingProgramAddress}
         `);
 
   return {
@@ -111,5 +137,9 @@ export const deployMocks = async (): Promise<MockDeployments> => {
     ckksVerifiedProgramPs3Address,
     ckksSalaryProgramAddress,
     ckksAuctionProgramAddress,
+    ckksCreditProgramAddress,
+    ckksTreasuryProgramAddress,
+    ckksFedAvgProgramAddress,
+    ckksMatchingProgramAddress,
   };
 };

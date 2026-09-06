@@ -1,0 +1,7 @@
+[package]
+name = "ckks_treasury_validity_ps5"
+type = "bin"
+authors = [""]
+
+[dependencies]
+lib = { path = "../../../lib" }

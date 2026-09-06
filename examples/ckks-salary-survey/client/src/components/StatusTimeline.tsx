@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import type { Round, RoundStatus } from '@interfold/ckks-salary-sdk'
+import { RoundTimeline, type RoundPhase } from '@interfold/ckks-editorial'
 import { fmtTime } from '@/utils/constants'
 
 const STEPS: { key: string; label: string; reached: (r: Round) => boolean; when: (r: Round) => number | null }[] = [
@@ -41,18 +42,34 @@ export const statusLabel = (s: RoundStatus): string =>
     failed: 'Failed',
   })[s]
 
+/** Map the server's round status onto the editorial timeline phases. */
+export const phaseOf = (r: Round): RoundPhase => {
+  if (r.status === 'failed') return 'failed'
+  if (r.results) return 'published'
+  if (r.evaluation) return 'decrypting'
+  if (r.status === 'evaluating' || r.status === 'closed') return 'evaluating'
+  if (r.status === 'open' && r.public_key_hex) return 'open'
+  return 'keygen'
+}
+
 export const StatusTimeline = ({ round }: { round: Round }) => (
-  <ol className="timeline" data-testid="timeline">
-    {STEPS.map((s) => {
-      const done = s.reached(round)
-      const when = s.when(round)
-      return (
-        <li key={s.key} className={done ? 'done' : 'todo'} data-testid={`step-${s.key}`}>
-          <span className="mark">{done ? '✓' : '○'}</span>
-          <span>{s.label}</span>
-          {done && when ? <span className="muted"> · {fmtTime(when)}</span> : null}
-        </li>
-      )
-    })}
-  </ol>
+  <div className="col" style={{ gap: 18 }}>
+    <RoundTimeline phase={phaseOf(round)} committee={{ signed: round.public_key_hex ? round.committee.length || 5 : 0, total: round.committee.length || 5 }} />
+    <ol className="proof-steps" data-testid="timeline">
+      {STEPS.map((s, i) => {
+        const done = s.reached(round)
+        const when = s.when(round)
+        return (
+          <li key={s.key} className={`proof-step ${done ? 'done' : 'todo'}`} data-testid={`step-${s.key}`}>
+            <span className="mono-sm num">{String(i + 1).padStart(2, '0')}</span>
+            <span className="glyph" aria-hidden>
+              {done ? '✓' : '○'}
+            </span>
+            <span className="lbl">{s.label}</span>
+            <span className="mono-sm detail">{done && when ? fmtTime(when) : ''}</span>
+          </li>
+        )
+      })}
+    </ol>
+  </div>
 )

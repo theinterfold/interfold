@@ -9,6 +9,7 @@ import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import App from './App'
 import { AppProviders } from './providers/AppProviders'
+import '@interfold/ckks-editorial/styles.css'
 import './globals.css'
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

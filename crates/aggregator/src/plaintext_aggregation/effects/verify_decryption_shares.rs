@@ -83,13 +83,20 @@ impl ThresholdPlaintextAggregator {
                     );
                     return self.ckks_aggregate_and_publish(ec, BTreeSet::new(), false);
                 }
+                // FAIL CLOSED. A PROVEN C6 posture with zero proofs attached
+                // is not a test convenience to be waved through: it means
+                // every party published a share the aggregator cannot verify.
+                // Aggregating them would publish a plaintext whose shares
+                // were never checked against the DKG commitments. Refuse.
+                // (In-process tests that want proof-less aggregation must run
+                // under a ProofFree posture, which is what that arm is for.)
                 e3_fhe_params::ckks_presets::ProofPosture::Proven if no_proofs => {
-                    info!(
-                        e3_id = %self.e3_id,
-                        "CKKS decryption shares carry no C6 proofs (in-process test path) — \
-                         aggregating without verification"
+                    bail!(
+                        "CKKS e3 {}: C6 posture is PROVEN but none of the {} decryption shares \
+                         carries a C6 proof — refusing to aggregate unverified shares",
+                        self.e3_id,
+                        c6_proofs.len()
                     );
-                    return self.ckks_aggregate_and_publish(ec, BTreeSet::new(), false);
                 }
                 e3_fhe_params::ckks_presets::ProofPosture::Proven => {}
             }

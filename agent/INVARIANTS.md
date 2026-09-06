@@ -401,6 +401,37 @@ design citation alone does not establish current runtime behavior.
 
 ### Threshold CKKS (scheme-bound E3s; explicit, tested postures — not gaps)
 
+- **CKKS E3s verify the committee key and the decrypted output ON-CHAIN with real Honk verifiers;
+  `MockPkVerifier` / `MockDecryptionVerifier` are NEVER registered for the CKKS scheme id.**
+  `Interfold` keys verifiers by encryption scheme (`pkVerifiers` / `decryptionVerifiers`, keyed by
+  `keccak256("fhe.rs:CKKS")`), so CKKS gets its own pair and BFV's wiring is untouched.
+  `CkksPkVerifier` Honk-verifies ONE C1-CKKS (`pk_generation_ckks_ps<N>`) proof per committee
+  member — CKKS has no recursive pk-aggregation circuit, so the blob is
+  `abi.encode(bytes[] partyProofs, bytes32[][] partyPublicInputs, bytes aggregatePublicKey)` in
+  ascending party order (`e3_evm::helpers::encode_ckks_pk_proofs`); it additionally requires
+  `partyProofs.length == sortedNodes.length` (CKKS sums over ALL dealers, so the rogue-key gate is
+  all-or-nothing), pairwise-distinct per-party `pk`/`sk` commitments, and
+  `keccak256(aggregatePublicKey) == pkCommitment`. `CkksDecryptionVerifier` Honk-verifies ONE
+  C7-CKKS (`decrypted_shares_aggregation_ckks[_ps<N>]`) proof, which attests that `u_global` is the
+  Lagrange+CRT reconstruction of `T+1` C6-committed shares at strictly increasing party ids.
+  Both contracts dispatch on `interfold.getE3(e3Id).paramSet`, so ONE deployment of each serves
+  the auction (ps2), salary-survey (ps3) and credit-scoring (ps4) demos.
+  NOT bound on-chain, and trusted deliberately: (a) the aggregate key is not proven to be the sum
+  of the per-party `pk0_i` — the circuit commitment is SAFE/Poseidon over limb coefficients while
+  the chain commitment is keccak256 over serialised bytes, and neither is recomputable from the
+  other in the EVM (the link is enforced off-chain by `check_c1_ckks_keyshare_commitments`);
+  (b) the published plaintext is not bound to `u_global` — CKKS decode (center mod Q, divide by
+  `delta`, inverse FFT) is not EVM-tractable; (c) neither circuit exposes a domain slot, so
+  `e3Id` / committee / ciphertext binding is absent. Closing (a) and (b) needs a C5-CKKS
+  aggregation circuit and a decode-committing circuit respectively; neither exists.
+  The aggregator FAILS CLOSED: a missing party proof aborts publication rather than sending an
+  empty blob. Pinned by `test/CkksOnchainVerifiers.spec.ts` (19 specs over real fixtures from
+  `scripts/ckks-onchain-verifier-fixtures.sh`) and
+  `e3_evm::helpers::tests::test_encode_ckks_pk_proofs_*`. Measured gas: 9,128,457 for a 3-party
+  key verification, 2,865,226 for one output verification. RISC0 program-correctness proving
+  (`MockCiphertextVerifier`) remains out of scope and is the one honest remaining trust
+  assumption. — `flow-trace/04` §CKKS
+
 - **Committee-wide CKKS decisions are pure functions of the on-chain `ParamSet`, never node
   configuration.** `crates/fhe-params/src/ckks_presets.rs` is the single source: the CKKS params
   (`ckks_params_for_on_chain_param_set`), their inverse (`ckks_on_chain_param_set_for`), the DKG
@@ -436,9 +467,79 @@ design citation alone does not establish current runtime behavior.
   per-level machine rejects the sentinel — so mixed-mode chunks fail attributably before decode.
   `max_relin_share_bytes` sizes the hybrid payload as `2·dnum·(L+k)·N·8` (+25 %).
   — `flow-trace/04` §CKKS
+- **ParamSet 4 (credit scoring) runs a TWO-level ceremony and opens SLOTS (v2).** Five 36-bit
+  limbs (`CREDIT_CKKS_MODULI` = the ParamSet-3 primes + `0xffffba001` + `0xffffb7001`, pinned by
+  `credit_preset_tail_primes_are_the_next_ntt_primes`), all fitting the standard transport; the
+  plan is `RelinCeremonyPlan::PerLevel([1, 2])` because the credit policy
+  (`e3_trckks::policy::credit_sigmoid_policy`, called by the E3 PROGRAM — never by a ciphernode)
+  computes `σ(z) ≈ 0.5 + 0.197·z − 0.004·z³` HOMOMORPHICALLY: two ct×ct products with relin at
+  levels 1 and 2, rescales, then adds the applicant's mask ciphertext; `CREDIT_OPENING_LEVEL = 3`.
+  Applicant `i` proves the public-weight logit `z_i = ⟨w, x_i⟩/cap + b` into SLOT `i` of one
+  ciphertext and a uniform mask `m_i ∈ [0, 2^20)/2^10` into slot `i` of a second; the ONE opened
+  output carries `σ(z_i) + m_i` in slot `i` (`0.5` for an unused slot). The linear v1 design
+  (coefficient encoding, per-feature masks, `RelinCeremonyPlan::None`) survives ONLY as the tested
+  library fn `credit_linear_logit_policy` and is NOT what the app runs. Every C1/C6/C7 artifact
+  for set 4 must be registered under the `_ps4` names before an E3 can start (`ckks_artifacts`
+  fails closed). Pinned by `credit_preset_fits_standard_transport`, the `ckks_credit_eval`
+  workflow test and `test/CkksCreditE3Program.spec.ts`. — `flow-trace/04` §CKKS
+- **The credit applicant proves FIVE legs, and the logit is bound to public model weights.**
+  `ckks_credit_validity_ps4` (public inputs `[cap, address, merkle_root, m_commitment, model
+  hash, slot index]`) proves the Greco-committed message places `round(Δ·z_i)` in slot `i` and
+  zero elsewhere, with `z_i` computed from Merkle-attested features `poseidon9([address,
+  x_0..x_7])` under the round's issuer root and the round's on-chain `fixed_point_model`; the
+  mask ciphertext's Greco pair binds `m_commitment`. Two Greco pairs (`user_data_encryption_ckks_
+  ct{0,1}_ps4` for logit and mask) + the validity leg = five UltraHonk proofs verified on-chain
+  by `CkksCreditE3Program` (nested `CreditApplication` ABI tuple: each `GrecoPair` has its own
+  head/tail offsets — encode it nested, a flat 12-field envelope reverts). The mask is the ONLY
+  thing that makes the score private to its owner; it lives in the applicant's browser
+  (localStorage) and never reaches the server or chain. — `flow-trace/04` §CKKS
+- **C7-CKKS binds the FULL ring and its CRT glue is SOUND; the BFV C7 glue is NOT (documented,
+  untouched).** `decrypted_shares_aggregation_ckks` uses `DECRYPTED_SHARES_AGGREGATION_CKKS_N`
+  (= ring degree N, emitted by codegen) as its coefficient window — never BFV's sparse
+  `MAX_MSG_NON_ZERO_COEFFS = 100` — so C6-CKKS's `d_commitment` (hashed over all N coefficients)
+  and C7's `expected_d_commitments[i]` are the SAME hash; the zk-helpers test
+  `inputs_match_threshold_decryption` asserts that equality. `verify_crt_reconstruction_ckks`
+  range-constrains `u_global < Q_l` and every quotient `r_l < Q_l/q_l` (`Q_FULL`, `Q_OVER_QL`
+  emitted by codegen; `Q_l < 2^253` holds at every opening level in use), so the field identity
+  `u_crts[l] + r_l·q_l == u_global` implies the integer identity and `u_global` is the UNIQUE
+  canonical lift — it is no longer a free public input. The shared BFV `verify_crt_reconstruction`
+  leaves `crt_quotients` unconstrained and is vacuous over the field (a prover sets
+  `r_l = (u* − u_crts[l])·q_l⁻¹`); it is deliberately byte-identical to `main` and recorded as
+  claim C-6 in `docs/BFV_C7_CRT_SOUNDNESS_FINDING.md`. Never route a CKKS circuit through the BFV
+  glue. Pinned by Noir `test_ckks_aggregation_rejects_forged_u_global` /
+  `_rejects_noncanonical_lift` and the hardhat spec "rejects a forged u_global".
+- **C7-CKKS is domain-bound; a proof serves exactly one E3.** The circuit exposes
+  `domain_hi`/`domain_lo` — the SAME two words C6-CKKS binds, derived by
+  `e3_committee_hash::decryption_domain_limbs(chain_id, e3_id, DecryptionDomainContext,
+  keccak256(ciphertext))` — and `CkksDecryptionVerifier` reverts `DomainBindingMismatch` unless
+  they equal the hi/lo split of the domain `InterfoldLifecycle.verifyPlaintext` derives on-chain.
+  The aggregator supplies the domain via `DecryptedSharesAggregationProofRequest::
+  ckks_decryption_domain` + `ckks_ciphertext_bytes` (both `#[serde(default)]`, appended); the
+  C7-CKKS prover FAILS CLOSED when either is missing — an unbound aggregation proof is never
+  emitted. `ThresholdPlaintextAggregatorExtension::create_with_interfold` carries the per-chain
+  Interfold address for this (same source as the keyshare's). Public-input layout:
+  `[d_commitments T+1][party_ids T+1][domain_hi][domain_lo][u_global N]` = 518 words at T=1,
+  N=512 (`NUMBER_OF_PUBLIC_INPUTS` 526 incl. pairing points). Pinned by the hardhat spec
+  "rejects the proof replayed under a DIFFERENT E3's decryption domain".
+- **CKKS decryption is FAIL-CLOSED under a PROVEN C6 posture — there is no proof-less path in
+  production.** The keyshare shell `bail!`s instead of publishing a plain share when the
+  decryption domain / aggregated pk are unknown (`ckks_shell.rs`, was an "in-process test path");
+  the aggregator `bail!`s instead of aggregating when no party attached a C6 proof
+  (`verify_decryption_shares.rs`, same). The decryption domain is set from BOTH the gossiped
+  `PublicKeyAggregated` AND the chain-observed `CommitteePublished` (`route_events.rs`;
+  `pk_commitment = keccak256(pubkey)`, committee hash over ascending addresses), so a node that
+  missed the gossip still reaches decryption with a domain. In-process tests that want proof-less
+  aggregation MUST run under a `ProofFree` posture. Pinned by
+  `committee_of_actors_ckks_dkg_and_threshold_decryption`, which now asserts the share travels
+  inside `ShareDecryptionProofPending` and panics on a plain `DecryptionshareCreated`.
+- **CKKS machine snapshots COMMIT BEFORE DISPATCH.** `ckks_dispatch_commands` persists the
+  machine snapshot FIRST, then emits side effects (and again after). The `Decrypting {
+  served_ct_hash }` pin that makes the dealt smudging share single-use (IND-CPA-D) is therefore on
+  disk before the decryption share can hit the wire; a crash in the dispatch window replays a
+  duplicate publish, never a second flooding of a different ciphertext with the same `e_sm`.
 - **Every CKKS proof posture is PROVEN; proof-free is NOT an accepted state.**
   `CkksProofPosture::from_bytes` is `Proven` for C0/C1/C6/C7/ceremony on every known param set
-  (0/2/3); the ONLY proof-free path is the explicit operator knob `CKKS_ALLOW_PROOF_FREE=1`
+  (0/2/3/4); the ONLY proof-free path is the explicit operator knob `CKKS_ALLOW_PROOF_FREE=1`
   (`CKKS_ALLOW_PROOF_FREE_ENV`, default OFF, committee-wide, demo-only), which flips every
   entry with `PROOF_FREE_OVERRIDE_REASON`. The node FAILS CLOSED at `CiphernodeSelected`
   (keyshare) and at aggregator construction:

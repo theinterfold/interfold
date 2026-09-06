@@ -235,6 +235,162 @@ pub fn encrypt_and_witness_with_rng<R: RngCore + CryptoRng>(
     bundle_from_inputs(param_set, &preset, inputs, values)
 }
 
+/// COEFFICIENT-encoded encryption + Greco witness (ParamSet 5 apps:
+/// private matching / treasury risk / federated averaging).
+///
+/// `coefficients` is the FULL length-N coefficient vector already laid
+/// out by the app (`e3_trckks::policy::coefficient_layout::{forward,
+/// reversed, mask, gradient_block, constant}` — one definition of the
+/// encoding, mirrored in the JS SDKs); every entry must satisfy
+/// `|c| <= input_bound` (1024 for ParamSet 5). Encodes with
+/// `CkksEncoder::encode_coefficients(coefficients, 0, Δ)` — NO canonical
+/// embedding, NO slots — so coefficient `k` of the plaintext is exactly
+/// `round(Δ · coefficients[k])`, which is what the ParamSet-5 validity
+/// legs check per coefficient. The returned bundle is identical in shape
+/// to [`encrypt_and_witness`]'s (both Prover.tomls, noir_js ct0/ct1
+/// input maps, u/m commitments, message poly) so the SDKs' Greco proving
+/// path is unchanged.
+///
+/// Shared by three apps built in parallel: add app-specific helpers in
+/// the apps' SDKs, not here.
+pub fn encrypt_coefficients_and_witness<R: RngCore + CryptoRng>(
+    param_set: u8,
+    pk_bytes: &[u8],
+    coefficients: &[f64],
+    rng: &mut R,
+) -> Result<WitnessBundle> {
+    let preset = preset_for_param_set(param_set)?;
+    let n = preset.params.degree();
+    if coefficients.len() != n {
+        return Err(format!(
+            "coefficient vector must have exactly N = {n} entries; got {}",
+            coefficients.len()
+        )
+        .into());
+    }
+    for (k, c) in coefficients.iter().enumerate() {
+        if !c.is_finite() {
+            return Err(format!("coefficient {k} is not finite").into());
+        }
+        if c.abs() > preset.input_bound {
+            return Err(format!(
+                "coefficient {k} = {c} exceeds the param-set input bound {}",
+                preset.input_bound
+            )
+            .into());
+        }
+    }
+    let pk = CkksPublicKey::from_bytes(pk_bytes, &preset.params)
+        .map_err(err("CKKS public key decode"))?;
+    let encoder = CkksEncoder::new(&preset.params);
+    let pt = encoder
+        .encode_coefficients(coefficients, 0, preset.params.scale())
+        .map_err(err("CKKS coefficient encode"))?;
+    let (ct, u, e0, e1) = pk
+        .try_encrypt_extended(&pt, rng)
+        .map_err(err("CKKS encrypt"))?;
+    let inputs = witness_from_encryption(&preset, &pk, &pt, &ct, &u, &e0, &e1)?;
+    bundle_from_inputs(param_set, &preset, inputs, coefficients.to_vec())
+}
+
+/// Credit-scoring v2 (ParamSet 4) client submission: TWO slot encodings
+/// at slot `index` — the public model's logit over the applicant's
+/// features and the applicant's output mask — encrypted separately (two
+/// Greco bundles) plus the credit leg's noir_js `InputMap` (the exact
+/// `CreditInputs::to_json` shape of the Rust builder, Merkle opening
+/// included). Byte-identical to
+/// `e3_zk_helpers::threshold::ckks_credit_validity::build_credit_submission`
+/// given the same RNG stream: the native pre-check runs here too, so an
+/// out-of-range feature / mask / weight fails BEFORE encryption.
+///
+/// Returns `(logit_bundle, mask_bundle, credit_inputs_json)`. The
+/// `credit_inputs_json` carries every private and public input the
+/// `ckks_credit_validity_ps4` circuit declares.
+#[allow(clippy::too_many_arguments)]
+pub fn encrypt_credit_and_witness<R: RngCore + CryptoRng>(
+    pk_bytes: &[u8],
+    feature_proof: CreditFeatureProof,
+    cap: u32,
+    model: CreditModel,
+    index: u32,
+    mask: u32,
+    rng: &mut R,
+) -> Result<(WitnessBundle, WitnessBundle, serde_json::Value)> {
+    use e3_zk_helpers::threshold::ckks_credit_validity::{
+        encode_credit_slot, mask_value, CreditConfigs, CreditInputs, CREDIT_PARAM_SET, MASK_BITS,
+    };
+    if cap == 0 {
+        return Err("cap must be nonzero".into());
+    }
+    if let Some((j, x)) = feature_proof
+        .features
+        .iter()
+        .enumerate()
+        .find(|(_, x)| **x > cap)
+    {
+        return Err(format!("feature {j} = {x} exceeds cap {cap}").into());
+    }
+    if mask >= (1u32 << MASK_BITS) {
+        return Err(format!("mask {mask} is not in [0, 2^{MASK_BITS})").into());
+    }
+    if !model.in_range() {
+        return Err("model weights/bias outside |w| <= 8".into());
+    }
+    let preset = preset_for_param_set(CREDIT_PARAM_SET)?;
+    let configs = CreditConfigs::compute(&preset).map_err(err("credit configs"))?;
+    let pk = CkksPublicKey::from_bytes(pk_bytes, &preset.params)
+        .map_err(err("CKKS public key decode"))?;
+
+    // Same order as the Rust builder: logit first, then mask.
+    let z = model.logit(&feature_proof.features, cap);
+    let pt_z = encode_credit_slot(&preset.params, z, index as usize).map_err(err("slot encode"))?;
+    let (ct_z, u, e0, e1) = pk
+        .try_encrypt_extended(&pt_z, rng)
+        .map_err(err("CKKS encrypt"))?;
+    let inputs_z = witness_from_encryption(&preset, &pk, &pt_z, &ct_z, &u, &e0, &e1)?;
+    let pt_m = encode_credit_slot(&preset.params, mask_value(mask), index as usize)
+        .map_err(err("slot encode"))?;
+    let (ct_m, u, e0, e1) = pk
+        .try_encrypt_extended(&pt_m, rng)
+        .map_err(err("CKKS encrypt"))?;
+    let inputs_m = witness_from_encryption(&preset, &pk, &pt_m, &ct_m, &u, &e0, &e1)?;
+
+    let credit_inputs = CreditInputs {
+        m_z: inputs_z.m.clone(),
+        m_m: inputs_m.m.clone(),
+        cap,
+        index,
+        model,
+        mask,
+        feature_proof,
+    };
+    credit_inputs
+        .check(&configs)
+        .map_err(|e| CkksZkError(format!("credit leg pre-check failed: {e}")))?;
+    let credit_json = credit_inputs.to_json();
+
+    let logit = bundle_from_inputs(CREDIT_PARAM_SET, &preset, inputs_z, vec![z])?;
+    let mask_bundle =
+        bundle_from_inputs(CREDIT_PARAM_SET, &preset, inputs_m, vec![mask_value(mask)])?;
+    Ok((logit, mask_bundle, credit_json))
+}
+
+/// Number of credit features (mirror of the zk-helpers constant).
+pub const CREDIT_FEATURES: usize = e3_zk_helpers::threshold::ckks_credit_validity::FEATURES;
+/// The Merkle opening type of the credit leg (re-export).
+pub type CreditFeatureProof = e3_zk_helpers::threshold::ckks_credit_validity::FeatureProof;
+/// The fixed-point model type of the credit leg (re-export).
+pub type CreditModel = e3_zk_helpers::threshold::ckks_credit_validity::CreditModel;
+
+/// `sigma_cubic(z) = 0.5 + 0.197 z - 0.004 z^3` — the polynomial the
+/// credit-v2 policy evaluates homomorphically. MUST mirror
+/// `e3_trckks::policy::{sigmoid_cubic, CREDIT_SIGMOID_C1, CREDIT_SIGMOID_C3}`
+/// (this crate does not depend on e3-trckks; pinned by
+/// `sigmoid_cubic_matches_policy_constants` against the same literals).
+pub fn sigmoid_cubic(z: f64) -> f64 {
+    0.5 + 0.197 * z - 0.004 * z * z * z
+}
+
 /// Greco witness derivation from an extended encryption — the exact math
 /// of the native `Inputs::compute` (witness polys reversed + centered,
 /// `e0`/`m` lifted centered mod Q, per-limb `r1/r2` and `p1/p2` quotients
@@ -565,4 +721,20 @@ pub fn decrypt(param_set: u8, sk_bytes: &[u8], ct_bytes: &[u8]) -> Result<Vec<f6
     CkksEncoder::new(&preset.params)
         .decode(&pt)
         .map_err(err("decode"))
+}
+
+/// Decrypt + decode the first `count` COEFFICIENTS (tests / fixtures only).
+pub fn decrypt_coefficients(
+    param_set: u8,
+    sk_bytes: &[u8],
+    ct_bytes: &[u8],
+    count: usize,
+) -> Result<Vec<f64>> {
+    let preset = preset_for_param_set(param_set)?;
+    let sk = CkksSecretKey::from_bytes(sk_bytes, &preset.params).map_err(err("sk decode"))?;
+    let ct = CkksCiphertext::from_bytes(ct_bytes, &preset.params).map_err(err("ct decode"))?;
+    let pt = sk.try_decrypt(&ct).map_err(err("decrypt"))?;
+    CkksEncoder::new(&preset.params)
+        .decode_coefficients(&pt, count)
+        .map_err(err("decode_coefficients"))
 }

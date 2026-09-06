@@ -661,6 +661,7 @@ mod tests {
                     pk_commitment: [0u8; 32],
                     dkg_aggregator_proof: None,
                     dkg_attestation_bundle: None,
+                    ckks_pk_proof_blob: None,
                 }
                 .into(),
             ),

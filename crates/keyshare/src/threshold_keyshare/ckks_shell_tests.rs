@@ -376,7 +376,44 @@ async fn committee_of_actors_ckks_dkg_and_threshold_decryption() -> Result<()> {
     let output = ct_a.try_add(&ct_b)?;
     let out_bytes = output.to_bytes();
 
-    // CiphertextOutputPublished to t+1 nodes -> DecryptionshareCreated.
+    // Chain-observed committee publication. On a real network EVERY node sees
+    // this (the gossiped PublicKeyAggregated only reliably reaches the
+    // aggregator), and it is what sets the C6 decryption domain
+    // (`route_events.rs`). Under the PROVEN C6 posture the shell now REFUSES
+    // to publish a share without that domain — the old test skipped this
+    // event and thereby exercised the fail-open path this change removed.
+    let committee_addrs: Vec<String> = (0..N).map(|p| format!("0x{:040x}", 0x1000 + p)).collect();
+    for node in &nodes {
+        seq += 1;
+        node.actor
+            .send(seq_event(
+                CommitteePublished {
+                    e3_id: e3_id.clone(),
+                    nodes: committee_addrs.clone(),
+                    public_key: ArcBytes::from_bytes(&joint_pk_bytes),
+                    proof: ArcBytes::from_bytes(&[]),
+                }
+                .into(),
+                seq,
+            ))
+            .await?;
+        let _ = drain(node).await?;
+    }
+    // The domain is now known to every node.
+    for node in &nodes {
+        let s = node.state_repo.read().await?.expect("persisted state");
+        assert!(
+            s.decryption_domain.is_some() && s.aggregated_pk.is_some(),
+            "CommitteePublished must set the decryption domain and aggregated pk"
+        );
+    }
+
+    // CiphertextOutputPublished to t+1 nodes. Under the PROVEN C6 posture the
+    // shell publishes `ShareDecryptionProofPending` (share + C6 proof request)
+    // and the `DecryptionshareCreated` only fires once the prover returns the
+    // signed proof — there is no prover in this in-process test, so read the
+    // share from the proof request. A plain `DecryptionshareCreated` here
+    // would mean the fail-open proof-less path was taken: assert it is NOT.
     // Chain party ids (0-based committee slots); Shamir x = pid + 1.
     let reconstructing = [0u64, 2];
     let mut shares = Vec::new();
@@ -395,10 +432,26 @@ async fn committee_of_actors_ckks_dkg_and_threshold_decryption() -> Result<()> {
             ))
             .await?;
         for event in drain(&nodes[pid as usize]).await? {
-            if let InterfoldEventData::DecryptionshareCreated(d) = event.into_components().0 {
-                assert_eq!(d.party_id, pid, "event carries the CHAIN party id");
-                // aggregate_plaintext takes the 1-based Shamir x.
-                shares.push((pid + 1, d.decryption_share[0].clone()));
+            match event.into_components().0 {
+                InterfoldEventData::ShareDecryptionProofPending(p) => {
+                    assert_eq!(p.party_id, pid, "event carries the CHAIN party id");
+                    assert_eq!(p.proof_request.scheme, E3Scheme::Ckks);
+                    assert!(
+                        p.proof_request.ckks_params.is_some(),
+                        "C6-CKKS request must carry the E3's own CKKS params"
+                    );
+                    // aggregate_plaintext takes the 1-based Shamir x.
+                    shares.push((pid + 1, p.decryption_share[0].clone()));
+                }
+                InterfoldEventData::DecryptionshareCreated(d) => {
+                    panic!(
+                        "party {} published a proof-less DecryptionshareCreated under a PROVEN \
+                         C6 posture (fail-open path) — {} proofs attached",
+                        d.party_id,
+                        d.signed_decryption_proofs.len()
+                    );
+                }
+                _ => {}
             }
         }
     }
