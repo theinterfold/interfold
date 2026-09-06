@@ -1,0 +1,130 @@
+ROUND 114 RESULT (2026-09-06) — aggregator-side pool: the LAST DKG circuit pool
+on the DKG critical path never given the r110/r111/r112 source-minimality pass,
++ its DKG-family circuits RAN-anchored at ADD SECURE-8192/SMALL on box-1.
+
+Idea r114 (I-r114, p2 -> closed RAN)
+=====
+Per-node DKG pool RAN-closed for minimality before r114: C1..C5 leaves
+(C1 r44 / C2 r111 / C3 r110 / C4 I18-I19 / C5 r38+r113), c3 inners family
+(r4/r80-r84/I5a), the 4 per-node seam folds (r112). Untouched by every
+earlier minimality round: the AGGREGATOR-side fold + verify pool —
+nodes_fold / nodes_fold_kernel / c6_fold / c6_fold_kernel / dkg_aggregator /
+decryption_aggregator (the P2 aggregator tail: folds the H node_folds
+non-ZK, verifies C5, binds the committee hash, and emits the final non-ZK
+proof the EVM wrapper attests). Cleanest remaining box-1 leg: source sweep
+(cheapest) + RAN re-anchor of all 6 on-disk artifacts + compile the 2
+DKG-family circuits at secure/small (first RAN secure numbers for the
+aggregator tail; min anchors inherited from the 2026-09-02 build session).
+
+METHOD (RAN, cheapest-first)
+============================
+1. Source-minimality sweep, all 6 fold/comander bodies read in full
+   (nodes_fold 79L / nodes_fold_kernel 65L / c6_fold 101L /
+   c6_fold_kernel 74L / dkg_aggregator 180L / decryption_aggregator 182L):
+   - ZERO sponge/challenge/payload hits in any of the 6 bodies (grep, RAN) —
+     only compute_vk_hash, a one-way commitment, not a transcript.
+   - Every verify_honk_proof[_non_zk] call is a transitive-enforcement
+     verify of one child's FINAL proof chain (I5a argument: dropping any
+     turns the top into trust-the-prover, same class as r110/r112).
+   - Cross-circuit asserts bind DISTINCT pairs, none a consequence of
+     another (each pins a distinct pair of children):
+       nodes_fold: fill-once acc invariant (acc row == 0 before overwrite at
+         the written slot; other slots copy forward)
+       dkg_aggregator: party_id < N range (keeps committee indexing legal
+         and future identity-checks total), per-row party_id == slot 0,
+         cross-node C0->C3 (row i c3_pk[j] == row j c0_pk, ∀i,j),
+         cross-party C2a->C4a (∀i≠j,l) and C2b->C4b (∀i≠j,l),
+         C5->node_fold (c5_public[i] == row i c1_pk, ∈i),
+         committee_hash == committee_hash_limbs(committee_members)
+       decryption_aggregator: committee hash limbs, c6/r7 domain pairing
+         (c6_fold_public[4..5] == domain_hi/lo), ct-commitment uniformity
+         across all T+1 C6 slots, C6->C7 d-commitment cross-circuit (r6 col
+         == c7_public prefix), party_ids strictly-increasing + valid 1..N
+         bounds (the 2026 security-audit fix, deff9cfa, RAN present).
+   => the I3/I14 redundant-raw-push class is STRUCTURALLY ABSENT in this
+      pool (no Fiat-Shamir transcript exists to de-dup; all blocks
+      load-bearing). C6/C7 LEAF-LEVEL transcripts (C6 carries a C3-style
+      FS payload + gamma challenge, RAN read: share_decryption.nr:186/226)
+      are inside the LEAF circuits (post-DKG pool) — out of scope here;
+      any future lever of that class is leaf-level, r33-lesson territory.
+
+2. RAN re-anchor, all 8 on-disk artifacts, ZERO recompile
+   (`bb gates -t noir-recursive-no-zk`; 2026-09-02 build-session artifacts):
+   - Committee MINIMUM shape RAN-verified FROM THE ABI (proved, not
+     assumed): nodes_fold/nodes_fold_kernel return [[F;34];2] with
+       34 = 11 + 3 + 2*(3+2)*2 = NODE_FOLD_PUBLIC_LEN(min N=3,H=2,L=2)  == r74;
+     dkg_aggregator party_ids[2] committee_members[3]; c6/c6_kernel 4
+     cols of length 2 = T+1 with T=1 (min). L=2 = insecure-preset ring-512.
+   | circuit               | gates     | ACIR  | sha16          | anchor |
+   | nodes_fold            | 1,429,885 |   293 | 83438d7c22d4145f | r54 DIGIT-EXACT |
+   | nodes_fold_kernel     |   683,065 |    81 | 3040c8ab84ce2afa | NEW |
+   | c6_fold               | 1,448,603 |    57 | 27571a52d377d4e6 | NEW (post-DKG) |
+   | c6_fold_kernel        |   703,873 |    23 | eed9aea56e2eeba9 | NEW (post-DKG) |
+   | dkg_aggregator        | 1,447,338 |  1,552 | 7f26e4cc55a050b6 | NEW |
+   | decryption_aggregator | 1,448,924 |  1,643 | 787581d85e661421 | NEW (post-DKG) |
+   | C6 leaf (threshold/share_decryption, insecure/min on-disk)   | 86,892  | NEW (secure counterpart = bench-report C6 3,001,847-cons anchor, results_secure_agg_small) |
+   | C7 leaf (threshold/decrypted_shares_aggregation, insecure/min on-disk) | 89,602 | NEW (secure counterpart = bench C7 136,374) |
+
+3. SECURE-8192/SMALL compiles of the 2 DKG-family circuits (config swap =
+   r113 pattern: committee minimum->small + preset insecure->secure; byte-
+   restored on exit; both legs RAN twice, byte-identical artifacts):
+   - nodes_fold secure/small: RAN 1,510,845 g / 8,229 ACIR / sha16 13936688
+       ABI RAN-self-check: node_fold_public_inputs[204] with 204 = 11+19+
+       2*(19+10)*3 = 204 (NODE_FOLD_PUBLIC_LEN, N=19/H=10/L=3, formula
+       r94-class) ✓; acc_public_inputs[2244] = 4 + 10*204 ✓; return
+       [[F;204];10] (H=10 rows) ✓.
+       SUPERSEDES r39's secure table row: r39 read nodes_fold = 1,510,845
+       in its census ("+5.66% vs ring-512, committee-dependent pub rows
+       H=10 vs H=2 — flagged") — now RAN-reverified by an independent
+       secure compile + ABI formula self-check (same builder, same toolchain
+       pin; digit-exact).
+   - dkg_aggregator secure/small: RAN 1,553,541 g / 10,059 ACIR /
+       sha16 27380186. ABI RAN-self-check: c5_public[11] = H+1 = 11 ✓,
+       committee_members[19] = N ✓, party_ids[10] = H ✓,
+       nodes_fold_public[2244] = 4 + H*224? NO: 4 + H*NODES row... 2244
+       = 4 + 10*224, and nodes_fold's own acc = 4 + 10*224 = 2244 ✓✓
+       CROSS-CIRCUIT ABI CONSISTENCY RAN: dkg_aggregator consumes exactly
+       the aux len nodes_fold emits (both 2244, digit-exact).
+       First RAN box-1 SECURE number for the EVM-tail circuit (its
+       production prove = 28.09 s tracked, bench report P2 span 400.03 s,
+       r28-class — wall anchor already in the model).
+
+VERDICT
+=======
+I-r114 CLOSED RAN (negative minimality + 8-anchor table + 2 secure
+compiles). The ENTIRE DKG circuit pool — per-node leaves C1..C5, c3
+inners, 4 seam folds, AND the aggregator tail (nodes_fold pair + C5
+verify + final non-ZK top) — is now RAN-minimality-closed on box-1:
+no I3/I14-class lever (the SEAM and AGGREGATOR pools carry no FS
+transcript; transitive-verifies + distinct cross-asserts only, each
+load-bearing by the I5a class). DRAFT → RAN advances: min nodes_fold
+1,429,885 r54 digit-exact from a FRESH independent read; r39's secure
+nodes_fold 1,510,845 reverified by its own ABI formula; NEW RAN anchors
+= dkg_aggregator {1,447,338 min / 1,553,541 secure} + 4 unanchored
+aggregator-pool min points. NO box-1 circuit lever (matches r110-r113).
+NO UPSTREAM PR CANDIDATE (read + 2 artifact compiles; zero circuits/
+or crates/ source change, no gate reduction). N=19 wall table UNTOUCHED
+(aggregator work is P2-side, not the 90.1-min/node per-node line; the
+P2 aggregator span was already RAN-anchored from the bench report).
+Post-DKG C6/C7 pool source-closed for pool-level levers (leaf-level
+C6 C3-style FS sponge = the only future lever class there, r33-lesson
+territory, out of scope for a DKG-efficiency round).
+
+BOX/FIT
+=======
+4c/7.8GiB box; both secure compiles = nargo beta26 + bb 5.1.0, wall
+~1.1 s each (warm workspace; cold-class = the earlier r39 723-7,695 MB
+pool — the aggregator folds are sub-GiB compiles, RAN-safe). Zero
+nargo-config drift: configs byte-restored (sha-verified on the 2 edited
+files), on-disk min artifacts byte-restored from pre-secure snapshots
+(sha re-verified 83438d7c / 7f26e4cc), interfold `git status --porcelain`
+= 0 lines outside the new untracked poc/r114/ (target/ paths git-ignored).
+
+RE-RUN
+======
+python3 interfold/poc/r114/verify_agg_pool_secure_r114.py
+(stateless re-runnable; swaps + byte-restores the 2 config files on
+exit; after the run the on-disk nodes_fold/dkg_aggregator jsons are in
+SECURE shape — restore the min shape from
+interfold/poc/r114/pre-secure/*.json if needed (git-ignored paths).
+secure_gates_r114.json = the RAN record (gates/ACIR/sha/ABI lens).

@@ -1,0 +1,46 @@
+{
+ "nodes_fold": {
+  "wall_s": 1.04,
+  "rc": 0,
+  "tail": "",
+  "gates": 1510845,
+  "acir": 8229,
+  "sha16": "1393668849486076",
+  "param_lens": {
+   "inner_vk": "115",
+   "inner_proof": "410",
+   "node_fold_public_inputs": "204",
+   "acc_vk": "115",
+   "acc_proof": "410",
+   "acc_public_inputs": "2044",
+   "inner_key_hash": "",
+   "acc_key_hash": "",
+   "is_first_step": "",
+   "slot_index": ""
+  },
+  "ret": "{\"kind\": \"array\", \"length\": 10, \"type\": {\"kind\": \"array\", \"length\": 204, \"type\": {\"kind\": \"field\"}}}"
+ },
+ "dkg_aggregator": {
+  "wall_s": 1.11,
+  "rc": 0,
+  "tail": "",
+  "gates": 1553541,
+  "acir": 10059,
+  "sha16": "2738018607312207",
+  "param_lens": {
+   "nodes_fold_vk": "115",
+   "nodes_fold_proof": "410",
+   "nodes_fold_public": "2044",
+   "c5_vk": "115",
+   "c5_proof": "410",
+   "c5_public": "11",
+   "nodes_fold_key_hash": "",
+   "c5_key_hash": "",
+   "party_ids": "10",
+   "committee_members": "19",
+   "committee_hash_hi": "",
+   "committee_hash_lo": ""
+  },
+  "ret": "{\"kind\": \"tuple\", \"fields\": [{\"kind\": \"field\"}, {\"kind\": \"array\", \"length\": 10, \"type\": {\"kind\": \"field\"}}, {\"kind\": \"ar"
+ }
+}
