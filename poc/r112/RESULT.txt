@@ -38,7 +38,7 @@ to the N=19 wall table's 73.5 s RAN-min-folds line) still digit-exact at HEAD, o
   Grepped the whole pool for sponge|payload|challenge|compute_.*_challenge|fs_ => ZERO hits.
 (2) RAN re-anchor: `bb gates -b <artifact> -t noir-recursive-no-zk` on the 4 ON-DISK small fold
     artifacts in the sha-pinned durable tree poc/r77/root/secure-8192/small/default/recursive_aggregation/
-    (sha16 + digit cross-check vs the r21/r39/r46 small goldens). Re-runnable deliverable (tracked,
+    (sha16 + digit cross-check vs the r39 N=19 small fold goldens). Re-runnable deliverable (tracked,
     in the interfold repo at interfold/poc/r112/): verify_fold_seam_anchor_r112.py (RC 0, SELF-CHECK OK).
 (3) Cone-drift audit (r94 class): `git log` over the 4 seam-fold srcs + c3_fold. Per-file last touch:
     c2ab/c3ab/c4ab/node_fold = 2026-08-07 (nargo beta26 + bb 5.1.0 pin, commit 3c84684c);
@@ -71,10 +71,10 @@ to the N=19 wall table's 73.5 s RAN-min-folds line) still digit-exact at HEAD, o
 (2) 4 LOAD-BEARING FOLD GATE COUNTS RAN re-anchored (single-sourced + re-runnable, DIGIT-EXACT to
   every prior baseline, 0 fold-cone drift since 3c84684c 2026-08-07 toolchain pin), secure-8192/SMALL
   (N=19/T=9/H=10/L=3), `bb gates -t noir-recursive-no-zk` on the poc/r77/root durable tree:
-    - c2ab_fold  = 1,473,584 gates / 122 ACIR  (sha16 a46ddf7f4dc494bb) DIGIT-EXACT r21/r39
-    - c3ab_fold  = 1,437,844 gates / 348 ACIR  (sha16 ad5736fc4c082c4a) DIGIT-EXACT r21/r39
-    - c4ab_fold  = 1,471,783 gates / 68 ACIR   (sha256ed 2cd4411a80008822) DIGIT-EXACT r21/r39
-    - node_fold  = 3,719,958 gates / 438 ACIR  (sha16 6a50a30e55eb9ae9) DIGIT-EXACT r21/r39
+    - c2ab_fold  = 1,473,584 gates / 122 ACIR  (sha16 a46ddf7f4dc494bb) DIGIT-EXACT r39
+    - c3ab_fold  = 1,437,844 gates / 348 ACIR  (sha16 ad5736fc4c082c4a) DIGIT-EXACT r39
+    - c4ab_fold  = 1,471,783 gates / 68 ACIR   (sha256ed 2cd4411a80008822) DIGIT-EXACT r39
+    - node_fold  = 3,719,958 gates / 438 ACIR  (sha16 6a50a30e55eb9ae9) DIGIT-EXACT r39
   These are the FOLD inputs the N=19 wall table reads (the "c2ab+c4ab+node 73.5 s [RAN min floor]"
   line, r76 — the wall is proven on the min box-1 legs and the small arms come from box-2 by
   construction). The N=19 header 90.1 min/node @4c EXCL. comm is UNTOUCHED (no new node wall).
@@ -85,7 +85,7 @@ fold-seam box-1 lever question is RAN-CLOSED negative: the 4 folds are source-MI
 verify-seam + every cross-seam assert + the vk-hash is load-bearing; the I3/I14 redundant-raw-push
 class is structurally absent because there is no sponge transcript to de-dup); no new box-1 fold
 lever. (b) The model's 4 load-bearing small fold gate counts are RAN re-anchored to a single
-re-runnable check, all DIGIT-EXACT to the r21/r39/r46 goldens with 0 cone drift. Per-node-minimal
+re-runnable check, all DIGIT-EXACT to the r39 N=19 small fold goldens with 0 cone drift. Per-node-minimal
 -ity for the ENTIRE DKG DAG (C1..C5 + c3 + 4 seam folds) is now RAN-closed on box-1. The ONE forward
 path is unchanged: box-2 (owner directive 2026-09-05 — 4c/7.8 GiB is max here). No repo source
 change (out-of-repo anchor under poc/r112/; gate N/A, no commit).

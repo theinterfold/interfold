@@ -5,7 +5,7 @@ Re-reads the 4 load-bearing secure-8192 N=19
 fold-seam circuit (c2ab_fold / c3ab_fold / c4ab_fold / node_fold) artifacts ON-DISK in the sha-pinned
 durable tree poc/r77/root/secure-8192/small/default/recursive_aggregation/,
 cross-checks each sha16 + `bb gates -t noir-recursive-no-zk` circuit_size against the
-r21/r39/r46 small goldens, and pre-checks the fold-cone source for drift since the
+r39 N=19 small fold goldens, and pre-checks the fold-cone source for drift since the
 nargo beta26 + bb 5.1.0 toolchain pin (3c84684c).
 
 Zero nargo/bb COMPILE: `bb gates` is a read of an existing artifact (r110/r111 class).
