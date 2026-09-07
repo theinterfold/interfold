@@ -1,0 +1,148 @@
+ROUND 117 - C6 I14 post-patch invariance closure + r115-filed "VK re-pin
+chain" RAN-converted on box-1 (2026-09-07)
+
+UPSTREAM SYNC (step 2, RAN)
+  git fetch origin -> origin/main HEAD 499146c9 = merge-base; branch
+  i5/dkg-research 1189fc36 (r116) 61-ahead / 0-behind -> NO REBASE
+  (r107's 52/52 rebase stands). Box unchanged 4c / 8,131,776 kB
+  + 8 GiB swap / btime 1788243915 (no reboot) / load 0.11-0.45 /
+  up 5d 21:46.
+
+CLAIM (I-r117)
+  r115 shipped the C6 I14 source patch in-tree (678d0fd4: C6 secure-8192/small
+  2,977,228 -> 2,562,117 g, -13.943%) and FILED a follow-up: "the VK re-pin
+  chain (c6_fold / c6_fold_kernel / decryption_aggregator / nodes_fold)" as
+  a box-2 step after owner sign-off. Two things were never RAN-verified:
+  (a) which of those consumers actually SHIFT (or don't) after the C6 patch;
+  (b) the proof-level fold-chain e2e (fold_accumulators_e2e_tests::
+  c6_fold_sequential_proves_and_verifies) - the C6 soundness anchor the
+  r115 log deferred ("e2e prove+verify green" was prove-and-check-publics
+  only; prove_with_variant does not bb-verify, confirmed in traits.rs).
+  This round RAN-converts both on box-1.
+
+METHOD (RAN, cheapest-first)
+  1. Source invariance arg: c6_fold/c6_fold_kernel/decryption_aggregator .nr
+     = 0 commits since r114 (git rev-list --count -> 0); the C6 diff 678d0fd4
+     ^..HEAD outside poc/ = exactly circuits/lib/src/core/threshold/
+     share_decryption.nr. The 3 consumers ingest C6's VK as a WITNESS
+     (verify_honk_proof(inner_vk, inner_proof, c6_public_inputs,
+     inner_key_hash) - c6_fold/src/main.nr:41); none bakes C6 in-circuit;
+     nodes_fold does not consume C6 at all (DKG-side fold chain only, r114).
+     => the consumer CIRCUITS are post-patch invariant by construction.
+  2. On-disk min re-gate (invariance at the min leg): the 3 consumer min
+     artifacts re-gate DIGIT-EXACT to r114's pre-patch anchors.
+  3. RAN proof-level e2e: c6_fold_sequential_proves_and_verifies
+     (2 inner C6 proofs + c6_fold_kernel genesis + 2 c6_fold steps +
+     verify_fold_proof), InsecureThreshold512/Minimum (T=1).
+  4. Secure/small fresh compiles of the 3 consumers (r113/r114
+     self-restoring config swap) + ABI pins (T+1 = 10 slots).
+  Artifacts: verify_c6_postpatch_consumers_secure_r117.py (re-runnable,
+  FULL SELF-CHECK OK, asserts config byte-restore AFTER the swap and
+  restores the 3 consumers' min servers json from pre-secure/ before the
+  TS-min leg), regen_c6_vks_r117.sh (canon build-recipe VK regen, re-
+  runnable; gated on configs at min/min), pre-secure/ (5 min jsons).
+
+FINDINGS (RAN, exact)
+  1. NO-REBASE confirmed: origin/main 499146c9 = merge-base, 61/0.
+  2. INVARIANCE (min leg, on-disk, RAN re-gated, 0 source drift since r114):
+     c6_fold             1,448,603 g / 57 ACIR   = r114 pre-patch (sha 27571a52)
+     c6_fold_kernel         703,873 g / 23 ACIR  = r114 pre-patch (sha eed9aea5)
+     decryption_aggregator 1,448,924 g / 1643 ACIR = r114 pre-patch (sha 787581d8)
+     => the 3 consumer circuits are UNCHANGED by the C6 I14 patch (0 source
+     drift + transitive-witness design). r115's "VK re-pin chain" does NOT
+     require a gate-count delta on these 3 circuits: their own circuits stay
+     identical, so their own VKs stay valid; only the C6 inner VK they
+     transit-verify is new (regenerated, item 3).
+  3. PROOF-LEVEL E2E (the soundness anchor r115 deferred to box-2) — RAN:
+     FIRST run: RED. fold_accumulators_e2e_tests::c6_fold_sequential_
+     proves_and_verifies 1 failed (the inners+fold PROVED; the final
+     verify_fold_proof returned false), wall 33.8 s @4c.
+     ROOT CAUSE (RAN): r115 RECOMPILED the C6 leaf share_decryption.json
+     IN-PLACE (nargo compile) WITHOUT regenerating the derived VK set =>
+     share_decryption.json (2026-09-06 21:33, post-patch 78,227 g, sha
+     5a34b39b) sat next to 6 PRE-PATCH VK files (all 2026-09-02 19:50).
+     The test harness COPIES those on-disk .vk_noir/.vk_recursive into the
+     stage tree (it never recomputes VKs), so the fold chain's transitive
+     verify_honk_proof(stale inner_vk, fresh I14 C6 inner_proof) rejected:
+     a fresh I14-patched C6 proof checked against a stale pre-patch VK.
+     The on-disk leaf folder was left INCOHERENT by r115 (new circuit +
+     old VKs) — the exact coherence gap r115 flagged as box-2.
+     FIX (RAN): regen_c6_vks_r117.sh regenerates the C6 VK set from the
+     current (I14-patched) share_decryption.json per the CANONICAL build
+     recipe (scripts/build-circuits.ts base DKG/threshold branch: evm +
+     noir-recursive-no-zk + noir-recursive; `bb write_vk -b <json> -o
+     <dir> -t <target>`, then copy /vk + /vk_hash onto the named .vk* files
+     and delete the transients; gated on configs at min/min). All 6 VK
+     files now derive from the I14 json (2026-09-07 04:03).
+     AFTER FIX: c6_fold_sequential_proves_and_verifies = GREEN, 31.93 s
+     (2 inner C6 proves + c6_fold_kernel genesis + 2 c6_fold steps +
+     verify_fold_proof=true), InsecureThreshold512/Minimum. Full
+     fold_accumulators_e2e_tests = 8 passed / 0 failed (32.54 s). The 2 C6
+     consistency e2es (test_threshold_share_decryption_commitment_
+     consistency 1.15 s / test_c4_sk_commitment_is_c6_expected_sk_input_e2e
+     1.94 s) also GREEN. NOTE: r115's "box-1 e2e prove+verify RC 0 / 1.58 s"
+     was prove-and-check-publics only — prove_with_variant does NOT bb-
+     verify (crates/zk-prover/src/traits.rs); the genuine proof-level C6
+     anchor is the FOLD-CHAIN test, now RAN-GREEN on box-1 for the first
+     time.
+  4. SECURE-8192/SMALL (N=19/T=9/H=10, L=3) fresh compiles of the 3
+     post-DKG consumers (r113/r114 self-restoring swap; 0.9-1.1 s each @4c;
+     config byte-restored + asserted; NEW RAN secure numbers — r114 only
+     read these on-disk at min):
+     c6_fold             1,449,894 g / 233 ACIR  (sha 28981292, acc_pub 46)
+     c6_fold_kernel         703,953 g /  79 ACIR (sha 15180298, acc_pub 46)
+     decryption_aggregator 1,493,885 g / 9526 ACIR (sha 11924226,
+       c6_fold_public 46, committee_members 19)
+     ABI pins hold (T+1 = 10 slots => 6 + 4*10 = 46). min->small deltas
+     (c6_fold +1291 / kernel +80 / dkg_agg +44961 g; dkg_agg ACIR 1643 ->
+     9526) are the committee-shape class (N/T/H rows), not patch drift.
+  5. N=19 wall table 90.1 min/node @4c EXCL. comm UNTOUCHED (these
+     circuits are the decryption/P2-side tail, outside the per-node
+     c3-bulk-dominated wall; model.py unchanged, gate N/A here).
+
+GATE / TREE RAN
+  cargo check --workspace RC 0 (1.51 s). python3
+  poc/r117/verify_c6_postpatch_consumers_secure_r117.py = FULL SELF-CHECK
+  OK (RC 0; 3 secure compiles rc 0 + ABI pins hold + TS-min triple PASS +
+  config byte-restored + asserted). circuits/*/target/ is GITIGNORED, so
+  the only repo diff is poc/r117/ (RESULT.txt + 2 scripts + pre-secure/
+  5 min jsons); post-commit `git status --porcelain` = 0 lines; configs
+  clean at min/min; on-disk min consumer jsons byte-restored
+  (27571a52 / eed9aea5 / 787581d8) + C6 leaf json 5a34b39b intact.
+
+VERDICT (RAN, box-1)
+  I-r117 CLOSED RAN (POSITIVE + REPAIR):
+  (a) The 3 post-DKG consumer circuits are POST-PATCH-INVARIANT — C6's
+      VK is a transitive WITNESS (verify_honk_proof(inner_vk, ...)), never
+      baked in; 0 source drift since r114; min re-gates digit-exact to
+      r114 pre-patch; secure/small fresh RAN compiles hold the ABI.
+      nodes_fold (DKG side) never consumes C6 (r114). => r115's filed
+      "VK re-pin chain (c6_fold / c6_fold_kernel / decryption_aggregator /
+      nodes_fold)" needs NO re-derivation of any of these 4 circuits' own
+      circuits/VKs. The only genuine coupling = the C6 LEAF VK the fold
+      chain transit-verifies, and that is regenerated by the canonical
+      build recipe (the incoherent leaf target/ is repaired by the
+      drop-in regen script; no source change).
+  (b) The deferred C6 SOUNDNESS ANCHOR (proof-level fold-chain e2e) is now
+      RAN-GREEN on box-1: RED -> stale-VK root cause (r115 in-place
+      recompile left leaf VKs pre-patch) -> regen -> GREEN. The RED was an
+      artifact-coherence gap, NOT a circuit break; it only mattered for
+      box-1 proof-level proof (the box-2 r78 run rebuilds VKs from source
+      and would not have hit it). Box-1 box-1: with the C6 I14 lever
+      in-tree (r115) + consumer invariance + fold-chain soundness
+      RAN-confirmed (r117), the C6 ship is ready for owner sign-off; NO
+      box-1 circuit work remains open anywhere. The C6/C5 commitment-
+      scheme lever (I18/I19, r38/r113 RAN-quantified) stays HELD pending
+      owner sign-off, unchanged.
+
+BOX-2 FORWARD (owner directive 2026-09-05: work on what's allocated,
+4c/7.8 GiB is the ceiling; heavy compiles stay deferred box-2 cards)
+  (0) box-2 32 GiB E2E + the 3 heavy small-leaf compiles (C2a 15.1 / C2b
+      14.9 / C4 14.70 GiB r45/r46 OOM arms; SPEC A 16 GiB @4c-pinned RAN-
+      anchored r102 vs SPEC B 24 GiB @8c) + the r78 19-node one-env-var
+      run. The C6 I14 lever is in-tree (r115) and its conformance side is
+      now RAN-confirmed on box-1 (r117: consumer invariance + fold-chain
+      prove+verify GREEN + C6 VK regen recipe), so the ONLY gate on the
+      C6 production ship is owner sign-off — not box-2 compute.
+  (1) batched inners >=8c/16 GiB (r72).
+  (2) 19-node E2E + live-netlink comm wall (r105-r109 RAN-anchored).
