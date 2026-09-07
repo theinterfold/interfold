@@ -29,10 +29,9 @@ impl<let L: u32> Configs<L> {
 /// **Role:** Sum honest parties' `d0`/`d2` row limbs into `d0_agg`/`d2_agg` and
 /// commit each for downstream use (e.g. final RLK assembly / on-chain
 /// verification). `d1`/`a` are not part of this circuit: both are compile-time
-/// constants already pinned by the verification key (same mechanism `CRP`
-/// relies on for `pk_generation`/`pk_aggregation`), so hashing them here would
+/// constants already pinned by the verification key, so hashing them here would
 /// be redundant - any consumer that needs their values reads them directly
-/// from the same `D1_GADGET_ROWS`/`CRP_GADGET_ROWS` constants.
+/// from the same `LBFV_URS_GADGET_ROWS`/`LBFV_CRS_GADGET_ROWS` constants.
 ///
 /// **Consumes:** `commit(d0[h])`/`commit(d2[h])` from RLK generation per honest party `h`.
 ///

@@ -73,8 +73,23 @@ until the circuit constants and adapters support them.
 The current Noir entry point selects `LBFV_URS_GADGET_ROWS` and `LBFV_CRS_GADGET_ROWS` as
 compile-time constants. The initial design therefore uses release/config-scoped l-BFV public
 randomness. The `secure-16384` seeds are defined in `crates/fhe-params/src/lbfv.rs`, and the
-generated `secure_16384/threshold.nr` module contains the expanded row values. An E3-varying URS
-remains a future protocol change because it would require new circuit and recursive public inputs.
+generated `secure_16384/lbfv/{crs,urs}.nr` modules contain the expanded row values. An E3-varying
+URS remains a future protocol change because it would require new circuit and recursive public
+inputs.
+
+The fixed seeds use SHA-256 domain-separated labels:
+
+```text
+SHA-256("interfold/lbfv/secure-16384/v1/crs")
+SHA-256("interfold/lbfv/secure-16384/v1/urs")
+```
+
+These hashes are public domain-separation values, not secret material. They ensure that CRS and URS
+use different deterministic streams, while the preset and version labels prevent accidental reuse
+across parameter sets or circuit revisions. The resulting 32-byte values are passed to
+`CommonRandomPolyVec::from_seed` by both the runtime integration and the config generator. A change
+to either label, seed, parameter set, CRT representation, or row serialization requires regenerated
+circuit constants and a new compatible circuit artifact set.
 
 References:
 

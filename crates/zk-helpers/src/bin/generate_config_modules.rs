@@ -215,6 +215,33 @@ fn lbfv_gadget_scalars(
     Ok(format!("[{}]", values.join(", ")))
 }
 
+fn render_lbfv(preset: BfvPreset) -> Result<Option<(String, String, String)>> {
+    let (Some(crs_seed), Some(urs_seed)) = (lbfv_crs_seed(preset), lbfv_urs_seed(preset)) else {
+        return Ok(None);
+    };
+
+    let (threshold_params, _) = build_pair_for_preset(preset)
+        .with_context(|| format!("build_pair_for_preset({preset:?}) failed"))?;
+    let crs_rows = lbfv_rows_block(&threshold_params, crs_seed)?;
+    let urs_rows = lbfv_rows_block(&threshold_params, urs_seed)?;
+    let gadget_scalars = lbfv_gadget_scalars(&threshold_params)?;
+    let slug = preset.noir_config_module();
+    let header = format!(
+        "{LICENSE}\nuse crate::math::polynomial::Polynomial;\nuse super::super::threshold::{{GADGET_DIM, L, N}};\n"
+    );
+    let crs = format!(
+        "{header}\npub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = {crs_rows};\n"
+    );
+    let urs = format!(
+        "{header}\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = {urs_rows};\n"
+    );
+    let module = format!(
+        "{LICENSE}\nuse super::threshold::GADGET_DIM;\n\npub mod crs;\npub mod urs;\n\npub use crate::configs::{slug}::lbfv::crs::LBFV_CRS_GADGET_ROWS;\npub use crate::configs::{slug}::lbfv::urs::LBFV_URS_GADGET_ROWS;\n\npub global G_GADGET_ROWS: [Field; GADGET_DIM] = {gadget_scalars};\n"
+    );
+
+    Ok(Some((module, crs, urs)))
+}
+
 fn render_threshold(preset: BfvPreset) -> Result<String> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
 
@@ -340,40 +367,37 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
         .take(pkgen.l as usize)
         .collect::<Vec<_>>()
         .join(", ");
-    let (lbfv_crs_gadget_rows, lbfv_urs_gadget_rows, gadget_scalars) =
-        match (lbfv_crs_seed(preset), lbfv_urs_seed(preset)) {
-            (Some(crs_seed), Some(urs_seed)) => (
-                lbfv_rows_block(&threshold_params, crs_seed)?,
-                lbfv_rows_block(&threshold_params, urs_seed)?,
-                lbfv_gadget_scalars(&threshold_params)?,
-            ),
-            _ => {
-                let rows = std::iter::repeat("CRP")
-                    .take(pkgen.l as usize)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                let scalars = std::iter::repeat("1")
-                    .take(pkgen.l as usize)
-                    .collect::<Vec<_>>()
-                    .join(", ");
-                (
-                    format!("[{}]", rows),
-                    format!("[{}]", rows),
-                    format!("[{}]", scalars),
-                )
-            }
-        };
+    let lbfv_enabled = lbfv_crs_seed(preset).is_some() && lbfv_urs_seed(preset).is_some();
+    let lbfv_rows = if lbfv_enabled {
+        "pub use super::lbfv::{G_GADGET_ROWS, LBFV_CRS_GADGET_ROWS, LBFV_URS_GADGET_ROWS};"
+            .to_string()
+    } else {
+        let rows = std::iter::repeat("CRP")
+            .take(pkgen.l as usize)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global G_GADGET_ROWS: [Field; GADGET_DIM] = [{}];",
+            std::iter::repeat("1")
+                .take(pkgen.l as usize)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let c1_rows_comment = if lbfv_enabled {
+        "// C1 still uses the existing repeated-CRP path. The secure-16384 l-BFV integration must migrate C1 to independent public-key rows before RLK proofs can bind to each row."
+    } else {
+        "// C1 uses the existing repeated-CRP path. This preset does not enable the l-BFV RLK path."
+    };
     let rlk_section = section(
         "l-BFV relinearization key circuits",
         &format!(
             "pub global GADGET_DIM: u32 = L;
-// Legacy C1 rows remain backed by the single-CRP path until C1 row generation is migrated.
+{c1_rows_comment}
 pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{}];
 // l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
 // placeholder declarations because their RLK path is disabled.
-pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = {};
-pub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = {};
-pub global G_GADGET_ROWS: [Field; GADGET_DIM] = {};
+{lbfv_rows}
 
 pub global RLK_GENERATION_BIT_R: u32 = PK_GENERATION_BIT_SK;
 pub global RLK_GENERATION_BIT_SK: u32 = PK_GENERATION_BIT_SK;
@@ -409,7 +433,7 @@ pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationCon
 
 pub global RLK_AGGREGATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
 pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationConfigs::new(QIS);",
-            gadget_rows, lbfv_crs_gadget_rows, lbfv_urs_gadget_rows, gadget_scalars,
+            gadget_rows,
         ),
     );
 
@@ -716,8 +740,13 @@ pub global SHARE_ENCRYPTION_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryption
     ))
 }
 
-fn render_mod() -> String {
-    format!("{LICENSE}\npub mod dkg;\npub mod threshold;\n")
+fn render_mod(preset: BfvPreset) -> String {
+    let lbfv = if lbfv_crs_seed(preset).is_some() && lbfv_urs_seed(preset).is_some() {
+        "pub mod lbfv;\n"
+    } else {
+        ""
+    };
+    format!("{LICENSE}\npub mod dkg;\n{lbfv}pub mod threshold;\n")
 }
 
 fn main() -> Result<()> {
@@ -737,6 +766,7 @@ fn main() -> Result<()> {
 
     let threshold = render_threshold(preset)?;
     let dkg = render_dkg(preset)?;
+    let lbfv = render_lbfv(preset)?;
 
     let tp = dir.join("threshold.nr");
     let dp = dir.join("dkg.nr");
@@ -744,7 +774,19 @@ fn main() -> Result<()> {
 
     std::fs::write(&tp, threshold).with_context(|| format!("writing {}", tp.display()))?;
     std::fs::write(&dp, dkg).with_context(|| format!("writing {}", dp.display()))?;
-    std::fs::write(&mp, render_mod()).with_context(|| format!("writing {}", mp.display()))?;
+    std::fs::write(&mp, render_mod(preset)).with_context(|| format!("writing {}", mp.display()))?;
+
+    if let Some((module, crs, urs)) = lbfv {
+        let lbfv_dir = dir.join("lbfv");
+        std::fs::create_dir_all(&lbfv_dir)
+            .with_context(|| format!("creating {}", lbfv_dir.display()))?;
+        let lmp = lbfv_dir.join("mod.nr");
+        let lcp = lbfv_dir.join("crs.nr");
+        let lup = lbfv_dir.join("urs.nr");
+        std::fs::write(&lmp, module).with_context(|| format!("writing {}", lmp.display()))?;
+        std::fs::write(&lcp, crs).with_context(|| format!("writing {}", lcp.display()))?;
+        std::fs::write(&lup, urs).with_context(|| format!("writing {}", lup.display()))?;
+    }
 
     println!("{}", tp.display());
     println!("{}", dp.display());
