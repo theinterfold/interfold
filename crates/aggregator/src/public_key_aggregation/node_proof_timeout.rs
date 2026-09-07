@@ -22,18 +22,21 @@ pub(crate) const DKG_NODE_PROOF_TIMEOUT_ENV: &str = "E3_DKG_NODE_PROOF_TIMEOUT_S
 
 /// Default budget for collecting every honest party's NodeDkgFold proof.
 ///
-/// A node fold is the most expensive job in the DKG and its cost grows with the ring degree.
-/// Measured at the insecure test preset (degree 512) across five folds: 135 s, 137 s, 147 s,
-/// 214 s, 214 s. A restarted member must also re-prove C1–C4 before it can start folding
-/// (~40 s more). 30 minutes is ~8x the slowest measured fold, which bounds the stall well
-/// below the two-hour DKG window while leaving room for a slow or once-restarted member.
+/// Matches the DKG window (`E3_DKG_WINDOW_SECS`, 7200 s), for the same reason the `bb` cap does:
+/// a node proof that arrives after the window cannot be used by the E3 it belongs to, because
+/// `Interfold.onCommitteePublished` rejects a key published after `dkgDeadline`. Failing earlier
+/// than the window only converts a recoverable delay into a lost E3.
 ///
-/// CAUTION — this default is calibrated against insecure test params and has NOT been measured
-/// at secure params. Secure operation uses degree 32768 (64x this ring), and if fold cost grows
-/// even linearly in the degree the honest fold alone would exceed this budget, so every E3 would
-/// fail with `DKGTimeout` on healthy nodes. Measure the fold at the deployment preset and raise
-/// this default (or set `E3_DKG_NODE_PROOF_TIMEOUT_SECS`) before running at secure N.
-pub(crate) const DEFAULT_DKG_NODE_PROOF_TIMEOUT_SECS: u64 = 1800;
+/// A shorter budget is unsafe at production parameters. Measured `ZkNodeDkgFold` at the
+/// `secure-8192` preset (`circuits/benchmarks/results_secure_*`) is 132 s at N=3, 380 s at N=5,
+/// and 904 s at N=9, which extrapolates to about 2180 s at N=19, the largest supported committee.
+/// A member that restarts mid-DKG must also re-prove its inner circuits before it can fold again,
+/// which measures about 5500 s per node at N=9. The earlier 1800 s default was therefore below
+/// the honest completion time for a restarted member at N=9 and would have failed healthy E3s.
+///
+/// Operators who want a tighter bound must measure a node fold at their own preset and committee
+/// size first, then set `E3_DKG_NODE_PROOF_TIMEOUT_SECS` above the restart-inclusive worst case.
+pub(crate) const DEFAULT_DKG_NODE_PROOF_TIMEOUT_SECS: u64 = 7200;
 
 /// Resolve the collection budget, honouring the environment override.
 pub(crate) fn dkg_node_proof_timeout() -> Duration {
@@ -69,5 +72,27 @@ mod tests {
         assert_eq!(dkg_node_proof_timeout(), default);
 
         std::env::remove_var(DKG_NODE_PROOF_TIMEOUT_ENV);
+    }
+
+    /// The budget must not drop below the honest completion time at production parameters.
+    ///
+    /// Measured `ZkNodeDkgFold` at `secure-8192` is 904 s per node at N=9, and a member that
+    /// restarts mid-DKG re-proves about 5500 s of inner circuits before it can fold again. A
+    /// budget under that sum fails healthy E3s, which is worse than the stall it replaces. The
+    /// DKG window is the natural bound: a proof that lands later cannot be used by its E3.
+    #[test]
+    fn default_budget_covers_a_restarted_member_at_secure_parameters() {
+        const DKG_WINDOW_SECS: u64 = 7200;
+        const MEASURED_RESTART_WORST_CASE_SECS: u64 = 6414;
+
+        assert_eq!(
+            DEFAULT_DKG_NODE_PROOF_TIMEOUT_SECS, DKG_WINDOW_SECS,
+            "the budget must track the DKG window; work finishing later cannot be used"
+        );
+        assert!(
+            DEFAULT_DKG_NODE_PROOF_TIMEOUT_SECS > MEASURED_RESTART_WORST_CASE_SECS,
+            "budget {DEFAULT_DKG_NODE_PROOF_TIMEOUT_SECS} s would fail a healthy restarted \
+             member that needs {MEASURED_RESTART_WORST_CASE_SECS} s at N=9"
+        );
     }
 }

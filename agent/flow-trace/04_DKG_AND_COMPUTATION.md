@@ -337,9 +337,11 @@ mid-fold sends nothing. `PublicKeyAggregator` therefore arms a durable budget wh
 `E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGTimeout }`. The late parties are not
 dropped from the honest set instead: C5 is signed before the cross-node fold completes and binds
 exactly those H keyshares, so a different honest set would invalidate a published proof. The budget
-is `E3_DKG_NODE_PROOF_TIMEOUT_SECS`, and its default is calibrated for the insecure test preset.
-Measure a node fold at the deployment preset before secure operation, because a budget below the
-honest fold time fails every E3 on healthy nodes.
+is `E3_DKG_NODE_PROOF_TIMEOUT_SECS`, and its default matches the DKG window (7200 s) because a node
+proof that arrives after the window cannot be used by its E3. Measured `ZkNodeDkgFold` at the
+`secure-8192` preset is 132 s at N=3, 380 s at N=5, and 904 s at N=9, and a member that restarts
+mid-DKG re-proves about 5500 s of inner circuits before it can fold again. Do not lower the budget
+below that restart-inclusive worst case for the deployed committee size.
 
 **Failure bridge:** `ProofRequestActor` now converts proof-generation worker failures and local
 proof-signing failures into terminal round failures instead of only logging that the proof-bearing
