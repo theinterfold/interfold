@@ -24,7 +24,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use e3_fhe_params::{build_pair_for_preset, BfvPreset, ParameterType};
+use e3_fhe_params::{
+    build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset, ParameterType,
+};
+use e3_polynomial::CrtPolynomial;
 use e3_zk_helpers::ciphernodes_committee::CiphernodesCommitteeSize;
 use e3_zk_helpers::circuits::dkg::pk::computation::{Bits as DkgPkBits, Configs as DkgPkConfigs};
 use e3_zk_helpers::circuits::dkg::share_encryption::circuit::ShareEncryptionCircuitData;
@@ -157,6 +160,61 @@ fn crp_block(threshold_params: &std::sync::Arc<fhe::bfv::BfvParameters>) -> Resu
     ))
 }
 
+/// Serialize one fixed l-BFV public-randomness vector as circuit rows.
+///
+/// The outer vector is the l-BFV key-switching slot. Each row contains the CRT limbs of one
+/// concrete polynomial. The values must remain identical to the `CommonRandomPolyVec` used by the
+/// runtime l-BFV key path.
+fn lbfv_rows_block(
+    threshold_params: &std::sync::Arc<fhe::bfv::BfvParameters>,
+    seed: [u8; 32],
+) -> Result<String> {
+    let rows = fhe::bfv::CommonRandomPolyVec::from_seed(threshold_params, seed)?
+        .to_polys()
+        .into_iter()
+        .map(|poly| {
+            let mut row = CrtPolynomial::from_fhe_polynomial(&poly);
+            row.reverse();
+            row.center(threshold_params.moduli())?;
+
+            let limbs = row
+                .limbs
+                .iter()
+                .map(|limb| {
+                    let coefficients = limb
+                        .coefficients()
+                        .iter()
+                        .map(|coefficient| format!("        {},", bigint_to_field(coefficient)))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    format!("    Polynomial::new([\n{}\n    ]),", coefficients)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            Ok(format!("[\n{}\n]", limbs))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(format!("[\n{}\n]", rows.join(",\n")))
+}
+
+/// Serialize the fixed Garner coefficients used by the l-BFV key-switching rows.
+fn lbfv_gadget_scalars(
+    threshold_params: &std::sync::Arc<fhe::bfv::BfvParameters>,
+) -> Result<String> {
+    let rns = fhe_math::rns::RnsContext::new(threshold_params.moduli())?;
+    let values = (0..threshold_params.moduli().len())
+        .map(|index| {
+            let coefficient = rns
+                .get_garner(index)
+                .ok_or_else(|| anyhow::anyhow!("missing Garner coefficient at index {index}"))?;
+            Ok(bigint_to_field(&BigInt::from(coefficient.clone())).to_string())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(format!("[{}]", values.join(", ")))
+}
+
 fn render_threshold(preset: BfvPreset) -> Result<String> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
 
@@ -282,19 +340,40 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
         .take(pkgen.l as usize)
         .collect::<Vec<_>>()
         .join(", ");
-    let gadget_scalars = std::iter::repeat("1")
-        .take(pkgen.l as usize)
-        .collect::<Vec<_>>()
-        .join(", ");
+    let (lbfv_crs_gadget_rows, lbfv_urs_gadget_rows, gadget_scalars) =
+        match (lbfv_crs_seed(preset), lbfv_urs_seed(preset)) {
+            (Some(crs_seed), Some(urs_seed)) => (
+                lbfv_rows_block(&threshold_params, crs_seed)?,
+                lbfv_rows_block(&threshold_params, urs_seed)?,
+                lbfv_gadget_scalars(&threshold_params)?,
+            ),
+            _ => {
+                let rows = std::iter::repeat("CRP")
+                    .take(pkgen.l as usize)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                let scalars = std::iter::repeat("1")
+                    .take(pkgen.l as usize)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                (
+                    format!("[{}]", rows),
+                    format!("[{}]", rows),
+                    format!("[{}]", scalars),
+                )
+            }
+        };
     let rlk_section = section(
         "l-BFV relinearization key circuits",
         &format!(
             "pub global GADGET_DIM: u32 = L;
-// These row constants are placeholders. Do not use them for production l-BFV until each row has
-// an independent CRS, URS, and Garner coefficient.
+// Legacy C1 rows remain backed by the single-CRP path until C1 row generation is migrated.
 pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{}];
-pub global D1_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{}];
-pub global G_GADGET_ROWS: [Field; GADGET_DIM] = [{}];
+// l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
+// placeholder declarations because their RLK path is disabled.
+pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = {};
+pub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = {};
+pub global G_GADGET_ROWS: [Field; GADGET_DIM] = {};
 
 pub global RLK_GENERATION_BIT_R: u32 = PK_GENERATION_BIT_SK;
 pub global RLK_GENERATION_BIT_SK: u32 = PK_GENERATION_BIT_SK;
@@ -330,7 +409,7 @@ pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationCon
 
 pub global RLK_AGGREGATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
 pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationConfigs::new(QIS);",
-            gadget_rows, gadget_rows, gadget_scalars,
+            gadget_rows, lbfv_crs_gadget_rows, lbfv_urs_gadget_rows, gadget_scalars,
         ),
     );
 

@@ -24654,10 +24654,12 @@ l-BFV relinearization key circuits
 ************************************/
 
 pub global GADGET_DIM: u32 = L;
-// These row constants are placeholders. Do not use them for production l-BFV until each row has
-// an independent CRS, URS, and Garner coefficient.
+// Legacy C1 rows remain backed by the single-CRP path until C1 row generation is migrated.
 pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP];
-pub global D1_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP];
+// l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
+// placeholder declarations because their RLK path is disabled.
+pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP];
+pub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP];
 pub global G_GADGET_ROWS: [Field; GADGET_DIM] = [1, 1, 1];
 
 pub global RLK_GENERATION_BIT_R: u32 = PK_GENERATION_BIT_SK;
