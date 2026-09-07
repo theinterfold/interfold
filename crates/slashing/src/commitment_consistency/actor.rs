@@ -35,9 +35,9 @@
 use actix::{Actor, Addr, Context, Handler};
 use e3_data::Repository;
 use e3_events::{
-    BusHandle, CommitmentConsistencyCheckRequested, CommitmentLink, E3id, EventPublisher,
-    EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, ProofVerificationPassed,
-    TypedEvent,
+    BusHandle, CommitmentConsistencyCheckRequested, CommitmentLink, E3id, EventContext,
+    EventPublisher, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
+    ProofVerificationPassed, Sequenced, TypedEvent,
 };
 use e3_utils::NotifySync;
 use tracing::{error, info};
@@ -91,10 +91,31 @@ impl CommitmentConsistencyChecker {
         self
     }
 
-    fn persist(&self) {
-        if let Some(repo) = &self.snapshot_repo {
-            repo.write(&self.consistency.snapshot());
+    /// Persist the verified-proof cache in the same atomic snapshot batch as the event that
+    /// changed it.
+    ///
+    /// Plain `Repository::write` is a `do_send`: the causing event can reach the event log and
+    /// advance its snapshot cursor while this write is still queued, and a crash in that window
+    /// loses the cache while replay skips the event that would rebuild it. That is exactly the
+    /// failure this cache exists to prevent, so the write must ride the event's batch.
+    fn persist(&self, context: &EventContext<Sequenced>) {
+        let Some(repo) = &self.snapshot_repo else {
+            return;
+        };
+        if let Err(err) = repo.write_with_context(&self.consistency.snapshot(), context) {
+            error!(
+                e3_id = %self.e3_id,
+                error = %err,
+                "Failed to persist the commitment-consistency cache; a restart would drop it"
+            );
         }
+    }
+
+    /// Size of the verified-proof cache. Lets a test assert that the actor actually restored
+    /// its durable snapshot, rather than only that the underlying service can restore one.
+    #[cfg(test)]
+    pub(crate) fn cached_proof_count(&self) -> usize {
+        self.consistency.cached_proof_count()
     }
 
     pub fn setup(
@@ -153,7 +174,7 @@ impl Handler<TypedEvent<ProofVerificationPassed>> for CommitmentConsistencyCheck
     ) -> Self::Result {
         let (data, ec) = msg.into_components();
         let violations = self.consistency.on_proof_verified(data);
-        self.persist();
+        self.persist(&ec);
         for violation in violations {
             if let Err(err) = self.bus.publish(violation, ec.clone()) {
                 error!(
@@ -177,7 +198,7 @@ impl Handler<TypedEvent<CommitmentConsistencyCheckRequested>> for CommitmentCons
         let Some(outcome) = self.consistency.on_check_requested(data) else {
             return;
         };
-        self.persist();
+        self.persist(&ec);
 
         for violation in outcome.violations {
             if let Err(err) = self.bus.publish(violation, ec.clone()) {

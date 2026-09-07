@@ -946,8 +946,20 @@ impl CiphernodeBuilder {
         lifecycle_stages: &HashMap<E3id, E3Stage>,
     ) -> Result<e3_request::E3RouterBuilder> {
         let recovered_selections = recovered_ciphernode_selections(selector_state, addr)?;
-        let mut e3_builder =
-            E3Router::builder(bus, store.clone()).with_recovered_selections(recovered_selections);
+        // Keep a slashably-failed E3's context alive for as long as the chain still accepts a
+        // report. `accusationVoteValidity` has no on-chain upper bound, so a fixed grace can be
+        // silently outgrown by governance; take the largest window across the configured chains.
+        let teardown_grace = e3_request::teardown_grace_for(
+            accusation_vote_validity_by_chain
+                .values()
+                .copied()
+                .filter(|secs| *secs > 0)
+                .max()
+                .map(std::time::Duration::from_secs),
+        );
+        let mut e3_builder = E3Router::builder(bus, store.clone())
+            .with_recovered_selections(recovered_selections)
+            .with_teardown_grace(teardown_grace);
         e3_builder = e3_builder.with(AggregatorRoleExtension::create(
             selector_state.is_aggregator.clone(),
         ));

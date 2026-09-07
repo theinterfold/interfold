@@ -556,3 +556,60 @@ fn snapshot_roundtrip_is_lossless() {
     assert_eq!(restored.cached_proof_count(), 6);
     assert_eq!(restored.snapshot().entries.len(), snap.entries.len());
 }
+
+/// The tests above drive `restore` directly, so they pass even when the actor never calls it.
+/// This one goes through `with_snapshot`, the wiring the extension actually uses
+/// (`commitment_consistency_checker_ext.rs`), so deleting the restore in the actor fails here.
+#[actix::test]
+async fn the_actor_restores_its_cache_from_the_durable_repository() {
+    use crate::actors::commitment_consistency_checker::CommitmentConsistencyChecker;
+    use crate::repo::CommitmentConsistencyRepositoryFactory;
+    use actix::{Actor, Context as ActixContext, Handler};
+    use e3_data::{DataStore, InMemStore, RepositoriesFactory};
+    use e3_events::{
+        hlc_factory::HlcFactory, BusHandle, EventBus, EventBusConfig, Sequencer,
+        StoreEventRequested,
+    };
+
+    struct StoreSink;
+    impl Actor for StoreSink {
+        type Context = ActixContext<Self>;
+    }
+    impl Handler<StoreEventRequested> for StoreSink {
+        type Result = ();
+        fn handle(&mut self, _: StoreEventRequested, _: &mut Self::Context) {}
+    }
+
+    let event_bus = EventBus::new(EventBusConfig { deduplicate: true }).start();
+    let sequencer = Sequencer::new(&event_bus, StoreSink.start().recipient()).start();
+    let bus = BusHandle::new(event_bus, sequencer, HlcFactory::new())
+        .enable("commitment-consistency-restore-test");
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let repo = store.repositories().commitment_consistency(&e3());
+
+    // "Pre-crash": a checker caches its own C0 and persists the snapshot.
+    let mut before = CommitmentConsistency::new(e3(), vec![same_party_link()], 2);
+    before.on_proof_verified(passed(
+        e3(),
+        1,
+        addr(1),
+        ProofType::C1PkGeneration,
+        [0x10; 32],
+        signals(0x10),
+    ));
+    assert_eq!(before.cached_proof_count(), 1);
+    repo.write(&before.snapshot());
+
+    // "Post-restart": the extension rebuilds the actor and hands it the persisted snapshot.
+    let restored = repo.read().await.expect("read snapshot");
+    assert!(restored.is_some(), "the snapshot must survive in the store");
+    let checker = CommitmentConsistencyChecker::new(&bus, e3(), vec![same_party_link()], 2)
+        .with_snapshot(repo, restored);
+
+    assert_eq!(
+        checker.cached_proof_count(),
+        1,
+        "the actor must start from the durable cache; without the restore the node forgets \
+         its own C0 and faults honest peers"
+    );
+}

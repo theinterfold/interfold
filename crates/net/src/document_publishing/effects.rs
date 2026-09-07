@@ -15,7 +15,7 @@ pub async fn handle_publish_document_requested(
     event: PublishDocumentRequested,
     topic: impl Into<String>,
     bus: BusHandle,
-) -> Result<DocumentPublishedNotification> {
+) -> Result<PublishOutcome> {
     let value = event.value;
     let key = ContentHash::from_content(&value);
     let expires = Some(
@@ -33,8 +33,30 @@ pub async fn handle_publish_document_requested(
     )
     .await?;
     let notification = DocumentPublishedNotification::new(event.meta, key, bus.ts()?);
-    broadcast_document_published_notification(tx, rx, notification.clone(), topic).await?;
-    Ok(notification)
+
+    // The DHT record is durable from here on, so the pointer is worth retaining even if the
+    // gossip publish fails. `NoPeersSubscribed` is the normal outcome when this node is the
+    // first to join the topic, and treating it as fatal would drop the announcement from
+    // `announcements_to_repeat` — the late peer would then never learn about a record that is
+    // sitting in the DHT. Report the outcome and let the caller retain the pointer either way.
+    let broadcast = broadcast_document_published_notification(tx, rx, notification.clone(), topic)
+        .await
+        .map(|_| ());
+    Ok(PublishOutcome {
+        notification,
+        broadcast,
+    })
+}
+
+/// The result of publishing a document: the pointer to retain, and whether the initial gossip
+/// broadcast reached the mesh.
+///
+/// The two are separate because the DHT put and the gossip publish fail independently: the
+/// record can be durable while the broadcast finds no subscribed peers.
+#[derive(Debug)]
+pub(super) struct PublishOutcome {
+    pub notification: DocumentPublishedNotification,
+    pub broadcast: Result<()>,
 }
 
 /// Re-gossip a notification that was already announced once.

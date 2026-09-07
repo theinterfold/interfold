@@ -25,6 +25,11 @@ pub type ProcessRecord = (Child, Vec<JoinHandle<()>>);
 pub type ProcessMap = Arc<Mutex<HashMap<String, ProcessRecord>>>;
 
 /// Spawn a child process and return the Child handle
+///
+/// The returned handle owns the child: `kill_on_drop` means dropping it kills the process. Use
+/// this only when the caller retains the handle for the child's whole life, as `ProcessManager`
+/// does in its `ProcessMap`. For a process that must outlive this one, use
+/// [`spawn_detached_process`].
 pub async fn spawn_process(program: &str, args: Vec<String>) -> Result<Child> {
     let child = Command::new(program)
         .args(args)
@@ -34,6 +39,27 @@ pub async fn spawn_process(program: &str, args: Vec<String>) -> Result<Child> {
         // A termination-path error must not turn dropping our last handle into an orphaned
         // ciphernode. Normal stops still use SIGTERM and the graceful drain in ProcessManager.
         .kill_on_drop(true)
+        .spawn()?;
+
+    Ok(child)
+}
+
+/// Spawn a child process that outlives this one.
+///
+/// Unlike [`spawn_process`] this does NOT set `kill_on_drop`: the caller starts the child and
+/// returns, so the handle is dropped immediately and `kill_on_drop` would kill the very process
+/// it just started. The child is also detached from this process's pipes, because the read ends
+/// close when the caller exits and the child would then fail on every write to a broken pipe.
+///
+/// The caller keeps no handle, so the child is reached through its own protocol from then on
+/// (for the daemon, the socket at [`SERVER_ADDRESS`]).
+pub async fn spawn_detached_process(program: &str, args: Vec<String>) -> Result<Child> {
+    let child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(false)
         .spawn()?;
 
     Ok(child)

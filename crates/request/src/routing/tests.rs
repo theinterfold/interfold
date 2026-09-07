@@ -541,3 +541,40 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
     );
     Ok(())
 }
+
+/// The teardown grace must cover the window during which the chain still accepts a report.
+///
+/// `SlashingManager.submitSlashProposal` accepts a report until the E3's lifecycle deadline plus
+/// `ACCUSATION_REPORTING_WINDOW` (1 day), and `setAccusationVoteValidity` enforces only a lower
+/// bound, so governance can raise the vote window past any fixed constant. Tearing a context down
+/// early removes this node from the accusation quorum while the evidence is still admissible.
+#[actix::test]
+async fn teardown_grace_covers_the_on_chain_accusation_window() {
+    // A vote validity far larger than the old fixed two-hour grace.
+    let validity = std::time::Duration::from_secs(7 * 24 * 60 * 60);
+    let grace = teardown_grace_for(Some(validity));
+
+    assert!(
+        grace > validity,
+        "the grace must outlast the vote-validity window it is meant to cover: \
+         grace={grace:?} validity={validity:?}"
+    );
+    assert!(
+        grace >= ACCUSATION_REPORTING_WINDOW + validity,
+        "the grace must cover the reporting window plus the vote validity: grace={grace:?}"
+    );
+    assert!(
+        grace > SLASHABLE_FAILURE_TEARDOWN_GRACE,
+        "a governance-raised window must widen the grace beyond the fixed default"
+    );
+}
+
+/// Without a chain value the grace falls back to the fixed default rather than to zero.
+#[actix::test]
+async fn teardown_grace_falls_back_when_the_chain_window_is_unknown() {
+    assert_eq!(
+        teardown_grace_for(None),
+        SLASHABLE_FAILURE_TEARDOWN_GRACE,
+        "an unknown on-chain window must not shorten the grace"
+    );
+}

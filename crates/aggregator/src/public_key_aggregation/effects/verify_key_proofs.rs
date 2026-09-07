@@ -292,6 +292,10 @@ impl PublicKeyAggregator {
                 nodes_fold_accumulator: None,
                 nodes_fold_completed_slots: 0,
                 nodes_fold_step_correlation: None,
+                // Fresh transition out of VerifyingC1: the node-proof wait has not started, so
+                // no deadline is armed yet. `arm_node_proof_deadline` persists one once C5 is
+                // signed and honest proofs are actually outstanding.
+                node_proof_deadline_at: None,
             })
         })?;
 

@@ -80,8 +80,15 @@ impl ProofRequestActor {
     /// pending dispatch of the same kind, returning that dispatch's correlation id.
     ///
     /// Only considers dispatches for `e3_id` whose kind matches `input_type`. For
-    /// `SmudgingNoise` the lowest outstanding `esi_idx` is taken: replayed requests were
-    /// dispatched in canonical order, so their responses arrive in that order too.
+    /// `SmudgingNoise` the lowest outstanding `esi_idx` is taken.
+    ///
+    /// SAFE ONLY WHILE THERE IS ONE ESI SLOT. `DkgShareDecryptionProofResponse` carries no
+    /// ESI index, so this infers the slot from arrival order. These jobs run concurrently and
+    /// can finish out of order, which would put a proof in another slot and produce a C4b
+    /// vector that does not match its witness. Today every preset generates exactly one ESI
+    /// share (`vec![SharedSecret::from(..)]`, `trbfv/src/gen_esi_sss.rs:91`), so there is only
+    /// one candidate and the order cannot be wrong. Before `num_esi > 1`, carry the index on
+    /// the response and match on it instead of inferring it here.
     pub(in crate::actors::proof_request) fn adopt_orphaned_c4_response(
         &self,
         e3_id: &E3id,

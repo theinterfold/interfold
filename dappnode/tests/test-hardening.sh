@@ -12,8 +12,16 @@ fail() {
     exit 1
 }
 
-grep -Fq 'stop_grace_period: 45s' "$ROOT_DIR/docker-compose.yml" \
-    || fail "Docker stop grace period must exceed the node shutdown deadline"
+# The grace must exceed NODE_SHUTDOWN_DEADLINE (60s = FANOUT_ACCEPT_TIMEOUT + 30s, see
+# crates/events/src/eventbus.rs), or Docker sends SIGKILL mid store-flush. Compare the value
+# instead of pinning a literal: a pinned literal silently asserts the opposite of this rule
+# once the Rust constant moves.
+NODE_SHUTDOWN_DEADLINE_SECS=60
+grace_line="$(grep -oE 'stop_grace_period: [0-9]+s' "$ROOT_DIR/docker-compose.yml" | head -1)"
+[ -n "$grace_line" ] || fail "docker-compose.yml must declare stop_grace_period"
+grace_secs="$(printf '%s' "$grace_line" | grep -oE '[0-9]+')"
+[ "$grace_secs" -gt "$NODE_SHUTDOWN_DEADLINE_SECS" ] \
+    || fail "Docker stop grace period (${grace_secs}s) must exceed the node shutdown deadline (${NODE_SHUTDOWN_DEADLINE_SECS}s)"
 
 assert_contains() {
     grep -Fq -- "$2" "$1" || fail "expected '$2' in $1"

@@ -106,12 +106,41 @@ pub struct E3Router {
 
 /// Default for how long a slashably-failed E3's context stays alive after `E3Failed`.
 ///
-/// The accusation manager can still initiate or vote on an accusation for up to the
-/// on-chain `accusationVoteValidity` window (30 min by default) plus the local vote timeout
-/// (5 min) after the failure. Two hours covers the largest window governance can set with
-/// margin; the leak this bounds used to be permanent.
+/// Used only when the on-chain windows are unknown (no chain configured, or the registry read
+/// failed). Prefer [`teardown_grace_for`], which derives the value from the chain.
 pub const SLASHABLE_FAILURE_TEARDOWN_GRACE: std::time::Duration =
     std::time::Duration::from_secs(2 * 60 * 60);
+
+/// The on-chain window during which a slashing report is still accepted, counted from the E3's
+/// lifecycle deadline: `SlashingManager.ACCUSATION_REPORTING_WINDOW`.
+pub const ACCUSATION_REPORTING_WINDOW: std::time::Duration =
+    std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Local margin for a vote that is in flight when the on-chain window closes.
+const LOCAL_VOTE_TIMEOUT_MARGIN: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// How long to keep a slashably-failed E3's context, given the chain's vote-validity window.
+///
+/// `SlashingManager.submitSlashProposal` accepts a report until the E3's snapshotted lifecycle
+/// deadline plus `ACCUSATION_REPORTING_WINDOW` (1 day), and votes stay valid for
+/// `CiphernodeRegistry.accusationVoteValidity()`, which governance can raise with no upper
+/// bound (`setAccusationVoteValidity` enforces only `>=`). A context that is torn down while
+/// the chain still accepts evidence takes this node out of the accusation quorum; because every
+/// node uses the same grace, the whole committee goes dark at once and the H-of-N attestation
+/// quorum becomes unreachable for a report the chain would still have accepted.
+///
+/// So the grace covers the reporting window plus the actual vote validity plus a margin for a
+/// vote already in flight, rather than a fixed constant that governance can silently outgrow.
+pub fn teardown_grace_for(
+    accusation_vote_validity: Option<std::time::Duration>,
+) -> std::time::Duration {
+    let Some(validity) = accusation_vote_validity else {
+        return SLASHABLE_FAILURE_TEARDOWN_GRACE;
+    };
+    ACCUSATION_REPORTING_WINDOW
+        .saturating_add(validity)
+        .saturating_add(LOCAL_VOTE_TIMEOUT_MARGIN)
+}
 
 /// Upper bound on how many completed E3 ids the router remembers.
 ///

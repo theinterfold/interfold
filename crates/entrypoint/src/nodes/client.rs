@@ -7,11 +7,12 @@
 use anyhow::{bail, Result};
 use reqwest::Client;
 use std::env;
+use std::time::Duration;
 use tracing::{error, trace};
 
 use crate::helpers::termtable::print_table;
 
-use super::nodes::{spawn_process, Action, ProcessStatus, Query, SERVER_ADDRESS};
+use super::nodes::{spawn_detached_process, Action, ProcessStatus, Query, SERVER_ADDRESS};
 
 pub async fn get_status() -> Result<Query> {
     let client = Client::new();
@@ -154,10 +155,44 @@ pub async fn start_daemon(
         args.push(exclude.join(","));
     }
 
-    // Start and forget
-    spawn_process(&interfold_bin, args).await?;
+    // Start and forget. The daemon must outlive this CLI process, so it is spawned detached:
+    // holding no handle means nothing kills it when this function returns. Readiness is
+    // confirmed through the socket rather than through the child handle.
+    let mut child = spawn_detached_process(&interfold_bin, args).await?;
+
+    // A daemon that dies immediately (port taken, bad config, missing binary) otherwise looks
+    // like a success: the CLI reports "started" and exits, and the operator finds out only when
+    // the next command cannot reach the socket.
+    if tokio::time::timeout(DAEMON_START_TIMEOUT, wait_until_ready())
+        .await
+        .is_err()
+    {
+        // Report the child's own exit status when it has one; it is the actionable detail.
+        if let Ok(Some(status)) = child.try_wait() {
+            bail!("Daemon exited during startup with {status}");
+        }
+        let _ = child.kill().await;
+        bail!(
+            "Daemon did not become ready on {SERVER_ADDRESS} within {}s",
+            DAEMON_START_TIMEOUT.as_secs()
+        );
+    }
 
     tracing::info!("Daemon started successfully");
 
     Ok(())
+}
+
+/// How long `nodes up --detach` waits for the daemon to answer on its socket.
+const DAEMON_START_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Poll the daemon socket until it accepts a connection.
+///
+/// `is_ready` reports a refused connection as `Ok(false)` rather than an error, so a daemon that
+/// is still binding its port is indistinguishable from one that never will be. The caller bounds
+/// this loop with [`DAEMON_START_TIMEOUT`].
+async fn wait_until_ready() {
+    while !is_ready().await.unwrap_or(false) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }

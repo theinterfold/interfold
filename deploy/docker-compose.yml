@@ -1,7 +1,7 @@
 services:
   cn1:
     image: '{{IMAGE}}'
-    stop_grace_period: 45s
+    stop_grace_period: 65s
     volumes:
       - ./cn1.yaml:/home/ciphernode/.config/interfold/config.yaml:ro
       - cn1-data:/home/ciphernode/.local/share/interfold
@@ -20,7 +20,7 @@ services:
 
   cn2:
     image: '{{IMAGE}}'
-    stop_grace_period: 45s
+    stop_grace_period: 65s
     volumes:
       - ./cn2.yaml:/home/ciphernode/.config/interfold/config.yaml:ro
       - cn2-data:/home/ciphernode/.local/share/interfold
@@ -39,7 +39,7 @@ services:
 
   cn3:
     image: '{{IMAGE}}'
-    stop_grace_period: 45s
+    stop_grace_period: 65s
     volumes:
       - ./cn3.yaml:/home/ciphernode/.config/interfold/config.yaml:ro
       - cn3-data:/home/ciphernode/.local/share/interfold
@@ -58,7 +58,7 @@ services:
 
   cn4:
     image: '{{IMAGE}}'
-    stop_grace_period: 45s
+    stop_grace_period: 65s
     depends_on:
       - cn1
     volumes:

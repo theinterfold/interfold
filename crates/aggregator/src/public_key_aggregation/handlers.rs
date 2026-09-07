@@ -46,8 +46,12 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                 trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
                     self.effects_enabled = true;
                     self.publish_inputs_ready(ec.clone())?;
-                    self.resume_in_flight_work(ec)
+                    self.resume_in_flight_work(ec.clone())
                 });
+                // Re-arm the node-proof bound after the state is hydrated. None of the events
+                // that arm it in-process are replayed on recovery, so without this a restart
+                // while proofs are outstanding would wait forever for a member that is gone.
+                self.rearm_node_proof_deadline(ctx, &ec);
             }
             InterfoldEventData::E3RequestComplete(_) => self.notify_sync(ctx, Die),
             InterfoldEventData::CommitteeMemberExpelled(data) => {

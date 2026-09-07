@@ -843,6 +843,7 @@ mod tests {
             nodes_fold_accumulator: None,
             nodes_fold_completed_slots: 0,
             nodes_fold_step_correlation: None,
+            node_proof_deadline_at: None,
         }
     }
 

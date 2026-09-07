@@ -419,3 +419,79 @@ async fn test_publishes_document_fails_with_exponential_backoff() -> Result<()> 
 
     Ok(())
 }
+
+/// A pointer whose DHT record is durable must survive an initial gossip publish that found no
+/// peers, so a peer that subscribes later still learns about the document.
+///
+/// `put_record` runs before the gossip publish. When this node is the first to join the topic
+/// the publish fails with `NoPeersSubscribed`, which used to abort the handler before the
+/// pointer was recorded — leaving a live DHT record that no late subscriber was ever told
+/// about. Every other test in this file drives the initial publish to success, so this path
+/// was uncovered.
+#[actix::test]
+async fn a_pointer_survives_an_initial_publish_with_no_peers() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _net_evt_rx, _, _, _) =
+        setup_test()?;
+    let e3_id = E3id::new("91", 1);
+
+    bus.publish_without_context(PublishDocumentRequested {
+        meta: DocumentMeta::new(e3_id.clone(), DocumentKind::TrBFV, vec![], None),
+        value: ArcBytes::from_bytes(b"encryption key"),
+    })?;
+
+    // The DHT put succeeds: the record is durable and fetchable from here on.
+    let Some(NetCommand::DhtPutRecord {
+        correlation_id,
+        key,
+        ..
+    }) = timeout(Duration::from_secs(1), net_cmd_rx.recv()).await?
+    else {
+        bail!("expected DhtPutRecord");
+    };
+    net_evt_tx.send(NetEvent::DhtPutRecordSucceeded {
+        correlation_id,
+        key: key.clone(),
+    })?;
+
+    // The gossip publish then fails because nobody is subscribed yet.
+    let Some(NetCommand::GossipPublish {
+        correlation_id,
+        data: GossipData::DocumentPublishedNotification(first),
+        ..
+    }) = timeout(Duration::from_secs(1), net_cmd_rx.recv()).await?
+    else {
+        bail!("expected the first GossipPublish");
+    };
+    net_evt_tx.send(NetEvent::GossipPublishError {
+        correlation_id,
+        error: std::sync::Arc::new(GossipPublishFailure::from_libp2p(
+            libp2p::gossipsub::PublishError::NoPeersSubscribedToTopic,
+        )),
+    })?;
+    sleep(Duration::from_millis(50)).await;
+
+    // A peer joins the topic afterwards. The pointer must still be re-announced.
+    net_evt_tx.send(NetEvent::GossipSubscribed {
+        count: 1,
+        topic: libp2p::gossipsub::IdentTopic::new("topic").hash(),
+    })?;
+
+    let Some(NetCommand::GossipPublish {
+        data: GossipData::DocumentPublishedNotification(again),
+        ..
+    }) = timeout(Duration::from_secs(1), net_cmd_rx.recv())
+        .await
+        .expect(
+            "pointer was dropped after a failed initial publish, so the late peer was never told",
+        )
+    else {
+        bail!("expected the re-announced GossipPublish");
+    };
+    assert_eq!(
+        again.key, first.key,
+        "the re-announced pointer must reference the same durable DHT record"
+    );
+    assert_eq!(again.meta.e3_id, e3_id);
+
+    Ok(())
+}

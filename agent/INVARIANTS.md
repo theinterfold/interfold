@@ -641,6 +641,25 @@ design citation alone does not establish current runtime behavior.
 - The node shutdown deadline and the fanout accept timeout come from one constant,
   `NODE_SHUTDOWN_DEADLINE = FANOUT_ACCEPT_TIMEOUT + 30 s`. The daemon SIGKILL delay must stay above
   that deadline, so a node is never killed while it still flushes. — `flow-trace/06`
+- A process that must outlive its spawner must not be started with `kill_on_drop`. The handle is
+  dropped as soon as the spawner returns, so the flag kills the very process it just started;
+  `spawn_detached_process` is the correct helper, and `spawn_process` is only for a caller that
+  retains the handle for the child's whole life. A detached start must then confirm readiness
+  through the child's own protocol, because it holds no handle to observe. — `flow-trace/06`
+- Every **external** supervisor grace must also exceed `NODE_SHUTDOWN_DEADLINE`: the
+  `const _: () = assert!` guards cover only the in-process `nodes daemon` path, not the container
+  runtimes that actually run production and DAppNode nodes. `deploy/docker-compose.yml` and
+  `dappnode/docker-compose.yml` carry `stop_grace_period`, and the DAppNode gate must compare the
+  parsed value against the deadline rather than pin a literal — a pinned literal silently asserts
+  the opposite of this rule once the Rust constant moves. — `flow-trace/06`
+- A deadline that bounds a wait must be persisted as an absolute instant and re-armed on recovery,
+  not held only in an actix `SpawnHandle`. The handle dies with the process, and a bound whose
+  arming events are not replayed is silently dropped by the restart it exists to survive. —
+  `flow-trace/04`
+- A local teardown that ends this node's ability to act on an on-chain window must derive its
+  deadline from that window, not from a fixed constant. `setAccusationVoteValidity` enforces only a
+  lower bound, so governance can outgrow any constant; because every node shares the grace, the
+  whole committee would go dark together while the chain still accepts a report. — `flow-trace/05`
 - An actor that holds in-memory state derived from an event below the persisted snapshot cursor must
   persist that state, because replay starts at the cursor and never redelivers the event. Verified
   caches, own-proof records, and collector inputs all follow this rule. — `flow-trace/06`
@@ -651,6 +670,13 @@ design citation alone does not establish current runtime behavior.
   explicit schema version; add/remove/reorder of fields requires a compatibility test against
   checked-in fixtures; version mismatch runs a tested migration or fails startup with an actionable
   error. — `ARCHITECTURE.md`
+- `#[serde(default)]` does **not** make a new field backward compatible on a bincode-persisted type.
+  Bincode encodes a struct as a fixed sequence with no field names, so a record written before the
+  field existed fails to decode with "unexpected end of file" rather than defaulting; the attribute
+  only covers a value built in memory. Adding a field to any type reachable from
+  `Repository`/`Persistable` therefore requires bumping `SCHEMA_VERSION`, which converts the opaque
+  decode error into the explicit halt-and-migrate path. The JSON daemon socket is the exception: it
+  is field-named, so `serde(default)` behaves as expected there.
 
 ## Build / config sync
 

@@ -48,9 +48,17 @@ impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {
         let topic = self.topic.clone();
         let addr = ctx.address();
         trap_fut(EType::IO, &bus.with_ec(&ec), async move {
-            let notification = handle_publish_document_requested(tx, rx, msg, topic, bus).await?;
+            let outcome = handle_publish_document_requested(tx, rx, msg, topic, bus).await?;
             // Hand the gossiped pointer back to the actor so a late peer can be re-told.
-            addr.do_send(Announced(notification));
+            // This is correctness-critical, not telemetry: a dropped `Announced` leaves the
+            // pointer out of `announcements_to_repeat`, so a peer that subscribes later never
+            // learns the DHT record and its E3 stalls. Await the send rather than fire it.
+            //
+            // Retain the pointer even when the initial broadcast failed. The DHT put already
+            // succeeded, so a later `GossipSubscribed` can still deliver it; failing here would
+            // strand a record that is present and fetchable.
+            addr.send(Announced(outcome.notification)).await?;
+            outcome.broadcast?;
             Ok(())
         })
     }

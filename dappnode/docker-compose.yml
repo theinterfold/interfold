@@ -7,8 +7,10 @@ services:
         UPSTREAM_VERSION: 0.14.0
     image: 'ciphernode.interfold-ciphernode.public.dappnode.eth:0.5.0'
     restart: unless-stopped
-    # Allow the node's 30-second durability barrier to finish before Docker sends SIGKILL.
-    stop_grace_period: 45s
+    # Must exceed NODE_SHUTDOWN_DEADLINE (60s = FANOUT_ACCEPT_TIMEOUT + 30s, see
+    # crates/events/src/eventbus.rs). A shorter grace sends SIGKILL while the node is still
+    # flushing its event log, losing the state the barrier exists to protect.
+    stop_grace_period: 65s
     volumes:
       - 'ciphernode_data:/data'
     ports:

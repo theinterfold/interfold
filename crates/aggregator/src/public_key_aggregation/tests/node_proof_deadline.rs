@@ -28,6 +28,9 @@ fn awaiting_node_proofs(honest: &[u64], present: &[u64]) -> PublicKeyAggregatorS
         nodes_fold_accumulator: None,
         nodes_fold_completed_slots: 0,
         nodes_fold_step_correlation: None,
+        // These cases drive `missing_node_proof_parties` / `fail_on_missing_node_proofs`
+        // directly and never read the persisted instant, so no deadline is armed.
+        node_proof_deadline_at: None,
     }
 }
 
@@ -135,4 +138,63 @@ async fn expiring_the_budget_is_inert_once_every_proof_arrived() -> Result<()> {
         result.events
     );
     Ok(())
+}
+
+/// The node-proof deadline must be an absolute instant in the persisted state, not only an
+/// in-process timer.
+///
+/// The `SpawnHandle` dies with the process, and none of the three events that arm it
+/// (`AggregatorChanged`, `PkAggregationProofSigned`, `DKGRecursiveAggregationComplete`) are
+/// replayed on recovery: `AggregatorChanged` early-returns when the role has not flipped, the
+/// recovery path does not republish the signed proof, and the recursive-aggregation event only
+/// arrives if the stuck party sends something, which by construction it never does. Without a
+/// persisted instant a restart therefore silently drops the bound and restores the unbounded
+/// stall the deadline exists to prevent.
+#[actix::test]
+async fn the_node_proof_deadline_survives_a_restart() {
+    let armed_at = 1_700_000_000_u64;
+
+    // A state hydrated from a checkpoint that was written while the wait was in progress.
+    let mut state = awaiting_node_proofs(&[0, 1], &[0]);
+    if let PublicKeyAggregatorState::GeneratingC5Proof {
+        node_proof_deadline_at,
+        ..
+    } = &mut state
+    {
+        *node_proof_deadline_at = Some(armed_at);
+    }
+
+    // Round-trip through the durable encoding, which is what a restart actually does.
+    let encoded = bincode::serialize(&state).expect("state must serialize");
+    let restored: PublicKeyAggregatorState =
+        bincode::deserialize(&encoded).expect("state must survive the durable round trip");
+
+    let PublicKeyAggregatorState::GeneratingC5Proof {
+        node_proof_deadline_at,
+        dkg_node_proofs,
+        honest_party_ids,
+        ..
+    } = restored
+    else {
+        panic!("expected GeneratingC5Proof after the round trip");
+    };
+
+    assert_eq!(
+        node_proof_deadline_at,
+        Some(armed_at),
+        "the absolute deadline must survive a restart so the wait can be re-armed for the time \
+         that is actually left"
+    );
+    // The party that has not delivered is still identifiable, so the re-armed deadline has
+    // something to attribute the failure to.
+    let missing: Vec<u64> = honest_party_ids
+        .iter()
+        .filter(|id| !dkg_node_proofs.contains_key(id))
+        .copied()
+        .collect();
+    assert_eq!(
+        missing,
+        vec![1],
+        "the outstanding party must still be identifiable after recovery"
+    );
 }

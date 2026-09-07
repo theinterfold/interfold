@@ -30,6 +30,7 @@ use e3_utils::NotifySync;
 use e3_utils::{ArcBytes, MAILBOX_LIMIT};
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::sync::Arc;
+use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
 // Public-key aggregation state machine + pure transition logic now live in
@@ -99,6 +100,11 @@ impl PublicKeyAggregator {
     /// `GeneratingC5Proof` (each buffered proof re-runs the dispatch path) do not extend the
     /// budget. Only the active aggregator arms it — a standby that is later promoted arms its
     /// own on promotion, which is the point at which its wait actually begins.
+    ///
+    /// Records an absolute deadline in the persisted state as well as arming the in-process
+    /// timer. The handle is a [`SpawnHandle`] that dies with the process, and none of the three
+    /// events that arm it are replayed on recovery, so without the persisted instant a restart
+    /// would silently drop the bound and restore the unbounded stall this exists to prevent.
     pub(in crate::actors::publickey_aggregator) fn arm_node_proof_deadline(
         &mut self,
         ctx: &mut Context<Self>,
@@ -108,12 +114,109 @@ impl PublicKeyAggregator {
             return;
         }
         let budget = node_proof_timeout::dkg_node_proof_timeout();
+        let deadline_at = Self::unix_now_secs().saturating_add(budget.as_secs());
+        if let Err(err) = self.persist_node_proof_deadline(ec, Some(deadline_at)) {
+            error!(
+                e3_id = %self.e3_id,
+                error = %err,
+                "Failed to persist the node-proof deadline; a restart would drop the bound"
+            );
+        }
+        self.spawn_node_proof_deadline(ctx, ec, budget);
+    }
+
+    /// Re-arm the bound after a restart from the persisted absolute deadline.
+    ///
+    /// Arms for the time that is actually left rather than a fresh full budget. An already
+    /// expired deadline fires on the next tick instead of being skipped.
+    pub(in crate::actors::publickey_aggregator) fn rearm_node_proof_deadline(
+        &mut self,
+        ctx: &mut Context<Self>,
+        ec: &EventContext<Sequenced>,
+    ) {
+        if self.node_proof_deadline.is_some() || !self.can_run_aggregation_effects() {
+            return;
+        }
+        if self.missing_node_proof_parties().is_empty() {
+            return;
+        }
+
+        let Some(PublicKeyAggregatorState::GeneratingC5Proof {
+            node_proof_deadline_at,
+            ..
+        }) = self.state.get()
+        else {
+            return;
+        };
+
+        // A checkpoint written before the deadline was persisted carries no instant. Start a
+        // full budget now: a bound that is too generous still terminates, whereas none does not.
+        let deadline_at = match node_proof_deadline_at {
+            Some(at) => at,
+            None => {
+                let at = Self::unix_now_secs()
+                    .saturating_add(node_proof_timeout::dkg_node_proof_timeout().as_secs());
+                if let Err(err) = self.persist_node_proof_deadline(ec, Some(at)) {
+                    error!(
+                        e3_id = %self.e3_id,
+                        error = %err,
+                        "Failed to persist a node-proof deadline during recovery"
+                    );
+                }
+                at
+            }
+        };
+
+        let remaining = Duration::from_secs(deadline_at.saturating_sub(Self::unix_now_secs()));
+        info!(
+            e3_id = %self.e3_id,
+            remaining_secs = remaining.as_secs(),
+            missing_party_ids = ?self.missing_node_proof_parties(),
+            "Re-armed the DKG node-proof deadline after recovery"
+        );
+        self.spawn_node_proof_deadline(ctx, ec, remaining);
+    }
+
+    fn spawn_node_proof_deadline(
+        &mut self,
+        ctx: &mut Context<Self>,
+        ec: &EventContext<Sequenced>,
+        delay: Duration,
+    ) {
+        let budget = node_proof_timeout::dkg_node_proof_timeout();
         let ec = ec.clone();
-        let handle = ctx.run_later(budget, move |actor, _ctx| {
+        let handle = ctx.run_later(delay, move |actor, _ctx| {
             actor.node_proof_deadline = None;
+            // Clear the persisted instant so a restart after the failure does not re-arm a
+            // deadline for an E3 that has already been failed.
+            let _ = actor.persist_node_proof_deadline(&ec, None);
             actor.fail_on_missing_node_proofs(&ec, budget);
         });
         self.node_proof_deadline = Some(handle);
+    }
+
+    fn persist_node_proof_deadline(
+        &mut self,
+        ec: &EventContext<Sequenced>,
+        deadline_at: Option<u64>,
+    ) -> Result<()> {
+        self.state.try_mutate(ec, |mut state| {
+            if let PublicKeyAggregatorState::GeneratingC5Proof {
+                node_proof_deadline_at,
+                ..
+            } = &mut state
+            {
+                *node_proof_deadline_at = deadline_at;
+            }
+            Ok(state)
+        })
+    }
+
+    pub(in crate::actors::publickey_aggregator) fn unix_now_secs() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
     }
 
     /// Cancel the bounded wait once every honest proof is in (or the E3 is finished).

@@ -12,7 +12,12 @@
 /// marker is the guardrail: bump it whenever a persisted format changes in a
 /// non-additive way. On boot the persisted value is compared against this
 /// constant (see `decide_schema_version`).
-pub const SCHEMA_VERSION: u32 = 2;
+///
+/// Version 3 adds `RequestRouterCheckpoint::teardown_deadlines`. Bincode encodes a struct as
+/// a fixed sequence with no field names, so `#[serde(default)]` cannot recover the missing
+/// field from a version-2 record: the decode fails with "unexpected end of file". The bump
+/// converts that opaque decode error into the explicit halt-and-migrate message above.
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]

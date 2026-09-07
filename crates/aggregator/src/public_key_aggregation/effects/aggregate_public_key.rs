@@ -52,6 +52,7 @@ impl PublicKeyAggregator {
                 nodes_fold_accumulator,
                 nodes_fold_completed_slots,
                 nodes_fold_step_correlation,
+                node_proof_deadline_at,
                 ..
             } = state
             else {
@@ -75,6 +76,7 @@ impl PublicKeyAggregator {
                 nodes_fold_accumulator,
                 nodes_fold_completed_slots,
                 nodes_fold_step_correlation,
+                node_proof_deadline_at,
             })
         })?;
         self.try_publish_complete()
@@ -230,6 +232,7 @@ impl PublicKeyAggregator {
                 nodes_fold_completed_slots,
                 nodes_fold_step_correlation,
                 last_ec: _,
+                node_proof_deadline_at,
             } = state
             else {
                 return Ok(state);
@@ -256,6 +259,7 @@ impl PublicKeyAggregator {
                 nodes_fold_accumulator,
                 nodes_fold_completed_slots,
                 nodes_fold_step_correlation,
+                node_proof_deadline_at,
             })
         })?;
 

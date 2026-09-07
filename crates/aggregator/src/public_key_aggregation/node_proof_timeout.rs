@@ -89,8 +89,10 @@ mod tests {
             DEFAULT_DKG_NODE_PROOF_TIMEOUT_SECS, DKG_WINDOW_SECS,
             "the budget must track the DKG window; work finishing later cannot be used"
         );
+        // Compared through the resolver rather than as two constants, so the check survives
+        // constant folding: `assert!(CONST > CONST)` is optimized out and guards nothing.
         assert!(
-            DEFAULT_DKG_NODE_PROOF_TIMEOUT_SECS > MEASURED_RESTART_WORST_CASE_SECS,
+            dkg_node_proof_timeout() > Duration::from_secs(MEASURED_RESTART_WORST_CASE_SECS),
             "budget {DEFAULT_DKG_NODE_PROOF_TIMEOUT_SECS} s would fail a healthy restarted \
              member that needs {MEASURED_RESTART_WORST_CASE_SECS} s at N=9"
         );
