@@ -1308,7 +1308,16 @@ When CommitteeMemberExpelled event arrives from EVM:
     │   │   → Single cleanup signal for all per-E3 actors
     │   │   NOTE: E3Failed with a misbehaviour reason (DKGInvalidShares, etc.) does
     │   │   NOT trigger E3RequestComplete — the accusation/slashing lifecycle must
-    │   │   complete first.
+    │   │   complete first. A slashable failure instead schedules a teardown after a
+    │   │   grace derived from the chain: ACCUSATION_REPORTING_WINDOW (1 day) plus the
+    │   │   registry's accusationVoteValidity plus a vote-in-flight margin, so the
+    │   │   accusation and vote windows can close while the E3 still leaves the router.
+    │   │   The grace is NOT a fixed constant: setAccusationVoteValidity enforces only a
+    │   │   lower bound, so governance can raise the window past any constant and every
+    │   │   node would tear down together while the chain still accepts a report.
+    │   │   SLASHABLE_FAILURE_TEARDOWN_GRACE (2 h) is the fallback used only when no
+    │   │   chain window is known. The deadline is persisted in the request-router
+    │   │   checkpoint and re-armed on restart.
     │   └─ E3StageChanged(Failed) and the same non-slashing E3Failed arriving after teardown
     │       are silently ignored (expected on-chain lag)
     │

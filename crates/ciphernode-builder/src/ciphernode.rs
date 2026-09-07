@@ -8,6 +8,7 @@ use actix::Addr;
 use anyhow::{Context, Result};
 use e3_data::{DataStore, InMemStore, StoreAddr};
 use e3_events::{BusHandle, HistoryCollector, InterfoldEvent};
+use e3_evm::GatewayFailureReceiver;
 use e3_net::{NetChannelBridge, NetworkStatus};
 use libp2p::PeerId;
 use std::{future::Future, time::Duration};
@@ -68,6 +69,9 @@ pub struct CiphernodeHandle {
     pub network_status: NetworkStatus,
     pub eventstore: EventStoreReader,
     pub aggregate_ids: Vec<usize>,
+    /// One receiver per chain gateway; yields a reason if that gateway fails closed after
+    /// startup. Empty when the node runs without chains.
+    pub gateway_failures: Vec<GatewayFailureReceiver>,
 }
 
 impl PartialEq for CiphernodeHandle {
@@ -123,6 +127,35 @@ impl CiphernodeHandle {
             return Some(store);
         }
         None
+    }
+
+    /// Resolve with the reason as soon as any chain gateway fails closed.
+    ///
+    /// A gateway that fails closed stops ingesting chain events but leaves the rest of the
+    /// node running: peers stay connected, the daemon and the DAppNode healthcheck both report
+    /// it healthy, and the operator's only signal is one log line. The gateway's own message
+    /// tells the operator to restart; the run loop uses this future to do that for them.
+    /// Pends forever when the node has no chain gateways.
+    pub fn gateway_failure(&self) -> impl Future<Output = String> + Send + 'static {
+        let mut receivers = self.gateway_failures.clone();
+        async move {
+            if receivers.is_empty() {
+                return std::future::pending().await;
+            }
+            let waits = receivers.iter_mut().map(|rx| {
+                Box::pin(async move {
+                    // `wait_for` yields immediately if a reason is already set, and resolves
+                    // with an error if the gateway actor (the sender) is dropped.
+                    match rx.wait_for(|reason| reason.is_some()).await {
+                        Ok(reason) => reason
+                            .clone()
+                            .unwrap_or_else(|| "EVM chain gateway failed closed".to_owned()),
+                        Err(_) => "EVM chain gateway stopped without reporting a reason".to_owned(),
+                    }
+                })
+            });
+            futures::future::select_all(waits).await.0
+        }
     }
 
     /// Stop protocol actors and make persisted state durable within `deadline`.

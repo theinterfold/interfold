@@ -21,6 +21,8 @@ pub async fn execute(
     maybe_otel: Option<String>,
 ) -> Result<()> {
     if client::is_ready().await? {
+        // Name the other swarm so the operator does not assume it is theirs.
+        client::ensure_same_swarm(&config.config_file()).await?;
         bail!("Swarm is already running!");
     }
 

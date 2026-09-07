@@ -13,12 +13,12 @@ use e3_events::{
     InterfoldEvent, InterfoldEventData, Shutdown, TicketGenerated, TypedEvent,
 };
 use e3_events::{E3id, EventContext, Sequenced};
-use e3_evm::helpers::{ConcreteReadProvider, EthProvider};
+use e3_evm::helpers::{ConcreteReadProvider, EthProvider, ProviderFactory};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 
 #[path = "handlers.rs"]
 mod handlers;
@@ -79,13 +79,100 @@ fn finalization_delay_seconds(committee_deadline: u64, now: u64, party_index: u6
         .saturating_add(party_index.saturating_mul(FINALIZE_INTERVAL_SECONDS))
 }
 
+/// A read provider for one chain together with the means to rebuild it.
+///
+/// The provider is a WebSocket clone taken at startup. When the RPC endpoint is away for
+/// longer than alloy's own reconnect budget the clone dies for good and every timestamp read
+/// fails with "backend connection task has stopped". The factory lets the finalizer replace
+/// it instead of retrying the dead one every 30 s until the committee deadline passes.
+#[derive(Clone)]
+pub struct FinalizerChainProvider {
+    pub provider: EthProvider<ConcreteReadProvider>,
+    pub factory: Option<ProviderFactory<ConcreteReadProvider>>,
+}
+
+impl FinalizerChainProvider {
+    pub fn new(provider: EthProvider<ConcreteReadProvider>) -> Self {
+        Self {
+            provider,
+            factory: None,
+        }
+    }
+
+    pub fn with_factory(mut self, factory: ProviderFactory<ConcreteReadProvider>) -> Self {
+        self.factory = Some(factory);
+        self
+    }
+}
+
+/// Read the chain's latest timestamp, rebuilding the provider once if the read fails.
+///
+/// Returns the timestamp result and, when a reconnect produced a new provider, that provider
+/// so the actor can adopt it for later reads.
+async fn read_timestamp_with_reconnect(
+    chain_provider: FinalizerChainProvider,
+    chain_id: u64,
+    e3_id: &E3id,
+) -> (Result<u64>, Option<EthProvider<ConcreteReadProvider>>) {
+    read_timestamp_reconnecting(
+        chain_provider.provider,
+        chain_provider.factory,
+        chain_id,
+        e3_id,
+    )
+    .await
+}
+
+/// Generic core of [`read_timestamp_with_reconnect`], so a mock transport can drive it.
+async fn read_timestamp_reconnecting<P>(
+    provider: EthProvider<P>,
+    factory: Option<ProviderFactory<P>>,
+    chain_id: u64,
+    e3_id: &E3id,
+) -> (Result<u64>, Option<EthProvider<P>>)
+where
+    P: alloy::providers::Provider + Clone + 'static,
+{
+    let first = e3_evm::helpers::get_current_timestamp_from_provider(provider.clone()).await;
+    let (Err(first_error), Some(factory)) = (&first, factory.as_ref()) else {
+        return (first, None);
+    };
+    warn!(
+        %e3_id,
+        error = %first_error,
+        "Timestamp read failed; reconnecting the read provider and retrying once"
+    );
+    let replacement = match factory().await {
+        Ok(replacement) if replacement.chain_id() == chain_id => replacement,
+        Ok(replacement) => {
+            warn!(
+                %e3_id,
+                expected_chain_id = chain_id,
+                actual_chain_id = replacement.chain_id(),
+                "Refusing a reconnected finalizer provider for another chain"
+            );
+            return (first, None);
+        }
+        Err(reconnect_error) => {
+            warn!(
+                %e3_id,
+                error = %reconnect_error,
+                "Unable to reconnect the finalizer read provider"
+            );
+            return (first, None);
+        }
+    };
+    let second = e3_evm::helpers::get_current_timestamp_from_provider(replacement.clone()).await;
+    (second, Some(replacement))
+}
+
 /// CommitteeFinalizer is an actor that listens to CommitteeRequested events and dispatches
 /// CommitteeFinalizeRequested events after the submission deadline has passed.
 pub struct CommitteeFinalizer {
     bus: BusHandle,
     pending_committees: HashMap<E3id, SpawnHandle>,
     recovery: Persistable<CommitteeFinalizerRecoveryState>,
-    chain_providers: HashMap<u64, EthProvider<ConcreteReadProvider>>,
+    chain_providers: HashMap<u64, FinalizerChainProvider>,
     effects_enabled: bool,
 }
 
@@ -93,7 +180,7 @@ impl CommitteeFinalizer {
     fn from_recovery(
         bus: &BusHandle,
         recovery: Persistable<CommitteeFinalizerRecoveryState>,
-        chain_providers: HashMap<u64, EthProvider<ConcreteReadProvider>>,
+        chain_providers: HashMap<u64, FinalizerChainProvider>,
     ) -> Self {
         Self {
             bus: bus.clone(),
@@ -107,7 +194,7 @@ impl CommitteeFinalizer {
     pub async fn attach_with_recovery(
         bus: &BusHandle,
         repository: Repository<CommitteeFinalizerRecoveryState>,
-        chain_providers: HashMap<u64, EthProvider<ConcreteReadProvider>>,
+        chain_providers: HashMap<u64, FinalizerChainProvider>,
     ) -> Result<Addr<Self>> {
         let recovery = repository
             .load_or_default(CommitteeFinalizerRecoveryState::default())
@@ -152,34 +239,40 @@ impl CommitteeFinalizer {
         let ec = request.context.clone();
         let pending_key = e3_id.clone();
         let e3_id_for_async = e3_id.clone();
-        let provider = self.chain_providers.get(&e3_id.chain_id()).cloned();
+        let chain_id = e3_id.chain_id();
+        let chain_provider = self.chain_providers.get(&chain_id).cloned();
 
         let fut = async move {
-            let timestamp = match provider {
-                Some(provider) => {
-                    e3_evm::helpers::get_current_timestamp_from_provider(provider).await
-                }
-                None => Err(anyhow::anyhow!(
-                    "No RPC provider configured for chain {}",
-                    e3_id_for_async.chain_id()
-                )),
+            let Some(chain_provider) = chain_provider else {
+                error!(
+                    e3_id = %e3_id_for_async,
+                    "No RPC provider configured for chain {chain_id}"
+                );
+                return (None, None);
             };
+            let (timestamp, replacement) =
+                read_timestamp_with_reconnect(chain_provider, chain_id, &e3_id_for_async).await;
             match timestamp {
-                Ok(timestamp) => Some(timestamp),
+                Ok(timestamp) => (Some(timestamp), replacement),
                 Err(e) => {
                     error!(
                         e3_id = %e3_id_for_async,
                         error = %e,
                         "Failed to get current timestamp from RPC"
                     );
-                    None
+                    (None, replacement)
                 }
             }
         };
 
         let handle = ctx.spawn(
             fut.into_actor(self)
-                .then(move |current_timestamp, act, ctx| {
+                .then(move |(current_timestamp, replacement), act, ctx| {
+                    if let Some(replacement) = replacement {
+                        if let Some(entry) = act.chain_providers.get_mut(&chain_id) {
+                            entry.provider = replacement;
+                        }
+                    }
                     if let Some(current_timestamp) = current_timestamp {
                         let seconds_until_deadline = finalization_delay_seconds(
                             committee_deadline,
@@ -300,5 +393,98 @@ mod tests {
             finalization_delay_seconds(1_000, 5_000, 3),
             1 + 3 * FINALIZE_INTERVAL_SECONDS
         );
+    }
+
+    mod reconnect {
+        use super::super::read_timestamp_reconnecting;
+        use alloy::{
+            providers::{Provider, ProviderBuilder},
+            transports::mock::Asserter,
+        };
+        use e3_events::E3id;
+        use e3_evm::helpers::{EthProvider, ProviderFactory};
+        use std::sync::Arc;
+
+        async fn provider_on_chain(
+            asserter: &Asserter,
+            chain_id_hex: &str,
+        ) -> EthProvider<impl Provider + Clone> {
+            asserter.push_success(&chain_id_hex);
+            EthProvider::new(ProviderBuilder::new().connect_mocked_client(asserter.clone()))
+                .await
+                .expect("mock chain ID must decode")
+        }
+
+        fn block_with_timestamp(timestamp: u64) -> alloy::rpc::types::Block {
+            let mut block: alloy::rpc::types::Block = Default::default();
+            block.header.inner.timestamp = timestamp;
+            block
+        }
+
+        /// Observed on a 5-node swarm: after a 90 s RPC outage every node's finalizer logged
+        /// `Failed to get current timestamp from RPC` every 30 s until the committee window
+        /// closed, because the startup provider clone had given up reconnecting. The
+        /// finalizer must rebuild the provider through its factory and retry.
+        #[actix::test]
+        async fn dead_provider_is_replaced_before_the_timestamp_read_fails() {
+            let dead = Asserter::new();
+            let dead_provider = provider_on_chain(&dead, "0x1").await;
+            dead.push_failure_msg("backend connection task has stopped");
+
+            let healthy = Asserter::new();
+            let healthy_provider = provider_on_chain(&healthy, "0x1").await;
+            healthy.push_success(&block_with_timestamp(1_700_000_042));
+            let factory: ProviderFactory<_> = Arc::new(move || {
+                let provider = healthy_provider.clone();
+                Box::pin(async move { Ok(provider) })
+            });
+
+            let (timestamp, replacement) =
+                read_timestamp_reconnecting(dead_provider, Some(factory), 1, &E3id::new("7", 1))
+                    .await;
+
+            assert_eq!(timestamp.unwrap(), 1_700_000_042);
+            assert!(
+                replacement.is_some(),
+                "the reconnected provider must be adopted"
+            );
+        }
+
+        #[actix::test]
+        async fn without_a_factory_the_error_is_returned_unchanged() {
+            let dead = Asserter::new();
+            let dead_provider = provider_on_chain(&dead, "0x1").await;
+            dead.push_failure_msg("backend connection task has stopped");
+
+            let (timestamp, replacement) =
+                read_timestamp_reconnecting(dead_provider, None, 1, &E3id::new("7", 1)).await;
+
+            assert!(timestamp
+                .unwrap_err()
+                .to_string()
+                .contains("Failed to get latest block"));
+            assert!(replacement.is_none());
+        }
+
+        #[actix::test]
+        async fn a_wrong_chain_reconnect_is_refused() {
+            let dead = Asserter::new();
+            let dead_provider = provider_on_chain(&dead, "0x1").await;
+            dead.push_failure_msg("backend connection task has stopped");
+
+            let other = Asserter::new();
+            let other_provider = provider_on_chain(&other, "0x2").await;
+            let factory: ProviderFactory<_> = Arc::new(move || {
+                let provider = other_provider.clone();
+                Box::pin(async move { Ok(provider) })
+            });
+
+            let (timestamp, replacement) =
+                read_timestamp_reconnecting(dead_provider, Some(factory), 1, &E3id::new("7", 1))
+                    .await;
+
+            assert!(timestamp.is_err());
+            assert!(replacement.is_none());
+        }
     }
 }

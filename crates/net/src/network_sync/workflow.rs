@@ -61,6 +61,15 @@ impl NetReadiness {
         self.all_peers_dialed
     }
 
+    /// Whether a peer connection has been established at any point.
+    ///
+    /// `NetReady` is published by the connect-timeout fallback even when this is
+    /// still false, so historical peer sync must consult it before it attempts
+    /// fetches that cannot succeed.
+    pub fn has_connections(&self) -> bool {
+        self.has_connections
+    }
+
     fn try_publish(&mut self) -> ReadinessDecision {
         if !self.net_ready_published {
             self.net_ready_published = true;

@@ -159,10 +159,15 @@ impl PublicKeyAggregator {
                         },
                         ec.clone(),
                     ) {
-                        error!("Failed to publish SignedProofFailed: {e}");
+                        error!(
+                            e3_id = %self.e3_id,
+                            party_id,
+                            "Failed to publish SignedProofFailed: {e}"
+                        );
                     }
                 }
                 Err(e) => warn!(
+                    e3_id = %self.e3_id,
                     "Could not recover address from C1 proof for party {}: {e}",
                     party_id
                 ),
@@ -171,6 +176,7 @@ impl PublicKeyAggregator {
 
         if !audit.mismatched.is_empty() {
             warn!(
+                e3_id = %self.e3_id,
                 "C1 commitment mismatch for {} parties — filtering before aggregation",
                 audit.mismatched.len()
             );

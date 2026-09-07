@@ -5,9 +5,10 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::*;
+use e3_config::AppConfig;
 use e3_entrypoint::nodes::stop;
 
-pub async fn execute(id: &str) -> Result<()> {
-    stop::execute(id).await?;
+pub async fn execute(config: &AppConfig, id: &str) -> Result<()> {
+    stop::execute(config, id).await?;
     Ok(())
 }

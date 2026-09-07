@@ -5,9 +5,10 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use anyhow::*;
+use e3_config::AppConfig;
 use e3_entrypoint::nodes::down;
 
-pub async fn execute() -> Result<()> {
-    down::execute().await?;
+pub async fn execute(config: &AppConfig) -> Result<()> {
+    down::execute(config).await?;
     Ok(())
 }

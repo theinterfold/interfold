@@ -330,6 +330,17 @@ aggregation path can terminate deterministically instead of stalling on missing 
 `PublicKeyAggregator` and `ThresholdPlaintextAggregator` dispatch the aggregator requests instead of
 pairwise folding.
 
+**Bounded node-proof collection:** a failed `NodeDkgFold` reports itself, but a member that dies
+mid-fold sends nothing. `PublicKeyAggregator` therefore arms a durable budget when it enters
+`GeneratingC5Proof` and cancels it when every honest proof arrives. If the budget expires,
+`fail_on_missing_node_proofs` names the parties that did not deliver and publishes
+`E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGTimeout }`. The late parties are not
+dropped from the honest set instead: C5 is signed before the cross-node fold completes and binds
+exactly those H keyshares, so a different honest set would invalidate a published proof. The budget
+is `E3_DKG_NODE_PROOF_TIMEOUT_SECS`, and its default is calibrated for the insecure test preset.
+Measure a node fold at the deployment preset before secure operation, because a budget below the
+honest fold time fails every E3 on healthy nodes.
+
 **Failure bridge:** `ProofRequestActor` now converts proof-generation worker failures and local
 proof-signing failures into terminal round failures instead of only logging that the proof-bearing
 artifact will not be published. DKG-path proofs (`C0` through `C5`) emit

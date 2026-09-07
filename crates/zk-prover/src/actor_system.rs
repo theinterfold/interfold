@@ -8,6 +8,7 @@
 
 use actix::{Actor, Addr};
 use alloy::signers::local::PrivateKeySigner;
+use e3_data::DataStore;
 use e3_events::{BusHandle, Committee, DkgFoldAttestationContext, E3id};
 use e3_request::E3Meta;
 use std::collections::HashMap;
@@ -47,6 +48,7 @@ impl ZkActorRecovery {
 /// Requires a `ZkBackend` for proof generation/verification and a `PrivateKeySigner` for signing
 /// proofs. `dkg_fold_attestation_contexts_by_chain` is a fallback for synthetic runs that have no
 /// on-chain context event. Live and replayed context events carry each E3's registry and verifier.
+/// `store` keeps each E3's own C0 proof so the DKG node fold can complete after a restart.
 pub fn setup_zk_actors(
     bus: &BusHandle,
     backend: &ZkBackend,
@@ -54,6 +56,7 @@ pub fn setup_zk_actors(
     dkg_fold_attestation_contexts_by_chain: HashMap<u64, Option<DkgFoldAttestationContext>>,
     recovery: ZkActorRecovery,
     proof_aggregation_enabled: bool,
+    store: Option<DataStore>,
 ) -> ZkActors {
     let ZkActorRecovery {
         finalized_committees,
@@ -63,7 +66,8 @@ pub fn setup_zk_actors(
     let zk_actor = ZkActor::new(backend).start();
     let verifier = zk_actor.clone().recipient();
 
-    let proof_request = ProofRequestActor::setup(bus, signer.clone(), proof_aggregation_enabled);
+    let proof_request =
+        ProofRequestActor::setup(bus, signer.clone(), proof_aggregation_enabled, store);
     let proof_verification =
         ProofVerificationActor::setup(bus, verifier, finalized_committees.clone(), e3_metadata);
     let share_verification = ShareVerificationActor::setup(bus, finalized_committees);

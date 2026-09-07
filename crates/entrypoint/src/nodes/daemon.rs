@@ -135,7 +135,10 @@ pub async fn execute(
         maybe_otel,
     )?;
 
-    let process_manager = Arc::new(Mutex::new(ProcessManager::from(command_map)));
+    let process_manager = Arc::new(Mutex::new(
+        ProcessManager::from(command_map)
+            .with_config_file(config.config_file().display().to_string()),
+    ));
 
     process_manager.lock().await.start_all().await?;
 

@@ -86,6 +86,7 @@ impl ThresholdPlaintextAggregator {
         let mut dishonest_parties = msg.dishonest_parties.clone();
         if !dishonest_parties.is_empty() {
             warn!(
+                e3_id = %self.e3_id,
                 "C6 verification: {} dishonest parties filtered: {:?}",
                 dishonest_parties.len(),
                 dishonest_parties
@@ -102,6 +103,7 @@ impl ThresholdPlaintextAggregator {
 
         if honest_shares.len() <= state.threshold_m as usize {
             warn!(
+                e3_id = %self.e3_id,
                 "Not enough honest shares after C6 verification: {} honest shares, {} required",
                 honest_shares.len(),
                 state.threshold_m + 1
@@ -121,6 +123,7 @@ impl ThresholdPlaintextAggregator {
             );
         if !share_mismatch_parties.is_empty() {
             warn!(
+                e3_id = %self.e3_id,
                 "C6 share-commitment mismatch for {} parties: {:?} — excluding from aggregation",
                 share_mismatch_parties.len(),
                 share_mismatch_parties,
@@ -130,6 +133,7 @@ impl ThresholdPlaintextAggregator {
             honest_shares.retain(|(id, _)| !share_mismatch_parties.contains(id));
             if honest_shares.len() <= state.threshold_m as usize {
                 warn!(
+                    e3_id = %self.e3_id,
                     "Not enough honest shares after d_commitment check: {} honest, {} required",
                     honest_shares.len(),
                     state.threshold_m + 1

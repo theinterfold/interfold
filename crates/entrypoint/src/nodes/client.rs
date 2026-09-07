@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use reqwest::Client;
 use std::env;
 use tracing::{error, trace};
@@ -72,7 +72,8 @@ pub async fn status(id: &str) -> Result<()> {
 }
 
 pub async fn ps() -> Result<()> {
-    let rows: Vec<Vec<String>> = if let Ok(Query::Status { status }) = get_status().await {
+    let status = get_status().await;
+    let rows: Vec<Vec<String>> = if let Ok(Query::Status { status }) = &status {
         status
             .processes
             .iter()
@@ -83,6 +84,11 @@ pub async fn ps() -> Result<()> {
     };
 
     print_table(&["PROCESS", "STATUS"], &rows);
+    if let Ok(Query::Status { status }) = &status {
+        if let Some(config_file) = &status.config_file {
+            println!("config: {config_file}");
+        }
+    }
 
     Ok(())
 }
@@ -93,6 +99,30 @@ pub async fn is_ready() -> Result<bool> {
     };
 
     Ok(true)
+}
+
+/// Refuse to drive a daemon that was launched from a different config file.
+///
+/// The control socket is a fixed loopback port shared by every checkout on the machine, and
+/// node ids such as `cn1` are the documented defaults, so `nodes stop cn1` from one repo
+/// would otherwise stop `cn1` in whichever swarm happens to own the port. Daemons that
+/// predate the `config_file` field are accepted so an upgrade cannot lock an operator out.
+pub async fn ensure_same_swarm(config_file: &std::path::Path) -> Result<()> {
+    let Query::Status { status } = get_status().await? else {
+        bail!("Swarm client is not ready. Did you forget to call `interfold nodes up`?");
+    };
+    let Some(daemon_config) = status.config_file else {
+        return Ok(());
+    };
+    let mine = config_file.display().to_string();
+    if daemon_config != mine {
+        bail!(
+            "A swarm is already running on {SERVER_ADDRESS} for a different config.\n  \
+             running: {daemon_config}\n  yours:   {mine}\n\
+             Run `interfold nodes down` from that config first, or use it for this command."
+        );
+    }
+    Ok(())
 }
 
 pub async fn start_daemon(

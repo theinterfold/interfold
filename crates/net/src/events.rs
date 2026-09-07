@@ -44,6 +44,10 @@ pub enum PeerRejectionKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum GossipPublishFailure {
     NoPeersSubscribed,
+    /// gossipsub already holds an identical message (content-hash id) in its duplicate
+    /// cache. The message is in flight in the mesh; nothing was lost. Re-announcing a
+    /// document pointer within `duplicate_cache_time` (60 s) of the original hits this.
+    AlreadyPublished,
     Transient(String),
     Permanent(String),
 }
@@ -52,6 +56,7 @@ impl GossipPublishFailure {
     pub fn from_libp2p(error: PublishError) -> Self {
         match error {
             PublishError::NoPeersSubscribedToTopic => Self::NoPeersSubscribed,
+            PublishError::Duplicate => Self::AlreadyPublished,
             PublishError::AllQueuesFull(count) => {
                 Self::Transient(PublishError::AllQueuesFull(count).to_string())
             }
@@ -72,10 +77,15 @@ impl std::fmt::Display for GossipPublishFailure {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             Self::NoPeersSubscribed => formatter.write_str("no peers are subscribed to the topic"),
+            Self::AlreadyPublished => {
+                formatter.write_str("an identical message is already in the gossip mesh")
+            }
             Self::Transient(reason) | Self::Permanent(reason) => formatter.write_str(reason),
         }
     }
 }
+
+impl std::error::Error for GossipPublishFailure {}
 
 #[derive(Clone, Copy, Debug)]
 pub enum PeerTarget {
@@ -340,12 +350,15 @@ impl NetEvent {
             | Self::DhtGetRecordSucceeded { .. }
             | Self::DhtPutRecordSucceeded { .. }
             | Self::DhtGetRecordError { .. }
-            | Self::DhtPutRecordError { .. } => true,
+            | Self::DhtPutRecordError { .. }
+            // The document publisher re-announces in-flight DHT pointers when a peer joins
+            // the topic; it reads the application channel. One small event per peer-join
+            // cannot crowd the startup buffer.
+            | Self::GossipSubscribed { .. } => true,
             Self::DialError { .. }
             | Self::ConnectionEstablished { .. }
             | Self::PeerRejected { .. }
             | Self::OutgoingConnectionError { .. }
-            | Self::GossipSubscribed { .. }
             | Self::IncomingRequest(_)
             | Self::OutgoingRequestSucceeded(_)
             | Self::OutgoingRequestFailed(_)

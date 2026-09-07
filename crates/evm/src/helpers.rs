@@ -221,6 +221,12 @@ impl ProviderConfig {
             .max_frame_size(Some(32 * 1024 * 1024))
             .max_message_size(Some(32 * 1024 * 1024));
 
+        // alloy's pubsub service retries a dropped WebSocket 10 × 3 s and then answers every
+        // request with "backend connection task has stopped" for the life of the provider.
+        // That bound is deliberate here: it is the signal the chain reader's recreate path
+        // needs to backfill the blocks that were mined during the outage. Every other actor
+        // that holds a provider clone must therefore own a `ProviderFactory` and reconnect
+        // itself — see `RandomnessProviderSolReader` and `CommitteeFinalizer`.
         let mut ws_connect = WsConnect::new(self.rpc.as_ws_url()?).with_config(config);
 
         if let Some(auth) = self.auth.to_ws_auth() {
@@ -263,12 +269,15 @@ pub async fn load_signer_from_repository(
     repository: Repository<Vec<u8>>,
     cipher: &Cipher,
 ) -> Result<PrivateKeySigner> {
-    let encrypted_key = repository
-        .read()
-        .await?
-        .context("No private key found in repository")?;
+    let encrypted_key = repository.read().await?.context(
+        "no operator wallet key is stored for this node. Add one with \
+         `interfold wallet set --name <node> --config <config> --private-key <key>`",
+    )?;
 
-    let mut decrypted = cipher.decrypt_data(&encrypted_key)?;
+    let mut decrypted = cipher.decrypt_data(&encrypted_key).context(
+        "the stored operator wallet key could not be decrypted. This usually means the node \
+         password does not match the one used to store the key",
+    )?;
     let private_key = Zeroizing::new(hex::encode(&decrypted));
     decrypted.zeroize();
     private_key.parse().map_err(Into::into)

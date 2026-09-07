@@ -6,13 +6,15 @@
 
 use super::client;
 use anyhow::*;
+use e3_config::AppConfig;
 use tracing::instrument;
 
 #[instrument(skip_all)]
-pub async fn execute(id: &str) -> Result<()> {
+pub async fn execute(config: &AppConfig, id: &str) -> Result<()> {
     if !client::is_ready().await? {
         bail!("Swarm client is not ready. Did you forget to call `interfold nodes up`?");
     }
+    client::ensure_same_swarm(&config.config_file()).await?;
 
     client::restart(id).await?;
 

@@ -111,6 +111,7 @@ impl PublicKeyAggregator {
         };
         if dkg_node_proofs.contains_key(&msg.party_id) {
             warn!(
+                e3_id = %self.e3_id,
                 "Duplicate DKGRecursiveAggregationComplete for party {} — ignoring",
                 msg.party_id
             );
@@ -120,6 +121,7 @@ impl PublicKeyAggregator {
         if honest_party_ids.contains(&msg.party_id) {
             let Some(expected_node) = party_nodes.get(&msg.party_id) else {
                 warn!(
+                    e3_id = %self.e3_id,
                     party_id = msg.party_id,
                     "DKG fold from party without registered node address — rejecting"
                 );
@@ -136,6 +138,7 @@ impl PublicKeyAggregator {
                 (Some(proof), Some(attestation)) => {
                     let Some(expected_context) = self.dkg_fold_attestation_context else {
                         warn!(
+                            e3_id = %self.e3_id,
                             party_id = msg.party_id,
                             "DKG fold attestation context missing — rejecting"
                         );
@@ -147,6 +150,7 @@ impl PublicKeyAggregator {
                     let n_moduli = meta.num_moduli;
                     if committee_n == 0 || committee_h == 0 {
                         warn!(
+                            e3_id = %self.e3_id,
                             party_id = msg.party_id,
                             "DKG fold attestation verify skipped — circuit committee dims unset"
                         );
@@ -163,8 +167,19 @@ impl PublicKeyAggregator {
                         committee_h,
                         n_moduli,
                     ) {
+                        // Name both addresses: a signer mismatch here is either a genuine
+                        // impostor or a party_id -> node-address ordering divergence between
+                        // this aggregator and the signing node, and the two are
+                        // indistinguishable without seeing the pair.
+                        let recovered = attestation
+                            .recover_address()
+                            .map(|a| a.to_string())
+                            .unwrap_or_else(|e| format!("<unrecoverable: {e}>"));
                         warn!(
+                            e3_id = %self.e3_id,
                             party_id = msg.party_id,
+                            expected_node = %expected_node,
+                            recovered_signer = %recovered,
                             error = %e,
                             "DKG fold attestation verification failed — rejecting"
                         );
@@ -173,6 +188,7 @@ impl PublicKeyAggregator {
                 }
                 (Some(_), None) => {
                     warn!(
+                        e3_id = %self.e3_id,
                         party_id = msg.party_id,
                         "DKG fold has proof but missing attestation — rejecting (attribution)"
                     );
@@ -180,6 +196,7 @@ impl PublicKeyAggregator {
                 }
                 (None, Some(_)) => {
                     warn!(
+                        e3_id = %self.e3_id,
                         party_id = msg.party_id,
                         "DKG fold has attestation but missing proof — rejecting"
                     );

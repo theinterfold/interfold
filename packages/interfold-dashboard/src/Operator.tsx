@@ -16,12 +16,15 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { erc20Abi, formatUnits, isAddress, parseUnits, type Address, type Hash } from 'viem'
 import Loader from './Loader'
-import { CONTRACTS, NETWORK_NAME, bondingRegistryAbi, faucetAbi } from './lib/chain'
+import { CONTRACTS, IS_TESTNET, NETWORK_NAME, bondingRegistryAbi, faucetAbi } from './lib/chain'
 import { LINKS, explorerAddress, explorerTx } from './lib/links'
 import { ZERO_ADDRESS, simulateAndWrite, useBonding, type BondingConfig, type OperatorStatus } from './lib/bonding'
 import { confirmTx, useWallet, walletErrorMessage } from './lib/wallet'
 
-const FAUCET_ENABLED = CONTRACTS.Faucet !== ZERO_ADDRESS && CONTRACTS.Faucet.trim() !== ''
+// The faucet is testnet-only: a configured address is not enough, the selected
+// network must be a test network too. Otherwise a VITE_FAUCET_ADDRESS left over
+// from a testnet deployment shows "Testnet tokens" on mainnet.
+const FAUCET_ENABLED = IS_TESTNET && CONTRACTS.Faucet !== ZERO_ADDRESS && CONTRACTS.Faucet.trim() !== ''
 
 const shortAddr = (a: string): string => (a.length > 14 ? `${a.slice(0, 8)}…${a.slice(-6)}` : a)
 

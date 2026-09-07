@@ -30,6 +30,9 @@ pub enum ZkError {
     #[error("Proof generation failed: {0}")]
     ProveFailed(String),
 
+    #[error("bb timed out: {0}")]
+    Timeout(String),
+
     #[error("Proof verification failed: {0}")]
     VerifyFailed(String),
 

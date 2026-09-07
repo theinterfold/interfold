@@ -24,7 +24,9 @@ impl ProofVerificationActor {
         let Some((preset, committee_size)) = self.presets.get(&msg.e3_id).copied() else {
             error!(
                 "No BfvPreset known for e3_id={} — cannot determine circuit artifacts directory. \
-                 This can happen if CiphernodeSelected was missed (e.g. after restart). Rejecting key from party {}.",
+                 Rejecting key from party {}. (Presets survive a restart: they are seeded from \
+                 the persisted E3 metadata before replay, so this means the E3 is genuinely \
+                 unknown to this node, not that a CiphernodeSelected event was missed.)",
                 msg.e3_id, msg.key.party_id
             );
             return;

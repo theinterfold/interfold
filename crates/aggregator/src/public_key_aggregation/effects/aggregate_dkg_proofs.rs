@@ -127,8 +127,10 @@ impl PublicKeyAggregator {
         pairs.sort_by_key(|(pid, _)| *pid);
         let party_ids: Vec<u64> = pairs.iter().map(|(pid, _)| *pid).collect();
         let node_fold_proofs: Vec<Proof> = pairs.into_iter().map(|(_, p)| p).collect();
-        info!(
-            "ORDER-DEBUG dispatch DkgAggregation: honest_party_ids(submission-idx)={:?} \
+        // Party-id ordering across three representations has been a real source of circuit
+        // mismatches, so keep the correspondence loggable — but at debug, not on every dispatch.
+        debug!(
+            "DkgAggregation dispatch ordering: honest_party_ids(submission-idx)={:?} \
              dkg_node_proofs_keys(real party_id from DKGRecursiveAggregationComplete)={:?} \
              party_ids_passed_to_circuit={:?}",
             honest_party_ids.iter().collect::<Vec<_>>(),

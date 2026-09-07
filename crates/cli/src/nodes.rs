@@ -83,15 +83,15 @@ pub async fn execute(
         NodeCommands::Up { detach, exclude } => {
             nodes_up::execute(config, detach, exclude, verbose, config_string, otel).await?
         }
-        NodeCommands::Down => nodes_down::execute().await?,
+        NodeCommands::Down => nodes_down::execute(config).await?,
         NodeCommands::Ps => nodes_ps::execute().await?,
         NodeCommands::Daemon { exclude } => {
             nodes_daemon::execute(config, exclude, verbose, config_string, otel).await?
         }
-        NodeCommands::Start { id } => nodes_start::execute(&id).await?,
-        NodeCommands::Status { id } => nodes_status::execute(&id).await?,
-        NodeCommands::Stop { id } => nodes_stop::execute(&id).await?,
-        NodeCommands::Restart { id } => nodes_restart::execute(&id).await?,
+        NodeCommands::Start { id } => nodes_start::execute(config, &id).await?,
+        NodeCommands::Status { id } => nodes_status::execute(config, &id).await?,
+        NodeCommands::Stop { id } => nodes_stop::execute(config, &id).await?,
+        NodeCommands::Restart { id } => nodes_restart::execute(config, &id).await?,
         NodeCommands::Purge => nodes_purge::execute().await?,
     };
 

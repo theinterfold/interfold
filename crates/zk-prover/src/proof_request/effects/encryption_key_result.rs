@@ -48,6 +48,16 @@ impl ProofRequestActor {
         }
 
         let local_party_id = key.party_id;
+
+        // Persist the own C0 first. It is produced once and never regenerated, and the
+        // event that triggered it is not replayed after a restart (see `OwnC0Record`).
+        if let Some(repo) = self.own_c0_repo(&e3_id) {
+            repo.write(&OwnC0Record {
+                party_id: local_party_id,
+                proof: proof.clone(),
+            });
+        }
+
         if let Err(err) = self.bus.publish(
             EncryptionKeyCreated {
                 e3_id: e3_id.clone(),
@@ -88,12 +98,14 @@ impl ProofRequestActor {
         }
 
         // Emit DKGInnerProofReady for C0, or buffer if meta not yet available
-        if let Some(meta) = self.node_agg_meta.get(&e3_id) {
+        if let Some(meta) = self.node_agg_meta.get_mut(&e3_id) {
             if self.proof_aggregation_enabled {
+                meta.c0_emitted = true;
+                let party_id = meta.party_id;
                 if let Err(err) = self.bus.publish(
                     DKGInnerProofReady {
                         e3_id: e3_id.clone(),
-                        party_id: meta.party_id,
+                        party_id,
                         proof: proof.clone(),
                         seq: 0,
                     },
@@ -110,6 +122,7 @@ impl ProofRequestActor {
                     party_id: 0,
                     total_expected: 0,
                     pending_c0: Some(proof),
+                    c0_emitted: false,
                 },
             );
         }

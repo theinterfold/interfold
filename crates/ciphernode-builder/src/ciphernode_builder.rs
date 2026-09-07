@@ -20,6 +20,7 @@ use e3_aggregator::ext::{
 };
 use e3_aggregator::{
     CommitteeFinalizer, CommitteeFinalizerRecoveryState, CommitteeFinalizerRepositoryFactory,
+    FinalizerChainProvider,
 };
 use e3_config::{chain_config::ChainConfig, NetworkProfile};
 use e3_crypto::Cipher;
@@ -33,8 +34,9 @@ use e3_evm::{
     ensure_node_release, fetch_accusation_vote_validity, fetch_randomness_providers,
     BondingRegistrySolReader, CiphernodeRegistrySol, CiphernodeRegistrySolReader,
     DataAvailabilityCoordinator, DataAvailabilityRepositoryFactory, EvmChainGatewayHandle,
-    InterfoldSolReader, InterfoldSolWriter, ProviderConfig, RandomnessProviderSolReader,
-    SlashingManagerSolReader, SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
+    GatewayFailureReceiver, InterfoldSolReader, InterfoldSolWriter, ProviderConfig,
+    RandomnessProviderSolReader, SlashingManagerSolReader, SlashingManagerSolWriter,
+    SlashingWriterRepositoryFactory,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
@@ -661,7 +663,12 @@ impl CiphernodeBuilder {
                 .filter(|chain| chain.enabled.unwrap_or(true))
             {
                 let provider = provider_cache.ensure_read_provider(chain).await?;
-                finalizer_providers.insert(provider.chain_id(), provider);
+                let factory = ProviderConfig::new(chain.rpc_url()?, chain.rpc_auth.clone())
+                    .into_read_provider_factory();
+                finalizer_providers.insert(
+                    provider.chain_id(),
+                    FinalizerChainProvider::new(provider).with_factory(factory),
+                );
             }
             CommitteeFinalizer::attach_with_recovery(
                 &bus,
@@ -728,6 +735,13 @@ impl CiphernodeBuilder {
         // selections remain dormant until SyncEffect, after EffectsEnabled attaches consumers.
         e3_builder.build().await?;
 
+        // Keep the failure receivers: `wait_for_evm_gateways` consumes the handles, but the
+        // run loop must still learn when a gateway fails closed after startup.
+        let gateway_failures: Vec<GatewayFailureReceiver> = evm_gateways
+            .iter()
+            .map(EvmChainGatewayHandle::failure_receiver)
+            .collect();
+
         // Run the sync routine
         tokio::try_join!(
             sync_with_net_ready(
@@ -753,6 +767,7 @@ impl CiphernodeBuilder {
             network_status,
             eventstore,
             aggregate_ids: eventstore_aggregate_config.indexed_ids(),
+            gateway_failures,
         })
     }
 
@@ -993,6 +1008,7 @@ impl CiphernodeBuilder {
                 dkg_fold_context_by_chain.clone(),
                 zk_recovery.clone(),
                 self.proof_aggregation_enabled,
+                Some(store.clone()),
             );
         }
 
@@ -1019,6 +1035,7 @@ impl CiphernodeBuilder {
                     dkg_fold_context_by_chain.clone(),
                     zk_recovery,
                     self.proof_aggregation_enabled,
+                    Some(store.clone()),
                 );
             }
         }
@@ -1058,6 +1075,7 @@ impl CiphernodeBuilder {
             info!("Setting up CommitmentConsistencyCheckerExtension");
             e3_builder = e3_builder.with(CommitmentConsistencyCheckerExtension::create(
                 bus,
+                &store,
                 e3_zk_prover::default_links,
             ));
         }
@@ -1389,10 +1407,12 @@ async fn setup_evm_system(
             }
             for randomness_address in randomness_addresses {
                 let randomness_read_provider = provider.clone();
+                let randomness_provider_factory = provider_factory.clone();
                 system.with_contract(randomness_address, move |next| {
-                    RandomnessProviderSolReader::setup(
+                    RandomnessProviderSolReader::setup_with_factory(
                         &next,
                         randomness_read_provider,
+                        Some(randomness_provider_factory),
                         contract_address,
                     )
                     .recipient()

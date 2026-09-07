@@ -101,7 +101,14 @@ impl ThresholdKeyshare {
         recovery: &ThresholdKeyshareRecoveryState,
         self_addr: Addr<Self>,
     ) -> Result<()> {
-        if recovery.decryption_key_shares.is_empty() {
+        // Mirror the live path (`calculate_decryption_key.rs`): the collector exists whenever
+        // other honest parties are expected, regardless of how many shares have arrived. A
+        // restart in `ReadyForDecryption` before the first peer share used to skip the
+        // collector entirely; the first share then hit "no collector (sole honest party)" in
+        // `route_events` and was dropped, and with no collector there was no timeout either.
+        // The collector's deadline is resolved from `dkg_started_at_unix_secs`, so re-creating
+        // it after a restart keeps the original DKG-relative timeout.
+        if !self.expects_peer_decryption_key_shares()? {
             return Ok(());
         }
         let collector = self.ensure_decryption_key_shared_collector(self_addr)?;
@@ -109,6 +116,16 @@ impl ThresholdKeyshare {
             collector.try_send(event.clone())?;
         }
         Ok(())
+    }
+
+    /// Whether any honest party other than this node still owes a `DecryptionKeyShared`.
+    fn expects_peer_decryption_key_shares(&self) -> Result<bool> {
+        let state = self.state.try_get()?;
+        let my_party_id = state.party_id;
+        Ok(state
+            .honest_parties
+            .as_ref()
+            .is_some_and(|honest| honest.iter().any(|&pid| pid != my_party_id)))
     }
 
     fn resume_generating_threshold_share(
@@ -169,7 +186,10 @@ impl ThresholdKeyshare {
                     signed_e_sm_share_encryption_proofs: Vec::new(),
                 },
             ))
-        })
+        })?;
+        // The recovery arm replays persisted peer shares into the collector before this
+        // resume runs, so the collector can already have completed.
+        self.flush_early_all_shares_collected()
     }
 
     /// Re-create interrupted collectors and process-local jobs from their persisted inputs.

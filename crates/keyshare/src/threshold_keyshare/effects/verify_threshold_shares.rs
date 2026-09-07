@@ -10,6 +10,41 @@ impl ThresholdKeyshare {
         &mut self,
         msg: TypedEvent<AllThresholdSharesCollected>,
     ) -> Result<()> {
+        // The collector is fed by peer shares and can finish before this node's own DKG has
+        // advanced the state to `AggregatingDecryptionKey`. That happens whenever the node is
+        // behind its peers: after a restart it can still be collecting encryption keys while
+        // peers, who already have its key, finish and send their shares. Keep the message: the
+        // collector has already cancelled its timeout and will not send it again, and dropping
+        // it here would leave the DKG with no path to completion and no timer to fail it.
+        if matches!(
+            self.state.try_get()?.state,
+            KeyshareState::CollectingEncryptionKeys(_) | KeyshareState::GeneratingThresholdShare(_)
+        ) {
+            info!(
+                "AllThresholdSharesCollected arrived before own DKG reached aggregation; \
+                 holding it until the state advances"
+            );
+            self.pending.early_all_shares_collected = Some(msg);
+            return Ok(());
+        }
+        self.apply_all_threshold_shares_collected(msg)
+    }
+
+    /// Consume a held `AllThresholdSharesCollected` once the state can accept it.
+    pub(in crate::actors::threshold_keyshare) fn flush_early_all_shares_collected(
+        &mut self,
+    ) -> Result<()> {
+        if let Some(msg) = self.pending.early_all_shares_collected.take() {
+            info!("Applying the held AllThresholdSharesCollected after own share generation");
+            return self.apply_all_threshold_shares_collected(msg);
+        }
+        Ok(())
+    }
+
+    fn apply_all_threshold_shares_collected(
+        &mut self,
+        msg: TypedEvent<AllThresholdSharesCollected>,
+    ) -> Result<()> {
         let (msg, ec) = msg.into_components();
         info!("AllThresholdSharesCollected");
         let state = self.state.try_get()?;

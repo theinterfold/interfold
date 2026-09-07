@@ -10,11 +10,18 @@ pub struct E3RouterBuilder {
     pub recovered_selections: Vec<CiphernodeSelected>,
     pub recovery_store: Repository<RequestRouterCheckpoint>,
     pub store: Repository<E3RouterSnapshot>,
+    pub teardown_grace: std::time::Duration,
 }
 
 impl E3RouterBuilder {
     pub fn with(mut self, listener: Box<dyn E3Extension>) -> Self {
         self.extensions.push(listener);
+        self
+    }
+
+    /// Override how long a slashably-failed E3's context is kept for its accusation window.
+    pub fn with_teardown_grace(mut self, grace: std::time::Duration) -> Self {
+        self.teardown_grace = grace;
         self
     }
 
@@ -32,15 +39,16 @@ impl E3RouterBuilder {
         let legacy_snapshot: Option<E3RouterSnapshot> = self.store.read().await?;
         let recovery_store = self.recovery_store;
         let recovery_checkpoint = recovery_store.read().await?;
-        let (snapshot, replay_cursors) = match recovery_checkpoint {
+        let (snapshot, replay_cursors, teardown_deadlines) = match recovery_checkpoint {
             Some(checkpoint) => (
                 Some(E3RouterSnapshot {
                     contexts: checkpoint.contexts,
                     completed: checkpoint.completed,
                 }),
                 checkpoint.replay_cursors,
+                checkpoint.teardown_deadlines,
             ),
-            None => (legacy_snapshot, HashMap::new()),
+            None => (legacy_snapshot, HashMap::new(), HashMap::new()),
         };
         let params = E3RouterParams {
             extensions: self.extensions.into(),
@@ -49,6 +57,8 @@ impl E3RouterBuilder {
             replay_cursors,
             recovery_store,
             recovered_selections,
+            teardown_deadlines,
+            teardown_grace: self.teardown_grace,
         };
 
         let router = match snapshot {

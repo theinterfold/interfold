@@ -14,4 +14,9 @@ pub struct RequestRouterCheckpoint {
     pub contexts: Vec<E3id>,
     pub completed: HashSet<E3id>,
     pub replay_cursors: HashMap<AggregateId, u64>,
+    /// E3s that failed with a slashable reason, keyed to the unix second after which the
+    /// accusation/slashing lifecycle can no longer act and the context may be torn down.
+    /// Absent in checkpoints written before this field existed.
+    #[serde(default)]
+    pub teardown_deadlines: HashMap<E3id, u64>,
 }

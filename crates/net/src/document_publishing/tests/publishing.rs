@@ -80,6 +80,210 @@ async fn test_publishes_document() -> Result<()> {
     Ok(())
 }
 
+/// A `DocumentPublishedNotification` is gossiped once. A peer that subscribes to the topic
+/// afterwards — restarting mid-DKG, or connecting late — never receives the pointer and cannot
+/// fetch the DHT record even though it is still there. Observed live: a node killed and
+/// restarted during DKG stalled forever waiting on encryption keys its peers had already
+/// published. The publisher must re-announce its in-flight pointers when a peer subscribes.
+#[actix::test]
+async fn in_flight_pointers_are_reannounced_when_a_peer_subscribes() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _net_evt_rx, _, _, _) =
+        setup_test()?;
+    let e3_id = E3id::new("77", 1);
+
+    // Publish one document and drive the fake network through put + gossip.
+    bus.publish_without_context(PublishDocumentRequested {
+        meta: DocumentMeta::new(e3_id.clone(), DocumentKind::TrBFV, vec![], None),
+        value: ArcBytes::from_bytes(b"encryption key"),
+    })?;
+    let Some(NetCommand::DhtPutRecord {
+        correlation_id,
+        key,
+        ..
+    }) = timeout(Duration::from_secs(1), net_cmd_rx.recv()).await?
+    else {
+        bail!("expected DhtPutRecord");
+    };
+    net_evt_tx.send(NetEvent::DhtPutRecordSucceeded {
+        correlation_id,
+        key: key.clone(),
+    })?;
+    let Some(NetCommand::GossipPublish {
+        correlation_id,
+        data: GossipData::DocumentPublishedNotification(first),
+        ..
+    }) = timeout(Duration::from_secs(1), net_cmd_rx.recv()).await?
+    else {
+        bail!("expected the first GossipPublish");
+    };
+    net_evt_tx.send(NetEvent::GossipPublished {
+        correlation_id,
+        message_id: libp2p::gossipsub::MessageId::new(&[1]),
+    })?;
+    // Let the actor record the announced pointer.
+    sleep(Duration::from_millis(50)).await;
+
+    // A peer joins the topic after the fact.
+    net_evt_tx.send(NetEvent::GossipSubscribed {
+        count: 1,
+        topic: libp2p::gossipsub::IdentTopic::new("topic").hash(),
+    })?;
+
+    // The same pointer goes out again. It must carry a FRESH ts: gossipsub ids messages by
+    // the SHA-256 of their bytes, so a byte-identical re-send is rejected as `Duplicate`
+    // for 60 s and never reaches a peer that was down for the original announce (Round 10).
+    // Receivers key on `key`, not `ts`, so the changed ts is harmless to them.
+    let Some(NetCommand::GossipPublish {
+        correlation_id,
+        data: GossipData::DocumentPublishedNotification(again),
+        ..
+    }) = timeout(Duration::from_secs(1), net_cmd_rx.recv())
+        .await
+        .expect("pointer was not re-announced on peer subscribe")
+    else {
+        bail!("expected the re-announced GossipPublish");
+    };
+    net_evt_tx.send(NetEvent::GossipPublished {
+        correlation_id,
+        message_id: libp2p::gossipsub::MessageId::new(&[2]),
+    })?;
+    assert_eq!(again.key, first.key);
+    assert_eq!(again.meta.e3_id, e3_id);
+    assert_ne!(
+        again.ts, first.ts,
+        "re-announce must be re-stamped so gossipsub does not reject it as a Duplicate"
+    );
+    assert_ne!(
+        again.to_bytes()?,
+        first.to_bytes()?,
+        "re-announce bytes must differ or the gossipsub message id collides"
+    );
+
+    Ok(())
+}
+
+/// gossipsub ids messages by content hash and rejects an identical publish for 60 s. A
+/// peer that subscribes inside that window makes the re-announce hit `Duplicate`; the first
+/// announce is still in the mesh so nothing was lost, and it must not surface as an
+/// `InterfoldError` (it did on every node of the Round 9 swarm at `nodes down`).
+#[actix::test]
+async fn a_duplicate_reannounce_is_not_an_error() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _net_evt_rx, _, errors, _) =
+        setup_test()?;
+    let e3_id = E3id::new("78", 1);
+
+    bus.publish_without_context(PublishDocumentRequested {
+        meta: DocumentMeta::new(e3_id.clone(), DocumentKind::TrBFV, vec![], None),
+        value: ArcBytes::from_bytes(b"encryption key"),
+    })?;
+    let Some(NetCommand::DhtPutRecord {
+        correlation_id,
+        key,
+        ..
+    }) = timeout(Duration::from_secs(1), net_cmd_rx.recv()).await?
+    else {
+        bail!("expected DhtPutRecord");
+    };
+    net_evt_tx.send(NetEvent::DhtPutRecordSucceeded {
+        correlation_id,
+        key,
+    })?;
+    let Some(NetCommand::GossipPublish { correlation_id, .. }) =
+        timeout(Duration::from_secs(1), net_cmd_rx.recv()).await?
+    else {
+        bail!("expected the first GossipPublish");
+    };
+    net_evt_tx.send(NetEvent::GossipPublished {
+        correlation_id,
+        message_id: libp2p::gossipsub::MessageId::new(&[1]),
+    })?;
+    sleep(Duration::from_millis(50)).await;
+
+    net_evt_tx.send(NetEvent::GossipSubscribed {
+        count: 1,
+        topic: libp2p::gossipsub::IdentTopic::new("topic").hash(),
+    })?;
+    let Some(NetCommand::GossipPublish { correlation_id, .. }) =
+        timeout(Duration::from_secs(1), net_cmd_rx.recv()).await?
+    else {
+        bail!("expected the re-announced GossipPublish");
+    };
+    // The network reports gossipsub's duplicate-cache rejection.
+    net_evt_tx.send(NetEvent::GossipPublishError {
+        correlation_id,
+        error: std::sync::Arc::new(GossipPublishFailure::from_libp2p(
+            libp2p::gossipsub::PublishError::Duplicate,
+        )),
+    })?;
+    sleep(Duration::from_millis(100)).await;
+
+    let errors = errors.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(
+        errors.is_empty(),
+        "a duplicate re-announce must be swallowed, got {errors:?}"
+    );
+    Ok(())
+}
+
+/// Once an E3 completes its pointers must not be re-announced to late peers.
+#[actix::test]
+async fn completed_e3_pointers_are_not_reannounced() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _net_evt_rx, _, _, _) =
+        setup_test()?;
+    let e3_id = E3id::new("78", 1);
+
+    bus.publish_without_context(PublishDocumentRequested {
+        meta: DocumentMeta::new(e3_id.clone(), DocumentKind::TrBFV, vec![], None),
+        value: ArcBytes::from_bytes(b"done"),
+    })?;
+    let Some(NetCommand::DhtPutRecord {
+        correlation_id,
+        key,
+        ..
+    }) = timeout(Duration::from_secs(1), net_cmd_rx.recv()).await?
+    else {
+        bail!("expected DhtPutRecord");
+    };
+    net_evt_tx.send(NetEvent::DhtPutRecordSucceeded {
+        correlation_id,
+        key,
+    })?;
+    let Some(NetCommand::GossipPublish { correlation_id, .. }) =
+        timeout(Duration::from_secs(1), net_cmd_rx.recv()).await?
+    else {
+        bail!("expected GossipPublish");
+    };
+    net_evt_tx.send(NetEvent::GossipPublished {
+        correlation_id,
+        message_id: libp2p::gossipsub::MessageId::new(&[1]),
+    })?;
+    sleep(Duration::from_millis(50)).await;
+
+    bus.publish_without_context(e3_events::E3RequestComplete {
+        e3_id: e3_id.clone(),
+    })?;
+    // Completion prunes the DHT records.
+    let Some(NetCommand::DhtRemoveRecords { .. }) =
+        timeout(Duration::from_secs(1), net_cmd_rx.recv()).await?
+    else {
+        bail!("expected DhtRemoveRecords");
+    };
+
+    net_evt_tx.send(NetEvent::GossipSubscribed {
+        count: 1,
+        topic: libp2p::gossipsub::IdentTopic::new("topic").hash(),
+    })?;
+
+    assert!(
+        timeout(Duration::from_millis(300), net_cmd_rx.recv())
+            .await
+            .is_err(),
+        "a completed E3's pointers must not be re-announced"
+    );
+
+    Ok(())
+}
+
 #[actix::test]
 async fn expired_document_is_rejected_without_a_dht_write() -> Result<()> {
     let system = EventSystem::new().with_fresh_bus();

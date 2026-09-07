@@ -70,6 +70,11 @@ pub enum ProcessStatus {
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct SwarmStatus {
     pub processes: HashMap<String, ProcessStatus>,
+    /// Config file the daemon was launched with. The control port is a fixed loopback
+    /// address, so a client started from a different checkout or config would otherwise
+    /// silently drive someone else's swarm. `None` only from daemons built before this field.
+    #[serde(default)]
+    pub config_file: Option<String>,
 }
 
 #[cfg(test)]

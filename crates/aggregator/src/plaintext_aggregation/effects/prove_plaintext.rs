@@ -60,6 +60,7 @@ impl ThresholdPlaintextAggregator {
 
         if proofs.len() != state.plaintext.len() {
             warn!(
+                e3_id = %self.e3_id,
                 "C7 proof count mismatch: got {} proofs for {} ciphertext indices",
                 proofs.len(),
                 state.plaintext.len()
@@ -146,6 +147,7 @@ impl ThresholdPlaintextAggregator {
         // "aggregation disabled". Fail loudly instead so the missing shares are surfaced.
         if honest_c6.is_empty() || honest_c6.iter().any(|(_, w)| w.is_empty()) {
             warn!(
+                e3_id = %self.e3_id,
                 "DecryptionAggregation: honest C6 inner proofs missing while proof aggregation is enabled"
             );
             return self.fail_decryption_round(ec.clone());
@@ -161,6 +163,7 @@ impl ThresholdPlaintextAggregator {
         let c6_total_slots = state.threshold_m as usize + 1;
         if honest_c6.len() < c6_total_slots {
             warn!(
+                e3_id = %self.e3_id,
                 "DecryptionAggregation needs at least {} honest C6 parties, have {}",
                 c6_total_slots,
                 honest_c6.len()
@@ -261,6 +264,7 @@ impl ThresholdPlaintextAggregator {
                     if let Some(c7_proofs) = self.pending.c7_proofs_pending.as_ref() {
                         if resp.proofs.len() != c7_proofs.len() {
                             warn!(
+                                e3_id = %self.e3_id,
                                 "DecryptionAggregation response proof count {} != expected {}",
                                 resp.proofs.len(),
                                 c7_proofs.len()

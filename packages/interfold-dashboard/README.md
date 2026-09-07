@@ -81,8 +81,8 @@ Sepolia deployment defined in `src/lib/chain.ts`:
 - `VITE_INTERFOLD_ADDRESS`, `VITE_CIPHERNODE_REGISTRY_ADDRESS`, `VITE_CRISP_PROGRAM_ADDRESS` —
   contracts.
 - `VITE_BONDING_REGISTRY_ADDRESS` — bonding registry behind the operator guide.
-- `VITE_FAUCET_ADDRESS` — testnet faucet. Set to the zero address on a non-testnet deployment to
-  hide the "Get test tokens" action.
+- `VITE_FAUCET_ADDRESS` — testnet faucet. Ignored unless `VITE_NETWORK` selects a test network;
+  set it to the zero address to hide the "Get test tokens" action on a testnet too.
 - `VITE_DEPLOY_BLOCK` — first block to scan from (the Interfold deploy block).
 
 The fetchers chunk `getLogs` calls to 9_500 blocks per request so they work against the stricter

@@ -13,6 +13,7 @@ mod aggregate_dkg_proofs;
 mod aggregate_public_key;
 mod fold_node_proofs;
 mod handle_compute_results;
+mod node_proof_deadline;
 mod publish_result;
 mod recovery;
 mod verify_key_proofs;

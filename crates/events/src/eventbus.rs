@@ -40,7 +40,30 @@ const DEFAULT_DEDUP_CAPACITY: usize = 250_000;
 /// Actor handlers are expected to hand long-running work to child futures. A
 /// full mailbox that cannot accept one event within this window is unhealthy;
 /// replay fails closed instead of hanging startup forever.
-const FANOUT_ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
+///
+/// Also bounds the `Shutdown` fanout. The graceful-shutdown deadline in
+/// `e3-cli` is sized above this so that a single wedged subscriber (a handler
+/// blocked inside a `bb` proof) spends this window and the pipeline and store
+/// flushes still get their own time; if the two were equal, the first wedged
+/// subscriber would consume the whole deadline and the store flush would be
+/// skipped.
+pub const FANOUT_ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Wall-clock budget for a node's three-stage graceful shutdown (actor drain,
+/// event flush, store flush).
+///
+/// One full [`FANOUT_ACCEPT_TIMEOUT`] for the drain plus headroom for the two
+/// flushes. The healthy path finishes in tens of milliseconds; the budget only
+/// matters when a subscriber is wedged, in which case the drain burns the whole
+/// accept window and the flushes must still complete so persisted state is
+/// durable before exit. Anything that waits for a node to shut down (the swarm
+/// daemon before escalating to SIGKILL) must allow at least this long.
+pub const NODE_SHUTDOWN_DEADLINE: Duration =
+    Duration::from_secs(FANOUT_ACCEPT_TIMEOUT.as_secs() + 30);
+const _: () = assert!(
+    NODE_SHUTDOWN_DEADLINE.as_secs() > FANOUT_ACCEPT_TIMEOUT.as_secs(),
+    "a wedged subscriber must not be able to consume the whole shutdown budget"
+);
 
 /// A bounded, exact FIFO set.
 ///

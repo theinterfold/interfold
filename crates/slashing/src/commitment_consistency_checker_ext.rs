@@ -12,9 +12,12 @@
 //! in the [`E3Context`] so it receives routed events.
 
 use crate::actors::commitment_consistency_checker::CommitmentConsistencyChecker;
+use crate::domain::commitment_consistency::CommitmentConsistencySnapshot;
+use crate::repo::CommitmentConsistencyRepositoryFactory;
 use actix::Actor;
 use anyhow::Result;
 use async_trait::async_trait;
+use e3_data::{DataStore, RepositoriesFactory};
 use e3_events::{BusHandle, CommitmentLink, Event, InterfoldEvent, InterfoldEventData};
 use e3_fhe_params::BfvPreset;
 use e3_request::{E3Context, E3ContextSnapshot, E3Extension, META_KEY};
@@ -27,20 +30,24 @@ pub struct CommitmentConsistencyCheckerExtension {
     bus: BusHandle,
     /// Factory that builds commitment links for a given BFV preset.
     links_factory: LinksFactory,
+    /// Backing store for the per-E3 durable proof cache.
+    store: DataStore,
 }
 
 impl CommitmentConsistencyCheckerExtension {
     pub fn create(
         bus: &BusHandle,
+        store: &DataStore,
         links_factory: impl Fn(BfvPreset) -> Vec<Box<dyn CommitmentLink>> + Send + Sync + 'static,
     ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
             links_factory: Box::new(links_factory),
+            store: store.clone(),
         })
     }
 
-    fn start_checker(&self, ctx: &mut E3Context) {
+    fn start_checker(&self, ctx: &mut E3Context, restored: Option<CommitmentConsistencySnapshot>) {
         if ctx
             .get_event_recipient("commitment_consistency_checker")
             .is_some()
@@ -51,7 +58,10 @@ impl CommitmentConsistencyCheckerExtension {
         let e3_id = ctx.e3_id.clone();
 
         let Some(meta) = ctx.get_dependency(META_KEY) else {
-            error!("E3Meta not available; cannot start CommitmentConsistencyChecker");
+            error!(
+                e3_id = %e3_id,
+                "E3Meta not available; cannot start CommitmentConsistencyChecker"
+            );
             return;
         };
 
@@ -75,7 +85,10 @@ impl CommitmentConsistencyCheckerExtension {
         // The request router owns delivery and lifetime for this per-E3 actor. Subscribing it to
         // the global bus as well would deliver every event twice and keep the actor alive after
         // the E3 context is removed.
-        let addr = CommitmentConsistencyChecker::new(&self.bus, e3_id, links, committee_h).start();
+        let repo = self.store.repositories().commitment_consistency(&e3_id);
+        let addr = CommitmentConsistencyChecker::new(&self.bus, e3_id, links, committee_h)
+            .with_snapshot(repo, restored)
+            .start();
 
         ctx.set_event_recipient("commitment_consistency_checker", Some(addr.into()));
     }
@@ -92,12 +105,23 @@ impl E3Extension for CommitmentConsistencyCheckerExtension {
             return;
         }
 
-        self.start_checker(ctx);
+        self.start_checker(ctx, None);
     }
 
+    /// Recreate the checker with the proof cache it had before the crash.
+    ///
+    /// EventStore replay only covers events after the aggregate snapshot cursor, so the
+    /// `ProofVerificationPassed` events this checker consumed before the crash are never
+    /// redelivered. Restoring the cache is the only way the node's own C0 gets back in.
     async fn hydrate(&self, ctx: &mut E3Context, _snapshot: &E3ContextSnapshot) -> Result<()> {
         if ctx.get_dependency(META_KEY).is_some() {
-            self.start_checker(ctx);
+            let restored = self
+                .store
+                .repositories()
+                .commitment_consistency(&ctx.e3_id)
+                .read()
+                .await?;
+            self.start_checker(ctx, restored);
         }
 
         Ok(())
@@ -147,8 +171,11 @@ mod tests {
         }
     }
 
-    fn test_context(e3_id: E3id) -> E3Context {
-        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    fn test_store() -> DataStore {
+        DataStore::from_in_mem(&InMemStore::new(false).start())
+    }
+
+    fn test_context(store: &DataStore, e3_id: E3id) -> E3Context {
         let repositories = store.repositories();
         E3Context::from_params(E3ContextParams {
             repository: repositories.context(&e3_id),
@@ -160,9 +187,10 @@ mod tests {
     #[actix::test]
     async fn hydrate_recreates_checker_when_meta_was_recovered() -> Result<()> {
         let bus = test_bus();
-        let extension = CommitmentConsistencyCheckerExtension::create(&bus, |_| Vec::new());
+        let store = test_store();
+        let extension = CommitmentConsistencyCheckerExtension::create(&bus, &store, |_| Vec::new());
         let e3_id = E3id::new("0", 31337);
-        let mut ctx = test_context(e3_id.clone());
+        let mut ctx = test_context(&store, e3_id.clone());
         ctx.set_dependency(META_KEY, test_meta());
         assert!(ctx
             .get_event_recipient("commitment_consistency_checker")
@@ -186,9 +214,10 @@ mod tests {
     #[actix::test]
     async fn hydrate_without_meta_leaves_checker_unset() -> Result<()> {
         let bus = test_bus();
-        let extension = CommitmentConsistencyCheckerExtension::create(&bus, |_| Vec::new());
+        let store = test_store();
+        let extension = CommitmentConsistencyCheckerExtension::create(&bus, &store, |_| Vec::new());
         let e3_id = E3id::new("0", 31337);
-        let mut ctx = test_context(e3_id.clone());
+        let mut ctx = test_context(&store, e3_id.clone());
         let snapshot = E3ContextSnapshot {
             e3_id,
             recipients: vec![],

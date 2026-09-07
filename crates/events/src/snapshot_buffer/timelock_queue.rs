@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
-use tracing::debug;
+use tracing::{debug, trace};
 
 use super::batch_router::{FlushSeq, SnapshotKey};
 
@@ -145,7 +145,7 @@ impl Actor for TimelockQueue {
 impl Handler<StartTimelock> for TimelockQueue {
     type Result = ();
     fn handle(&mut self, msg: StartTimelock, _: &mut Self::Context) -> Self::Result {
-        debug!("Start timelock: {:?}", msg.delay);
+        trace!(delay = ?msg.delay, "Start timelock");
         let expiry = msg.now + msg.delay;
         self.timelocks.push(Reverse(Timelock::new(expiry, msg.key)));
     }
@@ -155,13 +155,18 @@ impl Handler<Tick> for TimelockQueue {
     type Result = ();
     fn handle(&mut self, _: Tick, _: &mut Self::Context) -> Self::Result {
         let now_time = Duration::from_micros(self.clock.now_micros());
-        debug!(
-            "Running timelock tick. waiting times: {:?}.",
-            self.timelocks
-                .iter()
-                .map(|t| t.0.expiry.saturating_sub(now_time))
-                .collect::<Vec<_>>(),
-        );
+        // An idle queue ticks continuously; logging every empty tick produced ~1.7k lines per
+        // 8-minute run saying nothing happened, and the Vec below was allocated even when the
+        // level filtered the line out.
+        if !self.timelocks.is_empty() {
+            debug!(
+                "Running timelock tick. waiting times: {:?}.",
+                self.timelocks
+                    .iter()
+                    .map(|t| t.0.expiry.saturating_sub(now_time))
+                    .collect::<Vec<_>>(),
+            );
+        }
 
         while !self.timelocks.is_empty() && self.next_timelock_lt(now_time) {
             if let Some(tl) = self.timelocks.pop() {

@@ -634,6 +634,16 @@ design citation alone does not establish current runtime behavior.
   router's `on_event` path must not do synchronous store reads. — `flow-trace/06`
 - A well-formed `E3Requested` with an unsupported committee-size/preset enum is a benign skip (emit
   `Processed` so ordering advances); ABI-decode failures still fail closed. — INDEX concern #13
+- Every wait on a peer must be bounded and must end in an attributable outcome. The aggregator
+  bounds its wait for honest `NodeDkgFold` proofs and publishes `E3Failed{DKGTimeout}` when the
+  budget expires. A late party must not be dropped from the honest set instead, because C5 is signed
+  before the fold completes and binds exactly those H keyshares. — `flow-trace/04`
+- The node shutdown deadline and the fanout accept timeout come from one constant,
+  `NODE_SHUTDOWN_DEADLINE = FANOUT_ACCEPT_TIMEOUT + 30 s`. The daemon SIGKILL delay must stay above
+  that deadline, so a node is never killed while it still flushes. — `flow-trace/06`
+- An actor that holds in-memory state derived from an event below the persisted snapshot cursor must
+  persist that state, because replay starts at the cursor and never redelivers the event. Verified
+  caches, own-proof records, and collector inputs all follow this rule. — `flow-trace/06`
 
 ### Schema evolution
 

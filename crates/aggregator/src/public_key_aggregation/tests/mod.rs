@@ -267,3 +267,4 @@ async fn standby_persists_and_resumes_public_key_work() -> Result<()> {
 
 mod attestations;
 mod failures;
+mod node_proof_deadline;

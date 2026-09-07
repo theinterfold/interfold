@@ -80,6 +80,21 @@ impl ThresholdKeyshare {
         self_addr: Addr<Self>,
     ) -> Result<()> {
         let (res, ec) = res.into_components();
+
+        // A restart inside the DKG window can drive this compute twice: once from the
+        // event-store replay of the original `ComputeRequest` and once from the re-driven
+        // `ShareVerificationComplete`. The gate cannot dedup them (different correlation
+        // ids). The first response wins and moves us to `ReadyForDecryption`; the second is
+        // a no-op, not an error — the node is healthy and the key is already derived.
+        let state = self.state.try_get()?;
+        if !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_)) {
+            debug!(
+                "Ignoring CalculateDecryptionKey response in {:?}; key already derived",
+                state.state.variant_name()
+            );
+            return Ok(());
+        }
+
         let output: CalculateDecryptionKeyResponse = res
             .try_into()
             .context("Error extracting data from compute process")?;
@@ -102,7 +117,6 @@ impl ThresholdKeyshare {
 
         // Accept the C4 proof intent before advancing the primary phase. A crash cannot then
         // leave ReadyForDecryption without the input required to recreate its proof job.
-        let state = self.state.try_get()?;
         let e3_id = state.get_e3_id();
         let party_id = state.party_id;
         let node = state.address.clone();

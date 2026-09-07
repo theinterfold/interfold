@@ -30,7 +30,7 @@ use e3_utils::NotifySync;
 use e3_utils::{ArcBytes, MAILBOX_LIMIT};
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 // Public-key aggregation state machine + pure transition logic now live in
 // `crate::workflow::publickey_aggregation`; re-exported here to preserve the public path
@@ -53,6 +53,8 @@ pub struct PublicKeyAggregator {
     effects_enabled: bool,
     /// DKG recursive aggregation events received before entering GeneratingC5Proof.
     early_dkg_proofs: Vec<TypedEvent<DKGRecursiveAggregationComplete>>,
+    /// Bounded wait for honest-party NodeDkgFold proofs. See [`node_proof_timeout`].
+    node_proof_deadline: Option<SpawnHandle>,
 }
 
 pub struct PublicKeyAggregatorParams {
@@ -87,6 +89,40 @@ impl PublicKeyAggregator {
             is_aggregator: params.initial_is_aggregator,
             effects_enabled: params.effects_enabled,
             early_dkg_proofs: Vec::new(),
+            node_proof_deadline: None,
+        }
+    }
+
+    /// Arm the bounded wait for honest-party NodeDkgFold proofs.
+    ///
+    /// Idempotent: re-arming while a timer is live is a no-op, so repeated entries into
+    /// `GeneratingC5Proof` (each buffered proof re-runs the dispatch path) do not extend the
+    /// budget. Only the active aggregator arms it — a standby that is later promoted arms its
+    /// own on promotion, which is the point at which its wait actually begins.
+    pub(in crate::actors::publickey_aggregator) fn arm_node_proof_deadline(
+        &mut self,
+        ctx: &mut Context<Self>,
+        ec: &EventContext<Sequenced>,
+    ) {
+        if self.node_proof_deadline.is_some() || !self.can_run_aggregation_effects() {
+            return;
+        }
+        let budget = node_proof_timeout::dkg_node_proof_timeout();
+        let ec = ec.clone();
+        let handle = ctx.run_later(budget, move |actor, _ctx| {
+            actor.node_proof_deadline = None;
+            actor.fail_on_missing_node_proofs(&ec, budget);
+        });
+        self.node_proof_deadline = Some(handle);
+    }
+
+    /// Cancel the bounded wait once every honest proof is in (or the E3 is finished).
+    pub(in crate::actors::publickey_aggregator) fn cancel_node_proof_deadline(
+        &mut self,
+        ctx: &mut Context<Self>,
+    ) {
+        if let Some(handle) = self.node_proof_deadline.take() {
+            ctx.cancel_future(handle);
         }
     }
 
@@ -124,6 +160,8 @@ impl PublicKeyAggregator {
 mod effects;
 #[path = "handlers.rs"]
 mod handlers;
+#[path = "node_proof_timeout.rs"]
+mod node_proof_timeout;
 
 #[cfg(test)]
 #[path = "tests/mod.rs"]

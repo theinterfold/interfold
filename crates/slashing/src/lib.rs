@@ -11,6 +11,7 @@
 
 mod actors;
 mod domain;
+mod repo;
 mod workflow;
 
 pub mod accusation_manager_ext;
@@ -26,3 +27,5 @@ pub use accusation_manager::AccusationManager;
 pub use accusation_manager_ext::AccusationManagerExtension;
 pub use commitment_consistency_checker::CommitmentConsistencyChecker;
 pub use commitment_consistency_checker_ext::CommitmentConsistencyCheckerExtension;
+pub use domain::commitment_consistency::CommitmentConsistencySnapshot;
+pub use repo::CommitmentConsistencyRepositoryFactory;

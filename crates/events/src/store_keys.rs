@@ -53,6 +53,17 @@ impl StoreKeys {
         format!("//context/{e3_id}")
     }
 
+    /// Durable verified-proof cache of the per-E3 commitment-consistency checker.
+    pub fn commitment_consistency(e3_id: &E3id) -> String {
+        format!("//commitment_consistency/v1/{e3_id}")
+    }
+
+    /// The node's own signed C0 proof for an E3. Needed to re-seed the DKG node fold after a
+    /// restart, because C0 is never regenerated.
+    pub fn own_c0_proof(e3_id: &E3id) -> String {
+        format!("//own_c0_proof/v1/{e3_id}")
+    }
+
     pub fn router() -> String {
         String::from("//router")
     }
@@ -91,18 +102,6 @@ impl StoreKeys {
 
     pub fn libp2p_keypair() -> String {
         String::from("//libp2p/keypair")
-    }
-
-    pub fn interfold_sol_reader(chain_id: u64) -> String {
-        format!("//evm_readers/interfold/{chain_id}")
-    }
-
-    pub fn ciphernode_registry_reader(chain_id: u64) -> String {
-        format!("//evm_readers/ciphernode_registry/{chain_id}")
-    }
-
-    pub fn bonding_registry_reader(chain_id: u64) -> String {
-        format!("//evm_readers/bonding_registry/{chain_id}")
     }
 
     pub fn node_state() -> String {

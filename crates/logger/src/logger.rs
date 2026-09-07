@@ -88,13 +88,17 @@ fn severity(data: &InterfoldEventData) -> Severity {
         | E::AccusationVote(_)
         | E::AccusationQuorumReached(_)
         | E::SlashExecuted(_)
-        | E::CommitteeMemberExpelled(_)
-        | E::AggregatorChanged(_) => Severity::Warn,
+        | E::CommitteeMemberExpelled(_) => Severity::Warn,
 
         E::EvmLogObserved(event) if !event.known => Severity::Warn,
 
         E::E3Requested(_)
         | E::CommitteeRequested(_)
+        // Fires on every normal E3 when the aggregator role is first assigned — six times in a
+        // measured run with zero failovers — so it is not an alert. A genuine failover
+        // promotion has its own WARN in the sortition actor
+        // ("Aggregator progress deadline expired; promoting deterministic standby").
+        | E::AggregatorChanged(_)
         | E::TicketGenerated(_)
         | E::TicketSubmitted(_)
         | E::CommitteeFinalizeRequested(_)

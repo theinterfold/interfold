@@ -407,6 +407,7 @@ mod tests {
             network_status: NetworkStatus::default(),
             eventstore,
             aggregate_ids: vec![],
+            gateway_failures: vec![],
         })
     }
 

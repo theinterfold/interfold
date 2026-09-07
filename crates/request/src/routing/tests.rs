@@ -14,9 +14,9 @@ use async_trait::async_trait;
 use e3_data::{InMemStore, RepositoriesFactory};
 use e3_events::{
     hlc_factory::HlcFactory, BusHandle, CiphernodeSelected, DkgFoldAttestationContext,
-    DkgFoldAttestationContextEstablished, E3Requested, EventBus, InterfoldEventData,
-    RequestRouterCheckpoint, Sequencer, StoreEventRequested, SyncEffect, Unsequenced,
-    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    DkgFoldAttestationContextEstablished, E3Failed, E3Requested, E3Stage, EventBus, EventType,
+    FailureReason, InterfoldEventData, RequestRouterCheckpoint, Sequencer, StoreEventRequested,
+    StoreEventResponse, SyncEffect, Unsequenced, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -33,6 +33,33 @@ impl Handler<StoreEventRequested> for StoreSink {
     type Result = ();
 
     fn handle(&mut self, _: StoreEventRequested, _: &mut Self::Context) {}
+}
+
+/// A store that sequences events so published events actually reach bus subscribers.
+struct SequencingStore {
+    next_seq: u64,
+}
+
+impl Actor for SequencingStore {
+    type Context = Context<Self>;
+}
+
+impl Handler<StoreEventRequested> for SequencingStore {
+    type Result = ();
+
+    fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) {
+        let StoreEventRequested { event, sender } = msg;
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        sender.do_send(StoreEventResponse(event.into_sequenced(seq)));
+    }
+}
+
+fn sequencing_bus() -> BusHandle {
+    let event_bus = EventBus::<InterfoldEvent>::default().start();
+    let store = SequencingStore { next_seq: 1 }.start();
+    let sequencer = Sequencer::new(&event_bus, store.recipient()).start();
+    BusHandle::new(event_bus, sequencer, HlcFactory::new()).enable("router-teardown-test")
 }
 
 struct RecoveryExtension {
@@ -101,6 +128,8 @@ async fn mid_e3_context_and_completed_set_survive_hydration() -> Result<()> {
         replay_cursors: HashMap::new(),
         recovery_store,
         recovered_selections: Vec::new(),
+        teardown_deadlines: HashMap::new(),
+        teardown_grace: SLASHABLE_FAILURE_TEARDOWN_GRACE,
     };
     let recovered = E3Router::from_snapshot(
         params,
@@ -135,6 +164,8 @@ async fn hydration_fails_when_an_active_context_snapshot_is_missing() -> Result<
         replay_cursors: HashMap::new(),
         recovery_store,
         recovered_selections: Vec::new(),
+        teardown_deadlines: HashMap::new(),
+        teardown_grace: SLASHABLE_FAILURE_TEARDOWN_GRACE,
     };
 
     let error = match E3Router::from_snapshot(
@@ -177,6 +208,7 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
             contexts: vec![recovered_e3.clone()],
             completed: HashSet::new(),
             replay_cursors: HashMap::from([(aggregate_id, 12)]),
+            teardown_deadlines: HashMap::new(),
         })
         .await?;
 
@@ -192,6 +224,7 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
         }],
         recovery_store: recovery_store.clone(),
         store: repositories.router(),
+        teardown_grace: SLASHABLE_FAILURE_TEARDOWN_GRACE,
     }
     .build()
     .await?;
@@ -230,6 +263,195 @@ async fn recovery_is_direct_and_uses_one_checkpoint() -> Result<()> {
     );
     assert_eq!(selections.load(Ordering::SeqCst), 1);
     Ok(())
+}
+
+#[actix::test]
+async fn slashable_failure_tears_the_context_down_after_the_grace_window() -> Result<()> {
+    let e3_id = E3id::new("21", 31337);
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let repositories = store.repositories();
+    let recovery_store = repositories.request_router_checkpoint();
+    let bus = sequencing_bus();
+    let completions = Arc::new(AtomicUsize::new(0));
+    bus.subscribe(
+        EventType::E3RequestComplete,
+        CompletionCounter {
+            completions: completions.clone(),
+        }
+        .start()
+        .recipient(),
+    );
+
+    let router = E3RouterBuilder {
+        bus: bus.clone(),
+        extensions: vec![E3MetaExtension::create()],
+        recovered_selections: Vec::new(),
+        recovery_store: recovery_store.clone(),
+        store: repositories.router(),
+        teardown_grace: std::time::Duration::from_secs(1),
+    }
+    .build()
+    .await?;
+
+    router
+        .send(
+            InterfoldEvent::<Unsequenced>::test_event("request")
+                .data(E3Requested {
+                    e3_id: e3_id.clone(),
+                    ..Default::default()
+                })
+                .seq(1)
+                .build(),
+        )
+        .await?;
+    router
+        .send(
+            InterfoldEvent::<Unsequenced>::test_event("failed")
+                .data(E3Failed {
+                    e3_id: e3_id.clone(),
+                    failed_at_stage: E3Stage::CommitteeFinalized,
+                    reason: FailureReason::DKGInvalidShares,
+                })
+                .seq(2)
+                .build(),
+        )
+        .await?;
+
+    // During the grace window the context is alive (the accusation manager needs it) and
+    // the deadline is durable.
+    let checkpoint = recovery_store.read().await?.expect("checkpoint");
+    assert!(checkpoint.contexts.contains(&e3_id));
+    assert!(checkpoint.teardown_deadlines.contains_key(&e3_id));
+    assert_eq!(completions.load(Ordering::SeqCst), 0);
+
+    actix::clock::sleep(std::time::Duration::from_millis(1500)).await;
+    // Let the E3RequestComplete round-trip through the bus back into the router.
+    router
+        .send(
+            InterfoldEvent::<Unsequenced>::test_event("sync-effect")
+                .data(SyncEffect::new())
+                .seq(3)
+                .build(),
+        )
+        .await?;
+
+    assert_eq!(completions.load(Ordering::SeqCst), 1);
+    let checkpoint = recovery_store.read().await?.expect("checkpoint");
+    assert!(
+        !checkpoint.contexts.contains(&e3_id),
+        "the failed E3's context must be torn down once the slashing window closes"
+    );
+    assert!(checkpoint.completed.contains(&e3_id));
+    assert!(checkpoint.teardown_deadlines.is_empty());
+    Ok(())
+}
+
+#[actix::test]
+async fn a_persisted_teardown_deadline_is_rearmed_after_restart() -> Result<()> {
+    let e3_id = E3id::new("22", 31337);
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let repositories = store.repositories();
+    repositories
+        .router()
+        .repositories()
+        .context(&e3_id)
+        .write_sync(&E3ContextSnapshot {
+            e3_id: e3_id.clone(),
+            recipients: Vec::new(),
+            dependencies: Vec::new(),
+        })
+        .await?;
+    let recovery_store = repositories.request_router_checkpoint();
+    // A deadline that already passed while the node was down.
+    recovery_store
+        .write_sync(&RequestRouterCheckpoint {
+            contexts: vec![e3_id.clone()],
+            completed: HashSet::new(),
+            replay_cursors: HashMap::new(),
+            teardown_deadlines: HashMap::from([(e3_id.clone(), 1)]),
+        })
+        .await?;
+
+    let bus = sequencing_bus();
+    let completions = Arc::new(AtomicUsize::new(0));
+    bus.subscribe(
+        EventType::E3RequestComplete,
+        CompletionCounter {
+            completions: completions.clone(),
+        }
+        .start()
+        .recipient(),
+    );
+    let router = E3RouterBuilder {
+        bus: bus.clone(),
+        extensions: vec![E3MetaExtension::create()],
+        recovered_selections: Vec::new(),
+        recovery_store: recovery_store.clone(),
+        store: repositories.router(),
+        teardown_grace: SLASHABLE_FAILURE_TEARDOWN_GRACE,
+    }
+    .build()
+    .await?;
+
+    actix::clock::sleep(std::time::Duration::from_millis(200)).await;
+    router
+        .send(
+            InterfoldEvent::<Unsequenced>::test_event("sync-effect")
+                .data(SyncEffect::new())
+                .seq(1)
+                .build(),
+        )
+        .await?;
+
+    assert_eq!(completions.load(Ordering::SeqCst), 1);
+    let checkpoint = recovery_store.read().await?.expect("checkpoint");
+    assert!(!checkpoint.contexts.contains(&e3_id));
+    assert!(checkpoint.completed.contains(&e3_id));
+    Ok(())
+}
+
+struct CompletionCounter {
+    completions: Arc<AtomicUsize>,
+}
+
+impl Actor for CompletionCounter {
+    type Context = Context<Self>;
+}
+
+impl Handler<InterfoldEvent> for CompletionCounter {
+    type Result = ();
+
+    fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) {
+        if matches!(msg.get_data(), InterfoldEventData::E3RequestComplete(_)) {
+            self.completions.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+}
+
+/// `completed` is serialized into the checkpoint on every event; unbounded, its size grows
+/// with the node's whole E3 history. The oldest ids must go first so late events for the
+/// most recent completions are still rejected.
+#[test]
+fn completed_set_is_bounded_and_prunes_the_oldest_ids_first() {
+    let mut completed: HashSet<E3id> = (0..(MAX_REMEMBERED_COMPLETIONS as u64 + 10))
+        .map(|n| E3id::new(n.to_string(), 31337))
+        .collect();
+    prune_completed(&mut completed);
+    assert_eq!(completed.len(), MAX_REMEMBERED_COMPLETIONS);
+    for oldest in 0..10u64 {
+        assert!(
+            !completed.contains(&E3id::new(oldest.to_string(), 31337)),
+            "E3 {oldest} is the oldest and must have been pruned"
+        );
+    }
+    let newest = MAX_REMEMBERED_COMPLETIONS as u64 + 9;
+    assert!(completed.contains(&E3id::new(newest.to_string(), 31337)));
+    assert!(completed.contains(&E3id::new("10", 31337)));
+
+    // Under the bound nothing is touched.
+    let mut small: HashSet<E3id> = HashSet::from([E3id::new("1", 1), E3id::new("2", 1)]);
+    prune_completed(&mut small);
+    assert_eq!(small.len(), 2);
 }
 
 #[actix::test]
@@ -281,6 +503,7 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
             contexts: vec![old_e3.clone(), new_e3.clone()],
             completed: HashSet::new(),
             replay_cursors: HashMap::new(),
+            teardown_deadlines: HashMap::new(),
         })
         .await?;
 
@@ -299,6 +522,8 @@ async fn request_time_attestation_contexts_survive_router_snapshots() -> Result<
             replay_cursors: HashMap::new(),
             recovery_store,
             recovered_selections: Vec::new(),
+            teardown_deadlines: HashMap::new(),
+            teardown_grace: SLASHABLE_FAILURE_TEARDOWN_GRACE,
         },
         E3RouterSnapshot {
             contexts: vec![old_e3.clone()],

@@ -33,6 +33,7 @@
 //! [`CommitmentConsistencyViolation`]: e3_events::CommitmentConsistencyViolation
 
 use actix::{Actor, Addr, Context, Handler};
+use e3_data::Repository;
 use e3_events::{
     BusHandle, CommitmentConsistencyCheckRequested, CommitmentLink, E3id, EventPublisher,
     EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, ProofVerificationPassed,
@@ -41,7 +42,7 @@ use e3_events::{
 use e3_utils::NotifySync;
 use tracing::{error, info};
 
-use crate::domain::commitment_consistency::CommitmentConsistency;
+use crate::domain::commitment_consistency::{CommitmentConsistency, CommitmentConsistencySnapshot};
 
 /// Per-E3 actor that enforces cross-circuit commitment consistency.
 ///
@@ -52,6 +53,9 @@ pub struct CommitmentConsistencyChecker {
     e3_id: E3id,
     /// Plain, synchronous consistency core. Owns the proof cache and links.
     consistency: CommitmentConsistency,
+    /// Durable copy of the verified-proof cache; written after every mutation. `None` only
+    /// in tests that never restart. See [`CommitmentConsistencySnapshot`] for why.
+    snapshot_repo: Option<Repository<CommitmentConsistencySnapshot>>,
 }
 
 impl CommitmentConsistencyChecker {
@@ -65,6 +69,31 @@ impl CommitmentConsistencyChecker {
             bus: bus.clone(),
             e3_id: e3_id.clone(),
             consistency: CommitmentConsistency::new(e3_id, links, committee_h),
+            snapshot_repo: None,
+        }
+    }
+
+    /// Attach the durable cache. If `restored` is given the cache starts from it.
+    pub fn with_snapshot(
+        mut self,
+        repo: Repository<CommitmentConsistencySnapshot>,
+        restored: Option<CommitmentConsistencySnapshot>,
+    ) -> Self {
+        if let Some(snapshot) = restored {
+            self.consistency.restore(snapshot);
+            info!(
+                "CommitmentConsistencyChecker for E3 {} restored {} cached proof(s)",
+                self.e3_id,
+                self.consistency.cached_proof_count()
+            );
+        }
+        self.snapshot_repo = Some(repo);
+        self
+    }
+
+    fn persist(&self) {
+        if let Some(repo) = &self.snapshot_repo {
+            repo.write(&self.consistency.snapshot());
         }
     }
 
@@ -123,9 +152,14 @@ impl Handler<TypedEvent<ProofVerificationPassed>> for CommitmentConsistencyCheck
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         let (data, ec) = msg.into_components();
-        for violation in self.consistency.on_proof_verified(data) {
+        let violations = self.consistency.on_proof_verified(data);
+        self.persist();
+        for violation in violations {
             if let Err(err) = self.bus.publish(violation, ec.clone()) {
-                error!("Failed to publish CommitmentConsistencyViolation: {err}");
+                error!(
+                    e3_id = %self.e3_id,
+                    "Failed to publish CommitmentConsistencyViolation: {err}"
+                );
             }
         }
     }
@@ -143,16 +177,23 @@ impl Handler<TypedEvent<CommitmentConsistencyCheckRequested>> for CommitmentCons
         let Some(outcome) = self.consistency.on_check_requested(data) else {
             return;
         };
+        self.persist();
 
         for violation in outcome.violations {
             if let Err(err) = self.bus.publish(violation, ec.clone()) {
-                error!("Failed to publish CommitmentConsistencyViolation: {err}");
+                error!(
+                    e3_id = %self.e3_id,
+                    "Failed to publish CommitmentConsistencyViolation: {err}"
+                );
             }
         }
 
         // Respond to ShareVerificationActor.
         if let Err(err) = self.bus.publish(outcome.complete, ec) {
-            error!("Failed to publish CommitmentConsistencyCheckComplete: {err}");
+            error!(
+                e3_id = %self.e3_id,
+                "Failed to publish CommitmentConsistencyCheckComplete: {err}"
+            );
         }
     }
 }

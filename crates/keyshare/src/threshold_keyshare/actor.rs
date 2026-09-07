@@ -42,7 +42,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::actors::decryption_key_shared_collector::{
     AllDecryptionKeySharesCollected, DecryptionKeySharedCollectionFailed,
@@ -139,6 +139,15 @@ struct PendingKeyshareWork {
     own_dkg_shares: Option<(SensitiveBytes, Vec<SensitiveBytes>)>,
     /// C4 completed before the signed C1 artifact became available.
     keyshare_publish: bool,
+    /// The share collector finished before this node's own DKG reached aggregation.
+    ///
+    /// Peers' shares can complete the collector while the local state is still
+    /// `CollectingEncryptionKeys` or `GeneratingThresholdShare` — routinely after a restart,
+    /// because peers that already hold this node's key finish ahead of it, and because
+    /// recovery rebuilds the collector from persisted peer shares before it redrives local
+    /// work. The collector cancels its timeout and never re-emits, so this message must be
+    /// kept until the state can consume it or the DKG stalls with no timer left to fail it.
+    early_all_shares_collected: Option<TypedEvent<AllThresholdSharesCollected>>,
 }
 
 pub struct ThresholdKeyshare {

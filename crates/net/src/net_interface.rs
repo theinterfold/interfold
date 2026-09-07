@@ -871,13 +871,16 @@ async fn process_swarm_event(
                 debug!(%peer_id, %topic, "Ignoring a subscription before peer admission");
                 return Ok(());
             }
-            debug!("Peer {} subscribed to {}", peer_id, topic);
             let count = swarm
                 .behaviour()
                 .gossipsub
                 .mesh_peers(&topic)
                 .filter(|peer| peer_admission.is_admitted(peer))
                 .count();
+            // Mesh size is the diagnostic for "my publish reached nobody" — the Bug 20 class,
+            // where a restarted peer never learns about in-flight shares. Cheap and low
+            // frequency (once per peer per topic), so keep it at INFO.
+            info!(%peer_id, %topic, mesh_peers = count, "Peer subscribed to topic");
             event_tx.send(NetEvent::GossipSubscribed { count, topic })?;
         }
 
@@ -1108,7 +1111,15 @@ async fn process_swarm_event(
             status.disconnected(&peer_id.to_string(), num_established);
             if num_established == 0 {
                 let total = swarm.connected_peers().count();
-                debug!("Peer disconnected: {peer_id} (total: {total}, cause: {cause:?})");
+                // Losing the last connection to a peer is the leading indicator of the
+                // no-peers stall that crash-looped a mainnet node; it must be visible without
+                // -vv. `total == 0` means this node is now isolated.
+                info!(
+                    %peer_id,
+                    connected_peers = total,
+                    cause = ?cause,
+                    "Peer disconnected"
+                );
             }
         }
 
@@ -1126,7 +1137,9 @@ async fn process_swarm_event(
         }
 
         unknown => {
-            debug!("Unhandled swarm event: {:?}", unknown);
+            // Swarm events we deliberately do not act on. The full struct dump was ~800 lines
+            // per run and never actionable; keep it at trace for when it genuinely matters.
+            trace!("Unhandled swarm event: {:?}", unknown);
         }
     };
     Ok(())
