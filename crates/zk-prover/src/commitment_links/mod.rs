@@ -10,6 +10,7 @@
 //! for each ZK proof pair. The trait and supporting types live in `e3-events`.
 
 pub mod c0_to_c3;
+pub mod c1_rows;
 pub mod c1_to_c2;
 pub mod c1_to_c5;
 pub mod c2_to_c3;
@@ -33,11 +34,16 @@ use e3_fhe_params::BfvPreset;
 /// that C4 consumes as `expected_commitments`. Since C2→C3 already ensures
 /// C3 encrypts the correct share, C2→C4 closes the remaining gap (preventing
 /// a party from using different commitments in C4 than they computed in C2).
+///
+/// C1 rows→C1 rows (`c1_rows::C1RowsSkCommitmentLink`) is self-referential:
+/// l-BFV parties submit `GADGET_DIM` C1 proofs (one per gadget row), and this
+/// link enforces `sk_commitment` equality across all of a party's rows.
 pub fn default_links(preset: BfvPreset) -> Vec<Box<dyn CommitmentLink>> {
     let l = preset.metadata().num_moduli;
     vec![
         Box::new(c0_to_c3::C3aToC0PkCommitmentLink),
         Box::new(c0_to_c3::C3bToC0PkCommitmentLink),
+        Box::new(c1_rows::C1RowsSkCommitmentLink),
         Box::new(c1_to_c2::C1ToC2aSkCommitmentLink),
         Box::new(c1_to_c2::C1ToC2bESmCommitmentLink),
         Box::new(c1_to_c5::C1ToC5PkCommitmentLink),

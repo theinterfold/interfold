@@ -145,6 +145,9 @@ pub const SHARE_ENCRYPTION_INPUTS: &[OutputField] = &[
     f("mod_idx"),
 ];
 
+/// C1 — Public gadget-row selector.
+pub const PK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
+
 /// Describes the public input layout of a circuit.
 ///
 /// Unlike [`CircuitOutputLayout`] which indexes from the TAIL of
@@ -213,11 +216,12 @@ mod tests {
         let layout = CircuitOutputLayout::Fixed {
             fields: PK_GENERATION_OUTPUTS,
         };
-        // C1 has no pub inputs, only 3 outputs = 96 bytes total
-        let mut signals = vec![0u8; 96];
-        signals[0..32].copy_from_slice(&[0x11; 32]); // sk_commitment
-        signals[32..64].copy_from_slice(&[0x22; 32]); // pk_commitment
-        signals[64..96].copy_from_slice(&[0x33; 32]); // e_sm_commitment
+        // C1 has one pub input and 3 outputs = 128 bytes total.
+        let mut signals = vec![0u8; 128];
+        signals[31] = 2; // row_index
+        signals[32..64].copy_from_slice(&[0x11; 32]); // sk_commitment
+        signals[64..96].copy_from_slice(&[0x22; 32]); // pk_commitment
+        signals[96..128].copy_from_slice(&[0x33; 32]); // e_sm_commitment
 
         assert_eq!(
             layout.extract_field(&signals, "sk_commitment").unwrap(),
@@ -276,10 +280,11 @@ mod tests {
         let layout = CircuitOutputLayout::Fixed {
             fields: PK_GENERATION_OUTPUTS,
         };
-        let mut signals = vec![0u8; 96];
-        signals[0..32].copy_from_slice(&[0x11; 32]);
-        signals[32..64].copy_from_slice(&[0x22; 32]);
-        signals[64..96].copy_from_slice(&[0x33; 32]);
+        let mut signals = vec![0u8; 128];
+        signals[31] = 2;
+        signals[32..64].copy_from_slice(&[0x11; 32]);
+        signals[64..96].copy_from_slice(&[0x22; 32]);
+        signals[96..128].copy_from_slice(&[0x33; 32]);
 
         let all = layout.extract_all(&signals).unwrap();
         assert_eq!(all.len(), 3);
@@ -344,6 +349,19 @@ mod tests {
                 .unwrap(),
             &[0xBB; 32]
         );
+    }
+
+    #[test]
+    fn extract_c1_row_index_from_head() {
+        let layout = CircuitInputLayout::Fixed {
+            fields: PK_GENERATION_INPUTS,
+        };
+        let mut signals = vec![0u8; 128];
+        signals[31] = 2;
+        let mut row = [0u8; 32];
+        row[31] = 2;
+
+        assert_eq!(layout.extract_field(&signals, "row_index").unwrap(), &row);
     }
 
     #[test]

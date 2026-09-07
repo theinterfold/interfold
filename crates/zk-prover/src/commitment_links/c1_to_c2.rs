@@ -8,11 +8,15 @@
 //!
 //! ## Circuit layouts
 //!
-//! **C1 (PkGeneration)** outputs `(sk_commitment, pk_commitment, e_sm_commitment)`.
-//! Public signals contain 3 fields (no public inputs):
-//! - field 0: `sk_commitment`   (byte offset   0..32)
-//! - field 1: `pk_commitment`   (byte offset  32..64)
-//! - field 2: `e_sm_commitment` (byte offset  64..96)
+//! **C1 (PkGeneration)** has the public `row_index` input and outputs
+//! `(sk_commitment, pk_commitment, e_sm_commitment)`. Public signals contain:
+//! - field 0: `row_index`
+//! - field 1: `sk_commitment`
+//! - field 2: `pk_commitment`
+//! - field 3: `e_sm_commitment`
+//!
+//! The output layout indexes return values from the end of `public_signals`, so
+//! the public input prefix does not change commitment extraction.
 //!
 //! **C2a/C2b** expose the recursive child VK hash at field 0 and the
 //! expected secret root commitment at field 1 (chunk-finalizer proof).
@@ -117,7 +121,7 @@ mod tests {
         f
     }
 
-    /// C1 public signals: [sk_commitment, pk_commitment, e_sm_commitment]
+    /// C1 return values: [sk_commitment, pk_commitment, e_sm_commitment]
     fn c1_signals(sk: [u8; 32], pk: [u8; 32], esm: [u8; 32]) -> Vec<u8> {
         let mut v = Vec::with_capacity(96);
         v.extend_from_slice(&sk);

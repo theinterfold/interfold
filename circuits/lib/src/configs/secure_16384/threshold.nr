@@ -7,6 +7,8 @@
 use crate::core::threshold::decrypted_shares_aggregation::Configs as DecryptedSharesAggregationConfigs;
 use crate::core::threshold::pk_aggregation::Configs as PkAggregationConfigs;
 use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;
+use crate::core::threshold::rlk_aggregation::Configs as RlkAggregationConfigs;
+use crate::core::threshold::rlk_generation::Configs as RlkGenerationConfigs;
 use crate::core::threshold::share_decryption::Configs as ShareDecryptionConfigs;
 use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncryptionCt0Configs;
 use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
@@ -81993,6 +81995,54 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
     PK_GENERATION_R1_BOUNDS,
     PK_GENERATION_R2_BOUNDS,
 );
+
+/************************************
+-------------------------------------
+l-BFV relinearization key circuits
+-------------------------------------
+************************************/
+
+pub global GADGET_DIM: u32 = L;
+// These row constants are placeholders. Do not use them for production l-BFV until each row has
+// an independent CRS, URS, and Garner coefficient.
+pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP, CRP, CRP];
+pub global D1_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP, CRP, CRP];
+pub global G_GADGET_ROWS: [Field; GADGET_DIM] = [1, 1, 1, 1, 1];
+
+pub global RLK_GENERATION_BIT_R: u32 = PK_GENERATION_BIT_SK;
+pub global RLK_GENERATION_BIT_SK: u32 = PK_GENERATION_BIT_SK;
+pub global RLK_GENERATION_BIT_E0: u32 = PK_GENERATION_BIT_EEK;
+pub global RLK_GENERATION_BIT_E2: u32 = PK_GENERATION_BIT_EEK;
+pub global RLK_GENERATION_BIT_R1_D0: u32 = PK_GENERATION_BIT_R1;
+pub global RLK_GENERATION_BIT_R2_D0: u32 = PK_GENERATION_BIT_R2;
+pub global RLK_GENERATION_BIT_R1_D2: u32 = PK_GENERATION_BIT_R1;
+pub global RLK_GENERATION_BIT_R2_D2: u32 = PK_GENERATION_BIT_R2;
+pub global RLK_GENERATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
+
+pub global RLK_GENERATION_R_BOUND: Field = PK_GENERATION_SK_BOUND;
+pub global RLK_GENERATION_SK_BOUND: Field = PK_GENERATION_SK_BOUND;
+pub global RLK_GENERATION_E0_BOUND: Field = PK_GENERATION_EEK_BOUND;
+pub global RLK_GENERATION_E2_BOUND: Field = PK_GENERATION_EEK_BOUND;
+pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
+pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
+pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
+pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
+
+// RLK quotient bounds reuse the PK generation bounds. Verify these bounds before production use.
+pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::new(
+    QIS,
+    RLK_GENERATION_R_BOUND,
+    RLK_GENERATION_SK_BOUND,
+    RLK_GENERATION_E0_BOUND,
+    RLK_GENERATION_E2_BOUND,
+    RLK_GENERATION_R1_D0_BOUNDS,
+    RLK_GENERATION_R2_D0_BOUNDS,
+    RLK_GENERATION_R1_D2_BOUNDS,
+    RLK_GENERATION_R2_D2_BOUNDS,
+);
+
+pub global RLK_AGGREGATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
+pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationConfigs::new(QIS);
 
 /************************************
 -------------------------------------
