@@ -326,6 +326,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         interfold,
         bondingRegistry,
         registry,
+        slashingManager,
         operator1,
         computeProvider,
         finalizeReadyCommittee,
@@ -349,6 +350,28 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(await registry.isCommitteeMemberActive(firstE3Id, operatorAddress))
         .to.be.true;
 
+      // The E3 fails early (DKG timeout) while the queued exit is still
+      // maturing and the accusation window is still open.
+      await time.increase(defaultTimeoutConfig.dkgWindow + 1);
+      await interfold.markE3Failed(firstE3Id);
+
+      // ZEN-09: a finalized committee stays held through the accusation
+      // window, so a valid accusation submitted after the E3 ends still finds
+      // collateral to slash.
+      const [, submissionDeadline] =
+        await slashingManager.getE3AccusationWindow(firstE3Id);
+      expect(
+        await slashingManager.accusationSubmissionDeadline(firstE3Id),
+      ).to.equal(submissionDeadline);
+      expect(submissionDeadline).to.be.greaterThan(await time.latest());
+      await expect(registry.releaseCommittee(firstE3Id))
+        .to.be.revertedWithCustomError(
+          registry,
+          "CommitteeAccusationWindowOpen",
+        )
+        .withArgs(firstE3Id, submissionDeadline);
+
+      // The exit matures, but the committee hold still blocks the claim.
       await time.increase((await bondingRegistry.exitDelay()) + 1n);
       await expect(
         bondingRegistry
@@ -359,11 +382,144 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         "OperatorInActiveCommittee",
       );
 
-      await interfold.markE3Failed(firstE3Id);
+      // In this fixture the exit delay outlasts the accusation window, so the
+      // window has already closed. The ZEN-09 test below covers the case where
+      // the exit matures first.
+      expect(await time.latest()).to.be.greaterThan(submissionDeadline);
       await expect(registry.releaseCommittee(firstE3Id))
         .to.emit(registry, "CommitteeActivationChanged")
         .withArgs(firstE3Id, false);
 
+      await bondingRegistry
+        .connect(computeProvider)
+        .claimExitsFor(operatorAddress, ethers.MaxUint256, ethers.MaxUint256);
+      const [pendingTickets, pendingCiphernodeBond] =
+        await bondingRegistry.pendingExits(operatorAddress);
+      expect(pendingTickets).to.equal(0);
+      expect(pendingCiphernodeBond).to.equal(0);
+    });
+
+    it("ZEN-09: holds a finalized committee through the last second of the accusation window", async function () {
+      const { interfold, registry, slashingManager, finalizeReadyCommittee } =
+        await loadFixture(setup);
+
+      await finalizeReadyCommittee();
+      await time.increase(defaultTimeoutConfig.dkgWindow + 1);
+      await interfold.markE3Failed(firstE3Id);
+
+      const [, submissionDeadline] =
+        await slashingManager.getE3AccusationWindow(firstE3Id);
+      await time.setNextBlockTimestamp(submissionDeadline);
+      await expect(registry.releaseCommittee(firstE3Id))
+        .to.be.revertedWithCustomError(
+          registry,
+          "CommitteeAccusationWindowOpen",
+        )
+        .withArgs(firstE3Id, submissionDeadline);
+
+      await time.setNextBlockTimestamp(submissionDeadline + 1n);
+      await expect(registry.releaseCommittee(firstE3Id))
+        .to.emit(registry, "CommitteeActivationChanged")
+        .withArgs(firstE3Id, false);
+      expect(await registry.unreleasedCommitteeCount()).to.equal(0);
+    });
+
+    it("ZEN-09: releases a finalized committee after governance closes its accusation window", async function () {
+      const {
+        interfold,
+        registry,
+        slashingManager,
+        owner,
+        finalizeReadyCommittee,
+      } = await loadFixture(setup);
+
+      await finalizeReadyCommittee();
+      await time.increase(defaultTimeoutConfig.dkgWindow + 1);
+      await interfold.markE3Failed(firstE3Id);
+
+      const [, submissionDeadline] =
+        await slashingManager.getE3AccusationWindow(firstE3Id);
+      await time.increaseTo(submissionDeadline + 1n);
+      await slashingManager.connect(owner).closeE3(firstE3Id);
+      expect(
+        await slashingManager.accusationSubmissionDeadline(firstE3Id),
+      ).to.equal(0);
+
+      await expect(registry.releaseCommittee(firstE3Id))
+        .to.emit(registry, "CommitteeActivationChanged")
+        .withArgs(firstE3Id, false);
+    });
+
+    it("ZEN-09: releases an unfinalized committee at terminal stage without an accusation hold", async function () {
+      const { interfold, registry, slashingManager, makeReadyRequest } =
+        await loadFixture(setup);
+
+      await makeReadyRequest();
+      const [, submissionDeadline] =
+        await slashingManager.getE3AccusationWindow(firstE3Id);
+      expect(submissionDeadline).to.be.greaterThan(await time.latest());
+
+      const committeeDeadline = await registry.getCommitteeDeadline(firstE3Id);
+      await time.setNextBlockTimestamp(committeeDeadline + 1n);
+      await expect(registry.finalizeCommittee(firstE3Id))
+        .to.emit(registry, "CommitteeActivationChanged")
+        .withArgs(firstE3Id, false);
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(6); // E3Stage.Failed
+      expect(await registry.unreleasedCommitteeCount()).to.equal(0);
+    });
+
+    it("ZEN-09: an exit that matures before the accusation window closes cannot be claimed", async function () {
+      const {
+        interfold,
+        bondingRegistry,
+        registry,
+        slashingManager,
+        owner,
+        operator1,
+        computeProvider,
+        finalizeReadyCommittee,
+      } = await loadFixture(setup);
+
+      // Shorten the exit delay so it matures well inside the accusation
+      // window of the round configured in this fixture.
+      await bondingRegistry.connect(owner).setExitDelay(ONE_DAY);
+      await finalizeReadyCommittee();
+      const operatorAddress = await operator1.getAddress();
+
+      // Day 0.1: the operator queues its entire stake for withdrawal.
+      await bondingRegistry
+        .connect(operator1)
+        .deregisterOperatorFor(operatorAddress);
+
+      // Day 1: the round fails. Its accusation window remains open.
+      await time.increase(defaultTimeoutConfig.dkgWindow + 1);
+      await interfold.markE3Failed(firstE3Id);
+      const [, submissionDeadline] =
+        await slashingManager.getE3AccusationWindow(firstE3Id);
+
+      // The exit delay matures before the accusation deadline.
+      await time.increase(ONE_DAY + 1);
+      expect(await time.latest()).to.be.lessThan(submissionDeadline);
+
+      // Neither the release nor the claim can proceed.
+      await expect(registry.releaseCommittee(firstE3Id))
+        .to.be.revertedWithCustomError(
+          registry,
+          "CommitteeAccusationWindowOpen",
+        )
+        .withArgs(firstE3Id, submissionDeadline);
+      await expect(
+        bondingRegistry
+          .connect(computeProvider)
+          .claimExitsFor(operatorAddress, ethers.MaxUint256, ethers.MaxUint256),
+      ).to.be.revertedWithCustomError(
+        bondingRegistry,
+        "OperatorInActiveCommittee",
+      );
+
+      // After the window closes both succeed.
+      await time.increaseTo(submissionDeadline + 1n);
+      await registry.releaseCommittee(firstE3Id);
       await bondingRegistry
         .connect(computeProvider)
         .claimExitsFor(operatorAddress, ethers.MaxUint256, ethers.MaxUint256);
@@ -2158,6 +2314,567 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(
         (await usdcToken.balanceOf(targetRecipient)) - balanceBefore,
       ).to.equal(released);
+    });
+
+    it("ZEN2-04: an expulsion corrects a front-run requester-paid reason", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        slashingManager,
+        makeRequest,
+        owner,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+        finalizeAndPublishCommittee,
+      } = await loadFixture(setup);
+
+      for (const operator of [operator1, operator2, operator3]) {
+        await setupOperator(operator);
+      }
+      await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
+        ticketPenalty: ethers.parseUnits("50", 6),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
+        requiresProof: true,
+        proofVerifier: ethers.ZeroAddress,
+        banNode: false,
+        appealWindow: ONE_DAY,
+        enabled: true,
+        affectsCommittee: true,
+        failureReason: 0,
+      });
+
+      await makeRequest();
+      await finalizeAndPublishCommittee();
+
+      // Two committee members face expulsions. Executing both drops the
+      // active roster below the viability threshold M.
+      const proof1 = await signAndEncodeAttestation(
+        [operator2, operator3],
+        firstE3Id,
+        await operator1.getAddress(),
+        await slashingManager.getAddress(),
+      );
+      await slashingManager.proposeSlash(
+        firstE3Id,
+        await operator1.getAddress(),
+        proof1,
+      );
+      const proof2 = await signAndEncodeAttestation(
+        [operator1, operator3],
+        firstE3Id,
+        await operator2.getAddress(),
+        await slashingManager.getAddress(),
+      );
+      await slashingManager.proposeSlash(
+        firstE3Id,
+        await operator2.getAddress(),
+        proof2,
+      );
+
+      // The member front-runs the slash and locks in the requester-paid
+      // reason during the grace period.
+      const e3 = await interfold.getE3(firstE3Id);
+      await time.increaseTo(
+        Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
+      );
+      await interfold.connect(operator1).markE3Failed(firstE3Id);
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(
+        6 /* ComputeTimeout */,
+      );
+
+      // Executing the expulsions corrects the payer before settlement. The
+      // first keeps the committee viable; the second breaks viability.
+      await time.increase(ONE_DAY + 1);
+      await slashingManager.executeSlash(0);
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(
+        6 /* ComputeTimeout */,
+      );
+      await expect(slashingManager.executeSlash(1))
+        .to.emit(interfold, "E3FailureReclassified")
+        .withArgs(
+          firstE3Id,
+          6 /* ComputeTimeout */,
+          2 /* InsufficientCommitteeMembers */,
+        );
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(
+        2 /* InsufficientCommitteeMembers */,
+      );
+      // The stage stays terminal; only the payer moved.
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(6);
+
+      // Settlement now refunds the requester in full instead of 45%.
+      await interfold.processE3Failure(firstE3Id);
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
+      expect(distribution.requesterAmount).to.equal(
+        distribution.originalPayment,
+      );
+      expect(distribution.honestNodeAmount).to.equal(0);
+      expect(distribution.protocolAmount).to.equal(0);
+    });
+
+    it("ZEN2-04: settlement makes the recorded reason final", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        slashingManager,
+        makeRequest,
+        owner,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+        finalizeAndPublishCommittee,
+      } = await loadFixture(setup);
+
+      for (const operator of [operator1, operator2, operator3]) {
+        await setupOperator(operator);
+      }
+      await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
+        ticketPenalty: ethers.parseUnits("50", 6),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
+        requiresProof: true,
+        proofVerifier: ethers.ZeroAddress,
+        banNode: false,
+        appealWindow: ONE_DAY,
+        enabled: true,
+        affectsCommittee: true,
+        failureReason: 0,
+      });
+
+      await makeRequest();
+      await finalizeAndPublishCommittee();
+
+      const proof1 = await signAndEncodeAttestation(
+        [operator2, operator3],
+        firstE3Id,
+        await operator1.getAddress(),
+        await slashingManager.getAddress(),
+      );
+      await slashingManager.proposeSlash(
+        firstE3Id,
+        await operator1.getAddress(),
+        proof1,
+      );
+      const proof2 = await signAndEncodeAttestation(
+        [operator1, operator3],
+        firstE3Id,
+        await operator2.getAddress(),
+        await slashingManager.getAddress(),
+      );
+      await slashingManager.proposeSlash(
+        firstE3Id,
+        await operator2.getAddress(),
+        proof2,
+      );
+
+      const e3 = await interfold.getE3(firstE3Id);
+      await time.increaseTo(
+        Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
+      );
+      await interfold.connect(operator1).markE3Failed(firstE3Id);
+      // Settlement runs before the expulsions execute.
+      await interfold.processE3Failure(firstE3Id);
+      const settled = await e3RefundManager.getRefundDistribution(firstE3Id);
+      expect(settled.calculated).to.be.true;
+
+      // The correction no longer applies, and the expulsion still executes so
+      // the collateral penalty is not lost.
+      await time.increase(ONE_DAY + 1);
+      await slashingManager.executeSlash(0);
+      await slashingManager.executeSlash(1);
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(
+        6 /* ComputeTimeout */,
+      );
+      const after = await e3RefundManager.getRefundDistribution(firstE3Id);
+      expect(after.requesterAmount).to.equal(settled.requesterAmount);
+      expect(after.honestNodeAmount).to.equal(settled.honestNodeAmount);
+    });
+
+    it("ZEN2-04: only the E3's slashing manager corrects a reason", async function () {
+      const {
+        interfold,
+        makeRequest,
+        requester,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+        finalizeAndPublishCommittee,
+      } = await loadFixture(setup);
+
+      for (const operator of [operator1, operator2, operator3]) {
+        await setupOperator(operator);
+      }
+      await makeRequest();
+      await finalizeAndPublishCommittee();
+
+      const e3 = await interfold.getE3(firstE3Id);
+      await time.increaseTo(
+        Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
+      );
+      await interfold.markE3Failed(firstE3Id);
+
+      // A failed E3 does not let an arbitrary caller move the payer.
+      await expect(
+        interfold
+          .connect(requester)
+          .onE3Failed(firstE3Id, 2 /* InsufficientCommitteeMembers */),
+      ).to.be.revertedWithCustomError(
+        interfold,
+        "OnlyCiphernodeRegistryOrSlashingManager",
+      );
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(
+        6 /* ComputeTimeout */,
+      );
+    });
+
+    it("ZEN2-20: a proposal opened after settlement holds a credited reward", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        slashingManager,
+        usdcToken,
+        makeRequest,
+        owner,
+        requester,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+        transferBondOwner,
+        finalizeAndPublishCommittee,
+      } = await loadFixture(setup);
+
+      for (const operator of [operator1, operator2, operator3]) {
+        await setupOperator(operator);
+      }
+      await transferBondOwner(operator1, requester);
+      await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
+        ticketPenalty: ethers.parseUnits("50", 6),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
+        requiresProof: true,
+        proofVerifier: ethers.ZeroAddress,
+        banNode: false,
+        appealWindow: ONE_DAY,
+        enabled: true,
+        affectsCommittee: true,
+        failureReason: 0,
+      });
+
+      await makeRequest();
+      await finalizeAndPublishCommittee();
+
+      // The E3 completes with no proposal open, so the reward is credited.
+      const e3 = await interfold.getE3(firstE3Id);
+      await time.increaseTo(Number(e3.inputWindow[1]));
+      const ciphertext = "0x" + "ab".repeat(100);
+      await publishAvailableCiphertextOutput(
+        interfold,
+        firstE3Id,
+        ciphertext,
+        ethers.keccak256(ciphertext),
+        "0x1337",
+      );
+      await interfold.publishPlaintextOutput(
+        firstE3Id,
+        "0x" + "cd".repeat(100),
+        "0x1337",
+      );
+
+      const operator1Address = await operator1.getAddress();
+      const targetRecipient = await requester.getAddress();
+      const credited = await e3RefundManager.pendingHeldSuccessReward(
+        firstE3Id,
+        targetRecipient,
+      );
+      expect(credited).to.be.gt(0);
+
+      // A valid expelling proposal opens AFTER completion.
+      const proof = await signAndEncodeAttestation(
+        [operator2, operator3],
+        firstE3Id,
+        operator1Address,
+        await slashingManager.getAddress(),
+      );
+      await slashingManager.proposeSlash(firstE3Id, operator1Address, proof);
+
+      // The credited reward is now held: it reports zero and cannot be pulled
+      // through any claim path.
+      expect(
+        await e3RefundManager.pendingHeldSuccessReward(
+          firstE3Id,
+          targetRecipient,
+        ),
+      ).to.equal(0);
+      expect(
+        await interfold.pendingReward(firstE3Id, targetRecipient),
+      ).to.equal(0);
+      const [, pending, excluded] = await e3RefundManager.rewardStatus(
+        firstE3Id,
+        operator1Address,
+      );
+      expect(pending).to.be.true;
+      expect(excluded).to.be.false;
+
+      await expect(
+        e3RefundManager.connect(requester).claimHeldSuccessReward(firstE3Id),
+      ).to.be.revertedWithCustomError(e3RefundManager, "NothingToClaim");
+      await expect(
+        interfold.connect(requester).claimReward(firstE3Id),
+      ).to.be.revertedWithCustomError(interfold, "NothingToClaim");
+      await expect(
+        e3RefundManager.claimOperatorHeldSuccessReward(
+          firstE3Id,
+          operator1Address,
+        ),
+      )
+        .to.be.revertedWithCustomError(
+          e3RefundManager,
+          "RewardPendingExpulsion",
+        )
+        .withArgs(firstE3Id, operator1Address);
+
+      // Clearing the proposal releases exactly the original allocation.
+      await slashingManager.connect(operator1).fileAppeal(0, "not responsible");
+      await slashingManager.connect(owner).resolveAppeal(0, true, "cleared");
+      expect(
+        await e3RefundManager.pendingHeldSuccessReward(
+          firstE3Id,
+          targetRecipient,
+        ),
+      ).to.equal(credited);
+      const balanceBefore = await usdcToken.balanceOf(targetRecipient);
+      await e3RefundManager
+        .connect(requester)
+        .claimHeldSuccessReward(firstE3Id);
+      expect(
+        (await usdcToken.balanceOf(targetRecipient)) - balanceBefore,
+      ).to.equal(credited);
+    });
+
+    it("ZEN2-20: an executed expulsion forfeits a credited reward", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        slashingManager,
+        usdcToken,
+        makeRequest,
+        owner,
+        requester,
+        computeProvider,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+        transferBondOwner,
+        finalizeAndPublishCommittee,
+      } = await loadFixture(setup);
+
+      for (const operator of [operator1, operator2, operator3]) {
+        await setupOperator(operator);
+      }
+      await transferBondOwner(operator1, requester);
+      await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
+        ticketPenalty: ethers.parseUnits("50", 6),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
+        requiresProof: true,
+        proofVerifier: ethers.ZeroAddress,
+        banNode: false,
+        appealWindow: ONE_DAY,
+        enabled: true,
+        affectsCommittee: true,
+        failureReason: 0,
+      });
+
+      await makeRequest();
+      await finalizeAndPublishCommittee();
+
+      const e3 = await interfold.getE3(firstE3Id);
+      await time.increaseTo(Number(e3.inputWindow[1]));
+      const ciphertext = "0x" + "ab".repeat(100);
+      await publishAvailableCiphertextOutput(
+        interfold,
+        firstE3Id,
+        ciphertext,
+        ethers.keccak256(ciphertext),
+        "0x1337",
+      );
+      await interfold.publishPlaintextOutput(
+        firstE3Id,
+        "0x" + "cd".repeat(100),
+        "0x1337",
+      );
+
+      const operator1Address = await operator1.getAddress();
+      const targetRecipient = await requester.getAddress();
+      // The other two operators keep the fixture's shared bond owner.
+      const operator2Recipient = await computeProvider.getAddress();
+      const credited = await e3RefundManager.pendingHeldSuccessReward(
+        firstE3Id,
+        targetRecipient,
+      );
+      expect(credited).to.be.gt(0);
+      const peersBefore = await e3RefundManager.pendingHeldSuccessReward(
+        firstE3Id,
+        operator2Recipient,
+      );
+
+      // Open and execute the expulsion after completion.
+      const proof = await signAndEncodeAttestation(
+        [operator2, operator3],
+        firstE3Id,
+        operator1Address,
+        await slashingManager.getAddress(),
+      );
+      await slashingManager.proposeSlash(firstE3Id, operator1Address, proof);
+      await time.increase(ONE_DAY + 1);
+      await slashingManager.executeSlash(0);
+
+      const [, , excluded] = await e3RefundManager.rewardStatus(
+        firstE3Id,
+        operator1Address,
+      );
+      expect(excluded).to.be.true;
+
+      // The forfeited allocation is unreachable and was reallocated to the
+      // remaining eligible members, not left with the accused recipient.
+      expect(
+        await e3RefundManager.pendingHeldSuccessReward(
+          firstE3Id,
+          targetRecipient,
+        ),
+      ).to.equal(0);
+      await expect(
+        e3RefundManager.connect(requester).claimHeldSuccessReward(firstE3Id),
+      ).to.be.revertedWithCustomError(e3RefundManager, "NothingToClaim");
+      await expect(
+        e3RefundManager.claimOperatorHeldSuccessReward(
+          firstE3Id,
+          operator1Address,
+        ),
+      ).to.be.revertedWithCustomError(
+        e3RefundManager,
+        "RewardPendingExpulsion",
+      );
+      expect(
+        await e3RefundManager.pendingHeldSuccessReward(
+          firstE3Id,
+          operator2Recipient,
+        ),
+      ).to.be.gt(peersBefore);
+
+      // Custody still covers what the contract says it owes.
+      expect(
+        await usdcToken.balanceOf(await e3RefundManager.getAddress()),
+      ).to.be.gte(
+        await e3RefundManager.tokenLiability(await usdcToken.getAddress()),
+      );
+    });
+
+    it("ZEN2-20: a shared recipient keeps independent per-operator allocations", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        slashingManager,
+        usdcToken,
+        makeRequest,
+        owner,
+        computeProvider,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+        finalizeAndPublishCommittee,
+      } = await loadFixture(setup);
+
+      for (const operator of [operator1, operator2, operator3]) {
+        await setupOperator(operator);
+      }
+      await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
+        ticketPenalty: ethers.parseUnits("50", 6),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
+        requiresProof: true,
+        proofVerifier: ethers.ZeroAddress,
+        banNode: false,
+        appealWindow: ONE_DAY,
+        enabled: true,
+        affectsCommittee: true,
+        failureReason: 0,
+      });
+
+      await makeRequest();
+      await finalizeAndPublishCommittee();
+
+      const e3 = await interfold.getE3(firstE3Id);
+      await time.increaseTo(Number(e3.inputWindow[1]));
+      const ciphertext = "0x" + "ab".repeat(100);
+      await publishAvailableCiphertextOutput(
+        interfold,
+        firstE3Id,
+        ciphertext,
+        ethers.keccak256(ciphertext),
+        "0x1337",
+      );
+      await interfold.publishPlaintextOutput(
+        firstE3Id,
+        "0x" + "cd".repeat(100),
+        "0x1337",
+      );
+
+      // All three operators share one bond owner in this fixture.
+      const sharedRecipient = await computeProvider.getAddress();
+      const operator1Address = await operator1.getAddress();
+      for (const operator of [operator1, operator2, operator3]) {
+        expect(
+          await e3RefundManager.rewardRecipient(
+            firstE3Id,
+            await operator.getAddress(),
+          ),
+        ).to.equal(sharedRecipient);
+      }
+      const total = await e3RefundManager.pendingHeldSuccessReward(
+        firstE3Id,
+        sharedRecipient,
+      );
+      const [accusedShare] = await e3RefundManager.operatorHeldRewards(
+        firstE3Id,
+        operator1Address,
+      );
+      expect(accusedShare).to.be.gt(0);
+      expect(total).to.be.gt(accusedShare);
+
+      // A proposal against one operator must hold only that operator's share.
+      const proof = await signAndEncodeAttestation(
+        [operator2, operator3],
+        firstE3Id,
+        operator1Address,
+        await slashingManager.getAddress(),
+      );
+      await slashingManager.proposeSlash(firstE3Id, operator1Address, proof);
+
+      expect(
+        await e3RefundManager.pendingHeldSuccessReward(
+          firstE3Id,
+          sharedRecipient,
+        ),
+      ).to.equal(total - accusedShare);
+
+      const balanceBefore = await usdcToken.balanceOf(sharedRecipient);
+      await e3RefundManager
+        .connect(computeProvider)
+        .claimHeldSuccessReward(firstE3Id);
+      expect(
+        (await usdcToken.balanceOf(sharedRecipient)) - balanceBefore,
+      ).to.equal(total - accusedShare);
+      // The accused operator's share stays held, not paid with its peers.
+      const [stillHeld] = await e3RefundManager.operatorHeldRewards(
+        firstE3Id,
+        operator1Address,
+      );
+      expect(stillHeld).to.equal(accusedShare);
     });
 
     it("routes failed-E3 slashes to treasury when no honest nodes exist", async function () {

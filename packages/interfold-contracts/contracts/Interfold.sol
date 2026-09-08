@@ -522,7 +522,6 @@ contract Interfold is
             _e3ProtocolShareBps,
             _e3ProtocolTreasury,
             _pendingTreasury,
-            _pendingRewards,
             address(_registryFor(e3Id)),
             _refundManagerFor(e3Id),
             e3Id
@@ -824,10 +823,27 @@ contract Interfold is
     /// @inheritdoc IInterfold
     function onE3Failed(uint256 e3Id, uint8 reason) external {
         E3Stage current = _e3Stages[e3Id];
+        E3Dependencies storage dependencies = _e3Dependencies[e3Id];
+        if (current == E3Stage.Failed) {
+            // ZEN2-04: the round already failed with a reason a caller
+            // recorded first. An expulsion that broke committee viability is
+            // the true cause, so correct a requester-paid reason. The stage
+            // stays Failed and `activeE3Count` is untouched: only the payer
+            // changes.
+            InterfoldLifecycle.reclassifyFailure(
+                _e3FailureReasons,
+                msg.sender,
+                address(dependencies.slashManager),
+                address(dependencies.refundManager),
+                e3Id,
+                reason
+            );
+            return;
+        }
         InterfoldLifecycle.validateReportedFailure(
             msg.sender,
-            address(_registryFor(e3Id)),
-            address(_slashingManagerFor(e3Id)),
+            address(dependencies.registry),
+            address(dependencies.slashManager),
             e3Id,
             uint8(current),
             reason
@@ -1187,6 +1203,7 @@ contract Interfold is
             InterfoldPricing.claimReward(
                 _pendingRewards,
                 _e3FeeTokens,
+                _refundManagerFor(e3Id),
                 e3Id,
                 account
             );
@@ -1197,7 +1214,13 @@ contract Interfold is
         uint256 e3Id,
         address account
     ) external view returns (uint256) {
-        return _pendingRewards[e3Id][account];
+        return
+            InterfoldPricing.pendingReward(
+                _pendingRewards,
+                _refundManagerFor(e3Id),
+                e3Id,
+                account
+            );
     }
 
     /// @inheritdoc IInterfold

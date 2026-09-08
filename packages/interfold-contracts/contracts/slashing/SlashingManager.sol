@@ -321,6 +321,13 @@ contract SlashingManager is
     }
 
     /// @inheritdoc ISlashingManager
+    function accusationSubmissionDeadline(
+        uint256 e3Id
+    ) external view returns (uint64 submissionDeadline) {
+        return _e3Dependencies[e3Id].slashSubmissionDeadline;
+    }
+
+    /// @inheritdoc ISlashingManager
     function getPendingSlashRoute(
         uint256 proposalId
     ) external view returns (PendingSlashRoute memory) {
@@ -824,12 +831,14 @@ contract SlashingManager is
                 IInterfold.E3Stage stage = dependencies
                     .interfoldContract
                     .getE3Stage(p.e3Id);
-                if (
-                    stage != IInterfold.E3Stage.Complete &&
-                    stage != IInterfold.E3Stage.Failed
-                ) {
-                    // This call must succeed with the expulsion. A revert rolls
-                    // back the penalties, ban, and committee membership change.
+                if (stage != IInterfold.E3Stage.Complete) {
+                    // A nonterminal round fails here. A round that a caller
+                    // already failed gets its requester-paid reason corrected,
+                    // because this expulsion is the true cause (ZEN2-04).
+                    // Interfold treats a correction that no longer applies as a
+                    // no-op, so this call reverts only on a real fault, and a
+                    // revert rolls back the penalties, ban, and committee
+                    // membership change.
                     dependencies.interfoldContract.onE3Failed(
                         p.e3Id,
                         uint8(

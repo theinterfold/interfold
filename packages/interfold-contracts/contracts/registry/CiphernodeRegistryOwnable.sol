@@ -791,6 +791,20 @@ contract CiphernodeRegistryOwnable is
             stage != IInterfold.E3Stage.Failed
         ) revert E3NotTerminal(e3Id);
 
+        // A finalized committee did protocol work that peers can still accuse.
+        // Keep its collateral held until the slashing manager stops accepting
+        // accusations for this E3. A committee that never finalized has no
+        // accusable work, so its candidates release at terminal stage.
+        // `closeE3` clears the deadline only after it has passed, so a zero
+        // deadline also permits release.
+        if (c.stage == ICiphernodeRegistry.CommitteeStage.Finalized) {
+            uint64 submissionDeadline = _slashingManagerFor(e3Id)
+                .accusationSubmissionDeadline(e3Id);
+            if (block.timestamp <= submissionDeadline) {
+                revert CommitteeAccusationWindowOpen(e3Id, submissionDeadline);
+            }
+        }
+
         c.obligationsReleased = true;
         RegistrySortitionLib.failRequestedCommittee(c, e3Id);
         _releaseCommitteeObligations(e3Id, c);

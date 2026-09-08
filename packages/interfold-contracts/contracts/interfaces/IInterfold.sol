@@ -356,6 +356,14 @@ interface IInterfold {
         FailureReason reason
     );
 
+    /// @notice Emitted when an expulsion corrects an E3's failure reason.
+    /// @dev The stage stays `Failed`; only the party that pays changes.
+    event E3FailureReclassified(
+        uint256 indexed e3Id,
+        FailureReason previousReason,
+        FailureReason reason
+    );
+
     /// @notice Emitted when timeout config is updated
     event TimeoutConfigUpdated(E3TimeoutConfig config);
 
@@ -812,6 +820,14 @@ interface IInterfold {
 
     /// @notice Called by authorized contracts to mark an E3 as failed with a specific reason.
     /// @dev Updates E3 lifecycle to Failed stage with the given reason.
+    ///      ZEN2-04: when the E3 already failed, the E3's request-time slashing
+    ///      manager may call this with `InsufficientCommitteeMembers` to
+    ///      correct a requester-paid reason another caller recorded first. That
+    ///      path leaves the stage at `Failed` and the active-E3 counter
+    ///      unchanged, so it moves only the recorded payer. It returns without
+    ///      an effect once settlement calculated the distribution or the reason
+    ///      is already supplier-paid, so the expulsion that triggers it still
+    ///      commits.
     /// @param e3Id ID of the E3.
     /// @param reason The failure reason from FailureReason enum.
     function onE3Failed(uint256 e3Id, uint8 reason) external;

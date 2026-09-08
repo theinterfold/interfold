@@ -367,6 +367,74 @@ Production therefore needs:
 No fallback changes the data source after its hash is known. Adding such a fallback would require a
 new, explicitly bound proof path and a separate review.
 
+## VectorX pointer rotation (ZEN2-08)
+
+`AvailVectorXDataAvailabilityVerifier` stores `bridge` and `vectorx` as immutables and re-checks
+`bridge.vectorx() == vectorx` on **every** call, not only in its constructor. If Avail governance
+rotates the bridge's VectorX pointer, every verification reverts `InvalidVectorX`.
+
+This is deliberate. The re-check is the property that stops a bridge-side rotation from silently
+changing the trust root of an already deployed program. Accepting the new pointer automatically
+would let an external governance action redefine what "available" means for a round that is already
+paid for and in flight.
+
+### Blast radius
+
+Data availability is bound **per program**, not per protocol. `InterfoldLifecycle` delegates
+verification to `IE3ProgramDataAvailability(e3Program)`, and each program holds its own immutable
+verifier. Interfold has no protocol-level data-availability verifier. A rotation therefore affects
+only the programs constructed with the rotated `(bridge, vectorx)` pair. A program on another
+provider, or on a later adapter, keeps working.
+
+| Scope                                   | Effect                                                 |
+| --------------------------------------- | ------------------------------------------------------ |
+| Programs on the rotated pointer         | `finalizeInput` and output publication revert          |
+| Programs on any other verifier          | Unaffected                                             |
+| In-flight rounds of an affected program | Cannot finalize inputs or publish output               |
+| New requests                            | Stoppable per program, without touching other programs |
+
+### Response
+
+1. **Detect.** Monitor `bridge.vectorx()` for each deployed adapter and alert on a value that no
+   longer matches the adapter's `vectorx` immutable. Treat this as a production incident: rounds
+   fail closed from this point.
+2. **Contain.** Call `unregisterE3Program(affectedProgram)` for each program bound to the rotated
+   pointer. This blocks new requests for those programs only. There is no protocol-wide pause and
+   none is required: retirement does not change the program that an existing E3 snapshotted at
+   request time.
+3. **Accept the in-flight loss.** Interfold has no deadline-extension path, and `computeDeadline` is
+   written once at key publication. Affected rounds stall until the compute deadline and then fail
+   as requester-paid `ComputeTimeout` before `CiphertextReady`, or nodes-paid `DecryptionTimeout`
+   after it. Restoring the original pointer before the deadline lets a stalled round continue.
+4. **Recover.** Deploy a new adapter bound to the new pointer, deploy a program that uses it, and
+   register that program. Existing E3s keep their original program and cannot be migrated.
+
+### Accepted limitations
+
+- A rotation that outlasts an affected round's compute deadline bills the requester for an external
+  governance action. Neither remedy that Zenith proposed is implemented, for the reasons below.
+- **A governed re-point is unsafe even with an honest key.** A verified receipt is a
+  `DataReference{contentHash, blockNumber, leafIndex}` with no provider field, and only
+  `contentHash` is persisted; the coordinates live in the `CiphertextOutputReferencePublished`
+  event. Re-pointing a live round would prove inputs 1..k against the old provider and k+1..n
+  against the new one with nothing on chain to separate them, so the earlier coordinates stop being
+  resolvable without off-chain knowledge of the switch, and the aggregate step cannot read a round
+  whose inputs are split. The round it was meant to rescue still cannot complete: the failure moves
+  from "cannot verify" to "verified but unretrievable." A timelock does not address this, because
+  the defect is the missing provider binding rather than the authority to rotate. Multi-provider
+  rounds would need a persisted provider identifier in the reference first.
+- **A deadline extension does not reallocate the cost.** `FailurePayerLib.getFailurePayer` reads the
+  failure reason alone, and the reason follows the stage the round stalled in, so a longer clock
+  produces the same requester-paid `ComputeTimeout`. An extension only preserves the chance to
+  complete, which for a pointer rotation requires Avail to point the bridge back at the original
+  address. It also lets a round outlive the accusation window snapshotted for it and holds committee
+  collateral longer, because `slashSubmissionDeadline` derives from the request-time lifecycle
+  deadline and `releaseCommittee` gates on it. An extension is a plausible mitigation for transient
+  provider degradation with an unchanged pointer, which is a different failure than this one.
+- Compensating a requester for a data-availability outage needs funds from outside the service
+  escrow, which is exactly `originalPayment` and is fully allocated at settlement. That is a failure
+  attribution and funding decision, not an adapter change.
+
 ## Fast-machine acceptance gates
 
 The normal unit and contract suites do not reproduce the production RISC Zero image. Before this
