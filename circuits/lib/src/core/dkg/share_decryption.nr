@@ -9,6 +9,7 @@ use crate::math::commitments::{
 };
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
+use crate::math::secure_arithmetic::{native, parameters, reduce_small_sum, reverse};
 
 /// DKG share decryption and aggregation (C4a / C4b).
 ///
@@ -114,17 +115,25 @@ impl<let N: u32, let L: u32, let H: u32, let BIT_MSG: u32, let BIT_AGG: u32> Sha
     /// Rust witness (which operates on sk coefficients already reduced to `[0, q_l)`
     /// and then applies `.reverse()` and `.center(&qi)` before hashing).
     pub fn execute(self, moduli: [Field; L]) -> Field {
-        // Step 1: Verify decrypted shares match expected C2 commitments.
-        self.verify_commitments();
+        if (N == 8192) & (L == 3) & (H == 2) {
+            prove_secure::<N, L, H, BIT_MSG, BIT_AGG>(
+                moduli,
+                self.expected_commitments,
+                self.decrypted_shares,
+            )
+        } else {
+            // Step 1: Verify decrypted shares match expected C2 commitments.
+            self.verify_commitments();
 
-        // Step 2: Sum shares coefficient-wise per CRT limb.
-        let aggregated = self.compute_aggregated_shares();
+            // Step 2: Sum shares coefficient-wise per CRT limb.
+            let aggregated = self.compute_aggregated_shares();
 
-        // Step 3: Normalize to match C6's representation: reduce mod q, reverse, center.
-        let normalized = normalize_aggregated::<N, L>(aggregated, moduli);
+            // Step 3: Normalize to match C6's representation: reduce mod q, reverse, center.
+            let normalized = normalize_aggregated::<N, L>(aggregated, moduli);
 
-        // Step 4: Publish commitment to the aggregate (C6 input).
-        compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)
+            // Step 4: Publish commitment to the aggregate (C6 input).
+            compute_aggregated_shares_commitment::<N, L, BIT_AGG>(normalized)
+        }
     }
 }
 
@@ -167,4 +176,30 @@ fn normalize_aggregated<let N: u32, let L: u32>(
     }
 
     normalized
+}
+
+fn prove_secure<let N: u32, let L: u32, let H: u32, let B: u32, let BA: u32>(
+    qis: [Field; L],
+    expected: [[Field; L]; H],
+    shares: [[Polynomial<N>; L]; H],
+) -> Field {
+    parameters::<N, L>(qis);
+    assert((H == 2) | (H == 5) | (H == 10));
+    let mut totals = [Polynomial::new([0; N]); L];
+    for h in 0..H {
+        for l in 0..L {
+            // Packed commitment openings need local canonical bounds, even if C2 supplied the digest.
+            native(shares[h][l], qis[l]);
+            assert(
+                compute_share_encryption_commitment_from_message::<N, B>(reverse(shares[h][l]))
+                    == expected[h][l],
+            );
+            totals[l] = totals[l].add(shares[h][l]);
+        }
+    }
+    let mut out = [Polynomial::new([0; N]); L];
+    for l in 0..L {
+        out[l] = reverse(reduce_small_sum(totals[l], qis[l]));
+    }
+    compute_aggregated_shares_commitment::<N, L, BA>(out)
 }

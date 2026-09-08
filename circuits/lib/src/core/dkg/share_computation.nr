@@ -10,6 +10,7 @@ use crate::math::commitments::{
 };
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
+use crate::math::secure_arithmetic::{native, native_to_centered, parameters, reverse};
 
 /// Cryptographic parameters for Threshold secret share verification circuit.
 pub struct Configs<let L: u32> {
@@ -92,20 +93,30 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
 
     /// Main verification function
     pub fn execute(self) -> [[Field; L]; N_PARTIES] {
-        // Step 1: Verify secret commitment matches expected
-        self.verify_secret_commitment();
+        if (N == 8192) & (L == 3) {
+            self.verify_secret_consistency();
+            prove_sk::<N, L, N_PARTIES, T, BIT_SECRET, BIT_SHARE>(
+                self.configs.qis,
+                self.expected_secret_commitment,
+                self.sk_secret,
+                party_evaluations(self.y),
+            )
+        } else {
+            // Step 1: Verify secret commitment matches expected
+            self.verify_secret_commitment();
 
-        // Step 2: Verify secret consistency
-        self.verify_secret_consistency();
+            // Step 2: Verify secret consistency
+            self.verify_secret_consistency();
 
-        // Step 3: Range checks
-        check_range_bounds::<N, L, N_PARTIES, BIT_SHARE>(self.configs.qis, self.y);
+            // Step 3: Range checks
+            check_range_bounds::<N, L, N_PARTIES, BIT_SHARE>(self.configs.qis, self.y);
 
-        // Step 4: Verify parity check
-        verify_parity_check::<N, L, N_PARTIES, T>(self.configs.qis, self.h, self.y);
+            // Step 4: Verify parity check
+            verify_parity_check::<N, L, N_PARTIES, T>(self.configs.qis, self.h, self.y);
 
-        // Step 5: Commit to shares for each party and modulus
-        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y)
+            // Step 5: Commit to shares for each party and modulus
+            commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y)
+        }
     }
 
     /// Verifies that secret hashes to expected_secret_commitment.
@@ -162,20 +173,30 @@ impl<let N: u32, let L: u32, let N_PARTIES: u32, let T: u32, let BIT_SECRET: u32
 
     /// Main verification function
     pub fn execute(self) -> [[Field; L]; N_PARTIES] {
-        // Step 1: Verify secret commitment matches expected
-        self.verify_secret_commitment();
+        if (N == 8192) & (L == 3) {
+            self.verify_secret_consistency();
+            prove_esm::<N, L, N_PARTIES, T, BIT_SECRET, BIT_SHARE>(
+                self.configs.qis,
+                self.expected_secret_commitment,
+                self.e_sm_secret,
+                party_evaluations(self.y),
+            )
+        } else {
+            // Step 1: Verify secret commitment matches expected
+            self.verify_secret_commitment();
 
-        // Step 2: Verify secret consistency
-        self.verify_secret_consistency();
+            // Step 2: Verify secret consistency
+            self.verify_secret_consistency();
 
-        // Step 3: Range checks
-        check_range_bounds::<N, L, N_PARTIES, BIT_SHARE>(self.configs.qis, self.y);
+            // Step 3: Range checks
+            check_range_bounds::<N, L, N_PARTIES, BIT_SHARE>(self.configs.qis, self.y);
 
-        // Step 4: Verify parity check
-        verify_parity_check::<N, L, N_PARTIES, T>(self.configs.qis, self.h, self.y);
+            // Step 4: Verify parity check
+            verify_parity_check::<N, L, N_PARTIES, T>(self.configs.qis, self.h, self.y);
 
-        // Step 5: Commit to shares for each party and modulus
-        commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y)
+            // Step 5: Commit to shares for each party and modulus
+            commit_to_party_shares::<N, L, N_PARTIES, BIT_SHARE>(self.y)
+        }
     }
 
     /// Verifies that secret hashes to expected_secret_commitment.
@@ -325,4 +346,176 @@ pub fn commit_to_party_shares<let N: u32, let L: u32, let N_PARTIES: u32, let BI
     }
 
     commitments
+}
+
+// Keep the existing witness layout, including the checked f(0) coordinate.
+fn party_evaluations<let N: u32, let L: u32, let P: u32>(
+    y: [[[Field; P + 1]; L]; N],
+) -> [[[Field; P]; L]; N] {
+    let mut shares = [[[0 as Field; P]; L]; N];
+    for c in 0..N {
+        for l in 0..L {
+            for p in 0..P {
+                shares[c][l][p] = y[c][l][p + 1];
+            }
+        }
+    }
+    shares
+}
+
+unconstrained fn row_quotients<let N: u32>(s: [Field; N], q: Field) -> [Field; N] {
+    let mut out = [0; N];
+    for j in 0..N {
+        out[j] = ((s[j] as u128) / (q as u128)) as Field;
+    }
+    out
+}
+
+// Consecutive coordinates 0,1,...,P and q>P are required. This is not a general H-matrix API.
+pub fn finite_differences<let N: u32, let L: u32, let P: u32, let T: u32>(
+    qis: [Field; L],
+    secrets: [Polynomial<N>; L],
+    y: [[[Field; P]; L]; N],
+) {
+    assert(((P == 3) & (T == 1)) | ((P == 9) & (T == 4)) | ((P == 19) & (T == 9)));
+    // Pascal's triangle constructs public integer binomial coefficients without division.
+    let mut binomial = [0 as Field; T + 2];
+    binomial[0] = 1;
+    for _ in 0..(T + 1) {
+        for k in 0..(T + 1) {
+            let j = T + 1 - k;
+            binomial[j] += binomial[j - 1];
+        }
+    }
+    for l in 0..L {
+        let q = qis[l];
+        let offset = 2.pow_32((T + 1) as Field) * q;
+        for start in 0..(P - T) {
+            let mut sums = [0 as Field; N];
+            for c in 0..N {
+                let mut sum: Field = offset;
+                for j in 0..(T + 2) {
+                    // Select only the required coordinate. Do not copy every share per coefficient.
+                    let coordinate = start + j;
+                    let value = if coordinate == 0 {
+                        secrets[l].coefficients[c]
+                    } else {
+                        y[c][l][coordinate - 1]
+                    };
+                    if j % 2 == 0 {
+                        sum += binomial[j] * value;
+                    } else {
+                        sum -= binomial[j] * value;
+                    }
+                }
+                sums[c] = sum;
+            }
+            // Safety: bounded quotients must reproduce every finite-difference sum exactly.
+            let quotients = unsafe { row_quotients(sums, q) };
+            for c in 0..N {
+                quotients[c].assert_max_bit_size::<T + 2>();
+                assert(sums[c] == q * quotients[c]);
+            }
+        }
+    }
+}
+
+fn share_commitments<let N: u32, let L: u32, let P: u32, let B: u32>(
+    qis: [Field; L],
+    y: [[[Field; P]; L]; N],
+) -> [[Field; L]; P] {
+    let mut out = [[0 as Field; L]; P];
+    for party in 0..P {
+        for l in 0..L {
+            let mut coeffs = [0 as Field; N];
+            for j in 0..N {
+                coeffs[j] = y[j][l][party];
+            }
+            let poly = Polynomial::new(coeffs);
+            native(poly, qis[l]);
+            out[party][l] = compute_share_encryption_commitment_from_message::<N, B>(reverse(poly));
+        }
+    }
+    out
+}
+
+pub fn prove_sk<let N: u32, let L: u32, let P: u32, let T: u32, let BS: u32, let B: u32>(
+    qis: [Field; L],
+    expected: Field,
+    sk: Polynomial<N>,
+    y: [[[Field; P]; L]; N],
+) -> [[Field; L]; P] {
+    parameters::<N, L>(qis);
+    assert(BS == 1);
+    sk.range_check_2bounds::<BS>(1, 1);
+    assert(compute_share_computation_sk_commitment::<N, BS>(reverse(sk)) == expected);
+    let out = share_commitments::<N, L, P, B>(qis, y);
+    finite_differences::<N, L, P, T>(qis, [sk; L], y);
+    out
+}
+
+pub fn prove_esm<let N: u32, let L: u32, let P: u32, let T: u32, let BS: u32, let B: u32>(
+    qis: [Field; L],
+    expected: Field,
+    secret: [Polynomial<N>; L],
+    y: [[[Field; P]; L]; N],
+) -> [[Field; L]; P] {
+    parameters::<N, L>(qis);
+    let mut normalized = [Polynomial::new([0; N]); L];
+    for l in 0..L {
+        native(secret[l], qis[l]);
+        normalized[l] = reverse(native_to_centered(secret[l], qis[l]));
+    }
+    assert(compute_share_computation_e_sm_commitment::<N, L, BS>(normalized) == expected);
+    let out = share_commitments::<N, L, P, B>(qis, y);
+    finite_differences::<N, L, P, T>(qis, secret, y);
+    out
+}
+
+#[test]
+fn finite_difference_accepts_linear_shares() {
+    // f(x)=1+2x over the first four consecutive coordinates.
+    finite_differences::<1, 1, 3, 1>([101], [Polynomial::new([1])], [[[3, 5, 7]]]);
+}
+#[test]
+fn finite_difference_accepts_negative_secret() {
+    // The native residue of f(0)=-1 is 100 modulo 101.
+    finite_differences::<1, 1, 3, 1>([101], [Polynomial::new([-1])], [[[1, 3, 5]]]);
+}
+#[test(should_fail)]
+fn finite_difference_rejects_altered_share() {
+    finite_differences::<1, 1, 3, 1>([101], [Polynomial::new([1])], [[[3, 6, 7]]]);
+}
+
+fn degree_t_shares<let P: u32, let T: u32>() -> [[[Field; P]; 1]; 1] {
+    let mut y = [[[0 as Field; P]; 1]; 1];
+    for party in 0..P {
+        let mut value = 1 as u128;
+        for _ in 0..T {
+            value = value * ((party + 1) as u128) % 101;
+        }
+        y[0][0][party] = value as Field;
+    }
+    y
+}
+
+#[test]
+fn finite_difference_accepts_micro() {
+    finite_differences::<1, 1, 9, 4>([101], [Polynomial::new([0])], degree_t_shares::<9, 4>());
+}
+#[test]
+fn finite_difference_accepts_small() {
+    finite_differences::<1, 1, 19, 9>([101], [Polynomial::new([0])], degree_t_shares::<19, 9>());
+}
+#[test(should_fail)]
+fn finite_difference_rejects_last_micro_share() {
+    let mut y = degree_t_shares::<9, 4>();
+    y[0][0][8] += 1;
+    finite_differences::<1, 1, 9, 4>([101], [Polynomial::new([0])], y);
+}
+#[test(should_fail)]
+fn finite_difference_rejects_last_small_share() {
+    let mut y = degree_t_shares::<19, 9>();
+    y[0][0][18] += 1;
+    finite_differences::<1, 1, 19, 9>([101], [Polynomial::new([0])], y);
 }

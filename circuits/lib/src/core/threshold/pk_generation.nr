@@ -10,6 +10,9 @@ use crate::math::commitments::{
 };
 use crate::math::helpers::flatten;
 use crate::math::polynomial::Polynomial;
+use crate::math::secure_arithmetic::{
+    append, centered, challenge, dot, fold_negacyclic, kernel, parameters,
+};
 
 /// Parameters for threshold public key generation (C1).
 pub struct Configs<let N: u32, let L: u32> {
@@ -123,21 +126,37 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
     ///
     /// Returns `(commit(sk), commit(pk_trbfv), commit(e_sm))` as documented on the struct.
     pub fn execute(self) -> (Field, Field, Field) {
-        // Step 1: Range-check secret witnesses (sk, eek, e_sm, quotients).
-        self.perform_range_checks();
+        if (N == 8192) & (L == 3) {
+            let mut q_short = [Polynomial::new([0; N]); L];
+            for l in 0..L {
+                q_short[l] = fold_negacyclic(self.r1[l]);
+            }
+            prove_secure::<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_PK>(
+                self.configs,
+                self.a,
+                self.eek,
+                self.sk,
+                self.e_sm,
+                q_short,
+                self.pk0,
+            )
+        } else {
+            // Step 1: Range-check secret witnesses (sk, eek, e_sm, quotients).
+            self.perform_range_checks();
 
-        // Step 2: Derive commitments for the FS transcript.
-        let sk_commitment = compute_share_computation_sk_commitment::<N, BIT_SK>(self.sk);
-        let e_sm_commitment =
-            compute_share_computation_e_sm_commitment::<N, L, BIT_E_SM>(self.e_sm);
-        let pk_commitment = compute_threshold_pk_commitment::<N, L, BIT_PK>(self.pk0);
+            // Step 2: Derive commitments for the FS transcript.
+            let sk_commitment = compute_share_computation_sk_commitment::<N, BIT_SK>(self.sk);
+            let e_sm_commitment =
+                compute_share_computation_e_sm_commitment::<N, L, BIT_E_SM>(self.e_sm);
+            let pk_commitment = compute_threshold_pk_commitment::<N, L, BIT_PK>(self.pk0);
 
-        // Step 3: Fiat-Shamir challenge and per-modulus evaluation checks.
-        let gamma = self.generate_challenge(sk_commitment, pk_commitment);
-        self.verify_evaluations(gamma);
+            // Step 3: Fiat-Shamir challenge and per-modulus evaluation checks.
+            let gamma = self.generate_challenge(sk_commitment, pk_commitment);
+            self.verify_evaluations(gamma);
 
-        // Step 4: Return commitments for downstream circuits.
-        (sk_commitment, pk_commitment, e_sm_commitment)
+            // Step 4: Return commitments for downstream circuits.
+            (sk_commitment, pk_commitment, e_sm_commitment)
+        }
     }
 
     /// Generates Fiat-Shamir challenge values using the SAFE cryptographic sponge.
@@ -202,4 +221,57 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
             assert(self.pk0[i].eval(gamma) == expected_pk0, "Public key equation 1 failed");
         }
     }
+}
+
+fn prove_secure<let N: u32, let L: u32, let BE: u32, let BS: u32, let BESM: u32, let BPK: u32>(
+    configs: Configs<N, L>,
+    a: [Polynomial<N>; L],
+    eek: Polynomial<N>,
+    sk: Polynomial<N>,
+    e_sm: [Polynomial<N>; L],
+    q_short: [Polynomial<N>; L],
+    pk0is: [Polynomial<N>; L],
+) -> (Field, Field, Field) {
+    parameters::<N, L>(configs.qis);
+    assert(configs.sk_bound == 1);
+    assert(configs.eek_bound == 20);
+    assert(BE == 5);
+    assert(BS == 1);
+    sk.range_check_2bounds::<BS>(1, 1);
+    eek.range_check_2bounds::<BE>(20, 20);
+    for l in 0..L {
+        centered(pk0is[l], configs.qis[l]);
+        // The Rust generator already centers each noise residue modulo q_l.
+        // Prove that the configured global bound contains that interval, then use
+        // the cheaper canonical-residue check. The global noise distribution is unchanged.
+        assert((BESM >= 58) & (BESM <= 192));
+        configs.e_sm_bound.assert_max_bit_size::<BESM>();
+        (configs.e_sm_bound - (configs.qis[l] - 1) / 2).assert_max_bit_size::<BESM>();
+        centered(e_sm[l], configs.qis[l]);
+        for j in 0..N {
+            (q_short[l].coefficients[j] + 8192).assert_max_bit_size::<14>();
+        }
+    }
+    let sc = compute_share_computation_sk_commitment::<N, BS>(sk);
+    let ec = compute_share_computation_e_sm_commitment::<N, L, BESM>(e_sm);
+    let pc = compute_threshold_pk_commitment::<N, L, BPK>(pk0is);
+    // a is the fixed CRP in this entry point, not a private or public caller-supplied value.
+    let mut payload = [101, N as Field, L as Field, sc, pc, ec].as_vector();
+    payload = append::<N, 6>(payload, eek, 20);
+    for l in 0..L {
+        payload = payload.push_back(configs.qis[l]);
+        payload = append::<N, 14>(payload, q_short[l], 8192);
+    }
+    let x = challenge(payload);
+    let k = kernel(sk, x);
+    for l in 0..L {
+        let mut residual = [0; N];
+        for j in 0..N {
+            residual[j] = pk0is[l].coefficients[j]
+                - eek.coefficients[j]
+                - configs.qis[l] * q_short[l].coefficients[j];
+        }
+        assert(Polynomial::new(residual).eval(x) == -dot(a[l], k));
+    }
+    (sc, pc, ec)
 }

@@ -14,6 +14,13 @@ Delegated bonding does not alter cryptographic identity. Every ECDSA proof signa
 by the hot operator key and verified against the operator address snapshotted into the committee.
 The bond owner never signs DKG, key-publication, computation, or decryption messages.
 
+On this review branch, the normal DKG and threshold leaves select compact arithmetic for
+secure-8192. The existing witness layouts and public commitment formats remain. Insecure parameters
+retain the original path; C4 uses compact arithmetic only for the minimum committee. C0 and C5 are
+unchanged. The new checking transcripts require new verification keys, dependent recursive
+artifacts, and matching on-chain verifiers before deployment. See
+`circuits/benchmarks/secure_compaction/README.md` for earlier measurements and validation limits.
+
 ---
 
 ## Phase 1: DKG — Distributed Key Generation

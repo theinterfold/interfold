@@ -29,10 +29,7 @@ fn main(
     d: [Polynomial<N>; L],
     d_native_trunc: [Polynomial<MAX_MSG_NON_ZERO_COEFFS>; L],
 ) -> pub Field {
-    // The domain is intentionally not part of the BFV arithmetic. Making it a
-    // public input of this secret-bearing proof cryptographically authorizes
-    // this exact E3 context; recursive aggregation must preserve both limbs.
-    let _ = (domain_hi, domain_lo);
+    // Preserve both public domain limbs through the leaf and recursive proofs.
     let share_decryption: ShareDecryption<N, MAX_MSG_NON_ZERO_COEFFS, L, THRESHOLD_SHARE_DECRYPTION_BIT_CT, THRESHOLD_SHARE_DECRYPTION_BIT_SK, THRESHOLD_SHARE_DECRYPTION_BIT_E_SM, THRESHOLD_SHARE_DECRYPTION_BIT_R1, THRESHOLD_SHARE_DECRYPTION_BIT_R2, THRESHOLD_SHARE_DECRYPTION_BIT_D, THRESHOLD_SHARE_DECRYPTION_BIT_D_NATIVE> = ShareDecryption::new(
         THRESHOLD_SHARE_DECRYPTION_CONFIGS,
         expected_sk_commitment,
@@ -47,5 +44,5 @@ fn main(
         d,
         d_native_trunc,
     );
-    share_decryption.execute()
+    share_decryption.execute(domain_hi, domain_lo)
 }

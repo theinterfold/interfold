@@ -7,6 +7,9 @@
 use crate::math::commitments::compute_threshold_decryption_share_commitment;
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
+use crate::math::secure_arithmetic::{
+    divide_big_hint, divide_u128_hint, divisible, native, range, TH_Q, TH_T,
+};
 use ::bignum::BigNum;
 use ::bignum::bignum::to_field;
 use ::bignum::SecureThreshold8192;
@@ -82,33 +85,44 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u3
 
     /// Run all checks (no return value; asserts hold or the proof fails).
     pub fn execute(self) {
-        for party_idx in 0..(T + 1) {
-            let computed = compute_threshold_decryption_share_commitment::<MAX_MSG_NON_ZERO_COEFFS, L, BIT_D_NATIVE>(
-                self.decryption_shares[party_idx],
+        if L == 3 {
+            prove_secure::<MAX_MSG_NON_ZERO_COEFFS, L, T + 1, 2 * T + 1, BIT_D_NATIVE>(
+                self.configs,
+                self.expected_d_commitments,
+                self.party_ids,
+                self.message,
+                self.decryption_shares,
             );
-            assert(computed == self.expected_d_commitments[party_idx], "d commitment mismatch");
+        } else {
+            for party_idx in 0..(T + 1) {
+                let computed = compute_threshold_decryption_share_commitment::<MAX_MSG_NON_ZERO_COEFFS, L, BIT_D_NATIVE>(
+                    self.decryption_shares[party_idx],
+                );
+                assert(computed == self.expected_d_commitments[party_idx], "d commitment mismatch");
+            }
+
+            // Step 1: Compute Lagrange coefficients in-circuit
+            let lagrange_coeffs =
+                compute_all_lagrange_coeffs::<T, L>(self.configs.qis, self.party_ids);
+
+            // Step 2: Compute u^{(l)} for each CRT basis via Lagrange interpolation
+            let u_crts = compute_crt_components::<MAX_MSG_NON_ZERO_COEFFS, L, T>(
+                self.configs.qis,
+                self.decryption_shares,
+                lagrange_coeffs,
+            );
+
+            // Step 3: Verify CRT reconstruction: u^{(l)} + r^{(l)} * q_l = u_global
+            verify_crt_reconstruction::<MAX_MSG_NON_ZERO_COEFFS, L>(
+                self.configs.qis,
+                self.u_global,
+                self.crt_quotients,
+                u_crts,
+            );
+
+            // Step 4: Verify decoding
+            self.verify_decoding();
         }
-
-        // Step 1: Compute Lagrange coefficients in-circuit
-        let lagrange_coeffs = compute_all_lagrange_coeffs::<T, L>(self.configs.qis, self.party_ids);
-
-        // Step 2: Compute u^{(l)} for each CRT basis via Lagrange interpolation
-        let u_crts = compute_crt_components::<MAX_MSG_NON_ZERO_COEFFS, L, T>(
-            self.configs.qis,
-            self.decryption_shares,
-            lagrange_coeffs,
-        );
-
-        // Step 3: Verify CRT reconstruction: u^{(l)} + r^{(l)} * q_l = u_global
-        verify_crt_reconstruction::<MAX_MSG_NON_ZERO_COEFFS, L>(
-            self.configs.qis,
-            self.u_global,
-            self.crt_quotients,
-            u_crts,
-        );
-
-        // Step 4: Verify decoding
-        self.verify_decoding();
     }
 
     /// Verifies decoding using BigNum for large Q values
@@ -312,4 +326,189 @@ fn test_decoded_zero_coefficient_must_match() {
 fn test_nonzero_decoded_coefficient_cannot_be_claimed_as_zero() {
     // Regression test for IF-002: the old conditional check skipped this case.
     assert_decoded_coefficient(1, 0);
+}
+
+// All hint arithmetic is public-parameter-bounded. Callers separately prove every result.
+unconstrained fn lagrange_hint(n: Field, d: Field, q: Field, neg: bool) -> Field {
+    let modulus = q as u128;
+    let mut base = d as u128;
+    let exponent = (q as u64) - 2;
+    let mut inverse = 1 as u128;
+    for bit in 0..64 {
+        if ((exponent >> bit) & 1) == 1 {
+            inverse = (inverse * base) % modulus;
+        }
+        base = (base * base) % modulus;
+    }
+    let value = ((n as u128) * inverse) % modulus;
+    if neg & (value != 0) {
+        (modulus - value) as Field
+    } else {
+        value as Field
+    }
+}
+
+fn reduce<let BQ: u32>(x: Field, q: Field) -> Field {
+    // Safety: a bounded quotient and canonical remainder constrain the division.
+    let k = unsafe { divide_u128_hint(x, q) };
+    k.assert_max_bit_size::<BQ>();
+    let remainder = x - q * k;
+    native(Polynomial::new([remainder]), q);
+    remainder
+}
+
+pub fn lagrange<let H: u32, let P: u32>(ids: [Field; H]) -> [[Field; H]; 3] {
+    assert(((P == 3) & (H == 2)) | ((P == 9) & (H == 5)) | ((P == 19) & (H == 10)));
+    for i in 0..H {
+        ids[i].assert_max_bit_size::<5>();
+        assert((ids[i] as u32) > 0);
+        assert((ids[i] as u32) <= P);
+    }
+    for i in 1..H {
+        assert((ids[i - 1] as u32) < (ids[i] as u32));
+    }
+    let mut out = [[0 as Field; H]; 3];
+    for i in 0..H {
+        let mut n: Field = 1;
+        let mut d: Field = 1;
+        for j in 0..H {
+            if j != i {
+                n *= ids[j];
+                let difference = if j > i {
+                    ids[j] - ids[i]
+                } else {
+                    ids[i] - ids[j]
+                };
+                d *= difference;
+            }
+        }
+        let neg = i % 2 == 1;
+        for l in 0..3 {
+            let q = TH_Q[l];
+            // Safety: canonical residues and exact divisibility constrain the inverse relation.
+            let coefficient = unsafe { lagrange_hint(n, d, q, neg) };
+            native(Polynomial::new([coefficient]), q);
+            // n,d < 19^9 < 2^39 < q, so this is a nonnegative <2^98 integer.
+            let signed_term = if neg { n } else { q - n };
+            let numerator = d * coefficient + signed_term;
+            divisible::<40>(numerator, q);
+            out[l][i] = coefficient;
+        }
+    }
+    out
+}
+
+// Caller must already constrain each residue to [0,q_l).
+// Garner reconstruction gives the unique U in [0,Q). No global CRT witness is accepted.
+pub fn reconstruct(r: [Field; 3]) -> Field {
+    let q0 = TH_Q[0];
+    let q1 = TH_Q[1];
+    let q2 = TH_Q[2];
+    // These are inverse(q0) modulo q1 and inverse(q0*q1) modulo q2.
+    let inv01: Field = 14411408858559267;
+    let inv012: Field = 135437144770778859;
+    let a = reduce::<60>((r[1] - r[0] + 2 * q1) * inv01, q1);
+    let u01 = r[0] + q0 * a;
+    let rem01 = reduce::<60>(u01, q2);
+    let b = reduce::<60>((r[2] - rem01 + q2) * inv012, q2);
+    u01 + (q0 * q1) * b
+}
+
+fn prove_secure<let K: u32, let L: u32, let H: u32, let P: u32, let BD: u32>(
+    configs: Configs<L>,
+    expected: [Field; H],
+    ids: [Field; H],
+    message: Polynomial<K>,
+    shares: [[Polynomial<K>; L]; H],
+) {
+    assert(L == 3);
+    assert(configs.plaintext_modulus == TH_T);
+    assert(configs.q_inverse_mod_t == 536833);
+    for l in 0..L {
+        assert(configs.qis[l] == TH_Q[l]);
+    }
+    for h in 0..H {
+        for l in 0..L {
+            native(shares[h][l], TH_Q[l]);
+        }
+        assert(compute_threshold_decryption_share_commitment::<K, L, BD>(shares[h]) == expected[h]);
+    }
+    let coefficients = lagrange::<H, P>(ids);
+    let q = TH_Q[0] * TH_Q[1] * TH_Q[2];
+    let half = (q - 1) / 2;
+    for j in 0..K {
+        let mut residues = [0 as Field; 3];
+        for l in 0..L {
+            let mut sum: Field = 0;
+            for h in 0..H {
+                sum += shares[h][l].coefficients[j] * coefficients[l][h];
+            }
+            // H<=10 and both operands <q_l: sum<2^119, quotient<2^62.
+            residues[l] = reduce::<62>(sum, TH_Q[l]);
+        }
+        let u = reconstruct(residues);
+        // 0<=u<Q; t*Q has 191 bits. No native-field wrap is possible.
+        let numerator = TH_T * u + half;
+        // Safety: the quotient bound and exact remainder interval constrain rounding.
+        let rounded = unsafe { divide_big_hint(numerator, q) };
+        rounded.assert_max_bit_size::<20>();
+        range::<172>(numerator - q * rounded, q);
+        let decoded = if rounded == TH_T { 0 } else { rounded };
+        assert(decoded == message.coefficients[j], "decoded message mismatch");
+    }
+}
+
+#[test]
+fn garner_small_residue_cases() {
+    let q = TH_Q[0] * TH_Q[1] * TH_Q[2];
+    assert(reconstruct([0, 0, 0]) == 0);
+    assert(reconstruct([1, 1, 1]) == 1);
+    assert(reconstruct([TH_Q[0] - 1, TH_Q[1] - 1, TH_Q[2] - 1]) == q - 1);
+}
+#[test]
+fn minimal_lagrange() {
+    let a = lagrange::<2, 3>([1, 3]);
+    for l in 0..3 {
+        assert(((2 * a[l][0] - 3) == 0) | ((2 * a[l][0] - 3) == TH_Q[l]));
+    }
+}
+#[test(should_fail)]
+fn reject_duplicate_ids() {
+    let _ = lagrange::<2, 3>([1, 1]);
+}
+#[test(should_fail)]
+fn reject_zero_id() {
+    let _ = lagrange::<2, 3>([0, 2]);
+}
+#[test(should_fail)]
+fn reject_noncommittee_id() {
+    let _ = lagrange::<2, 3>([1, 4]);
+}
+
+#[test]
+fn zero_decoding_is_checked() {
+    let p = Polynomial::new([0]);
+    let share = [p; 3];
+    let commitment = compute_threshold_decryption_share_commitment::<1, 3, 58>(share);
+    let cfg = Configs::new(TH_Q, TH_T, 536833);
+    let circuit: DecryptedSharesAggregation<1, 3, 1, 1, 58> =
+        DecryptedSharesAggregation::new(cfg, [commitment; 2], [share; 2], [1, 3], p, p, share);
+    circuit.execute();
+}
+#[test(should_fail)]
+fn wrong_claimed_message_cannot_pass() {
+    let p = Polynomial::new([0]);
+    let share = [p; 3];
+    let commitment = compute_threshold_decryption_share_commitment::<1, 3, 58>(share);
+    let cfg = Configs::new(TH_Q, TH_T, 536833);
+    let circuit: DecryptedSharesAggregation<1, 3, 1, 1, 58> = DecryptedSharesAggregation::new(
+        cfg,
+        [commitment; 2],
+        [share; 2],
+        [1, 3],
+        Polynomial::new([1]),
+        p,
+        share,
+    );
+    circuit.execute();
 }

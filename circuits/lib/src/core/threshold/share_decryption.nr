@@ -10,6 +10,9 @@ use crate::math::commitments::{
 };
 use crate::math::helpers::flatten;
 use crate::math::polynomial::Polynomial;
+use crate::math::secure_arithmetic::{
+    append, centered, centered_to_native, challenge, dot, fold_negacyclic, kernel, parameters,
+};
 
 /// Parameters for threshold share decryption (C6).
 pub struct Configs<let L: u32> {
@@ -202,37 +205,59 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
     }
 
     /// Returns the C7-facing commitment to the first `MAX_MSG_NON_ZERO_COEFFS` coeffs of `d` per limb.
-    pub fn execute(self) -> Field {
-        // Step 1: Verify sk commitment matches expected
-        self.verify_agg_sk_commitment();
+    pub fn execute(self, domain_hi: Field, domain_lo: Field) -> Field {
+        if (N == 8192) & (L == 3) {
+            self.verify_d_native_trunc_binding();
+            let mut q_short = [Polynomial::new([0; N]); L];
+            for l in 0..L {
+                q_short[l] = fold_negacyclic(self.r1[l]);
+            }
+            prove_secure::<N, MAX_MSG_NON_ZERO_COEFFS, L, BIT_CT, BIT_SK, BIT_E_SM, BIT_D_NATIVE>(
+                self.configs.qis,
+                self.expected_sk_commitment,
+                self.expected_e_sm_commitment,
+                self.ct_commitment,
+                domain_hi,
+                domain_lo,
+                self.ct0,
+                self.ct1,
+                self.sk,
+                self.e_sm,
+                q_short,
+                self.d,
+            )
+        } else {
+            // Step 1: Verify sk commitment matches expected
+            self.verify_agg_sk_commitment();
 
-        // Step 2: Verify e_sm commitment matches expected
-        self.verify_agg_e_sm_commitment();
+            // Step 2: Verify e_sm commitment matches expected
+            self.verify_agg_e_sm_commitment();
 
-        // Step 3: Bind witness ciphertext to the public ct_commitment
-        self.verify_ct_commitment();
+            // Step 3: Bind witness ciphertext to the public ct_commitment
+            self.verify_ct_commitment();
 
-        // Step 4: Range-check quotient polynomials (r1, r2).
-        // sk and e_sm are enforced only via `verify_agg_*_commitment` against C4 outputs; C4
-        // aggregated per-party shares that passed verification against C2 (see `dkg/share_decryption`).
-        self.check_range_bounds();
+            // Step 4: Range-check quotient polynomials (r1, r2).
+            // sk and e_sm are enforced only via `verify_agg_*_commitment` against C4 outputs; C4
+            // aggregated per-party shares that passed verification against C2 (see `dkg/share_decryption`).
+            self.check_range_bounds();
 
-        self.verify_d_native_trunc_binding();
-        let d_commitment = compute_threshold_decryption_share_commitment::<MAX_MSG_NON_ZERO_COEFFS, L, BIT_D_NATIVE>(
-            self.d_native_trunc,
-        );
+            self.verify_d_native_trunc_binding();
+            let d_commitment = compute_threshold_decryption_share_commitment::<MAX_MSG_NON_ZERO_COEFFS, L, BIT_D_NATIVE>(
+                self.d_native_trunc,
+            );
 
-        // Step 5: Generate Fiat-Shamir challenge from the transcript
-        let gamma = self.generate_challenge();
+            // Step 5: Generate Fiat-Shamir challenge from the transcript
+            let gamma = self.generate_challenge();
 
-        // Step 6: Verify decryption share computation for each CRT basis.
-        // cyclo_at_gamma is identical across all bases (same gamma, same N); compute once.
-        let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
-        for i in 0..L {
-            self.verify_decryption_share_computation(i, gamma, cyclo_at_gamma);
+            // Step 6: Verify decryption share computation for each CRT basis.
+            // cyclo_at_gamma is identical across all bases (same gamma, same N); compute once.
+            let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
+            for i in 0..L {
+                self.verify_decryption_share_computation(i, gamma, cyclo_at_gamma);
+            }
+
+            d_commitment
         }
-
-        d_commitment
     }
 
     /// Performs range checks on quotient polynomial witnesses.
@@ -343,4 +368,77 @@ impl<let N: u32, let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let BIT_CT: u32, 
             "Decryption share computation failed",
         );
     }
+}
+
+fn prove_secure<let N: u32, let K: u32, let L: u32, let BC: u32, let BS: u32, let BE: u32, let BN: u32>(
+    qis: [Field; L],
+    expected_sk: Field,
+    expected_esm: Field,
+    expected_ct: Field,
+    domain_hi: Field,
+    domain_lo: Field,
+    ct0: [Polynomial<N>; L],
+    ct1: [Polynomial<N>; L],
+    sk: [Polynomial<N>; L],
+    esm: [Polynomial<N>; L],
+    q_short: [Polynomial<N>; L],
+    d: [Polynomial<N>; L],
+) -> Field {
+    parameters::<N, L>(qis);
+    assert(K <= N);
+    domain_hi.assert_max_bit_size::<128>();
+    domain_lo.assert_max_bit_size::<128>();
+    for l in 0..L {
+        centered(ct0[l], qis[l]);
+        centered(ct1[l], qis[l]);
+        centered(sk[l], qis[l]);
+        centered(esm[l], qis[l]);
+        centered(d[l], qis[l]);
+        for j in 0..N {
+            (q_short[l].coefficients[j] + 2.pow_32(69)).assert_max_bit_size::<70>();
+        }
+    }
+    assert(compute_aggregated_shares_commitment::<N, L, BS>(sk) == expected_sk);
+    assert(compute_aggregated_shares_commitment::<N, L, BE>(esm) == expected_esm);
+    assert(compute_ciphertext_commitment::<N, L, BC>(ct0, ct1) == expected_ct);
+    let mut tails = [Polynomial::new([0; K]); L];
+    for l in 0..L {
+        let mut values = [0; K];
+        for j in 0..K {
+            values[j] = d[l].coefficients[N - 1 - j];
+        }
+        tails[l] = centered_to_native(Polynomial::new(values), qis[l]);
+    }
+    let dc = compute_threshold_decryption_share_commitment::<K, L, BN>(tails);
+    let mut payload = [
+        106,
+        N as Field,
+        L as Field,
+        K as Field,
+        expected_sk,
+        expected_esm,
+        expected_ct,
+        domain_hi,
+        domain_lo,
+        dc,
+    ]
+        .as_vector();
+    for l in 0..L {
+        payload = payload.push_back(qis[l]);
+        payload = append::<N, 70>(payload, q_short[l], 2.pow_32(69));
+        payload = append::<N, 58>(payload, d[l], 2.pow_32(57));
+    }
+    let x = challenge(payload);
+    for l in 0..L {
+        let k = kernel(sk[l], x);
+        let mut residual = [0; N];
+        for j in 0..N {
+            residual[j] = d[l].coefficients[j]
+                - ct0[l].coefficients[j]
+                - esm[l].coefficients[j]
+                - qis[l] * q_short[l].coefficients[j];
+        }
+        assert(Polynomial::new(residual).eval(x) == dot(ct1[l], k));
+    }
+    dc
 }

@@ -9,9 +9,15 @@ use crate::math::commitments::{
     compute_share_encryption_commitment_from_message,
 };
 use crate::math::commitments::compute_dkg_pk_commitment;
+use crate::math::helpers::compute_safe;
 use crate::math::helpers::flatten;
 use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
+use crate::math::secure_arithmetic::fold_negacyclic;
+use crate::math::share_encryption_arithmetic::{
+    ALPHA, append_offset, BETA, canonical_message, canonical_poly, DELTA, DS_C3_MAX_V3, product_dot,
+    product_kernel, rounding_carries, SECURE_K0, SECURE_Q, SECURE_SCALE, SECURE_T, SMALL_D,
+};
 
 /// Parameters for DKG share encryption (C3).
 pub struct Configs<let L: u32> {
@@ -286,28 +292,32 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
     /// Executes the share encryption circuit and returns the ciphertext commitment (C3 public output).
     pub fn execute(self) -> Field {
-        // Step 1: Verify public key commitment matches expected
-        self.verify_pk_commitment();
+        if (N == 8192) & (L == 2) {
+            self.execute_secure()
+        } else {
+            // Step 1: Verify public key commitment matches expected
+            self.verify_pk_commitment();
 
-        // Step 2: Verify message commitment matches expected
-        self.verify_message_commitment();
+            // Step 2: Verify message commitment matches expected
+            self.verify_message_commitment();
 
-        // Step 3: Perform range checks
-        self.check_range_bounds();
+            // Step 3: Perform range checks
+            self.check_range_bounds();
 
-        // Step 4: Check CRT consistency for e0
-        self.check_e0_crt_consistency();
+            // Step 4: Check CRT consistency for e0
+            self.check_e0_crt_consistency();
 
-        // Step 5: Compute scaled message k1 from message
-        let k1 = self.compute_scaled_message();
+            // Step 5: Compute scaled message k1 from message
+            let k1 = self.compute_scaled_message();
 
-        // Step 6: Generate Fiat-Shamir challenges
-        let gammas = self.generate_challenge(k1);
+            // Step 6: Generate Fiat-Shamir challenges
+            let gammas = self.generate_challenge(k1);
 
-        // Step 7: Verify encryption constraints
-        self.verify_evaluations(gammas, k1);
+            // Step 7: Verify encryption constraints
+            self.verify_evaluations(gammas, k1);
 
-        compute_ciphertext_commitment::<N, L, BIT_CT>(self.ct0is, self.ct1is)
+            compute_ciphertext_commitment::<N, L, BIT_CT>(self.ct0is, self.ct1is)
+        }
     }
 
     /// Performs range checks on all secret witness polynomial coefficients.
@@ -409,5 +419,130 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         }
 
         assert(sum.0 == sum.1);
+    }
+    fn check_secure_parameters(self) {
+        assert(N == 8192);
+        assert(L == 2);
+        assert(DELTA * SECURE_T + SECURE_SCALE == SECURE_Q[0] * SECURE_Q[1]);
+        for l in 0..2 {
+            assert(SMALL_D[l] == 4 * SECURE_Q[l] - DELTA);
+            assert(SECURE_K0[l] * SECURE_T + 1 == BETA[l] * SECURE_Q[l]);
+            assert(SECURE_K0[l] * SECURE_SCALE + SMALL_D[l] == ALPHA[l] * SECURE_Q[l]);
+        }
+
+        assert(self.configs.t == SECURE_T);
+        assert(self.configs.q_mod_t == SECURE_SCALE);
+        assert(self.configs.u_bound == 1);
+        assert(self.configs.e0_bound == 20);
+        assert(self.configs.e1_bound == 20);
+        assert(BIT_PK == 59);
+        assert(BIT_CT == 59);
+        assert(BIT_MSG == 58);
+        for l in 0..L {
+            assert(self.configs.qis[l] == SECURE_Q[l]);
+            assert(self.configs.k0is[l] == SECURE_K0[l]);
+        }
+    }
+    fn check_secure_statement_bounds(self) {
+        self.u.range_check_2bounds::<1>(1, 1);
+        self.e0.range_check_2bounds::<5>(20, 20);
+        self.e1.range_check_2bounds::<5>(20, 20);
+        canonical_message(self.message);
+        // q0 = 2^59 + 16385; q1 = 2^59 + 278529. Canonical endpoints are preserved.
+        canonical_poly::<N, 15>(self.pk0is[0], SECURE_Q[0]);
+        canonical_poly::<N, 15>(self.pk1is[0], SECURE_Q[0]);
+        canonical_poly::<N, 15>(self.ct0is[0], SECURE_Q[0]);
+        canonical_poly::<N, 15>(self.ct1is[0], SECURE_Q[0]);
+        canonical_poly::<N, 19>(self.pk0is[1], SECURE_Q[1]);
+        canonical_poly::<N, 19>(self.pk1is[1], SECURE_Q[1]);
+        canonical_poly::<N, 19>(self.ct0is[1], SECURE_Q[1]);
+        canonical_poly::<N, 19>(self.ct1is[1], SECURE_Q[1]);
+    }
+    fn execute_secure(self) -> Field {
+        self.check_secure_parameters();
+        self.check_secure_statement_bounds();
+        assert(
+            compute_dkg_pk_commitment::<N, L, 59>(self.pk0is, self.pk1is)
+                == self.expected_pk_commitment,
+            "Public key commitment mismatch",
+        );
+        assert(
+            compute_share_encryption_commitment_from_message::<N, 58>(self.message)
+                == self.expected_message_commitment,
+            "Message commitment mismatch",
+        );
+        let ct_commitment = compute_ciphertext_commitment::<N, L, 59>(self.ct0is, self.ct1is);
+        let z = rounding_carries(self.message);
+
+        // Reduce the existing quotient witnesses. No unconstrained conversion is used.
+        let mut q0 = [Polynomial::new([0; N]); L];
+        let mut q1 = [Polynomial::new([0; N]); L];
+        for l in 0..L {
+            let folded = fold_negacyclic(self.r1is[l]);
+            for j in 0..N {
+                q0[l].coefficients[j] = folded.coefficients[j]
+                    + ALPHA[l] * self.message.coefficients[j]
+                    - BETA[l] * z.coefficients[j];
+            }
+            q1[l] = fold_negacyclic(self.p1is[l]);
+        }
+        let difference = q0[1].sub(q0[0]);
+        for j in 0..N {
+            (q0[0].coefficients[j] + 8192).assert_max_bit_size::<27>();
+            (difference.coefficients[j] + 16384).assert_max_bit_size::<19>();
+            for l in 0..2 {
+                (q1[l].coefficients[j] + 8192).assert_max_bit_size::<14>();
+            }
+        }
+
+        // Bind all independent operands. z is uniquely constrained by the committed message.
+        // Only the reduced, range-checked quotients enter this transcript.
+        let mut inputs = [
+            3,
+            N as Field,
+            2 as Field,
+            SECURE_T,
+            SECURE_SCALE,
+            self.expected_pk_commitment,
+            self.expected_message_commitment,
+            ct_commitment,
+        ]
+            .as_vector();
+        for l in 0..2 {
+            inputs = inputs.push_back(SECURE_Q[l]);
+            inputs = inputs.push_back(SECURE_K0[l]);
+        }
+        inputs = append_offset::<N, 2>(inputs, self.u, 1);
+        inputs = append_offset::<N, 6>(inputs, self.e0, 20);
+        inputs = append_offset::<N, 6>(inputs, self.e1, 20);
+        inputs = append_offset::<N, 27>(inputs, q0[0], 8192);
+        inputs = append_offset::<N, 19>(inputs, difference, 16384);
+        for l in 0..2 {
+            inputs = append_offset::<N, 14>(inputs, q1[l], 8192);
+        }
+        let x = compute_safe(DS_C3_MAX_V3, inputs, [0x80000000 | inputs.len(), 1])[0];
+        let mut x_n = x;
+        for _ in 0..13 {
+            x_n = x_n * x_n;
+        }
+        let kernel = product_kernel(self.u, x, x_n + 1);
+
+        for l in 0..2 {
+            // Move linear coefficient terms together before evaluating them.
+            let mut residual0 = Polynomial::new([0; N]);
+            let mut residual1 = Polynomial::new([0; N]);
+            for j in 0..N {
+                residual0.coefficients[j] = self.ct0is[l].coefficients[j] - self.e0.coefficients[j]
+                    + SMALL_D[l] * self.message.coefficients[j]
+                    - z.coefficients[j]
+                    - SECURE_Q[l] * q0[l].coefficients[j];
+                residual1.coefficients[j] = self.ct1is[l].coefficients[j]
+                    - self.e1.coefficients[j]
+                    - SECURE_Q[l] * q1[l].coefficients[j];
+            }
+            assert(residual0.eval(x) == product_dot(self.pk0is[l], kernel));
+            assert(residual1.eval(x) == product_dot(self.pk1is[l], kernel));
+        }
+        ct_commitment
     }
 }
