@@ -1,0 +1,7 @@
+[package]
+name = "ct1_chunk_p1"
+type = "bin"
+authors = [""]
+
+[dependencies]
+lib = { path = "../../../lib" }

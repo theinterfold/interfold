@@ -1,7 +1,0 @@
-[package]
-name = "ct0_r1_check"
-type = "bin"
-authors = [""]
-
-[dependencies]
-lib = { path = "../../../lib" }

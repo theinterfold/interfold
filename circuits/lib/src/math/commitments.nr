@@ -272,20 +272,21 @@ pub fn compute_sc_secret_chunk_root_commitment(
 }
 
 // Commitment kind tags for user_data_encryption (ct0/ct1). Distinguishes which witness group a
-// commitment belongs to so values from different groups/legs never collide under the shared
-// DS_USER_DATA_ENCRYPTION_CHUNK domain separator. `u`/`k1` (ct0) and `u` (ct1) aren't here - they
-// use the protocol-invariant `compute_single_polynomial_commitment` scheme instead (see
-// `ct0_u_k1_check`/`ct1_e1_p2_u_check`), since the wrapper cross-checks ct0's and ct1's
-// `u_commitment` directly.
+// chunk commitment belongs to so values from different groups/legs never collide under the
+// shared DS_USER_DATA_ENCRYPTION_CHUNK domain separator (same purpose as DKG's SK=0/ESM=1
+// kind_tag).
+pub global UDE_KIND_CT0_U: Field = 0;
 pub global UDE_KIND_CT0_E0: Field = 1;
+pub global UDE_KIND_CT0_K1: Field = 2;
 pub global UDE_KIND_CT0_R2: Field = 3;
 pub global UDE_KIND_CT0_R1: Field = 4;
+pub global UDE_KIND_CT1_U: Field = 5;
 pub global UDE_KIND_CT1_E1: Field = 6;
 pub global UDE_KIND_CT1_P2: Field = 7;
 pub global UDE_KIND_CT1_P1: Field = 8;
 
-/// Compute a domain-separated commitment for one user_data_encryption witness group (single
-/// polynomial: e0 or e1). `kind_tag` is one of the `UDE_KIND_*` constants above.
+/// Compute a domain-separated commitment for one user_data_encryption chunk (single polynomial:
+/// u, e0, k1, or e1). `kind_tag` is one of the `UDE_KIND_*` constants above.
 pub fn compute_ude_chunk_commitment<let CHUNK_SIZE: u32, let BIT: u32>(
     kind_tag: Field,
     chunk_idx: u32,
@@ -309,6 +310,22 @@ pub fn compute_ude_multi_chunk_commitment<let CHUNK_SIZE: u32, let L: u32, let B
     let mut payload =
         [0, kind_tag, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
     payload = multiple_polynomial_payload::<CHUNK_SIZE, L, BIT>(payload, polynomials);
+    compute_commitment(payload, DS_USER_DATA_ENCRYPTION_CHUNK)
+}
+
+/// Compute the root commitment for a set of user_data_encryption chunk commitments. Shared by
+/// both `compute_ude_chunk_commitment` and `compute_ude_multi_chunk_commitment` leaves, the same
+/// way `compute_sc_secret_chunk_root_commitment` is shared by SK/ESM in the DKG chunk pipeline.
+pub fn compute_ude_chunk_root_commitment(
+    kind_tag: Field,
+    n: u32,
+    chunk_size: u32,
+    chunk_commitments: [Field],
+) -> Field {
+    let mut payload = [1, kind_tag, n as Field, chunk_size as Field].as_vector();
+    for i in 0..chunk_commitments.len() {
+        payload = payload.push_back(chunk_commitments[i]);
+    }
     compute_commitment(payload, DS_USER_DATA_ENCRYPTION_CHUNK)
 }
 

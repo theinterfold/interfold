@@ -1,7 +1,0 @@
-[package]
-name = "ct1_eval_e1_p2_u"
-type = "bin"
-authors = [""]
-
-[dependencies]
-lib = { path = "../../../lib" }

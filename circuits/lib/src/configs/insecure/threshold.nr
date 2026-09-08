@@ -1163,6 +1163,26 @@ pub global USER_DATA_ENCRYPTION_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> 
 
 /************************************
 -------------------------------------
+user_data_encryption chunking (ct0/ct1 coefficient-level chunk grid)
+-------------------------------------
+************************************/
+
+// Not a cryptographic parameter - see the comment at this constant's call site in
+// generate_config_modules.rs for the sizing rationale (N_CHUNKS=2 is the minimum that's
+// still genuinely "chunking"). Each grid's own chunk width is computed locally
+// (N / USER_DATA_ENCRYPTION_N_CHUNKS for the main grid, (2*N) / USER_DATA_ENCRYPTION_R1_N_CHUNKS
+// for the r1/p1 grid) rather than shared, since r1/p1 is twice as long at the same chunk count.
+
+// Main grid: covers u, e0, k1, r2is (ct0) / u, e1, p2is (ct1) - everything of length N.
+// r2is/p2is (degree N-1) are padded to N by one always-zero top coefficient.
+pub global USER_DATA_ENCRYPTION_N_CHUNKS: u32 = 2;
+
+// r1/p1 grid: covers r1is (ct0) / p1is (ct1), padded from degree 2N-1 to 2N by one
+// always-zero top coefficient.
+pub global USER_DATA_ENCRYPTION_R1_N_CHUNKS: u32 = 2;
+
+/************************************
+-------------------------------------
 share_decryption (CIRCUIT 6 - THRESHOLD BFV SHARE DECRYPTION)
 -------------------------------------
 ************************************/

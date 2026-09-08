@@ -13,15 +13,13 @@ use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncrypt
 use crate::math::polynomial::Polynomial;
 
 pub use crate::configs::committee::active::{
-    SECURE_16384_E_SM_BIT as PK_GENERATION_BIT_E_SM,
-    SECURE_16384_E_SM_BOUND as PK_GENERATION_E_SM_BOUND,
+    SECURE_16384_E_SM_BIT as PK_GENERATION_BIT_E_SM, SECURE_16384_E_SM_BOUND as PK_GENERATION_E_SM_BOUND,
 };
 
 // Global configs for threshold secure_16384 preset
 pub global N: u32 = 16384;
 pub global L: u32 = 5;
-pub global QIS: [Field; L] =
-    [1125899917262849, 1125899915886593, 1125899915231233, 1125899915100161, 1125899914510337];
+pub global QIS: [Field; L] = [1125899917262849, 1125899915886593, 1125899915231233, 1125899915100161, 1125899914510337];
 pub global PLAINTEXT_MODULUS: Field = 1000;
 pub global Q_MOD_T: Field = 617;
 pub global Q_MOD_T_CENTERED: Field = -383;
@@ -81980,8 +81978,7 @@ pub global PK_GENERATION_BIT_PK: u32 = 50;
 pub global PK_GENERATION_EEK_BOUND: Field = 20;
 pub global PK_GENERATION_SK_BOUND: Field = 1;
 pub global PK_GENERATION_R1_BOUNDS: [Field; L] = [8192, 8192, 8192, 8192, 8192];
-pub global PK_GENERATION_R2_BOUNDS: [Field; L] =
-    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
+pub global PK_GENERATION_R2_BOUNDS: [Field; L] = [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
 
 pub global PK_GENERATION_B_ENC: Field = 28147497671065600;
 
@@ -82021,10 +82018,8 @@ pub global USER_DATA_ENCRYPTION_BIT_R2: u32 = 50;
 pub global USER_DATA_ENCRYPTION_BIT_P1: u32 = 14;
 pub global USER_DATA_ENCRYPTION_BIT_P2: u32 = 50;
 
-pub global USER_DATA_ENCRYPTION_K0IS: [Field; L] =
-    [730709046303589, 514536261560173, 1009932223962416, 496521862559171, 307370676661322];
-pub global USER_DATA_ENCRYPTION_PK_BOUNDS: [Field; L] =
-    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
+pub global USER_DATA_ENCRYPTION_K0IS: [Field; L] = [730709046303589, 514536261560173, 1009932223962416, 496521862559171, 307370676661322];
+pub global USER_DATA_ENCRYPTION_PK_BOUNDS: [Field; L] = [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
 pub global USER_DATA_ENCRYPTION_E0_BOUND: Field = 28147497671065600;
 pub global USER_DATA_ENCRYPTION_E1_BOUND: Field = 20;
 pub global USER_DATA_ENCRYPTION_U_BOUND: Field = 1;
@@ -82032,11 +82027,9 @@ pub global USER_DATA_ENCRYPTION_K1_LOW_BOUND: Field = 0;
 pub global USER_DATA_ENCRYPTION_K1_UP_BOUND: Field = 999;
 pub global USER_DATA_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [8193, 8193, 8193, 8193, 8193];
 pub global USER_DATA_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [8842, 8650, 9090, 8634, 8466];
-pub global USER_DATA_ENCRYPTION_R2_BOUNDS: [Field; L] =
-    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
+pub global USER_DATA_ENCRYPTION_R2_BOUNDS: [Field; L] = [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
 pub global USER_DATA_ENCRYPTION_P1_BOUNDS: [Field; L] = [8192, 8192, 8192, 8192, 8192];
-pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] =
-    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
+pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
 
 /************************************
 -------------------------------------
@@ -82072,6 +82065,26 @@ pub global USER_DATA_ENCRYPTION_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> 
 
 /************************************
 -------------------------------------
+user_data_encryption chunking (ct0/ct1 coefficient-level chunk grid)
+-------------------------------------
+************************************/
+
+// Not a cryptographic parameter - see the comment at this constant's call site in
+// generate_config_modules.rs for the sizing rationale (N_CHUNKS=2 is the minimum that's
+// still genuinely "chunking"). Each grid's own chunk width is computed locally
+// (N / USER_DATA_ENCRYPTION_N_CHUNKS for the main grid, (2*N) / USER_DATA_ENCRYPTION_R1_N_CHUNKS
+// for the r1/p1 grid) rather than shared, since r1/p1 is twice as long at the same chunk count.
+
+// Main grid: covers u, e0, k1, r2is (ct0) / u, e1, p2is (ct1) - everything of length N.
+// r2is/p2is (degree N-1) are padded to N by one always-zero top coefficient.
+pub global USER_DATA_ENCRYPTION_N_CHUNKS: u32 = 2;
+
+// r1/p1 grid: covers r1is (ct0) / p1is (ct1), padded from degree 2N-1 to 2N by one
+// always-zero top coefficient.
+pub global USER_DATA_ENCRYPTION_R1_N_CHUNKS: u32 = 2;
+
+/************************************
+-------------------------------------
 share_decryption (CIRCUIT 6 - THRESHOLD BFV SHARE DECRYPTION)
 -------------------------------------
 ************************************/
@@ -82084,15 +82097,8 @@ pub global THRESHOLD_SHARE_DECRYPTION_BIT_R2: u32 = 50;
 pub global THRESHOLD_SHARE_DECRYPTION_BIT_D: u32 = 50;
 pub global THRESHOLD_SHARE_DECRYPTION_BIT_D_NATIVE: u32 = 51;
 
-pub global THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS: [Field; L] = [
-    4611686061108621314,
-    4611686055471476738,
-    4611686052787122178,
-    4611686052250251266,
-    4611686049834332162,
-];
-pub global THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS: [Field; L] =
-    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
+pub global THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS: [Field; L] = [4611686061108621314, 4611686055471476738, 4611686052787122178, 4611686052250251266, 4611686049834332162];
+pub global THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS: [Field; L] = [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
 
 pub global THRESHOLD_SHARE_DECRYPTION_CONFIGS: ShareDecryptionConfigs<L> = ShareDecryptionConfigs::new(
     QIS,

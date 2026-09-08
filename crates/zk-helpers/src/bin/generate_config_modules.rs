@@ -182,6 +182,16 @@ fn render_threshold(preset: BfvPreset) -> Result<String> {
         _ => unreachable!("config generation requires a threshold preset"),
     };
 
+    // user_data_encryption chunking grid: not a cryptographic parameter, just how ct0/ct1's
+    // range-check + evaluation work is split across browser-sized circuits. N_CHUNKS=2 is the
+    // minimum that's still genuinely "chunking" (one fewer and it degenerates to the
+    // witness-group-split design) - it also means every grid's leaves combine directly into a
+    // root with no intermediate pair/quad level, minimizing total proving instances while every
+    // circuit still measures well under the 2M gate ceiling. Each grid's own chunk width is
+    // computed locally (main: N/N_CHUNKS, r1/p1: 2N/R1_N_CHUNKS) rather than shared, since r1/p1
+    // is twice as long at the same chunk count.
+    let (udec_n_chunks, udec_r1_n_chunks) = (2u32, 2u32);
+
     let header = format!(
         "{LICENSE}
 use crate::core::threshold::decrypted_shares_aggregation::Configs as DecryptedSharesAggregationConfigs;
@@ -362,6 +372,26 @@ pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];",
 );",
     );
 
+    let udec_chunking_section = section(
+        "user_data_encryption chunking (ct0/ct1 coefficient-level chunk grid)",
+        &format!(
+            "// Not a cryptographic parameter - see the comment at this constant's call site in
+// generate_config_modules.rs for the sizing rationale (N_CHUNKS=2 is the minimum that's
+// still genuinely \"chunking\"). Each grid's own chunk width is computed locally
+// (N / USER_DATA_ENCRYPTION_N_CHUNKS for the main grid, (2*N) / USER_DATA_ENCRYPTION_R1_N_CHUNKS
+// for the r1/p1 grid) rather than shared, since r1/p1 is twice as long at the same chunk count.
+
+// Main grid: covers u, e0, k1, r2is (ct0) / u, e1, p2is (ct1) - everything of length N.
+// r2is/p2is (degree N-1) are padded to N by one always-zero top coefficient.
+pub global USER_DATA_ENCRYPTION_N_CHUNKS: u32 = {};
+
+// r1/p1 grid: covers r1is (ct0) / p1is (ct1), padded from degree 2N-1 to 2N by one
+// always-zero top coefficient.
+pub global USER_DATA_ENCRYPTION_R1_N_CHUNKS: u32 = {};",
+            udec_n_chunks, udec_r1_n_chunks,
+        ),
+    );
+
     let tsd_section = section(
         "share_decryption (CIRCUIT 6 - THRESHOLD BFV SHARE DECRYPTION)",
         &format!(
@@ -406,7 +436,7 @@ pub global DECRYPTED_SHARES_AGGREGATION_CONFIGS: DecryptedSharesAggregationConfi
     );
 
     Ok(format!(
-        "{header}{pkgen_section}\n\n{pkagg_section}\n\n{udec_section}\n\n{udec_ct0_section}\n\n{udec_ct1_section}\n\n{tsd_section}\n\n{dsa_section}\n"
+        "{header}{pkgen_section}\n\n{pkagg_section}\n\n{udec_section}\n\n{udec_ct0_section}\n\n{udec_ct1_section}\n\n{udec_chunking_section}\n\n{tsd_section}\n\n{dsa_section}\n"
     ))
 }
 
