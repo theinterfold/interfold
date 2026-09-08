@@ -82020,6 +82020,11 @@ pub global USER_DATA_ENCRYPTION_BIT_R1: u32 = 14;
 pub global USER_DATA_ENCRYPTION_BIT_R2: u32 = 50;
 pub global USER_DATA_ENCRYPTION_BIT_P1: u32 = 14;
 pub global USER_DATA_ENCRYPTION_BIT_P2: u32 = 50;
+// Bit width for `e0_quotients` (the CRT quotient in `e0 == e0is[i] + e0_quotients[i] * qis[i]`).
+// MUST be range-checked with USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS: the equation holds in
+// F_p, not Z, so an unconstrained quotient lets a prover pick any e0is (soundness gap, not a
+// tuning knob - see check_e0_crt_consistency's callers).
+pub global USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT: u32 = 5;
 
 pub global USER_DATA_ENCRYPTION_K0IS: [Field; L] =
     [730709046303589, 514536261560173, 1009932223962416, 496521862559171, 307370676661322];
@@ -82037,6 +82042,8 @@ pub global USER_DATA_ENCRYPTION_R2_BOUNDS: [Field; L] =
 pub global USER_DATA_ENCRYPTION_P1_BOUNDS: [Field; L] = [8192, 8192, 8192, 8192, 8192];
 pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] =
     [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
+// Per-limb bound on the honest e0_quotients[i] magnitude: (e0_bound + qi_bound) / qi + 1.
+pub global USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS: [Field; L] = [26, 26, 26, 26, 26];
 
 /************************************
 -------------------------------------
@@ -82054,6 +82061,7 @@ pub global USER_DATA_ENCRYPTION_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> 
     USER_DATA_ENCRYPTION_R2_BOUNDS,
     USER_DATA_ENCRYPTION_K1_LOW_BOUND,
     USER_DATA_ENCRYPTION_K1_UP_BOUND,
+    USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS,
 );
 
 /************************************

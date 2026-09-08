@@ -28,6 +28,8 @@ pub struct Configs<let N: u32, let L: u32> {
     pub r2_bounds: [Field; L],
     pub k1_low_bound: Field,
     pub k1_up_bound: Field,
+    /// Per-limb bound on the honest `e0_quotients[i]` magnitude - see `check_range_bounds`.
+    pub e0_quotient_bounds: [Field; L],
 }
 
 impl<let N: u32, let L: u32> Configs<N, L> {
@@ -41,6 +43,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
         r2_bounds: [Field; L],
         k1_low_bound: Field,
         k1_up_bound: Field,
+        e0_quotient_bounds: [Field; L],
     ) -> Self {
         Configs {
             qis,
@@ -52,6 +55,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
             r2_bounds,
             k1_low_bound,
             k1_up_bound,
+            e0_quotient_bounds,
         }
     }
 }
@@ -64,7 +68,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 /// **Consumes:** Threshold PK from C5 (`pk0is` witness path).
 ///
 /// **Produces:** `(pk0_commitment, ct0_commitment, k1_commitment, u_commitment)` public outputs.
-pub struct UserDataEncryptionCt0<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R1: u32, let BIT_R2: u32> {
+pub struct UserDataEncryptionCt0<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_E0_QUOTIENT: u32> {
     configs: Configs<N, L>,
     /// Aggregated threshold `pk0` limb (from C5).
     pk0is: [Polynomial<N>; L],
@@ -78,7 +82,7 @@ pub struct UserDataEncryptionCt0<let N: u32, let L: u32, let BIT_PK: u32, let BI
     r2is: [Polynomial<N - 1>; L],
 }
 
-impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R1: u32, let BIT_R2: u32> UserDataEncryptionCt0<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E0, BIT_K, BIT_R1, BIT_R2> {
+impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, let BIT_E0: u32, let BIT_K: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_E0_QUOTIENT: u32> UserDataEncryptionCt0<N, L, BIT_PK, BIT_CT, BIT_U, BIT_E0, BIT_K, BIT_R1, BIT_R2, BIT_E0_QUOTIENT> {
 
     pub fn new(
         configs: Configs<N, L>,
@@ -120,6 +124,16 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             self.r2is[i].range_check_2bounds::<BIT_R2>(
                 self.configs.r2_bounds[i],
                 self.configs.r2_bounds[i],
+            );
+            // `check_e0_crt_consistency`'s equation holds in F_p, not Z: an unbounded
+            // `e0_quotients[i]` lets a prover satisfy it for an arbitrary `e0is[i]` by solving
+            // `e0_quotients[i] := (e0 - e0is[i]) / qis[i]` via the modular inverse, which then
+            // reaches `verify_evaluations` unmediated. Bounding the quotient to the honest range
+            // closes that gap; deliberately not bounding `e0is` itself (redundant - any multiple
+            // of qis[i] absorbed there is absorbed one-for-one by r1is mod qis[i]).
+            self.e0_quotients[i].range_check_2bounds::<BIT_E0_QUOTIENT>(
+                self.configs.e0_quotient_bounds[i],
+                self.configs.e0_quotient_bounds[i],
             );
         }
     }
@@ -204,4 +218,108 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
 
         (pk0_commitment, ct0_commitment, k1_commitment, u_commitment)
     }
+}
+
+// Regression/demonstration tests for the e0_quotients soundness gap: `check_e0_crt_consistency`
+// checks `e0[j] == e0is[i][j] + e0_quotients[i][j] * qis[i]` as an equation in the SNARK's
+// native field F_p, not over Z. Left unconstrained, `e0_quotients` lets a prover pick ANY
+// e0is[i][j] and back-solve `e0_quotients[i][j] = (e0[j] - e0is[i][j]) / qis[i]` (Field division
+// = multiplication by the modular inverse), satisfying the assertion trivially regardless of how
+// implausible the resulting quotient is as an honest CRT decomposition (honest quotients for
+// this preset sit in roughly [-25, 25]; the one constructed below is ~2^40, nowhere close).
+// Since Round B evaluates `e0is` directly (`e0is_at_gamma`, never bounded or committed) into
+// `verify_evaluations`'s RHS, this lets a prover choose an arbitrary `ct0is`, solve
+// `e0is := ct0is - (pk0is*u + k1*k0is + r1i*qi + r2i*cyclo)` at the coefficient level, and pass
+// the whole ct0 circuit with `u`/`e0`/`k1`/`r1is`/`r2is` all honest and in range.
+//
+// The fix range-checks `e0_quotients` in `check_range_bounds` (not in
+// `check_e0_crt_consistency`, which is - and always will be - satisfiable for any e0is by
+// itself; the two checks only close the gap together, matching `execute()`'s call order).
+
+/// Documents that `check_e0_crt_consistency` alone remains, by construction, always
+/// satisfiable for a forged e0is - this is inherent to checking the equation in F_p, not a bug
+/// to fix in that method. It's `check_range_bounds` (tested below) that has to reject the
+/// forgery.
+#[test]
+fn test_e0_crt_consistency_alone_accepts_arbitrary_e0is() {
+    let honest_e0_coeff: Field = 5;
+    let qis0: Field = 1125899917262849; // real secure_16384 QIS[0], for realism
+    let forged_e0is_coeff: Field = 999999999999; // arbitrary, no honest relation to e0=5
+    let forged_quotient: Field = (honest_e0_coeff - forged_e0is_coeff) / qis0;
+    assert(forged_quotient != 0); // nowhere near the honest [-25, 25] range
+
+    let configs = test_configs(qis0, 100, 32);
+    let circuit = test_circuit(configs, honest_e0_coeff, forged_e0is_coeff, forged_quotient);
+
+    // The real, unmodified production check - not a reimplementation. It does not panic on a
+    // forged e0is with a back-solved, wildly out-of-range quotient.
+    circuit.check_e0_crt_consistency();
+}
+
+/// Confirms the fix: the same forged witness, but now going through `check_range_bounds` too
+/// (as `execute()` does) - the out-of-range `e0_quotients` gets rejected.
+#[test(should_fail)]
+fn test_check_range_bounds_rejects_out_of_range_e0_quotient() {
+    let honest_e0_coeff: Field = 5;
+    let qis0: Field = 1125899917262849;
+    let forged_e0is_coeff: Field = 999999999999;
+    let forged_quotient: Field = (honest_e0_coeff - forged_e0is_coeff) / qis0;
+
+    let configs = test_configs(qis0, 100, 32);
+    let circuit = test_circuit(configs, honest_e0_coeff, forged_e0is_coeff, forged_quotient);
+
+    circuit.check_range_bounds();
+}
+
+/// Sanity check: an honest quotient (within the configured bound) must still pass
+/// `check_range_bounds`, so the fix doesn't reject legitimate witnesses.
+#[test]
+fn test_check_range_bounds_accepts_honest_e0_quotient() {
+    let honest_e0_coeff: Field = 5;
+    let qis0: Field = 1125899917262849;
+    let honest_e0is_coeff: Field = 5; // same as e0, so the honest quotient is exactly 0
+    let honest_quotient: Field = 0;
+
+    let configs = test_configs(qis0, 100, 32);
+    let circuit = test_circuit(configs, honest_e0_coeff, honest_e0is_coeff, honest_quotient);
+
+    circuit.check_range_bounds();
+}
+
+// e0_bound=100 and BIT_E0=8 (9-bit capacity) comfortably cover the small honest_e0_coeff used
+// above; e0_quotient_bound and BIT_E0_QUOTIENT=6 (7-bit capacity, range_size=2*bound) mirror the
+// real fix's ~32 margin over the ~25.5 honest maximum at the real secure_16384 preset.
+fn test_configs(qis0: Field, e0_bound: Field, e0_quotient_bound: Field) -> Configs<2, 1> {
+    Configs::new(
+        [qis0],
+        [0],
+        e0_bound,
+        0,
+        [0],
+        [0],
+        [0],
+        0,
+        0,
+        [e0_quotient_bound],
+    )
+}
+
+fn test_circuit(
+    configs: Configs<2, 1>,
+    e0_coeff: Field,
+    e0is_coeff: Field,
+    quotient: Field,
+) -> UserDataEncryptionCt0<2, 1, 1, 1, 1, 8, 1, 1, 1, 6> {
+    UserDataEncryptionCt0::new(
+        configs,
+        [Polynomial::new([0, 0])],
+        [Polynomial::new([0, 0])],
+        Polynomial::new([0, 0]),
+        Polynomial::new([e0_coeff, 0]),
+        [Polynomial::new([e0is_coeff, 0])],
+        [Polynomial::new([quotient, 0])],
+        Polynomial::new([0, 0]),
+        [Polynomial::new([0, 0, 0])],
+        [Polynomial::new([0])],
+    )
 }

@@ -17,8 +17,9 @@
 //! chunk's contribution (done in the combine tree) reconstructs the full evaluation exactly.
 
 use lib::configs::default::threshold::{
-    L, N, QIS, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_R1,
-    USER_DATA_ENCRYPTION_BIT_R2, USER_DATA_ENCRYPTION_BIT_U,
+    L, N, QIS, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT,
+    USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_R1, USER_DATA_ENCRYPTION_BIT_R2,
+    USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS,
     USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS, USER_DATA_ENCRYPTION_R1_N_CHUNKS as R1_N_CHUNKS,
 };
 use lib::math::commitments::{
@@ -42,6 +43,16 @@ fn main(
     gamma: pub Field,
 ) -> pub (Field, Field, Field, Field, Field, Field, Field, [Field; L], [Field; L], [Field; L]) {
     for i in 0..L {
+        // Round B's e0_quotients_chunk is an independent witness from Round A's - neither round
+        // commits to e0is/e0_quotients, so there is no cross-round binding forcing them to
+        // match, and Round A's own range check (if present) provides no protection here. This
+        // range check on Round B's copy is the one that actually matters: e0is_partial below
+        // feeds e0is_at_gamma, which reaches the identity check unmediated by any other bound.
+        // See user_data_encryption_ct0.nr's check_range_bounds for the full analysis.
+        e0_quotients_chunk[i].range_check_2bounds::<USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT>(
+            USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS[i],
+            USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS[i],
+        );
         for j in 0..CHUNK_SIZE {
             assert(
                 e0_chunk.coefficients[j]

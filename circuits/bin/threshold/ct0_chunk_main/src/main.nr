@@ -27,12 +27,13 @@
 //! convention); the padding slot lives at global index 0, i.e. chunk_idx 0's local offset 0.
 
 use lib::configs::default::threshold::{
-    L, N, QIS, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_R1,
-    USER_DATA_ENCRYPTION_BIT_R2, USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_E0_BOUND,
-    USER_DATA_ENCRYPTION_K1_LOW_BOUND, USER_DATA_ENCRYPTION_K1_UP_BOUND,
-    USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS, USER_DATA_ENCRYPTION_R1_LOW_BOUNDS,
-    USER_DATA_ENCRYPTION_R1_N_CHUNKS as R1_N_CHUNKS, USER_DATA_ENCRYPTION_R1_UP_BOUNDS,
-    USER_DATA_ENCRYPTION_R2_BOUNDS, USER_DATA_ENCRYPTION_U_BOUND,
+    L, N, QIS, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT,
+    USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_R1, USER_DATA_ENCRYPTION_BIT_R2,
+    USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_E0_BOUND,
+    USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS, USER_DATA_ENCRYPTION_K1_LOW_BOUND,
+    USER_DATA_ENCRYPTION_K1_UP_BOUND, USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS,
+    USER_DATA_ENCRYPTION_R1_LOW_BOUNDS, USER_DATA_ENCRYPTION_R1_N_CHUNKS as R1_N_CHUNKS,
+    USER_DATA_ENCRYPTION_R1_UP_BOUNDS, USER_DATA_ENCRYPTION_R2_BOUNDS, USER_DATA_ENCRYPTION_U_BOUND,
 };
 
 global CHUNK_SIZE: u32 = N / N_CHUNKS;
@@ -84,6 +85,15 @@ fn main(
         r1is_chunk[i].range_check_2bounds::<USER_DATA_ENCRYPTION_BIT_R1>(
             USER_DATA_ENCRYPTION_R1_UP_BOUNDS[i],
             USER_DATA_ENCRYPTION_R1_LOW_BOUNDS[i],
+        );
+        // The CRT-consistency assert below holds in F_p, not Z: an unbounded e0_quotients[i]
+        // lets a prover satisfy it for an arbitrary e0is[i] by solving
+        // e0_quotients[i] := (e0 - e0is[i]) / QIS[i] via the modular inverse, which then reaches
+        // the identity check unmediated. This range check closes that gap - see
+        // user_data_encryption_ct0.nr's check_range_bounds for the full analysis.
+        e0_quotients_chunk[i].range_check_2bounds::<USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT>(
+            USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS[i],
+            USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS[i],
         );
     }
 

@@ -308,6 +308,11 @@ pub global USER_DATA_ENCRYPTION_BIT_R1: u32 = {};
 pub global USER_DATA_ENCRYPTION_BIT_R2: u32 = {};
 pub global USER_DATA_ENCRYPTION_BIT_P1: u32 = {};
 pub global USER_DATA_ENCRYPTION_BIT_P2: u32 = {};
+// Bit width for `e0_quotients` (the CRT quotient in `e0 == e0is[i] + e0_quotients[i] * qis[i]`).
+// MUST be range-checked with USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS: the equation holds in
+// F_p, not Z, so an unconstrained quotient lets a prover pick any e0is (soundness gap, not a
+// tuning knob - see check_e0_crt_consistency's callers).
+pub global USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT: u32 = {};
 
 pub global USER_DATA_ENCRYPTION_K0IS: [Field; L] = [{}];
 pub global USER_DATA_ENCRYPTION_PK_BOUNDS: [Field; L] = [{}];
@@ -320,7 +325,9 @@ pub global USER_DATA_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [{}];
 pub global USER_DATA_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [{}];
 pub global USER_DATA_ENCRYPTION_R2_BOUNDS: [Field; L] = [{}];
 pub global USER_DATA_ENCRYPTION_P1_BOUNDS: [Field; L] = [{}];
-pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];",
+pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];
+// Per-limb bound on the honest e0_quotients[i] magnitude: (e0_bound + qi_bound) / qi + 1.
+pub global USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS: [Field; L] = [{}];",
             udec.bits.pk_bit,
             udec.bits.ct_bit,
             udec.bits.u_bit,
@@ -331,6 +338,7 @@ pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];",
             udec.bits.r2_bit,
             udec.bits.p1_bit,
             udec.bits.p2_bit,
+            udec.bits.e0_quotient_bit,
             join_display(&udec.k0is, ", "),
             join_biguint(&udec.bounds.pk_bounds),
             udec.bounds.e0_bound,
@@ -343,6 +351,7 @@ pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];",
             join_biguint(&udec.bounds.r2_bounds),
             join_biguint(&udec.bounds.p1_bounds),
             join_biguint(&udec.bounds.p2_bounds),
+            join_biguint(&udec.bounds.e0_quotient_bounds),
         ),
     );
 
@@ -358,6 +367,7 @@ pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];",
     USER_DATA_ENCRYPTION_R2_BOUNDS,
     USER_DATA_ENCRYPTION_K1_LOW_BOUND,
     USER_DATA_ENCRYPTION_K1_UP_BOUND,
+    USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS,
 );",
     );
 
