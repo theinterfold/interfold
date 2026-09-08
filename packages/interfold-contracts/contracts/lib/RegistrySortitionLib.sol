@@ -107,10 +107,12 @@ library RegistrySortitionLib {
     }
 
     /// @custom:storage-location erc7201:interfold.storage.RegistrySortitionRandomness
+    /// @dev `degraded` is appended at the end. Do not insert fields before it.
     struct RandomnessStorage {
         IRandomnessProvider provider;
         uint256 requestTimeout;
         mapping(uint256 e3Id => RandomnessRequest request) requests;
+        bool degraded;
     }
 
     function insertCandidate(
@@ -364,7 +366,7 @@ library RegistrySortitionLib {
         );
     }
 
-    /// @notice Marks a requested committee as failed and stops future requests if its response expired.
+    /// @notice Marks a requested committee as failed and reports an expired randomness response.
     /// @dev A timely response must never be discarded and replaced with a new draw.
     function failRequestedCommittee(
         ICiphernodeRegistry.Committee storage committee,
@@ -372,11 +374,17 @@ library RegistrySortitionLib {
     ) external {
         if (committee.stage != ICiphernodeRegistry.CommitteeStage.Requested)
             return;
-        _tripRandomnessCircuitBreaker(e3Id);
+        _flagRandomnessDegraded(e3Id);
         committee.stage = ICiphernodeRegistry.CommitteeStage.Failed;
     }
 
-    function _tripRandomnessCircuitBreaker(uint256 e3Id) private {
+    /// @notice Reports one expired randomness response without stopping new requests.
+    /// @dev The breaker is advisory. An expired response is reachable permissionlessly through
+    ///      the committee timeout path, through `markE3Failed`, and through `cancelE3`. If it
+    ///      cleared the registry-global provider, one prepared round could stop every later
+    ///      request until governance pauses requests and every committee releases. This
+    ///      function records the condition and lets governance re-point the provider.
+    function _flagRandomnessDegraded(uint256 e3Id) private {
         RandomnessStorage storage state = _randomnessStorage();
         RandomnessRequest storage request = state.requests[e3Id];
         if (
@@ -389,14 +397,12 @@ library RegistrySortitionLib {
         (bool ready, , ) = _providerState(request, e3Id);
         if (ready) return;
 
-        address failedProvider = address(state.provider);
-        state.provider = IRandomnessProvider(address(0));
+        if (!state.degraded) state.degraded = true;
         emit ICiphernodeRegistry.RandomnessCircuitBreakerTripped(
             e3Id,
             request.requestId,
-            failedProvider
+            address(state.provider)
         );
-        emit ICiphernodeRegistry.RandomnessProviderSet(address(0));
     }
 
     /// @notice Validates every precondition for releasing a committee's obligations.
@@ -462,7 +468,10 @@ library RegistrySortitionLib {
                 address(this),
                 actualRequester
             );
-        _randomnessStorage().provider = provider;
+        RandomnessStorage storage state = _randomnessStorage();
+        state.provider = provider;
+        // A new provider clears the advisory degraded flag.
+        if (state.degraded) state.degraded = false;
         emit ICiphernodeRegistry.RandomnessProviderSet(providerAddress);
     }
 
@@ -504,6 +513,11 @@ library RegistrySortitionLib {
 
     function randomnessRequestTimeout() external view returns (uint256) {
         return _randomnessStorage().requestTimeout;
+    }
+
+    /// @notice Tells whether one randomness response expired since the last provider change.
+    function randomnessDegraded() external view returns (bool) {
+        return _randomnessStorage().degraded;
     }
 
     function requestContext(

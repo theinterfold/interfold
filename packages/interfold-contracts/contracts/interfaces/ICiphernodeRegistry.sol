@@ -266,7 +266,9 @@ interface ICiphernodeRegistry {
     /// @notice Emitted when the randomness provider changes.
     event RandomnessProviderSet(address indexed randomnessProvider);
 
-    /// @notice Emitted when an expired response disables future randomness requests.
+    /// @notice Emitted when a randomness response expires without a usable result.
+    /// @dev The signal is advisory. New requests continue to use the same provider until
+    ///      governance re-points it with `setRandomnessProvider`.
     event RandomnessCircuitBreakerTripped(
         uint256 indexed e3Id,
         uint256 indexed requestId,
@@ -655,6 +657,10 @@ interface ICiphernodeRegistry {
 
     /// @notice Returns the maximum time allowed for a randomness response.
     function randomnessRequestTimeout() external view returns (uint256);
+
+    /// @notice Tells whether one randomness response expired since the last provider change.
+    /// @dev Advisory only. Governance uses it to decide a provider change.
+    function randomnessDegraded() external view returns (bool);
 
     /// @notice Returns the duration that the exit delay must exceed.
     /// @dev Includes the current randomness and submission windows and the

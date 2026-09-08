@@ -670,10 +670,23 @@ it starts after the E3 has failed or completed.
 If no usable response arrives, no party can re-request or replace the random word. After the frozen
 response deadline, the requester can cancel the E3 or any caller can finalize its timeout. Both
 paths classify it as `CommitteeFormationTimeout`, release committee obligations, and return all
-service fee escrow to the requester. The flat randomness fee stays charged. The timeout also clears
-the active provider. New E3 requests then revert until governance pauses requests, investigates the
-failure, and restores a provider. A late callback stays recorded in the request-bound provider but
-cannot restart the E3.
+service fee escrow to the requester. The flat randomness fee stays charged. The timeout also sets an
+advisory `degraded` flag and emits `RandomnessCircuitBreakerTripped`. New E3 requests continue to
+use the same provider. Governance reads `randomnessDegraded()`, investigates the failure, and
+re-points the provider with `setRandomnessProvider`, which clears the flag. A late callback stays
+recorded in the request-bound provider but cannot restart the E3.
+
+The breaker is advisory because it was registry-global (Zenith `ZEN2-07`). Any party can reach the
+expiry path through the `finalizeCommittee` timeout, through `markE3Failed`, and through the
+requester's `cancelE3`. If it cleared the provider, one prepared long-lived round could stop every
+later request until governance paused requests and every committee released.
+
+`ChainlinkVrfRandomnessProvider` also reserves subscription balance for each unfulfilled draw. It
+counts pending requests and requires
+`availableBalance >= minimumSubscriptionBalance * (pending + 1)`. Without that reservation, many
+requests in one block pass the same balance check, and the underfunded draws respond after the
+frozen one-hour deadline. The owner calls `releaseAbandonedRequest(requestId)` to release the
+reservation of a draw that never responds.
 
 The Registry reader acknowledges `RandomnessCircuitBreakerTripped` as a control-plane event. The SDK
 also exposes this event and the request-bound provider's `RandomnessFulfilled` event. Consumers use

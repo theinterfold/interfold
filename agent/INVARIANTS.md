@@ -217,8 +217,11 @@ design citation alone does not establish current runtime behavior.
   re-requests an E3, checks the configured subscription balance floor before requesting, and the
   Registry rejects responses from the Ethereum request block, future-dated responses, and late
   responses. This release supports Ethereum mainnet, Sepolia, and local development chains only. The
-  first request that expires without a usable response clears the active provider. This blocks new
-  requests until governance pauses the protocol and restores a provider. A timely accepted response
+  provider reserves the subscription balance floor for each unfulfilled draw, thus a burst of
+  requests in one block cannot all pass the same balance check. A request that expires without a
+  usable response sets an advisory `degraded` flag and emits `RandomnessCircuitBreakerTripped`. It
+  does not clear the active provider, because that path is permissionless and registry-global.
+  Governance reads the flag and re-points the provider, which clears it. A timely accepted response
   remains readable after terminal cleanup so fresh historical replay derives the same committee
   request; late responses remain unusable. Rust reads the accepted seed and request context at the
   fulfillment block. If historical block state is unavailable, it accepts retained current state
@@ -367,8 +370,11 @@ design citation alone does not establish current runtime behavior.
   layout. A failed callback rolls back the penalties, ban, and expulsion. Complete and failed E3s
   allow later slashes; on a failed E3 the expulsion additionally attempts the reclassification
   above, which is a no-op when it no longer applies. Committee key, ciphertext, and plaintext
-  publication all require a currently viable request-time committee. — `flow-trace/04`, `05`; INDEX
-  concern Z-32
+  publication all require a currently viable request-time committee. Ciphertext publication checks
+  the stage and that viability again after `IE3Program.verify` returns, because an application
+  callback can slash a member and record a terminal failure through `onE3Failed`, outside the
+  publication reentrancy guard. A failed recheck reverts the complete transaction. —
+  `flow-trace/04`, `05`; INDEX concerns Z-32, ZEN2-04, ZEN2-26
 - Accusation quorum: `agree_count >= threshold_m`; voters must be active committee members; all
   votes agree. Lane A is **attestation-based** (ECDSA per voter), not on-chain ZK re-verification.
   Vote digest / EIP-712 type hashes must match the Solidity constants exactly (Rust ↔ Solidity). —

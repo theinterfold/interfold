@@ -253,6 +253,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   error InvalidComputeContext();
   error InvalidDataAvailabilityVerifier();
   error DataAvailabilityHashMismatch(bytes32 expected, bytes32 actual);
+  error ZeroEncryptedVoteHash();
 
   // Events
   event InterfoldBound(address indexed interfold);
@@ -643,6 +644,9 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     if (block.timestamp >= availabilityAttestationExpiresAt) {
       revert InputAvailabilityAttestationExpired(availabilityAttestationExpiresAt);
     }
+    // A zero content hash matches an Avail padding leaf. Refuse it here so that no committed
+    // input can later finalize against data that no party published.
+    if (encryptedVoteHash == bytes32(0)) revert ZeroEncryptedVoteHash();
 
     _verifyInputProof(e3Id, e3, noirProof, slotAddress, encryptedVoteCommitment, encryptedVoteHash, parentIndexPlusOne);
 

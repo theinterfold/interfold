@@ -915,6 +915,12 @@ Compute provider runs computation on encrypted data:
 │  │       → Checks the application fields in the same receipt│
 │  │       → Must return true                                 │
 │  │       → Cannot re-enter ciphertext or plaintext publication│
+│  │    8b. Re-read stage from storage: must be KeyPublished  │
+│  │       Re-check request-time committee viability          │
+│  │       → An application callback can slash a member and   │
+│  │         record Failed through onE3Failed, which is        │
+│  │         outside this reentrancy guard. A revert here      │
+│  │         rolls back that failure and its settlement.       │
 │  │    9. Save output hash and SAFE commitment               │
 │  │       Set stage and decryption deadline                  │
 │  │   10. Emit CiphertextOutputReferencePublished(...)       │
@@ -922,6 +928,17 @@ Compute provider runs computation on encrypted data:
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```
+
+`IE3Program.verify` is an application hook that can change state (Zenith `ZEN2-26`). Step 8b
+therefore repeats the stage read and the committee-viability check after the application returns.
+Without it, a verifier callback that executes a mature expelling slash could record `Failed`,
+decrement `activeE3Count`, and release the committee, and publication would then overwrite the
+terminal state and leave the counter low. This keeps the "Committee viability loss is atomic"
+invariant true for the output-publication path.
+
+The data-availability adapter rejects a zero content hash (Zenith `ZEN2-05`). Avail pads its
+submitted-data Merkle tree with zero leaves, so a zero expected hash would accept a padding leaf as
+proof of publication.
 
 The accepted event records the content hash and stable Avail coordinates, not the ciphertext bytes.
 Ciphernodes replay that durable reference without network access. After recovery enables effects,

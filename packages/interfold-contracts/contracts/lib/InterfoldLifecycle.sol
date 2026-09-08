@@ -363,6 +363,20 @@ library InterfoldLifecycle {
             )
         ) revert IInterfold.InvalidOutput(bytes(""));
 
+        // The application verifier can change state. A callback that slashes a member can drop
+        // the committee below the threshold and record a terminal failure through
+        // `onE3Failed`, which is outside the publication reentrancy guard. Read the stage from
+        // storage again and check committee viability again. A revert here rolls back the
+        // nested failure, settlement, and committee-release effects.
+        IInterfold.E3Stage stageAfterVerify = stages[e3Id];
+        if (stageAfterVerify != IInterfold.E3Stage.KeyPublished)
+            revert IInterfold.InvalidStage(
+                e3Id,
+                IInterfold.E3Stage.KeyPublished,
+                stageAfterVerify
+            );
+        _requireViableCommittee(registryAddress, e3Id);
+
         e3.ciphertextOutput = contentHash;
         e3.ciphertextCommitment = ciphertextCommitment;
         stages[e3Id] = IInterfold.E3Stage.CiphertextReady;

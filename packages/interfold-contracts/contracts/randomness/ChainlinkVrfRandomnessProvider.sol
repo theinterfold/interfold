@@ -28,6 +28,7 @@ contract ChainlinkVrfRandomnessProvider is
         uint256 fulfilledBlock;
         bool exists;
         bool fulfilled;
+        bool released;
     }
 
     error OnlyRequester(address caller);
@@ -40,12 +41,17 @@ contract ChainlinkVrfRandomnessProvider is
     error InvalidMinimumSubscriptionBalance();
     error UnsupportedChain(uint256 chainId);
     error InsufficientSubscriptionBalance(
-        uint96 availableBalance,
-        uint96 minimumBalance
+        uint256 availableBalance,
+        uint256 requiredBalance
     );
     error RandomnessAlreadyRequested(uint256 e3Id);
+    error UnknownRandomnessRequest(uint256 requestId);
+    error RandomnessRequestNotReleasable(uint256 requestId);
 
     event RandomnessResponseIgnored(uint256 indexed requestId);
+
+    /// @notice Emitted when the owner releases the reservation of an abandoned request.
+    event RandomnessRequestReleased(uint256 indexed requestId);
 
     address public immutable override requester; // solhint-disable-line immutable-vars-naming
     uint256 public immutable subscriptionId; // solhint-disable-line immutable-vars-naming
@@ -54,6 +60,9 @@ contract ChainlinkVrfRandomnessProvider is
     uint32 public immutable callbackGasLimit; // solhint-disable-line immutable-vars-naming
     bool public immutable nativePayment; // solhint-disable-line immutable-vars-naming
     uint96 public immutable minimumSubscriptionBalance; // solhint-disable-line immutable-vars-naming
+
+    /// @notice Count of requests that have no recorded response.
+    uint256 public pendingRequestCount;
 
     mapping(uint256 e3Id => bool requested) public randomnessRequested;
     mapping(uint256 e3Id => uint256 requestId) public requestIdByE3Id;
@@ -102,15 +111,22 @@ contract ChainlinkVrfRandomnessProvider is
         (uint96 linkBalance, uint96 nativeBalance, , , ) = s_vrfCoordinator
             .getSubscription(subscriptionId);
         uint96 availableBalance = nativePayment ? nativeBalance : linkBalance;
-        if (availableBalance < minimumSubscriptionBalance) {
+        // Reserve `minimumSubscriptionBalance` for each draw that has no response yet. The
+        // subscription balance alone does not show the cost of the requests that Chainlink
+        // still holds. Without this reservation, many requests in one block pass the same
+        // check, and the underfunded draws respond after the frozen deadline.
+        uint256 requiredBalance = uint256(minimumSubscriptionBalance) *
+            (pendingRequestCount + 1);
+        if (uint256(availableBalance) < requiredBalance) {
             revert InsufficientSubscriptionBalance(
                 availableBalance,
-                minimumSubscriptionBalance
+                requiredBalance
             );
         }
 
         // Set this before the external call so one E3 can never request twice.
         randomnessRequested[e3Id] = true;
+        pendingRequestCount++;
         requestId = s_vrfCoordinator.requestRandomWords(
             VRFV2PlusClient.RandomWordsRequest({
                 keyHash: keyHash,
@@ -154,6 +170,21 @@ contract ChainlinkVrfRandomnessProvider is
         );
     }
 
+    /// @notice Releases the balance reservation of one request that got no response.
+    /// @dev Chainlink keeps an unfunded request for a limited time. A request that never gets a
+    ///      response would hold its reservation forever. The owner releases it. This function
+    ///      does not change the recorded result, thus a later response stays usable.
+    /// @param requestId Identifier of the request to release.
+    function releaseAbandonedRequest(uint256 requestId) external onlyOwner {
+        RandomnessResult storage result = _results[requestId];
+        if (!result.exists) revert UnknownRandomnessRequest(requestId);
+        if (result.fulfilled || result.released)
+            revert RandomnessRequestNotReleasable(requestId);
+        result.released = true;
+        if (pendingRequestCount != 0) pendingRequestCount--;
+        emit RandomnessRequestReleased(requestId);
+    }
+
     /// @dev Never reverts for an unknown, duplicate, or malformed response. Chainlink does not
     ///      retry a callback that reverts.
     function fulfillRandomWords(
@@ -170,6 +201,10 @@ contract ChainlinkVrfRandomnessProvider is
         result.fulfilledAt = block.timestamp;
         result.fulfilledBlock = RegistrySortitionLib.currentBlockNumber();
         result.fulfilled = true;
+        if (!result.released) {
+            result.released = true;
+            if (pendingRequestCount != 0) pendingRequestCount--;
+        }
         emit RandomnessFulfilled(
             requestId,
             e3IdByRequestId[requestId],

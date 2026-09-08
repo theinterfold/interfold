@@ -488,7 +488,10 @@ describe("CiphernodeRegistryOwnable", function () {
         .withArgs(firstE3Id, requestId, failedProvider);
       expect(await interfold.getFailureReason(firstE3Id)).to.equal(1);
       expect(await registry.unreleasedCommitteeCount()).to.equal(0);
-      expect(await registry.randomnessProvider()).to.equal(ethers.ZeroAddress);
+      // ZEN2-07: the breaker is advisory. The provider stays configured and later requests
+      // still work. Governance re-points the provider after it reads the degraded flag.
+      expect(await registry.randomnessProvider()).to.equal(failedProvider);
+      expect(await registry.randomnessDegraded()).to.equal(true);
 
       await expect(
         makeRequest(
@@ -497,7 +500,7 @@ describe("CiphernodeRegistryOwnable", function () {
           mockE3Program,
           mockDecryptionVerifier,
         ),
-      ).to.be.revertedWithCustomError(registry, "ZeroAddress");
+      ).to.not.be.revert(ethers);
     });
 
     it("keeps the first mock response", async function () {

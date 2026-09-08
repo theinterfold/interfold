@@ -607,9 +607,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await time.increaseTo(deadline + 1n);
       await ctx.interfold.connect(ctx.requester).cancelE3(firstE3Id);
       expect(await ctx.registry.unreleasedCommitteeCount()).to.equal(0);
+      // ZEN2-07: the breaker is advisory. Cancellation flags the degraded state and keeps the
+      // provider, so one round cannot stop every later request.
       expect(await ctx.registry.randomnessProvider()).to.equal(
-        ethers.ZeroAddress,
+        await ctx.randomnessProvider.getAddress(),
       );
+      expect(await ctx.registry.randomnessDegraded()).to.equal(true);
 
       const requestId = await ctx.randomnessProvider.requestIdByE3Id(firstE3Id);
       await ctx.randomnessProvider.fulfill(requestId, 123n);
@@ -678,9 +681,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         false,
         0n,
       ]);
+      // ZEN2-07: the provider stays configured; only the advisory flag changes.
       expect(await ctx.registry.randomnessProvider()).to.equal(
-        ethers.ZeroAddress,
+        await ctx.randomnessProvider.getAddress(),
       );
+      expect(await ctx.registry.randomnessDegraded()).to.equal(true);
     });
 
     it("rejects invalid failure reasons from an authorized dependency", async function () {

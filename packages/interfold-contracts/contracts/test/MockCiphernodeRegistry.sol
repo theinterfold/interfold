@@ -21,6 +21,7 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
     address public slashingManager;
     address public randomnessProvider;
     uint256 public randomnessRequestTimeout = 1 hours;
+    bool public randomnessDegraded;
 
     /// @notice Configurable committee members per E3 for testing
     mapping(uint256 e3Id => address[] nodes) private _committeeNodes;
@@ -470,6 +471,10 @@ contract MockCiphernodeRegistryEmptyKey is ICiphernodeRegistry {
 
     function randomnessRequestTimeout() external pure returns (uint256) {
         return 1 hours;
+    }
+
+    function randomnessDegraded() external pure returns (bool) {
+        return false;
     }
 
     // solhint-disable-next-line no-empty-blocks
