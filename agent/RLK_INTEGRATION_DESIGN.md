@@ -1,41 +1,43 @@
 # Threshold l-BFV RLK Integration Design
 
-Status: pure adapters and the RLK generation and aggregation helper/prover boundaries are
-implemented. Runtime collection, aggregation, storage, and publication remain pending. This document
-records verified interfaces, the integration boundary, and decisions that require protocol approval.
-It does not define a wire schema or on-chain ABI.
+Status: pure adapters and the l-BFV public-key, RLK generation, and RLK aggregation helper/prover
+boundaries are implemented. Runtime collection, aggregation, storage, and publication remain
+pending. This document records verified interfaces, the integration boundary, and decisions that
+require protocol approval. It does not define a wire schema or on-chain ABI.
 
 ## Scope
 
 The target is a threshold l-BFV relinearization-key (RLK) extension for one E3:
 
 1. Generate one l-BFV public-key contribution and one RLK contribution per accepted party.
-2. Produce a proof for each RLK gadget row.
+2. Produce public-key and RLK proofs for each gadget row.
 3. Verify and aggregate the accepted contributions.
 4. Persist enough data to recover the operational RLK after restart.
 5. Use the recovered RLK for ciphertext multiplication and relinearization.
 
 The existing TrBFV key-generation, decryption, and C0-C7 paths remain in place. The `secure-8192`
-preset keeps the existing circuit set. The `secure-16384` preset adds the two RLK circuits and the
-matching runtime path. The path must remain compatible with the existing committee, proof, event,
-and recovery rules.
+preset keeps the existing circuit set. The `secure-16384` preset adds dedicated l-BFV row circuits
+and the matching runtime path. The path must remain compatible with the existing committee, proof,
+event, and recovery rules.
 
 ## Verified Boundary
 
-The pinned `fhe::trlbfv` API provides additive l-BFV contributions. It does not provide threshold
+The locked `fhe::trlbfv` API provides additive l-BFV contributions. It does not provide threshold
 decryption, transport authentication, ZK proofs, or witness serialization.
 
 ### l-BFV library
 
 - `PublicKeyShare` represents one additive public-key contribution.
 - `RelinKeyShare` represents one additive RLK contribution.
-- `RelinKeyShare::contribution_with_crp_and_binding_extended` returns the RLK share and an
-  `RlkWitness`.
-- `RlkWitness` contains the ephemeral key `r`, `errors_d0`, and `errors_d2`.
-- `aggregate_relinearization_key` requires an exact participant set and an `AggregatedPublicKey`.
+- `RelinKeyShare::contribution_with_crp_extended` returns the RLK share and an `RlkWitness`.
+- `RlkWitness` contains the auto-zeroized ephemeral key `r`, `errors_d0`, and `errors_d2`.
+- `aggregate_relinearization_key` requires the selected shares and an `LBFVPublicKey`.
 - RLK aggregation sums the secret-dependent `c0` components and carries the shared `c1` components.
 - An operational `LBFVRelinearizationKey` does not retain participant metadata.
-- The pinned `fhe.rs` revision exposes validated, read-only `d0` and `d2` row components and level
+- The library validates arithmetic structure, shared URS and CRS values, and public-key consistency.
+- Interfold must authenticate contributions, select the canonical participant set, and reject
+  duplicate inclusion before library aggregation.
+- The locked `fhe.rs` revision exposes validated, read-only `d0` and `d2` row components and level
   metadata. Interfold computes the circuit-specific quotient polynomials.
 
 ### Paper-to-library parameter mapping
@@ -95,34 +97,36 @@ circuit constants and a new compatible circuit artifact set.
 
 References:
 
-- `~/.cargo/git/checkouts/fhe.rs-28554c2cc2152fe4/0f784ae/crates/fhe/src/trlbfv/relin_key_share.rs`
-- `~/.cargo/git/checkouts/fhe.rs-28554c2cc2152fe4/0f784ae/crates/fhe/src/trlbfv/aggregate.rs`
-- `~/.cargo/git/checkouts/fhe.rs-28554c2cc2152fe4/0f784ae/crates/fhe/src/trlbfv/binding.rs`
+- `https://github.com/gnosisguild/fhe.rs/blob/96981eebe18a63117fb65569b8bf5c2362c29f9a/crates/fhe/src/trlbfv/public_key_share.rs`
+- `https://github.com/gnosisguild/fhe.rs/blob/96981eebe18a63117fb65569b8bf5c2362c29f9a/crates/fhe/src/trlbfv/relin_key_share.rs`
+- `https://github.com/gnosisguild/fhe.rs/blob/96981eebe18a63117fb65569b8bf5c2362c29f9a/crates/fhe/src/trlbfv/aggregate.rs`
 
 ### Noir circuits
 
 The repository contains row-level circuits:
 
+- `circuits/bin/threshold/lbfv_pk_generation/src/main.nr` proves `(commit(sk), commit(pk_row))` for
+  one `row_index`.
 - `circuits/bin/threshold/rlk_generation/src/main.nr` proves
   `(commit(sk), commit(r), commit(d0), commit(d2))` for one `row_index`.
 - `circuits/bin/threshold/rlk_aggregation/src/main.nr` proves the sum of `H` parties' `d0` and `d2`
   rows for one `row_index`.
-- Both circuits use compile-time row constants. The RLK generation circuit requires each `a` row to
+- The circuits use compile-time row constants. The RLK generation circuit requires each `a` row to
   equal the corresponding l-BFV public-key CRS row.
 - The `secure-16384` preset now contains generated fixed CRS, URS, and Garner rows. Unsupported
   presets retain placeholders because their RLK path is disabled.
 
-The production C1 circuit and proof flow still use one summation-only proof per party. The pure Rust
-adapter can convert every fixed l-BFV CRS row, but the row-indexed C1 circuit, codegen, runtime
-request, response, recursive circuit, and proof collection path remain deferred. These components
-must change as one compatibility unit before RLK proofs can bind every RLK row to the party's C1
-secret-key commitment.
+The production C1 circuit and proof flow still use one summation-only proof per party. A separate
+`lbfv_pk_generation` circuit now proves each fixed l-BFV public-key row. It reuses the C1 relation
+with zero smudging noise and returns only the secret-key and row commitments. This design preserves
+the C1 ABI and C1-to-C5 public-key commitment. The runtime request, response, recursive circuit, and
+proof collection path remain deferred.
 
-The RLK generation and aggregation Rust paths now provide circuit computation, `Prover.toml`
-generation, row-selectable CLI sample generation, and `Provable` implementations. Aggregation
-requires exactly the canonical `H` shares and computes centered sums for each CRT limb.
-`CircuitName::RlkGeneration` and `CircuitName::RlkAggregation` are appended at durable discriminants
-27 and 28. No RLK `ProofType`, request, response, or runtime event is defined yet.
+The three l-BFV Rust paths provide circuit computation, `Prover.toml` generation, row-selectable CLI
+sample generation, and `Provable` implementations. Aggregation requires exactly the canonical `H`
+shares and computes centered sums for each CRT limb. `CircuitName::RlkGeneration`,
+`CircuitName::RlkAggregation`, and `CircuitName::LbfvPkGeneration` use durable discriminants 27, 28,
+and 29. No l-BFV `ProofType`, request, response, or runtime event is defined yet.
 
 ## Proposed Protocol Shape
 
@@ -138,44 +142,42 @@ The E3 workflow must create one RLK session context containing:
 - the RLK ciphertext and key levels;
 - a versioned domain identifier for proof signatures and durable records.
 
-The session context must derive the l-BFV `ParticipantSet` from canonical protocol data. It must not
-accept a participant set supplied by a peer. The RLK session belongs to one E3 and must never be
-reused by another E3.
+The session context must derive the accepted participant set from canonical protocol data. It must
+not accept participant metadata supplied by a peer. The RLK session belongs to one E3 and must never
+be reused by another E3.
 
 ### 2. Generate contributions locally
 
 Each party must use the same secret-key contribution that the existing key path binds to its RLK
 contribution. The effect runner must:
 
-1. Build the bound `PublicKeyShare`.
-2. Build the bound `RelinKeyShare` with the same `a` CRS and the shared `d1` URS.
+1. Build the `PublicKeyShare` with the fixed `a` CRS.
+2. Build the `RelinKeyShare` with the same `a` CRS and the shared `d1` URS.
 3. Retain the `RlkWitness` only in encrypted local pending-proof state.
 4. Serialize the public contribution for the authenticated protocol event.
-5. Create one RLK generation proof request for every gadget row.
+5. Create one l-BFV public-key proof request and one RLK generation proof request for every gadget
+   row.
 
-The proof request for row `j` must carry `row_index = j`, the secret-key witness, the row's `d0` and
-`d2` values, the row's errors and quotient polynomials, and the session's preset and committee
-scope. Sensitive values must use the existing encrypted-at-rest wrapper.
+The public-key request for row `j` must carry `row_index = j`, the secret key, the row's public-key
+share and error, and the quotient polynomials. The RLK request must carry the row's `d0` and `d2`
+values, errors, and quotient polynomials. Both requests must carry the session's preset and
+committee scope. Sensitive values must use the existing encrypted-at-rest wrapper.
 
 ### 3. Complete the l-BFV public-key row path
 
-The existing C1 implementation must be extended as one compatibility-preserving slice for the
-RLK-enabled preset:
+The runtime must add the separate proof family without changing the existing C1 proof:
 
-- add `row_index` to `PkGenerationCircuitData` and `PkGenerationProofRequest`;
-- generate and collect `GADGET_DIM` C1 proofs per party, where each row proves the matching l-BFV
-  `a_j` public-key contribution;
+- generate and collect `GADGET_DIM` `LbfvPkGeneration` proofs per party;
 - key pending proofs by `(party_id, row_index)`;
-- require all C1 rows for one party to expose the same `sk_commitment`;
-- update C1-to-C2, C1-to-C5, NodeFold, and public-input validation;
-- add compatibility fixtures because the durable request type changes.
+- require all l-BFV public-key rows for one party to expose the same `sk_commitment`;
+- require that commitment to equal the party's legacy C1 `sk_commitment`;
+- preserve the existing C1-to-C2 and C1-to-C5 links;
+- extend `NodeFold` and public-input validation with the l-BFV row proofs;
+- add compatibility fixtures when the durable request types change.
 
-This is more than changing the row index. The l-BFV public-key constructor and the C1 witness
-conversion must use the same concrete `a_j` vector. The existing single-CRP BFV path must remain
-unchanged for presets and flows that do not enable l-BFV.
-
-The C1 enum discriminant must not change. Any new RLK proof circuit must be appended to the durable
-`CircuitName` and `ProofType` enums.
+The l-BFV public-key constructor and witness conversion must use the same concrete `a_j` vector as
+the RLK circuit. The existing single-CRP BFV path must remain unchanged. The C1 enum discriminant
+must not change. New proof types must be appended to durable enums.
 
 ### 4. Generate and verify RLK row proofs
 
@@ -186,7 +188,7 @@ must bind all of these values:
 - the party slot;
 - the RLK session version;
 - `row_index`;
-- the C1 `sk_commitment` for the same party and row;
+- the l-BFV public-key and legacy C1 `sk_commitment` for the same party;
 - the `r_commitment`, which must be equal in all rows from one party;
 - the RLK `d0` and `d2` commitments;
 - the CRS and URS version or digest.
@@ -204,15 +206,21 @@ RLK aggregation must use the same canonical honest set that supplies the aggrega
 keeps the RLK bound to the public key accepted for the E3 and avoids an RLK based on a different
 secret-key sum.
 
+Legacy C5 cannot prove l-BFV row aggregation because its binary pins the single TrBFV `CRP`. The
+l-BFV path therefore needs a separate row-indexed public-key aggregation circuit. That circuit must
+reuse the C5 aggregation relation, select `LBFV_CRS_GADGET_ROWS[row_index]`, and expose the
+aggregate row commitment. It must not change the C5 ABI.
+
 For each row, the aggregator must:
 
 1. Select exactly `H` canonical accepted party IDs.
-2. Verify one RLK generation proof for each selected party.
-3. Verify each proof's C1 secret-key commitment and row identity.
-4. Deserialize the selected `RelinKeyShare` values.
-5. Run `aggregate_relinearization_key` against the bound `AggregatedPublicKey`.
-6. Run the RLK aggregation circuit with the same `H` party order.
-7. Store the operational RLK with separate session and participant metadata.
+2. Verify one l-BFV public-key proof and one RLK generation proof for each selected party.
+3. Verify each proof's secret-key commitment and row identity.
+4. Aggregate the selected public-key rows and run the l-BFV public-key aggregation circuit.
+5. Deserialize the selected `RelinKeyShare` values.
+6. Run `aggregate_relinearization_key` against the aggregate `LBFVPublicKey`.
+7. Run the RLK aggregation circuit with the same `H` party order.
+8. Store the operational RLK with separate session and participant metadata.
 
 The operational RLK is derivable from the durable selected shares, aggregate public key, and proof
 results. The workflow must still persist the accepted inputs and pending effects before dispatch,
@@ -225,17 +233,16 @@ explicit verifier boundary that binds the proofs to the E3, crypto configuration
 row set, and aggregate RLK commitment. A generated Honk verifier alone is not sufficient because it
 only verifies proof bytes and public inputs.
 
-The recursive path must mirror the existing DKG path. The two new threshold circuits remain the only
-new RLK-specific Noir circuits. Existing recursive circuits must be extended to verify and bind
-their outputs:
+The recursive path must mirror the existing DKG path. Existing recursive circuits must be extended
+to verify and bind the new l-BFV circuit outputs:
 
-- `NodeFold` must verify the selected party's RLK generation proof for every gadget row and expose
-  the row commitments.
+- `NodeFold` must verify the selected party's public-key and RLK generation proofs for every gadget
+  row and expose the row commitments.
 - `NodesFold` must carry those row commitments while it folds the canonical `H` party rows.
-- `DkgAggregator` must verify one RLK aggregation proof per gadget row and bind its expected party
-  commitments to the folded `NodeFold` outputs.
-- `DkgAggregator` must expose the aggregate RLK commitment vector together with the existing C5
-  commitment and DKG proof outputs.
+- `DkgAggregator` must verify one public-key aggregation proof and one RLK aggregation proof per
+  gadget row. It must bind their expected party commitments to the folded `NodeFold` outputs.
+- `DkgAggregator` must expose the aggregate l-BFV public-key and RLK commitment vectors together
+  with the existing C5 commitment and DKG proof outputs.
 
 The first publication design is to extend the existing `publishCommittee` call with the aggregate
 RLK commitment and the extended `DkgAggregator` proof. This preserves the current C5 publication
@@ -265,11 +272,13 @@ replacement for the threshold share and smudging workflow.
 
 ## Library Adapter
 
-The pinned `fhe.rs` revision `0f784ae6c87626b09286da57d147e0b8b6487302` provides the approved
+The locked `fhe.rs` revision `96981eebe18a63117fb65569b8bf5c2362c29f9a` provides the approved
 read-only extraction API. It returns validated `d0` and `d2` components and exposes
 `ciphertext_level` and `key_level`. `RlkWitness` provides `r`, `errors_d0`, and `errors_d2`.
 Interfold converts these values to CRT form and computes the exact modulus-switching and
-cyclotomic-reduction quotients. The adapter rejects nonzero levels and CRS mismatches.
+cyclotomic-reduction quotients. The adapter rejects nonzero levels and CRS mismatches. Interfold
+must validate participant identity, canonical selection, and duplicate inclusion before it calls the
+aggregation API.
 
 ## Durable State
 
@@ -294,14 +303,14 @@ Stable operation IDs must include the E3 domain, session version, party slot, pr
 
 The recursive proof chain will carry the RLK data as follows:
 
-1. One party produces one RLK generation proof for each `row_index`.
-2. The party's `NodeFold` input contains the ordered RLK generation proof set.
-3. `NodeFold` verifies each row proof and returns the row's `d0` and `d2` commitments.
+1. One party produces one public-key proof and one RLK generation proof for each `row_index`.
+2. The party's `NodeFold` input contains both ordered proof sets.
+3. `NodeFold` verifies each proof pair and returns the row's public-key, `d0`, and `d2` commitments.
 4. `NodesFold` preserves the row commitment columns for exactly the canonical `H` party slots.
-5. The aggregator produces one RLK aggregation proof for each row.
-6. `DkgAggregator` verifies each RLK aggregation proof and checks its expected commitment arrays
+5. The aggregator produces one public-key aggregation proof and one RLK aggregation proof per row.
+6. `DkgAggregator` verifies both aggregation proofs and checks their expected commitment arrays
    against the corresponding `NodesFold` rows.
-7. `DkgAggregator` returns aggregate RLK commitments for the on-chain publication wrapper.
+7. `DkgAggregator` returns aggregate public-key and RLK commitments for the publication wrapper.
 
 The existing C5 commitment remains part of the same DKG publication proof. The on-chain wrapper must
 check the new RLK commitment vector against the E3-scoped publication input and the selected
@@ -315,17 +324,17 @@ decodable, but the extended proof requires a new protocol release and artifact s
 
 The initial supported matrix is:
 
-| Preset         | Existing C0-C7 path | RLK generation | RLK aggregation |
-| -------------- | ------------------- | -------------- | --------------- |
-| `secure-8192`  | supported           | not enabled    | not enabled     |
-| `secure-16384` | supported           | enabled        | enabled         |
+| Preset         | Existing C0-C7 path | l-BFV PK rows | RLK generation | RLK aggregation |
+| -------------- | ------------------- | ------------- | -------------- | --------------- |
+| `secure-8192`  | supported           | not enabled   | not enabled    | not enabled     |
+| `secure-16384` | supported           | enabled       | enabled        | enabled         |
 
-The `insecure` preset does not support RLK in the initial implementation. The build, artifact,
-verifier, and runtime gates must fail closed when an RLK request targets `insecure` or
+The `insecure` preset does not support the l-BFV row path in the initial implementation. The build,
+artifact, verifier, and runtime gates must fail closed when an l-BFV request targets `insecure` or
 `secure-8192`.
 
-The `secure-16384` RLK circuits must use the same concrete l-BFV public-key CRS row data as the
-RLK-enabled C1 rows. They must not introduce a second source of l-BFV cryptographic constants.
+The `secure-16384` circuits must use the same concrete l-BFV public-key CRS row data. They must not
+introduce a second source of l-BFV cryptographic constants.
 
 ## Circuit and Prover Work
 
@@ -333,18 +342,21 @@ The pure circuit slice now includes:
 
 - `crates/zk-helpers/src/circuits/threshold/rlk_generation.rs`;
 - RLK generation circuit registration and a `Provable` implementation in `crates/zk-prover`;
-- the pure l-BFV C1 row adapter;
+- the l-BFV public-key row adapter, circuit computation, codegen, and `Provable` implementation;
+- the separate `lbfv_pk_generation` Noir circuit, which preserves the legacy C1 ABI;
 - derived RLK quotient bounds that include the Garner term;
 - `d0` and `d2` coefficient range checks and a shared-`r` commitment;
 - witness conversion tests for `SecretKey`, RNS polynomials, errors, and quotient values;
 - `crates/zk-helpers/src/circuits/threshold/rlk_aggregation.rs` and its prover registration;
 - exact-`H` aggregation, centered CRT sums, generation commitments, and aggregate commitments;
 - recursive synchronization and drift checks for generated l-BFV CRS and URS modules;
-- secure-16384 build selection and complete RLK artifact cache gates;
+- secure-16384 build selection and complete l-BFV row artifact cache gates;
+- artifact source hashes that include shared Noir relation and commitment sources;
 
 The remaining capability additions are:
 
-- row-aware C1 proof-request and runtime collection changes;
+- a row-indexed l-BFV public-key aggregation circuit that preserves the legacy C5 ABI;
+- l-BFV public-key proof requests and runtime collection changes;
 - generated RLK verifier artifacts for the `secure-16384` preset;
 - recursive `NodeFold`, `NodesFold`, and `DkgAggregator` changes so RLK proofs reach the existing
   EVM-facing DKG verifier;
@@ -359,10 +371,10 @@ The implementation must add tests at these levels:
 
 - pure conversion tests for every supported preset and every RLK row;
 - proof-output tests for `commit(sk)`, `commit(d0)`, and `commit(d2)`;
-- C1-to-RLK commitment-link tests;
+- C1-to-l-BFV and l-BFV-to-RLK commitment-link tests;
 - duplicate, missing, reordered, wrong-row, wrong-party, and wrong-session rejection tests;
 - exact-`H` aggregation tests and `H < N` tests;
-- `RelinKeyShare` and `AggregatedPublicKey` serialization round trips;
+- `RelinKeyShare` and `LBFVPublicKey` serialization round trips;
 - depth-one multiplication and threshold decryption using the existing `trbfv` path;
 - restart tests at each durable effect boundary;
 - an integration scenario that encrypts, multiplies, relinearizes, and threshold-decrypts.

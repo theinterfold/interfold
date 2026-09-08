@@ -63,7 +63,7 @@ const REQUIRED_VARIANT_CIRCUITS = [
   ...REQUIRED_BASE_CIRCUITS.map((circuit) => join('recursive', circuit)),
 ] as const
 
-const REQUIRED_RLK_VARIANT_CIRCUITS = ['rlk_generation', 'rlk_aggregation'].flatMap((circuit) => [
+const REQUIRED_LBFV_VARIANT_CIRCUITS = ['lbfv_pk_generation', 'rlk_generation', 'rlk_aggregation'].flatMap((circuit) => [
   join('default', 'threshold', circuit, circuit),
   join('evm', 'threshold', circuit, circuit),
   join('recursive', 'threshold', circuit, circuit),
@@ -133,7 +133,7 @@ function stampFiles(dir: string): string[] {
 
 export function requiredArtifactMarkers(preset: string, committee: string): string[] {
   const circuits =
-    preset === CIRCUIT_PRESETS.SECURE_16384 ? [...REQUIRED_VARIANT_CIRCUITS, ...REQUIRED_RLK_VARIANT_CIRCUITS] : REQUIRED_VARIANT_CIRCUITS
+    preset === CIRCUIT_PRESETS.SECURE_16384 ? [...REQUIRED_VARIANT_CIRCUITS, ...REQUIRED_LBFV_VARIANT_CIRCUITS] : REQUIRED_VARIANT_CIRCUITS
   return circuits.flatMap((circuit) => REQUIRED_ARTIFACT_EXTENSIONS.map((extension) => join(preset, committee, `${circuit}${extension}`)))
 }
 

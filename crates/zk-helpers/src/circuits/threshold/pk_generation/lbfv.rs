@@ -4,14 +4,17 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Conversion of l-BFV public-key rows into C1 circuit inputs.
+//! Conversion of l-BFV public-key rows into Noir witnesses.
 
 use crate::math::{
-    cyclotomic_polynomial, fhe_poly_to_crt_centered_checked, fhe_secret_key_to_crt_centered,
-    validate_fhe_poly_context,
+    cyclotomic_polynomial, decompose_residue, fhe_poly_to_crt_centered_checked,
+    fhe_secret_key_to_crt_centered, validate_fhe_poly_context,
 };
 use crate::utils::verify_crt_shapes;
-use crate::{CiphernodesCommittee, CircuitsErrors};
+use crate::{
+    crt_polynomial_to_toml_json, polynomial_to_toml_json, Artifacts, CiphernodesCommittee, Circuit,
+    CircuitCodegen, CircuitComputation, CircuitsErrors, CodegenToml, Computation,
+};
 use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe::bfv::{BfvParameters, CommonRandomPolyVec, SecretKey};
@@ -20,9 +23,21 @@ use fhe_math::rq::Context;
 use num_bigint::BigInt;
 use std::sync::Arc;
 
-/// Circuit-ready values for one l-BFV C1 public-key row.
+/// Row-level l-BFV public-key generation circuit.
+#[derive(Debug)]
+pub struct LbfvPkGenerationCircuit;
+
+impl Circuit for LbfvPkGenerationCircuit {
+    const NAME: &'static str = "lbfv-pk-generation";
+    const PREFIX: &'static str = "LBFV_PK_GENERATION";
+    const SUPPORTED_PARAMETER: e3_fhe_params::ParameterType =
+        e3_fhe_params::ParameterType::THRESHOLD;
+    const DKG_INPUT_TYPE: Option<crate::computation::DkgInputType> = None;
+}
+
+/// Circuit-ready values for one l-BFV public-key row.
 #[derive(Debug, Clone)]
-pub struct LbfvPkGenerationRowData {
+pub struct LbfvPkGenerationCircuitData {
     /// Committee values used by the matching circuit configuration.
     pub committee: CiphernodesCommittee,
     /// Gadget-row index proved by the circuit.
@@ -37,7 +52,140 @@ pub struct LbfvPkGenerationRowData {
     pub sk: Polynomial,
 }
 
-/// Converts a concrete l-BFV public-key share into row-level C1 inputs.
+/// Computed values for one l-BFV public-key row proof.
+pub struct LbfvPkGenerationComputationOutput {
+    pub bounds: super::Bounds,
+    pub bits: super::Bits,
+    pub inputs: LbfvPkGenerationInputs,
+}
+
+/// Prover inputs for one l-BFV public-key row.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct LbfvPkGenerationInputs {
+    pub row_index: u32,
+    pub eek: Polynomial,
+    pub sk: Polynomial,
+    pub r1is: CrtPolynomial,
+    pub r2is: CrtPolynomial,
+    pub pk0is: CrtPolynomial,
+}
+
+impl CircuitComputation for LbfvPkGenerationCircuit {
+    type Preset = BfvPreset;
+    type Data = LbfvPkGenerationCircuitData;
+    type Output = LbfvPkGenerationComputationOutput;
+    type Error = CircuitsErrors;
+
+    fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self::Output, Self::Error> {
+        let bounds = super::Bounds::compute(preset, &data.committee)?;
+        let bits = super::Bits::compute(preset, &bounds)?;
+        let inputs = LbfvPkGenerationInputs::compute(preset, data)?;
+        Ok(LbfvPkGenerationComputationOutput {
+            bounds,
+            bits,
+            inputs,
+        })
+    }
+}
+
+impl Computation for LbfvPkGenerationInputs {
+    type Preset = BfvPreset;
+    type Data = LbfvPkGenerationCircuitData;
+    type Error = CircuitsErrors;
+
+    fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
+        let adapter = LbfvPkGenerationAdapter::new(preset)?;
+        let (params, _) = build_pair_for_preset(preset)
+            .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+        compute_inputs(&params, &adapter, data)
+    }
+
+    fn to_json(&self) -> serde_json::Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "row_index": self.row_index,
+            "eek": polynomial_to_toml_json(&self.eek),
+            "sk": polynomial_to_toml_json(&self.sk),
+            "r1is": crt_polynomial_to_toml_json(&self.r1is),
+            "r2is": crt_polynomial_to_toml_json(&self.r2is),
+            "pk0is": crt_polynomial_to_toml_json(&self.pk0is),
+        }))
+    }
+}
+
+fn compute_inputs(
+    params: &BfvParameters,
+    adapter: &LbfvPkGenerationAdapter,
+    data: &LbfvPkGenerationCircuitData,
+) -> Result<LbfvPkGenerationInputs, CircuitsErrors> {
+    if adapter.crs_row(data.row_index)? != data.a {
+        return Err(CircuitsErrors::Other(
+            "l-BFV public-key row does not match the fixed CRS".to_string(),
+        ));
+    }
+
+    let l = params.moduli().len();
+    let n = params.degree();
+    verify_crt_shapes(&[&data.pk0_share, &data.a], l, n).map_err(|error| {
+        CircuitsErrors::Other(format!("l-BFV public-key CRT shape mismatch: {error}"))
+    })?;
+    for (name, polynomial) in [("eek", &data.eek), ("sk", &data.sk)] {
+        if polynomial.coefficients().len() != n {
+            return Err(CircuitsErrors::Other(format!(
+                "l-BFV public-key {name} has {} coefficients; expected {n}",
+                polynomial.coefficients().len()
+            )));
+        }
+    }
+
+    let cyclotomic = cyclotomic_polynomial(n as u64);
+    let mut r1is = Vec::with_capacity(l);
+    let mut r2is = Vec::with_capacity(l);
+    for (index, modulus) in params.moduli().iter().enumerate() {
+        let expected = data.a.limb(index).neg().mul(&data.sk).add(&data.eek);
+        let (r1, r2) = decompose_residue(
+            data.pk0_share.limb(index),
+            &expected,
+            &BigInt::from(*modulus),
+            &cyclotomic,
+            n as u64,
+        );
+        r1is.push(r1);
+        r2is.push(r2);
+    }
+
+    Ok(LbfvPkGenerationInputs {
+        row_index: data.row_index,
+        eek: data.eek.clone(),
+        sk: data.sk.clone(),
+        r1is: CrtPolynomial::new(r1is),
+        r2is: CrtPolynomial::new(r2is),
+        pk0is: data.pk0_share.clone(),
+    })
+}
+
+impl CircuitCodegen for LbfvPkGenerationCircuit {
+    type Preset = BfvPreset;
+    type Data = LbfvPkGenerationCircuitData;
+    type Error = CircuitsErrors;
+
+    fn codegen(&self, preset: Self::Preset, data: &Self::Data) -> Result<Artifacts, Self::Error> {
+        let inputs = LbfvPkGenerationInputs::compute(preset, data)?;
+        let configs = super::Configs::compute(preset, &data.committee)?;
+        Ok(Artifacts {
+            toml: generate_lbfv_pk_toml(inputs)?,
+            configs: super::codegen::generate_configs(preset, &configs)?,
+        })
+    }
+}
+
+/// Serialize one l-BFV public-key row as `Prover.toml`.
+pub fn generate_lbfv_pk_toml(
+    inputs: LbfvPkGenerationInputs,
+) -> Result<CodegenToml, CircuitsErrors> {
+    Ok(toml::to_string(&inputs.to_json()?)?)
+}
+
+/// Converts a concrete l-BFV public-key share into row-level circuit inputs.
 pub struct LbfvPkGenerationAdapter {
     context: Arc<Context>,
     moduli: Vec<u64>,
@@ -68,10 +216,10 @@ impl LbfvPkGenerationAdapter {
     /// Return one fixed l-BFV CRS row in circuit representation.
     pub fn crs_row(&self, row_index: u32) -> Result<CrtPolynomial, CircuitsErrors> {
         let row = usize::try_from(row_index)
-            .map_err(|_| CircuitsErrors::Other("C1 row index does not fit usize".to_string()))?;
+            .map_err(|_| CircuitsErrors::Other("l-BFV row index does not fit usize".to_string()))?;
         self.a_rows.get(row).cloned().ok_or_else(|| {
             CircuitsErrors::Other(format!(
-                "C1 row index {row_index} is out of range for {} rows",
+                "l-BFV row index {row_index} is out of range for {} rows",
                 self.row_count()
             ))
         })
@@ -84,12 +232,12 @@ impl LbfvPkGenerationAdapter {
         row_index: u32,
         secret_key: &SecretKey,
         public_key: &PublicKeyShare,
-    ) -> Result<LbfvPkGenerationRowData, CircuitsErrors> {
+    ) -> Result<LbfvPkGenerationCircuitData, CircuitsErrors> {
         let row = usize::try_from(row_index)
-            .map_err(|_| CircuitsErrors::Other("C1 row index does not fit usize".to_string()))?;
+            .map_err(|_| CircuitsErrors::Other("l-BFV row index does not fit usize".to_string()))?;
         if row >= self.row_count() {
             return Err(CircuitsErrors::Other(format!(
-                "C1 row index {row_index} is out of range for {} rows",
+                "l-BFV row index {row_index} is out of range for {} rows",
                 self.row_count()
             )));
         }
@@ -132,7 +280,7 @@ impl LbfvPkGenerationAdapter {
             self.moduli.len(),
             self.degree,
         )
-        .map_err(|error| CircuitsErrors::Other(format!("C1 CRT shape mismatch: {error}")))?;
+        .map_err(|error| CircuitsErrors::Other(format!("l-BFV CRT shape mismatch: {error}")))?;
 
         let sk = sk_crt.limb(0).clone();
         if sk_crt.limbs.iter().any(|limb| limb != &sk) {
@@ -165,7 +313,7 @@ impl LbfvPkGenerationAdapter {
             ));
         }
 
-        Ok(LbfvPkGenerationRowData {
+        Ok(LbfvPkGenerationCircuitData {
             committee,
             row_index,
             pk0_share,
@@ -208,6 +356,35 @@ impl LbfvPkGenerationAdapter {
     }
 }
 
+impl LbfvPkGenerationCircuitData {
+    /// Generate row zero for codegen and prover tests.
+    pub fn generate_sample(
+        preset: BfvPreset,
+        committee: CiphernodesCommittee,
+    ) -> Result<Self, CircuitsErrors> {
+        Self::generate_sample_for_row(preset, committee, 0)
+    }
+
+    /// Generate one valid l-BFV public-key row for codegen and prover tests.
+    pub fn generate_sample_for_row(
+        preset: BfvPreset,
+        committee: CiphernodesCommittee,
+        row_index: u32,
+    ) -> Result<Self, CircuitsErrors> {
+        let (params, _) = build_pair_for_preset(preset)
+            .map_err(|error| CircuitsErrors::Sample(error.to_string()))?;
+        let crs_seed = lbfv_crs_seed(preset).ok_or_else(|| {
+            CircuitsErrors::Sample(format!("l-BFV CRS is not enabled for {preset:?}"))
+        })?;
+        let crp = CommonRandomPolyVec::from_seed(&params, crs_seed)?;
+        let mut rng = rand::rng();
+        let secret_key = SecretKey::random(&params, &mut rng);
+        let public_key = PublicKeyShare::contribute_with_crp(&secret_key, &crp, &mut rng)?;
+        let adapter = LbfvPkGenerationAdapter::from_crp(&params, &crp)?;
+        adapter.row_data(committee, row_index, &secret_key, &public_key)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -244,6 +421,8 @@ mod tests {
             assert_eq!(data.a.limbs.len(), params.moduli().len());
             assert_eq!(data.eek.coefficients().len(), params.degree());
             assert_eq!(data.sk.coefficients().len(), params.degree());
+            let inputs = compute_inputs(&params, &adapter, &data)?;
+            assert_eq!(inputs.row_index, row_index as u32);
             if let Some(expected_sk) = &first_sk {
                 assert_eq!(&data.sk, expected_sk);
             } else {
@@ -261,8 +440,23 @@ mod tests {
                 expected.reduce(&BigInt::from(*qi));
                 expected.center(&BigInt::from(*qi));
                 assert_eq!(&expected, data.pk0_share.limb(index));
+
+                let expected_hat = data.a.limb(index).neg().mul(&data.sk).add(&data.eek);
+                let (expected_r1, expected_r2) = decompose_residue(
+                    data.pk0_share.limb(index),
+                    &expected_hat,
+                    &BigInt::from(*qi),
+                    &adapter.cyclotomic,
+                    params.degree() as u64,
+                );
+                assert_eq!(&expected_r1, inputs.r1is.limb(index));
+                assert_eq!(&expected_r2, inputs.r2is.limb(index));
             }
         }
+
+        let mut mismatched = adapter.row_data(committee, 0, &secret_key, &public_key)?;
+        mismatched.a = adapter.crs_row(1)?;
+        assert!(compute_inputs(&params, &adapter, &mismatched).is_err());
 
         Ok(())
     }
@@ -290,6 +484,50 @@ mod tests {
                 &public_key,
             )
             .is_err());
+        Ok(())
+    }
+
+    #[test]
+    fn compute_inputs_accepts_zero_quotients() -> Result<(), CircuitsErrors> {
+        let mut rng = rng();
+        let params = BfvParametersBuilder::new()
+            .set_degree(8)
+            .set_plaintext_modulus(1153)
+            .set_moduli_sizes(&[62; 6])
+            .build_arc()
+            .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+        let crp = CommonRandomPolyVec::new(&params, &mut rng)?;
+        let adapter = LbfvPkGenerationAdapter::from_crp(&params, &crp)?;
+        let degree = params.degree();
+        let data = LbfvPkGenerationCircuitData {
+            committee: CiphernodesCommitteeSize::Minimum.values(),
+            row_index: 0,
+            pk0_share: CrtPolynomial::new(
+                params
+                    .moduli()
+                    .iter()
+                    .map(|_| Polynomial::zero(degree - 1))
+                    .collect(),
+            ),
+            a: adapter.crs_row(0)?,
+            eek: Polynomial::zero(degree - 1),
+            sk: Polynomial::zero(degree - 1),
+        };
+
+        let inputs = compute_inputs(&params, &adapter, &data)?;
+
+        assert!(inputs.r1is.limbs.iter().all(Polynomial::is_zero));
+        assert!(inputs.r2is.limbs.iter().all(Polynomial::is_zero));
+        assert!(inputs
+            .r1is
+            .limbs
+            .iter()
+            .all(|polynomial| polynomial.degree() == 2 * (degree - 1)));
+        assert!(inputs
+            .r2is
+            .limbs
+            .iter()
+            .all(|polynomial| polynomial.degree() == degree - 2));
         Ok(())
     }
 }

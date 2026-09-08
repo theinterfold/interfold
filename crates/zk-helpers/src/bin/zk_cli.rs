@@ -43,7 +43,10 @@ use e3_zk_helpers::threshold::decrypted_shares_aggregation::{
 };
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
-use e3_zk_helpers::threshold::pk_generation::{PkGenerationCircuit, PkGenerationCircuitData};
+use e3_zk_helpers::threshold::pk_generation::{
+    LbfvPkGenerationCircuit, LbfvPkGenerationCircuitData, PkGenerationCircuit,
+    PkGenerationCircuitData,
+};
 use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
 use e3_zk_helpers::threshold::rlk_generation::{RlkGenerationCircuit, RlkGenerationCircuitData};
 use e3_zk_helpers::threshold::share_decryption::{
@@ -211,6 +214,7 @@ fn main() -> Result<()> {
     registry.register(Arc::new(ShareComputationCircuit));
     registry.register(Arc::new(UserDataEncryptionCircuit));
     registry.register(Arc::new(PkGenerationCircuit));
+    registry.register(Arc::new(LbfvPkGenerationCircuit));
     registry.register(Arc::new(RlkGenerationCircuit));
     registry.register(Arc::new(RlkAggregationCircuit));
     registry.register(Arc::new(ShareEncryptionCircuit));
@@ -376,6 +380,16 @@ fn main() -> Result<()> {
                 let sample = PkGenerationCircuitData::generate_sample(preset, committee)?;
 
                 let circuit = PkGenerationCircuit;
+                circuit.codegen(preset, &sample)?
+            }
+            name if name == <LbfvPkGenerationCircuit as Circuit>::NAME => {
+                let sample = LbfvPkGenerationCircuitData::generate_sample_for_row(
+                    preset,
+                    committee,
+                    args.row_index,
+                )?;
+
+                let circuit = LbfvPkGenerationCircuit;
                 circuit.codegen(preset, &sample)?
             }
             name if name == <RlkGenerationCircuit as Circuit>::NAME => {

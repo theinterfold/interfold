@@ -770,10 +770,7 @@ mod tests {
     use crate::CiphernodesCommitteeSize;
     use fhe::aggregate::AggregateIter;
     use fhe::bfv::{BfvParametersBuilder, Encoding, Plaintext};
-    use fhe::trlbfv::{
-        aggregate_relinearization_key, AggregatedPublicKey, ContributionBinding, ParticipantSet,
-        PublicKeyShare,
-    };
+    use fhe::trlbfv::{aggregate_relinearization_key, LBFVPublicKey, PublicKeyShare};
     use fhe_traits::{
         DeserializeParametrized, FheDecoder, FheDecrypter, FheEncoder, FheEncrypter, Serialize,
     };
@@ -918,15 +915,10 @@ mod tests {
         let crp_d1 = CommonRandomPolyVec::new(&params, &mut rng)?;
         let crp_a = CommonRandomPolyVec::new(&params, &mut rng)?;
         let secret_key = SecretKey::random(&params, &mut rng);
-        let participant_set = ParticipantSet::new([9u8; 32], vec![1])
-            .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
-        let binding = ContributionBinding::new(participant_set, 1)
-            .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
-        let (share, _) = RelinKeyShare::contribution_with_crp_and_binding_extended(
+        let (share, _) = RelinKeyShare::contribution_with_crp_extended(
             &secret_key,
             &crp_d1,
             &crp_a,
-            binding.clone(),
             0,
             0,
             &mut rng,
@@ -939,19 +931,12 @@ mod tests {
         assert_eq!(restored.ciphertext_level(), 0);
         assert_eq!(restored.key_level(), 0);
 
-        let public_key = PublicKeyShare::contribute_with_crp_and_binding(
-            &secret_key,
-            &crp_a,
-            binding,
-            &mut rng,
-        )?;
-        let aggregated_public_key: AggregatedPublicKey = [public_key].into_iter().aggregate()?;
+        let public_key = PublicKeyShare::contribute_with_crp(&secret_key, &crp_a, &mut rng)?;
+        let aggregated_public_key: LBFVPublicKey = [public_key].into_iter().aggregate()?;
         let relin_key = aggregate_relinearization_key(&[restored], &aggregated_public_key)?;
 
         let plaintext = Plaintext::try_encode(&[3u64], Encoding::poly(), &params)?;
-        let ciphertext = aggregated_public_key
-            .operational()
-            .try_encrypt(&plaintext, &mut rng)?;
+        let ciphertext = aggregated_public_key.try_encrypt(&plaintext, &mut rng)?;
         let mut square = &ciphertext * &ciphertext;
         relin_key.relinearizes(&mut square)?;
         let decoded = Vec::<u64>::try_decode(&secret_key.try_decrypt(&square)?, Encoding::poly())?;

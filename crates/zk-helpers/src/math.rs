@@ -222,6 +222,14 @@ pub fn decompose_residue(
     cyclo: &[BigInt],
     n: u64,
 ) -> (Polynomial, Polynomial) {
+    let product_degree = 2 * (n - 1);
+    let product_len = (product_degree + 1) as usize;
+    let pad_to_product_len = |polynomial: &Polynomial| {
+        assert!(polynomial.coefficients().len() <= product_len);
+        let mut coefficients = vec![BigInt::zero(); product_len - polynomial.coefficients().len()];
+        coefficients.extend_from_slice(polynomial.coefficients());
+        Polynomial::new(coefficients)
+    };
     let cyclo_poly = Polynomial::new(cyclo.to_vec());
     let qi_poly = Polynomial::new(vec![qi_bigint.clone()]);
 
@@ -231,8 +239,11 @@ pub fn decompose_residue(
     xi_hat_mod_rqi.center(qi_bigint);
     assert_eq!(xi, &xi_hat_mod_rqi);
 
-    let num_coeffs = xi.sub(xi_hat).coefficients().to_vec();
-    assert_eq!((num_coeffs.len() as u64) - 1, 2 * (n - 1));
+    let num_coeffs = pad_to_product_len(xi)
+        .sub(&pad_to_product_len(xi_hat))
+        .coefficients()
+        .to_vec();
+    assert_eq!((num_coeffs.len() as u64) - 1, product_degree);
 
     let mut num_mod_zqi = Polynomial::new(num_coeffs.clone());
     num_mod_zqi.reduce(qi_bigint);
@@ -242,32 +253,36 @@ pub fn decompose_residue(
     assert!(r2_rem_poly.coefficients().iter().all(|c| c.is_zero()));
     assert_eq!((r2_poly.coefficients().len() as u64) - 1, n - 2);
 
-    let r2_times_cyclo = r2_poly.mul(&cyclo_poly);
+    let r2_times_cyclo = if r2_poly.is_zero() {
+        Polynomial::zero(product_degree as usize)
+    } else {
+        r2_poly.mul(&cyclo_poly)
+    };
     let mut r2_times_cyclo_mod = r2_times_cyclo.clone();
     r2_times_cyclo_mod.reduce(qi_bigint);
     r2_times_cyclo_mod.center(qi_bigint);
     assert_eq!(&num_mod_zqi, &r2_times_cyclo_mod);
     assert_eq!(
         (r2_times_cyclo.coefficients().len() as u64) - 1,
-        2 * (n - 1)
+        product_degree
     );
 
     let num_poly = Polynomial::new(num_coeffs);
     let r1_num = num_poly.sub(&r2_times_cyclo);
-    assert_eq!((r1_num.coefficients().len() as u64) - 1, 2 * (n - 1));
+    assert_eq!((r1_num.coefficients().len() as u64) - 1, product_degree);
 
     let (r1_poly, r1_rem_poly) = r1_num.div(&qi_poly).unwrap();
     assert!(r1_rem_poly.coefficients().iter().all(|c| c.is_zero()));
-    assert_eq!((r1_poly.coefficients().len() as u64) - 1, 2 * (n - 1));
-    assert_eq!(&r1_num, &r1_poly.mul(&qi_poly));
+    assert_eq!((r1_poly.coefficients().len() as u64) - 1, product_degree);
 
     let r1_times_qi = r1_poly.clone().scalar_mul(qi_bigint);
+    assert_eq!(&r1_num, &r1_times_qi);
     let xi_calculated = xi_hat
         .clone()
         .add(&r1_times_qi)
         .add(&r2_times_cyclo)
         .trim_leading_zeros();
-    assert_eq!(xi, &xi_calculated);
+    assert_eq!(xi.clone().trim_leading_zeros(), xi_calculated);
 
     (r1_poly, r2_poly)
 }
@@ -281,5 +296,20 @@ mod tests {
         let moduli = [3u64, 5, 7];
         let q = compute_q_product(&moduli);
         assert_eq!(q, BigUint::from(105u64));
+    }
+
+    #[test]
+    fn decompose_residue_preserves_zero_quotient_shapes() {
+        let n = 4;
+        let cyclo = cyclotomic_polynomial(n);
+        let xi = Polynomial::zero((n - 1) as usize);
+        let xi_hat = Polynomial::zero((2 * (n - 1)) as usize);
+
+        let (r1, r2) = decompose_residue(&xi, &xi_hat, &BigInt::from(17), &cyclo, n);
+
+        assert!(r1.is_zero());
+        assert!(r2.is_zero());
+        assert_eq!(r1.degree(), (2 * (n - 1)) as usize);
+        assert_eq!(r2.degree(), (n - 2) as usize);
     }
 }

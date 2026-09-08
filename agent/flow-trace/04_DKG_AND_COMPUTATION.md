@@ -463,13 +463,14 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │                                      the final decryption proof exposes the SAFE commitment and the wrapper compares it with
 │   │   │                                      the commitment stored at ciphertext publication. Keccak(raw output) remains separate.
 │   │   │
-│   │   ├─ NOTE: Production C1 still proves one summation-only public-key share per party. A pure
-│   │   │   Rust adapter can convert each fixed l-BFV CRS row, but the row-indexed C1 circuit and
-│   │   │   its same-party `sk_commitment` link stay inactive. Activate them only when C1 codegen,
-│   │   │   `NodeFold`, `PendingThresholdProofs.pk_generation_proof`, and the request/response wire
-│   │   │   types change as one compatibility unit to collect GADGET_DIM proofs.
-│   │   │   `CircuitName::RlkGeneration` and `CircuitName::RlkAggregation` are reserved at appended
-│   │   │   discriminants 27 and 28. Their pure helper/prover boundaries exist, but no RLK
+│   │   ├─ NOTE: Production C1 still proves one summation-only public-key share per party. The
+│   │   │   separate `lbfv_pk_generation` circuit proves one fixed l-BFV public-key row and exposes
+│   │   │   `row_index`, `sk_commitment`, and `pk_commitment`. Its helper and prover boundaries
+│   │   │   exist, but `NodeFold`, pending proof state, and request/response types do not collect it.
+│   │   │   Legacy C5 pins the single TrBFV `CRP`; a separate l-BFV row aggregation circuit is still
+│   │   │   required.
+│   │   │   `CircuitName::RlkGeneration`, `CircuitName::RlkAggregation`, and
+│   │   │   `CircuitName::LbfvPkGeneration` use appended discriminants 27, 28, and 29. No l-BFV
 │   │   │   `ProofType` or runtime event exists yet.
 │   │   │
 │   │   ├─ On mismatch: publishes CommitmentConsistencyViolation

@@ -26,7 +26,7 @@ output — every step backed by ZK proofs verified on-chain.
 | Committee    | Ciphernodes serving an E3. Sizes `(N, T, H)`: `minimum` (3,1,2), `micro` (9,4,5), `small` (19,9,10)                             |
 | DKG          | Distributed key generation — joint threshold public key, no party holds the full secret                                         |
 | BFV / TrBFV  | Brakerski–Fan–Vercauteren FHE scheme / its threshold (publicly verifiable) variant                                              |
-| Preset       | BFV parameter set: `insecure` (dev/CI default), `secure-8192`, or `secure-16384`                                                  |
+| Preset       | BFV parameter set: `insecure` (dev/CI default), `secure-8192`, or `secure-16384`                                                |
 | C0–C7        | ZK circuit IDs across the DKG/decryption pipeline (map below)                                                                   |
 | Sortition    | Random committee selection (`crates/sortition`)                                                                                 |
 | Slashing     | Fault attribution, accusation quorum, commitment consistency (`crates/slashing`)                                                |
@@ -122,9 +122,10 @@ opentelemetry/tracing.
   `esm_share_computation_chunk` · C3 `share_encryption` · C4 `share_decryption`
 - **Threshold** (`circuits/bin/threshold/`): C1 `pk_generation` · C5 `pk_aggregation` · P3
   `user_data_encryption_ct0/ct1` (+ wrapper) · C6 `share_decryption` · C7
-  `decrypted_shares_aggregation` · l-BFV row proofs `rlk_generation` (helper/prover only; reserved
-  `CircuitName::RlkGeneration = 27`) and `rlk_aggregation` (helper/prover only; reserved
-  `CircuitName::RlkAggregation = 28`)
+  `decrypted_shares_aggregation` · secure-16384 l-BFV row proofs `lbfv_pk_generation`
+  (`CircuitName::LbfvPkGeneration = 29`), `rlk_generation` (`CircuitName::RlkGeneration = 27`), and
+  `rlk_aggregation` (`CircuitName::RlkAggregation = 28`). These circuits have helper and prover
+  boundaries, but the runtime proof flow does not use them yet.
 - **Recursive aggregation** (`circuits/bin/recursive_aggregation/`): fold kernels
   (`c2ab_chunk_fold`, `c3_fold`, `c6_fold`, `node_fold`, `nodes_fold`, …) and the top-level
   `dkg_aggregator` / `decryption_aggregator`, which produce the on-chain Honk verifiers. The

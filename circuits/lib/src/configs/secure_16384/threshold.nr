@@ -82003,7 +82003,7 @@ l-BFV relinearization key circuits
 ************************************/
 
 pub global GADGET_DIM: u32 = L;
-// C1 still uses the repeated CRP path; l-BFV row integration is not connected.
+// C1 uses the repeated CRP path. The dedicated l-BFV public-key circuit selects rows below.
 pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP, CRP, CRP];
 // l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
 // placeholder declarations because their RLK path is disabled.

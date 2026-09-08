@@ -17,10 +17,9 @@ use lib::math::polynomial::Polynomial;
 /// l-BFV: this circuit proves one gadget row's RLK `(d0, d2)` contribution. The
 /// same compiled circuit is reused for every row `row_index in 0..GADGET_DIM` by
 /// selecting that row's URS/CRS/Garner scalar out of `LBFV_URS_GADGET_ROWS`/
-/// `LBFV_CRS_GADGET_ROWS`/`G_GADGET_ROWS`. `a` is read from `LBFV_CRS_GADGET_ROWS` - the
-/// SAME constant `pk_generation` uses for this row (critical linkage between the
-/// public key and the relinearization key for a given row). The `r` commitment binds
-/// all rows from one party to the same ephemeral polynomial.
+/// `LBFV_CRS_GADGET_ROWS`/`G_GADGET_ROWS`. The l-BFV public-key row circuit uses
+/// the same `a` constant. The `r` commitment binds all rows from one party to the
+/// same ephemeral polynomial.
 fn main(
     row_index: pub u32,
     sk: Polynomial<N>,

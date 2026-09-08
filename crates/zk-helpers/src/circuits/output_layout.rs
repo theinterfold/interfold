@@ -126,6 +126,9 @@ pub const PK_BFV_OUTPUTS: &[OutputField] = &[f("pk_commitment")];
 pub const PK_GENERATION_OUTPUTS: &[OutputField] =
     &[f("sk_commitment"), f("pk_commitment"), f("e_sm_commitment")];
 
+/// l-BFV public-key generation for one gadget row.
+pub const LBFV_PK_GENERATION_OUTPUTS: &[OutputField] = &[f("sk_commitment"), f("pk_commitment")];
+
 /// l-BFV relinearization-key generation for one row.
 pub const RLK_GENERATION_OUTPUTS: &[OutputField] = &[
     f("sk_commitment"),
@@ -159,6 +162,9 @@ pub const SHARE_ENCRYPTION_INPUTS: &[OutputField] = &[
 
 /// Public l-BFV relinearization-key row selector.
 pub const RLK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
+
+/// Public l-BFV public-key row selector.
+pub const LBFV_PK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
 
 /// Public row selector for l-BFV relinearization-key aggregation.
 pub const RLK_AGGREGATION_INPUTS: &[OutputField] = &[f("row_index")];

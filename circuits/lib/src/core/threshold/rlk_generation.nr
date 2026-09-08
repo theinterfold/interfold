@@ -64,7 +64,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 ///
 /// **Role:** Prove one party's row-`j` RLK contribution from hidden `sk`, `r`,
 /// `e0`, `e2`, and quotients. `d1` is the row's URS; `a` is the CRS that the
-/// future row-level `pk_generation` flow must also select for this row.
+/// l-BFV public-key circuit also selects for this row.
 ///
 /// **Verifies:** Range checks on witnesses; evaluation form of
 /// `d0 = -d1*sk + e0 + g*r` and `d2 = a*r + e2 + g*sk` at the FS challenge,
@@ -86,7 +86,7 @@ pub struct RlkGeneration<let N: u32, let L: u32, let BIT_R: u32, let BIT_SK: u32
     /// Garner gadget scalar for this row (public constant).
     g: Field,
 
-    /// Secret key polynomial (secret witness) - same `sk` as this row's C1 proof.
+    /// Secret key polynomial (secret witness) - same `sk` as this row's l-BFV public-key proof.
     sk: Polynomial<N>,
     /// Ephemeral secret polynomial (secret witness), sampled like `sk`.
     r: Polynomial<N>,

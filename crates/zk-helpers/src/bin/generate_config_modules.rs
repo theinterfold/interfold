@@ -390,7 +390,7 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
         )
     };
     let c1_rows_comment = if lbfv_enabled {
-        "// C1 still uses the repeated CRP path; l-BFV row integration is not connected."
+        "// C1 uses the repeated CRP path. The dedicated l-BFV public-key circuit selects rows below."
     } else {
         "// C1 uses the repeated CRP path because this preset does not enable l-BFV."
     };
