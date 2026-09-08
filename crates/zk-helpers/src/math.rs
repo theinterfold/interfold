@@ -7,16 +7,19 @@
 //! Unified math helpers for ZK circuit computations: BFV/TRBFV parameters (Q, delta, inverses),
 //! CRT operations (k0is, FHE poly to CRT), and polynomial ring (cyclotomic, residue decomposition).
 
+use crate::utils::validate_crt_shape;
 use crate::CircuitsErrors;
 use e3_polynomial::center;
 use e3_polynomial::{CrtPolynomial, CrtPolynomialError, Polynomial, ToPowerBasisPoly};
-use fhe::bfv::{Encoding, Plaintext};
+use fhe::bfv::{Encoding, Plaintext, SecretKey};
+use fhe_math::rq::{traits::TryConvertFrom, Context, Poly, PowerBasis, RepresentationTag};
 use fhe_math::zq::Modulus;
 use fhe_traits::FheDecoder;
 use ndarray::Array2;
 use num_bigint::{BigInt, BigUint};
 use num_integer::Integer;
 use num_traits::{ToPrimitive, Zero};
+use std::sync::Arc;
 
 /// Encoded plaintext coefficients in poly encoding (u64 limb values).
 pub fn plaintext_poly_u64(pt: &Plaintext) -> Result<Vec<u64>, CircuitsErrors> {
@@ -154,6 +157,50 @@ pub fn fhe_poly_to_crt_centered(
     crt.reverse();
     crt.center(moduli)?;
     Ok(crt)
+}
+
+/// Convert an FHE polynomial to centered CRT form and validate its circuit shape.
+pub fn fhe_poly_to_crt_centered_checked(
+    poly: &impl ToPowerBasisPoly,
+    moduli: &[u64],
+    degree: usize,
+) -> Result<CrtPolynomial, CircuitsErrors> {
+    let crt = fhe_poly_to_crt_centered(poly, moduli)?;
+    validate_crt_shape(&crt, moduli.len(), degree)
+        .map_err(|error| CircuitsErrors::Other(format!("invalid FHE polynomial shape: {error}")))?;
+    Ok(crt)
+}
+
+/// Convert an FHE secret key to centered CRT form for circuit witnesses.
+pub fn fhe_secret_key_to_crt_centered(
+    secret_key: &SecretKey,
+    context: &Arc<Context>,
+    moduli: &[u64],
+    degree: usize,
+) -> Result<CrtPolynomial, CircuitsErrors> {
+    if secret_key.coeffs.len() != degree {
+        return Err(CircuitsErrors::Other(format!(
+            "secret key has {} coefficients; expected {degree}",
+            secret_key.coeffs.len()
+        )));
+    }
+    let poly = Poly::<PowerBasis>::try_convert_from(secret_key.coeffs.as_ref(), context, false)
+        .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+    fhe_poly_to_crt_centered_checked(&poly, moduli, degree)
+}
+
+/// Verify that an FHE polynomial uses the expected ring context.
+pub fn validate_fhe_poly_context<R: RepresentationTag>(
+    poly: &Poly<R>,
+    context: &Context,
+    name: &str,
+) -> Result<(), CircuitsErrors> {
+    if poly.ctx().degree != context.degree || poly.ctx().moduli() != context.moduli() {
+        return Err(CircuitsErrors::Other(format!(
+            "{name} context does not match the adapter"
+        )));
+    }
+    Ok(())
 }
 
 // ---------- Polynomial ring (cyclotomic, residue decomposition) ----------

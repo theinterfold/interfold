@@ -4,9 +4,9 @@ use derivative::Derivative;
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::{
     CircuitInputLayout, CircuitOutputLayout, DKG_SHARE_DECRYPTION_OUTPUTS, PK_AGGREGATION_OUTPUTS,
-    PK_BFV_OUTPUTS, PK_GENERATION_INPUTS, PK_GENERATION_OUTPUTS, RLK_AGGREGATION_INPUTS,
-    RLK_AGGREGATION_OUTPUTS, RLK_GENERATION_INPUTS, RLK_GENERATION_OUTPUTS,
-    SHARE_ENCRYPTION_INPUTS, SHARE_ENCRYPTION_OUTPUTS, THRESHOLD_SHARE_DECRYPTION_INPUTS,
+    PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS, RLK_AGGREGATION_INPUTS, RLK_AGGREGATION_OUTPUTS,
+    RLK_GENERATION_INPUTS, RLK_GENERATION_OUTPUTS, SHARE_ENCRYPTION_INPUTS,
+    SHARE_ENCRYPTION_OUTPUTS, THRESHOLD_SHARE_DECRYPTION_INPUTS,
     THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
 };
 use serde::{Deserialize, Serialize};
@@ -302,9 +302,6 @@ impl CircuitName {
     /// Public input layout for circuits with tracked fields at the start of public_signals.
     pub fn input_layout(&self) -> CircuitInputLayout {
         match self {
-            CircuitName::PkGeneration => CircuitInputLayout::Fixed {
-                fields: PK_GENERATION_INPUTS,
-            },
             CircuitName::RlkGeneration => CircuitInputLayout::Fixed {
                 fields: RLK_GENERATION_INPUTS,
             },
@@ -526,20 +523,10 @@ mod tests {
     #[test]
     fn input_layout_other_circuits_none() {
         assert_eq!(CircuitName::PkBfv.input_layout().field_count(), Some(0));
-    }
-
-    #[test]
-    fn input_layout_pk_generation_row_index() {
         assert_eq!(
             CircuitName::PkGeneration.input_layout().field_count(),
-            Some(1)
+            Some(0)
         );
-        let mut signals = vec![0u8; 128];
-        signals[31] = 2;
-        let proof = make_proof(CircuitName::PkGeneration, &signals);
-        let mut row = [0u8; 32];
-        row[31] = 2;
-        assert_eq!(&*proof.extract_input("row_index").unwrap(), &row);
     }
 
     #[test]

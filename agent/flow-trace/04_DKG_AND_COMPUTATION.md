@@ -450,9 +450,6 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   ├─ Caches each party's (address, proof_type) → {public_signals, data_hash}
 │   │   ├─ Evaluates all registered CommitmentLinks:
 │   │   │     C0→C3   (SourceMustExistInTargets): C3's expected_pk_commitment ∈ any C0 pk_commitment
-│   │   │     C1 rows (SameParty, self-referential): l-BFV — a party's GADGET_DIM per-row
-│   │   │                                          C1 proofs must all share the same sk_commitment
-│   │   │                                          (source and target proof type are both C1PkGeneration)
 │   │   │     C1→C2a  (SameParty):                C1's sk_commitment == C2a's expected_secret_commitment
 │   │   │     C1→C2b  (SameParty):                C1's e_sm_commitment == C2b's expected_secret_commitment
 │   │   │     C1→C5   (CrossParty):               C1's pk_commitment ∈ C5 expected pk inputs
@@ -466,11 +463,11 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │                                      the final decryption proof exposes the SAFE commitment and the wrapper compares it with
 │   │   │                                      the commitment stored at ciphertext publication. Keccak(raw output) remains separate.
 │   │   │
-│   │   ├─ NOTE: The C1 Noir circuit declares public `row_index`, and the pure Rust adapter can
-│   │   │   convert each fixed l-BFV CRS row. Rust C1 codegen, `NodeFold`,
-│   │   │   `PendingThresholdProofs.pk_generation_proof`, and the C1 request/response wire types
-│   │   │   still carry one C1 proof per party. The link activates after these components change
-│   │   │   as one compatibility unit and collect GADGET_DIM C1 proofs.
+│   │   ├─ NOTE: Production C1 still proves one summation-only public-key share per party. A pure
+│   │   │   Rust adapter can convert each fixed l-BFV CRS row, but the row-indexed C1 circuit and
+│   │   │   its same-party `sk_commitment` link stay inactive. Activate them only when C1 codegen,
+│   │   │   `NodeFold`, `PendingThresholdProofs.pk_generation_proof`, and the request/response wire
+│   │   │   types change as one compatibility unit to collect GADGET_DIM proofs.
 │   │   │   `CircuitName::RlkGeneration` and `CircuitName::RlkAggregation` are reserved at appended
 │   │   │   discriminants 27 and 28. Their pure helper/prover boundaries exist, but no RLK
 │   │   │   `ProofType` or runtime event exists yet.

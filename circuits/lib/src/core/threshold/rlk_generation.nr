@@ -63,9 +63,8 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 /// analogous to `pk_generation` (C1) but for the RLK's `(d0, d2)` pair).
 ///
 /// **Role:** Prove one party's row-`j` RLK contribution from hidden `sk`, `r`,
-/// `e0`, `e2`, and quotients. `d1` is the row's URS; `a` is the CRS - the SAME
-/// `a` used by `pk_generation` for this row (critical linkage: caller must pass
-/// the identical CRS to both circuits for a given row).
+/// `e0`, `e2`, and quotients. `d1` is the row's URS; `a` is the CRS that the
+/// future row-level `pk_generation` flow must also select for this row.
 ///
 /// **Verifies:** Range checks on witnesses; evaluation form of
 /// `d0 = -d1*sk + e0 + g*r` and `d2 = a*r + e2 + g*sk` at the FS challenge,
@@ -82,8 +81,7 @@ pub struct RlkGeneration<let N: u32, let L: u32, let BIT_R: u32, let BIT_SK: u32
 
     /// URS polynomials for this row (public witnesses), one per modulus.
     d1: [Polynomial<N>; L],
-    /// CRS polynomials for this row (public witnesses), one per modulus - must
-    /// be the same `a` passed to `pk_generation` for this row.
+    /// CRS polynomials for this row (public witnesses), one per modulus.
     a: [Polynomial<N>; L],
     /// Garner gadget scalar for this row (public constant).
     g: Field,
@@ -149,6 +147,7 @@ impl<let N: u32, let L: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, l
         inputs = flatten::<_, _, BIT_E0>(inputs, [self.e0]);
         inputs = flatten::<_, _, BIT_E2>(inputs, [self.e2]);
 
+        // The commitments bind sk, r, d0, and d2 without repeating their coefficients.
         inputs = inputs.push_back(sk_commitment);
         inputs = inputs.push_back(r_commitment);
         inputs = inputs.push_back(d0_commitment);

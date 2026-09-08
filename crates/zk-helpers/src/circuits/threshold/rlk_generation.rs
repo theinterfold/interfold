@@ -6,7 +6,10 @@
 
 //! Conversion of l-BFV relinearization-key rows into Noir witnesses.
 
-use crate::math::{cyclotomic_polynomial, decompose_residue};
+use crate::math::{
+    cyclotomic_polynomial, decompose_residue, fhe_poly_to_crt_centered_checked,
+    fhe_secret_key_to_crt_centered, validate_fhe_poly_context,
+};
 use crate::utils::{validate_crt_shape, verify_crt_shapes};
 use crate::{
     calculate_bit_width, crt_polynomial_to_toml_json, polynomial_to_toml_json, Artifacts,
@@ -14,11 +17,11 @@ use crate::{
     CodegenConfigs, CodegenToml, Computation,
 };
 use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
-use e3_polynomial::{CrtPolynomial, Polynomial, ToPowerBasisPoly};
+use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe::bfv::{BfvParameters, CommonRandomPolyVec, SecretKey};
 use fhe::trlbfv::{PublicKeyShare, RelinKeyShare, RlkWitness};
 use fhe_math::rns::RnsContext;
-use fhe_math::rq::{traits::TryConvertFrom, Context, Ntt, NttShoup, Poly, PowerBasis};
+use fhe_math::rq::Context;
 use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
 use zeroize::Zeroize;
@@ -256,7 +259,18 @@ impl Computation for RlkGenerationInputs {
     fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
         let (params, _) = build_pair_for_preset(preset)
             .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
-        RlkGenerationAdapter::new(preset)?.crs_row(data.row_index)?;
+        let crs_seed = lbfv_crs_seed(preset).ok_or_else(|| {
+            CircuitsErrors::Other(format!("l-BFV CRS is not enabled for {preset:?}"))
+        })?;
+        let crs_row_count = CommonRandomPolyVec::from_seed(&params, crs_seed)?.len();
+        let row_index = usize::try_from(data.row_index)
+            .map_err(|_| CircuitsErrors::Other("RLK row index does not fit usize".to_string()))?;
+        if row_index >= crs_row_count {
+            return Err(CircuitsErrors::Other(format!(
+                "RLK row index {} is out of range for {crs_row_count} rows",
+                data.row_index
+            )));
+        }
         let l = params.moduli().len();
         let n = params.degree();
         verify_crt_shapes(&[&data.d0, &data.d2], l, n)
@@ -353,83 +367,58 @@ pub global N: u32 = {};
 pub global L: u32 = {};
 pub global QIS: [Field; L] = [{}];
 
-pub global {}_BIT_R: u32 = {};
-pub global {}_BIT_SK: u32 = {};
-pub global {}_BIT_E0: u32 = {};
-pub global {}_BIT_E2: u32 = {};
-pub global {}_BIT_R1_D0: u32 = {};
-pub global {}_BIT_R2_D0: u32 = {};
-pub global {}_BIT_R1_D2: u32 = {};
-pub global {}_BIT_R2_D2: u32 = {};
-pub global {}_BIT_D: u32 = {};
+pub global {prefix}_BIT_R: u32 = {};
+pub global {prefix}_BIT_SK: u32 = {};
+pub global {prefix}_BIT_E0: u32 = {};
+pub global {prefix}_BIT_E2: u32 = {};
+pub global {prefix}_BIT_R1_D0: u32 = {};
+pub global {prefix}_BIT_R2_D0: u32 = {};
+pub global {prefix}_BIT_R1_D2: u32 = {};
+pub global {prefix}_BIT_R2_D2: u32 = {};
+pub global {prefix}_BIT_D: u32 = {};
 
-pub global {}_R_BOUND: Field = {};
-pub global {}_SK_BOUND: Field = {};
-pub global {}_E0_BOUND: Field = {};
-pub global {}_E2_BOUND: Field = {};
-pub global {}_R1_D0_BOUNDS: [Field; L] = [{}];
-pub global {}_R2_D0_BOUNDS: [Field; L] = [{}];
-pub global {}_R1_D2_BOUNDS: [Field; L] = [{}];
-pub global {}_R2_D2_BOUNDS: [Field; L] = [{}];
+pub global {prefix}_R_BOUND: Field = {};
+pub global {prefix}_SK_BOUND: Field = {};
+pub global {prefix}_E0_BOUND: Field = {};
+pub global {prefix}_E2_BOUND: Field = {};
+pub global {prefix}_R1_D0_BOUNDS: [Field; L] = [{}];
+pub global {prefix}_R2_D0_BOUNDS: [Field; L] = [{}];
+pub global {prefix}_R1_D2_BOUNDS: [Field; L] = [{}];
+pub global {prefix}_R2_D2_BOUNDS: [Field; L] = [{}];
 
-pub global {}_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::new(
+pub global {prefix}_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::new(
     QIS,
-    {}_R_BOUND,
-    {}_SK_BOUND,
-    {}_E0_BOUND,
-    {}_E2_BOUND,
-    {}_R1_D0_BOUNDS,
-    {}_R2_D0_BOUNDS,
-    {}_R1_D2_BOUNDS,
-    {}_R2_D2_BOUNDS,
+    {prefix}_R_BOUND,
+    {prefix}_SK_BOUND,
+    {prefix}_E0_BOUND,
+    {prefix}_E2_BOUND,
+    {prefix}_R1_D0_BOUNDS,
+    {prefix}_R2_D0_BOUNDS,
+    {prefix}_R1_D2_BOUNDS,
+    {prefix}_R2_D2_BOUNDS,
 );
 "#,
         configs.n,
         configs.l,
         moduli,
-        prefix,
         configs.bits.r_bit,
-        prefix,
         configs.bits.sk_bit,
-        prefix,
         configs.bits.e0_bit,
-        prefix,
         configs.bits.e2_bit,
-        prefix,
         configs.bits.r1_d0_bit,
-        prefix,
         configs.bits.r2_d0_bit,
-        prefix,
         configs.bits.r1_d2_bit,
-        prefix,
         configs.bits.r2_d2_bit,
-        prefix,
         configs.bits.d_bit,
-        prefix,
         configs.bounds.r_bound,
-        prefix,
         configs.bounds.sk_bound,
-        prefix,
         configs.bounds.e0_bound,
-        prefix,
         configs.bounds.e2_bound,
-        prefix,
         r1_d0,
-        prefix,
         r2_d0,
-        prefix,
         r1_d2,
-        prefix,
         r2_d2,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
+        prefix = prefix,
     )
 }
 
@@ -470,17 +459,6 @@ impl RlkGenerationAdapter {
         self.d1_rows.len()
     }
 
-    fn crs_row(&self, row_index: u32) -> Result<&CrtPolynomial, CircuitsErrors> {
-        let row = usize::try_from(row_index)
-            .map_err(|_| CircuitsErrors::Other("RLK row index does not fit usize".to_string()))?;
-        self.a_rows.get(row).ok_or_else(|| {
-            CircuitsErrors::Other(format!(
-                "RLK row index {row_index} is out of range for {} rows",
-                self.row_count()
-            ))
-        })
-    }
-
     /// Convert one public RLK share row to the circuit's centered CRT representation.
     pub fn share_row_components(
         &self,
@@ -513,12 +491,12 @@ impl RlkGenerationAdapter {
 
         let d0_component = &share.d0_components()[row];
         let d2_component = &share.d2_components()[row];
-        validate_component_context(d0_component, &self.context, &self.moduli, "d0")?;
-        validate_component_context(d2_component, &self.context, &self.moduli, "d2")?;
+        validate_fhe_poly_context(d0_component, &self.context, "RLK d0 component")?;
+        validate_fhe_poly_context(d2_component, &self.context, "RLK d2 component")?;
 
         Ok((
-            centered_crt(d0_component, &self.moduli, self.degree)?,
-            centered_crt(d2_component, &self.moduli, self.degree)?,
+            fhe_poly_to_crt_centered_checked(d0_component, &self.moduli, self.degree)?,
+            fhe_poly_to_crt_centered_checked(d2_component, &self.moduli, self.degree)?,
         ))
     }
 
@@ -549,16 +527,15 @@ impl RlkGenerationAdapter {
             .get(row)
             .ok_or_else(|| CircuitsErrors::Other("RLK d2 error row is missing".to_string()))?;
 
-        for (name, component) in [("e0", error_d0), ("e2", error_d2)] {
-            validate_component_context(component, &self.context, &self.moduli, name)?;
-        }
+        validate_fhe_poly_context(error_d0, &self.context, "RLK e0 component")?;
+        validate_fhe_poly_context(error_d2, &self.context, "RLK e2 component")?;
 
         let (d0, d2) = self.share_row_components(row_index, share)?;
-        let e0_crt = centered_crt(error_d0, &self.moduli, self.degree)?;
-        let e2_crt = centered_crt(error_d2, &self.moduli, self.degree)?;
-        let sk_crt = secret_key_to_centered_crt(sk, &self.context, &self.moduli, self.degree)?;
+        let e0_crt = fhe_poly_to_crt_centered_checked(error_d0, &self.moduli, self.degree)?;
+        let e2_crt = fhe_poly_to_crt_centered_checked(error_d2, &self.moduli, self.degree)?;
+        let sk_crt = fhe_secret_key_to_crt_centered(sk, &self.context, &self.moduli, self.degree)?;
         let r_crt =
-            secret_key_to_centered_crt(&witness.r, &self.context, &self.moduli, self.degree)?;
+            fhe_secret_key_to_crt_centered(&witness.r, &self.context, &self.moduli, self.degree)?;
 
         verify_crt_shapes(
             &[&d0, &d2, &e0_crt, &e2_crt, &sk_crt, &r_crt],
@@ -663,8 +640,8 @@ impl RlkGenerationAdapter {
         }
 
         for (row, component) in a_components.iter().enumerate() {
-            validate_public_key_component_context(component, &self.context, &self.moduli)?;
-            let actual = centered_crt(component, &self.moduli, self.degree)?;
+            validate_fhe_poly_context(component, &self.context, "public-key CRS component")?;
+            let actual = fhe_poly_to_crt_centered_checked(component, &self.moduli, self.degree)?;
             if actual != self.a_rows[row] {
                 return Err(CircuitsErrors::Other(format!(
                     "public-key CRS row {row} does not match the RLK CRS"
@@ -691,12 +668,12 @@ impl RlkGenerationAdapter {
         let d1_rows = crp_d1
             .to_polys()
             .iter()
-            .map(|poly| centered_crt(poly, &moduli, degree))
+            .map(|poly| fhe_poly_to_crt_centered_checked(poly, &moduli, degree))
             .collect::<Result<Vec<_>, _>>()?;
         let a_rows = crp_a
             .to_polys()
             .iter()
-            .map(|poly| centered_crt(poly, &moduli, degree))
+            .map(|poly| fhe_poly_to_crt_centered_checked(poly, &moduli, degree))
             .collect::<Result<Vec<_>, _>>()?;
 
         let rns =
@@ -781,67 +758,10 @@ impl RlkGenerationCircuitData {
         let sk = SecretKey::random(&params, &mut rng);
         let (share, witness) =
             RelinKeyShare::contribution_with_crp_extended(&sk, &crp_d1, &crp_a, 0, 0, &mut rng)?;
-        let adapter = RlkGenerationAdapter::new(preset)?;
+        let adapter = RlkGenerationAdapter::from_rows(&params, &crp_d1, &crp_a)?;
         let witness = RlkWitnessGuard::new(witness);
         adapter.row_data(committee, row_index, &sk, &share, witness.as_ref())
     }
-}
-
-fn centered_crt(
-    poly: &impl ToPowerBasisPoly,
-    moduli: &[u64],
-    degree: usize,
-) -> Result<CrtPolynomial, CircuitsErrors> {
-    let mut crt = CrtPolynomial::from_fhe_polynomial(poly);
-    crt.reverse();
-    crt.center(moduli)?;
-    validate_crt_shape(&crt, moduli.len(), degree)
-        .map_err(|error| CircuitsErrors::Other(format!("invalid FHE polynomial shape: {error}")))?;
-    Ok(crt)
-}
-
-fn validate_component_context(
-    poly: &Poly<NttShoup>,
-    context: &Context,
-    moduli: &[u64],
-    name: &str,
-) -> Result<(), CircuitsErrors> {
-    if poly.ctx().degree != context.degree || poly.ctx().moduli() != moduli {
-        return Err(CircuitsErrors::Other(format!(
-            "RLK {name} component context does not match the adapter"
-        )));
-    }
-    Ok(())
-}
-
-fn validate_public_key_component_context(
-    poly: &Poly<Ntt>,
-    context: &Context,
-    moduli: &[u64],
-) -> Result<(), CircuitsErrors> {
-    if poly.ctx().degree != context.degree || poly.ctx().moduli() != moduli {
-        return Err(CircuitsErrors::Other(
-            "public-key CRS component context does not match the adapter".to_string(),
-        ));
-    }
-    Ok(())
-}
-
-fn secret_key_to_centered_crt(
-    secret_key: &SecretKey,
-    context: &Arc<Context>,
-    moduli: &[u64],
-    degree: usize,
-) -> Result<CrtPolynomial, CircuitsErrors> {
-    if secret_key.coeffs.len() != degree {
-        return Err(CircuitsErrors::Other(format!(
-            "secret key has {} coefficients; expected {degree}",
-            secret_key.coeffs.len()
-        )));
-    }
-    let poly = Poly::<PowerBasis>::try_convert_from(secret_key.coeffs.as_ref(), context, false)
-        .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
-    centered_crt(&poly, moduli, degree)
 }
 
 #[cfg(test)]

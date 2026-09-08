@@ -6,14 +6,17 @@
 
 //! Conversion of l-BFV public-key rows into C1 circuit inputs.
 
-use crate::math::cyclotomic_polynomial;
-use crate::utils::{validate_crt_shape, verify_crt_shapes};
+use crate::math::{
+    cyclotomic_polynomial, fhe_poly_to_crt_centered_checked, fhe_secret_key_to_crt_centered,
+    validate_fhe_poly_context,
+};
+use crate::utils::verify_crt_shapes;
 use crate::{CiphernodesCommittee, CircuitsErrors};
 use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, BfvPreset};
-use e3_polynomial::{CrtPolynomial, Polynomial, ToPowerBasisPoly};
+use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe::bfv::{BfvParameters, CommonRandomPolyVec, SecretKey};
 use fhe::trlbfv::PublicKeyShare;
-use fhe_math::rq::{traits::TryConvertFrom, Context, Ntt, Poly, PowerBasis};
+use fhe_math::rq::Context;
 use num_bigint::BigInt;
 use std::sync::Arc;
 
@@ -105,21 +108,25 @@ impl LbfvPkGenerationAdapter {
         for (index, (a_component, b_component)) in
             a_components.iter().zip(b_components.iter()).enumerate()
         {
-            validate_component_context(a_component, &self.context, &self.moduli, "a")?;
-            validate_component_context(b_component, &self.context, &self.moduli, "b")?;
+            validate_fhe_poly_context(a_component, &self.context, "l-BFV public-key a component")?;
+            validate_fhe_poly_context(b_component, &self.context, "l-BFV public-key b component")?;
 
-            let a = centered_crt(a_component, &self.moduli, self.degree)?;
+            let a = fhe_poly_to_crt_centered_checked(a_component, &self.moduli, self.degree)?;
             if a != self.a_rows[index] {
                 return Err(CircuitsErrors::Other(format!(
                     "public-key CRS row {index} does not match the fixed l-BFV CRS"
                 )));
             }
             a_rows.push(a);
-            b_rows.push(centered_crt(b_component, &self.moduli, self.degree)?);
+            b_rows.push(fhe_poly_to_crt_centered_checked(
+                b_component,
+                &self.moduli,
+                self.degree,
+            )?);
         }
 
         let sk_crt =
-            secret_key_to_centered_crt(secret_key, &self.context, &self.moduli, self.degree)?;
+            fhe_secret_key_to_crt_centered(secret_key, &self.context, &self.moduli, self.degree)?;
         verify_crt_shapes(
             &[&a_rows[row], &b_rows[row], &sk_crt],
             self.moduli.len(),
@@ -185,7 +192,7 @@ impl LbfvPkGenerationAdapter {
 
         let a_rows = rows
             .iter()
-            .map(|row| centered_crt(row, &moduli, degree))
+            .map(|row| fhe_poly_to_crt_centered_checked(row, &moduli, degree))
             .collect::<Result<Vec<_>, _>>()?;
 
         Ok(Self {
@@ -199,50 +206,6 @@ impl LbfvPkGenerationAdapter {
             cyclotomic: cyclotomic_polynomial(degree as u64),
         })
     }
-}
-
-fn centered_crt(
-    poly: &impl ToPowerBasisPoly,
-    moduli: &[u64],
-    degree: usize,
-) -> Result<CrtPolynomial, CircuitsErrors> {
-    let mut crt = CrtPolynomial::from_fhe_polynomial(poly);
-    crt.reverse();
-    crt.center(moduli)?;
-    validate_crt_shape(&crt, moduli.len(), degree)
-        .map_err(|error| CircuitsErrors::Other(format!("invalid FHE polynomial shape: {error}")))?;
-    Ok(crt)
-}
-
-fn validate_component_context(
-    poly: &Poly<Ntt>,
-    context: &Context,
-    moduli: &[u64],
-    name: &str,
-) -> Result<(), CircuitsErrors> {
-    if poly.ctx().degree != context.degree || poly.ctx().moduli() != moduli {
-        return Err(CircuitsErrors::Other(format!(
-            "l-BFV public-key {name} component context does not match the adapter"
-        )));
-    }
-    Ok(())
-}
-
-fn secret_key_to_centered_crt(
-    secret_key: &SecretKey,
-    context: &Arc<Context>,
-    moduli: &[u64],
-    degree: usize,
-) -> Result<CrtPolynomial, CircuitsErrors> {
-    if secret_key.coeffs.len() != degree {
-        return Err(CircuitsErrors::Other(format!(
-            "secret key has {} coefficients; expected {degree}",
-            secret_key.coeffs.len()
-        )));
-    }
-    let poly = Poly::<PowerBasis>::try_convert_from(secret_key.coeffs.as_ref(), context, false)
-        .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
-    centered_crt(&poly, moduli, degree)
 }
 
 #[cfg(test)]
