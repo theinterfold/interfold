@@ -1,0 +1,63 @@
+r123 - DecryptionAggregator anchor on the PRODUCTION keccak decryption domain
+===============================================================================
+RAN-GREEN on box-1 (2026-09-08).
+
+What: r122 RAN-proved the DA (the on-chain final decryption-tail proof) at
+secure-8192/small (N=19/T=9/H=10/L=3) with a (domain_hi, domain_lo) = (1, 2)
+stand-in and flagged the production keccak domain as the ONE
+intentionally-simplified input. r123 closes that line: the domain is now
+derived via e3_committee_hash::decryption_domain_limbs - the EXACT production
+code path (crates/multithread/src/multithread.rs:452-457):
+
+    domain_hash = keccak256(abi.encode(chainId, interfold_address, e3_id,
+                    committee_hash, ciphertext_output_hash, committee_pk))
+    (domain_hi, domain_lo) = (hi_128, lo_128)
+
+RAN inputs (identical shape to r122, domain substituted):
+  chain_id           = 31337            (test-only deployment constant)
+  e3_id              = 123              (test-only)
+  interfold_address  = 0x1111...1111    (test-only)
+  committee hash     = keccak256 over the SAME 19 ordered addresses the DA
+                       consumes as on-chain topNodes (production code path,
+                       e3_committee_hash::hash_committee_addresses)
+  pk_commitment      = C1-style pk commitment of the SAME aggregated pk the
+                       world encrypts with (compute_public_key_commitment,
+                       e3_zk_helpers)
+  ct_output_hash     = keccak256(ct.to_bytes()) over the SAME shared
+                       ciphertext (fhe_traits::Serialize)
+
+Derived domain (RAN, exact):
+  domain_hi = 253851075070681689317958502982541247106
+  domain_lo = 120459510031717238758581311556505218891
+  pkc    = 2fe6ceab7a606309971ef24fda969f154c9d2b3453ec25c8bf616fff8ddcd56a
+  cth    = 0x574c85c468aa2dedb6749c608aa229c74b3012c52d7aa3e325ac15a231793ab1
+
+Prove (all on the SAME derived domain; leg_run.out):
+  shared world build      7.44 s
+  10 C6 inners (Recursive, shared) 382.68 s total (37.52-39.49 each;
+                              r122: 375.25 s - domain-invariant as predicted)
+  1 C7 (Default, shared)     5.71 s (r121 anchor 5.80 s avg)
+  c6_fold chain (inside DA API) - part of the 139.73 s below
+  DA (CircuitVariant::Evm, production API prove_decryption_aggregation_jobs)
+                                          139.73 s (r122: 136.61 s)
+  DA EVM verify (on-chain verifier path) ok=true 0.010 s
+  TOTAL test wall           535.88 s; /usr/bin/time: 8:59.34 @4c
+  peak RSS                  3,624,888 kB = 3.46 GiB (r122: 3,625,024 kB)
+  Swaps                     0
+  RC_TEST                   0 (1 passed / 0 failed)
+
+Consequence: EVERY input to the DA proof at the production committee is now
+production-shape RAN data (the (1,2) stand-in line is closed end to end -
+C6 inners + c6_fold chain + DA EVM + EVM verify all run on the real keccak
+limbs). No circuit/source change (test + Cargo.toml dev-dep + poc/ only).
+NO UPSTREAM-PR (test-only; matches the r118-r122 class).
+
+Wall table: N=19 90.1 min/node @4c EXCL. comm UNTOUCHED (DA = post-DKG
+P4-tail, not a per-node input; model.py unchanged).
+
+Staging: ZERO compile this round. The stage tree is r122's byte-conserved
+poc/r122/root (reused via E3_R123_STAGE_ROOT); artifacts are commit-pinned
+(DA 1,493,885 g / 9,526 ACIR sha-gate 1192422675816716; C6/C7 r119/r121
+dur-tree copies). Build command documented in the test header.
+
+Re-runnable derivation: build_test_r123.py (from da_secure_small_r122.rs).

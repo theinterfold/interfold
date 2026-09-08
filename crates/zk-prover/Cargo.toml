@@ -53,6 +53,7 @@ walkdir = "2.5"
 e3-test-helpers = { workspace = true }
 e3-evm = { workspace = true }
 e3-crypto = { workspace = true }
+e3-committee-hash = { workspace = true }
 e3-trbfv = { workspace = true }
 fhe-math = { workspace = true }
 ark-bn254 = { workspace = true }
