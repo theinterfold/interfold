@@ -56,6 +56,39 @@ fn stage_ends_input_retrieval(stage: &E3Stage) -> bool {
     )
 }
 
+/// The divisor the coordinator must scale raw voting power by, or `None` to derive a default.
+///
+/// Three rules, in order:
+///
+/// - A Merkle round gets `None`. The contract records a divisor for ONCHAIN rounds only, because
+///   a Merkle round takes its bound from the census leaf. Scaling the census by a factor that
+///   `_tallyScale()` does not read back would give a wrong tally with nothing to show it.
+/// - The value the contract stored wins. `CRISPProgram` resolved it once at request time, and
+///   every input is scaled by exactly it, so it is the authority.
+/// - The requested field is the fallback, for a round whose stored value could not be read. A
+///   zero or unparseable field means the round named no divisor, and the default is derived from
+///   the token as the contract did.
+fn resolve_divisor_override(
+    stored: Option<U256>,
+    requested: &str,
+    is_onchain_census: bool,
+) -> Option<U256> {
+    if !is_onchain_census {
+        return None;
+    }
+
+    if let Some(divisor) = stored {
+        if !divisor.is_zero() {
+            return Some(divisor);
+        }
+    }
+
+    match U256::from_str_radix(requested, 10) {
+        Ok(divisor) if !divisor.is_zero() => Some(divisor),
+        _ => None,
+    }
+}
+
 pub async fn register_e3_requested(
     indexer: InterfoldIndexer<impl DataStore, ReadWrite>,
 ) -> Result<InterfoldIndexer<impl DataStore, ReadWrite>> {
@@ -198,6 +231,36 @@ pub async fn register_e3_requested(
                     );
                 }
 
+                // The divisor the contract resolved and stored when the round was requested.
+                // `CRISPProgram` scales every input by exactly this value, so reading it removes
+                // the need to derive anything: the coordinator cannot disagree with the chain
+                // about an optional `decimals()` call or about a default the chain refused.
+                //
+                // A failed read is not fatal. The declared field below is the same value for
+                // every round that names one, and a round that names none still derives its
+                // default from the token, which is what the contract did.
+                let stored_divisor = if is_onchain_census {
+                    match crisp.onchain_voting_power_divisor(event.e3Id).await {
+                        Ok(divisor) => divisor,
+                        Err(error) => {
+                            warn!(
+                                "[e3_id={}] Failed to read the stored voting-power divisor: \
+                                 {:#}. Falling back to the requested value.",
+                                e3_id, error
+                            );
+                            None
+                        }
+                    }
+                } else {
+                    None
+                };
+
+                let divisor_override = resolve_divisor_override(
+                    stored_divisor,
+                    &custom_params.voting_power_divisor,
+                    is_onchain_census,
+                );
+
                 // Get token holders from Etherscan API or mocked data.
                 // Asked only when the round declared it. Probing every requester and falling back
                 // on failure would turn a broken census provider into a token vote over the wrong
@@ -305,17 +368,7 @@ pub async fn register_e3_requested(
                                 // the census leaf. Applying it there would scale the census by one
                                 // factor while `_tallyScale()` reads the results back assuming
                                 // another, and the tally would be wrong with nothing to show it.
-                                if is_onchain_census {
-                                    match U256::from_str_radix(
-                                        &custom_params.voting_power_divisor,
-                                        10,
-                                    ) {
-                                        Ok(d) if !d.is_zero() => Some(d),
-                                        _ => None,
-                                    }
-                                } else {
-                                    None
-                                },
+                                divisor_override,
                             )
                             .await
                             .context("Etherscan token-holder discovery failed")?
@@ -1695,5 +1748,73 @@ mod custom_params_decoding_tests {
         assert!(stage_ends_input_retrieval(&E3Stage::Complete));
         assert!(stage_ends_input_retrieval(&E3Stage::Failed));
         assert!(!stage_ends_input_retrieval(&E3Stage::KeyPublished));
+    }
+}
+
+/// The divisor decides the units every scaled balance is expressed in. The contract holds the
+/// authoritative value, so the coordinator must prefer it over the requested field and must apply
+/// neither one outside ONCHAIN mode.
+#[cfg(test)]
+mod voting_power_divisor_tests {
+    use super::resolve_divisor_override;
+    use alloy::primitives::U256;
+
+    /// The stored value is what `CRISPProgram` scales every input by, so it wins even when the
+    /// requested field says something else. A round requested with a zero field has a nonzero
+    /// stored divisor, which is the ordinary DAO configuration.
+    #[test]
+    fn the_stored_divisor_wins_over_the_requested_field() {
+        let stored = U256::from(10).pow(U256::from(17));
+
+        assert_eq!(
+            resolve_divisor_override(Some(stored), "0", true),
+            Some(stored)
+        );
+        assert_eq!(
+            resolve_divisor_override(Some(stored), "5000", true),
+            Some(stored)
+        );
+    }
+
+    /// The fallback for a round whose stored value could not be read.
+    #[test]
+    fn the_requested_field_is_used_when_no_stored_divisor_is_available() {
+        assert_eq!(
+            resolve_divisor_override(None, "5000", true),
+            Some(U256::from(5000))
+        );
+    }
+
+    /// A zero or unparseable field means the round named no divisor. `None` derives the default
+    /// from the token, which is what the contract did.
+    #[test]
+    fn a_round_that_names_no_divisor_derives_the_default() {
+        assert_eq!(resolve_divisor_override(None, "0", true), None);
+        assert_eq!(resolve_divisor_override(Some(U256::ZERO), "0", true), None);
+        assert_eq!(resolve_divisor_override(None, "not a number", true), None);
+        assert_eq!(resolve_divisor_override(None, "", true), None);
+    }
+
+    /// A Merkle round takes its bound from the census leaf. Scaling its census by a divisor would
+    /// give a tally that `_tallyScale()` decodes with a different factor.
+    #[test]
+    fn a_merkle_round_is_never_scaled_by_an_explicit_divisor() {
+        let stored = U256::from(10).pow(U256::from(17));
+
+        assert_eq!(resolve_divisor_override(Some(stored), "5000", false), None);
+        assert_eq!(resolve_divisor_override(None, "5000", false), None);
+    }
+
+    /// A divisor larger than 128 bits is an ordinary value on the chain, so it must survive the
+    /// coordinator unchanged.
+    #[test]
+    fn a_divisor_wider_than_128_bits_is_preserved() {
+        let stored = U256::from(10).pow(U256::from(39));
+
+        assert_eq!(
+            resolve_divisor_override(Some(stored), "0", true),
+            Some(stored)
+        );
+        assert!(stored > U256::from(u128::MAX));
     }
 }

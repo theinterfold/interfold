@@ -73,6 +73,12 @@ sol! {
         function MIN_VOTING_DURATION() external view returns (uint256);
         function pendingInputCount(uint256 e3Id) external view returns (uint40);
         function inputCommitmentDeadline(uint256 e3Id) external view returns (uint256);
+        /// The divisor `CRISPProgram` resolved and stored when the round was requested.
+        /// Zero for a round that is not ONCHAIN, and for a round it never initialized.
+        function votingPowerDivisorOf(uint256 e3Id) external view returns (uint256);
+        /// The census mode recorded at validation. Declared as a uint8 because that is how
+        /// Solidity encodes the enum, so no enum declaration has to be mirrored here.
+        function censusModeOf(uint256 e3Id) external view returns (uint8);
         function verify(
             uint256 e3Id,
             bytes32 ciphertextOutputHash,
@@ -111,6 +117,12 @@ sol! {
         uint40 parentIndexPlusOne
     );
 }
+
+/// The `CensusMode.ONCHAIN` discriminant, as `CRISPProgram` declares the enum.
+///
+/// The third variant, after `TOKEN` and `BY_REQUESTER`. A round of any other mode holds no
+/// voting-power divisor.
+const CENSUS_MODE_ONCHAIN: u8 = 2;
 
 /// Why a `publishInput` dry run failed.
 ///
@@ -550,6 +562,34 @@ impl CRISPContract<CRISPReadProvider> {
     pub async fn pending_input_count(&self, e3_id: U256) -> Result<u64> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
         Ok(contract.pendingInputCount(e3_id).call().await?.to::<u64>())
+    }
+
+    /// The voting-power divisor `CRISPProgram` stored for an ONCHAIN round.
+    ///
+    /// The authority on the divisor. The contract resolves it once, in the transaction that
+    /// requests the E3, and every input is then scaled by exactly this value. Reading it removes
+    /// the whole off-chain derivation, so the coordinator cannot disagree with the chain over an
+    /// optional `decimals()` call or over the width of an intermediate value.
+    ///
+    /// `Ok(None)` when the round is not ONCHAIN, or when the contract holds no divisor for it.
+    /// Both are legitimate answers rather than failures, and neither one is authoritative.
+    pub async fn onchain_voting_power_divisor(&self, e3_id: U256) -> Result<Option<U256>> {
+        let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
+
+        // The mode is checked first. The contract records a divisor for ONCHAIN rounds only, and
+        // applying one to a Merkle round would scale the census by a factor the tally does not
+        // read back.
+        let census_mode = contract.censusModeOf(e3_id).call().await?;
+        if census_mode != CENSUS_MODE_ONCHAIN {
+            return Ok(None);
+        }
+
+        let divisor = contract.votingPowerDivisorOf(e3_id).call().await?;
+        if divisor.is_zero() {
+            return Ok(None);
+        }
+
+        Ok(Some(divisor))
     }
 }
 

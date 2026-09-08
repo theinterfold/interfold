@@ -179,27 +179,74 @@ async fn broadcast_encrypted_vote(
         }
     };
 
-    // Reserve a global slot before the service can admit work that may spend relay funds.
-    if limiter.try_reserve_global().is_err() {
-        warn!("Rate limit (global) refused a broadcast from {caller}");
-
-        return HttpResponse::TooManyRequests().json(VoteResponse {
-            status: VoteResponseStatus::FailedBroadcast,
-            tx_hash: None,
-            job_id: None,
-            encoded_proof: None,
-            message: Some("The relay is busy, please try again shortly".to_string()),
-        });
+    // A repeat of a statement that already has durable work creates nothing and spends nothing.
+    // Answer it before the funding window is touched: charging a replay would let one caller
+    // consume the allowance that new votes need, and near the commitment cutoff that stops
+    // honest voters. The caller traffic window above still bounds a replay loop.
+    match availability
+        .existing_input_job(&e3_key, &encoded_proof)
+        .await
+    {
+        Ok(Some(job)) if job.status == "success" => return HttpResponse::Ok().json(job),
+        Ok(Some(job)) => return HttpResponse::Accepted().json(job),
+        Ok(None) => {}
+        Err(error) => {
+            if let Some(message) = input_rejection_message(&error) {
+                warn!("[e3_id={}] Vote rejected: {}", e3_key, error);
+                return HttpResponse::BadRequest().json(VoteResponse {
+                    status: VoteResponseStatus::FailedBroadcast,
+                    tx_hash: None,
+                    job_id: None,
+                    encoded_proof: None,
+                    message: Some(message.to_string()),
+                });
+            }
+            error!("[e3_id={}] Availability service failed: {}", e3_key, error);
+            return HttpResponse::ServiceUnavailable().json(VoteResponse {
+                status: VoteResponseStatus::FailedBroadcast,
+                tx_hash: None,
+                job_id: None,
+                encoded_proof: None,
+                message: Some("The availability service is temporarily unavailable".to_string()),
+            });
+        }
     }
+
+    // Reserve a global slot before the service can admit work that may spend relay funds. The
+    // guard owns this request's reservation and returns it on any path that admits nothing.
+    let reservation = match limiter.try_reserve_global() {
+        Ok(reservation) => reservation,
+        Err(_) => {
+            warn!("Rate limit (global) refused a broadcast from {caller}");
+
+            return HttpResponse::TooManyRequests().json(VoteResponse {
+                status: VoteResponseStatus::FailedBroadcast,
+                tx_hash: None,
+                job_id: None,
+                encoded_proof: None,
+                message: Some("The relay is busy, please try again shortly".to_string()),
+            });
+        }
+    };
 
     match availability
         .stage_input(&e3_key, encoded_proof.to_vec())
         .await
     {
-        Ok(job) if job.status == "success" => HttpResponse::Ok().json(job),
-        Ok(job) => HttpResponse::Accepted().json(job),
+        Ok(staged) => {
+            if staged.admitted {
+                // Durable work exists and can still spend relay funds after this response.
+                reservation.commit();
+            }
+            if staged.view.status == "success" {
+                HttpResponse::Ok().json(staged.view)
+            } else {
+                HttpResponse::Accepted().json(staged.view)
+            }
+        }
         Err(error) => {
-            limiter.release_global_reservation();
+            // Nothing durable was admitted, so the guard returns this request's own slot.
+            drop(reservation);
             if let Some(message) = input_rejection_message(&error) {
                 warn!("[e3_id={}] Vote rejected: {}", e3_key, error);
                 return HttpResponse::BadRequest().json(VoteResponse {

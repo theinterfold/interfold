@@ -2,7 +2,10 @@
 
 //! Persistent publication jobs for CRISP's large encrypted objects.
 
-use crate::{config::Config, server::models::e3_id_to_u256};
+use crate::{
+    config::Config,
+    server::models::{canonical_e3_id, e3_id_to_u256},
+};
 use alloy::{
     eips::{BlockId, BlockNumberOrTag},
     primitives::{keccak256, Address, Bytes, B256, U256},
@@ -11,17 +14,20 @@ use alloy::{
     sol,
     sol_types::SolValue,
 };
+use e3_bfv_client::client::compute_ct_commitment_with_params;
 use e3_data_availability::{
     AvailPublisher, AvailReader, DataAvailabilityPublisher, DataAvailabilityReader, DataReference,
     PendingPublication, ProofStatus,
 };
 use e3_evm_helpers::contracts::{E3Stage, InterfoldContractFactory, InterfoldRead, InterfoldWrite};
+use e3_fhe_params::{build_bfv_params_from_set_arc, encode_bfv_params, BfvParamSet, BfvPreset};
 use evm_helpers::{CRISPContract, InputPublished, SimulateError};
+use fhe::bfv::BfvParameters;
 use serde::{Deserialize, Serialize};
 use sled::{transaction::Transactional, Db, Tree};
 use std::{
-    collections::HashSet,
-    sync::{Arc, Mutex as StorageMutex},
+    collections::{HashMap, HashSet},
+    sync::{Arc, LazyLock, Mutex as StorageMutex},
     time::Duration,
 };
 use tokio::{sync::Semaphore, task::JoinSet};
@@ -33,8 +39,27 @@ const JOB_POLL_INTERVAL: Duration = Duration::from_secs(30);
 const JOB_STEP_TIMEOUT: Duration = Duration::from_secs(480);
 const JOB_STATUS_REFRESH_TIMEOUT: Duration = Duration::from_secs(15);
 const MAX_CONCURRENT_JOB_STEPS: usize = 4;
+// Deserialization and the SAFE commitment are real processor work, and intake is a public
+// endpoint. Keep this below the job-step bound: a validation holds one processor for the
+// complete calculation, while a job step usually waits for a network answer.
+const MAX_CONCURRENT_CIPHERTEXT_VALIDATIONS: usize = 2;
 const AVAILABILITY_JOB_SCHEMA_VERSION: u32 = 1;
 const AVAILABLE_INPUT_REFERENCE_SCHEMA_VERSION: u32 = 1;
+
+/// Bounds the intake ciphertext validations that can run at the same time.
+///
+/// Process-wide, because the limit protects the processor, and one process can serve more than
+/// one round.
+static CIPHERTEXT_VALIDATION_SLOTS: LazyLock<Semaphore> =
+    LazyLock::new(|| Semaphore::new(MAX_CONCURRENT_CIPHERTEXT_VALIDATIONS));
+
+/// BFV parameter tables and their circuit configuration identifier, by parameter-set index.
+///
+/// The secure tables are expensive to build and a parameter set has one fixed content, so they
+/// are built one time and shared by every later validation.
+static BFV_PARAMETERS_BY_PARAM_SET: LazyLock<
+    StorageMutex<HashMap<u8, (Arc<BfvParameters>, B256)>>,
+> = LazyLock::new(|| StorageMutex::new(HashMap::new()));
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -79,6 +104,67 @@ pub fn input_rejection_message(error: &anyhow::Error) -> Option<&'static str> {
         }
     }
     None
+}
+
+/// The circuit configuration identifier that Interfold binds to a parameter set at request time.
+///
+/// `InterfoldLifecycle.validateQuoteLimit` compares the requester's `expectedCryptoConfigId`
+/// against `ActiveCryptoConfig.configIdForParamSet(paramSet)`, and `Interfold.request` stores that
+/// accepted value in `e3CryptoConfigIds`. This function derives the same identifier from the local
+/// parameter tables, so a comparison against the stored value proves that these tables are the
+/// request-time parameters.
+fn crypto_config_id_for_params(params: &BfvParameters) -> B256 {
+    keccak256(
+        (
+            keccak256(b"fhe.rs:BFV"),
+            keccak256(encode_bfv_params(params)),
+            keccak256(b"interfold-bfv-v1"),
+        )
+            .abi_encode(),
+    )
+}
+
+/// Build the BFV parameter tables for one on-chain parameter set, one time per process.
+///
+/// The secure tables are large, and every input of one round uses the same tables. The cache
+/// keeps intake from rebuilding them for each ballot.
+fn bfv_parameters_for_param_set(param_set: u8) -> anyhow::Result<(Arc<BfvParameters>, B256)> {
+    if let Some(cached) = BFV_PARAMETERS_BY_PARAM_SET
+        .lock()
+        .map_err(|_| anyhow::anyhow!("BFV parameter cache lock is poisoned"))?
+        .get(&param_set)
+    {
+        return Ok(cached.clone());
+    }
+    let preset = BfvPreset::from_on_chain_param_set(param_set)
+        .ok_or_else(|| anyhow::anyhow!("unsupported BFV parameter set {param_set}"))?;
+    let params = build_bfv_params_from_set_arc(BfvParamSet::from(preset));
+    let config_id = crypto_config_id_for_params(&params);
+    let entry = (params, config_id);
+    // The lock is released while the tables are built, so two callers can miss the cache at the
+    // same time. Keep whichever entry arrives first and return that one, or the second insert
+    // replaces tables the first caller already holds and every later caller rebuilds them.
+    Ok(BFV_PARAMETERS_BY_PARAM_SET
+        .lock()
+        .map_err(|_| anyhow::anyhow!("BFV parameter cache lock is poisoned"))?
+        .entry(param_set)
+        .or_insert(entry)
+        .clone())
+}
+
+/// Recompute the SAFE commitment of `ciphertext` and compare it with `expected`.
+///
+/// This is the processor-intensive part of intake validation, so the caller must already hold a
+/// validation slot. `compute_ct_commitment_with_params` deserializes the bytes with the given
+/// parameters and refuses a ciphertext that does not have exactly two components, which keeps the
+/// commitment in agreement with the Noir circuit.
+fn ciphertext_matches_commitment(
+    ciphertext: &[u8],
+    expected: B256,
+    params: &Arc<BfvParameters>,
+) -> bool {
+    compute_ct_commitment_with_params(ciphertext, params)
+        .is_ok_and(|recomputed| recomputed == expected.0)
 }
 
 sol! {
@@ -191,6 +277,28 @@ enum JobState {
     Ready {
         ethereum_payload: Vec<u8>,
         commitment_transaction_hash: Option<String>,
+        /// The Avail coordinates that produced this candidate proof.
+        ///
+        /// A candidate proof is not proof that Ethereum accepts it: the bridge API answer is
+        /// checked for the expected content hash, not for a valid Merkle path. Keep the
+        /// coordinates so a refused candidate can be replaced by a fresh proof for bytes that
+        /// Avail already holds. `None` decodes a record written before this field existed. Such
+        /// a job keeps its candidate proof and has no automatic replacement path.
+        #[serde(default)]
+        publication: Option<PendingPublication>,
+    },
+    /// A publication transaction is on Ethereum but is not yet in finalized state.
+    ///
+    /// Retiring a job clears its recovery material and can delete the local object, so a job
+    /// stops only on a finalized observation. The submitted transaction is recorded so a job
+    /// that waits for finality is not sent a second time. The payload and the Avail coordinates
+    /// stay durable, so an orphaned transaction can be sent again.
+    AwaitingFinality {
+        transaction_hash: String,
+        ethereum_payload: Vec<u8>,
+        commitment_transaction_hash: Option<String>,
+        #[serde(default)]
+        publication: Option<PendingPublication>,
     },
     Submitted {
         transaction_hash: String,
@@ -216,6 +324,33 @@ pub struct AvailabilityJobView {
     pub tx_hash: Option<String>,
     pub encoded_proof: Option<String>,
     pub message: Option<String>,
+}
+
+/// The result of one `stage_input` call, and what it did with the funding window.
+///
+/// The route reserves relay funding before it stages, and must keep that reservation only when
+/// this call created durable work that can spend the funds. A repeat of a statement that already
+/// has a job spends nothing, so its reservation goes back to the window immediately.
+pub struct StagedInput {
+    pub view: AvailabilityJobView,
+    /// True when this call created durable work that can spend relay funds.
+    pub admitted: bool,
+}
+
+impl StagedInput {
+    fn admitted(view: AvailabilityJobView) -> Self {
+        Self {
+            view,
+            admitted: true,
+        }
+    }
+
+    fn existing(view: AvailabilityJobView) -> Self {
+        Self {
+            view,
+            admitted: false,
+        }
+    }
 }
 
 /// Durable work item created when Ethereum accepts an input reference.
@@ -298,6 +433,16 @@ impl From<&AvailabilityJob> for AvailabilityJobView {
             } => (
                 "pending_availability",
                 commitment_transaction_hash.clone(),
+                None,
+                None,
+            ),
+            // A publication that waits for finality is still pending work for the client: the
+            // transaction can be orphaned, and the job then sends it again.
+            JobState::AwaitingFinality {
+                transaction_hash, ..
+            } => (
+                "pending_availability",
+                Some(transaction_hash.clone()),
                 None,
                 None,
             ),
@@ -475,12 +620,83 @@ impl AvailabilityService {
         Ok(())
     }
 
-    pub async fn stage_input(
+    /// Check that the submitted bytes reproduce the commitment their ballot proof binds.
+    ///
+    /// The Honk public inputs bind `encryptedVoteCommitment`, the ballot digest, and the slot and
+    /// parent context. They do not bind `encryptedVoteHash`. A caller can therefore copy a valid
+    /// proof tuple, attach different bytes with their matching hash, and get a different job
+    /// identifier, input identifier, and tree leaf without a new ballot proof. Each such
+    /// submission makes the service issue an attestation and pay for Avail publication, Ethereum
+    /// finalization, storage, and a worker slot for a ciphertext that the Secure Process always
+    /// rejects.
+    ///
+    /// Votes, updates, and masks get the same check. The three operations prove one relation and
+    /// use one request format, so a special case for masks would make them different on chain.
+    ///
+    /// This check is intake only. A job that is already committed keeps its recovery work, because
+    /// its pending status still needs DA finalization.
+    async fn validate_input_ciphertext(
         &self,
         e3_id: &str,
-        encoded_envelope: Vec<u8>,
-    ) -> anyhow::Result<AvailabilityJobView> {
-        let mut envelope = decode_input_envelope(&encoded_envelope)
+        ciphertext: &[u8],
+        commitment: B256,
+    ) -> anyhow::Result<()> {
+        let interfold =
+            InterfoldContractFactory::create_read(&self.http_rpc_url, &self.interfold_address)
+                .await
+                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let e3_id_value =
+            e3_id_to_u256(e3_id).map_err(|_| reject_input("The E3 identifier is invalid"))?;
+        let e3 = interfold
+            .get_e3(e3_id_value)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        let (params, config_id) = bfv_parameters_for_param_set(e3.paramSet)?;
+        // Use the local tables only when they are the tables the request accepted. Otherwise a
+        // recomputed commitment answers for a different parameter set and rejects honest ballots.
+        let request_config_id = interfold
+            .get_e3_crypto_config_id(e3_id_value)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+        anyhow::ensure!(
+            request_config_id == config_id,
+            "local BFV parameters do not match the request-time configuration for E3 {e3_id}"
+        );
+
+        // Bound the processor work at this public endpoint. The calculation also runs on a
+        // blocking thread, because it uses milliseconds of processor time and must not hold the
+        // asynchronous runtime.
+        let _validation_slot = CIPHERTEXT_VALIDATION_SLOTS
+            .acquire()
+            .await
+            .map_err(|_| anyhow::anyhow!("the ciphertext validation limiter is closed"))?;
+        let ciphertext = ciphertext.to_vec();
+        let matches = tokio::task::spawn_blocking(move || {
+            ciphertext_matches_commitment(&ciphertext, commitment, &params)
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("ciphertext validation did not finish: {error}"))?;
+        if !matches {
+            return Err(reject_input(
+                "The encrypted vote does not match its proved commitment",
+            ));
+        }
+        Ok(())
+    }
+
+    /// Derive the durable job identity for one input statement.
+    ///
+    /// This does the checks that need no chain access: envelope decoding, the object bound, and
+    /// the content hash. Both the idempotent replay path and admission use it, so both agree on
+    /// what "the same statement" means.
+    fn input_identity(
+        &self,
+        e3_id: &str,
+        encoded_envelope: &[u8],
+    ) -> anyhow::Result<(String, InputEnvelope, B256, String)> {
+        let canonical =
+            canonical_e3_id(e3_id).map_err(|_| reject_input("The E3 identifier is invalid"))?;
+        let envelope = decode_input_envelope(encoded_envelope)
             .map_err(|_| reject_input("The encoded vote envelope is invalid"))?;
         e3_data_availability::validate_object_bytes(&envelope.availabilityProof)
             .map_err(|_| reject_input("The encrypted vote is too large"))?;
@@ -490,7 +706,6 @@ impl AvailabilityService {
                 "The encrypted vote does not match its committed hash",
             ));
         }
-        let object = envelope.availabilityProof.to_vec();
 
         // A proof system can produce more than one valid proof for the same public statement.
         // Keep the durable job keyed by that statement, not by the proof bytes, or retrying with
@@ -501,12 +716,54 @@ impl AvailabilityService {
             envelope.parentIndexPlusOne,
         )
             .abi_encode();
-        let id = self.job_id(b"input", e3_id, actual, &request_identity);
+        let id = self.job_id(b"input", &canonical, actual, &request_identity)?;
+        Ok((canonical, envelope, actual, id))
+    }
+
+    /// Return the view of an existing non-failed job for this statement, if there is one.
+    ///
+    /// A repeat of a statement that already has durable work is idempotent: it creates no job,
+    /// signs no new attestation, and pays for no publication. The route therefore answers it
+    /// without taking a funding reservation. Charging a replay would let one caller spend the
+    /// window that new votes need, and near the commitment cutoff that is a denial of service.
+    /// The caller traffic window still applies, so a replay loop is still bounded.
+    pub async fn existing_input_job(
+        &self,
+        e3_id: &str,
+        encoded_envelope: &[u8],
+    ) -> anyhow::Result<Option<AvailabilityJobView>> {
+        let (_, _, _, id) = self.input_identity(e3_id, encoded_envelope)?;
+        if self.load(&id)?.is_none() {
+            return Ok(None);
+        }
+        self.process(&id).await;
+        let existing = self.load_required(&id)?;
+        if matches!(&existing.state, JobState::Failed { .. }) {
+            // A failed job is restarted under the same identifier, which creates a fresh funding
+            // obligation. That path must take a reservation.
+            return Ok(None);
+        }
+        Ok(Some((&existing).into()))
+    }
+
+    pub async fn stage_input(
+        &self,
+        e3_id: &str,
+        encoded_envelope: Vec<u8>,
+    ) -> anyhow::Result<StagedInput> {
+        // The numeric parser accepts leading zeros, so two different strings can name the same E3.
+        // Canonicalize before the identifier reaches a job ID, a durable record, or a contract
+        // call. Otherwise an alias creates a second durable job for one statement.
+        let (canonical_e3_id, mut envelope, actual, id) =
+            self.input_identity(e3_id, &encoded_envelope)?;
+        let e3_id = &canonical_e3_id;
+        let object = envelope.availabilityProof.to_vec();
+
         if self.load(&id)?.is_some() {
             self.process(&id).await;
             let existing = self.load_required(&id)?;
             if !matches!(&existing.state, JobState::Failed { .. }) {
-                return Ok((&existing).into());
+                return Ok(StagedInput::existing((&existing).into()));
             }
         }
 
@@ -527,6 +784,11 @@ impl AvailabilityService {
                 envelope.encryptedVoteHash,
                 envelope.parentIndexPlusOne.to::<u64>(),
             )
+            .await?;
+
+        // The proof binds the commitment, not the bytes. Check the bytes against that commitment
+        // before this service attests to them or spends funds on their publication.
+        self.validate_input_ciphertext(e3_id, &object, envelope.encryptedVoteCommitment)
             .await?;
 
         let (deadline, commitment_deadline) = if matches!(&*self.backend, Backend::Avail { .. }) {
@@ -583,31 +845,10 @@ impl AvailabilityService {
             },
             state: JobState::Created,
         };
-        {
-            // Serialize admission so concurrent requests cannot both pass the slot and capacity
-            // checks. A slot can have one uncommitted promise at a time. Once that promise lands
-            // on Ethereum, a later re-vote can be staged normally.
-            let _storage = self
-                .storage
-                .lock()
-                .map_err(|_| anyhow::anyhow!("data-availability storage lock is poisoned"))?;
-            if let Some(existing) = self.load(&id)? {
-                if !matches!(&existing.state, JobState::Failed { .. }) {
-                    return Ok((&existing).into());
-                }
-            }
-            if self
-                .uncommitted_input_for_slot(e3_id, envelope.slotAddress, &id)?
-                .is_some()
-            {
-                return Err(reject_input(
-                    "A vote for this slot is already waiting for commitment",
-                ));
-            }
-            // Persist the bytes and their recovery job atomically before an attestation can be
-            // returned. The signature promises that this service received the exact object and
-            // can resume after a restart.
-            self.store_new_job_with_object(&job, &object)?;
+        if let Some(existing) = self.admit_input(&job, &object)? {
+            // A concurrent request admitted the same statement first. Only one of the two
+            // reservations funds durable work, so this one goes back to the window.
+            return Ok(StagedInput::existing(existing));
         }
         self.process(&id).await;
         if matches!(&*self.backend, Backend::Mock) {
@@ -617,7 +858,7 @@ impl AvailabilityService {
             self.process(&id).await;
             self.process(&id).await;
         }
-        Ok((&self.load_required(&id)?).into())
+        Ok(StagedInput::admitted((&self.load_required(&id)?).into()))
     }
 
     pub async fn stage_output(
@@ -627,12 +868,16 @@ impl AvailabilityService {
         ciphertext_commitment: [u8; 32],
         compute_proof: Vec<u8>,
     ) -> anyhow::Result<AvailabilityJobView> {
+        // `/state/add-result` is unauthenticated and the numeric parser accepts leading zeros.
+        // Canonicalize the identifier at entry so every alias of one E3 resolves to one job ID,
+        // one durable record, and one paid Avail publication.
+        let e3_id = &canonical_e3_id(e3_id)?;
         e3_data_availability::validate_object_bytes(&ciphertext)?;
         let hash = keccak256(&ciphertext);
         // The output statement is the E3, exact ciphertext hash, and ciphertext commitment. The
         // RISC Zero seal proves that statement but is not its identity: another valid seal must be
         // an idempotent retry, not another paid Avail publication.
-        let id = self.job_id(b"output", e3_id, hash, &ciphertext_commitment);
+        let id = self.job_id(b"output", e3_id, hash, &ciphertext_commitment)?;
         if let Some(job) = self.load(&id)? {
             return Ok((&job).into());
         }
@@ -736,7 +981,27 @@ impl AvailabilityService {
     /// observes it. On reload, returning the cached `AwaitingCommitment` state would offer the same
     /// transaction again. This bounded read checks the one relevant on-chain fact first. A slow RPC
     /// does not make the status endpoint unavailable; the durable worker still retries normally.
+    ///
+    /// The refresh takes the same per-job ownership as the worker. Both paths load a copy, await
+    /// an Ethereum read, and then save, so without one owner a status refresh can save a state it
+    /// loaded before the worker made durable progress, and that stale write can discard saved
+    /// Avail coordinates and buy another publication. A request that finds the job busy returns
+    /// the persisted view and writes nothing.
     pub async fn refreshed_view(&self, id: &str) -> anyhow::Result<Option<AvailabilityJobView>> {
+        let Some(job) = self.load(id)? else {
+            return Ok(None);
+        };
+        if matches!(
+            &job.state,
+            JobState::Submitted { .. } | JobState::Failed { .. }
+        ) {
+            return Ok(Some((&job).into()));
+        }
+
+        let Some(_active_job) = self.claim_job(id) else {
+            return Ok(Some((&job).into()));
+        };
+        // Load again under ownership: the copy above can already be stale.
         let Some(mut job) = self.load(id)? else {
             return Ok(None);
         };
@@ -749,13 +1014,17 @@ impl AvailabilityService {
 
         let refresh = async {
             if matches!(&job.state, JobState::AwaitingCommitment { .. }) {
-                if self.input_is_committed(&job).await? {
+                // A commitment observed at the chain head can still be reorganized out. Advance
+                // only on finalized state: `Committed` starts the paid Avail publication, and an
+                // orphaned commitment would leave the attestation unrenewable.
+                let (finalized_block, _) = self.finalized_block().await?;
+                if self.input_is_committed_at(&job, finalized_block).await? {
                     job.state = JobState::Committed {
                         transaction_hash: "wallet-committed".to_owned(),
                     };
                     self.save(&job)?;
                 }
-            } else if self.ethereum_publication_exists(&job).await? {
+            } else if self.publication_is_final(&job).await? {
                 job.state = JobState::Submitted {
                     transaction_hash: "already-finalized".to_owned(),
                 };
@@ -919,35 +1188,36 @@ impl AvailabilityService {
         Ok(())
     }
 
-    fn uncommitted_input_for_slot(
+    /// Admit one input statement, or return the view of an equal statement already accepted.
+    ///
+    /// Admission is per statement, not per target slot. CRISP lets any account produce a valid
+    /// mask for an eligible slot without that slot owner's signature, so a per-slot reservation
+    /// would let one caller hold an attestation, withhold its Ethereum commitment, and stop the
+    /// slot owner from getting an attestation for a different statement. Each distinct statement
+    /// therefore gets its own durable job, and the bounded object storage, the caller rate limits,
+    /// and the proof and deadline checks stay as the only limits on new work.
+    ///
+    /// Admission does not change retention: an earlier attested job keeps its own job record, and
+    /// `save` releases object bytes only when no other non-terminal job uses them.
+    fn admit_input(
         &self,
-        e3_id: &str,
-        slot: Address,
-        except_id: &str,
-    ) -> anyhow::Result<Option<String>> {
-        for entry in &self.jobs {
-            let (_, value) = entry?;
-            let job = Self::decode_job(&value)?;
-            if job.id == except_id
-                || !matches!(
-                    job.state,
-                    JobState::Created | JobState::AwaitingCommitment { .. }
-                )
-            {
-                continue;
-            }
-            let JobKind::Input {
-                e3_id: existing_e3,
-                staged_envelope,
-                ..
-            } = &job.kind
-            else {
-                continue;
-            };
-            if existing_e3 == e3_id && decode_input_envelope(staged_envelope)?.slotAddress == slot {
-                return Ok(Some(job.id));
+        job: &AvailabilityJob,
+        object: &[u8],
+    ) -> anyhow::Result<Option<AvailabilityJobView>> {
+        // Serialize admission so concurrent requests cannot both pass the capacity check.
+        let _storage = self
+            .storage
+            .lock()
+            .map_err(|_| anyhow::anyhow!("data-availability storage lock is poisoned"))?;
+        if let Some(existing) = self.load(&job.id)? {
+            if !matches!(&existing.state, JobState::Failed { .. }) {
+                return Ok(Some((&existing).into()));
             }
         }
+        // Persist the bytes and their recovery job atomically before an attestation can be
+        // returned. The signature promises that this service received the exact object and can
+        // resume after a restart.
+        self.store_new_job_with_object(job, object)?;
         Ok(None)
     }
 
@@ -1031,23 +1301,32 @@ impl AvailabilityService {
         }
     }
 
+    /// Take exclusive ownership of one job, or return `None` when another path owns it.
+    ///
+    /// Every write path takes this guard, because each one loads a copy, awaits an Ethereum or
+    /// Avail call, and then saves. Without one owner per job, a copy loaded before the other
+    /// path made durable progress can replace that progress and discard recovery material.
+    fn claim_job<'a>(&'a self, id: &'a str) -> Option<ActiveJobGuard<'a>> {
+        let mut active = self
+            .in_progress
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !active.insert(id.to_owned()) {
+            return None;
+        }
+        Some(ActiveJobGuard {
+            jobs: &self.in_progress,
+            id,
+        })
+    }
+
     async fn process(&self, id: &str) {
         let Ok(_permit) = Arc::clone(&self.job_slots).acquire_owned().await else {
             warn!(job_id = id, "Data-availability worker is shutting down");
             return;
         };
-        let _active_job = {
-            let mut active = self
-                .in_progress
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if !active.insert(id.to_owned()) {
-                return;
-            }
-            ActiveJobGuard {
-                jobs: &self.in_progress,
-                id,
-            }
+        let Some(_active_job) = self.claim_job(id) else {
+            return;
         };
         match tokio::time::timeout(JOB_STEP_TIMEOUT, self.process_inner(id)).await {
             Ok(Ok(())) => {}
@@ -1068,7 +1347,10 @@ impl AvailabilityService {
         if terminal {
             return Ok(());
         }
-        if !terminal && self.ethereum_publication_exists(&job).await? {
+        if !terminal && self.publication_is_final(&job).await? {
+            // Retire only on finalized state. A publication seen at the chain head can be
+            // reorganized out, and retirement clears the recovery material and can delete the
+            // local object, which removes every automatic path back to a publishable job.
             job.state = JobState::Submitted {
                 transaction_hash: "already-finalized".to_owned(),
             };
@@ -1171,7 +1453,7 @@ impl AvailabilityService {
         match job.state.clone() {
             JobState::Created => {
                 match &job.kind {
-                    JobKind::Input { .. } if self.input_is_committed(&job).await? => {
+                    JobKind::Input { .. } if self.input_commitment_is_final(&job).await? => {
                         job.state = JobState::Committed {
                             transaction_hash: "already-committed".to_owned(),
                         };
@@ -1197,7 +1479,10 @@ impl AvailabilityService {
                 self.save(&job)?;
             }
             JobState::AwaitingCommitment { .. } => {
-                if self.input_is_committed(&job).await? {
+                // Leave this state only on finalized state. `Committed` stops the attestation
+                // renewal path and starts the paid Avail publication, so an orphaned commitment
+                // would strand the input with no way back to a fresh promise.
+                if self.input_commitment_is_final(&job).await? {
                     job.state = JobState::Committed {
                         transaction_hash: "wallet-committed".to_owned(),
                     };
@@ -1206,12 +1491,9 @@ impl AvailabilityService {
             }
             JobState::Committed { transaction_hash } => {
                 if matches!(&job.kind, JobKind::Input { .. })
-                    && matches!(&*self.backend, Backend::Avail { .. })
+                    && !self.input_commitment_is_final(&job).await?
                 {
-                    let (finalized_block, _) = self.finalized_block().await?;
-                    if !self.input_is_committed_at(&job, finalized_block).await? {
-                        return Ok(());
-                    }
+                    return Ok(());
                 }
                 job.state = self
                     .start_availability(&job, Some(transaction_hash))
@@ -1226,24 +1508,44 @@ impl AvailabilityService {
                     anyhow::bail!("mock job cannot await a VectorX proof");
                 };
                 if let ProofStatus::Ready { abi_proof, .. } = publisher.proof(&publication).await? {
+                    // Keep the Avail coordinates beside the candidate proof. The bridge answer
+                    // is checked for the expected content hash only, so a syntactically valid
+                    // answer can carry a Merkle path that Ethereum refuses. Without the
+                    // coordinates the job can never request a replacement proof.
                     job.state = JobState::Ready {
                         ethereum_payload: abi_proof,
                         commitment_transaction_hash,
+                        publication: Some(publication),
                     };
                     self.save(&job)?;
                 }
             }
             JobState::Ready {
-                ethereum_payload, ..
+                ethereum_payload,
+                commitment_transaction_hash,
+                publication,
             } => match &job.kind {
                 JobKind::Input { .. } => {
                     anyhow::ensure!(
                         self.input_is_committed(&job).await?,
                         "cannot finalize an input whose proof commitment is absent"
                     );
-                    let receipt = self.finalize_input(&job, &ethereum_payload).await?;
-                    job.state = JobState::Submitted {
+                    let receipt = match self.finalize_input(&job, &ethereum_payload).await {
+                        Ok(receipt) => receipt,
+                        Err(error) => {
+                            self.recover_rejected_proof(
+                                &mut job,
+                                commitment_transaction_hash,
+                                publication,
+                            )?;
+                            return Err(error);
+                        }
+                    };
+                    job.state = JobState::AwaitingFinality {
                         transaction_hash: receipt.transaction_hash.to_string(),
+                        ethereum_payload,
+                        commitment_transaction_hash,
+                        publication,
                     };
                     self.save(&job)?;
                 }
@@ -1268,19 +1570,27 @@ impl AvailabilityService {
                     match stage {
                         E3Stage::KeyPublished => {}
                         E3Stage::CiphertextReady | E3Stage::Complete => {
-                            job.state = JobState::Submitted {
-                                transaction_hash: "already-finalized".to_owned(),
-                            };
-                            self.save(&job)?;
+                            // Another party published this output. Confirm the observation in
+                            // finalized state before this job releases its recovery material.
+                            if self.publication_is_final(&job).await? {
+                                job.state = JobState::Submitted {
+                                    transaction_hash: "already-finalized".to_owned(),
+                                };
+                                self.save(&job)?;
+                            }
                             return Ok(());
                         }
                         E3Stage::Failed => {
-                            job.state = JobState::Failed {
-                                message:
-                                    "the E3 failed before its aggregate ciphertext was published"
-                                        .to_owned(),
-                            };
-                            self.save(&job)?;
+                            // A failed E3 at the chain head can be reorganized away, and the
+                            // failure clears the compute proof. Require finalized state.
+                            if self.e3_failure_is_final(&job).await? {
+                                job.state = JobState::Failed {
+                                    message:
+                                        "the E3 failed before its aggregate ciphertext was published"
+                                            .to_owned(),
+                                };
+                                self.save(&job)?;
+                            }
                             return Ok(());
                         }
                         E3Stage::None | E3Stage::Requested | E3Stage::CommitteeFinalized => {
@@ -1292,7 +1602,7 @@ impl AvailabilityService {
                                 );
                         }
                     }
-                    let receipt = contract
+                    let receipt = match contract
                         .publish_ciphertext_output(
                             e3_id,
                             B256::from(job.content_hash),
@@ -1301,16 +1611,85 @@ impl AvailabilityService {
                             Bytes::copy_from_slice(&ethereum_payload),
                         )
                         .await
-                        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-                    job.state = JobState::Submitted {
+                        .map_err(|error| anyhow::anyhow!(error.to_string()))
+                    {
+                        Ok(receipt) => receipt,
+                        Err(error) => {
+                            self.recover_rejected_proof(
+                                &mut job,
+                                commitment_transaction_hash,
+                                publication,
+                            )?;
+                            return Err(error);
+                        }
+                    };
+                    job.state = JobState::AwaitingFinality {
                         transaction_hash: receipt.transaction_hash.to_string(),
+                        ethereum_payload,
+                        commitment_transaction_hash,
+                        publication,
                     };
                     self.save(&job)?;
                 }
             },
+            JobState::AwaitingFinality {
+                transaction_hash,
+                ethereum_payload,
+                commitment_transaction_hash,
+                publication,
+            } => {
+                if self.publication_is_final(&job).await? {
+                    job.state = JobState::Submitted { transaction_hash };
+                    self.save(&job)?;
+                    return Ok(());
+                }
+                // The publication is absent from finalized state. It can still be pending, so
+                // send it again only when it is also absent from the chain head. The transaction
+                // is idempotent on chain: the contract refuses a second publication of one
+                // reference, and that refusal returns this job here on the next step.
+                if !self.ethereum_publication_exists(&job).await? {
+                    job.state = JobState::Ready {
+                        ethereum_payload,
+                        commitment_transaction_hash,
+                        publication,
+                    };
+                    self.save(&job)?;
+                }
+            }
             JobState::Submitted { .. } | JobState::Failed { .. } => unreachable!(),
         }
         Ok(())
+    }
+
+    /// Return a job with a refused candidate proof to a state that can request a replacement.
+    ///
+    /// The Avail bridge answer is checked for the expected content hash, not for a valid Merkle
+    /// path, so a `Ready` job can hold a proof that Ethereum refuses. Retrying the same payload
+    /// can never succeed, and the job stays `Ready` forever. The saved Avail coordinates name
+    /// bytes that Avail already holds, so `AwaitingProof` asks the bridge for a fresh proof and
+    /// pays for no second publication. A transport failure takes the same path and costs one
+    /// more bridge request, which is why this needs no error classification: a bridge that has
+    /// nothing new returns the same proof and the job continues as before. A record written
+    /// before the coordinates were kept has nothing to ask the bridge with, so it keeps its
+    /// candidate proof and needs operator recovery.
+    fn recover_rejected_proof(
+        &self,
+        job: &mut AvailabilityJob,
+        commitment_transaction_hash: Option<String>,
+        publication: Option<PendingPublication>,
+    ) -> anyhow::Result<()> {
+        let Some(publication) = publication else {
+            return Ok(());
+        };
+        warn!(
+            job_id = job.id.as_str(),
+            "Ethereum refused the availability proof; requesting a replacement"
+        );
+        job.state = JobState::AwaitingProof {
+            publication,
+            commitment_transaction_hash,
+        };
+        self.save(job)
     }
 
     async fn start_availability(
@@ -1323,6 +1702,9 @@ impl AvailabilityService {
             Backend::Mock => Ok(JobState::Ready {
                 ethereum_payload: object,
                 commitment_transaction_hash,
+                // The mock backend has no Avail publication to name, so it has no replacement
+                // proof to request.
+                publication: None,
             }),
             Backend::Avail { publisher, .. } => {
                 let publication = publisher.publish(&object).await?;
@@ -1480,19 +1862,26 @@ impl AvailabilityService {
             .map_err(|error| anyhow::anyhow!(error.to_string()))
     }
 
+    /// Derive the durable job ID for one statement.
+    ///
+    /// The identifier is canonicalized here as well as at each entry point. The decimal parser
+    /// accepts leading zeros, so an alias of one E3 would otherwise hash to a second job ID and
+    /// buy a second paid publication for the same bytes. Canonical decimal identifiers keep the
+    /// job IDs they already have.
     fn job_id(
         &self,
         domain: &[u8],
         e3_id: &str,
         content_hash: B256,
         request_identity: &[u8],
-    ) -> String {
+    ) -> anyhow::Result<String> {
+        let e3_id = canonical_e3_id(e3_id)?;
         let mut identity = Vec::with_capacity(domain.len() + e3_id.len() + 64);
         identity.extend_from_slice(domain);
         identity.extend_from_slice(e3_id.as_bytes());
         identity.extend_from_slice(content_hash.as_slice());
         identity.extend_from_slice(keccak256(request_identity).as_slice());
-        format!("0x{}", hex::encode(keccak256(identity)))
+        Ok(format!("0x{}", hex::encode(keccak256(identity))))
     }
 
     async fn chain_timestamp(&self) -> anyhow::Result<u64> {
@@ -1688,6 +2077,55 @@ impl AvailabilityService {
                 ))
             }
         }
+    }
+
+    /// Answer whether this job's publication is present in finalized Ethereum state.
+    ///
+    /// Retiring a job clears its recovery material and can delete the local object, so a
+    /// publication seen only at the chain head is not enough: a reorganization would remove the
+    /// publication and leave no automatic path back to a publishable job. The mock backend has
+    /// no finalized block to read, so it uses the head.
+    async fn publication_is_final(&self, job: &AvailabilityJob) -> anyhow::Result<bool> {
+        if !matches!(&*self.backend, Backend::Avail { .. }) {
+            return self.ethereum_publication_exists(job).await;
+        }
+        let (finalized_block, _) = self.finalized_block().await?;
+        self.ethereum_publication_exists_at(job, finalized_block)
+            .await
+    }
+
+    /// Answer whether this input's commitment is present in finalized Ethereum state.
+    ///
+    /// `Committed` stops attestation renewal and starts the paid Avail publication, so an
+    /// orphaned commitment would strand the input for the rest of its commitment window.
+    async fn input_commitment_is_final(&self, job: &AvailabilityJob) -> anyhow::Result<bool> {
+        if !matches!(&*self.backend, Backend::Avail { .. }) {
+            return self.input_is_committed(job).await;
+        }
+        let (finalized_block, _) = self.finalized_block().await?;
+        self.input_is_committed_at(job, finalized_block).await
+    }
+
+    /// Answer whether this output's E3 has failed in finalized Ethereum state.
+    ///
+    /// A failure record clears the compute proof, so an orphaned failure would discard the
+    /// material needed to publish the aggregate ciphertext.
+    async fn e3_failure_is_final(&self, job: &AvailabilityJob) -> anyhow::Result<bool> {
+        let JobKind::Output { e3_id, .. } = &job.kind else {
+            return Ok(false);
+        };
+        if !matches!(&*self.backend, Backend::Avail { .. }) {
+            return Ok(true);
+        }
+        let (finalized_block, _) = self.finalized_block().await?;
+        let provider = ProviderBuilder::new().connect(&self.http_rpc_url).await?;
+        let contract = IInterfoldAvailabilityState::new(self.interfold_address.parse()?, provider);
+        let stage = contract
+            .getE3Stage(e3_id_to_u256(e3_id)?)
+            .block(BlockId::number(finalized_block))
+            .call()
+            .await?;
+        Ok(matches!(stage, StoredE3Stage::Failed))
     }
 
     fn pending_ids(&self) -> anyhow::Result<Vec<String>> {
@@ -2203,5 +2641,745 @@ mod tests {
         assert_eq!(service.object_required(content_hash).unwrap(), object);
         let stored = service.load_required(&replacement.id).unwrap();
         assert!(matches!(stored.state, JobState::Created));
+    }
+
+    fn staged_envelope_for_slot(slot: Address, commitment: B256, object: &[u8]) -> Vec<u8> {
+        let mut envelope =
+            decode_input_envelope(&hex::decode(SDK_INPUT_ENVELOPE).unwrap()).unwrap();
+        envelope.slotAddress = slot;
+        envelope.encryptedVoteCommitment = commitment;
+        envelope.encryptedVoteHash = keccak256(object);
+        envelope.availabilityProof = Bytes::new();
+        envelope.abi_encode_params()
+    }
+
+    fn input_job(id: &str, slot: Address, commitment: u8, object: &[u8]) -> AvailabilityJob {
+        AvailabilityJob {
+            schema_version: AVAILABILITY_JOB_SCHEMA_VERSION,
+            id: id.to_owned(),
+            content_hash: keccak256(object).0,
+            kind: JobKind::Input {
+                e3_id: "1".to_owned(),
+                staged_envelope: staged_envelope_for_slot(
+                    slot,
+                    B256::repeat_byte(commitment),
+                    object,
+                ),
+                deadline: 1_000,
+                commitment_deadline: 900,
+            },
+            state: JobState::Created,
+        }
+    }
+
+    /// A mask needs no signature from the slot owner, so an uncommitted job for a slot must not
+    /// stop a different statement for the same slot.
+    #[test]
+    fn a_second_statement_for_one_slot_is_admitted_and_keeps_the_first() {
+        let service = test_service(1024);
+        let slot = Address::repeat_byte(0x77);
+
+        let mask_object = b"attacker-mask-ciphertext";
+        let mask = input_job("mask-input", slot, 0x11, mask_object);
+        assert!(service.admit_input(&mask, mask_object).unwrap().is_none());
+
+        // The attacker holds the attestation and never sends its Ethereum commitment.
+        let mut attested = service.load_required(&mask.id).unwrap();
+        attested.state = JobState::AwaitingCommitment {
+            ethereum_payload: vec![0x01],
+            attestation_expires_at: 600,
+        };
+        service.save(&attested).unwrap();
+
+        let vote_object = b"slot-owner-ciphertext";
+        let vote = input_job("owner-input", slot, 0x22, vote_object);
+        assert!(service.admit_input(&vote, vote_object).unwrap().is_none());
+
+        // Admission of the second statement keeps the earlier attestation valid and keeps its
+        // bytes retrievable.
+        assert!(matches!(
+            service.load_required(&mask.id).unwrap().state,
+            JobState::AwaitingCommitment { .. }
+        ));
+        assert_eq!(
+            service.object_required(mask.content_hash).unwrap(),
+            mask_object
+        );
+        assert_eq!(
+            service.object_required(vote.content_hash).unwrap(),
+            vote_object
+        );
+
+        // The same statement stays one job.
+        let repeat = service.admit_input(&vote, vote_object).unwrap();
+        assert_eq!(repeat.unwrap().job_id, vote.id);
+        assert_eq!(service.jobs.len(), 2);
+        assert!(service.validate_storage().is_ok());
+    }
+
+    /// Per-statement admission must not remove the bounded pending-object limit.
+    #[test]
+    fn admission_still_respects_the_pending_byte_limit() {
+        let service = test_service(8);
+        let slot = Address::repeat_byte(0x77);
+
+        let first_object = b"12345678";
+        let first = input_job("first-input", slot, 0x11, first_object);
+        assert!(service.admit_input(&first, first_object).unwrap().is_none());
+
+        let second_object = b"9";
+        let second = input_job("second-input", slot, 0x22, second_object);
+        assert!(service.admit_input(&second, second_object).is_err());
+        assert!(service.load(&second.id).unwrap().is_none());
+    }
+
+    /// A noncanonical E3 identifier must not buy a second publication for the same statement.
+    #[test]
+    fn noncanonical_e3_identifiers_resolve_to_one_job() {
+        let service = test_service(1024);
+        let ciphertext = b"aggregate-ciphertext";
+        let hash = keccak256(ciphertext);
+        let commitment = [0x22u8; 32];
+
+        let canonical = service.job_id(b"output", "42", hash, &commitment).unwrap();
+        for alias in ["042", "0000042", "0000000000000000000000000042"] {
+            assert_eq!(
+                service.job_id(b"output", alias, hash, &commitment).unwrap(),
+                canonical
+            );
+        }
+        assert!(service
+            .job_id(b"output", "not-an-id", hash, &commitment)
+            .is_err());
+        assert_ne!(
+            service.job_id(b"output", "43", hash, &commitment).unwrap(),
+            canonical
+        );
+
+        let job = AvailabilityJob {
+            schema_version: AVAILABILITY_JOB_SCHEMA_VERSION,
+            id: canonical.clone(),
+            content_hash: hash.0,
+            kind: JobKind::Output {
+                e3_id: "42".to_owned(),
+                ciphertext_commitment: commitment,
+                compute_proof: vec![0x33],
+                deadline: 7,
+            },
+            state: JobState::Created,
+        };
+        service.store_new_job_with_object(&job, ciphertext).unwrap();
+
+        // An alias of the same E3 now finds the stored job, so its call is an idempotent retry
+        // instead of a second paid Avail publication.
+        let alias_id = service
+            .job_id(b"output", "0042", hash, &commitment)
+            .unwrap();
+        assert_eq!(service.load(&alias_id).unwrap().unwrap().id, canonical);
+        assert_eq!(service.jobs.len(), 1);
+    }
+
+    /// One encrypted ballot with the SAFE commitment that its ballot proof binds.
+    ///
+    /// `message` selects the operation: a vote or an update carries ballot coefficients, and a
+    /// mask carries zero. Every operation produces the same request shape, so the tests use one
+    /// builder for all three.
+    fn encrypted_ballot(params: &Arc<BfvParameters>, message: &[u64]) -> (Vec<u8>, B256) {
+        use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
+        use fhe_traits::{FheEncoder, FheEncrypter, Serialize as _};
+
+        let mut rng = rand::rng();
+        let secret_key = SecretKey::random(params, &mut rng);
+        let public_key = PublicKey::new(&secret_key, &mut rng);
+        let plaintext = Plaintext::try_encode(message, Encoding::poly(), params).unwrap();
+        let ciphertext = public_key.try_encrypt(&plaintext, &mut rng).unwrap();
+        let bytes = ciphertext.to_bytes();
+        let commitment = compute_ct_commitment_with_params(&bytes, params).unwrap();
+        (bytes, B256::from(commitment))
+    }
+
+    fn insecure_test_params() -> Arc<BfvParameters> {
+        bfv_parameters_for_param_set(0).unwrap().0
+    }
+
+    /// The proof binds the commitment, not the bytes, so intake must compare the two.
+    #[test]
+    fn intake_accepts_proved_bytes_and_refuses_substituted_bytes() {
+        let params = insecure_test_params();
+        let (bytes, commitment) = encrypted_ballot(&params, &[1_u64]);
+
+        assert!(ciphertext_matches_commitment(&bytes, commitment, &params));
+
+        // The attack this check stops: a copied proof tuple keeps its commitment while the bytes
+        // and their Keccak hash change. The hash check passes and this check must not.
+        let (other_bytes, other_commitment) = encrypted_ballot(&params, &[1_u64]);
+        assert_ne!(other_commitment, commitment);
+        assert!(!ciphertext_matches_commitment(
+            &other_bytes,
+            commitment,
+            &params
+        ));
+
+        // Bytes that do not deserialize are unusable, not merely mismatched.
+        assert!(!ciphertext_matches_commitment(
+            b"not-a-ciphertext",
+            commitment,
+            &params
+        ));
+        let mut truncated = bytes.clone();
+        truncated.truncate(bytes.len() / 2);
+        assert!(!ciphertext_matches_commitment(
+            &truncated, commitment, &params
+        ));
+    }
+
+    /// The SAFE commitment covers `c[0]` and `c[1]` only.
+    ///
+    /// A padded ciphertext would otherwise share one commitment with its two-component prefix,
+    /// and threshold decryption would reject it after the service paid to publish it. The
+    /// underlying two-component restriction must therefore stay in effect at intake.
+    #[test]
+    fn intake_preserves_the_two_component_restriction() {
+        use fhe::bfv::Ciphertext;
+        use fhe_traits::{DeserializeParametrized, Serialize as _};
+
+        let params = insecure_test_params();
+        let (bytes, commitment) = encrypted_ballot(&params, &[1_u64]);
+        let ciphertext = Ciphertext::from_bytes(&bytes, &params).unwrap();
+
+        let padded = Ciphertext::new(
+            vec![
+                ciphertext[0].clone(),
+                ciphertext[1].clone(),
+                ciphertext[1].clone(),
+            ],
+            &params,
+        )
+        .unwrap();
+        assert_eq!(padded.len(), 3);
+
+        let padded_bytes = padded.to_bytes();
+        assert_ne!(padded_bytes, bytes);
+        assert!(!ciphertext_matches_commitment(
+            &padded_bytes,
+            commitment,
+            &params
+        ));
+    }
+
+    /// Votes, updates, and masks use one validation path.
+    ///
+    /// The three operations prove one relation and publish one shape. A special case for masks
+    /// would make them different on chain, which is what masks exist to prevent.
+    #[test]
+    fn votes_updates_and_masks_get_identical_validation() {
+        let params = insecure_test_params();
+        let vote = encrypted_ballot(&params, &[1_u64]);
+        let update = encrypted_ballot(&params, &[1_u64, 1_u64]);
+        let mask = encrypted_ballot(&params, &[0_u64]);
+
+        for (bytes, commitment) in [&vote, &update, &mask] {
+            assert!(ciphertext_matches_commitment(bytes, *commitment, &params));
+        }
+
+        // Every operation refuses substituted bytes on the same terms.
+        assert!(!ciphertext_matches_commitment(&vote.0, update.1, &params));
+        assert!(!ciphertext_matches_commitment(&update.0, mask.1, &params));
+        assert!(!ciphertext_matches_commitment(&mask.0, vote.1, &params));
+    }
+
+    /// Intake validates with the parameters the request accepted, not with a local default.
+    ///
+    /// `Interfold.request` stores the configuration identifier that
+    /// `ActiveCryptoConfig.configIdForParamSet` produced for the requested parameter set. Intake
+    /// derives the same identifier from its own tables and compares. A mismatch means the local
+    /// tables are not the request-time parameters, so their recomputed commitment would refuse
+    /// honest ballots.
+    #[test]
+    fn local_parameters_reproduce_the_onchain_crypto_config_id() {
+        let (insecure, insecure_config_id) = bfv_parameters_for_param_set(0).unwrap();
+        assert_eq!(
+            insecure_config_id,
+            "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78"
+                .parse::<B256>()
+                .unwrap(),
+            "insecure-512 must reproduce ActiveCryptoConfig.INSECURE_CONFIG_ID"
+        );
+
+        let (_, secure_config_id) = bfv_parameters_for_param_set(1).unwrap();
+        assert_eq!(
+            secure_config_id,
+            "0xd9c86e581f8291ffb5b63595600e8d096ed30b16e2e0a6634a76c22b1f58fb4e"
+                .parse::<B256>()
+                .unwrap(),
+            "secure-8192 must reproduce ActiveCryptoConfig.SECURE_CONFIG_ID"
+        );
+        assert_ne!(insecure_config_id, secure_config_id);
+
+        assert!(bfv_parameters_for_param_set(2).is_err());
+
+        // The cache returns the same tables, so intake does not rebuild them for every ballot.
+        assert!(Arc::ptr_eq(
+            &insecure,
+            &bfv_parameters_for_param_set(0).unwrap().0
+        ));
+    }
+
+    /// Deserialization plus the commitment is real processor work at a public endpoint.
+    #[test]
+    fn intake_ciphertext_validation_is_bounded() {
+        assert_eq!(
+            CIPHERTEXT_VALIDATION_SLOTS.available_permits(),
+            MAX_CONCURRENT_CIPHERTEXT_VALIDATIONS
+        );
+
+        let mut held = Vec::new();
+        for _ in 0..MAX_CONCURRENT_CIPHERTEXT_VALIDATIONS {
+            held.push(CIPHERTEXT_VALIDATION_SLOTS.try_acquire().unwrap());
+        }
+        assert!(
+            CIPHERTEXT_VALIDATION_SLOTS.try_acquire().is_err(),
+            "an unbounded validation endpoint is a denial-of-service surface"
+        );
+
+        drop(held);
+        assert_eq!(
+            CIPHERTEXT_VALIDATION_SLOTS.available_permits(),
+            MAX_CONCURRENT_CIPHERTEXT_VALIDATIONS
+        );
+    }
+
+    /// Build a wire envelope that still carries its ciphertext, as a client sends it.
+    ///
+    /// `staged_envelope_for_slot` builds the durable form, which has the ciphertext removed.
+    /// Intake needs the form that still contains the bytes.
+    fn staged_envelope_with_object(slot: Address, commitment: B256, object: &[u8]) -> Vec<u8> {
+        let mut envelope =
+            decode_input_envelope(&hex::decode(SDK_INPUT_ENVELOPE).unwrap()).unwrap();
+        envelope.slotAddress = slot;
+        envelope.encryptedVoteCommitment = commitment;
+        envelope.encryptedVoteHash = keccak256(object);
+        envelope.availabilityProof = Bytes::copy_from_slice(object);
+        envelope.abi_encode_params()
+    }
+
+    /// Store a job and then move it to `state`.
+    ///
+    /// `store_new_job_with_object` admits only a new job in the created state, so a test that
+    /// needs a later state stores the admission and then saves the transition.
+    fn store_job_in_state(
+        service: &AvailabilityService,
+        job: &AvailabilityJob,
+        object: &[u8],
+        state: JobState,
+    ) -> AvailabilityJob {
+        let mut created = job.clone();
+        created.state = JobState::Created;
+        service.store_new_job_with_object(&created, object).unwrap();
+        let mut moved = created;
+        moved.state = state;
+        service.save(&moved).unwrap();
+        moved
+    }
+
+    fn output_job(id: &str, state: JobState, object: &[u8]) -> AvailabilityJob {
+        AvailabilityJob {
+            schema_version: AVAILABILITY_JOB_SCHEMA_VERSION,
+            id: id.to_owned(),
+            content_hash: keccak256(object).0,
+            kind: JobKind::Output {
+                e3_id: "1".to_owned(),
+                ciphertext_commitment: [0x22; 32],
+                compute_proof: vec![0x33; 8],
+                deadline: 1_000,
+            },
+            state,
+        }
+    }
+
+    fn test_publication(content_hash: [u8; 32]) -> PendingPublication {
+        PendingPublication {
+            content_hash,
+            block_hash: "0xblock".to_owned(),
+            block_number: 42,
+            extrinsic_index: 7,
+        }
+    }
+
+    /// ZEN2-11: a candidate proof must keep the coordinates that can replace it.
+    ///
+    /// The bridge answer is checked for the expected content hash, not for a valid Merkle path,
+    /// so a `Ready` job can hold a proof Ethereum refuses. Discarding the Avail coordinates
+    /// leaves no way to request a replacement, and the job retries one payload forever.
+    #[test]
+    fn a_ready_job_keeps_the_avail_coordinates_of_its_candidate_proof() {
+        let service = test_service(1024);
+        let object = b"ciphertext";
+        let publication = test_publication(keccak256(object).0);
+        let state = JobState::Ready {
+            ethereum_payload: vec![0xaa; 4],
+            commitment_transaction_hash: Some("0xcommit".to_owned()),
+            publication: Some(publication.clone()),
+        };
+        let job = output_job("candidate-proof", state.clone(), object);
+        store_job_in_state(&service, &job, object, state);
+
+        let JobState::Ready {
+            publication: stored,
+            ..
+        } = service.load_required(&job.id).unwrap().state
+        else {
+            panic!("expected a job with a candidate proof");
+        };
+        assert_eq!(stored, Some(publication));
+    }
+
+    /// ZEN2-11: a refused candidate returns to the state that asks for a replacement proof.
+    ///
+    /// The Avail bytes are already published, so the replacement costs one bridge request and no
+    /// second publication.
+    #[test]
+    fn a_refused_candidate_proof_returns_to_awaiting_proof() {
+        let service = test_service(1024);
+        let object = b"ciphertext";
+        let publication = test_publication(keccak256(object).0);
+        let state = JobState::Ready {
+            ethereum_payload: vec![0xaa; 4],
+            commitment_transaction_hash: Some("0xcommit".to_owned()),
+            publication: Some(publication.clone()),
+        };
+        let job = output_job("refused-proof", state.clone(), object);
+        let mut job = store_job_in_state(&service, &job, object, state);
+
+        service
+            .recover_rejected_proof(
+                &mut job,
+                Some("0xcommit".to_owned()),
+                Some(publication.clone()),
+            )
+            .unwrap();
+
+        let stored = service.load_required(&job.id).unwrap();
+        let JobState::AwaitingProof {
+            publication: recovered,
+            commitment_transaction_hash,
+        } = stored.state
+        else {
+            panic!("a refused candidate must be able to request a replacement");
+        };
+        assert_eq!(recovered, publication);
+        assert_eq!(commitment_transaction_hash, Some("0xcommit".to_owned()));
+        // The bytes stay available, so the replacement pays for no second publication.
+        assert_eq!(
+            service.object_required(stored.content_hash).unwrap(),
+            object
+        );
+    }
+
+    /// ZEN2-11: a record written before the coordinates were kept must still decode.
+    ///
+    /// Such a job has nothing to ask the bridge with. It keeps its candidate proof and needs
+    /// operator recovery rather than failing to load.
+    #[test]
+    fn a_legacy_ready_job_without_coordinates_decodes_and_is_not_recovered() {
+        let service = test_service(1024);
+        let object = b"ciphertext";
+        let job = output_job(
+            "legacy-ready",
+            JobState::Ready {
+                ethereum_payload: vec![0xaa; 4],
+                commitment_transaction_hash: None,
+                publication: Some(test_publication(keccak256(object).0)),
+            },
+            object,
+        );
+        let mut encoded = serde_json::to_value(&job).unwrap();
+        encoded["state"]
+            .as_object_mut()
+            .unwrap()
+            .remove("publication");
+
+        let decoded =
+            AvailabilityService::decode_job(&serde_json::to_vec(&encoded).unwrap()).unwrap();
+        let JobState::Ready {
+            publication,
+            ethereum_payload,
+            ..
+        } = decoded.state.clone()
+        else {
+            panic!("expected a job with a candidate proof");
+        };
+        assert_eq!(publication, None);
+        assert_eq!(ethereum_payload, vec![0xaa; 4]);
+
+        // With no coordinates there is no replacement to request, so the state is unchanged.
+        let mut legacy = decoded;
+        store_job_in_state(&service, &legacy, object, legacy.state.clone());
+        service
+            .recover_rejected_proof(&mut legacy, None, None)
+            .unwrap();
+        assert!(matches!(legacy.state, JobState::Ready { .. }));
+    }
+
+    /// ZEN2-24: a submitted publication waits for finality before the job retires.
+    ///
+    /// Retirement clears the recovery material and can delete the local object. A transaction
+    /// seen only at the chain head can be orphaned, and the job would then have no way back.
+    #[test]
+    fn a_publication_awaiting_finality_keeps_its_recovery_material() {
+        let service = test_service(1024);
+        let object = b"ciphertext";
+        let publication = test_publication(keccak256(object).0);
+        let state = JobState::AwaitingFinality {
+            transaction_hash: "0xpublish".to_owned(),
+            ethereum_payload: vec![0xaa; 4],
+            commitment_transaction_hash: None,
+            publication: Some(publication.clone()),
+        };
+        let job = output_job("awaiting-finality", state.clone(), object);
+        let job = store_job_in_state(&service, &job, object, state);
+
+        let stored = service.load_required(&job.id).unwrap();
+        let JobState::AwaitingFinality {
+            ethereum_payload,
+            publication: stored_publication,
+            ..
+        } = stored.state.clone()
+        else {
+            panic!("expected a job that waits for finality");
+        };
+        // Everything a resend needs survives: the payload, the coordinates, and the bytes.
+        assert_eq!(ethereum_payload, vec![0xaa; 4]);
+        assert_eq!(stored_publication, Some(publication));
+        assert_eq!(service.object_required(job.content_hash).unwrap(), object);
+        let JobKind::Output { compute_proof, .. } = &stored.kind else {
+            panic!("expected an output job");
+        };
+        assert!(
+            !compute_proof.is_empty(),
+            "a nonfinal publication must not clear the compute proof"
+        );
+
+        // The worker still schedules it, and startup validation still accepts it.
+        assert!(service.pending_ids().unwrap().contains(&job.id));
+        assert!(service.validate_storage().is_ok());
+
+        // The view keeps the client waiting rather than reporting success.
+        let view: AvailabilityJobView = (&stored).into();
+        assert_eq!(view.status, "pending_availability");
+        assert_eq!(view.tx_hash, Some("0xpublish".to_owned()));
+    }
+
+    /// ZEN2-24: only a finalized observation retires a job and releases its material.
+    #[test]
+    fn only_a_finalized_publication_retires_a_job() {
+        let service = test_service(1024);
+        let object = b"ciphertext";
+        let state = JobState::AwaitingFinality {
+            transaction_hash: "0xpublish".to_owned(),
+            ethereum_payload: vec![0xaa; 4],
+            commitment_transaction_hash: None,
+            publication: Some(test_publication(keccak256(object).0)),
+        };
+        let job = output_job("finalized-publication", state.clone(), object);
+        let mut job = store_job_in_state(&service, &job, object, state);
+        assert!(service.pending_ids().unwrap().contains(&job.id));
+
+        job.state = JobState::Submitted {
+            transaction_hash: "0xpublish".to_owned(),
+        };
+        service.save(&job).unwrap();
+
+        assert!(!service.pending_ids().unwrap().contains(&job.id));
+        let stored = service.load_required(&job.id).unwrap();
+        let JobKind::Output { compute_proof, .. } = stored.kind else {
+            panic!("expected an output job");
+        };
+        assert!(compute_proof.is_empty());
+    }
+
+    /// ZEN2-22: the status refresh takes the same per-job ownership as the worker.
+    ///
+    /// Both paths load a copy, await an Ethereum read, and then save. Without one owner, a stale
+    /// copy can replace newer durable progress and discard saved Avail coordinates.
+    #[tokio::test]
+    async fn a_status_refresh_does_not_write_while_the_worker_owns_the_job() {
+        let service = test_service(1024);
+        let object = b"ciphertext";
+        let publication = test_publication(keccak256(object).0);
+        let state = JobState::AwaitingProof {
+            publication: publication.clone(),
+            commitment_transaction_hash: None,
+        };
+        let job = output_job("contended-job", state.clone(), object);
+        let job = store_job_in_state(&service, &job, object, state);
+
+        // The worker owns the job while it awaits Avail.
+        let owned = service.claim_job(&job.id).expect("the job is free");
+        assert!(
+            service.claim_job(&job.id).is_none(),
+            "one job must have one owner"
+        );
+
+        // The refresh finds the job busy, so it reports the persisted view and writes nothing.
+        let view = service
+            .refreshed_view(&job.id)
+            .await
+            .unwrap()
+            .expect("the job exists");
+        assert_eq!(view.job_id, job.id);
+        let JobState::AwaitingProof {
+            publication: stored,
+            ..
+        } = service.load_required(&job.id).unwrap().state
+        else {
+            panic!("a busy job must keep its durable state");
+        };
+        assert_eq!(stored, publication);
+
+        drop(owned);
+        assert!(
+            service.claim_job(&job.id).is_some(),
+            "ownership must be released for the next step"
+        );
+    }
+
+    /// ZEN2-23: a repeat of an existing statement must not consume funding quota.
+    ///
+    /// `existing_input_job` answers a replay without creating work, so the route can serve it
+    /// before it touches the global window.
+    #[tokio::test]
+    async fn replaying_an_existing_statement_is_idempotent_without_new_work() {
+        let service = test_service(4096);
+        let slot = Address::repeat_byte(0x77);
+        let object = b"voter-ciphertext";
+        let envelope = staged_envelope_with_object(slot, B256::repeat_byte(0x11), object);
+
+        // No job yet: the caller is a potential new admission and must reserve quota.
+        assert!(service
+            .existing_input_job("1", &envelope)
+            .await
+            .unwrap()
+            .is_none());
+
+        let (_, _, _, id) = service.input_identity("1", &envelope).unwrap();
+        let job = AvailabilityJob {
+            schema_version: AVAILABILITY_JOB_SCHEMA_VERSION,
+            id: id.clone(),
+            content_hash: keccak256(object).0,
+            kind: JobKind::Input {
+                e3_id: "1".to_owned(),
+                staged_envelope: staged_envelope_for_slot(slot, B256::repeat_byte(0x11), object),
+                deadline: no_deadline(),
+                commitment_deadline: no_deadline(),
+            },
+            state: JobState::Created,
+        };
+        store_job_in_state(
+            &service,
+            &job,
+            object,
+            JobState::Submitted {
+                transaction_hash: "0xdone".to_owned(),
+            },
+        );
+
+        // The same statement now resolves to the stored job, with no new durable work.
+        let replay = service
+            .existing_input_job("1", &envelope)
+            .await
+            .unwrap()
+            .expect("the statement already has a job");
+        assert_eq!(replay.job_id, id);
+        assert_eq!(replay.status, "success");
+        assert_eq!(service.jobs.len(), 1);
+
+        // A noncanonical alias of the same E3 is the same statement.
+        let alias = service
+            .existing_input_job("001", &envelope)
+            .await
+            .unwrap()
+            .expect("an alias names the same statement");
+        assert_eq!(alias.job_id, id);
+        assert_eq!(service.jobs.len(), 1);
+    }
+
+    /// ZEN2-23: a failed job restarted under one identifier creates a fresh funding obligation,
+    /// so it must not take the free replay path.
+    #[tokio::test]
+    async fn a_failed_job_is_not_a_free_replay() {
+        let service = test_service(4096);
+        let slot = Address::repeat_byte(0x77);
+        let object = b"voter-ciphertext";
+        let envelope = staged_envelope_with_object(slot, B256::repeat_byte(0x11), object);
+        let (_, _, _, id) = service.input_identity("1", &envelope).unwrap();
+
+        let mut job = AvailabilityJob {
+            schema_version: AVAILABILITY_JOB_SCHEMA_VERSION,
+            id: id.clone(),
+            content_hash: keccak256(object).0,
+            kind: JobKind::Input {
+                e3_id: "1".to_owned(),
+                staged_envelope: staged_envelope_for_slot(slot, B256::repeat_byte(0x11), object),
+                deadline: no_deadline(),
+                commitment_deadline: no_deadline(),
+            },
+            state: JobState::Created,
+        };
+        service.store_new_job_with_object(&job, object).unwrap();
+        job.state = JobState::Failed {
+            message: "availability promise expired".to_owned(),
+        };
+        service.save(&job).unwrap();
+
+        assert!(
+            service
+                .existing_input_job("1", &envelope)
+                .await
+                .unwrap()
+                .is_none(),
+            "restarting a failed job must reserve funding capacity"
+        );
+    }
+
+    /// ZEN2-23: an invalid envelope is refused before it reaches the free replay path.
+    #[tokio::test]
+    async fn the_replay_check_still_validates_the_envelope() {
+        let service = test_service(4096);
+
+        let error = service
+            .existing_input_job("1", b"not-an-envelope")
+            .await
+            .unwrap_err();
+        assert_eq!(
+            input_rejection_message(&error),
+            Some("The encoded vote envelope is invalid")
+        );
+
+        // Bytes that do not reproduce their committed hash are refused as well.
+        let slot = Address::repeat_byte(0x77);
+        let mut envelope =
+            decode_input_envelope(&staged_envelope_with_object(slot, B256::ZERO, b"real")).unwrap();
+        envelope.encryptedVoteHash = B256::repeat_byte(0x99);
+        let error = service
+            .existing_input_job("1", &envelope.abi_encode_params())
+            .await
+            .unwrap_err();
+        assert_eq!(
+            input_rejection_message(&error),
+            Some("The encrypted vote does not match its committed hash")
+        );
+
+        let error = service
+            .existing_input_job(
+                "not-an-e3",
+                &staged_envelope_with_object(slot, B256::ZERO, b"real"),
+            )
+            .await
+            .unwrap_err();
+        assert_eq!(
+            input_rejection_message(&error),
+            Some("The E3 identifier is invalid")
+        );
     }
 }
