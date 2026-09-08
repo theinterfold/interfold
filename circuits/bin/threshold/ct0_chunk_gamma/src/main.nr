@@ -4,10 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Chunking-comparison branch: verifies `ct0_chunk_combine_roots` and `ct0_chunk_pk_ct_combine`
-//! (both non-ZK), gathering every commitment the ct0 challenge depends on, then derives `gamma`.
-//! Same replacement the witness-group-split branch's `ct0_abcde_combine` makes: the transcript
-//! hashes commitments/roots instead of raw coefficients.
+//! Chunking-comparison branch: verifies `ct0_chunk_main_root` (now covers all five witness
+//! groups - u/e0/k1/r2/r1 merged into one grid, so there's no separate combine-roots step) and
+//! `ct0_chunk_pk_ct_combine` (both non-ZK), gathering every commitment the ct0 challenge depends
+//! on, then derives `gamma`. Same replacement the witness-group-split branch's
+//! `ct0_abcde_combine` makes: the transcript hashes commitments/roots instead of raw
+//! coefficients.
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::threshold::L;

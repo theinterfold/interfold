@@ -6,14 +6,15 @@
 
 //! Top-level ct0 (P3), chunking-comparison branch: the monolithic `UserDataEncryptionCt0`
 //! circuit no longer fits a single browser-side proof at N=16384, L=5, so its work is split by
-//! coefficient-level chunking - `u`/`e0`/`k1`/`r2is` (main grid, 4 chunks) and `r1is` (r1 grid, 8
-//! chunks), each chunk range-checked independently and combined through a binary tree (max 2
-//! recursive verifications per circuit): `ct0_chunk_main`/`ct0_chunk_r1` (leaves) ->
-//! `ct0_chunk_main_pair`/`ct0_chunk_pair`/`ct0_chunk_r1_quad` -> `ct0_chunk_main_root`/
-//! `ct0_chunk_r1_root` -> `ct0_chunk_combine_roots` + `ct0_chunk_pk_ct_combine` ->
-//! `ct0_chunk_gamma` (derives gamma). Round B (`ct0_eval_chunk_*`) mirrors this shape to evaluate
-//! every chunk at gamma and sum the partial evaluations, converging on `ct0_eval_chunk_identity`
-//! (the actual Schwartz-Zippel identity check).
+//! coefficient-level chunking into one merged grid - `u`/`e0`/`k1`/`r2is`/`r1is` together, 2
+//! chunks - each chunk range-checked independently and combined through a two-level tree (max 2
+//! recursive verifications per circuit): `ct0_chunk_main` (leaves, 2 instances) ->
+//! `ct0_chunk_main_root` (verifies both leaves directly, no intermediate pair level) + separate
+//! `ct0_pk_commit`/`ct0_ct_commit` -> `ct0_chunk_pk_ct_combine` -> `ct0_chunk_gamma` (verifies
+//! `ct0_chunk_main_root` and `ct0_chunk_pk_ct_combine`, derives gamma). Round B
+//! (`ct0_eval_chunk_*`) mirrors this shape to evaluate every chunk at gamma and sum the partial
+//! evaluations, converging on `ct0_eval_chunk_identity` (the actual Schwartz-Zippel identity
+//! check).
 //!
 //! This circuit verifies both final proofs and checks every commitment and batching coefficient
 //! they produced agree - closing the binding that stops a prover from range-checking one witness

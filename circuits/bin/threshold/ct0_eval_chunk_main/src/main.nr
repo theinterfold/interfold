@@ -4,29 +4,31 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Chunking-comparison branch: Round B leaf for ct0's main grid. Re-supplies the same
+//! Chunking-comparison branch: Round B leaf for ct0's merged main+r1 grid. Re-supplies the same
 //! `chunk_idx` slice `ct0_chunk_main` checked, redoes the CRT-consistency check (cheap - keeps
-//! `e0is` tied to the cross-round-bound `e0`), re-derives the same 4 per-chunk commitments for
+//! `e0is` tied to the cross-round-bound `e0`), re-derives the same 5 per-chunk commitments for
 //! binding, and computes each polynomial's *partial* Horner evaluation for this slice.
 //!
 //! Splitting a Horner evaluation across chunks: `Polynomial::eval` treats a `CHUNK_SIZE`-length
 //! slice as its own complete (local) polynomial, so a chunk's actual contribution to the full-N
 //! evaluation is `local_eval * gamma^offset`, where `offset` is the degree of the chunk's lowest
 //! coefficient (`N - (chunk_idx+1)*CHUNK_SIZE` in this descending-coefficient-order layout).
-//! Summing every chunk's contribution (done in the combine tree) reconstructs the full
-//! evaluation exactly.
+//! `r1is` is padded to `2N` (not `N`), so its own offset is computed against `2N`. Summing every
+//! chunk's contribution (done in the combine tree) reconstructs the full evaluation exactly.
 
 use lib::configs::default::threshold::{
-    L, N, QIS, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_R2,
-    USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS,
+    L, N, QIS, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_R1,
+    USER_DATA_ENCRYPTION_BIT_R2, USER_DATA_ENCRYPTION_BIT_U,
+    USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS, USER_DATA_ENCRYPTION_R1_N_CHUNKS as R1_N_CHUNKS,
 };
 use lib::math::commitments::{
     compute_ude_chunk_commitment, compute_ude_multi_chunk_commitment, UDE_KIND_CT0_E0,
-    UDE_KIND_CT0_K1, UDE_KIND_CT0_R2, UDE_KIND_CT0_U,
+    UDE_KIND_CT0_K1, UDE_KIND_CT0_R1, UDE_KIND_CT0_R2, UDE_KIND_CT0_U,
 };
 use lib::math::polynomial::Polynomial;
 
 global CHUNK_SIZE: u32 = N / N_CHUNKS;
+global R1_CHUNK_SIZE: u32 = (2 * N) / R1_N_CHUNKS;
 
 fn main(
     chunk_idx: pub u32,
@@ -36,8 +38,9 @@ fn main(
     e0is_chunk: [Polynomial<CHUNK_SIZE>; L],
     e0_quotients_chunk: [Polynomial<CHUNK_SIZE>; L],
     r2is_chunk: [Polynomial<CHUNK_SIZE>; L],
+    r1is_chunk: [Polynomial<R1_CHUNK_SIZE>; L],
     gamma: pub Field,
-) -> pub (Field, Field, Field, Field, Field, Field, [Field; L], [Field; L]) {
+) -> pub (Field, Field, Field, Field, Field, Field, Field, [Field; L], [Field; L], [Field; L]) {
     for i in 0..L {
         for j in 0..CHUNK_SIZE {
             assert(
@@ -72,6 +75,12 @@ fn main(
         N,
         r2is_chunk,
     );
+    let r1_commit = compute_ude_multi_chunk_commitment::<R1_CHUNK_SIZE, L, USER_DATA_ENCRYPTION_BIT_R1>(
+        UDE_KIND_CT0_R1,
+        chunk_idx,
+        N,
+        r1is_chunk,
+    );
 
     let offset = N - ((chunk_idx + 1) * CHUNK_SIZE);
     let gamma_pow = gamma.pow_32(offset as Field);
@@ -85,5 +94,16 @@ fn main(
         r2i_partial[i] = r2is_chunk[i].eval(gamma) * gamma_pow;
     }
 
-    (u_commit, e0_commit, k1_commit, r2_commit, u_partial, k1_partial, e0is_partial, r2i_partial)
+    let two_n = 2 * N;
+    let r1_offset = two_n - ((chunk_idx + 1) * R1_CHUNK_SIZE);
+    let r1_gamma_pow = gamma.pow_32(r1_offset as Field);
+    let mut r1i_partial: [Field; L] = [0; L];
+    for i in 0..L {
+        r1i_partial[i] = r1is_chunk[i].eval(gamma) * r1_gamma_pow;
+    }
+
+    (
+        u_commit, e0_commit, k1_commit, r2_commit, r1_commit, u_partial, k1_partial, e0is_partial,
+        r2i_partial, r1i_partial,
+    )
 }

@@ -4,11 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Chunking-comparison branch: verifies `ct0_eval_chunk_combine_roots` and
-//! `ct0_eval_chunk_pk_ct_combine` (both non-ZK), then performs the actual ct0 Schwartz-Zippel
-//! identity check - the one place all five witness groups' evaluations are simultaneously
-//! available. Replicates the monolithic circuit's `verify_evaluations` exactly (same as the
-//! witness-group-split branch's `ct0_eval_abcde_combine`).
+//! Chunking-comparison branch: verifies `ct0_eval_chunk_main_root` (now covers all five witness
+//! groups directly - no separate combine-roots step) and `ct0_eval_chunk_pk_ct_combine` (both
+//! non-ZK), then performs the actual ct0 Schwartz-Zippel identity check - the one place all five
+//! witness groups' evaluations are simultaneously available. Replicates the monolithic circuit's
+//! `verify_evaluations` exactly (same as the witness-group-split branch's
+//! `ct0_eval_abcde_combine`).
 //!
 //! `ct0_batching_coeffs` (`gammas[0..L]` from `ct0_chunk_gamma`) is taken as a plain input, not
 //! verified against Round A within this circuit - the top-level `user_data_encryption_ct0`
@@ -17,7 +18,7 @@
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::threshold::{L, N, QIS, USER_DATA_ENCRYPTION_K0IS};
 
-global ROOTS_LEN: u32 = 10 + (3 * L);
+global ROOTS_LEN: u32 = 8 + (3 * L);
 global PK_CT_LEN: u32 = 5 + (2 * L);
 
 fn main(
@@ -34,26 +35,24 @@ fn main(
     verify_honk_proof_non_zk(roots_vk, roots_proof, roots_public_inputs, roots_key_hash);
     verify_honk_proof_non_zk(pk_ct_vk, pk_ct_proof, pk_ct_public_inputs, pk_ct_key_hash);
 
-    let gamma = roots_public_inputs[2];
+    let gamma = roots_public_inputs[0];
     assert(gamma == pk_ct_public_inputs[2], "gamma mismatch");
     assert(gamma == ct0_batching_coeffs[0], "gamma mismatch with batching coefficients");
 
-    let u_root = roots_public_inputs[3];
-    let e0_root = roots_public_inputs[4];
-    let k1_root = roots_public_inputs[5];
-    let r2_root = roots_public_inputs[6];
-    let u_at_gamma = roots_public_inputs[7];
-    let k1_at_gamma = roots_public_inputs[8];
+    let u_root = roots_public_inputs[1];
+    let e0_root = roots_public_inputs[2];
+    let k1_root = roots_public_inputs[3];
+    let r2_root = roots_public_inputs[4];
+    let r1_root = roots_public_inputs[5];
+    let u_at_gamma = roots_public_inputs[6];
+    let k1_at_gamma = roots_public_inputs[7];
     let mut e0is_at_gamma: [Field; L] = [0; L];
     let mut r2i_at_gamma: [Field; L] = [0; L];
-    for i in 0..L {
-        e0is_at_gamma[i] = roots_public_inputs[9 + i];
-        r2i_at_gamma[i] = roots_public_inputs[9 + L + i];
-    }
-    let r1_root = roots_public_inputs[9 + (2 * L)];
     let mut r1i_at_gamma: [Field; L] = [0; L];
     for i in 0..L {
-        r1i_at_gamma[i] = roots_public_inputs[10 + (2 * L) + i];
+        e0is_at_gamma[i] = roots_public_inputs[8 + i];
+        r2i_at_gamma[i] = roots_public_inputs[8 + L + i];
+        r1i_at_gamma[i] = roots_public_inputs[8 + (2 * L) + i];
     }
 
     let pk0_commitment = pk_ct_public_inputs[3];
