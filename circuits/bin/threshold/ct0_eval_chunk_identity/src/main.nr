@@ -14,11 +14,15 @@
 //! `ct0_batching_coeffs` (`gammas[0..L]` from `ct0_chunk_gamma`) is taken as a plain input, not
 //! verified against Round A within this circuit - the top-level `user_data_encryption_ct0`
 //! circuit verifies both this proof and Round A's `ct0_chunk_gamma` and checks they agree.
+//!
+//! `ct0_eval_chunk_main_root` itself recursively verifies two leaf proofs, so it declares its own
+//! `pub leaf0_key_hash`/`leaf1_key_hash` parameters ahead of its return tuple in its public
+//! inputs - `ROOTS_LEN` and the indices below account for those 2 leading fields.
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::threshold::{L, N, QIS, USER_DATA_ENCRYPTION_K0IS};
 
-global ROOTS_LEN: u32 = 8 + (3 * L);
+global ROOTS_LEN: u32 = 10 + (3 * L);
 global PK_CT_LEN: u32 = 5 + (2 * L);
 
 fn main(
@@ -35,24 +39,24 @@ fn main(
     verify_honk_proof_non_zk(roots_vk, roots_proof, roots_public_inputs, roots_key_hash);
     verify_honk_proof_non_zk(pk_ct_vk, pk_ct_proof, pk_ct_public_inputs, pk_ct_key_hash);
 
-    let gamma = roots_public_inputs[0];
+    let gamma = roots_public_inputs[2];
     assert(gamma == pk_ct_public_inputs[2], "gamma mismatch");
     assert(gamma == ct0_batching_coeffs[0], "gamma mismatch with batching coefficients");
 
-    let u_root = roots_public_inputs[1];
-    let e0_root = roots_public_inputs[2];
-    let k1_root = roots_public_inputs[3];
-    let r2_root = roots_public_inputs[4];
-    let r1_root = roots_public_inputs[5];
-    let u_at_gamma = roots_public_inputs[6];
-    let k1_at_gamma = roots_public_inputs[7];
+    let u_root = roots_public_inputs[3];
+    let e0_root = roots_public_inputs[4];
+    let k1_root = roots_public_inputs[5];
+    let r2_root = roots_public_inputs[6];
+    let r1_root = roots_public_inputs[7];
+    let u_at_gamma = roots_public_inputs[8];
+    let k1_at_gamma = roots_public_inputs[9];
     let mut e0is_at_gamma: [Field; L] = [0; L];
     let mut r2i_at_gamma: [Field; L] = [0; L];
     let mut r1i_at_gamma: [Field; L] = [0; L];
     for i in 0..L {
-        e0is_at_gamma[i] = roots_public_inputs[8 + i];
-        r2i_at_gamma[i] = roots_public_inputs[8 + L + i];
-        r1i_at_gamma[i] = roots_public_inputs[8 + (2 * L) + i];
+        e0is_at_gamma[i] = roots_public_inputs[10 + i];
+        r2i_at_gamma[i] = roots_public_inputs[10 + L + i];
+        r1i_at_gamma[i] = roots_public_inputs[10 + (2 * L) + i];
     }
 
     let pk0_commitment = pk_ct_public_inputs[3];

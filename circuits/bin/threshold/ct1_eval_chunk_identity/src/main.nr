@@ -14,11 +14,15 @@
 //! `ct1_batching_coeffs` (`gammas[L..2L]` from `ct1_chunk_gamma`) is taken as a plain input, not
 //! verified against Round A here - the top-level `user_data_encryption_ct1` circuit verifies
 //! both this proof and Round A's `ct1_chunk_gamma` and checks they agree.
+//!
+//! `ct1_eval_chunk_main_root` itself recursively verifies two leaf proofs, so it declares its own
+//! `pub leaf0_key_hash`/`leaf1_key_hash` parameters ahead of its return tuple in its public
+//! inputs - `ROOTS_LEN` and the indices below account for those 2 leading fields.
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::threshold::{L, N, QIS};
 
-global ROOTS_LEN: u32 = 7 + (2 * L);
+global ROOTS_LEN: u32 = 9 + (2 * L);
 global PK_CT_LEN: u32 = 5 + (2 * L);
 
 fn main(
@@ -35,20 +39,20 @@ fn main(
     verify_honk_proof_non_zk(roots_vk, roots_proof, roots_public_inputs, roots_key_hash);
     verify_honk_proof_non_zk(pk_ct_vk, pk_ct_proof, pk_ct_public_inputs, pk_ct_key_hash);
 
-    let gamma = roots_public_inputs[0];
+    let gamma = roots_public_inputs[2];
     assert(gamma == pk_ct_public_inputs[2], "gamma mismatch");
 
-    let u_root = roots_public_inputs[1];
-    let e1_root = roots_public_inputs[2];
-    let p2_root = roots_public_inputs[3];
-    let p1_root = roots_public_inputs[4];
-    let u_at_gamma = roots_public_inputs[5];
-    let e1_at_gamma = roots_public_inputs[6];
+    let u_root = roots_public_inputs[3];
+    let e1_root = roots_public_inputs[4];
+    let p2_root = roots_public_inputs[5];
+    let p1_root = roots_public_inputs[6];
+    let u_at_gamma = roots_public_inputs[7];
+    let e1_at_gamma = roots_public_inputs[8];
     let mut p2i_at_gamma: [Field; L] = [0; L];
     let mut p1i_at_gamma: [Field; L] = [0; L];
     for i in 0..L {
-        p2i_at_gamma[i] = roots_public_inputs[7 + i];
-        p1i_at_gamma[i] = roots_public_inputs[7 + L + i];
+        p2i_at_gamma[i] = roots_public_inputs[9 + i];
+        p1i_at_gamma[i] = roots_public_inputs[9 + L + i];
     }
 
     let pk1_commitment = pk_ct_public_inputs[3];
