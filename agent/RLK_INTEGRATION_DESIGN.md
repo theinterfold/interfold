@@ -1,10 +1,9 @@
 # Threshold l-BFV RLK Integration Design
 
 Status: pure adapters and the RLK generation and aggregation helper/prover boundaries are
-implemented.
-Runtime collection, aggregation, storage, and publication remain pending. This document records
-verified interfaces, the integration boundary, and decisions that require protocol approval. It
-does not define a wire schema or on-chain ABI.
+implemented. Runtime collection, aggregation, storage, and publication remain pending. This document
+records verified interfaces, the integration boundary, and decisions that require protocol approval.
+It does not define a wire schema or on-chain ABI.
 
 ## Scope
 
@@ -113,10 +112,11 @@ The repository contains row-level circuits:
 - The `secure-16384` preset now contains generated fixed CRS, URS, and Garner rows. Unsupported
   presets retain placeholders because their RLK path is disabled.
 
-The C1 Noir circuit declares a public `row_index`, and the pure Rust adapter can convert every fixed
-l-BFV CRS row. The Rust C1 codegen, runtime request, response, recursive circuit, and proof collection
-path still model one C1 proof per party. These components must change as one compatibility unit before
-RLK proofs can bind every RLK row to the party's C1 secret-key commitment.
+The production C1 circuit and proof flow still use one summation-only proof per party. The pure Rust
+adapter can convert every fixed l-BFV CRS row, but the row-indexed C1 circuit, codegen, runtime
+request, response, recursive circuit, and proof collection path remain deferred. These components
+must change as one compatibility unit before RLK proofs can bind every RLK row to the party's C1
+secret-key commitment.
 
 The RLK generation and aggregation Rust paths now provide circuit computation, `Prover.toml`
 generation, row-selectable CLI sample generation, and `Provable` implementations. Aggregation
@@ -339,11 +339,12 @@ The pure circuit slice now includes:
 - witness conversion tests for `SecretKey`, RNS polynomials, errors, and quotient values;
 - `crates/zk-helpers/src/circuits/threshold/rlk_aggregation.rs` and its prover registration;
 - exact-`H` aggregation, centered CRT sums, generation commitments, and aggregate commitments;
+- recursive synchronization and drift checks for generated l-BFV CRS and URS modules;
+- secure-16384 build selection and complete RLK artifact cache gates;
 
 The remaining capability additions are:
 
 - row-aware C1 proof-request and runtime collection changes;
-- artifact and verification-key entries for every supported preset and committee pair;
 - generated RLK verifier artifacts for the `secure-16384` preset;
 - recursive `NodeFold`, `NodesFold`, and `DkgAggregator` changes so RLK proofs reach the existing
   EVM-facing DKG verifier;
@@ -396,5 +397,5 @@ adapter, circuit, or prover work in steps 1 through 4 of the implementation orde
    session, accepted-party records, proof bundles, aggregation effects, and publication intents.
 
 Do not add contract calls or publication behavior before the step 9 measurements. Do not add durable
-records or wire events without the step 5 schema names and versions. Continue the implementation order
-through the pure, circuit, prover, and local aggregation layers.
+records or wire events without the step 5 schema names and versions. Continue the implementation
+order through the pure, circuit, prover, and local aggregation layers.

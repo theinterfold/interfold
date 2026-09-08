@@ -20,7 +20,7 @@ import {
   writeFileSync,
 } from 'fs'
 import { tmpdir } from 'os'
-import { basename, join, resolve } from 'path'
+import { basename, join, relative, resolve } from 'path'
 import { AbiCoder, id, keccak256 } from 'ethers'
 import { BFV_PARAMS } from '../packages/interfold-contracts/scripts/protocol/constants'
 import {
@@ -40,6 +40,62 @@ import {
 } from './circuit-constants'
 
 const SECURE_16384_ONLY_CIRCUITS = new Set(['rlk_generation', 'rlk_aggregation'])
+
+function configModuleFiles(dir: string, base = dir): string[] {
+  if (!existsSync(dir)) return []
+  const files: string[] = []
+  for (const entry of readdirSync(dir).sort()) {
+    const path = join(dir, entry)
+    const stat = statSync(path)
+    if (stat.isDirectory()) files.push(...configModuleFiles(path, base))
+    else if (stat.isFile()) files.push(relative(base, path))
+  }
+  return files
+}
+
+function syncGeneratedConfigModules(generatedDir: string, committedDir: string): void {
+  const files = configModuleFiles(generatedDir)
+  if (files.length === 0) throw new Error(`No generated config modules found in ${generatedDir}`)
+
+  rmSync(committedDir, { recursive: true, force: true })
+  for (const file of files) {
+    const destination = join(committedDir, file)
+    mkdirSync(resolve(destination, '..'), { recursive: true })
+    copyFileSync(join(generatedDir, file), destination)
+  }
+}
+
+function generatedConfigDrift(generatedDir: string, committedDir: string): string | null {
+  const generatedFiles = configModuleFiles(generatedDir)
+  const committedFiles = configModuleFiles(committedDir)
+  if (generatedFiles.join('\n') !== committedFiles.join('\n')) return 'file set'
+
+  const normalize = (content: string) => content.replace(/\s+/g, '').replace(/,([}\]])/g, '$1')
+  for (const file of generatedFiles) {
+    if (normalize(readFileSync(join(committedDir, file), 'utf8')) !== normalize(readFileSync(join(generatedDir, file), 'utf8'))) {
+      return file
+    }
+  }
+  return null
+}
+
+function requiredRlkDistMarkers(dist: string, preset: string): string[] {
+  if (preset !== CIRCUIT_PRESETS.SECURE_16384) return []
+  return Object.values(CIRCUIT_VARIANTS).flatMap((variant) =>
+    [...SECURE_16384_ONLY_CIRCUITS].flatMap((circuit) =>
+      ['json', 'vk', 'vk_hash'].map((extension) => join(dist, variant, CIRCUIT_GROUPS.THRESHOLD, circuit, `${circuit}.${extension}`)),
+    ),
+  )
+}
+
+function requiredRlkBinMarkers(bin: string, preset: string): string[] {
+  if (preset !== CIRCUIT_PRESETS.SECURE_16384) return []
+  return [...SECURE_16384_ONLY_CIRCUITS].flatMap((circuit) =>
+    ['json', 'vk', 'vk_hash', 'vk_recursive', 'vk_recursive_hash', 'vk_noir', 'vk_noir_hash'].map((extension) =>
+      join(bin, CIRCUIT_GROUPS.THRESHOLD, circuit, 'target', `${circuit}.${extension}`),
+    ),
+  )
+}
 
 interface CircuitInfo {
   name: string
@@ -385,9 +441,7 @@ class NoirCircuitBuilder {
     try {
       this.runConfigModuleGenerator(preset, generatedRoot)
       const module = PRESET_NOIR_CONFIG[preset]
-      for (const file of ['mod.nr', 'threshold.nr', 'dkg.nr']) {
-        copyFileSync(join(generatedRoot, module, file), join(this.rootDir, 'circuits', 'lib', 'src', 'configs', module, file))
-      }
+      syncGeneratedConfigModules(join(generatedRoot, module), join(this.rootDir, 'circuits', 'lib', 'src', 'configs', module))
       this.generatedConfigPresets.add(preset)
     } catch (err: any) {
       throw new Error(
@@ -404,16 +458,12 @@ class NoirCircuitBuilder {
     try {
       this.runConfigModuleGenerator(preset, generatedRoot)
       const module = PRESET_NOIR_CONFIG[preset]
-      const normalize = (content: string) => content.replace(/\s+/g, '').replace(/,([}\]])/g, '$1')
-      for (const file of ['mod.nr', 'threshold.nr', 'dkg.nr']) {
-        const committed = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', module, file)
-        const generated = join(generatedRoot, module, file)
-        if (!existsSync(committed) || normalize(readFileSync(committed, 'utf8')) !== normalize(readFileSync(generated, 'utf8'))) {
-          throw new Error(
-            `Generated config drift detected for ${module}/${file}. ` +
-              `Run: pnpm build:circuits sync-config --preset ${preset} --committee ${this.options.committee ?? CIRCUIT_COMMITTEES.MINIMUM}`,
-          )
-        }
+      const drift = generatedConfigDrift(join(generatedRoot, module), join(this.rootDir, 'circuits', 'lib', 'src', 'configs', module))
+      if (drift) {
+        throw new Error(
+          `Generated config drift detected for ${module}/${drift}. ` +
+            `Run: pnpm build:circuits sync-config --preset ${preset} --committee ${this.options.committee ?? CIRCUIT_COMMITTEES.MINIMUM}`,
+        )
       }
     } finally {
       rmSync(generatedRoot, { recursive: true, force: true })
@@ -665,12 +715,16 @@ library ActiveCryptoConfig {
    */
   private hydrateBinFromDist(preset: CircuitPreset, committee: CircuitCommittee, sourceHash: string): void {
     const distRoot = join(this.options.outputDir!, preset, committee)
+    const missingDistArtifacts = this.requiredDistMarkers(preset, committee).filter((path) => !existsSync(path))
+    if (missingDistArtifacts.length > 0) {
+      throw new Error(`Cannot hydrate circuits/bin: missing artifact ${missingDistArtifacts[0]}`)
+    }
     const discovered = this.discoverCircuits()
     const circuits = this.circuitsForPreset(discovered, preset)
     let copied = 0
 
     for (const circuit of discovered) {
-      if (!this.isCircuitEnabledForPreset(circuit, preset)) this.removeCircuitTargetArtifacts(circuit)
+      this.removeCircuitTargetArtifacts(circuit)
     }
 
     for (const circuit of circuits) {
@@ -698,6 +752,10 @@ library ActiveCryptoConfig {
       copyPair(join(recursiveDir, `${packageName}.vk_hash`), join(targetDir, `${packageName}.vk_noir_hash`))
     }
 
+    const missingBinArtifacts = requiredRlkBinMarkers(this.circuitsDir, preset).filter((path) => !existsSync(path))
+    if (missingBinArtifacts.length > 0) {
+      throw new Error(`Cannot hydrate circuits/bin: missing hydrated artifact ${missingBinArtifacts[0]}`)
+    }
     console.log(`   Copied ${copied} artifact file(s) into circuits/bin targets.`)
     this.writeActiveBinPresetStamp(preset, committee, sourceHash)
   }
@@ -709,11 +767,12 @@ library ActiveCryptoConfig {
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation', 'pk_aggregation.json'),
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'dkg_aggregator.json'),
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.json'),
+      ...requiredRlkDistMarkers(dist, preset),
     ]
   }
 
   /** Marker files required by `test_trbfv_actor` / gas extraction under circuits/bin. */
-  private requiredBinMarkers(): string[] {
+  private requiredBinMarkers(preset: string): string[] {
     const bin = this.circuitsDir
     return [
       join(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'target', 'dkg_aggregator.json'),
@@ -722,6 +781,7 @@ library ActiveCryptoConfig {
       join(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'target', 'decryption_aggregator.vk_recursive'),
       join(bin, CIRCUIT_GROUPS.DKG, 'target', 'pk.json'),
       join(bin, CIRCUIT_GROUPS.THRESHOLD, 'target', 'pk_aggregation.json'),
+      ...requiredRlkBinMarkers(bin, preset),
     ]
   }
 
@@ -745,7 +805,7 @@ library ActiveCryptoConfig {
     const active = this.readActiveBinPreset()
     if (!active || active.preset !== preset || active.sourceHash !== sourceHash) return false
     if (active.committee && active.committee !== committee) return false
-    return this.requiredBinMarkers().every((path) => existsSync(path))
+    return this.requiredBinMarkers(preset).every((path) => existsSync(path))
   }
 
   private isPresetUpToDate(preset: string, committee: string, sourceHash: string): boolean {
@@ -765,7 +825,7 @@ library ActiveCryptoConfig {
           `Run without --skip-if-built or \`pnpm build:circuits --preset ${preset}\` once to refresh.`,
       )
     }
-    const missing = [...this.requiredDistMarkers(preset, committee), ...this.requiredBinMarkers()].filter((path) => !existsSync(path))
+    const missing = [...this.requiredDistMarkers(preset, committee), ...this.requiredBinMarkers(preset)].filter((path) => !existsSync(path))
     if (missing.length > 0) {
       console.log(`   ℹ️  --skip-if-built: missing ${missing.length} marker artifact(s), e.g. ${missing[0]}`)
     }
@@ -1452,5 +1512,10 @@ export {
   CircuitGroup,
   CIRCUIT_GROUPS,
   CIRCUIT_PRESETS,
+  configModuleFiles,
+  generatedConfigDrift,
+  requiredRlkBinMarkers,
+  requiredRlkDistMarkers,
+  syncGeneratedConfigModules,
   type CircuitPreset,
 }
