@@ -24,7 +24,7 @@ use lib::configs::default::threshold::{
 };
 use lib::math::commitments::{
     compute_ude_chunk_commitment, compute_ude_multi_chunk_commitment, UDE_KIND_CT0_E0,
-    UDE_KIND_CT0_K1, UDE_KIND_CT0_R1, UDE_KIND_CT0_R2, UDE_KIND_CT0_U,
+    UDE_KIND_CT0_K1, UDE_KIND_CT0_R1, UDE_KIND_CT0_R2, UDE_KIND_U,
 };
 use lib::math::polynomial::Polynomial;
 
@@ -63,7 +63,7 @@ fn main(
     }
 
     let u_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, USER_DATA_ENCRYPTION_BIT_U>(
-        UDE_KIND_CT0_U,
+        UDE_KIND_U,
         chunk_idx,
         N,
         u_chunk,

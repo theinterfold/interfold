@@ -19,7 +19,7 @@ use lib::configs::default::threshold::{
 };
 use lib::math::commitments::{
     compute_ude_chunk_root_commitment, UDE_KIND_CT0_E0, UDE_KIND_CT0_K1, UDE_KIND_CT0_R1,
-    UDE_KIND_CT0_R2, UDE_KIND_CT0_U,
+    UDE_KIND_CT0_R2, UDE_KIND_U,
 };
 
 global CHUNK_SIZE: u32 = N / N_CHUNKS;
@@ -92,8 +92,7 @@ fn main(
 
     assert(leaf0_gamma == leaf1_gamma, "gamma mismatch");
 
-    let u_root =
-        compute_ude_chunk_root_commitment(UDE_KIND_CT0_U, N, CHUNK_SIZE, [leaf0_u, leaf1_u]);
+    let u_root = compute_ude_chunk_root_commitment(UDE_KIND_U, N, CHUNK_SIZE, [leaf0_u, leaf1_u]);
     let e0_root =
         compute_ude_chunk_root_commitment(UDE_KIND_CT0_E0, N, CHUNK_SIZE, [leaf0_e0, leaf1_e0]);
     let k1_root =

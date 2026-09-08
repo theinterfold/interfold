@@ -275,12 +275,17 @@ pub fn compute_sc_secret_chunk_root_commitment(
 // chunk commitment belongs to so values from different groups/legs never collide under the
 // shared DS_USER_DATA_ENCRYPTION_CHUNK domain separator (same purpose as DKG's SK=0/ESM=1
 // kind_tag).
-pub global UDE_KIND_CT0_U: Field = 0;
+//
+// `u` deliberately has ONE tag shared by both legs, unlike every other group here. ct0 and ct1
+// encrypt under the same randomness `u`, and the `user_data_encryption` wrapper proves that by
+// asserting ct0's and ct1's `u` commitments are equal. A per-leg tag would make those two
+// commitments differ for one and the same `u`, so that assert could never be satisfied - the
+// tag has to be shared for the cross-leg binding to work at all.
+pub global UDE_KIND_U: Field = 0;
 pub global UDE_KIND_CT0_E0: Field = 1;
 pub global UDE_KIND_CT0_K1: Field = 2;
 pub global UDE_KIND_CT0_R2: Field = 3;
 pub global UDE_KIND_CT0_R1: Field = 4;
-pub global UDE_KIND_CT1_U: Field = 5;
 pub global UDE_KIND_CT1_E1: Field = 6;
 pub global UDE_KIND_CT1_P2: Field = 7;
 pub global UDE_KIND_CT1_P1: Field = 8;
@@ -483,4 +488,34 @@ pub fn compute_user_data_encryption_ct0_challenge<let L: u32>(payload: [Field]) 
 
 pub fn compute_user_data_encryption_ct1_challenge<let L: u32>(payload: [Field]) -> [Field] {
     compute_challenge::<L>(payload, DS_CLG_USER_DATA_ENCRYPTION)
+}
+
+// Guards the cross-leg `u` binding: the `user_data_encryption` wrapper proves ct0 and ct1 used
+// the same randomness by asserting their `u` commitments are EQUAL. That only works while both
+// legs commit `u` under the same kind tag - giving `u` a per-leg tag (as every other witness
+// group here correctly has) silently makes the two roots differ for one and the same `u`, and
+// the wrapper assert becomes unsatisfiable by any honest prover.
+#[test]
+fn test_u_commitment_matches_across_ct0_and_ct1_legs() {
+    let u_chunk0: Polynomial<2> = Polynomial::new([7, 11]);
+    let u_chunk1: Polynomial<2> = Polynomial::new([13, 17]);
+    let n: u32 = 4;
+
+    // Exactly what ct0_chunk_main / ct0_chunk_main_root compute for `u`...
+    let ct0_c0 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 0, n, u_chunk0);
+    let ct0_c1 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 1, n, u_chunk1);
+    let ct0_u_root = compute_ude_chunk_root_commitment(UDE_KIND_U, n, 2, [ct0_c0, ct0_c1]);
+
+    // ...and what ct1_chunk_main / ct1_chunk_main_root compute for the same `u`.
+    let ct1_c0 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 0, n, u_chunk0);
+    let ct1_c1 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 1, n, u_chunk1);
+    let ct1_u_root = compute_ude_chunk_root_commitment(UDE_KIND_U, n, 2, [ct1_c0, ct1_c1]);
+
+    assert(ct0_u_root == ct1_u_root, "ct0 and ct1 must agree on u for the wrapper's binding");
+
+    // A different `u` must still give a different root - the binding has to have teeth.
+    let other: Polynomial<2> = Polynomial::new([7, 12]);
+    let other_c1 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 1, n, other);
+    let other_root = compute_ude_chunk_root_commitment(UDE_KIND_U, n, 2, [ct0_c0, other_c1]);
+    assert(ct0_u_root != other_root);
 }

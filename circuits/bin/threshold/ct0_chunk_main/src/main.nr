@@ -15,25 +15,31 @@
 //! under 2M (~800K main + ~600K r1 ~= 1.4M), but with less headroom before `N_CHUNKS` needs to
 //! grow again as L increases, since main and r1 now share one 2M budget instead of two.
 //!
-//! Range-checks and CRT-consistency for the slice, then emits one chunk commitment *per
-//! polynomial* (not bundled - `u_commitment`/`k1_commitment` must stay independently
-//! recoverable: the wrapper cross-checks ct0's and ct1's `u_commitment` directly, and
-//! `k1_commitment` survives into ct0's final output tuple unchanged). At N_CHUNKS=2, exactly 2 of
-//! these leaves combine directly into `ct0_chunk_main_root` - no intermediate pair/quad level
-//! needed.
+//! Range-checks the slice, then emits one chunk commitment *per polynomial* (not bundled -
+//! `u_commitment`/`k1_commitment` must stay independently recoverable: the wrapper cross-checks
+//! ct0's and ct1's `u_commitment` directly, and `k1_commitment` survives into ct0's final output
+//! tuple). At N_CHUNKS=2, exactly 2 of these leaves combine directly into
+//! `ct0_chunk_main_root` - no intermediate pair/quad level needed.
+//!
+//! `e0is`/`e0_quotients` and the CRT-consistency check deliberately live in Round B only
+//! (`ct0_eval_chunk_main`), not here. Round A never commits to `e0is`, so a copy of that check
+//! here would constrain nothing observable: the binding that matters runs entirely through Round
+//! B, where `e0is` is tied to `e0_chunk` by the CRT check plus the bounded quotient, and
+//! `e0_chunk` is in turn tied to Round A's `e0` by the top-level circuit's `e0_root` equality
+//! assert. Keeping it Round-B-only drops ~225K gates from this leaf, the tightest circuit in the
+//! tree.
 //!
 //! `r2is` and `r1is` are padded from their native degrees (`N-1` and `2N-1`) to `N` and `2N`
 //! coefficients respectively by one leading zero (see `Polynomial`'s descending-degree
 //! convention); the padding slot lives at global index 0, i.e. chunk_idx 0's local offset 0.
 
 use lib::configs::default::threshold::{
-    L, N, QIS, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT,
-    USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_R1, USER_DATA_ENCRYPTION_BIT_R2,
-    USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_E0_BOUND,
-    USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS, USER_DATA_ENCRYPTION_K1_LOW_BOUND,
-    USER_DATA_ENCRYPTION_K1_UP_BOUND, USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS,
-    USER_DATA_ENCRYPTION_R1_LOW_BOUNDS, USER_DATA_ENCRYPTION_R1_N_CHUNKS as R1_N_CHUNKS,
-    USER_DATA_ENCRYPTION_R1_UP_BOUNDS, USER_DATA_ENCRYPTION_R2_BOUNDS, USER_DATA_ENCRYPTION_U_BOUND,
+    L, N, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_R1,
+    USER_DATA_ENCRYPTION_BIT_R2, USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_E0_BOUND,
+    USER_DATA_ENCRYPTION_K1_LOW_BOUND, USER_DATA_ENCRYPTION_K1_UP_BOUND,
+    USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS, USER_DATA_ENCRYPTION_R1_LOW_BOUNDS,
+    USER_DATA_ENCRYPTION_R1_N_CHUNKS as R1_N_CHUNKS, USER_DATA_ENCRYPTION_R1_UP_BOUNDS,
+    USER_DATA_ENCRYPTION_R2_BOUNDS, USER_DATA_ENCRYPTION_U_BOUND,
 };
 
 global CHUNK_SIZE: u32 = N / N_CHUNKS;
@@ -41,7 +47,7 @@ global R1_CHUNK_SIZE: u32 = (2 * N) / R1_N_CHUNKS;
 
 use lib::math::commitments::{
     compute_ude_chunk_commitment, compute_ude_multi_chunk_commitment, UDE_KIND_CT0_E0,
-    UDE_KIND_CT0_K1, UDE_KIND_CT0_R1, UDE_KIND_CT0_R2, UDE_KIND_CT0_U,
+    UDE_KIND_CT0_K1, UDE_KIND_CT0_R1, UDE_KIND_CT0_R2, UDE_KIND_U,
 };
 use lib::math::polynomial::Polynomial;
 
@@ -50,8 +56,6 @@ fn main(
     u_chunk: Polynomial<CHUNK_SIZE>,
     e0_chunk: Polynomial<CHUNK_SIZE>,
     k1_chunk: Polynomial<CHUNK_SIZE>,
-    e0is_chunk: [Polynomial<CHUNK_SIZE>; L],
-    e0_quotients_chunk: [Polynomial<CHUNK_SIZE>; L],
     r2is_chunk: [Polynomial<CHUNK_SIZE>; L],
     r1is_chunk: [Polynomial<R1_CHUNK_SIZE>; L],
 ) -> pub (Field, Field, Field, Field, Field) {
@@ -86,29 +90,10 @@ fn main(
             USER_DATA_ENCRYPTION_R1_UP_BOUNDS[i],
             USER_DATA_ENCRYPTION_R1_LOW_BOUNDS[i],
         );
-        // The CRT-consistency assert below holds in F_p, not Z: an unbounded e0_quotients[i]
-        // lets a prover satisfy it for an arbitrary e0is[i] by solving
-        // e0_quotients[i] := (e0 - e0is[i]) / QIS[i] via the modular inverse, which then reaches
-        // the identity check unmediated. This range check closes that gap - see
-        // user_data_encryption_ct0.nr's check_range_bounds for the full analysis.
-        e0_quotients_chunk[i].range_check_2bounds::<USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT>(
-            USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS[i],
-            USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS[i],
-        );
-    }
-
-    for i in 0..L {
-        for j in 0..CHUNK_SIZE {
-            assert(
-                e0_chunk.coefficients[j]
-                    == e0is_chunk[i].coefficients[j]
-                        + e0_quotients_chunk[i].coefficients[j] * QIS[i],
-            );
-        }
     }
 
     let u_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, USER_DATA_ENCRYPTION_BIT_U>(
-        UDE_KIND_CT0_U,
+        UDE_KIND_U,
         chunk_idx,
         N,
         u_chunk,

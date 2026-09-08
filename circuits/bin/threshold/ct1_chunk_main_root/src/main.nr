@@ -16,7 +16,7 @@ use lib::configs::default::threshold::{
 };
 use lib::math::commitments::{
     compute_ude_chunk_root_commitment, UDE_KIND_CT1_E1, UDE_KIND_CT1_P1, UDE_KIND_CT1_P2,
-    UDE_KIND_CT1_U,
+    UDE_KIND_U,
 };
 
 global CHUNK_SIZE: u32 = N / N_CHUNKS;
@@ -53,8 +53,7 @@ fn main(
         leaf1_key_hash,
     );
 
-    let u_root =
-        compute_ude_chunk_root_commitment(UDE_KIND_CT1_U, N, CHUNK_SIZE, [leaf0_u, leaf1_u]);
+    let u_root = compute_ude_chunk_root_commitment(UDE_KIND_U, N, CHUNK_SIZE, [leaf0_u, leaf1_u]);
     let e1_root =
         compute_ude_chunk_root_commitment(UDE_KIND_CT1_E1, N, CHUNK_SIZE, [leaf0_e1, leaf1_e1]);
     let p2_root =
