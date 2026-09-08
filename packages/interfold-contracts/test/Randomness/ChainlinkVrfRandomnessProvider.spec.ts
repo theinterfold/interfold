@@ -206,6 +206,34 @@ describe("ChainlinkVrfRandomnessProvider", function () {
     ).to.emit(provider, "RandomnessRequested");
   });
 
+  it("ignores a response to a released request", async function () {
+    const { coordinator, owner, provider, requesterSigner } = await setup({
+      fundedBalance: 10n,
+      minimumBalance: 5n,
+    });
+
+    await provider.connect(requesterSigner).requestRandomness(1);
+    expect(await provider.pendingRequestCount()).to.equal(1n);
+
+    await provider.connect(owner).releaseAbandonedRequest(1);
+    expect(await provider.pendingRequestCount()).to.equal(0n);
+
+    // The reservation is back, so the released draw must stay unusable. Accepting it would let
+    // the provider hold more usable draws than the reservation covers.
+    await expect(
+      coordinator.fulfillRandomWordsWithOverride(
+        1,
+        await provider.getAddress(),
+        [222],
+      ),
+    ).to.emit(provider, "RandomnessResponseIgnored");
+
+    const [fulfilled, randomWord] = await provider.getRandomness(1);
+    expect(fulfilled).to.equal(false);
+    expect(randomWord).to.equal(0n);
+    expect(await provider.pendingRequestCount()).to.equal(0n);
+  });
+
   it("lets the owner release the reservation of an abandoned draw", async function () {
     const { owner, provider, requesterSigner, other } = await setup({
       fundedBalance: 10n,

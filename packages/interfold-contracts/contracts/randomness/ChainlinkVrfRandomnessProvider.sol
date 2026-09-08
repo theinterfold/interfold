@@ -172,8 +172,10 @@ contract ChainlinkVrfRandomnessProvider is
 
     /// @notice Releases the balance reservation of one request that got no response.
     /// @dev Chainlink keeps an unfunded request for a limited time. A request that never gets a
-    ///      response would hold its reservation forever. The owner releases it. This function
-    ///      does not change the recorded result, thus a later response stays usable.
+    ///      response would hold its reservation forever. The owner releases it. The release also
+    ///      makes the request unusable: `fulfillRandomWords` ignores a later response. Otherwise
+    ///      the owner could release a live request, request again under the lower count, and hold
+    ///      more usable draws than the reservation covers.
     /// @param requestId Identifier of the request to release.
     function releaseAbandonedRequest(uint256 requestId) external onlyOwner {
         RandomnessResult storage result = _results[requestId];
@@ -196,15 +198,20 @@ contract ChainlinkVrfRandomnessProvider is
             emit RandomnessResponseIgnored(requestId);
             return;
         }
+        // A released request gave its balance reservation back, so accepting its response would
+        // let the provider hold more usable draws than the reservation covers. Ignore it. The
+        // owner releases only a request that Chainlink no longer answers.
+        if (result.released) {
+            emit RandomnessResponseIgnored(requestId);
+            return;
+        }
 
         result.randomWord = randomWords[0];
         result.fulfilledAt = block.timestamp;
         result.fulfilledBlock = RegistrySortitionLib.currentBlockNumber();
         result.fulfilled = true;
-        if (!result.released) {
-            result.released = true;
-            if (pendingRequestCount != 0) pendingRequestCount--;
-        }
+        result.released = true;
+        if (pendingRequestCount != 0) pendingRequestCount--;
         emit RandomnessFulfilled(
             requestId,
             e3IdByRequestId[requestId],
