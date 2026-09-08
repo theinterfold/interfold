@@ -396,6 +396,12 @@ interface IInterfold {
     /// @param e3Program The E3 program address that is not allowed.
     error E3ProgramNotAllowed(IE3Program e3Program);
 
+    /// @notice Thrown when a candidate E3 program does not advertise a required interface.
+    /// @dev Interfold probes `IE3Program` and `IE3ProgramDataAvailability` with ERC-165 at
+    ///      registration. A program that omits either one cannot publish an output.
+    /// @param e3Program The rejected program address.
+    error E3ProgramInterfaceMissing(address e3Program);
+
     /// @notice Thrown when attempting to access an E3 that does not exist.
     /// @param e3Id The ID of the non-existent E3.
     error E3DoesNotExist(uint256 e3Id);
@@ -503,6 +509,17 @@ interface IInterfold {
     /// @param e3Id The E3 identifier.
     /// @param deadline The last valid publication timestamp.
     error DKGDeadlinePassed(uint256 e3Id, uint256 deadline);
+
+    /// @notice Thrown when a committee publishes its key after the input window closed.
+    /// @dev A round that reaches `KeyPublished` after its input window can no longer receive
+    ///      inputs. It then fails as a requester-paid compute timeout instead of a
+    ///      committee-paid DKG timeout. Refuse the late publication instead.
+    /// @param e3Id The E3 identifier.
+    /// @param inputDeadline The end of the input window.
+    error InputWindowClosedBeforeKeyPublication(
+        uint256 e3Id,
+        uint256 inputDeadline
+    );
 
     /// @notice The Input deadline is invalid
     error InvalidInputDeadline(uint256 deadline);

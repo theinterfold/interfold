@@ -29,8 +29,20 @@ contract MockInterfold {
   mapping(uint256 => E3) public e3s;
   mapping(IE3Program => bool) public e3Programs;
 
+  /// @notice The program that `getE3` reports as the assignee of every E3.
+  /// @dev Interfold assigns one program per E3. CRISP refuses an E3 that another program owns,
+  /// so this mock must report an assignee. Registration sets it, and `setE3Program` overrides it
+  /// for tests of the refusal path.
+  IE3Program public assignedE3Program;
+
   function registerE3Program(IE3Program program) external {
     e3Programs[program] = true;
+    assignedE3Program = program;
+  }
+
+  /// @notice Set the program that `getE3` reports as the assignee.
+  function setE3Program(IE3Program program) external {
+    assignedE3Program = program;
   }
 
   function request(address program) external {
@@ -55,7 +67,7 @@ contract MockInterfold {
       requestBlock: mockRequestBlock,
       inputWindow: [uint256(0), uint256(0)],
       encryptionSchemeId: ENCRYPTION_SCHEME_ID,
-      e3Program: IE3Program(address(0)),
+      e3Program: assignedE3Program,
       paramSet: 0, // Insecure512
       customParams: params,
       decryptionVerifier: IDecryptionVerifier(address(0)),
@@ -81,7 +93,7 @@ contract MockInterfold {
       requestBlock: mockRequestBlock,
       inputWindow: [uint256(0), uint256(0)],
       encryptionSchemeId: ENCRYPTION_SCHEME_ID,
-      e3Program: IE3Program(address(0)),
+      e3Program: assignedE3Program,
       paramSet: 0, // Insecure512
       customParams: abi.encode(address(0), nextE3Id, numOptions, 0, 0, 0, 0),
       decryptionVerifier: IDecryptionVerifier(address(0)),
@@ -154,7 +166,7 @@ contract MockInterfold {
         requestBlock: mockRequestBlock,
         inputWindow: inputWindow,
         encryptionSchemeId: ENCRYPTION_SCHEME_ID,
-        e3Program: IE3Program(address(0)),
+        e3Program: assignedE3Program,
         paramSet: 0, // Insecure512
         customParams: abi.encode(address(0), 0, 2, 0, 0, 0, 0),
         decryptionVerifier: IDecryptionVerifier(address(0)),

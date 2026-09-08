@@ -31,4 +31,28 @@ describe('CRISP Interfold binding', function () {
 
     await expect(program.bindInterfold(interfoldAddress)).to.be.revertedWithCustomError(program, 'InterfoldAlreadyBound')
   })
+
+  it('refuses to initialize round state for an E3 that Interfold assigned elsewhere', async function () {
+    // ZEN2-12. `validate` accepts the owner as a caller. Without an assignment check the owner
+    // could create parallel CRISP round state — input tree and params hash — for an E3 that
+    // Interfold gave to a different program.
+    const [, otherProgram] = await ethers.getSigners()
+    const mockInterfold = await deployMockInterfold()
+    const program = await deployCRISPProgram({ mockInterfold })
+    const params = ethers.AbiCoder.defaultAbiCoder().encode(
+      ['address', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256', 'uint256'],
+      [ethers.ZeroAddress, 0n, 2, 0, 1, 0, 0],
+    )
+
+    // Interfold reports the E3 as assigned to a different program.
+    await (await mockInterfold.setE3Program(otherProgram.address)).wait()
+    await expect(program.validate(1, 0, '0x', '0x', params))
+      .to.be.revertedWithCustomError(program, 'E3NotAssignedToProgram')
+      .withArgs(1)
+
+    // The same E3, once Interfold assigns it to this program, initializes normally.
+    await (await mockInterfold.setE3Program(await program.getAddress())).wait()
+    await (await program.validate(1, 0, '0x', '0x', params)).wait()
+    expect((await program.getRoundData(1)).numOptions).to.equal(2)
+  })
 })

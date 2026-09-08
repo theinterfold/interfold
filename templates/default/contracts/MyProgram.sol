@@ -12,9 +12,10 @@ import { E3 } from "@interfold/contracts/contracts/interfaces/IE3.sol";
 import { Risc0ComputeProof } from "@interfold/contracts/contracts/lib/Risc0ComputeProof.sol";
 import { IDataAvailabilityVerifier, IE3ProgramDataAvailability } from "@interfold/contracts/contracts/interfaces/IDataAvailabilityVerifier.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import { LazyIMTData, InternalLazyIMT } from "@zk-kit/lazy-imt.sol/InternalLazyIMT.sol";
 
-contract MyProgram is IE3Program, IE3ProgramDataAvailability, Ownable {
+contract MyProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable {
   using InternalLazyIMT for LazyIMTData;
   // Constants
   bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
@@ -55,6 +56,16 @@ contract MyProgram is IE3Program, IE3ProgramDataAvailability, Ownable {
     verifier = _verifier;
     imageId = _imageId;
     authorizedContracts[address(_interfold)] = true;
+  }
+
+  /// @inheritdoc IERC165
+  /// @dev Interfold probes these interfaces before it registers a program. A program that does
+  /// not advertise them cannot be registered.
+  function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
+    return
+      interfaceId == type(IE3Program).interfaceId ||
+      interfaceId == type(IE3ProgramDataAvailability).interfaceId ||
+      interfaceId == type(IERC165).interfaceId;
   }
 
   /// @inheritdoc IE3Program

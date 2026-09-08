@@ -259,14 +259,16 @@ design citation alone does not establish current runtime behavior.
 - **E3 program allowlist:** production initialization registers one deployed E3 program and assigns
   Interfold ownership to the configured protocol owner. Later registration and retirement are
   owner-only. Retirement closes only new request admission; existing E3s keep their snapshotted
-  program. Every registered address must contain runtime code. `MockE3Program` is the stateless
-  bootstrap option. It has no administrative controls and applies no application rules. Its
-  deterministic test receipt is not production data availability, so requests remain paused until a
-  production program is registered and wired. The request-time BFV ciphertext verifier and
-  decryption verifier remain mandatory. Its mutable failure controls live only in
-  `MockE3ProgramHarness`. A protocol upgrade that makes the program interface incompatible must
-  retire every incompatible bootstrap program before requests resume. — `Interfold.sol`;
-  `MockE3Program.sol`; `flow-trace/03`
+  program. Every registered address must contain runtime code and must advertise both `IE3Program`
+  and `IE3ProgramDataAvailability` through ERC-165. Interfold calls `verifyDataAvailability` on
+  every output publication, so a program that omits the selector could otherwise brick its own
+  rounds after the requester paid. `MockE3Program` is the stateless bootstrap option. It has no
+  administrative controls and applies no application rules. Its deterministic test receipt is not
+  production data availability, so requests remain paused until a production program is registered
+  and wired. The request-time BFV ciphertext verifier and decryption verifier remain mandatory. Its
+  mutable failure controls live only in `MockE3ProgramHarness`. A protocol upgrade that makes the
+  program interface incompatible must retire every incompatible bootstrap program before requests
+  resume. — `Interfold.sol`; `MockE3Program.sol`; `flow-trace/03`
 - **Data availability binds per program and per round:** Interfold holds no protocol-level
   data-availability verifier; it delegates to `IE3ProgramDataAvailability(e3Program)`, and a program
   holds its verifier as an immutable. The Avail adapter re-checks `bridge.vectorx() == vectorx` on

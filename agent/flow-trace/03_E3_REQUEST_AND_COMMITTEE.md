@@ -723,3 +723,22 @@ The EVM reader has typed coverage for `CommitteeFormationFailed`, `CommitteeActi
 `CommitteeViabilityUpdated` in addition to ticket submission, finalization, publication, and
 expulsion. These facts are stored in the E3's chain aggregate and projected into the dashboard's
 committee stage, including submitted/required thresholds and post-expulsion viability.
+
+## Zenith 2026-09 additions (post-fix semantics)
+
+### ZEN2-13 — operator tree capacity
+
+`CiphernodeRegistryOwnable.MAX_CIPHERNODE_LEAVES` is `2**TREE_DEPTH - 1` (1,048,575 at depth 20),
+not `2**TREE_DEPTH`. The pinned `@zk-kit/lazy-imt.sol` sets `maxIndex = (1 << depth) - 1` and
+inserts only while `index < maxIndex`. A cap of `2**TREE_DEPTH` let the last append pass the
+registry check in `addCiphernode` and then revert inside the dependency. The comparison operator and
+the free-index reuse list are unchanged. `CIPHERNODE_TREE_WARNING_THRESHOLD` stays at 80 percent of
+the corrected cap.
+
+### ZEN2-03 — committee key publication and the input window
+
+`Interfold.onCommitteePublished` now reverts with `InputWindowClosedBeforeKeyPublication` when
+`block.timestamp > e3.inputWindow[1]`. A relayer with a valid DKG proof could otherwise publish
+before `dkgDeadline` but after the input window, giving a round that reaches `KeyPublished` and
+never accepts an input. That round failed as a requester-paid `ComputeTimeout` instead of a
+committee-paid `DKGTimeout`. See `04_DKG_AND_COMPUTATION.md` for the full publication trace.

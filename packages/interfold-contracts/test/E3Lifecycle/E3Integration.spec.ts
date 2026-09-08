@@ -991,6 +991,87 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         ),
       ).to.be.revertedWithCustomError(interfold, "DKGDeadlinePassed");
     });
+
+    it("rejects committee publication after the input window closed", async function () {
+      // ZEN2-03. A key published after `inputWindow[1]` gives a round that
+      // reaches KeyPublished and can never receive an input. It then fails as
+      // a requester-paid ComputeTimeout instead of a committee-paid
+      // DKGTimeout, so the publication is refused instead.
+      const {
+        interfold,
+        registry,
+        usdcToken,
+        e3Program,
+        decryptionVerifier,
+        requester,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+      } = await loadFixture(setup);
+
+      for (const operator of [operator1, operator2, operator3]) {
+        await setupOperator(operator);
+      }
+
+      // A short input window puts `inputWindow[1]` before the DKG deadline,
+      // which is the only shape in which this finding is reachable.
+      await time.increase(1);
+      const startTime = (await time.latest()) + 10;
+      const requestParams = {
+        committeeSize: 0,
+        inputWindow: [startTime, startTime + 20] as [number, number],
+        e3Program: await e3Program.getAddress(),
+        paramSet: 0,
+        computeProviderParams: abiCoder.encode(
+          ["address"],
+          [await decryptionVerifier.getAddress()],
+        ),
+        customParams: abiCoder.encode(
+          ["address"],
+          ["0x1234567890123456789012345678901234567890"],
+        ),
+        expectedFeeToken: await usdcToken.getAddress(),
+        expectedCryptoConfigId: ACTIVE_CRYPTO_CONFIG_ID,
+        maxFee: ethers.MaxUint256,
+      };
+      const fee = await interfold.getE3Quote(requestParams);
+      await usdcToken
+        .connect(requester)
+        .approve(await interfold.getAddress(), fee);
+      await interfold.connect(requester).request(requestParams);
+
+      for (const operator of [operator1, operator2, operator3]) {
+        await registry.connect(operator).submitTicket(firstE3Id, 1);
+      }
+      const committeeDeadline = await registry.getCommitteeDeadline(firstE3Id);
+      await time.setNextBlockTimestamp(committeeDeadline + 1n);
+      await registry.finalizeCommittee(firstE3Id);
+
+      const e3 = await interfold.getE3(firstE3Id);
+      const inputWindowEnd = e3.inputWindow[1];
+      const { dkgDeadline } = await interfold.getDeadlines(firstE3Id);
+      // Publication is still inside the DKG deadline, so only the new check
+      // can reject it.
+      expect(await time.latest()).to.be.gt(inputWindowEnd);
+      expect(dkgDeadline).to.be.gt(await time.latest());
+
+      const publicKey = "0x1234567890abcdef1234567890abcdef";
+      const pkCommitment = ethers.keccak256(publicKey);
+      await expect(
+        registry.publishCommittee(
+          firstE3Id,
+          pkCommitment,
+          encodeMockDkgProof(pkCommitment),
+          "0x01",
+        ),
+      )
+        .to.be.revertedWithCustomError(
+          interfold,
+          "InputWindowClosedBeforeKeyPublication",
+        )
+        .withArgs(firstE3Id, inputWindowEnd);
+    });
   });
 
   describe("processE3Failure()", function () {

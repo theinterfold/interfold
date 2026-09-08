@@ -29,6 +29,9 @@ import {
 import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
 import { FailurePayerLib } from "./FailurePayerLib.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {
+    IERC165
+} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 /**
  * @title InterfoldLifecycle
@@ -40,6 +43,35 @@ library InterfoldLifecycle {
     // keccak256(abi.encode(uint256(keccak256("interfold.storage.CiphertextVerifier")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant CIPHERTEXT_VERIFIER_STORAGE_SLOT =
         0xfc399dd26441dab88259cd69fffcf8b5f96dd87f2db63f29285d86101a4d1500;
+
+    /// @notice Gas limit for one ERC-165 probe of a candidate E3 program.
+    uint256 private constant PROGRAM_PROBE_GAS = 30000;
+
+    /// @notice Refuses a program that does not advertise the interfaces Interfold calls.
+    /// @dev Interfold calls `verifyDataAvailability` on every output publication. A program that
+    ///      omits that selector cannot publish an output, and the E3 fails after the requester
+    ///      paid. Reject the program at registration, when the owner can still correct it.
+    /// @param e3Program The candidate program.
+    function validateE3ProgramInterfaces(address e3Program) external view {
+        if (
+            !_advertisesInterface(e3Program, type(IE3Program).interfaceId) ||
+            !_advertisesInterface(
+                e3Program,
+                type(IE3ProgramDataAvailability).interfaceId
+            )
+        ) revert IInterfold.E3ProgramInterfaceMissing(e3Program);
+    }
+
+    /// @dev Returns true only when the target answers one ERC-165 probe with `true`.
+    function _advertisesInterface(
+        address target,
+        bytes4 interfaceId
+    ) private view returns (bool advertised) {
+        (bool success, bytes memory result) = target.staticcall{
+            gas: PROGRAM_PROBE_GAS
+        }(abi.encodeCall(IERC165.supportsInterface, (interfaceId)));
+        return success && result.length == 32 && abi.decode(result, (bool));
+    }
 
     /// @notice Closes new request admission for one program.
     /// @dev Existing E3 records keep their request-time program address.
@@ -267,7 +299,8 @@ library InterfoldLifecycle {
 
     // prettier-ignore
     function validateCommitteePublication(
-        address caller, address registry, uint256 e3Id, uint8 current, uint256 dkgDeadline
+        address caller, address registry, uint256 e3Id, uint8 current, uint256 dkgDeadline,
+        uint256 inputWindowEnd
     ) external view {
         if (caller != registry) revert IInterfold.OnlyCiphernodeRegistry();
         IInterfold.E3Stage stage = IInterfold.E3Stage(current);
@@ -275,6 +308,11 @@ library InterfoldLifecycle {
             revert IInterfold.InvalidStage(e3Id, IInterfold.E3Stage.CommitteeFinalized, stage);
         if (block.timestamp > dkgDeadline)
             revert IInterfold.DKGDeadlinePassed(e3Id, dkgDeadline);
+        // A key published after the input window closed gives a round that can never receive an
+        // input. The round then fails as a requester-paid compute timeout. Attribute the delay to
+        // the committee instead, and refuse the publication.
+        if (block.timestamp > inputWindowEnd)
+            revert IInterfold.InputWindowClosedBeforeKeyPublication(e3Id, inputWindowEnd);
     }
 
     /// @notice Validates, verifies, and records a content-addressed ciphertext output.

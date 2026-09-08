@@ -19,7 +19,8 @@ import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { IHonkVerifier } from "./interfaces/IHonkVerifier.sol";
 import { IVotesToken } from "./interfaces/IVotesToken.sol";
 import { IERC6372Clock } from "./interfaces/IERC6372Clock.sol";
-import { IDataAvailabilityVerifier } from "@interfold/contracts/contracts/interfaces/IDataAvailabilityVerifier.sol";
+import { IDataAvailabilityVerifier, IE3ProgramDataAvailability } from "@interfold/contracts/contracts/interfaces/IDataAvailabilityVerifier.sol";
+import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 interface IInterfoldProgramRegistry {
   function e3Programs(IE3Program e3Program) external view returns (bool);
@@ -29,7 +30,7 @@ interface IInterfoldRegistryView {
   function ciphernodeRegistry() external view returns (ICiphernodeRegistry);
 }
 
-contract CRISPProgram is IE3Program, Ownable, EIP712 {
+contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable, EIP712 {
   using InternalLazyIMT for LazyIMTData;
 
   /// @notice Enum to represent credit modes
@@ -247,6 +248,7 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   /// round cannot conclude while its input stays pending.
   error ComputeWindowTooShort(uint256 e3Id, uint256 computeWindow, uint256 required);
   error KeyNotPublished(uint256 e3Id);
+  error E3NotAssignedToProgram(uint256 e3Id);
   error E3NotAcceptingInputs(uint256 e3Id);
   error InvalidComputeContext();
   error InvalidDataAvailabilityVerifier();
@@ -452,6 +454,10 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   ) external returns (bytes32) {
     if (msg.sender != address(interfold) && msg.sender != owner()) revert CallerNotAuthorized();
     if (e3Data[e3Id].paramsHash != bytes32(0)) revert E3AlreadyInitialized();
+    // Interfold stores the provisional E3 and its selected program before it calls `validate`.
+    // Read that record and refuse an E3 that Interfold assigned to a different program. Without
+    // this check the owner can create parallel CRISP round state for another program's E3.
+    _requireAssignedE3(e3Id);
 
     // Delegated to its own frame rather than scoped inline: `validate` is close enough to the
     // stack limit that holding the six decoded values alongside the parameters exceeds it.
@@ -464,6 +470,23 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     e3Data[e3Id].votes._init(TREE_DEPTH);
 
     return ENCRYPTION_SCHEME_ID;
+  }
+
+  /// @inheritdoc IERC165
+  /// @dev Interfold probes these interfaces before it registers a program.
+  function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+    return
+      interfaceId == type(IE3Program).interfaceId ||
+      interfaceId == type(IE3ProgramDataAvailability).interfaceId ||
+      interfaceId == type(IERC165).interfaceId;
+  }
+
+  /// @notice Refuse an E3 that Interfold did not assign to this program.
+  /// @dev Interfold records the provisional E3 and its selected program before it calls
+  /// `validate`, so the assignment is readable at initialization time.
+  /// @param e3Id The E3 to check.
+  function _requireAssignedE3(uint256 e3Id) internal view {
+    if (address(interfold.getE3(e3Id).e3Program) != address(this)) revert E3NotAssignedToProgram(e3Id);
   }
 
   /// @notice Refuse a round that can close before a worst-case committee leaves one hour to vote,
@@ -714,6 +737,8 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
 
   function _keyPublishedE3(uint256 e3Id) internal view returns (E3 memory e3) {
     e3 = interfold.getE3(e3Id);
+    // Defense in depth. `validate` already refuses an E3 that belongs to a different program.
+    if (address(e3.e3Program) != address(this)) revert E3NotAssignedToProgram(e3Id);
     if (interfold.getE3Stage(e3Id) != IInterfold.E3Stage.KeyPublished) {
       revert KeyNotPublished(e3Id);
     }

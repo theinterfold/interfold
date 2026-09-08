@@ -427,6 +427,21 @@ describe("Interfold", function () {
         .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
         .withArgs(AddressTwo);
     });
+    it("reverts if E3 Program does not advertise the required interfaces", async function () {
+      // ZEN2-01. Output publication calls `verifyDataAvailability` on the
+      // request-time program with no fallback, so a program that omits that
+      // selector cannot complete an E3. Reject it at registration, while the
+      // owner can still correct it.
+      const { interfold } = await loadFixture(setup);
+      const notAProgram = await ethers.deployContract("MockComputeProvider");
+      await notAProgram.waitForDeployment();
+      const address = await notAProgram.getAddress();
+
+      await expect(interfold.registerE3Program(address))
+        .to.be.revertedWithCustomError(interfold, "E3ProgramInterfaceMissing")
+        .withArgs(address);
+      expect(await interfold.e3Programs(address)).to.be.false;
+    });
     it("registers E3 Program correctly", async function () {
       const { interfold } = await loadFixture(setup);
       const e3Program = await deployUnregisteredE3Program();

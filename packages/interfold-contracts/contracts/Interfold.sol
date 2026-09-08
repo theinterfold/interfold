@@ -630,6 +630,10 @@ contract Interfold is
             }
             sstore(programSlot, 1)
         }
+        // Reject a program that does not advertise the interfaces Interfold calls. Output
+        // publication calls `verifyDataAvailability` unconditionally, so a program that omits
+        // that selector cannot complete an E3.
+        InterfoldLifecycle.validateE3ProgramInterfaces(address(e3Program));
         emit E3ProgramRegistered(e3Program);
     }
 
@@ -786,14 +790,15 @@ contract Interfold is
         uint256 e3Id,
         bytes32 committeePublicKey
     ) external {
+        E3 storage e3 = e3s[e3Id];
         InterfoldLifecycle.validateCommitteePublication(
             msg.sender,
             address(_registryFor(e3Id)),
             e3Id,
             uint8(_e3Stages[e3Id]),
-            _e3Deadlines[e3Id].dkgDeadline
+            _e3Deadlines[e3Id].dkgDeadline,
+            e3.inputWindow[1]
         );
-        E3 storage e3 = e3s[e3Id];
 
         _e3Stages[e3Id] = E3Stage.KeyPublished;
         e3.committeePublicKey = committeePublicKey;

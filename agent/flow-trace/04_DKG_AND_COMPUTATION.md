@@ -735,6 +735,7 @@ phase.
         │  │       │  │  onCommitteePublished(e3Id, pk) {   │  │
         │  │       │  │    require(stage==CommitteeFinalized) │  │
         │  │       │  │    require(now <= dkgDeadline)       │  │
+        │  │       │  │    require(now <= inputWindow[1])    │  │
         │  │       │  │    e3.committeePublicKey = pk         │  │
         │  │       │  │    stage = KeyPublished               │  │
         │  │       │  │    computeDeadline = max(now,         │  │
@@ -931,6 +932,18 @@ is `max(block.timestamp, inputWindow[1]) + requestTimeComputeWindow`. A late key
 not consume the compute provider's allotted window, and publication still waits until the input
 window closes. The request-time timeout snapshot prevents later governance changes from changing an
 active E3's deadlines.
+
+`onCommitteePublished` also refuses a key that arrives after `inputWindow[1]`, with
+`InputWindowClosedBeforeKeyPublication` (ZEN2-03). Such a round reaches `KeyPublished` but can never
+receive an input, so it fails as a requester-paid `ComputeTimeout` instead of a committee-paid
+`DKGTimeout`. The DKG deadline alone does not stop this, because `dkgDeadline` can fall after
+`inputWindow[1]`. The refusal keeps failure attribution on the committee.
+
+`publishCiphertextOutput` calls `IE3ProgramDataAvailability.verifyDataAvailability` on the
+request-time program without a fallback. A program that omits that selector cannot publish an
+output. `Interfold.registerE3Program` therefore probes the candidate program with ERC-165 for
+`IE3Program` and `IE3ProgramDataAvailability` and reverts with `E3ProgramInterfaceMissing`
+(ZEN2-01). The probe is bounded to 30000 gas and treats a failed, short, or false answer as missing.
 
 ---
 
