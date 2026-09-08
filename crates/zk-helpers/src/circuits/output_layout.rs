@@ -126,6 +126,18 @@ pub const PK_BFV_OUTPUTS: &[OutputField] = &[f("pk_commitment")];
 pub const PK_GENERATION_OUTPUTS: &[OutputField] =
     &[f("sk_commitment"), f("pk_commitment"), f("e_sm_commitment")];
 
+/// l-BFV relinearization-key generation for one row.
+pub const RLK_GENERATION_OUTPUTS: &[OutputField] = &[
+    f("sk_commitment"),
+    f("r_commitment"),
+    f("d0_commitment"),
+    f("d2_commitment"),
+];
+
+/// l-BFV relinearization-key aggregation for one gadget row.
+pub const RLK_AGGREGATION_OUTPUTS: &[OutputField] =
+    &[f("d0_agg_commitment"), f("d2_agg_commitment")];
+
 /// C4 — DKG share decryption.
 pub const DKG_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("commitment")];
 
@@ -147,6 +159,12 @@ pub const SHARE_ENCRYPTION_INPUTS: &[OutputField] = &[
 
 /// C1 — Public gadget-row selector.
 pub const PK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
+
+/// Public l-BFV relinearization-key row selector.
+pub const RLK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
+
+/// Public row selector for l-BFV relinearization-key aggregation.
+pub const RLK_AGGREGATION_INPUTS: &[OutputField] = &[f("row_index")];
 
 /// Describes the public input layout of a circuit.
 ///

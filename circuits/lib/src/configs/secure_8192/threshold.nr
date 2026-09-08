@@ -24654,7 +24654,7 @@ l-BFV relinearization key circuits
 ************************************/
 
 pub global GADGET_DIM: u32 = L;
-// Legacy C1 rows remain backed by the single-CRP path until C1 row generation is migrated.
+// C1 uses the repeated CRP path because this preset does not enable l-BFV.
 pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP];
 // l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
 // placeholder declarations because their RLK path is disabled.
@@ -24681,7 +24681,6 @@ pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
 pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
 pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
 
-// RLK quotient bounds reuse the PK generation bounds. Verify these bounds before production use.
 pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::new(
     QIS,
     RLK_GENERATION_R_BOUND,

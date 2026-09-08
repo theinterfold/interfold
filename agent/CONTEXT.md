@@ -122,7 +122,9 @@ opentelemetry/tracing.
   `esm_share_computation_chunk` · C3 `share_encryption` · C4 `share_decryption`
 - **Threshold** (`circuits/bin/threshold/`): C1 `pk_generation` · C5 `pk_aggregation` · P3
   `user_data_encryption_ct0/ct1` (+ wrapper) · C6 `share_decryption` · C7
-  `decrypted_shares_aggregation`
+  `decrypted_shares_aggregation` · l-BFV row proofs `rlk_generation` (helper/prover only; reserved
+  `CircuitName::RlkGeneration = 27`) and `rlk_aggregation` (helper/prover only; reserved
+  `CircuitName::RlkAggregation = 28`)
 - **Recursive aggregation** (`circuits/bin/recursive_aggregation/`): fold kernels
   (`c2ab_chunk_fold`, `c3_fold`, `c6_fold`, `node_fold`, `nodes_fold`, …) and the top-level
   `dkg_aggregator` / `decryption_aggregator`, which produce the on-chain Honk verifiers. The

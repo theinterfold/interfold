@@ -7,4 +7,6 @@
 mod decrypted_shares_aggregation;
 mod pk_aggregation;
 mod pk_generation;
+mod rlk_aggregation;
+mod rlk_generation;
 mod share_decryption;

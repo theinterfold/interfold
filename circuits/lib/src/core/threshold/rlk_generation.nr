@@ -6,7 +6,7 @@
 
 use crate::math::commitments::{
     compute_rlk_d0_commitment, compute_rlk_d2_commitment, compute_rlk_generation_challenge,
-    compute_sc_sk_secret_root_from_polynomial,
+    compute_rlk_r_commitment, compute_sc_sk_secret_root_from_polynomial,
 };
 use crate::math::helpers::flatten;
 use crate::math::polynomial::Polynomial;
@@ -73,6 +73,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 ///
 /// **Produces (tuple order):**
 /// - `commit(sk)` -> must match the same row's C1 `sk_commitment` (same party, same sk).
+/// - `commit(r)` -> must match all RLK rows from the same party.
 /// - `commit(d0)` -> RLK aggregation.
 /// - `commit(d2)` -> RLK aggregation.
 pub struct RlkGeneration<let N: u32, let L: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, let BIT_E2: u32, let BIT_R1_D0: u32, let BIT_R2_D0: u32, let BIT_R1_D2: u32, let BIT_R2_D2: u32, let BIT_D: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
@@ -132,7 +133,13 @@ impl<let N: u32, let L: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, l
     }
 
     /// Flattens all witness data into a single array for Fiat-Shamir challenge generation.
-    fn payload(self, sk_commitment: Field, d0_commitment: Field, d2_commitment: Field) -> [Field] {
+    fn payload(
+        self,
+        sk_commitment: Field,
+        r_commitment: Field,
+        d0_commitment: Field,
+        d2_commitment: Field,
+    ) -> [Field] {
         let mut inputs: [Field] = [].as_vector();
 
         inputs = flatten::<_, _, BIT_D>(inputs, self.d1);
@@ -143,6 +150,7 @@ impl<let N: u32, let L: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, l
         inputs = flatten::<_, _, BIT_E2>(inputs, [self.e2]);
 
         inputs = inputs.push_back(sk_commitment);
+        inputs = inputs.push_back(r_commitment);
         inputs = inputs.push_back(d0_commitment);
         inputs = inputs.push_back(d2_commitment);
 
@@ -156,33 +164,36 @@ impl<let N: u32, let L: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, l
 
     /// Executes the l-BFV RLK generation circuit for one gadget row.
     ///
-    /// Returns `(commit(sk), commit(d0), commit(d2))` as documented on the struct.
-    pub fn execute(self) -> (Field, Field, Field) {
+    /// Returns `(commit(sk), commit(r), commit(d0), commit(d2))` as documented on the struct.
+    pub fn execute(self) -> (Field, Field, Field, Field) {
         // Step 1: Range-check secret witnesses (sk, r, e0, e2, quotients).
         self.perform_range_checks();
 
         // Step 2: Derive commitments for the FS transcript.
         let sk_commitment =
             compute_sc_sk_secret_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SK>(self.sk);
+        let r_commitment = compute_rlk_r_commitment::<N, BIT_R>(self.r);
         let d0_commitment = compute_rlk_d0_commitment::<N, L, BIT_D>(self.d0);
         let d2_commitment = compute_rlk_d2_commitment::<N, L, BIT_D>(self.d2);
 
         // Step 3: Fiat-Shamir challenge and per-modulus evaluation checks.
-        let gamma = self.generate_challenge(sk_commitment, d0_commitment, d2_commitment);
+        let gamma =
+            self.generate_challenge(sk_commitment, r_commitment, d0_commitment, d2_commitment);
         self.verify_evaluations(gamma);
 
         // Step 4: Return commitments for downstream circuits.
-        (sk_commitment, d0_commitment, d2_commitment)
+        (sk_commitment, r_commitment, d0_commitment, d2_commitment)
     }
 
     /// Generates the Fiat-Shamir challenge using the SAFE cryptographic sponge.
     fn generate_challenge(
         self,
         sk_commitment: Field,
+        r_commitment: Field,
         d0_commitment: Field,
         d2_commitment: Field,
     ) -> Field {
-        let inputs = self.payload(sk_commitment, d0_commitment, d2_commitment);
+        let inputs = self.payload(sk_commitment, r_commitment, d0_commitment, d2_commitment);
 
         compute_rlk_generation_challenge(inputs)
     }
@@ -195,6 +206,14 @@ impl<let N: u32, let L: u32, let BIT_R: u32, let BIT_SK: u32, let BIT_E0: u32, l
         self.e2.range_check_2bounds::<BIT_E2>(self.configs.e2_bound, self.configs.e2_bound);
 
         for i in 0..L {
+            self.d0[i].range_check_2bounds::<BIT_D>(
+                self.configs.r2_d0_bounds[i],
+                self.configs.r2_d0_bounds[i],
+            );
+            self.d2[i].range_check_2bounds::<BIT_D>(
+                self.configs.r2_d2_bounds[i],
+                self.configs.r2_d2_bounds[i],
+            );
             self.r1_d0[i].range_check_2bounds::<BIT_R1_D0>(
                 self.configs.r1_d0_bounds[i],
                 self.configs.r1_d0_bounds[i],

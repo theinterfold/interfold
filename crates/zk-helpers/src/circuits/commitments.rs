@@ -74,6 +74,22 @@ const DS_PK_AGGREGATION: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
+/// String: "RLK_GENERATION"
+const DS_RLK_GENERATION: [u8; 64] = [
+    0x52, 0x4c, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "RLK_AGGREGATION"
+const DS_RLK_AGGREGATION: [u8; 64] = [
+    0x52, 0x4c, 0x4b, 0x5f, 0x41, 0x47, 0x47, 0x52, 0x45, 0x47, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
 /// Domain separator for general-purpose ciphertext commitments.
 /// String: "CIPHERTEXT"
 const DS_CIPHERTEXT: [u8; 64] = [
@@ -550,6 +566,29 @@ pub fn compute_pk_aggregation_commitment(
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
 }
 
+/// Compute the RLK generation commitment for one `d0` row.
+pub fn compute_rlk_d0_commitment(d0: &CrtPolynomial, bit_d: u32) -> BigInt {
+    let mut payload = vec![Field::from(1u64)];
+    payload = flatten(payload, &d0.limbs, bit_d);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION, io)[0])
+}
+
+/// Compute the RLK generation commitment for one `d2` row.
+pub fn compute_rlk_d2_commitment(d2: &CrtPolynomial, bit_d: u32) -> BigInt {
+    let mut payload = vec![Field::from(2u64)];
+    payload = flatten(payload, &d2.limbs, bit_d);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION, io)[0])
+}
+
+/// Compute an RLK aggregation commitment for one aggregated component row.
+pub fn compute_rlk_aggregation_commitment(component: &CrtPolynomial, bit_d: u32) -> BigInt {
+    let payload = flatten(Vec::new(), &component.limbs, bit_d);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_AGGREGATION, io)[0])
+}
+
 /// Compute aggregation commitment.
 ///
 /// This matches the Noir `compute_recursive_aggregation_commitment` function exactly.
@@ -801,6 +840,35 @@ mod tests {
 
         let actual = compute_ciphertext_commitment(&ct0, &ct1, bit_ct);
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn rlk_commitments_match_tagged_noir_payloads() {
+        let bit_d = 4;
+        let component = CrtPolynomial::from_bigint_vectors(vec![vec![1.into(), (-2).into()]]);
+
+        let d0_payload = flatten(vec![Field::from(1u64)], &component.limbs, bit_d);
+        let d0_io = [0x80000000 | d0_payload.len() as u32, 1];
+        let expected_d0 =
+            field_to_bigint(compute_commitments(d0_payload, DS_RLK_GENERATION, d0_io)[0]);
+        assert_eq!(compute_rlk_d0_commitment(&component, bit_d), expected_d0);
+
+        let d2_payload = flatten(vec![Field::from(2u64)], &component.limbs, bit_d);
+        let d2_io = [0x80000000 | d2_payload.len() as u32, 1];
+        let expected_d2 =
+            field_to_bigint(compute_commitments(d2_payload, DS_RLK_GENERATION, d2_io)[0]);
+        assert_eq!(compute_rlk_d2_commitment(&component, bit_d), expected_d2);
+
+        let aggregate_payload = flatten(Vec::new(), &component.limbs, bit_d);
+        let aggregate_io = [0x80000000 | aggregate_payload.len() as u32, 1];
+        let expected_aggregate = field_to_bigint(
+            compute_commitments(aggregate_payload, DS_RLK_AGGREGATION, aggregate_io)[0],
+        );
+        assert_eq!(
+            compute_rlk_aggregation_commitment(&component, bit_d),
+            expected_aggregate
+        );
+        assert_ne!(expected_d0, expected_d2);
     }
 
     #[test]

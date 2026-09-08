@@ -1,7 +1,10 @@
 # Threshold l-BFV RLK Integration Design
 
-Status: design only. This document records verified interfaces, a proposed integration boundary, and
-decisions that require protocol approval. It does not define a wire schema or on-chain ABI.
+Status: pure adapters and the RLK generation and aggregation helper/prover boundaries are
+implemented.
+Runtime collection, aggregation, storage, and publication remain pending. This document records
+verified interfaces, the integration boundary, and decisions that require protocol approval. It
+does not define a wire schema or on-chain ABI.
 
 ## Scope
 
@@ -33,8 +36,8 @@ decryption, transport authentication, ZK proofs, or witness serialization.
 - `aggregate_relinearization_key` requires an exact participant set and an `AggregatedPublicKey`.
 - RLK aggregation sums the secret-dependent `c0` components and carries the shared `c1` components.
 - An operational `LBFVRelinearizationKey` does not retain participant metadata.
-- RLK share internals are private. The integration cannot read the `d0` and `d2` polynomials needed
-  by the Noir aggregation circuit without a library adapter or a minimal upstream API addition.
+- The pinned `fhe.rs` revision exposes validated, read-only `d0` and `d2` row components and level
+  metadata. Interfold computes the circuit-specific quotient polynomials.
 
 ### Paper-to-library parameter mapping
 
@@ -93,16 +96,16 @@ circuit constants and a new compatible circuit artifact set.
 
 References:
 
-- `~/.cargo/git/checkouts/fhe.rs-28554c2cc2152fe4/e1bc405/crates/fhe/src/trlbfv/relin_key_share.rs`
-- `~/.cargo/git/checkouts/fhe.rs-28554c2cc2152fe4/e1bc405/crates/fhe/src/trlbfv/aggregate.rs`
-- `~/.cargo/git/checkouts/fhe.rs-28554c2cc2152fe4/e1bc405/crates/fhe/src/trlbfv/binding.rs`
+- `~/.cargo/git/checkouts/fhe.rs-28554c2cc2152fe4/0f784ae/crates/fhe/src/trlbfv/relin_key_share.rs`
+- `~/.cargo/git/checkouts/fhe.rs-28554c2cc2152fe4/0f784ae/crates/fhe/src/trlbfv/aggregate.rs`
+- `~/.cargo/git/checkouts/fhe.rs-28554c2cc2152fe4/0f784ae/crates/fhe/src/trlbfv/binding.rs`
 
 ### Noir circuits
 
 The repository contains row-level circuits:
 
-- `circuits/bin/threshold/rlk_generation/src/main.nr` proves `(commit(sk), commit(d0), commit(d2))`
-  for one `row_index`.
+- `circuits/bin/threshold/rlk_generation/src/main.nr` proves
+  `(commit(sk), commit(r), commit(d0), commit(d2))` for one `row_index`.
 - `circuits/bin/threshold/rlk_aggregation/src/main.nr` proves the sum of `H` parties' `d0` and `d2`
   rows for one `row_index`.
 - Both circuits use compile-time row constants. The RLK generation circuit requires each `a` row to
@@ -110,9 +113,16 @@ The repository contains row-level circuits:
 - The `secure-16384` preset now contains generated fixed CRS, URS, and Garner rows. Unsupported
   presets retain placeholders because their RLK path is disabled.
 
-The C1 Noir circuit also has a public `row_index`, but the Rust C1 data, request, response, and
-proof collection path still model one C1 proof per party. The C1 row plumbing must be completed
-before RLK proofs can bind every RLK row to the party's C1 secret-key commitment.
+The C1 Noir circuit declares a public `row_index`, and the pure Rust adapter can convert every fixed
+l-BFV CRS row. The Rust C1 codegen, runtime request, response, recursive circuit, and proof collection
+path still model one C1 proof per party. These components must change as one compatibility unit before
+RLK proofs can bind every RLK row to the party's C1 secret-key commitment.
+
+The RLK generation and aggregation Rust paths now provide circuit computation, `Prover.toml`
+generation, row-selectable CLI sample generation, and `Provable` implementations. Aggregation
+requires exactly the canonical `H` shares and computes centered sums for each CRT limb.
+`CircuitName::RlkGeneration` and `CircuitName::RlkAggregation` are appended at durable discriminants
+27 and 28. No RLK `ProofType`, request, response, or runtime event is defined yet.
 
 ## Proposed Protocol Shape
 
@@ -177,6 +187,7 @@ must bind all of these values:
 - the RLK session version;
 - `row_index`;
 - the C1 `sk_commitment` for the same party and row;
+- the `r_commitment`, which must be equal in all rows from one party;
 - the RLK `d0` and `d2` commitments;
 - the CRS and URS version or digest.
 
@@ -252,25 +263,13 @@ must reject a ciphertext multiplication request when:
 Threshold decryption remains the existing `trbfv` path. `trlbfv` must not be treated as a
 replacement for the threshold share and smudging workflow.
 
-## Required Library Adapter
+## Library Adapter
 
-The current public `fhe::trlbfv` API is sufficient to generate, serialize, bind, and aggregate RLK
-shares, but it does not expose the row polynomials required by the RLK circuits. `RlkWitness`
-contains `r`, `errors_d0`, and `errors_d2`, but it does not contain the quotient polynomials needed
-by the Noir witness.
-
-The smallest viable library change is a public, read-only extraction method that returns validated
-`d0` and `d2` polynomial components, together with an adapter or helper that computes the exact
-modulus-switching and cyclotomic-reduction quotients in the representation required by the proof
-adapter. The method must not expose mutable internals or bypass the existing serialization checks.
-If the upstream API cannot provide this method, the project must choose between:
-
-- adding a maintained fork patch with a stable adapter API;
-- changing the RLK aggregation circuit so it consumes a different public representation;
-- treating RLK proofs as generation-only and accepting that the current aggregation circuit cannot
-  be used.
-
-The last option is not compatible with the stated full-proof design.
+The pinned `fhe.rs` revision `0f784ae6c87626b09286da57d147e0b8b6487302` provides the approved
+read-only extraction API. It returns validated `d0` and `d2` components and exposes
+`ciphertext_level` and `key_level`. `RlkWitness` provides `r`, `errors_d0`, and `errors_d2`.
+Interfold converts these values to CRT form and computes the exact modulus-switching and
+cyclotomic-reduction quotients. The adapter rejects nonzero levels and CRS mismatches.
 
 ## Durable State
 
@@ -330,13 +329,20 @@ RLK-enabled C1 rows. They must not introduce a second source of l-BFV cryptograp
 
 ## Circuit and Prover Work
 
-The implementation will need these capability additions:
+The pure circuit slice now includes:
 
-- `crates/zk-helpers/src/circuits/threshold/rlk_generation/`;
-- `crates/zk-helpers/src/circuits/threshold/rlk_aggregation/`;
-- circuit registration and `Provable` implementations in `crates/zk-prover`;
-- row-aware C1 helper and proof-request changes;
+- `crates/zk-helpers/src/circuits/threshold/rlk_generation.rs`;
+- RLK generation circuit registration and a `Provable` implementation in `crates/zk-prover`;
+- the pure l-BFV C1 row adapter;
+- derived RLK quotient bounds that include the Garner term;
+- `d0` and `d2` coefficient range checks and a shared-`r` commitment;
 - witness conversion tests for `SecretKey`, RNS polynomials, errors, and quotient values;
+- `crates/zk-helpers/src/circuits/threshold/rlk_aggregation.rs` and its prover registration;
+- exact-`H` aggregation, centered CRT sums, generation commitments, and aggregate commitments;
+
+The remaining capability additions are:
+
+- row-aware C1 proof-request and runtime collection changes;
 - artifact and verification-key entries for every supported preset and committee pair;
 - generated RLK verifier artifacts for the `secure-16384` preset;
 - recursive `NodeFold`, `NodesFold`, and `DkgAggregator` changes so RLK proofs reach the existing
@@ -380,15 +386,15 @@ The following decisions are resolved:
   separate E3-scoped publication method is the fallback when measured gas or transaction size is too
   large.
 
-The following decisions remain open:
-
-The open decisions must be resolved before Rust implementation:
+The following decisions remain open. They affect later protocol layers and do not block the pure
+adapter, circuit, or prover work in steps 1 through 4 of the implementation order:
 
 1. **Combined publication limits:** Does the extended `publishCommittee` call fit every supported
-   chain's gas and transaction-size limits? Use the combined call when it does. Use the versioned
-   fallback method only when measurement shows that it does not.
-2. **Wire and storage names:** Which event and schema names should become stable protocol
-   vocabulary?
+   chain's gas and transaction-size limits? Measure this in step 9. Use the combined call when it
+   fits. Use the versioned fallback method only when measurement shows that it does not.
+2. **Wire and storage names:** Step 5 must define stable names and schema versions for the RLK
+   session, accepted-party records, proof bundles, aggregation effects, and publication intents.
 
-Until these decisions are set, implementation must stop at pure adapters and test fixtures. It must
-not add guessed events, contract calls, or compatibility behavior.
+Do not add contract calls or publication behavior before the step 9 measurements. Do not add durable
+records or wire events without the step 5 schema names and versions. Continue the implementation order
+through the pure, circuit, prover, and local aggregation layers.

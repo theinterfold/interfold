@@ -466,10 +466,14 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │                                      the final decryption proof exposes the SAFE commitment and the wrapper compares it with
 │   │   │                                      the commitment stored at ciphertext publication. Keccak(raw output) remains separate.
 │   │   │
-│   │   ├─ NOTE: "C1 rows" is currently inert — `PendingThresholdProofs.pk_generation_proof`
-│   │   │   and the C1 request/response wire types still carry exactly one C1 proof per party
-│   │   │   (no `row_index`). The link activates once that plumbing is extended to dispatch
-│   │   │   and collect GADGET_DIM C1 proofs per party.
+│   │   ├─ NOTE: The C1 Noir circuit declares public `row_index`, and the pure Rust adapter can
+│   │   │   convert each fixed l-BFV CRS row. Rust C1 codegen, `NodeFold`,
+│   │   │   `PendingThresholdProofs.pk_generation_proof`, and the C1 request/response wire types
+│   │   │   still carry one C1 proof per party. The link activates after these components change
+│   │   │   as one compatibility unit and collect GADGET_DIM C1 proofs.
+│   │   │   `CircuitName::RlkGeneration` and `CircuitName::RlkAggregation` are reserved at appended
+│   │   │   discriminants 27 and 28. Their pure helper/prover boundaries exist, but no RLK
+│   │   │   `ProofType` or runtime event exists yet.
 │   │   │
 │   │   ├─ On mismatch: publishes CommitmentConsistencyViolation
 │   │   │   → AccusationManager initiates accusation quorum (see Part 5)

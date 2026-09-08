@@ -44,6 +44,8 @@ use e3_zk_helpers::threshold::decrypted_shares_aggregation::{
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
 use e3_zk_helpers::threshold::pk_generation::{PkGenerationCircuit, PkGenerationCircuitData};
+use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
+use e3_zk_helpers::threshold::rlk_generation::{RlkGenerationCircuit, RlkGenerationCircuitData};
 use e3_zk_helpers::threshold::share_decryption::{
     ShareDecryptionCircuit as ThresholdShareDecryptionCircuit,
     ShareDecryptionCircuitData as ThresholdShareDecryptionCircuitData,
@@ -195,6 +197,9 @@ struct Cli {
     /// layout is pinned to a 512-coefficient chunk size.
     #[arg(long, default_value_t = 512)]
     chunk_size: usize,
+    /// Row in the public l-BFV key-switching vectors.
+    #[arg(long, default_value_t = 0)]
+    row_index: u32,
 }
 
 fn main() -> Result<()> {
@@ -206,6 +211,8 @@ fn main() -> Result<()> {
     registry.register(Arc::new(ShareComputationCircuit));
     registry.register(Arc::new(UserDataEncryptionCircuit));
     registry.register(Arc::new(PkGenerationCircuit));
+    registry.register(Arc::new(RlkGenerationCircuit));
+    registry.register(Arc::new(RlkAggregationCircuit));
     registry.register(Arc::new(ShareEncryptionCircuit));
     registry.register(Arc::new(DkgShareDecryptionCircuit));
     registry.register(Arc::new(PkAggregationCircuit));
@@ -369,6 +376,26 @@ fn main() -> Result<()> {
                 let sample = PkGenerationCircuitData::generate_sample(preset, committee)?;
 
                 let circuit = PkGenerationCircuit;
+                circuit.codegen(preset, &sample)?
+            }
+            name if name == <RlkGenerationCircuit as Circuit>::NAME => {
+                let sample = RlkGenerationCircuitData::generate_sample_for_row(
+                    preset,
+                    committee,
+                    args.row_index,
+                )?;
+
+                let circuit = RlkGenerationCircuit;
+                circuit.codegen(preset, &sample)?
+            }
+            name if name == <RlkAggregationCircuit as Circuit>::NAME => {
+                let sample = RlkAggregationCircuitData::generate_sample_for_row(
+                    preset,
+                    committee,
+                    args.row_index,
+                )?;
+
+                let circuit = RlkAggregationCircuit;
                 circuit.codegen(preset, &sample)?
             }
             name if name == <DkgShareDecryptionCircuit as Circuit>::NAME => {

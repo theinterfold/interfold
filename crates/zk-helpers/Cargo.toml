@@ -30,6 +30,7 @@ toml = { workspace = true }
 itertools = "0.14.0"
 ndarray = { workspace = true }
 e3-parity-matrix = { workspace = true }
+zeroize = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

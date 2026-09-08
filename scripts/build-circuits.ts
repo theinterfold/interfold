@@ -39,6 +39,8 @@ import {
   type CircuitPreset,
 } from './circuit-constants'
 
+const SECURE_16384_ONLY_CIRCUITS = new Set(['rlk_generation', 'rlk_aggregation'])
+
 interface CircuitInfo {
   name: string
   group: CircuitGroup
@@ -663,8 +665,13 @@ library ActiveCryptoConfig {
    */
   private hydrateBinFromDist(preset: CircuitPreset, committee: CircuitCommittee, sourceHash: string): void {
     const distRoot = join(this.options.outputDir!, preset, committee)
-    const circuits = this.discoverCircuits()
+    const discovered = this.discoverCircuits()
+    const circuits = this.circuitsForPreset(discovered, preset)
     let copied = 0
+
+    for (const circuit of discovered) {
+      if (!this.isCircuitEnabledForPreset(circuit, preset)) this.removeCircuitTargetArtifacts(circuit)
+    }
 
     for (const circuit of circuits) {
       const packageName = this.getPackageName(circuit.path)
@@ -788,7 +795,8 @@ library ActiveCryptoConfig {
       this.checkTool('nargo --version', 'nargo')
       if (!this.options.skipVk) this.checkTool('bb --version', 'bb')
 
-      const circuits = this.discoverCircuits()
+      const discovered = this.discoverCircuits()
+      const circuits = this.circuitsForPreset(discovered, preset)
       if (circuits.length === 0) {
         console.log('   ⚠️  No circuits found')
         return result
@@ -848,7 +856,7 @@ library ActiveCryptoConfig {
       }
 
       if (!this.options.noCleanTargets) {
-        this.cleanTargetDirs(circuits)
+        this.cleanTargetDirs(discovered)
       }
       mkdirSync(presetOutputDir, { recursive: true })
 
@@ -915,6 +923,17 @@ library ActiveCryptoConfig {
     }
   }
 
+  private removeCircuitTargetArtifacts(circuit: CircuitInfo): void {
+    const packagePrefix = `${this.getPackageName(circuit.path)}.`
+    const groupDir = join(this.circuitsDir, circuit.group)
+    for (const targetDir of new Set(this.getTargetSearchDirs(circuit.path, groupDir))) {
+      if (!existsSync(targetDir)) continue
+      for (const entry of readdirSync(targetDir)) {
+        if (entry.startsWith(packagePrefix)) rmSync(join(targetDir, entry), { recursive: true })
+      }
+    }
+  }
+
   private discoverCircuits(): CircuitInfo[] {
     const circuits: CircuitInfo[] = []
     if (!existsSync(this.circuitsDir)) return circuits
@@ -926,6 +945,19 @@ library ActiveCryptoConfig {
       this.findCircuitsInDir(groupDir, '', group, circuits)
     }
     return circuits
+  }
+
+  private isCircuitEnabledForPreset(circuit: CircuitInfo, preset: CircuitPreset): boolean {
+    return (
+      preset === CIRCUIT_PRESETS.SECURE_16384 || circuit.group !== CIRCUIT_GROUPS.THRESHOLD || !SECURE_16384_ONLY_CIRCUITS.has(circuit.name)
+    )
+  }
+
+  private circuitsForPreset(circuits: CircuitInfo[], preset: CircuitPreset): CircuitInfo[] {
+    if (preset !== CIRCUIT_PRESETS.SECURE_16384 && this.options.circuits?.some((circuit) => SECURE_16384_ONLY_CIRCUITS.has(circuit))) {
+      throw new Error(`l-BFV RLK circuits require preset ${CIRCUIT_PRESETS.SECURE_16384}`)
+    }
+    return circuits.filter((circuit) => this.isCircuitEnabledForPreset(circuit, preset))
   }
 
   private findCircuitsInDir(dir: string, relativePath: string, group: CircuitGroup, out: CircuitInfo[]): void {

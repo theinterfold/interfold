@@ -36,6 +36,7 @@ use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::computatio
 use e3_zk_helpers::circuits::threshold::pk_aggregation::Configs as PkAggregationConfigs;
 use e3_zk_helpers::circuits::threshold::pk_generation::computation::Configs as PkGenerationConfigs;
 use e3_zk_helpers::circuits::threshold::pk_generation::utils::deterministic_crp_crt_polynomial;
+use e3_zk_helpers::circuits::threshold::rlk_generation::RlkGenerationConfigs;
 use e3_zk_helpers::circuits::threshold::share_decryption::Configs as ThresholdShareDecryptionConfigs;
 use e3_zk_helpers::circuits::threshold::user_data_encryption::Configs as UserDataEncryptionConfigs;
 use e3_zk_helpers::computation::DkgInputType;
@@ -247,6 +248,11 @@ fn render_threshold(preset: BfvPreset) -> Result<String> {
 
     let pkgen = PkGenerationConfigs::compute(preset, &committee)
         .context("PkGenerationConfigs::compute failed")?;
+    let lbfv_enabled = lbfv_crs_seed(preset).is_some() && lbfv_urs_seed(preset).is_some();
+    let rlkgen = lbfv_enabled
+        .then(|| RlkGenerationConfigs::compute(preset, &committee))
+        .transpose()
+        .context("RlkGenerationConfigs::compute failed")?;
     let dsa = DsaConfigs::compute(preset, &()).context("DsaConfigs::compute failed")?;
     let udec = UserDataEncryptionConfigs::compute(preset, &())
         .context("UserDataEncryptionConfigs::compute failed")?;
@@ -367,7 +373,6 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
         .take(pkgen.l as usize)
         .collect::<Vec<_>>()
         .join(", ");
-    let lbfv_enabled = lbfv_crs_seed(preset).is_some() && lbfv_urs_seed(preset).is_some();
     let lbfv_rows = if lbfv_enabled {
         "pub use super::lbfv::{G_GADGET_ROWS, LBFV_CRS_GADGET_ROWS, LBFV_URS_GADGET_ROWS};"
             .to_string()
@@ -385,21 +390,50 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
         )
     };
     let c1_rows_comment = if lbfv_enabled {
-        "// C1 still uses the existing repeated-CRP path. The secure-16384 l-BFV integration must migrate C1 to independent public-key rows before RLK proofs can bind to each row."
+        "// C1 still uses the repeated CRP path; l-BFV row integration is not connected."
     } else {
-        "// C1 uses the existing repeated-CRP path. This preset does not enable the l-BFV RLK path."
+        "// C1 uses the repeated CRP path because this preset does not enable l-BFV."
     };
-    let rlk_section = section(
-        "l-BFV relinearization key circuits",
-        &format!(
-            "pub global GADGET_DIM: u32 = L;
-{c1_rows_comment}
-pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{}];
-// l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
-// placeholder declarations because their RLK path is disabled.
-{lbfv_rows}
+    let rlk_generation_constants = if let Some(rlkgen) = rlkgen {
+        format!(
+            "pub global RLK_GENERATION_BIT_R: u32 = {};
+pub global RLK_GENERATION_BIT_SK: u32 = {};
+pub global RLK_GENERATION_BIT_E0: u32 = {};
+pub global RLK_GENERATION_BIT_E2: u32 = {};
+pub global RLK_GENERATION_BIT_R1_D0: u32 = {};
+pub global RLK_GENERATION_BIT_R2_D0: u32 = {};
+pub global RLK_GENERATION_BIT_R1_D2: u32 = {};
+pub global RLK_GENERATION_BIT_R2_D2: u32 = {};
+pub global RLK_GENERATION_BIT_D: u32 = {};
 
-pub global RLK_GENERATION_BIT_R: u32 = PK_GENERATION_BIT_SK;
+pub global RLK_GENERATION_R_BOUND: Field = {};
+pub global RLK_GENERATION_SK_BOUND: Field = {};
+pub global RLK_GENERATION_E0_BOUND: Field = {};
+pub global RLK_GENERATION_E2_BOUND: Field = {};
+pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = [{}];
+pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = [{}];
+pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = [{}];
+pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = [{}];",
+            rlkgen.bits.r_bit,
+            rlkgen.bits.sk_bit,
+            rlkgen.bits.e0_bit,
+            rlkgen.bits.e2_bit,
+            rlkgen.bits.r1_d0_bit,
+            rlkgen.bits.r2_d0_bit,
+            rlkgen.bits.r1_d2_bit,
+            rlkgen.bits.r2_d2_bit,
+            rlkgen.bits.d_bit,
+            rlkgen.bounds.r_bound,
+            rlkgen.bounds.sk_bound,
+            rlkgen.bounds.e0_bound,
+            rlkgen.bounds.e2_bound,
+            join_biguint(&rlkgen.bounds.r1_d0_bounds),
+            join_biguint(&rlkgen.bounds.r2_d0_bounds),
+            join_biguint(&rlkgen.bounds.r1_d2_bounds),
+            join_biguint(&rlkgen.bounds.r2_d2_bounds),
+        )
+    } else {
+        "pub global RLK_GENERATION_BIT_R: u32 = PK_GENERATION_BIT_SK;
 pub global RLK_GENERATION_BIT_SK: u32 = PK_GENERATION_BIT_SK;
 pub global RLK_GENERATION_BIT_E0: u32 = PK_GENERATION_BIT_EEK;
 pub global RLK_GENERATION_BIT_E2: u32 = PK_GENERATION_BIT_EEK;
@@ -416,9 +450,21 @@ pub global RLK_GENERATION_E2_BOUND: Field = PK_GENERATION_EEK_BOUND;
 pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
 pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
 pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
-pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
+pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;"
+            .to_string()
+    };
+    let rlk_section = section(
+        "l-BFV relinearization key circuits",
+        &format!(
+            "pub global GADGET_DIM: u32 = L;
+{c1_rows_comment}
+pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{}];
+// l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
+// placeholder declarations because their RLK path is disabled.
+{lbfv_rows}
 
-// RLK quotient bounds reuse the PK generation bounds. Verify these bounds before production use.
+{rlk_generation_constants}
+
 pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::new(
     QIS,
     RLK_GENERATION_R_BOUND,

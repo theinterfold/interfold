@@ -19,7 +19,8 @@ use lib::math::polynomial::Polynomial;
 /// selecting that row's URS/CRS/Garner scalar out of `LBFV_URS_GADGET_ROWS`/
 /// `LBFV_CRS_GADGET_ROWS`/`G_GADGET_ROWS`. `a` is read from `LBFV_CRS_GADGET_ROWS` - the
 /// SAME constant `pk_generation` uses for this row (critical linkage between the
-/// public key and the relinearization key for a given row).
+/// public key and the relinearization key for a given row). The `r` commitment binds
+/// all rows from one party to the same ephemeral polynomial.
 fn main(
     row_index: pub u32,
     sk: Polynomial<N>,
@@ -32,7 +33,7 @@ fn main(
     r2_d2: [Polynomial<N - 1>; L],
     d0: [Polynomial<N>; L],
     d2: [Polynomial<N>; L],
-) -> pub (Field, Field, Field) {
+) -> pub (Field, Field, Field, Field) {
     assert(row_index < GADGET_DIM, "row_index out of range");
     let d1 = LBFV_URS_GADGET_ROWS[row_index];
     let a = LBFV_CRS_GADGET_ROWS[row_index];

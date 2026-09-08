@@ -400,11 +400,17 @@ pub fn compute_pk_aggregation_commitment<let N: u32, let L: u32, let BIT_PK: u32
     compute_commitment(inputs, DS_PK_AGGREGATION)
 }
 
+/// l-BFV RLK generation: commitment to the ephemeral polynomial shared by all rows.
+pub fn compute_rlk_r_commitment<let N: u32, let BIT_R: u32>(r: Polynomial<N>) -> Field {
+    let payload = single_polynomial_payload::<N, BIT_R>([0].as_vector(), r);
+    compute_commitment(payload, DS_RLK_GENERATION)
+}
+
 /// l-BFV RLK generation (new circuit, row-level): commitment to one row's `d0`.
 pub fn compute_rlk_d0_commitment<let N: u32, let L: u32, let BIT_D: u32>(
     d0: [Polynomial<N>; L],
 ) -> Field {
-    let payload = multiple_polynomial_payload::<N, L, BIT_D>([].as_vector(), d0);
+    let payload = multiple_polynomial_payload::<N, L, BIT_D>([1].as_vector(), d0);
     compute_commitment(payload, DS_RLK_GENERATION)
 }
 
@@ -412,7 +418,7 @@ pub fn compute_rlk_d0_commitment<let N: u32, let L: u32, let BIT_D: u32>(
 pub fn compute_rlk_d2_commitment<let N: u32, let L: u32, let BIT_D: u32>(
     d2: [Polynomial<N>; L],
 ) -> Field {
-    let payload = multiple_polynomial_payload::<N, L, BIT_D>([].as_vector(), d2);
+    let payload = multiple_polynomial_payload::<N, L, BIT_D>([2].as_vector(), d2);
     compute_commitment(payload, DS_RLK_GENERATION)
 }
 
