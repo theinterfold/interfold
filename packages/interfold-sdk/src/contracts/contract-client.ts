@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import {
+  encodeAbiParameters,
   type Abi,
   type Chain,
   type Hash,
@@ -19,7 +20,7 @@ import {
 import { privateKeyToAccount } from 'viem/accounts'
 
 import { CiphernodeRegistryOwnable__factory, Interfold__factory, InterfoldToken__factory } from '@interfold/contracts/types'
-import type { ContractAddresses, E3, E3RequestParams, E3Stage, FailureReason } from './types'
+import type { CiphertextOutputReference, ContractAddresses, E3, E3RequestParams, E3Stage, FailureReason } from './types'
 import { validateCommitteeSize } from './types'
 import { SDKError, cryptoConfigIdForParamSet, isValidAddress } from '../utils'
 
@@ -199,13 +200,7 @@ export class ContractClient {
     }
   }
 
-  public async publishCiphertextOutput(
-    e3Id: bigint,
-    ciphertextOutput: `0x${string}`,
-    ciphertextCommitment: `0x${string}`,
-    proof: `0x${string}`,
-    gasLimit?: bigint,
-  ): Promise<Hash> {
+  public async publishCiphertextOutput(e3Id: bigint, outputReference: CiphertextOutputReference, gasLimit?: bigint): Promise<Hash> {
     if (!this.walletClient) {
       throw new SDKError('Wallet client required for write operations', 'NO_WALLET')
     }
@@ -216,11 +211,26 @@ export class ContractClient {
         throw new SDKError('No account connected', 'NO_ACCOUNT')
       }
 
+      const encodedOutputReference = encodeAbiParameters(
+        [
+          {
+            type: 'tuple',
+            components: [
+              { name: 'contentHash', type: 'bytes32' },
+              { name: 'ciphertextCommitment', type: 'bytes32' },
+              { name: 'computeProof', type: 'bytes' },
+              { name: 'availabilityProof', type: 'bytes' },
+            ],
+          },
+        ],
+        [outputReference],
+      )
+
       const { request } = await this.publicClient.simulateContract({
         address: this.contracts.interfold,
         abi: Interfold__factory.abi,
         functionName: 'publishCiphertextOutput',
-        args: [e3Id, ciphertextOutput, ciphertextCommitment, proof],
+        args: [e3Id, encodedOutputReference],
         account,
         gas: gasLimit,
       })

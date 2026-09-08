@@ -91,25 +91,8 @@ impl<S: DataStore> CurrentRoundRepository<S> {
         for round_id in self.get_round_ids().await?.into_iter().rev() {
             let crisp_repo = CrispE3Repository::new(self.store.clone(), &round_id);
 
-            match crisp_repo.get_e3_state_lite().await {
-                Ok(state) => {
-                    if state.requester == requester {
-                        return Ok(Some(CurrentRound { id: round_id }));
-                    }
-                }
-                Err(e) => {
-                    // Expected for a round between E3Requested and CommitteePublished: the CRISP
-                    // record and the round index are written at request time, but the `_e3:` record
-                    // only exists once the committee publishes its key, so a freshly requested
-                    // round is half-indexed for the duration of the DKG. Persistent repeats for
-                    // the same round mean the key never arrived — no registered ciphernodes, or a
-                    // CommitteePublished the indexer rejected (see its log for the reason).
-                    info!(
-                        "Round {} is not fully indexed yet (usually: committee key pending) — skipping: {:?}",
-                        round_id, e
-                    );
-                    continue;
-                }
+            if crisp_repo.is_requested_by(&requester).await? {
+                return Ok(Some(CurrentRound { id: round_id }));
             }
         }
 
@@ -154,6 +137,7 @@ impl<S: DataStore> CrispE3Repository<S> {
         }
     }
 
+    #[cfg(test)]
     async fn set_crisp(&mut self, value: E3Crisp) -> Result<()> {
         let key = self.crisp_key();
         self.store
@@ -179,12 +163,25 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// Whether this server has a record of the round at all.
     ///
     /// The CRISP record is written when `E3Requested` is indexed; the indexer's `_e3:` record only
-    /// lands on `CommitteePublished`. So a round mid-DKG — or one whose committee never formed —
-    /// has the first and not the second, and reads needing both come back empty. Without this the
-    /// two are indistinguishable, and "the committee has not published a key" reads as "no such
-    /// round", which is a very different thing to debug.
+    /// lands after a public-key byte event passes commitment verification. A round can
+    /// therefore have the first record and not the second during DKG or after on-chain
+    /// `KeyPublished`. Without this check, "verified key bytes are pending" reads as "no such
+    /// round".
     pub async fn has_crisp_record(&self) -> Result<bool> {
         Ok(self.try_get_crisp().await?.is_some())
+    }
+
+    /// Whether the request-time CRISP record belongs to `requester`.
+    pub async fn is_requested_by(&self, requester: &str) -> Result<bool> {
+        Ok(self
+            .try_get_crisp()
+            .await?
+            .is_some_and(|round| round.requester.eq_ignore_ascii_case(requester)))
+    }
+
+    /// Whether the generic indexer stored a verified committee public key for this round.
+    pub async fn has_indexed_public_key(&self) -> Result<bool> {
+        Ok(self.try_get_e3().await?.is_some())
     }
 
     async fn get_crisp(&self) -> Result<E3Crisp> {
@@ -196,11 +193,25 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(e3_crisp)
     }
 
-    pub async fn start_round(&mut self) -> Result<()> {
-        let mut e3_crisp = self.get_crisp().await?;
-        e3_crisp.start_time = chrono::Utc::now().timestamp() as u64;
-        e3_crisp.status = "Active".to_string();
-        self.set_crisp(e3_crisp).await
+    /// Start a requested round once. Duplicate committee events do not reset its deadline state.
+    pub async fn try_start_round(&mut self) -> Result<bool> {
+        let key = self.crisp_key();
+        let mut started = false;
+        let now = chrono::Utc::now().timestamp() as u64;
+        self.store
+            .modify(&key, |current: Option<E3Crisp>| {
+                current.map(|mut round| {
+                    if round.status == "Requested" {
+                        round.start_time = now;
+                        round.status = "Active".to_owned();
+                        started = true;
+                    }
+                    round
+                })
+            })
+            .await
+            .map_err(|error| eyre::eyre!("Could not start CRISP round at '{key}': {error}"))?;
+        Ok(started)
     }
 
     pub async fn insert_ciphertext_input(
@@ -272,15 +283,18 @@ impl<S: DataStore> CrispE3Repository<S> {
         &mut self,
         custom_params: CustomParams,
         requester: String,
+        voting_end_time: u64,
         end_time: u64,
         snapshot_block: u64,
     ) -> Result<()> {
-        self.set_crisp(E3Crisp {
+        let key = self.crisp_key();
+        let initial = E3Crisp {
             input_commitments: Vec::new(),
             input_slots: Vec::new(),
             input_parents: Vec::new(),
             input_usable: Vec::new(),
             start_time: 0u64,
+            voting_end_time,
             status: "Requested".to_string(),
             tally: vec![],
             emojis: generate_emoji(),
@@ -296,8 +310,15 @@ impl<S: DataStore> CrispE3Repository<S> {
             census_mode: custom_params.census_mode,
             end_time,
             snapshot_block,
-        })
-        .await
+        };
+
+        self.store
+            .modify(&key, move |current: Option<E3Crisp>| {
+                current.or_else(|| Some(initial.clone()))
+            })
+            .await
+            .map_err(|_| eyre::eyre!("Could not initialize round at '{key}'"))?;
+        Ok(())
     }
 
     fn get_e3_repo(&self) -> E3Repository<S> {
@@ -327,7 +348,7 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(e3_crisp.num_options.parse::<usize>()?)
     }
 
-    /// How many slots hold at least one published entry.
+    /// How many slots hold at least one available, locally indexed entry.
     ///
     /// The closest thing to a participation count the server can give. A mask is
     /// indistinguishable from a vote by design, so per-slot activity — not "who voted" — is what
@@ -346,12 +367,36 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(e3_crisp.status)
     }
 
+    /// Marks a round expired only while it is still waiting for computation.
+    ///
+    /// Deadline callbacks can overlap. A blind status write can move a round from
+    /// `PublishingCiphertext` back to `Expired`, which permits a second compute request.
+    pub async fn try_mark_expired(&mut self) -> Result<bool> {
+        let key = self.crisp_key();
+        let mut marked = false;
+        self.store
+            .modify(&key, |e3_obj: Option<E3Crisp>| {
+                e3_obj.map(|mut e| {
+                    if e.status == "Active" || e.status == "Expired" {
+                        e.status = "Expired".to_owned();
+                        marked = true;
+                    }
+                    e
+                })
+            })
+            .await
+            .map_err(|_| eyre::eyre!("Could not expire round at '{key}'"))?;
+        Ok(marked)
+    }
+
     /// Moves the round to "Computing", but only if nothing has claimed it yet.
     ///
     /// Returns whether this caller made the transition. One store operation, because `modify` is a
     /// read-modify-write under a single write lock: reading the status and writing it back as two
     /// separate awaits leaves a window where two deadline passes both observe "Expired" and both
-    /// start the one-shot `run_compute`, publishing two results for one round.
+    /// submit `run_compute` concurrently. Restart recovery can submit again because the remote
+    /// response might have been lost; Interfold is the durable idempotency boundary and accepts
+    /// only the first valid ciphertext output.
     pub async fn try_claim_computing(&mut self) -> Result<bool> {
         let key = self.crisp_key();
         let mut claimed = false;
@@ -359,7 +404,7 @@ impl<S: DataStore> CrispE3Repository<S> {
         self.store
             .modify(&key, |e3_obj: Option<E3Crisp>| {
                 e3_obj.map(|mut e| {
-                    if e.status != "Computing" && e.status != "Finished" {
+                    if e.status == "Expired" {
                         e.status = "Computing".to_string();
                         claimed = true;
                     }
@@ -370,6 +415,52 @@ impl<S: DataStore> CrispE3Repository<S> {
             .map_err(|_| eyre::eyre!("Could not claim computation for '{key}'"))?;
 
         Ok(claimed)
+    }
+
+    /// Record that the program server accepted the claimed computation.
+    pub async fn mark_compute_submitted(&mut self) -> Result<bool> {
+        let key = self.crisp_key();
+        let mut submitted = false;
+
+        self.store
+            .modify(&key, |e3_obj: Option<E3Crisp>| {
+                e3_obj.map(|mut e| {
+                    if e.status == "Computing" {
+                        e.status = "PublishingCiphertext".to_string();
+                        submitted = true;
+                    }
+                    e
+                })
+            })
+            .await
+            .map_err(|_| eyre::eyre!("Could not record compute submission at '{key}'"))?;
+
+        Ok(submitted)
+    }
+
+    /// Release a compute claim when the program server refused the request.
+    ///
+    /// Only `Computing` can move back. A callback or output event may already have advanced the
+    /// round while the request handler was returning an error. Reverting a later state would start
+    /// a second computation for an output already in progress.
+    pub async fn release_compute_claim(&mut self) -> Result<bool> {
+        let key = self.crisp_key();
+        let mut released = false;
+
+        self.store
+            .modify(&key, |e3_obj: Option<E3Crisp>| {
+                e3_obj.map(|mut e| {
+                    if e.status == "Computing" {
+                        e.status = "Expired".to_owned();
+                        released = true;
+                    }
+                    e
+                })
+            })
+            .await
+            .map_err(|_| eyre::eyre!("Could not release computation for '{key}'"))?;
+
+        Ok(released)
     }
 
     pub async fn update_status(&mut self, value: &str) -> Result<()> {
@@ -421,12 +512,6 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(e3.committee_public_key)
     }
 
-    pub async fn get_web_result_request(&self) -> Result<WebResultRequest> {
-        self.try_get_web_result_request()
-            .await?
-            .ok_or_else(|| eyre::eyre!("No state stored for round {}", self.e3_id))
-    }
-
     /// The round's result, or `None` when the round is not in the store. See
     /// [`Self::try_get_e3_state_lite`] for why both records have to be present.
     pub async fn try_get_web_result_request(&self) -> Result<Option<WebResultRequest>> {
@@ -463,13 +548,18 @@ impl<S: DataStore> CrispE3Repository<S> {
             return Ok(None);
         };
         let snapshot_block = snapshot_block(e3.request_block, e3_crisp.snapshot_block);
+        let voting_end_time = if e3_crisp.voting_end_time == 0 {
+            e3.input_window[1]
+        } else {
+            e3_crisp.voting_end_time
+        };
         Ok(Some(E3StateLite {
             emojis: e3_crisp.emojis,
             id: self.e3_id.clone(),
             status: e3_crisp.status,
             chain_id: e3.chain_id,
             start_time: e3.input_window[0],
-            end_time: e3.input_window[1],
+            end_time: voting_end_time,
             vote_count: count_active_slots(&e3_crisp.input_slots),
             start_block: e3.request_block,
             snapshot_block,
@@ -600,7 +690,7 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(())
     }
 
-    /// Whether the slot holds any published entry, from the indexed `InputPublished` events.
+    /// Whether the slot holds any committed entry that this server has the bytes for.
     ///
     /// Deliberately not "has this address voted" — the server cannot know that. Anyone can mask
     /// any eligible slot, and a mask is indistinguishable from a vote, so activity is the only
@@ -706,7 +796,44 @@ pub fn parse_slot_address(address: &str) -> Result<[u8; 20]> {
 
 #[cfg(test)]
 mod tests {
-    use super::{count_active_slots, parse_slot_address, snapshot_block};
+    use super::{
+        count_active_slots, parse_slot_address, snapshot_block, CrispE3Repository,
+        CurrentRoundRepository,
+    };
+    use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp};
+    use e3_sdk::indexer::{InMemoryStore, SharedStore};
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    fn test_store() -> SharedStore<InMemoryStore> {
+        SharedStore::new(Arc::new(RwLock::new(InMemoryStore::new())))
+    }
+
+    fn crisp_round(requester: &str, status: &str) -> E3Crisp {
+        E3Crisp {
+            emojis: ["one".to_string(), "two".to_string()],
+            start_time: 0,
+            voting_end_time: 100,
+            end_time: 100,
+            status: status.to_string(),
+            tally: vec![],
+            token_holder_hashes: vec![],
+            eligible_addresses: vec![],
+            token_address: "0x0000000000000000000000000000000000000001".to_string(),
+            balance_threshold: "1".to_string(),
+            ciphertext_inputs: vec![],
+            input_commitments: vec![],
+            input_slots: vec![],
+            input_usable: vec![],
+            input_parents: vec![],
+            requester: requester.to_string(),
+            num_options: "2".to_string(),
+            credit_mode: CreditMode::Constant,
+            credits: Some("1".to_string()),
+            snapshot_block: 1,
+            census_mode: CensusMode::Token,
+        }
+    }
 
     #[test]
     fn counts_each_slot_once_no_matter_how_long_its_chain_is() {
@@ -742,5 +869,77 @@ mod tests {
     #[test]
     fn does_not_underflow_on_the_genesis_block() {
         assert_eq!(snapshot_block(0, 0), 0);
+    }
+
+    #[tokio::test]
+    async fn requested_round_is_visible_before_the_public_key_is_indexed() {
+        let store = test_store();
+        let requester = "0x1111111111111111111111111111111111111111";
+        let mut round = CrispE3Repository::new(store.clone(), "8");
+        round
+            .set_crisp(crisp_round(requester, "Requested"))
+            .await
+            .unwrap();
+
+        let mut current = CurrentRoundRepository::new(store);
+        current.record_round("8").await.unwrap();
+
+        let found = current
+            .get_current_round_for_requester(requester.to_uppercase())
+            .await
+            .unwrap()
+            .expect("the request-time CRISP record should be sufficient");
+        assert_eq!(found.id, "8");
+    }
+
+    #[tokio::test]
+    async fn compute_claim_release_never_regresses_an_accepted_submission() {
+        let store = test_store();
+        let mut round = CrispE3Repository::new(store, "9");
+        round
+            .set_crisp(crisp_round("requester", "Requested"))
+            .await
+            .unwrap();
+
+        assert!(round.try_start_round().await.unwrap());
+        assert!(!round.try_start_round().await.unwrap());
+        assert!(round.try_mark_expired().await.unwrap());
+        assert!(round.try_claim_computing().await.unwrap());
+        assert!(!round.try_claim_computing().await.unwrap());
+        assert!(round.release_compute_claim().await.unwrap());
+        assert_eq!(round.get_status().await.unwrap(), "Expired");
+        assert!(round.try_claim_computing().await.unwrap());
+        assert!(round.mark_compute_submitted().await.unwrap());
+        assert_eq!(round.get_status().await.unwrap(), "PublishingCiphertext");
+        assert!(!round.release_compute_claim().await.unwrap());
+        assert_eq!(round.get_status().await.unwrap(), "PublishingCiphertext");
+    }
+
+    #[tokio::test]
+    async fn requested_event_replay_does_not_reset_round_status() {
+        let store = test_store();
+        let mut round = CrispE3Repository::new(store, "10");
+        let params = || CustomParams {
+            token_address: "0x0000000000000000000000000000000000000001".to_string(),
+            balance_threshold: "1".to_string(),
+            num_options: "2".to_string(),
+            credit_mode: CreditMode::Constant,
+            credits: Some("1".to_string()),
+            census_mode: CensusMode::Token,
+            voting_power_divisor: "0".to_string(),
+        };
+
+        round
+            .initialize_round(params(), "requester".to_string(), 100, 100, 1)
+            .await
+            .unwrap();
+        round.update_status("Finished").await.unwrap();
+        round
+            .initialize_round(params(), "requester".to_string(), 200, 200, 2)
+            .await
+            .unwrap();
+
+        assert_eq!(round.get_status().await.unwrap(), "Finished");
+        assert_eq!(round.get_input_deadline().await.unwrap(), 100);
     }
 }

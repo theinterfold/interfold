@@ -202,6 +202,11 @@
       "type": "error"
     },
     {
+      "inputs": [],
+      "name": "InvalidPublicKeyChunk",
+      "type": "error"
+    },
+    {
       "inputs": [
         {
           "internalType": "uint256",
@@ -313,6 +318,11 @@
     {
       "inputs": [],
       "name": "PkCommitmentRequired",
+      "type": "error"
+    },
+    {
+      "inputs": [],
+      "name": "PublicKeyPublisherNotCommitteeMember",
       "type": "error"
     },
     {
@@ -671,6 +681,67 @@
         }
       ],
       "name": "CommitteeProofPublished",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": true,
+          "internalType": "address",
+          "name": "publisher",
+          "type": "address"
+        },
+        {
+          "indexed": true,
+          "internalType": "bytes32",
+          "name": "candidateHash",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "address[]",
+          "name": "nodes",
+          "type": "address[]"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "pkCommitment",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint16",
+          "name": "chunkIndex",
+          "type": "uint16"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint16",
+          "name": "chunkCount",
+          "type": "uint16"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint32",
+          "name": "totalLength",
+          "type": "uint32"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes",
+          "name": "chunk",
+          "type": "bytes"
+        }
+      ],
+      "name": "CommitteePublicKeyChunkPublished",
       "type": "event"
     },
     {
@@ -1582,8 +1653,28 @@
           "type": "uint256"
         },
         {
+          "internalType": "bytes32",
+          "name": "candidateHash",
+          "type": "bytes32"
+        },
+        {
+          "internalType": "uint16",
+          "name": "chunkIndex",
+          "type": "uint16"
+        },
+        {
+          "internalType": "uint16",
+          "name": "chunkCount",
+          "type": "uint16"
+        },
+        {
+          "internalType": "uint32",
+          "name": "totalLength",
+          "type": "uint32"
+        },
+        {
           "internalType": "bytes",
-          "name": "publicKey",
+          "name": "chunk",
           "type": "bytes"
         }
       ],
@@ -1871,5 +1962,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ICiphernodeRegistry.sol",
-  "buildInfoId": "solc-0_8_28-998d25c0cf0787b178a4e3411f4a8664937a9e9b"
+  "buildInfoId": "solc-0_8_28-b95d25dbcdea5354ca4c3fb8a90c5c3f029dfa00"
 }

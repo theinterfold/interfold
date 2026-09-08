@@ -29,7 +29,8 @@ export type VoteManagementContextType = {
   initialLoad: () => Promise<void>
   getPastPolls: () => Promise<void>
   setVotingRound: React.Dispatch<React.SetStateAction<VotingRound | null>>
-  broadcastVote: (vote: BroadcastVoteRequest) => Promise<BroadcastVoteResponse | undefined>
+  broadcastVote: (vote: BroadcastVoteRequest, onJobCreated?: (jobId: string) => void) => Promise<BroadcastVoteResponse | undefined>
+  getVoteAvailability: (jobId: string) => Promise<BroadcastVoteResponse | null | undefined>
   getRoundStateLite: (roundId: string) => Promise<void>
   setPastPolls: React.Dispatch<React.SetStateAction<PollResult[]>>
   getWebResult: () => Promise<PollRequestResult[] | undefined>

@@ -1389,6 +1389,7 @@ dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "hex",
+ "risc0-bigint2",
  "sha3 0.10.8",
  "taceo-poseidon2",
 ]
@@ -2236,6 +2237,12 @@ dependencies = [
  "quote",
  "syn 2.0.117",
 ]
+
+[[package]]
+name = "include_bytes_aligned"
+version = "0.1.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4ee796ad498c8d9a1d68e477df8f754ed784ef875de1414ebdaf169f70a6a784"
 
 [[package]]
 name = "indexmap"
@@ -3320,6 +3327,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "risc0-bigint2"
+version = "1.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b87f5f7494a2242cead2750b7ce2b8522c1be83dee268479f1c12ed521eaf595"
+dependencies = [
+ "include_bytes_aligned",
+ "stability",
+]
+
+[[package]]
 name = "rlp"
 version = "0.5.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3733,6 +3750,16 @@ checksum = "d91ed6c858b01f942cd56b37a94b3e0a1798290327d1236e4d9cf4eaca44d29d"
 dependencies = [
  "base64ct",
  "der",
+]
+
+[[package]]
+name = "stability"
+version = "0.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d904e7009df136af5297832a3ace3370cd14ff1546a232f4f185036c2736fcac"
+dependencies = [
+ "quote",
+ "syn 2.0.117",
 ]
 
 [[package]]

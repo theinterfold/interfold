@@ -691,9 +691,13 @@ phase.
   │  └─ If that transaction is mined with a failed receipt, the writer reads the
   │     commitment again. An equal commitment from another aggregator completes
   │     the step; a different commitment stays an error
-  └─ Calls contract.publishCommitteePublicKey(e3_id, publicKey) after the
-     commitment is available, including after restart
-     → A terminal result clears the intent; a retryable failure keeps it and retries after 30s
+  └─ Splits the serialized key into deterministic 90 KiB chunks and calls
+     contract.publishCommitteePublicKey(e3_id, candidateHash, index, count,
+     totalLength, chunk) for every chunk after the commitment is available
+     → A terminal result clears the in-memory intent; a retryable failure keeps it and retries
+       after 30s
+     → RPC request-size rejection and permanent contract or payload errors are terminal for the
+       running writer. They produce one final error instead of an unbounded 30-second retry loop
      → A restart replays the intent, so an unfinished publication still reaches the chain.
        E3RequestComplete that arrives before EffectsEnabled comes from that same replay and
        drops the intent: a completed request published its candidate in an earlier run, and
@@ -742,12 +746,11 @@ phase.
         │  │    8. Emit CommitteeProofPublished(                │
         │  │         e3Id, c.topNodes, pkCommitment, proof)     │
         │  │                                                     │
-        │  │  publishCommitteePublicKey(e3Id, publicKey) {      │
+        │  │  publishCommitteePublicKey(e3Id, hash, i, n, len, chunk) { │
         │  │    1. require the proven commitment                │
-        │  │    2. require 0 < publicKey.length <= 256 KiB      │
-        │  │    3. Emit CommitteePublished with the candidate,  │
-        │  │       stored commitment, and empty compatibility   │
-        │  │       proof field                                  │
+        │  │    2. require caller is a request-time committee member │
+        │  │    3. require len <= 512 KiB and canonical 90 KiB chunks │
+        │  │    4. Emit CommitteePublicKeyChunkPublished        │
         │  │  }                                                  │
         │  └─────────────────────────────────────────────────────┘
 ```
@@ -763,17 +766,18 @@ an attestation. The registry uses the same frozen verifier when the committee pu
 attestation from another registry or verifier therefore fails even when both registries use the same
 E3 ID and committee.
 
-The serialized `publicKey` event field is a transport hint, not on-chain authority. Proof-backed
-committee publication does not accept it. A separate permissionless function emits bounded key
-candidates and remains usable after an invalid candidate, so a front-run transaction cannot consume
-the only transport slot. Before `e3-indexer` stores it in `E3.committee_public_key`, it decodes the
-BFV key, recomputes the circuit's public-key commitment using the request's parameter set, and
-requires equality with the event's on-chain `pkCommitment`. TypeScript event consumers receive the
-same `pkCommitment` and use `InterfoldSDK.validatePublicKeyCommitment()` before accepting the bytes;
-the default application does this before advancing to encryption. Malformed bytes or bytes for a
-different key fail closed and never reach first-party encryption clients. Production verifies the
-C5-backed final DKG proof on-chain; the explicit test/CI skip mode works only with mock verifiers
-that trust its placeholder.
+The serialized key is transported in Ethereum event chunks; it is not on-chain authority. Only a
+request-time committee member can emit chunks while the E3 remains in `KeyPublished`. This includes
+a retained expelled member, whose bytes receive no extra trust but can still repair availability.
+Terminal E3s reject new chunks, so late publishers cannot recreate assemblies after cleanup.
+Consumers accept the first candidate hash from each member. The ciphernode coordinator and
+`e3-indexer` group the canonical chunks by E3, publisher, and candidate hash. They require a
+complete sequence, check `keccak256(serializedKey) == candidateHash`, decode the BFV key, recompute
+the circuit's public-key commitment with the request-time parameter set, and require equality with
+the proven on-chain `pkCommitment`. Only then do they produce the existing `CommitteePublished`
+runtime event or store the key for encryption. Invalid candidates do not consume another committee
+member's candidate. Production also verifies the C5-backed final DKG proof on-chain; the explicit
+test/CI skip mode works only with mock verifiers.
 
 > **C-08 (BfvPkVerifier domain binding) — implemented** The wrapper exposes a
 > `verify(e3Id, committeeRoot, sortedNodes, pkCommitment, committeeHash, proof)` signature.
@@ -806,11 +810,26 @@ comparison.
 ```
 Data providers submit encrypted inputs:
 │
-└─ e3Program.publishInput(e3Id, encryptedData)
-   → Must be within inputWindow [start, end]
-   → Encrypted under the committee's aggregate public key
-   → Only M+1 committee members can collectively decrypt
+├─ Server validates the Noir proof and durably stores the exact ciphertext
+├─ Server signs the chain-bound input ID only after storage succeeds
+├─ e3Program.publishInput(e3Id, proofCommitment)
+│  → Must be before inputCommitmentDeadline
+│  → Verifies the Noir proof, content hash, SAFE commitment, and server signature
+│  → Reserves the input leaf and index immediately
+│  → Emits InputCommitted and increments pendingInputCount
+├─ Server publishes the stored ciphertext to Avail with submit_data
+├─ VectorX anchors that Avail block on Ethereum
+└─ e3Program.finalizeInput(e3Id, inputTuple, vectorXProof)
+   → Verifies availability of the exact keccak256(ciphertext)
+   → Emits InputPublished and decrements pendingInputCount
+   → Can be called by anyone; the voter does not stay online
 ```
+
+The final three hours of the input window accept finalizations but no new proof commitments. The
+input leaf is reserved in the first transaction so later masks and revotes can extend it while
+VectorX is pending. Computation waits for the original input-window end and for
+`pendingInputCount == 0`. See [08_DATA_AVAILABILITY.md](08_DATA_AVAILABILITY.md) for the exact
+deadlines, recovery flow, and remaining trust.
 
 ### Ciphertext Output Publication
 
@@ -869,11 +888,13 @@ are unaffected: `TryConvertFrom` expands the seed into `c[1]` before the convert
 ```
 Compute provider runs computation on encrypted data:
 │
-└─ Interfold.publishCiphertextOutput(e3Id, ciphertextOutput, ciphertextCommitment, proof)
+├─ Publish the aggregate ciphertext bytes to Avail
+├─ Wait for the VectorX proof
+└─ Interfold.publishCiphertextOutput(e3Id, encodedOutputReference)
     │
     │  ┌─── ON-CHAIN (Interfold.sol) ─────────────────────────────┐
     │  │                                                         │
-│  │  publishCiphertextOutput(e3Id, output, commitment, proof) { │
+│  │  publishCiphertextOutput(e3Id, encodedReference) {        │
     │  │    0. enter the shared publication reentrancy guard      │
     │  │    1. require(stage == KeyPublished)                    │
     │  │    2. require(block.timestamp <= computeDeadline)       │
@@ -883,9 +904,8 @@ Compute provider runs computation on encrypted data:
     │  │       → Can only publish once                           │
     │  │    5. require(activeCount >= threshold[0])              │
     │  │       → The request-time committee is still viable      │
-│  │    6. Save output hash and SAFE commitment               │
-│  │       Set stage and decryption deadline                  │
-│  │       → A later revert restores all prior state          │
+│  │    6. E3 program verifies the VectorX/Avail receipt      │
+│  │       and requires receipt.contentHash == output hash    │
 │  │    7. schemeVerifier.verify(...)                         │
 │  │       → Checks the protocol fields in the compute receipt│
 │  │       → Must return true                                 │
@@ -893,12 +913,18 @@ Compute provider runs computation on encrypted data:
 │  │       → Checks the application fields in the same receipt│
 │  │       → Must return true                                 │
 │  │       → Cannot re-enter ciphertext or plaintext publication│
-│  │    9. Confirm the stage is still CiphertextReady          │
-│  │   10. Emit CiphertextOutputPublished(...)                 │
+│  │    9. Save output hash and SAFE commitment               │
+│  │       Set stage and decryption deadline                  │
+│  │   10. Emit CiphertextOutputReferencePublished(...)       │
 │  │   11. Emit E3StageChanged(CiphertextReady)                │
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```
+
+The accepted event records the content hash and stable Avail coordinates, not the ciphertext bytes.
+Ciphernodes replay that durable reference without network access. After recovery enables effects,
+they fetch the named Avail block, find bytes with the exact Keccak hash, and emit the existing
+runtime `CiphertextOutputPublished` event. Failed retrieval is retried and never substitutes bytes.
 
 `onCommitteePublished` stores the committee key and starts the compute clock. The compute deadline
 is `max(block.timestamp, inputWindow[1]) + requestTimeComputeWindow`. A late key publication does
@@ -1318,8 +1344,12 @@ present in the running ABI catalog is exposed as `UnknownEvmLog` with raw topics
 
 During restart, `ComputeEffectGate` observes replay before compute workers are effects-enabled. It
 buffers and deduplicates `ComputeRequest`s, prefers the newest regenerated request, cancels terminal
-E3 work, and releases pending jobs only after `EffectsEnabled`. The gate changes effect timing, not
-durable event order or audit state.
+E3 work, and releases pending jobs only after `EffectsEnabled`. The gate starts with the durable E3
+lifecycle snapshot. If an E3 has already reached `KeyPublished`, it discards replayed DKG and DKG
+proof jobs because the chain has made that work obsolete; decryption jobs remain eligible. C1-C3 and
+C6 verification share one compute-request variant, so the gate uses the signed proof type to keep C6
+threshold-decryption verification eligible. The gate changes effect timing, not durable event order
+or audit state.
 
 `CiphernodeSelector` also observes replay before it enables failover effects. Its versioned
 repository stores a readiness-gated phase, assigned party, absolute deadline, and locally
@@ -1338,6 +1368,31 @@ keeps retryable failures for a later attempt. `E3RequestComplete` does not erase
 publication, and only an active aggregator can start a retained submission. `PlaintextAggregated` is
 not gossiped or returned by historical peer sync; only the producing node can create this EVM write
 intent.
+
+The CRISP server writes its request record at `E3Requested` and writes the generic E3 record only
+after the indexer verifies the committee public key against the on-chain commitment. Current-round
+lookup uses the request record, so a round remains visible while its key is pending. CRISP activates
+the round only when both records exist. Either handler can complete the activation after their
+records converge, and deferred checks cover slow live-handler ordering. Duplicate request and
+committee events do not reset the round, replace indexed output, or resubmit an already-matching
+Merkle root. The shared Interfold contract also emits requests for other E3 programs. The CRISP
+indexer ignores those requests before it creates a round or makes a program-specific RPC call. An
+old program's historical round therefore cannot stop a fresh CRISP backfill.
+
+Startup rebuilds deadline callbacks for active and expired rounds and releases an interrupted
+compute submission for retry. The compute transition is atomic, and a synchronous program-server
+request error releases the claim to `Expired` so a later deadline callback can retry it. Compute
+submission is at-least-once across a restart because the HTTP response or webhook can be lost. A
+retry can repeat proof work, but it cannot publish a second result: `Interfold` accepts ciphertext
+output only from `KeyPublished`, and the callback treats an E3 that already reached
+`CiphertextReady` or `Complete` as success.
+
+Secure-8192 committee public-key bytes do not use one oversized transaction. `publishCommittee`
+first records the proof-backed commitment. The selected publisher then sends the bytes through
+bounded `publishCommitteePublicKey` chunks. Readers assemble one canonical chunk set and accept the
+key only when its recomputed commitment equals the value already stored on chain. `KeyPublished`
+alone therefore does not mean that a client has usable key bytes. The application becomes ready only
+after the complete key publication arrives and passes that commitment check.
 
 ### What the compute-provider crate guarantees, and what an E3 program decides
 
@@ -1379,20 +1434,19 @@ index there, laid out as `abi.encodePacked(address, uint40)`.
 
 ### Input leaf binding and per-slot selection
 
-An E3 program verifies a proof over the ciphertext **commitment** when an input is published. The
-proof never sees the serialized ciphertext the event carries, so the two can disagree, and neither
-the contract nor the circuit can tell: the commitment is a Poseidon sponge over the ciphertext's CRT
-limbs (~49k field elements at the secure preset), and the circuit cannot reproduce the fhe.rs
-serialization. The guest is the first place both representations exist at once.
+An E3 program verifies a proof over the ciphertext **commitment** when an input is committed. The
+proof also exposes the Keccak hash of the serialized ciphertext, split across two field elements.
+The contract cannot deserialize the ciphertext or reproduce its Poseidon commitment. The guest is
+the first place both representations exist at once.
 
 `CRISPProgram.inputLeaf` therefore binds four values:
 
 ```text
-leaf = sha256(sha256(encryptedVote) || encryptedVoteCommitment || slotAddress || parentIndexPlusOne)
+leaf = sha256(keccak256(encryptedVote) || encryptedVoteCommitment || slotAddress || parentIndexPlusOne)
        mod SNARK_SCALAR_FIELD
 ```
 
-- the **bytes**, so a submitter cannot publish a valid commitment beside unrelated data;
+- the **content hash**, so a submitter cannot pair a valid commitment with unrelated bytes;
 - the **commitment**, so any commitment cannot be paired with any ciphertext;
 - the **slot**, because the tree is append-only and the guest selects per slot — an unbound slot
   would let a prover re-group entries and change which one wins;
@@ -1405,10 +1459,9 @@ vector (`program/tests/input_leaf.rs` and `tests/input-leaf.test.ts`), and
 contract produced, from a fixture generated by `tests/input-tree-e2e.test.ts`. A one-byte divergence
 would make every root mismatch and nothing else would detect it.
 
-SHA-256 rather than Keccak: the zkVM accelerates SHA-256 inline, while its Keccak accelerator emits
-a proof assumption the host must prove separately and compose. The extra on-chain cost is about 67k
-gas on a transaction that already carries the ciphertext — a secure-preset ciphertext is about 348
-KB, so calldata and log data dominate by orders of magnitude.
+Keccak is used for the serialized ciphertext so the digest can match a content hash exposed by an
+external data-availability receipt. SHA-256 remains the outer hash because the zkVM accelerates it
+inline. The guest recomputes both hashes from the ciphertext bytes that it consumes.
 
 **The input tree is append-only.** `_processVote` always inserts and never updates in place. That is
 a security property, not a storage choice: the mask path requires no signature, so anyone can write
@@ -1477,10 +1530,10 @@ empty ciphertext does not deserialize. That is only reachable when no honest inp
 indistinguishable from a round that received none, which the protocol resolves as
 `NoInputsReceived`.
 
-`InputPublished` carries the slot, the commitment, and the parent alongside the bytes. All three
-were already public — the slot and the parent are plaintext `publishInput` arguments, and
-`getSlotIndex` and `inputCommitmentOf` expose the rest — so emitting them leaks nothing and saves
-every consumer from parsing transaction calldata.
+`InputCommitted` carries the slot, commitment, content hash, parent, and reserved index. The later
+`InputPublished` event repeats the tuple with the VectorX-verified Avail coordinates. Neither event
+carries the ciphertext bytes. Indexers fetch those bytes and reject them unless their Keccak hash
+matches the on-chain content hash.
 
 ### One relation for voting, updating, and masking
 

@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use alloy::providers::fillers::BlobGasFiller;
+use alloy::sol_types::SolValue;
 use alloy::{
     network::{Ethereum, EthereumWallet},
     primitives::{Address, Bytes, B256, U256},
@@ -130,6 +131,14 @@ sol! {
         uint256 decryptionDeadline;
     }
 
+    struct CiphertextOutputReference {
+        bytes32 contentHash;
+        bytes32 ciphertextCommitment;
+        bytes computeProof;
+        bytes availabilityProof;
+    }
+
+
     #[derive(Debug)]
     #[sol(rpc)]
     contract Interfold {
@@ -137,7 +146,10 @@ sol! {
         mapping(address e3Program => bool allowed) public e3Programs;
         function request(E3RequestParams calldata requestParams) external returns (uint256 e3Id, E3 memory e3);
         function registerE3Program(address e3Program) public;
-        function publishCiphertextOutput(uint256 e3Id, bytes calldata ciphertextOutput, bytes32 ciphertextCommitment, bytes calldata proof) external returns (bool success);
+        function publishCiphertextOutput(
+            uint256 e3Id,
+            bytes calldata encodedOutputReference
+        ) external;
         function publishPlaintextOutput(uint256 e3Id, bytes calldata data, bytes calldata proof) external returns (bool success);
         function getE3(uint256 e3Id) external view returns (E3 memory e3);
         function paramSetRegistry(uint8 paramSet) external view returns (bytes memory encodedParams);
@@ -213,13 +225,14 @@ pub trait InterfoldWrite {
     /// Enable an E3 program
     async fn register_e3_program(&self, e3_program: Address) -> Result<TransactionReceipt>;
 
-    /// Publish ciphertext output with proof
+    /// Publish an externally available ciphertext output and its verified receipt.
     async fn publish_ciphertext_output(
         &self,
         e3_id: U256,
-        data: Bytes,
+        ciphertext_output_hash: B256,
         ciphertext_commitment: B256,
-        proof: Bytes,
+        compute_proof: Bytes,
+        availability_proof: Bytes,
     ) -> Result<TransactionReceipt>;
 
     /// Publish plaintext output
@@ -532,9 +545,10 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
     async fn publish_ciphertext_output(
         &self,
         e3_id: U256,
-        data: Bytes,
+        ciphertext_output_hash: B256,
         ciphertext_commitment: B256,
-        proof: Bytes,
+        compute_proof: Bytes,
+        availability_proof: Bytes,
     ) -> Result<TransactionReceipt> {
         let _guard = NONCE_LOCK.lock().await;
         let wallet_addr = self
@@ -543,12 +557,20 @@ impl InterfoldWrite for InterfoldContract<ReadWrite> {
         let nonce = get_next_nonce(&*self.provider, wallet_addr).await?;
 
         let contract = Interfold::new(self.contract_address, &self.provider);
-        let builder = contract
-            .publishCiphertextOutput(e3_id, data, ciphertext_commitment, proof)
-            .nonce(nonce);
-        let receipt = builder.send().await?.get_receipt().await?;
+        let output_reference = CiphertextOutputReference {
+            contentHash: ciphertext_output_hash,
+            ciphertextCommitment: ciphertext_commitment,
+            computeProof: compute_proof,
+            availabilityProof: availability_proof,
+        };
+        let receipt = contract
+            .publishCiphertextOutput(e3_id, output_reference.abi_encode().into())
+            .nonce(nonce)
+            .send()
+            .await?
+            .get_receipt()
+            .await?;
         e3_utils::require_successful_receipt("publish ciphertext output", &receipt)?;
-
         Ok(receipt)
     }
 

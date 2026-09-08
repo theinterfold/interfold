@@ -6,6 +6,7 @@
 
 #![allow(clippy::result_large_err)]
 
+use std::collections::HashMap;
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -28,7 +29,7 @@ use e3_events::{
     ComputeResponse, DecryptedSharesAggregationProofRequest,
     DecryptedSharesAggregationProofResponse, DecryptionAggregationRequest,
     DecryptionAggregationResponse, DkgAggregationRequest, DkgAggregationResponse,
-    DkgShareDecryptionProofRequest, DkgShareDecryptionProofResponse, EventPublisher,
+    DkgShareDecryptionProofRequest, DkgShareDecryptionProofResponse, E3Stage, E3id, EventPublisher,
     EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, NodeDkgFoldRequest,
     NodeDkgFoldResponse, NodesFoldStepRequest, NodesFoldStepResponse, PartyVerificationResult,
     PkAggregationProofRequest, PkAggregationProofResponse, PkBfvProofRequest, PkBfvProofResponse,
@@ -137,10 +138,11 @@ impl Multithread {
         cipher: Arc<Cipher>,
         task_pool: TaskPool,
         report: Option<Addr<MultithreadReport>>,
+        lifecycle_stages: HashMap<E3id, E3Stage>,
     ) -> Addr<Self> {
         let addr = Self::new(bus.clone(), rng.clone(), cipher.clone(), task_pool, report).start();
 
-        ComputeEffectGate::attach(bus, addr.clone().recipient());
+        ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
         info!("Multithread actor waiting behind the replay-safe effect gate.");
 
         addr
@@ -153,6 +155,7 @@ impl Multithread {
         task_pool: TaskPool,
         report: Option<Addr<MultithreadReport>>,
         zk_backend: &ZkBackend,
+        lifecycle_stages: HashMap<E3id, E3Stage>,
     ) -> Addr<Self> {
         let zk_prover = Arc::new(ZkProver::new(zk_backend));
         let actor = Self::new(bus.clone(), rng.clone(), cipher.clone(), task_pool, report)
@@ -167,7 +170,7 @@ impl Multithread {
             addr.clone().into(),
         );
 
-        ComputeEffectGate::attach(bus, addr.clone().recipient());
+        ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
         info!("Multithread actor with ZK waiting behind the replay-safe effect gate.");
 
         addr

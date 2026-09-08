@@ -30,7 +30,7 @@ use e3_keyshare::ThresholdKeyshareRepositoryFactory;
 use e3_request::{
     E3Context, E3ContextSnapshot, E3Extension, TypedKey, DKG_FOLD_ATTESTATION_CONTEXT_KEY, META_KEY,
 };
-use e3_sortition::Sortition;
+use e3_sortition::{FinalizedCommitteesRepositoryFactory, Sortition};
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::collections::{BTreeSet, HashMap};
 
@@ -543,6 +543,27 @@ async fn recover_committee_dependencies_from_publickey_state(
     Ok(())
 }
 
+async fn recover_committee_dependencies_from_sortition_state(
+    ctx: &mut E3Context,
+    e3_id: &E3id,
+) -> Result<()> {
+    if ctx.get_dependency(COMMITTEE_ADDRESSES_KEY).is_some() {
+        return Ok(());
+    }
+
+    let repo = ctx.repositories().finalized_committees();
+    let Some(committees) = repo.read().await? else {
+        return Ok(());
+    };
+    let Some(committee) = committees.get(e3_id) else {
+        return Ok(());
+    };
+
+    let addresses = committee_addresses_from_node_strings(committee.members())?;
+    ctx.set_dependency(COMMITTEE_ADDRESSES_KEY, addresses);
+    Ok(())
+}
+
 async fn recover_honest_committee_dependencies_from_keyshare_state(
     ctx: &mut E3Context,
     e3_id: &E3id,
@@ -690,6 +711,7 @@ impl E3Extension for ThresholdPlaintextAggregatorExtension {
 
     async fn hydrate(&self, ctx: &mut E3Context, snapshot: &E3ContextSnapshot) -> Result<()> {
         let e3_id = ctx.e3_id.clone();
+        recover_committee_dependencies_from_sortition_state(ctx, &e3_id).await?;
         recover_committee_dependencies_from_publickey_state(ctx, &e3_id).await?;
         recover_honest_committee_dependencies_from_keyshare_state(ctx, &e3_id).await?;
 
@@ -776,7 +798,7 @@ mod tests {
     use super::*;
     use alloy::primitives::address;
     use e3_data::{DataStore, InMemStore};
-    use e3_events::{OrderedSet, Seed};
+    use e3_events::{Committee, OrderedSet, Seed};
     use e3_fhe::Fhe;
     use e3_fhe_params::BfvPreset;
     use e3_request::{ContextRepositoryFactory, E3ContextParams, E3Meta};
@@ -960,6 +982,41 @@ mod tests {
             Some(&honest_committee_addresses)
         );
         assert!(ctx.get_event_recipient("publickey").is_some());
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn recovers_full_committee_from_finalized_sortition_state() -> Result<()> {
+        let e3_id = E3id::new("42", 1);
+        let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+        let mut ctx = E3Context::from_params(E3ContextParams {
+            repository: store.repositories().context(&e3_id),
+            e3_id: e3_id.clone(),
+            extensions: Arc::new(Vec::new()),
+        });
+        let committee_nodes = vec![
+            "0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65".to_string(),
+            "0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC".to_string(),
+            "0x70997970C51812dc3A010C7d01b50e0d17dc79C8".to_string(),
+        ];
+        ctx.repositories()
+            .finalized_committees()
+            .write_sync(&HashMap::from([(
+                e3_id.clone(),
+                Committee::new(committee_nodes),
+            )]))
+            .await?;
+
+        recover_committee_dependencies_from_sortition_state(&mut ctx, &e3_id).await?;
+
+        assert_eq!(
+            ctx.get_dependency(COMMITTEE_ADDRESSES_KEY),
+            Some(&vec![
+                address!("0x15d34AAf54267DB7D7c367839AAf71A00a2C6A65"),
+                address!("0x3C44CdDdB6a900fa2b585dd299e03d12FA4293BC"),
+                address!("0x70997970C51812dc3A010C7d01b50e0d17dc79C8"),
+            ])
+        );
         Ok(())
     }
 

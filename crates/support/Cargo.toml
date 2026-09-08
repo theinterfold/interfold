@@ -13,7 +13,7 @@ e3-support-app = { path = "./app" }
 e3-support-host = { path = "./host" }
 e3-user-program = { path = "./program" }
 e3-support-types = { path = "./types" }
-e3-fhe-params = { git = "https://github.com/theinterfold/interfold", rev = "5b2ca6619a07aec6104f9b877bff948bd976b6cf" }
+e3-fhe-params = { git = "https://github.com/theinterfold/interfold", rev = "5668f4c9ee0992aeb05b320eaa3b998a6c32e525" }
 
 methods = { path = "./methods" }
 alloy-primitives = { version = "1.3", default-features = false, features = [
@@ -39,6 +39,7 @@ risc0-zkp = { version = "=3.0.2", default-features = false }
 serde = { version = "1.0", features = ["derive", "std"] }
 serde_json = "=1.0.145"
 sha2 = "=0.10.9"
+sha3 = "=0.10.8"
 # The Interfold revision must match for all Interfold dependencies in this workspace.
 #
 # The Interfold crates below are pinned by revision rather than by path because this workspace is
@@ -47,32 +48,23 @@ sha2 = "=0.10.9"
 # so anything outside that directory is unreachable from the guest build.
 #
 # The pin therefore decides which compute-provider code the guest runs, and moving it changes the
-# image ID. Bump it only together with a rebuilt crates/support/contracts/ImageID.sol and a
-# refreshed ImageID.stamp.json. `pnpm check:image-id` asserts that every pin here names one
-# revision and warns when that revision is not an ancestor of HEAD.
+# image ID. Bump it only together with a reproducible rebuild of
+# crates/support/contracts/ImageID.sol and a complete provenance manifest.
 #
-# Why this revision: 5b2ca661 is the tip of the branch that fixed compute-input binding, and the
-# guest has to run that code for the fix to mean anything on chain.
+# Why this revision: 5668f4c9 contains the compute-input binding, secure-parameter fixes,
+# shared-parameter path, and accelerated SAFE commitment path that the guest must run.
 #
 # It replaces c2097da6, the scope commit of the 2026-08-17 Zenith protocol audit. Sitting at the
 # audited baseline read as the conservative choice and was not: the audit covered six Solidity
 # files and no Rust at all, so crates/compute-provider and the guest were outside its scope, and
 # outside the mitigation review at c64bcfb8 as well. See packages/interfold-contracts/audits/README.md.
-# Holding the old pin bought reproducibility rather than assurance, while excluding real fixes to
-# the code the guest runs — among them 5213e23d, which derives the guest input root from the
-# processed ciphertexts. `pnpm check:image-id` still warns that the pin has moved off the audit
-# baseline, which is true and worth seeing; it does not mean the pin is wrong.
-#
-# This revision is interim. It is a branch tip, and this repository squash-merges, so the commit
-# stops being referenced by anything once the branch is deleted and eventually stops resolving —
-# at which point the guest cannot be built at all. Re-pin to the commit a release tag names as
-# soon as one contains this code, and record the tag here. `pnpm check:image-id` warns until then.
-# It is deliberately a `rev` and not a `tag`: a tag can be moved, and the pin decides which code
-# the guest runs, so it should be content-addressed even when it names a release.
+# Holding the old audit pin bought reproducibility rather than assurance while excluding real fixes
+# to the code the guest runs. The revision remains content-addressed even though a permanent main
+# commit retains it; a movable branch or tag is not an acceptable guest dependency.
 fhe = { package = "fhe", git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
 fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
 fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
-e3-compute-provider = { git = "https://github.com/theinterfold/interfold", rev = "5b2ca6619a07aec6104f9b877bff948bd976b6cf" }
+e3-compute-provider = { git = "https://github.com/theinterfold/interfold", rev = "5668f4c9ee0992aeb05b320eaa3b998a6c32e525" }
 tokio = { version = "=1.46.1", features = ["full"] }
 rand = { version = "=0.9.2" }
 tracing-subscriber = { version = "=0.3.20", features = ["env-filter"] }

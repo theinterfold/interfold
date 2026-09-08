@@ -9,6 +9,7 @@ import { task } from "hardhat/config";
 import { ArgumentType } from "hardhat/types/arguments";
 
 import { readDeploymentArgs } from "../scripts/utils";
+import { stageMockDataAvailabilityObject } from "./mockDataAvailability";
 
 export const publishInput = task(
   "e3-program:publishInput",
@@ -47,9 +48,22 @@ export const publishInput = task(
     defaultValue: "",
     type: ArgumentType.STRING,
   })
+  .addOption({
+    name: "mockDataAvailabilityDirectory",
+    description: "test-only directory served by the local mock DA endpoint",
+    defaultValue: "",
+    type: ArgumentType.STRING,
+  })
   .setAction(async () => ({
     default: async (
-      { e3Id, data, dataFile, programAddress, ciphertextCommitmentFile },
+      {
+        e3Id,
+        data,
+        dataFile,
+        programAddress,
+        ciphertextCommitmentFile,
+        mockDataAvailabilityDirectory,
+      },
       hre,
     ) => {
       const { deployAndSaveMockProgram } = await import(
@@ -86,6 +100,13 @@ export const publishInput = task(
         const file = fs.readFileSync(dataFile);
         // Hex-encode binary file contents so ethers ABI-encodes them as `bytes`.
         dataToSend = "0x" + file.toString("hex");
+      }
+
+      if (mockDataAvailabilityDirectory) {
+        stageMockDataAvailabilityObject(
+          mockDataAvailabilityDirectory,
+          dataToSend,
+        );
       }
 
       if (ciphertextCommitmentFile) {

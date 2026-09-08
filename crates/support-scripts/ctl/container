@@ -1,10 +1,26 @@
 #!/usr/bin/env bash
 
-GIT_SHA=$(interfold rev)
+# Resolve the revision from this CLI binary, not from a running node. In an Interfold project,
+# `interfold rev` is normally forwarded to the node daemon and can therefore return the revision
+# of an older node while a new CLI is starting its matching support image.
+GIT_SHA=$(cd / && interfold rev)
 CONTAINER_NAME="e3-support.1"
 IMAGE_REPOSITORY="${E3_SUPPORT_IMAGE_REPOSITORY:-ghcr.io/theinterfold/e3-support}"
 IMAGE="$IMAGE_REPOSITORY:$GIT_SHA"
 CACHE_PREFIX="e3-support"
+
+SUPPORT_ENVIRONMENT=(
+    RISC0_DEV_MODE RPC_URL PRIVATE_KEY PINATA_JWT IPFS_GATEWAY_URL PROGRAM_URL BOUNDLESS_ONCHAIN
+    BOUNDLESS_MIN_PRICE_ETH BOUNDLESS_MAX_PRICE_ETH BOUNDLESS_TIMEOUT_SECS
+    BOUNDLESS_LOCK_TIMEOUT_SECS BOUNDLESS_RAMP_UP_SECS BOUNDLESS_LOCK_COLLATERAL_ZKC
+)
+DOCKER_ENVIRONMENT=()
+for name in "${SUPPORT_ENVIRONMENT[@]}"; do
+    if [[ -n "${!name:-}" ]]; then
+        # Giving Docker only the name copies the inherited value without placing it in argv.
+        DOCKER_ENVIRONMENT+=(--env "$name")
+    fi
+done
 
 # Use the support image that matches the CLI revision.
 # This match prevents incompatible support script changes after a CLI update.
@@ -44,7 +60,7 @@ fi
 
 if docker ps -q -f name="$CONTAINER_NAME" | grep -q .; then
     echo "Running exec $IMAGE..."
-    docker exec $TTY_FLAGS "$CONTAINER_NAME" bash -c "$*"
+    docker exec $TTY_FLAGS "${DOCKER_ENVIRONMENT[@]}" "$CONTAINER_NAME" bash -c "$*"
 else
     echo "Running start $IMAGE..."
     # --network=host does not work on macos for allowing the container to access 
@@ -57,6 +73,7 @@ else
         --name "$CONTAINER_NAME" \
         --platform linux/amd64 \
         --add-host=host.local:host-gateway \
+        "${DOCKER_ENVIRONMENT[@]}" \
         -p 13151:13151 \
         -v "$(pwd)/.interfold/generated/contracts:/app/contracts:rw" \
         -v "$(pwd)/tests:/app/tests" \

@@ -249,12 +249,14 @@ On restart:
 │   → restores complete CRC-valid, decodable frames whose tail index write was lost
 │   → rejects indexed corruption, decode failure, gaps, and offset mismatches
 ├─ Builder recovery before actors start:
-│   1. Check the storage schema and repair the request-router admission projection
+│   1. Check the storage schema and reconcile the request-router admission checkpoint
 │      → The checkpoint is stored at the canonical root key, not below a router-local namespace
 │      → Each aggregate cursor keeps the highest sequence observed, even when contextual snapshot
 │        writes arrive out of HLC or sequence order
 │      → If the checkpoint trails the snapshot cut, only the missing EventStore suffix is applied
 │        to the existing admission state
+│      → A checkpoint that covers the snapshot cut is never moved backward
+│      → Missing context snapshots or cursor disagreement fail startup before actors attach
 │   2. Backfill missing versioned recovery records from the EventStore
 │      → Sortition inputs, committee-finalizer inputs/tickets, and slash intents are reconstructed
 │      → Existing versioned records are not replaced
@@ -490,8 +492,9 @@ publish that exclusion leaves the intent retryable.
 The registry writer rebuilds ticket, committee-finalization, and public-key submission gates from
 durable local events. It does not submit during replay. After `EffectsEnabled`, it retries temporary
 RPC or contract-ordering failures, treats already-landed transactions as success, and stops retrying
-a ticket after a permanent eligibility or deadline result. The Interfold writer applies the same
-pattern to plaintext publication.
+a ticket after a permanent eligibility or deadline result. It also stops a public-key submission
+after an RPC request-size rejection or a permanent payload or contract error. The Interfold writer
+applies the same pattern to plaintext publication.
 
 The request router uses one checkpoint at `//router/recovery_checkpoint` for its active contexts,
 completed set, and all aggregate cursors. Per-E3 context snapshots remain below their own router
@@ -503,6 +506,12 @@ into hydrated protocol actors. A checkpoint that already covers the snapshot vec
 backward. Replay preserves durable sequence inside each aggregate and uses HLC order between
 aggregate heads. The final snapshot drain writes open cross-aggregate batches in their original
 event order, so an older batch cannot overwrite the newest checkpoint during shutdown.
+
+Ethereum lifecycle events remain the canonical terminal input. A same-version restart restores the
+durable checkpoint, replays its missing EventStore suffix, and then ingests missing historical EVM
+events through normal chain synchronization. Startup does not run a separate per-context Ethereum
+repair query. The production cutover starts nodes with empty protocol databases, so it does not
+carry the inconsistent projections written by intermediate Sepolia binaries.
 
 ---
 

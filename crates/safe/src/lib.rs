@@ -24,7 +24,13 @@
 use ark_bn254::Fr;
 use ark_ff::Zero;
 use sha3::{Digest, Keccak256};
+#[cfg(not(all(target_os = "zkvm", target_arch = "riscv32")))]
 use taceo_poseidon2::bn254::t4::permutation as poseidon2_permutation;
+
+#[cfg(any(all(target_os = "zkvm", target_arch = "riscv32"), test))]
+mod poseidon2_accel;
+#[cfg(all(target_os = "zkvm", target_arch = "riscv32"))]
+use poseidon2_accel::permutation as poseidon2_permutation;
 
 /// Field type used throughout the SAFE implementation (BN254 scalar field)
 pub type Field = Fr;

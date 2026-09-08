@@ -9,7 +9,9 @@ import {
   MaxUint256,
   ZeroAddress,
   ZeroHash,
+  getBytes,
   isHexString,
+  keccak256,
   zeroPadValue,
 } from "ethers";
 import fs from "fs";
@@ -18,6 +20,8 @@ import { ArgumentType } from "hardhat/types/arguments";
 import path from "path";
 
 import { readDeploymentArgs } from "../scripts/utils";
+import { assembleUniqueCommitteePublicKey } from "./committeePublicKey";
+import { stageMockDataAvailabilityObject } from "./mockDataAvailability";
 
 function cryptoConfigIdForParamSet(paramSet: number): string {
   if (paramSet === 0) {
@@ -559,12 +563,29 @@ export const publishCommittee = task(
         await tx.wait();
       }
 
-      const publicKeyTx = await ciphernodeRegistry.publishCommitteePublicKey(
-        e3Id,
-        publicKey,
-      );
-      console.log("Publishing committee public key... ", publicKeyTx.hash);
-      await publicKeyTx.wait();
+      const publicKeyBytes = getBytes(publicKey);
+      const chunkBytes = 90 * 1024;
+      const chunkCount = Math.ceil(publicKeyBytes.length / chunkBytes);
+      const candidateHash = keccak256(publicKey);
+      for (let chunkIndex = 0; chunkIndex < chunkCount; chunkIndex += 1) {
+        const chunk = publicKeyBytes.slice(
+          chunkIndex * chunkBytes,
+          (chunkIndex + 1) * chunkBytes,
+        );
+        const publicKeyTx = await ciphernodeRegistry.publishCommitteePublicKey(
+          e3Id,
+          candidateHash,
+          chunkIndex,
+          chunkCount,
+          publicKeyBytes.length,
+          chunk,
+        );
+        console.log(
+          `Publishing committee public-key chunk ${chunkIndex + 1}/${chunkCount}... `,
+          publicKeyTx.hash,
+        );
+        await publicKeyTx.wait();
+      }
       console.log(`Committee proof and public key published`);
     },
   }))
@@ -572,7 +593,7 @@ export const publishCommittee = task(
 
 export const getCommitteePublicKey = task(
   "committee:getPublicKey",
-  "Read the latest published committee public key for an E3",
+  "Reassemble the published committee public key for an E3",
 )
   .addOption({
     name: "e3Id",
@@ -589,29 +610,32 @@ export const getCommitteePublicKey = task(
   .setAction(async () => ({
     default: async ({ e3Id, outFile }, hre) => {
       const { ethers, deployment, registry } = await getRegistryConnection(hre);
-      const filter = registry.filters.CommitteePublished(e3Id);
+      const filter = registry.filters.CommitteePublicKeyChunkPublished(e3Id);
       const logs = await registry.queryFilter(
         filter,
         deployment.blockNumber ?? 0,
         "latest",
       );
-      const event = logs.at(-1) as any;
-
-      if (!event) {
-        throw new Error(`CommitteePublished event not found for e3Id=${e3Id}`);
-      }
-
-      const publicKey = (event.args.publicKey ?? event.args[2]) as string;
-      if (!publicKey || publicKey === "0x") {
-        throw new Error(`Committee public key is empty for e3Id=${e3Id}`);
-      }
+      const expectedPkCommitment = await registry.committeePublicKey(e3Id);
+      const publicKeyBytes = assembleUniqueCommitteePublicKey(
+        logs.map((log: any) => ({
+          publisher: log.args.publisher ?? log.args[1],
+          candidateHash: log.args.candidateHash ?? log.args[2],
+          pkCommitment: log.args.pkCommitment ?? log.args[4],
+          chunkIndex: Number(log.args.chunkIndex ?? log.args[5]),
+          chunkCount: Number(log.args.chunkCount ?? log.args[6]),
+          totalLength: Number(log.args.totalLength ?? log.args[7]),
+          chunk: log.args.chunk ?? log.args[8],
+        })),
+        expectedPkCommitment,
+      );
 
       if (outFile) {
         ensureParentDir(outFile);
-        fs.writeFileSync(outFile, Buffer.from(ethers.getBytes(publicKey)));
+        fs.writeFileSync(outFile, Buffer.from(publicKeyBytes));
       }
 
-      console.log(publicKey);
+      console.log(ethers.hexlify(publicKeyBytes));
     },
   }))
   .build();
@@ -697,6 +721,25 @@ export const publishCiphertext = task(
     defaultValue: "",
     type: ArgumentType.STRING,
   })
+  .addOption({
+    name: "availabilityProof",
+    description:
+      "VectorX proof bytes; defaults to the ciphertext for the local mock",
+    defaultValue: "",
+    type: ArgumentType.STRING,
+  })
+  .addOption({
+    name: "availabilityProofFile",
+    description: "file containing the ABI-encoded VectorX proof",
+    defaultValue: "",
+    type: ArgumentType.STRING,
+  })
+  .addOption({
+    name: "mockDataAvailabilityDirectory",
+    description: "test-only directory served by the local mock DA endpoint",
+    defaultValue: "",
+    type: ArgumentType.STRING,
+  })
   .setAction(async () => ({
     default: async (
       {
@@ -707,10 +750,13 @@ export const publishCiphertext = task(
         proofFile,
         ciphertextCommitment,
         ciphertextCommitmentFile,
+        availabilityProof,
+        availabilityProofFile,
+        mockDataAvailabilityDirectory,
       },
       hre,
     ) => {
-      const { interfold } = await getInterfoldConnection(hre);
+      const { ethers, interfold } = await getInterfoldConnection(hre);
 
       let dataToSend = data;
 
@@ -737,11 +783,50 @@ export const publishCiphertext = task(
         );
       }
 
+      if (!isHexString(dataToSend) || dataToSend === "0x") {
+        throw new Error("A non-empty --data or --data-file is required");
+      }
+      if (!isHexString(proofToSend) || proofToSend === "0x") {
+        throw new Error("A non-empty --proof or --proof-file is required");
+      }
+
+      let availabilityProofToSend = availabilityProof || dataToSend;
+      if (availabilityProofFile) {
+        availabilityProofToSend = fs
+          .readFileSync(availabilityProofFile)
+          .toString();
+      }
+      if (
+        !isHexString(availabilityProofToSend) ||
+        availabilityProofToSend === "0x"
+      ) {
+        throw new Error("The availability proof must be non-empty hex bytes");
+      }
+
+      const contentHash = mockDataAvailabilityDirectory
+        ? stageMockDataAvailabilityObject(
+            mockDataAvailabilityDirectory,
+            dataToSend,
+          )
+        : ethers.keccak256(dataToSend);
+
+      const encodedOutputReference = ethers.AbiCoder.defaultAbiCoder().encode(
+        [
+          "tuple(bytes32 contentHash,bytes32 ciphertextCommitment,bytes computeProof,bytes availabilityProof)",
+        ],
+        [
+          {
+            contentHash,
+            ciphertextCommitment: commitmentToSend,
+            computeProof: proofToSend,
+            availabilityProof: availabilityProofToSend,
+          },
+        ],
+      );
+
       const tx = await interfold.publishCiphertextOutput(
         e3Id,
-        dataToSend,
-        commitmentToSend,
-        proofToSend,
+        encodedOutputReference,
       );
 
       console.log("Publishing ciphertext... ", tx.hash);

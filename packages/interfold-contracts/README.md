@@ -168,8 +168,9 @@ Set `deployMockE3Program` to `true` and set `e3Programs[0]` to the zero address
 to deploy `MockE3Program` in the same run. This stateless program applies no
 application-specific input or output rules. It has no owner, controller,
 setters, or reentrancy hooks. Interfold still verifies each BFV ciphertext proof
-and committee decryption proof. Do not set `bindInitialE3Program` for this
-option.
+and committee decryption proof. Its deterministic receipt is for tests, not
+production data availability. Keep requests paused until a production program is
+registered and wired. Do not set `bindInitialE3Program` for this option.
 
 `Interfold.initialize` registers the selected program before the governance
 transaction executes. Later registrations require an owner transaction.

@@ -1451,6 +1451,7 @@ async fn test_trbfv_actor() -> Result<()> {
         },
         finalization_ms: None,
         chain_id: Some(1),
+        data_availability: None,
     };
 
     // Setup ZK backend for proof generation/verification

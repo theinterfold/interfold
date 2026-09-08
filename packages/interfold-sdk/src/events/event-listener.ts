@@ -60,6 +60,7 @@ export class EventListener implements SDKEventEmitter {
     RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED,
     RegistryEventType.RANDOMNESS_CIRCUIT_BREAKER_TRIPPED,
     RegistryEventType.COMMITTEE_PUBLISHED,
+    RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED,
     RegistryEventType.COMMITTEE_FINALIZED,
     RegistryEventType.INTERFOLD_SET,
   ])

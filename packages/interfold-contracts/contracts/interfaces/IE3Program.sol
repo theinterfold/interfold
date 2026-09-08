@@ -28,7 +28,8 @@ interface IE3Program {
     ) external returns (bytes32 encryptionSchemeId);
 
     /// @notice Verify the ciphertext output of an E3 computation
-    /// @dev This function is called by the Interfold contract when ciphertext output is published
+    /// @dev Interfold calls this before it stores the output or advances the E3 stage. Verify the
+    ///      supplied arguments instead of reading the pending output from Interfold storage.
     /// @param e3Id ID of the E3 computation
     /// @param ciphertextOutputHash The keccak256 hash of output data to be verified
     /// @param ciphertextCommitment The SAFE commitment authenticated by the proof

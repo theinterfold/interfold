@@ -177,6 +177,7 @@ export interface ProtocolDeployment {
   bfvVerifierRoutes?: BfvVerifierRouteDeployment[];
   ciphertextVerifier?: string;
   crispProgram?: string;
+  dataAvailabilityVerifier?: string;
   initialE3Program: string;
   ticketToken: string;
   slashingManager: string;
@@ -251,6 +252,9 @@ export interface SecureCrispUpgradePlan {
   lifecycleLibrary: string;
   pricingLibrary: string;
   registryProxy: string;
+  registryProxyAdmin: string;
+  registryImplementation: string;
+  sortitionLibrary: string;
   nodeReleaseRegistry: string;
   nodeRelease: {
     version: string;
@@ -264,6 +268,12 @@ export interface SecureCrispUpgradePlan {
   decryptionVerifier: string;
   ciphertextVerifier: string;
   crispProgram: string;
+  /** Bootstrap mock closed to new requests by this activation, when present. */
+  retiredE3Program?: string;
+  dataAvailabilityVerifier: string;
+  inputAvailabilitySigner: string;
+  availBridge: string;
+  vectorx: string;
   bfvVerifierRoutes: BfvVerifierRouteDeployment[];
   safeTransactions: string;
   governanceSafeBuilder?: string;

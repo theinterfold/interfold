@@ -53,6 +53,7 @@ COPY crates/config/Cargo.toml ./config/Cargo.toml
 COPY crates/console/Cargo.toml ./console/Cargo.toml
 COPY crates/crypto/Cargo.toml ./crypto/Cargo.toml
 COPY crates/data/Cargo.toml ./data/Cargo.toml
+COPY crates/data-availability/Cargo.toml ./data-availability/Cargo.toml
 COPY crates/interfoldup/Cargo.toml ./interfoldup/Cargo.toml
 COPY crates/entrypoint/Cargo.toml ./entrypoint/Cargo.toml
 COPY crates/events/Cargo.toml ./events/Cargo.toml

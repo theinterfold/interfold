@@ -254,12 +254,16 @@ design citation alone does not establish current runtime behavior.
   deadline watermark. The time-based floor decreases after old windows expire, and the
   BondingRegistry cannot clear its registry pointer. — `flow-trace/02`, `03`, `06`; INDEX Z-37
 - **E3 program allowlist:** production initialization registers one deployed E3 program and assigns
-  Interfold ownership to the configured protocol owner. Later registrations are append-only and
-  owner-only. Every registered address must contain runtime code. `MockE3Program` is the stateless
-  launch option. It has no administrative controls and applies no application rules. The
-  request-time BFV ciphertext verifier and decryption verifier remain mandatory. Its mutable failure
-  controls live only in `MockE3ProgramHarness`. — `Interfold.sol`; `MockE3Program.sol`;
-  `flow-trace/03`
+  Interfold ownership to the configured protocol owner. Later registration and retirement are
+  owner-only. Retirement closes only new request admission; existing E3s keep their snapshotted
+  program. Every registered address must contain runtime code. `MockE3Program` is the stateless
+  bootstrap option. It has no administrative controls and applies no application rules. Its
+  deterministic test receipt is not production data availability, so requests remain paused until a
+  production program is registered and wired. The request-time BFV ciphertext verifier and
+  decryption verifier remain mandatory. Its mutable failure controls live only in
+  `MockE3ProgramHarness`. A protocol upgrade that makes the program interface incompatible must
+  retire every incompatible bootstrap program before requests resume. — `Interfold.sol`;
+  `MockE3Program.sol`; `flow-trace/03`
 
 ### Deadlines
 
@@ -437,10 +441,30 @@ design citation alone does not establish current runtime behavior.
   skips the comparison accepts a result computed over any input set. — `flow-trace/04`
 - **A Secure Process derives its leaves; it never receives them, and never drops one.**
   `MerkleTreeBuilder::compute_leaf_hashes` builds every leaf from the ciphertexts it was given and
-  pushes one per published input, whatever the E3 program's policy decides about computing over it.
-  Both rules are applied by `e3-compute-provider` rather than delegated: a received root can
+  pushes one per on-chain input leaf, whatever the E3 program's policy decides about computing over
+  it. Both rules are applied by `e3-compute-provider` rather than delegated: a received root can
   disagree with the data it claims to describe, and a missing leaf changes the root and makes the
   result unpublishable. — `flow-trace/04`
+- **A CRISP input is committed before it is finalized, but computation requires both.**
+  `publishInput` verifies the Noir proof and the configured service's EIP-712 storage attestation,
+  then reserves the leaf and index so a later input can name it as its parent. `finalizeInput` must
+  prove VectorX availability for the exact committed content hash. The input tuple cannot change
+  between the calls, and `CRISPProgram.verify` must reject while any committed input remains
+  pending. — `flow-trace/08`
+- **CRISP input envelopes use one flat ABI parameter sequence.** The SDK uses `encodeAbiParameters`
+  for the six fields. The server uses parameter decoding for that sequence and parameter encoding
+  for the signed commitment payload that Solidity reads through `abi.decode`. Treating the envelope
+  as one wrapped struct adds a leading tuple offset and breaks the boundary. — `flow-trace/08`
+- **Avail-backed CRISP rounds leave a usable voting interval.** `CRISPProgram.validate` derives the
+  worst-case key time from the E3 timeout snapshot and the request-time Registry windows. The
+  commitment cutoff must be at least one hour after both that time and the configured input start.
+  The server repeats the production minimum as an early configuration check, but it is not the
+  security boundary. — `flow-trace/08`
+- **Avail references name exact application bytes.** The application content hash is
+  `keccak256(rawBytes)`, which is also the `leaf` returned by Avail's proof API. The official bridge
+  hashes that value once more when it verifies the submitted-data Merkle root. Solidity binds the
+  proof API leaf to `contentHash`, and every reader hashes retrieved raw bytes again before decoding
+  or proving over them. An App ID or RPC response is not a correctness proof. — `flow-trace/08`
 - **The leaf layout and input selection are the E3 program's, not the crate's.** They are supplied
   as an `InputPolicy`, because a leaf must match whatever that program builds on chain and no two
   programs need agree, and because "what does a second input for the same participant mean?" has no
@@ -449,7 +473,7 @@ design citation alone does not establish current runtime behavior.
   `policy()` beside `fhe_processor`. — `flow-trace/04`
 - **CRISP binds bytes, commitment, slot and parent into its leaf, and selects the end of each slot's
   chain.** `CRISPProgram.inputLeaf` is
-  `sha256(sha256(bytes) || commitment || slot || parentIndexPlusOne) mod SNARK_SCALAR_FIELD` and
+  `sha256(keccak256(bytes) || commitment || slot || parentIndexPlusOne) mod SNARK_SCALAR_FIELD` and
   `e3_user_program::policy` rebuilds it byte for byte; a divergence makes every root mismatch and
   nothing else would catch it, so both sides pin the same vector (`program/tests/input_leaf.rs`,
   `tests/input-leaf.test.ts`) and `onchain_root_agreement.rs` asserts Rust reproduces a root a real
@@ -497,11 +521,14 @@ design citation alone does not establish current runtime behavior.
   padded ciphertext would otherwise share a commitment with its two-component prefix while threshold
   decryption rejects it, failing the round as a `DecryptionTimeout` billed to the ciphernodes. —
   `flow-trace/04`
-- **Client PK commitment binding (C-01):** serialized PK event bytes are an untrusted transport
-  hint; indexers store the decoded key only when its recomputed commitment equals the on-chain
-  (C5-proven) value. Proof-backed committee publication never accepts key bytes. Public-key
-  candidates are bounded, permissionless, and repeatable, so an invalid candidate cannot block a
-  later valid one. — INDEX concerns #33, Z-31
+- **Client PK commitment binding (C-01):** Serialized PK event bytes are an untrusted transport
+  hint. Consumers decode the bytes with the request-time threshold BFV parameters. Consumers store
+  the key only when its recomputed commitment equals the on-chain (C5-proven) value. Proof-backed
+  committee publication never accepts key bytes. Public-key candidates are bounded and gated to
+  request-time committee members while the E3 remains in `KeyPublished`. Retained expelled members
+  can still repair transport, but their bytes receive no extra trust. Terminal E3s cannot create new
+  durable assemblies after cleanup. Consumers accept at most one candidate per member, so an invalid
+  candidate cannot block a valid candidate from another member. — INDEX concerns #33, Z-31
 - **No proof-disabled bypass (C-02):** both final verifier calls are mandatory in production;
   `skip_proof_aggregation` works only under the `test-only-skip-proof-aggregation` Cargo feature;
   production verifiers reject placeholder C5/C7 proofs. — INDEX concern #32
@@ -562,6 +589,12 @@ design citation alone does not establish current runtime behavior.
   from its missing EventStore suffix, and the final snapshot drain preserves event order. An older
   contextual write must never replace newer admission state or move a covered-prefix cursor
   backward. — INDEX concern #43
+- Before actor hydration, startup checks each persisted request context against finalized Ethereum
+  lifecycle state. A complete E3 or a non-slashing failed E3 must not resume local protocol work. A
+  failed E3 that requires accusation or slashing work must retain its context. An unavailable or
+  unknown canonical result must fail startup. If the E3 exists at chain head but not yet at the
+  finalized block, recovery keeps the context and waits; finality lag is not an unknown E3. — INDEX
+  concern #48
 - EventStore replay preserves durable sequence inside each aggregate. It uses HLC order only to
   choose between the next events of different aggregates. A late event can have an older remote HLC
   and must not move ahead of an earlier local sequence from the same aggregate. — INDEX concern #43

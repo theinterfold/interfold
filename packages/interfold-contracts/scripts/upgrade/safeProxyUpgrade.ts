@@ -9,6 +9,7 @@ import {
   deploymentPath,
   protocolDir,
   readJson,
+  repoRelativePath,
   writeJson,
 } from "../protocol/files";
 import { governanceBatch, proposeSafeBatch, safeTx } from "../protocol/safe";
@@ -145,7 +146,7 @@ export async function proposeProxyUpgrade(
     operator: operatorAddress,
     protocolOwner: config.protocolOwner,
     safe: config.safe,
-    safeTransactions: batchFile,
+    safeTransactions: repoRelativePath(batchFile),
   };
 
   if (hasFlag("propose-safe")) {

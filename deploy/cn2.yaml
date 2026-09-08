@@ -8,6 +8,9 @@ node:
 chains:
   - name: 'sepolia'
     rpc_url: '${RPC_URL}'
+    data_availability:
+      mode: avail
+      rpc_url: 'https://turing-rpc.avail.so/rpc'
     contracts:
       interfold: '${SEPOLIA_INTERFOLD_ADDRESS}'
       ciphernode_registry: '${SEPOLIA_CIPHERNODE_REGISTRY_ADDRESS}'

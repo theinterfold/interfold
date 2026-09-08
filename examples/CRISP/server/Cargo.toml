@@ -46,6 +46,8 @@ e3-compute-provider.workspace = true
 e3-sdk = { workspace = true, default-features = false, features=["full"] }
 e3-fhe-params = { workspace = true }
 e3-bfv-client = { workspace = true }
+e3-data-availability = { workspace = true, features = ["avail-submit"] }
+e3-evm-helpers.workspace = true
 evm-helpers = { path = "../crates/evm_helpers" }
 crisp-utils.workspace = true
 
@@ -75,6 +77,7 @@ sled = "=0.34.7"
 # Logging
 env_logger.workspace = true
 log.workspace = true
+tracing.workspace = true
 anyhow.workspace = true
 
 # Configuration

@@ -28,11 +28,12 @@ import {
   ignition,
   makeRequest,
   networkHelpers,
+  publishAvailableCiphertextOutput,
   setPricingConfig,
   signAndEncodeAttestation,
 } from "../fixtures";
 
-const { loadFixture, mine, time } = networkHelpers;
+const { loadFixture, time } = networkHelpers;
 
 /**
  * Integration tests for E3 Refund/Timeout Mechanism
@@ -167,7 +168,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const fee = await interfold.getE3Quote(requestParams);
       await requestToken.connect(signer).approve(interfoldAddress, fee);
       await interfold.connect(signer).request(requestParams);
-      await mine(1);
+      await time.increase(1);
 
       return { e3Id };
     };
@@ -232,7 +233,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       for (const operator of [operator1, operator2, operator3]) {
         await registry.connect(operator).submitTicket(firstE3Id, 1);
       }
-      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+      const deadline = await registry.getCommitteeDeadline(firstE3Id);
+      await time.setNextBlockTimestamp(deadline + 1n);
       await registry.finalizeCommittee(firstE3Id);
     };
 
@@ -240,7 +242,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       for (const operator of [operator1, operator2, operator3]) {
         await registry.connect(operator).submitTicket(firstE3Id, 1);
       }
-      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+      const deadline = await registry.getCommitteeDeadline(firstE3Id);
+      await time.setNextBlockTimestamp(deadline + 1n);
       await registry.finalizeCommittee(firstE3Id);
       const publicKey = "0x1234567890abcdef1234567890abcdef";
       const pkCommitment = ethers.keccak256(publicKey);
@@ -2118,7 +2121,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const e3 = await interfold.getE3(firstE3Id);
       await time.increaseTo(Number(e3.inputWindow[1]));
       const ciphertext = "0x" + "ab".repeat(100);
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         firstE3Id,
         ciphertext,
         ethers.keccak256(ciphertext),
@@ -2699,7 +2703,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const ciphertextOutput = "0x" + "ab".repeat(100);
       const proof = "0x1337";
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         firstE3Id,
         ciphertextOutput,
         ethers.keccak256(ciphertextOutput),
@@ -2996,7 +3001,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const ciphertextOutput = "0x" + "ab".repeat(100);
       const proofBytes = "0x1337";
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         firstE3Id,
         ciphertextOutput,
         ethers.keccak256(ciphertextOutput),
@@ -3112,7 +3118,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const ciphertextOutput = "0x" + "ab".repeat(100);
       const proof = "0x1337";
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         firstE3Id,
         ciphertextOutput,
         ethers.keccak256(ciphertextOutput),
@@ -3173,7 +3180,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       const ciphertextOutput = "0x" + "ab".repeat(100);
       const proof = "0x1337";
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         firstE3Id,
         ciphertextOutput,
         ethers.keccak256(ciphertextOutput),

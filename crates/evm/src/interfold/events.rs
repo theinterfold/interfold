@@ -13,8 +13,8 @@ use anyhow::{anyhow, Context as _, Result};
 use e3_events::E3id;
 use e3_events::InterfoldEventData;
 use e3_events::{
-    E3Failed, E3Stage, E3StageChanged, FailureReason, InputPublished, PlaintextOutputPublished,
-    RewardClaimed, RewardCredited, RewardsDistributed,
+    CiphertextOutputReferencePublished, E3Failed, E3Stage, E3StageChanged, FailureReason,
+    InputPublished, PlaintextOutputPublished, RewardClaimed, RewardCredited, RewardsDistributed,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
 use e3_trbfv::helpers::calculate_error_size;
@@ -136,6 +136,29 @@ impl From<CiphertextOutputPublishedWithChainId> for InterfoldEventData {
     fn from(value: CiphertextOutputPublishedWithChainId) -> Self {
         let payload: e3_events::CiphertextOutputPublished = value.into();
         payload.into()
+    }
+}
+
+struct CiphertextOutputReferenceWithChainId(
+    pub IInterfold::CiphertextOutputReferencePublished,
+    pub u64,
+);
+
+impl From<CiphertextOutputReferenceWithChainId> for CiphertextOutputReferencePublished {
+    fn from(value: CiphertextOutputReferenceWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            content_hash: value.0.contentHash.into(),
+            ciphertext_commitment: value.0.ciphertextCommitment.into(),
+            availability_block: value.0.availabilityBlock,
+            availability_leaf_index: value.0.availabilityLeafIndex,
+        }
+    }
+}
+
+impl From<CiphertextOutputReferenceWithChainId> for InterfoldEventData {
+    fn from(value: CiphertextOutputReferenceWithChainId) -> Self {
+        CiphertextOutputReferencePublished::from(value).into()
     }
 }
 
@@ -364,6 +387,16 @@ pub(crate) fn extractor(
             Ok(Some(InterfoldEventData::from(
                 CiphertextOutputPublishedWithChainId(event, chain_id),
             )))
+        }
+        Some(&IInterfold::CiphertextOutputReferencePublished::SIGNATURE_HASH) => {
+            let mut event = IInterfold::CiphertextOutputReferencePublished::decode_log_data(data)
+                .context(
+                "failed to decode CiphertextOutputReferencePublished after its topic matched",
+            )?;
+            event.e3Id = indexed_u256(topics, 1, "CiphertextOutputReferencePublished")?;
+            Ok(Some(
+                CiphertextOutputReferenceWithChainId(event, chain_id).into(),
+            ))
         }
         Some(&IInterfold::InputPublished::SIGNATURE_HASH) => {
             let mut event = IInterfold::InputPublished::decode_log_data(data)

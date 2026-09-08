@@ -562,11 +562,16 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPublicKey>
                         false
                     }
                     Err(err) => {
+                        let terminal = committee_publication_error_is_terminal(&err);
                         error!(
                             "Failed to preflight publishCommittee: {}",
                             format_evm_error(&err)
                         );
-                        return (e3_id, false);
+                        if terminal {
+                            error!(e3_id = %e3_id, "Committee publication failed permanently; stopping retries");
+                        }
+                        bus.err(EType::Evm, err);
+                        return (e3_id, terminal);
                     }
                     Ok(true) => true,
                 };
@@ -607,12 +612,16 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPublicKey>
                 match result {
                     Ok(()) => (e3_id, true),
                     Err(err) => {
+                        let terminal = committee_publication_error_is_terminal(&err);
                         error!(
                             "Failed to publish committee data: {}",
                             format_evm_error(&err)
                         );
+                        if terminal {
+                            error!(e3_id = %e3_id, "Committee publication failed permanently; stopping retries");
+                        }
                         bus.err(EType::Evm, err);
-                        (e3_id, false)
+                        (e3_id, terminal)
                     }
                 }
             }

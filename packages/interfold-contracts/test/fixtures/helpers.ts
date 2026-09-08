@@ -9,11 +9,7 @@ import type { ContractTransactionResponse, Signer } from "ethers";
 import type { IInterfold, Interfold } from "../../types/contracts/Interfold";
 import type { MockUSDC } from "../../types/contracts/test/MockStableToken.sol/MockUSDC";
 import { ethers, networkHelpers } from "./connection";
-import {
-  ACTIVE_CRYPTO_CONFIG_ID,
-  COMMITTEE_SIZE_MINIMUM,
-  SORTITION_SUBMISSION_WINDOW,
-} from "./constants";
+import { ACTIVE_CRYPTO_CONFIG_ID, COMMITTEE_SIZE_MINIMUM } from "./constants";
 import { buildMockDkgAttestationFixtureData } from "./dkgAttestation";
 
 const { time } = networkHelpers;
@@ -66,11 +62,12 @@ export const setupAndPublishCommittee = async (
   committeeProof: string = "0x",
   dkgAttestationBundle: string = "0x",
 ): Promise<void> => {
-  await networkHelpers.mine(1);
+  await time.increase(1);
   for (const operator of operators) {
     await registry.connect(operator).submitTicket(e3Id, 1);
   }
-  await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+  const deadline = await registry.getCommitteeDeadline(e3Id);
+  await time.setNextBlockTimestamp(deadline + 1n);
   await registry.finalizeCommittee(e3Id);
   const pkCommitment = ethers.keccak256(publicKey);
   if (committeeProof === "0x" && dkgAttestationBundle === "0x") {
@@ -99,8 +96,55 @@ export const setupAndPublishCommittee = async (
     committeeProof,
     dkgAttestationBundle,
   );
-  await registry.publishCommitteePublicKey(e3Id, publicKey);
+  const publicKeyBytes = ethers.getBytes(publicKey);
+  await registry
+    .connect(operators[0])
+    .publishCommitteePublicKey(
+      e3Id,
+      ethers.keccak256(publicKey),
+      0,
+      1,
+      publicKeyBytes.length,
+      publicKeyBytes,
+    );
 };
+
+/** Build the reference payload accepted by the protocol's DA-only output path. */
+export const ciphertextOutputReference = (
+  ciphertextOutput: string,
+  ciphertextCommitment: string,
+  computeProof: string,
+) => ({
+  contentHash: ethers.keccak256(ciphertextOutput),
+  ciphertextCommitment,
+  computeProof,
+  // MockE3ProgramHarness treats the raw object as its deterministic local receipt.
+  availabilityProof: ciphertextOutput,
+});
+
+/** Publish a test ciphertext through the deterministic local DA verifier. */
+export const publishAvailableCiphertextOutput = (
+  interfold: Interfold,
+  e3Id: number | bigint,
+  ciphertextOutput: string,
+  ciphertextCommitment: string,
+  computeProof: string,
+) =>
+  interfold.publishCiphertextOutput(
+    e3Id,
+    abiCoder.encode(
+      [
+        "tuple(bytes32 contentHash,bytes32 ciphertextCommitment,bytes computeProof,bytes availabilityProof)",
+      ],
+      [
+        ciphertextOutputReference(
+          ciphertextOutput,
+          ciphertextCommitment,
+          computeProof,
+        ),
+      ],
+    ),
+  );
 
 /**
  * Approve USDC for the quoted fee and submit an E3 request.

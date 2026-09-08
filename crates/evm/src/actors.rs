@@ -10,6 +10,8 @@
 mod bonding_registry_sol;
 #[path = "ciphernode_registry/actor.rs"]
 mod ciphernode_registry_sol;
+#[path = "data_availability/actor.rs"]
+mod data_availability;
 #[path = "chain_gateway/actor.rs"]
 mod evm_chain_gateway;
 #[path = "chain_hub.rs"]
@@ -40,6 +42,10 @@ pub use ciphernode_registry_sol::{
     fetch_accusation_vote_validity, fetch_dkg_fold_attestation_verifier, fetch_randomness_provider,
     fetch_randomness_providers, CiphernodeRegistrySol, CiphernodeRegistrySolReader,
     CiphernodeRegistrySolWriter,
+};
+pub use data_availability::{
+    DataAvailabilityCoordinator, DataAvailabilityRecoveryState,
+    DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION,
 };
 pub use evm_chain_gateway::*;
 pub use evm_hub::*;

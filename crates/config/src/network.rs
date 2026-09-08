@@ -287,6 +287,7 @@ mod tests {
             },
             finalization_ms: None,
             chain_id,
+            data_availability: None,
         }
     }
 

@@ -8,6 +8,7 @@ import {
   governanceSafeBuilderPath,
   protocolDir,
   readJson,
+  repoRelativePath,
   writeJson,
 } from "../protocol/files";
 import {
@@ -340,8 +341,10 @@ export async function prepareVrfSortitionUpgrade(): Promise<void> {
     randomnessFlatFee: config.interfold.pricing.randomnessFlatFee,
     randomnessProviderOwnershipAcceptanceRequired:
       randomness.randomnessProviderOwnershipAcceptanceRequired,
-    safeTransactions: rawBatchFile,
-    governanceSafeBuilder: safeBuilderFile,
+    safeTransactions: repoRelativePath(rawBatchFile),
+    governanceSafeBuilder: safeBuilderFile
+      ? repoRelativePath(safeBuilderFile)
+      : undefined,
   };
 
   if (hasFlag("propose-safe")) {

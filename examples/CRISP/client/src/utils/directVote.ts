@@ -10,21 +10,20 @@ import type { Address, Hex, PublicClient, WalletClient } from 'viem'
 const PUBLISH_INPUT_ABI = parseAbi(['function publishInput(uint256 e3Id, bytes data)'])
 
 /**
- * Submit an encoded input straight from the voter's wallet.
+ * Commit an encoded input proof straight from the voter's wallet.
  *
- * `publishInput` is permissionless — the proof inside `encodedProof` carries the slot, the
- * commitment and the ciphertext, and the contract does not care who pays for the call. Simulated
- * first so an input the contract would refuse costs a wallet error instead of a reverted
- * transaction, mirroring what the relay does before it pays.
+ * `publishInput` is permissionless. The payload carries the proof, slot, ciphertext commitment,
+ * content hash, parent, and signed 10-minute expiry. It does not carry the ciphertext or wait for
+ * VectorX. The durable availability service publishes those bytes and finalizes the input later.
  *
  * @param walletClient The voter's wallet.
  * @param publicClient The public client, for simulation and the receipt.
  * @param crispProgram The CRISP program address.
  * @param e3Id The round.
- * @param encodedProof The `encodeSolidityProof` output.
+ * @param encodedProof The compact proof-commitment payload returned by the availability service.
  * @returns The transaction hash, after one confirmation.
  */
-export const submitVoteDirectly = async (
+export const submitInputCommitmentDirectly = async (
   walletClient: WalletClient,
   publicClient: PublicClient,
   crispProgram: Address,

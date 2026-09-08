@@ -1078,8 +1078,8 @@ checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
 
 [[package]]
 name = "e3-bfv-client"
-version = "0.7.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5b2ca6619a07aec6104f9b877bff948bd976b6cf#5b2ca6619a07aec6104f9b877bff948bd976b6cf"
+version = "0.14.0"
+source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
 dependencies = [
  "anyhow",
  "e3-fhe-params",
@@ -1093,8 +1093,8 @@ dependencies = [
 
 [[package]]
 name = "e3-compute-provider"
-version = "0.7.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5b2ca6619a07aec6104f9b877bff948bd976b6cf#5b2ca6619a07aec6104f9b877bff948bd976b6cf"
+version = "0.14.0"
+source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
 dependencies = [
  "ark-bn254 0.4.0",
  "ark-ff 0.4.2",
@@ -1115,8 +1115,8 @@ dependencies = [
 
 [[package]]
 name = "e3-fhe-params"
-version = "0.7.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5b2ca6619a07aec6104f9b877bff948bd976b6cf#5b2ca6619a07aec6104f9b877bff948bd976b6cf"
+version = "0.14.0"
+source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
 dependencies = [
  "alloy-dyn-abi",
  "alloy-primitives",
@@ -1133,8 +1133,8 @@ dependencies = [
 
 [[package]]
 name = "e3-parity-matrix"
-version = "0.7.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5b2ca6619a07aec6104f9b877bff948bd976b6cf#5b2ca6619a07aec6104f9b877bff948bd976b6cf"
+version = "0.14.0"
+source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
 dependencies = [
  "num-bigint",
  "num-traits",
@@ -1144,8 +1144,8 @@ dependencies = [
 
 [[package]]
 name = "e3-polynomial"
-version = "0.7.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5b2ca6619a07aec6104f9b877bff948bd976b6cf#5b2ca6619a07aec6104f9b877bff948bd976b6cf"
+version = "0.14.0"
+source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
 dependencies = [
  "fhe-math",
  "num-bigint",
@@ -1156,12 +1156,13 @@ dependencies = [
 
 [[package]]
 name = "e3-safe"
-version = "0.7.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5b2ca6619a07aec6104f9b877bff948bd976b6cf#5b2ca6619a07aec6104f9b877bff948bd976b6cf"
+version = "0.14.0"
+source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
 dependencies = [
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "hex",
+ "risc0-bigint2",
  "sha3",
  "taceo-poseidon2",
 ]
@@ -1188,12 +1189,13 @@ dependencies = [
  "fhe",
  "fhe-traits",
  "sha2",
+ "sha3",
 ]
 
 [[package]]
 name = "e3-zk-helpers"
-version = "0.7.0"
-source = "git+https://github.com/theinterfold/interfold?rev=5b2ca6619a07aec6104f9b877bff948bd976b6cf#5b2ca6619a07aec6104f9b877bff948bd976b6cf"
+version = "0.14.0"
+source = "git+https://github.com/theinterfold/interfold?rev=5668f4c9ee0992aeb05b320eaa3b998a6c32e525#5668f4c9ee0992aeb05b320eaa3b998a6c32e525"
 dependencies = [
  "anyhow",
  "ark-bn254 0.5.0",
@@ -1586,7 +1588,6 @@ dependencies = [
 name = "guests"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "bincode",
  "e3-compute-provider",
  "e3-support-types",
@@ -2498,6 +2499,16 @@ checksum = "f8dd2a808d456c4a54e300a23e9f5a67e122c3024119acbfd73e3bf664491cb2"
 dependencies = [
  "hmac",
  "subtle",
+]
+
+[[package]]
+name = "risc0-bigint2"
+version = "1.4.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b87f5f7494a2242cead2750b7ce2b8522c1be83dee268479f1c12ed521eaf595"
+dependencies = [
+ "include_bytes_aligned",
+ "stability",
 ]
 
 [[package]]

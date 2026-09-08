@@ -17,6 +17,21 @@ use tracing::error;
 
 const PUBLIC_RPC_CONFIRMATIONS: u64 = 1;
 
+#[derive(Debug, Clone, Copy, PartialEq, Hash, Eq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DataAvailabilityMode {
+    Avail,
+    MockHttp,
+}
+
+/// Read configuration for content-addressed objects referenced by Ethereum events.
+#[derive(Debug, Clone, PartialEq, Hash, Eq, Deserialize, Serialize)]
+pub struct DataAvailabilityConfig {
+    pub mode: DataAvailabilityMode,
+    /// Avail HTTP RPC for `avail`, or the local object-service URL for `mock_http`.
+    pub rpc_url: String,
+}
+
 #[derive(Debug, Clone, PartialEq, Hash, Eq, Deserialize, Serialize)]
 pub struct ChainConfig {
     pub enabled: Option<bool>,
@@ -27,6 +42,8 @@ pub struct ChainConfig {
     pub contracts: ContractAddresses,
     pub finalization_ms: Option<u64>,
     pub chain_id: Option<u64>,
+    #[serde(default)]
+    pub data_availability: Option<DataAvailabilityConfig>,
 }
 
 impl ChainConfig {
@@ -108,6 +125,7 @@ mod tests {
             },
             finalization_ms: None,
             chain_id: Some(1),
+            data_availability: None,
         }
     }
 

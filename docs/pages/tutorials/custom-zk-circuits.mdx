@@ -205,10 +205,19 @@ honkVerifier.verify(proof, publicInputs);
 The public inputs include:
 
 - `prev_ct_commitment` — commitment to the previous ciphertext in the slot
-- `merkle_root` — the eligibility Merkle root
+- `digest_hi` and `digest_lo` — the two field-sized halves of the ballot authorisation digest
 - `slot_address` — which vote slot is being written to
-- `is_first_vote` — whether this input extends an earlier entry in the slot, or nothing
+- `merkle_root` or `voting_power` — the eligibility value for the round's census mode
+- `is_first_vote` — whether this input names an earlier entry in the slot
 - `num_options` — number of voting options
+- `sum_ct_commitment` — commitment to the encrypted vote that becomes the new slot value
+- `committee_public_key_commitment` — the key under which the vote must be encrypted
+
+The large encrypted vote is not a Noir public input and is not placed in this Ethereum transaction.
+`publishInput()` commits its Keccak hash together with `sum_ct_commitment` and the slot metadata.
+`finalizeInput()` later accepts only a VectorX proof that the same hash was published to Avail. The
+RISC Zero tally program retrieves those bytes and recomputes both the Keccak hash and the BFV
+commitment before it includes the vote.
 
 ---
 

@@ -34,10 +34,12 @@ bincode = { version = "=1.3.3" }
 bytemuck = { version = "=1.23.1" }
 derivative = "=2.2.0"
 e3-compute-provider = { path = "../../crates/compute-provider" }
+e3-data-availability = { path = "../../crates/data-availability" }
 e3-program-server = { path = "../../crates/program-server" }
 e3-bfv-client = { path = "../../crates/bfv-client" }
 e3-zk-helpers = { path = "../../crates/zk-helpers" }
 e3-fhe-params = { path = "../../crates/fhe-params" }
+e3-evm-helpers = { path = "../../crates/evm-helpers" }
 e3-sdk = { path = "../../crates/sdk", default-features = false }
 e3-polynomial = { path = "../../crates/polynomial" }
 eyre = "=0.6.12"
@@ -53,4 +55,5 @@ fhe-math = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
 fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
 tokio = { version = "=1.46.1", features = ["full"] }
 rand = { version = "0.9" }
+tracing = { version = "=0.1.41" }
 tracing-subscriber = { version = "=0.3.20", features = ["env-filter"] }
