@@ -4,32 +4,26 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Chunking-comparison branch: Round B leaf for ct0's merged main+r1 grid. Re-supplies the same
-//! `chunk_idx` slice `ct0_chunk_main` checked, redoes the CRT-consistency check (cheap - keeps
-//! `e0is` tied to the cross-round-bound `e0`), re-derives the same 5 per-chunk commitments for
-//! binding, and computes each polynomial's *partial* Horner evaluation for this slice.
-//!
-//! Splitting a Horner evaluation across chunks: `Polynomial::eval` treats a `CHUNK_SIZE`-length
-//! slice as its own complete (local) polynomial, so a chunk's actual contribution to the full-N
-//! evaluation is `local_eval * gamma^offset`, where `offset` is the degree of the chunk's lowest
-//! coefficient (`N - (chunk_idx+1)*CHUNK_SIZE` in this descending-coefficient-order layout).
-//! `r1is` is padded to `2N` (not `N`), so its own offset is computed against `2N`. Summing every
-//! chunk's contribution (done in the combine tree) reconstructs the full evaluation exactly.
+//! Round B leaf for ct0's merged main+r1 grid. Re-supplies the same
+//! `chunk_idx` slice `ct0_chunk_main` checked, runs the CRT-consistency check that ties `e0is` to
+//! the cross-round-bound `e0`, re-derives the identical 5 per-chunk commitments for binding, and
+//! computes each polynomial's *partial* Horner evaluation for this slice. The per-slice logic
+//! lives in `lib::core::threshold::user_data_encryption_chunk` - see `chunk_gamma_pow` for how a
+//! Horner evaluation splits across chunks, and why `r1is` is offset against `2N` rather than `N`.
 
 use lib::configs::default::threshold::{
-    L, N, QIS, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT,
+    L, N, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT,
     USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_R1, USER_DATA_ENCRYPTION_BIT_R2,
-    USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS,
-    USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS, USER_DATA_ENCRYPTION_R1_N_CHUNKS as R1_N_CHUNKS,
+    USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_CT0_CHUNK_CONFIGS,
+    USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS,
 };
-use lib::math::commitments::{
-    compute_ude_chunk_commitment, compute_ude_multi_chunk_commitment, UDE_KIND_CT0_E0,
-    UDE_KIND_CT0_K1, UDE_KIND_CT0_R1, UDE_KIND_CT0_R2, UDE_KIND_U,
+use lib::core::threshold::user_data_encryption_chunk::{
+    check_e0_chunk_crt_consistency, chunk_gamma_pow, Ct0ChunkLeaf,
 };
 use lib::math::polynomial::Polynomial;
 
 global CHUNK_SIZE: u32 = N / N_CHUNKS;
-global R1_CHUNK_SIZE: u32 = (2 * N) / R1_N_CHUNKS;
+global R1_CHUNK_SIZE: u32 = 2 * CHUNK_SIZE;
 
 fn main(
     chunk_idx: pub u32,
@@ -42,59 +36,26 @@ fn main(
     r1is_chunk: [Polynomial<R1_CHUNK_SIZE>; L],
     gamma: pub Field,
 ) -> pub (Field, Field, Field, Field, Field, Field, Field, [Field; L], [Field; L], [Field; L]) {
-    for i in 0..L {
-        // Round B's e0_quotients_chunk is an independent witness from Round A's - neither round
-        // commits to e0is/e0_quotients, so there is no cross-round binding forcing them to
-        // match, and Round A's own range check (if present) provides no protection here. This
-        // range check on Round B's copy is the one that actually matters: e0is_partial below
-        // feeds e0is_at_gamma, which reaches the identity check unmediated by any other bound.
-        // See user_data_encryption_ct0.nr's check_range_bounds for the full analysis.
-        e0_quotients_chunk[i].range_check_2bounds::<USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT>(
-            USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS[i],
-            USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS[i],
-        );
-        for j in 0..CHUNK_SIZE {
-            assert(
-                e0_chunk.coefficients[j]
-                    == e0is_chunk[i].coefficients[j]
-                        + e0_quotients_chunk[i].coefficients[j] * QIS[i],
-            );
-        }
-    }
+    check_e0_chunk_crt_consistency::<CHUNK_SIZE, L, USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT>(
+        USER_DATA_ENCRYPTION_CT0_CHUNK_CONFIGS,
+        e0_chunk,
+        e0is_chunk,
+        e0_quotients_chunk,
+    );
 
-    let u_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, USER_DATA_ENCRYPTION_BIT_U>(
-        UDE_KIND_U,
+    let leaf = Ct0ChunkLeaf::<CHUNK_SIZE, R1_CHUNK_SIZE, L, USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_R2, USER_DATA_ENCRYPTION_BIT_R1>::new(
+        USER_DATA_ENCRYPTION_CT0_CHUNK_CONFIGS,
         chunk_idx,
         N,
         u_chunk,
-    );
-    let e0_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, USER_DATA_ENCRYPTION_BIT_E0>(
-        UDE_KIND_CT0_E0,
-        chunk_idx,
-        N,
         e0_chunk,
-    );
-    let k1_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, USER_DATA_ENCRYPTION_BIT_K>(
-        UDE_KIND_CT0_K1,
-        chunk_idx,
-        N,
         k1_chunk,
-    );
-    let r2_commit = compute_ude_multi_chunk_commitment::<CHUNK_SIZE, L, USER_DATA_ENCRYPTION_BIT_R2>(
-        UDE_KIND_CT0_R2,
-        chunk_idx,
-        N,
         r2is_chunk,
-    );
-    let r1_commit = compute_ude_multi_chunk_commitment::<R1_CHUNK_SIZE, L, USER_DATA_ENCRYPTION_BIT_R1>(
-        UDE_KIND_CT0_R1,
-        chunk_idx,
-        N,
         r1is_chunk,
     );
+    let (u_commit, e0_commit, k1_commit, r2_commit, r1_commit) = leaf.commitments();
 
-    let offset = N - ((chunk_idx + 1) * CHUNK_SIZE);
-    let gamma_pow = gamma.pow_32(offset as Field);
+    let gamma_pow = chunk_gamma_pow(N, CHUNK_SIZE, chunk_idx, gamma);
 
     let u_partial = u_chunk.eval(gamma) * gamma_pow;
     let k1_partial = k1_chunk.eval(gamma) * gamma_pow;
@@ -105,9 +66,7 @@ fn main(
         r2i_partial[i] = r2is_chunk[i].eval(gamma) * gamma_pow;
     }
 
-    let two_n = 2 * N;
-    let r1_offset = two_n - ((chunk_idx + 1) * R1_CHUNK_SIZE);
-    let r1_gamma_pow = gamma.pow_32(r1_offset as Field);
+    let r1_gamma_pow = chunk_gamma_pow(2 * N, R1_CHUNK_SIZE, chunk_idx, gamma);
     let mut r1i_partial: [Field; L] = [0; L];
     for i in 0..L {
         r1i_partial[i] = r1is_chunk[i].eval(gamma) * r1_gamma_pow;

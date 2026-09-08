@@ -4,26 +4,19 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Chunking-comparison branch: verifies the two `ct0_eval_chunk_main` leaf proofs directly
-//! (N_CHUNKS=2 - no intermediate pair level needed). Both leaves hold raw sensitive witness data,
-//! so both are ZK-verified. Checks they agree on `gamma`, computes the five root commitments
-//! (for binding against Round A's `ct0_chunk_main_root`), and sums the two chunks' partial
-//! evaluations into the full `u_at_gamma`/`k1_at_gamma`/`e0is_at_gamma`/`r2i_at_gamma`/
-//! `r1i_at_gamma`. This output feeds directly into `ct0_eval_chunk_identity` - r1 no longer has
-//! its own root/combine circuits.
+//! Verifies the two `ct0_eval_chunk_main` leaf proofs directly - at N_CHUNKS=2 no intermediate
+//! pair level is needed. Both leaves hold raw sensitive witness data, so both are ZK-verified.
+//! Checks they agree on `gamma`, computes the five root commitments (for binding against Round
+//! A's `ct0_chunk_main_root`), and sums the two chunks' partial evaluations into the full
+//! `u_at_gamma`/`k1_at_gamma`/`e0is_at_gamma`/`r2i_at_gamma`/`r1i_at_gamma`. This output feeds
+//! directly into `ct0_eval_chunk_identity`.
 
 use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
-use lib::configs::default::threshold::{
-    L, N, USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS,
-    USER_DATA_ENCRYPTION_R1_N_CHUNKS as R1_N_CHUNKS,
-};
-use lib::math::commitments::{
-    compute_ude_chunk_root_commitment, UDE_KIND_CT0_E0, UDE_KIND_CT0_K1, UDE_KIND_CT0_R1,
-    UDE_KIND_CT0_R2, UDE_KIND_U,
-};
+use lib::configs::default::threshold::{L, N, USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS};
+use lib::core::threshold::user_data_encryption_chunk::ct0_chunk_roots;
 
 global CHUNK_SIZE: u32 = N / N_CHUNKS;
-global R1_CHUNK_SIZE: u32 = (2 * N) / R1_N_CHUNKS;
+global R1_CHUNK_SIZE: u32 = 2 * CHUNK_SIZE;
 global LEAF_LEN: u32 = 9 + (3 * L);
 
 fn main(
@@ -92,15 +85,16 @@ fn main(
 
     assert(leaf0_gamma == leaf1_gamma, "gamma mismatch");
 
-    let u_root = compute_ude_chunk_root_commitment(UDE_KIND_U, N, CHUNK_SIZE, [leaf0_u, leaf1_u]);
-    let e0_root =
-        compute_ude_chunk_root_commitment(UDE_KIND_CT0_E0, N, CHUNK_SIZE, [leaf0_e0, leaf1_e0]);
-    let k1_root =
-        compute_ude_chunk_root_commitment(UDE_KIND_CT0_K1, N, CHUNK_SIZE, [leaf0_k1, leaf1_k1]);
-    let r2_root =
-        compute_ude_chunk_root_commitment(UDE_KIND_CT0_R2, N, CHUNK_SIZE, [leaf0_r2, leaf1_r2]);
-    let r1_root =
-        compute_ude_chunk_root_commitment(UDE_KIND_CT0_R1, N, R1_CHUNK_SIZE, [leaf0_r1, leaf1_r1]);
+    let (u_root, e0_root, k1_root, r2_root, r1_root) = ct0_chunk_roots(
+        N,
+        CHUNK_SIZE,
+        R1_CHUNK_SIZE,
+        [leaf0_u, leaf1_u],
+        [leaf0_e0, leaf1_e0],
+        [leaf0_k1, leaf1_k1],
+        [leaf0_r2, leaf1_r2],
+        [leaf0_r1, leaf1_r1],
+    );
 
     let u_at_gamma = leaf0_u_partial + leaf1_u_partial;
     let k1_at_gamma = leaf0_k1_partial + leaf1_k1_partial;

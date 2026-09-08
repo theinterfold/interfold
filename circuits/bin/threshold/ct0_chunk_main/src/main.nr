@@ -4,52 +4,26 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Chunking-comparison branch: coefficient-level chunk leaf for ct0's merged main+r1 grid (P3).
-//! One instance of this circuit (same VK) is proven once per `chunk_idx` in `0..N_CHUNKS` (2 at
-//! this preset - the minimum that's still genuinely "chunking"), each handling a `CHUNK_SIZE = N
-//! / N_CHUNKS` slice of `u`/`e0`/`k1`/`r2is` and a `R1_CHUNK_SIZE = 2N / R1_N_CHUNKS` slice of
-//! `r1is` at the same index. `r1is` was originally its own grid (own leaf/root/combine family),
-//! but since `R1_N_CHUNKS == N_CHUNKS` its chunk boundaries already line up 1:1 with main's, so
-//! folding it into this leaf drops three circuit kinds (`ct0_chunk_r1`, `ct0_chunk_r1_root`,
-//! `ct0_chunk_combine_roots`) at the cost of a larger per-leaf gate count - still comfortably
-//! under 2M (~800K main + ~600K r1 ~= 1.4M), but with less headroom before `N_CHUNKS` needs to
-//! grow again as L increases, since main and r1 now share one 2M budget instead of two.
-//!
-//! Range-checks the slice, then emits one chunk commitment *per polynomial* (not bundled -
-//! `u_commitment`/`k1_commitment` must stay independently recoverable: the wrapper cross-checks
-//! ct0's and ct1's `u_commitment` directly, and `k1_commitment` survives into ct0's final output
-//! tuple). At N_CHUNKS=2, exactly 2 of these leaves combine directly into
-//! `ct0_chunk_main_root` - no intermediate pair/quad level needed.
+//! Round A leaf for ct0's merged main+r1 grid (P3). One instance of this circuit (same VK) is
+//! proven once per `chunk_idx` in `0..N_CHUNKS` (2 at this preset - the minimum that's still
+//! genuinely "chunking"). Range-checks its slice and commits to it; the per-slice logic lives in
+//! `lib::core::threshold::user_data_encryption_chunk`.
 //!
 //! `e0is`/`e0_quotients` and the CRT-consistency check deliberately live in Round B only
-//! (`ct0_eval_chunk_main`), not here. Round A never commits to `e0is`, so a copy of that check
-//! here would constrain nothing observable: the binding that matters runs entirely through Round
-//! B, where `e0is` is tied to `e0_chunk` by the CRT check plus the bounded quotient, and
-//! `e0_chunk` is in turn tied to Round A's `e0` by the top-level circuit's `e0_root` equality
-//! assert. Keeping it Round-B-only drops ~225K gates from this leaf, the tightest circuit in the
-//! tree.
-//!
-//! `r2is` and `r1is` are padded from their native degrees (`N-1` and `2N-1`) to `N` and `2N`
-//! coefficients respectively by one leading zero (see `Polynomial`'s descending-degree
-//! convention); the padding slot lives at global index 0, i.e. chunk_idx 0's local offset 0.
+//! (`ct0_eval_chunk_main`) - see `check_e0_chunk_crt_consistency` for why a copy here would
+//! constrain nothing observable. Keeping it Round-B-only also keeps this leaf, the tightest
+//! circuit in the tree, well clear of the 2M gate ceiling.
 
 use lib::configs::default::threshold::{
     L, N, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_R1,
-    USER_DATA_ENCRYPTION_BIT_R2, USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_E0_BOUND,
-    USER_DATA_ENCRYPTION_K1_LOW_BOUND, USER_DATA_ENCRYPTION_K1_UP_BOUND,
-    USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS, USER_DATA_ENCRYPTION_R1_LOW_BOUNDS,
-    USER_DATA_ENCRYPTION_R1_N_CHUNKS as R1_N_CHUNKS, USER_DATA_ENCRYPTION_R1_UP_BOUNDS,
-    USER_DATA_ENCRYPTION_R2_BOUNDS, USER_DATA_ENCRYPTION_U_BOUND,
+    USER_DATA_ENCRYPTION_BIT_R2, USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_CT0_CHUNK_CONFIGS,
+    USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS,
 };
+use lib::core::threshold::user_data_encryption_chunk::Ct0ChunkLeaf;
+use lib::math::polynomial::Polynomial;
 
 global CHUNK_SIZE: u32 = N / N_CHUNKS;
-global R1_CHUNK_SIZE: u32 = (2 * N) / R1_N_CHUNKS;
-
-use lib::math::commitments::{
-    compute_ude_chunk_commitment, compute_ude_multi_chunk_commitment, UDE_KIND_CT0_E0,
-    UDE_KIND_CT0_K1, UDE_KIND_CT0_R1, UDE_KIND_CT0_R2, UDE_KIND_U,
-};
-use lib::math::polynomial::Polynomial;
+global R1_CHUNK_SIZE: u32 = 2 * CHUNK_SIZE;
 
 fn main(
     chunk_idx: pub u32,
@@ -59,69 +33,21 @@ fn main(
     r2is_chunk: [Polynomial<CHUNK_SIZE>; L],
     r1is_chunk: [Polynomial<R1_CHUNK_SIZE>; L],
 ) -> pub (Field, Field, Field, Field, Field) {
-    assert(N_CHUNKS == R1_N_CHUNKS, "merged main+r1 grid requires equal chunk counts");
     assert(chunk_idx < N_CHUNKS);
 
-    if chunk_idx == 0 {
-        for i in 0..L {
-            assert(r2is_chunk[i].coefficients[0] == 0, "r2is padding coefficient must be zero");
-            assert(r1is_chunk[i].coefficients[0] == 0, "r1is padding coefficient must be zero");
-        }
-    }
-
-    u_chunk.range_check_2bounds::<USER_DATA_ENCRYPTION_BIT_U>(
-        USER_DATA_ENCRYPTION_U_BOUND,
-        USER_DATA_ENCRYPTION_U_BOUND,
-    );
-    e0_chunk.range_check_2bounds::<USER_DATA_ENCRYPTION_BIT_E0>(
-        USER_DATA_ENCRYPTION_E0_BOUND,
-        USER_DATA_ENCRYPTION_E0_BOUND,
-    );
-    k1_chunk.range_check_2bounds::<USER_DATA_ENCRYPTION_BIT_K>(
-        USER_DATA_ENCRYPTION_K1_UP_BOUND,
-        USER_DATA_ENCRYPTION_K1_LOW_BOUND,
-    );
-    for i in 0..L {
-        r2is_chunk[i].range_check_2bounds::<USER_DATA_ENCRYPTION_BIT_R2>(
-            USER_DATA_ENCRYPTION_R2_BOUNDS[i],
-            USER_DATA_ENCRYPTION_R2_BOUNDS[i],
-        );
-        r1is_chunk[i].range_check_2bounds::<USER_DATA_ENCRYPTION_BIT_R1>(
-            USER_DATA_ENCRYPTION_R1_UP_BOUNDS[i],
-            USER_DATA_ENCRYPTION_R1_LOW_BOUNDS[i],
-        );
-    }
-
-    let u_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, USER_DATA_ENCRYPTION_BIT_U>(
-        UDE_KIND_U,
+    let leaf = Ct0ChunkLeaf::<CHUNK_SIZE, R1_CHUNK_SIZE, L, USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_BIT_E0, USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_BIT_R2, USER_DATA_ENCRYPTION_BIT_R1>::new(
+        USER_DATA_ENCRYPTION_CT0_CHUNK_CONFIGS,
         chunk_idx,
         N,
         u_chunk,
-    );
-    let e0_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, USER_DATA_ENCRYPTION_BIT_E0>(
-        UDE_KIND_CT0_E0,
-        chunk_idx,
-        N,
         e0_chunk,
-    );
-    let k1_commit = compute_ude_chunk_commitment::<CHUNK_SIZE, USER_DATA_ENCRYPTION_BIT_K>(
-        UDE_KIND_CT0_K1,
-        chunk_idx,
-        N,
         k1_chunk,
-    );
-    let r2_commit = compute_ude_multi_chunk_commitment::<CHUNK_SIZE, L, USER_DATA_ENCRYPTION_BIT_R2>(
-        UDE_KIND_CT0_R2,
-        chunk_idx,
-        N,
         r2is_chunk,
-    );
-    let r1_commit = compute_ude_multi_chunk_commitment::<R1_CHUNK_SIZE, L, USER_DATA_ENCRYPTION_BIT_R1>(
-        UDE_KIND_CT0_R1,
-        chunk_idx,
-        N,
         r1is_chunk,
     );
 
-    (u_commit, e0_commit, k1_commit, r2_commit, r1_commit)
+    leaf.check_padding();
+    leaf.check_range_bounds();
+
+    leaf.commitments()
 }

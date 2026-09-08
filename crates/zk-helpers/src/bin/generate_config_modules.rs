@@ -187,10 +187,10 @@ fn render_threshold(preset: BfvPreset) -> Result<String> {
     // minimum that's still genuinely "chunking" (one fewer and it degenerates to the
     // witness-group-split design) - it also means every grid's leaves combine directly into a
     // root with no intermediate pair/quad level, minimizing total proving instances while every
-    // circuit still measures well under the 2M gate ceiling. Each grid's own chunk width is
-    // computed locally (main: N/N_CHUNKS, r1/p1: 2N/R1_N_CHUNKS) rather than shared, since r1/p1
-    // is twice as long at the same chunk count.
-    let (udec_n_chunks, udec_r1_n_chunks) = (2u32, 2u32);
+    // circuit still measures well under the 2M gate ceiling. r1is/p1is live in the same merged
+    // leaf, sliced at the same `chunk_idx`, so they share this count: their chunk width is simply
+    // twice the main one (`2 * CHUNK_SIZE`), derived in each circuit rather than configured.
+    let udec_n_chunks = 2u32;
 
     let header = format!(
         "{LICENSE}
@@ -198,6 +198,8 @@ use crate::core::threshold::decrypted_shares_aggregation::Configs as DecryptedSh
 use crate::core::threshold::pk_aggregation::Configs as PkAggregationConfigs;
 use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;
 use crate::core::threshold::share_decryption::Configs as ShareDecryptionConfigs;
+use crate::core::threshold::user_data_encryption_chunk::Ct0ChunkConfigs as UserDataEncryptionCt0ChunkConfigs;
+use crate::core::threshold::user_data_encryption_chunk::Ct1ChunkConfigs as UserDataEncryptionCt1ChunkConfigs;
 use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncryptionCt0Configs;
 use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
 use crate::math::polynomial::Polynomial;
@@ -387,18 +389,37 @@ pub global USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS: [Field; L] = [{}];",
         &format!(
             "// Not a cryptographic parameter - see the comment at this constant's call site in
 // generate_config_modules.rs for the sizing rationale (N_CHUNKS=2 is the minimum that's
-// still genuinely \"chunking\"). Each grid's own chunk width is computed locally
-// (N / USER_DATA_ENCRYPTION_N_CHUNKS for the main grid, (2*N) / USER_DATA_ENCRYPTION_R1_N_CHUNKS
-// for the r1/p1 grid) rather than shared, since r1/p1 is twice as long at the same chunk count.
-
-// Main grid: covers u, e0, k1, r2is (ct0) / u, e1, p2is (ct1) - everything of length N.
-// r2is/p2is (degree N-1) are padded to N by one always-zero top coefficient.
+// still genuinely \"chunking\").
+//
+// One count covers the whole merged grid: u, e0, k1, r2is (ct0) / u, e1, p2is (ct1) - everything
+// of length N - plus r1is/p1is, which the same chunk leaf slices at the same `chunk_idx`. r2is/p2is
+// (degree N-1) are padded to N and r1is/p1is (degree 2N-1) to 2N by one always-zero top
+// coefficient, so a circuit's r1/p1 chunk width is always exactly twice its main chunk width
+// (`2 * CHUNK_SIZE`) and is derived that way rather than from a second count.
 pub global USER_DATA_ENCRYPTION_N_CHUNKS: u32 = {};
 
-// r1/p1 grid: covers r1is (ct0) / p1is (ct1), padded from degree 2N-1 to 2N by one
-// always-zero top coefficient.
-pub global USER_DATA_ENCRYPTION_R1_N_CHUNKS: u32 = {};",
-            udec_n_chunks, udec_r1_n_chunks,
+// Bounds the chunk leaves check against. Same values as the CT0/CT1 configs above - the chunk
+// structs are sized for one `CHUNK_SIZE` slice rather than a whole `Polynomial<N>`, and drop the
+// fields only the whole-witness circuits use (k0is, and qis on the ct1 side).
+pub global USER_DATA_ENCRYPTION_CT0_CHUNK_CONFIGS: UserDataEncryptionCt0ChunkConfigs<L> = UserDataEncryptionCt0ChunkConfigs::new(
+    QIS,
+    USER_DATA_ENCRYPTION_U_BOUND,
+    USER_DATA_ENCRYPTION_E0_BOUND,
+    USER_DATA_ENCRYPTION_K1_LOW_BOUND,
+    USER_DATA_ENCRYPTION_K1_UP_BOUND,
+    USER_DATA_ENCRYPTION_R1_LOW_BOUNDS,
+    USER_DATA_ENCRYPTION_R1_UP_BOUNDS,
+    USER_DATA_ENCRYPTION_R2_BOUNDS,
+    USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS,
+);
+
+pub global USER_DATA_ENCRYPTION_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = UserDataEncryptionCt1ChunkConfigs::new(
+    USER_DATA_ENCRYPTION_U_BOUND,
+    USER_DATA_ENCRYPTION_E1_BOUND,
+    USER_DATA_ENCRYPTION_P1_BOUNDS,
+    USER_DATA_ENCRYPTION_P2_BOUNDS,
+);",
+            udec_n_chunks,
         ),
     );
 
