@@ -21,6 +21,8 @@ contract MockInterfold {
   uint256 public mockRandomnessRequestTimeout;
   uint256 public mockSortitionSubmissionWindow;
   uint256 public mockDkgWindow;
+  /// @dev Defaults to the value the timing tests relied on before it was settable.
+  uint256 public mockComputeWindow = 100;
 
   uint256 public nextE3Id;
 
@@ -124,7 +126,11 @@ contract MockInterfold {
   }
 
   function getE3TimeoutConfig(uint256) external view returns (IInterfold.E3TimeoutConfig memory) {
-    return IInterfold.E3TimeoutConfig({ dkgWindow: mockDkgWindow, computeWindow: 100, decryptionWindow: 100 });
+    return IInterfold.E3TimeoutConfig({ dkgWindow: mockDkgWindow, computeWindow: mockComputeWindow, decryptionWindow: 100 });
+  }
+
+  function setComputeWindow(uint256 computeWindow) external {
+    mockComputeWindow = computeWindow;
   }
 
   function ciphernodeRegistry() external view returns (ICiphernodeRegistry) {
