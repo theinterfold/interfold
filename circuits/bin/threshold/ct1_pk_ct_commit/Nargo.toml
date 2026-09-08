@@ -1,5 +1,5 @@
 [package]
-name = "ct1_eval_ct"
+name = "ct1_pk_ct_commit"
 type = "bin"
 authors = [""]
 

@@ -4,23 +4,26 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Chunking-comparison branch: verifies `ct1_chunk_main_root` (now covers all four witness
-//! groups - u/e1/p2/p1 merged into one grid, so there's no separate combine-roots step) and
-//! `ct1_chunk_pk_ct_combine` (both non-ZK), gathering every commitment the ct1 challenge depends
-//! on, then derives `gamma`. Same replacement the witness-group-split branch's
-//! `ct1_abcd_combine` makes: the transcript hashes commitments/roots instead of raw
-//! coefficients.
+//! Chunking-comparison branch: verifies `ct1_chunk_main_root` (non-ZK - covers all four witness
+//! groups, u/e1/p2/p1 merged into one grid) and `ct1_pk_ct_commit` (ZK - holds raw
+//! `pk1is`/`ct1is` witness directly, no combine step needed since it was never recursive to
+//! begin with), gathering every commitment the ct1 challenge depends on, then derives `gamma`.
+//! Same replacement the witness-group-split branch's `ct1_abcd_combine` makes: the transcript
+//! hashes commitments/roots instead of raw coefficients.
 //!
 //! Unlike ct0, ct1's batching coefficients are `gammas[L..2L]` for every limb (no `i == 0`
 //! special-case) - see `verify_evaluations` in the original `UserDataEncryptionCt1`.
 //!
-//! Both verified circuits themselves recursively verify two inner proofs, so each declares its
-//! own `pub` key-hash parameters (`leaf0_key_hash`/`leaf1_key_hash` on `ct1_chunk_main_root`,
-//! `pk_key_hash`/`ct_key_hash` on `ct1_chunk_pk_ct_combine`) - those are part of *their* real
-//! public inputs, not an internal detail, so this circuit must reconstruct the full public-input
-//! vector including them, not just the return tuple.
+//! `ct1_chunk_main_root` itself recursively verifies two inner proofs, so it declares its own
+//! `pub leaf0_key_hash`/`leaf1_key_hash` parameters ahead of its return tuple in its public
+//! inputs - `roots_leaf0_key_hash`/`roots_leaf1_key_hash` below account for those 2 leading
+//! fields. `ct1_pk_ct_commit` has no such params (it doesn't itself verify anything), so its
+//! public inputs are exactly its two-commitment return tuple.
 
-use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
+use bb_proof_verification::{
+    UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
+    verify_honk_proof_non_zk,
+};
 use lib::configs::default::threshold::L;
 use lib::math::commitments::compute_user_data_encryption_ct1_challenge;
 
@@ -35,9 +38,7 @@ fn main(
     p1_root: Field,
     roots_key_hash: pub Field,
     pk_ct_vk: UltraHonkVerificationKey,
-    pk_ct_proof: UltraHonkProof,
-    pk_key_hash_pub: Field,
-    ct_key_hash_pub: Field,
+    pk_ct_proof: UltraHonkZKProof,
     pk1_commitment: Field,
     ct1_commitment: Field,
     pk_ct_key_hash: pub Field,
@@ -48,10 +49,10 @@ fn main(
         [roots_leaf0_key_hash, roots_leaf1_key_hash, u_root, e1_root, p2_root, p1_root],
         roots_key_hash,
     );
-    verify_honk_proof_non_zk(
+    verify_honk_proof(
         pk_ct_vk,
         pk_ct_proof,
-        [pk_key_hash_pub, ct_key_hash_pub, pk1_commitment, ct1_commitment],
+        [pk1_commitment, ct1_commitment],
         pk_ct_key_hash,
     );
 

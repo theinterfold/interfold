@@ -9,12 +9,12 @@
 //! so its work is split by coefficient-level chunking into one merged grid - `u`/`e1`/`p2is`/
 //! `p1is` together, 2 chunks - each chunk range-checked independently and combined directly into
 //! a root (N_CHUNKS=2 needs no intermediate pair level): `ct1_chunk_main` (leaves, 2 instances)
-//! -> `ct1_chunk_main_root` (verifies both leaves directly) + separate `ct1_pk_commit`/
-//! `ct1_ct_commit` -> `ct1_chunk_pk_ct_combine` -> `ct1_chunk_gamma` (verifies
-//! `ct1_chunk_main_root` and `ct1_chunk_pk_ct_combine`, derives gamma). Round B
-//! (`ct1_eval_chunk_*`) mirrors this shape to evaluate every chunk at gamma and sum the partial
-//! evaluations, converging on `ct1_eval_chunk_identity` (the actual Schwartz-Zippel identity
-//! check).
+//! -> `ct1_chunk_main_root` (verifies both leaves directly) + separate `ct1_pk_ct_commit`
+//! (commits `pk1is` and `ct1is` together - never recursive, so no combine step is needed) ->
+//! `ct1_chunk_gamma` (verifies `ct1_chunk_main_root` and `ct1_pk_ct_commit`, derives gamma).
+//! Round B (`ct1_eval_chunk_*`) mirrors this shape to evaluate every chunk at gamma and sum the
+//! partial evaluations, converging on `ct1_eval_chunk_identity` (the actual Schwartz-Zippel
+//! identity check).
 //!
 //! This circuit verifies both final proofs and checks every commitment and batching coefficient
 //! they produced agree. Output shape matches the witness-group-split branch's top-level circuit

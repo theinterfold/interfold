@@ -4,12 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Chunking-comparison branch: verifies `ct0_eval_chunk_main_root` (now covers all five witness
-//! groups directly - no separate combine-roots step) and `ct0_eval_chunk_pk_ct_combine` (both
-//! non-ZK), then performs the actual ct0 Schwartz-Zippel identity check - the one place all five
-//! witness groups' evaluations are simultaneously available. Replicates the monolithic circuit's
-//! `verify_evaluations` exactly (same as the witness-group-split branch's
-//! `ct0_eval_abcde_combine`).
+//! Chunking-comparison branch: verifies `ct0_eval_chunk_main_root` (non-ZK - covers all five
+//! witness groups directly) and `ct0_eval_pk_ct` (ZK - holds raw `pk0is`/`ct0is` witness
+//! directly, no combine step needed), then performs the actual ct0 Schwartz-Zippel identity
+//! check - the one place all five witness groups' evaluations are simultaneously available.
+//! Replicates the monolithic circuit's `verify_evaluations` exactly (same as the
+//! witness-group-split branch's `ct0_eval_abcde_combine`).
 //!
 //! `ct0_batching_coeffs` (`gammas[0..L]` from `ct0_chunk_gamma`) is taken as a plain input, not
 //! verified against Round A within this circuit - the top-level `user_data_encryption_ct0`
@@ -18,12 +18,17 @@
 //! `ct0_eval_chunk_main_root` itself recursively verifies two leaf proofs, so it declares its own
 //! `pub leaf0_key_hash`/`leaf1_key_hash` parameters ahead of its return tuple in its public
 //! inputs - `ROOTS_LEN` and the indices below account for those 2 leading fields.
+//! `ct0_eval_pk_ct` has only one such param, `gamma` (needed to derive its own per-limb
+//! evaluations), ahead of its four-element return tuple.
 
-use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
+use bb_proof_verification::{
+    UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
+    verify_honk_proof_non_zk,
+};
 use lib::configs::default::threshold::{L, N, QIS, USER_DATA_ENCRYPTION_K0IS};
 
 global ROOTS_LEN: u32 = 10 + (3 * L);
-global PK_CT_LEN: u32 = 5 + (2 * L);
+global PK_CT_LEN: u32 = 3 + (2 * L);
 
 fn main(
     roots_vk: UltraHonkVerificationKey,
@@ -31,16 +36,16 @@ fn main(
     roots_public_inputs: [Field; ROOTS_LEN],
     roots_key_hash: pub Field,
     pk_ct_vk: UltraHonkVerificationKey,
-    pk_ct_proof: UltraHonkProof,
+    pk_ct_proof: UltraHonkZKProof,
     pk_ct_public_inputs: [Field; PK_CT_LEN],
     pk_ct_key_hash: pub Field,
     ct0_batching_coeffs: pub [Field; L],
 ) -> pub (Field, Field, Field, Field, Field, Field, Field, Field) {
     verify_honk_proof_non_zk(roots_vk, roots_proof, roots_public_inputs, roots_key_hash);
-    verify_honk_proof_non_zk(pk_ct_vk, pk_ct_proof, pk_ct_public_inputs, pk_ct_key_hash);
+    verify_honk_proof(pk_ct_vk, pk_ct_proof, pk_ct_public_inputs, pk_ct_key_hash);
 
     let gamma = roots_public_inputs[2];
-    assert(gamma == pk_ct_public_inputs[2], "gamma mismatch");
+    assert(gamma == pk_ct_public_inputs[0], "gamma mismatch");
     assert(gamma == ct0_batching_coeffs[0], "gamma mismatch with batching coefficients");
 
     let u_root = roots_public_inputs[3];
@@ -59,15 +64,15 @@ fn main(
         r1i_at_gamma[i] = roots_public_inputs[10 + (2 * L) + i];
     }
 
-    let pk0_commitment = pk_ct_public_inputs[3];
+    let pk0_commitment = pk_ct_public_inputs[1];
     let mut pk0is_at_gamma: [Field; L] = [0; L];
     for i in 0..L {
-        pk0is_at_gamma[i] = pk_ct_public_inputs[4 + i];
+        pk0is_at_gamma[i] = pk_ct_public_inputs[2 + i];
     }
-    let ct0_commitment = pk_ct_public_inputs[4 + L];
+    let ct0_commitment = pk_ct_public_inputs[2 + L];
     let mut ct0is_at_gamma: [Field; L] = [0; L];
     for i in 0..L {
-        ct0is_at_gamma[i] = pk_ct_public_inputs[5 + L + i];
+        ct0is_at_gamma[i] = pk_ct_public_inputs[3 + L + i];
     }
 
     let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;

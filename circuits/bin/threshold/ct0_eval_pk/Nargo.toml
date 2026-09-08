@@ -1,7 +1,0 @@
-[package]
-name = "ct0_eval_pk"
-type = "bin"
-authors = [""]
-
-[dependencies]
-lib = { path = "../../../lib" }

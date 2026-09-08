@@ -1,7 +1,0 @@
-[package]
-name = "ct0_ct_commit"
-type = "bin"
-authors = [""]
-
-[dependencies]
-lib = { path = "../../../lib" }

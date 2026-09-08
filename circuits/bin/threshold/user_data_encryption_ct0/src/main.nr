@@ -10,11 +10,11 @@
 //! chunks - each chunk range-checked independently and combined through a two-level tree (max 2
 //! recursive verifications per circuit): `ct0_chunk_main` (leaves, 2 instances) ->
 //! `ct0_chunk_main_root` (verifies both leaves directly, no intermediate pair level) + separate
-//! `ct0_pk_commit`/`ct0_ct_commit` -> `ct0_chunk_pk_ct_combine` -> `ct0_chunk_gamma` (verifies
-//! `ct0_chunk_main_root` and `ct0_chunk_pk_ct_combine`, derives gamma). Round B
-//! (`ct0_eval_chunk_*`) mirrors this shape to evaluate every chunk at gamma and sum the partial
-//! evaluations, converging on `ct0_eval_chunk_identity` (the actual Schwartz-Zippel identity
-//! check).
+//! `ct0_pk_ct_commit` (commits `pk0is` and `ct0is` together - never recursive, so no combine
+//! step is needed) -> `ct0_chunk_gamma` (verifies `ct0_chunk_main_root` and `ct0_pk_ct_commit`,
+//! derives gamma). Round B (`ct0_eval_chunk_*`) mirrors this shape to evaluate every chunk at
+//! gamma and sum the partial evaluations, converging on `ct0_eval_chunk_identity` (the actual
+//! Schwartz-Zippel identity check).
 //!
 //! This circuit verifies both final proofs and checks every commitment and batching coefficient
 //! they produced agree - closing the binding that stops a prover from range-checking one witness
