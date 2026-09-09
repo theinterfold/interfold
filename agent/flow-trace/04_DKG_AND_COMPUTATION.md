@@ -735,7 +735,8 @@ phase.
         │  │       │  │  onCommitteePublished(e3Id, pk) {   │  │
         │  │       │  │    require(stage==CommitteeFinalized) │  │
         │  │       │  │    require(now <= dkgDeadline)       │  │
-        │  │       │  │    require(now <= inputWindow[1])    │  │
+        │  │       │  │    require(block.timestamp <=         │  │
+        │  │       │  │      inputWindow[1])                  │  │
         │  │       │  │    e3.committeePublicKey = pk         │  │
         │  │       │  │    stage = KeyPublished               │  │
         │  │       │  │    computeDeadline = max(now,         │  │
