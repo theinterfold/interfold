@@ -2072,22 +2072,141 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         expulsionProof,
       );
       await time.increase(ONE_DAY + 1);
+      const operator3Recipient = await computeProvider.getAddress();
+      const operator1Before = await e3RefundManager.pendingSlashedClaim(
+        firstE3Id,
+        usdcAddress,
+        operator1Recipient,
+      );
+      const operator3Before = await e3RefundManager.pendingSlashedClaim(
+        firstE3Id,
+        usdcAddress,
+        operator3Recipient,
+      );
+      expect(operator1Before).to.equal(0);
       await slashingManager.executeSlash(expulsionProposalId);
 
-      // The redistribution must skip operator1: this round penalized it, so
-      // none of its own penalty can come back to it.
+      // Two things move here. (1) operator2's held 25 came entirely from
+      // operator1's penalty, so re-sharing it must skip operator1 and go to
+      // operator3 alone. (2) operator2's own 50 penalty is a new penalty, split
+      // between operator1 and operator3, 25 each; operator1 is entitled to
+      // that share. So operator1 gains exactly 25 and operator3 gains 50:
+      // nothing of operator1's own penalty came back to operator1.
+      const penalty = ethers.parseUnits("50", 6);
       expect(
-        await e3RefundManager.pendingSlashedClaim(
+        (await e3RefundManager.pendingSlashedClaim(
           firstE3Id,
           usdcAddress,
           operator1Recipient,
-        ),
-      ).to.equal(0);
+        )) - operator1Before,
+      ).to.equal(penalty / 2n);
+      expect(
+        (await e3RefundManager.pendingSlashedClaim(
+          firstE3Id,
+          usdcAddress,
+          operator3Recipient,
+        )) - operator3Before,
+      ).to.equal(penalty);
       // Custody still covers what the contract says it owes.
       expect(
         await usdcToken.balanceOf(await e3RefundManager.getAddress()),
       ).to.be.gte(await e3RefundManager.tokenLiability(usdcAddress));
     });
+
+    for (const [label, order] of [
+      ["A then B", [0, 1]],
+      ["B then A", [1, 0]],
+    ] as const) {
+      it(`shares each non-expelling penalty with every other member (${label})`, async function () {
+        const {
+          interfold,
+          e3RefundManager,
+          slashingManager,
+          usdcToken,
+          makeRequest,
+          owner,
+          requester,
+          treasury,
+          computeProvider,
+          operator1,
+          operator2,
+          operator3,
+          setupOperator,
+          transferBondOwner,
+          finalizeAndPublishCommittee,
+        } = await loadFixture(setup);
+
+        for (const operator of [operator1, operator2, operator3]) {
+          await setupOperator(operator);
+        }
+        await transferBondOwner(operator1, requester);
+        await transferBondOwner(operator2, treasury);
+        await transferBondOwner(operator3, computeProvider);
+
+        await slashingManager.connect(owner).setSlashPolicy(REASON_PT_1, {
+          ticketPenalty: ethers.parseUnits("50", 6),
+          ciphernodeBondPenalty: 0n,
+          requiresProof: true,
+          proofVerifier: ethers.ZeroAddress,
+          banNode: false,
+          appealWindow: 0,
+          enabled: true,
+          affectsCommittee: false,
+          failureReason: 0,
+        });
+
+        await makeRequest();
+        await finalizeAndPublishCommittee();
+
+        const e3 = await interfold.getE3(firstE3Id);
+        await time.increaseTo(
+          Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
+        );
+        await interfold.markE3Failed(firstE3Id);
+        await interfold.processE3Failure(firstE3Id);
+
+        const usdcAddress = await usdcToken.getAddress();
+        const members = [operator1, operator2, operator3];
+        const recipients = [requester, treasury, computeProvider];
+        const penalty = ethers.parseUnits("50", 6);
+
+        // Two non-expelling penalties, on A then B or B then A. A target is
+        // excluded only from its own penalty, so each penalty is split
+        // between the other two members and the outcome does not depend on
+        // the order the proposals execute in.
+        for (const targetIndex of order) {
+          const voters = members.filter((_, i) => i !== targetIndex);
+          const proof = await signAndEncodeAttestation(
+            voters,
+            firstE3Id,
+            await members[targetIndex].getAddress(),
+            await slashingManager.getAddress(),
+            1,
+          );
+          const proposalId = await slashingManager.totalProposals();
+          await slashingManager.proposeSlash(
+            firstE3Id,
+            await members[targetIndex].getAddress(),
+            proof,
+          );
+          await slashingManager.retrySlashRoute(proposalId);
+        }
+
+        const claim = async (i: number) =>
+          e3RefundManager.pendingSlashedClaim(
+            firstE3Id,
+            usdcAddress,
+            await recipients[i].getAddress(),
+          );
+        // A gets half of B's penalty, B gets half of A's, C gets half of both.
+        expect(await claim(0)).to.equal(penalty / 2n);
+        expect(await claim(1)).to.equal(penalty / 2n);
+        expect(await claim(2)).to.equal(penalty);
+        expect(
+          await usdcToken.balanceOf(await e3RefundManager.getAddress()),
+        ).to.be.gte(await e3RefundManager.tokenLiability(usdcAddress));
+      });
+    }
 
     it("does not return a non-expelling ticket penalty to its target", async function () {
       const {

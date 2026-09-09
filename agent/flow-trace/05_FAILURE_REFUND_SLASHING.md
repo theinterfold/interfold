@@ -297,6 +297,14 @@ SLASH RECIPIENT claims a token-specific entitlement:
 │  expulsion. Shares stay in _operatorEntitlements[e3Id][operator].heldSlash
 │  until this check passes, so a proposal opened after settlement still holds
 │  them and a shared recipient keeps independent per-operator entitlements
+├─ ZEN2-20 follow-up: heldSlash is one sum, so each credit also records its
+│  penalty target in _heldSlashFrom[e3Id][holder][target]. An expulsion
+│  re-shares the expelled holder's funds one bucket at a time, excluding that
+│  bucket's own target, so a penalty never returns to the operator it was
+│  raised against while every other member still takes its share of every
+│  other penalty. A round-wide "penalized" flag was rejected: it drops a
+│  target from later penalties too, so payouts would depend on proposal order.
+│  Buckets are cleared with the sum on every claim path
 ├─ Clear the claim and reduce actualToken's protected liability
 ├─ Transfer that exact token; base refunds never consume the protected reserve
 └─ Emit SlashedFundsClaimed(e3Id, caller, actualToken, amount)
