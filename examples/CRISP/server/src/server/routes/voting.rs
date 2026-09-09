@@ -229,15 +229,15 @@ async fn broadcast_encrypted_vote(
         }
     };
 
+    // The service commits the reservation in the step that writes the durable job and returns
+    // it on every path that admits nothing. Committing here, after the await, would let a
+    // client that closes the connection mid-stage cancel this handler and release quota for a
+    // job the background worker still holds.
     match availability
-        .stage_input(&e3_key, encoded_proof.to_vec())
+        .stage_input(&e3_key, encoded_proof.to_vec(), Some(reservation))
         .await
     {
         Ok(staged) => {
-            if staged.admitted {
-                // Durable work exists and can still spend relay funds after this response.
-                reservation.commit();
-            }
             if staged.view.status == "success" {
                 HttpResponse::Ok().json(staged.view)
             } else {
@@ -245,8 +245,6 @@ async fn broadcast_encrypted_vote(
             }
         }
         Err(error) => {
-            // Nothing durable was admitted, so the guard returns this request's own slot.
-            drop(reservation);
             if let Some(message) = input_rejection_message(&error) {
                 warn!("[e3_id={}] Vote rejected: {}", e3_key, error);
                 return HttpResponse::BadRequest().json(VoteResponse {
