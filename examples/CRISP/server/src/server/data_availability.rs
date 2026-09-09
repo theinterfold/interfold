@@ -393,7 +393,9 @@ pub struct AvailabilityJobView {
 /// reservation goes back to the window immediately.
 pub struct StagedInput {
     pub view: AvailabilityJobView,
-    /// True when this call created durable work that can spend relay funds.
+    /// True when this call created durable work that can spend relay funds. The reservation
+    /// is already settled by then; this is for callers and tests that want to know.
+    #[allow(dead_code)]
     pub admitted: bool,
 }
 
