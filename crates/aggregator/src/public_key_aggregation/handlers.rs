@@ -182,8 +182,10 @@ impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {
                 self.arm_node_proof_deadline(ctx, &ec);
             }
         } else {
-            // Demoted: stop counting down. The newly promoted aggregator owns the bound.
-            self.cancel_node_proof_deadline(ctx);
+            // Demoted: stop counting down and drop the persisted instant. The newly promoted
+            // aggregator owns the bound now.
+            let ec = msg.get_ctx().clone();
+            self.cancel_node_proof_deadline_with_context(ctx, &ec);
         }
     }
 }

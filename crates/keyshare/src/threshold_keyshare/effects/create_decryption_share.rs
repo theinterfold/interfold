@@ -126,6 +126,20 @@ impl ThresholdKeyshare {
         let msg: CalculateDecryptionShareResponse = res.try_into()?;
         let state = self.state.try_get()?;
         let e3_id = state.e3_id.clone();
+
+        // A restart replays this response, and the share may already be computed: the pre-crash
+        // handler transitions to `GeneratingDecryptionProof` once it publishes
+        // `ShareDecryptionProofPending`. Recomputing is not possible from that state and is not
+        // needed, because the C6 proof request is already in flight. Treat the late copy as the
+        // duplicate it is instead of raising a fault on a node that did nothing wrong.
+        let KeyshareState::Decrypting(_) = state.state else {
+            debug!(
+                e3_id = %e3_id,
+                state = ?state.state,
+                "Decryption share already computed for this request; ignoring the replayed response"
+            );
+            return Ok(());
+        };
         let decrypting: Decrypting = state.clone().try_into()?;
         let d_share_poly = msg.d_share_poly;
 

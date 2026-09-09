@@ -198,3 +198,64 @@ async fn the_node_proof_deadline_survives_a_restart() {
         "the outstanding party must still be identifiable after recovery"
     );
 }
+
+/// A demoted aggregator must give up the persisted deadline, not just its in-process timer.
+///
+/// Failover promotes the lowest-id standby when the active aggregator stops making progress, so
+/// the E3 changes hands mid-DKG. The promoted node arms its own bound; the demoted one must
+/// clear the instant it wrote, or durable state describes a wait that node is no longer
+/// performing and a later restart would reason from it. `arm_node_proof_deadline` always writes
+/// a fresh instant, so re-promotion stays correct either way — this is about not leaving a
+/// deadline behind that nothing owns.
+#[actix::test]
+async fn demotion_clears_the_persisted_node_proof_deadline() -> Result<()> {
+    // An aggregator part-way through collection, with one honest party still outstanding.
+    let state = awaiting_node_proofs(&[0, 1], &[0]);
+    let (mut aggregator, _history, _) = build_public_key_aggregator(state).await?;
+    aggregator.is_aggregator = true;
+    let ec = test_ctx(EffectsEnabled::new());
+
+    // Arming records an absolute instant in the persisted state.
+    aggregator.persist_node_proof_deadline(&ec, Some(1_700_000_000))?;
+    let Some(PublicKeyAggregatorState::GeneratingC5Proof {
+        node_proof_deadline_at,
+        ..
+    }) = aggregator.state.get()
+    else {
+        panic!("expected GeneratingC5Proof");
+    };
+    assert_eq!(
+        node_proof_deadline_at,
+        Some(1_700_000_000),
+        "arming must record the absolute instant"
+    );
+
+    // Demotion clears it: the promoted standby owns the bound now.
+    aggregator.persist_node_proof_deadline(&ec, None)?;
+    let Some(PublicKeyAggregatorState::GeneratingC5Proof {
+        node_proof_deadline_at,
+        dkg_node_proofs,
+        honest_party_ids,
+        ..
+    }) = aggregator.state.get()
+    else {
+        panic!("expected GeneratingC5Proof");
+    };
+    assert_eq!(
+        node_proof_deadline_at, None,
+        "a demoted aggregator must not leave a deadline describing a wait it is not performing"
+    );
+
+    // The outstanding party is unchanged, so the promoted standby inherits the same work.
+    let missing: Vec<u64> = honest_party_ids
+        .iter()
+        .filter(|id| !dkg_node_proofs.contains_key(id))
+        .copied()
+        .collect();
+    assert_eq!(
+        missing,
+        vec![1],
+        "demotion must not disturb which party is still owed"
+    );
+    Ok(())
+}

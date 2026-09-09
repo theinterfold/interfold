@@ -377,6 +377,18 @@ impl CiphernodeSelector {
             return Ok(());
         }
 
+        // Arm the round at the start of a phase as well as when aggregation inputs are ready.
+        //
+        // `ready_phases` is set by `AggregationInputsReady`, which the aggregator publishes only
+        // once it holds a threshold of shares (`VerifyingC6` or later for the plaintext phase).
+        // Arming solely on that signal leaves the collection window uncovered: an aggregator that
+        // dies between the phase starting and inputs becoming ready is never replaced, because no
+        // round exists for the timer to fire on. Observed on a 5-node swarm — the active
+        // aggregator was killed two seconds into the decryption phase and the E3 stalled
+        // permanently, with the surviving members each holding a usable decryption share.
+        //
+        // A real phase change re-arms with the full budget, so covering the collection window
+        // does not shorten the budget for the work that follows.
         let ready = phase.is_some_and(|phase| self.ready_phases.get(&e3_id) == Some(&phase));
         if phase_changed || phase.is_none() || ready {
             let now = self.clock.now_unix_secs();
@@ -385,7 +397,7 @@ impl CiphernodeSelector {
                 if phase_changed || phase.is_none() {
                     reconcile_phase(&mut state, &e3_id, None, now, &policy);
                 }
-                if ready {
+                if ready || phase_changed {
                     reconcile_phase(&mut state, &e3_id, phase, now, &policy);
                 }
                 Ok(state)

@@ -8,7 +8,7 @@ use crate::net_interface_handle::NetEventSubscriber;
 
 /// Called when we receive a PublishDocumentRequested event.
 ///
-/// Returns the notification that was gossiped so the caller can keep it for re-announcement.
+/// Returns the pointer to retain plus whether the initial gossip broadcast reached the mesh.
 pub async fn handle_publish_document_requested(
     tx: mpsc::Sender<NetCommand>,
     rx: NetEventSubscriber,
@@ -54,7 +54,7 @@ pub async fn handle_publish_document_requested(
 /// The two are separate because the DHT put and the gossip publish fail independently: the
 /// record can be durable while the broadcast finds no subscribed peers.
 #[derive(Debug)]
-pub(super) struct PublishOutcome {
+pub struct PublishOutcome {
     pub notification: DocumentPublishedNotification,
     pub broadcast: Result<()>,
 }

@@ -220,12 +220,33 @@ impl PublicKeyAggregator {
     }
 
     /// Cancel the bounded wait once every honest proof is in (or the E3 is finished).
+    ///
+    /// Also clears the persisted instant when a context is available. A demoted aggregator no
+    /// longer owns the bound — the promoted standby arms its own — so leaving the old deadline
+    /// in durable state would describe a wait this node is not performing. Re-promotion is
+    /// unaffected either way because `arm_node_proof_deadline` always writes a fresh instant.
     pub(in crate::actors::publickey_aggregator) fn cancel_node_proof_deadline(
         &mut self,
         ctx: &mut Context<Self>,
     ) {
         if let Some(handle) = self.node_proof_deadline.take() {
             ctx.cancel_future(handle);
+        }
+    }
+
+    /// Cancel the bounded wait and clear the persisted instant that described it.
+    pub(in crate::actors::publickey_aggregator) fn cancel_node_proof_deadline_with_context(
+        &mut self,
+        ctx: &mut Context<Self>,
+        ec: &EventContext<Sequenced>,
+    ) {
+        self.cancel_node_proof_deadline(ctx);
+        if let Err(err) = self.persist_node_proof_deadline(ec, None) {
+            error!(
+                e3_id = %self.e3_id,
+                error = %err,
+                "Failed to clear the node-proof deadline after demotion"
+            );
         }
     }
 

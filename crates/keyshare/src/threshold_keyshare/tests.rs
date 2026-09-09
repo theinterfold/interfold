@@ -801,3 +801,71 @@ async fn the_duplicate_classification_survives_a_restart() -> Result<()> {
     );
     Ok(())
 }
+
+/// A restart replays the decryption-share response after the share is already computed.
+///
+/// Observed on a 5-node swarm (chaos round 28): `kill -9` during decryption, then restart. The
+/// node replayed its own `CalculateDecryptionShare` compute response, but the pre-crash handler
+/// had already published `ShareDecryptionProofPending` and moved to `GeneratingDecryptionProof`.
+/// `TryInto<Decrypting>` then failed and raised `InterfoldError("Invalid state")` on a node that
+/// had done its job correctly. The C6 proof request was already in flight, so nothing was lost —
+/// only a spurious fault was reported, which is what an operator would chase.
+#[actix::test]
+async fn a_replayed_decryption_share_response_after_the_transition_is_ignored() -> Result<()> {
+    let generating = GeneratingDecryptionProof {
+        pk_share: ArcBytes::from_bytes(&[1]),
+        decryption_share: vec![ArcBytes::from_bytes(&[2])],
+        signed_pk_generation_proof: None,
+        signed_sk_share_computation_proof: None,
+        signed_e_sm_share_computation_proof: None,
+        signed_sk_share_encryption_proofs: Vec::new(),
+        signed_e_sm_share_encryption_proofs: Vec::new(),
+    };
+    let (actor, history, e3_id, repo) =
+        start_actor_with_state(KeyshareState::GeneratingDecryptionProof(generating)).await?;
+
+    let ctx = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        EffectsEnabled::new().into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(1)
+    .get_ctx()
+    .clone();
+
+    let replayed = TypedEvent::new(
+        ComputeResponse::trbfv(
+            TrBFVResponse::CalculateDecryptionShare(CalculateDecryptionShareResponse {
+                d_share_poly: vec![ArcBytes::from_bytes(&[3])],
+            }),
+            CorrelationId::new(),
+            e3_id.clone(),
+        ),
+        ctx,
+    );
+
+    actor.send(replayed).await?;
+
+    // The replay must not turn into a fault event.
+    let result = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
+    let errors: Vec<_> = result
+        .events
+        .iter()
+        .filter(|e| matches!(e.get_data(), InterfoldEventData::InterfoldError(_)))
+        .collect();
+    assert!(
+        errors.is_empty(),
+        "a replayed decryption-share response after the transition is a duplicate, not a fault; \
+         got {errors:?}"
+    );
+
+    // The already-computed share is untouched.
+    assert!(matches!(
+        repo.read().await?.expect("persisted keyshare state").state,
+        KeyshareState::GeneratingDecryptionProof(_)
+    ));
+
+    Ok(())
+}
