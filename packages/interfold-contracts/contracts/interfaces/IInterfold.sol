@@ -236,6 +236,10 @@ interface IInterfold {
     );
 
     /// @notice Emitted when a recipient claims their accrued E3 reward.
+    /// @dev ZEN2-20: covers both sources of one claim, the pre-upgrade balance
+    ///      held here and the operator-held escrow the refund manager pays to
+    ///      the same frozen recipient. `amount` is their sum, so a consumer
+    ///      that follows this event sees every withdrawal of an E3 reward.
     /// @param e3Id The ID of the E3 computation.
     /// @param account The claimant address.
     /// @param token The ERC20 fee token transferred.

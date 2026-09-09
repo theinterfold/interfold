@@ -824,31 +824,21 @@ contract Interfold is
     function onE3Failed(uint256 e3Id, uint8 reason) external {
         E3Stage current = _e3Stages[e3Id];
         E3Dependencies storage dependencies = _e3Dependencies[e3Id];
-        if (current == E3Stage.Failed) {
-            // ZEN2-04: the round already failed with a reason a caller
-            // recorded first. An expulsion that broke committee viability is
-            // the true cause, so correct a requester-paid reason. The stage
-            // stays Failed and `activeE3Count` is untouched: only the payer
-            // changes.
-            InterfoldLifecycle.reclassifyFailure(
+        // ZEN2-04: a round that already failed keeps its stage and its
+        // `activeE3Count`. Only a requester-paid reason is corrected, and only
+        // by the expulsion that broke committee viability.
+        if (
+            InterfoldLifecycle.reportFailure(
                 _e3FailureReasons,
                 msg.sender,
+                address(dependencies.registry),
                 address(dependencies.slashManager),
                 address(dependencies.refundManager),
                 e3Id,
+                uint8(current),
                 reason
-            );
-            return;
-        }
-        InterfoldLifecycle.validateReportedFailure(
-            msg.sender,
-            address(dependencies.registry),
-            address(dependencies.slashManager),
-            e3Id,
-            uint8(current),
-            reason
-        );
-        _markE3FailedWithReason(e3Id, current, FailureReason(reason));
+            )
+        ) _markE3FailedWithReason(e3Id, current, FailureReason(reason));
     }
 
     ////////////////////////////////////////////////////////////

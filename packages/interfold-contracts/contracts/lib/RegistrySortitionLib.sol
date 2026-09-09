@@ -10,6 +10,7 @@ import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IRandomnessProvider } from "../interfaces/IRandomnessProvider.sol";
+import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
 
 /// @notice Resolves entropy and updates candidate rankings for registry sortition.
 library RegistrySortitionLib {
@@ -371,6 +372,47 @@ library RegistrySortitionLib {
             failedProvider
         );
         emit ICiphernodeRegistry.RandomnessProviderSet(address(0));
+    }
+
+    /// @notice Validates every precondition for releasing a committee's obligations.
+    /// @dev One entry point so the registry encodes one argument list instead of four separate
+    ///      guards, each with its own revert data. A finalized committee did protocol work that
+    ///      peers can still accuse, so its collateral stays held until the slashing manager
+    ///      stops accepting accusations for the E3. A committee that never finalized has no
+    ///      accusable work, so its candidates release at terminal stage. `closeE3` clears the
+    ///      deadline only after it has passed, so a zero deadline also permits release.
+    /// @param stage The committee's current stage.
+    /// @param obligationsReleased Whether this committee already released.
+    /// @param e3Stage The E3's current stage.
+    /// @param slashingManager The slashing manager frozen for this E3.
+    /// @param e3Id The E3 whose committee is being released.
+    function validateCommitteeRelease(
+        ICiphernodeRegistry.CommitteeStage stage,
+        bool obligationsReleased,
+        IInterfold.E3Stage e3Stage,
+        ISlashingManager slashingManager,
+        uint256 e3Id
+    ) external view {
+        if (
+            stage != ICiphernodeRegistry.CommitteeStage.Requested &&
+            stage != ICiphernodeRegistry.CommitteeStage.Finalized
+        ) revert ICiphernodeRegistry.CommitteeNotFinalized();
+        if (obligationsReleased)
+            revert ICiphernodeRegistry.CommitteeObligationsAlreadyReleased(
+                e3Id
+            );
+        if (
+            e3Stage != IInterfold.E3Stage.Complete &&
+            e3Stage != IInterfold.E3Stage.Failed
+        ) revert ICiphernodeRegistry.E3NotTerminal(e3Id);
+        if (stage != ICiphernodeRegistry.CommitteeStage.Finalized) return;
+        uint64 submissionDeadline = slashingManager
+            .accusationSubmissionDeadline(e3Id);
+        if (block.timestamp <= submissionDeadline)
+            revert ICiphernodeRegistry.CommitteeAccusationWindowOpen(
+                e3Id,
+                submissionDeadline
+            );
     }
 
     /// @notice Sets the provider used by future requests.

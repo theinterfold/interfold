@@ -478,7 +478,7 @@ library InterfoldLifecycle {
     // prettier-ignore
     function validateReportedFailure(
         address caller, address registry, address slashManager, uint256 e3Id, uint8 current, uint8 reason
-    ) external pure {
+    ) public pure {
         if (caller != registry && caller != slashManager)
             revert IInterfold.OnlyCiphernodeRegistryOrSlashingManager();
         IInterfold.E3Stage stage = IInterfold.E3Stage(current);
@@ -513,14 +513,49 @@ library InterfoldLifecycle {
     /// @param refundManager The E3's request-time refund manager.
     /// @param e3Id The E3 identifier.
     /// @param reason The corrected reason.
-    function reclassifyFailure(
+    /// @param current The E3's current stage.
+    /// @param registry The E3's request-time registry.
+    /// @return markFailed True when the caller must still record the failure.
+    function reportFailure(
+        mapping(uint256 => IInterfold.FailureReason) storage failureReasons,
+        address caller,
+        address registry,
+        address slashManager,
+        address refundManager,
+        uint256 e3Id,
+        uint8 current,
+        uint8 reason
+    ) external returns (bool markFailed) {
+        if (IInterfold.E3Stage(current) != IInterfold.E3Stage.Failed) {
+            validateReportedFailure(
+                caller,
+                registry,
+                slashManager,
+                e3Id,
+                current,
+                reason
+            );
+            return true;
+        }
+        _reclassifyFailure(
+            failureReasons,
+            caller,
+            slashManager,
+            refundManager,
+            e3Id,
+            reason
+        );
+        return false;
+    }
+
+    function _reclassifyFailure(
         mapping(uint256 => IInterfold.FailureReason) storage failureReasons,
         address caller,
         address slashManager,
         address refundManager,
         uint256 e3Id,
         uint8 reason
-    ) external {
+    ) private {
         // Only the E3's own slashing manager corrects a reason, and only
         // through an expulsion that broke committee viability.
         if (caller != slashManager)

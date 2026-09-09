@@ -1954,6 +1954,141 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       ).to.equal(true);
     });
 
+    it("does not return a penalty to its target through a later expulsion", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        slashingManager,
+        usdcToken,
+        makeRequest,
+        owner,
+        requester,
+        treasury,
+        computeProvider,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+        transferBondOwner,
+        finalizeAndPublishCommittee,
+      } = await loadFixture(setup);
+
+      for (const operator of [operator1, operator2, operator3]) {
+        await setupOperator(operator);
+      }
+      // Give every operator its own recipient, so a per-recipient balance
+      // identifies exactly one operator.
+      await transferBondOwner(operator1, requester);
+      await transferBondOwner(operator2, treasury);
+      await transferBondOwner(operator3, computeProvider);
+
+      // A non-expelling penalty on operator1, then an expelling one on
+      // operator2. Redistributing operator2's held share must not hand any of
+      // operator1's own penalty back to operator1.
+      await slashingManager.connect(owner).setSlashPolicy(REASON_PT_1, {
+        ticketPenalty: ethers.parseUnits("50", 6),
+        ciphernodeBondPenalty: 0n,
+        requiresProof: true,
+        proofVerifier: ethers.ZeroAddress,
+        banNode: false,
+        appealWindow: 0,
+        enabled: true,
+        affectsCommittee: false,
+        failureReason: 0,
+      });
+      await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
+        ticketPenalty: ethers.parseUnits("50", 6),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
+        requiresProof: true,
+        proofVerifier: ethers.ZeroAddress,
+        banNode: false,
+        appealWindow: ONE_DAY,
+        enabled: true,
+        affectsCommittee: true,
+        failureReason: 0,
+      });
+
+      await makeRequest();
+      await finalizeAndPublishCommittee();
+
+      // Settle the round: a slash route is only distributed once the refund
+      // distribution exists.
+      const e3 = await interfold.getE3(firstE3Id);
+      await time.increaseTo(
+        Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
+      );
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
+
+      const operator1Address = await operator1.getAddress();
+      const operator2Address = await operator2.getAddress();
+      const usdcAddress = await usdcToken.getAddress();
+      const operator1Recipient = await requester.getAddress();
+      const operator2Recipient = await treasury.getAddress();
+
+      // Penalize operator1 without expelling it. Its penalty is shared out.
+      const penaltyProof = await signAndEncodeAttestation(
+        [operator2, operator3],
+        firstE3Id,
+        operator1Address,
+        await slashingManager.getAddress(),
+        1,
+      );
+      const penaltyProposalId = await slashingManager.totalProposals();
+      await slashingManager.proposeSlash(
+        firstE3Id,
+        operator1Address,
+        penaltyProof,
+      );
+      await slashingManager.retrySlashRoute(penaltyProposalId);
+
+      // operator1 is the target, so it receives none of its own penalty.
+      expect(
+        await e3RefundManager.pendingSlashedClaim(
+          firstE3Id,
+          usdcAddress,
+          operator1Recipient,
+        ),
+      ).to.equal(0);
+      expect(
+        await e3RefundManager.pendingSlashedClaim(
+          firstE3Id,
+          usdcAddress,
+          operator2Recipient,
+        ),
+      ).to.be.gt(0);
+
+      // Now expel operator2, which redistributes the share it was holding.
+      const expulsionProof = await signAndEncodeAttestation(
+        [operator1, operator3],
+        firstE3Id,
+        operator2Address,
+        await slashingManager.getAddress(),
+      );
+      const expulsionProposalId = await slashingManager.totalProposals();
+      await slashingManager.proposeSlash(
+        firstE3Id,
+        operator2Address,
+        expulsionProof,
+      );
+      await time.increase(ONE_DAY + 1);
+      await slashingManager.executeSlash(expulsionProposalId);
+
+      // The redistribution must skip operator1: this round penalized it, so
+      // none of its own penalty can come back to it.
+      expect(
+        await e3RefundManager.pendingSlashedClaim(
+          firstE3Id,
+          usdcAddress,
+          operator1Recipient,
+        ),
+      ).to.equal(0);
+      // Custody still covers what the contract says it owes.
+      expect(
+        await usdcToken.balanceOf(await e3RefundManager.getAddress()),
+      ).to.be.gte(await e3RefundManager.tokenLiability(usdcAddress));
+    });
+
     it("does not return a non-expelling ticket penalty to its target", async function () {
       const {
         interfold,

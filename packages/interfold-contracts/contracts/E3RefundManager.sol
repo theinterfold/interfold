@@ -138,6 +138,15 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     /// @notice Released or reallocated successful-E3 rewards by account.
     mapping(uint256 e3Id => mapping(address account => uint256 amount))
         internal _pendingHeldSuccessClaims;
+    /// @notice Operators that a slash proposal of this E3 has penalized.
+    /// @dev ZEN2-20 follow-up: a held slash share does not record the proposal
+    ///      that produced it, so redistribution cannot tell one penalty from
+    ///      another. Without this set, penalizing A and crediting B, then
+    ///      expelling B, returns part of A's own penalty to A. Append only,
+    ///      bounded by the committee size, and written where the target is
+    ///      known. Redistribution treats a member of this set as ineligible.
+    mapping(uint256 e3Id => mapping(address operator => bool penalized))
+        internal _e3PenalizedOperators;
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                       Modifiers                        //
@@ -579,6 +588,10 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         route.token = token;
         route.operator = operator;
         route.amount = amount;
+        // ZEN2-20 follow-up: remember the penalty target. A redistribution
+        // that happens later cannot recover the proposal, so record it where
+        // it is still known.
+        _e3PenalizedOperators[e3Id][operator] = true;
         _pendingSlashedByToken[e3Id][token] += amount;
         _increaseTokenLiability(token, amount);
 
@@ -651,7 +664,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         RefundDistribution storage dist = _distributions[e3Id];
         uint256 toHonestNodes = amount;
         uint256 toProtocol;
-        if (_eligibleNodeCount(e3Id, nodes, excludedOperator) == 0) {
+        if (_eligibleNodeCount(e3Id, nodes, excludedOperator, true) == 0) {
             // There is no honest service-provider recipient. Do not turn a
             // punitive slash into requester over-compensation.
             toProtocol = amount;
@@ -681,7 +694,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     ) internal {
         uint256 toNodes = (amount * _successSlashedNodeBpsFor(e3Id)) / BPS_BASE;
         uint256 toProtocol = amount - toNodes;
-        if (_eligibleNodeCount(e3Id, nodes, excludedOperator) == 0) {
+        if (_eligibleNodeCount(e3Id, nodes, excludedOperator, true) == 0) {
             toProtocol += toNodes;
             toNodes = 0;
         }
@@ -701,7 +714,14 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         address excludedOperator
     ) internal {
         if (amount == 0) return;
-        uint256 eligible = _eligibleNodeCount(e3Id, nodes, excludedOperator);
+        // ZEN2-20 follow-up: a penalized operator takes no share of any
+        // penalty in this round, so its own penalty cannot come back to it.
+        uint256 eligible = _eligibleNodeCount(
+            e3Id,
+            nodes,
+            excludedOperator,
+            true
+        );
         uint256 perNode = amount / eligible;
         uint256 distributed;
         for (uint256 i = 0; i < nodes.length; i++) {
@@ -709,7 +729,11 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             OperatorEntitlement storage entitlement = _operatorEntitlements[
                 e3Id
             ][operator];
-            if (operator == excludedOperator || entitlement.excluded) continue;
+            if (
+                operator == excludedOperator ||
+                entitlement.excluded ||
+                _e3PenalizedOperators[e3Id][operator]
+            ) continue;
             eligible--;
             uint256 nodeAmount = eligible == 0 ? amount - distributed : perNode;
             // ZEN2-20: every node share stays in its operator entitlement.
@@ -730,11 +754,26 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         address[] memory nodes,
         address excludedOperator
     ) internal view returns (uint256 count) {
+        return _eligibleNodeCount(e3Id, nodes, excludedOperator, false);
+    }
+
+    /// @dev `skipPenalized` drops every operator that a slash proposal of this
+    ///      E3 has penalized. Slash redistribution sets it, so a penalized
+    ///      operator never receives a share of any penalty in the round, not
+    ///      even one raised against a different member. A success reward is
+    ///      not a penalty, so that path leaves it false.
+    function _eligibleNodeCount(
+        uint256 e3Id,
+        address[] memory nodes,
+        address excludedOperator,
+        bool skipPenalized
+    ) internal view returns (uint256 count) {
         for (uint256 i = 0; i < nodes.length; i++) {
             address operator = nodes[i];
             if (
                 operator != excludedOperator &&
-                !_operatorEntitlements[e3Id][operator].excluded
+                !_operatorEntitlements[e3Id][operator].excluded &&
+                !(skipPenalized && _e3PenalizedOperators[e3Id][operator])
             ) count++;
         }
     }
@@ -881,7 +920,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         (address[] memory nodes, ) = ICiphernodeRegistry(
             _e3PolicySnapshots[e3Id].registry
         ).getActiveCommitteeNodes(e3Id);
-        if (_eligibleNodeCount(e3Id, nodes, operator) == 0) {
+        if (_eligibleNodeCount(e3Id, nodes, operator, true) == 0) {
             _creditTrackedTreasury(_treasuryFor(e3Id), token, amount);
             return;
         }
@@ -1526,5 +1565,5 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[43] private __gap;
+    uint256[42] private __gap;
 }

@@ -73,6 +73,9 @@ library InterfoldPricing {
     ///      that `account` is the frozen recipient of. Allocations held by a
     ///      pending expelling proposal, or forfeited by an executed one, are
     ///      skipped there, so this cannot pay an ineligible operator's share.
+    ///      One `RewardClaimed` covers both sources. Consumers follow this
+    ///      event for every withdrawal of an E3 reward, so paying the held
+    ///      escrow without it would hide those withdrawals.
     function claimReward(
         mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
         mapping(uint256 => IERC20) storage feeTokens,
@@ -83,11 +86,14 @@ library InterfoldPricing {
         amount = pendingRewards[e3Id][account];
         if (amount != 0) {
             pendingRewards[e3Id][account] = 0;
-            IERC20 token = feeTokens[e3Id];
-            _transferExact(token, account, amount);
-            emit RewardClaimed(e3Id, account, token, amount);
+            _transferExact(feeTokens[e3Id], account, amount);
         }
+        // The refund manager transfers this part itself and emits its own
+        // `HeldSuccessRewardClaimed`.
         amount += refundManager.claimHeldSuccessRewardFor(e3Id, account);
+        if (amount != 0) {
+            emit RewardClaimed(e3Id, account, feeTokens[e3Id], amount);
+        }
     }
 
     /// @notice Report everything `account` can claim for one E3.
