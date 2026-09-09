@@ -331,6 +331,14 @@ interface IE3RefundManager {
         address operator
     ) external returns (uint256 amount);
 
+    /// @notice Return how much of a holder's held slash share came from one penalty target.
+    /// @dev ZEN2-20 follow-up. The sum over every target equals `heldSlash`.
+    function heldSlashFrom(
+        uint256 e3Id,
+        address holder,
+        address target
+    ) external view returns (uint256 amount);
+
     /// @notice Return an operator's held successful-E3 reward and slash share.
     function operatorHeldRewards(
         uint256 e3Id,

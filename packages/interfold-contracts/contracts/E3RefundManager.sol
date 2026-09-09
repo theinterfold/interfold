@@ -67,6 +67,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 baseRiskExpulsions;
         bool excluded;
     }
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                 Storage Variables                      //
@@ -146,8 +147,11 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     ///      drops A from every later penalty in the round, so payouts depend on
     ///      proposal order. This map keeps the exclusion per originating target:
     ///      redistribution re-shares each bucket without that bucket's target
-    ///      only. Bounded by committee size squared; cleared with the sum on
-    ///      every claim and redistribution so the two never disagree.
+    ///      only. Walks key the committee's canonical `topNodes`, not the
+    ///      active roster: an expelled target leaves the roster while its
+    ///      bucket remains, and the roster walk would strand it. Bounded by
+    ///      committee size squared; cleared with the sum on every claim and
+    ///      redistribution so the two never disagree.
     mapping(uint256 e3Id => mapping(address holder => mapping(address target => uint256 amount)))
         internal _heldSlashFrom;
     ////////////////////////////////////////////////////////////
@@ -896,13 +900,16 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         (address[] memory nodes, ) = ICiphernodeRegistry(
             _e3PolicySnapshots[e3Id].registry
         ).getActiveCommitteeNodes(e3Id);
+        // Bucket keys are every member the committee ever had, so a target
+        // that was expelled since the credit is still found.
+        address[] memory targets = _canonicalCommittee(e3Id);
         mapping(address target => uint256 amount)
             storage buckets = _heldSlashFrom[e3Id][operator];
-        for (uint256 t = 0; t < nodes.length; t++) {
-            uint256 amount = buckets[nodes[t]];
+        for (uint256 t = 0; t < targets.length; t++) {
+            uint256 amount = buckets[targets[t]];
             if (amount == 0) continue;
-            buckets[nodes[t]] = 0;
-            _reshareHeldSlashBucket(e3Id, nodes, operator, nodes[t], amount);
+            buckets[targets[t]] = 0;
+            _reshareHeldSlashBucket(e3Id, nodes, operator, targets[t], amount);
         }
     }
 
@@ -952,17 +959,41 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
 
     /// @dev Drops every provenance bucket of a holder whose `heldSlash` was
     ///      paid out. Must run wherever `heldSlash` is zeroed by a claim, so the
-    ///      buckets never describe funds that already left.
-    function _clearHeldSlashProvenance(
-        uint256 e3Id,
-        address holder,
-        address[] memory nodes
-    ) internal {
+    ///      buckets never describe funds that already left. Keys are the
+    ///      committee's canonical members, so an expelled target is included.
+    function _clearHeldSlashProvenance(uint256 e3Id, address holder) internal {
+        address[] memory targets = _canonicalCommittee(e3Id);
         mapping(address target => uint256 amount)
             storage buckets = _heldSlashFrom[e3Id][holder];
-        for (uint256 t = 0; t < nodes.length; t++) {
-            if (buckets[nodes[t]] != 0) buckets[nodes[t]] = 0;
+        for (uint256 t = 0; t < targets.length; t++) {
+            if (buckets[targets[t]] != 0) buckets[targets[t]] = 0;
         }
+    }
+
+    /// @dev Every member the committee was finalized with, expelled or not.
+    ///      Read through `canonicalCommitteeNodeAt`, which works from
+    ///      finalization; `getCommitteeNodes` needs a published key, and a
+    ///      round can fail and be slashed before publication.
+    function _canonicalCommittee(
+        uint256 e3Id
+    ) internal view returns (address[] memory members) {
+        ICiphernodeRegistry registry = ICiphernodeRegistry(
+            _e3PolicySnapshots[e3Id].registry
+        );
+        (, , uint32 total, ) = registry.getCommitteeViability(e3Id);
+        members = new address[](total);
+        for (uint256 i = 0; i < total; i++) {
+            members[i] = registry.canonicalCommitteeNodeAt(e3Id, i);
+        }
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function heldSlashFrom(
+        uint256 e3Id,
+        address holder,
+        address target
+    ) external view returns (uint256 amount) {
+        return _heldSlashFrom[e3Id][holder][target];
     }
 
     function _redistributeHeldSuccess(
@@ -1308,10 +1339,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         amount = entitlement.heldSlash;
         require(amount > 0, NothingToClaim());
         entitlement.heldSlash = 0;
-        (address[] memory nodes, ) = ICiphernodeRegistry(
-            _e3PolicySnapshots[e3Id].registry
-        ).getActiveCommitteeNodes(e3Id);
-        _clearHeldSlashProvenance(e3Id, operator, nodes);
+        _clearHeldSlashProvenance(e3Id, operator);
         IERC20 token = _e3SlashTokens[e3Id];
         _decreaseTokenLiability(token, amount);
         _transferPreservingSlashedLiability(token, recipient, amount);
@@ -1521,7 +1549,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             } else {
                 amount += entitlement.heldSlash;
                 entitlement.heldSlash = 0;
-                _clearHeldSlashProvenance(e3Id, operator, nodes);
+                _clearHeldSlashProvenance(e3Id, operator);
             }
         }
     }

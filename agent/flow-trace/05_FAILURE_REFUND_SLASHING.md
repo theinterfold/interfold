@@ -304,7 +304,10 @@ SLASH RECIPIENT claims a token-specific entitlement:
 │  raised against while every other member still takes its share of every
 │  other penalty. A round-wide "penalized" flag was rejected: it drops a
 │  target from later penalties too, so payouts would depend on proposal order.
-│  Buckets are cleared with the sum on every claim path
+│  Bucket keys are walked over the committee's canonical members
+│  (canonicalCommitteeNodeAt), not the active roster: an expelled target
+│  leaves the roster while its bucket remains. Buckets are cleared with the
+│  sum on every claim path
 ├─ Clear the claim and reduce actualToken's protected liability
 ├─ Transfer that exact token; base refunds never consume the protected reserve
 └─ Emit SlashedFundsClaimed(e3Id, caller, actualToken, amount)

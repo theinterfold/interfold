@@ -2208,6 +2208,125 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       });
     }
 
+    it("clears a bucket whose penalty target was expelled earlier", async function () {
+      const {
+        interfold,
+        e3RefundManager,
+        slashingManager,
+        usdcToken,
+        makeRequest,
+        owner,
+        requester,
+        treasury,
+        computeProvider,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+        transferBondOwner,
+        finalizeAndPublishCommittee,
+      } = await loadFixture(setup);
+
+      for (const operator of [operator1, operator2, operator3]) {
+        await setupOperator(operator);
+      }
+      await transferBondOwner(operator1, requester);
+      await transferBondOwner(operator2, treasury);
+      await transferBondOwner(operator3, computeProvider);
+
+      await slashingManager.connect(owner).setSlashPolicy(REASON_PT_1, {
+        ticketPenalty: ethers.parseUnits("50", 6),
+        ciphernodeBondPenalty: 0n,
+        requiresProof: true,
+        proofVerifier: ethers.ZeroAddress,
+        banNode: false,
+        appealWindow: 0,
+        enabled: true,
+        affectsCommittee: false,
+        failureReason: 0,
+      });
+      await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
+        ticketPenalty: 0n,
+        ciphernodeBondPenalty: ethers.parseEther("100"),
+        requiresProof: true,
+        proofVerifier: ethers.ZeroAddress,
+        banNode: false,
+        appealWindow: ONE_DAY,
+        enabled: true,
+        affectsCommittee: true,
+        failureReason: 0,
+      });
+
+      await makeRequest();
+      await finalizeAndPublishCommittee();
+      const e3 = await interfold.getE3(firstE3Id);
+      await time.increaseTo(
+        Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
+      );
+      await interfold.markE3Failed(firstE3Id);
+      await interfold.processE3Failure(firstE3Id);
+
+      const usdcAddress = await usdcToken.getAddress();
+      const slashingAddress = await slashingManager.getAddress();
+      const op1 = await operator1.getAddress();
+      const op2 = await operator2.getAddress();
+      const penalty = ethers.parseUnits("50", 6);
+
+      // 1. Non-expelling penalty on A: B and C hold 25 each, tagged target=A.
+      const penaltyId = await slashingManager.totalProposals();
+      await slashingManager.proposeSlash(
+        firstE3Id,
+        op1,
+        await signAndEncodeAttestation(
+          [operator2, operator3],
+          firstE3Id,
+          op1,
+          slashingAddress,
+          1,
+        ),
+      );
+      await slashingManager.retrySlashRoute(penaltyId);
+
+      // 2. Expel A. A leaves the active roster, but B's bucket is still
+      //    keyed by A. Provenance bookkeeping must find it without the
+      //    roster, or it is left describing funds that have already moved.
+      const expelAId = await slashingManager.totalProposals();
+      await slashingManager.proposeSlash(
+        firstE3Id,
+        op1,
+        await signAndEncodeAttestation(
+          [operator2, operator3],
+          firstE3Id,
+          op1,
+          slashingAddress,
+        ),
+      );
+      await time.increase(ONE_DAY + 1);
+      await slashingManager.executeSlash(expelAId);
+
+      // A's bucket exists on B and C even though A is no longer active.
+      expect(await e3RefundManager.heldSlashFrom(firstE3Id, op2, op1)).to.equal(
+        penalty / 2n,
+      );
+
+      // 3. B claims its 25. The claim zeroes heldSlash and must also drop
+      //    the target=A bucket that backs it. Walking the active roster for
+      //    bucket keys would miss A and leave the bucket describing funds
+      //    that have already left.
+      await e3RefundManager.claimOperatorSlashedFunds(firstE3Id, op2);
+      const [, bHeld] = await e3RefundManager.operatorHeldRewards(
+        firstE3Id,
+        op2,
+      );
+      expect(bHeld).to.equal(0);
+      expect(await e3RefundManager.heldSlashFrom(firstE3Id, op2, op1)).to.equal(
+        0,
+      );
+      expect(
+        await usdcToken.balanceOf(await e3RefundManager.getAddress()),
+      ).to.be.gte(await e3RefundManager.tokenLiability(usdcAddress));
+    });
+
     it("does not return a non-expelling ticket penalty to its target", async function () {
       const {
         interfold,
@@ -2568,6 +2687,85 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(
         (await usdcToken.balanceOf(targetRecipient)) - balanceBefore,
       ).to.equal(released);
+    });
+
+    it("ZEN2-04: an expulsion leaves a supplier-paid reason alone", async function () {
+      const {
+        interfold,
+        registry,
+        slashingManager,
+        makeRequest,
+        owner,
+        operator1,
+        operator2,
+        operator3,
+        setupOperator,
+      } = await loadFixture(setup);
+
+      for (const operator of [operator1, operator2, operator3]) {
+        await setupOperator(operator);
+      }
+      await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
+        ticketPenalty: ethers.parseUnits("50", 6),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
+        requiresProof: true,
+        proofVerifier: ethers.ZeroAddress,
+        banNode: false,
+        appealWindow: ONE_DAY,
+        enabled: true,
+        affectsCommittee: true,
+        failureReason: 0,
+      });
+
+      await makeRequest();
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
+      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+      await registry.finalizeCommittee(firstE3Id);
+
+      const proof1 = await signAndEncodeAttestation(
+        [operator2, operator3],
+        firstE3Id,
+        await operator1.getAddress(),
+        await slashingManager.getAddress(),
+      );
+      await slashingManager.proposeSlash(
+        firstE3Id,
+        await operator1.getAddress(),
+        proof1,
+      );
+      const proof2 = await signAndEncodeAttestation(
+        [operator1, operator3],
+        firstE3Id,
+        await operator2.getAddress(),
+        await slashingManager.getAddress(),
+      );
+      await slashingManager.proposeSlash(
+        firstE3Id,
+        await operator2.getAddress(),
+        proof2,
+      );
+
+      // The round fails for a reason the committee already pays for. The
+      // expulsion that breaks viability must not rewrite it: only a
+      // requester-paid reason may move onto the committee, and DKGTimeout
+      // already charges the committee.
+      await time.increase(defaultTimeoutConfig.dkgWindow + 1);
+      await interfold.markE3Failed(firstE3Id);
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(
+        3 /* DKGTimeout */,
+      );
+
+      await time.increase(ONE_DAY + 1);
+      await slashingManager.executeSlash(0);
+      await expect(slashingManager.executeSlash(1)).to.not.emit(
+        interfold,
+        "E3FailureReclassified",
+      );
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(
+        3 /* DKGTimeout */,
+      );
     });
 
     it("ZEN2-04: an expulsion corrects a front-run requester-paid reason", async function () {
