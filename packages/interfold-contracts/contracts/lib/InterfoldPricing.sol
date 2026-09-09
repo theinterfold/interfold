@@ -56,18 +56,6 @@ library InterfoldPricing {
         emit IInterfold.FeeAssetConfigUpdated(token, tokenDecimals, config);
     }
 
-    /// @notice Pull an exact token amount into a custody contract.
-    function transferFromExact(
-        IERC20 token,
-        address sender,
-        address recipient,
-        uint256 amount
-    ) external {
-        uint256 balanceBefore = token.balanceOf(recipient);
-        token.safeTransferFrom(sender, recipient, amount);
-        _requireExactReceipt(token, recipient, balanceBefore, amount);
-    }
-
     /// @notice Drain one E3 reward and transfer it to its recipient.
     /// @dev ZEN2-20: also drains the refund manager's operator-held escrow
     ///      that `account` is the frozen recipient of. Allocations held by a
@@ -121,7 +109,11 @@ library InterfoldPricing {
         emit TreasuryClaimed(treasury, token, amount);
     }
 
-    /// @notice Records service escrow and credits the randomness fee.
+    /// @notice Pulls the quoted fee, then records service escrow and credits the randomness fee.
+    /// @dev The transfer runs first, so the treasury credit below is backed by tokens already in
+    ///      custody. In particular, the external program-validation call that precedes this in
+    ///      `request` never observes a claimable treasury balance backed by another E3's escrow.
+    ///      One entry point for both steps saves `Interfold` one library encoding.
     function recordRequestPayment(
         mapping(uint256 e3Id => uint256 amount) storage e3Payments,
         mapping(uint256 e3Id => IERC20 token) storage feeTokens,
@@ -134,6 +126,9 @@ library InterfoldPricing {
         uint256 quotedFee,
         IERC20 token
     ) external {
+        uint256 balanceBefore = token.balanceOf(address(this));
+        token.safeTransferFrom(msg.sender, address(this), quotedFee);
+        _requireExactReceipt(token, address(this), balanceBefore, quotedFee);
         uint256 randomnessFee = pricing.randomnessFlatFee;
         address treasury = pricing.protocolTreasury;
         e3Payments[e3Id] = quotedFee - randomnessFee;

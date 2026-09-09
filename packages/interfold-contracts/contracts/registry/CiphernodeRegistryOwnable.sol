@@ -617,33 +617,17 @@ contract CiphernodeRegistryOwnable is
             CommitteeAlreadyFinalized()
         );
         uint256 seed = _resolveSortitionSeed(e3Id, c);
-        require(
-            block.timestamp <= c.committeeDeadline,
-            CommitteeDeadlineReached()
-        );
-        require(!c.submitted[msg.sender], NodeAlreadySubmitted());
-        (bool activeAtRequest, ) = _bondingFor(e3Id).eligibilityAt(
-            msg.sender,
-            c.requestBlock - 1
-        );
-        require(
-            isEnabled(msg.sender) &&
-                _bondingFor(e3Id).isActive(msg.sender) &&
-                activeAtRequest,
-            NodeNotEligible()
-        );
-
-        // Validate node eligibility and ticket number
-        RegistrySortitionLib.validateTicket(
-            address(_bondingFor(e3Id)),
-            msg.sender,
-            ticketNumber,
-            c.requestBlock,
-            sortitionTicketPrices[e3Id]
-        );
-
+        IBondingRegistry bonding = _bondingFor(e3Id);
         // The ticket snapshot predates the request, while VRF fulfills the seed
         // only after the request is final.
+        RegistrySortitionLib.validateTicket(
+            c,
+            bonding,
+            isEnabled(msg.sender),
+            msg.sender,
+            ticketNumber,
+            sortitionTicketPrices[e3Id]
+        );
         uint256 score = RegistrySortitionLib.ticketScore(
             msg.sender,
             ticketNumber,
@@ -656,7 +640,7 @@ contract CiphernodeRegistryOwnable is
 
         RegistrySortitionLib.insertCandidate(
             c,
-            _bondingFor(e3Id),
+            bonding,
             e3Id,
             msg.sender,
             score

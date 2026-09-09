@@ -149,29 +149,54 @@ library RegistrySortitionLib {
         }
     }
 
-    /// @notice Validates one request-time ticket against the frozen ticket price.
+    /// @notice Validates every guard on one ticket submission.
+    /// @dev One entry point so the registry pays one argument encoding instead
+    ///      of five revert encodings. Revert precedence matches the previous
+    ///      inline order exactly.
+    /// @param c The committee the ticket targets.
+    /// @param bondingRegistry The E3's request-time bonding registry.
+    /// @param enabled Whether the registry lists the node as enabled.
+    /// @param node The submitting node.
+    /// @param ticketNumber The one-based ticket the node claims.
+    /// @param ticketPrice The ticket price frozen at request.
     function validateTicket(
-        address bondingRegistryAddress,
+        ICiphernodeRegistry.Committee storage c,
+        IBondingRegistry bondingRegistry,
+        bool enabled,
         address node,
         uint256 ticketNumber,
-        uint256 requestTime,
         uint256 ticketPrice
     ) external view {
+        if (block.timestamp > c.committeeDeadline)
+            revert ICiphernodeRegistry.CommitteeDeadlineReached();
+        if (c.submitted[node])
+            revert ICiphernodeRegistry.NodeAlreadySubmitted();
+        uint256 snapshotBlock = c.requestBlock - 1;
+        if (!enabled || !_eligibleAt(bondingRegistry, node, snapshotBlock))
+            revert ICiphernodeRegistry.NodeNotEligible();
         if (ticketNumber == 0 || ticketPrice == 0)
             revert ICiphernodeRegistry.InvalidTicketNumber();
-        if (bondingRegistryAddress == address(0))
+        if (address(bondingRegistry) == address(0))
             revert ICiphernodeRegistry.BondingRegistryNotSet();
-        IBondingRegistry bondingRegistry = IBondingRegistry(
-            bondingRegistryAddress
-        );
-        uint256 ticketBalance = bondingRegistry.ticketToken().getPastVotes(
+        uint256 availableTickets = bondingRegistry.ticketToken().getPastVotes(
             node,
-            requestTime - 1
-        );
-        uint256 availableTickets = ticketBalance / ticketPrice;
+            snapshotBlock
+        ) / ticketPrice;
         if (availableTickets == 0) revert ICiphernodeRegistry.NodeNotEligible();
         if (ticketNumber > availableTickets)
             revert ICiphernodeRegistry.InvalidTicketNumber();
+    }
+
+    function _eligibleAt(
+        IBondingRegistry bondingRegistry,
+        address node,
+        uint256 snapshotBlock
+    ) private view returns (bool) {
+        (bool activeAtRequest, ) = bondingRegistry.eligibilityAt(
+            node,
+            snapshotBlock
+        );
+        return bondingRegistry.isActive(node) && activeAtRequest;
     }
 
     function ticketScore(

@@ -394,16 +394,8 @@ contract Interfold is
         _e3Requesters[e3Id] = msg.sender;
         activeE3Count++;
 
-        // Transfer fee after all validations and state changes
-        InterfoldPricing.transferFromExact(
-            feeToken,
-            msg.sender,
-            address(this),
-            quotedFee
-        );
-        // Credit the payment only after the tokens are in custody. In particular, the external
-        // program-validation call above must not expose a claimable treasury balance backed by
-        // another E3's escrow.
+        // Transfer the fee after all validations and state changes, then credit it. The library
+        // pulls the tokens before it writes any claimable balance.
         InterfoldPricing.recordRequestPayment(
             e3Payments,
             _e3FeeTokens,
