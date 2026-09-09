@@ -111,8 +111,17 @@ contract SlashingManager is
     mapping(uint256 proposalId => PendingSlashRoute route)
         internal _pendingSlashRoutes;
 
-    uint256 internal constant INITIAL_ROUTE_GAS = 400_000;
-    uint256 internal constant MIN_INITIAL_ROUTE_GAS = 450_000;
+    /// @dev Gas handed to the first routing attempt. The route walks the committee
+    ///      once per eligibility pass and, since the ZEN2-20 follow-up, also skips
+    ///      every operator this E3 has penalized. That check costs about 28k gas
+    ///      on a three-member committee and grows with committee size, so the
+    ///      stipend was widened from 400k rather than trimming the check. A route
+    ///      that still runs out stays pending for `retrySlashRoute`.
+    uint256 internal constant INITIAL_ROUTE_GAS = 500_000;
+    /// @dev Gas the caller must still hold before the routing attempt. Keeps the
+    ///      same margin over `INITIAL_ROUTE_GAS` as before, plus the 63/64 share
+    ///      the EVM withholds from a nested call.
+    uint256 internal constant MIN_INITIAL_ROUTE_GAS = 560_000;
 
     /// @notice Mapping from slash reason hash to its configured policy
     mapping(bytes32 reason => SlashPolicy policy) public slashPolicies;

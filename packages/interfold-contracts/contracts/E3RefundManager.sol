@@ -66,6 +66,14 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 heldSuccess;
         uint256 baseRiskExpulsions;
         bool excluded;
+        /// @dev ZEN2-20 follow-up: a slash proposal of this E3 penalized the
+        ///      operator. A held slash share does not record the proposal that
+        ///      produced it, so without this flag penalizing A and crediting
+        ///      B, then expelling B, returns part of A's own penalty to A.
+        ///      Redistribution treats a penalized operator as ineligible.
+        ///      Packed beside `excluded`: every eligibility check already loads
+        ///      this slot, and the slash route runs inside a fixed gas stipend.
+        bool penalized;
     }
     ////////////////////////////////////////////////////////////
     //                                                        //
@@ -138,15 +146,6 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     /// @notice Released or reallocated successful-E3 rewards by account.
     mapping(uint256 e3Id => mapping(address account => uint256 amount))
         internal _pendingHeldSuccessClaims;
-    /// @notice Operators that a slash proposal of this E3 has penalized.
-    /// @dev ZEN2-20 follow-up: a held slash share does not record the proposal
-    ///      that produced it, so redistribution cannot tell one penalty from
-    ///      another. Without this set, penalizing A and crediting B, then
-    ///      expelling B, returns part of A's own penalty to A. Append only,
-    ///      bounded by the committee size, and written where the target is
-    ///      known. Redistribution treats a member of this set as ineligible.
-    mapping(uint256 e3Id => mapping(address operator => bool penalized))
-        internal _e3PenalizedOperators;
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                       Modifiers                        //
@@ -591,7 +590,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         // ZEN2-20 follow-up: remember the penalty target. A redistribution
         // that happens later cannot recover the proposal, so record it where
         // it is still known.
-        _e3PenalizedOperators[e3Id][operator] = true;
+        _operatorEntitlements[e3Id][operator].penalized = true;
         _pendingSlashedByToken[e3Id][token] += amount;
         _increaseTokenLiability(token, amount);
 
@@ -732,7 +731,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             if (
                 operator == excludedOperator ||
                 entitlement.excluded ||
-                _e3PenalizedOperators[e3Id][operator]
+                entitlement.penalized
             ) continue;
             eligible--;
             uint256 nodeAmount = eligible == 0 ? amount - distributed : perNode;
@@ -770,10 +769,13 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     ) internal view returns (uint256 count) {
         for (uint256 i = 0; i < nodes.length; i++) {
             address operator = nodes[i];
+            OperatorEntitlement storage entitlement = _operatorEntitlements[
+                e3Id
+            ][operator];
             if (
                 operator != excludedOperator &&
-                !_operatorEntitlements[e3Id][operator].excluded &&
-                !(skipPenalized && _e3PenalizedOperators[e3Id][operator])
+                !entitlement.excluded &&
+                !(skipPenalized && entitlement.penalized)
             ) count++;
         }
     }
@@ -1565,5 +1567,5 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[42] private __gap;
+    uint256[43] private __gap;
 }
