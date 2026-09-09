@@ -166,7 +166,10 @@ jobs:
           # Both feed template_integration, so each must cover every path that
           # triggers it — a skipped dependency silently skips the e2e job.
           echo "build_e3_support_dev=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI)" >> $GITHUB_OUTPUT
-          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
+          # build_circuits feeds template_integration and crisp_e2e via the
+          # circuits-dist artifact, so it must cover every path that triggers
+          # either of them — a skipped dependency silently skips the e2e job.
+          echo "build_circuits=$(any $FORCE $RUST $CIRCUITS $CRISP $TEMPLATES $CONTRACTS $SDK $CI)" >> $GITHUB_OUTPUT
           echo "integration_prebuild=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "zk_prover_integration=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "build_interfold_cli=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $TEMPLATES $CRISP $SDK $CI)" >> $GITHUB_OUTPUT
@@ -865,7 +868,7 @@ jobs:
         run: ${{ matrix.command }}
 
   crisp_e2e:
-    needs: [detect_changes, build_interfold_cli, build_crisp_sdk]
+    needs: [detect_changes, build_circuits, build_interfold_cli, build_crisp_sdk]
     if: needs.detect_changes.outputs.crisp == 'true'
     timeout-minutes: 45
     runs-on:
@@ -978,8 +981,18 @@ jobs:
           sudo mv "$BB_BIN" /usr/local/bin/bb
           chmod +x /usr/local/bin/bb
 
-      - name: Build interfold circuits
-        run: pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built
+      - name: Download circuit dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: circuits-dist
+          path: dist/circuits/
+
+      # --hydrate-bin-only copies dist into circuits/bin with no nargo compile,
+      # and hard-fails if dist is missing or its source-hash stamp is stale. That
+      # loud failure is the point: a broken hand-off must not silently fall back
+      # to a six minute rebuild.
+      - name: Hydrate interfold circuits
+        run: pnpm build:circuits --preset insecure-512 --committee minimum --hydrate-bin-only
 
       - name: Install and verify candidate circuits
         working-directory: ./examples/CRISP
@@ -1143,6 +1156,18 @@ jobs:
           retention-days: 1
           if-no-files-found: error
 
+      # `pnpm build:circuits` with no flags already defaults to insecure-512 +
+      # minimum (see the BuildOptions constructor), which is exactly the preset
+      # template_integration and crisp_e2e need. Publishing dist/ lets them
+      # hydrate instead of running the same ~6 minute nargo compile again.
+      - name: Upload circuit dist for e2e hydration
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: circuits-dist
+          path: dist/circuits/
+          retention-days: 1
+          if-no-files-found: error
+
       - name: Cancel workflow on failure
         if: failure()
         run: gh run cancel ${{ github.run_id }}
@@ -1268,7 +1293,10 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: support-scripts-artifacts
-          path: templates/default/target/
+          # Only the binary, never the whole target dir. Uploading target/ shipped
+          # 545 MB of intermediate cargo output that the one consumer
+          # (template_integration) discards, and cost it ~8 minutes to download.
+          path: templates/default/target/debug/e3-support-scripts-dev
           retention-days: 1
           if-no-files-found: error
 
@@ -1416,7 +1444,7 @@ jobs:
           if-no-files-found: warn
 
   template_integration:
-    needs: [detect_changes, build_interfold_cli, build_e3_support_dev, build_sdk]
+    needs: [detect_changes, build_circuits, build_interfold_cli, build_e3_support_dev, build_sdk]
     if: needs.detect_changes.outputs.templates == 'true'
     timeout-minutes: 30
     runs-on:
@@ -1459,7 +1487,7 @@ jobs:
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: support-scripts-artifacts
-          path: templates/default/target/
+          path: templates/default/target/debug/
 
       - name: Download SDK artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -1493,8 +1521,18 @@ jobs:
           sudo mv "$BB_BIN" /usr/local/bin/bb
           chmod +x /usr/local/bin/bb
 
-      - name: Build interfold circuits
-        run: pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built
+      - name: Download circuit dist
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: circuits-dist
+          path: dist/circuits/
+
+      # --hydrate-bin-only copies dist into circuits/bin with no nargo compile,
+      # and hard-fails if dist is missing or its source-hash stamp is stale. That
+      # loud failure is the point: a broken hand-off must not silently fall back
+      # to a six minute rebuild.
+      - name: Hydrate interfold circuits
+        run: pnpm build:circuits --preset insecure-512 --committee minimum --hydrate-bin-only
 
       - name: Install and verify candidate circuits
         working-directory: ./templates/default
