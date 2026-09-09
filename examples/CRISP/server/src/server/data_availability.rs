@@ -273,6 +273,15 @@ enum JobState {
     AwaitingProof {
         publication: PendingPublication,
         commitment_transaction_hash: Option<String>,
+        /// The candidate proof this job held before it asked for a replacement.
+        ///
+        /// A failed publication does not establish that the candidate is invalid: a transport
+        /// error reaches the same path. Keep the candidate so a job whose replacement never
+        /// arrives can still retry the proof it already had, instead of waiting on a bridge
+        /// that answers `Pending` or nothing at all. `None` for a job that has never held a
+        /// candidate, and for a record written before this field existed.
+        #[serde(default)]
+        last_candidate: Option<Vec<u8>>,
     },
     Ready {
         ethereum_payload: Vec<u8>,
@@ -1503,17 +1512,36 @@ impl AvailabilityService {
             JobState::AwaitingProof {
                 publication,
                 commitment_transaction_hash,
+                last_candidate,
             } => {
                 let Backend::Avail { publisher, .. } = &*self.backend else {
                     anyhow::bail!("mock job cannot await a VectorX proof");
                 };
-                if let ProofStatus::Ready { abi_proof, .. } = publisher.proof(&publication).await? {
+                // A refresh that fails must not strand a job that already holds a usable
+                // candidate. Ask the bridge, and on `Pending` or a transport error fall back to
+                // the candidate this job had before it asked. The publication is unchanged, so
+                // the fallback costs no second publication.
+                let refreshed = match publisher.proof(&publication).await {
+                    Ok(ProofStatus::Ready { abi_proof, .. }) => Some(abi_proof),
+                    Ok(ProofStatus::Pending) => None,
+                    Err(error) => {
+                        warn!(
+                            job_id = job.id.as_str(),
+                            %error,
+                            "The availability bridge did not answer; will retry"
+                        );
+                        None
+                    }
+                };
+                if let Some(ethereum_payload) =
+                    Self::publishable_payload(refreshed, last_candidate, job.id.as_str())
+                {
                     // Keep the Avail coordinates beside the candidate proof. The bridge answer
                     // is checked for the expected content hash only, so a syntactically valid
                     // answer can carry a Merkle path that Ethereum refuses. Without the
                     // coordinates the job can never request a replacement proof.
                     job.state = JobState::Ready {
-                        ethereum_payload: abi_proof,
+                        ethereum_payload,
                         commitment_transaction_hash,
                         publication: Some(publication),
                     };
@@ -1537,6 +1565,7 @@ impl AvailabilityService {
                                 &mut job,
                                 commitment_transaction_hash,
                                 publication,
+                                Some(ethereum_payload),
                             )?;
                             return Err(error);
                         }
@@ -1619,6 +1648,7 @@ impl AvailabilityService {
                                 &mut job,
                                 commitment_transaction_hash,
                                 publication,
+                                Some(ethereum_payload),
                             )?;
                             return Err(error);
                         }
@@ -1661,33 +1691,65 @@ impl AvailabilityService {
         Ok(())
     }
 
+    /// Choose the payload to publish from a bridge answer and the job's last candidate.
+    ///
+    /// A replacement is preferred when the bridge has one. When it has none, because it answered
+    /// `Pending` or did not answer at all, the previous candidate is still publishable: the Avail
+    /// coordinates are unchanged, and the deadline does not move. Returning `None` here leaves
+    /// the job in `AwaitingProof`, which the durable queue retries.
+    fn publishable_payload(
+        refreshed: Option<Vec<u8>>,
+        last_candidate: Option<Vec<u8>>,
+        job_id: &str,
+    ) -> Option<Vec<u8>> {
+        match (refreshed, last_candidate) {
+            (Some(abi_proof), _) => Some(abi_proof),
+            (None, Some(candidate)) => {
+                warn!(
+                    job_id,
+                    "No replacement proof is available; retrying the last candidate"
+                );
+                Some(candidate)
+            }
+            (None, None) => None,
+        }
+    }
+
     /// Return a job with a refused candidate proof to a state that can request a replacement.
     ///
     /// The Avail bridge answer is checked for the expected content hash, not for a valid Merkle
     /// path, so a `Ready` job can hold a proof that Ethereum refuses. Retrying the same payload
     /// can never succeed, and the job stays `Ready` forever. The saved Avail coordinates name
     /// bytes that Avail already holds, so `AwaitingProof` asks the bridge for a fresh proof and
-    /// pays for no second publication. A transport failure takes the same path and costs one
-    /// more bridge request, which is why this needs no error classification: a bridge that has
-    /// nothing new returns the same proof and the job continues as before. A record written
-    /// before the coordinates were kept has nothing to ask the bridge with, so it keeps its
-    /// candidate proof and needs operator recovery.
+    /// pays for no second publication.
+    ///
+    /// A failure here does not say which of the two happened: a refused proof and a temporary
+    /// RPC error arrive as the same error. Classifying them is not possible in general, so the
+    /// candidate is kept rather than discarded. The job asks for a replacement, and if none
+    /// arrives it retries the candidate it already had. Discarding it would turn one transport
+    /// failure into a missed deadline whenever the bridge is also unavailable.
+    ///
+    /// A record written before the coordinates were kept has nothing to ask the bridge with, so
+    /// it keeps its candidate proof and needs operator recovery.
     fn recover_rejected_proof(
         &self,
         job: &mut AvailabilityJob,
         commitment_transaction_hash: Option<String>,
         publication: Option<PendingPublication>,
+        last_candidate: Option<Vec<u8>>,
     ) -> anyhow::Result<()> {
         let Some(publication) = publication else {
             return Ok(());
         };
         warn!(
             job_id = job.id.as_str(),
-            "Ethereum refused the availability proof; requesting a replacement"
+            "Ethereum did not accept the availability proof; requesting a replacement and \
+             keeping the current candidate"
         );
         job.state = JobState::AwaitingProof {
             publication,
             commitment_transaction_hash,
+            last_candidate,
         };
         self.save(job)
     }
@@ -1715,6 +1777,8 @@ impl AvailabilityService {
                 Ok(JobState::AwaitingProof {
                     publication,
                     commitment_transaction_hash,
+                    // A fresh publication has never held a candidate proof.
+                    last_candidate: None,
                 })
             }
         }
@@ -3056,6 +3120,7 @@ mod tests {
                 &mut job,
                 Some("0xcommit".to_owned()),
                 Some(publication.clone()),
+                Some(vec![0xaa; 4]),
             )
             .unwrap();
 
@@ -3063,16 +3128,118 @@ mod tests {
         let JobState::AwaitingProof {
             publication: recovered,
             commitment_transaction_hash,
+            last_candidate,
         } = stored.state
         else {
             panic!("a refused candidate must be able to request a replacement");
         };
         assert_eq!(recovered, publication);
         assert_eq!(commitment_transaction_hash, Some("0xcommit".to_owned()));
+        // ZEN2-11 follow-up: the candidate survives, so a job whose replacement never arrives
+        // can still retry the proof it already had.
+        assert_eq!(last_candidate, Some(vec![0xaa; 4]));
         // The bytes stay available, so the replacement pays for no second publication.
         assert_eq!(
             service.object_required(stored.content_hash).unwrap(),
             object
+        );
+    }
+
+    /// ZEN2-11 follow-up: a transient publication failure keeps the candidate proof.
+    ///
+    /// Ethereum recovers while the bridge stays unavailable. The job must publish the candidate
+    /// it already held rather than wait for a replacement that never arrives, or a transport
+    /// error costs the round its deadline. Covers both job kinds: they take the same recovery
+    /// path from different call sites.
+    #[test]
+    fn a_transient_failure_keeps_the_candidate_for_both_job_kinds() {
+        let service = test_service(1024);
+        let object = b"ciphertext";
+        let publication = test_publication(keccak256(object).0);
+        let candidate = vec![0xaa; 4];
+
+        let output = output_job(
+            "transient-output",
+            JobState::Ready {
+                ethereum_payload: candidate.clone(),
+                commitment_transaction_hash: Some("0xcommit".to_owned()),
+                publication: Some(publication.clone()),
+            },
+            object,
+        );
+        let input = input_job("transient-input", Address::repeat_byte(0x11), 0x22, object);
+        let input_ready = JobState::Ready {
+            ethereum_payload: candidate.clone(),
+            commitment_transaction_hash: Some("0xcommit".to_owned()),
+            publication: Some(publication.clone()),
+        };
+
+        for (job, state) in [
+            (output.clone(), output.state.clone()),
+            (input.clone(), input_ready),
+        ] {
+            let mut job = store_job_in_state(&service, &job, object, state);
+            // A temporary RPC error reaches the same path as a refused proof.
+            service
+                .recover_rejected_proof(
+                    &mut job,
+                    Some("0xcommit".to_owned()),
+                    Some(publication.clone()),
+                    Some(candidate.clone()),
+                )
+                .unwrap();
+
+            let JobState::AwaitingProof {
+                publication: kept,
+                last_candidate,
+                ..
+            } = service.load_required(&job.id).unwrap().state
+            else {
+                panic!("a failed publication must be able to request a replacement");
+            };
+            // The Avail publication is preserved, so no second publication is paid for.
+            assert_eq!(kept, publication);
+            assert_eq!(last_candidate, Some(candidate.clone()));
+
+            // Ethereum is healthy again but the bridge answers Pending, then errors. Neither
+            // may strand the job: both fall back to the candidate it already had.
+            for bridge_answer in [None, None] {
+                assert_eq!(
+                    AvailabilityService::publishable_payload(
+                        bridge_answer,
+                        last_candidate.clone(),
+                        &job.id,
+                    ),
+                    Some(candidate.clone()),
+                    "a job with a usable candidate must not wait for the bridge"
+                );
+            }
+        }
+    }
+
+    /// ZEN2-11 follow-up: a replacement proof supersedes the candidate it replaces.
+    ///
+    /// The candidate is a fallback, not a preference. When the bridge answers with a fresh
+    /// proof, that proof is published, so an invalid candidate is genuinely replaced.
+    #[test]
+    fn a_replacement_proof_supersedes_the_last_candidate() {
+        let invalid_candidate = vec![0xaa; 4];
+        let replacement = vec![0xbb; 8];
+
+        assert_eq!(
+            AvailabilityService::publishable_payload(
+                Some(replacement.clone()),
+                Some(invalid_candidate),
+                "replacement",
+            ),
+            Some(replacement),
+            "a fresh proof must supersede the candidate Ethereum refused"
+        );
+        // With neither a replacement nor a candidate the job stays in AwaitingProof and the
+        // durable queue retries it.
+        assert_eq!(
+            AvailabilityService::publishable_payload(None, None, "nothing-to-publish"),
+            None
         );
     }
 
@@ -3116,7 +3283,7 @@ mod tests {
         let mut legacy = decoded;
         store_job_in_state(&service, &legacy, object, legacy.state.clone());
         service
-            .recover_rejected_proof(&mut legacy, None, None)
+            .recover_rejected_proof(&mut legacy, None, None, Some(vec![0xaa; 4]))
             .unwrap();
         assert!(matches!(legacy.state, JobState::Ready { .. }));
     }
@@ -3210,6 +3377,7 @@ mod tests {
         let state = JobState::AwaitingProof {
             publication: publication.clone(),
             commitment_transaction_hash: None,
+            last_candidate: None,
         };
         let job = output_job("contended-job", state.clone(), object);
         let job = store_job_in_state(&service, &job, object, state);

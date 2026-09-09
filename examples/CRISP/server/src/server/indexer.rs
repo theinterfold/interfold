@@ -35,7 +35,9 @@ use e3_sdk::{
     },
     indexer::{DataStore, IndexerContext, InterfoldIndexer, SharedStore},
 };
-use evm_helpers::{CRISPContractFactory, InputCommitted, InputPublished};
+use evm_helpers::{
+    CRISPContract, CRISPContractFactory, CRISPReadProvider, InputCommitted, InputPublished,
+};
 use eyre::Context;
 use log::{error, info, warn};
 use num_bigint::BigUint;
@@ -68,6 +70,37 @@ fn stage_ends_input_retrieval(stage: &E3Stage) -> bool {
 /// - The requested field is the fallback, for a round whose stored value could not be read. A
 ///   zero or unparseable field means the round named no divisor, and the default is derived from
 ///   the token as the contract did.
+/// Read the divisor the contract stored for a round, retrying a failed read.
+///
+/// `CRISPProgram` resolves and stores this value at request time. Deriving it again from
+/// `decimals()` can produce a different number, so a transient RPC failure must not silently
+/// become a coordinator that scales balances in units the contract does not use. Retry with
+/// backoff; on exhaustion return `None`, which is safe only when the round declared its own
+/// divisor and is refused by the caller when it did not.
+async fn read_stored_divisor(
+    crisp: &CRISPContract<CRISPReadProvider>,
+    e3_id: U256,
+    label: &str,
+) -> Option<U256> {
+    match call_with_retry("onchain_voting_power_divisor", &[], || async {
+        crisp
+            .onchain_voting_power_divisor(e3_id)
+            .await
+            .map_err(|error| anyhow::anyhow!(error.to_string()))
+    })
+    .await
+    {
+        Ok(divisor) => divisor,
+        Err(error) => {
+            warn!(
+                "[e3_id={}] Failed to read the stored voting-power divisor after retries: {:#}",
+                label, error
+            );
+            None
+        }
+    }
+}
+
 fn resolve_divisor_override(
     stored: Option<U256>,
     requested: &str,
@@ -236,21 +269,12 @@ pub async fn register_e3_requested(
                 // the need to derive anything: the coordinator cannot disagree with the chain
                 // about an optional `decimals()` call or about a default the chain refused.
                 //
-                // A failed read is not fatal. The declared field below is the same value for
-                // every round that names one, and a round that names none still derives its
-                // default from the token, which is what the contract did.
+                // A failed read is not fatal when the round declared a divisor: that value is what
+                // the contract stored. It is only dangerous when the round declared none, because
+                // the fallback then derives a divisor from `decimals()`, which can disagree with
+                // the value the contract resolved at request time. Retry before accepting that.
                 let stored_divisor = if is_onchain_census {
-                    match crisp.onchain_voting_power_divisor(event.e3Id).await {
-                        Ok(divisor) => divisor,
-                        Err(error) => {
-                            warn!(
-                                "[e3_id={}] Failed to read the stored voting-power divisor: \
-                                 {:#}. Falling back to the requested value.",
-                                e3_id, error
-                            );
-                            None
-                        }
-                    }
+                    read_stored_divisor(&crisp, event.e3Id, &e3_id).await
                 } else {
                     None
                 };
@@ -260,6 +284,19 @@ pub async fn register_e3_requested(
                     &custom_params.voting_power_divisor,
                     is_onchain_census,
                 );
+
+                // Neither source produced a divisor for an on-chain round. Deriving one from
+                // `decimals()` can disagree with what the contract stored, which would build the
+                // census in units the tally does not read back. Defer instead: the handler is
+                // driven by the indexer cursor, so a later pass retries once the read succeeds.
+                if is_onchain_census && divisor_override.is_none() {
+                    return Err(eyre::eyre!(
+                        "[e3_id={}] The stored voting-power divisor is unavailable and the round \
+                         declared none. Deferring registration rather than deriving a divisor the \
+                         contract may not use.",
+                        e3_id
+                    ));
+                }
 
                 // Get token holders from Etherscan API or mocked data.
                 // Asked only when the round declared it. Probing every requester and falling back
@@ -1785,14 +1822,22 @@ mod voting_power_divisor_tests {
         );
     }
 
-    /// A zero or unparseable field means the round named no divisor. `None` derives the default
-    /// from the token, which is what the contract did.
+    /// A zero or unparseable field means the round named no divisor.
+    ///
+    /// For a Merkle round `None` is the answer: the census leaf carries the bound. For an
+    /// on-chain round `None` is not a usable result, and the caller defers registration rather
+    /// than deriving a divisor from `decimals()` that the contract may not have stored.
     #[test]
-    fn a_round_that_names_no_divisor_derives_the_default() {
+    fn a_round_that_names_no_divisor_yields_no_override() {
         assert_eq!(resolve_divisor_override(None, "0", true), None);
         assert_eq!(resolve_divisor_override(Some(U256::ZERO), "0", true), None);
         assert_eq!(resolve_divisor_override(None, "not a number", true), None);
         assert_eq!(resolve_divisor_override(None, "", true), None);
+        // The declared field still rescues an on-chain round whose stored read failed.
+        assert_eq!(
+            resolve_divisor_override(None, "5000", true),
+            Some(U256::from(5000))
+        );
     }
 
     /// A Merkle round takes its bound from the census leaf. Scaling its census by a divisor would
