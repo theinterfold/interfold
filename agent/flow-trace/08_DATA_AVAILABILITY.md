@@ -328,7 +328,13 @@ rules:
   returns only its own reservation. Admission awaits RPC calls, so requests finish in a different
   order from the order they reserved, and a positional release would return the reservation of a
   request that admitted durable work. An admitted request keeps its reservation until the original
-  60-second window expires.
+  60-second window expires. The reservation is committed in the same synchronous step that writes
+  the durable job, under the storage lock, and not after the awaits that follow admission: a
+  client that closes its connection during those awaits cancels the handler, and a commit placed
+  after the await would never run, releasing quota for a job the background worker still holds.
+  When the store reports an error after its transaction may have applied (a failed flush), the
+  reservation is judged by the record: a live record keeps it, a missing or still-failed record
+  returns it.
 - A repeat of a statement that already has a non-failed job is answered before the funding window is
   touched. Such a replay creates no job, signs no attestation, and pays for no publication. Charging
   it would let one caller consume the allowance that new votes need, and near the commitment cutoff

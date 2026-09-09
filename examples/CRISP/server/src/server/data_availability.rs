@@ -4,7 +4,10 @@
 
 use crate::{
     config::Config,
-    server::models::{canonical_e3_id, e3_id_to_u256},
+    server::{
+        models::{canonical_e3_id, e3_id_to_u256},
+        rate_limit::GlobalReservation,
+    },
 };
 use alloy::{
     eips::{BlockId, BlockNumberOrTag},
@@ -384,9 +387,10 @@ pub struct AvailabilityJobView {
 
 /// The result of one `stage_input` call, and what it did with the funding window.
 ///
-/// The route reserves relay funding before it stages, and must keep that reservation only when
-/// this call created durable work that can spend the funds. A repeat of a statement that already
-/// has a job spends nothing, so its reservation goes back to the window immediately.
+/// The route reserves relay funding before it stages and hands the reservation to `stage_input`,
+/// which commits it at the moment it writes the durable job and returns it on every path that
+/// admits nothing. A repeat of a statement that already has a job spends nothing, so its
+/// reservation goes back to the window immediately.
 pub struct StagedInput {
     pub view: AvailabilityJobView,
     /// True when this call created durable work that can spend relay funds.
@@ -817,10 +821,19 @@ impl AvailabilityService {
         Ok(Some((&existing).into()))
     }
 
+    /// Stage one input statement for publication.
+    ///
+    /// `reservation` is the caller's slot of the relay funding window. It is committed inside
+    /// `admit_input`, in the same synchronous step that writes the durable job, and released on
+    /// every path that admits nothing. Committing it later — after the awaits that follow
+    /// admission — would let a cancelled request (the client closes the connection during the
+    /// await) release quota for work that stays retrievable and can still spend relay funds.
+    /// Admitted work must remain counted until its reservation expires on its own.
     pub async fn stage_input(
         &self,
         e3_id: &str,
         encoded_envelope: Vec<u8>,
+        reservation: Option<GlobalReservation<'_>>,
     ) -> anyhow::Result<StagedInput> {
         // The numeric parser accepts leading zeros, so two different strings can name the same E3.
         // Canonicalize before the identifier reaches a job ID, a durable record, or a contract
@@ -916,11 +929,13 @@ impl AvailabilityService {
             },
             state: JobState::Created,
         };
-        if let Some(existing) = self.admit_input(&job, &object)? {
+        if let Some(existing) = self.admit_input(&job, &object, reservation)? {
             // A concurrent request admitted the same statement first. Only one of the two
-            // reservations funds durable work, so this one goes back to the window.
+            // reservations funds durable work, so this one went back to the window.
             return Ok(StagedInput::existing(existing));
         }
+        // From here the reservation is committed and the job is durable. Cancellation of this
+        // future leaves both in place for the background worker.
         self.process(&id).await;
         if matches!(&*self.backend, Backend::Mock) {
             // Local mode has no external finality delay. Drive every durable phase so callers
@@ -1270,10 +1285,18 @@ impl AvailabilityService {
     ///
     /// Admission does not change retention: an earlier attested job keeps its own job record, and
     /// `save` releases object bytes only when no other non-terminal job uses them.
+    ///
+    /// The reservation is committed the moment the durable record exists, and only then: a
+    /// repeat statement or a storage refusal drops it, which returns the slot. The write and the
+    /// commit are one synchronous step under the storage lock, so no await separates them. If
+    /// the write reports an error after the transaction applied (a failed flush), the record
+    /// may still exist, so the reservation is kept: counting work that was not admitted costs
+    /// one slot for one window, while releasing quota for admitted work is the bug.
     fn admit_input(
         &self,
         job: &AvailabilityJob,
         object: &[u8],
+        reservation: Option<GlobalReservation<'_>>,
     ) -> anyhow::Result<Option<AvailabilityJobView>> {
         // Serialize admission so concurrent requests cannot both pass the capacity check.
         let _storage = self
@@ -1282,14 +1305,51 @@ impl AvailabilityService {
             .map_err(|_| anyhow::anyhow!("data-availability storage lock is poisoned"))?;
         if let Some(existing) = self.load(&job.id)? {
             if !matches!(&existing.state, JobState::Failed { .. }) {
+                drop(reservation);
                 return Ok(Some((&existing).into()));
             }
         }
         // Persist the bytes and their recovery job atomically before an attestation can be
         // returned. The signature promises that this service received the exact object and can
         // resume after a restart.
-        self.store_new_job_with_object(job, object)?;
-        Ok(None)
+        match self.store_new_job_with_object(job, object) {
+            Ok(()) => {
+                if let Some(reservation) = reservation {
+                    reservation.commit();
+                }
+                Ok(None)
+            }
+            Err(error) => {
+                if let Some(reservation) = reservation {
+                    self.settle_uncertain_admission(job, reservation);
+                }
+                Err(error)
+            }
+        }
+    }
+
+    /// Decide a reservation whose admission reported an error.
+    ///
+    /// The store transaction may have applied before a later step (the flush) failed, so the
+    /// call result does not say whether the job exists. Judge by the record: a live record is
+    /// admitted work the background worker will drive, so its slot stays taken. A missing
+    /// record, or one still in `Failed` (the earlier job this call was replacing), means the
+    /// write did not apply and the slot goes back. A read error keeps the slot: counting work
+    /// that was not admitted costs one slot for one window, while releasing quota for admitted
+    /// work is the bug.
+    fn settle_uncertain_admission(
+        &self,
+        job: &AvailabilityJob,
+        reservation: GlobalReservation<'_>,
+    ) {
+        let admitted = match self.load(&job.id) {
+            Ok(Some(stored)) => !matches!(&stored.state, JobState::Failed { .. }),
+            Ok(None) => false,
+            Err(_) => true,
+        };
+        if admitted {
+            reservation.commit();
+        }
     }
 
     /// Retrieve bytes named by a receipt that the Ethereum contract already accepted.
@@ -2895,7 +2955,10 @@ mod tests {
 
         let mask_object = b"attacker-mask-ciphertext";
         let mask = input_job("mask-input", slot, 0x11, mask_object);
-        assert!(service.admit_input(&mask, mask_object).unwrap().is_none());
+        assert!(service
+            .admit_input(&mask, mask_object, None)
+            .unwrap()
+            .is_none());
 
         // The attacker holds the attestation and never sends its Ethereum commitment.
         let mut attested = service.load_required(&mask.id).unwrap();
@@ -2908,7 +2971,10 @@ mod tests {
 
         let vote_object = b"slot-owner-ciphertext";
         let vote = input_job("owner-input", slot, 0x22, vote_object);
-        assert!(service.admit_input(&vote, vote_object).unwrap().is_none());
+        assert!(service
+            .admit_input(&vote, vote_object, None)
+            .unwrap()
+            .is_none());
 
         // Admission of the second statement keeps the earlier attestation valid and keeps its
         // bytes retrievable.
@@ -2926,7 +2992,7 @@ mod tests {
         );
 
         // The same statement stays one job.
-        let repeat = service.admit_input(&vote, vote_object).unwrap();
+        let repeat = service.admit_input(&vote, vote_object, None).unwrap();
         assert_eq!(repeat.unwrap().job_id, vote.id);
         assert_eq!(service.jobs.len(), 2);
         assert!(service.validate_storage().is_ok());
@@ -2940,12 +3006,112 @@ mod tests {
 
         let first_object = b"12345678";
         let first = input_job("first-input", slot, 0x11, first_object);
-        assert!(service.admit_input(&first, first_object).unwrap().is_none());
+        assert!(service
+            .admit_input(&first, first_object, None)
+            .unwrap()
+            .is_none());
 
         let second_object = b"9";
         let second = input_job("second-input", slot, 0x22, second_object);
-        assert!(service.admit_input(&second, second_object).is_err());
+        assert!(service.admit_input(&second, second_object, None).is_err());
         assert!(service.load(&second.id).unwrap().is_none());
+    }
+
+    // ZEN2-21 follow-up. The relay reservation is committed in the same synchronous step that
+    // writes the durable job, so a request cancelled after admission (the client closes the
+    // connection while `stage_input` awaits) cannot release quota for work the background
+    // worker still holds. The slot must stay taken until its window expires on its own.
+    #[test]
+    fn admission_commits_the_reservation_before_any_await() {
+        let service = test_service(1024);
+        let limiter = crate::server::rate_limit::RateLimiter::with_limits(8, 1);
+        let reservation = limiter.try_reserve_global().unwrap();
+        let object = b"admitted-ciphertext";
+        let job = input_job("admitted", Address::repeat_byte(0x77), 0x11, object);
+
+        assert!(service
+            .admit_input(&job, object, Some(reservation))
+            .unwrap()
+            .is_none());
+        // The job is durable and the slot is still taken: the reservation was committed inside
+        // `admit_input`, not left for a later step a cancellation could skip.
+        assert!(service.load(&job.id).unwrap().is_some());
+        assert!(limiter.try_reserve_global().is_err());
+    }
+
+    #[test]
+    fn a_repeat_statement_returns_its_reservation() {
+        let service = test_service(1024);
+        let limiter = crate::server::rate_limit::RateLimiter::with_limits(8, 2);
+        let object = b"repeated-ciphertext";
+        let job = input_job("repeated", Address::repeat_byte(0x77), 0x11, object);
+
+        let first = limiter.try_reserve_global().unwrap();
+        assert!(service
+            .admit_input(&job, object, Some(first))
+            .unwrap()
+            .is_none());
+        let second = limiter.try_reserve_global().unwrap();
+        // The second request admits nothing durable, so its slot goes back and one slot of the
+        // two stays taken for the admitted job.
+        assert!(service
+            .admit_input(&job, object, Some(second))
+            .unwrap()
+            .is_some());
+        let probe = limiter.try_reserve_global().unwrap();
+        assert!(limiter.try_reserve_global().is_err());
+        drop(probe);
+    }
+
+    #[test]
+    fn a_refused_admission_returns_its_reservation() {
+        // Storage refuses the second object: nothing durable, so the slot goes back.
+        let service = test_service(8);
+        let limiter = crate::server::rate_limit::RateLimiter::with_limits(8, 1);
+        let slot = Address::repeat_byte(0x77);
+        let first_object = b"12345678";
+        let first = input_job("first-input", slot, 0x11, first_object);
+        assert!(service
+            .admit_input(&first, first_object, None)
+            .unwrap()
+            .is_none());
+
+        let reservation = limiter.try_reserve_global().unwrap();
+        let second_object = b"9";
+        let second = input_job("second-input", slot, 0x22, second_object);
+        assert!(service
+            .admit_input(&second, second_object, Some(reservation))
+            .is_err());
+        assert!(service.load(&second.id).unwrap().is_none());
+        assert!(limiter.try_reserve_global().is_ok());
+    }
+
+    #[test]
+    fn a_store_error_with_a_live_record_keeps_the_reservation() {
+        // The uncertain path: `store_new_job_with_object` reports an error after its
+        // transaction applied, which is what a failed flush looks like. The decision is judged
+        // by the record, not by the call result, so with a live record the slot stays taken.
+        let service = test_service(1024);
+        let limiter = crate::server::rate_limit::RateLimiter::with_limits(8, 1);
+        let object = b"flushed-ciphertext";
+        let job = input_job("flushed", Address::repeat_byte(0x77), 0x11, object);
+        service.store_new_job_with_object(&job, object).unwrap();
+
+        let reservation = limiter.try_reserve_global().unwrap();
+        service.settle_uncertain_admission(&job, reservation);
+        assert!(limiter.try_reserve_global().is_err());
+
+        // With no live record (the earlier job is `Failed`, so the replacement did not apply),
+        // the same path returns the slot.
+        let mut failed = service.load_required(&job.id).unwrap();
+        failed.state = JobState::Failed {
+            message: "test".to_owned(),
+        };
+        service.save(&failed).unwrap();
+        let limiter = crate::server::rate_limit::RateLimiter::with_limits(8, 1);
+        let reservation = limiter.try_reserve_global().unwrap();
+        service.settle_uncertain_admission(&job, reservation);
+        assert!(limiter.try_reserve_global().is_ok());
     }
 
     /// A noncanonical E3 identifier must not buy a second publication for the same statement.
