@@ -8,7 +8,8 @@ use crate::net_interface_handle::NetEventSubscriber;
 use crate::{
     domain::{datetime_to_instant_from_now, DocumentPublishingService},
     events::{
-        call_and_await_response, DocumentPublishedNotification, GossipData, NetCommand, NetEvent,
+        call_and_await_response, DocumentPublishedNotification, GossipData, GossipPublishFailure,
+        NetCommand, NetEvent,
     },
     ContentHash,
 };
@@ -130,16 +131,25 @@ impl DocumentPublisher {
                         .await
                 {
                     debug!("Received event {:?}", event);
-                    if let NetEvent::GossipData(GossipData::DocumentPublishedNotification(data)) =
-                        event
-                    {
-                        if let Err(error) = addr.send(data).await {
-                            tracing::warn!(
-                                %error,
-                                "DocumentPublisher stopped; ending DHT notification ingress"
-                            );
-                            break;
+                    match event {
+                        NetEvent::GossipData(GossipData::DocumentPublishedNotification(data)) => {
+                            if let Err(error) = addr.send(data).await {
+                                tracing::warn!(
+                                    %error,
+                                    "DocumentPublisher stopped; ending DHT notification ingress"
+                                );
+                                break;
+                            }
                         }
+                        // A peer (re)joined the topic after our pointers went out. Re-announce
+                        // so it can fetch the records; without this a node that restarts
+                        // mid-DKG never learns the content hashes it needs.
+                        NetEvent::GossipSubscribed { .. } => {
+                            if addr.send(handlers::PeerSubscribed).await.is_err() {
+                                break;
+                            }
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -175,7 +185,10 @@ mod effects;
 #[path = "handlers.rs"]
 mod handlers;
 
-pub use effects::{handle_document_published_notification, handle_publish_document_requested};
+pub use effects::{
+    handle_document_published_notification, handle_publish_document_requested,
+    repeat_document_published_notification,
+};
 
 #[cfg(test)]
 #[path = "tests/mod.rs"]

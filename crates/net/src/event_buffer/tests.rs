@@ -20,7 +20,6 @@ use crate::{
 use e3_ciphernode_builder::EventSystem;
 use e3_events::{CorrelationId, EventPublisher, SyncEnded};
 use libp2p::{
-    gossipsub::TopicHash,
     swarm::{ConnectionId, DialError},
     PeerId,
 };
@@ -46,10 +45,6 @@ fn sync_and_connection_control_events() -> Vec<NetEvent> {
         NetEvent::OutgoingConnectionError {
             connection_id: ConnectionId::new_unchecked(3),
             error: Arc::new(DialError::NoAddresses),
-        },
-        NetEvent::GossipSubscribed {
-            count: 1,
-            topic: TopicHash::from_raw("test-topic"),
         },
         NetEvent::IncomingRequest(IncomingRequest {
             peer: PeerId::random(),

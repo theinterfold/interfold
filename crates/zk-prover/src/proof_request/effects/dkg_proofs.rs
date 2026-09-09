@@ -5,6 +5,59 @@
 use super::*;
 
 impl ProofRequestActor {
+    /// Re-seed `DKGInnerProofReady { seq: 0 }` from the durable own-C0 record.
+    ///
+    /// The read is async and the caller is a sync handler, so the publish happens from a
+    /// spawned task straight onto the bus; the `NodeProofAggregator` subscribes there.
+    pub(in crate::actors::proof_request) fn reseed_own_c0_from_store(
+        &mut self,
+        e3_id: E3id,
+        party_id: u64,
+        ec: EventContext<Sequenced>,
+    ) {
+        let Some(repo) = self.own_c0_repo(&e3_id) else {
+            return;
+        };
+        if let Some(meta) = self.node_agg_meta.get_mut(&e3_id) {
+            meta.c0_emitted = true;
+        }
+        let bus = self.bus.clone();
+        tokio::spawn(async move {
+            match repo.read().await {
+                Ok(Some(record)) => {
+                    info!(
+                        "Re-seeding own C0 proof for E3 {} from the durable record (party {})",
+                        e3_id, record.party_id
+                    );
+                    if record.party_id != party_id {
+                        warn!(
+                            "Own C0 record party {} differs from threshold share party {} for E3 {}",
+                            record.party_id, party_id, e3_id
+                        );
+                    }
+                    if let Err(err) = bus.publish(
+                        DKGInnerProofReady {
+                            e3_id: e3_id.clone(),
+                            party_id,
+                            proof: record.proof,
+                            seq: 0,
+                        },
+                        ec,
+                    ) {
+                        error!("Failed to publish re-seeded DKGInnerProofReady for C0: {err}");
+                    }
+                }
+                Ok(None) => warn!(
+                    "No durable own C0 record for E3 {}; the node DKG fold will not complete",
+                    e3_id
+                ),
+                Err(err) => error!("Failed to read own C0 record for E3 {}: {err}", e3_id),
+            }
+        });
+    }
+}
+
+impl ProofRequestActor {
     pub(in crate::actors::proof_request) fn handle_encryption_key_pending(
         &mut self,
         msg: TypedEvent<EncryptionKeyPending>,
@@ -47,18 +100,29 @@ impl ProofRequestActor {
         let e_sm_enc_count = msg.e_sm_share_encryption_requests.len();
 
         let total_expected = NodeAggregationMeta::total_expected_for(sk_enc_count, e_sm_enc_count);
-        let pending_c0 = self
+        let (pending_c0, c0_already_emitted) = self
             .node_agg_meta
             .get(&e3_id)
-            .and_then(|m| m.pending_c0.clone());
+            .map(|m| (m.pending_c0.clone(), m.c0_emitted))
+            .unwrap_or((None, false));
+        let c0_emitted = c0_already_emitted || pending_c0.is_some();
         self.node_agg_meta.insert(
             e3_id.clone(),
             NodeAggregationMeta {
                 party_id: msg.full_share.party_id,
                 total_expected,
                 pending_c0: None,
+                c0_emitted,
             },
         );
+        // The seq layout is now known; release any C4 dispatch that arrived first.
+        if let Some(held) = self.held_decryption_pending.remove(&e3_id) {
+            info!(
+                "Releasing held DecryptionShareProofsPending for E3 {} now that the seq layout is known",
+                e3_id
+            );
+            self.handle_decryption_share_proofs_pending(held);
+        }
         // If C0 proof arrived before meta, emit DKGInnerProofReady now
         if self.proof_aggregation_enabled {
             if let Some(c0_proof) = pending_c0 {
@@ -73,6 +137,10 @@ impl ProofRequestActor {
                 ) {
                     error!("Failed to publish DKGInnerProofReady for C0: {err}");
                 }
+            } else if !c0_already_emitted {
+                // No C0 in memory and none emitted earlier in this process: this is a restart
+                // with the C0 generated before the crash. Re-seed seq 0 from the durable record.
+                self.reseed_own_c0_from_store(e3_id.clone(), msg.full_share.party_id, ec.clone());
             }
         }
 
@@ -143,6 +211,15 @@ impl ProofRequestActor {
                         resp.proof.clone(),
                         &ec,
                     );
+                } else if let Some(adopted) =
+                    self.adopt_orphaned_c4_response(&msg.e3_id, resp.dkg_input_type)
+                {
+                    // After a restart the effect gate replays the pre-crash `ComputeRequest`
+                    // (old correlation id) and drops our re-driven one as a semantic
+                    // duplicate. The response arrives under an id this process never
+                    // registered. It is still the C4 proof we are waiting on — match it by
+                    // kind against the pending dispatch instead of losing it.
+                    self.handle_decryption_proof_response(&adopted, resp.proof.clone(), &ec);
                 } else {
                     self.handle_threshold_proof_response(
                         &msg.correlation_id,

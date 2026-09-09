@@ -10,16 +10,19 @@ use crate::{
     cli::{Cli, RemoteCli},
     owo,
 };
-use anyhow::Result;
+use anyhow::{bail, Result};
 use e3_ciphernode_builder::CiphernodeHandle;
 use e3_config::AppConfig;
 use e3_console::Console;
 use e3_daemon_server::start_daemon_server;
+use e3_events::NODE_SHUTDOWN_DEADLINE;
 use e3_utils::{colorize, Color};
 use tokio::signal::unix::{signal, SignalKind};
 use tracing::{error, info, instrument};
 
-const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(30);
+/// Wall-clock budget for the three-stage graceful shutdown. Defined next to the
+/// subscriber-accept window it is derived from; see `NODE_SHUTDOWN_DEADLINE`.
+const SHUTDOWN_DEADLINE: Duration = NODE_SHUTDOWN_DEADLINE;
 
 #[instrument(skip_all)]
 pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
@@ -95,8 +98,21 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
         node.peer_id
     );
 
-    shutdown.await;
+    // A chain gateway that fails closed after startup leaves a node that looks healthy to
+    // every supervisor while ingesting nothing. Its own error text says "restart the node";
+    // do it: shut down cleanly and exit non-zero so `restart: unless-stopped` brings the
+    // node back to replay chain history.
+    let gateway_failure = node.gateway_failure();
+    tokio::pin!(gateway_failure);
+    let gateway_failed = tokio::select! {
+        _ = &mut shutdown => None,
+        reason = &mut gateway_failure => Some(reason),
+    };
     graceful_shutdown(Some(node)).await?;
+    if let Some(reason) = gateway_failed {
+        error!(%reason, "exiting so the supervisor can restart the node");
+        bail!("{reason}");
+    }
 
     Ok(())
 }

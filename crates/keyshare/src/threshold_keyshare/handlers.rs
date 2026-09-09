@@ -211,6 +211,7 @@ impl Handler<TypedEvent<AllDecryptionKeySharesCollected>> for ThresholdKeyshare 
             || {
                 let (msg, ec) = msg.into_components();
                 self.decryption_key_shared_collector = None;
+                self.decryption_key_shares_collected = true;
                 self.dispatch_c4_verification(msg.shares, ec)
             },
         )

@@ -183,6 +183,7 @@ async fn local_only_cursor_completes_without_a_peer_request() {
         TypedEvent::new(start, context.sequence(1)),
         response_tx,
         true,
+        false,
         NetworkPolicy::local_unrestricted(),
     )
     .await
@@ -194,6 +195,47 @@ async fn local_only_cursor_completes_without_a_peer_request() {
     assert!(
         net_rx.try_recv().is_err(),
         "local aggregate caused an outbound peer request"
+    );
+}
+
+/// A node whose only bootstrap peer is unreachable still publishes `NetReady`
+/// through the connect-timeout fallback. Historical sync must then complete the
+/// phase instead of attempting fetches that can only fail: the failure path
+/// `bail!`s into an error event rather than a completion, so startup would wait
+/// on a `SyncRequestSucceeded` that never arrives and exit at
+/// `startup_timeout_secs` — a crash loop on every restart.
+#[actix::test]
+async fn no_connected_peers_completes_sync_instead_of_hanging_startup() {
+    let (net_tx, mut net_rx) = mpsc::channel::<NetCommand>(1);
+    let (event_tx, _event_rx) = broadcast::channel::<NetEvent>(1);
+    let event_rx = NetEventSubscriber::from(&event_tx);
+    let (response_tx, response_rx) =
+        e3_utils::actix::channel::oneshot::<TypedEvent<SyncRequestSucceeded>>();
+    // A real, peer-syncable chain aggregate — not the local aggregate 0.
+    let start = HistoricalNetSyncStart::new(BTreeMap::from([(AggregateId::new(31_337), 10)]));
+    let context: e3_events::EventContext<Unsequenced> =
+        InterfoldEventData::HistoricalNetSyncStart(start.clone()).into();
+
+    handle_sync_request_event(
+        net_tx,
+        event_rx,
+        TypedEvent::new(start, context.sequence(1)),
+        response_tx,
+        // AllPeersDialed already observed, so the function does not wait...
+        false,
+        // ...but no connection was ever established.
+        false,
+        NetworkPolicy::local_unrestricted(),
+    )
+    .await
+    .expect("sync must complete rather than bail when no peers are connected");
+
+    let response = response_rx.await.unwrap().into_inner().response;
+    assert!(response.events.is_empty());
+    assert_eq!(response.ts, 0);
+    assert!(
+        net_rx.try_recv().is_err(),
+        "no outbound peer request should be attempted without a connected peer"
     );
 }
 

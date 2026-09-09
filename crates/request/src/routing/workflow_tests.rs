@@ -357,18 +357,46 @@ fn requester_and_provider_failures_publish_complete() {
 }
 
 #[test]
-fn e3_failed_invalid_shares_does_not_complete() {
-    // Slashable failures must NOT trigger E3RequestComplete — the accusation/slashing
-    // lifecycle must be allowed to finish first.
+fn e3_failed_invalid_shares_schedules_teardown() {
+    // Slashable failures must NOT publish E3RequestComplete immediately — the
+    // accusation/slashing lifecycle needs the per-E3 accusation manager alive. But nothing
+    // in that lifecycle reports back, so the router must schedule the teardown itself or
+    // the context leaks forever.
     let id = e3id();
     let msg = e3_failed(id.clone(), FailureReason::DKGInvalidShares);
     assert_eq!(
         RequestRouter::route(&msg, &HashSet::new()),
         RoutingDecision::Process {
             e3_id: id,
-            post_forward: PostForward::None,
+            post_forward: PostForward::ScheduleTeardown,
         }
     );
+}
+
+#[test]
+fn every_slashable_failure_reason_schedules_teardown() {
+    // Only reasons that `ends_without_slashing()` rejects reach the teardown arm. Requester
+    // and provider faults (NoInputsReceived, ComputeProviderExpired, ComputeProviderFailed)
+    // end without an accusation, so they publish completion immediately and are covered by
+    // `requester_and_provider_failures_publish_complete`.
+    for reason in [
+        FailureReason::DKGInvalidShares,
+        FailureReason::DecryptionInvalidShares,
+        FailureReason::VerificationFailed,
+        FailureReason::InsufficientCommitteeMembers,
+        FailureReason::None,
+    ] {
+        let id = e3id();
+        let msg = e3_failed(id.clone(), reason.clone());
+        assert_eq!(
+            RequestRouter::route(&msg, &HashSet::new()),
+            RoutingDecision::Process {
+                e3_id: id,
+                post_forward: PostForward::ScheduleTeardown,
+            },
+            "{reason:?} must schedule a teardown, not leak the context"
+        );
+    }
 }
 
 #[test]

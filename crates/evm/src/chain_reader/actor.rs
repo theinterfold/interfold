@@ -18,13 +18,11 @@ use alloy::providers::Provider;
 use alloy::rpc::types::Filter;
 use alloy_primitives::Address;
 use anyhow::anyhow;
-use e3_events::{
-    BusHandle, EType, ErrorDispatcher, Event, EventId, InterfoldEvent, InterfoldEventData,
-};
+use e3_events::{BusHandle, EType, ErrorDispatcher, Event, InterfoldEvent, InterfoldEventData};
 use e3_events::{EventSubscriber, EventType};
 use e3_utils::{retry_with_backoff, RetryError, MAILBOX_LIMIT};
 use futures_util::stream::StreamExt;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 use tokio::select;
 use tokio::sync::oneshot;
@@ -48,12 +46,6 @@ const MAX_RETRIES_BEFORE_RECREATE: u32 = 3;
 /// Polling is required even while the subscription is quiet: a log becomes confirmed because later
 /// blocks arrive, and those blocks need not contain any matching contract event.
 const CONFIRMED_BACKFILL_INTERVAL_SECS: u64 = 5;
-
-#[derive(Default, serde::Serialize, serde::Deserialize, Clone)]
-pub struct EvmReadInterfaceState {
-    pub ids: HashSet<EventId>,
-    pub last_block: Option<u64>,
-}
 
 #[derive(Clone, Default)]
 pub struct Filters {

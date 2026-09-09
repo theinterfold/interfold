@@ -330,6 +330,26 @@ aggregation path can terminate deterministically instead of stalling on missing 
 `PublicKeyAggregator` and `ThresholdPlaintextAggregator` dispatch the aggregator requests instead of
 pairwise folding.
 
+**Bounded node-proof collection:** a failed `NodeDkgFold` reports itself, but a member that dies
+mid-fold sends nothing. `PublicKeyAggregator` therefore arms a budget when it enters
+`GeneratingC5Proof` and cancels it when every honest proof arrives. If the budget expires,
+`fail_on_missing_node_proofs` names the parties that did not deliver and publishes
+`E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGTimeout }`. The late parties are not
+dropped from the honest set instead: C5 is signed before the cross-node fold completes and binds
+exactly those H keyshares, so a different honest set would invalidate a published proof.
+
+The budget is durable, not only an in-process timer. `GeneratingC5Proof.node_proof_deadline_at`
+holds the absolute unix second, and `EffectsEnabled` re-arms it for the time that is actually left.
+The in-process handle is an actix `SpawnHandle` that dies with the process, and none of the three
+events that arm it are replayed on recovery, so without the persisted instant a restart would
+silently drop the bound and restore the unbounded stall it exists to prevent.
+
+The budget is `E3_DKG_NODE_PROOF_TIMEOUT_SECS`, and its default matches the DKG window (7200 s)
+because a node proof that arrives after the window cannot be used by its E3. Measured
+`ZkNodeDkgFold` at the `secure-8192` preset is 132 s at N=3, 380 s at N=5, and 904 s at N=9, and a
+member that restarts mid-DKG re-proves about 5500 s of inner circuits before it can fold again. Do
+not lower the budget below that restart-inclusive worst case for the deployed committee size.
+
 **Failure bridge:** `ProofRequestActor` now converts proof-generation worker failures and local
 proof-signing failures into terminal round failures instead of only logging that the proof-bearing
 artifact will not be published. DKG-path proofs (`C0` through `C5`) emit

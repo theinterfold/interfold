@@ -7,23 +7,23 @@ chains:
       rpc_url: http://127.0.0.1:4000/availability
     contracts:
       e3_program:
-        address: "0xb7278A61aa25c888815aFC32Ad3cC52fF24fE575"
-        deploy_block: 37
+        address: "0xc5a5C42992dECbae36851359345FE25997F5C42d"
+        deploy_block: 33
       interfold:
-        address: "0x9A676e781A523b5d0C0e43731313A708CB607508"
-        deploy_block: 18
+        address: "0x84eA74d481Ee0A5332c457a4d796187F6Ba67fEB"
+        deploy_block: 36
       ciphernode_registry:
-        address: "0x5FC8d32690cc91D4c39d9d3abcBD16989F875707"
-        deploy_block: 9
-      bonding_registry:
         address: "0xa513E6E4b8f2a923D98304ec87F64353C4D5C853"
-        deploy_block: 10
+        deploy_block: 12
+      bonding_registry:
+        address: "0x0B306BF915C4d645ff596e518fAf3F9669b97016"
+        deploy_block: 14
       slashing_manager:
-        address: "0xCf7Ed3AccA5a467e9e704C703E8D87F634fB0Fc9"
-        deploy_block: 8
+        address: "0xDc64a140Aa3E981100a9becA4E685f962f0cF6C9"
+        deploy_block: 10
       fee_token:
         address: "0xe7f1725E7734CE288F8367e1Bb143E90bb3F0512"
-        deploy_block: 6
+        deploy_block: 7
 
 program:
   dev: true

@@ -145,6 +145,7 @@ impl PublicKeyAggregation {
 
         if !dishonest_parties.is_empty() {
             warn!(
+                e3_id = %e3_id,
                 "Total dishonest parties (ZK + commitment): {:?}",
                 dishonest_parties
             );
@@ -153,6 +154,7 @@ impl PublicKeyAggregation {
         // Fail closed when fewer than H parties cleared C1 — C5 cannot be witnessed.
         if honest_entries.len() < circuit_h {
             error!(
+                e3_id = %e3_id,
                 "C5 requires {circuit_h} honest parties with valid C1 proofs; only {} honest after verification (collected {collected}, dishonest: {:?})",
                 honest_entries.len(),
                 dishonest_parties
@@ -176,6 +178,7 @@ impl PublicKeyAggregation {
         // Defensive: should hold after truncation above; guard against future refactors.
         if honest_entries.len() <= threshold_m {
             error!(
+                e3_id = %e3_id,
                 "Not enough honest parties after filtering: {} (need > {})",
                 honest_entries.len(),
                 threshold_m

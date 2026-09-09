@@ -76,6 +76,7 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
     event: TypedEvent<HistoricalNetSyncStart>,
     address: impl Into<Recipient<TypedEvent<SyncRequestSucceeded>>>,
     wait_for_event: bool,
+    has_connected_peers: bool,
     network: NetworkPolicy,
 ) -> Result<()> {
     info!("Sync request event received");
@@ -133,6 +134,32 @@ pub(in crate::actors::net_sync_manager) async fn handle_sync_request_event(
             address.into().try_send(TypedEvent::new(value, ctx))?;
             return Ok(());
         }
+    } else if !has_connected_peers {
+        // `AllPeersDialed` was already observed with zero successful connections and
+        // readiness published `NetReady` through its connect-timeout fallback. Every
+        // fetch below would fail with "No connected peers available", burn the retry
+        // budget, and then `bail!` — which `trap_fut` converts into an error event
+        // rather than a completion, so startup would wait on a `SyncRequestSucceeded`
+        // that can never arrive and die at `startup_timeout_secs` in a crash loop.
+        //
+        // A node that cannot reach a peer has no history to import. Complete the phase
+        // with an empty result so it boots and serves the chain; the background
+        // bootstrap retries and live gossip remain responsible for catching it up.
+        warn!(
+            aggregates = sync_cursor.len(),
+            "Skipping historical peer sync: no peer connections are available. \
+             The node will start from local state and catch up over live gossip"
+        );
+        address.into().try_send(TypedEvent::new(
+            SyncRequestSucceeded {
+                response: SyncResponseValue {
+                    events: vec![],
+                    ts: 0,
+                },
+            },
+            ctx,
+        ))?;
+        return Ok(());
     }
     info!("handle_sync_request_event: ready to sync");
 

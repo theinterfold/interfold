@@ -459,4 +459,65 @@ mod tests {
         assert_eq!(state.unresponsive[&id], vec![0, 1]);
         assert!(state.rounds[&id].exhausted);
     }
+
+    /// A phase must be covered by a failover deadline from the moment it starts.
+    ///
+    /// `CiphernodeSelector::observe_phase` decides when to create a round. It previously created
+    /// one only when `ready_phases` held the phase, which `AggregationInputsReady` sets after the
+    /// aggregator already holds a threshold of shares. The collection window was therefore
+    /// uncovered: an aggregator that died early in a phase left no round, so no timer could fire
+    /// and no standby was ever promoted.
+    ///
+    /// Observed on a 5-node swarm: the active aggregator was killed two seconds into the
+    /// decryption phase, and 903 seconds later — over 1.5x the 600 second budget — there had been
+    /// no promotion and no plaintext, while both survivors held a usable decryption share.
+    ///
+    /// This models the selector's gating expression. `reconcile_phase` itself was always correct;
+    /// the defect was that it was not called at phase start.
+    #[test]
+    fn a_phase_is_covered_by_a_deadline_from_the_moment_it_starts() {
+        let id = e3_id();
+        let mut state = AggregatorFailoverState::default();
+
+        // The phase has just changed, and no AggregationInputsReady has arrived yet.
+        let phase = Some(AggregatorPhase::Plaintext);
+        let phase_changed = true;
+        let ready = false;
+
+        // The selector's condition: a round must be created for a phase change, not only when
+        // inputs are ready.
+        if ready || phase_changed {
+            reconcile_phase(&mut state, &id, phase, 100, &policy());
+        }
+
+        let round = state.rounds.get(&id).expect(
+            "a phase change must create a failover round; without one an aggregator that dies \
+             before aggregation inputs are ready is never replaced",
+        );
+        assert_eq!(round.phase, AggregatorPhase::Plaintext);
+        assert_eq!(
+            round.deadline_unix_secs, 160,
+            "the round must carry the full budget from the phase start"
+        );
+
+        // With the active party bound, the deadline can now promote a standby.
+        reconcile_active_party(&mut state, &id, Some(0), 100, &policy());
+        let decision = apply_due_timeout(
+            &mut state,
+            &id,
+            ExpectedFailoverDeadline {
+                phase: AggregatorPhase::Plaintext,
+                unix_secs: 160,
+            },
+            160,
+            &policy(),
+            &committee(),
+            &[],
+        );
+        assert!(
+            matches!(decision, FailoverDecision::Promote { .. }),
+            "an aggregator that stops making progress during collection must be replaced; got \
+             {decision:?}"
+        );
+    }
 }

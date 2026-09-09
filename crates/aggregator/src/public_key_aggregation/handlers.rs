@@ -46,8 +46,12 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                 trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
                     self.effects_enabled = true;
                     self.publish_inputs_ready(ec.clone())?;
-                    self.resume_in_flight_work(ec)
+                    self.resume_in_flight_work(ec.clone())
                 });
+                // Re-arm the node-proof bound after the state is hydrated. None of the events
+                // that arm it in-process are replayed on recovery, so without this a restart
+                // while proofs are outstanding would wait forever for a member that is gone.
+                self.rearm_node_proof_deadline(ctx, &ec);
             }
             InterfoldEventData::E3RequestComplete(_) => self.notify_sync(ctx, Die),
             InterfoldEventData::CommitteeMemberExpelled(data) => {
@@ -59,7 +63,10 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                 let node_addr = data.node;
 
                 if data.e3_id != self.e3_id {
-                    error!("Wrong e3_id sent to PublicKeyAggregator for expulsion. This should not happen.");
+                    error!(
+                        e3_id = %self.e3_id,
+                        "Wrong e3_id sent to PublicKeyAggregator for expulsion. This should not happen."
+                    );
                     return;
                 }
 
@@ -107,7 +114,10 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
 
                 let node_addr = data.node;
                 if data.e3_id != self.e3_id {
-                    error!("Wrong e3_id sent to PublicKeyAggregator for local exclusion.");
+                    error!(
+                        e3_id = %self.e3_id,
+                        "Wrong e3_id sent to PublicKeyAggregator for local exclusion."
+                    );
                     return;
                 }
 
@@ -154,7 +164,7 @@ impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {
     fn handle(
         &mut self,
         msg: TypedEvent<AggregatorChanged>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
         if msg.e3_id != self.e3_id || msg.is_aggregator == self.is_aggregator {
             return;
@@ -163,8 +173,19 @@ impl Handler<TypedEvent<AggregatorChanged>> for PublicKeyAggregator {
         if self.can_run_aggregation_effects() {
             let ec = msg.get_ctx().clone();
             trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
-                self.resume_in_flight_work(ec)
+                self.resume_in_flight_work(ec.clone())
             });
+            // A promoted standby inherits the same missing node proofs the demoted
+            // aggregator was waiting on, so it starts its own bounded wait here rather than
+            // stalling for the rest of the E3.
+            if !self.missing_node_proof_parties().is_empty() {
+                self.arm_node_proof_deadline(ctx, &ec);
+            }
+        } else {
+            // Demoted: stop counting down and drop the persisted instant. The newly promoted
+            // aggregator owns the bound now.
+            let ec = msg.get_ctx().clone();
+            self.cancel_node_proof_deadline_with_context(ctx, &ec);
         }
     }
 }
@@ -186,7 +207,11 @@ impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {
             let c1_proof = event.signed_pk_generation_proof.clone();
 
             if e3_id != self.e3_id {
-                error!("Wrong e3_id sent to aggregator. This should not happen.");
+                error!(
+                    e3_id = %self.e3_id,
+                    party_id,
+                    "Wrong e3_id sent to aggregator. This should not happen."
+                );
                 return Ok(());
             }
 
@@ -240,16 +265,23 @@ impl Handler<TypedEvent<PkAggregationProofSigned>> for PublicKeyAggregator {
     fn handle(
         &mut self,
         msg: TypedEvent<PkAggregationProofSigned>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
         if !self.can_run_aggregation_effects() {
             return;
         }
+        let ec = msg.get_ctx().clone();
         trap(
             EType::PublickeyAggregation,
             &self.bus.with_ec(msg.get_ctx()),
             || self.handle_pk_aggregation_proof_signed(msg),
-        )
+        );
+        // C5 is signed; from here the aggregator only waits on honest-party NodeDkgFold
+        // proofs. Bound that wait — an unfinishable member used to hold the E3 open until
+        // the canonical deadline.
+        if !self.missing_node_proof_parties().is_empty() {
+            self.arm_node_proof_deadline(ctx, &ec);
+        }
     }
 }
 
@@ -259,16 +291,24 @@ impl Handler<TypedEvent<DKGRecursiveAggregationComplete>> for PublicKeyAggregato
     fn handle(
         &mut self,
         msg: TypedEvent<DKGRecursiveAggregationComplete>,
-        _ctx: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
         if !self.can_run_aggregation_effects() {
             return;
         }
+        let ec = msg.get_ctx().clone();
         trap(
             EType::PublickeyAggregation,
             &self.bus.with_ec(msg.get_ctx()),
             || self.handle_dkg_recursive_aggregation_complete(msg),
-        )
+        );
+        // Every honest proof in: the wait is over. Otherwise keep (or start) the bound —
+        // arming is idempotent, so a partial delivery never extends the original budget.
+        if self.missing_node_proof_parties().is_empty() {
+            self.cancel_node_proof_deadline(ctx);
+        } else {
+            self.arm_node_proof_deadline(ctx, &ec);
+        }
     }
 }
 

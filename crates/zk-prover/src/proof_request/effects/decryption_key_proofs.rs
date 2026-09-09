@@ -10,8 +10,25 @@ impl ProofRequestActor {
         &mut self,
         msg: TypedEvent<DecryptionShareProofsPending>,
     ) {
-        let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
+
+        // The seq layout (and so `c4_base_seq`) comes from `ThresholdSharePending`. Without it
+        // C4a/C4b would be dispatched as seq 0/1 and collide with C0/C1 in the node fold
+        // buffer. Hold until the layout is known; `handle_threshold_share_pending` replays.
+        let layout_known = self
+            .node_agg_meta
+            .get(&e3_id)
+            .is_some_and(|meta| meta.total_expected > 0);
+        if !layout_known {
+            info!(
+                "DecryptionShareProofsPending for E3 {} arrived before ThresholdSharePending — holding until the seq layout is known",
+                e3_id
+            );
+            self.held_decryption_pending.insert(e3_id, msg);
+            return;
+        }
+
+        let (msg, ec) = msg.into_components();
         let esm_count = msg.esm_requests.len();
 
         if self.pending_decryption.contains_key(&e3_id) {
@@ -41,7 +58,7 @@ impl ProofRequestActor {
             .node_agg_meta
             .get(&e3_id)
             .map(NodeAggregationMeta::c4_base_seq)
-            .unwrap_or(0);
+            .expect("layout checked above");
         for item in plan_decryption_dispatch(msg.sk_request, msg.esm_requests, c4_base_seq) {
             let corr = CorrelationId::new();
             self.decryption_correlation
@@ -57,6 +74,57 @@ impl ProofRequestActor {
                 return;
             }
         }
+    }
+
+    /// Match a C4 response whose correlation id this process never registered to the
+    /// pending dispatch of the same kind, returning that dispatch's correlation id.
+    ///
+    /// Only considers dispatches for `e3_id` whose kind matches `input_type`. For
+    /// `SmudgingNoise` the lowest outstanding `esi_idx` is taken.
+    ///
+    /// SAFE ONLY WHILE THERE IS ONE ESI SLOT. `DkgShareDecryptionProofResponse` carries no
+    /// ESI index, so this infers the slot from arrival order. These jobs run concurrently and
+    /// can finish out of order, which would put a proof in another slot and produce a C4b
+    /// vector that does not match its witness. Today every preset generates exactly one ESI
+    /// share (`vec![SharedSecret::from(..)]`, `trbfv/src/gen_esi_sss.rs:91`), so there is only
+    /// one candidate and the order cannot be wrong. Before `num_esi > 1`, carry the index on
+    /// the response and match on it instead of inferring it here.
+    pub(in crate::actors::proof_request) fn adopt_orphaned_c4_response(
+        &self,
+        e3_id: &E3id,
+        input_type: DkgInputType,
+    ) -> Option<CorrelationId> {
+        let mut candidates: Vec<(usize, CorrelationId)> = self
+            .decryption_correlation
+            .iter()
+            .filter(|(_, (eid, kind, _))| {
+                eid == e3_id
+                    && matches!(
+                        (input_type, kind),
+                        (DkgInputType::SecretKey, DecryptionProofKind::SecretKey)
+                            | (
+                                DkgInputType::SmudgingNoise,
+                                DecryptionProofKind::SmudgingNoise { .. }
+                            )
+                    )
+            })
+            .map(|(corr, (_, kind, _))| {
+                let order = match kind {
+                    DecryptionProofKind::SecretKey => 0,
+                    DecryptionProofKind::SmudgingNoise { esi_idx } => *esi_idx,
+                };
+                (order, *corr)
+            })
+            .collect();
+        candidates.sort_unstable_by_key(|(order, _)| *order);
+        let adopted = candidates.first().map(|(_, corr)| *corr);
+        if adopted.is_some() {
+            info!(
+                "Adopting orphaned C4 {:?} response for E3 {} (replayed pre-restart request)",
+                input_type, e3_id
+            );
+        }
+        adopted
     }
 
     /// Handle a C4 proof response — store and check completeness.

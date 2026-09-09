@@ -16,7 +16,7 @@ use actix::{
 use anyhow::{Context as _, Result};
 use e3_utils::MAILBOX_LIMIT_LARGE;
 use std::collections::HashMap;
-use tracing::{debug, error, warn};
+use tracing::{debug, error, trace, warn};
 
 /// QueryAggregator - handles a single query's lifecycle
 struct QueryAggregator {
@@ -140,8 +140,12 @@ impl<I: SequenceIndex, L: EventLog> EventStoreRouter<I, L> {
     }
 
     pub fn handle_store_event_requested(&mut self, msg: StoreEventRequested) {
-        debug!("Handling store event requested....");
         let aggregate_id = msg.event.aggregate_id();
+        trace!(
+            aggregate = %aggregate_id,
+            event_type = ?msg.event.event_type_enum(),
+            "Routing event to its aggregate store"
+        );
         let store_addr = self.stores.get(&aggregate_id).unwrap_or_else(|| {
             panic!(
                 "No EventStore is configured for aggregate {aggregate_id}; refusing to write it to another aggregate"

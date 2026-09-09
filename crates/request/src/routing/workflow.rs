@@ -17,6 +17,9 @@ pub enum PostForward {
     PublishComplete,
     /// Tear down the context for this request and mark it as completed.
     Teardown,
+    /// The request failed for a reason that opens an accusation/slashing window. Keep the
+    /// context alive for that window, then publish `E3RequestComplete`.
+    ScheduleTeardown,
     /// No completion action is required.
     None,
 }
@@ -141,11 +144,15 @@ impl RequestRouter {
                 PostForward::PublishComplete
             }
             // Timeout failures have no accusation/slashing lifecycle, so the context can be
-            // torn down immediately. Misbehaviour failures (DKGInvalidShares, etc.) still need
-            // the accusation/slashing lifecycle to complete before teardown.
+            // torn down immediately.
             InterfoldEventData::E3Failed(data) if data.reason.ends_without_slashing() => {
                 PostForward::PublishComplete
             }
+            // Misbehaviour failures (DKGInvalidShares, etc.) open an accusation/slashing
+            // window that the per-E3 accusation manager must be alive to serve. Nothing in
+            // that lifecycle reports back to the router, so without a scheduled teardown the
+            // context, its child actors and its checkpoint entry would leak forever.
+            InterfoldEventData::E3Failed(_) => PostForward::ScheduleTeardown,
             InterfoldEventData::E3RequestComplete(_) => PostForward::Teardown,
             _ => PostForward::None,
         };

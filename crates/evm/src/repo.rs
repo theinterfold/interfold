@@ -7,7 +7,7 @@
 use e3_data::{Repositories, Repository};
 use e3_events::StoreKeys;
 
-use crate::{DataAvailabilityRecoveryState, EvmReadInterfaceState, SlashingWriterRecoveryState};
+use crate::{DataAvailabilityRecoveryState, SlashingWriterRecoveryState};
 
 pub trait EthPrivateKeyRepositoryFactory {
     fn eth_private_key(&self) -> Repository<Vec<u8>>;
@@ -19,41 +19,12 @@ impl EthPrivateKeyRepositoryFactory for Repositories {
     }
 }
 
-pub trait InterfoldSolReaderRepositoryFactory {
-    fn interfold_sol_reader(&self, chain_id: u64) -> Repository<EvmReadInterfaceState>;
-}
-
-impl InterfoldSolReaderRepositoryFactory for Repositories {
-    fn interfold_sol_reader(&self, chain_id: u64) -> Repository<EvmReadInterfaceState> {
-        Repository::new(self.store.scope(StoreKeys::interfold_sol_reader(chain_id)))
-    }
-}
-
-pub trait CiphernodeRegistryReaderRepositoryFactory {
-    fn ciphernode_registry_reader(&self, chain_id: u64) -> Repository<EvmReadInterfaceState>;
-}
-
-impl CiphernodeRegistryReaderRepositoryFactory for Repositories {
-    fn ciphernode_registry_reader(&self, chain_id: u64) -> Repository<EvmReadInterfaceState> {
-        Repository::new(
-            self.store
-                .scope(StoreKeys::ciphernode_registry_reader(chain_id)),
-        )
-    }
-}
-
-pub trait BondingRegistryReaderRepositoryFactory {
-    fn bonding_registry_reader(&self, chain_id: u64) -> Repository<EvmReadInterfaceState>;
-}
-
-impl BondingRegistryReaderRepositoryFactory for Repositories {
-    fn bonding_registry_reader(&self, chain_id: u64) -> Repository<EvmReadInterfaceState> {
-        Repository::new(
-            self.store
-                .scope(StoreKeys::bonding_registry_reader(chain_id)),
-        )
-    }
-}
+// Note: the EVM read cursor is NOT stored here. Each aggregate's last ingested block is
+// persisted by the snapshot batch router under `StoreKeys::aggregate_block` and restored
+// through `SnapshotMeta::to_evm_config` at boot, which is what `HistoricalEvmSyncStart`
+// hands to the chain reader as its `from_block`. A previous per-contract
+// `EvmReadInterfaceState` repository was declared here but never read or written; it was
+// removed so nobody mistakes its absence for "the node re-scans from deploy_block".
 
 pub trait SlashingWriterRepositoryFactory {
     fn slashing_writer_recovery(&self, chain_id: u64) -> Repository<SlashingWriterRecoveryState>;

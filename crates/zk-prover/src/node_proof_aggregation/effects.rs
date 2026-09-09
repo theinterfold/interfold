@@ -191,8 +191,54 @@ impl NodeProofAggregator {
         correlation_id: &CorrelationId,
         proof: Proof,
     ) {
-        let Some(e3_id) = self.fold_correlation.remove(correlation_id) else {
-            return;
+        let e3_id = match self.fold_correlation.remove(correlation_id) {
+            Some(e3_id) => e3_id,
+            None => {
+                // Defensive: no live trigger has been reproduced for this branch.
+                //
+                // A crash during the fold leaves the pre-crash correlation id dead with the
+                // process. It does NOT normally strand the fold: recovery rebuilds the proof
+                // buffer, `try_dispatch_node_dkg_fold` mints a *fresh* `CorrelationId`, and the
+                // new response matches it. Two live chaos rounds that killed a committee member
+                // mid-fold (~40 s in) both recovered this way with zero adoptions, and the
+                // effect gate reported no duplicate suppression for `NodeDkgFold` — unlike the
+                // C4 `DkgShareDecryption` path, where replay re-plans an identical
+                // `(e3_id, request)` and the gate does dedup it.
+                //
+                // The branch is kept because dropping a response silently would leave the fold
+                // window unfinished for good if that ever changed (for example if the fold
+                // request became replay-identical). Adopt only when exactly one E3 is waiting on
+                // a fold: the request is per-E3 and `state.fold_correlation` allows one in
+                // flight, so there is no ambiguity about the owner.
+                let mut waiting = self
+                    .states
+                    .iter()
+                    .filter(|(_, state)| state.fold_correlation.is_some())
+                    .map(|(e3_id, _)| e3_id.clone());
+                match (waiting.next(), waiting.next()) {
+                    (Some(e3_id), None) => {
+                        info!(
+                            "NodeProofAggregator: adopting orphaned NodeDkgFold response for E3 {} \
+                             (correlation {:?} predates a restart)",
+                            e3_id, correlation_id
+                        );
+                        if let Some(state) = self.states.get_mut(&e3_id) {
+                            if let Some(stale) = state.fold_correlation.take() {
+                                self.fold_correlation.remove(&stale);
+                            }
+                        }
+                        e3_id
+                    }
+                    (Some(_), Some(_)) => {
+                        warn!(
+                            "NodeProofAggregator: orphaned NodeDkgFold response with several E3s \
+                             mid-fold — cannot attribute it, dropping"
+                        );
+                        return;
+                    }
+                    _ => return,
+                }
+            }
         };
 
         let Some(state) = self.states.remove(&e3_id) else {

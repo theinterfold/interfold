@@ -155,6 +155,12 @@ impl Cli {
                         setup_simple_tracing(log_level);
                         noir::execute_without_config(out, command).await?
                     },
+                    Commands::Nodes { .. } => bail!(
+                        "Configuration file not found. `interfold nodes ...` resolves \
+                         `interfold.config.yaml` from the current directory upwards, then from \
+                         the default config dir; run it from the directory that holds the \
+                         swarm's config, or pass `--config <path>`."
+                    ),
                     _ => bail!(
                         "Configuration file not found. Run `interfold ciphernode setup` to create a configuration."
                     ),

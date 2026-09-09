@@ -17,7 +17,7 @@ use e3_events::{
 };
 use e3_events::{Event, EventPublisher};
 use e3_utils::MAILBOX_LIMIT;
-use tokio::sync::oneshot;
+use tokio::sync::{oneshot, watch};
 use tracing::warn;
 
 /// Per-chain bound for events accumulated while the node is synchronizing.
@@ -26,14 +26,28 @@ use tracing::warn;
 /// of dropping an observed chain event if this window is exhausted.
 pub const DEFAULT_MAX_BUFFERED_EVM_EVENTS: usize = 100_000;
 
+/// Receives the reason when a gateway fails closed after it has gone live.
+///
+/// Startup failures are reported through the readiness channel; this one covers the rest of
+/// the process lifetime, when nothing else is awaiting the gateway. Without it a failed-closed
+/// gateway leaves a node that is up, peered and reported healthy while dropping every chain
+/// event. The value is `None` until a failure happens.
+pub type GatewayFailureReceiver = watch::Receiver<Option<String>>;
+
 pub struct EvmChainGatewayHandle {
     addr: Addr<EvmChainGateway>,
     readiness: oneshot::Receiver<std::result::Result<(), String>>,
+    failure: GatewayFailureReceiver,
 }
 
 impl EvmChainGatewayHandle {
     pub fn addr(&self) -> Addr<EvmChainGateway> {
         self.addr.clone()
+    }
+
+    /// A receiver that yields the failure reason if this gateway fails closed at any time.
+    pub fn failure_receiver(&self) -> GatewayFailureReceiver {
+        self.failure.clone()
     }
 
     pub async fn wait_until_live(self) -> Result<()> {
@@ -51,6 +65,7 @@ pub struct EvmChainGateway {
     status: SyncStatus<Recipient<HistoricalEvmEventsReceived>>,
     max_buffered_events: usize,
     readiness: Option<oneshot::Sender<std::result::Result<(), String>>>,
+    failure: watch::Sender<Option<String>>,
 }
 
 impl EvmChainGateway {
@@ -63,11 +78,13 @@ impl EvmChainGateway {
         max_buffered_events: usize,
         readiness: Option<oneshot::Sender<std::result::Result<(), String>>>,
     ) -> Self {
+        let (failure, _) = watch::channel(None);
         Self {
             bus: bus.clone(),
             status: SyncStatus::default(),
             max_buffered_events,
             readiness,
+            failure,
         }
     }
 
@@ -85,8 +102,13 @@ impl EvmChainGateway {
     ) -> EvmChainGatewayHandle {
         let (tx, readiness) = oneshot::channel();
         let actor = Self::with_options(bus, max_buffered_events, Some(tx));
+        let failure = actor.failure.subscribe();
         let addr = Self::start_and_subscribe(bus, actor);
-        EvmChainGatewayHandle { addr, readiness }
+        EvmChainGatewayHandle {
+            addr,
+            readiness,
+            failure,
+        }
     }
 
     fn start_and_subscribe(bus: &BusHandle, actor: Self) -> Addr<Self> {
@@ -112,7 +134,9 @@ impl EvmChainGateway {
         );
         self.status.fail(reason.clone());
         self.signal_startup(Err(reason.clone()));
-        self.bus.err(EType::Evm, anyhow::anyhow!(reason));
+        self.bus.err(EType::Evm, anyhow::anyhow!(reason.clone()));
+        // Post-startup consumers (the run loop) learn of the death through here.
+        let _ = self.failure.send(Some(reason));
         ctx.stop();
     }
 

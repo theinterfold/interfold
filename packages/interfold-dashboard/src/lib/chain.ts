@@ -41,6 +41,10 @@ type NetworkProfile = {
   chain: Chain
   // Human-readable name used in UI copy ("Reading from Sepolia…").
   name: string
+  // True for test networks. Gates test-only UI (the faucet card and its
+  // "testnet deployment" copy) independently of the faucet address, so a stale
+  // VITE_FAUCET_ADDRESS cannot surface testnet copy on a production network.
+  testnet: boolean
   rpc: string
   explorer: string
   interfold: string
@@ -63,6 +67,7 @@ const NETWORKS: Record<string, NetworkProfile> = {
   sepolia: {
     chain: sepolia,
     name: 'Sepolia',
+    testnet: true,
     rpc: 'https://ethereum-sepolia.publicnode.com',
     explorer: 'https://sepolia.etherscan.io',
     interfold: '0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C',
@@ -82,6 +87,7 @@ const NETWORKS: Record<string, NetworkProfile> = {
   mainnet: {
     chain: mainnet,
     name: 'Ethereum mainnet',
+    testnet: false,
     rpc: 'https://ethereum-rpc.publicnode.com',
     explorer: 'https://etherscan.io',
     interfold: '0x28cF63B459e6218C69EA97ea7D90541cf648c715',
@@ -149,6 +155,10 @@ export const CHAIN = NET.chain
 
 // Human-readable network name for UI copy.
 export const NETWORK_NAME = NET.name
+
+// Whether the selected network is a test network. Test-only UI must gate on this
+// as well as on the faucet address.
+export const IS_TESTNET = NET.testnet
 
 // Block explorer base URL for the selected network.
 export const EXPLORER_URL = NET.explorer

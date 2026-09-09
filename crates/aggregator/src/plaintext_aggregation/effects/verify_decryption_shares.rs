@@ -12,6 +12,23 @@ impl ThresholdPlaintextAggregator {
         signed_decryption_proofs: Vec<SignedProofPayload>,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
+        // Collection closes at `VerifyingC6`. A share that arrives after that is a duplicate of
+        // one already collected, not a fault: peers re-announce their in-flight document
+        // pointers whenever a node (re)subscribes to the gossip topic, so a restart anywhere in
+        // the committee re-delivers every decryption share to aggregators that have moved on.
+        // Without this guard `TryInto<Collecting>` fails and the duplicate surfaces as
+        // `InterfoldError("PlaintextState was expected to be Collecting but it was not.")` on a
+        // node doing nothing wrong — the same defect that hit `add_keyshare` on the DKG side.
+        if !matches!(
+            self.state.get().as_ref(),
+            Some(ThresholdPlaintextAggregatorState::Collecting(_))
+        ) {
+            debug!(
+                party_id,
+                "Ignoring a decryption share that arrived after collection closed"
+            );
+            return Ok(());
+        }
         let required_shares = self.aggregated_committee_n();
         ensure!(
             required_shares > 0,
@@ -86,6 +103,7 @@ impl ThresholdPlaintextAggregator {
         let mut dishonest_parties = msg.dishonest_parties.clone();
         if !dishonest_parties.is_empty() {
             warn!(
+                e3_id = %self.e3_id,
                 "C6 verification: {} dishonest parties filtered: {:?}",
                 dishonest_parties.len(),
                 dishonest_parties
@@ -102,6 +120,7 @@ impl ThresholdPlaintextAggregator {
 
         if honest_shares.len() <= state.threshold_m as usize {
             warn!(
+                e3_id = %self.e3_id,
                 "Not enough honest shares after C6 verification: {} honest shares, {} required",
                 honest_shares.len(),
                 state.threshold_m + 1
@@ -121,6 +140,7 @@ impl ThresholdPlaintextAggregator {
             );
         if !share_mismatch_parties.is_empty() {
             warn!(
+                e3_id = %self.e3_id,
                 "C6 share-commitment mismatch for {} parties: {:?} — excluding from aggregation",
                 share_mismatch_parties.len(),
                 share_mismatch_parties,
@@ -130,6 +150,7 @@ impl ThresholdPlaintextAggregator {
             honest_shares.retain(|(id, _)| !share_mismatch_parties.contains(id));
             if honest_shares.len() <= state.threshold_m as usize {
                 warn!(
+                    e3_id = %self.e3_id,
                     "Not enough honest shares after d_commitment check: {} honest, {} required",
                     honest_shares.len(),
                     state.threshold_m + 1

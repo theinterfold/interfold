@@ -34,6 +34,7 @@ pub(crate) fn find(contract: &str, topic0: B256) -> Option<&'static EvmEventDefi
     catalog(contract)
         .iter()
         .chain(retired_catalog(contract).iter())
+        .chain(PROXY_LIFECYCLE.iter())
         .find(|event| keccak256(event.signature.as_bytes()) == topic0)
 }
 
@@ -46,6 +47,25 @@ fn catalog(contract: &str) -> &'static [EvmEventDefinition] {
         _ => &[],
     }
 }
+
+/// ERC1967 proxy lifecycle events, emitted by the proxy itself rather than by the
+/// implementation.
+///
+/// Every watched contract is a proxy, but [`catalog`] is generated from — and asserted
+/// against — the *implementation* ABIs, which never declare these. Without them a routine
+/// deployment or upgrade decodes as `UnknownEvmLog`, which `e3_logger` reports at `warn`
+/// (see its `EvmLogObserved(event) if !event.known` arm). Every fresh sync then prints
+/// operator-facing warnings for entirely expected logs, which trains operators to ignore
+/// the warning level that real faults use.
+///
+/// Applies to all watched contracts, so this list is not keyed by contract name. These are
+/// fixed by ERC1967 and are deliberately kept out of [`catalog`], whose ABI-equality test
+/// must keep failing on genuine implementation drift.
+const PROXY_LIFECYCLE: &[EvmEventDefinition] = &[
+    EvmEventDefinition::new("Upgraded", "Upgraded(address)", None),
+    EvmEventDefinition::new("AdminChanged", "AdminChanged(address,address)", None),
+    EvmEventDefinition::new("BeaconUpgraded", "BeaconUpgraded(address)", None),
+];
 
 /// Signatures that the current ABIs no longer emit, kept so already-mined logs stay readable.
 ///
@@ -793,6 +813,58 @@ mod tests {
                 actual, expected,
                 "{contract} event catalog drifted from {artifact}"
             );
+        }
+    }
+
+    /// Every watched contract is a proxy, so a deployment or upgrade emits ERC1967 lifecycle
+    /// logs that the implementation ABI never declares. They must resolve on all of them,
+    /// otherwise a routine upgrade prints `UnknownEvmLog` at `warn` on every fresh sync.
+    #[test]
+    fn proxy_lifecycle_events_resolve_for_every_watched_contract() {
+        for contract in [
+            "Interfold",
+            "BondingRegistry",
+            "CiphernodeRegistry",
+            "SlashingManager",
+        ] {
+            for (name, signature) in [
+                ("Upgraded", "Upgraded(address)"),
+                ("AdminChanged", "AdminChanged(address,address)"),
+                ("BeaconUpgraded", "BeaconUpgraded(address)"),
+            ] {
+                let definition = find(contract, keccak256(signature.as_bytes()))
+                    .unwrap_or_else(|| panic!("{contract}: {signature} must resolve"));
+                assert_eq!(definition.name, name);
+                assert!(
+                    definition.e3_id_topic.is_none(),
+                    "proxy lifecycle events carry no e3Id"
+                );
+            }
+        }
+    }
+
+    /// The proxy list is consulted for every contract, so a collision would make a real
+    /// implementation event decode under the wrong name.
+    #[test]
+    fn proxy_lifecycle_events_never_shadow_a_contract_event() {
+        for contract in [
+            "Interfold",
+            "BondingRegistry",
+            "CiphernodeRegistry",
+            "SlashingManager",
+        ] {
+            let owned: HashSet<B256> = catalog(contract)
+                .iter()
+                .chain(retired_catalog(contract).iter())
+                .map(|event| keccak256(event.signature.as_bytes()))
+                .collect();
+            for proxy_event in PROXY_LIFECYCLE {
+                assert!(
+                    !owned.contains(&keccak256(proxy_event.signature.as_bytes())),
+                    "{contract}: proxy signature {} collides with a contract event",
+                    proxy_event.signature
+                );
+            }
         }
     }
 }

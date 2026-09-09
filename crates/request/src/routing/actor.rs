@@ -97,6 +97,83 @@ pub struct E3Router {
     replay_cursors: HashMap<AggregateId, u64>,
     recovery_store: Repository<RequestRouterCheckpoint>,
     recovered_selections: Vec<CiphernodeSelected>,
+    /// Slashably-failed E3s and the unix second at which each context is torn down.
+    /// Persisted in the checkpoint so a restart re-arms the timers.
+    teardown_deadlines: HashMap<E3id, u64>,
+    /// How long a slashably-failed E3's context stays alive after `E3Failed`.
+    teardown_grace: std::time::Duration,
+}
+
+/// Default for how long a slashably-failed E3's context stays alive after `E3Failed`.
+///
+/// Used only when the on-chain windows are unknown (no chain configured, or the registry read
+/// failed). Prefer [`teardown_grace_for`], which derives the value from the chain.
+pub const SLASHABLE_FAILURE_TEARDOWN_GRACE: std::time::Duration =
+    std::time::Duration::from_secs(2 * 60 * 60);
+
+/// The on-chain window during which a slashing report is still accepted, counted from the E3's
+/// lifecycle deadline: `SlashingManager.ACCUSATION_REPORTING_WINDOW`.
+pub const ACCUSATION_REPORTING_WINDOW: std::time::Duration =
+    std::time::Duration::from_secs(24 * 60 * 60);
+
+/// Local margin for a vote that is in flight when the on-chain window closes.
+const LOCAL_VOTE_TIMEOUT_MARGIN: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// How long to keep a slashably-failed E3's context, given the chain's vote-validity window.
+///
+/// `SlashingManager.submitSlashProposal` accepts a report until the E3's snapshotted lifecycle
+/// deadline plus `ACCUSATION_REPORTING_WINDOW` (1 day), and votes stay valid for
+/// `CiphernodeRegistry.accusationVoteValidity()`, which governance can raise with no upper
+/// bound (`setAccusationVoteValidity` enforces only `>=`). A context that is torn down while
+/// the chain still accepts evidence takes this node out of the accusation quorum; because every
+/// node uses the same grace, the whole committee goes dark at once and the H-of-N attestation
+/// quorum becomes unreachable for a report the chain would still have accepted.
+///
+/// So the grace covers the reporting window plus the actual vote validity plus a margin for a
+/// vote already in flight, rather than a fixed constant that governance can silently outgrow.
+pub fn teardown_grace_for(
+    accusation_vote_validity: Option<std::time::Duration>,
+) -> std::time::Duration {
+    let Some(validity) = accusation_vote_validity else {
+        return SLASHABLE_FAILURE_TEARDOWN_GRACE;
+    };
+    ACCUSATION_REPORTING_WINDOW
+        .saturating_add(validity)
+        .saturating_add(LOCAL_VOTE_TIMEOUT_MARGIN)
+}
+
+/// Upper bound on how many completed E3 ids the router remembers.
+///
+/// `completed` exists to reject late events for finished requests, and it is serialized
+/// into the recovery checkpoint on **every** routed event. Unbounded, it grows by one
+/// `E3id` (a `String` plus a `u64`) per E3 for the life of the data directory, so the
+/// per-event checkpoint write grows with total E3 history. Late events for an E3 arrive
+/// within blocks of its completion, never thousands of E3s later; keeping the most recent
+/// completions preserves the guard where it matters.
+pub const MAX_REMEMBERED_COMPLETIONS: usize = 4096;
+
+/// Drop the oldest completions once `completed` exceeds [`MAX_REMEMBERED_COMPLETIONS`].
+///
+/// On-chain E3 ids are allocated by an increasing counter, so the numerically lowest ids
+/// are the oldest; pruning by id keeps the checkpoint schema unchanged (no separate order
+/// list to persist). Ids that do not parse as integers sort first and go before any that
+/// do, which only affects non-chain test fixtures.
+pub(crate) fn prune_completed(completed: &mut HashSet<E3id>) {
+    let excess = completed.len().saturating_sub(MAX_REMEMBERED_COMPLETIONS);
+    if excess == 0 {
+        return;
+    }
+    let mut by_age: Vec<E3id> = completed.iter().cloned().collect();
+    by_age.sort_by_cached_key(|id| {
+        (
+            id.e3_id().parse::<u128>().ok(),
+            id.chain_id(),
+            id.e3_id().to_owned(),
+        )
+    });
+    for oldest in by_age.into_iter().take(excess) {
+        completed.remove(&oldest);
+    }
 }
 
 pub struct E3RouterParams {
@@ -106,6 +183,8 @@ pub struct E3RouterParams {
     replay_cursors: HashMap<AggregateId, u64>,
     recovery_store: Repository<RequestRouterCheckpoint>,
     recovered_selections: Vec<CiphernodeSelected>,
+    teardown_deadlines: HashMap<E3id, u64>,
+    teardown_grace: std::time::Duration,
 }
 
 impl E3Router {
@@ -117,6 +196,7 @@ impl E3Router {
             recovered_selections: vec![],
             recovery_store: repositories.request_router_checkpoint(),
             store: repositories.router(),
+            teardown_grace: SLASHABLE_FAILURE_TEARDOWN_GRACE,
         };
 
         // Everything needs the committe meta factory so adding it here by default
@@ -134,6 +214,8 @@ impl E3Router {
             replay_cursors: params.replay_cursors,
             recovery_store: params.recovery_store,
             recovered_selections: params.recovered_selections,
+            teardown_deadlines: params.teardown_deadlines,
+            teardown_grace: params.teardown_grace,
         }
     }
 }

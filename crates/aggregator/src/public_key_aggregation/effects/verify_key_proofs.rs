@@ -14,11 +14,25 @@ impl PublicKeyAggregator {
         c1_proof: Option<SignedProofPayload>,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
-        if matches!(
+        // Collection closes at `VerifyingC1`, not at `Complete`. A keyshare that arrives after
+        // that is a duplicate of one already collected, not a fault: peers re-announce their
+        // in-flight document pointers whenever a node (re)subscribes to the gossip topic, so a
+        // restart anywhere in the committee re-delivers every keyshare pointer to nodes that
+        // have long since moved on. Treating those as errors raised `InterfoldError` on healthy
+        // aggregators — observed on three nodes at once in a single restart, which is exactly
+        // the noise that hides a real fault.
+        //
+        // Ignoring is safe because the share was already recorded: `add_keyshare` is idempotent
+        // per `party_id`, and the honest set is fixed once C1 verification starts.
+        if !matches!(
             self.state.get().as_ref(),
-            Some(PublicKeyAggregatorState::Complete { .. })
+            Some(PublicKeyAggregatorState::Collecting { .. })
         ) {
-            info!("Ignoring replayed keyshare after public-key aggregation completed");
+            debug!(
+                e3_id = %self.e3_id,
+                party_id,
+                "Ignoring a keyshare that arrived after collection closed"
+            );
             return Ok(());
         }
         self.state.try_mutate(ec, |state| {
@@ -159,10 +173,15 @@ impl PublicKeyAggregator {
                         },
                         ec.clone(),
                     ) {
-                        error!("Failed to publish SignedProofFailed: {e}");
+                        error!(
+                            e3_id = %self.e3_id,
+                            party_id,
+                            "Failed to publish SignedProofFailed: {e}"
+                        );
                     }
                 }
                 Err(e) => warn!(
+                    e3_id = %self.e3_id,
                     "Could not recover address from C1 proof for party {}: {e}",
                     party_id
                 ),
@@ -171,6 +190,7 @@ impl PublicKeyAggregator {
 
         if !audit.mismatched.is_empty() {
             warn!(
+                e3_id = %self.e3_id,
                 "C1 commitment mismatch for {} parties — filtering before aggregation",
                 audit.mismatched.len()
             );
@@ -286,6 +306,10 @@ impl PublicKeyAggregator {
                 nodes_fold_accumulator: None,
                 nodes_fold_completed_slots: 0,
                 nodes_fold_step_correlation: None,
+                // Fresh transition out of VerifyingC1: the node-proof wait has not started, so
+                // no deadline is armed yet. `arm_node_proof_deadline` persists one once C5 is
+                // signed and honest proofs are actually outstanding.
+                node_proof_deadline_at: None,
             })
         })?;
 

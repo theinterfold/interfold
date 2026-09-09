@@ -89,6 +89,9 @@ impl ThresholdKeyshare {
                     },
                 ))
             })?;
+
+            // Peers may have completed the collector while we were still generating.
+            self.flush_early_all_shares_collected()?;
         }
         Ok(())
     }

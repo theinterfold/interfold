@@ -172,15 +172,22 @@ waiton-files() {
     done
   }
 
+  # `${var,,}` needs bash >= 4. macOS ships bash 3.2, so lowercase with `tr`
+  # to keep this harness runnable on a developer machine.
+  lowercase() {
+    printf '%s' "$1" | tr '[:upper:]' '[:lower:]'
+  }
+
   node_name_for_address() {
-    local address="${1,,}"
+    local address
+    address="$(lowercase "$1")"
 
     case "$address" in
-      "${CIPHERNODE_ADDRESS_1,,}") echo "cn1" ;;
-      "${CIPHERNODE_ADDRESS_2,,}") echo "cn2" ;;
-      "${CIPHERNODE_ADDRESS_3,,}") echo "cn3" ;;
-      "${CIPHERNODE_ADDRESS_4,,}") echo "cn4" ;;
-      "${CIPHERNODE_ADDRESS_5,,}") echo "cn5" ;;
+      "$(lowercase "$CIPHERNODE_ADDRESS_1")") echo "cn1" ;;
+      "$(lowercase "$CIPHERNODE_ADDRESS_2")") echo "cn2" ;;
+      "$(lowercase "$CIPHERNODE_ADDRESS_3")") echo "cn3" ;;
+      "$(lowercase "$CIPHERNODE_ADDRESS_4")") echo "cn4" ;;
+      "$(lowercase "$CIPHERNODE_ADDRESS_5")") echo "cn5" ;;
       *)
         echo "Unknown ciphernode address: $1" >&2
         return 1

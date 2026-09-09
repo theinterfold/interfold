@@ -42,7 +42,7 @@ use std::{
     collections::{BTreeSet, HashMap, HashSet},
     sync::Arc,
 };
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::actors::decryption_key_shared_collector::{
     AllDecryptionKeySharesCollected, DecryptionKeySharedCollectionFailed,
@@ -139,6 +139,26 @@ struct PendingKeyshareWork {
     own_dkg_shares: Option<(SensitiveBytes, Vec<SensitiveBytes>)>,
     /// C4 completed before the signed C1 artifact became available.
     keyshare_publish: bool,
+    /// The share collector finished before this node's own DKG reached aggregation.
+    ///
+    /// Peers' shares can complete the collector while the local state is still
+    /// `CollectingEncryptionKeys` or `GeneratingThresholdShare` — routinely after a restart,
+    /// because peers that already hold this node's key finish ahead of it, and because
+    /// recovery rebuilds the collector from persisted peer shares before it redrives local
+    /// work. The collector cancels its timeout and never re-emits, so this message must be
+    /// kept until the state can consume it or the DKG stalls with no timer left to fail it.
+    early_all_shares_collected: Option<TypedEvent<AllThresholdSharesCollected>>,
+}
+
+/// The reason a `DecryptionKeyShared` found no collector.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum UncollectedShare {
+    /// Collection finished and the collector was dropped; this is a late duplicate. Peers
+    /// re-announce their in-flight document pointers on every (re)subscribe, so a restart
+    /// anywhere in the committee re-delivers shares minutes after they were consumed.
+    AlreadyCollected,
+    /// No collector was ever needed because this node is the only honest party.
+    SoleHonestParty,
 }
 
 pub struct ThresholdKeyshare {
@@ -147,6 +167,20 @@ pub struct ThresholdKeyshare {
     decryption_key_collector: Option<Addr<ThresholdShareCollector>>,
     encryption_key_collector: Option<Addr<EncryptionKeyCollector>>,
     decryption_key_shared_collector: Option<Addr<DecryptionKeySharedCollector>>,
+    /// Set once `AllDecryptionKeySharesCollected` fires, so a share that arrives afterwards is
+    /// recognised as a late duplicate rather than reported as a missing collector.
+    ///
+    /// The collector is dropped the moment collection completes, which makes "no collector"
+    /// ambiguous: it means either "this node is the sole honest party and never needed one" or
+    /// "collection already finished". Peers re-announce their in-flight document pointers on
+    /// every (re)subscribe, so a restart anywhere in the committee re-delivers shares long after
+    /// the fact and used to log the misleading second case as the first.
+    ///
+    /// Not persisted directly: it is derived at construction from the durable
+    /// `decryption_key_shares` map, which recovery already carries. A restart after collection
+    /// completed therefore still classifies a re-announced share as a duplicate instead of
+    /// reporting a missing collector.
+    decryption_key_shares_collected: bool,
     state: Persistable<ThresholdKeyshareState>,
     recovery: Persistable<ThresholdKeyshareRecoveryState>,
     share_enc_preset: BfvPreset,
@@ -155,6 +189,20 @@ pub struct ThresholdKeyshare {
 }
 
 impl ThresholdKeyshare {
+    /// Why a `DecryptionKeyShared` arrived with no collector to receive it.
+    ///
+    /// The collector is dropped the instant collection completes, so its absence alone is
+    /// ambiguous. Distinguishing the two cases keeps the operator-facing warning meaningful:
+    /// only [`UncollectedShare::SoleHonestParty`] is unusual, and reporting a routine
+    /// re-announce as that hides the case an operator should act on.
+    pub(crate) fn classify_uncollected_share(&self) -> UncollectedShare {
+        if self.decryption_key_shares_collected {
+            UncollectedShare::AlreadyCollected
+        } else {
+            UncollectedShare::SoleHonestParty
+        }
+    }
+
     pub fn new(params: ThresholdKeyshareParams) -> Self {
         let recovered = params.recovery.get().unwrap_or_default();
         let own_party_id = params.state.get().map(|state| state.party_id);
@@ -181,6 +229,7 @@ impl ThresholdKeyshare {
             decryption_key_collector: None,
             encryption_key_collector: None,
             decryption_key_shared_collector: None,
+            decryption_key_shares_collected: !recovered.decryption_key_shares.is_empty(),
             state: params.state,
             recovery: params.recovery,
             share_enc_preset: params.share_enc_preset,

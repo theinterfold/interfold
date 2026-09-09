@@ -24,8 +24,18 @@ use super::nodes::{
     spawn_process, CommandMap, ProcessMap, ProcessRecord, ProcessStatus, SwarmStatus,
 };
 
-const GRACEFUL_CHILD_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+/// How long the daemon waits for a child to exit after SIGTERM before SIGKILL.
+///
+/// Must exceed the child's own graceful-shutdown budget, or the daemon kills it
+/// mid store-flush and the persisted state the flush was protecting is lost.
+const GRACEFUL_CHILD_SHUTDOWN_TIMEOUT: Duration =
+    Duration::from_secs(e3_events::NODE_SHUTDOWN_DEADLINE.as_secs() + 5);
+const _: () = assert!(
+    GRACEFUL_CHILD_SHUTDOWN_TIMEOUT.as_secs() > e3_events::NODE_SHUTDOWN_DEADLINE.as_secs(),
+    "the daemon must outwait the node's own shutdown budget before escalating to SIGKILL"
+);
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
+const EXIT_WATCH_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Forward stdout from child process to parent's stdout
 fn forward_stdout(id: &str, stdout: ChildStdout) -> JoinHandle<()> {
@@ -89,6 +99,54 @@ async fn run_command(id: &str, program: &str, args: Vec<String>) -> Result<Proce
     Ok((child, handles))
 }
 
+/// Poll a child for an unexpected exit and report it.
+///
+/// The daemon otherwise learns that a node died only when an operator runs `nodes ps`. A
+/// deliberate `stop` removes the record from the map before terminating the child, so a record
+/// that is still present when the child has exited is a crash, not an operator action. The
+/// watcher is aborted together with the output forwarders when the record is dropped.
+fn watch_exit(id: &str, processes: &ProcessMap) -> JoinHandle<()> {
+    let id = id.to_owned();
+    let processes = processes.clone();
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(EXIT_WATCH_INTERVAL).await;
+            let mut guard = processes.lock().await;
+            let Some((child, _)) = guard.get_mut(&id) else {
+                // Removed by `stop`/`terminate`: expected.
+                return;
+            };
+            match child.try_wait() {
+                Ok(None) => continue,
+                Ok(Some(status)) => {
+                    error!(
+                        process = %id,
+                        exit_code = ?status.code(),
+                        signal = ?std::os::unix::process::ExitStatusExt::signal(&status),
+                        "SWARM child exited unexpectedly; it is NOT restarted automatically \
+                         (use `nodes start {id}`)"
+                    );
+                    return;
+                }
+                Err(error) => {
+                    warn!(process = %id, %error, "Failed to poll child exit status");
+                    return;
+                }
+            }
+        }
+    })
+}
+
+/// Attach the exit watcher to a freshly stored record.
+async fn attach_exit_watcher(id: &str, processes: &ProcessMap) {
+    let watcher = watch_exit(id, processes);
+    if let Some((_, handlers)) = processes.lock().await.get_mut(id) {
+        handlers.push(watcher);
+    } else {
+        watcher.abort();
+    }
+}
+
 /// Run commands as child processes and set up output forwarding
 async fn run_commands(commands: &CommandMap, processes: &ProcessMap) -> Result<()> {
     let commands = commands.clone();
@@ -105,7 +163,9 @@ async fn run_commands(commands: &CommandMap, processes: &ProcessMap) -> Result<(
 
         // Store the process
         let mut processes_guard = processes.lock().await;
-        processes_guard.insert(id, record);
+        processes_guard.insert(id.clone(), record);
+        drop(processes_guard);
+        attach_exit_watcher(&id, processes).await;
     }
     Ok(())
 }
@@ -138,6 +198,8 @@ async fn start(id: &str, commands: &CommandMap, processes: &ProcessMap) -> Resul
     let record = run_command(id, &program, args).await?;
     let mut processes_guard = processes.lock().await;
     processes_guard.insert(id.to_owned(), record);
+    drop(processes_guard);
+    attach_exit_watcher(id, processes).await;
 
     Ok(())
 }
@@ -262,9 +324,17 @@ fn setup_signal_handlers(manager: &ProcessManager) -> JoinHandle<()> {
 pub struct ProcessManager {
     commands: CommandMap,
     processes: ProcessMap,
+    /// Config file this swarm was launched from; reported in `/status` so clients can refuse
+    /// to act on a daemon that serves a different config.
+    config_file: Option<String>,
 }
 
 impl ProcessManager {
+    pub fn with_config_file(mut self, config_file: impl Into<String>) -> Self {
+        self.config_file = Some(config_file.into());
+        self
+    }
+
     pub async fn start_all(&self) -> Result<()> {
         run_commands(&self.commands, &self.processes).await?;
         Ok(())
@@ -318,7 +388,10 @@ impl ProcessManager {
             processes.insert(id.to_string(), self.status(id).await);
         }
 
-        SwarmStatus { processes }
+        SwarmStatus {
+            processes,
+            config_file: self.config_file.clone(),
+        }
     }
 }
 
@@ -328,6 +401,7 @@ impl From<CommandMap> for ProcessManager {
         let manager = Self {
             commands: value,
             processes,
+            config_file: None,
         };
 
         setup_signal_handlers(&manager);
@@ -414,5 +488,51 @@ mod tests {
             "terminated"
         );
         assert_eq!(manager.status("long").await, ProcessStatus::Stopped);
+    }
+
+    /// The exit watcher must stop polling once a record has been removed by `stop`, and must
+    /// still be attached (so it can be aborted) while the child is running.
+    #[tokio::test]
+    async fn exit_watcher_is_attached_and_released_with_the_record() {
+        let commands = CommandMap::from([(
+            "long".to_string(),
+            (
+                "sh".to_string(),
+                vec!["-c".to_string(), "sleep 30".to_string()],
+            ),
+        )]);
+        let manager = ProcessManager::from(commands);
+        manager.start("long").await.unwrap();
+
+        // Two output forwarders plus the exit watcher.
+        assert_eq!(
+            manager.processes.lock().await.get("long").unwrap().1.len(),
+            3
+        );
+
+        manager.stop("long").await.unwrap();
+        assert!(manager.processes.lock().await.get("long").is_none());
+    }
+
+    /// A child that dies on its own stays in the map as `Exited` (so `nodes ps` reports it)
+    /// and the watcher observes the exit rather than an operator stop.
+    #[tokio::test]
+    async fn crashed_child_is_still_reported_by_status() {
+        let commands = CommandMap::from([(
+            "crash".to_string(),
+            (
+                "sh".to_string(),
+                vec!["-c".to_string(), "kill -9 $$".to_string()],
+            ),
+        )]);
+        let manager = ProcessManager::from(commands);
+        manager.start("crash").await.unwrap();
+        tokio::time::sleep(Duration::from_millis(100)).await;
+
+        // Signal death has no exit code.
+        assert_eq!(
+            manager.status("crash").await,
+            ProcessStatus::Exited { code: None }
+        );
     }
 }

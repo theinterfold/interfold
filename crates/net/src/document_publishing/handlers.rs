@@ -35,7 +35,7 @@ impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {
     fn handle(
         &mut self,
         msg: TypedEvent<PublishDocumentRequested>,
-        _: &mut Self::Context,
+        ctx: &mut Self::Context,
     ) -> Self::Result {
         let tx = self.tx.clone();
         let (msg, ec) = msg.into_components();
@@ -46,11 +46,71 @@ impl Handler<TypedEvent<PublishDocumentRequested>> for DocumentPublisher {
         let rx = self.rx.clone();
         let bus = self.bus.clone();
         let topic = self.topic.clone();
-        trap_fut(
-            EType::IO,
-            &bus.with_ec(&ec),
-            handle_publish_document_requested(tx, rx, msg, topic, bus),
-        )
+        let addr = ctx.address();
+        trap_fut(EType::IO, &bus.with_ec(&ec), async move {
+            let outcome = handle_publish_document_requested(tx, rx, msg, topic, bus).await?;
+            // Hand the gossiped pointer back to the actor so a late peer can be re-told.
+            // This is correctness-critical, not telemetry: a dropped `Announced` leaves the
+            // pointer out of `announcements_to_repeat`, so a peer that subscribes later never
+            // learns the DHT record and its E3 stalls. Await the send rather than fire it.
+            //
+            // Retain the pointer even when the initial broadcast failed. The DHT put already
+            // succeeded, so a later `GossipSubscribed` can still deliver it; failing here would
+            // strand a record that is present and fetchable.
+            addr.send(Announced(outcome.notification)).await?;
+            outcome.broadcast?;
+            Ok(())
+        })
+    }
+}
+
+/// A notification that has been gossiped once; kept so it can be re-announced.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub(super) struct Announced(pub DocumentPublishedNotification);
+
+impl Handler<Announced> for DocumentPublisher {
+    type Result = ();
+    fn handle(&mut self, msg: Announced, _: &mut Self::Context) -> Self::Result {
+        self.service.track_announced(msg.0);
+    }
+}
+
+/// A peer joined the gossip topic. Re-announce every in-flight document pointer so a peer
+/// that restarted or connected after the original broadcast can fetch the DHT record.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub(super) struct PeerSubscribed;
+
+impl Handler<PeerSubscribed> for DocumentPublisher {
+    type Result = ResponseFuture<()>;
+    fn handle(&mut self, _: PeerSubscribed, _: &mut Self::Context) -> Self::Result {
+        let notifications = self.service.announcements_to_repeat();
+        if notifications.is_empty() {
+            return Box::pin(async {});
+        }
+        info!(
+            count = notifications.len(),
+            "Peer subscribed; re-announcing in-flight document pointers"
+        );
+        let tx = self.tx.clone();
+        let rx = self.rx.clone();
+        let topic = self.topic.clone();
+        let bus = self.bus.clone();
+        let stamp_bus = bus.clone();
+        trap_fut(EType::IO, &bus, async move {
+            for notification in notifications {
+                repeat_document_published_notification(
+                    tx.clone(),
+                    rx.clone(),
+                    notification,
+                    topic.clone(),
+                    &stamp_bus,
+                )
+                .await?;
+            }
+            Ok(())
+        })
     }
 }
 

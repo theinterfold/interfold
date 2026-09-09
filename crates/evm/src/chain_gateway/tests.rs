@@ -37,6 +37,39 @@ async fn rejected_log_fails_gateway_readiness() -> Result<()> {
     Ok(())
 }
 
+/// The readiness channel only covers startup. A gateway that fails closed *after* going
+/// live used to leave the node up, peered and reported healthy while dropping every chain
+/// event (observed on all five nodes of a swarm after an RPC outage). The failure receiver
+/// is what lets the run loop exit so the supervisor restarts the node.
+#[actix::test]
+async fn post_startup_failure_is_reported_through_the_failure_receiver() -> Result<()> {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("test-post-startup-failure");
+    let gateway = EvmChainGateway::setup_with_readiness(&bus);
+    let mut failure = gateway.failure_receiver();
+    let addr = gateway.addr();
+
+    // Nothing has failed yet.
+    assert!(failure.borrow().is_none());
+
+    addr.send(InterfoldEvmEvent::Rejected(EvmLogRejected::new(
+        CorrelationId::new(),
+        1,
+        "backend connection task has stopped",
+    )))
+    .await?;
+
+    let reason = failure
+        .wait_for(|reason| reason.is_some())
+        .await
+        .expect("the gateway must publish its failure before stopping")
+        .clone()
+        .unwrap();
+    assert!(reason.contains("EVM chain gateway failed closed"));
+    assert!(reason.contains("backend connection task has stopped"));
+    Ok(())
+}
+
 impl Actor for SyncEventCollector {
     type Context = actix::Context<Self>;
 }

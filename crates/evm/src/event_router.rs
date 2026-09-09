@@ -9,7 +9,7 @@ use actix::{Actor, Handler};
 use alloy_primitives::Address;
 use e3_utils::MAILBOX_LIMIT;
 use std::collections::HashMap;
-use tracing::{debug, error, info};
+use tracing::{error, info, trace};
 
 /// Directs InterfoldEvmEvent::Log events to the correct upstream processors. Drops all other event
 /// types
@@ -62,7 +62,7 @@ impl Handler<InterfoldEvmEvent> for EvmRouter {
             InterfoldEvmEvent::Log(EvmLog { log, chain_id, .. }) => {
                 let address = log.address();
                 if let Some(dest) = self.routing_table.get(&address) {
-                    debug!("Found address {address} in routing table forwarding to destination.");
+                    trace!("Found address {address} in routing table forwarding to destination.");
                     dest.do_send(msg);
                 } else {
                     error!(

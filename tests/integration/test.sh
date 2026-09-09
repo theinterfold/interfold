@@ -21,7 +21,7 @@ parse_integration_args() {
         ;;
       *)
         echo "Unknown integration argument: $1" >&2
-        echo "Usage: ./test.sh [base|persist|net|restart] [--skip-proof-aggregation true|false] [--no-prebuild]" >&2
+        echo "Usage: ./test.sh [base|persist|net] [--skip-proof-aggregation true|false] [--no-prebuild]" >&2
         exit 1
         ;;
     esac
@@ -57,16 +57,32 @@ if [ $# -eq 0 ]; then
   "$THIS_DIR/persist.sh"
   "$THIS_DIR/base.sh"
   "$THIS_DIR/net.sh"
-  "$THIS_DIR/restart.sh"
 else
   SCRIPT_NAME="$1"
   shift
   parse_integration_args "$@"
   export_integration_flags
 
+  SUITE="$THIS_DIR/${SCRIPT_NAME}.sh"
+  # Fail loudly on an unknown suite. Without this the `set -e` shell reports the
+  # missing file but still exits 0 through the pipeline, so CI records a pass for
+  # a suite that never ran.
+  if [[ ! -f "$SUITE" ]]; then
+    echo "Unknown integration suite: ${SCRIPT_NAME}" >&2
+    echo "Available suites:" >&2
+    for candidate in "$THIS_DIR"/*.sh; do
+      name="$(basename "$candidate" .sh)"
+      case "$name" in
+        test|fns|prebuild) continue ;;
+      esac
+      echo "  - $name" >&2
+    done
+    exit 1
+  fi
+
   if [[ "$SKIP_PREBUILD" != "true" ]]; then
     "$THIS_DIR/lib/prebuild.sh"
   fi
 
-  "$THIS_DIR/${SCRIPT_NAME}.sh"
+  "$SUITE"
 fi

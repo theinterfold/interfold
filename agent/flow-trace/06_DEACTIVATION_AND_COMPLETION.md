@@ -239,7 +239,7 @@ interfold start → running node
     ├─ Persists Shutdown and waits for acknowledged EventBus fanout
     ├─ Flushes the sequencer and event-store pipeline
     ├─ Drains open snapshot batches in event order, flushes the backing store, and closes it
-    ├─ Enforces a 30-second deadline and exits unsuccessfully on failure
+    ├─ Enforces a 60-second deadline and exits unsuccessfully on failure
     └─ Flushes the optional operational JSON log collector
 
 On restart:
@@ -273,6 +273,17 @@ On restart:
 │        CiphernodeSelected events are likewise not guaranteed to replay.
 │      → Recovered aggregator roles, selected party IDs, and DHT document interests are injected
 │        directly from snapshots. Startup does not append synthetic recovery events.
+│      → Per-E3 durable caches are restored before replay, because replay starts at the snapshot
+│        cursor and never redelivers an earlier event:
+│        • CommitmentConsistencyChecker restores its verified-proof cache from
+│          `//commitment_consistency/v1/{e3_id}`. Without it the node holds no record of its own
+│          C0 proof, every peer C3 that points at that C0 fails the link check, and the node
+│          accuses honest peers.
+│        • ProofRequestActor restores its own C0 proof from `//own_c0_proof/v1/{e3_id}` and
+│          re-publishes `DKGInnerProofReady { seq: 0 }`. Without it the node fold waits forever
+│          at N−1 of N inner proofs.
+│        • ThresholdKeyshare rebuilds the decryption-share collector and its timeout whenever the
+│          state is `ReadyForDecryption`, including when no share has arrived yet.
 ├─ Sync module replays:
 │   → Arm the current NetReady listener before the network transport can publish readiness
 │   4. Replay EventStore events since the snapshot cut (effects still disabled)
@@ -311,6 +322,12 @@ The shutdown barrier proves that the persisted `Shutdown` event reached its curr
 event pipeline flushed, open snapshot batches drained, and the backing store flushed within the
 deadline. Detached work that is not owned by those barriers can still be cancelled by process exit;
 operators must continue to follow the production shutdown precautions.
+
+`NODE_SHUTDOWN_DEADLINE` is derived as `FANOUT_ACCEPT_TIMEOUT + 30 s` in `e3-events`, and both the
+CLI and the daemon read that one constant. The daemon waits for the deadline plus five seconds
+before it sends `SIGKILL`. An external supervisor must allow at least as long: a systemd
+`TimeoutStopSec` or Docker stop timeout below 65 seconds kills a node while it still flushes its
+event log.
 
 The three long-lived libp2p `NetEvent` broadcast consumers (`NetEventTranslator`,
 `DocumentPublisher`, and `NetSyncManager`) treat Tokio's `Lagged(n)` receive result as a recoverable

@@ -372,4 +372,144 @@ mod tests {
 
         Ok(())
     }
+
+    /// A restart during the node fold (~200 s at secure params) kills the in-memory
+    /// correlation id, but the replayed `ComputeRequest` still yields a response. The compute
+    /// effect gate dedups on `(e3_id, request)`, so the re-driven fold dispatch is suppressed
+    /// as already-forwarded and this response is the only one that will ever arrive. Dropping
+    /// it silently left the node fold unfinished forever (Bug 26 — the Bug 23 pattern one
+    /// level up, at the fold instead of C4).
+    #[actix::test]
+    async fn an_orphaned_node_dkg_fold_response_is_adopted_after_a_restart() -> Result<()> {
+        let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
+        let mut aggregator =
+            NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true);
+        let e3_id = E3id::new("49", 1);
+
+        aggregator.initialize_collection_state(
+            e3_id.clone(),
+            NodeDkgFoldMeta {
+                party_id: 7,
+                total_expected: 6,
+                sk_enc_count: 0,
+                e_sm_enc_count: 0,
+                sk_share_encryption_requests: Vec::new(),
+                e_sm_share_encryption_requests: Vec::new(),
+                committee_n: 0,
+                committee_h: 0,
+                n_moduli: 0,
+                params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+                committee_size: CiphernodesCommitteeSize::Minimum,
+            },
+            test_ctx(DKGRecursiveAggregationComplete {
+                e3_id: e3_id.clone(),
+                party_id: 7,
+                aggregated_proof: None,
+                fold_attestation: None,
+            }),
+        );
+        for seq in 0..6 {
+            let proof = dummy_proof(seq as u8);
+            aggregator.handle_inner_proof_ready(TypedEvent::new(
+                DKGInnerProofReady {
+                    e3_id: e3_id.clone(),
+                    party_id: 7,
+                    proof: proof.clone(),
+                    seq,
+                },
+                test_ctx(DKGInnerProofReady {
+                    e3_id: e3_id.clone(),
+                    party_id: 7,
+                    proof,
+                    seq,
+                }),
+            ));
+        }
+
+        // The buffer completed, so a fold is in flight with some correlation id.
+        let live_corr = aggregator.states[&e3_id]
+            .fold_correlation
+            .expect("a full buffer must dispatch the fold");
+        assert!(aggregator.fold_correlation.contains_key(&live_corr));
+
+        // Simulate the restart: the process-local correlation map is gone, but the state
+        // (rebuilt by replay) still shows a fold in flight.
+        aggregator.fold_correlation.clear();
+
+        // The response arrives under the PRE-CRASH correlation id, which this process never
+        // registered. It must still be attributed to the one E3 that is mid-fold.
+        let unknown = CorrelationId::new();
+        assert_ne!(unknown, live_corr);
+        aggregator.handle_node_dkg_response(&unknown, dummy_proof(99));
+
+        assert!(
+            !aggregator.states.contains_key(&e3_id),
+            "adopting the response must consume the collection state and finish the fold"
+        );
+        drop(history);
+        Ok(())
+    }
+
+    /// With two E3s mid-fold an orphaned response cannot be attributed, so it is dropped
+    /// rather than credited to the wrong E3.
+    #[actix::test]
+    async fn an_orphaned_fold_response_is_dropped_when_several_e3s_are_folding() -> Result<()> {
+        let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+        let mut aggregator =
+            NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true);
+
+        for id in ["50", "51"] {
+            let e3_id = E3id::new(id, 1);
+            aggregator.initialize_collection_state(
+                e3_id.clone(),
+                NodeDkgFoldMeta {
+                    party_id: 7,
+                    total_expected: 6,
+                    sk_enc_count: 0,
+                    e_sm_enc_count: 0,
+                    sk_share_encryption_requests: Vec::new(),
+                    e_sm_share_encryption_requests: Vec::new(),
+                    committee_n: 0,
+                    committee_h: 0,
+                    n_moduli: 0,
+                    params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+                    committee_size: CiphernodesCommitteeSize::Minimum,
+                },
+                test_ctx(DKGRecursiveAggregationComplete {
+                    e3_id: e3_id.clone(),
+                    party_id: 7,
+                    aggregated_proof: None,
+                    fold_attestation: None,
+                }),
+            );
+            for seq in 0..6 {
+                let proof = dummy_proof(seq as u8);
+                aggregator.handle_inner_proof_ready(TypedEvent::new(
+                    DKGInnerProofReady {
+                        e3_id: e3_id.clone(),
+                        party_id: 7,
+                        proof: proof.clone(),
+                        seq,
+                    },
+                    test_ctx(DKGInnerProofReady {
+                        e3_id: e3_id.clone(),
+                        party_id: 7,
+                        proof,
+                        seq,
+                    }),
+                ));
+            }
+        }
+        aggregator.fold_correlation.clear();
+        assert_eq!(aggregator.states.len(), 2);
+
+        aggregator.handle_node_dkg_response(&CorrelationId::new(), dummy_proof(99));
+
+        assert_eq!(
+            aggregator.states.len(),
+            2,
+            "an unattributable response must not consume either E3's state"
+        );
+        Ok(())
+    }
 }

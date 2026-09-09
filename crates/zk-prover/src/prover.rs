@@ -10,10 +10,103 @@ use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
 use std::fs;
+use std::io::Read;
 use std::path::PathBuf;
-use std::process::Command as StdCommand;
+use std::process::{Command as StdCommand, Output, Stdio};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{Duration, Instant};
 use tracing::{debug, info, warn};
+
+/// Environment override for the `bb` wall-clock cap, in seconds.
+pub const BB_TIMEOUT_ENV: &str = "INTERFOLD_BB_TIMEOUT_SECS";
+
+/// Default wall-clock cap for one `bb` invocation.
+///
+/// Matches the DKG window (`E3_DKG_WINDOW_SECS`, 7200 s): a proof that has not finished by
+/// then cannot be used by the E3 it was for. Without a cap a hung `bb` (seen with a bad
+/// witness on some platforms, and under memory pressure) occupies a job slot for the life
+/// of the process and, with `max_concurrent_jobs` slots, a handful of hangs stops the node
+/// from proving anything.
+pub const DEFAULT_BB_TIMEOUT: Duration = Duration::from_secs(7200);
+
+/// How often the waiter polls the child between checks of the deadline.
+const BB_POLL_INTERVAL: Duration = Duration::from_millis(250);
+
+fn bb_timeout() -> Duration {
+    std::env::var(BB_TIMEOUT_ENV)
+        .ok()
+        .and_then(|raw| raw.trim().parse::<u64>().ok())
+        .filter(|secs| *secs > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(DEFAULT_BB_TIMEOUT)
+}
+
+/// Run `bb` with the given arguments, killing it if it exceeds the wall-clock cap.
+///
+/// Equivalent to `Command::output()` on the happy path. On timeout the child is killed and
+/// reaped so it cannot linger as a zombie or keep its job slot, and a `ZkError::Timeout`
+/// names the operation that hung.
+fn run_bb_with_timeout(
+    bb_binary: &PathBuf,
+    args: &[&str],
+    operation: &str,
+    timeout: Duration,
+) -> Result<Output, ZkError> {
+    let mut child = StdCommand::new(bb_binary)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+
+    // Drain the pipes on threads so a chatty `bb` cannot block on a full pipe while we
+    // wait — that would look exactly like the hang we are guarding against.
+    let mut stdout_pipe = child.stdout.take();
+    let mut stderr_pipe = child.stderr.take();
+    let stdout_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(pipe) = stdout_pipe.as_mut() {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        if let Some(pipe) = stderr_pipe.as_mut() {
+            let _ = pipe.read_to_end(&mut buf);
+        }
+        buf
+    });
+
+    let started = Instant::now();
+    let status = loop {
+        match child.try_wait()? {
+            Some(status) => break status,
+            None if started.elapsed() >= timeout => {
+                warn!(
+                    operation,
+                    timeout_secs = timeout.as_secs(),
+                    "bb exceeded its wall-clock cap; killing it"
+                );
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err(ZkError::Timeout(format!(
+                    "bb {operation} exceeded {}s (set {BB_TIMEOUT_ENV} to change the cap)",
+                    timeout.as_secs()
+                )));
+            }
+            None => std::thread::sleep(BB_POLL_INTERVAL),
+        }
+    };
+
+    let stdout = stdout_reader.join().unwrap_or_default();
+    let stderr = stderr_reader.join().unwrap_or_default();
+    Ok(Output {
+        status,
+        stdout,
+        stderr,
+    })
+}
 
 /// Unique bb job directories — shared [`ZkBackend::work_dir`] must not reuse the same paths
 /// when prove/verify runs concurrently (integration harness + `multithread_concurrent_jobs` > 1).
@@ -212,7 +305,7 @@ impl ZkProver {
             verifier_target,
         ];
 
-        let output = StdCommand::new(&self.bb_binary).args(&args).output()?;
+        let output = run_bb_with_timeout(&self.bb_binary, &args, "prove", bb_timeout())?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -382,7 +475,7 @@ impl ZkProver {
             verifier_target,
         ];
 
-        let output = StdCommand::new(&self.bb_binary).args(&args).output()?;
+        let output = run_bb_with_timeout(&self.bb_binary, &args, "verify", bb_timeout())?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -429,5 +522,40 @@ mod tests {
 
         let result = prover.generate_proof(CircuitName::PkBfv, b"witness", "e3-1", "insecure-512");
         assert!(matches!(result, Err(ZkError::BbNotInstalled)));
+    }
+
+    /// A hung `bb` must be killed at the cap, not left holding a job slot forever. `sleep`
+    /// stands in for a hung `bb`; the cap is well under its duration.
+    #[test]
+    fn a_hung_bb_is_killed_at_the_wall_clock_cap() {
+        let sleep = PathBuf::from("/bin/sleep");
+        if !sleep.exists() {
+            return;
+        }
+        let started = Instant::now();
+        let result = run_bb_with_timeout(&sleep, &["30"], "prove", Duration::from_millis(600));
+        let elapsed = started.elapsed();
+
+        let err = result.expect_err("a bb that outlives the cap must be reported as a timeout");
+        assert!(matches!(err, ZkError::Timeout(_)), "got {err}");
+        assert!(err.to_string().contains("prove"));
+        assert!(err.to_string().contains(BB_TIMEOUT_ENV));
+        assert!(
+            elapsed < Duration::from_secs(5),
+            "the child must be killed at the cap, not waited for; took {elapsed:?}"
+        );
+    }
+
+    /// The happy path is unchanged: output and exit status come back as with `output()`.
+    #[test]
+    fn a_finishing_bb_returns_its_output() {
+        let echo = PathBuf::from("/bin/echo");
+        if !echo.exists() {
+            return;
+        }
+        let output = run_bb_with_timeout(&echo, &["proof-ok"], "verify", DEFAULT_BB_TIMEOUT)
+            .expect("echo must succeed");
+        assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "proof-ok");
     }
 }

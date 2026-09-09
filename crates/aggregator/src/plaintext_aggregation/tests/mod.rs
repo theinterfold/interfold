@@ -271,3 +271,59 @@ async fn standby_persists_and_resumes_plaintext_work() -> Result<()> {
 
 mod completion;
 mod failures;
+
+/// A decryption share that arrives after collection closed must be ignored, not raised as an
+/// error.
+///
+/// This is the decryption-phase twin of the DKG-side `add_keyshare` defect. Peers re-announce
+/// their in-flight document pointers whenever a node (re)subscribes to the gossip topic, so a
+/// restart anywhere in the committee re-delivers every decryption share to aggregators that have
+/// already moved to `VerifyingC6`. Without a state guard `TryInto<Collecting>` fails and the
+/// duplicate surfaces as `InterfoldError("PlaintextState was expected to be Collecting but it
+/// was not.")` on a node doing nothing wrong.
+#[actix::test]
+async fn a_decryption_share_after_collection_closed_is_ignored_not_an_error() -> Result<()> {
+    // Start already past collection, which is what a late re-announce finds.
+    let state = ThresholdPlaintextAggregatorState::VerifyingC6(VerifyingC6 {
+        threshold_m: 1,
+        threshold_n: 2,
+        shares: BTreeMap::new(),
+        c6_proofs: BTreeMap::new(),
+        ciphertext_output: vec![ArcBytes::from_bytes(&[9])],
+        params: test_params(),
+    });
+    let (mut aggregator, _history, _e3_id) = build_plaintext_aggregator(state, false).await?;
+    let ec = test_ctx(EffectsEnabled::new());
+
+    let result = aggregator.add_share(
+        0,
+        vec![ArcBytes::from_bytes(&[1])],
+        vec![SignedProofPayload {
+            payload: ProofPayload {
+                e3_id: E3id::new("42", 1),
+                proof_type: ProofType::C6ThresholdShareDecryption,
+                proof: Proof::new(
+                    CircuitName::ThresholdShareDecryption,
+                    ArcBytes::from_bytes(&[1]),
+                    ArcBytes::from_bytes(&[0u8; 32]),
+                ),
+            },
+            signature: ArcBytes::from_bytes(&[0u8; 65]),
+        }],
+        &ec,
+    );
+
+    assert!(
+        result.is_ok(),
+        "a re-announced decryption share must be ignored after collection closed, not raised \
+         as an error: {result:?}"
+    );
+    assert!(
+        matches!(
+            aggregator.state.get(),
+            Some(ThresholdPlaintextAggregatorState::VerifyingC6(_))
+        ),
+        "the late share must not disturb the state"
+    );
+    Ok(())
+}

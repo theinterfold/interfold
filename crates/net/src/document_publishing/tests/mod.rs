@@ -8,6 +8,7 @@ use crate::net_interface_handle::NetEventSubscriber;
 use std::{collections::HashMap, num::NonZero, sync::Arc, time::Duration};
 
 use super::*;
+use crate::events::GossipPublishFailure;
 use crate::events::NetCommand;
 use crate::{domain::EventConversionService, ContentHash};
 use actix::Addr;

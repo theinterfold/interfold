@@ -29,7 +29,10 @@ impl AccusationVoting {
 
         // Verify voter is in committee
         if !self.committee.contains(&vote.voter) {
-            warn!("Ignoring vote from non-committee member {}", vote.voter);
+            warn!(
+                e3_id = %self.e3_id,
+                "Ignoring vote from non-committee member {}", vote.voter
+            );
             return;
         }
 
@@ -40,14 +43,17 @@ impl AccusationVoting {
 
         // Verify voter's ECDSA signature
         if !self.verify_vote_signature(&vote) {
-            warn!("Invalid signature on vote from {} — ignoring", vote.voter);
+            warn!(
+                e3_id = %self.e3_id,
+                "Invalid signature on vote from {} — ignoring", vote.voter
+            );
             return;
         }
 
         let vote_accusation_id = vote.accusation_id;
 
         // Find the pending accusation
-        let Some(pending) = self.pending.get_mut(&vote_accusation_id) else {
+        let Some(pending) = self.pending.get(&vote_accusation_id) else {
             // Unknown accusation — buffer the vote for replay.
             let committee_len = self.committee.len();
             let buf = self.buffered_votes.entry(vote_accusation_id).or_default();
@@ -55,6 +61,7 @@ impl AccusationVoting {
                 buf.push(vote);
             } else {
                 warn!(
+                    e3_id = %self.e3_id,
                     "Buffered votes for unknown accusation {:?} reached committee-size cap — dropping vote",
                     vote_accusation_id
                 );
@@ -62,24 +69,42 @@ impl AccusationVoting {
             return;
         };
 
-        // Reject votes whose signed window disagrees with the accusation.
-        if vote.issued_at != pending.accusation.issued_at
-            || vote.deadline != pending.accusation.deadline
-        {
-            warn!(
-                "Ignoring vote from {} — issued_at {} (expected {}) or deadline {} (expected {}) does not match the accusation",
-                vote.voter,
-                vote.issued_at,
-                pending.accusation.issued_at,
-                vote.deadline,
-                pending.accusation.deadline
-            );
+        // A vote signed against a different window than the accusation we hold. Two honest
+        // accusers produce the same accusation id with different windows and the committee
+        // converges on the later one (see `adopt_later_vote_window`). A peer that converged
+        // before us sends votes against the winning window while we still hold the losing
+        // one; dropping them would lose the quorum. Buffer them: they are replayed when we
+        // adopt the window. Votes against a window that *loses* to ours are simply stale.
+        let held_window = (pending.accusation.issued_at, pending.accusation.deadline);
+        if (vote.issued_at, vote.deadline) != held_window {
+            if (vote.issued_at, vote.deadline) > held_window {
+                let committee_len = self.committee.len();
+                let buf = self.buffered_votes.entry(vote_accusation_id).or_default();
+                if buf.len() < committee_len {
+                    info!(
+                        "Buffering vote from {} signed against a later window (issued_at {} vs held {}) until we converge",
+                        vote.voter, vote.issued_at, held_window.0
+                    );
+                    buf.push(vote);
+                }
+            } else {
+                warn!(
+                    e3_id = %self.e3_id,
+                    "Ignoring vote from {} — issued_at {} (expected {}) or deadline {} (expected {}) does not match the accusation",
+                    vote.voter, vote.issued_at, held_window.0, vote.deadline, held_window.1
+                );
+            }
             return;
         }
+        let pending = self
+            .pending
+            .get_mut(&vote_accusation_id)
+            .expect("pending accusation checked above");
 
         // Reject votes from the accused party — conflict of interest
         if vote.voter == pending.accusation.accused {
             warn!(
+                e3_id = %self.e3_id,
                 "Ignoring vote from accused party {} on their own accusation",
                 vote.voter
             );
@@ -97,6 +122,7 @@ impl AccusationVoting {
             && vote.data_hash != pending.accusation.data_hash
         {
             warn!(
+                e3_id = %self.e3_id,
                 "Accuser {} sent vote with data_hash inconsistent with their accusation — rejecting vote",
                 vote.voter
             );
@@ -174,6 +200,7 @@ impl AccusationVoting {
         };
 
         warn!(
+            e3_id = %self.e3_id,
             "Accusation against {} for {:?} timed out with {} agreeing votes — outcome: {:?}",
             pending.accusation.accused,
             pending.accusation.proof_type,

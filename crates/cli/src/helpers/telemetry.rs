@@ -23,11 +23,38 @@ use tracing_subscriber::filter::Targets;
 use tracing_subscriber::fmt::format::{FormatFields, Writer};
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt, Layer};
 
+/// Level filter shared by every subscriber setup.
+///
+/// `-vv` (DEBUG) is the level an operator reaches for when a node misbehaves, so it has to stay
+/// readable. Dependency internals dominate it otherwise: in a measured 8-minute 5-node run,
+/// `sled`'s page-cache alone emitted 8.9k of 39.4k DEBUG lines (31%), with multistream protocol
+/// negotiation and the HTTP transport adding thousands more — all of it noise for diagnosing
+/// protocol behaviour. Pin those crates to WARN so `-vv` shows Interfold's own diagnostics.
+///
+/// Raise an individual dependency with `RUST_LOG` when you genuinely need its internals.
+fn level_targets(log_level: Level) -> Targets {
+    Targets::new()
+        .with_default(log_level)
+        .with_target("alloy_pubsub", Level::WARN)
+        // Storage engine page-cache/IO-buffer churn.
+        .with_target("sled", Level::WARN)
+        // libp2p connection-establishment protocol negotiation.
+        .with_target("multistream_select", Level::WARN)
+        // Gossipsub/Kademlia poll-loop internals (mesh churn is surfaced by our own
+        // "Peer subscribed to topic" / "Peer disconnected" lines instead).
+        .with_target("libp2p_gossipsub", Level::WARN)
+        .with_target("libp2p_kad", Level::WARN)
+        .with_target("libp2p_swarm", Level::WARN)
+        // HTTP transport connection pooling behind the EVM provider.
+        .with_target("alloy_transport_http", Level::WARN)
+        .with_target("hyper", Level::WARN)
+        .with_target("hyper_util", Level::WARN)
+        .with_target("reqwest", Level::WARN)
+}
+
 pub fn setup_simple_tracing(log_level: Level) {
     LogCollector::init("interfold", None);
-    let targets = Targets::new()
-        .with_default(log_level)
-        .with_target("alloy_pubsub", Level::WARN);
+    let targets = level_targets(log_level);
     let _ = tracing_subscriber::registry()
         .with(
             tracing_subscriber::fmt::layer()
@@ -45,9 +72,7 @@ pub fn setup_tracing(config: &AppConfig, log_level: Level) -> Result<()> {
     let name = config.name();
     LogCollector::init(&name, Some(operational_log_path(config)));
 
-    let targets = Targets::new()
-        .with_default(log_level)
-        .with_target("alloy_pubsub", Level::WARN);
+    let targets = level_targets(log_level);
 
     match config.otel() {
         Some(endpoint) => {

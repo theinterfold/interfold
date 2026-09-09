@@ -45,6 +45,7 @@ impl Handler<TypedEvent<HistoricalNetSyncStart>> for NetSyncManager {
                 msg,
                 ctx.address(),
                 !self.readiness_all_peers_dialed(),
+                self.readiness_has_connections(),
                 self.network.clone(),
             ),
         )
@@ -56,6 +57,13 @@ impl NetSyncManager {
         // `handle_sync_request_event` waits for a connection only if we have not yet observed the
         // AllPeersDialed signal. The readiness machine tracks this; mirror its view here.
         self.readiness.all_peers_dialed()
+    }
+
+    /// Whether any peer connection exists. When `AllPeersDialed` has already been
+    /// observed with no connections, historical sync has nothing to fetch from and
+    /// must not attempt requests that can only fail.
+    fn readiness_has_connections(&self) -> bool {
+        self.readiness.has_connections()
     }
 }
 

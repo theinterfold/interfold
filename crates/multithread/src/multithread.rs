@@ -85,7 +85,7 @@ use fhe_traits::{DeserializeParametrized, FheEncoder};
 use ndarray::Array2;
 use num_bigint::BigInt;
 use rand::Rng;
-use tracing::{error, info};
+use tracing::{debug, error, info};
 
 use crate::effect_gate::ComputeEffectGate;
 
@@ -509,11 +509,13 @@ fn timefunc<F>(
 where
     F: FnOnce() -> Result<ComputeResponse, ComputeRequestError>,
 {
-    info!("STARTING MULTITHREAD `{}({})`", name, id);
+    // The start line is scheduler bookkeeping; the finish line carries the duration, which is
+    // what makes a slow or hung job visible. Keep the pair asymmetric on purpose.
+    debug!("STARTING MULTITHREAD `{}({})`", name, id);
     let start = Instant::now();
     let out = func();
     let dur = start.elapsed();
-    info!("FINISHED MULTITHREAD `{}`({}) in {:?}", name, id, dur);
+    info!(job = %name, id, duration_ms = dur.as_millis(), "Compute job finished");
     (out, dur)
 }
 

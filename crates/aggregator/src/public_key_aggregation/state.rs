@@ -97,6 +97,19 @@ pub enum PublicKeyAggregatorState {
         nodes_fold_completed_slots: u32,
         /// Correlation ID of the in-flight [`ZkRequest::NodesFoldStep`], if any.
         nodes_fold_step_correlation: Option<e3_events::CorrelationId>,
+        /// Absolute unix second at which the node-proof collection budget expires.
+        ///
+        /// The in-process timer is a [`SpawnHandle`], which does not survive a restart, and the
+        /// events that arm it are not replayed. Persisting the deadline lets a hydrated
+        /// aggregator re-arm for the time that is actually left, so a member that goes quiet
+        /// cannot convert a restart into an unbounded stall.
+        ///
+        /// `serde(default)` covers a value built in memory, NOT an old on-disk record: this
+        /// state is bincode-encoded as a fixed sequence, so a checkpoint written before this
+        /// field existed fails to decode rather than defaulting. `SCHEMA_VERSION` 3 turns that
+        /// into an explicit halt-and-migrate message.
+        #[serde(default)]
+        node_proof_deadline_at: Option<u64>,
     },
     Complete {
         public_key: ArcBytes,

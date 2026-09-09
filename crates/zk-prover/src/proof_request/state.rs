@@ -35,6 +35,10 @@ pub(crate) struct NodeAggregationMeta {
     pub(crate) total_expected: usize,
     /// Buffered C0 proof, if it arrived before meta was stored.
     pub(crate) pending_c0: Option<Proof>,
+    /// `DKGInnerProofReady { seq: 0 }` has already gone out in this process. Distinguishes
+    /// the live path (C0 finished after `ThresholdSharePending`) from a restart, where the
+    /// pre-crash C0 must be re-seeded from the durable record.
+    pub(crate) c0_emitted: bool,
 }
 
 impl NodeAggregationMeta {

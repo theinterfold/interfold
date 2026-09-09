@@ -18,12 +18,14 @@ impl AccusationVoting {
         let accused_address = if event.accused_address == Address::ZERO {
             if let Some(&addr) = self.committee.get(event.accused_party_id as usize) {
                 warn!(
+                    e3_id = %self.e3_id,
                     "Resolved Address::ZERO for party {} to committee address {}",
                     event.accused_party_id, addr
                 );
                 addr
             } else {
                 error!(
+                    e3_id = %self.e3_id,
                     "Cannot resolve address for party {} (out of committee bounds) — dropping accusation",
                     event.accused_party_id
                 );
@@ -180,7 +182,10 @@ impl AccusationVoting {
         match self.sign_accusation_digest(&accusation) {
             Ok(sig) => accusation.signature = ArcBytes::from_bytes(&sig),
             Err(err) => {
-                error!("Failed to sign ProofFailureAccusation: {err}");
+                error!(
+                    e3_id = %self.e3_id,
+                    "Failed to sign ProofFailureAccusation: {err}"
+                );
                 self.accused_proofs.remove(&key);
                 return;
             }
@@ -213,7 +218,10 @@ impl AccusationVoting {
         match self.sign_vote_digest(&own_vote) {
             Ok(sig) => own_vote.signature = ArcBytes::from_bytes(&sig),
             Err(err) => {
-                error!("Failed to sign own AccusationVote: {err}");
+                error!(
+                    e3_id = %self.e3_id,
+                    "Failed to sign own AccusationVote: {err}"
+                );
                 self.accused_proofs.remove(&key);
                 return;
             }

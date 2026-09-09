@@ -100,6 +100,7 @@ pub async fn ensure_request_router_checkpoint(
             contexts: Vec::new(),
             completed: Default::default(),
             replay_cursors,
+            teardown_deadlines: Default::default(),
         })
         .await
 }

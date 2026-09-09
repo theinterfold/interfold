@@ -263,7 +263,8 @@ fn retry_policy(failure: &GossipPublishFailure) -> Option<(u8, Duration)> {
         GossipPublishFailure::Transient(_) => {
             Some((MAX_GOSSIP_PUBLISH_ATTEMPTS, GOSSIP_RETRY_DELAY))
         }
-        GossipPublishFailure::Permanent(_) => None,
+        // The identical message is already in the mesh; a retry would hit the same cache.
+        GossipPublishFailure::AlreadyPublished | GossipPublishFailure::Permanent(_) => None,
     }
 }
 

@@ -29,10 +29,12 @@ use e3_events::{
     ProofVerificationPassed,
 };
 use e3_utils::utility_types::ArcBytes;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use tracing::warn;
 
 /// Cached data from a verified proof.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct VerifiedProofData {
     party_id: u64,
     address: Address,
@@ -43,6 +45,23 @@ struct VerifiedProofData {
     /// forwarded to slashing so the on-chain contract can verify the dataHash
     /// bound in voter signatures.
     proof_data: ArcBytes,
+}
+
+/// Durable image of the verified-proof cache.
+///
+/// EventStore replay on restart starts at the aggregate snapshot cursor, not at the start of
+/// the log, so a freshly created checker never sees the `ProofVerificationPassed` events that
+/// were delivered before the crash. The one it can never recover live is this node's **own**
+/// C0: peers' keys are re-fetched and re-verified, but a node does not verify its own key, so
+/// the only copy was the pre-crash event. Without it every peer C3 that encrypts *to this node*
+/// fails the C3→C0 link on the next pre-ZK gate, both peers are flagged inconsistent, and the
+/// E3 fails with "too few honest parties" (Round 13, cn3).
+///
+/// The cache is therefore persisted after every mutation and restored on hydrate. The map is
+/// flattened to a `Vec` because the key is a tuple.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CommitmentConsistencySnapshot {
+    entries: Vec<(Address, ProofType, Vec<VerifiedProofData>)>,
 }
 
 /// Describes a source entry whose commitments are inconsistent with a target.
@@ -91,6 +110,31 @@ impl CommitmentConsistency {
             committee_h,
             verified: HashMap::new(),
         }
+    }
+
+    /// Export the verified-proof cache for persistence.
+    pub(crate) fn snapshot(&self) -> CommitmentConsistencySnapshot {
+        CommitmentConsistencySnapshot {
+            entries: self
+                .verified
+                .iter()
+                .map(|((address, proof_type), entries)| (*address, *proof_type, entries.clone()))
+                .collect(),
+        }
+    }
+
+    /// Restore a cache exported by [`Self::snapshot`]. Replaces the current cache.
+    pub(crate) fn restore(&mut self, snapshot: CommitmentConsistencySnapshot) {
+        self.verified = snapshot
+            .entries
+            .into_iter()
+            .map(|(address, proof_type, entries)| ((address, proof_type), entries))
+            .collect();
+    }
+
+    /// Number of cached verified proofs (all parties, all types).
+    pub(crate) fn cached_proof_count(&self) -> usize {
+        self.verified.values().map(Vec::len).sum()
     }
 
     /// Number of registered links (for actor startup logging).
@@ -178,7 +222,7 @@ impl CommitmentConsistency {
                         continue;
                     }
                     for src in srcs {
-                        if self.skip_c2_to_c4_source(src_type, src.party_id) {
+                        if self.skip_capped_roster_source(src_type, src.party_id) {
                             continue;
                         }
                         let vals = link.extract_source_values(&src.public_signals);
@@ -231,7 +275,7 @@ impl CommitmentConsistency {
                         continue;
                     }
                     for src in srcs {
-                        if self.skip_c2_to_c4_source(src_type, src.party_id) {
+                        if self.skip_capped_roster_source(src_type, src.party_id) {
                             continue;
                         }
                         let vals = link.extract_source_values(&src.public_signals);
@@ -263,11 +307,29 @@ impl CommitmentConsistency {
         }
     }
 
-    /// C4 circuits only witness `expected_commitments` for the lowest `H` senders.
-    fn skip_c2_to_c4_source(&self, proof_type: ProofType, party_id: u64) -> bool {
+    /// Circuits that only witness the lowest `H` senders cannot attest to a surplus
+    /// party's proof, so a source above that cap must not be faulted.
+    ///
+    /// Two independent circuit families cap their roster at `H`:
+    ///
+    /// - **C4** binds `expected_commitments` for the lowest `H` C2a/C2b senders.
+    /// - **C5** witnesses the canonical honest subset chosen by
+    ///   `select_honest_set`, which keeps the `H` lowest party IDs and leaves the
+    ///   remaining `N - H` parties in the full committee (see
+    ///   `e3_aggregator::public_key_aggregation`). Every one of the `N` parties
+    ///   produces a C1 proof, so on any committee with `N > H` the surplus C1
+    ///   sources have no C5 target and would otherwise be reported as violations
+    ///   on a completely successful DKG round.
+    ///
+    /// C6 needs no such exemption: only the `H` honest-subset members submit
+    /// decryption shares and every canonical committee has `H == T + 1`, which is
+    /// exactly the C7 witness width.
+    fn skip_capped_roster_source(&self, proof_type: ProofType, party_id: u64) -> bool {
         matches!(
             proof_type,
-            ProofType::C2aSkShareComputation | ProofType::C2bESmShareComputation
+            ProofType::C2aSkShareComputation
+                | ProofType::C2bESmShareComputation
+                | ProofType::C1PkGeneration
         ) && party_id as usize >= self.committee_h
     }
 
@@ -340,6 +402,7 @@ impl CommitmentConsistency {
                 // but guards against future regressions).
                 if m.data_hash == [0u8; 32] {
                     warn!(
+                        e3_id = %self.e3_id,
                         "[{}] Skipping mismatch with zero data_hash for party {} ({}) {:?}",
                         link.name(),
                         m.party_id,

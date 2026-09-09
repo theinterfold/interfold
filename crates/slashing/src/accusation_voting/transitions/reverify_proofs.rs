@@ -47,13 +47,19 @@ impl AccusationVoting {
         let zk_passed = match msg.response {
             ComputeResponseKind::Zk(ZkResponse::VerifyShareProofs(r)) => {
                 if r.party_results.is_empty() {
-                    warn!("Empty ZK re-verification results — abstaining");
+                    warn!(
+                        e3_id = %self.e3_id,
+                        "Empty ZK re-verification results — abstaining"
+                    );
                     return actions;
                 }
                 r.party_results.first().is_some_and(|r| r.all_verified)
             }
             _ => {
-                warn!("Unexpected ComputeResponse kind for C3a/C3b re-verification — abstaining");
+                warn!(
+                    e3_id = %self.e3_id,
+                    "Unexpected ComputeResponse kind for C3a/C3b re-verification — abstaining"
+                );
                 return actions;
             }
         };
@@ -101,7 +107,10 @@ impl AccusationVoting {
         match self.sign_vote_digest(&vote) {
             Ok(sig) => vote.signature = ArcBytes::from_bytes(&sig),
             Err(err) => {
-                error!("Failed to sign C3a/C3b AccusationVote: {err}");
+                error!(
+                    e3_id = %self.e3_id,
+                    "Failed to sign C3a/C3b AccusationVote: {err}"
+                );
                 return actions;
             }
         }
@@ -137,6 +146,7 @@ impl AccusationVoting {
         };
 
         error!(
+            e3_id = %self.e3_id,
             "C3a/C3b ZK re-verification failed for {:?} — abstaining from vote",
             reverif.proof_type
         );

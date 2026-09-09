@@ -1,0 +1,261 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+
+//! Bounded wait for honest-party NodeDkgFold proofs.
+
+use super::*;
+
+/// `GeneratingC5Proof` with C5 already signed and `present` of `honest` node proofs delivered.
+fn awaiting_node_proofs(honest: &[u64], present: &[u64]) -> PublicKeyAggregatorState {
+    let mut dkg_node_proofs = HashMap::new();
+    for id in present {
+        dkg_node_proofs.insert(*id, Some(dummy_proof(CircuitName::NodeFold)));
+    }
+    PublicKeyAggregatorState::GeneratingC5Proof {
+        public_key: ArcBytes::from_bytes(&[1, 2, 3]),
+        keyshare_bytes: Vec::new(),
+        nodes: OrderedSet::new(),
+        party_nodes: HashMap::new(),
+        dkg_node_proofs,
+        dkg_fold_attestations: HashMap::new(),
+        honest_party_ids: honest.iter().copied().collect::<BTreeSet<u64>>(),
+        dishonest_parties: BTreeSet::new(),
+        circuit_committee_n: 3,
+        circuit_committee_h: honest.len(),
+        dkg_aggregation_correlation: None,
+        dkg_aggregated_proof: None,
+        c5_proof_pending: Some(dummy_proof(CircuitName::PkAggregation)),
+        last_ec: None,
+        nodes_fold_accumulator: None,
+        nodes_fold_completed_slots: 0,
+        nodes_fold_step_correlation: None,
+        // These cases drive `missing_node_proof_parties` / `fail_on_missing_node_proofs`
+        // directly and never read the persisted instant, so no deadline is armed.
+        node_proof_deadline_at: None,
+    }
+}
+
+/// Round 14: cn3 could not finish its node fold (13/14 inner proofs), and the aggregator waited
+/// for it through three 10-minute standby budgets before giving up at the canonical deadline.
+/// The missing party must be identifiable so the wait can be bounded and attributed.
+#[actix::test]
+async fn missing_node_proof_parties_names_only_the_absent_honest_parties() -> Result<()> {
+    let (aggregator, _history, _e3_id) =
+        build_public_key_aggregator(awaiting_node_proofs(&[0, 1, 2], &[0, 2])).await?;
+    assert_eq!(aggregator.missing_node_proof_parties(), vec![1]);
+    Ok(())
+}
+
+#[actix::test]
+async fn nothing_is_missing_once_every_honest_proof_arrived() -> Result<()> {
+    let (aggregator, _history, _e3_id) =
+        build_public_key_aggregator(awaiting_node_proofs(&[0, 1, 2], &[0, 1, 2])).await?;
+    assert!(aggregator.missing_node_proof_parties().is_empty());
+    Ok(())
+}
+
+/// A dishonest party is not waited on: only the capped honest set gates the fold.
+#[actix::test]
+async fn dishonest_parties_are_not_waited_for() -> Result<()> {
+    let (aggregator, _history, _e3_id) =
+        build_public_key_aggregator(awaiting_node_proofs(&[0, 2], &[0, 2])).await?;
+    assert!(aggregator.missing_node_proof_parties().is_empty());
+    Ok(())
+}
+
+/// Once the final DKG aggregation proof exists the collection is over, so an expiring timer
+/// must not fail an E3 that already succeeded.
+#[actix::test]
+async fn nothing_is_missing_after_the_aggregated_proof_exists() -> Result<()> {
+    let mut state = awaiting_node_proofs(&[0, 1, 2], &[0]);
+    if let PublicKeyAggregatorState::GeneratingC5Proof {
+        dkg_aggregated_proof,
+        ..
+    } = &mut state
+    {
+        *dkg_aggregated_proof = Some(dummy_proof(CircuitName::NodesFold));
+    }
+    let (aggregator, _history, _e3_id) = build_public_key_aggregator(state).await?;
+    assert!(aggregator.missing_node_proof_parties().is_empty());
+    Ok(())
+}
+
+/// Before C5 exists the aggregator is not yet in the node-proof wait.
+#[actix::test]
+async fn a_non_collecting_state_reports_nothing_missing() -> Result<()> {
+    let (aggregator, _history, _e3_id) = build_public_key_aggregator(complete_state()).await?;
+    assert!(aggregator.missing_node_proof_parties().is_empty());
+    Ok(())
+}
+
+/// Budget expiry with a proof still missing must fail the E3 explicitly rather than hang.
+/// Excluding the late party is impossible here: C5 is already signed over this exact honest
+/// set, so the only bounded outcome is an attributable failure.
+#[actix::test]
+async fn expiring_the_budget_fails_the_e3_with_dkg_timeout() -> Result<()> {
+    let (mut aggregator, history, e3_id) =
+        build_public_key_aggregator(awaiting_node_proofs(&[0, 1, 2], &[0, 2])).await?;
+
+    aggregator.fail_on_missing_node_proofs(
+        &test_ctx(E3Failed {
+            e3_id: e3_id.clone(),
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGTimeout,
+        }),
+        std::time::Duration::from_secs(1800),
+    );
+
+    let failed = next_event(&history).await?;
+    let InterfoldEventData::E3Failed(data) = failed.get_data() else {
+        panic!("an expired node-proof budget must publish E3Failed, got {failed:?}");
+    };
+    assert_eq!(data.e3_id, e3_id);
+    assert_eq!(data.reason, FailureReason::DKGTimeout);
+    assert_eq!(data.failed_at_stage, E3Stage::CommitteeFinalized);
+    Ok(())
+}
+
+/// The timer can fire after the last proof landed (cancel races delivery). That must be inert.
+#[actix::test]
+async fn expiring_the_budget_is_inert_once_every_proof_arrived() -> Result<()> {
+    let (mut aggregator, history, e3_id) =
+        build_public_key_aggregator(awaiting_node_proofs(&[0, 1, 2], &[0, 1, 2])).await?;
+
+    aggregator.fail_on_missing_node_proofs(
+        &test_ctx(E3Failed {
+            e3_id: e3_id.clone(),
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGTimeout,
+        }),
+        std::time::Duration::from_secs(1800),
+    );
+
+    // Nothing was published, so nothing to take. `TakeEvents` reports the timeout instead of
+    // hanging, which is exactly the assertion: a late timer publishes no event at all.
+    let result = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
+    assert!(
+        result.timed_out && result.events.is_empty(),
+        "a late timer must not fail an E3 whose proofs all arrived, got {:?}",
+        result.events
+    );
+    Ok(())
+}
+
+/// The node-proof deadline must be an absolute instant in the persisted state, not only an
+/// in-process timer.
+///
+/// The `SpawnHandle` dies with the process, and none of the three events that arm it
+/// (`AggregatorChanged`, `PkAggregationProofSigned`, `DKGRecursiveAggregationComplete`) are
+/// replayed on recovery: `AggregatorChanged` early-returns when the role has not flipped, the
+/// recovery path does not republish the signed proof, and the recursive-aggregation event only
+/// arrives if the stuck party sends something, which by construction it never does. Without a
+/// persisted instant a restart therefore silently drops the bound and restores the unbounded
+/// stall the deadline exists to prevent.
+#[actix::test]
+async fn the_node_proof_deadline_survives_a_restart() {
+    let armed_at = 1_700_000_000_u64;
+
+    // A state hydrated from a checkpoint that was written while the wait was in progress.
+    let mut state = awaiting_node_proofs(&[0, 1], &[0]);
+    if let PublicKeyAggregatorState::GeneratingC5Proof {
+        node_proof_deadline_at,
+        ..
+    } = &mut state
+    {
+        *node_proof_deadline_at = Some(armed_at);
+    }
+
+    // Round-trip through the durable encoding, which is what a restart actually does.
+    let encoded = bincode::serialize(&state).expect("state must serialize");
+    let restored: PublicKeyAggregatorState =
+        bincode::deserialize(&encoded).expect("state must survive the durable round trip");
+
+    let PublicKeyAggregatorState::GeneratingC5Proof {
+        node_proof_deadline_at,
+        dkg_node_proofs,
+        honest_party_ids,
+        ..
+    } = restored
+    else {
+        panic!("expected GeneratingC5Proof after the round trip");
+    };
+
+    assert_eq!(
+        node_proof_deadline_at,
+        Some(armed_at),
+        "the absolute deadline must survive a restart so the wait can be re-armed for the time \
+         that is actually left"
+    );
+    // The party that has not delivered is still identifiable, so the re-armed deadline has
+    // something to attribute the failure to.
+    let missing: Vec<u64> = honest_party_ids
+        .iter()
+        .filter(|id| !dkg_node_proofs.contains_key(id))
+        .copied()
+        .collect();
+    assert_eq!(
+        missing,
+        vec![1],
+        "the outstanding party must still be identifiable after recovery"
+    );
+}
+
+/// A demoted aggregator must give up the persisted deadline, not just its in-process timer.
+///
+/// Failover promotes the lowest-id standby when the active aggregator stops making progress, so
+/// the E3 changes hands mid-DKG. The promoted node arms its own bound; the demoted one must
+/// clear the instant it wrote, or durable state describes a wait that node is no longer
+/// performing and a later restart would reason from it. `arm_node_proof_deadline` always writes
+/// a fresh instant, so re-promotion stays correct either way — this is about not leaving a
+/// deadline behind that nothing owns.
+#[actix::test]
+async fn demotion_clears_the_persisted_node_proof_deadline() -> Result<()> {
+    // An aggregator part-way through collection, with one honest party still outstanding.
+    let state = awaiting_node_proofs(&[0, 1], &[0]);
+    let (mut aggregator, _history, _) = build_public_key_aggregator(state).await?;
+    aggregator.is_aggregator = true;
+    let ec = test_ctx(EffectsEnabled::new());
+
+    // Arming records an absolute instant in the persisted state.
+    aggregator.persist_node_proof_deadline(&ec, Some(1_700_000_000))?;
+    let Some(PublicKeyAggregatorState::GeneratingC5Proof {
+        node_proof_deadline_at,
+        ..
+    }) = aggregator.state.get()
+    else {
+        panic!("expected GeneratingC5Proof");
+    };
+    assert_eq!(
+        node_proof_deadline_at,
+        Some(1_700_000_000),
+        "arming must record the absolute instant"
+    );
+
+    // Demotion clears it: the promoted standby owns the bound now.
+    aggregator.persist_node_proof_deadline(&ec, None)?;
+    let Some(PublicKeyAggregatorState::GeneratingC5Proof {
+        node_proof_deadline_at,
+        dkg_node_proofs,
+        honest_party_ids,
+        ..
+    }) = aggregator.state.get()
+    else {
+        panic!("expected GeneratingC5Proof");
+    };
+    assert_eq!(
+        node_proof_deadline_at, None,
+        "a demoted aggregator must not leave a deadline describing a wait it is not performing"
+    );
+
+    // The outstanding party is unchanged, so the promoted standby inherits the same work.
+    let missing: Vec<u64> = honest_party_ids
+        .iter()
+        .filter(|id| !dkg_node_proofs.contains_key(id))
+        .copied()
+        .collect();
+    assert_eq!(
+        missing,
+        vec![1],
+        "demotion must not disturb which party is still owed"
+    );
+    Ok(())
+}

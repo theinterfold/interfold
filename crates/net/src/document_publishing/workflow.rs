@@ -27,6 +27,15 @@ pub struct DocumentPublishingService {
     ids: HashMap<E3id, PartyId>,
     /// Track DHT content hashes per E3 for cleanup on completion.
     dht_keys: HashMap<E3id, Vec<ContentHash>>,
+    /// The notifications this node has gossiped, per E3, so they can be re-announced.
+    ///
+    /// A `DocumentPublishedNotification` is gossiped exactly once, when the DHT put
+    /// succeeds. A peer that is not subscribed at that instant — restarting, or still
+    /// dialing — never learns the content hash and cannot fetch the record, even though the
+    /// record itself stays in the DHT for days. Historical peer sync does not cover these
+    /// notifications either. Keeping the pointer lets the publisher re-announce it when a
+    /// peer (re)joins the topic; receivers dedup by content, so re-sends are harmless.
+    announced: HashMap<E3id, Vec<DocumentPublishedNotification>>,
 }
 
 impl DocumentPublishingService {
@@ -38,6 +47,7 @@ impl DocumentPublishingService {
         Self {
             ids,
             dht_keys: HashMap::new(),
+            announced: HashMap::new(),
         }
     }
 
@@ -49,7 +59,21 @@ impl DocumentPublishingService {
     /// Mark an E3 complete, returning the DHT keys that should be pruned for it.
     pub fn complete_e3(&mut self, e3_id: &E3id) -> Vec<ContentHash> {
         self.ids.remove(e3_id);
+        self.announced.remove(e3_id);
         self.dht_keys.remove(e3_id).unwrap_or_default()
+    }
+
+    /// Remember a notification that was gossiped so it can be re-announced later.
+    pub fn track_announced(&mut self, notification: DocumentPublishedNotification) {
+        self.announced
+            .entry(notification.meta.e3_id.clone())
+            .or_default()
+            .push(notification);
+    }
+
+    /// Every notification this node has gossiped for an E3 that is still in flight.
+    pub fn announcements_to_repeat(&self) -> Vec<DocumentPublishedNotification> {
+        self.announced.values().flatten().cloned().collect()
     }
 
     /// Compute the content hash for a value being published and record it against `e3_id`
