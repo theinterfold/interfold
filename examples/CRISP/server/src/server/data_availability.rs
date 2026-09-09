@@ -221,6 +221,41 @@ sol! {
     }
 }
 
+/// What the worker does with a provisional input commitment on one pass.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum CommitmentStep {
+    /// Finalized on Ethereum: record it and start the paid publication.
+    Promote(String),
+    /// The service relayed it and the chain head no longer shows it: it was reorganized out
+    /// and not re-included, and nothing else will resend it.
+    Recommit,
+    /// Still pending at the head, or wallet-submitted and absent: keep waiting.
+    Wait,
+}
+
+/// Decides the next step for a job in `AwaitingCommitment` from two Ethereum reads.
+///
+/// ZEN2-24 follow-up, relay path. A receipt is a head observation, so a relayed commitment is
+/// kept provisional until it is final. Only the relay resubmits an orphaned commitment: a
+/// wallet-submitted one belongs to the voter, and the expiry handler renews its attestation.
+fn commitment_step(
+    relayed_transaction_hash: Option<&str>,
+    is_final: bool,
+    at_head: bool,
+) -> CommitmentStep {
+    if is_final {
+        return CommitmentStep::Promote(
+            relayed_transaction_hash
+                .map(str::to_owned)
+                .unwrap_or_else(|| "wallet-committed".to_owned()),
+        );
+    }
+    match (relayed_transaction_hash, at_head) {
+        (Some(_), false) => CommitmentStep::Recommit,
+        _ => CommitmentStep::Wait,
+    }
+}
+
 fn decode_input_envelope(encoded: &[u8]) -> anyhow::Result<InputEnvelope> {
     Ok(InputEnvelope::abi_decode_params_validate(encoded)?)
 }
@@ -266,6 +301,18 @@ enum JobState {
         ethereum_payload: Vec<u8>,
         #[serde(default)]
         attestation_expires_at: u64,
+        /// The commitment transaction this service relayed, when it relayed one.
+        ///
+        /// ZEN2-24 follow-up. On a chain where the service submits the commitment itself, a
+        /// receipt used to move the job straight to `Committed`. A receipt is a head
+        /// observation: the transaction can be reorganized out and never re-included, and
+        /// `Committed` has no way back, so the input would wait on a finality that never comes.
+        /// Keep the job provisional instead. The finality gate below is the only exit, the
+        /// attestation renews on expiry exactly as a wallet-submitted job's does, and an
+        /// orphaned relay is resubmitted. `None` for a wallet-submitted job and for a record
+        /// written before this field existed.
+        #[serde(default)]
+        relayed_transaction_hash: Option<String>,
     },
     Committed {
         transaction_hash: String,
@@ -417,8 +464,23 @@ impl AvailableInputReference {
 impl From<&AvailabilityJob> for AvailabilityJobView {
     fn from(job: &AvailabilityJob) -> Self {
         let (status, tx_hash, encoded_proof, message) = match &job.state {
+            // A relayed commitment is the service's own transaction. Report it as pending so a
+            // client does not sign a second commitment with its wallet; the payload is still
+            // exposed so a client that wants the direct path after a relay failure has it.
             JobState::AwaitingCommitment {
-                ethereum_payload, ..
+                ethereum_payload,
+                relayed_transaction_hash: Some(transaction_hash),
+                ..
+            } => (
+                "pending_availability",
+                Some(transaction_hash.clone()),
+                Some(format!("0x{}", hex::encode(ethereum_payload))),
+                None,
+            ),
+            JobState::AwaitingCommitment {
+                ethereum_payload,
+                relayed_transaction_hash: None,
+                ..
             } => (
                 "ready_for_commitment",
                 None,
@@ -1473,13 +1535,14 @@ impl AvailabilityService {
                         job.state = JobState::AwaitingCommitment {
                             ethereum_payload,
                             attestation_expires_at,
+                            relayed_transaction_hash: None,
                         };
                     }
                     JobKind::Input { .. } => {
-                        let receipt = self.submit_input_commitment(&job).await?;
-                        job.state = JobState::Committed {
-                            transaction_hash: receipt.transaction_hash.to_string(),
-                        };
+                        // A receipt is a head observation, not finality. Stay provisional and
+                        // let the `AwaitingCommitment` arm promote the job on finalized state,
+                        // the same as a wallet-submitted commitment.
+                        job.state = self.relay_input_commitment(&job).await?;
                     }
                     JobKind::Output { .. } => {
                         job.state = self.start_availability(&job, None).await?;
@@ -1487,15 +1550,25 @@ impl AvailabilityService {
                 }
                 self.save(&job)?;
             }
-            JobState::AwaitingCommitment { .. } => {
+            JobState::AwaitingCommitment {
+                relayed_transaction_hash,
+                ..
+            } => {
                 // Leave this state only on finalized state. `Committed` stops the attestation
                 // renewal path and starts the paid Avail publication, so an orphaned commitment
                 // would strand the input with no way back to a fresh promise.
-                if self.input_commitment_is_final(&job).await? {
-                    job.state = JobState::Committed {
-                        transaction_hash: "wallet-committed".to_owned(),
-                    };
-                    self.save(&job)?;
+                let is_final = self.input_commitment_is_final(&job).await?;
+                let at_head = is_final || self.input_is_committed(&job).await?;
+                match commitment_step(relayed_transaction_hash.as_deref(), is_final, at_head) {
+                    CommitmentStep::Promote(transaction_hash) => {
+                        job.state = JobState::Committed { transaction_hash };
+                        self.save(&job)?;
+                    }
+                    CommitmentStep::Recommit => {
+                        job.state = self.relay_input_commitment(&job).await?;
+                        self.save(&job)?;
+                    }
+                    CommitmentStep::Wait => {}
                 }
             }
             JobState::Committed { transaction_hash } => {
@@ -1852,9 +1925,26 @@ impl AvailabilityService {
         ))
     }
 
-    async fn submit_input_commitment(
+    /// Relay one input commitment and return the provisional state that records it.
+    ///
+    /// The attestation expiry is the one the relayed payload was signed with, so the expiry
+    /// handler renews this job on the same schedule as a wallet-submitted one.
+    async fn relay_input_commitment(&self, job: &AvailabilityJob) -> anyhow::Result<JobState> {
+        let (ethereum_payload, attestation_expires_at) = self.commitment_payload(job).await?;
+        let receipt = self
+            .submit_input_commitment_payload(job, ethereum_payload.clone())
+            .await?;
+        Ok(JobState::AwaitingCommitment {
+            ethereum_payload,
+            attestation_expires_at,
+            relayed_transaction_hash: Some(receipt.transaction_hash.to_string()),
+        })
+    }
+
+    async fn submit_input_commitment_payload(
         &self,
         job: &AvailabilityJob,
+        payload: Vec<u8>,
     ) -> anyhow::Result<alloy::rpc::types::TransactionReceipt> {
         let JobKind::Input { e3_id, .. } = &job.kind else {
             anyhow::bail!("aggregate ciphertext jobs cannot commit an input");
@@ -1867,7 +1957,6 @@ impl AvailabilityService {
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let e3_id = e3_id_to_u256(e3_id)?;
-        let (payload, _) = self.commitment_payload(job).await?;
         let payload = Bytes::from(payload);
         contract
             .simulate_publish_input(e3_id, payload.clone())
@@ -2364,6 +2453,64 @@ mod tests {
         }
     }
 
+    // ZEN2-24 follow-up, relay path. The relayed commitment is provisional: a receipt does not
+    // promote it, only a finalized read does, and the loss of the relayed transaction from the
+    // chain head recommits it. A wallet-submitted commitment is never resubmitted here.
+    #[test]
+    fn a_relayed_commitment_is_provisional_until_final() {
+        // Receipt in hand, transaction still at the head, not yet final: wait.
+        assert_eq!(
+            commitment_step(Some("0xrelayed"), false, true),
+            CommitmentStep::Wait
+        );
+        // Reorganized out and not re-included: relay it again.
+        assert_eq!(
+            commitment_step(Some("0xrelayed"), false, false),
+            CommitmentStep::Recommit
+        );
+        // Final: promote and keep the relayed hash as the record.
+        assert_eq!(
+            commitment_step(Some("0xrelayed"), true, true),
+            CommitmentStep::Promote("0xrelayed".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_wallet_commitment_is_never_resubmitted_by_the_relay() {
+        // The voter's transaction is absent from the head: the voter owns it and the expiry
+        // handler renews the attestation, so the relay does not send one of its own.
+        assert_eq!(commitment_step(None, false, false), CommitmentStep::Wait);
+        assert_eq!(commitment_step(None, false, true), CommitmentStep::Wait);
+        assert_eq!(
+            commitment_step(None, true, true),
+            CommitmentStep::Promote("wallet-committed".to_owned())
+        );
+    }
+
+    #[test]
+    fn a_relayed_job_does_not_ask_the_client_to_sign() {
+        let mut job = input_job("relayed", Address::repeat_byte(0x77), 0x11, b"object");
+        job.state = JobState::AwaitingCommitment {
+            ethereum_payload: vec![0x33],
+            attestation_expires_at: 600,
+            relayed_transaction_hash: Some("0xrelayed".to_owned()),
+        };
+        let view = AvailabilityJobView::from(&job);
+        // Reported as pending, with the relayed hash, so the client keeps polling instead of
+        // signing a second commitment. A wallet-path job still reports ready_for_commitment.
+        assert_eq!(view.status, "pending_availability");
+        assert_eq!(view.tx_hash.as_deref(), Some("0xrelayed"));
+
+        job.state = JobState::AwaitingCommitment {
+            ethereum_payload: vec![0x33],
+            attestation_expires_at: 600,
+            relayed_transaction_hash: None,
+        };
+        let view = AvailabilityJobView::from(&job);
+        assert_eq!(view.status, "ready_for_commitment");
+        assert_eq!(view.tx_hash, None);
+    }
+
     #[test]
     fn active_job_guard_releases_the_job_for_retry() {
         let jobs = StorageMutex::new(HashSet::from(["job".to_owned()]));
@@ -2521,24 +2668,27 @@ mod tests {
             state: JobState::AwaitingCommitment {
                 ethereum_payload: vec![0x33],
                 attestation_expires_at: 600,
+                relayed_transaction_hash: None,
             },
         };
         let mut encoded = serde_json::to_value(&job).unwrap();
-        encoded["state"]
-            .as_object_mut()
-            .unwrap()
-            .remove("attestation_expires_at");
+        let state = encoded["state"].as_object_mut().unwrap();
+        state.remove("attestation_expires_at");
+        state.remove("relayed_transaction_hash");
 
         let decoded =
             AvailabilityService::decode_job(&serde_json::to_vec(&encoded).unwrap()).unwrap();
         let JobState::AwaitingCommitment {
             attestation_expires_at,
+            relayed_transaction_hash,
             ..
         } = decoded.state
         else {
             panic!("expected an uncommitted input job");
         };
         assert_eq!(attestation_expires_at, 0);
+        // A record written before the relay became provisional is a wallet-path record.
+        assert_eq!(relayed_transaction_hash, None);
     }
 
     #[test]
@@ -2752,6 +2902,7 @@ mod tests {
         attested.state = JobState::AwaitingCommitment {
             ethereum_payload: vec![0x01],
             attestation_expires_at: 600,
+            relayed_transaction_hash: None,
         };
         service.save(&attested).unwrap();
 

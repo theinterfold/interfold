@@ -220,7 +220,14 @@ transaction:
 
 - An input leaves `AwaitingCommitment` only when a finalized block contains its commitment.
   `Committed` stops attestation renewal and starts the paid Avail publication, so an orphaned
-  commitment would strand the input for the rest of its commitment window.
+  commitment would strand the input for the rest of its commitment window. This holds on both
+  submission paths. Where the service relays the commitment itself (every non-mainnet chain), the
+  receipt does not promote the job: the job stays in `AwaitingCommitment` with the relayed
+  transaction hash, the attestation renews on the same schedule as a wallet-submitted one, and a
+  relayed transaction that is absent from finalized state and from the chain head is relayed
+  again (`commitment_step`). The status endpoint reports a relayed provisional job as
+  `pending_availability`, not `ready_for_commitment`, so a client does not sign a second
+  commitment with its wallet.
 - A publication transaction moves to `AwaitingFinality`, not directly to success. That state keeps
   the Ethereum payload, the Avail coordinates, the compute proof or staged envelope, and the local
   object. When finalized state contains the publication, the job retires. When the publication is
