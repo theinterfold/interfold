@@ -101,6 +101,36 @@ async fn read_stored_divisor(
     }
 }
 
+/// What `E3Requested` does with a round once the divisor sources have answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RegistrationPlan {
+    /// Register the round and run holder discovery with this divisor override.
+    Discover(Option<U256>),
+    /// Register the round but skip holder discovery: an on-chain round with no known divisor
+    /// is fully votable, and deriving a divisor would build the census in the wrong units.
+    RegisterWithoutDiscovery,
+}
+
+/// Decides registration from the divisor sources alone, so the choice can be tested without
+/// a chain or an Etherscan client.
+///
+/// Registration itself never depends on the divisor. The live listener logs a handler error
+/// and moves on, so an `Err` from this handler does not defer anything: it drops the round
+/// from coordinator metadata until the next backfill replays the event. Only discovery is
+/// divisor-dependent, so only discovery is skipped.
+fn plan_registration(
+    stored_divisor: Option<U256>,
+    requested_divisor: &str,
+    is_onchain_census: bool,
+) -> RegistrationPlan {
+    let divisor_override =
+        resolve_divisor_override(stored_divisor, requested_divisor, is_onchain_census);
+    if is_onchain_census && divisor_override.is_none() {
+        return RegistrationPlan::RegisterWithoutDiscovery;
+    }
+    RegistrationPlan::Discover(divisor_override)
+}
+
 fn resolve_divisor_override(
     stored: Option<U256>,
     requested: &str,
@@ -279,24 +309,27 @@ pub async fn register_e3_requested(
                     None
                 };
 
-                let divisor_override = resolve_divisor_override(
+                // Neither source producing a divisor for an on-chain round must not block
+                // registration: see `plan_registration`. Deriving one from `decimals()` can
+                // disagree with what the contract stored, which would build the census in units
+                // the tally does not read back, so discovery is skipped instead.
+                let plan = plan_registration(
                     stored_divisor,
                     &custom_params.voting_power_divisor,
                     is_onchain_census,
                 );
-
-                // Neither source produced a divisor for an on-chain round. Deriving one from
-                // `decimals()` can disagree with what the contract stored, which would build the
-                // census in units the tally does not read back. Defer instead: the handler is
-                // driven by the indexer cursor, so a later pass retries once the read succeeds.
-                if is_onchain_census && divisor_override.is_none() {
-                    return Err(eyre::eyre!(
-                        "[e3_id={}] The stored voting-power divisor is unavailable and the round \
-                         declared none. Deferring registration rather than deriving a divisor the \
-                         contract may not use.",
-                        e3_id
-                    ));
-                }
+                let (divisor_override, divisor_unavailable) = match plan {
+                    RegistrationPlan::Discover(divisor) => (divisor, false),
+                    RegistrationPlan::RegisterWithoutDiscovery => {
+                        warn!(
+                            "[e3_id={}] The stored voting-power divisor is unavailable and the \
+                             round declared none. Registering the round without holder discovery \
+                             rather than deriving a divisor the contract may not use.",
+                            e3_id
+                        );
+                        (None, true)
+                    }
+                };
 
                 // Get token holders from Etherscan API or mocked data.
                 // Asked only when the round declared it. Probing every requester and falling back
@@ -309,6 +342,14 @@ pub async fn register_e3_requested(
                 // Etherscan being down carries no eligibility meaning there: the contract reads
                 // power per input, so the only cost is mask cover.
                 let discovery: eyre::Result<Vec<TokenHolder>> = async {
+                if divisor_unavailable {
+                    return Err(eyre::eyre!(
+                        "[e3_id={}] Holder discovery skipped: no voting-power divisor is known \
+                         for this on-chain round, and deriving one would scale the census in \
+                         units the contract may not use.",
+                        e3_id
+                    ));
+                }
                 Ok(if custom_params.census_mode == CensusMode::ByRequester {
                     let credits_str = match custom_params.credit_mode {
                         CreditMode::Constant => credits_clone
@@ -1793,7 +1834,7 @@ mod custom_params_decoding_tests {
 /// neither one outside ONCHAIN mode.
 #[cfg(test)]
 mod voting_power_divisor_tests {
-    use super::resolve_divisor_override;
+    use super::{plan_registration, resolve_divisor_override, RegistrationPlan};
     use alloy::primitives::U256;
 
     /// The stored value is what `CRISPProgram` scales every input by, so it wins even when the
@@ -1825,8 +1866,9 @@ mod voting_power_divisor_tests {
     /// A zero or unparseable field means the round named no divisor.
     ///
     /// For a Merkle round `None` is the answer: the census leaf carries the bound. For an
-    /// on-chain round `None` is not a usable result, and the caller defers registration rather
-    /// than deriving a divisor from `decimals()` that the contract may not have stored.
+    /// on-chain round `None` is not a usable discovery input, and `plan_registration` skips
+    /// discovery rather than deriving a divisor from `decimals()` that the contract may not
+    /// have stored. Registration itself still happens.
     #[test]
     fn a_round_that_names_no_divisor_yields_no_override() {
         assert_eq!(resolve_divisor_override(None, "0", true), None);
@@ -1848,6 +1890,47 @@ mod voting_power_divisor_tests {
 
         assert_eq!(resolve_divisor_override(Some(stored), "5000", false), None);
         assert_eq!(resolve_divisor_override(None, "5000", false), None);
+    }
+
+    /// The stored read failed after retries (an RPC outage during live processing) and the
+    /// round declared no divisor. The round must still be registered: the live listener does
+    /// not retry a failed handler, so refusing here would drop the round from coordinator
+    /// metadata until the next backfill. Only discovery, which needs the divisor, is skipped.
+    #[test]
+    fn an_onchain_round_is_registered_when_the_stored_divisor_read_fails() {
+        assert_eq!(
+            plan_registration(None, "0", true),
+            RegistrationPlan::RegisterWithoutDiscovery
+        );
+        assert_eq!(
+            plan_registration(None, "", true),
+            RegistrationPlan::RegisterWithoutDiscovery
+        );
+    }
+
+    /// The same outage against a round that declared its own divisor loses nothing: the
+    /// declared field is what the contract stored, so discovery runs with it.
+    #[test]
+    fn a_declared_divisor_survives_a_failed_stored_read() {
+        assert_eq!(
+            plan_registration(None, "5000", true),
+            RegistrationPlan::Discover(Some(U256::from(5000)))
+        );
+    }
+
+    /// Once the RPC recovers the stored value is read again and discovery runs with it. A
+    /// Merkle round never depends on the divisor, so it always discovers.
+    #[test]
+    fn a_recovered_stored_read_and_a_merkle_round_both_discover() {
+        let stored = U256::from(10).pow(U256::from(17));
+        assert_eq!(
+            plan_registration(Some(stored), "0", true),
+            RegistrationPlan::Discover(Some(stored))
+        );
+        assert_eq!(
+            plan_registration(None, "0", false),
+            RegistrationPlan::Discover(None)
+        );
     }
 
     /// A divisor larger than 128 bits is an ordinary value on the chain, so it must survive the
