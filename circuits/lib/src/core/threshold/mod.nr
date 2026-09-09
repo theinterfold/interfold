@@ -7,6 +7,7 @@
 pub mod pk_generation;
 pub mod pk_aggregation;
 pub mod lbfv_pk_generation;
+pub mod lbfv_pk_aggregation;
 pub mod rlk_generation;
 pub mod rlk_aggregation;
 pub mod user_data_encryption_ct0;

@@ -233,54 +233,12 @@ impl LbfvPkGenerationAdapter {
         secret_key: &SecretKey,
         public_key: &PublicKeyShare,
     ) -> Result<LbfvPkGenerationCircuitData, CircuitsErrors> {
-        let row = usize::try_from(row_index)
-            .map_err(|_| CircuitsErrors::Other("l-BFV row index does not fit usize".to_string()))?;
-        if row >= self.row_count() {
-            return Err(CircuitsErrors::Other(format!(
-                "l-BFV row index {row_index} is out of range for {} rows",
-                self.row_count()
-            )));
-        }
-
-        let a_components = public_key.a_components()?;
-        let b_components = public_key.b_components()?;
-        if a_components.len() != self.row_count() || b_components.len() != self.row_count() {
-            return Err(CircuitsErrors::Other(format!(
-                "public-key row counts must equal {}",
-                self.row_count()
-            )));
-        }
-
-        let mut a_rows = Vec::with_capacity(a_components.len());
-        let mut b_rows = Vec::with_capacity(b_components.len());
-        for (index, (a_component, b_component)) in
-            a_components.iter().zip(b_components.iter()).enumerate()
-        {
-            validate_fhe_poly_context(a_component, &self.context, "l-BFV public-key a component")?;
-            validate_fhe_poly_context(b_component, &self.context, "l-BFV public-key b component")?;
-
-            let a = fhe_poly_to_crt_centered_checked(a_component, &self.moduli, self.degree)?;
-            if a != self.a_rows[index] {
-                return Err(CircuitsErrors::Other(format!(
-                    "public-key CRS row {index} does not match the fixed l-BFV CRS"
-                )));
-            }
-            a_rows.push(a);
-            b_rows.push(fhe_poly_to_crt_centered_checked(
-                b_component,
-                &self.moduli,
-                self.degree,
-            )?);
-        }
+        let (a, pk0_share) = self.share_row_components(row_index, public_key)?;
 
         let sk_crt =
             fhe_secret_key_to_crt_centered(secret_key, &self.context, &self.moduli, self.degree)?;
-        verify_crt_shapes(
-            &[&a_rows[row], &b_rows[row], &sk_crt],
-            self.moduli.len(),
-            self.degree,
-        )
-        .map_err(|error| CircuitsErrors::Other(format!("l-BFV CRT shape mismatch: {error}")))?;
+        verify_crt_shapes(&[&a, &pk0_share, &sk_crt], self.moduli.len(), self.degree)
+            .map_err(|error| CircuitsErrors::Other(format!("l-BFV CRT shape mismatch: {error}")))?;
 
         let sk = sk_crt.limb(0).clone();
         if sk_crt.limbs.iter().any(|limb| limb != &sk) {
@@ -289,8 +247,6 @@ impl LbfvPkGenerationAdapter {
             ));
         }
 
-        let a = a_rows[row].clone();
-        let pk0_share = b_rows[row].clone();
         let mut eek_limbs = Vec::with_capacity(self.moduli.len());
         for (index, qi) in self.moduli.iter().enumerate() {
             let product = a
@@ -320,6 +276,56 @@ impl LbfvPkGenerationAdapter {
             a,
             eek,
             sk,
+        })
+    }
+
+    /// Extract one centered public-key row after validating all fixed CRS rows.
+    pub fn share_row_components(
+        &self,
+        row_index: u32,
+        public_key: &PublicKeyShare,
+    ) -> Result<(CrtPolynomial, CrtPolynomial), CircuitsErrors> {
+        let row = usize::try_from(row_index)
+            .map_err(|_| CircuitsErrors::Other("l-BFV row index does not fit usize".to_string()))?;
+        if row >= self.row_count() {
+            return Err(CircuitsErrors::Other(format!(
+                "l-BFV row index {row_index} is out of range for {} rows",
+                self.row_count()
+            )));
+        }
+
+        let a_components = public_key.a_components()?;
+        let b_components = public_key.b_components()?;
+        if a_components.len() != self.row_count() || b_components.len() != self.row_count() {
+            return Err(CircuitsErrors::Other(format!(
+                "public-key row counts must equal {}",
+                self.row_count()
+            )));
+        }
+
+        let mut selected = None;
+        for (index, (a_component, b_component)) in
+            a_components.iter().zip(b_components.iter()).enumerate()
+        {
+            validate_fhe_poly_context(a_component, &self.context, "l-BFV public-key a component")?;
+            validate_fhe_poly_context(b_component, &self.context, "l-BFV public-key b component")?;
+
+            let a = fhe_poly_to_crt_centered_checked(a_component, &self.moduli, self.degree)?;
+            if a != self.a_rows[index] {
+                return Err(CircuitsErrors::Other(format!(
+                    "public-key CRS row {index} does not match the fixed l-BFV CRS"
+                )));
+            }
+            if index == row {
+                selected = Some((
+                    a,
+                    fhe_poly_to_crt_centered_checked(b_component, &self.moduli, self.degree)?,
+                ));
+            }
+        }
+
+        selected.ok_or_else(|| {
+            CircuitsErrors::Other(format!("l-BFV public-key row {row_index} is missing"))
         })
     }
 

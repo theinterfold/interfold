@@ -465,13 +465,14 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │
 │   │   ├─ NOTE: Production C1 still proves one summation-only public-key share per party. The
 │   │   │   separate `lbfv_pk_generation` circuit proves one fixed l-BFV public-key row and exposes
-│   │   │   `row_index`, `sk_commitment`, and `pk_commitment`. Its helper and prover boundaries
-│   │   │   exist, but `NodeFold`, pending proof state, and request/response types do not collect it.
-│   │   │   Legacy C5 pins the single TrBFV `CRP`; a separate l-BFV row aggregation circuit is still
-│   │   │   required.
+│   │   │   `row_index`, `sk_commitment`, and `pk_commitment`. The `lbfv_pk_aggregation` circuit
+│   │   │   aggregates exactly `H` generation-bound rows against the selected fixed CRS row. Both
+│   │   │   helper/prover boundaries exist, and the legacy C5 ABI remains unchanged. `NodeFold`,
+│   │   │   pending proof state, and request/response types do not collect these proofs yet.
 │   │   │   `CircuitName::RlkGeneration`, `CircuitName::RlkAggregation`, and
-│   │   │   `CircuitName::LbfvPkGeneration` use appended discriminants 27, 28, and 29. No l-BFV
-│   │   │   `ProofType` or runtime event exists yet.
+│   │   │   `CircuitName::LbfvPkGeneration` use appended discriminants 27, 28, and 29.
+│   │   │   `CircuitName::LbfvPkAggregation` uses appended discriminant 30. No l-BFV `ProofType`
+│   │   │   or runtime event exists yet. Recursive integration remains pending.
 │   │   │
 │   │   ├─ On mismatch: publishes CommitmentConsistencyViolation
 │   │   │   → AccusationManager initiates accusation quorum (see Part 5)

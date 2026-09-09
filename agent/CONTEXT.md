@@ -123,9 +123,10 @@ opentelemetry/tracing.
 - **Threshold** (`circuits/bin/threshold/`): C1 `pk_generation` · C5 `pk_aggregation` · P3
   `user_data_encryption_ct0/ct1` (+ wrapper) · C6 `share_decryption` · C7
   `decrypted_shares_aggregation` · secure-16384 l-BFV row proofs `lbfv_pk_generation`
-  (`CircuitName::LbfvPkGeneration = 29`), `rlk_generation` (`CircuitName::RlkGeneration = 27`), and
+  (`CircuitName::LbfvPkGeneration = 29`), `lbfv_pk_aggregation`
+  (`CircuitName::LbfvPkAggregation = 30`), `rlk_generation` (`CircuitName::RlkGeneration = 27`), and
   `rlk_aggregation` (`CircuitName::RlkAggregation = 28`). These circuits have helper and prover
-  boundaries, but the runtime proof flow does not use them yet.
+  boundaries. The runtime and recursive proof flows do not use them yet.
 - **Recursive aggregation** (`circuits/bin/recursive_aggregation/`): fold kernels
   (`c2ab_chunk_fold`, `c3_fold`, `c6_fold`, `node_fold`, `nodes_fold`, …) and the top-level
   `dkg_aggregator` / `decryption_aggregator`, which produce the on-chain Honk verifiers. The

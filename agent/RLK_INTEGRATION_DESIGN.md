@@ -1,9 +1,9 @@
 # Threshold l-BFV RLK Integration Design
 
-Status: pure adapters and the l-BFV public-key, RLK generation, and RLK aggregation helper/prover
-boundaries are implemented. Runtime collection, aggregation, storage, and publication remain
-pending. This document records verified interfaces, the integration boundary, and decisions that
-require protocol approval. It does not define a wire schema or on-chain ABI.
+Status: pure adapters and all l-BFV public-key and RLK helper/prover boundaries are implemented.
+Runtime collection, recursive aggregation, storage, and publication remain pending. This document
+records verified interfaces, the integration boundary, and decisions that require protocol approval.
+It does not define a wire schema or on-chain ABI.
 
 ## Scope
 
@@ -107,6 +107,8 @@ The repository contains row-level circuits:
 
 - `circuits/bin/threshold/lbfv_pk_generation/src/main.nr` proves `(commit(sk), commit(pk_row))` for
   one `row_index`.
+- `circuits/bin/threshold/lbfv_pk_aggregation/src/main.nr` proves the sum of `H` public-key rows for
+  one `row_index`.
 - `circuits/bin/threshold/rlk_generation/src/main.nr` proves
   `(commit(sk), commit(r), commit(d0), commit(d2))` for one `row_index`.
 - `circuits/bin/threshold/rlk_aggregation/src/main.nr` proves the sum of `H` parties' `d0` and `d2`
@@ -122,11 +124,12 @@ with zero smudging noise and returns only the secret-key and row commitments. Th
 the C1 ABI and C1-to-C5 public-key commitment. The runtime request, response, recursive circuit, and
 proof collection path remain deferred.
 
-The three l-BFV Rust paths provide circuit computation, `Prover.toml` generation, row-selectable CLI
-sample generation, and `Provable` implementations. Aggregation requires exactly the canonical `H`
-shares and computes centered sums for each CRT limb. `CircuitName::RlkGeneration`,
-`CircuitName::RlkAggregation`, and `CircuitName::LbfvPkGeneration` use durable discriminants 27, 28,
-and 29. No l-BFV `ProofType`, request, response, or runtime event is defined yet.
+The four l-BFV Rust paths provide circuit computation, `Prover.toml` generation, row-selectable CLI
+samples, and `Provable` implementations. Aggregation requires exactly the canonical `H` shares and
+computes centered sums for each CRT limb. `CircuitName::RlkGeneration`,
+`CircuitName::RlkAggregation`, `CircuitName::LbfvPkGeneration`, and `CircuitName::LbfvPkAggregation`
+use durable discriminants 27, 28, 29, and 30. No l-BFV `ProofType`, request, response, or runtime
+event is defined yet.
 
 ## Proposed Protocol Shape
 
@@ -206,10 +209,10 @@ RLK aggregation must use the same canonical honest set that supplies the aggrega
 keeps the RLK bound to the public key accepted for the E3 and avoids an RLK based on a different
 secret-key sum.
 
-Legacy C5 cannot prove l-BFV row aggregation because its binary pins the single TrBFV `CRP`. The
-l-BFV path therefore needs a separate row-indexed public-key aggregation circuit. That circuit must
-reuse the C5 aggregation relation, select `LBFV_CRS_GADGET_ROWS[row_index]`, and expose the
-aggregate row commitment. It must not change the C5 ABI.
+Legacy C5 cannot prove l-BFV row aggregation because its binary pins the single TrBFV `CRP`.
+`lbfv_pk_aggregation` provides the separate pure circuit boundary. It reuses the C5 aggregation
+relation, selects `LBFV_CRS_GADGET_ROWS[row_index]`, and exposes the aggregate row commitment. The
+legacy C5 ABI remains unchanged. The runtime and recursive paths do not use this boundary yet.
 
 For each row, the aggregator must:
 
@@ -324,10 +327,10 @@ decodable, but the extended proof requires a new protocol release and artifact s
 
 The initial supported matrix is:
 
-| Preset         | Existing C0-C7 path | l-BFV PK rows | RLK generation | RLK aggregation |
-| -------------- | ------------------- | ------------- | -------------- | --------------- |
-| `secure-8192`  | supported           | not enabled   | not enabled    | not enabled     |
-| `secure-16384` | supported           | enabled       | enabled        | enabled         |
+| Preset         | Existing C0-C7 path | l-BFV PK generation | l-BFV PK aggregation | RLK generation | RLK aggregation |
+| -------------- | ------------------- | ------------------- | -------------------- | -------------- | --------------- |
+| `secure-8192`  | supported           | not enabled         | not enabled          | not enabled    | not enabled     |
+| `secure-16384` | supported           | enabled             | enabled              | enabled        | enabled         |
 
 The `insecure` preset does not support the l-BFV row path in the initial implementation. The build,
 artifact, verifier, and runtime gates must fail closed when an l-BFV request targets `insecure` or
@@ -349,13 +352,14 @@ The pure circuit slice now includes:
 - witness conversion tests for `SecretKey`, RNS polynomials, errors, and quotient values;
 - `crates/zk-helpers/src/circuits/threshold/rlk_aggregation.rs` and its prover registration;
 - exact-`H` aggregation, centered CRT sums, generation commitments, and aggregate commitments;
+- `crates/zk-helpers/src/circuits/threshold/lbfv_pk_aggregation.rs` and its prover registration;
+- the row-indexed l-BFV public-key aggregation circuit, which preserves the legacy C5 ABI;
 - recursive synchronization and drift checks for generated l-BFV CRS and URS modules;
 - secure-16384 build selection and complete l-BFV row artifact cache gates;
 - artifact source hashes that include shared Noir relation and commitment sources;
 
 The remaining capability additions are:
 
-- a row-indexed l-BFV public-key aggregation circuit that preserves the legacy C5 ABI;
 - l-BFV public-key proof requests and runtime collection changes;
 - generated RLK verifier artifacts for the `secure-16384` preset;
 - recursive `NodeFold`, `NodesFold`, and `DkgAggregator` changes so RLK proofs reach the existing

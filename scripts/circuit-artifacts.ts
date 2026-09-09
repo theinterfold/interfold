@@ -63,11 +63,13 @@ const REQUIRED_VARIANT_CIRCUITS = [
   ...REQUIRED_BASE_CIRCUITS.map((circuit) => join('recursive', circuit)),
 ] as const
 
-const REQUIRED_LBFV_VARIANT_CIRCUITS = ['lbfv_pk_generation', 'rlk_generation', 'rlk_aggregation'].flatMap((circuit) => [
-  join('default', 'threshold', circuit, circuit),
-  join('evm', 'threshold', circuit, circuit),
-  join('recursive', 'threshold', circuit, circuit),
-])
+const REQUIRED_LBFV_VARIANT_CIRCUITS = ['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_aggregation'].flatMap(
+  (circuit) => [
+    join('default', 'threshold', circuit, circuit),
+    join('evm', 'threshold', circuit, circuit),
+    join('recursive', 'threshold', circuit, circuit),
+  ],
+)
 
 const REQUIRED_ARTIFACT_EXTENSIONS = ['.json', '.vk', '.vk_hash'] as const
 

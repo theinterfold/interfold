@@ -4,10 +4,11 @@ use derivative::Derivative;
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::{
     CircuitInputLayout, CircuitOutputLayout, DKG_SHARE_DECRYPTION_OUTPUTS,
-    LBFV_PK_GENERATION_INPUTS, LBFV_PK_GENERATION_OUTPUTS, PK_AGGREGATION_OUTPUTS, PK_BFV_OUTPUTS,
-    PK_GENERATION_OUTPUTS, RLK_AGGREGATION_INPUTS, RLK_AGGREGATION_OUTPUTS, RLK_GENERATION_INPUTS,
-    RLK_GENERATION_OUTPUTS, SHARE_ENCRYPTION_INPUTS, SHARE_ENCRYPTION_OUTPUTS,
-    THRESHOLD_SHARE_DECRYPTION_INPUTS, THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
+    LBFV_PK_AGGREGATION_INPUTS, LBFV_PK_AGGREGATION_OUTPUTS, LBFV_PK_GENERATION_INPUTS,
+    LBFV_PK_GENERATION_OUTPUTS, PK_AGGREGATION_OUTPUTS, PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS,
+    RLK_AGGREGATION_INPUTS, RLK_AGGREGATION_OUTPUTS, RLK_GENERATION_INPUTS, RLK_GENERATION_OUTPUTS,
+    SHARE_ENCRYPTION_INPUTS, SHARE_ENCRYPTION_OUTPUTS, THRESHOLD_SHARE_DECRYPTION_INPUTS,
+    THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -172,6 +173,8 @@ pub enum CircuitName {
     RlkAggregation = 28,
     /// Row-level l-BFV public-key generation proof.
     LbfvPkGeneration = 29,
+    /// Row-level threshold l-BFV public-key aggregation proof.
+    LbfvPkAggregation = 30,
 }
 
 impl CircuitName {
@@ -207,6 +210,7 @@ impl CircuitName {
             CircuitName::RlkGeneration => "rlk_generation",
             CircuitName::RlkAggregation => "rlk_aggregation",
             CircuitName::LbfvPkGeneration => "lbfv_pk_generation",
+            CircuitName::LbfvPkAggregation => "lbfv_pk_aggregation",
         }
     }
 
@@ -225,7 +229,8 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => "threshold",
             CircuitName::RlkGeneration
             | CircuitName::RlkAggregation
-            | CircuitName::LbfvPkGeneration => "threshold",
+            | CircuitName::LbfvPkGeneration
+            | CircuitName::LbfvPkAggregation => "threshold",
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
             | CircuitName::C2ChunkBatch
@@ -262,6 +267,9 @@ impl CircuitName {
             },
             CircuitName::LbfvPkGeneration => CircuitOutputLayout::Fixed {
                 fields: LBFV_PK_GENERATION_OUTPUTS,
+            },
+            CircuitName::LbfvPkAggregation => CircuitOutputLayout::Fixed {
+                fields: LBFV_PK_AGGREGATION_OUTPUTS,
             },
             CircuitName::RlkGeneration => CircuitOutputLayout::Fixed {
                 fields: RLK_GENERATION_OUTPUTS,
@@ -312,6 +320,9 @@ impl CircuitName {
         match self {
             CircuitName::LbfvPkGeneration => CircuitInputLayout::Fixed {
                 fields: LBFV_PK_GENERATION_INPUTS,
+            },
+            CircuitName::LbfvPkAggregation => CircuitInputLayout::Fixed {
+                fields: LBFV_PK_AGGREGATION_INPUTS,
             },
             CircuitName::RlkGeneration => CircuitInputLayout::Fixed {
                 fields: RLK_GENERATION_INPUTS,
@@ -381,6 +392,7 @@ mod tests {
             (CircuitName::RlkGeneration, 27),
             (CircuitName::RlkAggregation, 28),
             (CircuitName::LbfvPkGeneration, 29),
+            (CircuitName::LbfvPkAggregation, 30),
         ];
 
         for (circuit, discriminant) in expected {
@@ -401,6 +413,7 @@ mod tests {
             ([27u8, 0, 0, 0], CircuitName::RlkGeneration),
             ([28u8, 0, 0, 0], CircuitName::RlkAggregation),
             ([29u8, 0, 0, 0], CircuitName::LbfvPkGeneration),
+            ([30u8, 0, 0, 0], CircuitName::LbfvPkAggregation),
         ];
 
         for (bytes, circuit) in expected {
@@ -604,6 +617,21 @@ mod tests {
             &*proof.extract_output("d2_agg_commitment").unwrap(),
             &[0x66; 32]
         );
+    }
+
+    #[test]
+    fn lbfv_pk_aggregation_layout_tracks_row_and_tail_commitment() {
+        let mut signals = vec![0u8; 128];
+        signals[31] = 4;
+        signals[96..128].copy_from_slice(&[0x77; 32]);
+        let proof = make_proof(CircuitName::LbfvPkAggregation, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 4);
+        assert_eq!(
+            &*proof.extract_output("pk_agg_commitment").unwrap(),
+            &[0x77; 32]
+        );
+        assert_eq!(proof.circuit.input_layout().field_count(), Some(1));
     }
 
     #[test]

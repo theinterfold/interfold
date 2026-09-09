@@ -129,6 +129,9 @@ pub const PK_GENERATION_OUTPUTS: &[OutputField] =
 /// l-BFV public-key generation for one gadget row.
 pub const LBFV_PK_GENERATION_OUTPUTS: &[OutputField] = &[f("sk_commitment"), f("pk_commitment")];
 
+/// Threshold l-BFV public-key aggregation for one gadget row.
+pub const LBFV_PK_AGGREGATION_OUTPUTS: &[OutputField] = &[f("pk_agg_commitment")];
+
 /// l-BFV relinearization-key generation for one row.
 pub const RLK_GENERATION_OUTPUTS: &[OutputField] = &[
     f("sk_commitment"),
@@ -165,6 +168,9 @@ pub const RLK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
 
 /// Public l-BFV public-key row selector.
 pub const LBFV_PK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
+
+/// Public row selector for threshold l-BFV public-key aggregation.
+pub const LBFV_PK_AGGREGATION_INPUTS: &[OutputField] = &[f("row_index")];
 
 /// Public row selector for l-BFV relinearization-key aggregation.
 pub const RLK_AGGREGATION_INPUTS: &[OutputField] = &[f("row_index")];
