@@ -12,6 +12,23 @@ impl ThresholdPlaintextAggregator {
         signed_decryption_proofs: Vec<SignedProofPayload>,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
+        // Collection closes at `VerifyingC6`. A share that arrives after that is a duplicate of
+        // one already collected, not a fault: peers re-announce their in-flight document
+        // pointers whenever a node (re)subscribes to the gossip topic, so a restart anywhere in
+        // the committee re-delivers every decryption share to aggregators that have moved on.
+        // Without this guard `TryInto<Collecting>` fails and the duplicate surfaces as
+        // `InterfoldError("PlaintextState was expected to be Collecting but it was not.")` on a
+        // node doing nothing wrong — the same defect that hit `add_keyshare` on the DKG side.
+        if !matches!(
+            self.state.get().as_ref(),
+            Some(ThresholdPlaintextAggregatorState::Collecting(_))
+        ) {
+            debug!(
+                party_id,
+                "Ignoring a decryption share that arrived after collection closed"
+            );
+            return Ok(());
+        }
         let required_shares = self.aggregated_committee_n();
         ensure!(
             required_shares > 0,

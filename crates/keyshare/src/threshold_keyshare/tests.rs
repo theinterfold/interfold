@@ -710,3 +710,94 @@ async fn a_share_after_collection_is_classified_as_a_duplicate_not_sole_honest_p
     );
     Ok(())
 }
+
+/// The duplicate classification must survive a restart.
+///
+/// R24 caught this: the restarted node had collected its shares before the crash, but the
+/// in-memory flag reset to false and the very next re-announced share logged
+/// `no collector (sole honest party)` on a node that was not alone at all. The durable
+/// `decryption_key_shares` map already records what was collected, so the flag is derived from
+/// it at construction rather than persisted separately.
+#[actix::test]
+async fn the_duplicate_classification_survives_a_restart() -> Result<()> {
+    let ready = ReadyForDecryption {
+        pk_share: ArcBytes::from_bytes(&[1]),
+        sk_poly_sum: SensitiveBytes::from_encrypted(&[2]),
+        es_poly_sum: vec![SensitiveBytes::from_encrypted(&[3])],
+        signed_pk_generation_proof: None,
+        signed_sk_share_computation_proof: None,
+        signed_e_sm_share_computation_proof: None,
+        signed_sk_share_encryption_proofs: Vec::new(),
+        signed_e_sm_share_encryption_proofs: Vec::new(),
+    };
+    let (bus, _history) = test_bus();
+    let e3_id = E3id::new("45", 1);
+    let store = InMemStore::new(false).start();
+    let repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
+    let state = ThresholdKeyshareState::new(
+        e3_id.clone(),
+        0,
+        KeyshareState::ReadyForDecryption(ready),
+        1,
+        3,
+        ArcBytes::from_bytes(b"params"),
+        Address::ZERO.to_string(),
+    );
+
+    // A recovery snapshot from a node that already collected a peer share before it crashed.
+    let recovery_store = InMemStore::new(false).start();
+    let recovery_repo =
+        Repository::<ThresholdKeyshareRecoveryState>::new(DataStore::from_in_mem(&recovery_store));
+    let mut recovered = ThresholdKeyshareRecoveryState::default();
+    recovered.decryption_key_shares.insert(
+        1,
+        TypedEvent::new(
+            DecryptionKeyShared {
+                e3_id: e3_id.clone(),
+                party_id: 1,
+                node: format!("0x{:040x}", 2),
+                signed_sk_decryption_proof: SignedProofPayload {
+                    payload: e3_events::ProofPayload {
+                        e3_id: e3_id.clone(),
+                        proof_type: e3_events::ProofType::C4aSkShareDecryption,
+                        proof: e3_events::Proof::new(
+                            e3_events::CircuitName::DkgShareDecryption,
+                            ArcBytes::from_bytes(&[1]),
+                            ArcBytes::from_bytes(&[0u8; 32]),
+                        ),
+                    },
+                    signature: ArcBytes::from_bytes(&[0u8; 65]),
+                },
+                signed_e_sm_decryption_proofs: Vec::new(),
+                external: true,
+            },
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                EffectsEnabled::new().into(),
+                None,
+                1,
+                None,
+                EventSource::Local,
+            )
+            .into_sequenced(1)
+            .get_ctx()
+            .clone(),
+        ),
+    );
+
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state: repo.send(Some(state)),
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        recovery: recovery_repo.send(Some(recovered)),
+    });
+
+    assert_eq!(
+        actor.classify_uncollected_share(),
+        UncollectedShare::AlreadyCollected,
+        "a node that collected shares before the crash must still treat a re-announced share \
+         as a duplicate after restart"
+    );
+    Ok(())
+}

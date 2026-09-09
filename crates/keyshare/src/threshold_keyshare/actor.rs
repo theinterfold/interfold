@@ -175,6 +175,11 @@ pub struct ThresholdKeyshare {
     /// "collection already finished". Peers re-announce their in-flight document pointers on
     /// every (re)subscribe, so a restart anywhere in the committee re-delivers shares long after
     /// the fact and used to log the misleading second case as the first.
+    ///
+    /// Not persisted directly: it is derived at construction from the durable
+    /// `decryption_key_shares` map, which recovery already carries. A restart after collection
+    /// completed therefore still classifies a re-announced share as a duplicate instead of
+    /// reporting a missing collector.
     decryption_key_shares_collected: bool,
     state: Persistable<ThresholdKeyshareState>,
     recovery: Persistable<ThresholdKeyshareRecoveryState>,
@@ -224,7 +229,7 @@ impl ThresholdKeyshare {
             decryption_key_collector: None,
             encryption_key_collector: None,
             decryption_key_shared_collector: None,
-            decryption_key_shares_collected: false,
+            decryption_key_shares_collected: !recovered.decryption_key_shares.is_empty(),
             state: params.state,
             recovery: params.recovery,
             share_enc_preset: params.share_enc_preset,
