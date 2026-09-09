@@ -645,3 +645,68 @@ async fn all_shares_collected_while_collecting_encryption_keys_is_held_not_dropp
 
     Ok(())
 }
+
+/// A `DecryptionKeyShared` arriving with no collector must be classified by WHY the collector is
+/// absent, so the operator-facing warning stays meaningful.
+///
+/// The collector is dropped the instant `AllDecryptionKeySharesCollected` fires, so its absence
+/// alone cannot tell "sole honest party, none needed" apart from "collection already finished".
+/// Peers re-announce their in-flight document pointers on every (re)subscribe, so a restart
+/// anywhere in the committee re-delivers shares minutes later. Round 22 logged
+/// `DecryptionKeyShared from party 1 dropped — no collector (sole honest party)` on two nodes
+/// that had each already collected and consumed that exact share — a routine duplicate reported
+/// as the unusual case.
+#[actix::test]
+async fn a_share_after_collection_is_classified_as_a_duplicate_not_sole_honest_party() -> Result<()>
+{
+    let ready = ReadyForDecryption {
+        pk_share: ArcBytes::from_bytes(&[1]),
+        sk_poly_sum: SensitiveBytes::from_encrypted(&[2]),
+        es_poly_sum: vec![SensitiveBytes::from_encrypted(&[3])],
+        signed_pk_generation_proof: None,
+        signed_sk_share_computation_proof: None,
+        signed_e_sm_share_computation_proof: None,
+        signed_sk_share_encryption_proofs: Vec::new(),
+        signed_e_sm_share_encryption_proofs: Vec::new(),
+    };
+    let (bus, _history) = test_bus();
+    let e3_id = E3id::new("44", 1);
+    let store = InMemStore::new(false).start();
+    let repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
+    let state = ThresholdKeyshareState::new(
+        e3_id.clone(),
+        0,
+        KeyshareState::ReadyForDecryption(ready),
+        1,
+        3,
+        ArcBytes::from_bytes(b"params"),
+        Address::ZERO.to_string(),
+    );
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state: repo.send(Some(state)),
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        recovery: test_recovery(),
+    });
+
+    // Before collection completes, no collector genuinely means sole honest party.
+    assert_eq!(
+        actor.classify_uncollected_share(),
+        UncollectedShare::SoleHonestParty,
+        "before collection, a missing collector is the sole-honest-party case"
+    );
+
+    // `AllDecryptionKeySharesCollected` drops the collector and records completion.
+    actor.decryption_key_shared_collector = None;
+    actor.decryption_key_shares_collected = true;
+
+    assert_eq!(
+        actor.classify_uncollected_share(),
+        UncollectedShare::AlreadyCollected,
+        "after collection completes, a re-announced share is a late duplicate, not a node \
+         operating alone"
+    );
+    Ok(())
+}

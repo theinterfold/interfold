@@ -14,11 +14,25 @@ impl PublicKeyAggregator {
         c1_proof: Option<SignedProofPayload>,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
-        if matches!(
+        // Collection closes at `VerifyingC1`, not at `Complete`. A keyshare that arrives after
+        // that is a duplicate of one already collected, not a fault: peers re-announce their
+        // in-flight document pointers whenever a node (re)subscribes to the gossip topic, so a
+        // restart anywhere in the committee re-delivers every keyshare pointer to nodes that
+        // have long since moved on. Treating those as errors raised `InterfoldError` on healthy
+        // aggregators — observed on three nodes at once in a single restart, which is exactly
+        // the noise that hides a real fault.
+        //
+        // Ignoring is safe because the share was already recorded: `add_keyshare` is idempotent
+        // per `party_id`, and the honest set is fixed once C1 verification starts.
+        if !matches!(
             self.state.get().as_ref(),
-            Some(PublicKeyAggregatorState::Complete { .. })
+            Some(PublicKeyAggregatorState::Collecting { .. })
         ) {
-            info!("Ignoring replayed keyshare after public-key aggregation completed");
+            debug!(
+                e3_id = %self.e3_id,
+                party_id,
+                "Ignoring a keyshare that arrived after collection closed"
+            );
             return Ok(());
         }
         self.state.try_mutate(ec, |state| {

@@ -269,3 +269,70 @@ async fn standby_persists_and_resumes_public_key_work() -> Result<()> {
 mod attestations;
 mod failures;
 mod node_proof_deadline;
+
+/// A keyshare that arrives after collection closed must be ignored, not raised as an error.
+///
+/// Peers re-announce their in-flight document pointers whenever a node (re)subscribes to the
+/// gossip topic, so a restart anywhere in the committee re-delivers every keyshare pointer to
+/// aggregators that already moved to `VerifyingC1`. Round 22 killed one committee member and
+/// three healthy nodes published `InterfoldError("Can only add keyshare in Collecting state")`
+/// within 100 s of its restart. The guard used to cover only `Complete`, which is reached far
+/// too late to catch this.
+#[actix::test]
+async fn a_keyshare_after_collection_closed_is_ignored_not_an_error() -> Result<()> {
+    let e3_id = E3id::new("42", 1);
+    let committee = CiphernodesCommitteeSize::Minimum.values();
+    let nodes = (0..committee.n as u64)
+        .map(|party_id| (party_id, format!("0x{:040x}", party_id + 1)))
+        .collect::<HashMap<_, _>>();
+    let state = PublicKeyAggregatorState::init(
+        committee.n,
+        committee.threshold,
+        Seed([0; 32]),
+        nodes.clone(),
+    );
+    let (mut aggregator, _history, _) = build_public_key_aggregator(state).await?;
+    let ec = test_ctx(EffectsEnabled::new());
+
+    // Fill the committee so collection closes and the actor moves to VerifyingC1.
+    for (party_id, node) in &nodes {
+        aggregator.add_keyshare(
+            ArcBytes::from_bytes(&[*party_id as u8]),
+            node.clone(),
+            *party_id,
+            Some(c1_proof_with_pk_commitment(&e3_id, [7; 32])),
+            &ec,
+        )?;
+    }
+    assert!(
+        matches!(
+            aggregator.state.get(),
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. })
+        ),
+        "collection must be closed before the late re-announce arrives"
+    );
+
+    // The re-announced duplicate. Before the fix this returned Err and surfaced as an
+    // InterfoldError on a node doing nothing wrong.
+    let (party_id, node) = nodes.iter().next().expect("committee is not empty");
+    let result = aggregator.add_keyshare(
+        ArcBytes::from_bytes(&[*party_id as u8]),
+        node.clone(),
+        *party_id,
+        Some(c1_proof_with_pk_commitment(&e3_id, [7; 32])),
+        &ec,
+    );
+    assert!(
+        result.is_ok(),
+        "a re-announced keyshare must be ignored after collection closed, not raised as an \
+         error: {result:?}"
+    );
+    assert!(
+        matches!(
+            aggregator.state.get(),
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. })
+        ),
+        "the late keyshare must not disturb the state"
+    );
+    Ok(())
+}

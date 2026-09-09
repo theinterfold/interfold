@@ -113,10 +113,17 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                                     collector.do_send(TypedEvent::new(data, ec));
                                     Ok(())
                                 } else {
-                                    warn!(
-                                        "DecryptionKeyShared from party {} dropped — no collector (sole honest party)",
-                                        data.party_id
-                                    );
+                                    match self.classify_uncollected_share() {
+                                        UncollectedShare::AlreadyCollected => debug!(
+                                            "DecryptionKeyShared from party {} ignored — \
+                                             collection already complete",
+                                            data.party_id
+                                        ),
+                                        UncollectedShare::SoleHonestParty => warn!(
+                                            "DecryptionKeyShared from party {} dropped — no collector (sole honest party)",
+                                            data.party_id
+                                        ),
+                                    }
                                     Ok(())
                                 }
                             }
