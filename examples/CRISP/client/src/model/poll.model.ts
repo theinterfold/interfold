@@ -28,6 +28,11 @@ export interface PollRequestResult {
   total_votes: number
 }
 
+export interface ArchivePage {
+  items: PollRequestResult[]
+  next_cursor: string | null
+}
+
 export interface Poll {
   value: number
   checked: boolean

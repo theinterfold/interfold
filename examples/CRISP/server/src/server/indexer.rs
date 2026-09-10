@@ -1575,6 +1575,9 @@ pub async fn start_indexer(
         }
     }
 
+    CurrentRoundRepository::new(crisp_indexer.get_store())
+        .ensure_requester_index()
+        .await?;
     restore_round_deadline_callbacks(&crisp_indexer).await?;
     crisp_indexer.listen().await?;
     info!("CRISP: Indexer listen loop has finished!");

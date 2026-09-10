@@ -196,6 +196,50 @@ pub struct WebResultRequest {
     pub requester: String,
 }
 
+#[derive(Debug, Deserialize)]
+pub struct ArchiveRequest {
+    #[serde(default)]
+    pub requesters: Vec<String>,
+    #[serde(default)]
+    pub cursor: Option<String>,
+    #[serde(default = "archive_page_size")]
+    pub limit: usize,
+}
+
+fn archive_page_size() -> usize {
+    12
+}
+
+impl ArchiveRequest {
+    pub fn before(&self) -> eyre::Result<Option<usize>> {
+        eyre::ensure!(
+            (1..=50).contains(&self.limit),
+            "Archive limit must be between 1 and 50"
+        );
+        self.cursor
+            .as_ref()
+            .map(|cursor| {
+                let position = cursor
+                    .strip_prefix("v1:")
+                    .ok_or_else(|| eyre::eyre!("Invalid archive cursor"))?;
+                eyre::ensure!(
+                    !position.is_empty() && position.bytes().all(|byte| byte.is_ascii_digit()),
+                    "Invalid archive cursor"
+                );
+                position
+                    .parse::<usize>()
+                    .map_err(|_| eyre::eyre!("Invalid archive cursor"))
+            })
+            .transpose()
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub struct ArchivePage {
+    pub items: Vec<WebResultRequest>,
+    pub next_cursor: Option<String>,
+}
+
 #[derive(Debug, Deserialize, Serialize)]
 pub struct E3StateLite {
     pub id: String,

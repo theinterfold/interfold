@@ -128,13 +128,13 @@ fn c6_fold_total_slots_from_compiled_json() -> usize {
 }
 
 #[test]
+#[ignore = "requires compiled circuits; run pnpm rust:test:proofs"]
 fn c3_fold_compiled_abi_has_consistent_slot_count() {
     if !c3_fold_json_path().exists() {
-        println!(
-            "skipping: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
+        panic!(
+            "missing required test prerequisite: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
             c3_fold_json_path().display()
         );
-        return;
     }
     let slots = c3_fold_total_slots_from_compiled_json();
     assert!(slots > 0, "C3_SLOTS inferred from ABI should be positive");
@@ -143,13 +143,13 @@ fn c3_fold_compiled_abi_has_consistent_slot_count() {
 }
 
 #[test]
+#[ignore = "requires compiled circuits; run pnpm rust:test:proofs"]
 fn c6_fold_compiled_abi_has_consistent_slot_count() {
     if !c6_fold_json_path().exists() {
-        println!(
-            "skipping: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
+        panic!(
+            "missing required test prerequisite: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
             c6_fold_json_path().display()
         );
-        return;
     }
     let slots = c6_fold_total_slots_from_compiled_json();
     assert!(slots > 0, "C6 slots inferred from ABI should be positive");
@@ -158,6 +158,7 @@ fn c6_fold_compiled_abi_has_consistent_slot_count() {
 }
 
 #[test]
+#[ignore = "requires compiled circuits; run pnpm rust:test:proofs"]
 fn node_fold_pipeline_compiled_json_load() {
     let mut missing = Vec::new();
     for &c in NODE_FOLD_PIPELINE {
@@ -167,11 +168,10 @@ fn node_fold_pipeline_compiled_json_load() {
         }
     }
     if !missing.is_empty() {
-        println!(
-            "skipping: missing compiled JSON(s) (run `pnpm build:circuits --group recursive_aggregation`): {:?}",
+        panic!(
+            "missing required test prerequisite: missing compiled JSON(s) (run `pnpm build:circuits --group recursive_aggregation`): {:?}",
             missing
         );
-        return;
     }
     for &c in NODE_FOLD_PIPELINE {
         let path = recursive_aggregation_compiled_json_path(c);
@@ -181,14 +181,16 @@ fn node_fold_pipeline_compiled_json_load() {
 }
 
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
 async fn recursive_aggregation_default_artifacts_staged() {
     let Some(bb) = find_bb().await else {
-        println!("skipping: bb not found");
-        return;
+        panic!("missing required test prerequisite: bb not found");
     };
     if !c3_fold_json_path().exists() {
-        println!("skipping: {} not found", c3_fold_json_path().display());
-        return;
+        panic!(
+            "missing required test prerequisite: {} not found",
+            c3_fold_json_path().display()
+        );
     }
 
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -216,16 +218,18 @@ async fn recursive_aggregation_default_artifacts_staged() {
 }
 
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
 async fn recursive_aggregation_c6_fold_kernel_artifacts_staged() {
     let Some(bb) = find_bb().await else {
-        println!("skipping: bb not found");
-        return;
+        panic!("missing required test prerequisite: bb not found");
     };
     let kernel_json = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
         .join("../../circuits/bin/recursive_aggregation/c6_fold_kernel/target/c6_fold_kernel.json");
     if !kernel_json.exists() {
-        println!("skipping: {} not found", kernel_json.display());
-        return;
+        panic!(
+            "missing required test prerequisite: {} not found",
+            kernel_json.display()
+        );
     }
 
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -253,18 +257,17 @@ async fn recursive_aggregation_c6_fold_kernel_artifacts_staged() {
 }
 
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
 async fn node_fold_pipeline_recursive_aggregation_artifacts_staged() {
     let Some(bb) = find_bb().await else {
-        println!("skipping: bb not found");
-        return;
+        panic!("missing required test prerequisite: bb not found");
     };
     let gate = recursive_aggregation_compiled_json_path(CircuitName::NodeFold);
     if !gate.exists() {
-        println!(
-            "skipping: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
+        panic!(
+            "missing required test prerequisite: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
             gate.display()
         );
-        return;
     }
 
     let (backend, temp) = setup_test_prover(&bb).await;
@@ -343,27 +346,26 @@ async fn setup_c3_fold_with_inner_share_encryption() -> Option<(
 }
 
 /// Expected C3 fold slot count when circuits are compiled for the minimum committee (N=3, T=1).
-const MINIMUM_C3_FOLD_SLOTS: usize = 2;
+const MINIMUM_C3_FOLD_SLOTS: usize = 6;
 /// Expected C6 fold slot count when circuits are compiled for the minimum committee (N=3, T=1).
 const MINIMUM_C6_FOLD_SLOTS: usize = 2;
 
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
 async fn c3_fold_sequential_proves_and_verifies() {
     let Some((_backend, _temp, prover, circuit, sample_a, sample_b, preset)) =
         setup_c3_fold_with_inner_share_encryption().await
     else {
-        println!("skipping: bb not found or prerequisites missing");
-        return;
+        panic!("missing required test prerequisite: bb not found or prerequisites missing");
     };
 
     let total_slots = c3_fold_total_slots_from_compiled_json();
     if total_slots != MINIMUM_C3_FOLD_SLOTS {
-        println!(
-            "skipping c3_fold_sequential_proves_and_verifies: circuits compiled for \
+        panic!(
+            "c3_fold_sequential_proves_and_verifies: circuits compiled for \
              non-minimum committee (total_slots={total_slots}, expected {MINIMUM_C3_FOLD_SLOTS}). \
              Rebuild with `pnpm build:circuits --committee minimum` to run this test."
         );
-        return;
     }
 
     let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
@@ -460,22 +462,21 @@ async fn setup_c6_fold_with_inner_threshold_share_decryption() -> Option<(
 }
 
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
 async fn c6_fold_sequential_proves_and_verifies() {
     let Some((_backend, _temp, prover, circuit, sample_a, sample_b, preset)) =
         setup_c6_fold_with_inner_threshold_share_decryption().await
     else {
-        println!("skipping: bb not found or prerequisites missing");
-        return;
+        panic!("missing required test prerequisite: bb not found or prerequisites missing");
     };
 
     let total_slots = c6_fold_total_slots_from_compiled_json();
     if total_slots != MINIMUM_C6_FOLD_SLOTS {
-        println!(
-            "skipping c6_fold_sequential_proves_and_verifies: circuits compiled for \
+        panic!(
+            "c6_fold_sequential_proves_and_verifies: circuits compiled for \
              non-minimum committee (total_slots={total_slots}, expected {MINIMUM_C6_FOLD_SLOTS}). \
              Rebuild with `pnpm build:circuits --committee minimum` to run this test."
         );
-        return;
     }
     let artifacts_dir = preset.artifacts_dir_for_committee("minimum");
     let inner_e3_a = "e3-c6fold-inner-0";

@@ -46,7 +46,8 @@
     "dev": "tsup --watch",
     "clean": "rm -rf dist",
     "test": "vitest --run",
-    "pretest": "pnpm compile:circuits",
+    "test:proofs": "pnpm compile:circuits && pnpm test:proofs:prepared",
+    "test:proofs:prepared": "vitest --run --config vitest.proofs.config.ts",
     "prerelease": "pnpm clean && pnpm build",
     "release": "pnpm publish --access=public"
   },

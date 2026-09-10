@@ -16,6 +16,7 @@ const RoundPoll: React.FC = () => {
   const navigate = useNavigate()
   const { roundState, getRoundStateLite, isLoading, currentRoundId } = useVoteManagementContext()
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   const isValidRoundId = roundId !== undefined && /^\d+$/.test(roundId)
 
@@ -28,19 +29,31 @@ const RoundPoll: React.FC = () => {
 
   // Load the specific round
   useEffect(() => {
+    let cancelled = false
     const loadRound = async () => {
       if (isValidRoundId && roundId !== undefined) {
         setLoading(true)
-        await getRoundStateLite(roundId)
-        setLoading(false)
+        setError(null)
+        try {
+          await getRoundStateLite(roundId)
+        } catch {
+          if (!cancelled) setError('Could not load this round. Refresh the page to retry.')
+        } finally {
+          if (!cancelled) setLoading(false)
+        }
       }
     }
-    loadRound()
+    void loadRound()
+    return () => {
+      cancelled = true
+    }
   }, [isValidRoundId, roundId, getRoundStateLite])
 
   const endTime = useMemo(() => (roundState ? convertTimestampToDate(roundState.end_time) : null), [roundState])
 
   const title = `Round #${roundId}`
+
+  if (error) return <p role='alert'>{error}</p>
 
   if (loading || isLoading) {
     return (

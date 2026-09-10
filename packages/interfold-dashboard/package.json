@@ -6,6 +6,7 @@
   "description": "Interfold / CRISP public observation dashboard",
   "license": "LGPL-3.0-only",
   "scripts": {
+    "test": "vitest --run",
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
@@ -18,6 +19,7 @@
     "viem": "^2.21.0"
   },
   "devDependencies": {
+    "vitest": "1.6.1",
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "@vitejs/plugin-react": "^4.3.1",

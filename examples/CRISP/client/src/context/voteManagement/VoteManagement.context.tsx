@@ -68,6 +68,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     getRoundStateLite: getRoundStateLiteRequest,
     getWebResultByRound,
     getWebResult,
+    getArchivePage,
     getCurrentRound,
     broadcastVote,
     getVoteAvailability,
@@ -147,17 +148,17 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
       const currentResult = await getWebResultByRound(currentRound.id)
       const currentHasTally = !!(currentResult && Array.isArray(currentResult.tally) && currentResult.tally.length > 0)
       if (!currentHasTally) {
-        const all = await getWebResult()
-        const latestWithTally = (all ?? [])
-          .filter((r) => Array.isArray(r.tally) && r.tally.length > 0)
-          .sort((a, b) => {
-            const aId = BigInt(a.round_id)
-            const bId = BigInt(b.round_id)
-            return aId === bId ? 0 : aId < bId ? 1 : -1
-          })[0]
-        if (latestWithTally && latestWithTally.round_id !== currentRound.id) {
-          fallbackRoundId = latestWithTally.round_id
-        }
+        let cursor: string | undefined
+        do {
+          const page = await getArchivePage(cursor)
+          const latestWithTally = page?.items.find((round) => Array.isArray(round.tally) && round.tally.length > 0)
+          if (latestWithTally) {
+            if (latestWithTally.round_id !== currentRound.id) fallbackRoundId = latestWithTally.round_id
+            break
+          }
+          if (!page?.next_cursor || page.next_cursor === cursor) break
+          cursor = page.next_cursor
+        } while (cursor)
       }
     }
 
@@ -169,13 +170,16 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     }
   }
 
-  const getRoundStateLite = async (roundId: string) => {
-    const fetchedRoundState = await getRoundStateLiteRequest(roundId)
+  const getRoundStateLite = useCallback(
+    async (roundId: string) => {
+      const fetchedRoundState = await getRoundStateLiteRequest(roundId)
 
-    if (fetchedRoundState) {
-      applyRoundState(fetchedRoundState)
-    }
-  }
+      if (fetchedRoundState) {
+        applyRoundState(fetchedRoundState)
+      }
+    },
+    [getRoundStateLiteRequest, applyRoundState],
+  )
 
   const getRoundStateLiteRequestRef = useRef(getRoundStateLiteRequest)
   useEffect(() => {
@@ -193,6 +197,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
     let delay = ROUND_POLL_INITIAL_MS
+    let inFlight = false
 
     function schedule(wait = delay) {
       if (cancelled || document.hidden) return
@@ -203,42 +208,52 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     }
 
     async function poll() {
-      if (cancelled) return
-
-      const currentRound = await getCurrentRoundRef.current()
-      if (cancelled) return
-
-      if (currentRound) {
-        const fetched = await getRoundStateLiteRequestRef.current(currentRound.id)
+      if (cancelled || inFlight) return
+      inFlight = true
+      try {
+        const currentRound = await getCurrentRoundRef.current()
         if (cancelled) return
 
-        // The current-round pointer can change while its state is in flight. Confirm it again
-        // before committing either value, or this effect stops polling on a stale round.
-        const confirmedRound = await getCurrentRoundRef.current()
-        if (cancelled) return
-        if (!confirmedRound || confirmedRound.id !== currentRound.id) {
-          schedule(1_000)
+        if (currentRound) {
+          const fetched = await getRoundStateLiteRequestRef.current(currentRound.id)
+          if (cancelled) return
+
+          // The current-round pointer can change while its state is in flight. Confirm it again
+          // before committing either value, or this effect stops polling on a stale round.
+          const confirmedRound = await getCurrentRoundRef.current()
+          if (cancelled) return
+          if (!confirmedRound || confirmedRound.id !== currentRound.id) {
+            schedule(1_000)
+            return
+          }
+
+          // Fetch the state before storing the round ID. Storing the ID reruns this
+          // effect and cancels the current request. If we store it first, a round
+          // that becomes active after page load can discard its successful state
+          // response and leave the page in the preparing state permanently.
+          setCurrentRoundId(currentRound.id)
+          setDisplayedRoundIsFallback(false)
+
+          if (fetched) {
+            applyRoundState(fetched)
+            setPendingCurrentRoundId(null)
+          } else {
+            setPendingCurrentRoundId(currentRound.id)
+          }
           return
         }
 
-        // Fetch the state before storing the round ID. Storing the ID reruns this
-        // effect and cancels the current request. If we store it first, a round
-        // that becomes active after page load can discard its successful state
-        // response and leave the page in the preparing state permanently.
-        setCurrentRoundId(currentRound.id)
-        setDisplayedRoundIsFallback(false)
-
-        if (fetched) {
-          applyRoundState(fetched)
-          setPendingCurrentRoundId(null)
-        } else {
-          setPendingCurrentRoundId(currentRound.id)
+        delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
+        schedule()
+      } catch (error) {
+        if (!cancelled) {
+          handleGenericError('Round polling failed', error as Error)
+          delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
+          schedule()
         }
-        return
+      } finally {
+        inFlight = false
       }
-
-      delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
-      schedule()
     }
 
     function resumeWhenVisible() {
@@ -263,6 +278,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     let cancelled = false
     let timer: ReturnType<typeof setTimeout> | null = null
     let delay = ROUND_POLL_INITIAL_MS
+    let inFlight = false
 
     function schedule() {
       if (cancelled || document.hidden) return
@@ -273,40 +289,50 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     }
 
     async function poll() {
-      if (cancelled) return
-
-      const currentRound = await getCurrentRoundRef.current()
-      if (cancelled) return
-      if (currentRound && currentRound.id !== pendingRoundId) {
-        // A newer round replaced the one whose key we were waiting for. Reset discovery instead
-        // of keeping the page attached to an old round that may never become readable.
-        setPendingCurrentRoundId(null)
-        setCurrentRoundId(null)
-        return
-      }
-
-      const fetched = await getRoundStateLiteRequestRef.current(pendingRoundId)
-      if (cancelled) return
-      if (fetched) {
-        const confirmedRound = await getCurrentRoundRef.current()
+      if (cancelled || inFlight) return
+      inFlight = true
+      try {
+        const currentRound = await getCurrentRoundRef.current()
         if (cancelled) return
-        if (!confirmedRound) {
-          delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
-          schedule()
-          return
-        }
-        if (confirmedRound.id !== pendingRoundId) {
+        if (currentRound && currentRound.id !== pendingRoundId) {
+          // A newer round replaced the one whose key we were waiting for. Reset discovery instead
+          // of keeping the page attached to an old round that may never become readable.
           setPendingCurrentRoundId(null)
           setCurrentRoundId(null)
           return
         }
-        applyRoundState(fetched)
-        setPendingCurrentRoundId(null)
-        return
-      }
 
-      delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
-      schedule()
+        const fetched = await getRoundStateLiteRequestRef.current(pendingRoundId)
+        if (cancelled) return
+        if (fetched) {
+          const confirmedRound = await getCurrentRoundRef.current()
+          if (cancelled) return
+          if (!confirmedRound) {
+            delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
+            schedule()
+            return
+          }
+          if (confirmedRound.id !== pendingRoundId) {
+            setPendingCurrentRoundId(null)
+            setCurrentRoundId(null)
+            return
+          }
+          applyRoundState(fetched)
+          setPendingCurrentRoundId(null)
+          return
+        }
+
+        delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
+        schedule()
+      } catch (error) {
+        if (!cancelled) {
+          handleGenericError('Round polling failed', error as Error)
+          delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
+          schedule()
+        }
+      } finally {
+        inFlight = false
+      }
     }
 
     function resumeWhenVisible() {
@@ -326,7 +352,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
 
   const getPastPolls = async () => {
     try {
-      const result = await getWebResult()
+      const result = (await getArchivePage())?.items
       if (result) {
         const convertedPolls = convertPollData(result)
         setPastPolls(convertedPolls)

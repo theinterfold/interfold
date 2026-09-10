@@ -59,6 +59,7 @@ jobs:
       net: ${{ steps.jobs.outputs.net }}
       init: ${{ steps.jobs.outputs.init }}
       build_sdk: ${{ steps.jobs.outputs.build_sdk }}
+      web_tests: ${{ steps.jobs.outputs.web_tests }}
       build_e3_support_dev: ${{ steps.jobs.outputs.build_e3_support_dev }}
       build_circuits: ${{ steps.jobs.outputs.build_circuits }}
       integration_prebuild: ${{ steps.jobs.outputs.integration_prebuild }}
@@ -114,6 +115,12 @@ jobs:
               - 'crates/wasm/**'
               - '!**/*.md'
               - '!**/*.mdx'
+            web:
+              - 'packages/interfold-react/**'
+              - 'packages/interfold-dashboard/**'
+              - 'examples/CRISP/client/**'
+              - 'pnpm-lock.yaml'
+              - 'package.json'
             integration_tests:
               - 'tests/integration/**'
               - '!**/*.md'
@@ -135,6 +142,7 @@ jobs:
           CRISP="${{ steps.filter.outputs.crisp }}"
           TEMPLATES="${{ steps.filter.outputs.templates }}"
           SDK="${{ steps.filter.outputs.sdk }}"
+          WEB="${{ steps.filter.outputs.web }}"
           INTEGRATION="${{ steps.filter.outputs.integration_tests }}"
           DOCKER="${{ steps.filter.outputs.docker }}"
           CI="${{ steps.filter.outputs.ci }}"
@@ -146,6 +154,7 @@ jobs:
           echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $INTEGRATION $CIRCUITS $CI $TEMPLATES)" >> $GITHUB_OUTPUT
+          echo "web_tests=$(any $FORCE $WEB $SDK $CI)" >> $GITHUB_OUTPUT
           # CRISP jobs (unit legs and e2e alike) only guard CRISP's own layers.
           # Cross-cutting ciphernode coverage comes from template_integration,
           # which drives the same full E3 lifecycle with the same interfold
@@ -224,6 +233,9 @@ jobs:
 
       - name: Run Unit Tests
         run: 'cargo test --lib && cargo test --doc'
+
+      - name: Run Rust-to-Solidity slashing assertions
+        run: pnpm rust:test:slashing
 
       - name: Cancel workflow on failure
         if: failure()
@@ -1152,7 +1164,7 @@ jobs:
   zk_prover_e2e:
     needs: [detect_changes, build_circuits]
     if: needs.detect_changes.outputs.zk == 'true'
-    timeout-minutes: 30
+    timeout-minutes: 60
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
@@ -1233,6 +1245,12 @@ jobs:
       - name: Run ZK prover e2e tests
         run: cargo test -p e3-zk-prover --test local_e2e_tests -- --nocapture --test-threads=1
 
+      - name: Verify fold accumulators and the correlated node proof
+        timeout-minutes: 30
+        run:
+          cargo test --locked -p e3-zk-prover --test fold_accumulators_e2e_tests --test node_fold_correlated_e2e_tests -- --include-ignored
+          --nocapture --test-threads=1
+
   build_e3_support_dev:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.build_e3_support_dev == 'true'
@@ -1271,6 +1289,26 @@ jobs:
           path: templates/default/target/
           retention-days: 1
           if-no-files-found: error
+
+  web_tests:
+    needs: [detect_changes]
+    if: needs.detect_changes.outputs.web_tests == 'true'
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - name: Install pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - name: Setup Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install test dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Test app behavior without circuit preparation
+        run: pnpm test:web
 
   build_sdk:
     needs: [detect_changes]
@@ -1329,6 +1367,10 @@ jobs:
 
       - name: Run the tests
         run: pnpm sdk:test
+
+      - name: Verify SDK encryption proofs and reject altered bindings
+        timeout-minutes: 15
+        run: pnpm sdk:test:proofs:prepared
 
       - name: Upload SDK artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
