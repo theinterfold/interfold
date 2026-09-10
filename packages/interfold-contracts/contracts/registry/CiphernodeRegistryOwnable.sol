@@ -103,7 +103,13 @@ contract CiphernodeRegistryOwnable is
     /// @notice Maximum number of leaves the underlying LazyIMT can hold.
     /// @dev New slots cannot be allocated after the tree reaches this cap. Removed
     ///      slots are reused before the registry allocates another leaf.
-    uint256 public constant MAX_CIPHERNODE_LEAVES = uint256(1) << TREE_DEPTH;
+    ///      The cap is `2**TREE_DEPTH - 1`, not `2**TREE_DEPTH`. The LazyIMT
+    ///      dependency sets `maxIndex = 2**depth - 1` and refuses an insertion at
+    ///      an index that is not less than `maxIndex`. A cap of `2**TREE_DEPTH`
+    ///      lets the last insertion pass this registry and then revert inside the
+    ///      dependency.
+    uint256 public constant MAX_CIPHERNODE_LEAVES =
+        (uint256(1) << TREE_DEPTH) - 1;
 
     /// @notice Lifetime insertion count at which operators must prepare a new tree generation.
     uint256 public constant CIPHERNODE_TREE_WARNING_THRESHOLD =

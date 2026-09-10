@@ -29,8 +29,31 @@ contract MockInterfold {
   mapping(uint256 => E3) public e3s;
   mapping(IE3Program => bool) public e3Programs;
 
+  /// @notice The program that `getE3` reports as the assignee of every E3.
+  /// @dev Interfold assigns one program per E3. CRISP refuses an E3 that another program owns,
+  /// so this mock must report an assignee. Registration sets it, and `setE3Program` overrides it
+  /// for tests of the refusal path.
+  IE3Program public assignedE3Program;
+
+  /// @notice Per-E3 assignee, which takes precedence over {assignedE3Program}.
+  /// @dev A single global assignee cannot distinguish a program that reads the requested E3 from
+  /// one that reads another record, so a binding test would pass either way. Set this to bind one
+  /// E3 ID and leave the others reporting the global default.
+  mapping(uint256 => IE3Program) public e3ProgramOf;
+
   function registerE3Program(IE3Program program) external {
     e3Programs[program] = true;
+    assignedE3Program = program;
+  }
+
+  /// @notice Set the program that `getE3` reports as the assignee.
+  function setE3Program(IE3Program program) external {
+    assignedE3Program = program;
+  }
+
+  /// @notice Set the assignee of one E3, so a test can provision the exact ID it exercises.
+  function setE3ProgramFor(uint256 e3Id, IE3Program program) external {
+    e3ProgramOf[e3Id] = program;
   }
 
   function request(address program) external {
@@ -55,7 +78,7 @@ contract MockInterfold {
       requestBlock: mockRequestBlock,
       inputWindow: [uint256(0), uint256(0)],
       encryptionSchemeId: ENCRYPTION_SCHEME_ID,
-      e3Program: IE3Program(address(0)),
+      e3Program: assignedE3Program,
       paramSet: 0, // Insecure512
       customParams: params,
       decryptionVerifier: IDecryptionVerifier(address(0)),
@@ -81,7 +104,7 @@ contract MockInterfold {
       requestBlock: mockRequestBlock,
       inputWindow: [uint256(0), uint256(0)],
       encryptionSchemeId: ENCRYPTION_SCHEME_ID,
-      e3Program: IE3Program(address(0)),
+      e3Program: assignedE3Program,
       paramSet: 0, // Insecure512
       customParams: abi.encode(address(0), nextE3Id, numOptions, 0, 0, 0, 0),
       decryptionVerifier: IDecryptionVerifier(address(0)),
@@ -145,8 +168,12 @@ contract MockInterfold {
     return mockSortitionSubmissionWindow;
   }
 
-  function getE3(uint256) external view returns (E3 memory) {
+  function getE3(uint256 e3Id) external view returns (E3 memory) {
     uint256[2] memory inputWindow = mockInputWindow[1] == 0 ? [uint256(0), block.timestamp + 100] : mockInputWindow;
+    // Report the per-E3 assignee when a test provisioned one. A caller that reads a different
+    // E3 record than the one it was asked about then fails, which a single global assignee
+    // could not detect.
+    IE3Program assignee = address(e3ProgramOf[e3Id]) == address(0) ? assignedE3Program : e3ProgramOf[e3Id];
     return
       E3({
         seed: 0,
@@ -154,7 +181,7 @@ contract MockInterfold {
         requestBlock: mockRequestBlock,
         inputWindow: inputWindow,
         encryptionSchemeId: ENCRYPTION_SCHEME_ID,
-        e3Program: IE3Program(address(0)),
+        e3Program: assignee,
         paramSet: 0, // Insecure512
         customParams: abi.encode(address(0), 0, 2, 0, 0, 0, 0),
         decryptionVerifier: IDecryptionVerifier(address(0)),

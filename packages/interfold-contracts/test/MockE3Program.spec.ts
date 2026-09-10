@@ -17,9 +17,13 @@ describe("MockE3Program", function () {
       fragment.type === "function" && "name" in fragment ? [fragment.name] : [],
     );
 
+    // `supportsInterface` is pure. Interfold probes it with ERC-165 before it
+    // registers a program, so the mock must advertise the interfaces it
+    // implements. It adds no mutable state.
     expect(functionNames).to.have.members([
       "ENCRYPTION_SCHEME_ID",
       "publishInput",
+      "supportsInterface",
       "validate",
       "verify",
       "verifyDataAvailability",
