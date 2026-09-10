@@ -745,6 +745,25 @@
       "type": "function"
     },
     {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        }
+      ],
+      "name": "accusationSubmissionDeadline",
+      "outputs": [
+        {
+          "internalType": "uint64",
+          "name": "submissionDeadline",
+          "type": "uint64"
+        }
+      ],
+      "stateMutability": "view",
+      "type": "function"
+    },
+    {
       "inputs": [],
       "name": "activeBanCount",
       "outputs": [
@@ -1597,5 +1616,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/ISlashingManager.sol",
-  "buildInfoId": "solc-0_8_28-b95d25dbcdea5354ca4c3fb8a90c5c3f029dfa00"
+  "buildInfoId": "solc-0_8_28-3b542ec020382976a51d065eb59e269a2158aba9"
 }

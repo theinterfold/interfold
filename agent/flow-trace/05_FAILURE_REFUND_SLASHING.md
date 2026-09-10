@@ -291,10 +291,46 @@ HONEST NODE'S BOND OWNER claims:
 SLASH RECIPIENT claims a token-specific entitlement:
   E3RefundManager.claimSlashedFunds(e3Id, actualToken)
 │
-├─ Read _pendingSlashedClaims[e3Id][actualToken][caller]
+├─ Read _pendingSlashedClaims[e3Id][actualToken][caller]  (pre-ZEN2-20 credits)
+├─ ZEN2-20: also drain every operator whose frozen recipient is the caller and
+│  whose entitlement has no pending expelling proposal and no executed
+│  expulsion. Shares stay in _operatorEntitlements[e3Id][operator].heldSlash
+│  until this check passes, so a proposal opened after settlement still holds
+│  them and a shared recipient keeps independent per-operator entitlements
+├─ ZEN2-20 follow-up: heldSlash is one sum, so each credit also records its
+│  penalty target in _heldSlashFrom[e3Id][holder][target]. An expulsion
+│  re-shares the expelled holder's funds one bucket at a time, excluding that
+│  bucket's own target, so a penalty never returns to the operator it was
+│  raised against while every other member still takes its share of every
+│  other penalty. A round-wide "penalized" flag was rejected: it drops a
+│  target from later penalties too, so payouts would depend on proposal order.
+│  Bucket keys are walked over the committee's canonical members
+│  (canonicalCommitteeNodeAt), not the active roster: an expelled target
+│  leaves the roster while its bucket remains. Buckets are cleared with the
+│  sum on every claim path
 ├─ Clear the claim and reduce actualToken's protected liability
 ├─ Transfer that exact token; base refunds never consume the protected reserve
 └─ Emit SlashedFundsClaimed(e3Id, caller, actualToken, amount)
+
+COMMITTEE REWARDS after a successful E3 (ZEN2-20):
+  Interfold.claimReward(e3Id) / claimRewards(e3Ids)
+  E3RefundManager.claimHeldSuccessReward(e3Id)
+  E3RefundManager.claimOperatorHeldSuccessReward(e3Id, operator)   [permissionless]
+  E3RefundManager.claimOperatorSlashedFunds(e3Id, operator)        [permissionless]
+│
+├─ Settlement escrows each member's share against the OPERATOR through
+│  InterfoldPricing._creditReward → holdSuccessReward, rather than crediting
+│  _pendingRewards[e3Id][recipient]. RewardCredited still names the recipient
+├─ Every claim path re-reads pendingExpulsions and excluded, then pays the
+│  recipient frozen at committee finalization
+│   • pending proposal → the allocation is withheld, peers still claim
+│   • executed expulsion → forfeited and reallocated to the remaining members
+│   • otherwise → paid to the frozen recipient
+├─ The permissionless variants let anyone settle an eligible allocation; funds
+│  can only reach the frozen recipient, never the caller
+└─ pendingReward / pendingHeldSuccessReward / pendingSlashedClaim report the
+   legacy balance plus what the caller can claim now, so an account keeps one
+   "claimable" answer across the upgrade
 ```
 
 ### Refund Example: Requester/Compute-Provider Fault
@@ -858,7 +894,17 @@ _executeSlash(proposalId):
 │     │
 │     └─ If activeCount < thresholdM:
 │         ├─ Read the E3 stage from its request-time Interfold contract
-│         ├─ Complete or Failed: allow the later slash without another callback
+│         ├─ Complete: allow the later slash without another callback
+│         ├─ Failed: call onE3Failed with InsufficientCommitteeMembers to
+│         │  correct a front-run requester-paid reason (ZEN2-04)
+│         │  → Interfold routes an already-Failed E3 to reclassifyFailure
+│         │  → Rewrites only from a requester-paid reason, only before
+│         │    getRefundDistribution().calculated, only from this E3's
+│         │    request-time slashing manager
+│         │  → Stage stays Failed; activeE3Count unchanged; emits
+│         │    E3FailureReclassified
+│         │  → A correction that no longer applies is a no-op, so it
+│         │    never reverts the expulsion
 │         └─ Any other stage: call onE3Failed with InsufficientCommitteeMembers
 │            → No catch-all suppression
 │            → Callback failure rolls back penalties, ban, and expulsion

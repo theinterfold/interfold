@@ -27,6 +27,7 @@ import {
     CiphertextVerifierStorage
 } from "../storage/CiphertextVerifierStorage.sol";
 import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
+import { FailurePayerLib } from "./FailurePayerLib.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 
 /**
@@ -477,7 +478,7 @@ library InterfoldLifecycle {
     // prettier-ignore
     function validateReportedFailure(
         address caller, address registry, address slashManager, uint256 e3Id, uint8 current, uint8 reason
-    ) external pure {
+    ) public pure {
         if (caller != registry && caller != slashManager)
             revert IInterfold.OnlyCiphernodeRegistryOrSlashingManager();
         IInterfold.E3Stage stage = IInterfold.E3Stage(current);
@@ -493,6 +494,104 @@ library InterfoldLifecycle {
             uint8(IInterfold.FailureReason.RequesterCancelled) ||
             reason >= uint8(IInterfold.FailureReason._MAX_FAILURE_REASON)
         ) revert IInterfold.InvalidFailureReason(reason);
+    }
+
+    /// @notice Corrects a requester-paid failure reason after an expulsion.
+    /// @dev ZEN2-04: `markE3Failed` writes the reason once, so an active
+    ///      committee member can call it in the grace period after a real
+    ///      timeout and lock in requester-paid `ComputeTimeout` before a
+    ///      committee-affecting slash executes. The slash then still runs, but
+    ///      `_executeSlash` skips its reclassification because the round is
+    ///      already terminal, and the requester keeps paying for a failure the
+    ///      committee caused. Let the expulsion correct the reason so the
+    ///      recorded payer does not depend on transaction order.
+    ///      Runs through the linked library to keep Interfold's runtime below
+    ///      the EIP-170 budget.
+    /// @param failureReasons The E3 failure-reason ledger.
+    /// @param caller The reporting dependency.
+    /// @param slashManager The E3's request-time slashing manager.
+    /// @param refundManager The E3's request-time refund manager.
+    /// @param e3Id The E3 identifier.
+    /// @param reason The corrected reason.
+    /// @param current The E3's current stage.
+    /// @param registry The E3's request-time registry.
+    /// @return markFailed True when the caller must still record the failure.
+    function reportFailure(
+        mapping(uint256 => IInterfold.FailureReason) storage failureReasons,
+        address caller,
+        address registry,
+        address slashManager,
+        address refundManager,
+        uint256 e3Id,
+        uint8 current,
+        uint8 reason
+    ) external returns (bool markFailed) {
+        if (IInterfold.E3Stage(current) != IInterfold.E3Stage.Failed) {
+            validateReportedFailure(
+                caller,
+                registry,
+                slashManager,
+                e3Id,
+                current,
+                reason
+            );
+            return true;
+        }
+        _reclassifyFailure(
+            failureReasons,
+            caller,
+            slashManager,
+            refundManager,
+            e3Id,
+            reason
+        );
+        return false;
+    }
+
+    function _reclassifyFailure(
+        mapping(uint256 => IInterfold.FailureReason) storage failureReasons,
+        address caller,
+        address slashManager,
+        address refundManager,
+        uint256 e3Id,
+        uint8 reason
+    ) private {
+        // Only the E3's own slashing manager corrects a reason, and only
+        // through an expulsion that broke committee viability.
+        if (caller != slashManager)
+            revert IInterfold.OnlyCiphernodeRegistryOrSlashingManager();
+        if (
+            reason !=
+            uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
+        ) revert IInterfold.InvalidFailureReason(reason);
+
+        IInterfold.FailureReason recorded = failureReasons[e3Id];
+        // Both refusals below return instead of reverting. The expulsion that
+        // triggers this call must still commit its penalties, ban, and
+        // membership change, so a correction that no longer applies is a no-op
+        // rather than a failure the caller has to catch.
+        //
+        // Settlement snapshots the payer from the reason. After that the
+        // distribution is fixed, so a late correction must not disagree with
+        // the amounts already credited.
+        if (
+            IE3RefundManager(refundManager)
+                .getRefundDistribution(e3Id)
+                .calculated
+        ) return;
+        // Only a requester-paid reason can become supplier-paid. Never move a
+        // cost onto the requester, and never overwrite an equivalent reason.
+        if (
+            FailurePayerLib.getFailurePayer(recorded) !=
+            IE3RefundManager.FailurePayer.Requester
+        ) return;
+
+        failureReasons[e3Id] = IInterfold.FailureReason(reason);
+        emit IInterfold.E3FailureReclassified(
+            e3Id,
+            recorded,
+            IInterfold.FailureReason(reason)
+        );
     }
 
     function validateMarkFailedCaller(

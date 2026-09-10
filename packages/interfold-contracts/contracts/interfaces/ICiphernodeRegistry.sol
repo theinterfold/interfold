@@ -370,6 +370,13 @@ interface ICiphernodeRegistry {
     /// @notice The E3's committee collateral obligations were already released.
     error CommitteeObligationsAlreadyReleased(uint256 e3Id);
 
+    /// @notice A finalized committee cannot release collateral while the
+    ///         slashing manager still accepts accusations for its E3.
+    error CommitteeAccusationWindowOpen(
+        uint256 e3Id,
+        uint64 submissionDeadline
+    );
+
     /// @notice Registry dependencies cannot change while membership or committees remain.
     error RegistryGenerationNotDrained();
 
@@ -560,7 +567,12 @@ interface ICiphernodeRegistry {
     ) external;
 
     /// @notice Release committee collateral after the E3 completes or fails.
-    /// @dev Permissionless and bound to the request-time Interfold and bonding registry.
+    /// @dev Permissionless and bound to the request-time Interfold, bonding
+    ///      registry, and slashing manager. A committee that never finalized
+    ///      releases as soon as the E3 is terminal. A finalized committee also
+    ///      waits until the slashing manager's accusation submission deadline
+    ///      has passed, so member collateral stays slashable for the full
+    ///      accusation window.
     function releaseCommittee(uint256 e3Id) external;
 
     /// @notice Returns DKG anchor commitments stored at publication (empty if not yet published).
