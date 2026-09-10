@@ -758,7 +758,7 @@ library ActiveCryptoConfig {
       copyPair(join(recursiveDir, `${packageName}.vk_hash`), join(targetDir, `${packageName}.vk_noir_hash`))
     }
 
-    const missingBinArtifacts = requiredLbfvBinMarkers(this.circuitsDir, preset).filter((path) => !existsSync(path))
+    const missingBinArtifacts = this.requiredBinMarkers(preset).filter((path) => !existsSync(path))
     if (missingBinArtifacts.length > 0) {
       throw new Error(`Cannot hydrate circuits/bin: missing hydrated artifact ${missingBinArtifacts[0]}`)
     }

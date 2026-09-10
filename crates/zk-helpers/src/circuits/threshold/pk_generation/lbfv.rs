@@ -141,11 +141,22 @@ fn compute_inputs(
     let mut r1is = Vec::with_capacity(l);
     let mut r2is = Vec::with_capacity(l);
     for (index, modulus) in params.moduli().iter().enumerate() {
+        let modulus = BigInt::from(*modulus);
         let expected = data.a.limb(index).neg().mul(&data.sk).add(&data.eek);
+        let mut expected_residue = expected
+            .reduce_by_cyclotomic(&cyclotomic)
+            .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+        expected_residue.reduce(&modulus);
+        expected_residue.center(&modulus);
+        if data.pk0_share.limb(index) != &expected_residue {
+            return Err(CircuitsErrors::Other(format!(
+                "l-BFV public-key residue mismatch at CRT limb {index}"
+            )));
+        }
         let (r1, r2) = decompose_residue(
             data.pk0_share.limb(index),
             &expected,
-            &BigInt::from(*modulus),
+            &modulus,
             &cyclotomic,
             n as u64,
         );
@@ -463,6 +474,22 @@ mod tests {
         let mut mismatched = adapter.row_data(committee, 0, &secret_key, &public_key)?;
         mismatched.a = adapter.crs_row(1)?;
         assert!(compute_inputs(&params, &adapter, &mismatched).is_err());
+
+        let mut inconsistent = adapter.row_data(
+            CiphernodesCommitteeSize::Minimum.values(),
+            0,
+            &secret_key,
+            &public_key,
+        )?;
+        let mut coefficients = inconsistent.pk0_share.limb(0).coefficients().to_vec();
+        coefficients[0] += 1;
+        inconsistent.pk0_share.limbs[0] = Polynomial::new(coefficients);
+        let error = compute_inputs(&params, &adapter, &inconsistent)
+            .err()
+            .expect("an inconsistent CRT residue must fail");
+        assert!(error
+            .to_string()
+            .contains("l-BFV public-key residue mismatch at CRT limb 0"));
 
         Ok(())
     }

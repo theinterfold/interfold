@@ -171,6 +171,12 @@ function hydrationFixture(): {
     join(pairDir, 'default', CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'dkg_aggregator.json'),
     join(pairDir, 'default', CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.json'),
     ...requiredLbfvDistMarkers(pairDir, CIRCUIT_PRESETS.SECURE_16384),
+    join(bin, CIRCUIT_GROUPS.DKG, 'target', 'pk.json'),
+    join(bin, CIRCUIT_GROUPS.THRESHOLD, 'target', 'pk_aggregation.json'),
+    join(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'target', 'dkg_aggregator.json'),
+    join(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'target', 'dkg_aggregator.vk_recursive'),
+    join(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'target', 'decryption_aggregator.json'),
+    join(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'target', 'decryption_aggregator.vk_recursive'),
   ])
 
   const builder = new NoirCircuitBuilder(root, {
@@ -220,6 +226,18 @@ test('rejects l-BFV hydration before writing a stamp when an artifact is missing
     unlinkSync(missing)
 
     assert.throws(fixture.hydrate, /Cannot hydrate circuits\/bin: missing artifact/)
+    assert.equal(existsSync(join(fixture.root, 'circuits', 'bin', '.active-preset.json')), false)
+  } finally {
+    rmSync(fixture.root, { recursive: true, force: true })
+  }
+})
+
+test('rejects hydration before writing a stamp when a base artifact is missing', () => {
+  const fixture = hydrationFixture()
+  try {
+    unlinkSync(join(fixture.root, 'circuits', 'bin', CIRCUIT_GROUPS.DKG, 'target', 'pk.json'))
+
+    assert.throws(fixture.hydrate, /Cannot hydrate circuits\/bin: missing hydrated artifact/)
     assert.equal(existsSync(join(fixture.root, 'circuits', 'bin', '.active-preset.json')), false)
   } finally {
     rmSync(fixture.root, { recursive: true, force: true })
