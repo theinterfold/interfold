@@ -64,29 +64,30 @@ design citation alone does not establish current runtime behavior.
   weight by bonding). Reading the denominator off the escrow instead would omit the bonded half and
   let participation exceed 100%. Summed voting power must never exceed total supply. —
   `BondedVotes.sol`; `flow-trace/02`
-- **Escrowed and bonded FOLD cannot overlap; vesting-locked and bonded do, and must be netted.**
-  Escrowing custodies the token in the escrow and bonding custodies it in the registry, so no token
-  can be in both. Both were transferred rather than burned, so both are still inside the token's
-  total supply — which is what makes the ratio sound in either configuration. Under an escrow votes
-  source `BondedVotes` adds a third source, `InterfoldToken.lockedBalanceAt`, because vesting-locked
-  FOLD sits in the holder's own wallet and the transfer hook will not let it reach the escrow. That
-  source **does** overlap the bond: a bond satisfies a lock (`transferableBalanceOf` nets the two),
-  so bonded FOLD is reported by `lockedBalanceAt` and by the bonded history while existing once.
-  `_lockedVotes` therefore subtracts the bond from the locked balance, saturating at zero, making
-  the pair worth `max(bonded, locked)` — then caps the result at the account's wallet balance,
-  because slashing takes the bond without taking the lock and would otherwise leave the account
-  voting with FOLD the slash recipient now holds. The lock schedule is read **only** when the votes
-  source is an escrow: when the token votes for itself, locked FOLD is wallet FOLD the token has
-  already counted. — `BondedVotes.sol`; `InterfoldToken.sol`; `flow-trace/02`
+- **Escrowed and bonded FOLD cannot overlap; live vesting-locked and bonded do, and must be
+  netted.** Escrowing custodies the token in the escrow and bonding custodies it in the registry, so
+  no token can be in both. Both were transferred rather than burned, so both are still inside the
+  token's total supply — which is what makes the ratio sound in either configuration. In `getVotes`,
+  under an escrow votes source, `BondedVotes` adds `InterfoldToken.lockedBalanceAt` because
+  vesting-locked FOLD sits in the holder's own wallet and the transfer hook will not let it reach
+  the escrow. That live source **does** overlap the bond: a bond satisfies a lock
+  (`transferableBalanceOf` nets the two), so bonded FOLD is reported by `lockedBalanceAt` and by the
+  bonded total while existing once. `_lockedVotes` therefore subtracts the bond from the locked
+  balance, saturating at zero, making the pair worth `max(bonded, locked)` — then caps the result at
+  the account's wallet balance, because slashing takes the bond without taking the lock and would
+  otherwise leave the account voting with FOLD the slash recipient now holds. The lock schedule is
+  read **only** for current votes and only when the votes source is an escrow: when the token votes
+  for itself, locked FOLD is wallet FOLD the token has already counted. — `BondedVotes.sol`;
+  `InterfoldToken.sol`; `flow-trace/02`
 - **The lock schedule is present-state, not history.** `lockedBalanceAt` walks an account's
   **current** locks and evaluates them against the timestamp given, so a lock created after a
-  governance snapshot appears in that snapshot's answer — unlike the bonded history, which is
-  checkpointed. Sound for vesting locks, which are minted or claimed rather than acquired at will;
-  it must not be treated as a general past balance. — `BondedVotes.sol`; `InterfoldToken.sol`
+  governance snapshot can appear in that snapshot's answer. `BondedVotes.getPastVotes` must not add
+  this present-state term. Historical voting power must come only from checkpointed sources until a
+  checkpointed lock source exists. — `BondedVotes.sol`; `InterfoldToken.sol`
 - **An escrow votes source requires a token with a lock schedule.** `_bindVotesSource` staticcalls
   `lockedBalanceAt` once at construction and reverts `LockedBalancesUnsupported` if it cannot
-  answer. Tolerating the failure at read time would return zero and disenfranchise exactly the
-  locked holders the third source exists to enfranchise. — `BondedVotes.sol`
+  answer. Tolerating the failure at live read time would return zero for exactly the locked holders
+  the current-vote path exists to enfranchise. — `BondedVotes.sol`
 - **Every summed source must share the token's clock.** `BondedCheckpoints` keys by
   `block.timestamp` to match `InterfoldToken`'s ERC-6372 `mode=timestamp`, and `BondedVotes`
   compares the history's clock **and** a non-token votes source's clock against the token's at
