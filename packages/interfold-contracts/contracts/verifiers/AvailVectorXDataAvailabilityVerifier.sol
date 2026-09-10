@@ -16,6 +16,14 @@ import {
 /// @notice Verifies Avail blob inclusion through the official VectorX bridge.
 /// @dev The expected bridge and VectorX contracts are immutable. If Avail governance rotates the
 /// bridge's VectorX pointer, this adapter fails closed and a new E3 program must be deployed.
+/// ZEN2-08: this is an accepted operating limit, not an oversight. Data availability binds per E3
+/// program, so a rotation stops only the programs built on the rotated pair, and
+/// `unregisterE3Program` contains new requests without a protocol-wide pause. Do not make this
+/// pointer settable. A returned `DataReference` carries no provider identifier and only its
+/// `contentHash` is persisted, so re-pointing a live round would prove its earlier inputs against
+/// one provider and its later inputs against another with nothing on chain to separate them: the
+/// earlier retrieval coordinates stop resolving and the aggregate step cannot read the round. See
+/// `agent/flow-trace/08_DATA_AVAILABILITY.md` for detection, containment, and recovery.
 contract AvailVectorXDataAvailabilityVerifier is IDataAvailabilityVerifier {
     IAvailBridge public immutable bridge;
     IVectorx public immutable vectorx;

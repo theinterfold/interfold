@@ -9,6 +9,7 @@ use alloy::eips::BlockNumberOrTag;
 use alloy::primitives::{Address, U256};
 use alloy::providers::{Provider, ProviderBuilder};
 use alloy::sol;
+use alloy::transports::RpcError;
 use eyre::{eyre, Context, Result}; // Add this import
 use reqwest;
 use serde::Deserialize;
@@ -61,6 +62,81 @@ pub struct VotingPowerSources {
 pub enum ClockMode {
     BlockNumber,
     Timestamp,
+}
+
+/// What a `decimals()` read on a census token found.
+///
+/// `decimals()` is optional on an ERC20. A token without it is a supported census token, so the
+/// two outcomes are separate values rather than an error.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TokenDecimals {
+    /// The token answered with its decimals.
+    Reported(u8),
+    /// The token has no usable `decimals()`. The node evaluated the call, and the token refused
+    /// it or answered with data that is not a `uint8`.
+    Absent,
+}
+
+/// The largest `decimals` a default divisor can be derived from.
+///
+/// `10 ** 77` is the last power of ten that fits in 256 bits, so 78 decimals is the last value
+/// `10 ** (decimals - 1)` supports. Mirrors `MAX_DERIVABLE_DECIMALS` in `CRISPProgram.sol`.
+const MAX_DERIVABLE_DECIMALS: u8 = 78;
+
+/// The divisor to apply to raw voting power when the round names none.
+///
+/// Mirrors `CRISPProgram._defaultVotingPowerDivisor`, so an ONCHAIN round and a Merkle round over
+/// the same token encode ballots in identical units: 1 for 0 or 1 decimals, and
+/// `10 ** (decimals - 1)` for 2 through 78 decimals.
+///
+/// The exponentiation happens in `U256`. A 128-bit intermediate overflows at 40 decimals, and the
+/// contract accepts decimals through 78, so a narrower type would disagree with the chain over
+/// exactly that range — and it would disagree by a panic, which discovery does not catch.
+fn default_voting_power_divisor(decimals: u8) -> Result<U256> {
+    if decimals > MAX_DERIVABLE_DECIMALS {
+        return Err(eyre!(
+            "The token reports {} decimals, and a default divisor is derivable through {}. \
+             Request the round with an explicit voting-power divisor.",
+            decimals,
+            MAX_DERIVABLE_DECIMALS
+        ));
+    }
+
+    // One ballot unit per token unit. The contract makes the same exception, because
+    // `10 ** (0 - 1)` has no meaning.
+    if decimals <= 1 {
+        return Ok(U256::from(1));
+    }
+
+    U256::from(10)
+        .checked_pow(U256::from(decimals - 1))
+        .ok_or_else(|| {
+            eyre!(
+                "A divisor for {} decimals does not fit in 256 bits. Request the round with an \
+                 explicit voting-power divisor.",
+                decimals
+            )
+        })
+}
+
+/// True when the node evaluated a metadata call and the token refused it.
+///
+/// The two failure kinds must stay separate. A revert, or an answer that does not decode, shows
+/// that the token has no usable `decimals()` — which is permitted on an ERC20, and which the
+/// contract answers with divisor 1. A timeout or a transport failure judged nothing about the
+/// token, and must not silently change the divisor.
+fn is_metadata_revert(error: &alloy::contract::Error) -> bool {
+    match error {
+        // The call succeeded and returned nothing, so the method is absent. A call to an address
+        // with no code takes this path as well.
+        alloy::contract::Error::ZeroData(..) => true,
+        // The node answered, and the answer is not a `uint8`.
+        alloy::contract::Error::AbiError(_) => true,
+        alloy::contract::Error::TransportError(RpcError::ErrorResp(payload)) => {
+            payload.as_revert_data().is_some() || payload.message.to_lowercase().contains("revert")
+        }
+        _ => false,
+    }
 }
 
 // Config
@@ -675,6 +751,35 @@ impl EtherscanClient {
         potential_voters.into_values().collect()
     }
 
+    /// Select the divisor to scale raw voting power by.
+    ///
+    /// The order matches `CRISPProgram._initRound`: a nonzero explicit divisor wins, and the
+    /// token metadata is read only when the round named no divisor. A round with an explicit
+    /// divisor therefore does not depend on optional token metadata at all.
+    ///
+    /// `read_decimals` is a parameter so that this order, the derivation, and the metadata
+    /// failure handling are testable without a node.
+    async fn resolve_scale_factor<F, Fut>(
+        divisor_override: Option<U256>,
+        read_decimals: F,
+    ) -> Result<U256>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<TokenDecimals>>,
+    {
+        if let Some(divisor) = divisor_override {
+            if !divisor.is_zero() {
+                return Ok(divisor);
+            }
+        }
+
+        match read_decimals().await? {
+            TokenDecimals::Reported(decimals) => default_voting_power_divisor(decimals),
+            // The value the contract records when its own `decimals()` call reverts.
+            TokenDecimals::Absent => Ok(U256::from(1)),
+        }
+    }
+
     /// Verify voting power for multiple addresses at an EIP-6372 timepoint
     pub async fn verify_voting_power(
         &self,
@@ -689,26 +794,23 @@ impl EtherscanClient {
     ) -> Result<Vec<TokenHolder>> {
         let mut token_holders: Vec<TokenHolder> = Vec::new();
 
-        let decimals = Self::get_decimals(token_address, rpc_url).await?;
-
-        // we want to keep some precision but want to deal with as small as numbers as possible
-        let precision = if decimals > 1 { decimals - 1 } else { 0 };
-
         // A round that names its own divisor must be scaled by that, not by the decimals: the
         // contract enforces the round's value, so deriving here would serve balances in units the
         // chain disagrees with, and a mask built from one would fail in the verifier.
-        let scale_factor = match divisor_override {
-            Some(divisor) if !divisor.is_zero() => divisor,
-            _ => U256::from(10u128.pow(precision as u32)),
-        };
+        //
+        // The override is selected before any metadata call, as `CRISPProgram._initRound` does.
+        // `decimals()` is optional on an ERC20, so a token that has no usable one must not stop
+        // discovery for a round that already named its divisor.
+        let scale_factor = Self::resolve_scale_factor(divisor_override, || {
+            Self::get_decimals(token_address, rpc_url)
+        })
+        .await?;
 
         log::info!(
-            "Verifying {} candidates against {} at timepoint {} (decimals={}, divisor={}, \
-             threshold={})",
+            "Verifying {} candidates against {} at timepoint {} (divisor={}, threshold={})",
             potential_voters.len(),
             token_address,
             timepoint,
-            decimals,
             scale_factor,
             threshold
         );
@@ -924,19 +1026,34 @@ impl EtherscanClient {
         }
     }
 
-    /// Get the token decimals
-    async fn get_decimals(token_address: Address, rpc_url: &str) -> Result<u8> {
+    /// Get the token decimals.
+    ///
+    /// Three outcomes, because they must not be confused. A token that answers gives its
+    /// decimals. A token that refuses the call has no usable `decimals()`, which is permitted on
+    /// an ERC20, and the default divisor becomes 1 exactly as `CRISPProgram` does in its `catch`.
+    /// Every other failure is an error: an RPC timeout or a transport failure judged nothing
+    /// about the token, and a silent divisor of 1 would rescale the whole census.
+    async fn get_decimals(token_address: Address, rpc_url: &str) -> Result<TokenDecimals> {
         let url = rpc_url.parse().context("Failed to parse RPC URL")?;
         let provider = ProviderBuilder::new().connect_http(url);
         let token = ERC20Votes::new(token_address, provider);
 
-        let decimals = token
-            .decimals()
-            .call()
-            .await
-            .context("Failed to call decimals")?;
-
-        Ok(decimals)
+        match token.decimals().call().await {
+            Ok(decimals) => Ok(TokenDecimals::Reported(decimals)),
+            Err(error) if is_metadata_revert(&error) => {
+                log::warn!(
+                    "decimals() on {} reverted ({}). The default divisor is 1, which is what \
+                     the contract records for the same token.",
+                    token_address,
+                    error
+                );
+                Ok(TokenDecimals::Absent)
+            }
+            Err(error) => Err(error).context(
+                "Failed to call decimals. The node judged nothing about the token, so the \
+                 divisor stays underived.",
+            ),
+        }
     }
 
     /// Parse address from 32-byte topic (last 20 bytes)
@@ -1606,5 +1723,166 @@ mod bond_owner_discovery_tests {
     #[test]
     fn refuses_a_topic_too_short_to_hold_an_address() {
         assert!(EtherscanClient::address_from_topic("0xdeadbeef").is_err());
+    }
+}
+
+/// The coordinator and `CRISPProgram` must scale voting power by the same divisor. A mismatch is
+/// silent: an ONCHAIN client builds a mask against a bound the verifier refuses, and a TOKEN
+/// census carries leaf weights the tally cannot decode back.
+#[cfg(test)]
+mod voting_power_divisor_tests {
+    use super::{
+        default_voting_power_divisor, EtherscanClient, TokenDecimals, MAX_DERIVABLE_DECIMALS,
+    };
+    use alloy::primitives::U256;
+
+    /// The token that reverts `decimals()`. `CRISPProgram._defaultVotingPowerDivisor` catches the
+    /// same revert and records divisor 1.
+    async fn reverting_decimals() -> eyre::Result<TokenDecimals> {
+        Ok(TokenDecimals::Absent)
+    }
+
+    /// An RPC failure. It judged nothing about the token, so it must not become divisor 1.
+    async fn unreachable_node() -> eyre::Result<TokenDecimals> {
+        Err(eyre::eyre!("Failed to call decimals"))
+    }
+
+    fn reports(
+        decimals: u8,
+    ) -> impl FnOnce() -> std::pin::Pin<Box<dyn std::future::Future<Output = eyre::Result<TokenDecimals>>>>
+    {
+        move || Box::pin(async move { Ok(TokenDecimals::Reported(decimals)) })
+    }
+
+    /// Every value the contract accepts, including the two that the previous `u128`
+    /// exponentiation could not represent. 39 is the last exponent that fits in 128 bits and 40
+    /// is the first that does not, so the pair pins the boundary that used to panic.
+    #[test]
+    fn the_default_divisor_matches_the_contract_for_every_supported_decimals() {
+        // `10 ** (decimals - 1)` has no meaning below two decimals, so the contract returns 1.
+        assert_eq!(default_voting_power_divisor(0).unwrap(), U256::from(1));
+        assert_eq!(default_voting_power_divisor(1).unwrap(), U256::from(1));
+
+        assert_eq!(default_voting_power_divisor(2).unwrap(), U256::from(10));
+        assert_eq!(
+            default_voting_power_divisor(18).unwrap(),
+            U256::from(10).pow(U256::from(17))
+        );
+        assert_eq!(
+            default_voting_power_divisor(39).unwrap(),
+            U256::from(10).pow(U256::from(38))
+        );
+        assert_eq!(
+            default_voting_power_divisor(40).unwrap(),
+            U256::from(10).pow(U256::from(39))
+        );
+        assert_eq!(
+            default_voting_power_divisor(MAX_DERIVABLE_DECIMALS).unwrap(),
+            U256::from(10).pow(U256::from(77))
+        );
+    }
+
+    /// The exact boundary the finding names. `10 ** 39` is larger than `u128::MAX`, so a 128-bit
+    /// intermediate panics or wraps here while the contract derives the value without difficulty.
+    #[test]
+    fn the_divisor_for_40_decimals_exceeds_128_bits() {
+        assert_eq!(
+            default_voting_power_divisor(40).unwrap(),
+            U256::from_str_radix("1000000000000000000000000000000000000000", 10).unwrap()
+        );
+        assert!(default_voting_power_divisor(40).unwrap() > U256::from(u128::MAX));
+        assert!(default_voting_power_divisor(39).unwrap() <= U256::from(u128::MAX));
+    }
+
+    /// Refused with a message, not with a panic. `10 ** 78` does not fit in 256 bits, and the
+    /// contract refuses the same value with `UnsupportedTokenDecimals`.
+    #[test]
+    fn a_decimals_above_the_contract_bound_is_refused() {
+        assert!(default_voting_power_divisor(MAX_DERIVABLE_DECIMALS + 1).is_err());
+        assert!(default_voting_power_divisor(u8::MAX).is_err());
+    }
+
+    /// The order the contract uses: the explicit divisor is selected before any metadata call.
+    /// The reader here panics, so a test failure shows that metadata was read.
+    #[tokio::test]
+    async fn an_explicit_divisor_wins_and_no_metadata_is_read() {
+        let divisor = U256::from(1_000u64);
+
+        let resolved = EtherscanClient::resolve_scale_factor(Some(divisor), || {
+            Box::pin(async {
+                panic!("metadata must not be read when the round names a divisor");
+                #[allow(unreachable_code)]
+                Ok(TokenDecimals::Absent)
+            })
+                as std::pin::Pin<Box<dyn std::future::Future<Output = eyre::Result<TokenDecimals>>>>
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(resolved, divisor);
+    }
+
+    /// The defect this pairing exists for: a token whose `decimals()` reverts must not stop
+    /// discovery for a round that already named its divisor.
+    #[tokio::test]
+    async fn an_explicit_divisor_survives_a_reverting_decimals_call() {
+        let divisor = U256::from(10).pow(U256::from(60));
+
+        let resolved = EtherscanClient::resolve_scale_factor(Some(divisor), reverting_decimals)
+            .await
+            .unwrap();
+
+        assert_eq!(resolved, divisor);
+    }
+
+    /// A zero divisor is how a round says it named none, so the default is derived.
+    #[tokio::test]
+    async fn a_zero_divisor_derives_the_default() {
+        let resolved = EtherscanClient::resolve_scale_factor(Some(U256::ZERO), reports(18))
+            .await
+            .unwrap();
+
+        assert_eq!(resolved, U256::from(10).pow(U256::from(17)));
+    }
+
+    /// The value `CRISPProgram` records when its own `decimals()` call reverts.
+    #[tokio::test]
+    async fn a_reverting_decimals_call_gives_divisor_one() {
+        let resolved = EtherscanClient::resolve_scale_factor(None, reverting_decimals)
+            .await
+            .unwrap();
+
+        assert_eq!(resolved, U256::from(1));
+    }
+
+    /// An RPC failure judged nothing about the token. Divisor 1 would rescale the whole census by
+    /// `10 ** (decimals - 1)`, so the failure must propagate instead.
+    #[tokio::test]
+    async fn an_rpc_failure_does_not_become_divisor_one() {
+        assert!(
+            EtherscanClient::resolve_scale_factor(None, unreachable_node)
+                .await
+                .is_err()
+        );
+    }
+
+    /// The derivation the contract performs for a 40-decimal token, through the same path
+    /// discovery takes.
+    #[tokio::test]
+    async fn a_forty_decimal_token_resolves_without_overflow() {
+        let resolved = EtherscanClient::resolve_scale_factor(None, reports(40))
+            .await
+            .unwrap();
+
+        assert_eq!(resolved, U256::from(10).pow(U256::from(39)));
+    }
+
+    /// An unsupported default is an error, not a panic. Discovery handles an error, and an
+    /// arithmetic panic bypasses that handling.
+    #[tokio::test]
+    async fn an_unsupported_decimals_is_an_error_rather_than_a_panic() {
+        assert!(EtherscanClient::resolve_scale_factor(None, reports(79))
+            .await
+            .is_err());
     }
 }

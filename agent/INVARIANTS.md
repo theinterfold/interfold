@@ -248,7 +248,10 @@ design citation alone does not establish current runtime behavior.
   request-time registry in `BondingRegistry`. A top-N ticket submission locks its candidate, and a
   better ticket releases the displaced candidate. Finalization retains each winner's obligation.
   `claimExitsFor` cannot pay a locked candidate or member until displacement or terminal committee
-  release. — `flow-trace/03`, `06`; INDEX concerns Z-04, Z-37
+  release. A finalized committee releases only after the E3 is terminal **and** the request-time
+  slashing manager's accusation submission deadline has passed, so an early-ended round cannot let a
+  member withdraw before a valid accusation can still be filed. — `flow-trace/03`, `06`; INDEX
+  concerns Z-04, Z-37, ZEN2-09
 - **Exit timing covers frozen requests:** `exitDelay` must exceed the current submission window and
   the remaining time for the latest request-time committee deadline. Each request raises a monotonic
   deadline watermark. The time-based floor decreases after old windows expire, and the
@@ -256,14 +259,43 @@ design citation alone does not establish current runtime behavior.
 - **E3 program allowlist:** production initialization registers one deployed E3 program and assigns
   Interfold ownership to the configured protocol owner. Later registration and retirement are
   owner-only. Retirement closes only new request admission; existing E3s keep their snapshotted
-  program. Every registered address must contain runtime code. `MockE3Program` is the stateless
-  bootstrap option. It has no administrative controls and applies no application rules. Its
-  deterministic test receipt is not production data availability, so requests remain paused until a
-  production program is registered and wired. The request-time BFV ciphertext verifier and
-  decryption verifier remain mandatory. Its mutable failure controls live only in
-  `MockE3ProgramHarness`. A protocol upgrade that makes the program interface incompatible must
-  retire every incompatible bootstrap program before requests resume. — `Interfold.sol`;
-  `MockE3Program.sol`; `flow-trace/03`
+  program. Every registered address must contain runtime code and must advertise both `IE3Program`
+  and `IE3ProgramDataAvailability` through ERC-165. Interfold calls `verifyDataAvailability` on
+  every output publication, so a program that omits the selector could otherwise brick its own
+  rounds after the requester paid. `MockE3Program` is the stateless bootstrap option. It has no
+  administrative controls and applies no application rules. Its deterministic test receipt is not
+  production data availability, so requests remain paused until a production program is registered
+  and wired. The request-time BFV ciphertext verifier and decryption verifier remain mandatory. Its
+  mutable failure controls live only in `MockE3ProgramHarness`. A protocol upgrade that makes the
+  program interface incompatible must retire every incompatible bootstrap program before requests
+  resume. — `Interfold.sol`; `MockE3Program.sol`; `flow-trace/03`
+- **Data availability binds per program and per round:** Interfold holds no protocol-level
+  data-availability verifier; it delegates to `IE3ProgramDataAvailability(e3Program)`, and a program
+  holds its verifier as an immutable. The Avail adapter re-checks `bridge.vectorx() == vectorx` on
+  every call, so an external pointer rotation fails closed instead of silently changing a live
+  round's trust root. Containment is `unregisterE3Program` for the affected programs only. —
+  `flow-trace/08`; INDEX concerns ZEN2-08
+- **One round, one data-availability provider.** A verified receipt is a
+  `DataReference{contentHash, blockNumber, leafIndex}`. Only `contentHash` reaches storage, as
+  `e3.ciphertextOutput`; `blockNumber` and `leafIndex` exist solely in the
+  `CiphertextOutputReferencePublished` event, and neither the struct nor the event carries a
+  provider identifier. Retrieval coordinates are therefore interpretable only under the single
+  verifier the round was bound to. Do not add a settable or governed verifier pointer. Re-pointing
+  mid round leaves inputs 1..k proved against the old provider and k+1..n against the new one,
+  indistinguishable on chain, so the earlier coordinates become unresolvable without off-chain
+  knowledge of the switch, and the aggregate step cannot read a round whose inputs are split across
+  providers. A timelock does not help: the defect is the missing provider binding, not the authority
+  to rotate. Supporting more than one provider per round requires a persisted provider identifier in
+  the reference first. — `flow-trace/08`; INDEX concerns ZEN2-08
+- **Do not extend `computeDeadline` to survive a data-availability outage.** `SlashingManager`
+  snapshots `slashSubmissionDeadline` from `getE3LifecycleDeadline(e3Id)` at proposal
+  initialization, so extending the compute deadline alone lets a round outlive the accusation window
+  sized for it, and `releaseCommittee` gates on that same deadline (ZEN2-09). An extension also
+  cannot change who pays: `FailurePayerLib.getFailurePayer` reads the failure reason only, and the
+  reason follows the stage the round stalled in, so a longer clock yields the same `ComputeTimeout`
+  and the same requester-paid settlement. Reallocating that cost is a failure attribution and
+  funding decision, not a deadline change. — `flow-trace/05`, `flow-trace/08`; INDEX concerns
+  ZEN2-08
 
 ### Deadlines
 
@@ -313,16 +345,30 @@ design citation alone does not establish current runtime behavior.
   the proposal opened. A cleared proposal releases those shares, while execution reallocates them to
   the remaining operators. Rewards claimed before a proposal opens remain final. Peer claims do not
   wait. A non-expelling slash excludes its target only from that proposal's penalty proceeds. All
-  paths use the recipient frozen at committee finalization. — `flow-trace/05`, `flow-trace/06`
+  paths use the recipient frozen at committee finalization. Unclaimed committee allocations stay
+  keyed by **operator** in `E3RefundManager._operatorEntitlements` until withdrawal, and every claim
+  path re-checks `pendingExpulsions` and `excluded` at claim time, so a proposal opened after
+  settlement still holds the allocation and two operators sharing one recipient keep independent
+  entitlements. — `flow-trace/05`, `flow-trace/06`; INDEX concerns ZEN2-20
 - Slash-policy validity: `!requiresProof ⇒ appealWindow > 0`; ≥1 nonzero penalty. The retained
   `failureReason` field is 0 or `InsufficientCommitteeMembers`; execution does not select failure
   attribution from policy data. — `flow-trace/05`; INDEX concerns Z-07, Z-32
+- Failure attribution is order independent: the recorded `FailureReason` fixes the payer, so an
+  expulsion that drops a round below committee viability reclassifies a **requester-paid** reason to
+  `InsufficientCommitteeMembers` even when a caller already marked the round `Failed`. Only the E3's
+  request-time slashing manager may reclassify, only before `getRefundDistribution().calculated`,
+  and only from a requester-paid reason, so a correction never moves a cost onto the requester and
+  never contradicts a settled distribution. The stage stays `Failed` and `activeE3Count` does not
+  change. A correction that no longer applies returns without an effect, so it never reverts the
+  expulsion. — `flow-trace/05`; INDEX concerns ZEN2-04
 - **Committee viability loss is atomic:** if an expulsion leaves fewer than H active members, the
   same transaction must fail the affected nonterminal E3 with the supplier-paid
   `InsufficientCommitteeMembers` reason. Reusing this existing reason preserves the persisted enum
   layout. A failed callback rolls back the penalties, ban, and expulsion. Complete and failed E3s
-  allow later slashes. Committee key, ciphertext, and plaintext publication all require a currently
-  viable request-time committee. — `flow-trace/04`, `05`; INDEX concern Z-32
+  allow later slashes; on a failed E3 the expulsion additionally attempts the reclassification
+  above, which is a no-op when it no longer applies. Committee key, ciphertext, and plaintext
+  publication all require a currently viable request-time committee. — `flow-trace/04`, `05`; INDEX
+  concern Z-32
 - Accusation quorum: `agree_count >= threshold_m`; voters must be active committee members; all
   votes agree. Lane A is **attestation-based** (ECDSA per voter), not on-chain ZK re-verification.
   Vote digest / EIP-712 type hashes must match the Solidity constants exactly (Rust ↔ Solidity). —

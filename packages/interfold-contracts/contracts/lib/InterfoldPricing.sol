@@ -56,31 +56,44 @@ library InterfoldPricing {
         emit IInterfold.FeeAssetConfigUpdated(token, tokenDecimals, config);
     }
 
-    /// @notice Pull an exact token amount into a custody contract.
-    function transferFromExact(
-        IERC20 token,
-        address sender,
-        address recipient,
-        uint256 amount
-    ) external {
-        uint256 balanceBefore = token.balanceOf(recipient);
-        token.safeTransferFrom(sender, recipient, amount);
-        _requireExactReceipt(token, recipient, balanceBefore, amount);
-    }
-
     /// @notice Drain one E3 reward and transfer it to its recipient.
+    /// @dev ZEN2-20: also drains the refund manager's operator-held escrow
+    ///      that `account` is the frozen recipient of. Allocations held by a
+    ///      pending expelling proposal, or forfeited by an executed one, are
+    ///      skipped there, so this cannot pay an ineligible operator's share.
+    ///      One `RewardClaimed` covers both sources. Consumers follow this
+    ///      event for every withdrawal of an E3 reward, so paying the held
+    ///      escrow without it would hide those withdrawals.
     function claimReward(
         mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
         mapping(uint256 => IERC20) storage feeTokens,
+        IE3RefundManager refundManager,
         uint256 e3Id,
         address account
     ) external returns (uint256 amount) {
         amount = pendingRewards[e3Id][account];
-        if (amount == 0) return 0;
-        pendingRewards[e3Id][account] = 0;
-        IERC20 token = feeTokens[e3Id];
-        _transferExact(token, account, amount);
-        emit RewardClaimed(e3Id, account, token, amount);
+        if (amount != 0) {
+            pendingRewards[e3Id][account] = 0;
+            _transferExact(feeTokens[e3Id], account, amount);
+        }
+        // The refund manager transfers this part itself and emits its own
+        // `HeldSuccessRewardClaimed`.
+        amount += refundManager.claimHeldSuccessRewardFor(e3Id, account);
+        if (amount != 0) {
+            emit RewardClaimed(e3Id, account, feeTokens[e3Id], amount);
+        }
+    }
+
+    /// @notice Report everything `account` can claim for one E3.
+    function pendingReward(
+        mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
+        IE3RefundManager refundManager,
+        uint256 e3Id,
+        address account
+    ) external view returns (uint256) {
+        return
+            pendingRewards[e3Id][account] +
+            refundManager.pendingHeldSuccessReward(e3Id, account);
     }
 
     /// @notice Drain one treasury balance and transfer it to the treasury.
@@ -96,7 +109,11 @@ library InterfoldPricing {
         emit TreasuryClaimed(treasury, token, amount);
     }
 
-    /// @notice Records service escrow and credits the randomness fee.
+    /// @notice Pulls the quoted fee, then records service escrow and credits the randomness fee.
+    /// @dev The transfer runs first, so the treasury credit below is backed by tokens already in
+    ///      custody. In particular, the external program-validation call that precedes this in
+    ///      `request` never observes a claimable treasury balance backed by another E3's escrow.
+    ///      One entry point for both steps saves `Interfold` one library encoding.
     function recordRequestPayment(
         mapping(uint256 e3Id => uint256 amount) storage e3Payments,
         mapping(uint256 e3Id => IERC20 token) storage feeTokens,
@@ -109,6 +126,9 @@ library InterfoldPricing {
         uint256 quotedFee,
         IERC20 token
     ) external {
+        uint256 balanceBefore = token.balanceOf(address(this));
+        token.safeTransferFrom(msg.sender, address(this), quotedFee);
+        _requireExactReceipt(token, address(this), balanceBefore, quotedFee);
         uint256 randomnessFee = pricing.randomnessFlatFee;
         address treasury = pricing.protocolTreasury;
         e3Payments[e3Id] = quotedFee - randomnessFee;
@@ -214,7 +234,6 @@ library InterfoldPricing {
     /// @dev Runs through a linked library call to keep the accounting loop out
     ///      of Interfold's size-constrained runtime bytecode.
     function _computeAndCreditRewards(
-        mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
         IE3RefundManager refundManager,
         uint256 cnAmount,
         uint256 e3Id,
@@ -231,14 +250,7 @@ library InterfoldPricing {
             if (i == dustIndex) amount += dust;
             amounts[i] = amount;
             if (amount > 0) {
-                _creditReward(
-                    pendingRewards,
-                    refundManager,
-                    e3Id,
-                    nodes[i],
-                    token,
-                    amount
-                );
+                _creditReward(refundManager, e3Id, nodes[i], token, amount);
             }
         }
     }
@@ -252,8 +264,6 @@ library InterfoldPricing {
         mapping(uint256 e3Id => address treasury) storage protocolTreasuries,
         mapping(address treasury => mapping(IERC20 token => uint256 amount))
             storage pendingTreasury,
-        mapping(uint256 e3Id => mapping(address account => uint256 amount))
-            storage pendingRewards,
         address registryAddress,
         IE3RefundManager refundManager,
         uint256 e3Id
@@ -297,7 +307,6 @@ library InterfoldPricing {
         }
 
         uint256[] memory amounts = _computeAndCreditRewards(
-            pendingRewards,
             refundManager,
             totalAmount - protocolAmount,
             e3Id,
@@ -309,24 +318,20 @@ library InterfoldPricing {
     }
 
     function _creditReward(
-        mapping(uint256 => mapping(address => uint256)) storage pendingRewards,
         IE3RefundManager refundManager,
         uint256 e3Id,
         address operator,
         IERC20 token,
         uint256 amount
     ) private {
-        (address recipient, bool held) = refundManager.rewardDisposition(
-            e3Id,
-            operator
-        );
-        if (held) {
-            _transferExact(token, address(refundManager), amount);
-            refundManager.holdSuccessReward(e3Id, operator, token, amount);
-        } else {
-            pendingRewards[e3Id][recipient] += amount;
-            emit RewardCredited(e3Id, recipient, token, amount);
-        }
+        // ZEN2-20: every committee reward is escrowed against its operator in
+        // the refund manager, not credited to a recipient-keyed balance here.
+        // Eligibility is then evaluated when the reward is claimed, so an
+        // expelling proposal opened after settlement still holds it.
+        (address recipient, ) = refundManager.rewardDisposition(e3Id, operator);
+        _transferExact(token, address(refundManager), amount);
+        refundManager.holdSuccessReward(e3Id, operator, token, amount);
+        emit RewardCredited(e3Id, recipient, token, amount);
     }
 
     function _transferExact(

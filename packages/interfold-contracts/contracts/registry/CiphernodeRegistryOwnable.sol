@@ -103,7 +103,13 @@ contract CiphernodeRegistryOwnable is
     /// @notice Maximum number of leaves the underlying LazyIMT can hold.
     /// @dev New slots cannot be allocated after the tree reaches this cap. Removed
     ///      slots are reused before the registry allocates another leaf.
-    uint256 public constant MAX_CIPHERNODE_LEAVES = uint256(1) << TREE_DEPTH;
+    ///      The cap is `2**TREE_DEPTH - 1`, not `2**TREE_DEPTH`. The LazyIMT
+    ///      dependency sets `maxIndex = 2**depth - 1` and refuses an insertion at
+    ///      an index that is not less than `maxIndex`. A cap of `2**TREE_DEPTH`
+    ///      lets the last insertion pass this registry and then revert inside the
+    ///      dependency.
+    uint256 public constant MAX_CIPHERNODE_LEAVES =
+        (uint256(1) << TREE_DEPTH) - 1;
 
     /// @notice Lifetime insertion count at which operators must prepare a new tree generation.
     uint256 public constant CIPHERNODE_TREE_WARNING_THRESHOLD =
@@ -617,33 +623,17 @@ contract CiphernodeRegistryOwnable is
             CommitteeAlreadyFinalized()
         );
         uint256 seed = _resolveSortitionSeed(e3Id, c);
-        require(
-            block.timestamp <= c.committeeDeadline,
-            CommitteeDeadlineReached()
-        );
-        require(!c.submitted[msg.sender], NodeAlreadySubmitted());
-        (bool activeAtRequest, ) = _bondingFor(e3Id).eligibilityAt(
-            msg.sender,
-            c.requestBlock - 1
-        );
-        require(
-            isEnabled(msg.sender) &&
-                _bondingFor(e3Id).isActive(msg.sender) &&
-                activeAtRequest,
-            NodeNotEligible()
-        );
-
-        // Validate node eligibility and ticket number
-        RegistrySortitionLib.validateTicket(
-            address(_bondingFor(e3Id)),
-            msg.sender,
-            ticketNumber,
-            c.requestBlock,
-            sortitionTicketPrices[e3Id]
-        );
-
+        IBondingRegistry bonding = _bondingFor(e3Id);
         // The ticket snapshot predates the request, while VRF fulfills the seed
         // only after the request is final.
+        RegistrySortitionLib.validateTicket(
+            c,
+            bonding,
+            isEnabled(msg.sender),
+            msg.sender,
+            ticketNumber,
+            sortitionTicketPrices[e3Id]
+        );
         uint256 score = RegistrySortitionLib.ticketScore(
             msg.sender,
             ticketNumber,
@@ -656,7 +646,7 @@ contract CiphernodeRegistryOwnable is
 
         RegistrySortitionLib.insertCandidate(
             c,
-            _bondingFor(e3Id),
+            bonding,
             e3Id,
             msg.sender,
             score
@@ -776,20 +766,13 @@ contract CiphernodeRegistryOwnable is
     /// @inheritdoc ICiphernodeRegistry
     function releaseCommittee(uint256 e3Id) public {
         Committee storage c = committees[e3Id];
-        require(
-            c.stage == ICiphernodeRegistry.CommitteeStage.Requested ||
-                c.stage == ICiphernodeRegistry.CommitteeStage.Finalized,
-            CommitteeNotFinalized()
+        RegistrySortitionLib.validateCommitteeRelease(
+            c.stage,
+            c.obligationsReleased,
+            _interfoldFor(e3Id).getE3Stage(e3Id),
+            _slashingManagerFor(e3Id),
+            e3Id
         );
-        if (c.obligationsReleased) {
-            revert CommitteeObligationsAlreadyReleased(e3Id);
-        }
-
-        IInterfold.E3Stage stage = _interfoldFor(e3Id).getE3Stage(e3Id);
-        if (
-            stage != IInterfold.E3Stage.Complete &&
-            stage != IInterfold.E3Stage.Failed
-        ) revert E3NotTerminal(e3Id);
 
         c.obligationsReleased = true;
         RegistrySortitionLib.failRequestedCommittee(c, e3Id);

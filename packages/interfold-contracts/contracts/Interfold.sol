@@ -394,16 +394,8 @@ contract Interfold is
         _e3Requesters[e3Id] = msg.sender;
         activeE3Count++;
 
-        // Transfer fee after all validations and state changes
-        InterfoldPricing.transferFromExact(
-            feeToken,
-            msg.sender,
-            address(this),
-            quotedFee
-        );
-        // Credit the payment only after the tokens are in custody. In particular, the external
-        // program-validation call above must not expose a claimable treasury balance backed by
-        // another E3's escrow.
+        // Transfer the fee after all validations and state changes, then credit it. The library
+        // pulls the tokens before it writes any claimable balance.
         InterfoldPricing.recordRequestPayment(
             e3Payments,
             _e3FeeTokens,
@@ -522,7 +514,6 @@ contract Interfold is
             _e3ProtocolShareBps,
             _e3ProtocolTreasury,
             _pendingTreasury,
-            _pendingRewards,
             address(_registryFor(e3Id)),
             _refundManagerFor(e3Id),
             e3Id
@@ -639,6 +630,10 @@ contract Interfold is
             }
             sstore(programSlot, 1)
         }
+        // Reject a program that does not advertise the interfaces Interfold calls. Output
+        // publication calls `verifyDataAvailability` unconditionally, so a program that omits
+        // that selector cannot complete an E3.
+        InterfoldLifecycle.validateE3ProgramInterfaces(address(e3Program));
         emit E3ProgramRegistered(e3Program);
     }
 
@@ -795,14 +790,15 @@ contract Interfold is
         uint256 e3Id,
         bytes32 committeePublicKey
     ) external {
+        E3 storage e3 = e3s[e3Id];
         InterfoldLifecycle.validateCommitteePublication(
             msg.sender,
             address(_registryFor(e3Id)),
             e3Id,
             uint8(_e3Stages[e3Id]),
-            _e3Deadlines[e3Id].dkgDeadline
+            _e3Deadlines[e3Id].dkgDeadline,
+            e3.inputWindow[1]
         );
-        E3 storage e3 = e3s[e3Id];
 
         _e3Stages[e3Id] = E3Stage.KeyPublished;
         e3.committeePublicKey = committeePublicKey;
@@ -824,15 +820,22 @@ contract Interfold is
     /// @inheritdoc IInterfold
     function onE3Failed(uint256 e3Id, uint8 reason) external {
         E3Stage current = _e3Stages[e3Id];
-        InterfoldLifecycle.validateReportedFailure(
-            msg.sender,
-            address(_registryFor(e3Id)),
-            address(_slashingManagerFor(e3Id)),
-            e3Id,
-            uint8(current),
-            reason
-        );
-        _markE3FailedWithReason(e3Id, current, FailureReason(reason));
+        E3Dependencies storage dependencies = _e3Dependencies[e3Id];
+        // ZEN2-04: a round that already failed keeps its stage and its
+        // `activeE3Count`. Only a requester-paid reason is corrected, and only
+        // by the expulsion that broke committee viability.
+        if (
+            InterfoldLifecycle.reportFailure(
+                _e3FailureReasons,
+                msg.sender,
+                address(dependencies.registry),
+                address(dependencies.slashManager),
+                address(dependencies.refundManager),
+                e3Id,
+                uint8(current),
+                reason
+            )
+        ) _markE3FailedWithReason(e3Id, current, FailureReason(reason));
     }
 
     ////////////////////////////////////////////////////////////
@@ -1187,6 +1190,7 @@ contract Interfold is
             InterfoldPricing.claimReward(
                 _pendingRewards,
                 _e3FeeTokens,
+                _refundManagerFor(e3Id),
                 e3Id,
                 account
             );
@@ -1197,7 +1201,13 @@ contract Interfold is
         uint256 e3Id,
         address account
     ) external view returns (uint256) {
-        return _pendingRewards[e3Id][account];
+        return
+            InterfoldPricing.pendingReward(
+                _pendingRewards,
+                _refundManagerFor(e3Id),
+                e3Id,
+                account
+            );
     }
 
     /// @inheritdoc IInterfold

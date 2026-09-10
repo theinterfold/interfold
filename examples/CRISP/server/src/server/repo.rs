@@ -184,7 +184,7 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(self.try_get_e3().await?.is_some())
     }
 
-    async fn get_crisp(&self) -> Result<E3Crisp> {
+    pub async fn get_crisp(&self) -> Result<E3Crisp> {
         let key = self.crisp_key();
         let e3_crisp = self
             .try_get_crisp()
@@ -310,6 +310,7 @@ impl<S: DataStore> CrispE3Repository<S> {
             census_mode: custom_params.census_mode,
             end_time,
             snapshot_block,
+            discovery_pending: false,
         };
 
         self.store
@@ -749,6 +750,21 @@ impl<S: DataStore> CrispE3Repository<S> {
     }
 
     /// `None` when the round is not in the store; an empty vec when it is but has no census yet.
+    /// Record whether holder discovery is still owed for this round.
+    pub async fn set_discovery_pending(&mut self, pending: bool) -> Result<()> {
+        let key = self.crisp_key();
+        self.store
+            .modify(&key, move |current: Option<E3Crisp>| {
+                current.map(|mut e| {
+                    e.discovery_pending = pending;
+                    e
+                })
+            })
+            .await
+            .map_err(|_| eyre::eyre!("Could not set discovery_pending for '{key}'"))?;
+        Ok(())
+    }
+
     pub async fn try_get_eligible_addresses(&self) -> Result<Option<Vec<TokenHolder>>> {
         Ok(self
             .try_get_crisp()
@@ -832,6 +848,7 @@ mod tests {
             credits: Some("1".to_string()),
             snapshot_block: 1,
             census_mode: CensusMode::Token,
+            discovery_pending: false,
         }
     }
 

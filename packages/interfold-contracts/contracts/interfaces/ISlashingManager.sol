@@ -508,6 +508,15 @@ interface ISlashingManager {
         uint256 e3Id
     ) external view returns (uint64 voteValidity, uint64 submissionDeadline);
 
+    /// @notice Returns the accusation submission deadline frozen for an E3.
+    /// @dev Returns 0 when no snapshot exists. `closeE3` deletes the snapshot
+    ///      only after the deadline has passed, so 0 never hides an open window
+    ///      for an E3 that once had one. Does not revert, so registries can use
+    ///      it to gate collateral release.
+    function accusationSubmissionDeadline(
+        uint256 e3Id
+    ) external view returns (uint64 submissionDeadline);
+
     /// @notice Return a slash route that remains pending after an initial failure.
     function getPendingSlashRoute(
         uint256 proposalId

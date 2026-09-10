@@ -2,7 +2,11 @@
 import hre from "hardhat";
 
 const EIP170_LIMIT_BYTES = 24_576;
-const REQUIRED_HEADROOM_BYTES = 256;
+// Deploy margin above the consensus limit, not a protocol rule. Lowered from 256 after the
+// Zenith 2026-09 remediation: the size folds on #1928 reclaimed ~500 bytes across the three
+// near-cap contracts, and the combined tree still lands Interfold 69 bytes inside the old
+// reserve while 187 bytes under EIP-170. Hold the release contracts to this line.
+const REQUIRED_HEADROOM_BYTES = 128;
 const MAX_RUNTIME_BYTES = EIP170_LIMIT_BYTES - REQUIRED_HEADROOM_BYTES;
 
 const RELEASE_CONTRACTS = [

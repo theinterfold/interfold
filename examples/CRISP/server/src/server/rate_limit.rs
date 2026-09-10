@@ -15,6 +15,9 @@
 //! - **Global reservation** ([`RateLimiter::try_reserve_global`]) caps durable work that can spend
 //!   relay funds across all callers. The route reserves before admission and returns the slot when
 //!   validation or infrastructure fails, so rejected traffic does not exhaust the shared window.
+//!   A reservation is owned by the request that took it: it carries a token, and only that token
+//!   is released. Admission is asynchronous, so requests finish out of order, and a positional
+//!   release would return the slot of whichever request reserved last — usually an admitted one.
 //!
 //! The limits are deliberately generous for people and tight for loops: one honest ballot costs
 //! minutes of client-side proving, so a human cannot reach them.
@@ -115,8 +118,44 @@ struct State {
     /// Recent request instants per caller. Pruned on every check, so a caller that goes quiet
     /// costs nothing after one window.
     per_caller: HashMap<String, Vec<Instant>>,
-    /// Recent global reservations across all callers.
-    global: Vec<Instant>,
+    /// Recent global reservations across all callers, each with the token of its owner.
+    global: Vec<GlobalEntry>,
+    /// Source of reservation tokens. One process cannot reach `u64::MAX` reservations.
+    next_token: u64,
+}
+
+/// One global reservation and the request that owns it.
+struct GlobalEntry {
+    token: u64,
+    at: Instant,
+}
+
+/// A held reservation of the global transaction quota.
+///
+/// Drop returns the reservation. [`GlobalReservation::commit`] keeps it, because durable work
+/// was admitted that can still spend relay funds. The token makes the release exact: releases
+/// happen in a different order from reservations, and a positional release would return the
+/// reservation of an admitted request instead of its own.
+#[must_use = "a dropped reservation is released; call commit() when durable work was admitted"]
+pub struct GlobalReservation<'a> {
+    limiter: &'a RateLimiter,
+    token: u64,
+    committed: bool,
+}
+
+impl GlobalReservation<'_> {
+    /// Keep this reservation until its window expires.
+    pub fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for GlobalReservation<'_> {
+    fn drop(&mut self) {
+        if !self.committed {
+            self.limiter.release_global(self.token);
+        }
+    }
 }
 
 fn within_window(cutoff: Option<Instant>) -> impl Fn(&Instant) -> bool {
@@ -133,6 +172,7 @@ impl RateLimiter {
             state: Mutex::new(State {
                 per_caller: HashMap::new(),
                 global: Vec::new(),
+                next_token: 0,
             }),
             per_caller_limit,
             global_limit,
@@ -156,19 +196,23 @@ impl RateLimiter {
 
     /// Reserve one slot of the global transaction quota.
     ///
-    /// Return this reservation if the request fails before durable work is admitted.
-    pub fn try_reserve_global(&self) -> Result<(), RateLimitExceeded> {
+    /// The returned guard releases the reservation when it is dropped. Call
+    /// [`GlobalReservation::commit`] once durable work is admitted, because that work can still
+    /// spend relay funds after the HTTP request ends.
+    pub fn try_reserve_global(&self) -> Result<GlobalReservation<'_>, RateLimitExceeded> {
         self.try_reserve_global_at(Instant::now())
     }
 
-    /// Return a reservation when request validation or infrastructure fails before durable work
-    /// is admitted. Durable jobs keep their reservation because they can still spend relay funds.
-    pub fn release_global_reservation(&self) {
-        self.state
-            .lock()
-            .expect("rate limiter mutex poisoned")
-            .global
-            .pop();
+    /// Return one reservation by token.
+    ///
+    /// A token that already expired, or that was already released, removes nothing. Removal is by
+    /// token and never by position, so a failed request cannot return the reservation of a
+    /// request that admitted durable work.
+    fn release_global(&self, token: u64) {
+        let mut state = self.state.lock().expect("rate limiter mutex poisoned");
+        if let Some(index) = state.global.iter().position(|entry| entry.token == token) {
+            state.global.remove(index);
+        }
     }
 
     fn check_caller_at(
@@ -199,18 +243,28 @@ impl RateLimiter {
         Ok(())
     }
 
-    fn try_reserve_global_at(&self, now: Instant) -> Result<(), RateLimitExceeded> {
+    fn try_reserve_global_at(
+        &self,
+        now: Instant,
+    ) -> Result<GlobalReservation<'_>, RateLimitExceeded> {
         let within = within_window(now.checked_sub(WINDOW));
 
         let mut state = self.state.lock().expect("rate limiter mutex poisoned");
 
-        state.global.retain(|t| within(t));
+        state.global.retain(|entry| within(&entry.at));
         if state.global.len() >= self.global_limit {
             return Err(RateLimitExceeded::Global);
         }
 
-        state.global.push(now);
-        Ok(())
+        let token = state.next_token;
+        state.next_token = state.next_token.wrapping_add(1);
+        state.global.push(GlobalEntry { token, at: now });
+        drop(state);
+        Ok(GlobalReservation {
+            limiter: self,
+            token,
+            committed: false,
+        })
     }
 }
 
@@ -257,16 +311,25 @@ mod tests {
         let limiter = RateLimiter::new();
         let now = Instant::now();
 
+        // Hold every reservation: a dropped guard would return its slot and never fill the window.
+        let mut held = Vec::new();
         for _ in 0..GLOBAL_LIMIT {
-            assert_eq!(limiter.try_reserve_global_at(now), Ok(()));
+            held.push(
+                limiter
+                    .try_reserve_global_at(now)
+                    .expect("within the limit"),
+            );
         }
         assert_eq!(
-            limiter.try_reserve_global_at(now),
-            Err(RateLimitExceeded::Global)
+            limiter.try_reserve_global_at(now).err(),
+            Some(RateLimitExceeded::Global)
         );
 
         let later = now + WINDOW + Duration::from_secs(1);
-        assert_eq!(limiter.try_reserve_global_at(later), Ok(()));
+        assert!(limiter.try_reserve_global_at(later).is_ok());
+        for reservation in held {
+            reservation.commit();
+        }
     }
 
     #[test]
@@ -280,15 +343,84 @@ mod tests {
             let _ = limiter.check_caller_at(&format!("caller-{i}"), 1, now);
         }
 
-        assert_eq!(limiter.try_reserve_global_at(now), Ok(()));
+        assert!(limiter.try_reserve_global_at(now).is_ok());
     }
 
     #[test]
     fn failed_admission_can_return_its_global_reservation() {
         let limiter = RateLimiter::with_limits(1, 1);
-        assert_eq!(limiter.try_reserve_global(), Ok(()));
-        limiter.release_global_reservation();
-        assert_eq!(limiter.try_reserve_global(), Ok(()));
+        let reservation = limiter.try_reserve_global().expect("the window is empty");
+        drop(reservation);
+        assert!(limiter.try_reserve_global().is_ok());
+    }
+
+    #[test]
+    fn a_committed_reservation_is_kept_until_its_window_expires() {
+        let limiter = RateLimiter::with_limits(1, 1);
+        let admitted = limiter.try_reserve_global().expect("the window is empty");
+        admitted.commit();
+
+        // Durable work can still spend relay funds, so its slot must stay counted.
+        assert_eq!(
+            limiter.try_reserve_global().err(),
+            Some(RateLimitExceeded::Global)
+        );
+    }
+
+    /// Reservations are released in a different order from the order they were taken, because
+    /// admission awaits RPC calls. A failed request must return only its own reservation.
+    #[test]
+    fn a_failed_request_releases_its_own_reservation_not_a_later_one() {
+        let limiter = RateLimiter::with_limits(1, 2);
+        let start = Instant::now();
+
+        // A reserves first and fails last. B reserves later and admits durable work.
+        let failing = limiter
+            .try_reserve_global_at(start)
+            .expect("the window is empty");
+        let admitted = limiter
+            .try_reserve_global_at(start + Duration::from_secs(10))
+            .expect("the window has room");
+        admitted.commit();
+
+        drop(failing);
+
+        // Only the failed request returned a slot, so exactly one slot is free.
+        let replacement = limiter
+            .try_reserve_global_at(start + Duration::from_secs(12))
+            .expect("the failed request returned its slot");
+        assert_eq!(
+            limiter
+                .try_reserve_global_at(start + Duration::from_secs(12))
+                .err(),
+            Some(RateLimitExceeded::Global),
+            "the admitted request must keep its reservation"
+        );
+        replacement.commit();
+
+        // The admitted reservation expires on its own timestamp, not on the earlier one.
+        assert_eq!(
+            limiter
+                .try_reserve_global_at(start + WINDOW + Duration::from_secs(1))
+                .err(),
+            Some(RateLimitExceeded::Global)
+        );
+    }
+
+    /// A release must be idempotent: a second release of one token must not free another
+    /// request's slot.
+    #[test]
+    fn releasing_an_unknown_token_frees_nothing() {
+        let limiter = RateLimiter::with_limits(1, 1);
+        let admitted = limiter.try_reserve_global().expect("the window is empty");
+        admitted.commit();
+
+        limiter.release_global(u64::MAX);
+
+        assert_eq!(
+            limiter.try_reserve_global().err(),
+            Some(RateLimitExceeded::Global)
+        );
     }
 
     #[test]

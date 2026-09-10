@@ -67,6 +67,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 baseRiskExpulsions;
         bool excluded;
     }
+
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                 Storage Variables                      //
@@ -138,6 +139,21 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     /// @notice Released or reallocated successful-E3 rewards by account.
     mapping(uint256 e3Id => mapping(address account => uint256 amount))
         internal _pendingHeldSuccessClaims;
+    /// @notice How much of a holder's `heldSlash` came from each penalty target.
+    /// @dev ZEN2-20 follow-up. `heldSlash` is one sum, so a later redistribution
+    ///      cannot tell whose penalty it is moving. Without provenance, crediting
+    ///      B from A's penalty and then expelling B returns part of A's penalty
+    ///      to A. A round-wide "penalized" flag closes that but over-excludes: it
+    ///      drops A from every later penalty in the round, so payouts depend on
+    ///      proposal order. This map keeps the exclusion per originating target:
+    ///      redistribution re-shares each bucket without that bucket's target
+    ///      only. Walks key the committee's canonical `topNodes`, not the
+    ///      active roster: an expelled target leaves the roster while its
+    ///      bucket remains, and the roster walk would strand it. Bounded by
+    ///      committee size squared; cleared with the sum on every claim and
+    ///      redistribution so the two never disagree.
+    mapping(uint256 e3Id => mapping(address holder => mapping(address target => uint256 amount)))
+        internal _heldSlashFrom;
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                       Modifiers                        //
@@ -712,15 +728,18 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             if (operator == excludedOperator || entitlement.excluded) continue;
             eligible--;
             uint256 nodeAmount = eligible == 0 ? amount - distributed : perNode;
-            if (entitlement.pendingExpulsions != 0) {
-                entitlement.heldSlash += nodeAmount;
-            } else {
-                address recipient = _rewardRecipients[e3Id][operator];
-                if (recipient == address(0)) {
-                    revert RewardRecipientNotSnapshotted(e3Id, operator);
-                }
-                _creditSlashedClaim(e3Id, token, recipient, nodeAmount);
+            // ZEN2-20: every node share stays in its operator entitlement.
+            // `claimOperatorSlashedFunds` checks eligibility at claim time, so
+            // a proposal opened after this credit still holds the allocation.
+            // `_e3SlashTokens[e3Id]` was frozen when this route was escrowed.
+            if (_rewardRecipients[e3Id][operator] == address(0)) {
+                revert RewardRecipientNotSnapshotted(e3Id, operator);
             }
+            entitlement.heldSlash += nodeAmount;
+            // ZEN2-20 follow-up: remember whose penalty this share is, so a
+            // later redistribution can keep that target out of it.
+            _heldSlashFrom[e3Id][operator][excludedOperator] += nodeAmount;
+            emit SlashedFundsCredited(e3Id, operator, token, nodeAmount);
             distributed += nodeAmount;
         }
     }
@@ -737,17 +756,6 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
                 !_operatorEntitlements[e3Id][operator].excluded
             ) count++;
         }
-    }
-
-    function _creditSlashedClaim(
-        uint256 e3Id,
-        IERC20 token,
-        address account,
-        uint256 amount
-    ) internal {
-        if (amount == 0) return;
-        _pendingSlashedClaims[e3Id][token][account] += amount;
-        emit SlashedFundsCredited(e3Id, account, token, amount);
     }
 
     function _creditTrackedTreasury(
@@ -776,10 +784,9 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
                 _redistributeForfeitedBaseReward(e3Id, operator, baseAtRisk);
             }
 
-            uint256 heldSlash = entitlement.heldSlash;
-            if (heldSlash > 0) {
+            if (entitlement.heldSlash > 0) {
                 entitlement.heldSlash = 0;
-                _redistributeHeldSlash(e3Id, operator, heldSlash);
+                _redistributeHeldSlash(e3Id, operator);
             }
 
             uint256 heldSuccess = entitlement.heldSuccess;
@@ -795,23 +802,16 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             !entitlement.excluded &&
             entitlement.pendingExpulsions == 0
         ) {
-            address recipient = _rewardRecipients[e3Id][operator];
-            uint256 heldSlash = entitlement.heldSlash;
-            if (heldSlash > 0) {
-                entitlement.heldSlash = 0;
-                _creditSlashedClaim(
-                    e3Id,
-                    _e3SlashTokens[e3Id],
-                    recipient,
-                    heldSlash
-                );
-            }
-
-            uint256 heldSuccess = entitlement.heldSuccess;
-            if (heldSuccess > 0) {
-                entitlement.heldSuccess = 0;
-                _pendingHeldSuccessClaims[e3Id][recipient] += heldSuccess;
-            }
+            // ZEN2-20: the allocation stays in the operator entitlement so a
+            // later proposal re-holds it. `claimOperatorHeldSuccessReward` and
+            // `claimOperatorSlashedFunds` pay the frozen recipient only while
+            // the operator is still eligible.
+            emit OperatorRewardsReleased(
+                e3Id,
+                operator,
+                entitlement.heldSuccess,
+                entitlement.heldSlash
+            );
         }
     }
 
@@ -890,20 +890,110 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         }
     }
 
-    function _redistributeHeldSlash(
-        uint256 e3Id,
-        address operator,
-        uint256 amount
-    ) internal {
-        IERC20 token = _e3SlashTokens[e3Id];
+    /// @dev Re-shares the expelled operator's held slash funds one penalty at
+    ///      a time. Each bucket keeps its own target out, so a penalty can never
+    ///      return to the operator it was raised against, and an operator that
+    ///      was penalized elsewhere in the round still takes its share of every
+    ///      other penalty. The caller has already zeroed `heldSlash`; the
+    ///      buckets are the authoritative split of that sum.
+    function _redistributeHeldSlash(uint256 e3Id, address operator) internal {
         (address[] memory nodes, ) = ICiphernodeRegistry(
             _e3PolicySnapshots[e3Id].registry
         ).getActiveCommitteeNodes(e3Id);
-        if (_eligibleNodeCount(e3Id, nodes, operator) == 0) {
+        // Bucket keys are every member the committee ever had, so a target
+        // that was expelled since the credit is still found.
+        address[] memory targets = _canonicalCommittee(e3Id);
+        mapping(address target => uint256 amount)
+            storage buckets = _heldSlashFrom[e3Id][operator];
+        for (uint256 t = 0; t < targets.length; t++) {
+            uint256 amount = buckets[targets[t]];
+            if (amount == 0) continue;
+            buckets[targets[t]] = 0;
+            _reshareHeldSlashBucket(e3Id, nodes, operator, targets[t], amount);
+        }
+    }
+
+    /// @dev Re-shares one provenance bucket among every active member other than
+    ///      the expelled holder and the bucket's own penalty target.
+    function _reshareHeldSlashBucket(
+        uint256 e3Id,
+        address[] memory nodes,
+        address operator,
+        address target,
+        uint256 amount
+    ) internal {
+        IERC20 token = _e3SlashTokens[e3Id];
+        uint256 eligible;
+        for (uint256 i = 0; i < nodes.length; i++) {
+            if (_reshareEligible(e3Id, nodes[i], operator, target)) eligible++;
+        }
+        if (eligible == 0) {
             _creditTrackedTreasury(_treasuryFor(e3Id), token, amount);
             return;
         }
-        _creditNodeSlashedClaims(e3Id, token, nodes, amount, operator);
+        uint256 perNode = amount / eligible;
+        uint256 distributed;
+        for (uint256 i = 0; i < nodes.length; i++) {
+            address node = nodes[i];
+            if (!_reshareEligible(e3Id, node, operator, target)) continue;
+            eligible--;
+            uint256 nodeAmount = eligible == 0 ? amount - distributed : perNode;
+            _operatorEntitlements[e3Id][node].heldSlash += nodeAmount;
+            _heldSlashFrom[e3Id][node][target] += nodeAmount;
+            emit SlashedFundsCredited(e3Id, node, token, nodeAmount);
+            distributed += nodeAmount;
+        }
+    }
+
+    function _reshareEligible(
+        uint256 e3Id,
+        address node,
+        address operator,
+        address target
+    ) internal view returns (bool) {
+        return
+            node != operator &&
+            node != target &&
+            !_operatorEntitlements[e3Id][node].excluded;
+    }
+
+    /// @dev Drops every provenance bucket of a holder whose `heldSlash` was
+    ///      paid out. Must run wherever `heldSlash` is zeroed by a claim, so the
+    ///      buckets never describe funds that already left. Keys are the
+    ///      committee's canonical members, so an expelled target is included.
+    function _clearHeldSlashProvenance(uint256 e3Id, address holder) internal {
+        address[] memory targets = _canonicalCommittee(e3Id);
+        mapping(address target => uint256 amount)
+            storage buckets = _heldSlashFrom[e3Id][holder];
+        for (uint256 t = 0; t < targets.length; t++) {
+            if (buckets[targets[t]] != 0) buckets[targets[t]] = 0;
+        }
+    }
+
+    /// @dev Every member the committee was finalized with, expelled or not.
+    ///      Read through `canonicalCommitteeNodeAt`, which works from
+    ///      finalization; `getCommitteeNodes` needs a published key, and a
+    ///      round can fail and be slashed before publication.
+    function _canonicalCommittee(
+        uint256 e3Id
+    ) internal view returns (address[] memory members) {
+        ICiphernodeRegistry registry = ICiphernodeRegistry(
+            _e3PolicySnapshots[e3Id].registry
+        );
+        (, , uint32 total, ) = registry.getCommitteeViability(e3Id);
+        members = new address[](total);
+        for (uint256 i = 0; i < total; i++) {
+            members[i] = registry.canonicalCommitteeNodeAt(e3Id, i);
+        }
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function heldSlashFrom(
+        uint256 e3Id,
+        address holder,
+        address target
+    ) external view returns (uint256 amount) {
+        return _heldSlashFrom[e3Id][holder][target];
     }
 
     function _redistributeHeldSuccess(
@@ -932,12 +1022,10 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             if (node == operator || entitlement.excluded) continue;
             eligible--;
             uint256 nodeAmount = eligible == 0 ? amount - distributed : perNode;
-            if (entitlement.pendingExpulsions != 0) {
-                entitlement.heldSuccess += nodeAmount;
-            } else {
-                address recipient = _rewardRecipients[e3Id][node];
-                _pendingHeldSuccessClaims[e3Id][recipient] += nodeAmount;
-            }
+            // ZEN2-20: hold every reallocated share in its operator
+            // entitlement, whether or not a proposal is open right now.
+            entitlement.heldSuccess += nodeAmount;
+            emit SuccessRewardHeld(e3Id, node, token, nodeAmount);
             distributed += nodeAmount;
         }
     }
@@ -967,8 +1055,14 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 e3Id,
         IERC20 token,
         address account
-    ) external view returns (uint256) {
-        return _pendingSlashedClaims[e3Id][token][account];
+    ) external view returns (uint256 amount) {
+        // ZEN2-20: shares are held per operator, so report what `account` can
+        // claim by summing the committee members whose frozen recipient it is
+        // and whose allocation is not held or forfeited. Balances credited to
+        // the legacy recipient ledger before this change remain claimable.
+        amount = _pendingSlashedClaims[e3Id][token][account];
+        if (token != _e3SlashTokens[e3Id]) return amount;
+        return amount + _claimableFor(e3Id, account, false);
     }
 
     /// @inheritdoc IE3RefundManager
@@ -1092,6 +1186,25 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     }
 
     /// @inheritdoc IE3RefundManager
+    function rewardStatus(
+        uint256 e3Id,
+        address operator
+    ) external view returns (address recipient, bool pending, bool excluded) {
+        recipient = _rewardRecipients[e3Id][operator];
+        if (recipient == address(0)) {
+            revert RewardRecipientNotSnapshotted(e3Id, operator);
+        }
+        OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
+            operator
+        ];
+        return (
+            recipient,
+            entitlement.pendingExpulsions != 0,
+            entitlement.excluded
+        );
+    }
+
+    /// @inheritdoc IE3RefundManager
     function openExpulsionProposal(
         uint256 e3Id,
         uint256 proposalId,
@@ -1163,26 +1276,117 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
             operator
         ];
-        if (entitlement.pendingExpulsions == 0 || entitlement.excluded) {
-            revert RewardPendingExpulsion(e3Id, operator);
-        }
         IERC20 expected = _e3SuccessTokens[e3Id];
         if (address(expected) == address(0)) {
             _e3SuccessTokens[e3Id] = token;
         } else if (expected != token) {
             revert RewardTokenMismatch(expected, token);
         }
+        // ZEN2-20: an already expelled operator forfeits the allocation now.
+        // Interfold sends every committee reward here, so this branch also
+        // covers a settlement that runs after the expulsion executed.
+        if (entitlement.excluded) {
+            _redistributeHeldSuccess(e3Id, operator, amount);
+            return;
+        }
         entitlement.heldSuccess += amount;
         emit SuccessRewardHeld(e3Id, operator, token, amount);
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function claimHeldSuccessRewardFor(
+        uint256 e3Id,
+        address account
+    ) external onlyE3Interfold(e3Id) returns (uint256 amount) {
+        // ZEN2-20: recipient-scoped variant used by `Interfold.claimReward`,
+        // so an existing recipient keeps one entry point. Same eligibility
+        // rule and same payee as {claimHeldSuccessReward}.
+        amount = _pendingHeldSuccessClaims[e3Id][account];
+        if (amount > 0) _pendingHeldSuccessClaims[e3Id][account] = 0;
+        amount += _drainClaimable(e3Id, account, true);
+        if (amount == 0) return 0;
+        IERC20 token = _e3SuccessTokens[e3Id];
+        _transferPreservingSlashedLiability(token, account, amount);
+        emit HeldSuccessRewardClaimed(e3Id, account, token, amount);
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function claimOperatorHeldSuccessReward(
+        uint256 e3Id,
+        address operator
+    ) external returns (uint256 amount) {
+        address recipient = _requireClaimableOperator(e3Id, operator);
+        OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
+            operator
+        ];
+        amount = entitlement.heldSuccess;
+        require(amount > 0, NothingToClaim());
+        entitlement.heldSuccess = 0;
+        IERC20 token = _e3SuccessTokens[e3Id];
+        _transferPreservingSlashedLiability(token, recipient, amount);
+        emit HeldSuccessRewardClaimed(e3Id, recipient, token, amount);
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function claimOperatorSlashedFunds(
+        uint256 e3Id,
+        address operator
+    ) external returns (uint256 amount) {
+        address recipient = _requireClaimableOperator(e3Id, operator);
+        OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
+            operator
+        ];
+        amount = entitlement.heldSlash;
+        require(amount > 0, NothingToClaim());
+        entitlement.heldSlash = 0;
+        _clearHeldSlashProvenance(e3Id, operator);
+        IERC20 token = _e3SlashTokens[e3Id];
+        _decreaseTokenLiability(token, amount);
+        _transferPreservingSlashedLiability(token, recipient, amount);
+        emit SlashedFundsClaimed(e3Id, recipient, token, amount);
+    }
+
+    /// @inheritdoc IE3RefundManager
+    function operatorHeldRewards(
+        uint256 e3Id,
+        address operator
+    ) external view returns (uint256 heldSuccess, uint256 heldSlash) {
+        OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
+            operator
+        ];
+        return (entitlement.heldSuccess, entitlement.heldSlash);
+    }
+
+    /// @dev Reverts unless the operator can still be paid: a snapshotted
+    ///      recipient, no unresolved expelling proposal, and no executed
+    ///      expulsion. Returns the frozen recipient.
+    function _requireClaimableOperator(
+        uint256 e3Id,
+        address operator
+    ) internal view returns (address recipient) {
+        recipient = _rewardRecipients[e3Id][operator];
+        if (recipient == address(0)) {
+            revert RewardRecipientNotSnapshotted(e3Id, operator);
+        }
+        OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
+            operator
+        ];
+        if (entitlement.pendingExpulsions != 0 || entitlement.excluded) {
+            revert RewardPendingExpulsion(e3Id, operator);
+        }
     }
 
     /// @inheritdoc IE3RefundManager
     function claimHeldSuccessReward(
         uint256 e3Id
     ) external returns (uint256 amount) {
+        // ZEN2-20: drain the legacy recipient balance and every operator
+        // allocation the caller is the frozen recipient of, skipping any that
+        // a pending proposal holds or an executed expulsion forfeited.
         amount = _pendingHeldSuccessClaims[e3Id][msg.sender];
+        if (amount > 0) _pendingHeldSuccessClaims[e3Id][msg.sender] = 0;
+        amount += _drainClaimable(e3Id, msg.sender, true);
         require(amount > 0, NothingToClaim());
-        _pendingHeldSuccessClaims[e3Id][msg.sender] = 0;
         IERC20 token = _e3SuccessTokens[e3Id];
         _transferPreservingSlashedLiability(token, msg.sender, amount);
         emit HeldSuccessRewardClaimed(e3Id, msg.sender, token, amount);
@@ -1193,7 +1397,36 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 e3Id,
         address account
     ) external view returns (uint256 amount) {
-        return _pendingHeldSuccessClaims[e3Id][account];
+        // ZEN2-20: see {pendingSlashedClaim}.
+        return
+            _pendingHeldSuccessClaims[e3Id][account] +
+            _claimableFor(e3Id, account, true);
+    }
+
+    /// @dev Sum the held allocations that `account` can claim right now: the
+    ///      committee members whose frozen recipient is `account` and whose
+    ///      entitlement carries no pending proposal and no executed expulsion.
+    ///      `success` picks the success reward, otherwise the slash share.
+    function _claimableFor(
+        uint256 e3Id,
+        address account,
+        bool success
+    ) internal view returns (uint256 amount) {
+        address registry = _e3PolicySnapshots[e3Id].registry;
+        if (registry == address(0)) return 0;
+        (address[] memory nodes, ) = ICiphernodeRegistry(registry)
+            .getActiveCommitteeNodes(e3Id);
+        for (uint256 i = 0; i < nodes.length; i++) {
+            address operator = nodes[i];
+            if (_rewardRecipients[e3Id][operator] != account) continue;
+            OperatorEntitlement storage entitlement = _operatorEntitlements[
+                e3Id
+            ][operator];
+            if (entitlement.pendingExpulsions != 0 || entitlement.excluded) {
+                continue;
+            }
+            amount += success ? entitlement.heldSuccess : entitlement.heldSlash;
+        }
     }
 
     function _treasuryFor(uint256 e3Id) internal view returns (address) {
@@ -1278,12 +1511,47 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         uint256 e3Id,
         IERC20 token
     ) external returns (uint256 amount) {
+        // ZEN2-20: see {claimHeldSuccessReward}.
         amount = _pendingSlashedClaims[e3Id][token][msg.sender];
+        if (amount > 0) _pendingSlashedClaims[e3Id][token][msg.sender] = 0;
+        if (token == _e3SlashTokens[e3Id]) {
+            amount += _drainClaimable(e3Id, msg.sender, false);
+        }
         require(amount > 0, NothingToClaim());
-        _pendingSlashedClaims[e3Id][token][msg.sender] = 0;
         _decreaseTokenLiability(token, amount);
         _transferPreservingSlashedLiability(token, msg.sender, amount);
         emit SlashedFundsClaimed(e3Id, msg.sender, token, amount);
+    }
+
+    /// @dev Zero and return the held allocations `account` can claim now. Same
+    ///      eligibility rule as {_claimableFor}.
+    function _drainClaimable(
+        uint256 e3Id,
+        address account,
+        bool success
+    ) internal returns (uint256 amount) {
+        address registry = _e3PolicySnapshots[e3Id].registry;
+        if (registry == address(0)) return 0;
+        (address[] memory nodes, ) = ICiphernodeRegistry(registry)
+            .getActiveCommitteeNodes(e3Id);
+        for (uint256 i = 0; i < nodes.length; i++) {
+            address operator = nodes[i];
+            if (_rewardRecipients[e3Id][operator] != account) continue;
+            OperatorEntitlement storage entitlement = _operatorEntitlements[
+                e3Id
+            ][operator];
+            if (entitlement.pendingExpulsions != 0 || entitlement.excluded) {
+                continue;
+            }
+            if (success) {
+                amount += entitlement.heldSuccess;
+                entitlement.heldSuccess = 0;
+            } else {
+                amount += entitlement.heldSlash;
+                entitlement.heldSlash = 0;
+                _clearHeldSlashProvenance(e3Id, operator);
+            }
+        }
     }
 
     /// @inheritdoc IE3RefundManager
@@ -1368,5 +1636,5 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
 
     /// @dev Reserved storage slots for future upgrades.
     // solhint-disable-next-line var-name-mixedcase
-    uint256[43] private __gap;
+    uint256[42] private __gap;
 }

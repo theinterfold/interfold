@@ -44,7 +44,7 @@ lean-imt = "=0.1.2"
 # Local dependencies
 e3-compute-provider.workspace = true
 e3-sdk = { workspace = true, default-features = false, features=["full"] }
-e3-fhe-params = { workspace = true }
+e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
 e3-bfv-client = { workspace = true }
 e3-data-availability = { workspace = true, features = ["avail-submit"] }
 e3-evm-helpers.workspace = true

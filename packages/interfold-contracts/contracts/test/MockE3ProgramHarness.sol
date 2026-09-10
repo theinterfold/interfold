@@ -9,11 +9,15 @@ import { IE3Program } from "../interfaces/IE3Program.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
-    IDataAvailabilityVerifier
+    IDataAvailabilityVerifier,
+    IE3ProgramDataAvailability
 } from "../interfaces/IDataAvailabilityVerifier.sol";
+import {
+    IERC165
+} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 /// @dev Test-only E3 program with controls used to exercise failure and reentrancy paths.
-contract MockE3ProgramHarness is IE3Program {
+contract MockE3ProgramHarness is IE3Program, IERC165 {
     error InvalidParams(bytes e3ProgramParams, bytes computeProviderParams);
     error E3AlreadyInitialized();
     error InvalidInput();
@@ -33,6 +37,17 @@ contract MockE3ProgramHarness is IE3Program {
     mapping(uint256 e3Id => uint256 requestTime) public validationRequestTimes;
     mapping(uint256 e3Id => bytes32 commitment)
         public expectedCiphertextCommitments;
+
+    /// @inheritdoc IERC165
+    /// @dev Interfold probes these interfaces before it registers a program.
+    function supportsInterface(
+        bytes4 interfaceId
+    ) external pure returns (bool) {
+        return
+            interfaceId == type(IE3Program).interfaceId ||
+            interfaceId == type(IE3ProgramDataAvailability).interfaceId ||
+            interfaceId == type(IERC165).interfaceId;
+    }
 
     function setInterfold(IInterfold _interfold) external {
         interfold = _interfold;

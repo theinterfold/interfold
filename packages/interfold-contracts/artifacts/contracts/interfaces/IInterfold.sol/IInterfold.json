@@ -258,6 +258,17 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "e3Program",
+          "type": "address"
+        }
+      ],
+      "name": "E3ProgramInterfaceMissing",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "contract IE3Program",
           "name": "e3Program",
           "type": "address"
@@ -366,6 +377,22 @@
         }
       ],
       "name": "InputDeadlineNotReached",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "inputDeadline",
+          "type": "uint256"
+        }
+      ],
+      "name": "InputWindowClosedBeforeKeyPublication",
       "type": "error"
     },
     {
@@ -2912,5 +2939,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-b95d25dbcdea5354ca4c3fb8a90c5c3f029dfa00"
+  "buildInfoId": "solc-0_8_28-4b8d0dc29ace33e0d668b55bed6902aeeeebdfd3"
 }
