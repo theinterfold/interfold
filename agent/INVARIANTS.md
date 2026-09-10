@@ -514,7 +514,8 @@ design citation alone does not establish current runtime behavior.
   verifier. — `dkg_aggregator`, `BfvPkVerifier`
 - Circuit soundness fixes to preserve: `ModU64::div_mod` verifies
   `result*divisor == dividend (mod modulus)` (IF-001); C7 compares **every** decoded coefficient,
-  including zeros, to the claimed message (IF-002).
+  including zeros, to the claimed message (IF-002), and uses `U384` so the secure-16384
+  `t * u mod Q` decode does not wrap at 256 bits (IF-005).
 
 ## Node / actor runtime
 

@@ -211,6 +211,7 @@ _Found during source-code cross-referencing of these trace documents._
 | **IF-002 — conditional C7 decoding equality**         | Fixed  | C7 compares every decoded coefficient with the claimed message, including zero coefficients; a focused regression test rejects a nonzero decoded value claimed as zero.                                           |
 | **IF-003 — decryption proof phase and party binding** | Fixed  | `decryption_aggregator` requires 1-indexed, strictly increasing party IDs, while `BfvDecryptionVerifier` checks the surfaced SK/ESM commitments against the E3's registry-backed DKG anchors.                     |
 | **IF-004 — ciphertext commitment binding**            | Fixed  | The off-chain SAFE commitment is stored at ciphertext publication, propagated as a final decryption-proof public input, and compared on-chain without attempting BFV decoding or Poseidon2 execution in Solidity. |
+| **IF-005 — C7 secure-16384 decode width**              | Fixed  | C7 uses `U384` for `t * u mod Q`; this prevents the 260-bit secure-16384 intermediate from wrapping modulo `2^256`. A regression covers `u = Q - 1`, which must decode to zero.                              |
 
 ### CRISP Ballot Remediations
 
