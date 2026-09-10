@@ -5,7 +5,6 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // On-chain E3 fetchers — read events + view functions and assemble dashboard records.
 
-import { CanonicalEventHistory, type HistorySnapshot, type IndexedLog } from './event-history'
 import { CONTRACTS, DEPLOY_BLOCK, E3Stage, TIMEOUTS, ciphernodeRegistryAbi, interfoldAbi, publicClient } from './chain'
 
 // Helper: pull a single named event ABI item out of the typechain bundle.
@@ -62,15 +61,8 @@ const CRISP_GET_ROUND_DATA = {
   ],
 } as const
 
-const history = new CanonicalEventHistory(
-  {
-    getBlock: (args) => publicClient.getBlock(args),
-    getLogs: (args) => publicClient.getLogs(args as any),
-  },
-  `${publicClient.chain?.id}:${DEPLOY_BLOCK}:${CONTRACTS.Interfold}:${CONTRACTS.CiphernodeRegistry}:${CONTRACTS.CRISPProgram}`,
-)
-
-const isTerminalStage = (stage: number) => stage === E3Stage.Complete || stage === E3Stage.Failed
+// Public RPCs cap getLogs range. 9_500 keeps us safely under common 10k limits.
+const LOG_CHUNK = 9_500n
 
 // An E3 is a CRISP poll only if its program contract is the CRISPProgram.
 // Other E3s on the same Interfold deployment run different programs and must not
@@ -171,8 +163,8 @@ export type E3FullDetails = E3Summary & {
   // Aggregated inputs. inputsTracked is true only for programs whose input
   // event we understand (CRISP); for other programs inputs aren't observable
   // from the dashboard, so ballotCount is 0 and inputsTracked is false.
-  // Each accepted input, including a re-vote, has a distinct tree index.
-  // Replayed copies of the same event count once.
+  // ballotCount is the number of DISTINCT ballots (re-votes are not counted
+  // twice). ballotEvents holds the raw on-chain events (incl. re-votes).
   inputsTracked: boolean
   ballotCount: number
   ballotEvents: Array<{
@@ -193,17 +185,13 @@ export type E3FullDetails = E3Summary & {
 }
 
 // Resolve unix timestamps for a (small, bounded) set of block numbers, deduped.
-async function blockTimestamps(snapshot: HistorySnapshot, blocks: bigint[]): Promise<Map<string, number>> {
+async function blockTimestamps(blocks: bigint[]): Promise<Map<string, number>> {
   const uniq = Array.from(new Set(blocks.filter((b) => b > 0n).map((b) => b.toString())))
   const entries = await Promise.all(
     uniq.map(async (s) => {
       try {
-        const cached = snapshot.get<number>(`timestamp:${s}`)
-        if (cached !== undefined) return [s, cached] as const
         const b = await publicClient.getBlock({ blockNumber: BigInt(s) })
-        const timestamp = Number(b.timestamp)
-        snapshot.set(`timestamp:${s}`, timestamp)
-        return [s, timestamp] as const
+        return [s, Number(b.timestamp)] as const
       } catch {
         return [s, 0] as const
       }
@@ -212,14 +200,18 @@ async function blockTimestamps(snapshot: HistorySnapshot, blocks: bigint[]): Pro
   return new Map(entries)
 }
 
-async function getLogsChunked<T extends IndexedLog>(
-  snapshot: HistorySnapshot,
+async function getLogsChunked<T>(
   args: Omit<Parameters<typeof publicClient.getLogs>[0], 'fromBlock' | 'toBlock'>,
   from: bigint,
   to: bigint,
 ): Promise<T[]> {
-  if (snapshot.head !== to) throw new Error('The event range does not match the snapshot.')
-  return snapshot.logs<T>(args, from)
+  const out: any[] = []
+  for (let start = from; start <= to; start += LOG_CHUNK + 1n) {
+    const end = start + LOG_CHUNK > to ? to : start + LOG_CHUNK
+    const logs = await publicClient.getLogs({ ...args, fromBlock: start, toBlock: end } as any)
+    out.push(...logs)
+  }
+  return out as T[]
 }
 
 export async function fetchLatestBlock(): Promise<bigint> {
@@ -233,10 +225,8 @@ const BLOCKS_PER_DAY = 7200n
 export async function fetchRecentBallotCount(): Promise<number> {
   const head = await fetchLatestBlock()
   const from = head > BLOCKS_PER_DAY + DEPLOY_BLOCK ? head - BLOCKS_PER_DAY : DEPLOY_BLOCK
-  return history.read(head, async (snapshot) => {
-    const logs = await getLogsChunked<any>(snapshot, { address: CONTRACTS.CRISPProgram, event: CRISP_INPUT_PUBLISHED }, from, head)
-    return logs.length
-  })
+  const logs = await getLogsChunked<any>({ address: CONTRACTS.CRISPProgram, event: CRISP_INPUT_PUBLISHED }, from, head)
+  return logs.length
 }
 
 export type FetchE3Opts = {
@@ -248,13 +238,7 @@ export type FetchE3Opts = {
 export async function fetchE3List(opts: FetchE3Opts = {}): Promise<E3Summary[]> {
   const { crispOnly = false, toBlock } = opts
   const head = toBlock ?? (await fetchLatestBlock())
-  return history.read(head, (snapshot) => fetchE3ListSnapshot(snapshot, crispOnly))
-}
-
-async function fetchE3ListSnapshot(snapshot: HistorySnapshot, crispOnly: boolean): Promise<E3Summary[]> {
-  const head = snapshot.head
   const logs = await getLogsChunked<any>(
-    snapshot,
     {
       address: CONTRACTS.Interfold,
       event: INTERFOLD_E3_REQUESTED,
@@ -265,38 +249,26 @@ async function fetchE3ListSnapshot(snapshot: HistorySnapshot, crispOnly: boolean
 
   const scoped = crispOnly ? logs.filter((log) => isCrispE3(log.args.e3.e3Program)) : logs
 
-  const active = scoped.filter((log) => snapshot.get<number>(`stage:${log.args.e3Id}`) === undefined)
-  const [stageResults, ballotCounts] = await Promise.all([
+  const [stages, ballotCounts] = await Promise.all([
     // Current stage of each E3 in one multicall — lets the list show real status
     // (completed / failed / expired) rather than guessing.
-    active.length
-      ? (publicClient.multicall as any)({
-          blockNumber: head,
-          contracts: active.map((log) => ({
-            address: CONTRACTS.Interfold,
-            abi: interfoldAbi,
-            functionName: 'getE3Stage',
-            args: [log.args.e3Id],
-          })),
-          allowFailure: true,
-        })
-      : Promise.resolve([]),
+    (publicClient.multicall as any)({
+      contracts: scoped.map((log) => ({
+        address: CONTRACTS.Interfold,
+        abi: interfoldAbi,
+        functionName: 'getE3Stage',
+        args: [log.args.e3Id],
+      })),
+      allowFailure: true,
+    }),
     // CRISP view: one scan of all ballots, grouped per E3 (distinct voteIndex),
     // so every history row shows its real count without a per-poll fetch.
-    crispOnly ? fetchCrispBallotCounts(snapshot) : Promise.resolve(new Map<string, number>()),
+    crispOnly ? fetchCrispBallotCounts(head) : Promise.resolve(new Map<string, number>()),
   ])
 
-  const stages = new Map<string, number>()
-  active.forEach((log, index) => {
-    const result = stageResults[index]
-    const stage = result.status === 'success' ? Number(result.result) : E3Stage.None
-    stages.set(log.args.e3Id.toString(), stage)
-    if (isTerminalStage(stage)) snapshot.set(`stage:${log.args.e3Id}`, stage)
-  })
-
-  const out: E3Summary[] = scoped.map((log) => {
+  const out: E3Summary[] = scoped.map((log, i) => {
     const { e3Id, e3 } = log.args
-    const stage = snapshot.get<number>(`stage:${e3Id}`) ?? stages.get(e3Id.toString()) ?? E3Stage.None
+    const stageResult = stages[i]
     return {
       id: e3Id,
       e3Program: e3.e3Program,
@@ -305,7 +277,7 @@ async function fetchE3ListSnapshot(snapshot: HistorySnapshot, crispOnly: boolean
       requestTxHash: log.transactionHash,
       inputWindow: [e3.inputWindow[0], e3.inputWindow[1]] as [bigint, bigint],
       committeeSize: Number(e3.committeeSize),
-      stage,
+      stage: stageResult.status === 'success' ? Number(stageResult.result) : E3Stage.None,
       ballotCount: ballotCounts.get(e3Id.toString()) ?? 0,
     }
   })
@@ -316,10 +288,9 @@ async function fetchE3ListSnapshot(snapshot: HistorySnapshot, crispOnly: boolean
 }
 
 // Distinct ballot count per CRISP E3, from a single scan of all InputPublished
-// events grouped by e3Id. Each accepted re-vote has its own index.
-async function fetchCrispBallotCounts(snapshot: HistorySnapshot): Promise<Map<string, number>> {
-  const head = snapshot.head
-  const inputs = await getLogsChunked<any>(snapshot, { address: CONTRACTS.CRISPProgram, event: CRISP_INPUT_PUBLISHED }, DEPLOY_BLOCK, head)
+// events grouped by e3Id (re-votes reuse a voteIndex, so we count unique ones).
+async function fetchCrispBallotCounts(head: bigint): Promise<Map<string, number>> {
+  const inputs = await getLogsChunked<any>({ address: CONTRACTS.CRISPProgram, event: CRISP_INPUT_PUBLISHED }, DEPLOY_BLOCK, head)
   const byE3 = new Map<string, Set<string>>()
   for (const l of inputs) {
     const id = l.args.e3Id.toString()
@@ -332,58 +303,41 @@ async function fetchCrispBallotCounts(snapshot: HistorySnapshot): Promise<Map<st
 
 export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3FullDetails> {
   const head = toBlock ?? (await fetchLatestBlock())
-  return history.read(head, (snapshot) => fetchE3DetailsSnapshot(e3Id, snapshot))
-}
-
-async function fetchE3DetailsSnapshot(e3Id: bigint, snapshot: HistorySnapshot): Promise<E3FullDetails> {
-  const head = snapshot.head
 
   // 1. Pull live E3 struct + stage + currently-escrowed fee.
   const [e3, stage, feeEscrowed] = await Promise.all([
-    snapshot.get<any>(`complete:${e3Id}`) ??
-      ((publicClient.readContract as any)({
-        address: CONTRACTS.Interfold,
-        abi: interfoldAbi,
-        functionName: 'getE3',
-        args: [e3Id],
-        blockNumber: head,
-      }) as Promise<any>),
-    snapshot.get<number>(`stage:${e3Id}`) ??
-      ((publicClient.readContract as any)({
-        address: CONTRACTS.Interfold,
-        abi: interfoldAbi,
-        functionName: 'getE3Stage',
-        args: [e3Id],
-        blockNumber: head,
-      }) as Promise<number>),
+    (publicClient.readContract as any)({
+      address: CONTRACTS.Interfold,
+      abi: interfoldAbi,
+      functionName: 'getE3',
+      args: [e3Id],
+    }) as Promise<any>,
+    (publicClient.readContract as any)({
+      address: CONTRACTS.Interfold,
+      abi: interfoldAbi,
+      functionName: 'getE3Stage',
+      args: [e3Id],
+    }) as Promise<number>,
     (publicClient.readContract as any)({
       address: CONTRACTS.Interfold,
       abi: interfoldAbi,
       functionName: 'e3Payments',
       args: [e3Id],
-      blockNumber: head,
     }).catch(() => 0n) as Promise<bigint>,
   ])
-
-  if (isTerminalStage(stage)) snapshot.set(`stage:${e3Id}`, stage)
-  if (stage === E3Stage.Complete) snapshot.set(`complete:${e3Id}`, e3)
 
   // CRISP round configuration. Only CRISP E3s expose it, and an uninitialised round
   // reports 0 options — in both cases the tally stays undecodable rather than guessed.
   const numOptions = isCrispE3(e3.e3Program)
-    ? (snapshot.get<number>(`options:${e3Id}`) ??
-      (await ((publicClient.readContract as any)({
+    ? await ((publicClient.readContract as any)({
         address: CONTRACTS.CRISPProgram,
         abi: [CRISP_GET_ROUND_DATA],
         functionName: 'getRoundData',
         args: [e3Id],
-        blockNumber: head,
       })
         .then((data: readonly unknown[]) => Number(data[2] as bigint) || undefined)
-        .catch(() => undefined) as Promise<number | undefined>)))
+        .catch(() => undefined) as Promise<number | undefined>)
     : undefined
-
-  if (numOptions !== undefined) snapshot.set(`options:${e3Id}`, numOptions)
 
   // `e3.requestBlock` is misnamed: on this contract version it stores
   // `block.timestamp` (EIP-6372 timestamp clock), not a block number. Using it
@@ -393,7 +347,6 @@ async function fetchE3DetailsSnapshot(e3Id: bigint, snapshot: HistorySnapshot): 
 
   // 2. Find the E3Requested tx for this id (for the inspector header).
   const requestLogs = await getLogsChunked<any>(
-    snapshot,
     {
       address: CONTRACTS.Interfold,
       event: INTERFOLD_E3_REQUESTED,
@@ -412,7 +365,6 @@ async function fetchE3DetailsSnapshot(e3Id: bigint, snapshot: HistorySnapshot): 
   // transition (the registry's CommitteePublished event has drifted from our ABI).
   const [requestedEvents, finalizedEvents, stageChanges] = await Promise.all([
     getLogsChunked<any>(
-      snapshot,
       {
         address: CONTRACTS.CiphernodeRegistry,
         event: REGISTRY_COMMITTEE_REQUESTED,
@@ -422,7 +374,6 @@ async function fetchE3DetailsSnapshot(e3Id: bigint, snapshot: HistorySnapshot): 
       head,
     ),
     getLogsChunked<any>(
-      snapshot,
       {
         address: CONTRACTS.CiphernodeRegistry,
         event: REGISTRY_COMMITTEE_FINALIZED,
@@ -432,7 +383,6 @@ async function fetchE3DetailsSnapshot(e3Id: bigint, snapshot: HistorySnapshot): 
       head,
     ),
     getLogsChunked<any>(
-      snapshot,
       {
         address: CONTRACTS.Interfold,
         event: INTERFOLD_E3_STAGE_CHANGED,
@@ -458,7 +408,6 @@ async function fetchE3DetailsSnapshot(e3Id: bigint, snapshot: HistorySnapshot): 
   const [inputs, results, rewards] = await Promise.all([
     inputsTracked
       ? getLogsChunked<any>(
-          snapshot,
           {
             address: CONTRACTS.CRISPProgram,
             event: CRISP_INPUT_PUBLISHED,
@@ -469,7 +418,6 @@ async function fetchE3DetailsSnapshot(e3Id: bigint, snapshot: HistorySnapshot): 
         )
       : Promise.resolve([] as any[]),
     getLogsChunked<any>(
-      snapshot,
       {
         address: CONTRACTS.Interfold,
         event: INTERFOLD_PLAINTEXT_PUBLISHED,
@@ -479,7 +427,6 @@ async function fetchE3DetailsSnapshot(e3Id: bigint, snapshot: HistorySnapshot): 
       head,
     ),
     getLogsChunked<any>(
-      snapshot,
       {
         address: CONTRACTS.Interfold,
         event: INTERFOLD_REWARDS_DISTRIBUTED,
@@ -489,7 +436,7 @@ async function fetchE3DetailsSnapshot(e3Id: bigint, snapshot: HistorySnapshot): 
       head,
     ),
   ])
-  // Count each accepted input index once, including re-votes.
+  // Distinct ballots: re-votes reuse the same Merkle-leaf index, so dedupe.
   const ballotCount = inputsTracked ? new Set(inputs.map((l: any) => l.args.index.toString())).size : 0
   // Real committee reward total (sum of per-node amounts), once distributed.
   const committeeReward = rewards.length
@@ -502,7 +449,6 @@ async function fetchE3DetailsSnapshot(e3Id: bigint, snapshot: HistorySnapshot): 
   const shownBallots = inputs.slice(0, 6)
   if (inputs.length > 6) shownBallots.push(inputs[inputs.length - 1])
   const ts = await blockTimestamps(
-    snapshot,
     [finLog?.blockNumber, pubLog?.blockNumber, resultLog?.blockNumber, ...shownBallots.map((l: any) => l.blockNumber)].filter(
       (b): b is bigint => typeof b === 'bigint',
     ),

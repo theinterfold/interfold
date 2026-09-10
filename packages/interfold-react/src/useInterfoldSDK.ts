@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useWalletClient, usePublicClient } from 'wagmi'
 import {
   InterfoldSDK,
@@ -74,41 +74,73 @@ export interface UseInterfoldSDKReturn {
  */
 export const useInterfoldSDK = (config: UseInterfoldSDKConfig): UseInterfoldSDKReturn => {
   const [sdk, setSdk] = useState<InterfoldSDK | null>(null)
+  const [isInitialized, setIsInitialized] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const sdkRef = useRef<InterfoldSDK | null>(null)
 
   const publicClient = usePublicClient()
 
   const { data: walletClient } = useWalletClient()
-  const { interfold, ciphernodeRegistry, feeToken } = config.contracts ?? {}
-  const { autoConnect, thresholdBfvParamsPresetName } = config
-
-  // Each effect owns one SDK instance and releases that instance on cleanup.
-  useEffect(() => {
-    // Mirror the external SDK lifecycle into React state.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
-    setSdk(null)
-    setError(null)
-    if (!autoConnect || !publicClient) return
-
+  const initializeSDK = useCallback(async () => {
     try {
+      setError(null)
+
+      if (!publicClient) {
+        throw new Error('Public client not available')
+      }
+
+      if (sdkRef.current) {
+        sdkRef.current.cleanup()
+      }
+
       const sdkConfig: SDKConfig = {
         publicClient,
         walletClient,
-        contracts: {
-          interfold: interfold ?? '0x0000000000000000000000000000000000000000',
-          ciphernodeRegistry: ciphernodeRegistry ?? '0x0000000000000000000000000000000000000000',
-          feeToken: feeToken ?? '0x0000000000000000000000000000000000000000',
+        contracts: config.contracts || {
+          interfold: '0x0000000000000000000000000000000000000000',
+          ciphernodeRegistry: '0x0000000000000000000000000000000000000000',
+          feeToken: '0x0000000000000000000000000000000000000000',
         },
-        thresholdBfvParamsPresetName,
+        thresholdBfvParamsPresetName: config.thresholdBfvParamsPresetName,
       }
-      const instance = new InterfoldSDK(sdkConfig)
-      setSdk(instance)
-      return () => instance.cleanup()
+
+      const newSdk = new InterfoldSDK(sdkConfig)
+      setSdk(newSdk)
+      sdkRef.current = newSdk
+      setIsInitialized(true)
     } catch (err: unknown) {
-      const message = err instanceof SDKError ? `SDK Error (${err.code}): ${err.message}` : `Failed to initialize SDK: ${err}`
-      setError(message)
+      const errorMessage = err instanceof SDKError ? `SDK Error (${err.code}): ${err.message}` : `Failed to initialize SDK: ${err}`
+      setError(errorMessage)
+      console.error('SDK initialization failed:', err)
     }
-  }, [autoConnect, publicClient, walletClient, interfold, ciphernodeRegistry, feeToken, thresholdBfvParamsPresetName])
+  }, [publicClient, walletClient, config.contracts, config.thresholdBfvParamsPresetName])
+
+  // The SDK is an external system with its own lifecycle (event subscriptions +
+  // cleanup), so it is created in an effect and mirrored into state rather than
+  // being derived during render.
+  useEffect(() => {
+    if (config.autoConnect && publicClient && !isInitialized) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      initializeSDK()
+    }
+  }, [config.autoConnect, publicClient, isInitialized, initializeSDK])
+
+  // Re-initialize when wallet client changes (connect/disconnect)
+  useEffect(() => {
+    if (isInitialized && publicClient && walletClient) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
+      initializeSDK()
+    }
+  }, [walletClient, initializeSDK, isInitialized, publicClient])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (sdkRef.current) {
+        sdkRef.current.cleanup()
+      }
+    }
+  }, [])
 
   const getThresholdBfvParamsSet = useCallback(async () => {
     if (!sdk) throw new Error('SDK not initialized')
@@ -141,7 +173,7 @@ export const useInterfoldSDK = (config: UseInterfoldSDKConfig): UseInterfoldSDKR
 
   return {
     sdk,
-    isInitialized: sdk !== null,
+    isInitialized,
     error,
     requestE3,
     getThresholdBfvParamsSet,

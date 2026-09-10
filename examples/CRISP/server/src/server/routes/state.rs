@@ -10,9 +10,8 @@ use crate::server::{
     app_data::AppData,
     data_availability::AvailabilityService,
     models::{
-        canonical_e3_id, e3_id_to_u256, ArchivePage, ArchiveRequest, GetRoundRequest, JsonResponse,
-        PreviousCiphertextRequest, PreviousCiphertextResponse, RoundRequestWithRequester,
-        WebhookPayload,
+        canonical_e3_id, e3_id_to_u256, GetRoundRequest, JsonResponse, PreviousCiphertextRequest,
+        PreviousCiphertextResponse, RoundRequestWithRequester, WebhookPayload,
     },
     rate_limit::ChainRateLimiter,
 };
@@ -30,7 +29,6 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
         web::scope("/state")
             .route("/result", web::post().to(get_round_result))
             .route("/all", web::post().to(get_all_round_results))
-            .route("/archive", web::post().to(get_archive_page))
             .route("/lite", web::post().to(get_round_state_lite))
             // The handler verifies the compute proof on Ethereum before it creates an Avail job.
             // Valid retries are idempotent, so this endpoint needs no separate caller identity.
@@ -290,40 +288,6 @@ async fn get_all_round_results(
     HttpResponse::Ok().json(states)
 }
 
-async fn get_archive_page(
-    data: web::Json<ArchiveRequest>,
-    store: web::Data<AppData>,
-) -> impl Responder {
-    let before = match data.before() {
-        Ok(before) => before,
-        Err(error) => return HttpResponse::BadRequest().body(error.to_string()),
-    };
-    let (ids, next_cursor) = match store
-        .current_round()
-        .get_archive_round_ids(&data.requesters, before, data.limit)
-        .await
-    {
-        Ok(page) => page,
-        Err(error) => {
-            error!("Could not read the archive index: {error}");
-            return HttpResponse::InternalServerError().body("Could not read the archive index");
-        }
-    };
-    let mut items = Vec::with_capacity(ids.len());
-    for id in ids {
-        match store.e3(id).try_get_web_result_request().await {
-            Ok(Some(summary)) => items.push(summary),
-            Ok(None) => {}
-            Err(error) => {
-                error!("Could not read an archive summary: {error}");
-                return HttpResponse::InternalServerError()
-                    .body("Could not read an archive summary");
-            }
-        }
-    }
-    HttpResponse::Ok().json(ArchivePage { items, next_cursor })
-}
-
 /// Get the state for a given round
 ///
 /// # Arguments
@@ -402,156 +366,5 @@ async fn handle_get_eligible_addresses(
             error!("Error getting eligible addresses for {e3_id}: {e:?}");
             HttpResponse::InternalServerError().body("Failed to get eligible addresses")
         }
-    }
-}
-
-#[cfg(test)]
-mod archive_tests {
-    use super::setup_routes;
-    use crate::server::{app_data::AppData, database::SledDB};
-    use actix_web::{http::StatusCode, test, web, App};
-    use e3_sdk::{
-        evm_helpers::contracts::CommitteeSize,
-        indexer::{models::E3, DataStore, SharedStore},
-    };
-    use serde_json::{json, Value};
-    use std::sync::Arc;
-    use tokio::sync::RwLock;
-
-    const FULL_WIDTH_ID: &str = "340282366920938463463374607431768211456";
-
-    async fn fixture() -> (web::Data<AppData>, SharedStore<SledDB>) {
-        let db = SledDB {
-            db: sled::Config::new().temporary(true).open().unwrap(),
-        };
-        let mut store = SharedStore::new(Arc::new(RwLock::new(db)));
-        store
-            .insert(
-                "_e3:round_index",
-                &json!({
-                    "ids": [FULL_WIDTH_ID, "1", "2"], "schema_version": 1,
-                    "requesters": {"requester": [0, 2], "other": [1]}
-                }),
-            )
-            .await
-            .unwrap();
-        let crisp = json!({
-            "emojis": ["one", "two"], "start_time": 0, "end_time": 100,
-            "status": "Finished", "tally": ["7", "3"], "token_holder_hashes": [],
-            "eligible_addresses": [], "token_address": "token", "balance_threshold": "1",
-            "ciphertext_inputs": [], "requester": "requester", "num_options": "2",
-            "credit_mode": 0, "credits": "1"
-        });
-        for id in [FULL_WIDTH_ID, "2"] {
-            store
-                .insert(&format!("_e3:crisp:{id}"), &crisp)
-                .await
-                .unwrap();
-        }
-        store
-            .insert("_e3:1", &"unselected invalid record")
-            .await
-            .unwrap();
-        let e3 = E3 {
-            chain_id: 1,
-            id: FULL_WIDTH_ID.into(),
-            input_window: [0, 100],
-            ciphertext_inputs: vec![],
-            ciphertext_output: vec![],
-            ciphertext_output_reference: None,
-            ciphertext_commitment: vec![],
-            committee_public_key: vec![1],
-            committee_public_key_hash: vec![],
-            e3_params: vec![],
-            custom_params: vec![],
-            interfold_address: "contract".into(),
-            encryption_scheme_id: vec![],
-            crypto_config_id: vec![],
-            plaintext_output: vec![],
-            request_block: 1,
-            seed: [0; 32],
-            committee_size: CommitteeSize::Minimum,
-            requester: "requester".into(),
-        };
-        store
-            .insert(&format!("_e3:{FULL_WIDTH_ID}"), &e3)
-            .await
-            .unwrap();
-        (web::Data::new(AppData::new(store.clone())), store)
-    }
-
-    #[actix_web::test]
-    async fn archive_http_pages_pending_rounds_and_returns_full_width_summary_ids() {
-        let (data, _) = fixture().await;
-        let app = test::init_service(App::new().app_data(data).configure(setup_routes)).await;
-        let first: Value = test::call_and_read_body_json(
-            &app,
-            test::TestRequest::post()
-                .uri("/state/archive")
-                .set_json(json!({"requesters": ["REQUESTER"], "limit": 1}))
-                .to_request(),
-        )
-        .await;
-        assert_eq!(first, json!({"items": [], "next_cursor": "v1:2"}));
-        let second: Value = test::call_and_read_body_json(
-            &app,
-            test::TestRequest::post()
-                .uri("/state/archive")
-                .set_json(json!({
-                    "requesters": ["requester"], "limit": 1, "cursor": first["next_cursor"]
-                }))
-                .to_request(),
-        )
-        .await;
-        assert_eq!(
-            second,
-            json!({"items": [{
-            "round_id": FULL_WIDTH_ID, "tally": ["7", "3"], "option_1_emoji": "one",
-            "option_2_emoji": "two", "total_votes": 0, "end_time": 100, "requester": "requester"
-        }], "next_cursor": null})
-        );
-    }
-
-    #[actix_web::test]
-    async fn archive_http_reports_bad_requests_and_store_failures() {
-        let (data, mut store) = fixture().await;
-        let app = test::init_service(App::new().app_data(data).configure(setup_routes)).await;
-        for body in [
-            json!({"limit": 0}),
-            json!({"limit": 51}),
-            json!({"cursor": "v2:1"}),
-        ] {
-            let response = test::call_service(
-                &app,
-                test::TestRequest::post()
-                    .uri("/state/archive")
-                    .set_json(body)
-                    .to_request(),
-            )
-            .await;
-            assert_eq!(response.status(), StatusCode::BAD_REQUEST);
-        }
-        let response = test::call_service(
-            &app,
-            test::TestRequest::post()
-                .uri("/state/archive")
-                .set_json(json!({"requesters": ["other"]}))
-                .to_request(),
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
-        store
-            .insert("_e3:round_index", &"invalid index")
-            .await
-            .unwrap();
-        let response = test::call_service(
-            &app,
-            test::TestRequest::post()
-                .uri("/state/archive")
-                .set_json(json!({}))
-                .to_request(),
-        )
-        .await;
-        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
     }
 }

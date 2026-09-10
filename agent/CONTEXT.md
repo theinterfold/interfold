@@ -59,9 +59,8 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Install / build all         | `pnpm i` · `pnpm build`                                                                                                                            |
 | Build Rust                  | `pnpm rust:build` (cargo `--locked --release`; prebuilds EVM fixtures)                                                                             |
-| Test everything             | `pnpm test` (EVM, Rust, required proof/slashing suites, SDK, web, Noir)                                                                            |
+| Test everything             | `pnpm test` (EVM, Rust, required proof/slashing suites, SDK, Noir)                                                                                 |
 | Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                                                            |
-| Fast app tests              | `pnpm test:web` (React SDK, dashboard, CRISP client, no circuit preparation)                                                                       |
 | SDK proof verification      | `pnpm sdk:test:proofs` (prepare circuits, generate one proof, verify bindings and reject tampering)                                                |
 | Prepared SDK proof tests    | `pnpm sdk:test:proofs:prepared` (reuse the current SDK build or prepared circuit set)                                                              |
 | Rust proof integration      | `pnpm rust:test:proofs` (prepared insecure-512/minimum circuits and `bb`)                                                                          |
@@ -75,7 +74,7 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | Prepare release branch      | `pnpm bump:versions X.Y.Z`                                                                                                                         |
 | Tag merged release          | `pnpm release:tag X.Y.Z` from updated `main`                                                                                                       |
 
-## Test preparation and app reads
+## Test preparation
 
 `pnpm sdk:test` runs the fast SDK suites without circuit preparation. The proof API tests mock the
 prover boundary. They do not claim to verify cryptographic proofs. The separate proof suite verifies
@@ -88,24 +87,6 @@ consistent set of inner and recursive circuits. Before `pnpm rust:test:slashing`
 `pnpm evm:build`. The named Rust integration suites fail if a required tool or artifact is missing.
 Ordinary Rust test runs report these integration tests as ignored. CI explicitly selects them. The
 full test command reuses the prepared circuits for SDK proof verification.
-
-The dashboard keeps event cursors per client and deployment. It validates the previous block hash
-before extending history. A reorg or an earlier requested height clears cached history and terminal
-state. Failed or cancelled refreshes commit neither cursors nor cached values. Only on-chain
-`Complete` and `Failed` stages stop stage polling. Display-time deadline estimates do not.
-
-CRISP serves archive pages at `POST /state/archive`. The request accepts `requesters`, an optional
-`cursor`, and `limit` (default 12, maximum 50). The response contains `items` and `next_cursor`.
-Each item is a lightweight result summary. A page reads at most `limit` round pairs after requester
-filtering. Rounds without verified public-key state consume a position but produce no item. The
-client follows the next cursor even when a page contains no items.
-
-Archive cursors use append-only round-index positions, not E3 IDs. New rounds do not shift an older
-page. Requester matching is case-insensitive. Round-index schema 1 adds requester positions to the
-existing JSON index. Startup backfills legacy indexes once and retains concurrent appends. A failed
-backfill leaves the legacy version unchanged. Unsupported future versions fail explicitly. Existing
-`/state/all` clients remain compatible. Countdown estimates use a shared chain clock and local
-display ticks. Contracts still enforce voting deadlines.
 
 ## Chain-Specific BFV Config
 

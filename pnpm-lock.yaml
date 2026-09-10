@@ -222,9 +222,6 @@ importers:
       '@types/react-syntax-highlighter':
         specifier: ^15.5.11
         version: 15.5.13
-      '@types/react-test-renderer':
-        specifier: ^18.3.0
-        version: 18.3.1
       '@vitejs/plugin-react':
         specifier: ^4.2.1
         version: 4.7.0(vite@5.4.21(@types/node@22.7.5))
@@ -243,9 +240,6 @@ importers:
       prettier-plugin-tailwindcss:
         specifier: ^0.5.13
         version: 0.5.14(@trivago/prettier-plugin-sort-imports@4.3.0(prettier@3.6.2))(prettier@3.6.2)
-      react-test-renderer:
-        specifier: 18.3.1
-        version: 18.3.1(react@18.3.1)
       tailwindcss:
         specifier: ^3.4.2
         version: 3.4.19(tsx@4.20.6)(yaml@2.8.2)
@@ -255,9 +249,6 @@ importers:
       vite:
         specifier: ^5.2.0
         version: 5.4.21(@types/node@22.7.5)
-      vitest:
-        specifier: 1.6.1
-        version: 1.6.1(@types/node@22.7.5)
 
   examples/CRISP/packages/crisp-contracts:
     dependencies:
@@ -625,9 +616,6 @@ importers:
       vite:
         specifier: ^5.4.0
         version: 5.4.21(@types/node@22.7.5)
-      vitest:
-        specifier: 1.6.1
-        version: 1.6.1(@types/node@22.7.5)
 
   packages/interfold-mcp:
     dependencies:
@@ -715,21 +703,12 @@ importers:
       '@types/react':
         specifier: ^18.2.0
         version: 18.3.31
-      '@types/react-test-renderer':
-        specifier: ^18.3.0
-        version: 18.3.1
-      react-test-renderer:
-        specifier: 18.3.1
-        version: 18.3.1(react@18.3.1)
       tsup:
         specifier: 8.5.0
         version: 8.5.0(@microsoft/api-extractor@7.58.12(@types/node@22.7.5))(@swc/core@1.15.46)(jiti@1.21.7)(postcss@8.5.25)(tsx@4.20.6)(typescript@5.8.3)(yaml@2.8.2)
       typescript:
         specifier: 5.8.3
         version: 5.8.3
-      vitest:
-        specifier: 1.6.1
-        version: 1.6.1(@types/node@22.7.5)
 
   packages/interfold-sdk:
     dependencies:
@@ -848,7 +827,7 @@ importers:
         version: 5.0.2(@openzeppelin/contracts@5.3.0)
       '@risc0/ethereum':
         specifier: file:lib/risc0-ethereum
-        version: file:templates/default/lib/risc0-ethereum
+        version: risc0-ethereum@file:templates/default/lib/risc0-ethereum
       '@types/chai':
         specifier: ^4.2.0
         version: 4.3.20
@@ -3409,9 +3388,6 @@ packages:
   '@reown/appkit@1.7.8':
     resolution: {integrity: sha512-51kTleozhA618T1UvMghkhKfaPcc9JlKwLJ5uV+riHyvSoWPKPRIa5A6M1Wano5puNyW0s3fwywhyqTHSilkaA==}
 
-  '@risc0/ethereum@file:templates/default/lib/risc0-ethereum':
-    resolution: {directory: templates/default/lib/risc0-ethereum, type: directory}
-
   '@rolldown/pluginutils@1.0.0-beta.27':
     resolution: {integrity: sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA==}
 
@@ -4498,9 +4474,6 @@ packages:
 
   '@types/react-syntax-highlighter@15.5.13':
     resolution: {integrity: sha512-uLGJ87j6Sz8UaBAooU0T6lWJ0dBmjZgN1PZTrj05TNql2/XpC6+4HhMT5syIdFUUt+FASfCeLLv4kBygNU+8qA==}
-
-  '@types/react-test-renderer@18.3.1':
-    resolution: {integrity: sha512-vAhnk0tG2eGa37lkU9+s5SoroCsRI08xnsWFiAXOuPH2jqzMbcXvKExXViPi1P5fIklDeCvXqyrdmipFaSkZrA==}
 
   '@types/react@18.3.31':
     resolution: {integrity: sha512-vfEqpXTvwT91yhmwdfouStN2hSKwTvyRs8qpLfADyrq/kxDw0hZM7Wk9Ug1FELj8hIby+S/+kQCSRFF32nv2Qw==}
@@ -9163,20 +9136,10 @@ packages:
     peerDependencies:
       react: '>=16.8'
 
-  react-shallow-renderer@16.15.0:
-    resolution: {integrity: sha512-oScf2FqQ9LFVQgA73vr86xl2NaOIX73rh+YFqcOp68CWj56tSfgtGKrEbyhCj0rSijyG9M1CYprTh39fBi5hzA==}
-    peerDependencies:
-      react: ^16.0.0 || ^17.0.0 || ^18.0.0
-
   react-syntax-highlighter@15.6.6:
     resolution: {integrity: sha512-DgXrc+AZF47+HvAPEmn7Ua/1p10jNoVZVI/LoPiYdtY+OM+/nG5yefLHKJwdKqY1adMuHFbeyBaG9j64ML7vTw==}
     peerDependencies:
       react: '>= 0.14.0'
-
-  react-test-renderer@18.3.1:
-    resolution: {integrity: sha512-KkAgygexHUkQqtvvx/otwxtuFu5cVjfzTCtjXLH9boS19/Nbtg84zS7wIQn39G8IlrhThBpQsMKkq5ZHZIYFXA==}
-    peerDependencies:
-      react: ^18.3.1
 
   react-transition-state@1.1.5:
     resolution: {integrity: sha512-ITY2mZqc2dWG2eitJkYNdcSFW8aKeOlkL2A/vowRrLL8GH3J6Re/SpD/BLvQzrVOTqjsP0b5S9N10vgNNzwMUQ==}
@@ -9404,6 +9367,9 @@ packages:
   ripemd160@2.0.3:
     resolution: {integrity: sha512-5Di9UC0+8h1L6ZD2d7awM7E/T4uA1fJRlx6zk/NvdCCVEoAnFqvHmCuNeIKoCeIixBX/q8uM+6ycDvF8woqosA==}
     engines: {node: '>= 0.8'}
+
+  risc0-ethereum@file:templates/default/lib/risc0-ethereum:
+    resolution: {directory: templates/default/lib/risc0-ethereum, type: directory}
 
   robust-predicates@3.0.3:
     resolution: {integrity: sha512-NS3levdsRIUOmiJ8FZWCP7LG3QpJyrs/TE0Zpf1yvZu8cAJJ6QMW92H1c7kWpdIHo8RvmLxN/o2JXTKHp74lUA==}
@@ -14175,8 +14141,6 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@risc0/ethereum@file:templates/default/lib/risc0-ethereum': {}
-
   '@rolldown/pluginutils@1.0.0-beta.27': {}
 
   '@rollup/plugin-inject@5.0.5(rollup@4.62.3)':
@@ -15441,10 +15405,6 @@ snapshots:
       '@types/react': 18.3.31
 
   '@types/react-syntax-highlighter@15.5.13':
-    dependencies:
-      '@types/react': 18.3.31
-
-  '@types/react-test-renderer@18.3.1':
     dependencies:
       '@types/react': 18.3.31
 
@@ -21608,12 +21568,6 @@ snapshots:
       '@remix-run/router': 1.23.3
       react: 18.3.1
 
-  react-shallow-renderer@16.15.0(react@18.3.1):
-    dependencies:
-      object-assign: 4.1.1
-      react: 18.3.1
-      react-is: 18.3.1
-
   react-syntax-highlighter@15.6.6(react@18.3.1):
     dependencies:
       '@babel/runtime': 7.29.7
@@ -21623,13 +21577,6 @@ snapshots:
       prismjs: 1.30.0
       react: 18.3.1
       refractor: 3.6.0
-
-  react-test-renderer@18.3.1(react@18.3.1):
-    dependencies:
-      react: 18.3.1
-      react-is: 18.3.1
-      react-shallow-renderer: 16.15.0(react@18.3.1)
-      scheduler: 0.23.2
 
   react-transition-state@1.1.5(react-dom@18.3.1(react@18.3.1))(react@18.3.1):
     dependencies:
@@ -21893,6 +21840,8 @@ snapshots:
     dependencies:
       hash-base: 3.1.2
       inherits: 2.0.4
+
+  risc0-ethereum@file:templates/default/lib/risc0-ethereum: {}
 
   robust-predicates@3.0.3: {}
 

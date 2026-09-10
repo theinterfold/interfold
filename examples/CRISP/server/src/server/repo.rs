@@ -15,49 +15,10 @@ use eyre::Result;
 use fhe::bfv::BfvParameters;
 use log::info;
 use num_bigint::BigUint;
-use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Default, serde::Deserialize, serde::Serialize)]
 struct RoundIndex {
     ids: Vec<String>,
-    #[serde(default)]
-    schema_version: u8,
-    #[serde(default)]
-    requesters: BTreeMap<String, BTreeSet<usize>>,
-}
-
-impl RoundIndex {
-    fn page(
-        &self,
-        requesters: &[String],
-        before: Option<usize>,
-        limit: usize,
-    ) -> (Vec<String>, Option<String>) {
-        let end = before.unwrap_or(self.ids.len()).min(self.ids.len());
-        let selected: Vec<usize> = if requesters.is_empty() {
-            (0..end).rev().take(limit + 1).collect()
-        } else {
-            let positions: BTreeSet<usize> = requesters
-                .iter()
-                .filter_map(|requester| self.requesters.get(&requester.to_lowercase()))
-                .flat_map(|positions| positions.range(..end).rev().take(limit + 1).copied())
-                .collect();
-            positions.into_iter().rev().take(limit + 1).collect()
-        };
-        let next = if selected.len() > limit {
-            selected
-                .get(limit - 1)
-                .map(|position| format!("v1:{position}"))
-        } else {
-            None
-        };
-        let ids = selected
-            .into_iter()
-            .take(limit)
-            .map(|position| self.ids[position].clone())
-            .collect();
-        (ids, next)
-    }
 }
 
 pub struct CurrentRoundRepository<S: DataStore> {
@@ -80,110 +41,18 @@ impl<S: DataStore> CurrentRoundRepository<S> {
 
     pub async fn record_round(&mut self, e3_id: impl ToString) -> Result<()> {
         let e3_id = e3_id.to_string();
-        let requester = CrispE3Repository::new(self.store.clone(), &e3_id)
-            .get_crisp()
-            .await?
-            .requester
-            .to_lowercase();
         let key = self.round_index_key();
-        self.read_round_index().await?;
         self.store
             .modify(&key, |index: Option<RoundIndex>| {
-                let mut index = index.unwrap_or_else(|| RoundIndex {
-                    schema_version: 1,
-                    ..Default::default()
-                });
-                let position = if let Some(position) = index.ids.iter().position(|id| id == &e3_id)
-                {
-                    position
-                } else {
+                let mut index = index.unwrap_or_default();
+                if !index.ids.contains(&e3_id) {
                     index.ids.push(e3_id.clone());
-                    index.ids.len() - 1
-                };
-                index
-                    .requesters
-                    .entry(requester.clone())
-                    .or_default()
-                    .insert(position);
+                }
                 Some(index)
             })
             .await
             .map_err(|_| eyre::eyre!("Could not record round in '{key}'"))?;
         Ok(())
-    }
-
-    async fn read_round_index(&self) -> Result<RoundIndex> {
-        let index = self
-            .store
-            .get::<RoundIndex>(&self.round_index_key())
-            .await
-            .map_err(|error| eyre::eyre!("Could not read the round index: {error}"))?
-            .unwrap_or_else(|| RoundIndex {
-                schema_version: 1,
-                ..Default::default()
-            });
-        eyre::ensure!(
-            index.schema_version <= 1,
-            "Unsupported round index schema {}. Use a compatible server.",
-            index.schema_version
-        );
-        Ok(index)
-    }
-
-    /// Add requester positions to legacy JSON records without changing round order.
-    pub async fn ensure_requester_index(&self) -> Result<()> {
-        let index = self.read_round_index().await?;
-        if index.schema_version == 1 {
-            return Ok(());
-        }
-        let mut requesters: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
-        for (position, id) in index.ids.iter().enumerate() {
-            if let Some(round) = CrispE3Repository::new(self.store.clone(), id)
-                .try_get_crisp()
-                .await?
-            {
-                requesters
-                    .entry(round.requester.to_lowercase())
-                    .or_default()
-                    .insert(position);
-            }
-        }
-        // Merge under the store lock so concurrent appends are retained.
-        self.store
-            .clone()
-            .modify(&self.round_index_key(), |current: Option<RoundIndex>| {
-                current.map(|mut current| {
-                    for (requester, positions) in &requesters {
-                        current
-                            .requesters
-                            .entry(requester.clone())
-                            .or_default()
-                            .extend(positions);
-                    }
-                    current.schema_version = 1;
-                    current
-                })
-            })
-            .await
-            .map_err(|error| eyre::eyre!("Could not migrate the requester index: {error}"))?;
-        Ok(())
-    }
-
-    pub async fn get_archive_round_ids(
-        &self,
-        requesters: &[String],
-        before: Option<usize>,
-        limit: usize,
-    ) -> Result<(Vec<String>, Option<String>)> {
-        eyre::ensure!(
-            (1..=50).contains(&limit),
-            "Archive limit must be between 1 and 50"
-        );
-        self.ensure_requester_index().await?;
-        Ok(self
-            .read_round_index()
-            .await?
-            .page(requesters, before, limit))
     }
 
     pub async fn get_round_ids(&self) -> Result<Vec<String>> {
@@ -219,8 +88,15 @@ impl<S: DataStore> CurrentRoundRepository<S> {
         &self,
         requester: String,
     ) -> Result<Option<CurrentRound>> {
-        let (ids, _) = self.get_archive_round_ids(&[requester], None, 1).await?;
-        Ok(ids.into_iter().next().map(|id| CurrentRound { id }))
+        for round_id in self.get_round_ids().await?.into_iter().rev() {
+            let crisp_repo = CrispE3Repository::new(self.store.clone(), &round_id);
+
+            if crisp_repo.is_requested_by(&requester).await? {
+                return Ok(Some(CurrentRound { id: round_id }));
+            }
+        }
+
+        Ok(None)
     }
 
     fn current_round_key(&self) -> String {
@@ -293,6 +169,14 @@ impl<S: DataStore> CrispE3Repository<S> {
     /// round".
     pub async fn has_crisp_record(&self) -> Result<bool> {
         Ok(self.try_get_crisp().await?.is_some())
+    }
+
+    /// Whether the request-time CRISP record belongs to `requester`.
+    pub async fn is_requested_by(&self, requester: &str) -> Result<bool> {
+        Ok(self
+            .try_get_crisp()
+            .await?
+            .is_some_and(|round| round.requester.eq_ignore_ascii_case(requester)))
     }
 
     /// Whether the generic indexer stored a verified committee public key for this round.
@@ -637,11 +521,11 @@ impl<S: DataStore> CrispE3Repository<S> {
         };
         Ok(Some(WebResultRequest {
             round_id: e3.id,
-            total_votes: count_active_slots(&e3_crisp.input_slots),
             tally: e3_crisp.tally,
             option_1_emoji: e3_crisp.emojis[0].clone(),
             option_2_emoji: e3_crisp.emojis[1].clone(),
             end_time: e3.input_window[1],
+            total_votes: self.get_vote_count().await?,
             requester: e3_crisp.requester,
         }))
     }
@@ -914,10 +798,10 @@ pub fn parse_slot_address(address: &str) -> Result<[u8; 20]> {
 mod tests {
     use super::{
         count_active_slots, parse_slot_address, snapshot_block, CrispE3Repository,
-        CurrentRoundRepository, RoundIndex,
+        CurrentRoundRepository,
     };
     use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp};
-    use e3_sdk::indexer::{DataStore, InMemoryStore, SharedStore};
+    use e3_sdk::indexer::{InMemoryStore, SharedStore};
     use std::sync::Arc;
     use tokio::sync::RwLock;
 
@@ -948,132 +832,6 @@ mod tests {
             credits: Some("1".to_string()),
             snapshot_block: 1,
             census_mode: CensusMode::Token,
-        }
-    }
-
-    #[tokio::test]
-    async fn archive_migrates_legacy_index_and_retains_cursor_order_after_replay_and_restart() {
-        let mut store = test_store();
-        let legacy: RoundIndex =
-            serde_json::from_str(include_str!("../../tests/fixtures/round-index-v0.json")).unwrap();
-        for (position, id) in legacy.ids.iter().enumerate() {
-            CrispE3Repository::new(store.clone(), id)
-                .set_crisp(crisp_round(
-                    if position == 1 { "other" } else { "requester" },
-                    "Requested",
-                ))
-                .await
-                .unwrap();
-        }
-        store.insert("_e3:round_index", &legacy).await.unwrap();
-        let mut current = CurrentRoundRepository::new(store.clone());
-        current.ensure_requester_index().await.unwrap();
-        let migrated = current.read_round_index().await.unwrap();
-        assert_eq!(migrated.schema_version, 1);
-        assert_eq!(migrated.ids, legacy.ids);
-        let (first, cursor) = current
-            .get_archive_round_ids(&["REQUESTER".into()], None, 1)
-            .await
-            .unwrap();
-        assert_eq!(first, ["3"]);
-        assert_eq!(cursor.as_deref(), Some("v1:2"));
-
-        CrispE3Repository::new(store.clone(), "4")
-            .set_crisp(crisp_round("requester", "Requested"))
-            .await
-            .unwrap();
-        current.record_round("4").await.unwrap();
-        current.record_round("3").await.unwrap();
-        let restarted = CurrentRoundRepository::new(store.clone());
-        let (second, next) = restarted
-            .get_archive_round_ids(&["requester".into()], Some(2), 1)
-            .await
-            .unwrap();
-        assert_eq!(second, ["1"]);
-        assert_eq!(next, None);
-        let (all, _) = restarted
-            .get_archive_round_ids(&[], None, 50)
-            .await
-            .unwrap();
-        assert_eq!(
-            all,
-            ["4", "3", "340282366920938463463374607431768211456", "1"]
-        );
-
-        // A page reads the index, not the historical CRISP records.
-        for id in &all {
-            store
-                .insert(&format!("_e3:crisp:{id}"), &"invalid round record")
-                .await
-                .unwrap();
-        }
-        assert_eq!(
-            restarted
-                .get_archive_round_ids(&["requester".into()], None, 2)
-                .await
-                .unwrap()
-                .0,
-            ["4", "3"]
-        );
-    }
-
-    #[tokio::test]
-    async fn archive_migration_is_idempotent_and_does_not_stamp_a_failed_backfill() {
-        let mut store = test_store();
-        let legacy: RoundIndex =
-            serde_json::from_str(include_str!("../../tests/fixtures/round-index-v0.json")).unwrap();
-        store.insert("_e3:round_index", &legacy).await.unwrap();
-        store
-            .insert("_e3:crisp:1", &"invalid round record")
-            .await
-            .unwrap();
-        let current = CurrentRoundRepository::new(store.clone());
-        assert!(current.ensure_requester_index().await.is_err());
-        assert_eq!(current.read_round_index().await.unwrap().schema_version, 0);
-        CrispE3Repository::new(store.clone(), "1")
-            .set_crisp(crisp_round("requester", "Requested"))
-            .await
-            .unwrap();
-        current.ensure_requester_index().await.unwrap();
-        current.ensure_requester_index().await.unwrap();
-        assert_eq!(
-            current
-                .get_archive_round_ids(&["requester".into(), "REQUESTER".into()], None, 12)
-                .await
-                .unwrap()
-                .0,
-            ["1"]
-        );
-
-        let unsupported = RoundIndex {
-            schema_version: 2,
-            ..Default::default()
-        };
-        store.insert("_e3:round_index", &unsupported).await.unwrap();
-        assert!(current
-            .ensure_requester_index()
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("Unsupported round index schema"));
-    }
-
-    #[test]
-    fn archive_request_rejects_invalid_limits_and_cursors() {
-        use crate::server::models::ArchiveRequest;
-        let valid: ArchiveRequest =
-            serde_json::from_str(r#"{"cursor":"v1:123","requesters":[]}"#).unwrap();
-        assert_eq!(valid.before().unwrap(), Some(123));
-        assert_eq!(valid.limit, 12);
-        for input in [
-            r#"{"limit":0}"#,
-            r#"{"limit":51}"#,
-            r#"{"cursor":"v2:3"}"#,
-            r#"{"cursor":"v1:-1"}"#,
-            r#"{"cursor":"v1:184467440737095516160"}"#,
-        ] {
-            let request: ArchiveRequest = serde_json::from_str(input).unwrap();
-            assert!(request.before().is_err(), "{input}");
         }
     }
 
