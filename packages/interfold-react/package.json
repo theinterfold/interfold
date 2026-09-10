@@ -15,7 +15,6 @@
     "dist"
   ],
   "scripts": {
-    "test": "vitest --run",
     "build": "tsup",
     "dev": "tsup --watch",
     "clean": "rm -rf dist",
@@ -47,9 +46,6 @@
     "viem": "2.30.6"
   },
   "devDependencies": {
-    "vitest": "1.6.1",
-    "react-test-renderer": "18.3.1",
-    "@types/react-test-renderer": "^18.3.0",
     "@interfold/config": "workspace:*",
     "@types/react": "^18.2.0",
     "tsup": "^8.5.0",

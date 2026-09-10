@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import React, { Fragment, useEffect, useMemo, useState } from 'react'
+import React, { Fragment, useEffect, useMemo } from 'react'
 import CardContent from '@/components/Cards/CardContent'
 import VotesBadge from '@/components/VotesBadge'
 import PollCardResult from '@/components/Cards/PollCardResult'
@@ -22,7 +22,6 @@ const PollResult: React.FC = () => {
   const { roundId, type } = params
   const { pastPolls, getWebResultByRound, pollResult, setPollResult } = useVoteManagementContext()
   const { roundEndDate, txUrl, roundState } = useVoteManagementContext()
-  const [error, setError] = useState<string | null>(null)
 
   const activeTotalCount = type === 'confirmation' ? roundState?.vote_count : pollResult?.totalVotes
 
@@ -38,29 +37,21 @@ const PollResult: React.FC = () => {
 
   useEffect(() => {
     if (pollResult || confirmationPoll || !roundId) return
-    let cancelled = false
 
     const fetchPoll = async () => {
-      setError(null)
-      try {
-        const fetched = await getWebResultByRound(roundId)
-        if (!cancelled && fetched) setPollResult(convertPollData([fetched])[0])
-      } catch {
-        if (!cancelled) setError('Could not load the result. Refresh the page to retry.')
+      const fetched = await getWebResultByRound(roundId)
+      if (fetched) {
+        setPollResult(convertPollData([fetched])[0])
       }
     }
-    void fetchPoll()
-    return () => {
-      cancelled = true
-    }
+    fetchPoll()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pastPolls, roundId, confirmationPoll, pollResult])
 
   return (
     <EditorialShell className='flex w-full flex-1 flex-col'>
       <section className='pad-section col' style={{ flex: 1, alignItems: 'center', gap: 36 }}>
-        {error && <p role='alert'>{error}</p>}
-        {loading && !error && (
+        {loading && (
           <div className='flex items-center justify-center'>
             <LoadingAnimation isLoading={loading} />
           </div>
