@@ -269,7 +269,9 @@ sequenceDiagram
     participant RandomnessProvider
     participant E3Program
     participant ComputeProvider
+    participant CiphertextVerifier
     participant DecryptionVerifier
+    participant Ciphernodes
 
     Users->>Interfold: request(parameters)
     Interfold->>E3Program: validate(e3ProgramParams)
@@ -291,23 +293,34 @@ sequenceDiagram
     Interfold->>Interfold: Set expiration and committeePublicKey
     Interfold-->>Users: success
 
-    Users->>Interfold: publishInput(e3Id, data)
-    Interfold->>E3Program: validateInput(msg.sender, data)
-    E3Program-->>Interfold: input, success
-    Interfold->>Interfold: Store input
-    Interfold-->>Users: success
+    Users->>CRISPServer: stage encrypted input + Noir proof
+    CRISPServer-->>Users: signed compact commitment
+    Users->>E3Program: publishInput(e3Id, commitment)
+    E3Program-->>Users: InputCommitted
+    CRISPServer->>Avail: submit_data(encryptedInput)
+    CRISPServer->>E3Program: finalizeInput(e3Id, VectorX receipt)
+    E3Program-->>CRISPServer: InputPublished
 
-    Users->>Interfold: publishCiphertextOutput(e3Id, data)
-    Interfold->>DecryptionVerifier: verify(e3Id, data)
-    DecryptionVerifier-->>Interfold: output, success
+    ComputeProvider-->>CRISPServer: aggregateCiphertext + RISC Zero proof
+    CRISPServer->>E3Program: verify output proof (read only)
+    CRISPServer->>Avail: submit_data(aggregateCiphertext)
+    CRISPServer->>Interfold: publishCiphertextOutput(e3Id, reference + VectorX receipt)
+    Interfold->>E3Program: verifyDataAvailability(contentHash, receipt)
+    Interfold->>CiphertextVerifier: verify compute proof
+    CiphertextVerifier-->>Interfold: success
+    Interfold->>E3Program: verify compute proof
+    E3Program-->>Interfold: success
     Interfold->>Interfold: Store ciphertextOutput
-    Interfold-->>Users: success
+    Interfold-->>CRISPServer: success
 
-    Users->>Interfold: publishPlaintextOutput(e3Id, data)
+    Ciphernodes->>Avail: retrieve aggregateCiphertext
+    Ciphernodes->>Interfold: publishPlaintextOutput(e3Id, data)
     Interfold->>E3Program: verify(e3Id, data)
     E3Program-->>Interfold: output, success
+    Interfold->>DecryptionVerifier: verify plaintext proof
+    DecryptionVerifier-->>Interfold: success
     Interfold->>Interfold: Store plaintextOutput
-    Interfold-->>Users: success
+    Interfold-->>Ciphernodes: success
 ```
 
 ## 🚀 Release Process

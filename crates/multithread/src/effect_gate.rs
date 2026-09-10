@@ -9,7 +9,7 @@
 use actix::{Actor, Context, Handler, Recipient};
 use e3_events::{
     ComputeRequestKind, E3Stage, E3id, Event, EventContextAccessors, EventSubscriber, EventType,
-    InterfoldEvent, InterfoldEventData,
+    InterfoldEvent, InterfoldEventData, ProofType, VerifyShareProofsRequest, ZkRequest,
 };
 use e3_utils::MAILBOX_LIMIT;
 use std::collections::{HashMap, HashSet};
@@ -36,16 +36,107 @@ pub(crate) struct ComputeEffectGate {
     enabled: bool,
     pending: HashMap<RequestKey, InterfoldEvent>,
     forwarded: HashSet<RequestKey>,
+    stages: HashMap<E3id, E3Stage>,
 }
 
 impl ComputeEffectGate {
-    fn new(target: Recipient<InterfoldEvent>) -> Self {
+    fn new(target: Recipient<InterfoldEvent>, initial_stages: HashMap<E3id, E3Stage>) -> Self {
         Self {
             target,
             enabled: false,
             pending: HashMap::new(),
             forwarded: HashSet::new(),
+            stages: initial_stages,
         }
+    }
+
+    fn stage_rank(stage: &E3Stage) -> u8 {
+        match stage {
+            E3Stage::None => 0,
+            E3Stage::Requested => 1,
+            E3Stage::CommitteeFinalized => 2,
+            E3Stage::KeyPublished => 3,
+            E3Stage::CiphertextReady => 4,
+            E3Stage::Complete => 5,
+            E3Stage::Failed => 6,
+        }
+    }
+
+    fn is_dkg_request(kind: &ComputeRequestKind) -> bool {
+        match kind {
+            ComputeRequestKind::TrBFV(request) => matches!(
+                request,
+                e3_trbfv::TrBFVRequest::GenEsiSss(_)
+                    | e3_trbfv::TrBFVRequest::GenPkShareAndSkSss(_)
+                    | e3_trbfv::TrBFVRequest::CalculateDecryptionKey(_)
+            ),
+            ComputeRequestKind::Zk(request) => {
+                matches!(
+                    request,
+                    ZkRequest::PkBfv(_)
+                        | ZkRequest::PkGeneration(_)
+                        | ZkRequest::ShareComputation(_)
+                        | ZkRequest::ShareEncryption(_)
+                        | ZkRequest::DkgShareDecryption(_)
+                        | ZkRequest::VerifyShareDecryptionProofs(_)
+                        | ZkRequest::PkAggregation(_)
+                        | ZkRequest::NodeDkgFold(_)
+                        | ZkRequest::NodesFoldStep(_)
+                        | ZkRequest::DkgAggregation(_)
+                ) || matches!(
+                    request,
+                    ZkRequest::VerifyShareProofs(request)
+                        if !Self::is_threshold_decryption_verification(request)
+                )
+            }
+        }
+    }
+
+    /// `VerifyShareProofs` carries both DKG proofs (C1-C3) and final
+    /// threshold-decryption proofs (C6). Inspect the signed proof type so a
+    /// lifecycle filter cannot discard valid C6 work after key publication.
+    fn is_threshold_decryption_verification(request: &VerifyShareProofsRequest) -> bool {
+        let mut proofs = request
+            .party_proofs
+            .iter()
+            .flat_map(|party| party.signed_proofs.iter());
+        let Some(first) = proofs.next() else {
+            return false;
+        };
+
+        first.payload.proof_type == ProofType::C6ThresholdShareDecryption
+            && proofs.all(|proof| proof.payload.proof_type == ProofType::C6ThresholdShareDecryption)
+    }
+
+    fn request_is_obsolete(&self, e3_id: &E3id, kind: &ComputeRequestKind) -> bool {
+        Self::request_is_obsolete_at_stage(self.stages.get(e3_id), kind)
+    }
+
+    fn request_is_obsolete_at_stage(stage: Option<&E3Stage>, kind: &ComputeRequestKind) -> bool {
+        match stage {
+            Some(E3Stage::Complete | E3Stage::Failed) => true,
+            Some(stage) if Self::stage_rank(stage) >= Self::stage_rank(&E3Stage::KeyPublished) => {
+                Self::is_dkg_request(kind)
+            }
+            _ => false,
+        }
+    }
+
+    fn record_stage(&mut self, e3_id: E3id, new_stage: E3Stage) {
+        let should_advance = self
+            .stages
+            .get(&e3_id)
+            .map(|current| Self::stage_rank(&new_stage) > Self::stage_rank(current))
+            .unwrap_or(true);
+        if should_advance {
+            self.stages.insert(e3_id.clone(), new_stage);
+        }
+
+        let current_stage = self.stages.get(&e3_id).cloned();
+        self.pending.retain(|(pending_id, kind), _| {
+            pending_id != &e3_id
+                || !Self::request_is_obsolete_at_stage(current_stage.as_ref(), kind)
+        });
     }
 
     /// Extract the dedup key from a ComputeRequest event, if it is one.
@@ -63,6 +154,10 @@ impl ComputeEffectGate {
     /// suppressed. Returns false if the key was already forwarded.
     fn forward(&mut self, event: InterfoldEvent) -> bool {
         if let Some(key) = Self::request_key(&event) {
+            if self.request_is_obsolete(&key.0, &key.1) {
+                debug!(e3_id = %key.0, "dropping compute effect made obsolete by lifecycle stage");
+                return false;
+            }
             if !self.forwarded.insert(key) {
                 debug!("dropping duplicate compute effect (already forwarded)");
                 return false;
@@ -72,8 +167,12 @@ impl ComputeEffectGate {
         true
     }
 
-    pub(crate) fn attach(bus: &BusHandle, target: Recipient<InterfoldEvent>) {
-        let gate = Self::new(target).start();
+    pub(crate) fn attach(
+        bus: &BusHandle,
+        target: Recipient<InterfoldEvent>,
+        initial_stages: HashMap<E3id, E3Stage>,
+    ) {
+        let gate = Self::new(target, initial_stages).start();
         bus.subscribe_all(
             &[
                 EventType::ComputeRequest,
@@ -141,12 +240,19 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
             }
             InterfoldEventData::ComputeRequest(_) => self.queue(event),
             InterfoldEventData::EffectsEnabled(_) => self.enable(),
-            InterfoldEventData::E3RequestComplete(complete) => self.cancel(&complete.e3_id),
-            InterfoldEventData::E3Failed(failed) => self.cancel(&failed.e3_id),
-            InterfoldEventData::E3StageChanged(stage)
-                if matches!(stage.new_stage, E3Stage::Complete | E3Stage::Failed) =>
-            {
-                self.cancel(&stage.e3_id)
+            InterfoldEventData::E3RequestComplete(complete) => {
+                self.record_stage(complete.e3_id.clone(), E3Stage::Complete);
+                self.cancel(&complete.e3_id);
+            }
+            InterfoldEventData::E3Failed(failed) => {
+                self.record_stage(failed.e3_id.clone(), E3Stage::Failed);
+                self.cancel(&failed.e3_id);
+            }
+            InterfoldEventData::E3StageChanged(stage) => {
+                self.record_stage(stage.e3_id.clone(), stage.new_stage.clone());
+                if matches!(stage.new_stage, E3Stage::Complete | E3Stage::Failed) {
+                    self.cancel(&stage.e3_id);
+                }
             }
             _ => {}
         }
@@ -158,9 +264,10 @@ mod tests {
     use super::*;
     use actix::{Message, ResponseFuture};
     use e3_events::{
-        ComputeRequest, CorrelationId, E3RequestComplete, EffectsEnabled,
-        EventConstructorWithTimestamp, EventSource, InterfoldEvent, PkBfvProofRequest, Unsequenced,
-        ZkRequest,
+        CircuitName, ComputeRequest, CorrelationId, E3RequestComplete, EffectsEnabled,
+        EventConstructorWithTimestamp, EventSource, InterfoldEvent, PartyProofsToVerify,
+        PkBfvProofRequest, Proof, ProofPayload, SignedProofPayload, Unsequenced,
+        VerifyShareProofsRequest, ZkRequest,
     };
     use e3_fhe_params::BfvPreset;
     use e3_utils::ArcBytes;
@@ -216,6 +323,46 @@ mod tests {
         .into_sequenced(1)
     }
 
+    fn share_verification_compute(
+        correlation_id: CorrelationId,
+        timestamp: u128,
+        proof_type: ProofType,
+        circuit: CircuitName,
+    ) -> InterfoldEvent {
+        let proof = SignedProofPayload {
+            payload: ProofPayload {
+                e3_id: E3id::new("4", 1),
+                proof_type,
+                proof: Proof::new(
+                    circuit,
+                    ArcBytes::from_bytes(&[1]),
+                    ArcBytes::from_bytes(&[2]),
+                ),
+            },
+            signature: ArcBytes::from_bytes(&[3]),
+        };
+        let request = ComputeRequest::zk(
+            ZkRequest::VerifyShareProofs(VerifyShareProofsRequest {
+                party_proofs: vec![PartyProofsToVerify {
+                    sender_party_id: 0,
+                    signed_proofs: vec![proof],
+                }],
+                params_preset: BfvPreset::default(),
+                committee_size: CiphernodesCommitteeSize::Micro,
+            }),
+            correlation_id,
+            E3id::new("4", 1),
+        );
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            request.into(),
+            None,
+            timestamp,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(1)
+    }
+
     fn effects_enabled() -> InterfoldEvent {
         InterfoldEvent::<Unsequenced>::new_with_timestamp(
             EffectsEnabled::new().into(),
@@ -244,7 +391,7 @@ mod tests {
     #[actix::test]
     async fn buffers_until_enabled_and_keeps_newest_semantic_retry() {
         let recorder = Recorder::default().start();
-        let gate = ComputeEffectGate::new(recorder.clone().recipient()).start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new()).start();
         let stale = CorrelationId::new();
         let regenerated = CorrelationId::new();
 
@@ -259,7 +406,7 @@ mod tests {
     #[actix::test]
     async fn terminal_e3_cancels_buffered_effects() {
         let recorder = Recorder::default().start();
-        let gate = ComputeEffectGate::new(recorder.clone().recipient()).start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new()).start();
 
         gate.send(compute(CorrelationId::new(), 10)).await.unwrap();
         gate.send(completed()).await.unwrap();
@@ -271,7 +418,7 @@ mod tests {
     #[actix::test]
     async fn drops_redriven_duplicate_after_enable() {
         let recorder = Recorder::default().start();
-        let gate = ComputeEffectGate::new(recorder.clone().recipient()).start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new()).start();
         let buffered = CorrelationId::new();
         let redriven = CorrelationId::new();
 
@@ -284,5 +431,47 @@ mod tests {
         // is suppressed — only one compute reaches the target.
         gate.send(compute(redriven, 40)).await.unwrap();
         assert_eq!(recorder.send(Received).await.unwrap(), vec![buffered]);
+    }
+
+    #[actix::test]
+    async fn key_published_snapshot_discards_obsolete_dkg_work() {
+        let recorder = Recorder::default().start();
+        let stages = HashMap::from([(E3id::new("4", 1), E3Stage::KeyPublished)]);
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), stages).start();
+
+        gate.send(compute(CorrelationId::new(), 10)).await.unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+        gate.send(compute(CorrelationId::new(), 40)).await.unwrap();
+
+        assert!(recorder.send(Received).await.unwrap().is_empty());
+    }
+
+    #[actix::test]
+    async fn key_published_snapshot_keeps_threshold_decryption_verification() {
+        let recorder = Recorder::default().start();
+        let stages = HashMap::from([(E3id::new("4", 1), E3Stage::CiphertextReady)]);
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), stages).start();
+        let dkg_correlation_id = CorrelationId::new();
+        let correlation_id = CorrelationId::new();
+
+        gate.send(share_verification_compute(
+            dkg_correlation_id,
+            5,
+            ProofType::C1PkGeneration,
+            CircuitName::PkGeneration,
+        ))
+        .await
+        .unwrap();
+        gate.send(share_verification_compute(
+            correlation_id,
+            10,
+            ProofType::C6ThresholdShareDecryption,
+            CircuitName::ThresholdShareDecryption,
+        ))
+        .await
+        .unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![correlation_id]);
     }
 }

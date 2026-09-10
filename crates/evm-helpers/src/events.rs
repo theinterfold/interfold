@@ -57,10 +57,32 @@ sol! {
     event CiphertextOutputPublished(uint256 indexed e3Id, bytes ciphertextOutput, bytes32 ciphertextCommitment);
 
     #[derive(Debug)]
+    event CiphertextOutputReferencePublished(
+        uint256 indexed e3Id,
+        bytes32 contentHash,
+        bytes32 ciphertextCommitment,
+        uint32 availabilityBlock,
+        uint128 availabilityLeafIndex
+    );
+
+    #[derive(Debug)]
     event PlaintextOutputPublished(uint256 indexed e3Id, bytes plaintextOutput, bytes proof);
 
     #[derive(Debug)]
     event CommitteePublished(uint256 indexed e3Id, address[] nodes, bytes publicKey, bytes32 pkCommitment, bytes proof);
+
+    #[derive(Debug)]
+    event CommitteePublicKeyChunkPublished(
+        uint256 indexed e3Id,
+        address indexed publisher,
+        bytes32 indexed candidateHash,
+        address[] nodes,
+        bytes32 pkCommitment,
+        uint16 chunkIndex,
+        uint16 chunkCount,
+        uint32 totalLength,
+        bytes chunk
+    );
 
     #[derive(Debug)]
     enum E3Stage {

@@ -24,17 +24,17 @@ use e3_aggregator::{
 use e3_config::{chain_config::ChainConfig, NetworkProfile};
 use e3_crypto::Cipher;
 use e3_data::{InMemStore, RepositoriesFactory};
-use e3_events::DkgFoldAttestationContext;
+use e3_events::{hlc::Hlc, DkgFoldAttestationContext};
 use e3_events::{
-    AggregateConfig, AggregateId, BusHandle, E3id, EventBus, EventBusConfig, EventSubscriber,
-    EventType, EvmEventConfig, InterfoldEvent,
+    AggregateConfig, AggregateId, BusHandle, E3Stage, E3id, EventBus, EventBusConfig,
+    EventSubscriber, EventType, EvmEventConfig, InterfoldEvent,
 };
 use e3_evm::{
     ensure_node_release, fetch_accusation_vote_validity, fetch_randomness_providers,
     BondingRegistrySolReader, CiphernodeRegistrySol, CiphernodeRegistrySolReader,
-    EvmChainGatewayHandle, InterfoldSolReader, InterfoldSolWriter, ProviderConfig,
-    RandomnessProviderSolReader, SlashingManagerSolReader, SlashingManagerSolWriter,
-    SlashingWriterRepositoryFactory,
+    DataAvailabilityCoordinator, DataAvailabilityRepositoryFactory, EvmChainGatewayHandle,
+    InterfoldSolReader, InterfoldSolWriter, ProviderConfig, RandomnessProviderSolReader,
+    SlashingManagerSolReader, SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
@@ -73,6 +73,7 @@ struct EvmStartupRecovery<'a> {
     dkg_fold_contexts_by_e3: &'a HashMap<E3id, DkgFoldAttestationContext>,
     active_aggregators: &'a HashMap<E3id, bool>,
     selected_party_ids: &'a HashMap<E3id, u64>,
+    lifecycle_stages: &'a HashMap<E3id, E3Stage>,
     committee_finalizer: &'a CommitteeFinalizerRecoveryState,
 }
 
@@ -597,6 +598,11 @@ impl CiphernodeBuilder {
             self.contract_components.slashing_manager,
         )
         .await?;
+        let lifecycle_stages = repositories
+            .e3_lifecycle()
+            .read()
+            .await?
+            .unwrap_or_default();
         let dkg_fold_contexts_by_e3 = load_dkg_fold_attestation_contexts(&repositories).await?;
 
         let mut provider_cache =
@@ -621,7 +627,9 @@ impl CiphernodeBuilder {
 
         // Resolve node address and enable the bus
         let addr = provider_cache.ensure_signer().await?.address().to_string();
-        let bus = event_system.handle()?.enable(&addr);
+        let bus = event_system
+            .handle()?
+            .enable_with_hlc(event_clock(&addr, &resolved_chain_ids));
 
         if self.logging {
             let logger_name = self.name.as_deref().unwrap_or("ciphernode");
@@ -673,6 +681,7 @@ impl CiphernodeBuilder {
                     dkg_fold_contexts_by_e3: &dkg_fold_contexts_by_e3,
                     active_aggregators: &selector_state.is_aggregator,
                     selected_party_ids: &selected_party_ids,
+                    lifecycle_stages: &lifecycle_stages,
                     committee_finalizer: &committee_finalizer_recovery,
                 },
             )
@@ -694,6 +703,7 @@ impl CiphernodeBuilder {
                 &dkg_fold_contexts_by_e3,
                 &accusation_vote_validity_by_chain,
                 &selector_state,
+                &lifecycle_stages,
             )
             .await?;
 
@@ -918,6 +928,7 @@ impl CiphernodeBuilder {
         dkg_fold_contexts_by_e3: &HashMap<e3_events::E3id, DkgFoldAttestationContext>,
         accusation_vote_validity_by_chain: &HashMap<u64, u64>,
         selector_state: &CiphernodeSelectorState,
+        lifecycle_stages: &HashMap<E3id, E3Stage>,
     ) -> Result<e3_request::E3RouterBuilder> {
         let recovered_selections = recovered_ciphernode_selections(selector_state, addr)?;
         let mut e3_builder =
@@ -945,7 +956,7 @@ impl CiphernodeBuilder {
 
         // ── Threshold keyshare + ZK actors ──
         if let Some(KeyshareKind::Threshold) = self.keyshare {
-            let _ = self.ensure_multithread(bus);
+            let _ = self.ensure_multithread(bus, lifecycle_stages);
             let backend = self
                 .zk_backend
                 .as_ref()
@@ -991,7 +1002,7 @@ impl CiphernodeBuilder {
             e3_builder = e3_builder.with(FheExtension::create(bus, &self.rng));
 
             info!("Setting up PublicKeyAggregationExtension");
-            let _ = self.ensure_multithread(bus);
+            let _ = self.ensure_multithread(bus, lifecycle_stages);
             e3_builder = e3_builder.with(PublicKeyAggregatorExtension::create(bus));
 
             if self.keyshare.is_none() {
@@ -1015,7 +1026,7 @@ impl CiphernodeBuilder {
         // ── Threshold plaintext aggregation ──
         if self.threshold_plaintext_agg {
             info!("Setting up ThresholdPlaintextAggregatorExtension");
-            let _ = self.ensure_multithread(bus);
+            let _ = self.ensure_multithread(bus, lifecycle_stages);
             e3_builder = e3_builder.with(ThresholdPlaintextAggregatorExtension::create(
                 bus,
                 sortition,
@@ -1108,7 +1119,11 @@ impl CiphernodeBuilder {
         NetworkPolicy::new(profile, deployments)
     }
 
-    fn ensure_multithread(&mut self, bus: &BusHandle) -> Addr<Multithread> {
+    fn ensure_multithread(
+        &mut self,
+        bus: &BusHandle,
+        lifecycle_stages: &HashMap<E3id, E3Stage>,
+    ) -> Addr<Multithread> {
         if let Some(cached) = self.multithread_cache.clone() {
             return cached;
         }
@@ -1131,6 +1146,7 @@ impl CiphernodeBuilder {
                 task_pool,
                 self.multithread_report.clone(),
                 backend,
+                lifecycle_stages.clone(),
             )
         } else {
             Multithread::attach(
@@ -1139,6 +1155,7 @@ impl CiphernodeBuilder {
                 self.cipher.clone(),
                 task_pool,
                 self.multithread_report.clone(),
+                lifecycle_stages.clone(),
             )
         };
 
@@ -1187,6 +1204,19 @@ fn validate_vrf_chain_id(chain_id: u64) -> Result<()> {
     Ok(())
 }
 
+fn event_clock(node_id: &str, chain_ids: &[u64]) -> Hlc {
+    let clock = Hlc::from_str(node_id);
+    // Local EVM tests advance block timestamps. Public chains keep the default drift fence.
+    if !chain_ids.is_empty()
+        && chain_ids
+            .iter()
+            .all(|chain_id| matches!(chain_id, 1_337 | 31_337))
+    {
+        return clock.with_max_drift(u64::MAX);
+    }
+    clock
+}
+
 /// Build delay configuration for a specific chain
 fn create_aggregate_delay(chain: &ChainConfig, actual_chain_id: u64) -> (AggregateId, Duration) {
     let aggregate_id = AggregateId::from_chain_id(Some(actual_chain_id));
@@ -1225,6 +1255,7 @@ async fn setup_evm_system(
         dkg_fold_contexts_by_e3,
         active_aggregators,
         selected_party_ids,
+        lifecycle_stages,
         committee_finalizer,
     } = recovery;
     let mut evm_config = EvmEventConfig::new();
@@ -1232,6 +1263,19 @@ async fn setup_evm_system(
     for chain in chains.iter().filter(|chain| chain.enabled.unwrap_or(true)) {
         let provider = provider_cache.ensure_read_provider(chain).await?;
         let chain_id = provider.chain_id();
+        if contract_components.interfold && chain.data_availability.is_none() {
+            anyhow::bail!(
+                "chain '{}' has Interfold enabled but no data_availability reader; protocol v3 nodes must be able to retrieve proof-backed ciphertext outputs",
+                chain.name
+            );
+        }
+        DataAvailabilityCoordinator::attach(
+            bus,
+            chain_id,
+            chain.data_availability.as_ref(),
+            repositories.data_availability_recovery(chain_id),
+        )
+        .await?;
         if contract_components.ciphernode_registry {
             validate_vrf_chain_id(chain_id)?;
         }
@@ -1261,12 +1305,39 @@ async fn setup_evm_system(
                 .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
                 .map(|(e3_id, party_id)| (e3_id.clone(), *party_id))
                 .collect();
+            let chain_request_registries = dkg_fold_contexts_by_e3
+                .iter()
+                .filter(|(e3_id, _)| e3_id.chain_id() == chain_id)
+                .map(|(e3_id, context)| (e3_id.clone(), context.registry))
+                .collect();
+            let chain_failure_stages = lifecycle_stages
+                .iter()
+                .filter(|(e3_id, stage)| {
+                    e3_id.chain_id() == chain_id
+                        && matches!(
+                            stage,
+                            E3Stage::Requested
+                                | E3Stage::CommitteeFinalized
+                                | E3Stage::KeyPublished
+                                | E3Stage::CiphertextReady
+                        )
+                })
+                .map(|(e3_id, stage)| (e3_id.clone(), stage.clone()))
+                .collect();
+            let chain_failure_settlements = lifecycle_stages
+                .iter()
+                .filter(|(e3_id, stage)| e3_id.chain_id() == chain_id && **stage == E3Stage::Failed)
+                .map(|(e3_id, _)| e3_id.clone())
+                .collect();
             InterfoldSolWriter::attach_with_recovery(
                 bus,
                 write_provider.clone(),
                 contract.address()?,
                 chain_active_aggregators,
                 chain_party_ids,
+                chain_request_registries,
+                chain_failure_stages,
+                chain_failure_settlements,
             );
             system.with_contract(contract.address()?, move |next| {
                 InterfoldSolReader::setup(&next).recipient()
@@ -1427,15 +1498,18 @@ async fn wait_for_evm_gateways(gateways: Vec<EvmChainGatewayHandle>) -> Result<(
 #[cfg(test)]
 mod tests {
     use super::{
-        create_aggregate_delay, reconcile_committee_snapshots, recovered_ciphernode_selections,
-        validate_vrf_chain_id,
+        create_aggregate_delay, event_clock, reconcile_committee_snapshots,
+        recovered_ciphernode_selections, validate_vrf_chain_id,
     };
     use e3_config::{
         chain_config::ChainConfig,
         contract::{Contract, ContractAddresses},
         rpc::RpcAuth,
     };
-    use e3_events::{Committee, E3Stage, E3id, Seed};
+    use e3_events::{
+        hlc::{HlcError, HlcMethods, HlcTimestamp},
+        Committee, E3Stage, E3id, Seed,
+    };
     use e3_fhe_params::BfvPreset;
     use e3_request::E3Meta;
     use e3_sortition::CiphernodeSelectorState;
@@ -1462,6 +1536,7 @@ mod tests {
             },
             finalization_ms,
             chain_id: Some(1),
+            data_availability: None,
         }
     }
 
@@ -1493,6 +1568,23 @@ mod tests {
         let error = validate_vrf_chain_id(42_161).expect_err("Arbitrum must be rejected");
 
         assert!(error.to_string().contains("Ethereum mainnet"));
+    }
+
+    #[test]
+    fn local_event_clock_allows_time_travel_only_on_dev_chains() {
+        let future_timestamp = |clock: &e3_events::hlc::Hlc| {
+            let now = clock.tick().unwrap();
+            HlcTimestamp::new(now.ts + 3_600_000_000, 0, now.node + 1)
+        };
+
+        let local = event_clock("local", &[31_337]);
+        assert!(local.receive(&future_timestamp(&local)).is_ok());
+
+        let public = event_clock("public", &[1]);
+        assert!(matches!(
+            public.receive(&future_timestamp(&public)),
+            Err(HlcError::DriftExceeded { .. })
+        ));
     }
 
     #[test]

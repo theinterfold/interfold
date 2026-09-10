@@ -65,14 +65,29 @@ Encryption (FHE) scheme, then generate and publish a shared public encryption ke
 During this phase, Data Providers — who may include individual users, applications, or institutions
 — encrypt their data to the CiCo's public key and publish commitments to those inputs onchain.
 
+The input window includes committee setup, voting, and the final availability period. Voting opens
+when the committee key is ready. CRISP stops new vote commitments three hours before the input
+window ends. This reserved period lets VectorX finalize votes that are already committed.
+
+The mainnet launch settings allow up to one hour for VRF, 10 minutes for ticket submission, and six
+hours for DKG. CRISP then requires at least one hour for new vote commitments. Therefore, the
+protocol minimum mainnet input window is 11 hours 10 minutes. The DAO plugin can require a longer
+window. Interfold also reserves seven days for computation and six hours for decryption. With its
+30-day lifecycle cap, the longest mainnet input window is 22 days 18 hours. The contracts reject
+windows outside these bounds.
+
 1. **Data Encryption**: Data Providers encrypt their inputs using the CiCo's public key.
 2. **Input Validation**: Data Providers generate several Zero-Knowledge Proofs about their inputs to
    ensure they are valid for the requested E3. Some of these proofs are generic (e.g., proof of
    valid encryption) while others will be specific to your application.
-3. **Submit Inputs**: Both encrypted data and ZKPs are submitted to your E3 Program contract's
-   `publishInput` function. The E3 Program validates the input and may add its hash to a Merkle
-   tree, the root of which can later be used to anchor proofs of correct execution of your E3
-   Program.
+3. **Commit Input**: The CRISP service stores the encrypted bytes, then signs a compact input
+   commitment that expires after 10 minutes. `publishInput` verifies the ZK proof, expiry, and
+   signature and reserves the input's tree index. If the wallet does not commit in time, the voter
+   can stage the same vote again. The voter can leave after the commitment transaction succeeds.
+4. **Finalize Availability**: The service publishes the bytes to Avail. After VectorX anchors the
+   Avail block, any account calls `finalizeInput`. The E3 Program accepts only a receipt for the
+   exact content hash committed by the ZK proof. Computation waits until every committed input is
+   finalized.
 
    ```solidity
    function publishInput(uint256 e3Id, bytes memory data) external;
@@ -86,16 +101,12 @@ deadline expires.
 
 1. **Execution**: The CP retrieves encrypted inputs and executes the Secure Process defined in your
    E3 program.
-2. **Publish Output**: The ciphertext output and accompanying proof are submitted to the Interfold
-   contract via `publishCiphertextOutput`. The Interfold contract calls your E3 Program's `verify`
-   function to validate the proof before accepting the output.
+2. **Publish Output**: The ciphertext bytes are published to Avail. A content hash, VectorX receipt,
+   and compute proof are submitted to Interfold through `publishCiphertextOutput`. Interfold accepts
+   the reference only when the availability and compute proofs bind the same output hash.
 
    ```solidity
-   function publishCiphertextOutput(
-     uint256 e3Id,
-     bytes memory ciphertextOutput,
-     bytes memory proof
-   ) external returns (bool success);
+   function publishCiphertextOutput(uint256 e3Id, bytes calldata encodedOutputReference) external;
    ```
 
 ### Phase 5: Decryption

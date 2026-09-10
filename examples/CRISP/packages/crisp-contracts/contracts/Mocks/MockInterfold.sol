@@ -10,11 +10,17 @@ import { IInterfold } from "@interfold/contracts/contracts/interfaces/IInterfold
 import { IE3Program } from "@interfold/contracts/contracts/interfaces/IE3Program.sol";
 import { IDecryptionVerifier } from "@interfold/contracts/contracts/interfaces/IDecryptionVerifier.sol";
 import { IPkVerifier } from "@interfold/contracts/contracts/interfaces/IPkVerifier.sol";
+import { ICiphernodeRegistry } from "@interfold/contracts/contracts/interfaces/ICiphernodeRegistry.sol";
 
 contract MockInterfold {
   bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
   bytes public plaintextOutput;
   bytes32 public committeePublicKey;
+  uint256[2] public mockInputWindow;
+  uint256 public mockRequestBlock;
+  uint256 public mockRandomnessRequestTimeout;
+  uint256 public mockSortitionSubmissionWindow;
+  uint256 public mockDkgWindow;
 
   uint256 public nextE3Id;
 
@@ -40,10 +46,11 @@ contract MockInterfold {
   /// mode and a census mode that only the caller knows, and the snapshot is taken during
   /// `validate`, so the params have to reach it here rather than being patched afterwards.
   function requestWithParams(address program, uint256 numOptions, bytes memory params) external {
+    mockRequestBlock = block.timestamp;
     e3s[nextE3Id] = E3({
       seed: 0,
       committeeSize: IInterfold.CommitteeSize.Minimum,
-      requestBlock: 0,
+      requestBlock: mockRequestBlock,
       inputWindow: [uint256(0), uint256(0)],
       encryptionSchemeId: ENCRYPTION_SCHEME_ID,
       e3Program: IE3Program(address(0)),
@@ -65,10 +72,11 @@ contract MockInterfold {
   }
 
   function _request(address program, uint256 numOptions) internal {
+    mockRequestBlock = block.timestamp;
     e3s[nextE3Id] = E3({
       seed: 0,
       committeeSize: IInterfold.CommitteeSize.Minimum,
-      requestBlock: 0,
+      requestBlock: mockRequestBlock,
       inputWindow: [uint256(0), uint256(0)],
       encryptionSchemeId: ENCRYPTION_SCHEME_ID,
       e3Program: IE3Program(address(0)),
@@ -96,17 +104,49 @@ contract MockInterfold {
     committeePublicKey = publicKeyHash;
   }
 
+  function setInputWindow(uint256 start, uint256 end) external {
+    mockInputWindow = [start, end];
+  }
+
+  function setCommitteeSetupWindows(uint256 randomness, uint256 sortition, uint256 dkg) external {
+    mockRandomnessRequestTimeout = randomness;
+    mockSortitionSubmissionWindow = sortition;
+    mockDkgWindow = dkg;
+  }
+
   function getE3Stage(uint256) external view returns (IInterfold.E3Stage) {
     return IInterfold.E3Stage.KeyPublished;
   }
 
+  function getDeadlines(uint256) external view returns (IInterfold.E3Deadlines memory) {
+    uint256 inputEnd = mockInputWindow[1] == 0 ? block.timestamp + 100 : mockInputWindow[1];
+    return IInterfold.E3Deadlines({ dkgDeadline: 0, computeDeadline: inputEnd + 100, decryptionDeadline: inputEnd + 200 });
+  }
+
+  function getE3TimeoutConfig(uint256) external view returns (IInterfold.E3TimeoutConfig memory) {
+    return IInterfold.E3TimeoutConfig({ dkgWindow: mockDkgWindow, computeWindow: 100, decryptionWindow: 100 });
+  }
+
+  function ciphernodeRegistry() external view returns (ICiphernodeRegistry) {
+    return ICiphernodeRegistry(address(this));
+  }
+
+  function randomnessRequestTimeout() external view returns (uint256) {
+    return mockRandomnessRequestTimeout;
+  }
+
+  function sortitionSubmissionWindow() external view returns (uint256) {
+    return mockSortitionSubmissionWindow;
+  }
+
   function getE3(uint256) external view returns (E3 memory) {
+    uint256[2] memory inputWindow = mockInputWindow[1] == 0 ? [uint256(0), block.timestamp + 100] : mockInputWindow;
     return
       E3({
         seed: 0,
         committeeSize: IInterfold.CommitteeSize.Minimum,
-        requestBlock: 0,
-        inputWindow: [uint256(0), block.timestamp + 100],
+        requestBlock: mockRequestBlock,
+        inputWindow: inputWindow,
         encryptionSchemeId: ENCRYPTION_SCHEME_ID,
         e3Program: IE3Program(address(0)),
         paramSet: 0, // Insecure512

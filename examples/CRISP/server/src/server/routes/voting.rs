@@ -6,6 +6,7 @@
 
 use crate::server::{
     app_data::AppData,
+    data_availability::{input_rejection_message, AvailabilityService},
     models::{
         canonical_e3_id, e3_id_to_u256, VoteRequest, VoteResponse, VoteResponseStatus,
         VoteStatusRequest, VoteStatusResponse,
@@ -16,16 +17,42 @@ use crate::server::{
 };
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use alloy::primitives::Bytes;
-use evm_helpers::{CRISPContract, SimulateError};
-use eyre::Error;
 use log::{error, info, warn};
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
+    config.route(
+        "/availability/objects/{content_hash}",
+        web::get().to(get_available_object),
+    );
     config.service(
         web::scope("/voting")
             .route("/broadcast", web::post().to(broadcast_encrypted_vote))
+            .route(
+                "/availability/{job_id}",
+                web::get().to(get_availability_status),
+            )
             .route("/status", web::post().to(get_vote_status)),
     );
+}
+
+async fn get_available_object(
+    content_hash: web::Path<String>,
+    availability: web::Data<AvailabilityService>,
+) -> impl Responder {
+    let normalized = content_hash.strip_prefix("0x").unwrap_or(&content_hash);
+    if normalized.len() != 64 || !normalized.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return HttpResponse::BadRequest().body("Invalid content hash");
+    }
+    match availability.object(&content_hash) {
+        Ok(Some(bytes)) => HttpResponse::Ok()
+            .content_type("application/octet-stream")
+            .body(bytes),
+        Ok(None) => HttpResponse::NotFound().finish(),
+        Err(error) => {
+            error!("Failed to read an availability object: {error}");
+            HttpResponse::InternalServerError().body("Availability storage is unavailable")
+        }
+    }
 }
 
 /// Get the slot activity for an address in a specific round.
@@ -99,41 +126,26 @@ async fn get_vote_status(
 /// # Returns
 ///
 /// * A JSON response indicating the success or failure of the operation
-/// Ethereum mainnet, where the relay does not operate.
-const MAINNET_CHAIN_ID: u64 = 1;
-
 async fn broadcast_encrypted_vote(
     request: HttpRequest,
     data: web::Json<VoteRequest>,
     limiter: web::Data<RateLimiter>,
+    availability: web::Data<AvailabilityService>,
 ) -> impl Responder {
-    // No relaying on mainnet: the relay key would pay real gas for anyone who posts a proof,
-    // which is an open faucet at mainnet prices. Voters submit `publishInput` from their own
-    // wallet there — the function is permissionless and the proof carries everything it needs.
-    // Refused before the rate limiter so a refused mainnet call never consumes a window slot.
-    if CONFIG.chain_id == MAINNET_CHAIN_ID {
-        return HttpResponse::Forbidden().json(VoteResponse {
-            status: VoteResponseStatus::FailedBroadcast,
-            tx_hash: None,
-            message: Some(
-                "The relay is disabled on mainnet. Submit the vote directly from your wallet."
-                    .to_string(),
-            ),
-        });
-    }
     // Same identity rule as the read routes, and it matters more here: this window is what stops
     // one caller spending the relay's gas. A forgeable key is no key at all — see `caller_id`.
     let caller = super::chain::identify(&request, CONFIG.trust_proxy_headers);
 
-    // Caller admission only. The global transaction quota is reserved after parsing and
-    // simulation, right before the relay pays — reserving it here would let invalid requests
-    // sprayed across addresses drain it and deny honest voters.
+    // Caller admission only. A later global reservation is returned if validation or
+    // infrastructure fails before a durable availability job is admitted.
     if limiter.check_caller(&caller).is_err() {
         warn!("Rate limit (caller) refused a broadcast from {caller}");
 
         return HttpResponse::TooManyRequests().json(VoteResponse {
             status: VoteResponseStatus::FailedBroadcast,
             tx_hash: None,
+            job_id: None,
+            encoded_proof: None,
             message: Some("Too many votes from this address, slow down".to_string()),
         });
     }
@@ -160,124 +172,70 @@ async fn broadcast_encrypted_vote(
             return HttpResponse::BadRequest().json(VoteResponse {
                 status: VoteResponseStatus::FailedBroadcast,
                 tx_hash: None,
+                job_id: None,
+                encoded_proof: None,
                 message: Some("Invalid hex encoded proof".to_string()),
             });
         }
     };
 
-    // Broadcast vote to blockchain
-    let contract = match CRISPContract::new(
-        &CONFIG.http_rpc_url,
-        &CONFIG.private_key,
-        &CONFIG.e3_program_address,
-    )
-    .await
-    {
-        Ok(c) => c,
-        Err(e) => {
-            error!("[e3_id={}] Contract creation error: {:?}", e3_key, e);
-            return HttpResponse::InternalServerError().json("Internal server error");
-        }
-    };
-
-    // The dry run: an input the contract would revert must not reach `send`, where the relay
-    // pays for the revert. It costs one `eth_call` on inputs that would succeed anyway. Only a
-    // revert blames the input — a provider failure judged nothing, so it answers retryable 503
-    // rather than telling a voter their valid ballot was refused.
-    match contract
-        .simulate_publish_input(e3_id, encoded_proof.clone())
-        .await
-    {
-        Ok(()) => {}
-        Err(SimulateError::Reverted(reason)) => {
-            warn!("[e3_id={}] Input refused by simulation: {}", e3_key, reason);
-
-            return HttpResponse::BadRequest().json(VoteResponse {
-                status: VoteResponseStatus::FailedBroadcast,
-                tx_hash: None,
-                message: Some("Transaction was reverted by the contract".to_string()),
-            });
-        }
-        Err(SimulateError::Provider(reason)) => {
-            error!(
-                "[e3_id={}] Simulation unavailable (provider failure): {}",
-                e3_key, reason
-            );
-
-            return HttpResponse::ServiceUnavailable().json(VoteResponse {
-                status: VoteResponseStatus::FailedBroadcast,
-                tx_hash: None,
-                message: Some(
-                    "The relay could not reach the blockchain, please try again".to_string(),
-                ),
-            });
-        }
-    }
-
-    // The relay is about to pay; this is the point the global quota protects.
+    // Reserve a global slot before the service can admit work that may spend relay funds.
     if limiter.try_reserve_global().is_err() {
         warn!("Rate limit (global) refused a broadcast from {caller}");
 
         return HttpResponse::TooManyRequests().json(VoteResponse {
             status: VoteResponseStatus::FailedBroadcast,
             tx_hash: None,
+            job_id: None,
+            encoded_proof: None,
             message: Some("The relay is busy, please try again shortly".to_string()),
         });
     }
 
-    match contract.publish_input(e3_id, encoded_proof).await {
-        Ok(hash) => {
-            info!("[e3_id={}] Vote broadcasted successfully", e3_key);
-            HttpResponse::Ok().json(VoteResponse {
-                status: VoteResponseStatus::Success,
-                tx_hash: Some(hash.transaction_hash.to_string()),
-                message: Some("Vote Successful".to_string()),
+    match availability
+        .stage_input(&e3_key, encoded_proof.to_vec())
+        .await
+    {
+        Ok(job) if job.status == "success" => HttpResponse::Ok().json(job),
+        Ok(job) => HttpResponse::Accepted().json(job),
+        Err(error) => {
+            limiter.release_global_reservation();
+            if let Some(message) = input_rejection_message(&error) {
+                warn!("[e3_id={}] Vote rejected: {}", e3_key, error);
+                return HttpResponse::BadRequest().json(VoteResponse {
+                    status: VoteResponseStatus::FailedBroadcast,
+                    tx_hash: None,
+                    job_id: None,
+                    encoded_proof: None,
+                    message: Some(message.to_string()),
+                });
+            }
+            error!("[e3_id={}] Availability service failed: {}", e3_key, error);
+            HttpResponse::ServiceUnavailable().json(VoteResponse {
+                status: VoteResponseStatus::FailedBroadcast,
+                tx_hash: None,
+                job_id: None,
+                encoded_proof: None,
+                message: Some("The availability service is temporarily unavailable".to_string()),
             })
         }
-        Err(e) => handle_vote_error(e).await,
     }
 }
 
-/// Extract an error message from an error
-fn extract_error_message(e: &Error) -> String {
-    let error_str = e.to_string();
-
-    if error_str.contains("Internal error") || error_str.contains("-32603") {
-        return "Transaction rejected by the blockchain".to_string();
+async fn get_availability_status(
+    job_id: web::Path<String>,
+    availability: web::Data<AvailabilityService>,
+) -> impl Responder {
+    match availability.refreshed_view(&job_id).await {
+        Ok(Some(job)) => HttpResponse::Ok().json(job),
+        Ok(None) => HttpResponse::NotFound().finish(),
+        Err(error) => {
+            error!(
+                "Failed to read availability job {}: {error}",
+                job_id.as_str()
+            );
+            HttpResponse::ServiceUnavailable()
+                .body("Availability status is temporarily unavailable")
+        }
     }
-    if error_str.contains("insufficient funds") {
-        return "Insufficient funds to process transaction".to_string();
-    }
-    if error_str.contains("nonce") {
-        return "Transaction conflict, please try again".to_string();
-    }
-    if error_str.contains("gas") {
-        return "Transaction failed due to gas issues".to_string();
-    }
-    if error_str.contains("reverted") {
-        return "Transaction was reverted by the contract".to_string();
-    }
-    if error_str.contains("timeout") || error_str.contains("Timeout") {
-        return "Transaction timed out, please try again".to_string();
-    }
-
-    "Transaction failed, please try again".to_string()
-}
-
-/// Handle the vote error
-///
-/// # Arguments
-///
-/// * `e` - The error that occurred
-async fn handle_vote_error(e: Error) -> HttpResponse {
-    // Log the full error for debugging
-    error!("Error while sending vote transaction: {:?}", e);
-
-    let user_message = extract_error_message(&e);
-
-    HttpResponse::InternalServerError().json(VoteResponse {
-        status: VoteResponseStatus::FailedBroadcast,
-        tx_hash: None,
-        message: Some(user_message),
-    })
 }

@@ -11,13 +11,14 @@ import {
   encodeComputeProviderParams,
   decodePlaintextOutput,
   CommitteeSize,
+  CommitteePublicKeyAssembler,
   ThresholdBfvParamsPresetNames,
 } from '@interfold/sdk'
 import { InterfoldEventType, RegistryEventType } from '@interfold/sdk/events'
 import type { AllEventTypes, InterfoldEvent } from '@interfold/sdk/events'
 import { E3Stage } from '@interfold/sdk/contracts'
 import type { E3 } from '@interfold/sdk/contracts'
-import { createWalletClient, hexToBytes, http, parseAbi } from 'viem'
+import { bytesToHex, createWalletClient, hexToBytes, http, parseAbi } from 'viem'
 import assert from 'assert'
 
 import { describe, expect, it } from 'vitest'
@@ -62,6 +63,10 @@ type E3StateOutputPublished = E3Shared & {
 type E3State = E3StateRequested | E3StatePublished | E3StateOutputPublished
 
 async function setupEventListeners(sdk: InterfoldSDK, store: Map<bigint, E3State>) {
+  const committeeKeyAssembler = new CommitteePublicKeyAssembler()
+  const readyCommitteeKeys = new Map<bigint, Uint8Array>()
+  const committeeKeyWaiters = new Map<bigint, Set<(publicKey: Uint8Array) => void>>()
+
   async function waitForEvent<T extends AllEventTypes>(
     type: T,
     trigger?: () => Promise<void>,
@@ -116,24 +121,31 @@ async function setupEventListeners(sdk: InterfoldSDK, store: Map<bigint, E3State
     })
   })
 
-  await sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLISHED, (event) => {
+  await sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED, async (event) => {
     const id = event.data.e3Id
+    if (readyCommitteeKeys.has(id)) return
+
+    const assembled = committeeKeyAssembler.add(event.data)
+    if (!assembled) return
+
+    const isBoundKey = await sdk.validatePublicKeyCommitment(assembled.publicKey, hexToBytes(assembled.pkCommitment))
+    if (!isBoundKey) {
+      return
+    }
 
     const state = store.get(id)
-
-    if (!state) {
-      throw new Error(`State for ID '${id}'not found.`)
-    }
-
-    if (state.type !== 'requested') {
-      throw new Error(`State must be in the requested state`)
-    }
+    assert(state, `State for ID '${id}' was not found`)
+    assert.strictEqual(state.type, 'requested', 'State must be requested before the committee key is accepted')
 
     store.set(id, {
-      publicKey: event.data.publicKey as `0x${string}`,
+      publicKey: bytesToHex(assembled.publicKey),
       ...state,
       type: 'committee_published',
     })
+    readyCommitteeKeys.set(id, assembled.publicKey)
+    committeeKeyAssembler.clear(id)
+    committeeKeyWaiters.get(id)?.forEach((resolve) => resolve(assembled.publicKey))
+    committeeKeyWaiters.delete(id)
   })
 
   await sdk.onInterfoldEvent(InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED, (event) => {
@@ -156,7 +168,29 @@ async function setupEventListeners(sdk: InterfoldSDK, store: Map<bigint, E3State
     })
   })
 
-  return { waitForEvent }
+  function waitForCommitteeKey(e3Id: bigint, timeoutMs: number): Promise<Uint8Array> {
+    const ready = readyCommitteeKeys.get(e3Id)
+    if (ready) return Promise.resolve(ready)
+
+    return new Promise((resolve, reject) => {
+      const waiters = committeeKeyWaiters.get(e3Id) ?? new Set()
+      let timer: ReturnType<typeof setTimeout>
+      const done = (publicKey: Uint8Array) => {
+        clearTimeout(timer)
+        waiters.delete(done)
+        resolve(publicKey)
+      }
+      waiters.add(done)
+      committeeKeyWaiters.set(e3Id, waiters)
+      timer = setTimeout(() => {
+        waiters.delete(done)
+        if (waiters.size === 0) committeeKeyWaiters.delete(e3Id)
+        reject(new Error(`Timed out waiting for a verified committee key after ${timeoutMs}ms`))
+      }, timeoutMs)
+    })
+  }
+
+  return { waitForEvent, waitForCommitteeKey }
 }
 
 describe('Integration', () => {
@@ -190,7 +224,7 @@ describe('Integration', () => {
   })
 
   it('completes an E3 from request through plaintext output', async () => {
-    const { waitForEvent } = await setupEventListeners(sdk, store)
+    const { waitForEvent, waitForCommitteeKey } = await setupEventListeners(sdk, store)
 
     const committeeSize = CommitteeSize.Minimum
     const inputWindowDurationSeconds = 300
@@ -203,7 +237,6 @@ describe('Integration', () => {
     )
 
     let state
-    let event
 
     // Verify fee quoting works
     const requestParams = {
@@ -259,16 +292,13 @@ describe('Integration', () => {
       await sleep(250)
     }
 
-    // Ciphernodes will publish a public key within the COMMITTEE_PUBLISHED event
-    console.log('Waiting for committee + DKG (CommitteePublished)...')
-    event = await waitForEvent(RegistryEventType.COMMITTEE_PUBLISHED, undefined, phaseTimeoutMs)
-
-    const publicKeyBytes = hexToBytes(event.data.publicKey as `0x${string}`)
+    console.log('Waiting for the verified chunked committee key...')
+    const publicKeyBytes = await waitForCommitteeKey(state.e3Id, phaseTimeoutMs)
 
     state = store.get(state.e3Id)
     assert(state, 'store should have E3State but it was falsey')
     assert.strictEqual(state.type, 'committee_published')
-    assert.strictEqual(state.publicKey, event.data.publicKey)
+    assert.strictEqual(state.publicKey, bytesToHex(publicKeyBytes))
 
     // Verify E3 stage after committee published
     const stageAfterCommittee = await sdk.getE3Stage(state.e3Id)

@@ -47,11 +47,13 @@ It exposes three main functions:
   (`Interfold.publishCiphertextOutput`). This function ensures that the ciphertext output is valid.
   CRISP uses Risc0 as the compute provider for running the FHE program, thus the proof will be a
   Risc0 proof.
-- `publishInput` - accepts an input for the E3 instance. Data providers call it on this contract
-  directly. In CRISP, the data providers are the voters and the input is the vote itself. The
-  function checks the stage and the input window, resolves the voter's eligibility from the census,
-  and verifies a Noir proof over nine public inputs, which is what establishes that the ciphertext
-  was encrypted correctly under the committee public key
+- `publishInput` - accepts the compact proof commitment for an input. A voter or relay calls it
+  after the CRISP availability service has durably stored the ciphertext and signed the input ID
+  with a 10-minute expiry. The function checks the stage, commitment cutoff, signed expiry, voter
+  eligibility, service signature, and Noir proof over nine public inputs. It reserves the input's
+  tree leaf and index immediately. `finalizeInput` later verifies the VectorX receipt for the exact
+  ciphertext hash without requiring the voter to remain online. The proof establishes that the
+  ciphertext was encrypted correctly under the committee public key
   (`examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol:493-554`, paths from the
   repository root). The verifier is the one the round's census selects: `CRISPVerifier.sol` for a
   census posted as a Merkle root, `CRISPOnchainVerifier.sol` for one read from token balances on

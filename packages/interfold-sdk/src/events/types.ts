@@ -9,6 +9,7 @@ import type { Log } from 'viem'
 export enum InterfoldEventType {
   E3_REQUESTED = 'E3Requested',
   CIPHERTEXT_OUTPUT_PUBLISHED = 'CiphertextOutputPublished',
+  CIPHERTEXT_OUTPUT_REFERENCE_PUBLISHED = 'CiphertextOutputReferencePublished',
   PLAINTEXT_OUTPUT_PUBLISHED = 'PlaintextOutputPublished',
   E3_PROGRAM_REGISTERED = 'E3ProgramRegistered',
   ENCRYPTION_SCHEME_ENABLED = 'EncryptionSchemeEnabled',
@@ -24,6 +25,7 @@ export enum RegistryEventType {
   COMMITTEE_RANDOMNESS_REQUESTED = 'CommitteeRandomnessRequested',
   RANDOMNESS_CIRCUIT_BREAKER_TRIPPED = 'RandomnessCircuitBreakerTripped',
   COMMITTEE_PUBLISHED = 'CommitteePublished',
+  COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED = 'CommitteePublicKeyChunkPublished',
   COMMITTEE_FINALIZED = 'SortitionCommitteeFinalized',
   INTERFOLD_SET = 'InterfoldSet',
   OWNERSHIP_TRANSFERRED = 'OwnershipTransferred',
@@ -65,6 +67,14 @@ export interface CiphertextOutputPublishedData {
   e3Id: bigint
   ciphertextOutput: string
   ciphertextCommitment: string
+}
+
+export interface CiphertextOutputReferencePublishedData {
+  e3Id: bigint
+  contentHash: string
+  ciphertextCommitment: string
+  availabilityBlock: number
+  availabilityLeafIndex: bigint
 }
 
 export interface PlaintextOutputPublishedData {
@@ -124,6 +134,18 @@ export interface CommitteePublishedData {
   proof: string
 }
 
+export interface CommitteePublicKeyChunkPublishedData {
+  e3Id: bigint
+  publisher: string
+  candidateHash: string
+  nodes: string[]
+  pkCommitment: string
+  chunkIndex: number
+  chunkCount: number
+  totalLength: number
+  chunk: string
+}
+
 export interface CommitteeFinalizedData {
   e3Id: bigint
   committee: string[]
@@ -133,6 +155,7 @@ export interface CommitteeFinalizedData {
 export interface InterfoldEventData {
   [InterfoldEventType.E3_REQUESTED]: E3RequestedData
   [InterfoldEventType.CIPHERTEXT_OUTPUT_PUBLISHED]: CiphertextOutputPublishedData
+  [InterfoldEventType.CIPHERTEXT_OUTPUT_REFERENCE_PUBLISHED]: CiphertextOutputReferencePublishedData
   [InterfoldEventType.PLAINTEXT_OUTPUT_PUBLISHED]: PlaintextOutputPublishedData
   [InterfoldEventType.E3_PROGRAM_REGISTERED]: { e3Program: string }
   [InterfoldEventType.ENCRYPTION_SCHEME_ENABLED]: { encryptionSchemeId: string }
@@ -148,6 +171,7 @@ export interface RegistryEventData {
   [RegistryEventType.COMMITTEE_RANDOMNESS_REQUESTED]: CommitteeRandomnessRequestedData
   [RegistryEventType.RANDOMNESS_CIRCUIT_BREAKER_TRIPPED]: RandomnessCircuitBreakerTrippedData
   [RegistryEventType.COMMITTEE_PUBLISHED]: CommitteePublishedData
+  [RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED]: CommitteePublicKeyChunkPublishedData
   [RegistryEventType.COMMITTEE_FINALIZED]: CommitteeFinalizedData
   [RegistryEventType.INTERFOLD_SET]: { interfold: string }
   [RegistryEventType.OWNERSHIP_TRANSFERRED]: { previousOwner: string; newOwner: string }

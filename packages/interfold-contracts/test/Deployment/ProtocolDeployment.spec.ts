@@ -11,7 +11,10 @@ import os from "os";
 import path from "path";
 
 import { deployProtocolContracts } from "../../scripts/protocol/deployContracts";
-import { currentNodeRelease } from "../../scripts/protocol/nodeRelease";
+import {
+  currentNodeRelease,
+  requiresNodeReleasePolicyUpdate,
+} from "../../scripts/protocol/nodeRelease";
 import {
   assertValidatedVrfDeploymentMatchesPlan,
   assertVrfSubscription,
@@ -31,6 +34,7 @@ import type {
   VrfSortitionUpgradePlan,
 } from "../../scripts/protocol/types";
 import { loadConfig } from "../../scripts/protocol/values";
+import { requiredActiveOperatorsForSecureCrisp } from "../../scripts/upgrade/resumeSecureCrisp";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
 const { ethers } = await network.connect();
@@ -44,6 +48,32 @@ describe("Protocol deployment", function () {
     expect(release.releaseId).to.equal(
       ethersLib.id(`interfold.node.release:v1:${release.version}`),
     );
+  });
+
+  it("updates the node release policy only when the release advances", function () {
+    const release = { protocolVersion: 3, nodeGeneration: 1 };
+
+    expect(requiresNodeReleasePolicyUpdate(release, 2n, 1n)).to.equal(true);
+    expect(requiresNodeReleasePolicyUpdate(release, 3n, 1n)).to.equal(false);
+    expect(() => requiresNodeReleasePolicyUpdate(release, 4n, 1n)).to.throw(
+      "cannot move backwards",
+    );
+  });
+
+  it("allows a named Sepolia rehearsal without weakening production capacity", function () {
+    const thresholds = [
+      { size: "0", total: "3" },
+      { size: "1", total: "9" },
+      { size: "2", total: "19" },
+    ];
+
+    expect(requiredActiveOperatorsForSecureCrisp(thresholds, 1)).to.equal(19n);
+    expect(
+      requiredActiveOperatorsForSecureCrisp(thresholds, 11155111, "0"),
+    ).to.equal(3n);
+    expect(() =>
+      requiredActiveOperatorsForSecureCrisp(thresholds, 1, "0"),
+    ).to.throw("only for a Sepolia rehearsal");
   });
 
   it("requires a ciphernode restart acknowledgement before resume", function () {

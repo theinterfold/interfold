@@ -58,6 +58,9 @@ pub struct JsonResponse {
 #[serde(rename_all = "snake_case")]
 pub enum VoteResponseStatus {
     Success,
+    PendingCommitment,
+    PendingAvailability,
+    ReadyForCommitment,
     FailedBroadcast,
 }
 
@@ -65,6 +68,8 @@ pub enum VoteResponseStatus {
 pub struct VoteResponse {
     pub status: VoteResponseStatus,
     pub tx_hash: Option<String>,
+    pub job_id: Option<String>,
+    pub encoded_proof: Option<String>,
     pub message: Option<String>,
 }
 
@@ -172,11 +177,10 @@ pub struct RoundRequest {
     pub cron_api_key: String,
     pub token_address: String,
     pub balance_threshold: String,
-    /// The census source for the round, as a `CRISPProgram.CensusMode` discriminant. Optional and
-    /// defaulted to the token census this route always requested, so existing cron configurations
-    /// keep their behavior. Pass 2 (ONCHAIN) with a registry or votes-token address to request a
-    /// round whose eligibility is read from the token per input — for `SelfRegistry`, that is what
-    /// lets voters register during the input window.
+    /// The census source for the round, as a `CRISPProgram.CensusMode` discriminant. Optional:
+    /// normal token rounds default to 0 (TOKEN), and a known `SelfRegistry` defaults to
+    /// 2 (ONCHAIN). A `SelfRegistry` cannot use 0, because token-holder discovery would find no
+    /// voters and the server would have no CRISP record to show clients.
     #[serde(default)]
     pub census_mode: Option<u64>,
 }
@@ -261,10 +265,14 @@ pub struct E3 {
     pub requester: String,
 }
 
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct E3Crisp {
     pub emojis: [String; 2],
     pub start_time: u64,
+    /// Last timestamp at which a voter can commit a new proof. The protocol input window ends
+    /// later so the availability service can finalize already committed ciphertexts.
+    #[serde(default)]
+    pub voting_end_time: u64,
     pub end_time: u64,
     pub status: String,
     pub tally: Vec<String>,

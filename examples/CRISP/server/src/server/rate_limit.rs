@@ -12,11 +12,9 @@
 //!
 //! - **Caller admission** ([`RateLimiter::check_caller`]) runs first, before any work, against
 //!   one hot client.
-//! - **Global reservation** ([`RateLimiter::try_reserve_global`]) caps what the relay key can
-//!   spend across all callers, and is taken only once a request has parsed and simulated
-//!   successfully — right before the transaction. Consuming it earlier would let an attacker
-//!   spray *invalid* requests across many addresses and exhaust the global window without the
-//!   relay ever paying for anything, denying honest voters instead of protecting them.
+//! - **Global reservation** ([`RateLimiter::try_reserve_global`]) caps durable work that can spend
+//!   relay funds across all callers. The route reserves before admission and returns the slot when
+//!   validation or infrastructure fails, so rejected traffic does not exhaust the shared window.
 //!
 //! The limits are deliberately generous for people and tight for loops: one honest ballot costs
 //! minutes of client-side proving, so a human cannot reach them.
@@ -158,10 +156,19 @@ impl RateLimiter {
 
     /// Reserve one slot of the global transaction quota.
     ///
-    /// Call only when a transaction is about to be sent — after parsing and simulation — so
-    /// invalid traffic cannot drain the quota honest voters depend on.
+    /// Return this reservation if the request fails before durable work is admitted.
     pub fn try_reserve_global(&self) -> Result<(), RateLimitExceeded> {
         self.try_reserve_global_at(Instant::now())
+    }
+
+    /// Return a reservation when request validation or infrastructure fails before durable work
+    /// is admitted. Durable jobs keep their reservation because they can still spend relay funds.
+    pub fn release_global_reservation(&self) {
+        self.state
+            .lock()
+            .expect("rate limiter mutex poisoned")
+            .global
+            .pop();
     }
 
     fn check_caller_at(
@@ -274,6 +281,14 @@ mod tests {
         }
 
         assert_eq!(limiter.try_reserve_global_at(now), Ok(()));
+    }
+
+    #[test]
+    fn failed_admission_can_return_its_global_reservation() {
+        let limiter = RateLimiter::with_limits(1, 1);
+        assert_eq!(limiter.try_reserve_global(), Ok(()));
+        limiter.release_global_reservation();
+        assert_eq!(limiter.try_reserve_global(), Ok(()));
     }
 
     #[test]

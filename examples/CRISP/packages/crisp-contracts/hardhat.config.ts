@@ -155,6 +155,7 @@ const config: HardhatUserConfig = {
       '@interfold/contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol',
       '@interfold/contracts/contracts/verifiers/bfv/Risc0BfvCiphertextVerifier.sol',
       '@interfold/contracts/contracts/verifiers/bfv/BfvPkVerifier.sol',
+      '@interfold/contracts/contracts/verifiers/AvailVectorXDataAvailabilityVerifier.sol',
       '@interfold/contracts/contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol',
       '@interfold/contracts/contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol',
     ],

@@ -81,6 +81,10 @@ impl StoreKeys {
         format!("//evm_writers/slashing/{chain_id}/recovery/v1")
     }
 
+    pub fn data_availability_recovery(chain_id: u64) -> String {
+        format!("//data_availability/{chain_id}/recovery/v1")
+    }
+
     pub fn eth_private_key() -> String {
         String::from("//eth_private_key")
     }

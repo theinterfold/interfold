@@ -44,6 +44,18 @@ library InterfoldPricing {
         uint256 amount
     );
 
+    /// @notice Updates only the non-refundable randomness fee.
+    function setRandomnessFlatFee(
+        IInterfold.PricingConfig storage config,
+        IERC20 token,
+        uint8 tokenDecimals,
+        uint192 randomnessFlatFee
+    ) external {
+        if (randomnessFlatFee == 0) revert IInterfold.PaymentRequired(0);
+        config.randomnessFlatFee = randomnessFlatFee;
+        emit IInterfold.FeeAssetConfigUpdated(token, tokenDecimals, config);
+    }
+
     /// @notice Pull an exact token amount into a custody contract.
     function transferFromExact(
         IERC20 token,

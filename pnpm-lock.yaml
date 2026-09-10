@@ -274,6 +274,9 @@ importers:
       '@crisp-e3/zk-inputs':
         specifier: workspace:^
         version: link:../crisp-zk-inputs
+      '@nomicfoundation/hardhat-ethers':
+        specifier: 4.0.3
+        version: 4.0.3(bufferutil@4.1.0)(hardhat@3.0.11(bufferutil@4.1.0)(utf-8-validate@5.0.10))(utf-8-validate@5.0.10)
       '@nomicfoundation/hardhat-keystore':
         specifier: 3.0.3
         version: 3.0.3(hardhat@3.0.11(bufferutil@4.1.0)(utf-8-validate@5.0.10))
@@ -824,7 +827,7 @@ importers:
         version: 5.0.2(@openzeppelin/contracts@5.3.0)
       '@risc0/ethereum':
         specifier: file:lib/risc0-ethereum
-        version: file:templates/default/lib/risc0-ethereum
+        version: risc0-ethereum@file:templates/default/lib/risc0-ethereum
       '@types/chai':
         specifier: ^4.2.0
         version: 4.3.20
@@ -3384,9 +3387,6 @@ packages:
 
   '@reown/appkit@1.7.8':
     resolution: {integrity: sha512-51kTleozhA618T1UvMghkhKfaPcc9JlKwLJ5uV+riHyvSoWPKPRIa5A6M1Wano5puNyW0s3fwywhyqTHSilkaA==}
-
-  '@risc0/ethereum@file:templates/default/lib/risc0-ethereum':
-    resolution: {directory: templates/default/lib/risc0-ethereum, type: directory}
 
   '@rolldown/pluginutils@1.0.0-beta.27':
     resolution: {integrity: sha512-+d0F4MKMCbeVUJwG96uQ4SgAznZNSq93I3V+9NHA4OpvqG8mRCpGdKmK8l/dl02h2CCDHwW2FqilnTyDcAnqjA==}
@@ -9368,6 +9368,9 @@ packages:
     resolution: {integrity: sha512-5Di9UC0+8h1L6ZD2d7awM7E/T4uA1fJRlx6zk/NvdCCVEoAnFqvHmCuNeIKoCeIixBX/q8uM+6ycDvF8woqosA==}
     engines: {node: '>= 0.8'}
 
+  risc0-ethereum@file:templates/default/lib/risc0-ethereum:
+    resolution: {directory: templates/default/lib/risc0-ethereum, type: directory}
+
   robust-predicates@3.0.3:
     resolution: {integrity: sha512-NS3levdsRIUOmiJ8FZWCP7LG3QpJyrs/TE0Zpf1yvZu8cAJJ6QMW92H1c7kWpdIHo8RvmLxN/o2JXTKHp74lUA==}
 
@@ -13174,7 +13177,7 @@ snapshots:
       debug: 4.4.3(supports-color@5.5.0)
       lodash: 4.17.21
       pony-cause: 2.1.11
-      semver: 7.7.3
+      semver: 7.8.5
       uuid: 9.0.1
     transitivePeerDependencies:
       - supports-color
@@ -13198,7 +13201,7 @@ snapshots:
       '@types/debug': 4.1.13
       debug: 4.4.3(supports-color@5.5.0)
       pony-cause: 2.1.11
-      semver: 7.7.3
+      semver: 7.8.5
       uuid: 9.0.1
     transitivePeerDependencies:
       - supports-color
@@ -13212,7 +13215,7 @@ snapshots:
       '@types/debug': 4.1.13
       debug: 4.4.3(supports-color@5.5.0)
       pony-cause: 2.1.11
-      semver: 7.7.3
+      semver: 7.8.5
       uuid: 9.0.1
     transitivePeerDependencies:
       - supports-color
@@ -14138,8 +14141,6 @@ snapshots:
       - utf-8-validate
       - zod
 
-  '@risc0/ethereum@file:templates/default/lib/risc0-ethereum': {}
-
   '@rolldown/pluginutils@1.0.0-beta.27': {}
 
   '@rollup/plugin-inject@5.0.5(rollup@4.62.3)':
@@ -14361,7 +14362,7 @@ snapshots:
 
   '@scure/bip32@1.7.0':
     dependencies:
-      '@noble/curves': 1.9.1
+      '@noble/curves': 1.9.7
       '@noble/hashes': 1.8.0
       '@scure/base': 1.2.6
 
@@ -21839,6 +21840,8 @@ snapshots:
     dependencies:
       hash-base: 3.1.2
       inherits: 2.0.4
+
+  risc0-ethereum@file:templates/default/lib/risc0-ethereum: {}
 
   robust-predicates@3.0.3: {}
 

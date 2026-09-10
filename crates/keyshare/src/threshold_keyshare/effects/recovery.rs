@@ -6,6 +6,20 @@ use super::*;
 use anyhow::ensure;
 
 impl ThresholdKeyshare {
+    pub(in crate::actors::threshold_keyshare) fn public_key_context_is_recovered(
+        state: &ThresholdKeyshareState,
+    ) -> bool {
+        state.aggregated_pk.is_some() && state.decryption_domain.is_some()
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn needs_keyshare_republication(
+        state: &ThresholdKeyshareState,
+        recovery: &ThresholdKeyshareRecoveryState,
+    ) -> bool {
+        !Self::public_key_context_is_recovered(state)
+            && (recovery.keyshare_publish_authorized || state.keyshare_published)
+    }
+
     pub(in crate::actors::threshold_keyshare) fn record_encryption_key(
         &mut self,
         event: &TypedEvent<EncryptionKeyCreated>,
@@ -215,6 +229,12 @@ impl ThresholdKeyshare {
                 }
             }
             KeyshareState::ReadyForDecryption(_) => {
+                // PublicKeyAggregated is a newer durable fact than the retained C2/C3/C4
+                // recovery inputs below. Replaying those superseded jobs would rebuild the
+                // complete DKG proof pipeline before this node can decrypt.
+                if Self::public_key_context_is_recovered(&state) {
+                    return Ok(());
+                }
                 if let Some(pending) = recovery.threshold_share_pending.clone() {
                     let (pending, pending_ec) = pending.into_components();
                     self.bus.publish(pending, pending_ec)?;
@@ -225,14 +245,14 @@ impl ThresholdKeyshare {
                 }
                 if let Some(verification) = recovery.decryption_verification_complete.clone() {
                     self.handle_share_verification_complete(verification)
-                } else if recovery.keyshare_publish_authorized || state.keyshare_published {
+                } else if Self::needs_keyshare_republication(&state, &recovery) {
                     self.publish_keyshare_created(ec)
                 } else {
                     self.replay_decryption_key_shares(&recovery, self_addr)
                 }
             }
             KeyshareState::Decrypting(_) => {
-                if recovery.keyshare_publish_authorized || state.keyshare_published {
+                if Self::needs_keyshare_republication(&state, &recovery) {
                     self.publish_keyshare_created(ec.clone())?;
                 }
                 self.issue_decryption_share_request(ec)

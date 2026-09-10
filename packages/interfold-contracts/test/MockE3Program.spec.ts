@@ -22,6 +22,7 @@ describe("MockE3Program", function () {
       "publishInput",
       "validate",
       "verify",
+      "verifyDataAvailability",
     ]);
   });
 
@@ -49,5 +50,14 @@ describe("MockE3Program", function () {
     expect(await program.validate.staticCall(1, 2, "0x", "0x", "0x")).to.equal(
       scheme,
     );
+
+    const object = "0x1234";
+    const contentHash = ethers.keccak256(object);
+    expect(
+      await program.verifyDataAvailability.staticCall(contentHash, object),
+    ).to.deep.equal([contentHash, 1n, 1n]);
+    await expect(
+      program.verifyDataAvailability.staticCall(ethers.ZeroHash, object),
+    ).to.be.revertedWithCustomError(program, "InvalidDataAvailabilityProof");
   });
 });

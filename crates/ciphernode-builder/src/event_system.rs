@@ -433,9 +433,9 @@ mod tests {
     use e3_events::EventContext;
     use e3_events::EventId;
     use e3_events::EventSource;
+    use e3_events::FlushPendingSnapshots;
     use e3_events::StoreKeys;
     use e3_events::SyncEnded;
-    use e3_events::Tick;
     use e3_events::TsAgg;
     use e3_test_helpers::with_tracing;
     use std::time::Duration;
@@ -630,12 +630,7 @@ mod tests {
         // Lets store some data on a plain datastore
         info!("Writing to /foo/name with no context");
         datastore.scope("/foo/name").write("Fred".to_string());
-        // Note there is some eventual consistency here we have to wait
-        assert_eq!(datastore.scope("/foo/name").read::<String>().await?, None);
-        info!("Wait one tick");
-
-        // Let's wait until all events are settled only takes a tick
-        sleep(Duration::from_millis(1)).await;
+        buffer.send(FlushPendingSnapshots).await??;
 
         // These inserts should not be buffered and should be available
         assert_eq!(
@@ -668,8 +663,7 @@ mod tests {
         info!("Publishing SyncEnded event to turn on SnapshotBuffer. This should send the seq=1 batch to the timelock...");
         // Publishing SyncEnded should turn on the SnapshotBuffer seq 2
         handle.publish(SyncEnded::new(), ec.clone())?;
-
-        sleep(Duration::from_millis(1)).await;
+        handle.flush_event_pipeline().await?;
 
         info!("Mutating persistable state to create inserts using seq=2");
 
@@ -683,20 +677,17 @@ mod tests {
         .sequence(2);
 
         persistable.try_mutate(&ec, |_| Ok("Liz".to_string()))?;
-        sleep(Duration::from_millis(1)).await;
         info!("Mutation complete");
-        // SnapshotBuffer is not cleared unless new events are published
+        // Flush through sequence 2 before the next event opens sequence 3. Timelock behavior has
+        // separate mock-clock tests; this integration test must not depend on wall-clock timing.
+        buffer.send(FlushPendingSnapshots).await??;
 
         // Get a timestamp for the events below
         let ts = handle.ts()?;
 
         // Push a few other events seq 3
-        // This sends the previous batch for seq2 to the timelock queue
         handle.publish_without_context(TestEvent::new("yellow", 1))?;
-
-        // Wait a second for the timelock to be checked
-        sleep(Duration::from_secs(2)).await;
-        buffer.try_send(Tick)?;
+        handle.flush_event_pipeline().await?;
 
         // Check now
         info!("Reading from /foo/name and expecting it to be correct.");
@@ -716,7 +707,7 @@ mod tests {
         // Publish a few other events
         handle.publish_without_context(TestEvent::new("red", 1))?;
         handle.publish_without_context(TestEvent::new("white", 1))?;
-        sleep(Duration::from_millis(100)).await;
+        handle.flush_event_pipeline().await?;
 
         // Get the event logs from the listener
         let logs = listener.send(GetLogs).await?;

@@ -158,7 +158,9 @@ program:
       rpc_url: 'https://sepolia.infura.io/v3/YOUR_KEY' # RPC endpoint
       private_key: 'YOUR_PRIVATE_KEY' # Wallet with funds for proving
       pinata_jwt: 'YOUR_PINATA_JWT' # Required for uploading programs to IPFS
-      program_url: 'https://gateway.pinata.cloud/ipfs/YOUR_CID' # Pre-uploaded program URL
+      # The gateway must allow full, unauthenticated downloads by Boundless provers.
+      ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
+      program_url: 'https://your-gateway.mypinata.cloud/ipfs/YOUR_CID' # Pre-uploaded program URL
       onchain: true # true = onchain requests, false = offchain
 ```
 
@@ -187,12 +189,78 @@ program URL:
    the full URL:
 
    ```yaml
-   program_url: 'https://gateway.pinata.cloud/ipfs/QmXxx...'
+   ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
+   program_url: 'https://your-gateway.mypinata.cloud/ipfs/QmXxx...'
    ```
 
 > **_Important:_** Every time you modify the guest program code in `program/`, you must rebuild and
 > re-upload it to IPFS, then update the `program_url` in your configuration. This ensures Boundless
 > uses your latest program version.
+
+### Encrypted-object data availability
+
+Local development uses `DATA_AVAILABILITY_MODE=mock`. The mock keeps the full input and aggregate
+ciphertext in the CRISP server database and produces a deterministic local receipt. It does not
+model VectorX latency or Avail fees.
+
+Sepolia and Ethereum mainnet use Avail. Before starting the CRISP server:
+
+1. Register an Avail App ID for CRISP.
+2. Fund a dedicated Avail account that can pay for every `submit_data` transaction.
+3. Keep the server database durable. It stores each pending publication until its VectorX proof is
+   available and resumes the job after a restart.
+4. Deploy CRISP with `INPUT_AVAILABILITY_SIGNER` set to the Ethereum address derived from the
+   server's `PRIVATE_KEY`.
+5. Configure an input window that covers the current on-chain committee setup, voting minimum, and
+   VectorX finalization tail. The server reads those values at startup. Twelve hours covers the
+   current production defaults with margin.
+
+The server signs a 10-minute commitment payload only after it stores and validates the complete
+ciphertext. If the commitment does not reach Ethereum before that payload expires, the server waits
+for Ethereum finality, releases the uncommitted bytes, and lets the voter stage the vote again.
+
+```dotenv
+# Sepolia + Avail Turing
+DATA_AVAILABILITY_MODE=avail
+AVAIL_RPC_URL=https://turing-rpc.avail.so/rpc
+AVAIL_BRIDGE_API_URL=https://turing-bridge-api.avail.so
+AVAIL_APP_ID=<registered-app-id>
+AVAIL_SEED=<dedicated-funded-secret-uri>
+AVAIL_PROOF_LEAD_SECONDS=10800
+# Unfinished objects are refused once they reach this capacity. Size it for the largest supported
+# round and monitor the server volume. Default: 1 GiB.
+DATA_AVAILABILITY_MAX_PENDING_BYTES=1073741824
+# 12 hours. Covers the current 1h VRF + 10m sortition + 6h DKG upper bound,
+# at least 1h of voting, and the 3h VectorX finalization target.
+E3_DURATION=43200
+
+# Ethereum mainnet uses these two endpoints instead:
+# AVAIL_RPC_URL=https://avail-rpc.publicnode.com/
+# AVAIL_BRIDGE_API_URL=https://bridge-api.avail.so
+```
+
+DAO deployments can set `DEFER_PROTOCOL_WIRING=true` to deploy CRISP before the governance wiring
+transaction. On Ethereum mainnet, the deployment also requires `ALLOW_MAINNET_DEFERRED_WIRING=true`
+as an explicit acknowledgement that CRISP is unusable until the DAO batch is executed and validated.
+Keep E3 requests paused throughout that interval.
+
+The server first validates the Noir proof and durably stores the exact encrypted bytes. It signs a
+compact proof commitment only after storage succeeds. On mainnet, the voter submits that commitment
+from their wallet and can then leave. The server publishes the ciphertext to Avail, waits for the
+official VectorX proof, and finalizes the input without the voter. The proof transaction reserves
+the input's tree index immediately, so masks and revotes can still extend it during the VectorX
+wait. CRISP refuses the aggregate computation while any input is not finalized.
+
+The service accepts only one not-yet-committed input per round and voting slot. It also limits the
+total bytes held by unfinished jobs. These controls bound abandoned signed inputs without deleting
+data that Ethereum already accepted. After Avail and Ethereum accept an object, the service removes
+its staging copy because Avail is then the recovery source.
+
+The aggregate ciphertext follows the Avail and VectorX path after its RISC Zero proof is ready.
+
+Each accepted Ethereum reference contains `keccak256(exact bytes)`. The CRISP server and ciphernodes
+re-hash retrieved bytes before they use them. An App ID helps indexing, but it is not a security
+boundary.
 
 ### Environment Variables
 

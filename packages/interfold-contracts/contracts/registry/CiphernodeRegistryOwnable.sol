@@ -50,6 +50,9 @@ contract CiphernodeRegistryOwnable is
     /// @dev Bounds the time reserved for ticket submission in one E3 lifecycle.
     uint256 public constant MAX_SORTITION_SUBMISSION_WINDOW = 1 days;
 
+    /// @notice Largest serialized committee public key accepted by the transport.
+    uint256 public constant MAX_COMMITTEE_PUBLIC_KEY_BYTES = 512 * 1024;
+
     /// @notice Timeout used by new registries before governance changes it.
     uint256 private constant DEFAULT_RANDOMNESS_REQUEST_TIMEOUT = 1 hours;
 
@@ -105,10 +108,6 @@ contract CiphernodeRegistryOwnable is
     /// @notice Lifetime insertion count at which operators must prepare a new tree generation.
     uint256 public constant CIPHERNODE_TREE_WARNING_THRESHOLD =
         (MAX_CIPHERNODE_LEAVES * 4) / 5;
-
-    /// @notice Maximum serialized public-key candidate size.
-    /// @dev Covers every currently supported BFV preset, including SecureThreshold8192.
-    uint256 public constant MAX_COMMITTEE_PUBLIC_KEY_BYTES = 256 * 1024;
 
     /// @notice Thrown when {addCiphernode} would push the LazyIMT past its
     ///         configured {TREE_DEPTH} capacity.
@@ -388,23 +387,21 @@ contract CiphernodeRegistryOwnable is
     /// @inheritdoc ICiphernodeRegistry
     function publishCommitteePublicKey(
         uint256 e3Id,
-        bytes calldata publicKey
+        bytes32 candidateHash,
+        uint16 chunkIndex,
+        uint16 chunkCount,
+        uint32 totalLength,
+        bytes calldata chunk
     ) external {
-        bytes32 pkCommitment = publicKeyHashes[e3Id];
-        require(pkCommitment != bytes32(0), CommitteeNotPublished());
-
-        uint256 length = publicKey.length;
-        require(
-            length != 0 && length <= MAX_COMMITTEE_PUBLIC_KEY_BYTES,
-            InvalidPublicKeyLength(length, MAX_COMMITTEE_PUBLIC_KEY_BYTES)
-        );
-
-        emit CommitteePublished(
+        RegistrySortitionLib.publishCommitteePublicKeyChunk(
+            committees,
+            publicKeyHashes,
             e3Id,
-            committees[e3Id].topNodes,
-            publicKey,
-            pkCommitment,
-            bytes("")
+            candidateHash,
+            chunkIndex,
+            chunkCount,
+            totalLength,
+            chunk
         );
     }
 

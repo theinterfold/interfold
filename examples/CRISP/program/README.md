@@ -48,11 +48,12 @@ CRISP uses BFV fully homomorphic encryption to tally votes without revealing ind
 The CRISP Solidity contract implements the three `IE3Program` entry points. Interfold calls two of
 them. Data providers call `publishInput` on the program directly.
 
-| Function       | Called by      | When called              | What it does                                                       |
-| -------------- | -------------- | ------------------------ | ------------------------------------------------------------------ |
-| `validate`     | Interfold      | On E3 request            | Validates request parameters (e.g. duration, eligible voters)      |
-| `publishInput` | Data providers | On each input submission | Checks that the submitted BFV ciphertext is well-formed            |
-| `verify`       | Interfold      | On output publication    | Verifies the Risc0 proof and that the ciphertext output is correct |
+| Function        | Called by            | When called                    | What it does                                                                             |
+| --------------- | -------------------- | ------------------------------ | ---------------------------------------------------------------------------------------- |
+| `validate`      | Interfold            | On E3 request                  | Validates request parameters, including the input window                                 |
+| `publishInput`  | Voter or relay       | Before the commitment cutoff   | Verifies the Noir proof and availability-service signature, then reserves the input leaf |
+| `finalizeInput` | Availability service | After VectorX proves inclusion | Verifies availability of the committed ciphertext hash                                   |
+| `verify`        | Interfold            | On output publication          | Verifies the Risc0 proof and that the ciphertext output is correct                       |
 
 ## Proof Generation
 

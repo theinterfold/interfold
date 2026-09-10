@@ -4,7 +4,13 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { getDeploymentChain, readDeploymentArgs, storeDeploymentArgs } from '@interfold/contracts/scripts'
+import {
+  AVAIL_FINALIZATION_WINDOW_SECONDS,
+  AVAIL_VECTORX,
+  getDeploymentChain,
+  readDeploymentArgs,
+  storeDeploymentArgs,
+} from '@interfold/contracts/scripts'
 import { Interfold__factory as InterfoldFactory } from '@interfold/contracts/types'
 import { readFileSync } from 'fs'
 
@@ -13,7 +19,9 @@ import hre from 'hardhat'
 import { CRISPProgram__factory as CRISPProgramFactory } from '../types'
 import { verifierNames } from '../scripts/verifiers'
 
-const imageIdContent = readFileSync('../../.interfold/generated/contracts/ImageID.sol', 'utf-8')
+// The production guest lives in crates/support. Read the Image ID generated from that exact
+// guest instead of the example project's cached copy, which can lag behind a guest change.
+const imageIdContent = readFileSync(new URL('../../../../../crates/support/contracts/ImageID.sol', import.meta.url), 'utf-8')
 const match = imageIdContent.match(/bytes32 public constant PROGRAM_ID = bytes32\((0x[a-fA-F0-9]+)\)/)
 const IMAGE_ID = match ? match[1] : null
 
@@ -37,7 +45,33 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
   }
   const initialOwner = configuredOwner ? ethers.getAddress(configuredOwner) : ownerAddress
 
-  const useMocks = Boolean(process.env.USE_MOCKS)
+  const rawUseMocks = process.env.USE_MOCKS?.trim().toLowerCase()
+  if (rawUseMocks && rawUseMocks !== 'true' && rawUseMocks !== 'false') {
+    throw new Error("USE_MOCKS must be 'true', 'false', or unset")
+  }
+  const useMocks = rawUseMocks === 'true'
+  if (chain === 'mainnet' && useMocks) {
+    throw new Error('USE_MOCKS cannot be enabled for a mainnet CRISP deployment')
+  }
+  const rawDeferProtocolWiring = process.env.DEFER_PROTOCOL_WIRING?.trim().toLowerCase()
+  if (rawDeferProtocolWiring && rawDeferProtocolWiring !== 'true' && rawDeferProtocolWiring !== 'false') {
+    throw new Error("DEFER_PROTOCOL_WIRING must be 'true', 'false', or unset")
+  }
+  const deferProtocolWiring = rawDeferProtocolWiring === 'true'
+  const mainnetDeferralAcknowledged = process.env.ALLOW_MAINNET_DEFERRED_WIRING?.trim().toLowerCase() === 'true'
+  if (chain === 'mainnet' && deferProtocolWiring && !mainnetDeferralAcknowledged) {
+    throw new Error(
+      'Mainnet protocol wiring can be deferred only with ALLOW_MAINNET_DEFERRED_WIRING=true. This acknowledgment means the deployment will exit with CRISP unusable until the DAO wiring batch is executed and validated.',
+    )
+  }
+  const configuredAvailabilitySigner = process.env.INPUT_AVAILABILITY_SIGNER
+  const inputAvailabilitySigner = configuredAvailabilitySigner
+    ? ethers.getAddress(configuredAvailabilitySigner)
+    : useMocks || chain === 'localhost'
+      ? ownerAddress
+      : (() => {
+          throw new Error('INPUT_AVAILABILITY_SIGNER is required for an Avail-backed CRISP deployment')
+        })()
 
   const verifier = await deployVerifier(useMocks, ethers)
 
@@ -129,6 +163,35 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
     chain,
   )
 
+  const useMockDataAvailability = useMocks || chain === 'localhost'
+  const dataAvailabilityContract = useMockDataAvailability ? 'MockCrispDataAvailabilityVerifier' : 'AvailVectorXDataAvailabilityVerifier'
+  let dataAvailabilityVerifier
+  if (useMockDataAvailability) {
+    dataAvailabilityVerifier = await ethers.deployContract('MockCrispDataAvailabilityVerifier')
+  } else {
+    const addresses = AVAIL_VECTORX[chain as keyof typeof AVAIL_VECTORX]
+    if (!addresses) {
+      throw new Error(`Avail/VectorX data availability is not configured for ${chain}`)
+    }
+    dataAvailabilityVerifier = await ethers.deployContract('AvailVectorXDataAvailabilityVerifier', [addresses.bridge, addresses.vectorx])
+  }
+  await dataAvailabilityVerifier.waitForDeployment()
+  const dataAvailabilityVerifierAddress = await dataAvailabilityVerifier.getAddress()
+  storeDeploymentArgs(
+    {
+      address: dataAvailabilityVerifierAddress,
+      blockNumber: await ethers.provider.getBlockNumber(),
+      constructorArgs: useMockDataAvailability
+        ? {}
+        : {
+            bridge: AVAIL_VECTORX[chain as keyof typeof AVAIL_VECTORX].bridge,
+            vectorx: AVAIL_VECTORX[chain as keyof typeof AVAIL_VECTORX].vectorx,
+          },
+    },
+    dataAvailabilityContract,
+    chain,
+  )
+
   const crispFactory = await ethers.getContractFactory(
     CRISPProgramFactory.abi,
     CRISPProgramFactory.linkBytecode({
@@ -137,7 +200,16 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
     owner,
   )
 
-  const crisp = await crispFactory.deploy(initialOwner, verifier, honkVerifierAddress, onchainHonkVerifierAddress, IMAGE_ID)
+  const crisp = await crispFactory.deploy(
+    initialOwner,
+    verifier,
+    honkVerifierAddress,
+    onchainHonkVerifierAddress,
+    dataAvailabilityVerifierAddress,
+    useMockDataAvailability ? 0 : AVAIL_FINALIZATION_WINDOW_SECONDS,
+    inputAvailabilitySigner,
+    IMAGE_ID,
+  )
   await crisp.waitForDeployment()
 
   const crispAddress = await crisp.getAddress()
@@ -150,6 +222,9 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
         verifierAddress: verifier,
         honkVerifierAddress,
         onchainHonkVerifierAddress,
+        dataAvailabilityVerifierAddress,
+        availabilityFinalizationWindow: useMockDataAvailability ? 0 : AVAIL_FINALIZATION_WINDOW_SECONDS,
+        inputAvailabilitySigner,
         imageId: IMAGE_ID,
       },
     },
@@ -159,7 +234,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
 
   let governanceComplete = false
   const interfoldAddress = readDeploymentArgs('Interfold', chain)?.address
-  if (interfoldAddress && (await ethers.provider.getCode(interfoldAddress)) !== '0x') {
+  if (interfoldAddress && (await ethers.provider.getCode(interfoldAddress)) !== '0x' && !deferProtocolWiring) {
     const interfold = InterfoldFactory.connect(interfoldAddress, owner)
     const interfoldOwner = await interfold.owner()
     const registered = await interfold.e3Programs(crispAddress)
@@ -183,6 +258,8 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
         'CRISP integration is incomplete. Protocol governance must set the ciphertext verifier, register the program, and bind Interfold.',
       )
     }
+  } else if (interfoldAddress && deferProtocolWiring) {
+    console.log('CRISP protocol wiring was deferred for the governance upgrade batch.')
   }
 
   let tokenAddress
@@ -225,6 +302,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
       Risc0BfvCiphertextVerifier: ${ciphertextVerifierAddress}
       HonkVerifier: ${honkVerifierAddress}
       OnchainHonkVerifier: ${onchainHonkVerifierAddress}
+      DataAvailabilityVerifier: ${dataAvailabilityVerifierAddress}
       CRISPProgram: ${crispAddress}
       TokenAddress: ${tokenAddress}
       SelfRegistry: ${selfRegistryAddress}
