@@ -51,7 +51,9 @@ use e3_zk_helpers::threshold::pk_generation::{
     PkGenerationCircuitData,
 };
 use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
-use e3_zk_helpers::threshold::rlk_generation::{RlkGenerationCircuit, RlkGenerationCircuitData};
+use e3_zk_helpers::threshold::rlk_generation::{
+    RlkGenerationCircuit, RlkGenerationLimbCircuit, RlkGenerationLimbCircuitData,
+};
 use e3_zk_helpers::threshold::share_decryption::{
     ShareDecryptionCircuit as ThresholdShareDecryptionCircuit,
     ShareDecryptionCircuitData as ThresholdShareDecryptionCircuitData,
@@ -206,6 +208,9 @@ struct Cli {
     /// Row in the public l-BFV key-switching vectors.
     #[arg(long, default_value_t = 0)]
     row_index: u32,
+    /// CRT limb in an l-BFV RLK row.
+    #[arg(long, default_value_t = 0)]
+    limb_index: u32,
 }
 
 fn main() -> Result<()> {
@@ -220,6 +225,7 @@ fn main() -> Result<()> {
     registry.register(Arc::new(LbfvPkGenerationCircuit));
     registry.register(Arc::new(LbfvPkAggregationCircuit));
     registry.register(Arc::new(RlkGenerationCircuit));
+    registry.register(Arc::new(RlkGenerationLimbCircuit));
     registry.register(Arc::new(RlkAggregationCircuit));
     registry.register(Arc::new(ShareEncryptionCircuit));
     registry.register(Arc::new(DkgShareDecryptionCircuit));
@@ -407,13 +413,19 @@ fn main() -> Result<()> {
                 circuit.codegen(preset, &sample)?
             }
             name if name == <RlkGenerationCircuit as Circuit>::NAME => {
-                let sample = RlkGenerationCircuitData::generate_sample_for_row(
+                return Err(anyhow!(
+                    "circuit {name} requires verified limb proofs; zk-cli does not fabricate recursive inputs"
+                ));
+            }
+            name if name == <RlkGenerationLimbCircuit as Circuit>::NAME => {
+                let sample = RlkGenerationLimbCircuitData::generate_sample_for_row_and_limb(
                     preset,
                     committee,
                     args.row_index,
+                    args.limb_index,
                 )?;
 
-                let circuit = RlkGenerationCircuit;
+                let circuit = RlkGenerationLimbCircuit;
                 circuit.codegen(preset, &sample)?
             }
             name if name == <RlkAggregationCircuit as Circuit>::NAME => {

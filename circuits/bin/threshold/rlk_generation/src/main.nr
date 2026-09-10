@@ -4,55 +4,75 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use lib::configs::default::dkg::{SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS};
+use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
 use lib::configs::default::threshold::{
-    G_GADGET_ROWS, GADGET_DIM, L, LBFV_CRS_GADGET_ROWS, LBFV_URS_GADGET_ROWS, N,
-    RLK_GENERATION_BIT_D, RLK_GENERATION_BIT_E0, RLK_GENERATION_BIT_E2, RLK_GENERATION_BIT_R,
-    RLK_GENERATION_BIT_R1_D0, RLK_GENERATION_BIT_R1_D2, RLK_GENERATION_BIT_R2_D0,
-    RLK_GENERATION_BIT_R2_D2, RLK_GENERATION_BIT_SK, RLK_GENERATION_CONFIGS,
+    GADGET_DIM, L, N, RLK_GENERATION_BIT_D, RLK_GENERATION_CONFIGS,
 };
-use lib::core::threshold::rlk_generation::RlkGeneration;
+use lib::math::commitments::{
+    compute_rlk_d0_commitment, compute_rlk_d2_commitment, compute_rlk_limb_d0_commitment,
+    compute_rlk_limb_d2_commitment,
+};
 use lib::math::polynomial::Polynomial;
 
-/// l-BFV: this circuit proves one gadget row's RLK `(d0, d2)` contribution. The
-/// same compiled circuit is reused for every row `row_index in 0..GADGET_DIM` by
-/// selecting that row's URS/CRS/Garner scalar out of `LBFV_URS_GADGET_ROWS`/
-/// `LBFV_CRS_GADGET_ROWS`/`G_GADGET_ROWS`. The l-BFV public-key row circuit uses
-/// the same `a` constant. The `r` commitment binds all rows from one party to the
-/// same ephemeral polynomial.
+pub global RLK_LIMB_PUBLIC_LEN: u32 = 8;
+
+/// Verify all CRT-limb proofs for one RLK row and restore the legacy row commitments.
 fn main(
     row_index: pub u32,
-    sk: Polynomial<N>,
-    r: Polynomial<N>,
-    e0: Polynomial<N>,
-    e2: Polynomial<N>,
-    r1_d0: [Polynomial<(2 * N) - 1>; L],
-    r2_d0: [Polynomial<N - 1>; L],
-    r1_d2: [Polynomial<(2 * N) - 1>; L],
-    r2_d2: [Polynomial<N - 1>; L],
+    limb_vk: UltraHonkVerificationKey,
+    limb_proofs: [UltraHonkZKProof; L],
+    limb_public_inputs: [[Field; RLK_LIMB_PUBLIC_LEN]; L],
+    limb_key_hash: Field,
     d0: [Polynomial<N>; L],
     d2: [Polynomial<N>; L],
-) -> pub (Field, Field, Field, Field) {
+) -> pub (Field, Field, Field, Field, Field) {
     assert(row_index < GADGET_DIM, "row_index out of range");
-    let d1 = LBFV_URS_GADGET_ROWS[row_index];
-    let a = LBFV_CRS_GADGET_ROWS[row_index];
-    let g = G_GADGET_ROWS[row_index];
 
-    let rlk_generation: RlkGeneration<N, L, RLK_GENERATION_BIT_R, RLK_GENERATION_BIT_SK, RLK_GENERATION_BIT_E0, RLK_GENERATION_BIT_E2, RLK_GENERATION_BIT_R1_D0, RLK_GENERATION_BIT_R2_D0, RLK_GENERATION_BIT_R1_D2, RLK_GENERATION_BIT_R2_D2, RLK_GENERATION_BIT_D, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> = RlkGeneration::new(
-        RLK_GENERATION_CONFIGS,
-        d1,
-        a,
-        g,
-        sk,
-        r,
-        e0,
-        e2,
-        r1_d0,
-        r2_d0,
-        r1_d2,
-        r2_d2,
-        d0,
-        d2,
-    );
-    rlk_generation.execute()
+    for limb_index in 0..L {
+        d0[limb_index].range_check_2bounds::<RLK_GENERATION_BIT_D>(
+            RLK_GENERATION_CONFIGS.r2_d0_bounds[limb_index],
+            RLK_GENERATION_CONFIGS.r2_d0_bounds[limb_index],
+        );
+        d2[limb_index].range_check_2bounds::<RLK_GENERATION_BIT_D>(
+            RLK_GENERATION_CONFIGS.r2_d2_bounds[limb_index],
+            RLK_GENERATION_CONFIGS.r2_d2_bounds[limb_index],
+        );
+        verify_honk_proof(
+            limb_vk,
+            limb_proofs[limb_index],
+            limb_public_inputs[limb_index],
+            limb_key_hash,
+        );
+
+        assert(limb_public_inputs[limb_index][0] == row_index as Field);
+        assert(limb_public_inputs[limb_index][1] == limb_index as Field);
+        assert(limb_public_inputs[limb_index][2] == limb_public_inputs[0][2]);
+        assert(limb_public_inputs[limb_index][3] == limb_public_inputs[0][3]);
+        assert(limb_public_inputs[limb_index][4] == limb_public_inputs[0][4]);
+        assert(limb_public_inputs[limb_index][5] == limb_public_inputs[0][5]);
+        assert(
+            compute_rlk_limb_d0_commitment::<N, RLK_GENERATION_BIT_D>(
+                row_index,
+                limb_index,
+                d0[limb_index],
+            )
+                == limb_public_inputs[limb_index][6],
+        );
+        assert(
+            compute_rlk_limb_d2_commitment::<N, RLK_GENERATION_BIT_D>(
+                row_index,
+                limb_index,
+                d2[limb_index],
+            )
+                == limb_public_inputs[limb_index][7],
+        );
+    }
+
+    let d0_commitment = compute_rlk_d0_commitment::<N, L, RLK_GENERATION_BIT_D>(d0);
+    let d2_commitment = compute_rlk_d2_commitment::<N, L, RLK_GENERATION_BIT_D>(d2);
+
+    (
+        limb_public_inputs[0][2], limb_public_inputs[0][3], d0_commitment, d2_commitment,
+        limb_key_hash,
+    )
 }

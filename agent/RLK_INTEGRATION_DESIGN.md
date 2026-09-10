@@ -1,9 +1,10 @@
 # Threshold l-BFV RLK Integration Design
 
-Status: pure adapters and all l-BFV public-key and RLK helper/prover boundaries are implemented.
-Runtime collection, recursive aggregation, storage, and publication remain pending. This document
-records verified interfaces, the integration boundary, and decisions that require protocol approval.
-It does not define a wire schema or on-chain ABI.
+Status: pure adapters and all l-BFV public-key and RLK helper/prover boundaries are implemented. The
+direct five-limb RLK generation and row-finalizer proof flow is verified end to end. Runtime
+collection, recursive aggregation, storage, and publication remain pending. This document records
+verified interfaces, the integration boundary, and decisions that require protocol approval. It does
+not define a wire schema or on-chain ABI.
 
 ## Scope
 
@@ -109,8 +110,13 @@ The repository contains row-level circuits:
   one `row_index`.
 - `circuits/bin/threshold/lbfv_pk_aggregation/src/main.nr` proves the sum of `H` public-key rows for
   one `row_index`.
-- `circuits/bin/threshold/rlk_generation/src/main.nr` proves
-  `(commit(sk), commit(r), commit(d0), commit(d2))` for one `row_index`.
+- `circuits/bin/threshold/rlk_generation_limb/src/main.nr` proves one CRT limb of one RLK row. Its
+  public statement is
+  `(row_index, limb_index, sk_commitment, r_commitment, e0_commitment, e2_commitment, d0_limb_commitment, d2_limb_commitment)`.
+- `circuits/bin/threshold/rlk_generation/src/main.nr` verifies exactly `L` ZK limb proofs in CRT
+  order. It privately receives the complete `d0` and `d2` rows, binds each limb to the matching leaf
+  commitment, and restores the legacy full-row commitments. Its public statement is
+  `(row_index, sk_commitment, r_commitment, d0_commitment, d2_commitment, limb_vk_hash)`.
 - `circuits/bin/threshold/rlk_aggregation/src/main.nr` proves the sum of `H` parties' `d0` and `d2`
   rows for one `row_index`.
 - The circuits use compile-time row constants. The RLK generation circuit requires each `a` row to
@@ -124,12 +130,49 @@ with zero smudging noise and returns only the secret-key and row commitments. Th
 the C1 ABI and C1-to-C5 public-key commitment. The runtime request, response, recursive circuit, and
 proof collection path remain deferred.
 
-The four l-BFV Rust paths provide circuit computation, `Prover.toml` generation, row-selectable CLI
-samples, and `Provable` implementations. Aggregation requires exactly the canonical `H` shares and
-computes centered sums for each CRT limb. `CircuitName::RlkGeneration`,
-`CircuitName::RlkAggregation`, `CircuitName::LbfvPkGeneration`, and `CircuitName::LbfvPkAggregation`
-use durable discriminants 27, 28, 29, and 30. No l-BFV `ProofType`, request, response, or runtime
-event is defined yet.
+The direct l-BFV Rust proof paths provide circuit computation, `Prover.toml` generation, and
+row-selectable CLI samples. RLK limb samples also select `limb_index`. The RLK terminal input helper
+accepts real limb proofs and does not generate placeholder recursive inputs. Aggregation requires
+exactly the canonical `H` shares and computes centered sums for each CRT limb. The RLK row prover
+derives all limbs from one borrowed row, proves them in canonical order, and discards each limb
+witness after proving. Before terminal proving, it requires the preset's exact limb count, validates
+all leaf public statements, and compares the staged leaf VK hash with a trusted caller-supplied
+hash. `CircuitName::RlkGeneration`, `CircuitName::RlkAggregation`, `CircuitName::LbfvPkGeneration`,
+and `CircuitName::LbfvPkAggregation` use durable discriminants 27, 28, 29, and 30.
+`CircuitName::RlkGenerationLimb` appends discriminant 31. No l-BFV `ProofType`, request, response,
+or runtime event is defined yet.
+
+### Compilation measurements
+
+The equation-wide monolithic attempt passed `nargo check` but did not complete compilation after
+more than 31 minutes. The compile was stopped without an artifact. This result caused the CRT-limb
+split.
+
+The production circuits were measured with Nargo `1.0.0-beta.26` under the active
+`secure-16384/minimum` configuration. The commands ran sequentially:
+
+- `rlk_generation_limb`: compilation completed in 512.58 seconds. Maximum resident set size was
+  26,388,774,912 bytes, peak memory footprint was 19,933,710,600 bytes, and the ACIR artifact was
+  37,955,993 bytes.
+- `rlk_generation`: compilation completed in 57.36 seconds. Maximum resident set size was
+  8,039,219,200 bytes, peak memory footprint was 4,561,295,696 bytes, and the ACIR artifact was
+  11,129,310 bytes.
+
+Do not compile these packages in parallel. The earlier disposable limb prototype reached
+28,566,781,952 bytes maximum resident set size.
+
+### End-to-end proof measurement
+
+The artifact-gated `secure-16384/minimum` test generated row 0, proved its five recursive limbs,
+proved the row finalizer, and verified all six proofs with `bb` 5.1.0. Row generation completed in
+820.21 seconds. Limb and terminal proving completed in 513.30 seconds. Each proof verification took
+between 8.37 and 9.23 milliseconds. Total wall time was 1,393.44 seconds, and maximum resident set
+size was 16,788,504,576 bytes.
+
+The same test compared the terminal's six public fields with Rust commitments and the trusted leaf
+VK hash. It also replaced the staged leaf VK with the terminal VK while it retained the trusted leaf
+hash. Proof generation can complete with this invalid witness, but the resulting terminal proof does
+not verify. The test requires this rejection.
 
 ## Proposed Protocol Shape
 
@@ -158,13 +201,16 @@ contribution. The effect runner must:
 2. Build the `RelinKeyShare` with the same `a` CRS and the shared `d1` URS.
 3. Retain the `RlkWitness` only in encrypted local pending-proof state.
 4. Serialize the public contribution for the authenticated protocol event.
-5. Create one l-BFV public-key proof request and one RLK generation proof request for every gadget
-   row.
+5. Create one l-BFV public-key proof request for every gadget row.
+6. Create one RLK limb proof request for every `(row_index, limb_index)` pair.
+7. Create one RLK row-finalizer request after all `L` limb proofs for that row exist.
 
 The public-key request for row `j` must carry `row_index = j`, the secret key, the row's public-key
-share and error, and the quotient polynomials. The RLK request must carry the row's `d0` and `d2`
-values, errors, and quotient polynomials. Both requests must carry the session's preset and
-committee scope. Sensitive values must use the existing encrypted-at-rest wrapper.
+share and error, and the quotient polynomials. An RLK leaf request must carry one CRT limb of the
+row's `d0`, `d2`, and quotient polynomials. It also carries the shared `sk`, `r`, `e0`, and `e2`
+polynomials. The row finalizer privately receives the complete `d0` and `d2` rows and the real leaf
+proofs. All requests must carry the session's preset and committee scope. Sensitive values must use
+the existing encrypted-at-rest wrapper.
 
 ### 3. Complete the l-BFV public-key row path
 
@@ -184,8 +230,18 @@ must not change. New proof types must be appended to durable enums.
 
 ### 4. Generate and verify RLK row proofs
 
-The proof pipeline should treat RLK generation as a separate proof family. A generated row proof
-must bind all of these values:
+The proof pipeline must treat RLK generation as a two-level proof family. Each leaf derives an
+independent Fiat-Shamir challenge with the `CLG_RLK_GENERATION_LIMB_V1` domain after it binds the
+row and limb indices, selected `d1`, `a`, `g`, and `qi`, active errors, commitments, and active
+quotient witnesses. The leaf commitment domain is `RLK_GENERATION_LIMB_V1`.
+
+The row finalizer verifies exactly `L` `UltraHonkZKProof` values with the supplied leaf VK and
+`verify_honk_proof`. It rejects a missing or reordered limb, requires one common row and common
+SK/R/E0/E2 commitments, binds each private D0/D2 limb to its leaf commitment, and recomputes the
+unchanged full-row D0/D2 commitments. It carries the verified leaf VK hash at the tail of its public
+statement so a future `NodeFold` can bind the leaf circuit identity.
+
+A generated terminal row proof must bind all of these values:
 
 - the complete E3 domain;
 - the party slot;
@@ -194,6 +250,7 @@ must bind all of these values:
 - the l-BFV public-key and legacy C1 `sk_commitment` for the same party;
 - the `r_commitment`, which must be equal in all rows from one party;
 - the RLK `d0` and `d2` commitments;
+- the RLK limb verification-key hash;
 - the CRS and URS version or digest.
 
 The existing signed-proof envelope binds only `e3_id`, proof type, proof bytes, and public signals.
@@ -201,7 +258,8 @@ The new row metadata must therefore be public circuit input, part of the signed 
 The implementation must not rely on an unsigned event field for row identity.
 
 Receiving nodes must validate the sender, committee slot, session, row, proof type, signature, and
-public-input shape before they dispatch heavy ZK verification.
+public-input shape before they dispatch heavy ZK verification. Runtime requests and collection are
+not implemented in this circuit slice.
 
 ### 5. Aggregate the accepted contributions
 
@@ -217,7 +275,7 @@ legacy C5 ABI remains unchanged. The runtime and recursive paths do not use this
 For each row, the aggregator must:
 
 1. Select exactly `H` canonical accepted party IDs.
-2. Verify one l-BFV public-key proof and one RLK generation proof for each selected party.
+2. Verify one l-BFV public-key proof and one terminal RLK generation proof for each selected party.
 3. Verify each proof's secret-key commitment and row identity.
 4. Aggregate the selected public-key rows and run the l-BFV public-key aggregation circuit.
 5. Deserialize the selected `RelinKeyShare` values.
@@ -306,14 +364,18 @@ Stable operation IDs must include the E3 domain, session version, party slot, pr
 
 The recursive proof chain will carry the RLK data as follows:
 
-1. One party produces one public-key proof and one RLK generation proof for each `row_index`.
-2. The party's `NodeFold` input contains both ordered proof sets.
-3. `NodeFold` verifies each proof pair and returns the row's public-key, `d0`, and `d2` commitments.
-4. `NodesFold` preserves the row commitment columns for exactly the canonical `H` party slots.
-5. The aggregator produces one public-key aggregation proof and one RLK aggregation proof per row.
-6. `DkgAggregator` verifies both aggregation proofs and checks their expected commitment arrays
+1. One party produces one public-key proof, `L` RLK limb proofs, and one terminal RLK generation
+   proof for each `row_index`.
+2. Each RLK row finalizer verifies its ordered CRT-limb proof set and returns the leaf VK hash with
+   the row commitments.
+3. The party's `NodeFold` input contains the public-key row proofs and terminal RLK row proofs.
+4. `NodeFold` verifies each proof pair, binds the terminal leaf VK hash, and returns the row's
+   public-key, `d0`, and `d2` commitments.
+5. `NodesFold` preserves the row commitment columns for exactly the canonical `H` party slots.
+6. The aggregator produces one public-key aggregation proof and one RLK aggregation proof per row.
+7. `DkgAggregator` verifies both aggregation proofs and checks their expected commitment arrays
    against the corresponding `NodesFold` rows.
-7. `DkgAggregator` returns aggregate public-key and RLK commitments for the publication wrapper.
+8. `DkgAggregator` returns aggregate public-key and RLK commitments for the publication wrapper.
 
 The existing C5 commitment remains part of the same DKG publication proof. The on-chain wrapper must
 check the new RLK commitment vector against the E3-scoped publication input and the selected
@@ -344,7 +406,11 @@ introduce a second source of l-BFV cryptographic constants.
 The pure circuit slice now includes:
 
 - `crates/zk-helpers/src/circuits/threshold/rlk_generation.rs`;
-- RLK generation circuit registration and a `Provable` implementation in `crates/zk-prover`;
+- one reusable `rlk_generation_limb` artifact for all rows and CRT limbs;
+- a recursive `rlk_generation` row finalizer that verifies the ZK leaf proofs and restores legacy
+  D0/D2 commitments;
+- RLK limb circuit registration and a `Provable` implementation in `crates/zk-prover`;
+- a local finalizer helper that accepts real limb proofs and binds the recursive leaf VK;
 - the l-BFV public-key row adapter, circuit computation, codegen, and `Provable` implementation;
 - the separate `lbfv_pk_generation` Noir circuit, which preserves the legacy C1 ABI;
 - derived RLK quotient bounds that include the Garner term;
@@ -361,7 +427,8 @@ The pure circuit slice now includes:
 The remaining capability additions are:
 
 - l-BFV public-key proof requests and runtime collection changes;
-- generated RLK verifier artifacts for the `secure-16384` preset;
+- generated RLK leaf and terminal verifier artifacts for the `secure-16384` preset;
+- runtime requests and collection for RLK leaf and terminal proofs;
 - recursive `NodeFold`, `NodesFold`, and `DkgAggregator` changes so RLK proofs reach the existing
   EVM-facing DKG verifier;
 - Solidity verifier wrapper and publication route for the recursive proof;
@@ -374,7 +441,10 @@ regenerated by the existing build tools. No generated artifact must be edited by
 The implementation must add tests at these levels:
 
 - pure conversion tests for every supported preset and every RLK row;
-- proof-output tests for `commit(sk)`, `commit(d0)`, and `commit(d2)`;
+- proof-output tests for leaf commitments, terminal `commit(sk)`, terminal `commit(d0)`, terminal
+  `commit(d2)`, and the terminal leaf VK hash;
+- missing, duplicate, reordered, wrong-row, wrong-limb, mixed-shared-commitment, and wrong-VK leaf
+  rejection tests;
 - C1-to-l-BFV and l-BFV-to-RLK commitment-link tests;
 - duplicate, missing, reordered, wrong-row, wrong-party, and wrong-session rejection tests;
 - exact-`H` aggregation tests and `H < N` tests;
@@ -393,8 +463,8 @@ The following decisions are resolved:
   E3 cleanup. Durable proof and commitment history remains domain-bound and is never reused by
   another E3.
 - RLK generation and aggregation proofs are verified on chain.
-- The proof path extends `NodeFold`, `NodesFold`, and `DkgAggregator` instead of adding a separate
-  RLK recursive circuit.
+- The row proof uses the recursive RLK finalizer. The later protocol path extends `NodeFold`,
+  `NodesFold`, and `DkgAggregator` instead of adding another RLK aggregation chain.
 - CRS and URS values use one defined source for the l-BFV row vectors and the C1/RLK circuits.
 - l-BFV public randomness uses fixed, domain-separated `secure-16384` seeds. `a_j` and `d1_j` are
   generated with `CommonRandomPolyVec::from_seed`; Garner scalars come from the level-0

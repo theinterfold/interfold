@@ -124,9 +124,18 @@ opentelemetry/tracing.
   `user_data_encryption_ct0/ct1` (+ wrapper) · C6 `share_decryption` · C7
   `decrypted_shares_aggregation` · secure-16384 l-BFV row proofs `lbfv_pk_generation`
   (`CircuitName::LbfvPkGeneration = 29`), `lbfv_pk_aggregation`
-  (`CircuitName::LbfvPkAggregation = 30`), `rlk_generation` (`CircuitName::RlkGeneration = 27`), and
-  `rlk_aggregation` (`CircuitName::RlkAggregation = 28`). These circuits have helper and prover
-  boundaries. The runtime and recursive proof flows do not use them yet.
+  (`CircuitName::LbfvPkAggregation = 30`), `rlk_generation` (`CircuitName::RlkGeneration = 27`),
+  `rlk_generation_limb` (`CircuitName::RlkGenerationLimb = 31`), and `rlk_aggregation`
+  (`CircuitName::RlkAggregation = 28`). `rlk_generation_limb` proves one CRT limb, and
+  `rlk_generation` recursively finalizes all limbs for one row. These circuits have helper and
+  prover boundaries. A real `secure-16384/minimum` test generates five recursive limb proofs,
+  finalizes one row, verifies all six proofs, checks the six terminal public fields, and rejects a
+  terminal proof made with the wrong leaf VK. The runtime and broader recursive proof flows do not
+  use them yet. Under `secure-16384/minimum`, sequential production compilation measured 512.58
+  seconds and 26,388,774,912 bytes maximum RSS for the limb, then 57.36 seconds and 8,039,219,200
+  bytes maximum RSS for the terminal. The end-to-end test took 1,393.44 seconds and 16,788,504,576
+  bytes maximum RSS. The prior equation-wide circuit did not complete compilation after more than 31
+  minutes.
 - **Recursive aggregation** (`circuits/bin/recursive_aggregation/`): fold kernels
   (`c2ab_chunk_fold`, `c3_fold`, `c6_fold`, `node_fold`, `nodes_fold`, …) and the top-level
   `dkg_aggregator` / `decryption_aggregator`, which produce the on-chain Honk verifiers. The

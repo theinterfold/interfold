@@ -12,9 +12,8 @@ use crate::math::{
 };
 use crate::utils::{validate_crt_shape, verify_crt_shapes};
 use crate::{
-    calculate_bit_width, crt_polynomial_to_toml_json, polynomial_to_toml_json, Artifacts,
-    CiphernodesCommittee, Circuit, CircuitCodegen, CircuitComputation, CircuitsErrors,
-    CodegenConfigs, CodegenToml, Computation,
+    calculate_bit_width, polynomial_to_toml_json, Artifacts, CiphernodesCommittee, Circuit,
+    CircuitCodegen, CircuitComputation, CircuitsErrors, CodegenConfigs, CodegenToml, Computation,
 };
 use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
@@ -26,12 +25,24 @@ use num_bigint::{BigInt, BigUint};
 use std::sync::Arc;
 use zeroize::Zeroize;
 
-/// Row-level l-BFV relinearization-key generation circuit.
+/// Recursive finalizer for one l-BFV relinearization-key row.
 #[derive(Debug)]
 pub struct RlkGenerationCircuit;
 
 impl Circuit for RlkGenerationCircuit {
     const NAME: &'static str = "rlk-generation";
+    const PREFIX: &'static str = "RLK_GENERATION";
+    const SUPPORTED_PARAMETER: e3_fhe_params::ParameterType =
+        e3_fhe_params::ParameterType::THRESHOLD;
+    const DKG_INPUT_TYPE: Option<crate::computation::DkgInputType> = None;
+}
+
+/// CRT-limb l-BFV relinearization-key generation circuit.
+#[derive(Debug)]
+pub struct RlkGenerationLimbCircuit;
+
+impl Circuit for RlkGenerationLimbCircuit {
+    const NAME: &'static str = "rlk-generation-limb";
     const PREFIX: &'static str = "RLK_GENERATION";
     const SUPPORTED_PARAMETER: e3_fhe_params::ParameterType =
         e3_fhe_params::ParameterType::THRESHOLD;
@@ -66,11 +77,53 @@ pub struct RlkGenerationCircuitData {
     pub d2: CrtPolynomial,
 }
 
-/// Complete RLK circuit computation output.
-pub struct RlkGenerationComputationOutput {
+/// Inputs for one CRT limb of one validated RLK row.
+pub struct RlkGenerationLimbCircuitData {
+    pub row: RlkGenerationCircuitData,
+    pub limb_index: u32,
+}
+
+/// Borrowed prover input for one CRT limb of a validated RLK row.
+pub struct RlkGenerationLimbInput<'a> {
+    pub row_index: u32,
+    pub limb_index: u32,
+    pub sk: &'a Polynomial,
+    pub r: &'a Polynomial,
+    pub e0: &'a Polynomial,
+    pub e2: &'a Polynomial,
+    pub r1_d0: &'a Polynomial,
+    pub r2_d0: &'a Polynomial,
+    pub r1_d2: &'a Polynomial,
+    pub r2_d2: &'a Polynomial,
+    pub d0: &'a Polynomial,
+    pub d2: &'a Polynomial,
+}
+
+impl RlkGenerationLimbInput<'_> {
+    /// Convert the borrowed limb input to the JSON shape required by the Noir ABI.
+    pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "row_index": self.row_index,
+            "limb_index": self.limb_index,
+            "sk": polynomial_to_toml_json(self.sk),
+            "r": polynomial_to_toml_json(self.r),
+            "e0": polynomial_to_toml_json(self.e0),
+            "e2": polynomial_to_toml_json(self.e2),
+            "r1_d0": polynomial_to_toml_json(self.r1_d0),
+            "r2_d0": polynomial_to_toml_json(self.r2_d0),
+            "r1_d2": polynomial_to_toml_json(self.r1_d2),
+            "r2_d2": polynomial_to_toml_json(self.r2_d2),
+            "d0": polynomial_to_toml_json(self.d0),
+            "d2": polynomial_to_toml_json(self.d2),
+        })
+    }
+}
+
+/// Complete RLK limb-circuit computation output.
+pub struct RlkGenerationLimbComputationOutput {
     pub bounds: RlkGenerationBounds,
     pub bits: RlkGenerationBits,
-    pub inputs: RlkGenerationInputs,
+    pub inputs: RlkGenerationLimbInputs,
 }
 
 /// Generated RLK constants for one preset and committee.
@@ -110,33 +163,34 @@ pub struct RlkGenerationBounds {
     pub r2_d2_bounds: Vec<BigUint>,
 }
 
-/// Prover inputs for one RLK gadget row.
+/// Prover inputs for one CRT limb of one RLK gadget row.
 #[derive(serde::Serialize, serde::Deserialize)]
-pub struct RlkGenerationInputs {
+pub struct RlkGenerationLimbInputs {
     pub row_index: u32,
+    pub limb_index: u32,
     pub sk: Polynomial,
     pub r: Polynomial,
     pub e0: Polynomial,
     pub e2: Polynomial,
-    pub r1_d0: CrtPolynomial,
-    pub r2_d0: CrtPolynomial,
-    pub r1_d2: CrtPolynomial,
-    pub r2_d2: CrtPolynomial,
-    pub d0: CrtPolynomial,
-    pub d2: CrtPolynomial,
+    pub r1_d0: Polynomial,
+    pub r2_d0: Polynomial,
+    pub r1_d2: Polynomial,
+    pub r2_d2: Polynomial,
+    pub d0: Polynomial,
+    pub d2: Polynomial,
 }
 
-impl CircuitComputation for RlkGenerationCircuit {
+impl CircuitComputation for RlkGenerationLimbCircuit {
     type Preset = BfvPreset;
-    type Data = RlkGenerationCircuitData;
-    type Output = RlkGenerationComputationOutput;
+    type Data = RlkGenerationLimbCircuitData;
+    type Output = RlkGenerationLimbComputationOutput;
     type Error = CircuitsErrors;
 
     fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self::Output, Self::Error> {
-        let bounds = RlkGenerationBounds::compute(preset, &data.committee)?;
+        let bounds = RlkGenerationBounds::compute(preset, &data.row.committee)?;
         let bits = RlkGenerationBits::compute(preset, &bounds)?;
-        let inputs = RlkGenerationInputs::compute(preset, data)?;
-        Ok(RlkGenerationComputationOutput {
+        let inputs = RlkGenerationLimbInputs::compute(preset, data)?;
+        Ok(RlkGenerationLimbComputationOutput {
             bounds,
             bits,
             inputs,
@@ -251,94 +305,127 @@ impl Computation for RlkGenerationBits {
     }
 }
 
-impl Computation for RlkGenerationInputs {
+impl Computation for RlkGenerationLimbInputs {
     type Preset = BfvPreset;
-    type Data = RlkGenerationCircuitData;
+    type Data = RlkGenerationLimbCircuitData;
     type Error = CircuitsErrors;
 
     fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
-        let (params, _) = build_pair_for_preset(preset)
-            .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
-        let crs_seed = lbfv_crs_seed(preset).ok_or_else(|| {
-            CircuitsErrors::Other(format!("l-BFV CRS is not enabled for {preset:?}"))
+        let limbs = derive_rlk_generation_limb_inputs(preset, &data.row)?;
+        let limb_index = usize::try_from(data.limb_index)
+            .map_err(|_| CircuitsErrors::Other("RLK limb index does not fit usize".to_string()))?;
+        let limb = limbs.get(limb_index).ok_or_else(|| {
+            CircuitsErrors::Other(format!(
+                "RLK limb index {} is out of range for {} limbs",
+                data.limb_index,
+                limbs.len()
+            ))
         })?;
-        let crs_row_count = CommonRandomPolyVec::from_seed(&params, crs_seed)?.len();
-        let row_index = usize::try_from(data.row_index)
-            .map_err(|_| CircuitsErrors::Other("RLK row index does not fit usize".to_string()))?;
-        if row_index >= crs_row_count {
-            return Err(CircuitsErrors::Other(format!(
-                "RLK row index {} is out of range for {crs_row_count} rows",
-                data.row_index
-            )));
-        }
-        let l = params.moduli().len();
-        let n = params.degree();
-        verify_crt_shapes(&[&data.d0, &data.d2], l, n)
-            .map_err(|error| CircuitsErrors::Other(format!("RLK CRT shape mismatch: {error}")))?;
-        for (name, polynomial, degree) in [
-            ("r1_d0", &data.r1_d0, 2 * n - 1),
-            ("r2_d0", &data.r2_d0, n - 1),
-            ("r1_d2", &data.r1_d2, 2 * n - 1),
-            ("r2_d2", &data.r2_d2, n - 1),
-        ] {
-            validate_crt_shape(polynomial, l, degree).map_err(|error| {
-                CircuitsErrors::Other(format!("invalid RLK {name} shape: {error}"))
-            })?;
-        }
-        for (name, polynomial) in [
-            ("sk", &data.sk),
-            ("r", &data.r),
-            ("e0", &data.e0),
-            ("e2", &data.e2),
-        ] {
-            if polynomial.coefficients().len() != n {
-                return Err(CircuitsErrors::Other(format!(
-                    "RLK {name} has {} coefficients; expected {n}",
-                    polynomial.coefficients().len()
-                )));
-            }
-        }
 
         Ok(Self {
-            row_index: data.row_index,
-            sk: data.sk.clone(),
-            r: data.r.clone(),
-            e0: data.e0.clone(),
-            e2: data.e2.clone(),
-            r1_d0: data.r1_d0.clone(),
-            r2_d0: data.r2_d0.clone(),
-            r1_d2: data.r1_d2.clone(),
-            r2_d2: data.r2_d2.clone(),
-            d0: data.d0.clone(),
-            d2: data.d2.clone(),
+            row_index: limb.row_index,
+            limb_index: limb.limb_index,
+            sk: limb.sk.clone(),
+            r: limb.r.clone(),
+            e0: limb.e0.clone(),
+            e2: limb.e2.clone(),
+            r1_d0: limb.r1_d0.clone(),
+            r2_d0: limb.r2_d0.clone(),
+            r1_d2: limb.r1_d2.clone(),
+            r2_d2: limb.r2_d2.clone(),
+            d0: limb.d0.clone(),
+            d2: limb.d2.clone(),
         })
     }
 
     fn to_json(&self) -> serde_json::Result<serde_json::Value> {
         Ok(serde_json::json!({
             "row_index": self.row_index,
+            "limb_index": self.limb_index,
             "sk": polynomial_to_toml_json(&self.sk),
             "r": polynomial_to_toml_json(&self.r),
             "e0": polynomial_to_toml_json(&self.e0),
             "e2": polynomial_to_toml_json(&self.e2),
-            "r1_d0": crt_polynomial_to_toml_json(&self.r1_d0),
-            "r2_d0": crt_polynomial_to_toml_json(&self.r2_d0),
-            "r1_d2": crt_polynomial_to_toml_json(&self.r1_d2),
-            "r2_d2": crt_polynomial_to_toml_json(&self.r2_d2),
-            "d0": crt_polynomial_to_toml_json(&self.d0),
-            "d2": crt_polynomial_to_toml_json(&self.d2),
+            "r1_d0": polynomial_to_toml_json(&self.r1_d0),
+            "r2_d0": polynomial_to_toml_json(&self.r2_d0),
+            "r1_d2": polynomial_to_toml_json(&self.r1_d2),
+            "r2_d2": polynomial_to_toml_json(&self.r2_d2),
+            "d0": polynomial_to_toml_json(&self.d0),
+            "d2": polynomial_to_toml_json(&self.d2),
         }))
     }
 }
 
-impl CircuitCodegen for RlkGenerationCircuit {
+/// Derive all CRT-limb inputs from one row in canonical limb order.
+pub fn derive_rlk_generation_limb_inputs(
+    preset: BfvPreset,
+    row: &RlkGenerationCircuitData,
+) -> Result<Vec<RlkGenerationLimbInput<'_>>, CircuitsErrors> {
+    let (params, _) =
+        build_pair_for_preset(preset).map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+    lbfv_crs_seed(preset)
+        .ok_or_else(|| CircuitsErrors::Other(format!("l-BFV CRS is not enabled for {preset:?}")))?;
+    let l = params.moduli().len();
+    let row_index = usize::try_from(row.row_index)
+        .map_err(|_| CircuitsErrors::Other("RLK row index does not fit usize".to_string()))?;
+    if row_index >= l {
+        return Err(CircuitsErrors::Other(format!(
+            "RLK row index {} is out of range for {l} rows",
+            row.row_index
+        )));
+    }
+    let n = params.degree();
+    verify_crt_shapes(&[&row.d0, &row.d2], l, n)
+        .map_err(|error| CircuitsErrors::Other(format!("RLK CRT shape mismatch: {error}")))?;
+    for (name, polynomial, degree) in [
+        ("r1_d0", &row.r1_d0, 2 * n - 1),
+        ("r2_d0", &row.r2_d0, n - 1),
+        ("r1_d2", &row.r1_d2, 2 * n - 1),
+        ("r2_d2", &row.r2_d2, n - 1),
+    ] {
+        validate_crt_shape(polynomial, l, degree)
+            .map_err(|error| CircuitsErrors::Other(format!("invalid RLK {name} shape: {error}")))?;
+    }
+    for (name, polynomial) in [
+        ("sk", &row.sk),
+        ("r", &row.r),
+        ("e0", &row.e0),
+        ("e2", &row.e2),
+    ] {
+        if polynomial.coefficients().len() != n {
+            return Err(CircuitsErrors::Other(format!(
+                "RLK {name} has {} coefficients; expected {n}",
+                polynomial.coefficients().len()
+            )));
+        }
+    }
+
+    Ok((0..l)
+        .map(|limb_index| RlkGenerationLimbInput {
+            row_index: row.row_index,
+            limb_index: limb_index as u32,
+            sk: &row.sk,
+            r: &row.r,
+            e0: &row.e0,
+            e2: &row.e2,
+            r1_d0: row.r1_d0.limb(limb_index),
+            r2_d0: row.r2_d0.limb(limb_index),
+            r1_d2: row.r1_d2.limb(limb_index),
+            r2_d2: row.r2_d2.limb(limb_index),
+            d0: row.d0.limb(limb_index),
+            d2: row.d2.limb(limb_index),
+        })
+        .collect())
+}
+
+impl CircuitCodegen for RlkGenerationLimbCircuit {
     type Preset = BfvPreset;
-    type Data = RlkGenerationCircuitData;
+    type Data = RlkGenerationLimbCircuitData;
     type Error = CircuitsErrors;
 
     fn codegen(&self, preset: Self::Preset, data: &Self::Data) -> Result<Artifacts, Self::Error> {
-        let inputs = RlkGenerationInputs::compute(preset, data)?;
-        let configs = RlkGenerationConfigs::compute(preset, &data.committee)?;
+        let inputs = RlkGenerationLimbInputs::compute(preset, data)?;
+        let configs = RlkGenerationConfigs::compute(preset, &data.row.committee)?;
         Ok(Artifacts {
             toml: generate_toml(inputs)?,
             configs: generate_configs(&configs),
@@ -346,8 +433,8 @@ impl CircuitCodegen for RlkGenerationCircuit {
     }
 }
 
-/// Serialize one RLK row as `Prover.toml`.
-pub fn generate_toml(inputs: RlkGenerationInputs) -> Result<CodegenToml, CircuitsErrors> {
+/// Serialize one RLK row limb as `Prover.toml`.
+pub fn generate_toml(inputs: RlkGenerationLimbInputs) -> Result<CodegenToml, CircuitsErrors> {
     Ok(toml::to_string(&inputs.to_json()?)?)
 }
 
@@ -764,6 +851,29 @@ impl RlkGenerationCircuitData {
     }
 }
 
+impl RlkGenerationLimbCircuitData {
+    /// Generate row zero and limb zero for codegen and prover tests.
+    pub fn generate_sample(
+        preset: BfvPreset,
+        committee: CiphernodesCommittee,
+    ) -> Result<Self, CircuitsErrors> {
+        Self::generate_sample_for_row_and_limb(preset, committee, 0, 0)
+    }
+
+    /// Generate one valid RLK row limb for codegen and prover tests.
+    pub fn generate_sample_for_row_and_limb(
+        preset: BfvPreset,
+        committee: CiphernodesCommittee,
+        row_index: u32,
+        limb_index: u32,
+    ) -> Result<Self, CircuitsErrors> {
+        Ok(Self {
+            row: RlkGenerationCircuitData::generate_sample_for_row(preset, committee, row_index)?,
+            limb_index,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -875,6 +985,75 @@ mod tests {
 
         assert!(noir.contains("RLK_GENERATION_R1_D0_BOUNDS"));
         assert!(noir.contains(&configs.bounds.r1_d0_bounds[0].to_string()));
+        Ok(())
+    }
+
+    #[test]
+    fn limb_toml_contains_only_one_polynomial_per_crt_value() -> Result<(), CircuitsErrors> {
+        let polynomial = Polynomial::new(vec![1.into(), (-1).into()]);
+        let inputs = RlkGenerationLimbInputs {
+            row_index: 2,
+            limb_index: 3,
+            sk: polynomial.clone(),
+            r: polynomial.clone(),
+            e0: polynomial.clone(),
+            e2: polynomial.clone(),
+            r1_d0: polynomial.clone(),
+            r2_d0: polynomial.clone(),
+            r1_d2: polynomial.clone(),
+            r2_d2: polynomial.clone(),
+            d0: polynomial.clone(),
+            d2: polynomial,
+        };
+        let toml = generate_toml(inputs)?;
+
+        assert!(toml.contains("row_index = 2"));
+        assert!(toml.contains("limb_index = 3"));
+        assert!(toml.contains("[d0]"));
+        assert!(!toml.contains("[[d0]]"));
+        Ok(())
+    }
+
+    #[test]
+    fn limb_inputs_borrow_one_row_in_canonical_order() -> Result<(), CircuitsErrors> {
+        let preset = BfvPreset::SecureThreshold16384;
+        let metadata = preset.metadata();
+        let polynomial = |degree| Polynomial::new(vec![BigInt::from(0u8); degree]);
+        let crt = |degree| {
+            CrtPolynomial::new(
+                (0..metadata.num_moduli)
+                    .map(|_| polynomial(degree))
+                    .collect(),
+            )
+        };
+        let row = RlkGenerationCircuitData {
+            committee: CiphernodesCommitteeSize::Minimum.values(),
+            row_index: 0,
+            sk: polynomial(metadata.degree),
+            r: polynomial(metadata.degree),
+            e0: polynomial(metadata.degree),
+            e2: polynomial(metadata.degree),
+            r1_d0: crt(2 * metadata.degree - 1),
+            r2_d0: crt(metadata.degree - 1),
+            r1_d2: crt(2 * metadata.degree - 1),
+            r2_d2: crt(metadata.degree - 1),
+            d0: crt(metadata.degree),
+            d2: crt(metadata.degree),
+        };
+        let limbs = derive_rlk_generation_limb_inputs(preset, &row)?;
+
+        assert_eq!(limbs.len(), metadata.num_moduli);
+        for (limb_index, limb) in limbs.iter().enumerate() {
+            assert_eq!(limb.row_index, row.row_index);
+            assert_eq!(limb.limb_index, limb_index as u32);
+            assert!(std::ptr::eq(limb.sk, &row.sk));
+            assert!(std::ptr::eq(limb.r, &row.r));
+            assert!(std::ptr::eq(limb.e0, &row.e0));
+            assert!(std::ptr::eq(limb.e2, &row.e2));
+            assert!(std::ptr::eq(limb.d0, row.d0.limb(limb_index)));
+            assert!(std::ptr::eq(limb.d2, row.d2.limb(limb_index)));
+        }
+
         Ok(())
     }
 

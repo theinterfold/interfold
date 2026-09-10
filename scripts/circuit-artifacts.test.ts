@@ -12,7 +12,7 @@ import test from 'node:test'
 import { RELEASE_REQUIRED_PAIRS, requiredArtifactMarkers, validateArtifactSet, validateReleaseArtifacts } from './circuit-artifacts'
 
 const REQUIRED_LBFV_MARKERS = ['default', 'evm', 'recursive'].flatMap((variant) =>
-  ['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_aggregation'].flatMap((circuit) =>
+  ['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_generation_limb', 'rlk_aggregation'].flatMap((circuit) =>
     ['.json', '.vk', '.vk_hash'].map((extension) =>
       join('secure-16384', 'minimum', variant, 'threshold', circuit, `${circuit}${extension}`),
     ),

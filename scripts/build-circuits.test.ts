@@ -53,8 +53,8 @@ test('synchronizes and verifies nested l-BFV config modules', () => {
 
 test('requires complete l-BFV row artifacts only for secure-16384', () => {
   const root = '/artifacts'
-  assert.equal(requiredLbfvDistMarkers(root, CIRCUIT_PRESETS.SECURE_16384).length, 36)
-  assert.equal(requiredLbfvBinMarkers(root, CIRCUIT_PRESETS.SECURE_16384).length, 28)
+  assert.equal(requiredLbfvDistMarkers(root, CIRCUIT_PRESETS.SECURE_16384).length, 45)
+  assert.equal(requiredLbfvBinMarkers(root, CIRCUIT_PRESETS.SECURE_16384).length, 35)
   assert.deepEqual(requiredLbfvDistMarkers(root, CIRCUIT_PRESETS.SECURE_8192), [])
   assert.deepEqual(requiredLbfvBinMarkers(root, CIRCUIT_PRESETS.INSECURE_512), [])
 })
@@ -156,7 +156,7 @@ function hydrationFixture(): {
   const outputDir = join(root, 'dist', 'circuits')
   const pairDir = join(outputDir, CIRCUIT_PRESETS.SECURE_16384, 'minimum')
 
-  for (const circuit of ['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_aggregation']) {
+  for (const circuit of ['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_generation_limb', 'rlk_aggregation']) {
     const circuitDir = join(bin, CIRCUIT_GROUPS.THRESHOLD, circuit)
     mkdirSync(circuitDir, { recursive: true })
     writeFileSync(join(circuitDir, 'Nargo.toml'), `[package]\nname = "${circuit}"\ntype = "bin"\n`)
@@ -198,6 +198,10 @@ test('hydrates all l-BFV row targets and removes stale target artifacts', () => 
     }
     assert.equal(
       existsSync(join(fixture.root, 'circuits', 'bin', 'threshold', 'rlk_generation', 'target', 'rlk_generation.obsolete')),
+      false,
+    )
+    assert.equal(
+      existsSync(join(fixture.root, 'circuits', 'bin', 'threshold', 'rlk_generation_limb', 'target', 'rlk_generation_limb.obsolete')),
       false,
     )
     assert.equal(JSON.parse(readFileSync(join(fixture.root, 'circuits', 'bin', '.active-preset.json'), 'utf8')).sourceHash, 'source-hash')

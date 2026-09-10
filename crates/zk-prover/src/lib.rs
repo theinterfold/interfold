@@ -44,6 +44,9 @@ pub use circuits::dkg::share_computation::{
     prove_chunked_share_computation, prove_chunked_share_computation_with_chunk_size,
     ChunkedShareComputationProofs, DEFAULT_C2_CHUNK_SIZE,
 };
+pub use circuits::threshold::rlk_generation::{
+    finalize_rlk_generation_row, prove_rlk_generation_row, RlkGenerationRowProof,
+};
 pub use config::{verify_checksum, BbTarget, CircuitInfo, VersionInfo, ZkConfig};
 pub use dkg_attestation_bundle::encode_dkg_attestation_bundle;
 pub use e3_events::CircuitVariant;

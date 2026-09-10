@@ -39,7 +39,13 @@ import {
   type CircuitPreset,
 } from './circuit-constants'
 
-const SECURE_16384_ONLY_CIRCUITS = new Set(['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_aggregation'])
+const SECURE_16384_ONLY_CIRCUITS = new Set([
+  'lbfv_pk_generation',
+  'lbfv_pk_aggregation',
+  'rlk_generation',
+  'rlk_generation_limb',
+  'rlk_aggregation',
+])
 
 function configModuleFiles(dir: string, base = dir): string[] {
   if (!existsSync(dir)) return []

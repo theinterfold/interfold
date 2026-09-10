@@ -66,6 +66,10 @@ get_zk_args() {
             echo "rlk-generation"
             return
             ;;
+        threshold/rlk_generation_limb)
+            echo "rlk-generation-limb"
+            return
+            ;;
         threshold/rlk_aggregation)
             echo "rlk-aggregation"
             return

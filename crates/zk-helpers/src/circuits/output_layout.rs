@@ -138,6 +138,17 @@ pub const RLK_GENERATION_OUTPUTS: &[OutputField] = &[
     f("r_commitment"),
     f("d0_commitment"),
     f("d2_commitment"),
+    f("limb_vk_hash"),
+];
+
+/// l-BFV relinearization-key generation for one row and one CRT limb.
+pub const RLK_GENERATION_LIMB_OUTPUTS: &[OutputField] = &[
+    f("sk_commitment"),
+    f("r_commitment"),
+    f("e0_commitment"),
+    f("e2_commitment"),
+    f("d0_limb_commitment"),
+    f("d2_limb_commitment"),
 ];
 
 /// l-BFV relinearization-key aggregation for one gadget row.
@@ -165,6 +176,9 @@ pub const SHARE_ENCRYPTION_INPUTS: &[OutputField] = &[
 
 /// Public l-BFV relinearization-key row selector.
 pub const RLK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
+
+/// Public row and CRT-limb selectors for an RLK leaf proof.
+pub const RLK_GENERATION_LIMB_INPUTS: &[OutputField] = &[f("row_index"), f("limb_index")];
 
 /// Public l-BFV public-key row selector.
 pub const LBFV_PK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
