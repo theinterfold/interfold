@@ -31,7 +31,8 @@ a seven-field commitment payload that `CRISPProgram.publishInput` reads through 
 voter creates ciphertext and Noir proof
         |
         v
-CRISP server validates the proof and stores the exact bytes durably
+CRISP server validates the proof, checks the ciphertext against its proved
+commitment, and stores the exact bytes durably
         |
         v
 server signs InputAvailability(e3Id, inputId, expiresAt)
@@ -75,9 +76,48 @@ The aggregate callback uses the same two-proof order. Before the server spends A
 `CRISPProgram.verify` as an Ethereum read with the output hash, SAFE commitment, and RISC Zero
 proof. Only an output that passes that exact on-chain verifier becomes a durable Avail job. The job
 ID excludes the proof seal, so another valid seal for the same output is an idempotent retry instead
-of a second paid publication. The server also refuses the job while the input window is open: a
-proof over the current root could otherwise become stale after another vote, after the Avail fee was
-already paid. The compute server retries a transiently failed callback five times.
+of a second paid publication. The job ID also uses the canonical decimal E3 identifier, so an alias
+such as `042` selects the same job as `42` rather than a second paid publication. The server also
+refuses the job while the input window is open: a proof over the current root could otherwise become
+stale after another vote, after the Avail fee was already paid. The compute server retries a
+transiently failed callback five times.
+
+## Intake ciphertext validation
+
+The ballot proof binds the ciphertext commitment, the ballot digest, and the slot and parent
+context. It does not bind `encryptedVoteHash`. The hash check at intake compares the submitted
+bytes with a hash that the same caller supplied, so it proves only internal consistency.
+
+Before it issues an availability attestation or spends funds, the server therefore also checks the
+bytes against the commitment the proof binds:
+
+1. Read the E3 and its parameter set from Interfold.
+2. Build the BFV parameter tables for that parameter set, one time per process.
+3. Compare the configuration identifier derived from those tables with `e3CryptoConfigIds`. A
+   mismatch means the local tables are not the request-time parameters, and the input is refused.
+4. Deserialize the ciphertext with those parameters and recompute its SAFE commitment through
+   `compute_ct_commitment_with_params`.
+5. Refuse the input when the recomputed commitment is different from `encryptedVoteCommitment`.
+
+Step 4 keeps the two-component restriction of that function. The commitment covers `c[0]` and
+`c[1]` only, so a padded ciphertext would share one commitment with its two-component prefix while
+threshold decryption rejects it.
+
+Votes, updates, and masks get identical validation. The three operations prove one relation and use
+one request format, and a special case for masks would make them different on chain.
+
+Without this check, a caller could copy a publicly visible valid proof tuple, attach different
+bytes with their matching Keccak hash, and get a different job identifier, input identifier, and
+tree leaf without a new ballot proof. Each such submission made the honest service pay for Avail
+publication, Ethereum finalization, storage, and a worker slot for a ciphertext that the Secure
+Process always excludes from ballot-head selection.
+
+Deserialization and the commitment are real processor work at a public endpoint, so a semaphore
+bounds the validations that run at the same time, and each one runs on a blocking thread.
+
+The check runs at intake only. The publication worker does not repeat it. An input that is already
+committed keeps its data and its recovery jobs, because its pending status still needs DA
+finalization even when the Secure Process will exclude it from ballot selection.
 
 ## Deadline simulation
 
@@ -135,8 +175,10 @@ The boundaries are intentional:
 
 - `publishInput` requires `timestamp < inputCommitmentDeadline`.
 - The availability service signs `InputAvailability(e3Id, inputId, expiresAt)` only after it stores
-  the complete ciphertext. The promise expires after 10 minutes if no Ethereum commitment lands. A
-  retry receives a new promise only after the old one expires and the server releases its bytes.
+  the complete ciphertext. The promise expires after 10 minutes if no Ethereum commitment lands. The
+  service admits one job per input statement, not one job per target slot, so an uncommitted promise
+  for a slot does not stop a different statement for that same slot. A repeat of the same statement
+  returns the existing job instead of a second one.
 - The final 3-hour tail accepts no new proof commitments.
 - `finalizeInput` normally completes in that tail. A delayed receipt can recover while the E3 is
   still `KeyPublished` and `timestamp <= computeDeadline`.
@@ -172,6 +214,34 @@ at that block. The same rule applies to input and output publication: a job is m
 after a finalized block strictly after the inclusive compute deadline still lacks the publication.
 Until then, the worker keeps the durable job recoverable.
 
+Every transition that retires a job or stops its recovery path reads finalized state, not the chain
+head. The rule applies to the worker, the status endpoint, and the handling of a submitted
+transaction:
+
+- An input leaves `AwaitingCommitment` only when a finalized block contains its commitment.
+  `Committed` stops attestation renewal and starts the paid Avail publication, so an orphaned
+  commitment would strand the input for the rest of its commitment window. This holds on both
+  submission paths. Where the service relays the commitment itself (every non-mainnet chain), the
+  receipt does not promote the job: the job stays in `AwaitingCommitment` with the relayed
+  transaction hash, the attestation renews on the same schedule as a wallet-submitted one, and a
+  relayed transaction that is absent from finalized state and from the chain head is relayed
+  again (`commitment_step`). The status endpoint reports a relayed provisional job as
+  `pending_availability`, not `ready_for_commitment`, so a client does not sign a second
+  commitment with its wallet.
+- A publication transaction moves to `AwaitingFinality`, not directly to success. That state keeps
+  the Ethereum payload, the Avail coordinates, the compute proof or staged envelope, and the local
+  object. When finalized state contains the publication, the job retires. When the publication is
+  absent from finalized state and also from the chain head, the job returns to `Ready` and sends the
+  transaction again. The contract refuses a second publication of one reference, so a resend of a
+  transaction that is only slow is harmless.
+- An observed output failure also needs finalized state, because the failure record clears the
+  compute proof.
+
+The status endpoint takes the same per-job ownership as the worker. Both paths load a job copy, wait
+for an Ethereum answer, and then save, so a status refresh that started before the worker made
+progress could otherwise write its older copy over that progress and discard saved Avail
+coordinates. A status request that finds the job busy returns the persisted view and writes nothing.
+
 The service does not release an expired promise based on its local clock or an unfinalized chain
 head. It waits for an Ethereum finalized block at or after `expiresAt`, then checks the historical
 `isInputCommitted` state at that block. A commitment mined before expiry therefore survives even
@@ -204,10 +274,22 @@ start, so calling the contract without the CRISP server cannot bypass the rule.
   finalization, and retrieval from the saved state.
 - Ethereum state is checked before each write. A transaction that landed before a crash is not sent
   again.
-- A round and voting slot can have only one signed input that is still waiting for its Ethereum
-  commitment. The service also refuses new jobs when unfinished objects reach the configured byte
-  limit. Failed jobs release their bytes, and successful Avail jobs use Avail as the recovery
-  source.
+- A round and voting slot can hold more than one signed input that still waits for its Ethereum
+  commitment. Each distinct statement gets its own durable job. CRISP lets any account produce a
+  valid mask for an eligible slot without that slot owner's signature. A per-slot reservation would
+  therefore let one caller take an attestation for a mask on another voter's slot, withhold the
+  commitment transaction, and stop that voter from getting an attestation for a different statement.
+  Admission is per statement, and the caller rate limits, the proof and deadline checks, and the
+  pending-byte limit stay as the only limits on new work. Admission of a later statement never
+  discards ciphertext that an earlier attestation covers. The service releases object bytes only
+  when no non-terminal job uses them. The service also refuses new jobs when unfinished objects
+  reach the configured byte limit. Failed jobs release their bytes, and successful Avail jobs use
+  Avail as the recovery source.
+- The service canonicalizes the E3 identifier before it derives a job ID, at input staging, at
+  aggregate staging, and inside the job-ID function. The decimal parser accepts leading zeros, so
+  `042` and `42` name one E3. Without canonicalization each alias made a second durable job and a
+  second paid Avail publication for the same bytes. Canonical decimal identifiers keep the job IDs
+  they already have.
 - The browser status endpoint performs a bounded Ethereum reconciliation. If the wallet commitment
   landed before the browser closed, a reload advances the durable job instead of asking the voter to
   sign and submit the same transaction again.
@@ -216,6 +298,13 @@ start, so calling the contract without the CRISP server cannot bypass the rule.
 - If a timeout interrupts an Avail submission after broadcast but before its receipt is saved, a
   retry can pay for a duplicate publication. The content hash remains the same, so this affects cost
   but not correctness.
+- A candidate VectorX proof keeps the Avail coordinates that produced it. The bridge answer is
+  checked for the expected content hash, not for a valid Merkle path, so a syntactically valid
+  answer can carry a proof that Ethereum refuses. When a publication attempt fails, the job returns
+  to the state that asks the bridge for a replacement proof. The bytes are already on Avail, so the
+  replacement costs one bridge request and no second publication. A job record written before the
+  coordinates were kept decodes with no coordinates, keeps its candidate proof, and needs operator
+  recovery.
 - The server verifies an aggregate RISC Zero proof before it creates an Avail output job. An
   arbitrary caller of the output webhook cannot spend the Avail account on an invalid output.
 - The compute server retries a transient callback five times, but this callback is not a durable
@@ -231,13 +320,35 @@ start, so calling the contract without the CRISP server cannot bypass the rule.
 
 The public HTTP boundary does not expose RPC or database error text. Contract reverts caused by a
 ballot return a stable client error. Provider and storage failures return a retryable service error.
-Failed admission returns its global relay reservation.
+
+The relay funding window counts durable work that can spend relay funds. Its accounting has two
+rules:
+
+- Each reservation belongs to the request that took it, identified by a token. A failed request
+  returns only its own reservation. Admission awaits RPC calls, so requests finish in a different
+  order from the order they reserved, and a positional release would return the reservation of a
+  request that admitted durable work. An admitted request keeps its reservation until the original
+  60-second window expires. The reservation is committed in the same synchronous step that writes
+  the durable job, under the storage lock, and not after the awaits that follow admission: a
+  client that closes its connection during those awaits cancels the handler, and a commit placed
+  after the await would never run, releasing quota for a job the background worker still holds.
+  When the store reports an error after its transaction may have applied (a failed flush), the
+  reservation is judged by the record: a live record keeps it, a missing or still-failed record
+  returns it.
+- A repeat of a statement that already has a non-failed job is answered before the funding window is
+  touched. Such a replay creates no job, signs no attestation, and pays for no publication. Charging
+  it would let one caller consume the allowance that new votes need, and near the commitment cutoff
+  that stops honest voters. The per-caller traffic window still bounds a replay loop. A failed job
+  restarted under the same identifier does take a reservation, because it creates a fresh funding
+  obligation.
 
 ## Remaining trust and operations
 
 VectorX provides the final correctness and availability proof. The server signature is an earlier
 liveness promise: it proves that the configured service received and durably stored the exact
-ciphertext before Ethereum reserves the leaf.
+ciphertext before Ethereum reserves the leaf. The service signs only after the bytes reproduce the
+commitment their ballot proof binds, so an honest signer no longer funds publication of a
+ciphertext that the Secure Process must exclude.
 
 If the availability signer is compromised, it can sign a hash without retaining the bytes. The
 resulting pending input can stop the round until the compute timeout. It cannot make Ethereum accept
