@@ -8,6 +8,7 @@ import type { HardhatRuntimeEnvironment } from "hardhat/types/hre";
 import {
   E3RefundManager,
   E3RefundManager__factory as E3RefundManagerFactory,
+  RefundClaimLib__factory as RefundClaimLibFactory,
 } from "../../types";
 import { getProxyAdmin } from "../proxy";
 import { readDeploymentArgs, storeDeploymentArgs } from "../utils";
@@ -59,20 +60,20 @@ export const deployAndSaveE3RefundManager = async ({
     return { e3RefundManager: e3RefundManagerContract };
   }
 
-  // The claim checks live in an external library, so the implementation is
-  // built by name with the library linked rather than from raw bytecode.
-  const refundClaimLibFactory = await ethers.getContractFactory(
-    "RefundClaimLib",
-    signer,
-  );
+  // The claim checks live in an external library. Both it and the
+  // implementation come from this package's typechain bytecode, so the
+  // deployed code is the one the package compiled and size-checked, not a
+  // consumer's recompile under its own optimizer settings.
+  const refundClaimLibFactory = new RefundClaimLibFactory(signer);
   const refundClaimLib = await refundClaimLibFactory.deploy();
   await refundClaimLib.waitForDeployment();
-  const e3RefundManagerFactory = await ethers.getContractFactory(
-    "E3RefundManager",
+  const refundClaimLibAddress = await refundClaimLib.getAddress();
+  const e3RefundManagerFactory = new E3RefundManagerFactory(
     {
-      signer,
-      libraries: { RefundClaimLib: await refundClaimLib.getAddress() },
+      ["project/contracts/lib/RefundClaimLib.sol:RefundClaimLib"]:
+        refundClaimLibAddress,
     },
+    signer,
   );
   const e3RefundManager = await e3RefundManagerFactory.deploy();
   await e3RefundManager.waitForDeployment();
@@ -101,6 +102,7 @@ export const deployAndSaveE3RefundManager = async ({
         interfold,
         treasury,
       },
+      libraries: { RefundClaimLib: refundClaimLibAddress },
       proxyRecords: {
         initData,
         initialOwner: owner,

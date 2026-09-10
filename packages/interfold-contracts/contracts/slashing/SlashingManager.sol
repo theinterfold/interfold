@@ -375,18 +375,27 @@ contract SlashingManager is
 
     /// @dev True once the registry finalized a committee for `e3Id`. Reads the
     ///      canonical slot 0, which the registry refuses to expose before
-    ///      finalization; the revert is the signal, so it is caught, not
-    ///      propagated. Empty revert data (an EOA or a registry without the
-    ///      view) is read as not finalized, which only delays settlement.
+    ///      finalization; the `CommitteeNotFinalized()` revert is the signal,
+    ///      so that exact revert is read as "no committee". Every other
+    ///      outcome — another error, an empty revert, a malformed answer, or an
+    ///      address with no code — is read as finalized so the accusation
+    ///      window is waited for: an unreadable registry must delay settlement,
+    ///      never open it early. A low-level call is used because a high-level
+    ///      `try` cannot catch the no-code and bad-return cases.
     function _committeeFinalized(
         ICiphernodeRegistry registry,
         uint256 e3Id
     ) internal view returns (bool) {
-        try registry.canonicalCommitteeNodeAt(e3Id, 0) returns (address) {
-            return true;
-        } catch {
-            return false;
-        }
+        (bool ok, bytes memory data) = address(registry).staticcall(
+            abi.encodeCall(
+                ICiphernodeRegistry.canonicalCommitteeNodeAt,
+                (e3Id, 0)
+            )
+        );
+        if (ok) return true;
+        return
+            data.length != 4 ||
+            bytes4(data) != ICiphernodeRegistry.CommitteeNotFinalized.selector;
     }
 
     function _settlementCutoff(uint64 deadline) internal pure returns (uint64) {

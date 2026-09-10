@@ -258,6 +258,17 @@
     {
       "inputs": [
         {
+          "internalType": "address",
+          "name": "e3Program",
+          "type": "address"
+        }
+      ],
+      "name": "E3ProgramInterfaceMissing",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
           "internalType": "contract IE3Program",
           "name": "e3Program",
           "type": "address"
@@ -366,6 +377,22 @@
         }
       ],
       "name": "InputDeadlineNotReached",
+      "type": "error"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "internalType": "uint256",
+          "name": "inputDeadline",
+          "type": "uint256"
+        }
+      ],
+      "name": "InputWindowClosedBeforeKeyPublication",
       "type": "error"
     },
     {
@@ -879,6 +906,31 @@
         }
       ],
       "name": "E3FailureProcessed",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "enum IInterfold.FailureReason",
+          "name": "previousReason",
+          "type": "uint8"
+        },
+        {
+          "indexed": false,
+          "internalType": "enum IInterfold.FailureReason",
+          "name": "reason",
+          "type": "uint8"
+        }
+      ],
+      "name": "E3FailureReclassified",
       "type": "event"
     },
     {
@@ -2912,5 +2964,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-e3e077b70e6427fde2158259df8a6d1d16c2985b"
+  "buildInfoId": "solc-0_8_28-b9d4a3b69423f157d5a2f8518a2d9fd694c035e3"
 }

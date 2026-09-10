@@ -650,12 +650,12 @@ Fresh deployment and upgrade validation check the subscription owner, consumer, 
 gas lane, and selected payment balance. The balance must meet the configured
 `minimumSubscriptionBalance`, in wei for native payment or juels for LINK, before requests resume.
 The provider reads the same selected balance before every request and reverts an underfunded request
-before the E3 is accepted. The floor is an admission check, not a reservation for concurrent draws,
-so production uses a dedicated subscription with balance monitoring. Upgrade preparation also checks
-the live exit delay against the planned response timeout and submission window before it deploys any
-implementation. The upgrade plan snapshots the effective subscription and provider settings.
-Validation records that snapshot, and resume rejects stale implementations, provider settings, fees,
-or deployment records.
+before the E3 is accepted. The provider reserves `minimumSubscriptionBalance` for each pending draw
+(see below), and production still uses a dedicated subscription with balance monitoring. Upgrade
+preparation also checks the live exit delay against the planned response timeout and submission
+window before it deploys any implementation. The upgrade plan snapshots the effective subscription
+and provider settings. Validation records that snapshot, and resume rejects stale implementations,
+provider settings, fees, or deployment records.
 
 Each E3 freezes its provider, provider request ID, response deadline, and submission window. Rust
 waits for `RandomnessFulfilled`, then asks the Registry for the accepted seed and frozen request

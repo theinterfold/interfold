@@ -319,6 +319,8 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
         uint256 partyId
     ) external view returns (address) {
         address[] storage nodes = _committeeNodes[e3Id];
+        // Mirror the real registry: no committee reads as not finalized.
+        require(nodes.length != 0, CommitteeNotFinalized());
         require(
             partyId < nodes.length,
             PartyIdOutOfBounds(partyId, nodes.length)
