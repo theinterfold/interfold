@@ -85,8 +85,8 @@ transiently failed callback five times.
 ## Intake ciphertext validation
 
 The ballot proof binds the ciphertext commitment, the ballot digest, and the slot and parent
-context. It does not bind `encryptedVoteHash`. The hash check at intake compares the submitted
-bytes with a hash that the same caller supplied, so it proves only internal consistency.
+context. It does not bind `encryptedVoteHash`. The hash check at intake compares the submitted bytes
+with a hash that the same caller supplied, so it proves only internal consistency.
 
 Before it issues an availability attestation or spends funds, the server therefore also checks the
 bytes against the commitment the proof binds:
@@ -99,18 +99,18 @@ bytes against the commitment the proof binds:
    `compute_ct_commitment_with_params`.
 5. Refuse the input when the recomputed commitment is different from `encryptedVoteCommitment`.
 
-Step 4 keeps the two-component restriction of that function. The commitment covers `c[0]` and
-`c[1]` only, so a padded ciphertext would share one commitment with its two-component prefix while
+Step 4 keeps the two-component restriction of that function. The commitment covers `c[0]` and `c[1]`
+only, so a padded ciphertext would share one commitment with its two-component prefix while
 threshold decryption rejects it.
 
 Votes, updates, and masks get identical validation. The three operations prove one relation and use
 one request format, and a special case for masks would make them different on chain.
 
-Without this check, a caller could copy a publicly visible valid proof tuple, attach different
-bytes with their matching Keccak hash, and get a different job identifier, input identifier, and
-tree leaf without a new ballot proof. Each such submission made the honest service pay for Avail
-publication, Ethereum finalization, storage, and a worker slot for a ciphertext that the Secure
-Process always excludes from ballot-head selection.
+Without this check, a caller could copy a publicly visible valid proof tuple, attach different bytes
+with their matching Keccak hash, and get a different job identifier, input identifier, and tree leaf
+without a new ballot proof. Each such submission made the honest service pay for Avail publication,
+Ethereum finalization, storage, and a worker slot for a ciphertext that the Secure Process always
+excludes from ballot-head selection.
 
 Deserialization and the commitment are real processor work at a public endpoint, so a semaphore
 bounds the validations that run at the same time, and each one runs on a blocking thread.
@@ -224,10 +224,10 @@ transaction:
   submission paths. Where the service relays the commitment itself (every non-mainnet chain), the
   receipt does not promote the job: the job stays in `AwaitingCommitment` with the relayed
   transaction hash, the attestation renews on the same schedule as a wallet-submitted one, and a
-  relayed transaction that is absent from finalized state and from the chain head is relayed
-  again (`commitment_step`). The status endpoint reports a relayed provisional job as
-  `pending_availability`, not `ready_for_commitment`, so a client does not sign a second
-  commitment with its wallet.
+  relayed transaction that is absent from finalized state and from the chain head is relayed again
+  (`commitment_step`). The status endpoint reports a relayed provisional job as
+  `pending_availability`, not `ready_for_commitment`, so a client does not sign a second commitment
+  with its wallet.
 - A publication transaction moves to `AwaitingFinality`, not directly to success. That state keeps
   the Ethereum payload, the Avail coordinates, the compute proof or staged envelope, and the local
   object. When finalized state contains the publication, the job retires. When the publication is
@@ -329,12 +329,11 @@ rules:
   order from the order they reserved, and a positional release would return the reservation of a
   request that admitted durable work. An admitted request keeps its reservation until the original
   60-second window expires. The reservation is committed in the same synchronous step that writes
-  the durable job, under the storage lock, and not after the awaits that follow admission: a
-  client that closes its connection during those awaits cancels the handler, and a commit placed
-  after the await would never run, releasing quota for a job the background worker still holds.
-  When the store reports an error after its transaction may have applied (a failed flush), the
-  reservation is judged by the record: a live record keeps it, a missing or still-failed record
-  returns it.
+  the durable job, under the storage lock, and not after the awaits that follow admission: a client
+  that closes its connection during those awaits cancels the handler, and a commit placed after the
+  await would never run, releasing quota for a job the background worker still holds. When the store
+  reports an error after its transaction may have applied (a failed flush), the reservation is
+  judged by the record: a live record keeps it, a missing or still-failed record returns it.
 - A repeat of a statement that already has a non-failed job is answered before the funding window is
   touched. Such a replay creates no job, signs no attestation, and pays for no publication. Charging
   it would let one caller consume the allowance that new votes need, and near the commitment cutoff
@@ -347,8 +346,8 @@ rules:
 VectorX provides the final correctness and availability proof. The server signature is an earlier
 liveness promise: it proves that the configured service received and durably stored the exact
 ciphertext before Ethereum reserves the leaf. The service signs only after the bytes reproduce the
-commitment their ballot proof binds, so an honest signer no longer funds publication of a
-ciphertext that the Secure Process must exclude.
+commitment their ballot proof binds, so an honest signer no longer funds publication of a ciphertext
+that the Secure Process must exclude.
 
 If the availability signer is compromised, it can sign a hash without retaining the bytes. The
 resulting pending input can stop the round until the compute timeout. It cannot make Ethereum accept
