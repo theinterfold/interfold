@@ -9,6 +9,7 @@
   },
   "homepage": "https://github.com/gnosisguild/CRISP",
   "scripts": {
+    "test": "vitest --run --config vitest.config.ts",
     "cli": "pnpm sh ./scripts/cli.sh",
     "dev": "vite --no-open --host",
     "dev-static": "NO_HOT=1 vite --no-open --host",
@@ -39,6 +40,9 @@
     "wagmi": "^2.14.16"
   },
   "devDependencies": {
+    "vitest": "1.6.1",
+    "react-test-renderer": "18.3.1",
+    "@types/react-test-renderer": "^18.3.0",
     "@tailwindcss/typography": "^0.5.12",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",

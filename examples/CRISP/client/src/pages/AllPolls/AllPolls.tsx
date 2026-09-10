@@ -4,59 +4,34 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react'
+import React, { useEffect, useMemo } from 'react'
 import PollCard from '@/components/Cards/PollCard'
 import { PollResult } from '@/model/poll.model'
 import LoadingAnimation from '@/components/LoadingAnimation'
 import { useVoteManagementContext } from '@/context/voteManagement'
 import { EditorialShell } from '@/design/Editorial'
-import { debounce } from '@/utils/methods'
+import { convertPollData } from '@/utils/methods'
+import { useInterfoldServer } from '@/hooks/interfold/useInterfoldServer'
+import { useArchivePolls } from '@/hooks/voting/useArchivePolls'
 
 const AllPolls: React.FC = () => {
-  const { votingRound, pastPolls, getPastPolls, isLoading } = useVoteManagementContext()
-  const [page, setPage] = useState<number>(0)
-  const [loadingMore, setLoadingMore] = useState<boolean>(false)
-
-  const loadMorePolls = useCallback(() => {
-    if (loadingMore || isLoading) return
-    setLoadingMore(true)
-    setTimeout(() => {
-      setPage((prevPage) => prevPage + 1)
-      window.scrollTo({
-        top: document.documentElement.scrollTop - 150,
-        behavior: 'smooth',
-      })
-      setLoadingMore(false)
-    }, 1000)
-  }, [loadingMore, isLoading])
+  const { setPastPolls } = useVoteManagementContext()
+  const { getArchivePage } = useInterfoldServer()
+  const { items, hasMore, isLoading, error, loadMore } = useArchivePolls(getArchivePage)
+  const visiblePolls = useMemo(() => convertPollData(items), [items])
 
   useEffect(() => {
-    if (votingRound && votingRound?.pk_bytes) {
-      const fetchPastPolls = async () => {
-        await getPastPolls()
-      }
-      fetchPastPolls()
+    setPastPolls(visiblePolls)
+  }, [visiblePolls, setPastPolls])
+
+  useEffect(() => {
+    const handleScroll = () => {
+      const { scrollTop, clientHeight, scrollHeight } = document.documentElement
+      if (scrollTop + clientHeight >= scrollHeight - 100 && hasMore && !isLoading && !error) void loadMore()
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [votingRound])
-
-  const visiblePolls = useMemo(() => pastPolls.slice(0, (page + 1) * 12), [page, pastPolls])
-
-  const handleScroll = useMemo(
-    () =>
-      debounce(() => {
-        const { scrollTop, clientHeight, scrollHeight } = document.documentElement
-        if (scrollTop + clientHeight >= scrollHeight && !loadingMore && pastPolls.length > visiblePolls.length) {
-          loadMorePolls()
-        }
-      }, 200),
-    [loadMorePolls, loadingMore, pastPolls.length, visiblePolls.length],
-  )
-
-  useEffect(() => {
-    window.addEventListener('scroll', handleScroll)
+    window.addEventListener('scroll', handleScroll, { passive: true })
     return () => window.removeEventListener('scroll', handleScroll)
-  }, [handleScroll])
+  }, [hasMore, isLoading, error, loadMore])
 
   return (
     <EditorialShell className='flex w-full flex-1 flex-col'>
@@ -70,7 +45,7 @@ const AllPolls: React.FC = () => {
             <LoadingAnimation isLoading={isLoading} />
           </div>
         )}
-        {!pastPolls.length && !isLoading && <p className='lede'>There are no polls yet.</p>}
+        {!visiblePolls.length && !isLoading && !error && !hasMore && <p className='lede'>There are no polls yet.</p>}
         {visiblePolls.length > 0 && (
           <div className='grid w-full grid-cols-1 gap-8 sm:grid-cols-2 md:grid-cols-3'>
             {visiblePolls.map((pollResult: PollResult, index: number) => {
@@ -86,10 +61,11 @@ const AllPolls: React.FC = () => {
             })}
           </div>
         )}
-        {loadingMore && (
-          <div className='flex w-full items-center justify-center'>
-            <LoadingAnimation isLoading={loadingMore} />
-          </div>
+        {error && <p role='alert'>{error}</p>}
+        {hasMore && !isLoading && (
+          <button type='button' className='mono' onClick={() => void loadMore()}>
+            {error ? 'Try again' : 'Load more polls'}
+          </button>
         )}
       </section>
     </EditorialShell>

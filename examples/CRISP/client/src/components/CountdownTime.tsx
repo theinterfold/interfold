@@ -6,7 +6,7 @@
 
 import React, { useEffect, useState } from 'react'
 import { usePublicClient } from 'wagmi'
-import LoadingAnimation from '@/components/LoadingAnimation'
+import { subscribeEstimatedChainTime } from '@/utils/estimated-chain-clock'
 
 interface CountdownTimerProps {
   endTime: Date
@@ -22,47 +22,29 @@ type RemainingTime = {
 const CountdownTimer: React.FC<CountdownTimerProps> = ({ endTime }) => {
   const client = usePublicClient()
   const [remainingTime, setRemainingTime] = useState<RemainingTime | null>(null)
-  const [loading, setLoading] = useState<boolean>(true)
+  const endTimeMs = endTime.getTime()
 
-  useEffect(() => {
-    const timer = setInterval(async () => {
-      // Use chain block timestamp so countdown matches when poll actually ends (block.timestamp > end_time)
-      let nowMs: number
-      if (client) {
-        try {
-          const block = await client.getBlock()
-          nowMs = Number(block.timestamp) * 1000
-        } catch {
-          nowMs = Date.now()
-        }
-      } else {
-        nowMs = Date.now()
-      }
-      const difference = endTime.getTime() - nowMs
-      if (difference <= 0) {
-        clearInterval(timer)
-        setLoading(false)
-        setRemainingTime({ days: '0', hours: '0', minutes: '0', seconds: '0' })
-        return
-      }
-
-      const days = Math.floor(difference / (1000 * 60 * 60 * 24)).toString()
-      const hours = Math.floor((difference / (1000 * 60 * 60)) % 24).toString()
-      const minutes = Math.floor((difference / 1000 / 60) % 60).toString()
-      const seconds = Math.floor((difference / 1000) % 60).toString()
-      setRemainingTime({ days, hours, minutes, seconds })
-      setLoading(false)
-    }, 1000)
-
-    return () => clearInterval(timer)
-  }, [endTime, client])
+  useEffect(
+    () =>
+      subscribeEstimatedChainTime(client, (estimatedNowMs) => {
+        const difference = Math.max(0, endTimeMs - estimatedNowMs)
+        setRemainingTime({
+          days: Math.floor(difference / 86_400_000).toString(),
+          hours: Math.floor((difference / 3_600_000) % 24).toString(),
+          minutes: Math.floor((difference / 60_000) % 60).toString(),
+          seconds: Math.floor((difference / 1_000) % 60).toString(),
+        })
+      }),
+    [endTimeMs, client],
+  )
 
   return (
     <div className='flex flex-col items-center justify-center space-y-2'>
-      <p className='text-base font-bold uppercase text-slate-600/50'>Poll ends in:</p>
+      <p className='text-base font-bold uppercase text-slate-600/50' title='Estimated time. The chain determines when voting ends.'>
+        Poll ends in:
+      </p>
 
-      {loading && <LoadingAnimation isLoading={true} />}
-      {!loading && remainingTime && (
+      {remainingTime && (
         <div className='flex space-x-6'>
           <p className='text-2xl font-bold text-slate-600'>
             {remainingTime.days}
