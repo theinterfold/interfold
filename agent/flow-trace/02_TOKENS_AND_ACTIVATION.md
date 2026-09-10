@@ -477,8 +477,13 @@ BondedVotes.getPastVotes(account, t)              ← the NUMERATOR
 ├─ votesSource.getPastVotes(account, t)           ← either the token or an escrow adapter
 │    ├─ votesSource == token   → wallet-held FOLD (needs delegation)
 │    └─ votesSource == escrow  → only escrowed FOLD; idle wallet FOLD carries no weight
-├─ BondedCheckpoints.getPastBonded(account, t)    ← FOLD bonded as an operator
-└─ InterfoldToken.lockedBalanceAt(account, t)     ← vesting-locked FOLD, escrow source ONLY
+└─ BondedCheckpoints.getPastBonded(account, t)    ← FOLD bonded as an operator
+
+BondedVotes.getVotes(account)                     ← current voting power
+│
+├─ votesSource.getVotes(account)
+├─ BondedCheckpoints.bonded(account)
+└─ InterfoldToken.lockedBalanceAt(account, now)   ← live vesting-locked FOLD, escrow source ONLY
      minus the bonded total (saturating), because a bond satisfies a lock
 
 BondedVotes.getPastTotalSupply(t)                 ← the DENOMINATOR
@@ -499,38 +504,38 @@ token in the escrow and bonding custodies it in the registry.
 
 ### Vesting-locked FOLD
 
-Under an escrow votes source there is a third numerator: FOLD still encumbered by the token's own
-vesting locks. That FOLD sits in the holder's own wallet and `InterfoldToken._update` refuses to
-move it, so it can never be deposited into the escrow — without counting it, a locked holder would
-be barred from governance for the whole vesting schedule by a rule they cannot act on.
+Under an escrow votes source there is a third current numerator: FOLD still encumbered by the
+token's own vesting locks. That FOLD sits in the holder's own wallet and `InterfoldToken._update`
+refuses to move it, so it can never be deposited into the escrow. `BondedVotes.getVotes` counts the
+live lock term so current voting-power reads include that encumbered FOLD.
 
 Unlike the escrowed and bonded halves, this one **overlaps** the bond. A bond satisfies a lock:
 `transferableBalanceOf` lets a wallet move locked FOLD to the extent the bond already covers the
-obligation, so bonded FOLD is reported by both `lockedBalanceAt` and `getPastBonded` while existing
-exactly once. `_lockedVotes` subtracts the bonded total from the locked balance and saturates at
-zero, so the pair is worth `max(bonded, locked)` rather than their sum.
+obligation, so bonded FOLD is reported by both `lockedBalanceAt` and `bonded` while existing exactly
+once. `_lockedVotes` subtracts the bonded total from the locked balance and saturates at zero, so
+the pair is worth `max(bonded, locked)` rather than their sum.
 
 The netting rests on the token's transfer rule, `balance >= locked - bonded`, enforced on every
 transfer. **Slashing breaks that rule**: it takes the bond without touching the lock, so an operator
 that had already moved locked FOLD out on the strength of the bond is left owing more than it holds,
 and the unbonded remainder would vote with FOLD the slash recipient now holds and can count too.
-`_lockedVotes` therefore caps the term at the account's wallet balance. The cap reads the present
-balance even for a past timepoint — a bound, never a source: it can only lower the term towards what
-the account demonstrably holds, and only that account's own power.
+`_lockedVotes` therefore caps the term at the account's wallet balance. The cap is a bound, never a
+source: it can only lower the term towards what the account demonstrably holds, and only that
+account's own power.
 
 Two limits worth holding on to:
 
-- The lock schedule is read **only** when the votes source is an escrow. When the token votes for
-  itself, locked FOLD is wallet FOLD its own checkpoints already carry, and adding it would double
-  every locked holder's weight.
+- The lock schedule is read **only** by current `getVotes` when the votes source is an escrow. When
+  the token votes for itself, locked FOLD is wallet FOLD its own checkpoints already carry, and
+  adding it would double every locked holder's weight.
 - `lockedBalanceAt` is not a checkpointed history — it walks the account's **current** locks and
-  evaluates them against the timestamp given. A lock created after a snapshot shows up in that
-  snapshot's answer. That is acceptable for vesting locks, which are minted or claimed rather than
-  acquired at will, but it is not a general past balance.
+  evaluates them against the timestamp given. A lock created after a snapshot can show up in that
+  snapshot's answer. `BondedVotes.getPastVotes` therefore excludes the token lock schedule until a
+  checkpointed lock source exists.
 
 The constructor staticcalls `lockedBalanceAt` once when binding an escrow votes source and reverts
-`LockedBalancesUnsupported` if the token cannot answer, rather than catching the failure at read
-time and silently returning zero for every locked holder.
+`LockedBalancesUnsupported` if the token cannot answer, rather than catching the failure at live
+read time and silently returning zero for every locked holder.
 
 ### Checkpoint write sites
 
