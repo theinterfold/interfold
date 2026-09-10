@@ -10,9 +10,9 @@
 //!
 //! **C1 (PkGeneration)** outputs `(sk_commitment, pk_commitment, e_sm_commitment)`.
 //! Public signals contain 3 fields (no public inputs):
-//! - field 0: `sk_commitment`   (byte offset   0..32)
-//! - field 1: `pk_commitment`   (byte offset  32..64)
-//! - field 2: `e_sm_commitment` (byte offset  64..96)
+//! - field 0: `sk_commitment`
+//! - field 1: `pk_commitment`
+//! - field 2: `e_sm_commitment`
 //!
 //! **C2a/C2b** expose the recursive child VK hash at field 0 and the
 //! expected secret root commitment at field 1 (chunk-finalizer proof).

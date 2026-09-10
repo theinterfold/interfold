@@ -3,9 +3,13 @@
 use derivative::Derivative;
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::{
-    CircuitInputLayout, CircuitOutputLayout, DKG_SHARE_DECRYPTION_OUTPUTS, PK_AGGREGATION_OUTPUTS,
-    PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS, SHARE_ENCRYPTION_INPUTS, SHARE_ENCRYPTION_OUTPUTS,
-    THRESHOLD_SHARE_DECRYPTION_INPUTS, THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
+    CircuitInputLayout, CircuitOutputLayout, DKG_SHARE_DECRYPTION_OUTPUTS,
+    LBFV_PK_AGGREGATION_INPUTS, LBFV_PK_AGGREGATION_OUTPUTS, LBFV_PK_GENERATION_INPUTS,
+    LBFV_PK_GENERATION_OUTPUTS, PK_AGGREGATION_OUTPUTS, PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS,
+    RLK_AGGREGATION_INPUTS, RLK_AGGREGATION_OUTPUTS, RLK_GENERATION_INPUTS,
+    RLK_GENERATION_LIMB_INPUTS, RLK_GENERATION_LIMB_OUTPUTS, RLK_GENERATION_OUTPUTS,
+    SHARE_ENCRYPTION_INPUTS, SHARE_ENCRYPTION_OUTPUTS, THRESHOLD_SHARE_DECRYPTION_INPUTS,
+    THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
 };
 use serde::{Deserialize, Serialize};
 use std::fmt;
@@ -164,6 +168,16 @@ pub enum CircuitName {
     ESmShareComputation = 25,
     /// Legacy ad-hoc aggregation C2a + C2b. Retain for bincode compatibility. Do not produce.
     C2abFold = 26,
+    /// Row-level l-BFV relinearization-key generation proof.
+    RlkGeneration = 27,
+    /// Row-level l-BFV relinearization-key aggregation proof.
+    RlkAggregation = 28,
+    /// Row-level l-BFV public-key generation proof.
+    LbfvPkGeneration = 29,
+    /// Row-level threshold l-BFV public-key aggregation proof.
+    LbfvPkAggregation = 30,
+    /// One CRT limb of one l-BFV relinearization-key row.
+    RlkGenerationLimb = 31,
 }
 
 impl CircuitName {
@@ -196,6 +210,11 @@ impl CircuitName {
             CircuitName::NodesFoldKernel => "nodes_fold_kernel",
             CircuitName::DkgAggregator => "dkg_aggregator",
             CircuitName::DecryptionAggregator => "decryption_aggregator",
+            CircuitName::RlkGeneration => "rlk_generation",
+            CircuitName::RlkAggregation => "rlk_aggregation",
+            CircuitName::LbfvPkGeneration => "lbfv_pk_generation",
+            CircuitName::LbfvPkAggregation => "lbfv_pk_aggregation",
+            CircuitName::RlkGenerationLimb => "rlk_generation_limb",
         }
     }
 
@@ -212,6 +231,11 @@ impl CircuitName {
             CircuitName::ThresholdShareDecryption => "threshold",
             CircuitName::PkAggregation => "threshold",
             CircuitName::DecryptedSharesAggregation => "threshold",
+            CircuitName::RlkGeneration
+            | CircuitName::RlkAggregation
+            | CircuitName::LbfvPkGeneration
+            | CircuitName::LbfvPkAggregation
+            | CircuitName::RlkGenerationLimb => "threshold",
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
             | CircuitName::C2ChunkBatch
@@ -245,6 +269,21 @@ impl CircuitName {
             },
             CircuitName::PkGeneration => CircuitOutputLayout::Fixed {
                 fields: PK_GENERATION_OUTPUTS,
+            },
+            CircuitName::LbfvPkGeneration => CircuitOutputLayout::Fixed {
+                fields: LBFV_PK_GENERATION_OUTPUTS,
+            },
+            CircuitName::LbfvPkAggregation => CircuitOutputLayout::Fixed {
+                fields: LBFV_PK_AGGREGATION_OUTPUTS,
+            },
+            CircuitName::RlkGeneration => CircuitOutputLayout::Fixed {
+                fields: RLK_GENERATION_OUTPUTS,
+            },
+            CircuitName::RlkGenerationLimb => CircuitOutputLayout::Fixed {
+                fields: RLK_GENERATION_LIMB_OUTPUTS,
+            },
+            CircuitName::RlkAggregation => CircuitOutputLayout::Fixed {
+                fields: RLK_AGGREGATION_OUTPUTS,
             },
             // Legacy circuits no longer produce proofs. Map to None so old
             // proofs fail closed on extraction but still decode.
@@ -284,9 +323,24 @@ impl CircuitName {
         }
     }
 
-    /// Public input layout for C3 and C6 circuits (fields at the start of public_signals).
+    /// Public input layout for circuits with tracked fields at the start of public_signals.
     pub fn input_layout(&self) -> CircuitInputLayout {
         match self {
+            CircuitName::LbfvPkGeneration => CircuitInputLayout::Fixed {
+                fields: LBFV_PK_GENERATION_INPUTS,
+            },
+            CircuitName::LbfvPkAggregation => CircuitInputLayout::Fixed {
+                fields: LBFV_PK_AGGREGATION_INPUTS,
+            },
+            CircuitName::RlkGeneration => CircuitInputLayout::Fixed {
+                fields: RLK_GENERATION_INPUTS,
+            },
+            CircuitName::RlkGenerationLimb => CircuitInputLayout::Fixed {
+                fields: RLK_GENERATION_LIMB_INPUTS,
+            },
+            CircuitName::RlkAggregation => CircuitInputLayout::Fixed {
+                fields: RLK_AGGREGATION_INPUTS,
+            },
             CircuitName::ShareEncryption => CircuitInputLayout::Fixed {
                 fields: SHARE_ENCRYPTION_INPUTS,
             },
@@ -346,6 +400,11 @@ mod tests {
             (CircuitName::SkShareComputation, 24),
             (CircuitName::ESmShareComputation, 25),
             (CircuitName::C2abFold, 26),
+            (CircuitName::RlkGeneration, 27),
+            (CircuitName::RlkAggregation, 28),
+            (CircuitName::LbfvPkGeneration, 29),
+            (CircuitName::LbfvPkAggregation, 30),
+            (CircuitName::RlkGenerationLimb, 31),
         ];
 
         for (circuit, discriminant) in expected {
@@ -363,6 +422,11 @@ mod tests {
             ([24u8, 0, 0, 0], CircuitName::SkShareComputation),
             ([25u8, 0, 0, 0], CircuitName::ESmShareComputation),
             ([26u8, 0, 0, 0], CircuitName::C2abFold),
+            ([27u8, 0, 0, 0], CircuitName::RlkGeneration),
+            ([28u8, 0, 0, 0], CircuitName::RlkAggregation),
+            ([29u8, 0, 0, 0], CircuitName::LbfvPkGeneration),
+            ([30u8, 0, 0, 0], CircuitName::LbfvPkAggregation),
+            ([31u8, 0, 0, 0], CircuitName::RlkGenerationLimb),
         ];
 
         for (bytes, circuit) in expected {
@@ -502,6 +566,108 @@ mod tests {
             CircuitName::PkGeneration.input_layout().field_count(),
             Some(0)
         );
+    }
+
+    #[test]
+    fn rlk_generation_layout_tracks_row_and_commitments() {
+        let mut signals = vec![0u8; 192];
+        signals[31] = 3;
+        signals[32..64].copy_from_slice(&[0x11; 32]);
+        signals[64..96].copy_from_slice(&[0x22; 32]);
+        signals[96..128].copy_from_slice(&[0x33; 32]);
+        signals[128..160].copy_from_slice(&[0x44; 32]);
+        signals[160..192].copy_from_slice(&[0x55; 32]);
+        let proof = make_proof(CircuitName::RlkGeneration, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 3);
+        assert_eq!(
+            &*proof.extract_output("sk_commitment").unwrap(),
+            &[0x11; 32]
+        );
+        assert_eq!(&*proof.extract_output("r_commitment").unwrap(), &[0x22; 32]);
+        assert_eq!(
+            &*proof.extract_output("d0_commitment").unwrap(),
+            &[0x33; 32]
+        );
+        assert_eq!(
+            &*proof.extract_output("d2_commitment").unwrap(),
+            &[0x44; 32]
+        );
+        assert_eq!(&*proof.extract_output("limb_vk_hash").unwrap(), &[0x55; 32]);
+    }
+
+    #[test]
+    fn rlk_generation_limb_layout_tracks_selectors_and_commitments() {
+        let mut signals = vec![0u8; 256];
+        signals[31] = 3;
+        signals[63] = 4;
+        signals[64..96].copy_from_slice(&[0x11; 32]);
+        signals[224..256].copy_from_slice(&[0x66; 32]);
+        let proof = make_proof(CircuitName::RlkGenerationLimb, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 3);
+        assert_eq!(proof.extract_input("limb_index").unwrap()[31], 4);
+        assert_eq!(
+            &*proof.extract_output("sk_commitment").unwrap(),
+            &[0x11; 32]
+        );
+        assert_eq!(
+            &*proof.extract_output("d2_limb_commitment").unwrap(),
+            &[0x66; 32]
+        );
+    }
+
+    #[test]
+    fn lbfv_pk_generation_layout_tracks_row_and_commitments() {
+        let mut signals = vec![0u8; 96];
+        signals[31] = 2;
+        signals[32..64].copy_from_slice(&[0x11; 32]);
+        signals[64..96].copy_from_slice(&[0x22; 32]);
+        let proof = make_proof(CircuitName::LbfvPkGeneration, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 2);
+        assert_eq!(
+            &*proof.extract_output("sk_commitment").unwrap(),
+            &[0x11; 32]
+        );
+        assert_eq!(
+            &*proof.extract_output("pk_commitment").unwrap(),
+            &[0x22; 32]
+        );
+    }
+
+    #[test]
+    fn rlk_aggregation_layout_tracks_row_and_commitments() {
+        let mut signals = vec![0u8; 160];
+        signals[31] = 4;
+        signals[96..128].copy_from_slice(&[0x55; 32]);
+        signals[128..160].copy_from_slice(&[0x66; 32]);
+        let proof = make_proof(CircuitName::RlkAggregation, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 4);
+        assert_eq!(
+            &*proof.extract_output("d0_agg_commitment").unwrap(),
+            &[0x55; 32]
+        );
+        assert_eq!(
+            &*proof.extract_output("d2_agg_commitment").unwrap(),
+            &[0x66; 32]
+        );
+    }
+
+    #[test]
+    fn lbfv_pk_aggregation_layout_tracks_row_and_tail_commitment() {
+        let mut signals = vec![0u8; 128];
+        signals[31] = 4;
+        signals[96..128].copy_from_slice(&[0x77; 32]);
+        let proof = make_proof(CircuitName::LbfvPkAggregation, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 4);
+        assert_eq!(
+            &*proof.extract_output("pk_agg_commitment").unwrap(),
+            &[0x77; 32]
+        );
+        assert_eq!(proof.circuit.input_layout().field_count(), Some(1));
     }
 
     #[test]

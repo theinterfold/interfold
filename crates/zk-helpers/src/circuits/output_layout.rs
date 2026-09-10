@@ -126,6 +126,35 @@ pub const PK_BFV_OUTPUTS: &[OutputField] = &[f("pk_commitment")];
 pub const PK_GENERATION_OUTPUTS: &[OutputField] =
     &[f("sk_commitment"), f("pk_commitment"), f("e_sm_commitment")];
 
+/// l-BFV public-key generation for one gadget row.
+pub const LBFV_PK_GENERATION_OUTPUTS: &[OutputField] = &[f("sk_commitment"), f("pk_commitment")];
+
+/// Threshold l-BFV public-key aggregation for one gadget row.
+pub const LBFV_PK_AGGREGATION_OUTPUTS: &[OutputField] = &[f("pk_agg_commitment")];
+
+/// l-BFV relinearization-key generation for one row.
+pub const RLK_GENERATION_OUTPUTS: &[OutputField] = &[
+    f("sk_commitment"),
+    f("r_commitment"),
+    f("d0_commitment"),
+    f("d2_commitment"),
+    f("limb_vk_hash"),
+];
+
+/// l-BFV relinearization-key generation for one row and one CRT limb.
+pub const RLK_GENERATION_LIMB_OUTPUTS: &[OutputField] = &[
+    f("sk_commitment"),
+    f("r_commitment"),
+    f("e0_commitment"),
+    f("e2_commitment"),
+    f("d0_limb_commitment"),
+    f("d2_limb_commitment"),
+];
+
+/// l-BFV relinearization-key aggregation for one gadget row.
+pub const RLK_AGGREGATION_OUTPUTS: &[OutputField] =
+    &[f("d0_agg_commitment"), f("d2_agg_commitment")];
+
 /// C4 — DKG share decryption.
 pub const DKG_SHARE_DECRYPTION_OUTPUTS: &[OutputField] = &[f("commitment")];
 
@@ -144,6 +173,21 @@ pub const SHARE_ENCRYPTION_INPUTS: &[OutputField] = &[
     f("party_idx"),
     f("mod_idx"),
 ];
+
+/// Public l-BFV relinearization-key row selector.
+pub const RLK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
+
+/// Public row and CRT-limb selectors for an RLK leaf proof.
+pub const RLK_GENERATION_LIMB_INPUTS: &[OutputField] = &[f("row_index"), f("limb_index")];
+
+/// Public l-BFV public-key row selector.
+pub const LBFV_PK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
+
+/// Public row selector for threshold l-BFV public-key aggregation.
+pub const LBFV_PK_AGGREGATION_INPUTS: &[OutputField] = &[f("row_index")];
+
+/// Public row selector for l-BFV relinearization-key aggregation.
+pub const RLK_AGGREGATION_INPUTS: &[OutputField] = &[f("row_index")];
 
 /// Describes the public input layout of a circuit.
 ///
@@ -213,7 +257,7 @@ mod tests {
         let layout = CircuitOutputLayout::Fixed {
             fields: PK_GENERATION_OUTPUTS,
         };
-        // C1 has no pub inputs, only 3 outputs = 96 bytes total
+        // C1 has no pub inputs, only 3 outputs = 96 bytes total.
         let mut signals = vec![0u8; 96];
         signals[0..32].copy_from_slice(&[0x11; 32]); // sk_commitment
         signals[32..64].copy_from_slice(&[0x22; 32]); // pk_commitment

@@ -74,6 +74,30 @@ const DS_PK_AGGREGATION: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
+/// String: "RLK_GENERATION"
+const DS_RLK_GENERATION: [u8; 64] = [
+    0x52, 0x4c, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "RLK_GENERATION_LIMB_V1"
+const DS_RLK_GENERATION_LIMB_V1: [u8; 64] = [
+    0x52, 0x4c, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x4c,
+    0x49, 0x4d, 0x42, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "RLK_AGGREGATION"
+const DS_RLK_AGGREGATION: [u8; 64] = [
+    0x52, 0x4c, 0x4b, 0x5f, 0x41, 0x47, 0x47, 0x52, 0x45, 0x47, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
 /// Domain separator for general-purpose ciphertext commitments.
 /// String: "CIPHERTEXT"
 const DS_CIPHERTEXT: [u8; 64] = [
@@ -119,6 +143,14 @@ const DS_RECURSIVE_AGGREGATION: [u8; 64] = [
 const DS_CLG_PK_GENERATION: [u8; 64] = [
     0x43, 0x4c, 0x47, 0x5f, 0x50, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49, 0x4f,
     0x4e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "CLG_RLK_GENERATION_LIMB_V1"
+const DS_CLG_RLK_GENERATION_LIMB_V1: [u8; 64] = [
+    0x43, 0x4c, 0x47, 0x5f, 0x52, 0x4c, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49,
+    0x4f, 0x4e, 0x5f, 0x4c, 0x49, 0x4d, 0x42, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
@@ -550,6 +582,102 @@ pub fn compute_pk_aggregation_commitment(
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
 }
 
+/// Compute the RLK commitment for the ephemeral polynomial shared by all rows.
+pub fn compute_rlk_r_commitment(r: &Polynomial, bit_r: u32) -> BigInt {
+    let payload = flatten(vec![Field::from(0u64)], from_ref(r), bit_r);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION, io)[0])
+}
+
+/// Compute the RLK generation commitment for one `d0` row.
+pub fn compute_rlk_d0_commitment(d0: &CrtPolynomial, bit_d: u32) -> BigInt {
+    let mut payload = vec![Field::from(1u64)];
+    payload = flatten(payload, &d0.limbs, bit_d);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION, io)[0])
+}
+
+/// Compute the RLK generation commitment for one `d2` row.
+pub fn compute_rlk_d2_commitment(d2: &CrtPolynomial, bit_d: u32) -> BigInt {
+    let mut payload = vec![Field::from(2u64)];
+    payload = flatten(payload, &d2.limbs, bit_d);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION, io)[0])
+}
+
+fn compute_rlk_shared_limb_commitment(
+    kind_tag: u64,
+    row_index: u32,
+    polynomial: &Polynomial,
+    bit: u32,
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(kind_tag),
+        Field::from(row_index as u64),
+        Field::from(polynomial.coefficients().len() as u64),
+    ];
+    payload = flatten(payload, from_ref(polynomial), bit);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION_LIMB_V1, io)[0])
+}
+
+fn compute_rlk_indexed_limb_commitment(
+    kind_tag: u64,
+    row_index: u32,
+    limb_index: u32,
+    polynomial: &Polynomial,
+    bit: u32,
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(kind_tag),
+        Field::from(row_index as u64),
+        Field::from(limb_index as u64),
+        Field::from(polynomial.coefficients().len() as u64),
+    ];
+    payload = flatten(payload, from_ref(polynomial), bit);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_GENERATION_LIMB_V1, io)[0])
+}
+
+/// Compute the row-bound commitment to the shared `e0` polynomial.
+pub fn compute_rlk_limb_e0_commitment(row_index: u32, e0: &Polynomial, bit_e0: u32) -> BigInt {
+    compute_rlk_shared_limb_commitment(0, row_index, e0, bit_e0)
+}
+
+/// Compute the row-bound commitment to the shared `e2` polynomial.
+pub fn compute_rlk_limb_e2_commitment(row_index: u32, e2: &Polynomial, bit_e2: u32) -> BigInt {
+    compute_rlk_shared_limb_commitment(1, row_index, e2, bit_e2)
+}
+
+/// Compute the row- and limb-bound commitment to one `d0` polynomial.
+pub fn compute_rlk_limb_d0_commitment(
+    row_index: u32,
+    limb_index: u32,
+    d0: &Polynomial,
+    bit_d: u32,
+) -> BigInt {
+    compute_rlk_indexed_limb_commitment(2, row_index, limb_index, d0, bit_d)
+}
+
+/// Compute the row- and limb-bound commitment to one `d2` polynomial.
+pub fn compute_rlk_limb_d2_commitment(
+    row_index: u32,
+    limb_index: u32,
+    d2: &Polynomial,
+    bit_d: u32,
+) -> BigInt {
+    compute_rlk_indexed_limb_commitment(3, row_index, limb_index, d2, bit_d)
+}
+
+/// Compute an RLK aggregation commitment for one aggregated component row.
+pub fn compute_rlk_aggregation_commitment(component: &CrtPolynomial, bit_d: u32) -> BigInt {
+    let payload = flatten(Vec::new(), &component.limbs, bit_d);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_RLK_AGGREGATION, io)[0])
+}
+
 /// Compute aggregation commitment.
 ///
 /// This matches the Noir `compute_recursive_aggregation_commitment` function exactly.
@@ -682,6 +810,13 @@ pub fn compute_threshold_pk_challenge(payload: Vec<Field>) -> BigInt {
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &challenge_bytes)
 }
 
+/// Compute the independent Fiat-Shamir challenge for one RLK row limb.
+pub fn compute_rlk_limb_challenge(payload: Vec<Field>) -> BigInt {
+    let input_size = payload.len() as u32;
+    let io_pattern = [0x80000000 | input_size, 1];
+    field_to_bigint(compute_commitments(payload, DS_CLG_RLK_GENERATION_LIMB_V1, io_pattern)[0])
+}
+
 /// Compute share encryption challenge.
 ///
 /// This matches the Noir `compute_share_encryption_challenge` function exactly.
@@ -801,6 +936,77 @@ mod tests {
 
         let actual = compute_ciphertext_commitment(&ct0, &ct1, bit_ct);
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn rlk_commitments_match_tagged_noir_payloads() {
+        let bit_d = 4;
+        let component = CrtPolynomial::from_bigint_vectors(vec![vec![1.into(), (-2).into()]]);
+
+        let r_payload = flatten(
+            vec![Field::from(0u64)],
+            std::slice::from_ref(component.limb(0)),
+            bit_d,
+        );
+        let r_io = [0x80000000 | r_payload.len() as u32, 1];
+        let expected_r =
+            field_to_bigint(compute_commitments(r_payload, DS_RLK_GENERATION, r_io)[0]);
+        assert_eq!(
+            compute_rlk_r_commitment(component.limb(0), bit_d),
+            expected_r
+        );
+
+        let d0_payload = flatten(vec![Field::from(1u64)], &component.limbs, bit_d);
+        let d0_io = [0x80000000 | d0_payload.len() as u32, 1];
+        let expected_d0 =
+            field_to_bigint(compute_commitments(d0_payload, DS_RLK_GENERATION, d0_io)[0]);
+        assert_eq!(compute_rlk_d0_commitment(&component, bit_d), expected_d0);
+
+        let d2_payload = flatten(vec![Field::from(2u64)], &component.limbs, bit_d);
+        let d2_io = [0x80000000 | d2_payload.len() as u32, 1];
+        let expected_d2 =
+            field_to_bigint(compute_commitments(d2_payload, DS_RLK_GENERATION, d2_io)[0]);
+        assert_eq!(compute_rlk_d2_commitment(&component, bit_d), expected_d2);
+
+        let aggregate_payload = flatten(Vec::new(), &component.limbs, bit_d);
+        let aggregate_io = [0x80000000 | aggregate_payload.len() as u32, 1];
+        let expected_aggregate = field_to_bigint(
+            compute_commitments(aggregate_payload, DS_RLK_AGGREGATION, aggregate_io)[0],
+        );
+        assert_eq!(
+            compute_rlk_aggregation_commitment(&component, bit_d),
+            expected_aggregate
+        );
+        assert_ne!(expected_d0, expected_d2);
+    }
+
+    #[test]
+    fn rlk_limb_commitments_bind_kind_row_and_limb() {
+        let polynomial = Polynomial::new(vec![1.into(), (-2).into()]);
+        let d0 = compute_rlk_limb_d0_commitment(2, 3, &polynomial, 4);
+
+        assert_ne!(d0, compute_rlk_limb_d0_commitment(2, 4, &polynomial, 4));
+        assert_ne!(d0, compute_rlk_limb_d0_commitment(1, 3, &polynomial, 4));
+        assert_ne!(d0, compute_rlk_limb_d2_commitment(2, 3, &polynomial, 4));
+        assert_ne!(
+            compute_rlk_limb_e0_commitment(2, &polynomial, 4),
+            compute_rlk_limb_e2_commitment(2, &polynomial, 4)
+        );
+    }
+
+    #[test]
+    fn rlk_limb_challenge_uses_an_independent_domain() {
+        let payload = vec![Field::from(1u64), Field::from(2u64)];
+        let input_size = payload.len() as u32;
+        let old_domain = field_to_bigint(
+            compute_commitments(
+                payload.clone(),
+                DS_CLG_PK_GENERATION,
+                [0x80000000 | input_size, 1],
+            )[0],
+        );
+
+        assert_ne!(compute_rlk_limb_challenge(payload), old_domain);
     }
 
     #[test]

@@ -273,6 +273,8 @@ On restart:
 │        CiphernodeSelected events are likewise not guaranteed to replay.
 │      → Recovered aggregator roles, selected party IDs, and DHT document interests are injected
 │        directly from snapshots. Startup does not append synthetic recovery events.
+│      → FHE hydration maps legacy parameter bytes that omit `error1_variance` back to the exact
+│        known threshold preset before it deserializes the common random polynomial.
 ├─ Sync module replays:
 │   → Arm the current NetReady listener before the network transport can publish readiness
 │   4. Replay EventStore events since the snapshot cut (effects still disabled)

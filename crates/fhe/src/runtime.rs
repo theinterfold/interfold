@@ -9,8 +9,10 @@ use async_trait::async_trait;
 use e3_bfv_client::{decode_plaintext_to_vec_u64, encode_vec_u64_to_bytes};
 use e3_data::{FromSnapshotWithParams, Snapshot};
 use e3_events::OrderedSet;
-use e3_fhe_params::build_bfv_params_arc;
-use e3_fhe_params::{create_deterministic_crp_from_default_seed, decode_bfv_params_arc};
+use e3_fhe_params::{
+    build_bfv_params_arc, create_deterministic_crp_from_default_seed, decode_bfv_params_arc,
+    BfvParamSet, BfvPreset,
+};
 use e3_utils::{ArcBytes, SharedRng};
 use fhe::{
     bfv::{BfvParameters, Ciphertext, Plaintext, PublicKey, SecretKey},
@@ -139,10 +141,92 @@ impl Snapshot for Fhe {
 impl FromSnapshotWithParams for Fhe {
     type Params = SharedRng;
     async fn from_snapshot(rng: SharedRng, snapshot: FheSnapshot) -> Result<Self> {
-        let params = Arc::new(BfvParameters::try_deserialize(&snapshot.params)?);
+        let params = deserialize_snapshot_params(&snapshot.params)?;
         let crp = CommonRandomPoly::deserialize(&snapshot.crp, &params)?;
         Ok(Fhe::new(params, crp, rng))
     }
+}
+
+fn deserialize_snapshot_params(bytes: &[u8]) -> Result<Arc<BfvParameters>> {
+    let params = BfvParameters::try_deserialize(bytes)?;
+    if protobuf_has_length_delimited_field(bytes, 6) {
+        return Ok(Arc::new(params));
+    }
+    let Some(preset) =
+        BfvPreset::from_threshold_parameters(params.degree(), params.plaintext(), params.moduli())
+    else {
+        return Ok(Arc::new(params));
+    };
+    Ok(BfvParamSet::from(preset).build_arc())
+}
+
+fn protobuf_has_length_delimited_field(bytes: &[u8], wanted_field: u64) -> bool {
+    let mut cursor = 0;
+    while cursor < bytes.len() {
+        let Some(key) = read_protobuf_varint(bytes, &mut cursor) else {
+            return false;
+        };
+        let field = key >> 3;
+        let wire_type = key & 0x07;
+        if field == wanted_field && wire_type == 2 {
+            return true;
+        }
+        if !skip_protobuf_value(bytes, &mut cursor, wire_type, field) {
+            return false;
+        }
+    }
+    false
+}
+
+fn read_protobuf_varint(bytes: &[u8], cursor: &mut usize) -> Option<u64> {
+    let mut value = 0u64;
+    for shift in (0..70).step_by(7) {
+        let byte = *bytes.get(*cursor)?;
+        *cursor += 1;
+        value |= u64::from(byte & 0x7f) << shift;
+        if byte & 0x80 == 0 {
+            return Some(value);
+        }
+    }
+    None
+}
+
+fn skip_protobuf_value(bytes: &[u8], cursor: &mut usize, wire_type: u64, field: u64) -> bool {
+    let length = match wire_type {
+        0 => return read_protobuf_varint(bytes, cursor).is_some(),
+        1 => 8,
+        2 => {
+            match read_protobuf_varint(bytes, cursor).and_then(|value| usize::try_from(value).ok())
+            {
+                Some(value) => value,
+                None => return false,
+            }
+        }
+        3 => loop {
+            let Some(key) = read_protobuf_varint(bytes, cursor) else {
+                return false;
+            };
+            let nested_field = key >> 3;
+            let nested_wire_type = key & 0x07;
+            if nested_wire_type == 4 {
+                return nested_field == field;
+            }
+            if !skip_protobuf_value(bytes, cursor, nested_wire_type, nested_field) {
+                return false;
+            }
+        },
+        4 => return false,
+        5 => 4,
+        _ => return false,
+    };
+    let Some(next) = cursor.checked_add(length) else {
+        return false;
+    };
+    if next > bytes.len() {
+        return false;
+    }
+    *cursor = next;
+    true
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
@@ -163,6 +247,50 @@ impl SecretKeySerializer {
 
     pub fn from_bytes(bytes: &[u8], params: Arc<BfvParameters>) -> Result<SecretKey> {
         Ok(Self::deserialize(bytes, params)?.inner)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const LEGACY_SECURE_8192_PARAMS: &[u8] = &[
+        8, 128, 64, 18, 27, 129, 128, 128, 134, 128, 128, 128, 128, 4, 129, 128, 144, 133, 128,
+        128, 128, 128, 4, 129, 128, 228, 132, 128, 128, 128, 128, 4, 24, 192, 132, 61, 32, 10,
+    ];
+
+    #[test]
+    fn restores_preset_variance_from_legacy_snapshot_params() {
+        let expected = BfvParamSet::from(BfvPreset::SecureThreshold8192).build();
+        let decoded = BfvParameters::try_deserialize(LEGACY_SECURE_8192_PARAMS).unwrap();
+        assert_ne!(
+            decoded.get_error1_variance(),
+            expected.get_error1_variance()
+        );
+        let restored = deserialize_snapshot_params(LEGACY_SECURE_8192_PARAMS).unwrap();
+        assert_eq!(
+            restored.get_error1_variance(),
+            expected.get_error1_variance()
+        );
+    }
+
+    #[test]
+    fn preserves_present_variance_with_unknown_protobuf_fields() {
+        let preset = BfvParamSet::from(BfvPreset::SecureThreshold8192);
+        let expected = e3_fhe_params::build_bfv_params(
+            preset.degree,
+            preset.plaintext_modulus,
+            preset.moduli,
+            Some("123"),
+        );
+        let mut encoded = expected.to_bytes();
+        encoded.extend_from_slice(&[0x38, 0x01]);
+
+        let restored = deserialize_snapshot_params(&encoded).unwrap();
+        assert_eq!(
+            restored.get_error1_variance(),
+            expected.get_error1_variance()
+        );
     }
 }
 

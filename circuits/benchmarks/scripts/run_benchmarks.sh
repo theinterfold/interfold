@@ -115,7 +115,7 @@ echo "║       Interfold ZK Circuit Benchmark Suite       ║"
 echo "╚════════════════════════════════════════════════╝"
 echo ""
 
-# Read configuration (circuits may be strings or {name, modes[]}; see config.json)
+# Read configuration (circuits may be strings or objects with mode/preset filters; see config.json)
 ALL_CIRCUITS=$(jq -r '.circuits[] | (if type == "string" then . else .name end)' "$CONFIG_FILE")
 ORACLES=$(jq -r '.oracles[]' "$CONFIG_FILE")
 OUTPUT_DIR_BASE=$(jq -r '.output_dir // "results"' "$CONFIG_FILE")
@@ -264,14 +264,16 @@ if [ "$SKIP_COMPILE" = false ]; then
     echo ""
 fi
 
-# Circuit-specific modes come from config.json (e.g. "config" has "modes": ["secure"]); see circuits/benchmarks/config.json
+# Circuit-specific mode and preset filters come from config.json.
 RUN_CIRCUITS=""
-CIRCUIT_MODES=$(jq -r '.circuits[] | (if type == "string" then . else .name end) as $path | (if type == "object" and (.modes != null) then (.modes | join(",")) else "insecure,secure" end) | "\($path)\t\(.)"' "$CONFIG_FILE")
+CIRCUIT_FILTERS=$(jq -r '.circuits[] | (if type == "string" then . else .name end) as $path | (if type == "object" and (.modes != null) then (.modes | join(",")) else "insecure,secure" end) as $modes | (if type == "object" and (.presets != null) then (.presets | join(",")) else "insecure,secure-8192,secure-16384" end) as $presets | "\($path)\t\($modes)\t\($presets)"' "$CONFIG_FILE")
 while IFS= read -r line; do
     [ -z "$line" ] && continue
     c="${line%%	*}"
-    modes="${line#*	}"
-    # If --circuit filter is set, we iterate over CIRCUITS (one path) and may not have entry in CIRCUIT_MODES; then run it
+    remainder="${line#*	}"
+    modes="${remainder%%	*}"
+    presets="${remainder#*	}"
+    # If --circuit filter is set, run only its matching entry.
     if [ -n "$CIRCUIT_FILTER" ]; then
         [ "$c" != "$CIRCUIT_FILTER" ] && continue
     fi
@@ -282,8 +284,12 @@ while IFS= read -r line; do
             continue
         fi
     fi
+    if [[ ",${presets}," != *",${PRESET_NAME},"* ]]; then
+        echo "  Skipping $c (config.json restricts to preset(s): $presets; current preset: $PRESET_NAME)"
+        continue
+    fi
     RUN_CIRCUITS="${RUN_CIRCUITS} ${c}"
-done <<< "$CIRCUIT_MODES"
+done <<< "$CIRCUIT_FILTERS"
 # When --circuit was given but not in config.json, no line matched; run it anyway if path exists (see note above)
 if [ -n "$CIRCUIT_FILTER" ] && [ -z "$RUN_CIRCUITS" ] && ! echo "$ALL_CIRCUITS" | grep -qx "$CIRCUIT_FILTER" 2>/dev/null; then
     RUN_CIRCUITS="$CIRCUIT_FILTER"

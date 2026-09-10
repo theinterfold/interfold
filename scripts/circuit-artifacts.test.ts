@@ -11,6 +11,14 @@ import { join } from 'node:path'
 import test from 'node:test'
 import { RELEASE_REQUIRED_PAIRS, requiredArtifactMarkers, validateArtifactSet, validateReleaseArtifacts } from './circuit-artifacts'
 
+const REQUIRED_LBFV_MARKERS = ['default', 'evm', 'recursive'].flatMap((variant) =>
+  ['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_generation_limb', 'rlk_aggregation'].flatMap((circuit) =>
+    ['.json', '.vk', '.vk_hash'].map((extension) =>
+      join('secure-16384', 'minimum', variant, 'threshold', circuit, `${circuit}${extension}`),
+    ),
+  ),
+)
+
 function sourceHash(preset: string, committee: string): string {
   return `source:${preset}:${committee}`
 }
@@ -81,6 +89,28 @@ test('rejects a stamp-valid pair with a missing verification-key artifact', () =
     try {
       const marker = requiredArtifactMarkers('secure-8192', 'small').find((artifact) => artifact.endsWith(extension))
       assert.ok(marker)
+      unlinkSync(join(dir, marker))
+      assert.throws(() => validateReleaseArtifacts(dir, sourceHash), /Incomplete circuit artifacts/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+})
+
+test('requires l-BFV row artifacts only for secure-16384', () => {
+  const secureMarkers = requiredArtifactMarkers('secure-16384', 'minimum').filter((artifact) => REQUIRED_LBFV_MARKERS.includes(artifact))
+  assert.deepEqual(secureMarkers.sort(), REQUIRED_LBFV_MARKERS.toSorted())
+
+  const unsupportedMarkers = requiredArtifactMarkers('secure-8192', 'minimum').filter((artifact) =>
+    REQUIRED_LBFV_MARKERS.includes(artifact),
+  )
+  assert.deepEqual(unsupportedMarkers, [])
+})
+
+test('rejects every missing secure-16384 l-BFV row artifact', () => {
+  for (const marker of REQUIRED_LBFV_MARKERS) {
+    const dir = makeCompleteMatrix()
+    try {
       unlinkSync(join(dir, marker))
       assert.throws(() => validateReleaseArtifacts(dir, sourceHash), /Incomplete circuit artifacts/)
     } finally {

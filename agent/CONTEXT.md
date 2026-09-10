@@ -26,7 +26,7 @@ output — every step backed by ZK proofs verified on-chain.
 | Committee    | Ciphernodes serving an E3. Sizes `(N, T, H)`: `minimum` (3,1,2), `micro` (9,4,5), `small` (19,9,10)                             |
 | DKG          | Distributed key generation — joint threshold public key, no party holds the full secret                                         |
 | BFV / TrBFV  | Brakerski–Fan–Vercauteren FHE scheme / its threshold (publicly verifiable) variant                                              |
-| Preset       | BFV parameter set: `insecure` (dev/CI default), `secure-8192`, or `secure-16384`                                                  |
+| Preset       | BFV parameter set: `insecure` (dev/CI default), `secure-8192`, or `secure-16384`                                                |
 | C0–C7        | ZK circuit IDs across the DKG/decryption pipeline (map below)                                                                   |
 | Sortition    | Random committee selection (`crates/sortition`)                                                                                 |
 | Slashing     | Fault attribution, accusation quorum, commitment consistency (`crates/slashing`)                                                |
@@ -122,7 +122,20 @@ opentelemetry/tracing.
   `esm_share_computation_chunk` · C3 `share_encryption` · C4 `share_decryption`
 - **Threshold** (`circuits/bin/threshold/`): C1 `pk_generation` · C5 `pk_aggregation` · P3
   `user_data_encryption_ct0/ct1` (+ wrapper) · C6 `share_decryption` · C7
-  `decrypted_shares_aggregation`
+  `decrypted_shares_aggregation` · secure-16384 l-BFV row proofs `lbfv_pk_generation`
+  (`CircuitName::LbfvPkGeneration = 29`), `lbfv_pk_aggregation`
+  (`CircuitName::LbfvPkAggregation = 30`), `rlk_generation` (`CircuitName::RlkGeneration = 27`),
+  `rlk_generation_limb` (`CircuitName::RlkGenerationLimb = 31`), and `rlk_aggregation`
+  (`CircuitName::RlkAggregation = 28`). `rlk_generation_limb` proves one CRT limb, and
+  `rlk_generation` recursively finalizes all limbs for one row. These circuits have helper and
+  prover boundaries. A real `secure-16384/minimum` test generates five recursive limb proofs,
+  finalizes one row, verifies all six proofs, checks the six terminal public fields, and rejects a
+  terminal proof made with the wrong leaf VK. The runtime and broader recursive proof flows do not
+  use them yet. Under `secure-16384/minimum`, sequential production compilation measured 512.58
+  seconds and 26,388,774,912 bytes maximum RSS for the limb, then 57.36 seconds and 8,039,219,200
+  bytes maximum RSS for the terminal. The end-to-end test took 1,393.44 seconds and 16,788,504,576
+  bytes maximum RSS. The prior equation-wide circuit did not complete compilation after more than 31
+  minutes.
 - **Recursive aggregation** (`circuits/bin/recursive_aggregation/`): fold kernels
   (`c2ab_chunk_fold`, `c3_fold`, `c6_fold`, `node_fold`, `nodes_fold`, …) and the top-level
   `dkg_aggregator` / `decryption_aggregator`, which produce the on-chain Honk verifiers. The

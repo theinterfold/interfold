@@ -463,6 +463,27 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │                                      the final decryption proof exposes the SAFE commitment and the wrapper compares it with
 │   │   │                                      the commitment stored at ciphertext publication. Keccak(raw output) remains separate.
 │   │   │
+│   │   ├─ NOTE: Production C1 still proves one summation-only public-key share per party. The
+│   │   │   separate `lbfv_pk_generation` circuit proves one fixed l-BFV public-key row and exposes
+│   │   │   `row_index`, `sk_commitment`, and `pk_commitment`. The `lbfv_pk_aggregation` circuit
+│   │   │   aggregates exactly `H` generation-bound rows against the selected fixed CRS row. Both
+│   │   │   helper/prover boundaries exist, and the legacy C5 ABI remains unchanged. `NodeFold`,
+│   │   │   pending proof state, and request/response types do not collect these proofs yet.
+│   │   │   RLK generation uses one reusable `rlk_generation_limb` circuit for each CRT limb. Its
+│   │   │   row finalizer verifies exactly `L` ZK leaf proofs in canonical limb order, reconstructs
+│   │   │   the unchanged full-row D0/D2 commitments, and exposes the bound leaf VK hash at the
+│   │   │   public-statement tail. `CircuitName::RlkGeneration`, `CircuitName::RlkAggregation`, and
+│   │   │   `CircuitName::LbfvPkGeneration` use appended discriminants 27, 28, and 29.
+│   │   │   `CircuitName::LbfvPkAggregation` and `CircuitName::RlkGenerationLimb` use appended
+│   │   │   discriminants 30 and 31. No l-BFV `ProofType` or runtime event exists yet. NodeFold and
+│   │   │   runtime integration remain pending. A real `secure-16384/minimum` test proves and
+│   │   │   verifies five recursive limbs and one row finalizer. It checks all six terminal public
+│   │   │   fields and rejects a terminal proof made with the wrong leaf VK. The test took 1,393.44
+│   │   │   seconds and 16,788,504,576 bytes maximum RSS. The prior equation-wide circuit did not
+│   │   │   complete compilation after more than 31 minutes. Sequential circuit compilation measured
+│   │   │   512.58 seconds and 26,388,774,912 bytes maximum RSS for the limb, then 57.36 seconds and
+│   │   │   8,039,219,200 bytes maximum RSS for the terminal.
+│   │   │
 │   │   ├─ On mismatch: publishes CommitmentConsistencyViolation
 │   │   │   → AccusationManager initiates accusation quorum (see Part 5)
 │   │   └─ Responds with CommitmentConsistencyCheckComplete { inconsistent_parties }
@@ -1104,6 +1125,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   │   │   )
 │   │   │   → Circuit: DecryptedSharesAggregation (C7)
 │   │   │   → Proves plaintext was correctly reconstructed from M+1 shares
+│   │   │   → Uses `U384` for `t * u mod Q`; secure-16384 needs a 260-bit intermediate
 │   │   ├─ ZkActor generates proof(s) via bb binary
 │   │   ├─ Signs each C7 proof (one per ciphertext index)
 │   │   └─ Publishes AggregationProofSigned {

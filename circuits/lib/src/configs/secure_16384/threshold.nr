@@ -7,6 +7,8 @@
 use crate::core::threshold::decrypted_shares_aggregation::Configs as DecryptedSharesAggregationConfigs;
 use crate::core::threshold::pk_aggregation::Configs as PkAggregationConfigs;
 use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;
+use crate::core::threshold::rlk_aggregation::Configs as RlkAggregationConfigs;
+use crate::core::threshold::rlk_generation::Configs as RlkGenerationConfigs;
 use crate::core::threshold::share_decryption::Configs as ShareDecryptionConfigs;
 use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncryptionCt0Configs;
 use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
@@ -81993,6 +81995,67 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
     PK_GENERATION_R1_BOUNDS,
     PK_GENERATION_R2_BOUNDS,
 );
+
+/************************************
+-------------------------------------
+l-BFV relinearization key circuits
+-------------------------------------
+************************************/
+
+pub global GADGET_DIM: u32 = L;
+// C1 uses the repeated CRP path. The dedicated l-BFV public-key circuit selects rows below.
+pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [CRP, CRP, CRP, CRP, CRP];
+// l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
+// placeholder declarations because their RLK path is disabled.
+pub use super::lbfv::{G_GADGET_ROWS, LBFV_CRS_GADGET_ROWS, LBFV_URS_GADGET_ROWS};
+
+pub global RLK_GENERATION_BIT_R: u32 = 1;
+pub global RLK_GENERATION_BIT_SK: u32 = 1;
+pub global RLK_GENERATION_BIT_E0: u32 = 5;
+pub global RLK_GENERATION_BIT_E2: u32 = 5;
+pub global RLK_GENERATION_BIT_R1_D0: u32 = 200;
+pub global RLK_GENERATION_BIT_R2_D0: u32 = 50;
+pub global RLK_GENERATION_BIT_R1_D2: u32 = 200;
+pub global RLK_GENERATION_BIT_R2_D2: u32 = 50;
+pub global RLK_GENERATION_BIT_D: u32 = 50;
+
+pub global RLK_GENERATION_R_BOUND: Field = 1;
+pub global RLK_GENERATION_SK_BOUND: Field = 1;
+pub global RLK_GENERATION_E0_BOUND: Field = 20;
+pub global RLK_GENERATION_E2_BOUND: Field = 20;
+pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = [
+    1434132872170587345710760287249466697733749722370573280385069,
+    1434132873923615250120702079636922901023924126471681914411053,
+    1434132874758390444203164478495735575359665559839107310000173,
+    1434132874925345483136273704858913710339479256828176684390444,
+    1434132875676643158816309303770814128383921346237312717592621,
+];
+pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] =
+    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
+pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = [
+    1434132872170587345710760287249466697733749722370573280385069,
+    1434132873923615250120702079636922901023924126471681914411053,
+    1434132874758390444203164478495735575359665559839107310000173,
+    1434132874925345483136273704858913710339479256828176684390444,
+    1434132875676643158816309303770814128383921346237312717592621,
+];
+pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] =
+    [562949958631424, 562949957943296, 562949957615616, 562949957550080, 562949957255168];
+
+pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::new(
+    QIS,
+    RLK_GENERATION_R_BOUND,
+    RLK_GENERATION_SK_BOUND,
+    RLK_GENERATION_E0_BOUND,
+    RLK_GENERATION_E2_BOUND,
+    RLK_GENERATION_R1_D0_BOUNDS,
+    RLK_GENERATION_R2_D0_BOUNDS,
+    RLK_GENERATION_R1_D2_BOUNDS,
+    RLK_GENERATION_R2_D2_BOUNDS,
+);
+
+pub global RLK_AGGREGATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
+pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationConfigs::new(QIS);
 
 /************************************
 -------------------------------------
