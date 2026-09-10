@@ -66,25 +66,30 @@ struct BenchmarkParams {
     plaintext_flow_timeout: Duration,
 }
 
+fn resolve_benchmark_preset(
+    benchmark_mode: &str,
+    requested_preset: Option<&str>,
+) -> (&'static str, BfvPreset) {
+    match requested_preset {
+        Some("insecure") => ("insecure", DEFAULT_BFV_PRESET),
+        Some("secure-8192") => ("secure-8192", BfvPreset::SecureThreshold8192),
+        Some("secure-16384") => ("secure-16384", BfvPreset::SecureThreshold16384),
+        Some(value) => panic!("BENCHMARK_PRESET has unsupported value {value:?}"),
+        None if benchmark_mode == "secure" => ("secure-8192", BfvPreset::SecureThreshold8192),
+        None => ("insecure", DEFAULT_BFV_PRESET),
+    }
+}
+
 fn select_benchmark_params() -> BenchmarkParams {
     let benchmark_mode = std::env::var("BENCHMARK_MODE").unwrap_or_else(|_| "insecure".to_string());
-    let is_secure_mode = benchmark_mode == "secure";
-
-    let bfv_preset = if is_secure_mode {
-        BfvPreset::SecureThreshold8192
-    } else {
-        DEFAULT_BFV_PRESET
-    };
+    let requested_preset = std::env::var("BENCHMARK_PRESET").ok();
+    let (preset_subdir, bfv_preset) =
+        resolve_benchmark_preset(&benchmark_mode, requested_preset.as_deref());
+    let is_secure_mode = preset_subdir != "insecure";
 
     // λ is part of the preset metadata; using a hard-coded value here will mix parameter
     // families and can invalidate noise/security assumptions.
     let lambda = bfv_preset.metadata().lambda;
-
-    let preset_subdir = if is_secure_mode {
-        "secure-8192"
-    } else {
-        "insecure"
-    };
 
     let committee = active_committee(preset_subdir);
     let is_small_committee = committee == e3_zk_helpers::CiphernodesCommitteeSize::Small;
@@ -120,6 +125,20 @@ fn select_benchmark_params() -> BenchmarkParams {
         pubkey_flow_timeout,
         plaintext_flow_timeout,
     }
+}
+
+#[test]
+fn benchmark_preset_override_selects_secure_16384() {
+    let (preset_subdir, preset) = resolve_benchmark_preset("secure", Some("secure-16384"));
+    assert_eq!(preset_subdir, "secure-16384");
+    assert!(matches!(preset, BfvPreset::SecureThreshold16384));
+}
+
+#[test]
+fn secure_benchmark_mode_defaults_to_secure_8192() {
+    let (preset_subdir, preset) = resolve_benchmark_preset("secure", None);
+    assert_eq!(preset_subdir, "secure-8192");
+    assert!(matches!(preset, BfvPreset::SecureThreshold8192));
 }
 
 /// Registered ciphernodes (excluding the observer collector) for benchmark sortition.
