@@ -534,11 +534,12 @@ pub async fn register_e3_requested(
 
                 // Discovery was skipped for want of a divisor, not refused. Record the debt so
                 // `retry_pending_discovery` settles it once the divisor reads: the event is
-                // not replayed once the cursor passes it, so nothing else would.
+                // not replayed once the cursor passes it, so nothing else would. The retry
+                // pass itself is started below, after `record_round`: it scans the round
+                // index and exits when nothing is owed, so starting it here could let it run
+                // before this round is listed, find nothing, and leave the debt to a restart.
                 if divisor_unavailable {
                     repo.set_discovery_pending(true).await?;
-                    // The startup pass covers a restart; this covers the debt taken while up.
-                    tokio::spawn(retry_pending_discovery(store.clone()));
                 }
 
                 // Poseidon hashes exist to build the census tree, and an on-chain census has no
@@ -559,6 +560,12 @@ pub async fn register_e3_requested(
                 CurrentRoundRepository::new(store.clone())
                     .record_round(&e3_id)
                     .await?;
+
+                // The round is listed, so the retry pass can find its debt. The startup pass
+                // covers a restart; this covers the debt taken while up.
+                if divisor_unavailable {
+                    tokio::spawn(retry_pending_discovery(store.clone()));
+                }
 
                 // Skipped for an on-chain census: `_eligibility` never reads `merkleRoot` in
                 // that mode, so posting one would spend gas to publish a value nothing consults —
