@@ -8,18 +8,21 @@ use std::str::FromStr;
 
 use crate::server::{
     app_data::AppData,
+    data_availability::AvailabilityService,
     models::{
         canonical_e3_id, e3_id_to_u256, GetRoundRequest, JsonResponse, PreviousCiphertextRequest,
         PreviousCiphertextResponse, RoundRequestWithRequester, WebhookPayload,
     },
-    CONFIG,
+    rate_limit::ChainRateLimiter,
 };
-use actix_web::{web, HttpResponse, Responder};
-use alloy::primitives::{Address, Bytes, B256};
-use e3_sdk::evm_helpers::contracts::{
-    E3Stage, InterfoldContract, InterfoldContractFactory, InterfoldRead, InterfoldWrite, ReadWrite,
-};
+use actix_web::{web, HttpRequest, HttpResponse, Responder};
+use alloy::primitives::Address;
 use log::{error, info};
+
+use super::chain::{admit, too_many_requests};
+
+/// Upstream reads performed before a new aggregate-output job is admitted.
+const OUTPUT_CALLBACK_READ_COST: usize = 6;
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
     config.service(
@@ -27,8 +30,8 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
             .route("/result", web::post().to(get_round_result))
             .route("/all", web::post().to(get_all_round_results))
             .route("/lite", web::post().to(get_round_state_lite))
-            // Do we need protection on this endpoint? technically they would need to send a valid proof for it to
-            // be included on chain
+            // The handler verifies the compute proof on Ethereum before it creates an Avail job.
+            // Valid retries are idempotent, so this endpoint needs no separate caller identity.
             .route("/add-result", web::post().to(handle_program_server_result))
             // Get the token holders hashes for a given round
             .route("/token-holders", web::post().to(get_token_holders_hashes))
@@ -59,19 +62,19 @@ fn round_not_found(e3_id: &str) -> HttpResponse {
     })
 }
 
-/// The round IS indexed — its committee just has not published a key.
+/// The round is indexed, but verified public-key bytes are not available.
 ///
 /// Same status as an unknown round, because there is still nothing to serve, but never the same
 /// message. The two have completely different causes: one means the request was never seen, the
-/// other means DKG has not completed (or never will, for a round that failed). Reporting both as
-/// "no state for round X" sent us looking for a broken indexer when the indexer was fine and the
-/// ciphernodes were not.
+/// other means the byte publication has not arrived or did not verify. `KeyPublished` on chain is
+/// not sufficient because that stage records the proof-backed commitment before the byte event.
 async fn round_state_pending(store: &web::Data<AppData>, e3_id: &str) -> HttpResponse {
     match store.e3(e3_id).has_crisp_record().await {
         Ok(true) => HttpResponse::NotFound().json(JsonResponse {
             response: format!(
-                "Round {e3_id} is indexed, but its committee has not published a key yet, so \
-                 there is no state to serve. Check whether the round has failed on chain."
+                "Round {e3_id} is indexed, but verified committee public-key bytes are not \
+                 available, so there is no state to serve. KeyPublished on chain confirms only \
+                 the commitment. Check the byte-publication event and the on-chain failure state."
             ),
         }),
         Ok(false) => round_not_found(e3_id),
@@ -138,16 +141,20 @@ async fn handle_get_previous_ciphertext(
 ///
 /// # Returns
 /// * A JSON response indicating the success of the operation
-async fn handle_program_server_result(data: web::Json<WebhookPayload>) -> impl Responder {
+async fn handle_program_server_result(
+    request: HttpRequest,
+    data: web::Json<WebhookPayload>,
+    availability: web::Data<AvailabilityService>,
+    limiter: web::Data<ChainRateLimiter>,
+) -> impl Responder {
     let incoming = data.into_inner();
 
     match incoming {
         WebhookPayload::Failed { e3_id, error } => {
             error!("Computation failed for E3 ID: {}. Error: {}", e3_id, error);
 
-            // TODO: Update E3 state to indicate computation failed
-            // TODO: Handle ciphernode rewards for partial work
-            // TODO: Emit on-chain event if needed
+            // This callback is not authenticated. Do not let a caller move durable round state by
+            // claiming that the program server failed.
 
             HttpResponse::Ok().json(format!(
                 "Computation failed for E3 ID: {}. Error: {}",
@@ -181,75 +188,24 @@ async fn handle_program_server_result(data: web::Json<WebhookPayload>) -> impl R
                 return HttpResponse::BadRequest()
                     .body("ciphertext_commitment must be exactly 32 bytes");
             }
+            if let Err((caller, cost)) = admit(&request, &limiter, OUTPUT_CALLBACK_READ_COST) {
+                return too_many_requests(&caller, cost, "/state/add-result");
+            }
 
-            // Create the contract
-            let contract: InterfoldContract<ReadWrite> =
-                match InterfoldContractFactory::create_write(
-                    &CONFIG.http_rpc_url,
-                    &CONFIG.interfold_address,
-                    &CONFIG.private_key,
-                )
+            let mut commitment = [0u8; 32];
+            commitment.copy_from_slice(&ciphertext_commitment);
+            match availability
+                .stage_output(&e3_id, ciphertext, commitment, proof)
                 .await
-                {
-                    Ok(contract) => contract,
-                    Err(e) => {
-                        error!("Failed to create contract: {:?}", e);
-                        return HttpResponse::InternalServerError()
-                            .json(format!("Failed to create contract: {}", e));
-                    }
-                };
-
-            let e3_id_u256 = match e3_id_to_u256(&e3_id) {
-                Ok(e3_id) => e3_id,
-                Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
-            };
-
-            // Try the direct call
-            let tx_result = contract
-                .publish_ciphertext_output(
-                    e3_id_u256,
-                    Bytes::from(ciphertext.clone()),
-                    B256::from_slice(&ciphertext_commitment),
-                    Bytes::from(proof.clone()),
-                )
-                .await;
-
-            let pending_tx = match tx_result {
-                Ok(tx) => tx,
-                Err(e) => {
-                    // A revert can mean the output already landed on chain — a retry of this
-                    // webhook, or our own earlier transaction confirming first. Publication is
-                    // this handler's goal, so an E3 already past KeyPublished is a success.
-                    match contract.get_e3_stage(e3_id_u256).await {
-                        Ok(stage)
-                            if stage == E3Stage::CiphertextReady || stage == E3Stage::Complete =>
-                        {
-                            info!(
-                                "Ciphertext output already published for E3 ID: {} (stage: {:?})",
-                                e3_id, stage
-                            );
-                            return HttpResponse::Ok().json(format!(
-                                "Ciphertext output already published for E3 ID: {}",
-                                e3_id
-                            ));
-                        }
-                        _ => {}
-                    }
-                    error!("Failed to send transaction: {:?}", e);
-                    return HttpResponse::InternalServerError()
-                        .json(format!("Failed to send transaction: {}", e));
+            {
+                Ok(job) if job.status == "success" => HttpResponse::Ok().json(job),
+                Ok(job) => HttpResponse::Accepted().json(job),
+                Err(error) => {
+                    error!("Failed to stage aggregate ciphertext: {error}");
+                    HttpResponse::ServiceUnavailable()
+                        .body("Aggregate ciphertext publication is temporarily unavailable")
                 }
-            };
-
-            info!(
-                "Ciphertext output published successfully for E3 ID: {} with tx: {}",
-                e3_id, pending_tx.transaction_hash
-            );
-
-            HttpResponse::Ok().json(format!(
-                "Ciphertext output published successfully for E3 ID: {}",
-                e3_id
-            ))
+            }
         }
     }
 }
@@ -305,8 +261,8 @@ async fn get_all_round_results(
     let requesters = incoming.requesters;
 
     for e3_id in round_ids {
-        match store.e3(&e3_id).get_web_result_request().await {
-            Ok(w) => {
+        match store.e3(&e3_id).try_get_web_result_request().await {
+            Ok(Some(w)) => {
                 if !requesters.is_empty() {
                     // if we have any requesters to filter by, do it
                     if requesters.contains(&w.requester) {
@@ -316,15 +272,15 @@ async fn get_all_round_results(
                     states.push(w);
                 }
             }
-            Err(e) => {
-                // Expected for a round whose committee key is not published yet — the `_e3:`
-                // record only exists after CommitteePublished. See the note in
-                // `get_current_round_for_requester`.
+            Ok(None) => {
                 info!(
-                    "Round {} is not fully indexed yet (usually: committee key pending) — skipping: {:?}",
-                    e3_id, e
+                    "Round {} has no verified public-key bytes yet; skipping it",
+                    e3_id
                 );
-                continue;
+            }
+            Err(error) => {
+                error!("Could not read round {e3_id} from the store: {error:?}");
+                return HttpResponse::InternalServerError().body("Failed to retrieve round state");
             }
         }
     }

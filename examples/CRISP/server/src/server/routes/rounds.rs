@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::config::CONFIG;
+use crate::deployments;
 use crate::server::app_data::AppData;
 use crate::server::indexer::get_current_timestamp_rpc;
 use crate::server::models::{
@@ -39,14 +40,23 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
 }
 
 sol! {
-    /// The E3 PROGRAM's input event — three arguments. Not to be confused with `Interfold`'s
-    /// four-argument `InputPublished`, which carries an extra `inputHash`; they are different
-    /// events from different contracts and only one of them is what the activity feed renders.
-    event InputPublished(uint256 indexed e3Id, bytes data, uint256 index);
+    /// The CRISP program's content-addressed input event.
+    event InputPublished(
+        uint256 indexed e3Id,
+        address indexed slotAddress,
+        bytes32 encryptedVoteCommitment,
+        bytes32 encryptedVoteHash,
+        uint32 availabilityBlock,
+        uint128 availabilityLeafIndex,
+        uint256 index,
+        uint40 parentIndexPlusOne
+    );
 }
 
 /// Cost charged to the caller's read window.
 const INPUTS_READ_COST: usize = 4;
+const CENSUS_MODE_TOKEN: u64 = 0;
+const CENSUS_MODE_ONCHAIN: u64 = 2;
 
 #[derive(Debug, Deserialize)]
 pub struct RoundInputsRequest {
@@ -81,10 +91,9 @@ pub struct RoundInputsResponse {
 /// `/state/lite` already reports how MANY inputs a round holds, but not when each arrived or in
 /// which transaction, which is what the feed links to — so this is not the same question.
 ///
-/// The event's `data` is the ciphertext and is deliberately dropped: the feed renders an index, a
-/// block and a link, and returning the payload would make the response orders of magnitude larger
-/// for a field nothing reads. Ballots stay indistinguishable either way — a mask and a vote look
-/// the same here, as they do on chain.
+/// The event holds only the content hash and Avail coordinates. The feed needs only the index,
+/// Ethereum block, and transaction link. Ballots stay indistinguishable: a mask and a vote have
+/// the same event shape.
 async fn round_inputs(
     http_request: HttpRequest,
     data: web::Json<RoundInputsRequest>,
@@ -205,13 +214,60 @@ mod tests {
 
     #[test]
     fn the_input_published_signature_is_the_program_event_not_interfold_s() {
-        // `InputPublished(uint256,bytes,uint256)` from the E3 PROGRAM, cross-checked against
-        // viem's `toEventSelector`. Interfold emits a four-argument event of the same name; using
-        // that one here would return an empty feed with nothing to indicate why.
+        // Cross-checked against viem's `toEventSelector`. Interfold has a different event with the
+        // same name; using that one here would return an empty feed.
         assert_eq!(
             format!("{:#x}", InputPublished::SIGNATURE_HASH),
-            "0xa8b9f2de7b39faeef44659f323cd6d14cfa11fbf8c4eaccfb1d6c954194656fd"
+            "0xbeebd5a7c46bb399523934784209bdeb6e68a004964282d7555fcc286169377c"
         );
+    }
+
+    #[test]
+    fn self_registry_defaults_to_onchain_census() {
+        let mode = resolve_request_census_mode(
+            "0x00a2Aaf566593b28EDEb614b81B2Ada01327db7e",
+            None,
+            Some("0x00a2aaf566593b28edeb614b81b2ada01327db7e"),
+        )
+        .unwrap();
+
+        assert_eq!(mode, CENSUS_MODE_ONCHAIN);
+    }
+
+    #[test]
+    fn normal_token_keeps_token_census_default() {
+        let mode = resolve_request_census_mode(
+            "0x1111111111111111111111111111111111111111",
+            None,
+            Some("0x00a2aaf566593b28edeb614b81b2ada01327db7e"),
+        )
+        .unwrap();
+
+        assert_eq!(mode, CENSUS_MODE_TOKEN);
+    }
+
+    #[test]
+    fn self_registry_rejects_token_census() {
+        let err = resolve_request_census_mode(
+            "0x00a2Aaf566593b28EDEb614b81B2Ada01327db7e",
+            Some(CENSUS_MODE_TOKEN),
+            Some("0x00a2aaf566593b28edeb614b81b2ada01327db7e"),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("SelfRegistry rounds must use census_mode 2"));
+    }
+
+    #[test]
+    fn unsupported_census_mode_is_rejected() {
+        let err = resolve_request_census_mode(
+            "0x1111111111111111111111111111111111111111",
+            Some(1),
+            Some("0x00a2aaf566593b28edeb614b81b2ada01327db7e"),
+        )
+        .unwrap_err();
+
+        assert!(err.contains("Unsupported census mode 1"));
     }
 }
 
@@ -243,17 +299,26 @@ async fn request_new_round(data: web::Json<RoundRequest>) -> impl Responder {
         });
     }
 
-    // TOKEN (0) and ONCHAIN (2) are the modes this route can request. BY_REQUESTER asks the
-    // requesting contract for its census, and the requester here is the server's own EOA, which
-    // cannot answer — such a round would validate and then be unusable.
-    let census_mode = data.census_mode.unwrap_or(0);
-    if census_mode != 0 && census_mode != 2 {
-        return HttpResponse::BadRequest().json(JsonResponse {
-            response: format!(
-                "Unsupported census mode {census_mode}: this route can request 0 (TOKEN) or 2 (ONCHAIN)"
-            ),
-        });
-    }
+    let self_registry = match deployments::self_registry_for_chain_id(CONFIG.chain_id) {
+        Ok(address) => address,
+        Err(e) => {
+            error!("Failed to read CRISP deployment addresses: {e}");
+            return HttpResponse::InternalServerError().json(JsonResponse {
+                response: "Failed to read CRISP deployment configuration".to_string(),
+            });
+        }
+    };
+
+    let census_mode = match resolve_request_census_mode(
+        &data.token_address,
+        data.census_mode,
+        self_registry.as_deref(),
+    ) {
+        Ok(mode) => mode,
+        Err(response) => {
+            return HttpResponse::BadRequest().json(JsonResponse { response });
+        }
+    };
 
     let result =
         initialize_crisp_round(&data.token_address, &data.balance_threshold, census_mode).await;
@@ -265,6 +330,36 @@ async fn request_new_round(data: web::Json<RoundRequest>) -> impl Responder {
         Err(e) => HttpResponse::InternalServerError().json(JsonResponse {
             response: format!("Failed to request new E3 round: {}", e),
         }),
+    }
+}
+
+fn same_address(left: &str, right: &str) -> bool {
+    left.trim().eq_ignore_ascii_case(right.trim())
+}
+
+fn is_known_self_registry(token_address: &str, self_registry: Option<&str>) -> bool {
+    self_registry.is_some_and(|address| same_address(token_address, address))
+}
+
+fn resolve_request_census_mode(
+    token_address: &str,
+    requested: Option<u64>,
+    self_registry: Option<&str>,
+) -> Result<u64, String> {
+    let self_registry_requested = is_known_self_registry(token_address, self_registry);
+
+    match requested {
+        Some(CENSUS_MODE_TOKEN) if self_registry_requested => Err(
+            "SelfRegistry rounds must use census_mode 2 (ONCHAIN). census_mode 0 would try \
+             token-holder discovery and make the round invisible to clients."
+                .to_string(),
+        ),
+        Some(mode @ (CENSUS_MODE_TOKEN | CENSUS_MODE_ONCHAIN)) => Ok(mode),
+        Some(mode) => Err(format!(
+            "Unsupported census mode {mode}: this route can request 0 (TOKEN) or 2 (ONCHAIN)"
+        )),
+        None if self_registry_requested => Ok(CENSUS_MODE_ONCHAIN),
+        None => Ok(CENSUS_MODE_TOKEN),
     }
 }
 

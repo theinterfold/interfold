@@ -64,10 +64,23 @@ fn completed_request_is_an_error() {
     let id = e3id();
     let mut completed = HashSet::new();
     completed.insert(id.clone());
-    let msg = with_e3_id("late", id.clone());
+    let msg = with_e3_id("late", id.clone()).with_source(EventSource::Local);
     assert_eq!(
         RequestRouter::route(&msg, &completed),
         RoutingDecision::AlreadyCompleted(id)
+    );
+}
+
+#[test]
+fn canonical_evm_history_for_completed_request_is_ignored() {
+    let id = e3id();
+    let mut completed = HashSet::new();
+    completed.insert(id.clone());
+    let msg = with_e3_id("historical-chain-event", id).with_source(EventSource::Evm);
+
+    assert_eq!(
+        RequestRouter::route(&msg, &completed),
+        RoutingDecision::Ignore
     );
 }
 
@@ -322,6 +335,25 @@ fn requester_cancellation_publishes_complete() {
             post_forward: PostForward::PublishComplete,
         }
     );
+}
+
+#[test]
+fn requester_and_provider_failures_publish_complete() {
+    for reason in [
+        FailureReason::NoInputsReceived,
+        FailureReason::ComputeProviderExpired,
+        FailureReason::ComputeProviderFailed,
+    ] {
+        let id = e3id();
+        let msg = e3_failed(id.clone(), reason);
+        assert_eq!(
+            RequestRouter::route(&msg, &HashSet::new()),
+            RoutingDecision::Process {
+                e3_id: id,
+                post_forward: PostForward::PublishComplete,
+            }
+        );
+    }
 }
 
 #[test]

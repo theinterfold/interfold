@@ -222,7 +222,6 @@ function log(msg: string) {
 async function waitForDemoPollReady(page: Page) {
   await page.waitForLoadState('load')
   await expect(page.locator("[data-test-id='poll-button-0']")).toBeVisible({ timeout: 60_000 })
-  await expect(page.locator('button:has-text("Connect Wallet")')).not.toBeVisible({ timeout: 60_000 })
   await expect(page.locator('.tag.live')).toBeVisible({ timeout: 60_000 })
 }
 
@@ -239,9 +238,22 @@ async function waitForWalletSession(page: Page) {
 
 async function reconnectWalletIfNeeded(page: Page, metamask: MetaMask) {
   const connectWalletBtn = page.locator('button:has-text("Connect Wallet")')
-  if (await connectWalletBtn.isVisible({ timeout: 3_000 }).catch(() => false)) {
-    log('wallet disconnected — reconnecting...')
-    await connectWalletWithRetry(page)
+  if (!(await connectWalletBtn.isVisible({ timeout: 3_000 }).catch(() => false))) return
+
+  // Wagmi restores the persisted connector asynchronously after a reload. Give
+  // it time to finish before opening a second connection request.
+  const restored = await expect(connectWalletBtn)
+    .toHaveCount(0, { timeout: 15_000 })
+    .then(() => true)
+    .catch(() => false)
+  if (restored) {
+    log('wallet session restored automatically')
+    return
+  }
+
+  log('wallet disconnected — reconnecting...')
+  const connectionRequested = await connectWalletWithRetry(page)
+  if (connectionRequested) {
     await metamask.connectToDapp()
   }
 }
@@ -269,7 +281,7 @@ async function castVoteWithSignature(page: Page, metamask: MetaMask) {
   }
 }
 
-async function connectWalletWithRetry(page: Page, maxAttempts = 3) {
+async function connectWalletWithRetry(page: Page, maxAttempts = 3): Promise<boolean> {
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       await page.waitForLoadState('load')
@@ -277,15 +289,28 @@ async function connectWalletWithRetry(page: Page, maxAttempts = 3) {
       const connectWalletBtn = page.locator('button:has-text("Connect Wallet")')
       const metamaskBtn = page.locator('button:has-text("MetaMask")')
 
+      if (!(await connectWalletBtn.isVisible().catch(() => false))) {
+        return false
+      }
+
       // Only open the modal if MetaMask option isn't already visible
       if (!(await metamaskBtn.isVisible().catch(() => false))) {
         log(`clicking Connect Wallet (attempt ${attempt})...`)
-        await connectWalletBtn.click({ timeout: 10_000 })
+        try {
+          await connectWalletBtn.click({ timeout: 10_000 })
+        } catch (error) {
+          // The persisted connector can finish restoring between the visibility
+          // check and the click. In that case no connection request is needed.
+          if (!(await connectWalletBtn.isVisible().catch(() => false))) {
+            return false
+          }
+          throw error
+        }
       }
 
       log(`clicking MetaMask (attempt ${attempt})...`)
       await metamaskBtn.click({ timeout: 15_000 })
-      return
+      return true
     } catch (error) {
       if (attempt === maxAttempts) throw error
       log(`wallet connect attempt ${attempt} failed, retrying...`)
@@ -294,6 +319,8 @@ async function connectWalletWithRetry(page: Page, maxAttempts = 3) {
       await page.waitForTimeout(2_000)
     }
   }
+
+  return false
 }
 
 test('CRISP smoke test', async ({ context, metamaskPage, extensionId }) => {
@@ -325,9 +352,11 @@ test('CRISP smoke test', async ({ context, metamaskPage, extensionId }) => {
   await ensureHomePageLoaded(page)
 
   log(`connecting wallet via ConnectKit...`)
-  await connectWalletWithRetry(page)
-  log(`connecting to dapp...`)
-  await metamask.connectToDapp()
+  const connectionRequested = await connectWalletWithRetry(page)
+  if (connectionRequested) {
+    log(`connecting to dapp...`)
+    await metamask.connectToDapp()
+  }
   log(`clicking try demo...`)
   await page.locator('a:has-text("Try the demo")').click()
 
@@ -338,10 +367,12 @@ test('CRISP smoke test', async ({ context, metamaskPage, extensionId }) => {
   log(`forcing page reload...`)
   await page.reload()
   await page.waitForLoadState('load')
-  log(`ensuring local anvil network after reload...`)
-  await metamask.switchNetwork('localwallet')
-  await reconnectWalletIfNeeded(page, metamask)
+  // The wallet fixture starts on localwallet, and reloading the application does
+  // not change the wallet network. Opening the extension here steals focus from
+  // the application while its round state is being restored.
+  await page.bringToFront()
   await waitForDemoPollReady(page)
+  await reconnectWalletIfNeeded(page, metamask)
   await waitForWalletSession(page)
   await castVoteWithSignature(page, metamask)
   await waitForVotePublication(e3id)

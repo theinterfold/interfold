@@ -13,9 +13,9 @@ use e3_crypto::Cipher;
 use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
 use e3_events::{
     hlc_factory::HlcFactory, BusHandle, ComputeRequestKind, E3Stage, E3id, EffectsEnabled,
-    EventBus, EventBusConfig, EventSource, FailureReason, HistoryCollector, InterfoldEvent,
-    InterfoldEventData, Sequencer, StoreEventRequested, StoreEventResponse, TakeEvents,
-    Unsequenced,
+    EventBus, EventBusConfig, EventSource, FailureReason, GetEvents, HistoryCollector,
+    InterfoldEvent, InterfoldEventData, Sequencer, StoreEventRequested, StoreEventResponse,
+    TakeEvents, Unsequenced,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use std::sync::Arc;
@@ -301,5 +301,63 @@ async fn restart_redrives_a_decryption_share_compute_request() -> Result<()> {
                 )
     ));
 
+    Ok(())
+}
+
+#[actix::test]
+async fn restart_skips_dkg_work_after_public_key_context_is_persisted() -> Result<()> {
+    let e3_id = E3id::new("42", 1);
+    let ready = ReadyForDecryption {
+        pk_share: ArcBytes::from_bytes(&[1]),
+        sk_poly_sum: SensitiveBytes::from_encrypted(&[2]),
+        es_poly_sum: vec![SensitiveBytes::from_encrypted(&[3])],
+        signed_pk_generation_proof: None,
+        signed_sk_share_computation_proof: None,
+        signed_e_sm_share_computation_proof: None,
+        signed_sk_share_encryption_proofs: Vec::new(),
+        signed_e_sm_share_encryption_proofs: Vec::new(),
+    };
+    let (bus, history) = test_bus();
+    let (mut state, _) = test_state(&e3_id, KeyshareState::ReadyForDecryption(ready));
+    state.try_mutate_without_context(|mut state| {
+        state.keyshare_published = true;
+        state.aggregated_pk = Some(ArcBytes::from_bytes(&[4]));
+        state.decryption_domain = Some(e3_committee_hash::DecryptionDomainContext {
+            interfold_address: Address::ZERO,
+            committee_hash: [5; 32].into(),
+            committee_public_key: [6; 32].into(),
+        });
+        Ok(state)
+    })?;
+    let recovery_store = InMemStore::new(false).start();
+    let recovery_repo =
+        Repository::<ThresholdKeyshareRecoveryState>::new(DataStore::from_in_mem(&recovery_store));
+    let recovery = recovery_repo.send(Some(ThresholdKeyshareRecoveryState {
+        keyshare_publish_authorized: true,
+        ..Default::default()
+    }));
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        recovery,
+    })
+    .start();
+    let effects_enabled = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        EffectsEnabled::new().into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(1);
+
+    actor.send(effects_enabled).await?;
+    actix::clock::sleep(std::time::Duration::from_millis(25)).await;
+
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(events.is_empty(), "restart replayed superseded DKG work");
     Ok(())
 }

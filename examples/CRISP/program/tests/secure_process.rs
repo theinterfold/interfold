@@ -11,7 +11,9 @@
 //! Everything except proof generation is covered, which matters because a guest failure inside the
 //! zkVM surfaces only as a missing proof and a requester-billed compute timeout.
 
-use e3_compute_provider::{ComputeError, ComputeInput, ComputeResult, FHEInputs, PublishedData};
+use e3_compute_provider::{
+    ComputeError, ComputeInput, ComputeResult, FHEInputs, FHEProcessorInput, PublishedData,
+};
 use e3_fhe_params::{build_pair_for_preset, encode_bfv_params, BfvPreset};
 use e3_user_program::fhe_processor;
 use e3_user_program::policy::crisp;
@@ -115,6 +117,13 @@ impl Round {
         input.process(fhe_processor, crisp())
     }
 
+    fn aggregate(&self, inputs: &FHEInputs) -> Vec<u8> {
+        fhe_processor(&FHEProcessorInput {
+            ciphertexts: &inputs.ciphertexts,
+            params: &self.params,
+        })
+    }
+
     /// Decrypts a tally ciphertext, as the ciphernode committee would.
     ///
     /// Against `self.params`, not a re-decoded copy: fhe.rs compares parameters by `Arc` identity,
@@ -139,7 +148,7 @@ fn the_secure_process_tallies_well_formed_ballots() {
 
     let result = round.run(input).expect("an honest round must process");
 
-    assert_eq!(round.decrypt_tally(&fhe_processor(&all), 2), vec![5, 5]);
+    assert_eq!(round.decrypt_tally(&round.aggregate(&all), 2), vec![5, 5]);
     assert_eq!(result.merkle_root.len(), 32);
 }
 
@@ -178,7 +187,7 @@ fn a_contradicting_input_is_dropped_and_the_round_survives() {
         "the substituted ballot must not reach the tally"
     );
     assert_eq!(
-        round.decrypt_tally(&fhe_processor(&survivor_inputs), 2),
+        round.decrypt_tally(&round.aggregate(&survivor_inputs), 2),
         vec![5, 0]
     );
 }
@@ -201,7 +210,7 @@ fn garbage_bytes_do_not_abort_the_secure_process() {
 
     assert_eq!(result.ciphertext_hash, reference.ciphertext_hash);
     assert_eq!(
-        round.decrypt_tally(&fhe_processor(&survivor_inputs), 2),
+        round.decrypt_tally(&round.aggregate(&survivor_inputs), 2),
         vec![0, 1]
     );
 }
@@ -284,7 +293,7 @@ fn a_poisoned_append_does_not_erase_the_vote_already_in_the_slot() {
     let reference_input = round.round_input_at(vec![honest_ballot], vec![victim]);
     let reference_fhe = reference_input.fhe_inputs.clone();
     assert_eq!(
-        round.decrypt_tally(&fhe_processor(&reference_fhe), 2),
+        round.decrypt_tally(&round.aggregate(&reference_fhe), 2),
         vec![6, 0]
     );
     assert_eq!(
@@ -315,7 +324,7 @@ fn an_honest_re_vote_replaces_the_earlier_ballot() {
     let reference_input = round.round_input_at(vec![second], vec![voter]);
     let reference_fhe = reference_input.fhe_inputs.clone();
     assert_eq!(
-        round.decrypt_tally(&fhe_processor(&reference_fhe), 2),
+        round.decrypt_tally(&round.aggregate(&reference_fhe), 2),
         vec![0, 7]
     );
     assert_eq!(

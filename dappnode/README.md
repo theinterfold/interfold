@@ -126,6 +126,10 @@ Non-secret runtime configuration is provided through environment variables:
 - **`RPC_URL`** (required) WebSocket RPC endpoint for the chain (e.g.
   `wss://ethereum-sepolia-rpc.publicnode.com`).
 
+- **`AVAIL_RPC_URL`** Avail HTTP endpoint used to retrieve proof-backed ciphertexts. It defaults by
+  `CHAIN_ID` for Ethereum mainnet and Sepolia. Set it explicitly to use a managed or self-hosted
+  endpoint.
+
 - **`NETWORK`** Logical network name written into the Interfold config. Default in this package:
   `mainnet`.
 

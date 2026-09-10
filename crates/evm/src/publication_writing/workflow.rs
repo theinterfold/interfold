@@ -92,7 +92,7 @@ mod tests {
     }
 
     #[test]
-    fn duplicate_replay_is_coalesced() {
+    fn duplicate_intent_cannot_start_while_submission_is_in_flight() {
         let mut gate = ReplaySubmissionGate::new();
         gate.record(7, "first");
         gate.record(7, "duplicate");

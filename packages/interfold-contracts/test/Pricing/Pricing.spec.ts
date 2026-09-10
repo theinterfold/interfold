@@ -13,6 +13,7 @@ import {
   ethers,
   networkHelpers,
   PROOF as proof,
+  publishAvailableCiphertextOutput,
   setPricingConfig,
   setupAndPublishCommittee,
 } from "../fixtures";
@@ -553,7 +554,8 @@ describe("E3 Pricing", function () {
 
       // Publish ciphertext
       await time.increase(inputWindowDuration + 200);
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ethers.keccak256(data),
@@ -635,7 +637,8 @@ describe("E3 Pricing", function () {
 
       // Publish outputs
       await time.increase(inputWindowDuration + 200);
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ethers.keccak256(data),

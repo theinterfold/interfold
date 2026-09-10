@@ -307,7 +307,7 @@ export type BroadcastVoteRequest = {
 /**
  * The status of a vote broadcast returned by the CRISP server
  */
-export type VoteResponseStatus = 'success' | 'failed_broadcast'
+export type VoteResponseStatus = 'success' | 'pending_commitment' | 'ready_for_commitment' | 'pending_availability' | 'failed_broadcast'
 
 /**
  * Type representing the response to a vote broadcast (`voting/broadcast`)
@@ -315,6 +315,9 @@ export type VoteResponseStatus = 'success' | 'failed_broadcast'
 export type BroadcastVoteResponse = {
   status: VoteResponseStatus
   tx_hash: string | null
+  job_id: string | null
+  /** Compact proof-commitment payload, present when the voter's wallet must submit it. */
+  encoded_proof: string | null
   message: string | null
 }
 

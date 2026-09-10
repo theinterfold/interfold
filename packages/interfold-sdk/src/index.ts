@@ -10,8 +10,10 @@ export { InterfoldSDK } from './interfold-sdk'
 // Core classes
 export { EventListener } from './events/event-listener'
 export { ContractClient } from './contracts/contract-client'
+export { CommitteePublicKeyAssembler, MAX_COMMITTEE_PUBLIC_KEY_BYTES, MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES } from './committee-public-key'
 export type { ContractClientConfig } from './contracts/contract-client'
 export type { EventListenerOptions } from './events/event-listener'
+export type { AssembledCommitteePublicKey } from './committee-public-key'
 
 // Standalone encryption functions
 export {
@@ -34,6 +36,7 @@ export type {
   ContractAddresses,
   E3,
   E3RequestParams,
+  CiphertextOutputReference,
   EventListenerConfig,
   EventFilter,
   EventCallback,
@@ -53,6 +56,7 @@ export type {
   RandomnessProviderEvent,
   RandomnessProviderEventCallback,
   CommitteePublishedData,
+  CommitteePublicKeyChunkPublishedData,
   CommitteeFinalizedData,
   InterfoldEventData,
   RegistryEventData,

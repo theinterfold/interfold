@@ -17,7 +17,8 @@ import { IInterfold } from "./IInterfold.sol";
  *      from request through completion
  * @param seed Random seed for committee selection and computation initialization
  * @param committeeSize The committee size enum value for this computation
- * @param requestBlock Block number when the E3 computation was requested
+ * @param requestBlock EIP-6372 timestamp when the E3 computation was requested. The name is kept
+ *                     for storage and ABI compatibility.
  * @param inputWindow When to start and stop accepting inputs from data providers
  * @param encryptionSchemeId Identifier for the encryption scheme used in this computation
  * @param e3Program Address of the E3 Program contract that validates and verifies the computation

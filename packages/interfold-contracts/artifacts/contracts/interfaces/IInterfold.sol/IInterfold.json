@@ -735,6 +735,43 @@
       "inputs": [
         {
           "indexed": true,
+          "internalType": "uint256",
+          "name": "e3Id",
+          "type": "uint256"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "contentHash",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "bytes32",
+          "name": "ciphertextCommitment",
+          "type": "bytes32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint32",
+          "name": "availabilityBlock",
+          "type": "uint32"
+        },
+        {
+          "indexed": false,
+          "internalType": "uint128",
+          "name": "availabilityLeafIndex",
+          "type": "uint128"
+        }
+      ],
+      "name": "CiphertextOutputReferencePublished",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": true,
           "internalType": "bytes32",
           "name": "encryptionSchemeId",
           "type": "bytes32"
@@ -855,6 +892,19 @@
         }
       ],
       "name": "E3ProgramRegistered",
+      "type": "event"
+    },
+    {
+      "anonymous": false,
+      "inputs": [
+        {
+          "indexed": false,
+          "internalType": "contract IE3Program",
+          "name": "e3Program",
+          "type": "address"
+        }
+      ],
+      "name": "E3ProgramUnregistered",
       "type": "event"
     },
     {
@@ -2283,28 +2333,12 @@
         },
         {
           "internalType": "bytes",
-          "name": "ciphertextOutput",
-          "type": "bytes"
-        },
-        {
-          "internalType": "bytes32",
-          "name": "ciphertextCommitment",
-          "type": "bytes32"
-        },
-        {
-          "internalType": "bytes",
-          "name": "proof",
+          "name": "encodedOutputReference",
           "type": "bytes"
         }
       ],
       "name": "publishCiphertextOutput",
-      "outputs": [
-        {
-          "internalType": "bool",
-          "name": "success",
-          "type": "bool"
-        }
-      ],
+      "outputs": [],
       "stateMutability": "nonpayable",
       "type": "function"
     },
@@ -2857,6 +2891,19 @@
       ],
       "stateMutability": "nonpayable",
       "type": "function"
+    },
+    {
+      "inputs": [
+        {
+          "internalType": "contract IE3Program",
+          "name": "e3Program",
+          "type": "address"
+        }
+      ],
+      "name": "unregisterE3Program",
+      "outputs": [],
+      "stateMutability": "nonpayable",
+      "type": "function"
     }
   ],
   "bytecode": "0x",
@@ -2865,5 +2912,5 @@
   "deployedLinkReferences": {},
   "immutableReferences": {},
   "inputSourceName": "project/contracts/interfaces/IInterfold.sol",
-  "buildInfoId": "solc-0_8_28-998d25c0cf0787b178a4e3411f4a8664937a9e9b"
+  "buildInfoId": "solc-0_8_28-b95d25dbcdea5354ca4c3fb8a90c5c3f029dfa00"
 }

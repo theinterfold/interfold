@@ -99,6 +99,14 @@ interface IInterfold {
         uint256 decryptionDeadline;
     }
 
+    /// @notice Proof-backed reference to a ciphertext stored on the DA layer.
+    struct CiphertextOutputReference {
+        bytes32 contentHash;
+        bytes32 ciphertextCommitment;
+        bytes computeProof;
+        bytes availabilityProof;
+    }
+
     /// @notice All pricing-related configuration for parametric E3 fee calculation
     struct PricingConfig {
         uint256 keyGenFixedPerNode;
@@ -169,6 +177,20 @@ interface IInterfold {
         uint256 indexed e3Id,
         bytes ciphertextOutput,
         bytes32 ciphertextCommitment
+    );
+
+    /// @notice Emitted when an aggregate ciphertext is stored on a verified data-availability layer.
+    /// @param e3Id ID of the E3.
+    /// @param contentHash Keccak-256 of the exact serialized ciphertext bytes.
+    /// @param ciphertextCommitment Circuit-compatible SAFE commitment to the decoded ciphertext.
+    /// @param availabilityBlock Normalized source-chain block that contains the bytes.
+    /// @param availabilityLeafIndex Blob leaf index verified by the availability adapter.
+    event CiphertextOutputReferencePublished(
+        uint256 indexed e3Id,
+        bytes32 contentHash,
+        bytes32 ciphertextCommitment,
+        uint32 availabilityBlock,
+        uint128 availabilityLeafIndex
     );
 
     /// @notice This event MUST be emitted any time the `maxDuration` is set.
@@ -256,10 +278,13 @@ interface IInterfold {
     /// @param encryptionSchemeId The ID of the encryption scheme that was enabled.
     event EncryptionSchemeEnabled(bytes32 encryptionSchemeId);
 
-    /// @notice This event MUST be emitted any time a E3 Program is registered.
+    /// @notice This event MUST be emitted any time an E3 Program is registered.
     /// @param e3Program The address of the E3 Program.
-    /// @dev Registration is append-only; programs cannot be deregistered.
     event E3ProgramRegistered(IE3Program e3Program);
+
+    /// @notice Emitted when governance closes new request admission for an E3 Program.
+    /// @param e3Program The address of the E3 Program.
+    event E3ProgramUnregistered(IE3Program e3Program);
 
     /// @notice Emitted when the active BFV parameter set is registered.
     /// @param paramSet The param set index.
@@ -593,19 +618,15 @@ interface IInterfold {
         E3RequestParams calldata requestParams
     ) external returns (uint256 e3Id, E3 memory e3);
 
-    /// @notice This function should be called to publish output data for an Encrypted Execution Environment (E3).
-    /// @dev This function MUST emit the CiphertextOutputPublished event.
+    /// @notice Publishes a proof-backed reference to an aggregate ciphertext stored outside Ethereum.
+    /// @dev The E3 program verifies the availability receipt and the computation proof remains bound
+    ///      to `ciphertextOutputHash` and `ciphertextCommitment`.
     /// @param e3Id ID of the E3.
-    /// @param ciphertextOutput ABI encoded output data to verify.
-    /// @param ciphertextCommitment Circuit-compatible SAFE commitment to the decoded BFV ciphertext.
-    /// @param proof ABI encoded data to verify the ciphertextOutput.
-    /// @return success True if the output was successfully published.
+    /// @param encodedOutputReference ABI-encoded {CiphertextOutputReference}.
     function publishCiphertextOutput(
         uint256 e3Id,
-        bytes calldata ciphertextOutput,
-        bytes32 ciphertextCommitment,
-        bytes calldata proof
-    ) external returns (bool success);
+        bytes calldata encodedOutputReference
+    ) external;
 
     /// @notice This function publishes the plaintext output of an Encrypted Execution Environment (E3).
     /// @dev This function MUST revert if the output has not been published.
@@ -661,10 +682,15 @@ interface IInterfold {
     /// @notice Returns whether a token is currently allow-listed as an E3 fee token.
     function isFeeTokenAllowed(IERC20 token) external view returns (bool);
 
-    /// @notice Register an E3 Program. Append-only — programs cannot be deregistered.
+    /// @notice Register an E3 Program for new requests.
     /// @dev Only the owner can register a program after initialization.
     /// @param e3Program The address of the E3 Program.
     function registerE3Program(IE3Program e3Program) external;
+
+    /// @notice Close new request admission for an E3 Program.
+    /// @dev Existing E3s keep their request-time program. Only the owner can unregister a program.
+    /// @param e3Program The address of the E3 Program.
+    function unregisterE3Program(IE3Program e3Program) external;
 
     /// @notice Sets or enables a decryption verifier for a specific encryption scheme.
     /// @dev This function MUST revert if the verifier address is zero or already set to the same value.

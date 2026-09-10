@@ -2,7 +2,7 @@
 ARG RUST_VERSION=1.91.1
 ARG SKIP_SOLIDITY=0
 
-FROM rust:${RUST_VERSION}-slim-bullseye AS base-dev
+FROM rust:${RUST_VERSION}-slim-bookworm AS base-dev
 
 ENV CARGO_HOME=/usr/local/cargo
 
@@ -131,6 +131,8 @@ COPY examples/CRISP/.interfold/   examples/CRISP/.interfold/
 COPY examples/CRISP/server/    examples/CRISP/server/
 COPY examples/CRISP/program/   examples/CRISP/program/
 COPY examples/CRISP/crates/   examples/CRISP/crates/
+COPY examples/CRISP/packages/crisp-contracts/deployed_contracts.json \
+    examples/CRISP/packages/crisp-contracts/deployed_contracts.json
 COPY examples/CRISP/Cargo.*    examples/CRISP/
 COPY Cargo.*                        ./
 COPY crates/           crates/

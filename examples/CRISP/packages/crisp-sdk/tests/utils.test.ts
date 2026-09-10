@@ -56,6 +56,20 @@ describe('Utils', () => {
       expect(proof.indices.slice(0, proof.length)).toEqual([1, 0, 1])
     })
 
+    it('accepts the fixed-width unprefixed hex leaves returned by the server', () => {
+      const leaves = generateTestLeaves([{ address, balance }])
+      const serverLeaves = leaves.map((leaf) => leaf.toString(16).padStart(64, '0'))
+      const proof = generateMerkleProof(balance, address, serverLeaves)
+
+      expect(proof.leaf).toBe(hashLeaf(address, balance))
+      expect(
+        generateMerkleTree(leaves).verifyProof({
+          ...proof.proof,
+          siblings: proof.proof.siblings.slice(0, proof.length),
+        }),
+      ).toBe(true)
+    })
+
     it('Should throw if the leaf does not exist in the tree', () => {
       expect(() => generateMerkleProof(balance, address, [])).toThrow('Leaf not found in the tree')
       const leaves = generateTestLeaves([{ address, balance }])

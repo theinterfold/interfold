@@ -12,6 +12,7 @@ source "$THIS_DIR/lib/utils.sh"
 heading "Start the EVM node"
 
 launch_evm
+launch_mock_data_availability
 
 until curl -sf -X POST http://localhost:8545 -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null; do
   sleep 1
@@ -112,7 +113,13 @@ sleep 6 # wait for input deadline to pass
 waiton "$SCRIPT_DIR/output/output.bin"
 
 heading "Publish ciphertext to EVM"
-pnpm e3:publishCiphertext --e3-id "$E3_ID" --network localhost --data-file "$SCRIPT_DIR/output/output.bin" --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin" --proof 0x12345678
+pnpm e3:publishCiphertext \
+  --e3-id "$E3_ID" \
+  --network localhost \
+  --data-file "$SCRIPT_DIR/output/output.bin" \
+  --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin" \
+  --proof 0x12345678 \
+  --mock-data-availability-directory "$MOCK_DATA_AVAILABILITY_DIRECTORY"
 
 wait_for_plaintext_output "$E3_ID" "$SCRIPT_DIR/output/plaintext.txt"
 

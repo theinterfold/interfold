@@ -7,7 +7,7 @@
 use e3_data::{Repositories, Repository};
 use e3_events::StoreKeys;
 
-use crate::{EvmReadInterfaceState, SlashingWriterRecoveryState};
+use crate::{DataAvailabilityRecoveryState, EvmReadInterfaceState, SlashingWriterRecoveryState};
 
 pub trait EthPrivateKeyRepositoryFactory {
     fn eth_private_key(&self) -> Repository<Vec<u8>>;
@@ -64,6 +64,25 @@ impl SlashingWriterRepositoryFactory for Repositories {
         Repository::new(
             self.store
                 .scope(StoreKeys::slashing_writer_recovery(chain_id)),
+        )
+    }
+}
+
+pub trait DataAvailabilityRepositoryFactory {
+    fn data_availability_recovery(
+        &self,
+        chain_id: u64,
+    ) -> Repository<DataAvailabilityRecoveryState>;
+}
+
+impl DataAvailabilityRepositoryFactory for Repositories {
+    fn data_availability_recovery(
+        &self,
+        chain_id: u64,
+    ) -> Repository<DataAvailabilityRecoveryState> {
+        Repository::new(
+            self.store
+                .scope(StoreKeys::data_availability_recovery(chain_id)),
         )
     }
 }

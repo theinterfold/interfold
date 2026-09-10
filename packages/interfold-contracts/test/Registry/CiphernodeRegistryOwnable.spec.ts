@@ -33,7 +33,8 @@ describe("CiphernodeRegistryOwnable", function () {
     registry: any,
     e3Id: number | bigint,
   ): Promise<void> {
-    await networkHelpers.time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+    const deadline = await registry.getCommitteeDeadline(e3Id);
+    await networkHelpers.time.setNextBlockTimestamp(deadline + 1n);
     await registry.finalizeCommittee(e3Id);
   }
 
@@ -111,7 +112,7 @@ describe("CiphernodeRegistryOwnable", function () {
 
     await tokenContract.approve(await interfold.getAddress(), fee);
     const tx = await interfoldContract.request(requestParams);
-    if (mineEntropyBlock) await networkHelpers.mine(1);
+    if (mineEntropyBlock) await networkHelpers.time.increase(1);
     return tx;
   }
 
@@ -931,16 +932,21 @@ describe("CiphernodeRegistryOwnable", function () {
         usdcToken,
         mockE3Program,
         mockDecryptionVerifier,
+        randomnessProvider,
         operator1,
         operator2,
         operator3,
       } = await loadFixture(setup);
+      await randomnessProvider.setAutoFulfill(false);
       await makeRequest(
         interfold,
         usdcToken,
         mockE3Program,
         mockDecryptionVerifier,
       );
+      const requestId = await randomnessProvider.requestIdByE3Id(firstE3Id);
+      await networkHelpers.time.increase(1);
+      await randomnessProvider.fulfill(requestId, 1n);
 
       await registry.connect(operator1).submitTicket(firstE3Id, 1);
       await registry.connect(operator2).submitTicket(firstE3Id, 1);
@@ -955,7 +961,7 @@ describe("CiphernodeRegistryOwnable", function () {
       );
       expect(await registry.committeePublicKey(firstE3Id)).to.equal(dataHash);
     });
-    it("lets a valid public-key candidate follow an invalid one", async function () {
+    it("rejects malformed chunks and accepts a committee member's valid candidate", async function () {
       const {
         registry,
         interfold,
@@ -987,48 +993,207 @@ describe("CiphernodeRegistryOwnable", function () {
         "0x01",
       );
 
-      const maxLength = await registry.MAX_COMMITTEE_PUBLIC_KEY_BYTES();
-      await expect(registry.publishCommitteePublicKey(firstE3Id, "0x"))
-        .to.be.revertedWithCustomError(registry, "InvalidPublicKeyLength")
-        .withArgs(0, maxLength);
-      const oversizedKey = ethers.hexlify(
-        new Uint8Array(Number(maxLength) + 1),
+      const publishPublicKey = registry.getFunction(
+        "publishCommitteePublicKey(uint256,bytes32,uint16,uint16,uint32,bytes)",
       );
-      await expect(registry.publishCommitteePublicKey(firstE3Id, oversizedKey))
-        .to.be.revertedWithCustomError(registry, "InvalidPublicKeyLength")
-        .withArgs(maxLength + 1n, maxLength);
+      const maxLength = await registry.MAX_COMMITTEE_PUBLIC_KEY_BYTES();
+      const observedSecure8192PublicKeyLength = 356_384n;
+      expect(maxLength).to.be.gte(observedSecure8192PublicKeyLength);
 
+      await expect(
+        publishPublicKey(
+          firstE3Id,
+          ethers.keccak256("0xdead"),
+          0,
+          6,
+          maxLength + 1n,
+          "0xdead",
+        ),
+      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+      await expect(
+        publishPublicKey(firstE3Id, ethers.ZeroHash, 0, 1, 2, "0xdead"),
+      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+      await expect(
+        publishPublicKey(
+          firstE3Id,
+          ethers.keccak256("0xdead"),
+          1,
+          1,
+          2,
+          "0xdead",
+        ),
+      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+      await expect(
+        publishPublicKey(
+          firstE3Id,
+          ethers.keccak256("0xdead"),
+          0,
+          2,
+          2,
+          "0xdead",
+        ),
+      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+      await expect(
+        publishPublicKey(
+          firstE3Id,
+          ethers.keccak256("0xdead"),
+          1,
+          2,
+          90 * 1024 + 1,
+          "0xdead",
+        ),
+      ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+
+      const candidate = "0xdead";
+      const candidateHash = ethers.keccak256(candidate);
       await expect(
         registry
           .connect(notTheOwner)
-          .publishCommitteePublicKey(firstE3Id, "0xdead"),
+          .getFunction(
+            "publishCommitteePublicKey(uint256,bytes32,uint16,uint16,uint32,bytes)",
+          )(firstE3Id, candidateHash, 0, 1, 2, candidate),
+      ).to.be.revertedWithCustomError(
+        registry,
+        "PublicKeyPublisherNotCommitteeMember",
+      );
+      await expect(
+        registry
+          .connect(operator1)
+          .getFunction(
+            "publishCommitteePublicKey(uint256,bytes32,uint16,uint16,uint32,bytes)",
+          )(firstE3Id, candidateHash, 0, 1, 2, candidate),
       )
-        .to.emit(registry, "CommitteePublished")
+        .to.emit(registry, "CommitteePublicKeyChunkPublished")
         .withArgs(
           firstE3Id,
+          await operator1.getAddress(),
+          candidateHash,
           [
             await operator3.getAddress(),
             await operator1.getAddress(),
             await operator2.getAddress(),
           ],
-          "0xdead",
           dataHash,
-          "0x",
+          0,
+          1,
+          2,
+          candidate,
         );
+    });
 
-      await expect(registry.publishCommitteePublicKey(firstE3Id, data))
-        .to.emit(registry, "CommitteePublished")
-        .withArgs(
-          firstE3Id,
-          [
-            await operator3.getAddress(),
-            await operator1.getAddress(),
-            await operator2.getAddress(),
-          ],
-          data,
-          dataHash,
-          "0x",
+    it("rejects public-key chunks after the E3 is terminal", async function () {
+      const {
+        registry,
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
+      await finalizeCommitteeAfterWindow(registry, firstE3Id);
+      await registry.publishCommittee(
+        firstE3Id,
+        dataHash,
+        encodeMockDkgProof(dataHash),
+        "0x01",
+      );
+
+      const deadlines = await interfold.getDeadlines(firstE3Id);
+      await networkHelpers.time.setNextBlockTimestamp(
+        deadlines.computeDeadline + 1n,
+      );
+      await interfold.markE3Failed(firstE3Id);
+
+      const candidate = "0xdead";
+      await expect(
+        registry
+          .connect(operator1)
+          .getFunction(
+            "publishCommitteePublicKey(uint256,bytes32,uint16,uint16,uint32,bytes)",
+          )(firstE3Id, ethers.keccak256(candidate), 0, 1, 2, candidate),
+      )
+        .to.be.revertedWithCustomError(interfold, "InvalidStage")
+        .withArgs(firstE3Id, 3, 6);
+    });
+
+    it("accepts a complete multi-transaction public-key candidate under the RPC size limit", async function () {
+      const {
+        registry,
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+      await makeRequest(
+        interfold,
+        usdcToken,
+        mockE3Program,
+        mockDecryptionVerifier,
+      );
+      await registry.connect(operator1).submitTicket(firstE3Id, 1);
+      await registry.connect(operator2).submitTicket(firstE3Id, 1);
+      await registry.connect(operator3).submitTicket(firstE3Id, 1);
+      await finalizeCommitteeAfterWindow(registry, firstE3Id);
+      await registry.publishCommittee(
+        firstE3Id,
+        dataHash,
+        encodeMockDkgProof(dataHash),
+        "0x01",
+      );
+
+      const firstChunk = new Uint8Array(90 * 1024).fill(0x11);
+      const secondChunk = new Uint8Array([0x22]);
+      const complete = ethers.concat([firstChunk, secondChunk]);
+      const candidateHash = ethers.keccak256(complete);
+      const publish = registry
+        .connect(operator1)
+        .getFunction(
+          "publishCommitteePublicKey(uint256,bytes32,uint16,uint16,uint32,bytes)",
         );
+      const firstTx = await publish.populateTransaction(
+        firstE3Id,
+        candidateHash,
+        0,
+        2,
+        firstChunk.length + secondChunk.length,
+        firstChunk,
+      );
+      expect(ethers.getBytes(firstTx.data).length).to.be.lessThan(128 * 1024);
+
+      await expect(
+        publish(
+          firstE3Id,
+          candidateHash,
+          0,
+          2,
+          firstChunk.length + secondChunk.length,
+          firstChunk,
+        ),
+      ).to.emit(registry, "CommitteePublicKeyChunkPublished");
+      await expect(
+        publish(
+          firstE3Id,
+          candidateHash,
+          1,
+          2,
+          firstChunk.length + secondChunk.length,
+          secondChunk,
+        ),
+      ).to.emit(registry, "CommitteePublicKeyChunkPublished");
     });
   });
 

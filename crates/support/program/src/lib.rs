@@ -4,8 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_compute_provider::FHEInputs;
-use e3_fhe_params::decode_bfv_params_arc;
+use e3_compute_provider::FHEProcessorInput;
 use fhe::bfv::Ciphertext;
 use fhe_traits::{DeserializeParametrized, Serialize};
 
@@ -18,12 +17,10 @@ pub fn policy() -> e3_compute_provider::InputPolicy {
 }
 
 /// CRISP Implementation of the CiphertextProcessor function
-pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
-    let params = decode_bfv_params_arc(&fhe_inputs.params).unwrap();
-
-    let mut sum = Ciphertext::zero(&params);
-    for ciphertext_bytes in &fhe_inputs.ciphertexts {
-        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, &params).unwrap();
+pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+    let mut sum = Ciphertext::zero(fhe_inputs.params);
+    for ciphertext_bytes in fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, fhe_inputs.params).unwrap();
 
         sum += &ciphertext;
     }
@@ -39,6 +36,7 @@ pub mod policy {
     use e3_compute_provider::policy::{leaf_from_digest, PublishedInput};
     use e3_compute_provider::{ComputeError, InputPolicy};
     use sha2::{Digest, Sha256};
+    use sha3::Keccak256;
     use std::collections::BTreeMap;
 
     /// The metadata `CRISPProgram` publishes with each input: 20-byte slot, then a 5-byte parent.
@@ -78,7 +76,7 @@ pub mod policy {
         })
     }
 
-    /// `sha256(sha256(ciphertext) || commitment || slot || parent) mod SNARK_SCALAR_FIELD`.
+    /// `sha256(keccak256(ciphertext) || commitment || slot || parent) mod SNARK_SCALAR_FIELD`.
     ///
     /// Must stay byte-identical to `CRISPProgram.inputLeaf`, or no root will ever match. It binds
     /// four things: the bytes, because the Noir proof constrains only the commitment and never sees
@@ -97,7 +95,7 @@ pub mod policy {
         metadata_of(input)?;
 
         let mut outer = Sha256::new();
-        outer.update(Sha256::digest(input.ciphertext));
+        outer.update(Keccak256::digest(input.ciphertext));
         outer.update(commitment);
         outer.update(input.metadata);
         Ok(leaf_from_digest(&outer.finalize()))

@@ -4,6 +4,11 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  AVAIL_FINALIZATION_WINDOW_SECONDS,
+  CRISP_MIN_VOTING_DURATION_SECONDS,
+  availVectorXForChain,
+} from "../dataAvailability";
 import { arg, connect, hasFlag, networkName } from "../protocol/cli";
 import { BFV_PARAMS, ZERO, proxyAdminInterface } from "../protocol/constants";
 import { deployBfvVerifierRoutes } from "../protocol/deployContracts";
@@ -12,6 +17,7 @@ import {
   governanceSafeBuilderPath,
   protocolDir,
   readJson,
+  repoRelativePath,
   repoRoot,
   resolvePath,
   writeJson,
@@ -19,6 +25,7 @@ import {
 import {
   currentNodeRelease,
   requiredCircuitsVersion,
+  requiresNodeReleasePolicyUpdate,
 } from "../protocol/nodeRelease";
 import {
   aragonAdminSafeBatch,
@@ -39,7 +46,11 @@ import {
   loadConfig,
   requireContract,
 } from "../protocol/values";
-import { MAINNET_BFV_CONFIGS, PRODUCTION_BFV_CONFIG } from "../utils";
+import {
+  PRODUCTION_BFV_CONFIG,
+  activeBfvConfigForChain,
+  bfvConfigsForChain,
+} from "../utils";
 import {
   deployUpgradeImplementation,
   proxyImplementation,
@@ -54,10 +65,21 @@ const crispInterface = new ethersLib.Interface([
   "function owner() view returns (address)",
   "function imageId() view returns (bytes32)",
   "function risc0Verifier() view returns (address)",
+  "function dataAvailabilityVerifier() view returns (address)",
+  "function availabilityFinalizationWindow() view returns (uint256)",
+  "function MIN_VOTING_DURATION() view returns (uint256)",
+  "function inputAvailabilitySigner() view returns (address)",
 ]);
 const ciphertextInterface = new ethersLib.Interface([
   "function imageId() view returns (bytes32)",
   "function risc0Verifier() view returns (address)",
+]);
+const dataAvailabilityInterface = new ethersLib.Interface([
+  "function bridge() view returns (address)",
+  "function vectorx() view returns (address)",
+]);
+const availBridgeInterface = new ethersLib.Interface([
+  "function vectorx() view returns (address)",
 ]);
 
 type CrispDeploymentRecord = Record<
@@ -90,20 +112,32 @@ function defaultCrispDeploymentsPath(): string {
 export function resolveCrispAddresses(): {
   crispProgram: string;
   ciphertextVerifier: string;
+  dataAvailabilityVerifier: string;
 } {
   const crispProgramOverride = arg("crisp-program");
   const ciphertextOverride = arg("ciphertext-verifier");
-  if (Boolean(crispProgramOverride) !== Boolean(ciphertextOverride)) {
+  const dataAvailabilityOverride = arg("data-availability-verifier");
+  if (
+    new Set([
+      Boolean(crispProgramOverride),
+      Boolean(ciphertextOverride),
+      Boolean(dataAvailabilityOverride),
+    ]).size !== 1
+  ) {
     throw new Error(
-      "Pass both --crisp-program and --ciphertext-verifier, or neither",
+      "Pass --crisp-program, --ciphertext-verifier, and --data-availability-verifier together, or pass none",
     );
   }
-  if (crispProgramOverride && ciphertextOverride) {
+  if (crispProgramOverride && ciphertextOverride && dataAvailabilityOverride) {
     return {
       crispProgram: address(crispProgramOverride, "CRISP program"),
       ciphertextVerifier: address(
         ciphertextOverride,
         "CRISP ciphertext verifier",
+      ),
+      dataAvailabilityVerifier: address(
+        dataAvailabilityOverride,
+        "CRISP data-availability verifier",
       ),
     };
   }
@@ -128,6 +162,13 @@ export function resolveCrispAddresses(): {
       deployment.Risc0BfvCiphertextVerifier?.address ?? "",
       "Risc0BfvCiphertextVerifier",
     ),
+    dataAvailabilityVerifier: address(
+      deployment.AvailVectorXDataAvailabilityVerifier?.address ??
+        deployment.MockCrispDataAvailabilityVerifier?.address ??
+        deployment.DataAvailabilityVerifier?.address ??
+        "",
+      "DataAvailabilityVerifier",
+    ),
   };
 }
 
@@ -150,13 +191,14 @@ async function requireProxyAdminOwner(
   ethers: any,
   proxyAdmin: string,
   expectedOwner: string,
+  label: string,
 ): Promise<void> {
-  await requireContract(ethers.provider, proxyAdmin, "Interfold ProxyAdmin");
+  await requireContract(ethers.provider, proxyAdmin, `${label} ProxyAdmin`);
   const admin = await ethers.getContractAt("ProxyAdmin", proxyAdmin);
   const owner = await admin.owner();
   if (owner.toLowerCase() !== expectedOwner.toLowerCase()) {
     throw new Error(
-      `Interfold ProxyAdmin owner mismatch: expected ${expectedOwner}, got ${owner}`,
+      `${label} ProxyAdmin owner mismatch: expected ${expectedOwner}, got ${owner}`,
     );
   }
 }
@@ -177,17 +219,29 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
   const config = loadConfig();
   const deployment = readJson<ProtocolDeployment>(deploymentPath(config));
   const network = await ethers.provider.getNetwork();
-  if (Number(network.chainId) !== 1 || config.chainId !== 1) {
-    throw new Error("The secure CRISP activation script is Ethereum-only");
+  const chainId = Number(network.chainId);
+  if (
+    ![1, 11155111].includes(chainId) ||
+    config.chainId !== chainId ||
+    deployment.chainId !== chainId
+  ) {
+    throw new Error(
+      "Secure CRISP activation supports matching Ethereum mainnet or Sepolia deployments",
+    );
   }
-  if (deployment.chainId !== 1) {
-    throw new Error("The protocol deployment file is not for Ethereum mainnet");
-  }
-  if (!config.governance) {
+  if (chainId === 1 && !config.governance) {
     throw new Error("Aragon governance is required for mainnet activation");
   }
 
-  const { crispProgram, ciphertextVerifier } = resolveCrispAddresses();
+  const { crispProgram, ciphertextVerifier, dataAvailabilityVerifier } =
+    resolveCrispAddresses();
+  const inputAvailabilitySigner = address(
+    arg("input-availability-signer") ??
+      process.env.INPUT_AVAILABILITY_SIGNER ??
+      "",
+    "input availability signer",
+  );
+  const avail = availVectorXForChain(chainId);
   await Promise.all([
     requireContract(ethers.provider, deployment.interfold, "Interfold proxy"),
     requireContract(
@@ -206,10 +260,22 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
       ciphertextVerifier,
       "CRISP ciphertext verifier",
     ),
+    requireContract(
+      ethers.provider,
+      dataAvailabilityVerifier,
+      "CRISP data-availability verifier",
+    ),
     requireProxyAdminOwner(
       ethers,
       deployment.interfoldProxyAdmin,
       config.protocolOwner,
+      "Interfold",
+    ),
+    requireProxyAdminOwner(
+      ethers,
+      deployment.ciphernodeRegistryProxyAdmin,
+      config.protocolOwner,
+      "CiphernodeRegistry",
     ),
   ]);
 
@@ -276,16 +342,11 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     releases.requiredProtocolVersion(),
     releases.requiredNodeGeneration(),
   ]);
-  if (BigInt(nodeRelease.protocolVersion) <= requiredProtocolVersion) {
-    throw new Error(
-      `Secure CRISP requires a new protocol_version above ${requiredProtocolVersion}; this release declares ${nodeRelease.protocolVersion}`,
-    );
-  }
-  if (BigInt(nodeRelease.nodeGeneration) < requiredNodeGeneration) {
-    throw new Error(
-      `node_generation cannot move backwards from ${requiredNodeGeneration} to ${nodeRelease.nodeGeneration}`,
-    );
-  }
+  const updateNodeReleasePolicy = requiresNodeReleasePolicyUpdate(
+    nodeRelease,
+    requiredProtocolVersion,
+    requiredNodeGeneration,
+  );
   const liveImplementation = await proxyImplementation(
     ethers,
     deployment.interfold,
@@ -296,6 +357,18 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
   ) {
     throw new Error(
       `Interfold deployment record is stale: recorded ${deployment.interfoldImplementation}, live ${liveImplementation}`,
+    );
+  }
+  const liveRegistryImplementation = await proxyImplementation(
+    ethers,
+    deployment.ciphernodeRegistry,
+  );
+  if (
+    liveRegistryImplementation.toLowerCase() !==
+    deployment.ciphernodeRegistryImplementation.toLowerCase()
+  ) {
+    throw new Error(
+      `CiphernodeRegistry deployment record is stale: recorded ${deployment.ciphernodeRegistryImplementation}, live ${liveRegistryImplementation}`,
     );
   }
 
@@ -370,6 +443,94 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     "CRISP RISC Zero verifier",
   );
 
+  const crispDataAvailability = await readContract(
+    ethers.provider,
+    crispProgram,
+    crispInterface,
+    "dataAvailabilityVerifier",
+  );
+  if (
+    String(crispDataAvailability).toLowerCase() !==
+    dataAvailabilityVerifier.toLowerCase()
+  ) {
+    throw new Error(
+      `CRISP data-availability verifier mismatch: expected ${dataAvailabilityVerifier}, got ${crispDataAvailability}`,
+    );
+  }
+  const crispFinalizationWindow = await readContract(
+    ethers.provider,
+    crispProgram,
+    crispInterface,
+    "availabilityFinalizationWindow",
+  );
+  if (
+    BigInt(String(crispFinalizationWindow)) !==
+    BigInt(AVAIL_FINALIZATION_WINDOW_SECONDS)
+  ) {
+    throw new Error(
+      `CRISP availability finalization window mismatch: expected ${AVAIL_FINALIZATION_WINDOW_SECONDS}, got ${crispFinalizationWindow}`,
+    );
+  }
+  const crispMinimumVotingDuration = await readContract(
+    ethers.provider,
+    crispProgram,
+    crispInterface,
+    "MIN_VOTING_DURATION",
+  );
+  if (
+    BigInt(String(crispMinimumVotingDuration)) !==
+    BigInt(CRISP_MIN_VOTING_DURATION_SECONDS)
+  ) {
+    throw new Error(
+      `CRISP minimum voting duration mismatch: expected ${CRISP_MIN_VOTING_DURATION_SECONDS}, got ${crispMinimumVotingDuration}`,
+    );
+  }
+  const configuredInputAvailabilitySigner = String(
+    await readContract(
+      ethers.provider,
+      crispProgram,
+      crispInterface,
+      "inputAvailabilitySigner",
+    ),
+  );
+  if (
+    configuredInputAvailabilitySigner.toLowerCase() !==
+    inputAvailabilitySigner.toLowerCase()
+  ) {
+    throw new Error(
+      `CRISP input availability signer mismatch: expected ${inputAvailabilitySigner}, got ${configuredInputAvailabilitySigner}`,
+    );
+  }
+  const [adapterBridge, adapterVectorX, liveBridgeVectorX] = await Promise.all([
+    readContract(
+      ethers.provider,
+      dataAvailabilityVerifier,
+      dataAvailabilityInterface,
+      "bridge",
+    ),
+    readContract(
+      ethers.provider,
+      dataAvailabilityVerifier,
+      dataAvailabilityInterface,
+      "vectorx",
+    ),
+    readContract(
+      ethers.provider,
+      avail.bridge,
+      availBridgeInterface,
+      "vectorx",
+    ),
+  ]);
+  for (const [label, actual, expected] of [
+    ["adapter bridge", adapterBridge, avail.bridge],
+    ["adapter VectorX", adapterVectorX, avail.vectorx],
+    ["live bridge VectorX", liveBridgeVectorX, avail.vectorx],
+  ] as const) {
+    if (String(actual).toLowerCase() !== expected.toLowerCase()) {
+      throw new Error(`${label} mismatch: expected ${expected}, got ${actual}`);
+    }
+  }
+
   const secureParams = encodeBfvParams(BFV_PARAMS.secure8192);
   const currentParams = await interfold.paramSetRegistry(SECURE_PARAM_SET);
   if (
@@ -382,23 +543,39 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
   }
 
   const [operator] = await ethers.getSigners();
+  const verifierDefault = activeBfvConfigForChain(chainId);
+  const verifierConfigs = bfvConfigsForChain(chainId);
+  const registryUpgrade = await deployUpgradeImplementation(
+    ethers,
+    operator,
+    "ciphernodeRegistry",
+    deployment,
+  );
   const interfoldUpgrade = await deployUpgradeImplementation(
     ethers,
     operator,
     "interfold",
     deployment,
   );
+  if (!registryUpgrade.sortitionLibrary) {
+    throw new Error("Registry sortition library was not deployed");
+  }
   if (!interfoldUpgrade.lifecycleLibrary || !interfoldUpgrade.pricingLibrary) {
     throw new Error("Interfold libraries were not deployed");
   }
   const verifierDeployment = await deployBfvVerifierRoutes(
     ethers,
     deployment.ciphernodeRegistry,
-    PRODUCTION_BFV_CONFIG,
-    MAINNET_BFV_CONFIGS,
+    verifierDefault,
+    verifierConfigs,
   );
 
   const txs: SafeTransaction[] = [
+    upgradeTransaction(
+      deployment.ciphernodeRegistryProxyAdmin,
+      deployment.ciphernodeRegistry,
+      registryUpgrade.implementation,
+    ),
     upgradeTransaction(
       deployment.interfoldProxyAdmin,
       deployment.interfold,
@@ -417,7 +594,11 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     );
   }
   for (const threshold of config.interfold.committeeThresholds) {
-    const current = await interfold.committeeThresholds(BigInt(threshold.size));
+    const size = BigInt(threshold.size);
+    const current = await Promise.all([
+      interfold.committeeThresholds(size, 0n),
+      interfold.committeeThresholds(size, 1n),
+    ]);
     if (
       current[0] !== BigInt(threshold.quorum) ||
       current[1] !== BigInt(threshold.total)
@@ -474,6 +655,24 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
       ),
     );
   }
+  let retiredE3Program: string | undefined;
+  const initialE3Program = address(
+    deployment.initialE3Program,
+    "initial E3 program",
+  );
+  if (initialE3Program.toLowerCase() !== crispProgram.toLowerCase()) {
+    if (await interfold.e3Programs(initialE3Program)) {
+      retiredE3Program = initialE3Program;
+      txs.push(
+        safeTx(
+          deployment.interfold,
+          interfold.interface.encodeFunctionData("unregisterE3Program", [
+            initialE3Program,
+          ]),
+        ),
+      );
+    }
+  }
   if (normalizedBoundInterfold === ZERO.toLowerCase()) {
     txs.push(
       safeTx(
@@ -484,30 +683,35 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
       ),
     );
   }
-  txs.push(
-    safeTx(
-      deployment.nodeReleaseRegistry,
-      releases.interface.encodeFunctionData("setRequiredNodeRelease", [
-        nodeRelease.protocolVersion,
-        nodeRelease.nodeGeneration,
-      ]),
-    ),
-  );
+  if (updateNodeReleasePolicy) {
+    txs.push(
+      safeTx(
+        deployment.nodeReleaseRegistry,
+        releases.interface.encodeFunctionData("setRequiredNodeRelease", [
+          nodeRelease.protocolVersion,
+          nodeRelease.nodeGeneration,
+        ]),
+      ),
+    );
+  }
 
   const rawBatchFile = batchPath(config);
   const batch = governanceBatch(config, txs);
   batch.meta.name = `${config.name} secure CRISP activation`;
   batch.meta.description =
-    "Install secure BFV routes, bind CRISP, and require the matching ciphernode protocol while requests remain paused.";
+    "Install secure BFV routes, bind CRISP, retire the incompatible initial E3 program, and require the matching ciphernode protocol while requests remain paused.";
   writeJson(rawBatchFile, batch);
 
-  const safeBuilderFile = governanceSafeBuilderPath({
-    ...config,
-    name: `${config.name}.secure-crisp.upgrade`,
-  });
-  const safeBatch = aragonAdminSafeBatch(config, txs);
-  safeBatch.meta.name = `${config.name} secure CRISP activation`;
-  writeJson(safeBuilderFile, safeBatch);
+  let safeBuilderFile: string | undefined;
+  if (config.governance) {
+    safeBuilderFile = governanceSafeBuilderPath({
+      ...config,
+      name: `${config.name}.secure-crisp.upgrade`,
+    });
+    const safeBatch = aragonAdminSafeBatch(config, txs);
+    safeBatch.meta.name = `${config.name} secure CRISP activation`;
+    writeJson(safeBuilderFile, safeBatch);
+  }
 
   const plan: SecureCrispUpgradePlan = {
     name: config.name,
@@ -520,6 +724,9 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     lifecycleLibrary: interfoldUpgrade.lifecycleLibrary,
     pricingLibrary: interfoldUpgrade.pricingLibrary,
     registryProxy: deployment.ciphernodeRegistry,
+    registryProxyAdmin: deployment.ciphernodeRegistryProxyAdmin,
+    registryImplementation: registryUpgrade.implementation,
+    sortitionLibrary: registryUpgrade.sortitionLibrary,
     nodeReleaseRegistry: deployment.nodeReleaseRegistry,
     nodeRelease,
     cryptoConfigId: PRODUCTION_BFV_CONFIG.configId,
@@ -528,28 +735,41 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     decryptionVerifier: verifierDeployment.decryptionVerifier,
     ciphertextVerifier,
     crispProgram,
+    retiredE3Program,
+    dataAvailabilityVerifier,
+    inputAvailabilitySigner,
+    availBridge: avail.bridge,
+    vectorx: avail.vectorx,
     bfvVerifierRoutes: verifierDeployment.bfvVerifierRoutes,
-    safeTransactions: rawBatchFile,
-    governanceSafeBuilder: safeBuilderFile,
+    safeTransactions: repoRelativePath(rawBatchFile),
+    governanceSafeBuilder: safeBuilderFile
+      ? repoRelativePath(safeBuilderFile)
+      : undefined,
   };
   if (hasFlag("propose-safe")) {
-    plan.safeProposal = await proposeSafeBatch(
-      config,
-      aragonAdminSafeTransactions(config, txs),
-      config.governance.proposerSafe,
-    );
+    plan.safeProposal = config.governance
+      ? await proposeSafeBatch(
+          config,
+          aragonAdminSafeTransactions(config, txs),
+          config.governance.proposerSafe,
+        )
+      : await proposeSafeBatch(config, txs);
   }
   writeJson(planPath(config), plan);
 
   console.log(`
 Secure CRISP activation prepared
   Interfold implementation: ${plan.interfoldImplementation}
+  Registry implementation:  ${plan.registryImplementation}
   PK verifier router:        ${plan.pkVerifier}
   decryption router:         ${plan.decryptionVerifier}
   CRISP program:             ${plan.crispProgram}
+  retired initial program:   ${plan.retiredE3Program ?? "none"}
+  DA verifier:               ${plan.dataAvailabilityVerifier}
+  input availability signer: ${plan.inputAvailabilitySigner}
   required node release:     ${plan.nodeRelease.version} (protocol ${plan.nodeRelease.protocolVersion}, generation ${plan.nodeRelease.nodeGeneration})
   governance batch:          ${plan.safeTransactions}
-  Aragon Safe batch:         ${plan.governanceSafeBuilder}
+  Aragon Safe batch:         ${plan.governanceSafeBuilder ?? "not configured"}
   transactions:              ${txs.length}
   requests remain paused after execution
 `);

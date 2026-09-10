@@ -12,9 +12,10 @@ use alloy::{
     sol_types::{SolEvent, SolValue},
 };
 use e3_events::{
-    CommitteeActivationChanged, CommitteeFinalized, CommitteeFormationFailed, CommitteePublished,
-    CommitteeViabilityUpdated, DkgFoldAttestationContext, DkgFoldAttestationContextEstablished,
-    E3id, InterfoldEventData, Seed, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    CommitteeActivationChanged, CommitteeFinalized, CommitteeFormationFailed,
+    CommitteePublicKeyChunkPublished, CommitteePublished, CommitteeViabilityUpdated,
+    DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3id, InterfoldEventData,
+    Seed, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_utils::ArcBytes;
 use tracing::{error, info, trace};
@@ -136,6 +137,33 @@ struct CommitteeFinalizedWithChainId(
     pub ICiphernodeRegistry::SortitionCommitteeFinalized,
     pub u64,
 );
+
+struct CommitteePublicKeyChunkWithChainId(
+    pub ICiphernodeRegistry::CommitteePublicKeyChunkPublished,
+    pub u64,
+);
+
+impl From<CommitteePublicKeyChunkWithChainId> for CommitteePublicKeyChunkPublished {
+    fn from(value: CommitteePublicKeyChunkWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            publisher: value.0.publisher.to_string(),
+            candidate_hash: value.0.candidateHash.into(),
+            nodes: value.0.nodes.iter().map(ToString::to_string).collect(),
+            pk_commitment: value.0.pkCommitment.into(),
+            chunk_index: value.0.chunkIndex,
+            chunk_count: value.0.chunkCount,
+            total_length: value.0.totalLength,
+            chunk: ArcBytes::from_bytes(value.0.chunk.as_ref()),
+        }
+    }
+}
+
+impl From<CommitteePublicKeyChunkWithChainId> for InterfoldEventData {
+    fn from(value: CommitteePublicKeyChunkWithChainId) -> Self {
+        CommitteePublicKeyChunkPublished::from(value).into()
+    }
+}
 
 impl From<CommitteeFinalizedWithChainId> for CommitteeFinalized {
     fn from(value: CommitteeFinalizedWithChainId) -> Self {
@@ -420,6 +448,24 @@ pub(crate) fn extractor(
             Some(InterfoldEventData::from(CommitteePublishedWithChainId(
                 event, chain_id,
             )))
+        }
+        Some(&ICiphernodeRegistry::CommitteePublicKeyChunkPublished::SIGNATURE_HASH) => {
+            let Ok(mut event) =
+                ICiphernodeRegistry::CommitteePublicKeyChunkPublished::decode_log_data(data)
+            else {
+                error!("Error parsing CommitteePublicKeyChunkPublished after topic was matched!");
+                return None;
+            };
+            let (Some(e3_id), Some(publisher), Some(candidate_hash)) =
+                (topics.get(1), topics.get(2), topics.get(3))
+            else {
+                error!("CommitteePublicKeyChunkPublished is missing indexed topics");
+                return None;
+            };
+            event.e3Id = alloy::primitives::U256::from_be_bytes(e3_id.0);
+            event.publisher = alloy::primitives::Address::from_slice(&publisher.0[12..]);
+            event.candidateHash = *candidate_hash;
+            Some(CommitteePublicKeyChunkWithChainId(event, chain_id).into())
         }
         Some(&ICiphernodeRegistry::CommitteeActivationChanged::SIGNATURE_HASH) => {
             let Ok(mut event) =

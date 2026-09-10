@@ -26,12 +26,15 @@ actually slashed and does not require an oracle or relabel one ERC-20 as another
 Anyone can call `markE3Failed()` when a deadline is missed. A ready committee remains finalizable
 through its absolute DKG deadline. It can fail if it remains unfinalized after that deadline.
 
-For the aggregator-owned DKG and decryption stages, each selected ciphernode reconstructs a
-canonical deadline watch from `CiphernodeSelected` and `E3StageChanged` during replay. After
-`EffectsEnabled`, it reads the deadline from `Interfold`, staggers its attempt by canonical party
-ID, confirms that the stage and failure condition still match, and calls `markE3Failed`. A canonical
-stage change cancels the old watch. If a node restarts after the deadline, the party-ID stagger is
-applied from restart time so all committee wallets do not submit at once.
+The Interfold writer watches every stage that `failureCondition` supports: `Requested`,
+`CommitteeFinalized`, `KeyPublished`, and `CiphertextReady`. Startup restores the stage from the
+durable lifecycle map and restores the request-time registry from the DKG context. A finalized
+committee member staggers its attempt by canonical party ID. A `Requested` E3 has no active
+committee yet, so every node waits until the failure grace period ends and uses the permissionless
+path. Before submission, the writer confirms that the stage and failure condition still match. A
+canonical stage change cancels the old watch and invalidates any older stage-discovery RPC. After a
+restart, finalized members keep their party-ID stagger and non-members remain outside the protected
+grace window.
 
 If an honest-node allocation is smaller than the node count, the refund manager credits it to the
 request-time treasury instead of creating zero-value claims.
@@ -149,7 +152,9 @@ charge the protocol-funded subscription.
 Runtime note: `processE3Failure()` is a permissionless cleanup path. The Rust `InterfoldSolWriter`
 may auto-submit it from any effects-enabled node on the same chain, and it must not depend on
 active-aggregator designation because failures can happen before committee finalization or while the
-current aggregator is offline.
+current aggregator is offline. A restart restores failed E3 IDs from the durable lifecycle map. The
+writer retries transient failures and treats `NoPaymentToRefund` as proof that another account has
+already processed the escrow.
 
 ```text
 Anyone calls: Interfold.processE3Failure(e3Id)
@@ -1293,16 +1298,18 @@ When CommitteeMemberExpelled event arrives from EVM:
 │   └─ Stores the expelled node as `alloy::Address` and removes/blocks keyshares by parsed
 │       address, so differently cased self-reported node strings cannot bypass expulsion
 │
-└─ When E3Failed(timeout) / E3StageChanged(Complete) arrives:
+└─ When a terminal non-slashing E3Failed / E3StageChanged(Complete) arrives:
     │
     ├─ E3Router (central cleanup orchestrator):
-    │   ├─ E3Failed with a timeout reason (CommitteeFormationTimeout, DKGTimeout,
-    │   │   ComputeTimeout, DecryptionTimeout) → publishes E3RequestComplete
+    │   ├─ E3Failed with a timeout, requester, or external-provider reason
+    │   │   (CommitteeFormationTimeout, DKGTimeout, ComputeTimeout,
+    │   │   DecryptionTimeout, NoInputsReceived, ComputeProviderExpired,
+    │   │   ComputeProviderFailed, RequesterCancelled) → publishes E3RequestComplete
     │   │   → Single cleanup signal for all per-E3 actors
     │   │   NOTE: E3Failed with a misbehaviour reason (DKGInvalidShares, etc.) does
     │   │   NOT trigger E3RequestComplete — the accusation/slashing lifecycle must
     │   │   complete first.
-    │   └─ E3StageChanged(Failed) and E3Failed(timeout) arriving after context teardown
+    │   └─ E3StageChanged(Failed) and the same non-slashing E3Failed arriving after teardown
     │       are silently ignored (expected on-chain lag)
     │
     ├─ CommitteeFinalizer (direct handler — semantic work):

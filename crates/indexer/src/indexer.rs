@@ -4,12 +4,15 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use super::{models::E3, DataStore};
+use super::{
+    models::{CiphertextOutputReference, E3},
+    DataStore,
+};
 use crate::callback_queue::CallbackQueue;
 use crate::E3Repository;
 use alloy::consensus::BlockHeader;
 use alloy::hex;
-use alloy::primitives::{keccak256, Uint};
+use alloy::primitives::{keccak256, Address, Uint};
 use alloy::providers::Provider;
 use alloy::sol_types::{SolEvent, SolValue};
 use async_trait::async_trait;
@@ -21,7 +24,10 @@ use e3_evm_helpers::{
         ReadWrite,
     },
     event_listener::{EventListener, LiveProgress, NOT_PROCESSING},
-    events::{CiphertextOutputPublished, CommitteePublished, PlaintextOutputPublished},
+    events::{
+        CiphertextOutputPublished, CiphertextOutputReferencePublished,
+        CommitteePublicKeyChunkPublished, CommitteePublished, PlaintextOutputPublished,
+    },
 };
 use e3_fhe_params::{decode_bfv_params, encode_bfv_params, BfvParamSet, BfvPreset};
 use eyre::eyre;
@@ -35,6 +41,95 @@ use tokio::{sync::RwLock, time::sleep};
 use tracing::{error, info, warn};
 
 type E3Id = String;
+
+const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
+const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
+
+#[derive(Clone, Debug, Serialize, serde::Deserialize)]
+struct PublicKeyChunkAssembly {
+    nodes: Vec<Address>,
+    pk_commitment: [u8; 32],
+    total_length: u32,
+    chunk_count: u16,
+    chunks: Vec<Option<Vec<u8>>>,
+    invalid: bool,
+    stored: bool,
+}
+
+impl PublicKeyChunkAssembly {
+    fn event_shape_is_valid(event: &CommitteePublicKeyChunkPublished) -> bool {
+        let total_length = event.totalLength as usize;
+        if total_length == 0 || total_length > MAX_PUBLIC_KEY_BYTES {
+            return false;
+        }
+        let expected_count = total_length.div_ceil(PUBLIC_KEY_CHUNK_BYTES);
+        if expected_count != usize::from(event.chunkCount)
+            || usize::from(event.chunkIndex) >= expected_count
+        {
+            return false;
+        }
+        let offset = usize::from(event.chunkIndex) * PUBLIC_KEY_CHUNK_BYTES;
+        let expected_length = (total_length - offset).min(PUBLIC_KEY_CHUNK_BYTES);
+        event.chunk.len() == expected_length
+    }
+
+    fn from_event(event: &CommitteePublicKeyChunkPublished) -> Self {
+        Self {
+            nodes: event.nodes.clone(),
+            pk_commitment: event.pkCommitment.0,
+            total_length: event.totalLength,
+            chunk_count: event.chunkCount,
+            chunks: vec![None; usize::from(event.chunkCount)],
+            invalid: false,
+            stored: false,
+        }
+    }
+
+    fn accepts(&self, event: &CommitteePublicKeyChunkPublished) -> bool {
+        self.nodes == event.nodes
+            && self.pk_commitment == event.pkCommitment.0
+            && self.total_length == event.totalLength
+            && self.chunk_count == event.chunkCount
+    }
+
+    fn insert(&mut self, event: &CommitteePublicKeyChunkPublished) {
+        if self.invalid || self.stored || !self.accepts(event) {
+            self.invalid |= !self.accepts(event);
+            return;
+        }
+        let expected_count = (self.total_length as usize).div_ceil(PUBLIC_KEY_CHUNK_BYTES);
+        let offset = usize::from(event.chunkIndex) * PUBLIC_KEY_CHUNK_BYTES;
+        let expected_length = (self.total_length as usize)
+            .saturating_sub(offset)
+            .min(PUBLIC_KEY_CHUNK_BYTES);
+        if expected_count != usize::from(self.chunk_count) || event.chunk.len() != expected_length {
+            self.invalid = true;
+            return;
+        }
+        let Some(slot) = self.chunks.get_mut(usize::from(event.chunkIndex)) else {
+            self.invalid = true;
+            return;
+        };
+        if let Some(existing) = slot {
+            if existing.as_slice() != event.chunk.as_ref() {
+                self.invalid = true;
+            }
+        } else {
+            *slot = Some(event.chunk.to_vec());
+        }
+    }
+
+    fn bytes(&self) -> Option<Vec<u8>> {
+        if self.invalid || self.stored {
+            return None;
+        }
+        let mut bytes = Vec::with_capacity(self.total_length as usize);
+        for chunk in &self.chunks {
+            bytes.extend_from_slice(chunk.as_ref()?);
+        }
+        (bytes.len() == self.total_length as usize).then_some(bytes)
+    }
+}
 
 #[derive(Error, Debug)]
 pub enum IndexerError {
@@ -327,6 +422,123 @@ impl<S: DataStore> InterfoldIndexer<S, ReadWrite> {
     }
 }
 
+async fn store_committee_public_key<S: DataStore, R: ProviderType>(
+    event: CommitteePublished,
+    ctx: Arc<IndexerContext<S, R>>,
+    ignore_invalid_candidate: bool,
+) -> Result<bool> {
+    let contract = ctx.contract();
+    let db = ctx.store();
+    let interfold_address = ctx.interfold_address();
+    let e3_id = event.e3Id.to_string();
+
+    info!(
+        "CommitteePublished: id={}, public_key_len={}, proof_len={}",
+        event.e3Id,
+        event.publicKey.len(),
+        event.proof.len()
+    );
+
+    let e3 = contract.get_e3(event.e3Id).await?;
+    let params_preset = BfvPreset::from_on_chain_param_set(e3.paramSet).ok_or_else(|| {
+        eyre!(
+            "unsupported BFV parameter set {} for E3 {e3_id}",
+            e3.paramSet
+        )
+    })?;
+    let e3_params = encode_bfv_params(&BfvParamSet::from(params_preset).build_arc());
+    let crypto_config_id = keccak256(
+        (
+            keccak256(b"fhe.rs:BFV"),
+            keccak256(&e3_params),
+            keccak256(b"interfold-bfv-v1"),
+        )
+            .abi_encode(),
+    );
+    let request_crypto_config_id = contract.get_e3_crypto_config_id(event.e3Id).await?;
+    if request_crypto_config_id != crypto_config_id {
+        return Err(eyre!(
+            "local circuit configuration does not match request-time config for E3 {e3_id}"
+        ));
+    }
+    if e3.encryptionSchemeId == keccak256("fhe.rs:BFV") {
+        let decoded_params = decode_bfv_params(&e3_params)
+            .map_err(|error| eyre!("invalid BFV parameters for E3 {e3_id}: {error}"))?;
+        if let Err(error) = validate_pk_commitment(
+            &event.publicKey,
+            event.pkCommitment.0,
+            decoded_params.degree(),
+            decoded_params.plaintext(),
+            decoded_params.moduli().to_vec(),
+        ) {
+            if ignore_invalid_candidate {
+                warn!("Ignoring unbound committee public-key candidate for E3 {e3_id}: {error}");
+                return Ok(false);
+            }
+            return Err(eyre!(
+                "rejecting unbound CommitteePublished public key for E3 {e3_id}: {error}"
+            ));
+        }
+    }
+    let seed = e3.seed.to_be_bytes();
+    let request_block = u64_try_from(e3.requestBlock)?;
+    let input_window = [
+        u64_try_from(e3.inputWindow[0])?,
+        u64_try_from(e3.inputWindow[1])?,
+    ];
+
+    let e3_obj = E3 {
+        chain_id: ctx.chain_id(),
+        ciphertext_inputs: vec![],
+        ciphertext_output: vec![],
+        ciphertext_output_reference: None,
+        ciphertext_commitment: vec![],
+        committee_public_key: event.publicKey.to_vec(),
+        committee_public_key_hash: event.pkCommitment.to_vec(),
+        custom_params: e3.customParams.to_vec(),
+        e3_params: e3_params.to_vec(),
+        interfold_address,
+        encryption_scheme_id: e3.encryptionSchemeId.to_vec(),
+        crypto_config_id: crypto_config_id.to_vec(),
+        id: e3_id.clone(),
+        plaintext_output: vec![],
+        request_block,
+        seed,
+        input_window,
+        committee_size: e3.committeeSize,
+        requester: e3.requester.to_string(),
+    };
+
+    let mut repo = E3Repository::new(db, &e3_id);
+    if repo.set_e3_if_absent(e3_obj).await? {
+        info!("E3 {} created and stored", e3_id);
+    } else {
+        info!("E3 {} already has a verified committee key", e3_id);
+    }
+    Ok(true)
+}
+
+async fn mark_public_key_assembly<S: DataStore>(
+    store: &mut SharedStore<S>,
+    key: &str,
+    stored: bool,
+) -> Result<()> {
+    store
+        .modify(key, move |current: Option<PublicKeyChunkAssembly>| {
+            current.map(|mut assembly| {
+                assembly.stored = stored;
+                assembly.invalid = !stored;
+                // The verified E3 record now owns the complete key. Keep only the small
+                // completion marker so duplicate or replayed chunks remain idempotent.
+                assembly.chunks.clear();
+                assembly
+            })
+        })
+        .await
+        .map_err(|error| eyre!("updating public-key chunk assembly failed: {error}"))?;
+    Ok(())
+}
+
 impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
     pub async fn new(
         mut event_listener: EventListener,
@@ -431,90 +643,88 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
 
     async fn register_committee_published(&mut self) -> Result<()> {
         self.add_event_handler(move |e: CommitteePublished, ctx| async move {
-            let contract = ctx.contract();
-            let db = ctx.store();
-            let interfold_address = ctx.interfold_address();
-            let e3_id = e.e3Id.to_string();
-
-            info!(
-                "CommitteePublished: id={}, public_key_len={}, proof_len={}",
-                e.e3Id,
-                e.publicKey.len(),
-                e.proof.len()
-            );
-
-            let e3 = contract.get_e3(e.e3Id).await?;
-            let params_preset =
-                BfvPreset::from_on_chain_param_set(e3.paramSet).ok_or_else(|| {
-                    eyre!(
-                        "unsupported BFV parameter set {} for E3 {e3_id}",
-                        e3.paramSet
-                    )
-                })?;
-            let e3_params = encode_bfv_params(&BfvParamSet::from(params_preset).build_arc());
-            let crypto_config_id = keccak256(
-                (
-                    keccak256(b"fhe.rs:BFV"),
-                    keccak256(&e3_params),
-                    keccak256(b"interfold-bfv-v1"),
-                )
-                    .abi_encode(),
-            );
-            let request_crypto_config_id = contract.get_e3_crypto_config_id(e.e3Id).await?;
-            if request_crypto_config_id != crypto_config_id {
-                return Err(eyre!(
-                    "local circuit configuration does not match request-time config for E3 {e3_id}"
-                ));
-            }
-            if e3.encryptionSchemeId == keccak256("fhe.rs:BFV") {
-                let decoded_params = decode_bfv_params(&e3_params)
-                    .map_err(|error| eyre!("invalid BFV parameters for E3 {e3_id}: {error}"))?;
-                validate_pk_commitment(
-                    &e.publicKey,
-                    e.pkCommitment.0,
-                    decoded_params.degree(),
-                    decoded_params.plaintext(),
-                    decoded_params.moduli().to_vec(),
-                )
-                .map_err(|error| {
-                    eyre!("rejecting unbound CommitteePublished public key for E3 {e3_id}: {error}")
-                })?;
-            }
-            let seed = e3.seed.to_be_bytes();
-            let request_block = u64_try_from(e3.requestBlock)?;
-            let input_window = [
-                u64_try_from(e3.inputWindow[0])?,
-                u64_try_from(e3.inputWindow[1])?,
-            ];
-
-            let e3_obj = E3 {
-                chain_id: ctx.chain_id(),
-                ciphertext_inputs: vec![],
-                ciphertext_output: vec![],
-                ciphertext_commitment: vec![],
-                committee_public_key: e.publicKey.to_vec(),
-                committee_public_key_hash: e.pkCommitment.to_vec(),
-                custom_params: e3.customParams.to_vec(),
-                e3_params: e3_params.to_vec(),
-                interfold_address,
-                encryption_scheme_id: e3.encryptionSchemeId.to_vec(),
-                crypto_config_id: crypto_config_id.to_vec(),
-                id: e3_id.clone(),
-                plaintext_output: vec![],
-                request_block,
-                seed,
-                input_window,
-                committee_size: e3.committeeSize,
-                requester: e3.requester.to_string(),
-            };
-
-            let mut repo = E3Repository::new(db, &e3_id);
-            repo.set_e3(e3_obj).await?;
-
-            info!("E3 {} created and stored", e3_id);
-
+            // A bad legacy candidate must not hold the indexer cursor. Every candidate still passes
+            // the same semantic DKG commitment check before storage.
+            store_committee_public_key(e, ctx, true).await?;
             Ok(())
         })
+        .await;
+        Ok(())
+    }
+
+    async fn register_committee_public_key_chunks(&mut self) -> Result<()> {
+        self.add_event_handler(
+            move |event: CommitteePublicKeyChunkPublished, ctx| async move {
+                if !PublicKeyChunkAssembly::event_shape_is_valid(&event) {
+                    warn!(
+                        "Ignoring malformed public-key chunk from {} for E3 {}",
+                        event.publisher, event.e3Id
+                    );
+                    return Ok(());
+                }
+                let publisher_key = format!(
+                    "_pk_candidate:{}:{}",
+                    event.e3Id, event.publisher
+                );
+                let candidate_hash = event.candidateHash.0;
+                let mut store = ctx.store();
+                let selected = store
+                    .modify(&publisher_key, move |current: Option<[u8; 32]>| {
+                        Some(current.unwrap_or(candidate_hash))
+                    })
+                    .await
+                    .map_err(|error| eyre!("saving public-key candidate failed: {error}"))?
+                    .ok_or_else(|| eyre!("public-key candidate selection disappeared"))?;
+                if selected != event.candidateHash.0 {
+                    warn!(
+                        "Ignoring a second public-key candidate from {} for E3 {}",
+                        event.publisher, event.e3Id
+                    );
+                    return Ok(());
+                }
+                let assembly_key = format!(
+                    "_pk_chunk:{}:{}:{:#x}",
+                    event.e3Id, event.publisher, event.candidateHash
+                );
+                let event_for_update = event.clone();
+                let assembly = store
+                    .modify(&assembly_key, move |current: Option<PublicKeyChunkAssembly>| {
+                        let mut current = current
+                            .unwrap_or_else(|| PublicKeyChunkAssembly::from_event(&event_for_update));
+                        current.insert(&event_for_update);
+                        Some(current)
+                    })
+                    .await
+                    .map_err(|error| eyre!("saving public-key chunk failed: {error}"))?
+                    .ok_or_else(|| eyre!("public-key chunk assembly disappeared"))?;
+
+                if assembly.invalid || assembly.stored {
+                    return Ok(());
+                }
+                let Some(public_key) = assembly.bytes() else {
+                    return Ok(());
+                };
+                if keccak256(&public_key) != event.candidateHash {
+                    warn!(
+                        "Ignoring chunked committee public key with a mismatched content hash for E3 {}",
+                        event.e3Id
+                    );
+                    mark_public_key_assembly(&mut store, &assembly_key, false).await?;
+                    return Ok(());
+                }
+
+                let synthetic = CommitteePublished {
+                    e3Id: event.e3Id,
+                    nodes: assembly.nodes,
+                    publicKey: public_key.into(),
+                    pkCommitment: assembly.pk_commitment.into(),
+                    proof: Vec::new().into(),
+                };
+                let stored = store_committee_public_key(synthetic, ctx, true).await?;
+                mark_public_key_assembly(&mut store, &assembly_key, stored).await?;
+                Ok(())
+            },
+        )
         .await;
         Ok(())
     }
@@ -537,6 +747,29 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
 
             Ok(())
         })
+        .await;
+        Ok(())
+    }
+
+    async fn register_ciphertext_output_reference_published(&mut self) -> Result<()> {
+        self.add_event_handler(
+            move |event: CiphertextOutputReferencePublished, ctx| async move {
+                info!(
+                    "CiphertextOutputReferencePublished: e3_id={}, block={}, leaf_index={}",
+                    event.e3Id, event.availabilityBlock, event.availabilityLeafIndex
+                );
+                let mut repo = E3Repository::new(ctx.store(), event.e3Id.to_string());
+                repo.set_ciphertext_output_reference(
+                    CiphertextOutputReference {
+                        content_hash: event.contentHash.to_vec(),
+                        availability_block: event.availabilityBlock,
+                        availability_leaf_index: event.availabilityLeafIndex,
+                    },
+                    event.ciphertextCommitment.to_vec(),
+                )
+                .await
+            },
+        )
         .await;
         Ok(())
     }
@@ -630,7 +863,10 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
     async fn setup_listeners(&mut self) -> Result<()> {
         info!("Setting up listeners for InterfoldIndexer...");
         self.register_committee_published().await?;
+        self.register_committee_public_key_chunks().await?;
         self.register_ciphertext_output_published().await?;
+        self.register_ciphertext_output_reference_published()
+            .await?;
         self.register_plaintext_output_published().await?;
         self.register_blocktime_callback_handler().await?;
         info!("Listeners have been setup!");
@@ -889,6 +1125,15 @@ impl<S: DataStore, R: ProviderType> InterfoldIndexer<S, R> {
     pub fn get_store(&self) -> SharedStore<S> {
         self.ctx.store.clone()
     }
+
+    /// Schedule a timestamp callback without requiring an event-handler context.
+    pub fn schedule_at<F, Fut>(&self, timestamp: u64, callback: F)
+    where
+        F: Fn(u64, Arc<IndexerContext<S, R>>) -> Fut + Send + Sync + 'static,
+        Fut: Future<Output = Result<()>> + Send + 'static,
+    {
+        self.ctx.do_later(timestamp, callback);
+    }
 }
 
 pub async fn get_e3(
@@ -911,4 +1156,43 @@ pub async fn get_e3(
 
 fn u64_try_from(input: Uint<256, 4>) -> Result<u64> {
     u64::try_from(input).map_err(|_| eyre!("larger than 64-bit"))
+}
+
+#[cfg(test)]
+mod public_key_chunk_tests {
+    use super::{
+        mark_public_key_assembly, DataStore, InMemoryStore, PublicKeyChunkAssembly, SharedStore,
+    };
+    use alloy::primitives::Address;
+    use std::sync::Arc;
+    use tokio::sync::RwLock;
+
+    #[tokio::test]
+    async fn completed_assembly_drops_temporary_chunk_bytes() {
+        let mut store = SharedStore::new(Arc::new(RwLock::new(InMemoryStore::new())));
+        let key = "_pk_chunk:1:publisher:candidate";
+        let assembly = PublicKeyChunkAssembly {
+            nodes: vec![Address::ZERO],
+            pk_commitment: [1; 32],
+            total_length: 4,
+            chunk_count: 2,
+            chunks: vec![Some(vec![2; 2]), Some(vec![3; 2])],
+            invalid: false,
+            stored: false,
+        };
+        store.insert(key, &assembly).await.unwrap();
+
+        mark_public_key_assembly(&mut store, key, true)
+            .await
+            .unwrap();
+
+        let completed = store
+            .get::<PublicKeyChunkAssembly>(key)
+            .await
+            .unwrap()
+            .unwrap();
+        assert!(completed.stored);
+        assert!(!completed.invalid);
+        assert!(completed.chunks.is_empty());
+    }
 }

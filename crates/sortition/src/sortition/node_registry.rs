@@ -16,7 +16,7 @@
 use alloy::primitives::U256;
 use e3_events::E3id;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{hash_map::Entry, HashMap};
 use tracing::{info, warn};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -265,6 +265,9 @@ impl NodeRegistry {
 
     /// Record a published committee and increment active-job counters for each
     /// of its members.
+    ///
+    /// Event replay and duplicate publication candidates can report the same
+    /// committee more than once. Only the first report changes the counters.
     pub fn record_committee_published(
         store: &mut HashMap<u64, NodeStateStore>,
         e3_id: &E3id,
@@ -274,7 +277,29 @@ impl NodeRegistry {
         let key = committee_key(e3_id);
         let chain_state = store.entry(chain_id).or_default();
 
-        chain_state.e3_committees.insert(key, nodes.to_vec());
+        match chain_state.e3_committees.entry(key) {
+            Entry::Vacant(entry) => {
+                entry.insert(nodes.to_vec());
+            }
+            Entry::Occupied(entry) => {
+                if entry.get().as_slice() != nodes {
+                    warn!(
+                        chain_id,
+                        e3_id = ?e3_id,
+                        recorded_nodes = ?entry.get(),
+                        replayed_nodes = ?nodes,
+                        "Ignored a conflicting committee publication replay"
+                    );
+                } else {
+                    info!(
+                        chain_id,
+                        e3_id = ?e3_id,
+                        "Ignored a duplicate committee publication replay"
+                    );
+                }
+                return;
+            }
+        }
 
         for node_addr in nodes {
             let node = chain_state.nodes.entry(node_addr.clone()).or_default();

@@ -17,6 +17,8 @@
 #      crates/tests. Forwarding declarations in [features] sections are fine.
 #   3. runtime proof-skip guard — validate_proof_aggregation_mode must exist and be
 #      called in crates/entrypoint (INVARIANTS §No proof-disabled bypass, C-02).
+#   4. ciphernode Docker workspace coverage — every root workspace crate manifest
+#      must be present in the dependency-cache stage of crates/Dockerfile.
 #
 # Exit 0 when all hold, 1 otherwise.
 
@@ -78,7 +80,12 @@ if ! grep -rq 'fn validate_proof_aggregation_mode' crates/entrypoint/src ||
   fail=1
 fi
 
+# --- 4. ciphernode Docker workspace coverage --------------------------------------
+if [[ -n "$python_bin" ]] && ! "$python_bin" scripts/check-ciphernode-docker-members.py; then
+  fail=1
+fi
+
 if ((fail == 0)); then
-  echo "✓ check:invariants: do_send=$count (≤ $DO_SEND_BASELINE), skip-proof feature contained, runtime guard present"
+  echo "✓ check:invariants: do_send=$count (≤ $DO_SEND_BASELINE), skip-proof feature contained, runtime guard present, ciphernode Docker workspace complete"
 fi
 exit "$fail"

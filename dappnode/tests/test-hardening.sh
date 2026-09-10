@@ -140,6 +140,18 @@ assert_contains "$success_dir/data/config.yaml" 'slashing_manager:'
 assert_contains "$success_dir/data/config.yaml" '0x7777777777777777777777777777777777777777'
 assert_contains "$success_dir/data/config.yaml" 'fee_token:'
 assert_contains "$success_dir/data/config.yaml" '0x8888888888888888888888888888888888888888'
+assert_contains "$success_dir/data/config.yaml" 'https://avail-rpc.publicnode.com/'
+
+# The pinned Avail client uses HTTP JSON-RPC. Rejecting WebSocket URLs at startup avoids a node
+# appearing healthy while every data retrieval fails with a local BadScheme error.
+invalid_avail_dir="$TEST_ROOT/invalid-avail-rpc"
+mkdir -p "$invalid_avail_dir/secrets"
+write_secrets "$invalid_avail_dir/secrets/secrets.json"
+if run_entrypoint "$invalid_avail_dir" AVAIL_RPC_URL="wss://turing-rpc.avail.so/ws"; then
+    fail "WebSocket Avail RPC URL was accepted"
+fi
+[ ! -s "$invalid_avail_dir/calls" ] || fail "invalid Avail RPC URL invoked Interfold"
+assert_contains "$invalid_avail_dir/output" 'AVAIL_RPC_URL must be an HTTP URL'
 
 # A credential command failure must propagate and must never start the node.
 failure_dir="$TEST_ROOT/failure"

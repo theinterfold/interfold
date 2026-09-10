@@ -17,12 +17,14 @@ mod ciphernode_deregistration_requested;
 mod ciphernode_removed;
 mod ciphernode_selected;
 mod ciphertext_output_published;
+mod ciphertext_output_reference_published;
 mod commitment_consistency;
 mod committee_activation_changed;
 mod committee_finalize_requested;
 mod committee_finalized;
 mod committee_formation_failed;
 mod committee_member_excluded;
+mod committee_public_key_chunk_published;
 mod committee_published;
 mod committee_requested;
 mod committee_viability_updated;
@@ -98,12 +100,14 @@ pub use ciphernode_deregistration_requested::*;
 pub use ciphernode_removed::*;
 pub use ciphernode_selected::*;
 pub use ciphertext_output_published::*;
+pub use ciphertext_output_reference_published::*;
 pub use commitment_consistency::*;
 pub use committee_activation_changed::*;
 pub use committee_finalize_requested::*;
 pub use committee_finalized::*;
 pub use committee_formation_failed::*;
 pub use committee_member_excluded::*;
+pub use committee_public_key_chunk_published::*;
 pub use committee_published::*;
 pub use committee_requested::*;
 pub use committee_viability_updated::*;
@@ -354,6 +358,8 @@ pub enum InterfoldEventData {
     // Append new durable variants to preserve existing enum discriminants in persisted logs.
     CommitteeMemberExcluded(CommitteeMemberExcluded),
     AggregationInputsReady(AggregationInputsReady),
+    CommitteePublicKeyChunkPublished(CommitteePublicKeyChunkPublished),
+    CiphertextOutputReferencePublished(CiphertextOutputReferencePublished),
 }
 
 impl InterfoldEventData {
@@ -679,6 +685,12 @@ impl InterfoldEventData {
             InterfoldEventData::DkgFoldAttestationContextEstablished(ref data) => {
                 Some(data.e3_id.clone())
             }
+            InterfoldEventData::CommitteePublicKeyChunkPublished(ref data) => {
+                Some(data.e3_id.clone())
+            }
+            InterfoldEventData::CiphertextOutputReferencePublished(ref data) => {
+                Some(data.e3_id.clone())
+            }
             _ => None,
         }
     }
@@ -791,7 +803,9 @@ impl_event_types!(
     BondOwnerSet,
     DkgFoldAttestationContextEstablished,
     CommitteeMemberExcluded,
-    AggregationInputsReady
+    AggregationInputsReady,
+    CommitteePublicKeyChunkPublished,
+    CiphertextOutputReferencePublished
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {
