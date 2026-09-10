@@ -181,6 +181,18 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │
 │     │  ┌─── E3RefundManager.calculateRefund() ────────────────┐
 │     │  │                                                       │
+│     │  │  0. ZEN2-04 gate: revert SettlementBlocked unless     │
+│     │  │     slashingManager.settlementOpen(e3Id):             │
+│     │  │       accusation window closed AND no affectsCommittee│
+│     │  │       proposal open for this E3, OR past the constant │
+│     │  │       settlementCutoff (window + 30d + 7d).           │
+│     │  │     A round with no finalized committee passes at     │
+│     │  │     once. Non-expelling penalties never gate. So on a │
+│     │  │     failed E3 every expulsion resolves before this    │
+│     │  │     point and `honestNodes` is the post-expulsion     │
+│     │  │     roster; the base split never has to be reallocated│
+│     │  │     for a later expulsion.                            │
+│     │  │                                                       │
 │     │  │  1. Read FailureReason and call getFailurePayer():    │
 │     │  │                                                       │
 │     │  │  Requester liability:                                 │

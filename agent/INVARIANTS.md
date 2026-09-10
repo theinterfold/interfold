@@ -352,7 +352,11 @@ design citation alone does not establish current runtime behavior.
   keyed by **operator** in `E3RefundManager._operatorEntitlements` until withdrawal, and every claim
   path re-checks `pendingExpulsions` and `excluded` at claim time, so a proposal opened after
   settlement still holds the allocation and two operators sharing one recipient keep independent
-  entitlements. — `flow-trace/05`, `flow-trace/06`; INDEX concerns ZEN2-20
+  entitlements. On a **failed** E3 the settlement gate below means every expulsion resolves before
+  `calculateRefund`, so the base split is taken over the post-expulsion roster and the
+  post-settlement reallocation paths (`_takeForfeitedBaseReward`, `_redistributeHeldSlash`) are
+  exercised only on successful E3s, whose accusation window stays open after completion. —
+  `flow-trace/05`, `flow-trace/06`; INDEX concerns ZEN2-20
 - Slash-policy validity: `!requiresProof ⇒ appealWindow > 0`; ≥1 nonzero penalty. The retained
   `failureReason` field is 0 or `InsufficientCommitteeMembers`; execution does not select failure
   attribution from policy data. — `flow-trace/05`; INDEX concerns Z-07, Z-32
@@ -364,6 +368,17 @@ design citation alone does not establish current runtime behavior.
   never contradicts a settled distribution. The stage stays `Failed` and `activeE3Count` does not
   change. A correction that no longer applies returns without an effect, so it never reverts the
   expulsion. — `flow-trace/05`; INDEX concerns ZEN2-04
+- **Failed-E3 settlement waits for the accusations that could move its payer:** `calculateRefund`
+  reverts `SettlementBlocked` unless `SlashingManager.settlementOpen(e3Id)`, which is true only when
+  the accusation window (`slashSubmissionDeadline`) has closed **and** no `affectsCommittee`
+  proposal for the E3 is open (`_openCommitteeProposals`, incremented in `_openProposal` and
+  decremented on every terminal path through `_closeProposalCount`). A round that never finalized a
+  committee has no member to expel and no payer to move, so it settles at once. Non-expelling
+  penalties never gate. Past the constant `settlementCutoff` = `slashSubmissionDeadline` +
+  `MAX_APPEAL_WINDOW` + `APPEAL_RESOLUTION_GRACE` (38 days) settlement proceeds regardless, so an
+  appealed proposal that governance never resolves cannot hold a refund forever; `expireAppeal` is
+  the permissionless lever that clears it earlier. A calculated refund still never changes: the gate
+  moves _when_ it is calculated, not what it can become. — `flow-trace/05`; INDEX concerns ZEN2-04
 - **Committee viability loss is atomic:** if an expulsion leaves fewer than H active members, the
   same transaction must fail the affected nonterminal E3 with the supplier-paid
   `InsufficientCommitteeMembers` reason. Reusing this existing reason preserves the persisted enum

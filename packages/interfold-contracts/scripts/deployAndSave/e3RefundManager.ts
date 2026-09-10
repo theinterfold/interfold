@@ -59,10 +59,20 @@ export const deployAndSaveE3RefundManager = async ({
     return { e3RefundManager: e3RefundManagerContract };
   }
 
-  const e3RefundManagerFactory = await ethers.getContractFactory(
-    E3RefundManagerFactory.abi,
-    E3RefundManagerFactory.bytecode,
+  // The claim checks live in an external library, so the implementation is
+  // built by name with the library linked rather than from raw bytecode.
+  const refundClaimLibFactory = await ethers.getContractFactory(
+    "RefundClaimLib",
     signer,
+  );
+  const refundClaimLib = await refundClaimLibFactory.deploy();
+  await refundClaimLib.waitForDeployment();
+  const e3RefundManagerFactory = await ethers.getContractFactory(
+    "E3RefundManager",
+    {
+      signer,
+      libraries: { RefundClaimLib: await refundClaimLib.getAddress() },
+    },
   );
   const e3RefundManager = await e3RefundManagerFactory.deploy();
   await e3RefundManager.waitForDeployment();

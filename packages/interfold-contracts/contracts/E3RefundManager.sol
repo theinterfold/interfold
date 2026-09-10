@@ -18,7 +18,9 @@ import { IE3RefundManager } from "./interfaces/IE3RefundManager.sol";
 import { IInterfold } from "./interfaces/IInterfold.sol";
 import { IBondingRegistry } from "./interfaces/IBondingRegistry.sol";
 import { ICiphernodeRegistry } from "./interfaces/ICiphernodeRegistry.sol";
+import { ISlashingManager } from "./interfaces/ISlashingManager.sol";
 import { FailurePayerLib } from "./lib/FailurePayerLib.sol";
+import { RefundClaimLib } from "./lib/RefundClaimLib.sol";
 
 /**
  * @title E3RefundManager
@@ -244,6 +246,7 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         require(!_distributions[e3Id].calculated, "Already calculated");
         require(originalPayment > 0, "No payment");
         require(address(paymentToken) != address(0), "Invalid fee token");
+        _requireSettlementOpen(e3Id);
 
         // Attribute the failure before touching requester escrow. Supplier-side
         // failures return the entire service escrow; requester-side failures
@@ -421,13 +424,6 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
         return IInterfold.E3Stage.Requested;
     }
 
-    /// @inheritdoc IE3RefundManager
-    function calculateWorkValue(
-        IInterfold.E3Stage stage
-    ) public view returns (uint16 workCompletedBps, uint16 workRemainingBps) {
-        return _calculateWorkValue(stage, _workAllocation);
-    }
-
     function _calculateWorkValue(
         IInterfold.E3Stage stage,
         WorkValueAllocation memory alloc
@@ -503,32 +499,20 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
             "feeToken not initialized"
         );
 
-        // Check that the supplied operator is an honest node.
-        address[] memory nodes = _honestNodes[e3Id];
-        bool isHonest = false;
-        for (uint256 i = 0; i < nodes.length && !isHonest; i++) {
-            isHonest = (nodes[i] == operator);
-        }
-        require(isHonest, NotHonestNode(e3Id, operator));
-
         OperatorEntitlement storage entitlement = _operatorEntitlements[e3Id][
             operator
         ];
-        if (entitlement.pendingExpulsions != 0) {
-            revert RewardPendingExpulsion(e3Id, operator);
-        }
-        bool baseClaimable = !_honestNodeClaimed[e3Id][operator] &&
-            !entitlement.excluded;
-        uint256 topUp = entitlement.baseTopUp;
-        if (!baseClaimable && topUp == 0) {
-            revert AlreadyClaimed(e3Id, operator);
-        }
-
-        address recipient = _rewardRecipients[e3Id][operator];
-        if (recipient == address(0)) {
-            revert RewardRecipientNotSnapshotted(e3Id, operator);
-        }
-        require(msg.sender == recipient, Unauthorized());
+        (bool baseClaimable, uint256 topUp, address recipient) = RefundClaimLib
+            .validateHonestNodeClaim(
+                e3Id,
+                operator,
+                _honestNodes[e3Id],
+                _honestNodeClaimed[e3Id],
+                _rewardRecipients[e3Id],
+                entitlement.pendingExpulsions,
+                entitlement.baseTopUp,
+                entitlement.excluded
+            );
 
         if (baseClaimable) {
             require(dist.honestNodeCount > 0, NoRefundAvailable(e3Id));
@@ -1437,6 +1421,18 @@ contract E3RefundManager is IE3RefundManager, Ownable2StepUpgradeable {
     function _interfoldFor(uint256 e3Id) internal view returns (IInterfold) {
         E3PolicySnapshot storage policy = _e3PolicySnapshots[e3Id];
         return IInterfold(policy.interfold);
+    }
+
+    /// @dev ZEN2-04 follow-up. Blocks the payer snapshot while a committee-affecting
+    ///      proposal is open or can still be filed, up to a constant hard cutoff.
+    ///      The decision and the open count both live in the slashing manager,
+    ///      which owns proposal lifecycle; this contract only asks. The manager
+    ///      read is the one frozen for this E3 at request time.
+    function _requireSettlementOpen(uint256 e3Id) internal view {
+        if (
+            !ISlashingManager(_e3PolicySnapshots[e3Id].slashingManager)
+                .settlementOpen(e3Id)
+        ) revert SettlementBlocked();
     }
 
     function _allocationFor(

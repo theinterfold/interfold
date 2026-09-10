@@ -517,6 +517,43 @@ interface ISlashingManager {
         uint256 e3Id
     ) external view returns (uint64 submissionDeadline);
 
+    /// @notice Returns the timestamp after which failed-E3 settlement may proceed
+    ///         regardless of open committee-affecting proposals.
+    /// @dev ZEN2-04 follow-up. Settlement waits for the accusation window to
+    ///      close and for every committee-affecting proposal to resolve, so an
+    ///      accused member cannot lock in the payer before its own expulsion.
+    ///      This is the constant upper bound on that wait: the accusation
+    ///      deadline plus the longest appeal window any policy may carry plus
+    ///      the resolution grace after which anyone may expire an appeal. By
+    ///      this time every proposal that could have been filed has reached
+    ///      its own terminal time, so the wait cannot exceed it. Returns 0
+    ///      when no snapshot exists, like `accusationSubmissionDeadline`.
+    function settlementCutoff(
+        uint256 e3Id
+    ) external view returns (uint64 cutoff);
+
+    /// @notice Whether failed-E3 settlement may proceed now.
+    /// @dev ZEN2-04 follow-up. Settlement freezes the payer, and only a
+    ///      committee-affecting proposal can move the payer, so only those gate
+    ///      it. Non-expelling slashes compose with settlement in either order,
+    ///      as the reward-eligibility invariant requires. Returns true when:
+    ///      no snapshot exists; the hard cutoff has passed; no committee was
+    ///      ever finalized (nothing to expel, nothing to move); or the accusation
+    ///      window has closed with no committee-affecting proposal open. Both
+    ///      halves of the last case are needed: a wait that ends while filing is
+    ///      still open only moves the race to the end of the wait. Past the
+    ///      cutoff every proposal that could have been filed has reached its own
+    ///      terminal time and `expireAppeal` is permissionless, so a refund can
+    ///      never stick; a proposal still open then executes against the frozen
+    ///      split.
+    /// @param e3Id The E3 being settled.
+    function settlementOpen(uint256 e3Id) external view returns (bool);
+
+    /// @notice Committee-affecting proposals still open for an E3.
+    function openCommitteeProposals(
+        uint256 e3Id
+    ) external view returns (uint256);
+
     /// @notice Return a slash route that remains pending after an initial failure.
     function getPendingSlashRoute(
         uint256 proposalId

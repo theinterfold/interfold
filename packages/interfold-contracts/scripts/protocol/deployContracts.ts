@@ -128,7 +128,12 @@ export async function deployProtocolContracts(
     ]),
   );
 
-  const refundFactory = await ethers.getContractFactory("E3RefundManager");
+  const refundClaimFactory = await ethers.getContractFactory("RefundClaimLib");
+  const refundClaimLib = await refundClaimFactory.deploy();
+  await refundClaimLib.waitForDeployment();
+  const refundFactory = await ethers.getContractFactory("E3RefundManager", {
+    libraries: { RefundClaimLib: await deployedAddress(refundClaimLib) },
+  });
   const refundImpl = await refundFactory.deploy();
   await refundImpl.waitForDeployment();
   const e3RefundManagerImplementation = await deployedAddress(refundImpl);
