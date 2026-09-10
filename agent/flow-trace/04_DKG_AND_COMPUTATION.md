@@ -14,6 +14,15 @@ Delegated bonding does not alter cryptographic identity. Every ECDSA proof signa
 by the hot operator key and verified against the operator address snapshotted into the committee.
 The bond owner never signs DKG, key-publication, computation, or decryption messages.
 
+C1 (`core/threshold/pk_generation.nr`) selects compact arithmetic for secure-8192. It proves the
+key-generation relation in `Z[X]/(X^N+1)` with one short quotient derived from the existing `r1`
+witness, instead of the full-degree `r1`/`r2` pair. Insecure-512 and secure-16384 keep the original
+path. The private entry-point layout, the public outputs, and the commitment formats are unchanged,
+so C2a, C2b, and C5 see the same values. The new checking transcript requires new verification keys,
+dependent recursive artifacts, and matching on-chain verifiers before deployment. The path also adds
+canonical-interval checks on `pk0` and `e_sm`; without them a party can open one public key under
+several distinct `commit(pk_trbfv)` values.
+
 ---
 
 ## Phase 1: DKG — Distributed Key Generation
