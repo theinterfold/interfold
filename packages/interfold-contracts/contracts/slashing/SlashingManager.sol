@@ -54,7 +54,7 @@ contract SlashingManager is
     ///         resolve a filed appeal. Expiry is fail-safe in the operator's favour.
     uint64 public constant APPEAL_RESOLUTION_GRACE = 7 days;
 
-    /// @notice Time after the latest possible E3 lifecycle deadline for Lane A reports.
+    /// @notice Reporting time after the latest possible E3 lifecycle deadline.
     uint64 public constant ACCUSATION_REPORTING_WINDOW = 1 days;
 
     /// @notice Emitted when {bondingRegistry} is updated.
@@ -354,7 +354,6 @@ contract SlashingManager is
         E3Dependencies storage dependencies = _e3Dependencies[e3Id];
         uint64 deadline = dependencies.slashSubmissionDeadline;
         if (deadline == 0) return true;
-        if (block.timestamp > _settlementCutoff(deadline)) return true;
         if (_openCommitteeProposals[e3Id] != 0) return false;
         // No committee was ever finalized: there is no member to expel and no
         // payer to move, so the accusation window is not waited for.
@@ -815,6 +814,14 @@ contract SlashingManager is
         uint256 proposalId
     ) internal {
         E3Dependencies memory dependencies = _dependenciesFor(proposal.e3Id);
+        // Both lanes close payer-affecting admission before failed-E3 settlement.
+        // Check every non-complete stage: a delayed failure call must not reopen it.
+        if (
+            proposal.affectsCommittee &&
+            block.timestamp > dependencies.slashSubmissionDeadline &&
+            dependencies.interfoldContract.getE3Stage(proposal.e3Id) !=
+            IInterfold.E3Stage.Complete
+        ) revert SlashSubmissionDeadlinePassed();
         _openProposalCount[proposal.operator]++;
         if (proposal.affectsCommittee) _openCommitteeProposals[proposal.e3Id]++;
         dependencies.bonding.openSlashLock(

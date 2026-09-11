@@ -352,11 +352,12 @@ design citation alone does not establish current runtime behavior.
   keyed by **operator** in `E3RefundManager._operatorEntitlements` until withdrawal, and every claim
   path re-checks `pendingExpulsions` and `excluded` at claim time, so a proposal opened after
   settlement still holds the allocation and two operators sharing one recipient keep independent
-  entitlements. On a **failed** E3 the settlement gate below means every expulsion resolves before
-  `calculateRefund`, so the base split is taken over the post-expulsion roster and the
-  post-settlement reallocation paths (`_takeForfeitedBaseReward`, `_redistributeHeldSlash`) are
-  exercised only on successful E3s, whose accusation window stays open after completion. —
-  `flow-trace/05`, `flow-trace/06`; INDEX concerns ZEN2-20
+  entitlements. On a **failed** E3 both lanes close expelling-proposal admission at the reporting
+  deadline, and every admitted expulsion resolves before `calculateRefund`. The base split uses the
+  post-expulsion roster, and the post-settlement reallocation paths (`_takeForfeitedBaseReward`,
+  `_redistributeHeldSlash`) are exercised only on successful E3s. Lane A retains its reporting
+  deadline, while Lane B permits later completed-round proposals while the dependencies remain
+  assigned. — `flow-trace/05`, `flow-trace/06`; INDEX concerns ZEN2-20
 - Slash-policy validity: `!requiresProof ⇒ appealWindow > 0`; ≥1 nonzero penalty. The retained
   `failureReason` field is 0 or `InsufficientCommitteeMembers`; execution does not select failure
   attribution from policy data. — `flow-trace/05`; INDEX concerns Z-07, Z-32
@@ -374,21 +375,27 @@ design citation alone does not establish current runtime behavior.
   proposal for the E3 is open (`_openCommitteeProposals`, incremented in `_openProposal` and
   decremented on every terminal path through `_closeProposalCount`). A round that never finalized a
   committee has no member to expel and no payer to move, so it settles at once. Non-expelling
-  penalties never gate. Past the constant `settlementCutoff` = `slashSubmissionDeadline` +
-  `MAX_APPEAL_WINDOW` + `APPEAL_RESOLUTION_GRACE` (38 days) settlement proceeds regardless, so an
-  appealed proposal that governance never resolves cannot hold a refund forever; `expireAppeal` is
-  the permissionless lever that clears it earlier. A calculated refund still never changes: the gate
-  moves _when_ it is calculated, not what it can become. — `flow-trace/05`; INDEX concerns ZEN2-04
+  penalties never gate. Both lanes reject new expelling proposals after the frozen reporting
+  deadline for every non-complete E3, including an overdue E3 not yet marked failed. Lane B keeps
+  late non-expelling penalties and completed-round proposals. `settlementCutoff` retains its ABI and
+  formula (`slashSubmissionDeadline` + `MAX_APPEAL_WINDOW` + `APPEAL_RESOLUTION_GRACE`), but never
+  bypasses an open proposal. By that time, each timely proposal can be resolved through
+  permissionless execution or unresolved-appeal expiry. Rejected appeals still require execution.
+  Settlement waits for those transactions to succeed; time alone does not close a proposal. The
+  reporting allowance remains one day after the scheduled lifecycle deadline, not after
+  `markE3Failed`. Its operational sufficiency is not established by these checks. A calculated
+  refund still never changes: the gate moves _when_ it is calculated, not what it can become. —
+  `flow-trace/05`; INDEX concerns ZEN2-04
 - **Committee viability loss is atomic:** if an expulsion leaves fewer than H active members, the
   same transaction must fail the affected nonterminal E3 with the supplier-paid
   `InsufficientCommitteeMembers` reason. Reusing this existing reason preserves the persisted enum
   layout. A failed callback rolls back the penalties, ban, and expulsion. Complete and failed E3s
-  allow later slashes; on a failed E3 the expulsion additionally attempts the reclassification
-  above, which is a no-op when it no longer applies. Committee key, ciphertext, and plaintext
-  publication all require a currently viable request-time committee. Ciphertext publication checks
-  the stage and that viability again after `IE3Program.verify` returns, because an application
-  callback can slash a member and record a terminal failure through `onE3Failed`, outside the
-  publication reentrancy guard. A failed recheck reverts the complete transaction. —
+  allow execution of admitted slashes; on a failed E3 the expulsion additionally attempts the
+  reclassification above, which is a no-op when it no longer applies. Committee key, ciphertext, and
+  plaintext publication all require a currently viable request-time committee. Ciphertext
+  publication checks the stage and that viability again after `IE3Program.verify` returns, because
+  an application callback can slash a member and record a terminal failure through `onE3Failed`,
+  outside the publication reentrancy guard. A failed recheck reverts the complete transaction. —
   `flow-trace/04`, `05`; INDEX concerns Z-32, ZEN2-04, ZEN2-26
 - Accusation quorum: `agree_count >= threshold_m`; voters must be active committee members; all
   votes agree. Lane A is **attestation-based** (ECDSA per voter), not on-chain ZK re-verification.

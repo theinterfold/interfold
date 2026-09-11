@@ -184,12 +184,12 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │  │  0. ZEN2-04 gate: revert SettlementBlocked unless     │
 │     │  │     slashingManager.settlementOpen(e3Id):             │
 │     │  │       accusation window closed AND no affectsCommittee│
-│     │  │       proposal open for this E3, OR past the constant │
-│     │  │       settlementCutoff (window + 30d + 7d).           │
+│     │  │       proposal open for this E3. The constant        │
+│     │  │       settlementCutoff never bypasses a proposal.    │
 │     │  │     A round with no finalized committee passes at     │
 │     │  │     once. Non-expelling penalties never gate. So on a │
-│     │  │     failed E3 every expulsion resolves before this    │
-│     │  │     point and `honestNodes` is the post-expulsion     │
+│     │  │     failed E3 every admitted expulsion resolves here. │
+│     │  │     `honestNodes` is the post-expulsion               │
 │     │  │     roster; the base split never has to be reallocated│
 │     │  │     for a later expulsion.                            │
 │     │  │                                                       │
@@ -755,6 +755,11 @@ SLASHER_ROLE calls: SlashingManager.proposeSlashEvidence(
 ├─ 2. Require the snapshotted E3 dependency graph exists and
 │     registry.isCommitteeMember(e3Id, operator)
 │     → Evidence cannot slash an unrelated operator into another E3's escrow
+│     → The shared _openProposal guard rejects affectsCommittee proposals
+│       after slashSubmissionDeadline unless the E3 is Complete. This also
+│       covers overdue E3s that have not yet been marked Failed.
+│     → Late non-expelling penalties and completed-round Lane B proposals remain valid
+│       subject to the existing role, dependency, membership, policy, and collateral checks
 │
 ├─ 3. Replay protection:
 │     evidenceHash = keccak256(abi.encode(e3Id, operator, keccak256(evidence)))
@@ -807,6 +812,18 @@ If governance does not resolve a filed appeal by
 `executableAt + APPEAL_RESOLUTION_GRACE`, anyone may call `expireAppeal`.
 Expiry conclusively upholds the appeal and releases the collateral gate.
 It also clears the E3 entitlement hold.
+
+Failed-E3 settlement requires every admitted expelling proposal to reach a terminal outcome.
+The retained `settlementCutoff` getter equals the reporting deadline plus 30 days plus 7 days.
+It bounds resolution eligibility for timely proposals, not automatic settlement. Unappealed
+proposals and rejected appeals require successful `executeSlash` calls. An unresolved filed appeal
+requires governance resolution or a successful permissionless `expireAppeal` call. An execution
+failure leaves the proposal open and settlement blocked until resolution succeeds.
+
+The reporting deadline remains the scheduled lifecycle deadline plus one day. A late
+`markE3Failed` call does not restart that window. This duration is an operational assumption,
+not a guarantee that fault detection and reporting finish in time. Late evidence cannot change a
+failed round's payer through expulsion; non-expelling penalties do not compensate the requester.
 
 ─── AFTER APPEAL WINDOW ──────────────────────────────────────
 

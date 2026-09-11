@@ -517,35 +517,25 @@ interface ISlashingManager {
         uint256 e3Id
     ) external view returns (uint64 submissionDeadline);
 
-    /// @notice Returns the timestamp after which failed-E3 settlement may proceed
-    ///         regardless of open committee-affecting proposals.
-    /// @dev ZEN2-04 follow-up. Settlement waits for the accusation window to
-    ///      close and for every committee-affecting proposal to resolve, so an
-    ///      accused member cannot lock in the payer before its own expulsion.
-    ///      This is the constant upper bound on that wait: the accusation
-    ///      deadline plus the longest appeal window any policy may carry plus
-    ///      the resolution grace after which anyone may expire an appeal. By
-    ///      this time every proposal that could have been filed has reached
-    ///      its own terminal time, so the wait cannot exceed it. Returns 0
-    ///      when no snapshot exists, like `accusationSubmissionDeadline`.
+    /// @notice Returns the resolution eligibility bound for reports admitted by the deadline.
+    /// @dev Equals the submission deadline plus the
+    ///      maximum appeal window plus the resolution grace. By this time,
+    ///      anyone can execute an unappealed proposal or one with a rejected
+    ///      appeal, or expire an unresolved appeal. These transactions must
+    ///      succeed before settlement. This timestamp never bypasses an open
+    ///      proposal. Returns 0 when no snapshot exists.
     function settlementCutoff(
         uint256 e3Id
     ) external view returns (uint64 cutoff);
 
     /// @notice Whether failed-E3 settlement may proceed now.
-    /// @dev ZEN2-04 follow-up. Settlement freezes the payer, and only a
-    ///      committee-affecting proposal can move the payer, so only those gate
-    ///      it. Non-expelling slashes compose with settlement in either order,
-    ///      as the reward-eligibility invariant requires. Returns true when:
-    ///      no snapshot exists; the hard cutoff has passed; no committee was
-    ///      ever finalized (nothing to expel, nothing to move); or the accusation
-    ///      window has closed with no committee-affecting proposal open. Both
-    ///      halves of the last case are needed: a wait that ends while filing is
-    ///      still open only moves the race to the end of the wait. Past the
-    ///      cutoff every proposal that could have been filed has reached its own
-    ///      terminal time and `expireAppeal` is permissionless, so a refund can
-    ///      never stick; a proposal still open then executes against the frozen
-    ///      split.
+    /// @dev Settlement freezes the payer. Both lanes reject new expelling
+    ///      proposals after the reporting deadline unless the E3 is Complete.
+    ///      Settlement requires the window to close and every expelling
+    ///      proposal to reach a terminal outcome, even after settlementCutoff.
+    ///      Non-expelling penalties never gate. An E3 without a snapshot, or
+    ///      without a finalized committee and any open expelling proposal,
+    ///      settles without waiting for the window.
     /// @param e3Id The E3 being settled.
     function settlementOpen(uint256 e3Id) external view returns (bool);
 
@@ -706,6 +696,8 @@ interface ISlashingManager {
     /**
      * @notice Creates a new slash proposal with evidence (Lane B - SLASHER_ROLE required)
      * @dev Only callable by SLASHER_ROLE. Evidence-based slashes have appeal windows.
+     *      After the E3 reporting deadline, an expelling policy requires a Complete E3.
+     *      Non-expelling policies do not have this admission deadline.
      * @param e3Id ID of the E3 computation this slash relates to
      * @param operator Address of the ciphernode operator to slash (must be non-zero)
      * @param reason Hash of the slash reason (must have an enabled non-proof policy)
