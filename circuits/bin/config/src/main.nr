@@ -40,7 +40,8 @@ use lib::configs::default::threshold::{
     Q_MOD_T_CENTERED as THRESHOLD_Q_MOD_T_CENTERED, Q_INVERSE_MOD_T as THRESHOLD_Q_INVERSE_MOD_T,
     // pk_generation bounds
     PK_GENERATION_EEK_BOUND, PK_GENERATION_SK_BOUND, PK_GENERATION_E_SM_BOUND,
-    PK_GENERATION_R1_BOUNDS, PK_GENERATION_R2_BOUNDS, PARAMS_SMUDGING_B_ENC,
+    PK_GENERATION_R1_BOUNDS, PK_GENERATION_R2_BOUNDS, PK_GENERATION_BIT_R1,
+    PARAMS_SMUDGING_B_ENC,
     // share_decryption bounds
     THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS, THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS,
     // user_data_encryption bounds
@@ -361,6 +362,16 @@ fn verify_pk_generation_bounds() {
             PK_GENERATION_R1_BOUNDS[i] as u128 == expected_r1,
             "PK_GENERATION_R1_BOUNDS mismatch",
         );
+
+        // bit_r1 must be the exact bit width of r1_bounds[i]. C1's compact path derives its
+        // quotient window from it, so a width that drifts either way breaks that circuit: too
+        // small and the window no longer holds the forced quotient, too large and it wastes a
+        // range check on every coefficient.
+        // r1_bounds[i] < 2^bit_r1
+        PK_GENERATION_R1_BOUNDS[i].assert_max_bit_size::<PK_GENERATION_BIT_R1>();
+        // r1_bounds[i] >= 2^(bit_r1 - 1); a wider width would wrap this difference
+        (PK_GENERATION_R1_BOUNDS[i] - 2.pow_32((PK_GENERATION_BIT_R1 - 1) as Field))
+            .assert_max_bit_size::<PK_GENERATION_BIT_R1>();
     }
 
     verify_e_sm_bound();

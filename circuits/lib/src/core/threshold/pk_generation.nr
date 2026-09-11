@@ -133,7 +133,7 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
             for l in 0..L {
                 q_short[l] = fold_negacyclic(self.r1[l]);
             }
-            prove_secure::<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_PK, N_CHUNKS, CHUNK_SIZE>(
+            prove_secure::<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_PK, N_CHUNKS, CHUNK_SIZE, BIT_R1>(
                 self.configs,
                 self.a,
                 self.eek,
@@ -237,8 +237,9 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
 ///
 /// Every operand of the checked equation is bounded before it is used, which is what makes the
 /// field identity imply the integer one: `pk0` and `e_sm` to their canonical centered intervals,
-/// `eek` and `sk` to their configured bounds, and each `q_short` coefficient to a 14-bit window.
-fn prove_secure<let N: u32, let L: u32, let BE: u32, let BS: u32, let BESM: u32, let BPK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32>(
+/// `eek` and `sk` to their configured bounds, and each `q_short` coefficient to a window derived
+/// from `BR1`, the configured bit width of the `r1` bound.
+fn prove_secure<let N: u32, let L: u32, let BE: u32, let BS: u32, let BESM: u32, let BPK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BR1: u32>(
     configs: Configs<N, L>,
     a: [Polynomial<N>; L],
     eek: Polynomial<N>,
@@ -254,6 +255,7 @@ fn prove_secure<let N: u32, let L: u32, let BE: u32, let BS: u32, let BESM: u32,
     assert(BS == 1);
     sk.range_check_2bounds::<BS>(1, 1);
     eek.range_check_2bounds::<BE>(20, 20);
+    let short_offset = 2.pow_32(BR1 as Field);
     for l in 0..L {
         centered(pk0is[l], configs.qis[l]);
         // The Rust generator already centers each noise residue modulo q_l. Prove that the
@@ -264,10 +266,11 @@ fn prove_secure<let N: u32, let L: u32, let BE: u32, let BS: u32, let BESM: u32,
         configs.e_sm_bound.assert_max_bit_size::<BESM>();
         (configs.e_sm_bound - (configs.qis[l] - 1) / 2).assert_max_bit_size::<BESM>();
         centered(e_sm[l], configs.qis[l]);
-        // |short| is at most N/2, so this window has ample margin. It is also what any r1 within
-        // its configured bound can fold to, so every witness the original path accepts still fits.
+        // The window is `[-2^BR1, 2^BR1 - 1]`, which always contains the forced quotient: a bit
+        // width of `BR1` means the r1 bound is below `2^BR1`, and `|short|` cannot exceed it.
+        // `bin/config` pins `BR1` against that bound at both ends.
         for j in 0..N {
-            (q_short[l].coefficients[j] + 8192).assert_max_bit_size::<14>();
+            (q_short[l].coefficients[j] + short_offset).assert_max_bit_size::<BR1 + 1>();
         }
     }
     let sc = compute_sc_sk_secret_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BS>(sk);
@@ -278,7 +281,7 @@ fn prove_secure<let N: u32, let L: u32, let BE: u32, let BS: u32, let BESM: u32,
     payload = append::<N, 6>(payload, eek, 20);
     for l in 0..L {
         payload = payload.push_back(configs.qis[l]);
-        payload = append::<N, 14>(payload, q_short[l], 8192);
+        payload = append::<N, BR1 + 1>(payload, q_short[l], short_offset);
     }
     let x = challenge(payload);
     let k = kernel(sk, x);
