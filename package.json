@@ -17,6 +17,7 @@
     "release:tag": "node scripts/release.mjs tag",
     "test:release": "node --test scripts/release.test.mjs",
     "test:harnesses": "node --test scripts/test-harnesses.test.mjs",
+    "test:dappnode": "bash dappnode/tests/test-hardening.sh",
     "build:circuits": "tsx scripts/build-circuits.ts",
     "generate:verifiers": "tsx scripts/generate-verifiers.ts --circuits dkg_aggregator,decryption_aggregator",
     "test:verifier-tooling": "tsx --test scripts/generate-verifiers.test.ts",

@@ -2,7 +2,7 @@
 
 import assert from 'node:assert/strict'
 import { spawnSync } from 'node:child_process'
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { test } from 'node:test'
@@ -11,7 +11,7 @@ import { fileURLToPath } from 'node:url'
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
 function fixture(t, script) {
-  const directory = mkdtempSync(join(tmpdir(), 'interfold-harness-test-'))
+  const directory = realpathSync(mkdtempSync(join(tmpdir(), 'interfold-harness-test-')))
   t.after(() => rmSync(directory, { recursive: true, force: true }))
   const executable = join(directory, script)
   const bin = join(directory, 'fake-bin')
@@ -264,5 +264,191 @@ for (const env of [{ RPC_ERROR: '1' }, { RPC_MINE_ERROR: '1' }, { RPC_TRANSPORT_
     const f = timing(t, 'set_integration_input_window; advance_evm_timestamp "$INPUT_WINDOW_END"', env)
     assert.notEqual(f.result.status, 0, f.result.stderr)
     if (!env.RPC_MINE_ERROR) assert.ok(f.calls().every((c) => JSON.parse(c.args.at(-1)).method === 'eth_getBlockByNumber'))
+  })
+}
+
+function isolatedCrisp(t) {
+  const f = fixture(t, 'scripts/run-crisp-test.sh')
+  f.write('fake-bin/bb', 'process.exit(0);')
+  f.write('existing-bin/interfold', 'original installed binary')
+  writeFileSync(join(f.directory, 'notes.txt'), 'unrelated caller data')
+  f.write(
+    'fake-bin/git',
+    `${record}
+if (args[2] === 'status') { if (process.env.WORKTREE_DIRTY) console.log(' M changed.rs'); process.exit(process.env.WORKTREE_STATUS_FAIL ? 17 : 0); }
+if (args[3] === 'remove' && process.env.WORKTREE_REMOVE_FAIL) process.exit(17);
+if (args[2] === 'worktree' && args[3] === 'add') {
+  if (process.env.WORKTREE_ADD_FAIL) process.exit(17);
+  fs.mkdirSync(require('node:path').join(args[5], 'examples/CRISP'), { recursive: true });
+} else if (args[2] !== 'submodule' && !(args[2] === 'worktree' && args[3] === 'remove')) process.exit(99);`,
+  )
+  f.write(
+    'fake-bin/rm',
+    `${record}
+if (args.length !== 2 || args[0] !== '-rf' || !args[1].startsWith(process.env.TMPDIR + '/interfold-crisp-e2e.')) process.exit(99);
+fs.rmSync(args[1], { recursive: true });`,
+  )
+  f.write(
+    'fake-bin/pnpm',
+    `const fs = require('node:fs');
+const args = process.argv.slice(2);
+fs.appendFileSync(process.env.HARNESS_LOG, JSON.stringify({ args, cwd: process.cwd(), installRoot: process.env.CARGO_INSTALL_ROOT }) + '\\n');
+fs.mkdirSync(process.env.CARGO_INSTALL_ROOT + '/bin', { recursive: true });
+fs.writeFileSync(process.env.CARGO_INSTALL_ROOT + '/bin/interfold', 'isolated binary');
+process.exit(process.env.HARNESS_FAIL === args[0] ? 17 : 0);`,
+  )
+  return f
+}
+
+test('isolated CRISP preserves caller files, installs locally, and forwards test arguments', (t) => {
+  const f = isolatedCrisp(t)
+  const installed = readFileSync(join(f.directory, 'existing-bin/interfold'), 'utf8')
+  const result = f.run(['--ui'])
+  assert.equal(result.status, 0, result.stderr)
+  const commands = f.calls().filter((c) => c.installRoot)
+  assert.deepEqual(
+    commands.map((c) => c.args),
+    [['dev:setup'], ['test:e2e', '--ui']],
+  )
+  assert.ok(commands.every((c) => c.cwd.startsWith(f.temporary + '/') && c.cwd.endsWith('/source/examples/CRISP')))
+  assert.ok(commands.every((c) => c.installRoot === resolve(c.cwd, '../../../cli')))
+  assert.equal(readFileSync(join(f.directory, 'notes.txt'), 'utf8'), 'unrelated caller data')
+  assert.equal(readFileSync(join(f.directory, 'existing-bin/interfold'), 'utf8'), installed)
+  assert.deepEqual(readdirSync(f.temporary), [])
+})
+
+for (const failed of ['dev:setup', 'test:e2e']) {
+  test(`isolated CRISP propagates ${failed} failure and retains its checkout`, (t) => {
+    const f = isolatedCrisp(t)
+    const result = f.run([], { HARNESS_FAIL: failed })
+    assert.equal(result.status, 17, result.stderr)
+    assert.equal(f.calls().at(-1).args[0], failed)
+    assert.match(result.stderr, /Retained checkout and build files/)
+    assert.equal(readdirSync(f.temporary).length, 1)
+  })
+}
+
+test('isolated CRISP rejects pending source changes before creating a worktree', (t) => {
+  const f = isolatedCrisp(t)
+  const result = f.run([], { WORKTREE_DIRTY: '1' })
+  assert.equal(result.status, 1, result.stderr)
+  assert.equal(f.calls().length, 1)
+  assert.deepEqual(readdirSync(f.temporary), [])
+})
+
+test('isolated CRISP stops if its checkout cannot be created', (t) => {
+  const f = isolatedCrisp(t)
+  assert.equal(f.run([], { WORKTREE_ADD_FAIL: '1' }).status, 17)
+  assert.ok(f.calls().every((c) => !c.installRoot))
+})
+
+test('isolated CRISP stops if source status cannot be read', (t) => {
+  const f = isolatedCrisp(t)
+  assert.equal(f.run([], { WORKTREE_STATUS_FAIL: '1' }).status, 17)
+  assert.equal(f.calls().length, 1)
+  assert.deepEqual(readdirSync(f.temporary), [])
+})
+
+test('isolated CRISP reports cleanup failure and retains its test files', (t) => {
+  const f = isolatedCrisp(t)
+  assert.equal(f.run([], { WORKTREE_REMOVE_FAIL: '1' }).status, 17)
+  assert.equal(readdirSync(f.temporary).length, 1)
+  assert.equal(f.calls().at(-1).args[3], 'remove')
+})
+
+test('isolated CRISP preserves a real Git checkout and its submodule', (t) => {
+  const f = isolatedCrisp(t)
+  rmSync(join(f.directory, 'fake-bin/git'))
+  mkdirSync(join(f.directory, 'examples/CRISP'), { recursive: true })
+  writeFileSync(join(f.directory, 'examples/CRISP/.keep'), '')
+  writeFileSync(join(f.directory, '.gitignore'), '/fake-bin/\n/existing-bin/\n/fixture-dependency/\n/notes.txt\n/commands.jsonl\n/tmp/\n')
+  const git = (...args) => {
+    const result = spawnSync('git', ['-C', f.directory, '-c', 'core.hooksPath=/dev/null', ...args], { encoding: 'utf8', timeout: 10_000 })
+    assert.equal(result.status, 0, result.stderr)
+    return result.stdout.trim()
+  }
+  git('init', '-q')
+  git('config', 'core.hooksPath', '/dev/null')
+  const commit = (...args) =>
+    git(
+      ...args,
+      '-c',
+      'user.name=Harness Test',
+      '-c',
+      'user.email=harness@example.invalid',
+      '-c',
+      'commit.gpgsign=false',
+      'commit',
+      '-qm',
+      'fix: add isolated fixture',
+    )
+  const dependency = join(f.directory, 'fixture-dependency')
+  git('init', '-q', dependency)
+  writeFileSync(join(dependency, 'README'), 'local dependency')
+  git('-C', dependency, 'add', 'README')
+  commit('-C', dependency)
+  git('-c', 'protocol.file.allow=always', 'submodule', 'add', dependency, 'examples/CRISP/dependency')
+  git('add', 'scripts/run-crisp-test.sh', 'examples/CRISP/.keep', '.gitignore', '.gitmodules', 'examples/CRISP/dependency')
+  commit()
+  const head = git('rev-parse', 'HEAD')
+  const result = f.run([], { GIT_ALLOW_PROTOCOL: 'file' })
+  assert.equal(result.status, 0, result.stderr)
+  assert.equal(git('rev-parse', 'HEAD'), head)
+  assert.equal(git('status', '--porcelain'), '')
+  assert.equal(
+    git('worktree', 'list', '--porcelain')
+      .split('\n')
+      .filter((line) => line.startsWith('worktree ')).length,
+    1,
+  )
+  assert.equal(f.calls().filter((c) => c.installRoot).length, 2)
+  assert.equal(readFileSync(join(f.directory, 'notes.txt'), 'utf8'), 'unrelated caller data')
+  assert.equal(readFileSync(join(f.directory, 'examples/CRISP/dependency/README'), 'utf8'), 'local dependency')
+  assert.deepEqual(readdirSync(f.temporary), [])
+})
+
+for (const hasEnv of [false, true]) {
+  test(`sale rehearsal reports missing ${hasEnv ? 'credentials' : 'env file'} before any command`, (t) => {
+    const f = fixture(t, 'scripts/cca-demo.sh')
+    if (hasEnv) {
+      mkdirSync(join(f.directory, 'packages/interfold-contracts'), { recursive: true })
+      writeFileSync(join(f.directory, 'packages/interfold-contracts/.env'), 'PRIVATE_KEY=\nSAFE_API_KEY=\n')
+    }
+    f.write('fake-bin/pnpm', `${record}\nprocess.exit(99);`)
+    const result = f.run([], { PRIVATE_KEY: '', SAFE_API_KEY: '' })
+    assert.equal(result.status, 1, result.stderr)
+    assert.doesNotMatch(result.stderr, /command not found/)
+    assert.match(result.stdout, hasEnv ? /PRIVATE_KEY not found/ : /\.env not found/)
+    assert.deepEqual(f.calls(), [])
+  })
+}
+
+test('sale rehearsal loads configuration and propagates compile failure without deploying', (t) => {
+  const f = fixture(t, 'scripts/cca-demo.sh')
+  mkdirSync(join(f.directory, 'packages/interfold-contracts'), { recursive: true })
+  writeFileSync(join(f.directory, 'packages/interfold-contracts/.env'), 'PRIVATE_KEY=fixture-only\nSAFE_API_KEY=fixture-only\n')
+  f.write('fake-bin/pnpm', `${record}\nprocess.exit(17);`)
+  const result = f.run()
+  assert.equal(result.status, 17, result.stderr)
+  assert.deepEqual(
+    f.calls().map((c) => c.args),
+    [['compile']],
+  )
+})
+
+for (const tool of ['node', 'jq', 'envsubst']) {
+  test(`DAppNode tests fail before setup when ${tool} is unavailable`, () => {
+    const result = spawnSync(
+      'bash',
+      ['-c', 'command() { [[ "$2" != "$MISSING_TOOL" ]]; }; source "$1"', '--', join(repo, 'dappnode/tests/test-hardening.sh')],
+      {
+        env: { ...process.env, MISSING_TOOL: tool },
+        encoding: 'utf8',
+        timeout: 10_000,
+      },
+    )
+    assert.equal(result.status, 1, result.stderr)
+    assert.match(result.stderr, new RegExp(`Required test tool is missing: ${tool}`))
+    assert.doesNotMatch(result.stdout, /PASS/)
   })
 }
