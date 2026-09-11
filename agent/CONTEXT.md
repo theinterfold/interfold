@@ -66,6 +66,8 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | Lint / format               | `pnpm lint` · `pnpm format` / `pnpm format:check`                                                                                                  |
 | Build circuits              | `pnpm build:circuits [--preset …] [--committee …]` (needs `nargo` + `bb`; `interfold noir setup` installs them)                                    |
 | Generate Solidity verifiers | `pnpm generate:verifiers [--check\|--write]`                                                                                                       |
+| Verifier selection tests    | `pnpm test:verifier-tooling` (isolated CLI fixtures; no proof generation)                                                                          |
+| Noir runner tests           | `pnpm test:noir-runner` (package selection and failure propagation; command stand-ins)                                                             |
 | Circuit artifact cache      | `pnpm store:circuits push\|pull` (orphan branch `circuit-artifacts`)                                                                               |
 | Consistency checks          | `pnpm check:committee` · `check:docs` · `check:addresses` · `check:invariants` · `check:license` · `check:verifiers` · `check:pnpm` · `check:size` |
 | Prepare release branch      | `pnpm bump:versions X.Y.Z`                                                                                                                         |
@@ -118,6 +120,10 @@ Barretenberg `bb` (versions pinned in `crates/zk-prover/versions.json`) · FHE v
 opentelemetry/tracing.
 
 ## Circuit map (IDs ↔ `CircuitName` in `crates/events`)
+
+`pnpm noir:test` runs the Noir library tests and the standalone recursive-decryption party-ID guard
+tests. Verifier generation and consistency checks fail if the selected circuit set is empty or any
+requested circuit is missing after group filtering.
 
 - **DKG** (`circuits/bin/dkg/`): C0 `pk` (PkBfv) · C2a `sk_share_computation` · C2b
   `e_sm_share_computation` · C3 `share_encryption` · C4 `share_decryption`
