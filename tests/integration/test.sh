@@ -21,7 +21,7 @@ parse_integration_args() {
         ;;
       *)
         echo "Unknown integration argument: $1" >&2
-        echo "Usage: ./test.sh [base|persist|net] [--skip-proof-aggregation true|false] [--no-prebuild]" >&2
+        echo "Usage: ./test.sh [base|persist|net|prebuild] [--skip-proof-aggregation true|false] [--no-prebuild]" >&2
         exit 1
         ;;
     esac
@@ -61,9 +61,9 @@ else
   SCRIPT_NAME="$1"
   shift
   case "$SCRIPT_NAME" in
-    base|persist|net) ;;
+    base|persist|net|prebuild) ;;
     *)
-      echo "Unknown integration scenario: $SCRIPT_NAME (expected base, persist, or net)" >&2
+      echo "Unknown integration entry point: $SCRIPT_NAME (expected base, persist, net, or prebuild)" >&2
       exit 1
       ;;
   esac

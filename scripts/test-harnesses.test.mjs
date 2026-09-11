@@ -50,7 +50,7 @@ fs.appendFileSync(process.env.HARNESS_LOG, JSON.stringify({ args, skip: process.
 
 function integration(t) {
   const f = fixture(t, 'tests/integration/test.sh')
-  for (const name of ['lib/prebuild', 'persist', 'base', 'net']) {
+  for (const name of ['lib/prebuild', 'prebuild', 'persist', 'base', 'net']) {
     f.write(
       `tests/integration/${name}.sh`,
       `
@@ -78,6 +78,16 @@ test('an individual integration scenario preserves the requested proof mode', (t
   const result = f.run(['net', '--no-prebuild', '--skip-proof-aggregation', 'false'])
   assert.equal(result.status, 0, result.stderr)
   assert.deepEqual(f.calls(), [{ name: 'net', skip: 'false' }])
+})
+
+test('the CI prebuild entry point prepares fixtures exactly once', (t) => {
+  const f = integration(t)
+  const result = f.run(['prebuild'])
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(
+    f.calls().map((c) => c.name),
+    ['lib/prebuild', 'prebuild'],
+  )
 })
 
 test('an unknown integration scenario fails before prebuild', (t) => {
