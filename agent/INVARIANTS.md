@@ -217,8 +217,11 @@ design citation alone does not establish current runtime behavior.
   re-requests an E3, checks the configured subscription balance floor before requesting, and the
   Registry rejects responses from the Ethereum request block, future-dated responses, and late
   responses. This release supports Ethereum mainnet, Sepolia, and local development chains only. The
-  first request that expires without a usable response clears the active provider. This blocks new
-  requests until governance pauses the protocol and restores a provider. A timely accepted response
+  provider reserves the subscription balance floor for each unfulfilled draw, thus a burst of
+  requests in one block cannot all pass the same balance check. A request that expires without a
+  usable response sets an advisory `degraded` flag and emits `RandomnessCircuitBreakerTripped`. It
+  does not clear the active provider, because that path is permissionless and registry-global.
+  Governance reads the flag and re-points the provider, which clears it. A timely accepted response
   remains readable after terminal cleanup so fresh historical replay derives the same committee
   request; late responses remain unusable. Rust reads the accepted seed and request context at the
   fulfillment block. If historical block state is unavailable, it accepts retained current state
@@ -349,7 +352,12 @@ design citation alone does not establish current runtime behavior.
   keyed by **operator** in `E3RefundManager._operatorEntitlements` until withdrawal, and every claim
   path re-checks `pendingExpulsions` and `excluded` at claim time, so a proposal opened after
   settlement still holds the allocation and two operators sharing one recipient keep independent
-  entitlements. — `flow-trace/05`, `flow-trace/06`; INDEX concerns ZEN2-20
+  entitlements. On a **failed** E3 both lanes close expelling-proposal admission at the reporting
+  deadline, and every admitted expulsion resolves before `calculateRefund`. The base split uses the
+  post-expulsion roster, and the post-settlement reallocation paths (`_takeForfeitedBaseReward`,
+  `_redistributeHeldSlash`) are exercised only on successful E3s. Lane A retains its reporting
+  deadline, while Lane B permits later completed-round proposals while the dependencies remain
+  assigned. — `flow-trace/05`, `flow-trace/06`; INDEX concerns ZEN2-20
 - Slash-policy validity: `!requiresProof ⇒ appealWindow > 0`; ≥1 nonzero penalty. The retained
   `failureReason` field is 0 or `InsufficientCommitteeMembers`; execution does not select failure
   attribution from policy data. — `flow-trace/05`; INDEX concerns Z-07, Z-32
@@ -361,14 +369,34 @@ design citation alone does not establish current runtime behavior.
   never contradicts a settled distribution. The stage stays `Failed` and `activeE3Count` does not
   change. A correction that no longer applies returns without an effect, so it never reverts the
   expulsion. — `flow-trace/05`; INDEX concerns ZEN2-04
+- **Failed-E3 settlement waits for the accusations that could move its payer:** `calculateRefund`
+  reverts `SettlementBlocked` unless `SlashingManager.settlementOpen(e3Id)`, which is true only when
+  the accusation window (`slashSubmissionDeadline`) has closed **and** no `affectsCommittee`
+  proposal for the E3 is open (`_openCommitteeProposals`, incremented in `_openProposal` and
+  decremented on every terminal path through `_closeProposalCount`). A round that never finalized a
+  committee has no member to expel and no payer to move, so it settles at once. Non-expelling
+  penalties never gate. Both lanes reject new expelling proposals after the frozen reporting
+  deadline for every non-complete E3, including an overdue E3 not yet marked failed. Lane B keeps
+  late non-expelling penalties and completed-round proposals. `settlementCutoff` retains its ABI and
+  formula (`slashSubmissionDeadline` + `MAX_APPEAL_WINDOW` + `APPEAL_RESOLUTION_GRACE`), but never
+  bypasses an open proposal. By that time, each timely proposal can be resolved through
+  permissionless execution or unresolved-appeal expiry. Rejected appeals still require execution.
+  Settlement waits for those transactions to succeed; time alone does not close a proposal. The
+  reporting allowance remains one day after the scheduled lifecycle deadline, not after
+  `markE3Failed`. Its operational sufficiency is not established by these checks. A calculated
+  refund still never changes: the gate moves _when_ it is calculated, not what it can become. —
+  `flow-trace/05`; INDEX concerns ZEN2-04
 - **Committee viability loss is atomic:** if an expulsion leaves fewer than H active members, the
   same transaction must fail the affected nonterminal E3 with the supplier-paid
   `InsufficientCommitteeMembers` reason. Reusing this existing reason preserves the persisted enum
   layout. A failed callback rolls back the penalties, ban, and expulsion. Complete and failed E3s
-  allow later slashes; on a failed E3 the expulsion additionally attempts the reclassification
-  above, which is a no-op when it no longer applies. Committee key, ciphertext, and plaintext
-  publication all require a currently viable request-time committee. — `flow-trace/04`, `05`; INDEX
-  concern Z-32
+  allow execution of admitted slashes; on a failed E3 the expulsion additionally attempts the
+  reclassification above, which is a no-op when it no longer applies. Committee key, ciphertext, and
+  plaintext publication all require a currently viable request-time committee. Ciphertext
+  publication checks the stage and that viability again after `IE3Program.verify` returns, because
+  an application callback can slash a member and record a terminal failure through `onE3Failed`,
+  outside the publication reentrancy guard. A failed recheck reverts the complete transaction. —
+  `flow-trace/04`, `05`; INDEX concerns Z-32, ZEN2-04, ZEN2-26
 - Accusation quorum: `agree_count >= threshold_m`; voters must be active committee members; all
   votes agree. Lane A is **attestation-based** (ECDSA per voter), not on-chain ZK re-verification.
   Vote digest / EIP-712 type hashes must match the Solidity constants exactly (Rust ↔ Solidity). —

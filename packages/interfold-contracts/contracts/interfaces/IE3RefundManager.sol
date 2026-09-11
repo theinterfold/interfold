@@ -19,6 +19,12 @@ interface IE3RefundManager {
     /// @notice A settlement transfer delivered a different amount than requested.
     error AssetTransferMismatch(IERC20 token, uint256 expected, uint256 actual);
 
+    /// @notice Settlement is blocked until the accusation window closes and every
+    ///         committee-affecting proposal resolves, or until the hard cutoff.
+    /// @dev Bare, for size. Read `ISlashingManager.settlementOpen`,
+    ///      `accusationSubmissionDeadline` and `settlementCutoff` to see why.
+    error SettlementBlocked();
+
     /// @notice Identifies which collateral pool bears a failed E3's completed-work cost.
     enum FailurePayer {
         None,
@@ -432,14 +438,6 @@ interface IE3RefundManager {
         uint256 e3Id,
         address operator
     ) external view returns (bool claimed);
-
-    /// @notice Calculate work value for a given stage
-    /// @param stage The stage when E3 failed
-    /// @return workCompletedBps Work completed in basis points
-    /// @return workRemainingBps Work remaining in basis points
-    function calculateWorkValue(
-        IInterfold.E3Stage stage
-    ) external view returns (uint16 workCompletedBps, uint16 workRemainingBps);
 
     /// @notice Set work value allocation
     /// @param allocation The new work allocation

@@ -65,6 +65,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
   // Lane A reason derived on-chain as keccak256(abi.encodePacked(proofType))
   const REASON_PT_0 = ethers.keccak256(ethers.solidityPacked(["uint256"], [0]));
   const REASON_PT_1 = ethers.keccak256(ethers.solidityPacked(["uint256"], [1]));
+  const REASON_EVIDENCE = ethers.id("committee misconduct");
 
   const setup = async () => {
     // E3Integration historically uses 7 signers in this order:
@@ -173,6 +174,21 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       return { e3Id };
     };
 
+    // ZEN2-04 follow-up. Once a committee is finalized, failed-E3 settlement
+    // waits for the accusation window to close and for every committee-
+    // affecting proposal to resolve, so an accused member cannot freeze the
+    // payer ahead of its own expulsion. Tests that settle an uncontested
+    // failure go through here, which moves the clock past the window first.
+    // A test that files a slash must file it BEFORE settling, inside the
+    // window; tests about the gate itself call `processE3Failure` directly.
+    const settleFailure = async (e3Id: bigint = firstE3Id) => {
+      const deadline = await slashingManager.accusationSubmissionDeadline(e3Id);
+      if (deadline > 0n && BigInt(await time.latest()) <= deadline) {
+        await time.setNextBlockTimestamp(deadline + 1n);
+      }
+      return interfold.processE3Failure(e3Id);
+    };
+
     const setupOperator = async (operator: Signer) => {
       const operatorAddress = await operator.getAddress();
       const bondOwnerAddress = await computeProvider.getAddress();
@@ -275,6 +291,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       operator3,
       computeProvider,
       makeRequest,
+      settleFailure,
       setupOperator,
       transferBondOwner,
       makeReadyRequest,
@@ -607,9 +624,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await time.increaseTo(deadline + 1n);
       await ctx.interfold.connect(ctx.requester).cancelE3(firstE3Id);
       expect(await ctx.registry.unreleasedCommitteeCount()).to.equal(0);
+      // ZEN2-07: the breaker is advisory. Cancellation flags the degraded state and keeps the
+      // provider, so one round cannot stop every later request.
       expect(await ctx.registry.randomnessProvider()).to.equal(
-        ethers.ZeroAddress,
+        await ctx.randomnessProvider.getAddress(),
       );
+      expect(await ctx.registry.randomnessDegraded()).to.equal(true);
 
       const requestId = await ctx.randomnessProvider.requestIdByE3Id(firstE3Id);
       await ctx.randomnessProvider.fulfill(requestId, 123n);
@@ -678,9 +698,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         false,
         0n,
       ]);
+      // ZEN2-07: the provider stays configured; only the advisory flag changes.
       expect(await ctx.registry.randomnessProvider()).to.equal(
-        ethers.ZeroAddress,
+        await ctx.randomnessProvider.getAddress(),
       );
+      expect(await ctx.registry.randomnessDegraded()).to.equal(true);
     });
 
     it("rejects invalid failure reasons from an authorized dependency", async function () {
@@ -712,6 +734,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         usdcToken,
         treasury,
         finalizeReadyCommittee,
+        settleFailure,
       } = await loadFixture(setup);
 
       await setPricingConfig(interfold, {
@@ -747,7 +770,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const deadlines = await interfold.getDeadlines(firstE3Id);
       await time.increaseTo(deadlines.computeDeadline + 1n);
       await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
+      await settleFailure(firstE3Id);
 
       expect(
         await e3RefundManager.pendingTreasuryClaim(
@@ -772,6 +795,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator2,
         operator3,
         setupOperator,
+        settleFailure,
       } = await loadFixture(setup);
 
       await setupOperator(operator1);
@@ -820,7 +844,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const deadlines = await interfold.getDeadlines(firstE3Id);
       await time.increaseTo(deadlines.computeDeadline + 1n);
       await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
+      await settleFailure(firstE3Id);
 
       const distribution =
         await e3RefundManager.getRefundDistribution(firstE3Id);
@@ -1443,6 +1467,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator2,
         operator3,
         setupOperator,
+        settleFailure,
       } = await loadFixture(setup);
 
       await setupOperator(operator1);
@@ -1483,12 +1508,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await time.increaseTo(computeDeadline + 1);
       await interfold.markE3Failed(firstE3Id);
 
-      // 3. Process failure → distribution calculated, funds transferred to refund manager
-      await interfold.processE3Failure(firstE3Id);
-      const distributionBefore =
-        await e3RefundManager.getRefundDistribution(firstE3Id);
-      expect(distributionBefore.calculated).to.be.true;
-
       // Record refund manager USDC balance before slash routing
       const refundManagerBalanceBefore = await usdcToken.balanceOf(
         await e3RefundManager.getAddress(),
@@ -1497,9 +1516,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       // Record BondingRegistry's slashedTicketBalance before slash
       const slashedBalanceBefore = await bondingRegistry.slashedTicketBalance();
 
-      // 4. Slash operator1 via proposeSlash (Lane A) — real on-chain flow.
-      //    The manager reserves the slash, then atomically routes the reserved
-      //    underlying through Interfold into E3RefundManager escrow.
+      // 3. Slash operator1 via proposeSlash (Lane A) — real on-chain flow,
+      //    inside the accusation window. The manager reserves the slash, then
+      //    atomically routes the reserved underlying through Interfold into
+      //    E3RefundManager escrow, where it parks until settlement.
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
         firstE3Id,
@@ -1513,13 +1533,28 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         proof,
       );
 
-      // 5. Verify actual USDC moved to the refund manager
+      // 4. Verify actual USDC moved to the refund manager and parked there:
+      //    the E3 is not yet settled, so the route waits.
       const refundManagerBalanceAfter = await usdcToken.balanceOf(
         await e3RefundManager.getAddress(),
       );
       const actualSlashedAmount =
         refundManagerBalanceAfter - refundManagerBalanceBefore;
       expect(actualSlashedAmount).to.be.gt(0);
+      expect(
+        await e3RefundManager.pendingSlashedFunds(
+          firstE3Id,
+          await usdcToken.getAddress(),
+        ),
+      ).to.equal(actualSlashedAmount);
+
+      // 5. Process failure past the accusation window → distribution
+      //    calculated; then route the parked slash into it.
+      await settleFailure(firstE3Id);
+      const distributionBefore =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
+      expect(distributionBefore.calculated).to.be.true;
+      await e3RefundManager.settleSlashedFunds(firstE3Id, 0);
 
       // Verify BondingRegistry's slashedTicketBalance was decremented
       const slashedBalanceAfter = await bondingRegistry.slashedTicketBalance();
@@ -1630,7 +1665,6 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow;
       await time.increaseTo(computeDeadline + 1);
       await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
 
       const blacklistToken = usdcToken as unknown as MockBlacklistUSDC;
       const refundManagerAddress = await e3RefundManager.getAddress();
@@ -1735,7 +1769,12 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await expect(slashingManager.connect(owner).closeE3(firstE3Id))
         .to.be.revertedWithCustomError(slashingManager, "AccusationWindowOpen")
         .withArgs(firstE3Id, submissionDeadline);
+      // Settlement waits for the same window; the routed slash parks until then.
+      await expect(
+        interfold.processE3Failure(firstE3Id),
+      ).to.be.revertedWithCustomError(e3RefundManager, "SettlementBlocked");
       await time.increaseTo(submissionDeadline + 1n);
+      await interfold.processE3Failure(firstE3Id);
       await slashingManager.connect(owner).closeE3(firstE3Id);
       await bondingRegistry
         .connect(owner)
@@ -1760,6 +1799,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator2,
         operator3,
         setupOperator,
+        settleFailure,
       } = await loadFixture(setup);
 
       await setupOperator(operator1);
@@ -1830,7 +1870,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
       );
       await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
+      await settleFailure(firstE3Id);
 
       // Fee settlement cannot consume or relabel the ticket underlying.
       // Anyone can settle its recorded proposal explicitly.
@@ -1918,6 +1958,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator2,
         operator3,
         setupOperator,
+        settleFailure,
       } = await loadFixture(setup);
 
       await setupOperator(operator1);
@@ -1967,14 +2008,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow;
       await time.increaseTo(computeDeadline + 1);
       await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
 
-      // 3. Record the base distribution before slash.
-      const distributionBefore =
-        await e3RefundManager.getRefundDistribution(firstE3Id);
-      const honestNodeAmountBefore = distributionBefore.honestNodeAmount;
-
-      // 4. Slash operator1 — this routes funds into the refund pool
+      // 3. Slash operator1 inside the accusation window — this routes funds
+      //    into the refund pool, where they park until settlement.
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
         firstE3Id,
@@ -1986,6 +2022,14 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         await operator1.getAddress(),
         proof,
       );
+
+      // 4. Settle past the window, then route the parked slash. The base
+      //    distribution is not moved by it.
+      await settleFailure(firstE3Id);
+      const distributionBefore =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
+      const honestNodeAmountBefore = distributionBefore.honestNodeAmount;
+      await e3RefundManager.settleSlashedFunds(firstE3Id, 0);
 
       const distribution =
         await e3RefundManager.getRefundDistribution(firstE3Id);
@@ -2022,17 +2066,15 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         .claimSlashedFunds(firstE3Id, usdcAddress);
       const ownerBalanceAfter = await usdcToken.balanceOf(bondOwnerAddress);
 
+      // operator1 was expelled before settlement, so the base split is over
+      // the two remaining honest nodes from the start: there is no forfeited
+      // share to top up, and each honest node's base is a half, not a third.
+      expect(distribution.honestNodeCount).to.equal(2);
       const perNodeAmount =
         distribution.honestNodeAmount / BigInt(distribution.honestNodeCount);
-      const baseTopUp =
-        ownerBalanceAfter -
-        ownerBalanceBefore -
-        perNodeAmount -
-        ownerSlashClaim;
-      expect(
-        baseTopUp == perNodeAmount / 2n ||
-          baseTopUp == perNodeAmount - perNodeAmount / 2n,
-      ).to.equal(true);
+      expect(ownerBalanceAfter - ownerBalanceBefore).to.equal(
+        perNodeAmount + ownerSlashClaim,
+      );
     });
 
     it("does not return a penalty to its target through a later expulsion", async function () {
@@ -2092,14 +2134,24 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await makeRequest();
       await finalizeAndPublishCommittee();
 
-      // Settle the round: a slash route is only distributed once the refund
-      // distribution exists.
+      // Complete the round: on a failed E3 every expulsion now precedes
+      // settlement (ZEN2-04), so held-share re-sharing is exercised on a
+      // successful E3, whose accusation window stays open after completion.
       const e3 = await interfold.getE3(firstE3Id);
-      await time.increaseTo(
-        Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
+      await time.increaseTo(Number(e3.inputWindow[1]));
+      const ciphertext = "0x" + "ab".repeat(100);
+      await publishAvailableCiphertextOutput(
+        interfold,
+        firstE3Id,
+        ciphertext,
+        ethers.keccak256(ciphertext),
+        "0x1337",
       );
-      await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
+      await interfold.publishPlaintextOutput(
+        firstE3Id,
+        "0x" + "cd".repeat(100),
+        "0x1337",
+      );
 
       const operator1Address = await operator1.getAddress();
       const operator2Address = await operator2.getAddress();
@@ -2167,27 +2219,30 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(operator1Before).to.equal(0);
       await slashingManager.executeSlash(expulsionProposalId);
 
-      // Two things move here. (1) operator2's held 25 came entirely from
+      // Two things move here. (1) operator2's held 12.5 came entirely from
       // operator1's penalty, so re-sharing it must skip operator1 and go to
-      // operator3 alone. (2) operator2's own 50 penalty is a new penalty, split
-      // between operator1 and operator3, 25 each; operator1 is entitled to
-      // that share. So operator1 gains exactly 25 and operator3 gains 50:
+      // operator3 alone. (2) operator2's own 25 node share is a new penalty, split
+      // between operator1 and operator3, 12.5 each; operator1 is entitled to
+      // that share. So operator1 gains exactly 12.5 and operator3 gains 25:
       // nothing of operator1's own penalty came back to operator1.
+      // On a successful E3 only `successSlashedNodeBps` (50%) of a penalty is
+      // shared with nodes; the rest goes to the treasury.
       const penalty = ethers.parseUnits("50", 6);
+      const nodeShare = penalty / 2n;
       expect(
         (await e3RefundManager.pendingSlashedClaim(
           firstE3Id,
           usdcAddress,
           operator1Recipient,
         )) - operator1Before,
-      ).to.equal(penalty / 2n);
+      ).to.equal(nodeShare / 2n);
       expect(
         (await e3RefundManager.pendingSlashedClaim(
           firstE3Id,
           usdcAddress,
           operator3Recipient,
         )) - operator3Before,
-      ).to.equal(penalty);
+      ).to.equal(nodeShare);
       // Custody still covers what the contract says it owes.
       expect(
         await usdcToken.balanceOf(await e3RefundManager.getAddress()),
@@ -2239,17 +2294,32 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         await makeRequest();
         await finalizeAndPublishCommittee();
 
+        // Complete the round: on a failed E3 every expulsion now precedes
+        // settlement (ZEN2-04), so held-share re-sharing is exercised on a
+        // successful E3, whose accusation window stays open after completion.
         const e3 = await interfold.getE3(firstE3Id);
-        await time.increaseTo(
-          Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
+        await time.increaseTo(Number(e3.inputWindow[1]));
+        const ciphertext = "0x" + "ab".repeat(100);
+        await publishAvailableCiphertextOutput(
+          interfold,
+          firstE3Id,
+          ciphertext,
+          ethers.keccak256(ciphertext),
+          "0x1337",
         );
-        await interfold.markE3Failed(firstE3Id);
-        await interfold.processE3Failure(firstE3Id);
+        await interfold.publishPlaintextOutput(
+          firstE3Id,
+          "0x" + "cd".repeat(100),
+          "0x1337",
+        );
 
         const usdcAddress = await usdcToken.getAddress();
         const members = [operator1, operator2, operator3];
         const recipients = [requester, treasury, computeProvider];
+        // On a successful E3 only `successSlashedNodeBps` (50%) of a penalty is
+        // shared with nodes; the rest goes to the treasury.
         const penalty = ethers.parseUnits("50", 6);
+        const nodeShare = penalty / 2n;
 
         // Two non-expelling penalties, on A then B or B then A. A target is
         // excluded only from its own penalty, so each penalty is split
@@ -2280,9 +2350,9 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
             await recipients[i].getAddress(),
           );
         // A gets half of B's penalty, B gets half of A's, C gets half of both.
-        expect(await claim(0)).to.equal(penalty / 2n);
-        expect(await claim(1)).to.equal(penalty / 2n);
-        expect(await claim(2)).to.equal(penalty);
+        expect(await claim(0)).to.equal(nodeShare / 2n);
+        expect(await claim(1)).to.equal(nodeShare / 2n);
+        expect(await claim(2)).to.equal(nodeShare);
         expect(
           await usdcToken.balanceOf(await e3RefundManager.getAddress()),
         ).to.be.gte(await e3RefundManager.tokenLiability(usdcAddress));
@@ -2340,20 +2410,35 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       await makeRequest();
       await finalizeAndPublishCommittee();
+      // Complete the round: on a failed E3 every expulsion now precedes
+      // settlement (ZEN2-04), so held-share re-sharing is exercised on a
+      // successful E3, whose accusation window stays open after completion.
       const e3 = await interfold.getE3(firstE3Id);
-      await time.increaseTo(
-        Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
+      await time.increaseTo(Number(e3.inputWindow[1]));
+      const ciphertext = "0x" + "ab".repeat(100);
+      await publishAvailableCiphertextOutput(
+        interfold,
+        firstE3Id,
+        ciphertext,
+        ethers.keccak256(ciphertext),
+        "0x1337",
       );
-      await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
+      await interfold.publishPlaintextOutput(
+        firstE3Id,
+        "0x" + "cd".repeat(100),
+        "0x1337",
+      );
 
       const usdcAddress = await usdcToken.getAddress();
       const slashingAddress = await slashingManager.getAddress();
       const op1 = await operator1.getAddress();
       const op2 = await operator2.getAddress();
+      // On a successful E3 only `successSlashedNodeBps` (50%) of a penalty is
+      // shared with nodes; the rest goes to the treasury.
       const penalty = ethers.parseUnits("50", 6);
+      const nodeShare = penalty / 2n;
 
-      // 1. Non-expelling penalty on A: B and C hold 25 each, tagged target=A.
+      // 1. Non-expelling penalty on A: B and C hold 12.5 each, tagged target=A.
       const penaltyId = await slashingManager.totalProposals();
       await slashingManager.proposeSlash(
         firstE3Id,
@@ -2387,10 +2472,10 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
 
       // A's bucket exists on B and C even though A is no longer active.
       expect(await e3RefundManager.heldSlashFrom(firstE3Id, op2, op1)).to.equal(
-        penalty / 2n,
+        nodeShare / 2n,
       );
 
-      // 3. B claims its 25. The claim zeroes heldSlash and must also drop
+      // 3. B claims its 12.5. The claim zeroes heldSlash and must also drop
       //    the target=A bucket that backs it. Walking the active roster for
       //    bucket keys would miss A and leave the bucket describing funds
       //    that have already left.
@@ -2424,6 +2509,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         setupOperator,
         transferBondOwner,
         finalizeAndPublishCommittee,
+        settleFailure,
       } = await loadFixture(setup);
 
       for (const operator of [operator1, operator2, operator3]) {
@@ -2439,8 +2525,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
       );
       await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
 
+      // A non-expelling penalty inside the window parks until settlement.
       const proof = await signAndEncodeAttestation(
         [operator2, operator3],
         firstE3Id,
@@ -2454,6 +2540,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         proof,
       );
       await slashingManager.retrySlashRoute(proposalId);
+      await settleFailure(firstE3Id);
+      await e3RefundManager.settleSlashedFunds(firstE3Id, proposalId);
 
       const token = await usdcToken.getAddress();
       const targetRecipient = await requester.getAddress();
@@ -2501,6 +2589,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         setupOperator,
         transferBondOwner,
         finalizeAndPublishCommittee,
+        settleFailure,
       } = await loadFixture(setup);
 
       for (const operator of [operator1, operator2, operator3]) {
@@ -2551,7 +2640,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
       );
       await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
+
+      // ZEN2-04: the pending expulsion blocks settlement until it resolves.
+      await expect(
+        interfold.processE3Failure(firstE3Id),
+      ).to.be.revertedWithCustomError(e3RefundManager, "SettlementBlocked");
 
       const unrelatedProof = await signAndEncodeAttestation(
         [operator1, operator3],
@@ -2566,42 +2659,31 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         unrelatedProof,
       );
 
+      await slashingManager.executeSlash(0);
+      await settleFailure(firstE3Id);
+      await e3RefundManager.settleSlashedFunds(firstE3Id, 0);
+      await e3RefundManager.settleSlashedFunds(firstE3Id, 1);
+
+      // operator1 was expelled before the split was calculated, so it holds
+      // no base reward and the two remaining honest nodes split the base.
+      const distribution =
+        await e3RefundManager.getRefundDistribution(firstE3Id);
+      expect(distribution.honestNodeCount).to.equal(2);
       await expect(
         e3RefundManager
           .connect(requester)
           .claimHonestNodeReward(firstE3Id, await operator1.getAddress()),
-      ).to.be.revertedWithCustomError(
-        e3RefundManager,
-        "RewardPendingExpulsion",
-      );
-
-      const distribution =
-        await e3RefundManager.getRefundDistribution(firstE3Id);
-      const perNode = distribution.perNodeAmount;
-      await e3RefundManager
-        .connect(treasury)
-        .claimHonestNodeReward(firstE3Id, await operator2.getAddress());
+      ).to.be.revertedWithCustomError(e3RefundManager, "NotHonestNode");
       const treasuryBefore = await usdcToken.balanceOf(
         await treasury.getAddress(),
       );
-
-      await slashingManager.executeSlash(0);
-
-      await expect(
-        e3RefundManager
-          .connect(requester)
-          .claimHonestNodeReward(firstE3Id, await operator1.getAddress()),
-      ).to.be.revertedWithCustomError(e3RefundManager, "AlreadyClaimed");
       await e3RefundManager
         .connect(treasury)
         .claimHonestNodeReward(firstE3Id, await operator2.getAddress());
-      const treasuryTopUp =
-        (await usdcToken.balanceOf(await treasury.getAddress())) -
-        treasuryBefore;
       expect(
-        treasuryTopUp == perNode / 2n ||
-          treasuryTopUp == perNode - perNode / 2n,
-      ).to.equal(true);
+        (await usdcToken.balanceOf(await treasury.getAddress())) -
+          treasuryBefore,
+      ).to.equal(distribution.perNodeAmount);
 
       const token = await usdcToken.getAddress();
       expect(
@@ -2637,6 +2719,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         computeProvider,
         makeReadyRequest,
         finalizeAndPublishCommittee,
+        settleFailure,
       } = await loadFixture(setup);
 
       await makeReadyRequest();
@@ -2645,7 +2728,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const deadlines = await interfold.getDeadlines(firstE3Id);
       await time.increaseTo(deadlines.computeDeadline + 1n);
       await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
+      await settleFailure(firstE3Id);
 
       const managerAddress = await slashingManager.getAddress();
       await networkHelpers.impersonateAccount(managerAddress);
@@ -2861,6 +2944,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator3,
         setupOperator,
         finalizeAndPublishCommittee,
+        settleFailure,
       } = await loadFixture(setup);
 
       for (const operator of [operator1, operator2, operator3]) {
@@ -2938,7 +3022,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(await interfold.getE3Stage(firstE3Id)).to.equal(6);
 
       // Settlement now refunds the requester in full instead of 45%.
-      await interfold.processE3Failure(firstE3Id);
+      await settleFailure(firstE3Id);
       const distribution =
         await e3RefundManager.getRefundDistribution(firstE3Id);
       expect(distribution.requesterAmount).to.equal(
@@ -2948,7 +3032,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       expect(distribution.protocolAmount).to.equal(0);
     });
 
-    it("ZEN2-04: settlement makes the recorded reason final", async function () {
+    it("ZEN2-04: settlement waits for open expulsions so the corrected reason is the one that settles", async function () {
       const {
         interfold,
         e3RefundManager,
@@ -2960,6 +3044,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator3,
         setupOperator,
         finalizeAndPublishCommittee,
+        settleFailure,
       } = await loadFixture(setup);
 
       for (const operator of [operator1, operator2, operator3]) {
@@ -3008,24 +3093,461 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
       );
       await interfold.connect(operator1).markE3Failed(firstE3Id);
-      // Settlement runs before the expulsions execute.
-      await interfold.processE3Failure(firstE3Id);
-      const settled = await e3RefundManager.getRefundDistribution(firstE3Id);
-      expect(settled.calculated).to.be.true;
+      // Two expulsions are open, so the front-run settlement is refused.
+      await expect(
+        interfold.processE3Failure(firstE3Id),
+      ).to.be.revertedWithCustomError(e3RefundManager, "SettlementBlocked");
+      expect(
+        (await e3RefundManager.getRefundDistribution(firstE3Id)).calculated,
+      ).to.be.false;
 
-      // The correction no longer applies, and the expulsion still executes so
-      // the collateral penalty is not lost.
+      // Once the expulsions execute, the reason is corrected and settlement
+      // records the corrected split.
       await time.increase(ONE_DAY + 1);
       await slashingManager.executeSlash(0);
       await slashingManager.executeSlash(1);
       expect(await interfold.getFailureReason(firstE3Id)).to.equal(
-        6 /* ComputeTimeout */,
+        2 /* InsufficientCommitteeMembers */,
       );
-      const after = await e3RefundManager.getRefundDistribution(firstE3Id);
-      expect(after.requesterAmount).to.equal(settled.requesterAmount);
-      expect(after.honestNodeAmount).to.equal(settled.honestNodeAmount);
+      await settleFailure(firstE3Id);
+      const settled = await e3RefundManager.getRefundDistribution(firstE3Id);
+      expect(settled.calculated).to.be.true;
+      expect(settled.honestNodeAmount).to.equal(0);
     });
 
+    describe("ZEN2-04 settlement gate", function () {
+      const EXPEL = {
+        ticketPenalty: ethers.parseUnits("50", 6),
+        ciphernodeBondPenalty: ethers.parseEther("100"),
+        requiresProof: true,
+        proofVerifier: ethers.ZeroAddress,
+        banNode: false,
+        appealWindow: ONE_DAY,
+        enabled: true,
+        affectsCommittee: true,
+        failureReason: 0,
+      };
+      const PENALTY_ONLY = {
+        ...EXPEL,
+        appealWindow: 0,
+        affectsCommittee: false,
+      };
+
+      async function failedWithCommittee(
+        fx: Awaited<ReturnType<typeof setup>>,
+        markFailed = true,
+      ) {
+        const {
+          interfold,
+          slashingManager,
+          makeRequest,
+          owner,
+          operator1,
+          operator2,
+          operator3,
+          setupOperator,
+          finalizeAndPublishCommittee,
+        } = fx;
+        for (const operator of [operator1, operator2, operator3]) {
+          await setupOperator(operator);
+        }
+        await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, EXPEL);
+        await slashingManager
+          .connect(owner)
+          .setSlashPolicy(REASON_PT_1, PENALTY_ONLY);
+        await slashingManager.addSlasher(await owner.getAddress());
+        await slashingManager.setSlashPolicy(REASON_EVIDENCE, {
+          ...EXPEL,
+          requiresProof: false,
+        });
+        await makeRequest();
+        await finalizeAndPublishCommittee();
+        const e3 = await interfold.getE3(firstE3Id);
+        await time.increaseTo(
+          Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
+        );
+        if (markFailed) await interfold.markE3Failed(firstE3Id);
+      }
+
+      async function expulsionProposal(
+        fx: Awaited<ReturnType<typeof setup>>,
+        reasonIndex = 0,
+      ) {
+        const { slashingManager, operator1, operator2, operator3 } = fx;
+        const id = await slashingManager.totalProposals();
+        await slashingManager.proposeSlash(
+          firstE3Id,
+          await operator1.getAddress(),
+          await signAndEncodeAttestation(
+            [operator2, operator3],
+            firstE3Id,
+            await operator1.getAddress(),
+            await slashingManager.getAddress(),
+            reasonIndex,
+          ),
+        );
+        return id;
+      }
+
+      async function evidenceProposal(
+        fx: Awaited<ReturnType<typeof setup>>,
+        operator: Signer = fx.operator1,
+      ) {
+        const id = await fx.slashingManager.totalProposals();
+        await fx.slashingManager.proposeSlashEvidence(
+          firstE3Id,
+          await operator.getAddress(),
+          REASON_EVIDENCE,
+          "0x1234",
+        );
+        return id;
+      }
+
+      for (const state of [
+        "unmarked",
+        "failed",
+        "settled",
+        "near cutoff",
+      ] as const) {
+        it(`rejects late Lane B expulsions when ${state}`, async function () {
+          const fx = await loadFixture(setup);
+          const { interfold, slashingManager, e3RefundManager, operator1 } = fx;
+          await failedWithCommittee(fx, state !== "unmarked");
+          const deadline =
+            await slashingManager.accusationSubmissionDeadline(firstE3Id);
+          const cutoff = await slashingManager.settlementCutoff(firstE3Id);
+          await time.increaseTo(
+            state === "near cutoff" ? cutoff - 1n : deadline + 1n,
+          );
+          if (state === "settled") await interfold.processE3Failure(firstE3Id);
+          const stage = await interfold.getE3Stage(firstE3Id);
+          const operator = await operator1.getAddress();
+          const evidenceKey = ethers.keccak256(
+            abiCoder.encode(
+              ["uint256", "address", "bytes32"],
+              [firstE3Id, operator, ethers.keccak256("0x1234")],
+            ),
+          );
+
+          await expect(evidenceProposal(fx)).to.be.revertedWithCustomError(
+            slashingManager,
+            "SlashSubmissionDeadlinePassed",
+          );
+          expect(await slashingManager.totalProposals()).to.equal(0);
+          expect(await slashingManager.evidenceConsumed(evidenceKey)).to.equal(
+            false,
+          );
+          expect(
+            await slashingManager.openCommitteeProposals(firstE3Id),
+          ).to.equal(0);
+          expect(await slashingManager.hasOpenSlashProposal(operator)).to.equal(
+            false,
+          );
+          const [, pending, excluded] = await e3RefundManager.rewardStatus(
+            firstE3Id,
+            operator,
+          );
+          expect(pending).to.equal(false);
+          expect(excluded).to.equal(false);
+          expect(await interfold.getE3Stage(firstE3Id)).to.equal(stage);
+        });
+      }
+
+      it("includes last-second Lane B expulsions in the requester's refund", async function () {
+        const fx = await loadFixture(setup);
+        const { interfold, slashingManager, e3RefundManager, operator2 } = fx;
+        await failedWithCommittee(fx);
+        await slashingManager.setSlashPolicy(REASON_EVIDENCE, {
+          ...EXPEL,
+          requiresProof: false,
+          appealWindow: await slashingManager.MAX_APPEAL_WINDOW(),
+        });
+        const deadline =
+          await slashingManager.accusationSubmissionDeadline(firstE3Id);
+        await time.setNextBlockTimestamp(deadline - 1n);
+        const first = await evidenceProposal(fx);
+        await time.setNextBlockTimestamp(deadline);
+        const second = await evidenceProposal(fx, operator2);
+        const proposal = await slashingManager.getSlashProposal(second);
+        expect(proposal.proposedAt).to.equal(deadline);
+        expect(proposal.executableAt).to.equal(deadline + BigInt(THIRTY_DAYS));
+        await time.increaseTo(deadline + 1n);
+        await expect(
+          slashingManager.executeSlash(second),
+        ).to.be.revertedWithCustomError(slashingManager, "AppealWindowActive");
+        await expect(
+          interfold.processE3Failure(firstE3Id),
+        ).to.be.revertedWithCustomError(e3RefundManager, "SettlementBlocked");
+
+        await time.increaseTo(
+          (await slashingManager.settlementCutoff(firstE3Id)) + 1n,
+        );
+        await expect(
+          interfold.processE3Failure(firstE3Id),
+        ).to.be.revertedWithCustomError(e3RefundManager, "SettlementBlocked");
+        await slashingManager.executeSlash(first);
+        await expect(
+          interfold.processE3Failure(firstE3Id),
+        ).to.be.revertedWithCustomError(e3RefundManager, "SettlementBlocked");
+        await slashingManager.executeSlash(second);
+        expect(await interfold.getFailureReason(firstE3Id)).to.equal(2);
+        await interfold.processE3Failure(firstE3Id);
+        const distribution =
+          await e3RefundManager.getRefundDistribution(firstE3Id);
+        expect(distribution.requesterAmount).to.equal(
+          distribution.originalPayment,
+        );
+        expect(distribution.honestNodeAmount).to.equal(0);
+        expect(distribution.protocolAmount).to.equal(0);
+      });
+
+      it("preserves late non-expelling Lane B penalties and bans after settlement", async function () {
+        const fx = await loadFixture(setup);
+        const { interfold, slashingManager, e3RefundManager, operator1 } = fx;
+        await failedWithCommittee(fx);
+        await slashingManager.setSlashPolicy(REASON_EVIDENCE, {
+          ...EXPEL,
+          requiresProof: false,
+          affectsCommittee: false,
+          banNode: true,
+        });
+        await fx.settleFailure();
+        const before = await e3RefundManager.getRefundDistribution(firstE3Id);
+        const id = await evidenceProposal(fx);
+        expect(
+          await slashingManager.openCommitteeProposals(firstE3Id),
+        ).to.equal(0);
+        await time.increaseTo(
+          (await slashingManager.getSlashProposal(id)).executableAt,
+        );
+        await slashingManager.executeSlash(id);
+        expect(
+          await slashingManager.isBanned(await operator1.getAddress()),
+        ).to.equal(true);
+        expect(await interfold.getFailureReason(firstE3Id)).to.equal(6);
+        const after = await e3RefundManager.getRefundDistribution(firstE3Id);
+        expect(after.requesterAmount).to.equal(before.requesterAmount);
+        expect(after.honestNodeAmount).to.equal(before.honestNodeAmount);
+        expect(after.protocolAmount).to.equal(before.protocolAmount);
+      });
+
+      it("refuses settlement while the accusation window is open and allows it after", async function () {
+        const fx = await loadFixture(setup);
+        const { interfold, e3RefundManager, slashingManager } = fx;
+        await failedWithCommittee(fx);
+
+        expect(await slashingManager.settlementOpen(firstE3Id)).to.equal(false);
+        await expect(
+          interfold.processE3Failure(firstE3Id),
+        ).to.be.revertedWithCustomError(e3RefundManager, "SettlementBlocked");
+
+        const deadline =
+          await slashingManager.accusationSubmissionDeadline(firstE3Id);
+        // At exactly the deadline the window is still open (strict `>`).
+        await time.increaseTo(deadline);
+        expect(await slashingManager.settlementOpen(firstE3Id)).to.equal(false);
+
+        await time.increaseTo(deadline + 1n);
+        expect(await slashingManager.settlementOpen(firstE3Id)).to.equal(true);
+        await interfold.processE3Failure(firstE3Id);
+        expect(
+          (await e3RefundManager.getRefundDistribution(firstE3Id)).calculated,
+        ).to.equal(true);
+      });
+
+      it("refuses settlement after the window while an expulsion is open, on every terminal path", async function () {
+        for (const terminal of ["execute", "clear", "expire"] as const) {
+          const fx = await loadFixture(setup);
+          const {
+            interfold,
+            e3RefundManager,
+            slashingManager,
+            owner,
+            operator1,
+          } = fx;
+          await failedWithCommittee(fx);
+          const id = await expulsionProposal(fx);
+          expect(
+            await slashingManager.openCommitteeProposals(firstE3Id),
+          ).to.equal(1);
+          if (terminal !== "execute") {
+            // An appeal must be filed inside the proposal's own appeal window.
+            await slashingManager
+              .connect(operator1)
+              .fileAppeal(id, "not responsible");
+          }
+
+          const deadline =
+            await slashingManager.accusationSubmissionDeadline(firstE3Id);
+          await time.increaseTo(deadline + 1n);
+          // Window closed, but the expulsion is still pending.
+          expect(await slashingManager.settlementOpen(firstE3Id)).to.equal(
+            false,
+          );
+          await expect(
+            interfold.processE3Failure(firstE3Id),
+          ).to.be.revertedWithCustomError(e3RefundManager, "SettlementBlocked");
+
+          if (terminal === "execute") {
+            await slashingManager.executeSlash(id);
+          } else {
+            if (terminal === "clear") {
+              await slashingManager
+                .connect(owner)
+                .resolveAppeal(id, true, "cleared");
+            } else {
+              const p = await slashingManager.getSlashProposal(id);
+              await time.increaseTo(
+                p.executableAt +
+                  (await slashingManager.APPEAL_RESOLUTION_GRACE()),
+              );
+              await slashingManager.expireAppeal(id);
+            }
+          }
+          expect(
+            await slashingManager.openCommitteeProposals(firstE3Id),
+          ).to.equal(0);
+          expect(await slashingManager.settlementOpen(firstE3Id)).to.equal(
+            true,
+          );
+          await interfold.processE3Failure(firstE3Id);
+        }
+      });
+
+      it("does not wait for a non-expelling penalty", async function () {
+        const fx = await loadFixture(setup);
+        const { interfold, slashingManager } = fx;
+        await failedWithCommittee(fx);
+        await expulsionProposal(fx, 1);
+        expect(
+          await slashingManager.openCommitteeProposals(firstE3Id),
+        ).to.equal(0);
+        const deadline =
+          await slashingManager.accusationSubmissionDeadline(firstE3Id);
+        await time.increaseTo(deadline + 1n);
+        expect(await slashingManager.settlementOpen(firstE3Id)).to.equal(true);
+        await interfold.processE3Failure(firstE3Id);
+      });
+
+      it("settles a round that never finalized a committee without waiting", async function () {
+        const {
+          interfold,
+          e3RefundManager,
+          slashingManager,
+          makeRequest,
+          operator1,
+          operator2,
+          operator3,
+          setupOperator,
+        } = await loadFixture(setup);
+        for (const operator of [operator1, operator2, operator3]) {
+          await setupOperator(operator);
+        }
+        await makeRequest();
+        await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+        await time.increase(defaultTimeoutConfig.dkgWindow + 1);
+        await interfold.markE3Failed(firstE3Id);
+        const deadline =
+          await slashingManager.accusationSubmissionDeadline(firstE3Id);
+        expect(await time.latest()).to.be.lt(deadline);
+        expect(await slashingManager.settlementOpen(firstE3Id)).to.equal(true);
+        await interfold.processE3Failure(firstE3Id);
+        expect(
+          (await e3RefundManager.getRefundDistribution(firstE3Id)).calculated,
+        ).to.equal(true);
+      });
+
+      for (const lane of ["A", "B"] as const) {
+        for (const appeal of ["none", "rejected", "unresolved"] as const) {
+          it(`waits past the cutoff for Lane ${lane} with appeal ${appeal}`, async function () {
+            const fx = await loadFixture(setup);
+            const {
+              interfold,
+              e3RefundManager,
+              slashingManager,
+              bondingRegistry,
+              operator1,
+            } = fx;
+            await failedWithCommittee(fx);
+            const id =
+              lane === "A"
+                ? await expulsionProposal(fx)
+                : await evidenceProposal(fx);
+            if (appeal !== "none") {
+              await slashingManager
+                .connect(operator1)
+                .fileAppeal(id, "not responsible");
+              if (appeal === "rejected")
+                await slashingManager.resolveAppeal(id, false, "confirmed");
+            }
+
+            const deadline =
+              await slashingManager.accusationSubmissionDeadline(firstE3Id);
+            const cutoff = await slashingManager.settlementCutoff(firstE3Id);
+            expect(cutoff).to.equal(
+              deadline +
+                (await slashingManager.MAX_APPEAL_WINDOW()) +
+                (await slashingManager.APPEAL_RESOLUTION_GRACE()),
+            );
+
+            // The deadline does not close a proposal or discard its outcome.
+            await time.increaseTo(cutoff - 1n);
+            expect(
+              await slashingManager.openCommitteeProposals(firstE3Id),
+            ).to.equal(1);
+            expect(await slashingManager.settlementOpen(firstE3Id)).to.equal(
+              false,
+            );
+            await expect(
+              interfold.processE3Failure(firstE3Id),
+            ).to.be.revertedWithCustomError(
+              e3RefundManager,
+              "SettlementBlocked",
+            );
+
+            // At exactly the cutoff the view is still closed (strict `>`).
+            await time.increaseTo(cutoff);
+            expect(await slashingManager.settlementOpen(firstE3Id)).to.equal(
+              false,
+            );
+
+            await time.increaseTo(cutoff + 1n);
+            expect(await slashingManager.settlementOpen(firstE3Id)).to.equal(
+              false,
+            );
+            await expect(
+              interfold.processE3Failure(firstE3Id),
+            ).to.be.revertedWithCustomError(
+              e3RefundManager,
+              "SettlementBlocked",
+            );
+            await expect(
+              slashingManager.closeE3(firstE3Id),
+            ).to.be.revertedWithCustomError(
+              bondingRegistry,
+              "InvalidConfiguration",
+            );
+            // The requester needs no slasher or governance role to finish resolution.
+            const resolver = slashingManager.connect(fx.requester);
+            if (appeal === "unresolved") await resolver.expireAppeal(id);
+            else await resolver.executeSlash(id);
+            expect(
+              await slashingManager.openCommitteeProposals(firstE3Id),
+            ).to.equal(0);
+            expect(await slashingManager.settlementOpen(firstE3Id)).to.equal(
+              true,
+            );
+            await interfold.processE3Failure(firstE3Id);
+            const settled =
+              await e3RefundManager.getRefundDistribution(firstE3Id);
+            expect(settled.calculated).to.equal(true);
+            expect(settled.honestNodeCount).to.equal(
+              appeal === "unresolved" ? 3 : 2,
+            );
+          });
+        }
+      }
+    });
     it("ZEN2-04: only the E3's slashing manager corrects a reason", async function () {
       const {
         interfold,
@@ -3064,7 +3586,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       );
     });
 
-    it("ZEN2-20: a proposal opened after settlement holds a credited reward", async function () {
+    it("ZEN2-20: a late Lane B proposal holds a reward credited on completion", async function () {
       const {
         interfold,
         e3RefundManager,
@@ -3085,10 +3607,11 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         await setupOperator(operator);
       }
       await transferBondOwner(operator1, requester);
-      await slashingManager.connect(owner).setSlashPolicy(REASON_PT_0, {
+      await slashingManager.addSlasher(await owner.getAddress());
+      await slashingManager.connect(owner).setSlashPolicy(REASON_EVIDENCE, {
         ticketPenalty: ethers.parseUnits("50", 6),
         ciphernodeBondPenalty: ethers.parseEther("100"),
-        requiresProof: true,
+        requiresProof: false,
         proofVerifier: ethers.ZeroAddress,
         banNode: false,
         appealWindow: ONE_DAY,
@@ -3125,14 +3648,16 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       );
       expect(credited).to.be.gt(0);
 
-      // A valid expelling proposal opens AFTER completion.
-      const proof = await signAndEncodeAttestation(
-        [operator2, operator3],
+      // Completed rounds retain Lane B enforcement after the reporting deadline.
+      await time.increaseTo(
+        (await slashingManager.accusationSubmissionDeadline(firstE3Id)) + 1n,
+      );
+      await slashingManager.proposeSlashEvidence(
         firstE3Id,
         operator1Address,
-        await slashingManager.getAddress(),
+        REASON_EVIDENCE,
+        "0x1234",
       );
-      await slashingManager.proposeSlash(firstE3Id, operator1Address, proof);
 
       // The credited reward is now held: it reports zero and cannot be pulled
       // through any claim path.
@@ -3503,6 +4028,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator2,
         operator3,
         setupOperator,
+        settleFailure,
       } = await loadFixture(setup);
 
       await setupOperator(operator1);
@@ -3517,7 +4043,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       await registry.finalizeCommittee(firstE3Id);
       await time.increase(defaultTimeoutConfig.dkgWindow + 1);
       await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
+      await settleFailure(firstE3Id);
 
       const distribution =
         await e3RefundManager.getRefundDistribution(firstE3Id);
@@ -3683,6 +4209,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator2,
         operator3,
         setupOperator,
+        settleFailure,
       } = await loadFixture(setup);
 
       await setupOperator(operator1);
@@ -3712,7 +4239,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         Number(e3.inputWindow[1]) + defaultTimeoutConfig.computeWindow + 1,
       );
       await interfold.markE3Failed(firstE3Id);
-      await interfold.processE3Failure(firstE3Id);
+      await settleFailure(firstE3Id);
 
       await e3RefundManager.connect(operator1).claimRequesterRefund(firstE3Id);
       expect(
@@ -3751,6 +4278,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator2,
         operator3,
         setupOperator,
+        settleFailure,
       } = await loadFixture(setup);
 
       await setupOperator(operator1);
@@ -3788,8 +4316,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const failureReason = await interfold.getFailureReason(firstE3Id);
       expect(failureReason).to.equal(3); // DKGTimeout
 
-      // 5. Process failure and claim refund
-      await interfold.processE3Failure(firstE3Id);
+      // 5. Settle once the accusation window has closed, then claim refund
+      await settleFailure(firstE3Id);
 
       const balanceBefore = await usdcToken.balanceOf(
         await requester.getAddress(),
@@ -3825,6 +4353,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator2,
         operator3,
         setupOperator,
+        settleFailure,
       } = await loadFixture(setup);
 
       await setupOperator(operator1);
@@ -3874,8 +4403,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const failureReason = await interfold.getFailureReason(firstE3Id);
       expect(failureReason).to.equal(6); // ComputeTimeout
 
-      // 5. Process and claim
-      await interfold.processE3Failure(firstE3Id);
+      // 5. Settle once the accusation window has closed, then claim
+      await settleFailure(firstE3Id);
 
       const balanceBefore = await usdcToken.balanceOf(
         await requester.getAddress(),
@@ -3917,6 +4446,7 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
         operator2,
         operator3,
         setupOperator,
+        settleFailure,
       } = await loadFixture(setup);
 
       await setupOperator(operator1);
@@ -3979,8 +4509,8 @@ describe("E3 Integration - Refund/Timeout Mechanism", function () {
       const failureReason = await interfold.getFailureReason(firstE3Id);
       expect(failureReason).to.equal(10); // DecryptionTimeout
 
-      // 6. Process failure and claim refund
-      await interfold.processE3Failure(firstE3Id);
+      // 6. Settle once the accusation window has closed, then claim refund
+      await settleFailure(firstE3Id);
 
       const balanceBefore = await usdcToken.balanceOf(
         await requester.getAddress(),

@@ -8,6 +8,40 @@ get_evm_timestamp() {
     | jq -r '.result.timestamp' | xargs printf "%d\n"
 }
 
+# Move the dev chain's clock just past an absolute deadline.
+#
+# The input window has to outlast a real DKG, because a committee published after
+# `inputWindowEnd` is refused by `validateCommitteePublication`. That makes the window
+# minutes wide, so waiting for it in wall-clock time would add those minutes to every
+# run. `evm_increaseTime` jumps the chain instead and keeps the suite at DKG speed.
+# A no-op when the deadline has already passed.
+#
+# Usage: advance_evm_time_past <unix_timestamp> [rpc_url]
+advance_evm_time_past() {
+  local target="$1"
+  local rpc_url="${2:-http://localhost:8545}"
+  local now
+  now=$(get_evm_timestamp "$rpc_url")
+  if ((now > target)); then
+    return 0
+  fi
+  local delta=$((target - now + 1))
+  curl -s -X POST "$rpc_url" \
+    -H "Content-Type: application/json" \
+    -d "{\"jsonrpc\":\"2.0\",\"method\":\"evm_increaseTime\",\"params\":[$delta],\"id\":1}" \
+    >/dev/null
+  curl -s -X POST "$rpc_url" \
+    -H "Content-Type: application/json" \
+    -d '{"jsonrpc":"2.0","method":"evm_mine","params":[],"id":1}' \
+    >/dev/null
+  local reached
+  reached=$(get_evm_timestamp "$rpc_url")
+  if ((reached <= target)); then
+    echo "Failed to advance chain time past $target (still at $reached)" >&2
+    return 1
+  fi
+}
+
 # Extract and validate the E3 ID printed by committee:new.
 # Usage: extract_e3_id "$request_output"
 extract_e3_id() {

@@ -517,6 +517,33 @@ interface ISlashingManager {
         uint256 e3Id
     ) external view returns (uint64 submissionDeadline);
 
+    /// @notice Returns the resolution eligibility bound for reports admitted by the deadline.
+    /// @dev Equals the submission deadline plus the
+    ///      maximum appeal window plus the resolution grace. By this time,
+    ///      anyone can execute an unappealed proposal or one with a rejected
+    ///      appeal, or expire an unresolved appeal. These transactions must
+    ///      succeed before settlement. This timestamp never bypasses an open
+    ///      proposal. Returns 0 when no snapshot exists.
+    function settlementCutoff(
+        uint256 e3Id
+    ) external view returns (uint64 cutoff);
+
+    /// @notice Whether failed-E3 settlement may proceed now.
+    /// @dev Settlement freezes the payer. Both lanes reject new expelling
+    ///      proposals after the reporting deadline unless the E3 is Complete.
+    ///      Settlement requires the window to close and every expelling
+    ///      proposal to reach a terminal outcome, even after settlementCutoff.
+    ///      Non-expelling penalties never gate. An E3 without a snapshot, or
+    ///      without a finalized committee and any open expelling proposal,
+    ///      settles without waiting for the window.
+    /// @param e3Id The E3 being settled.
+    function settlementOpen(uint256 e3Id) external view returns (bool);
+
+    /// @notice Committee-affecting proposals still open for an E3.
+    function openCommitteeProposals(
+        uint256 e3Id
+    ) external view returns (uint256);
+
     /// @notice Return a slash route that remains pending after an initial failure.
     function getPendingSlashRoute(
         uint256 proposalId
@@ -669,6 +696,8 @@ interface ISlashingManager {
     /**
      * @notice Creates a new slash proposal with evidence (Lane B - SLASHER_ROLE required)
      * @dev Only callable by SLASHER_ROLE. Evidence-based slashes have appeal windows.
+     *      After the E3 reporting deadline, an expelling policy requires a Complete E3.
+     *      Non-expelling policies do not have this admission deadline.
      * @param e3Id ID of the E3 computation this slash relates to
      * @param operator Address of the ciphernode operator to slash (must be non-zero)
      * @param reason Hash of the slash reason (must have an enabled non-proof policy)

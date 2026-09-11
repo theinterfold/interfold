@@ -53,7 +53,7 @@ import type { MockCiphernodeRegistry } from "../../types/contracts/test/MockCiph
 import type { MockCiphertextVerifier } from "../../types/contracts/test/MockCiphertextVerifier";
 import type { MockComputeProvider } from "../../types/contracts/test/MockComputeProvider";
 import type { MockDecryptionVerifier } from "../../types/contracts/test/MockDecryptionVerifier";
-import type { MockE3ProgramHarness } from "../../types/contracts/test/MockE3ProgramHarness";
+import type { MockE3ProgramHarness } from "../../types/contracts/test/MockE3ProgramHarness.sol/MockE3ProgramHarness";
 import type { MockPkVerifier } from "../../types/contracts/test/MockPkVerifier";
 import type { MockRandomnessProvider } from "../../types/contracts/test/MockRandomnessProvider";
 import type { MockCircuitVerifier } from "../../types/contracts/test/MockSlashingVerifier.sol/MockCircuitVerifier";

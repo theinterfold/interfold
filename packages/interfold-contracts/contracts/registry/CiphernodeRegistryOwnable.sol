@@ -898,6 +898,11 @@ contract CiphernodeRegistryOwnable is
     }
 
     /// @inheritdoc ICiphernodeRegistry
+    function randomnessDegraded() external view returns (bool) {
+        return RegistrySortitionLib.randomnessDegraded();
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
     function exitDelayFloor() public view returns (uint256 floor) {
         floor = sortitionSubmissionWindow + randomnessRequestTimeout();
         uint256 deadline = _latestCommitteeDeadline;

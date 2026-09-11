@@ -21,6 +21,7 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
     address public slashingManager;
     address public randomnessProvider;
     uint256 public randomnessRequestTimeout = 1 hours;
+    bool public randomnessDegraded;
 
     /// @notice Configurable committee members per E3 for testing
     mapping(uint256 e3Id => address[] nodes) private _committeeNodes;
@@ -318,6 +319,8 @@ contract MockCiphernodeRegistry is ICiphernodeRegistry {
         uint256 partyId
     ) external view returns (address) {
         address[] storage nodes = _committeeNodes[e3Id];
+        // Mirror the real registry: no committee reads as not finalized.
+        require(nodes.length != 0, CommitteeNotFinalized());
         require(
             partyId < nodes.length,
             PartyIdOutOfBounds(partyId, nodes.length)
@@ -470,6 +473,10 @@ contract MockCiphernodeRegistryEmptyKey is ICiphernodeRegistry {
 
     function randomnessRequestTimeout() external pure returns (uint256) {
         return 1 hours;
+    }
+
+    function randomnessDegraded() external pure returns (bool) {
+        return false;
     }
 
     // solhint-disable-next-line no-empty-blocks

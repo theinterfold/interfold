@@ -76,7 +76,12 @@ sleep 4
 
 CURRENT_TIMESTAMP=$(get_evm_timestamp)
 INPUT_WINDOW_START=$((CURRENT_TIMESTAMP + 20))
-INPUT_WINDOW_END=$((CURRENT_TIMESTAMP + 30))
+# The committee cannot publish its key after the input window closes
+# (`validateCommitteePublication`), and a real DKG on a CI runner takes well over a
+# minute, so the window has to outlast it rather than the other way round. The suite does
+# not wait this out in wall-clock time: `advance_evm_time_past` jumps the chain once the
+# input is in. Override with INTEGRATION_INPUT_WINDOW_SECONDS.
+INPUT_WINDOW_END=$((CURRENT_TIMESTAMP + ${INTEGRATION_INPUT_WINDOW_SECONDS:-600}))
 
 REQUEST_OUTPUT=$(pnpm committee:new \
   --network localhost \
@@ -117,6 +122,9 @@ if [[ "$FULL_PROOF_AGGREGATION" == "true" ]]; then
     --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin" \
     --mock-data-availability-directory "$MOCK_DATA_AVAILABILITY_DIRECTORY"
 
+  # The input is in; close the window so the round can move to decryption.
+  advance_evm_time_past "$INPUT_WINDOW_END"
+
   heading "Wait for on-chain plaintext (BFV decryption verifier)"
   wait_for_plaintext_output "$E3_ID" "$SCRIPT_DIR/output/plaintext.txt" "$INTEGRATION_DKG_TIMEOUT"
 else
@@ -126,7 +134,8 @@ else
   heading "Mock publish input e3-id"
   pnpm e3-program:publishInput --network localhost --e3-id "$E3_ID" --data 0x12345678
 
-  sleep 4
+  # The input is in; close the window so the round can move to decryption.
+  advance_evm_time_past "$INPUT_WINDOW_END"
 
   waiton "$SCRIPT_DIR/output/output.bin"
 

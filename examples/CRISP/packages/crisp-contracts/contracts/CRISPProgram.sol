@@ -253,6 +253,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   error InvalidComputeContext();
   error InvalidDataAvailabilityVerifier();
   error DataAvailabilityHashMismatch(bytes32 expected, bytes32 actual);
+  error ZeroEncryptedVoteHash();
 
   // Events
   event InterfoldBound(address indexed interfold);
@@ -643,7 +644,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     if (block.timestamp >= availabilityAttestationExpiresAt) {
       revert InputAvailabilityAttestationExpired(availabilityAttestationExpiresAt);
     }
-
     _verifyInputProof(e3Id, e3, noirProof, slotAddress, encryptedVoteCommitment, encryptedVoteHash, parentIndexPlusOne);
 
     bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
@@ -775,6 +775,11 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     bytes32 encryptedVoteHash,
     uint40 parentIndexPlusOne
   ) internal view {
+    // A zero content hash matches an Avail padding leaf. Refuse it on every proof path so that
+    // no committed input can later finalize against data that no party published, and so that
+    // `validateInputProof` cannot accept a statement that `publishInput` rejects.
+    if (encryptedVoteHash == bytes32(0)) revert ZeroEncryptedVoteHash();
+
     uint256 leaf = inputLeaf(encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
     if (e3Data[e3Id].appendedLeaf[leaf]) revert InputAlreadyPublished(leaf);
     bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
