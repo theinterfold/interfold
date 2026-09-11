@@ -95,8 +95,13 @@ jobs:
               - '!**/*.md'
               - '!**/*.mdx'
             circuits:
+              - 'package.json'
+              - 'pnpm-lock.yaml'
               - 'circuits/**'
               - 'scripts/*-circuits.sh'
+              - 'scripts/generate-verifiers*.ts'
+              - 'scripts/test-circuits.test.ts'
+              - 'scripts/circuit-constants.ts'
               - '!**/*.md'
               - '!**/*.mdx'
             crisp:
@@ -173,6 +178,23 @@ jobs:
 
       - name: Check release promotion safeguards
         run: node --test scripts/release.test.mjs
+
+      - name: Check test runner dispatch and results
+        run: node --test scripts/test-harnesses.test.mjs
+
+  test_dappnode:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+      - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+      - name: Install shell test prerequisites
+        run: sudo apt-get update && sudo apt-get install -y jq gettext-base
+      - name: Test DAppNode credentials and health checks
+        run: pnpm test:dappnode
 
   rust_unit_tests:
     needs: [detect_changes]
@@ -1070,6 +1092,12 @@ jobs:
 
       - name: Test circuit artifact validation
         run: pnpm test:circuit-tooling
+
+      - name: Test verifier circuit selection
+        run: pnpm test:verifier-tooling
+
+      - name: Test Noir runner selection and failure propagation
+        run: pnpm test:noir-runner
 
       # The generated verifier contracts must match the freshly built verification keys. A drift
       # means the deployed verifier accepts a different circuit from the one in this tree.

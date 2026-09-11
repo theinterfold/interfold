@@ -28,6 +28,17 @@ CCA_BLOCKS="25"              # ~5 minutes on Sepolia
 CCA_OFFSET_SECONDS="60"      # FOLD CCA phase starts 60s after deploy
 CCA_DURATION_SECONDS="600"   # FOLD CCA phase lasts 10 minutes
 
+# ── Colors ───────────────────────────────────────────────────────────────────
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+say() { echo -e "${GREEN}═══ $* ${NC}"; }
+warn() { echo -e "${YELLOW}⚠️  $* ${NC}"; }
+err() { echo -e "${RED}❌ $* ${NC}"; }
+
 # ── Load .env (RPC_URL, PRIVATE_KEY, SAFE_API_KEY) ───────────────────────────
 ENV_FILE="$CONTRACTS_DIR/.env"
 if [ -f "$ENV_FILE" ]; then
@@ -39,17 +50,6 @@ else
   err "$ENV_FILE not found — create it with RPC_URL, PRIVATE_KEY, SAFE_API_KEY"
   exit 1
 fi
-
-# ── Colors ───────────────────────────────────────────────────────────────────
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m' # No Color
-
-say() { echo -e "${GREEN}═══ $* ${NC}"; }
-warn() { echo -e "${YELLOW}⚠️  $* ${NC}"; }
-err() { echo -e "${RED}❌ $* ${NC}"; }
 
 # ── Pre-flight checks ────────────────────────────────────────────────────────
 say "Pre-flight checks..."

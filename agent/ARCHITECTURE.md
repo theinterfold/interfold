@@ -441,8 +441,17 @@ Recovery tests use a crash matrix around each effect:
 Each case must converge to the same state and external outcome as uninterrupted execution. Snapshot
 hydration and full replay must produce equivalent state plus pending intents.
 
+EventStore replay regressions load fixtures through `ReplaySpool::load` and deliver them through
+`ReplaySpool::replay`. Use a separate source bus so fixture setup cannot seed the destination clock
+or its deduplication state. Do not replace production replay with a test-only sorting or delivery
+loop.
+
 Integration tests assert end-to-end protocol behavior. Long cryptographic tests run after fast
 domain, workflow, crate, and workspace checks have passed.
+
+The `test_trbfv_actor` and `test_trbfv_isolation` tally checks compare the complete result vector.
+The actor test also requires one decryption proof per tally. Empty, missing, and surplus tallies
+must fail even when the event sequence succeeds.
 
 The recursive `node_fold_correlated_sparse_self_slot_proves_and_verifies` test and the full
 `test_trbfv_actor` flow belong to the slow lane. Debug builds may spend minutes in real proof/FHE

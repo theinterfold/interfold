@@ -2,6 +2,9 @@
 set -Eeuo pipefail
 
 ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+for tool in node jq envsubst; do
+    command -v "$tool" >/dev/null || { printf 'Required test tool is missing: %s\n' "$tool" >&2; exit 1; }
+done
 TEST_ROOT=$(mktemp -d)
 trap 'rm -rf "$TEST_ROOT"' EXIT
 DAPPNODE_VERSION=$(node -p "require('$ROOT_DIR/dappnode_package.json').version")
