@@ -1,8 +1,7 @@
 # Get the current block timestamp from a local EVM node
 # Usage: get_evm_timestamp [rpc_url]
 get_evm_timestamp() {
-  local rpc_url="${1:-http://localhost:8545}"
-  local timestamp
+  local rpc_url="${1:-http://localhost:8545}" timestamp
   timestamp=$(curl -fsS -X POST "$rpc_url" \
     -H "Content-Type: application/json" \
     -d '{"jsonrpc":"2.0","method":"eth_getBlockByNumber","params":["latest",false],"id":1}' \
@@ -12,9 +11,8 @@ get_evm_timestamp() {
 
 # Reserve time for the request, DKG, restart, and input preparation.
 set_integration_input_window() {
-  local timeout="${INTEGRATION_DKG_TIMEOUT:-1300}"
+  local timeout="${INTEGRATION_DKG_TIMEOUT:-1300}" now
   case "$timeout" in ''|*[!0-9]*|0) echo "Invalid INTEGRATION_DKG_TIMEOUT: $timeout" >&2; return 1 ;; esac
-  local now
   now=$(get_evm_timestamp) || return 1
   INPUT_WINDOW_START=$((now + 60))
   INPUT_WINDOW_END=$((INPUT_WINDOW_START + 10#$timeout + 300))

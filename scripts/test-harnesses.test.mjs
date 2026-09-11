@@ -246,14 +246,10 @@ for (const timeout of [1300, 3600]) {
     )
     assert.equal(f.result.status, 0, f.result.stderr)
     assert.equal(f.result.stdout.trim(), `1060 ${1060 + timeout + 300}`)
-    const mine = f
-      .calls()
-      .map((c) => JSON.parse(c.args.at(-1)))
-      .filter((c) => c.method === 'evm_mine')
-    assert.deepEqual(
-      mine.map((c) => c.params),
-      [[1060 + timeout + 300]],
-    )
+    const requests = f.calls().map((c) => JSON.parse(c.args.at(-1)))
+    const mine = requests.filter((c) => c.method === 'evm_mine')
+    assert.equal(mine.length, 1)
+    assert.deepEqual(mine[0].params, [1060 + timeout + 300])
   })
 }
 
