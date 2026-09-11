@@ -129,27 +129,24 @@ fn triplicate_honest_rows(mut d: ShareDecryptionCircuitData) -> ShareDecryptionC
 }
 
 #[tokio::test]
+#[ignore = "requires prepared integration artifacts; run pnpm rust:test:proofs"]
 async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     let Some(bb) = find_bb().await else {
-        println!("skipping: bb not found");
-        return;
+        panic!("missing required test prerequisite: bb not found");
     };
 
-    if require_minimum_circuits().is_none() {
-        return;
-    }
+    require_minimum_circuits()
+        .expect("rebuild required circuits with pnpm build:circuits --committee minimum");
 
     let gate = recursive_aggregation_compiled_json_path(CircuitName::NodeFold);
     if !gate.exists() {
-        println!(
-            "skipping: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
+        panic!(
+            "missing required test prerequisite: {} not found (run `pnpm build:circuits --group recursive_aggregation`)",
             gate.display()
         );
-        return;
     }
     if !c3_fold_json_path().exists() {
-        println!("skipping: c3_fold.json not found");
-        return;
+        panic!("missing required test prerequisite: c3_fold.json not found");
     }
 
     let committee = CiphernodesCommitteeSize::Minimum.values();
@@ -300,7 +297,10 @@ async fn node_fold_correlated_sparse_self_slot_proves_and_verifies() {
     let dkg_pk = fhe::bfv::PublicKey::new(&dkg_sk, &mut rng);
 
     let total_slots = c3_fold_total_slots_from_compiled_json();
-    assert_eq!(total_slots, 6, "Micro / insecure preset uses 3×2 C3 slots");
+    assert_eq!(
+        total_slots, 6,
+        "Minimum / insecure preset uses 3×2 C3 slots"
+    );
     let slots_per_party = total_slots / committee.n;
     let own_party_id = 0usize;
 

@@ -59,8 +59,12 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Install / build all         | `pnpm i` · `pnpm build`                                                                                                                            |
 | Build Rust                  | `pnpm rust:build` (cargo `--locked --release`; prebuilds EVM fixtures)                                                                             |
-| Test everything             | `pnpm test` (evm → rust → sdk → noir)                                                                                                              |
+| Test everything             | `pnpm test` (EVM, Rust, required proof/slashing suites, SDK, Noir)                                                                                 |
 | Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                                                            |
+| SDK proof verification      | `pnpm sdk:test:proofs` (prepare circuits, generate one proof, verify bindings and reject tampering)                                                |
+| Prepared SDK proof tests    | `pnpm sdk:test:proofs:prepared` (reuse the current SDK build or prepared circuit set)                                                              |
+| Rust proof integration      | `pnpm rust:test:proofs` (prepared insecure-512/minimum circuits and `bb`)                                                                          |
+| Rust slashing integration   | `pnpm rust:test:slashing` (compiled contract artifacts and `anvil`)                                                                                |
 | Integration tests           | `pnpm test:integration [name]` (`--no-prebuild` to skip binary build)                                                                              |
 | Lint / format               | `pnpm lint` · `pnpm format` / `pnpm format:check`                                                                                                  |
 | Build circuits              | `pnpm build:circuits [--preset …] [--committee …]` (needs `nargo` + `bb`; `interfold noir setup` installs them)                                    |
@@ -69,6 +73,20 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | Consistency checks          | `pnpm check:committee` · `check:docs` · `check:addresses` · `check:invariants` · `check:license` · `check:verifiers` · `check:pnpm` · `check:size` |
 | Prepare release branch      | `pnpm bump:versions X.Y.Z`                                                                                                                         |
 | Tag merged release          | `pnpm release:tag X.Y.Z` from updated `main`                                                                                                       |
+
+## Test preparation
+
+`pnpm sdk:test` runs the fast SDK suites without circuit preparation. The proof API tests mock the
+prover boundary. They do not claim to verify cryptographic proofs. The separate proof suite verifies
+a real proof against the compiled verification key and rejects altered public inputs and proof
+bytes.
+
+Before `pnpm rust:test:proofs` or `pnpm test`, run
+`pnpm build:circuits --preset insecure-512 --committee minimum --skip-if-built`. This prepares one
+consistent set of inner and recursive circuits. Before `pnpm rust:test:slashing`, run
+`pnpm evm:build`. The named Rust integration suites fail if a required tool or artifact is missing.
+Ordinary Rust test runs report these integration tests as ignored. CI explicitly selects them. The
+full test command reuses the prepared circuits for SDK proof verification.
 
 ## Chain-Specific BFV Config
 

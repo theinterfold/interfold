@@ -25,6 +25,8 @@ pub const DEFAULT_MAX_BUFFERED_NET_BYTES: usize = 256 * 1024 * 1024;
 
 pub struct NetEventBufferHandle {
     readiness: oneshot::Receiver<std::result::Result<(), String>>,
+    #[cfg(test)]
+    actor: actix::Addr<NetEventBuffer>,
 }
 
 impl NetEventBufferHandle {
@@ -78,7 +80,14 @@ impl NetEventBuffer {
         // Subscribe to InterfoldEvent on the bus
         bus.subscribe(EventType::SyncEnded, addr.clone().recipient());
 
-        (output, NetEventBufferHandle { readiness })
+        (
+            output,
+            NetEventBufferHandle {
+                readiness,
+                #[cfg(test)]
+                actor: addr,
+            },
+        )
     }
 
     fn handle_interfold_event(&mut self, msg: InterfoldEvent) -> Result<()> {
