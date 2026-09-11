@@ -444,6 +444,10 @@ hydration and full replay must produce equivalent state plus pending intents.
 Integration tests assert end-to-end protocol behavior. Long cryptographic tests run after fast
 domain, workflow, crate, and workspace checks have passed.
 
+The `test_trbfv_actor` tally check compares the complete result vector and requires one decryption
+proof per tally. Empty, missing, and surplus tallies must fail even when the event sequence
+succeeds.
+
 The recursive `node_fold_correlated_sparse_self_slot_proves_and_verifies` test and the full
 `test_trbfv_actor` flow belong to the slow lane. Debug builds may spend minutes in real proof/FHE
 work and may emit a "running for over 60 seconds" progress warning. That warning is not a failure;

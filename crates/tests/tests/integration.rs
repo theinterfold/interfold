@@ -2139,9 +2139,10 @@ async fn test_trbfv_actor() -> Result<()> {
             )
         })?;
 
-    assert!(
-        !decryption_aggregator_proofs.is_empty(),
-        "PlaintextAggregated must always carry an aggregated decryption proof payload"
+    assert_eq!(
+        decryption_aggregator_proofs.len(),
+        num_votes_per_voter,
+        "PlaintextAggregated must carry one decryption proof per tally"
     );
 
     if let Ok(path) = std::env::var("BENCHMARK_FOLDED_OUTPUT") {
@@ -2194,9 +2195,14 @@ async fn test_trbfv_actor() -> Result<()> {
         }
     }
 
+    assert_eq!(
+        results.as_slice(),
+        expected_result.as_slice(),
+        "Threshold decryption must return every expected tally"
+    );
+
     for (i, (res, exp)) in results.iter().zip(expected_result.iter()).enumerate() {
         println!("Tally {i} result = {res} / {exp}");
-        assert_eq!(res, exp);
     }
 
     // All-honest safeguard: scan every participant and the observer for spurious accusations,
