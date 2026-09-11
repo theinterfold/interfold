@@ -1077,6 +1077,9 @@ jobs:
       - name: Test verifier circuit selection
         run: pnpm test:verifier-tooling
 
+      - name: Test Noir runner selection and failure propagation
+        run: pnpm test:noir-runner
+
       # The generated verifier contracts must match the freshly built verification keys. A drift
       # means the deployed verifier accepts a different circuit from the one in this tree.
       #
