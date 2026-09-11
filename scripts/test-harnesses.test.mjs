@@ -209,3 +209,64 @@ test('network runs use distinct Compose projects', (t) => {
     .map((c) => c.args[2])
   assert.equal(new Set(projects).size, 2)
 })
+
+function timing(t, script, env = {}) {
+  const f = fixture(t, 'tests/integration/lib/utils.sh')
+  f.write(
+    'fake-bin/curl',
+    `${record}
+if (process.env.RPC_TRANSPORT_FAIL) process.exit(17);
+const request = JSON.parse(args.at(-1));
+console.log(JSON.stringify((process.env.RPC_ERROR || (process.env.RPC_MINE_ERROR && request.method === 'evm_mine')) ? { error: { message: 'rejected' } } :
+  { result: request.method === 'eth_getBlockByNumber' ? { timestamp: '0x3e8' } : '0x0' }));`,
+  )
+  const result = spawnSync(
+    'bash',
+    ['-euo', 'pipefail', '-c', `source "$1"; ${script}`, '--', join(f.directory, 'tests/integration/lib/utils.sh')],
+    {
+      env: {
+        ...process.env,
+        PATH: `${f.directory}/fake-bin:${process.env.PATH}`,
+        HARNESS_LOG: join(f.directory, 'commands.jsonl'),
+        ...env,
+      },
+      encoding: 'utf8',
+      timeout: 10_000,
+    },
+  )
+  return { ...f, result }
+}
+
+for (const timeout of [1300, 3600]) {
+  test(`integration input window covers the ${timeout}s DKG budget and advances without sleeping`, (t) => {
+    const f = timing(
+      t,
+      'set_integration_input_window; echo "$INPUT_WINDOW_START $INPUT_WINDOW_END"; advance_evm_timestamp "$INPUT_WINDOW_END"',
+      { INTEGRATION_DKG_TIMEOUT: String(timeout) },
+    )
+    assert.equal(f.result.status, 0, f.result.stderr)
+    assert.equal(f.result.stdout.trim(), `1060 ${1060 + timeout + 300}`)
+    const mine = f
+      .calls()
+      .map((c) => JSON.parse(c.args.at(-1)))
+      .filter((c) => c.method === 'evm_mine')
+    assert.deepEqual(
+      mine.map((c) => c.params),
+      [[1060 + timeout + 300]],
+    )
+  })
+}
+
+test('chain time does not move backward or mine again at the same timestamp', (t) => {
+  const f = timing(t, 'advance_evm_timestamp 999; advance_evm_timestamp 1000')
+  assert.equal(f.result.status, 0, f.result.stderr)
+  assert.ok(f.calls().every((c) => JSON.parse(c.args.at(-1)).method === 'eth_getBlockByNumber'))
+})
+
+for (const env of [{ RPC_ERROR: '1' }, { RPC_MINE_ERROR: '1' }, { RPC_TRANSPORT_FAIL: '1' }, { INTEGRATION_DKG_TIMEOUT: 'invalid' }]) {
+  test(`integration timing fails closed for ${Object.keys(env)[0]}`, (t) => {
+    const f = timing(t, 'set_integration_input_window; advance_evm_timestamp "$INPUT_WINDOW_END"', env)
+    assert.notEqual(f.result.status, 0, f.result.stderr)
+    if (!env.RPC_MINE_ERROR) assert.ok(f.calls().every((c) => JSON.parse(c.args.at(-1)).method === 'eth_getBlockByNumber'))
+  })
+}

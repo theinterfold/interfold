@@ -74,9 +74,7 @@ ENCODED_PARAMS=0x$($SCRIPT_DIR/lib/pack_e3_params.sh \
 
 sleep 4
 
-CURRENT_TIMESTAMP=$(get_evm_timestamp)
-INPUT_WINDOW_START=$((CURRENT_TIMESTAMP + 20))
-INPUT_WINDOW_END=$((CURRENT_TIMESTAMP + 30))
+set_integration_input_window
 
 REQUEST_OUTPUT=$(pnpm committee:new \
   --network localhost \
@@ -89,6 +87,7 @@ printf '%s\n' "$REQUEST_OUTPUT"
 E3_ID=$(extract_e3_id "$REQUEST_OUTPUT")
 
 wait_for_committee_pubkey "$E3_ID" "$SCRIPT_DIR/output/pubkey.bin" "$INTEGRATION_DKG_TIMEOUT"
+advance_evm_timestamp "$INPUT_WINDOW_START"
 
 if [[ "$FULL_PROOF_AGGREGATION" == "true" ]]; then
   heading "Verify active aggregator (proof aggregation / DKG path)"
@@ -109,6 +108,7 @@ if [[ "$FULL_PROOF_AGGREGATION" == "true" ]]; then
   $SCRIPT_DIR/lib/fake_encrypt.sh --input "$SCRIPT_DIR/output/pubkey.bin" --output "$SCRIPT_DIR/output/output.bin" --commitment-output "$SCRIPT_DIR/output/ciphertext_commitment.bin" --plaintext "$PLAINTEXT" --params "$ENCODED_PARAMS"
   waiton "$SCRIPT_DIR/output/output.bin"
 
+  advance_evm_timestamp "$INPUT_WINDOW_END"
   heading "Publish E3 input (forwards to publishCiphertextOutput; nodes run decryption with ZK proofs)"
   pnpm e3-program:publishInput \
     --network localhost \
@@ -126,7 +126,7 @@ else
   heading "Mock publish input e3-id"
   pnpm e3-program:publishInput --network localhost --e3-id "$E3_ID" --data 0x12345678
 
-  sleep 4
+  advance_evm_timestamp "$INPUT_WINDOW_END"
 
   waiton "$SCRIPT_DIR/output/output.bin"
 

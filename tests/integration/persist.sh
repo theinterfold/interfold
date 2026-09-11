@@ -65,9 +65,7 @@ ENCODED_PARAMS=0x$($SCRIPT_DIR/lib/pack_e3_params.sh \
   --degree 512 \
   --plaintext-modulus 100)
 
-CURRENT_TIMESTAMP=$(get_evm_timestamp)
-INPUT_WINDOW_START=$((CURRENT_TIMESTAMP + 20))
-INPUT_WINDOW_END=$((CURRENT_TIMESTAMP + 30))
+set_integration_input_window
 
 REQUEST_OUTPUT=$(pnpm committee:new \
   --network localhost \
@@ -80,6 +78,7 @@ printf '%s\n' "$REQUEST_OUTPUT"
 E3_ID=$(extract_e3_id "$REQUEST_OUTPUT")
 
 wait_for_committee_pubkey "$E3_ID" "$SCRIPT_DIR/output/pubkey.bin" "${INTEGRATION_DKG_TIMEOUT:-1300}"
+advance_evm_timestamp "$INPUT_WINDOW_START"
 
 ACTIVE_AGG_ADDRESS=$(wait_for_active_aggregator_address "$E3_ID")
 if ! ACTIVE_AGG=$(node_name_for_address "$ACTIVE_AGG_ADDRESS"); then
@@ -108,7 +107,7 @@ $SCRIPT_DIR/lib/fake_encrypt.sh --input "$SCRIPT_DIR/output/pubkey.bin" --output
 heading "Mock publish input e3-id"
 pnpm e3-program:publishInput --network localhost --e3-id "$E3_ID" --data 0x12345678
 
-sleep 6 # wait for input deadline to pass
+advance_evm_timestamp "$INPUT_WINDOW_END"
 
 waiton "$SCRIPT_DIR/output/output.bin"
 
