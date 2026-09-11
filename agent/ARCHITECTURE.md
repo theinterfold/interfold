@@ -441,6 +441,11 @@ Recovery tests use a crash matrix around each effect:
 Each case must converge to the same state and external outcome as uninterrupted execution. Snapshot
 hydration and full replay must produce equivalent state plus pending intents.
 
+EventStore replay regressions load fixtures through `ReplaySpool::load` and deliver them through
+`ReplaySpool::replay`. Use a separate source bus so fixture setup cannot seed the destination clock
+or its deduplication state. Do not replace production replay with a test-only sorting or delivery
+loop.
+
 Integration tests assert end-to-end protocol behavior. Long cryptographic tests run after fast
 domain, workflow, crate, and workspace checks have passed.
 

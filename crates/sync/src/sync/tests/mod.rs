@@ -7,7 +7,7 @@
 use super::{
     collect_historical_evm_events, has_schema_governed_kv_state, preflight_schema_version,
     project_restart_state_backfill, publish_reconciled_history,
-    reconcile_request_router_checkpoint, replay_eventstore_events,
+    reconcile_request_router_checkpoint,
 };
 use crate::{SyncRepositoryFactory, SCHEMA_VERSION};
 use e3_ciphernode_builder::EventSystem;
