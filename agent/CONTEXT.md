@@ -62,6 +62,7 @@ Run from repo root via pnpm scripts — not raw cargo/nargo/hardhat.
 | Test everything             | `pnpm test` (evm → rust → sdk → noir)                                                                                                              |
 | Test one layer              | `pnpm evm:test` · `pnpm rust:test` · `pnpm sdk:test` · `pnpm noir:test`                                                                            |
 | Integration tests           | `pnpm test:integration [name]` (`--no-prebuild` to skip binary build)                                                                              |
+| Test runner regressions     | `pnpm test:harnesses` (local stand-ins; no Docker services or browser stack)                                                                       |
 | Lint / format               | `pnpm lint` · `pnpm format` / `pnpm format:check`                                                                                                  |
 | Build circuits              | `pnpm build:circuits [--preset …] [--committee …]` (needs `nargo` + `bb`; `interfold noir setup` installs them)                                    |
 | Generate Solidity verifiers | `pnpm generate:verifiers [--check\|--write]`                                                                                                       |
