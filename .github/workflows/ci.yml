@@ -95,6 +95,8 @@ jobs:
               - '!**/*.md'
               - '!**/*.mdx'
             circuits:
+              - 'package.json'
+              - 'pnpm-lock.yaml'
               - 'circuits/**'
               - 'scripts/*-circuits.sh'
               - 'scripts/generate-verifiers*.ts'

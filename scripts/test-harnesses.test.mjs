@@ -10,6 +10,14 @@ import { fileURLToPath } from 'node:url'
 
 const repo = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 
+test('circuit tooling CI includes root package and lockfile changes', () => {
+  const workflow = readFileSync(join(repo, '.github/workflows/ci.yml'), 'utf8')
+  const filter = workflow.match(/^ {12}circuits:\n((?: {14}.*\n)+)/m)?.[1]
+  assert.ok(filter, 'The circuit path filter must exist.')
+  const paths = [...filter.matchAll(/^ {14}- '([^']+)'$/gm)].map((match) => match[1])
+  for (const path of ['package.json', 'pnpm-lock.yaml']) assert.ok(paths.includes(path), `${path} must trigger circuit checks.`)
+})
+
 function fixture(t, script) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'interfold-harness-test-')))
   t.after(() => rmSync(directory, { recursive: true, force: true }))
