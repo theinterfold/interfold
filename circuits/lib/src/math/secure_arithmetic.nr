@@ -18,13 +18,12 @@
 use crate::math::helpers::compute_safe;
 use crate::math::polynomial::Polynomial;
 
-/// Threshold coefficient moduli for the secure-8192 preset. Each is `2^58` plus a positive 24-bit
-/// gap, which is why the interval checks below use a split rather than a plain bit width.
-pub global TH_Q: [Field; 3] = [288230376164294657, 288230376162459649, 288230376161738753];
-/// Plaintext modulus for the secure-8192 preset.
-pub global TH_T: Field = 1000000;
-/// `2^58`. The power-of-two floor shared by all three threshold moduli.
-pub global TH_SPLIT: Field = 288230376151711744;
+/// Widest gap these routines accept above a modulus' power-of-two floor.
+///
+/// Every secure threshold prime is `2^K + gap` with `gap` below 24 bits, so this holds for the
+/// whole family with a bit to spare. A modulus whose gap does not fit is rejected by `check_split`,
+/// which is what keeps the insecure parameter set out: its gap is as wide as its floor.
+pub global SPLIT_GAP_BITS: u32 = 25;
 
 // INTERFOLD_MAX_SUITE_V1. The circuit identifier is also absorbed into each transcript.
 pub global DS: [u8; 64] = [
@@ -32,15 +31,6 @@ pub global DS: [u8; 64] = [
     0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     0, 0, 0, 0, 0, 0, 0,
 ];
-
-/// Rejects any configuration these routines are not pinned to.
-pub fn parameters<let N: u32, let L: u32>(q: [Field; L]) {
-    assert(N == 8192);
-    assert(L == 3);
-    for l in 0..L {
-        assert(q[l] == TH_Q[l]);
-    }
-}
 
 // Flags are hints only. check_split proves both the flag and the exact interval.
 unconstrained fn flags_hint<let N: u32, let K: u32>(a: [Field; N], offset: Field) -> [Field; N] {
@@ -72,13 +62,18 @@ pub fn check_split<let K: u32, let G: u32>(v: Field, gap: Field, flag: Field) {
 ///
 /// This fixes one representative per residue class, so a commitment over the result binds to a
 /// value rather than to whichever lift the prover preferred.
-pub fn centered<let N: u32>(a: Polynomial<N>, q: Field) {
-    assert((q == TH_Q[0]) | (q == TH_Q[1]) | (q == TH_Q[2]));
+///
+/// `K` is the modulus' power-of-two floor, which for every threshold parameter set is the same
+/// value the configuration already publishes as its public-key bit width. The gap above that floor
+/// is derived here rather than configured, and `check_split` rejects a modulus whose gap does not
+/// fit `SPLIT_GAP_BITS`.
+pub fn centered<let N: u32, let K: u32>(a: Polynomial<N>, q: Field) {
     let half = (q - 1) / 2;
+    let gap = q - 2.pow_32(K as Field);
     // Safety: check_split constrains each flag and the exact centered interval.
-    let flags = unsafe { flags_hint::<N, 58>(a.coefficients, half) };
+    let flags = unsafe { flags_hint::<N, K>(a.coefficients, half) };
     for j in 0..N {
-        check_split::<58, 24>(a.coefficients[j] + half, q - TH_SPLIT, flags[j]);
+        check_split::<K, SPLIT_GAP_BITS>(a.coefficients[j] + half, gap, flags[j]);
     }
 }
 
@@ -179,16 +174,30 @@ fn split_rejects_negative() {
 }
 
 #[test]
-fn split_covers_each_threshold_modulus() {
-    // The pinned gaps must fit the 24-bit width `centered` asks for.
-    for l in 0..3 {
-        let gap = TH_Q[l] - TH_SPLIT;
-        gap.assert_max_bit_size::<24>();
-        assert(gap != 0);
-        // Both ends of the canonical interval, at the flag value each requires.
-        check_split::<58, 24>(0, gap, 0);
-        check_split::<58, 24>(TH_Q[l] - 1, gap, 1);
-    }
+fn split_covers_every_secure_modulus() {
+    // One modulus from each secure parameter set: 2^58 + gap and 2^50 + gap.
+    let q8192 = 288230376164294657;
+    let q16384 = 1125899917262849;
+    check_split::<58, SPLIT_GAP_BITS>(0, q8192 - 288230376151711744, 0);
+    check_split::<58, SPLIT_GAP_BITS>(q8192 - 1, q8192 - 288230376151711744, 1);
+    check_split::<50, SPLIT_GAP_BITS>(0, q16384 - 1125899906842624, 0);
+    check_split::<50, SPLIT_GAP_BITS>(q16384 - 1, q16384 - 1125899906842624, 1);
+}
+
+#[test]
+fn centered_accepts_both_interval_ends() {
+    let q = 288230376164294657;
+    let half = (q - 1) / 2;
+    let p = Polynomial::new([-half, -1, 0, 1, half]);
+    centered::<5, 58>(p, q);
+}
+
+#[test(should_fail)]
+fn centered_rejects_non_canonical() {
+    let q = 288230376164294657;
+    // One coefficient lifted by a whole modulus: congruent, but not the canonical representative.
+    let p = Polynomial::new([0, 0, q, 0, 0]);
+    centered::<5, 58>(p, q);
 }
 
 #[test]

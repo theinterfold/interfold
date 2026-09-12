@@ -6,13 +6,10 @@
 
 use crate::math::commitments::{
     compute_sc_esm_secret_root_from_polynomial, compute_sc_sk_secret_root_from_polynomial,
-    compute_threshold_pk_challenge, compute_threshold_pk_commitment,
+    compute_threshold_pk_commitment,
 };
-use crate::math::helpers::flatten;
 use crate::math::polynomial::Polynomial;
-use crate::math::secure_arithmetic::{
-    append, centered, challenge, dot, fold_negacyclic, kernel, parameters,
-};
+use crate::math::secure_arithmetic::{append, centered, challenge, dot, fold_negacyclic, kernel};
 
 /// Parameters for threshold public key generation (C1).
 pub struct Configs<let N: u32, let L: u32> {
@@ -43,48 +40,54 @@ impl<let N: u32, let L: u32> Configs<N, L> {
     }
 }
 
-/// Threshold public key contribution (C1).
+
+/// Threshold public key contribution (C1), for the secure parameter sets.
 ///
-/// **Role:** Prove one party's TrBFV public-key contribution from hidden `sk`, `eek`, `e_sm`, and
-/// quotients (`pk1` limb is the CRS `a`).
+/// **Role:** Prove one party's TrBFV public-key contribution from hidden `sk`, `eek`, and `e_sm`
+/// (the `pk1` limb is the CRS `a`).
 ///
-/// **Verifies:** Range checks on witnesses; evaluation form of `pk0 = -a*sk + eek + ...` at the FS challenge.
+/// **Verifies:** `pk0 = -(a*sk mod X^N+1) + eek + q*short` per modulus, at a Fiat-Shamir point, with
+/// every operand of that equation range-checked first. The bounds are what make the field identity
+/// imply the integer one: the field has no ordering, so a checked equation alone proves only a
+/// congruence modulo the native prime, and `q` is invertible there.
 ///
 /// **Produces (tuple order):**
 /// - `commit(sk)` -> C2a (share computation).
 /// - `commit(pk_trbfv)` -> C5 (pk aggregation).
 /// - `commit(e_sm)` -> C2b (share computation).
-pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
+///
+/// `BIT_PK` doubles as the power-of-two floor of each modulus, and `BIT_R1` sets the quotient
+/// window. Both come from the configuration, so the circuit covers every secure parameter set
+/// without per-preset constants. Insecure parameters are not supported: their moduli sit too far
+/// above a power of two for the interval check, which rejects them rather than accepting a weaker
+/// bound.
+pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
     /// Cryptographic parameters including bounds, moduli, and constants.
     configs: Configs<N, L>,
 
-    /// Common Reference String polynomials (public witnesses)
-    /// One polynomial per modulus i
+    /// Common reference polynomial, one per modulus. Pinned by the configuration, so it is a
+    /// circuit constant rather than a caller-supplied value and needs no transcript entry.
     a: [Polynomial<N>; L],
 
-    /// Error polynomial (secret witness)
-    /// Small coefficients sampled from error distribution
+    /// Error polynomial (secret witness). Small coefficients from the error distribution.
     eek: Polynomial<N>,
 
-    /// Secret key polynomial (secret witness)
-    /// Small coefficients sampled from CBD (Centered Binomial Distribution)
+    /// Secret key polynomial (secret witness). Ternary coefficients.
     sk: Polynomial<N>,
 
-    /// Smudging noise polynomial (secret witness)
-    /// Used for threshold decryption security
+    /// Smudging noise polynomial (secret witness), one limb per modulus.
     e_sm: [Polynomial<N>; L],
 
-    /// Quotients from polynomial operations (secret witnesses)
-    /// r1[i] are quotients from modulus switching for modulus i (can be negative, degree 2*N-1)
+    /// Modulus-switching quotients (secret witnesses), one per modulus, degree `2N-2`. Reduced to
+    /// length `N` inside the circuit; only the reduction is constrained.
     r1: [Polynomial<2 * N - 1>; L],
-    /// r2[i] are quotients from cyclotomic reduction for modulus i (typically positive, degree N-1)
-    r2: [Polynomial<N - 1>; L],
 
-    /// Threshold public key first component per modulus (committed witness). Second component is a[i].
+    /// Threshold public key first component per modulus (committed witness). The second component
+    /// is `a[i]`.
     pk0: [Polynomial<N>; L],
 }
 
-impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_R2: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> PkGeneration<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_R1, BIT_R2, BIT_PK, N_CHUNKS, CHUNK_SIZE> {
+impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> PkGeneration<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_R1, BIT_PK, N_CHUNKS, CHUNK_SIZE> {
     pub fn new(
         configs: Configs<N, L>,
         a: [Polynomial<N>; L],
@@ -92,207 +95,90 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         sk: Polynomial<N>,
         e_sm: [Polynomial<N>; L],
         r1: [Polynomial<2 * N - 1>; L],
-        r2: [Polynomial<N - 1>; L],
         pk0: [Polynomial<N>; L],
     ) -> Self {
-        PkGeneration { configs, a, eek, sk, e_sm, r1, r2, pk0 }
-    }
-
-    /// Flattens all witness data into a single array for Fiat-Shamir challenge generation.
-    ///
-    /// Uses commitments for sk and pk rather than full polynomials to reduce constraint
-    /// count while maintaining binding properties. e_sm is not included in the payload.
-    fn payload(self, sk_commitment: Field, pk_commitment: Field) -> [Field] {
-        let mut inputs: [Field] = [].as_vector();
-
-        // Flatten CRS polynomials a (L polynomials of degree N)
-        inputs = flatten::<_, _, BIT_PK>(inputs, self.a);
-
-        // Flatten error polynomial eek (1 polynomial of degree N)
-        inputs = flatten::<_, _, BIT_EEK>(inputs, [self.eek]);
-
-        // Use commitments instead of full polynomials
-        inputs = inputs.push_back(sk_commitment);
-        inputs = inputs.push_back(pk_commitment);
-
-        // Flatten quotient polynomials (L polynomials each)
-        inputs = flatten::<_, _, BIT_R1>(inputs, self.r1);
-        inputs = flatten::<_, _, BIT_R2>(inputs, self.r2);
-
-        inputs
+        PkGeneration { configs, a, eek, sk, e_sm, r1, pk0 }
     }
 
     /// Executes the threshold public key generation circuit.
     ///
     /// Returns `(commit(sk), commit(pk_trbfv), commit(e_sm))` as documented on the struct.
     pub fn execute(self) -> (Field, Field, Field) {
-        // The compact path is pinned to secure-8192. Insecure-512 and secure-16384 (L = 5) both
-        // fall through to the original implementation; the condition folds at compile time.
-        if (N == 8192) & (L == 3) {
-            let mut q_short = [Polynomial::new([0; N]); L];
-            for l in 0..L {
-                q_short[l] = fold_negacyclic(self.r1[l]);
-            }
-            prove_secure::<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_PK, N_CHUNKS, CHUNK_SIZE, BIT_R1>(
-                self.configs,
-                self.a,
-                self.eek,
-                self.sk,
-                self.e_sm,
-                q_short,
-                self.pk0,
-            )
-        } else {
-            // Step 1: Range-check secret witnesses (sk, eek, e_sm, quotients).
-            self.perform_range_checks();
+        assert(self.configs.sk_bound == 1);
+        assert(self.configs.eek_bound == 20);
+        assert(BIT_EEK == 5);
+        assert(BIT_SK == 1);
 
-            // Step 2: Derive commitments for the FS transcript.
-            let sk_commitment = compute_sc_sk_secret_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SK>(
-                self.sk,
-            );
-            let e_sm_commitment = compute_sc_esm_secret_root_from_polynomial::<N, L, N_CHUNKS, CHUNK_SIZE, BIT_E_SM>(
-                self.e_sm,
-            );
-            let pk_commitment = compute_threshold_pk_commitment::<N, L, BIT_PK>(self.pk0);
-
-            // Step 3: Fiat-Shamir challenge and per-modulus evaluation checks.
-            let gamma = self.generate_challenge(sk_commitment, pk_commitment);
-            self.verify_evaluations(gamma);
-
-            // Step 4: Return commitments for downstream circuits.
-            (sk_commitment, pk_commitment, e_sm_commitment)
-        }
-    }
-
-    /// Generates Fiat-Shamir challenge values using the SAFE cryptographic sponge.
-    ///
-    /// Returns a single challenge point `gamma` used to verify key generation
-    /// equations for all CRT moduli via the Schwartz-Zippel lemma.
-    fn generate_challenge(self, sk_commitment: Field, pk_commitment: Field) -> Field {
-        let inputs = self.payload(sk_commitment, pk_commitment);
-
-        compute_threshold_pk_challenge(inputs)
-    }
-
-    /// Performs range checks on all secret witness values.
-    ///
-    /// These bounds are critical for BFV security-large coefficients would
-    /// break the scheme's hardness assumptions (Ring-LWE).
-    fn perform_range_checks(self) {
-        // Check that error polynomial has small coefficients
+        // Step 1: bound the small secrets to their configured distributions.
+        self.sk.range_check_2bounds::<BIT_SK>(self.configs.sk_bound, self.configs.sk_bound);
         self.eek.range_check_2bounds::<BIT_EEK>(self.configs.eek_bound, self.configs.eek_bound);
 
-        // Check that secret key polynomial has small coefficients
-        self.sk.range_check_2bounds::<BIT_SK>(self.configs.sk_bound, self.configs.sk_bound);
+        // Step 2: reduce each modulus-switching quotient modulo X^N + 1, then bound the result.
+        // The reduction itself is a witness derivation over the native field and may wrap; only
+        // these bounds make the reduced values usable as integers.
+        let short_offset = 2.pow_32(BIT_R1 as Field);
+        let mut q_short = [Polynomial::new([0; N]); L];
+        for l in 0..L {
+            q_short[l] = fold_negacyclic(self.r1[l]);
+            for j in 0..N {
+                (q_short[l].coefficients[j] + short_offset).assert_max_bit_size::<BIT_R1 + 1>();
+            }
+        }
 
-        // Check quotient terms are within expected bounds (per modulus)
-        for i in 0..L {
-            self.e_sm[i].range_check_2bounds::<BIT_E_SM>(
-                self.configs.e_sm_bound,
-                self.configs.e_sm_bound,
+        // Step 3: pin pk0 and each noise limb to their canonical centered intervals. Without this
+        // one public key opens under several distinct commitments.
+        for l in 0..L {
+            centered::<N, BIT_PK>(self.pk0[l], self.configs.qis[l]);
+            // The generator already centers each noise residue modulo q_l. Prove the configured
+            // global bound contains that interval, then check the narrower canonical one. This
+            // implies the configured bound rather than replacing it, and leaves the global noise
+            // distribution and its sampler unchanged.
+            // The lower end keeps the commitment packing injective: a centered residue is below
+            // 2^BIT_PK, so the encoding needs at least that many bits per digit. The upper end is
+            // where `packing_layout` stops fitting one digit in a field element.
+            assert((BIT_E_SM >= BIT_PK) & (BIT_E_SM <= 248));
+            self.configs.e_sm_bound.assert_max_bit_size::<BIT_E_SM>();
+            (self.configs.e_sm_bound - (self.configs.qis[l] - 1) / 2).assert_max_bit_size::<BIT_E_SM>();
+            centered::<N, BIT_PK>(self.e_sm[l], self.configs.qis[l]);
+        }
+
+        // Step 4: derive commitments for downstream circuits and the checking transcript.
+        let sk_commitment =
+            compute_sc_sk_secret_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BIT_SK>(self.sk);
+        let e_sm_commitment = compute_sc_esm_secret_root_from_polynomial::<N, L, N_CHUNKS, CHUNK_SIZE, BIT_E_SM>(
+            self.e_sm,
+        );
+        let pk_commitment = compute_threshold_pk_commitment::<N, L, BIT_PK>(self.pk0);
+
+        // Step 5: bind every independent operand before drawing the checking point. pk0 and sk are
+        // bound through their commitments; eek and the quotients are packed directly; the moduli
+        // and `a` are configuration constants.
+        let mut payload =
+            [101, N as Field, L as Field, sk_commitment, pk_commitment, e_sm_commitment]
+                .as_vector();
+        payload = append::<N, 6>(payload, self.eek, self.configs.eek_bound);
+        for l in 0..L {
+            payload = payload.push_back(self.configs.qis[l]);
+            payload = append::<N, BIT_R1 + 1>(payload, q_short[l], short_offset);
+        }
+        let x = challenge(payload);
+
+        // Step 6: check pk0 = -(a*sk mod X^N+1) + eek + q*short per modulus. The kernel evaluates
+        // the reduced product by constrained recurrence, so no product hint is accepted.
+        let k = kernel(self.sk, x);
+        for l in 0..L {
+            let mut residual = [0; N];
+            for j in 0..N {
+                residual[j] = self.pk0[l].coefficients[j]
+                    - self.eek.coefficients[j]
+                    - self.configs.qis[l] * q_short[l].coefficients[j];
+            }
+            assert(
+                Polynomial::new(residual).eval(x) == -dot(self.a[l], k),
+                "Public key equation failed",
             );
-
-            self.r1[i].range_check_2bounds::<BIT_R1>(
-                self.configs.r1_bounds[i],
-                self.configs.r1_bounds[i],
-            );
-
-            self.r2[i].range_check_2bounds::<BIT_R2>(
-                self.configs.r2_bounds[i],
-                self.configs.r2_bounds[i],
-            );
         }
-    }
 
-    /// Verifies BFV key generation equations for all CRT moduli using Schwartz-Zippel.
-    ///
-    /// For each CRT modulus i, verifies at the challenge point gamma:
-    /// - `pk0[i](gamma) = -a[i](gamma) * sk(gamma) + eek(gamma) + r2[i](gamma) * (gamma^N + 1) + r1[i](gamma) * q_i`
-    /// - `pk1[i](gamma) = a[i](gamma)`
-    ///
-    /// The Schwartz-Zippel lemma states that if these polynomial equations hold at a
-    /// random point, they hold for all coefficients with overwhelming probability.
-    fn verify_evaluations(self, gamma: Field) {
-        let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
-        let sk_at_gamma = self.sk.eval(gamma);
-        let eek_at_gamma = self.eek.eval(gamma);
-
-        for i in 0..L {
-            let expected_pk0 = -self.a[i].eval(gamma) * sk_at_gamma
-                + eek_at_gamma
-                + self.r2[i].eval(gamma) * cyclo_at_gamma
-                + self.r1[i].eval(gamma) * self.configs.qis[i];
-
-            assert(self.pk0[i].eval(gamma) == expected_pk0, "Public key equation 1 failed");
-        }
+        (sk_commitment, pk_commitment, e_sm_commitment)
     }
-}
-
-/// Proves the C1 relation in `Z[X]/(X^N+1)`, with one short quotient instead of two full-degree
-/// ones.
-///
-/// The relation becomes `pk0 = -(a*sk mod X^N+1) + eek + q*short`. `a` is the pinned CRP, so it is a
-/// circuit constant rather than a caller-supplied value and needs no transcript entry. The three
-/// returned commitments keep their existing formats.
-///
-/// Every operand of the checked equation is bounded before it is used, which is what makes the
-/// field identity imply the integer one: `pk0` and `e_sm` to their canonical centered intervals,
-/// `eek` and `sk` to their configured bounds, and each `q_short` coefficient to a window derived
-/// from `BR1`, the configured bit width of the `r1` bound.
-fn prove_secure<let N: u32, let L: u32, let BE: u32, let BS: u32, let BESM: u32, let BPK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BR1: u32>(
-    configs: Configs<N, L>,
-    a: [Polynomial<N>; L],
-    eek: Polynomial<N>,
-    sk: Polynomial<N>,
-    e_sm: [Polynomial<N>; L],
-    q_short: [Polynomial<N>; L],
-    pk0is: [Polynomial<N>; L],
-) -> (Field, Field, Field) {
-    parameters::<N, L>(configs.qis);
-    assert(configs.sk_bound == 1);
-    assert(configs.eek_bound == 20);
-    assert(BE == 5);
-    assert(BS == 1);
-    sk.range_check_2bounds::<BS>(1, 1);
-    eek.range_check_2bounds::<BE>(20, 20);
-    let short_offset = 2.pow_32(BR1 as Field);
-    for l in 0..L {
-        centered(pk0is[l], configs.qis[l]);
-        // The Rust generator already centers each noise residue modulo q_l. Prove that the
-        // configured global bound contains that interval, then check the narrower canonical one.
-        // This implies the configured bound rather than replacing it, and leaves the global noise
-        // distribution and its sampler unchanged.
-        assert((BESM >= 58) & (BESM <= 192));
-        configs.e_sm_bound.assert_max_bit_size::<BESM>();
-        (configs.e_sm_bound - (configs.qis[l] - 1) / 2).assert_max_bit_size::<BESM>();
-        centered(e_sm[l], configs.qis[l]);
-        // The window is `[-2^BR1, 2^BR1 - 1]`, which always contains the forced quotient: a bit
-        // width of `BR1` means the r1 bound is below `2^BR1`, and `|short|` cannot exceed it.
-        // `bin/config` pins `BR1` against that bound at both ends.
-        for j in 0..N {
-            (q_short[l].coefficients[j] + short_offset).assert_max_bit_size::<BR1 + 1>();
-        }
-    }
-    let sc = compute_sc_sk_secret_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, BS>(sk);
-    let ec = compute_sc_esm_secret_root_from_polynomial::<N, L, N_CHUNKS, CHUNK_SIZE, BESM>(e_sm);
-    let pc = compute_threshold_pk_commitment::<N, L, BPK>(pk0is);
-    // a is the fixed CRP in this entry point, not a private or public caller-supplied value.
-    let mut payload = [101, N as Field, L as Field, sc, pc, ec].as_vector();
-    payload = append::<N, 6>(payload, eek, 20);
-    for l in 0..L {
-        payload = payload.push_back(configs.qis[l]);
-        payload = append::<N, BR1 + 1>(payload, q_short[l], short_offset);
-    }
-    let x = challenge(payload);
-    let k = kernel(sk, x);
-    for l in 0..L {
-        let mut residual = [0; N];
-        for j in 0..N {
-            residual[j] = pk0is[l].coefficients[j]
-                - eek.coefficients[j]
-                - configs.qis[l] * q_short[l].coefficients[j];
-        }
-        assert(Polynomial::new(residual).eval(x) == -dot(a[l], k));
-    }
-    (sc, pc, ec)
 }

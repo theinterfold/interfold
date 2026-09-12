@@ -97,7 +97,6 @@ pub struct Inputs {
     pub sk: Polynomial,
     pub e_sm: CrtPolynomial,
     pub r1is: CrtPolynomial,
-    pub r2is: CrtPolynomial,
     pub pk0is: CrtPolynomial,
 }
 
@@ -280,7 +279,7 @@ impl Computation for Inputs {
         let cyclo = cyclotomic_polynomial(n);
 
         // Perform the main computation logic
-        let mut results: Vec<(usize, Polynomial, Polynomial, Polynomial, Polynomial)> = izip!(
+        let mut results: Vec<(usize, Polynomial, Polynomial, Polynomial)> = izip!(
             moduli.clone(),
             data.pk0_share.limbs.clone(),
             a.limbs.clone(),
@@ -315,15 +314,16 @@ impl Computation for Inputs {
 
             assert_eq!((pk0_share_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            let (r1, r2) = decompose_residue(&pk0_share, &pk0_share_hat, &qi, &cyclo, n);
+            // C1 reduces modulo X^N + 1 in-circuit, so only the modulus-switching quotient
+            // is a witness. The cyclotomic quotient is discarded.
+            let (r1, _r2) = decompose_residue(&pk0_share, &pk0_share_hat, &qi, &cyclo, n);
 
-            (i, r2, r1, pk0_share.clone(), e_sm.clone())
+            (i, r1, pk0_share.clone(), e_sm.clone())
         })
         .collect();
 
-        results.sort_by_key(|(i, _, _, _, _)| *i);
+        results.sort_by_key(|(i, _, _, _)| *i);
 
-        let mut r2 = CrtPolynomial::new(vec![]);
         let mut r1 = CrtPolynomial::new(vec![]);
         let mut pk0_share = CrtPolynomial::new(vec![]);
         let mut e_sm = CrtPolynomial::new(vec![]);
@@ -336,8 +336,7 @@ impl Computation for Inputs {
         eek.reverse();
         eek.center(&moduli[0]);
 
-        for (_i, r2i, r1i, pk0_sharei, e_smi) in results {
-            r2.add_limb(r2i);
+        for (_i, r1i, pk0_sharei, e_smi) in results {
             r1.add_limb(r1i);
             pk0_share.add_limb(pk0_sharei);
             e_sm.add_limb(e_smi);
@@ -348,7 +347,6 @@ impl Computation for Inputs {
             sk,
             e_sm,
             r1is: r1,
-            r2is: r2,
             pk0is: pk0_share,
         })
     }
@@ -359,7 +357,6 @@ impl Computation for Inputs {
         let sk = polynomial_to_toml_json(&self.sk);
         let e_sm = crt_polynomial_to_toml_json(&self.e_sm);
         let r1is = crt_polynomial_to_toml_json(&self.r1is);
-        let r2is = crt_polynomial_to_toml_json(&self.r2is);
 
         let json = serde_json::json!({
             "pk0is": pk0is,
@@ -367,7 +364,6 @@ impl Computation for Inputs {
             "sk": sk,
             "e_sm": e_sm,
             "r1is": r1is,
-            "r2is": r2is,
         });
 
         Ok(json)
