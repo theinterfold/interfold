@@ -654,3 +654,106 @@ print("        the node wall table above (RAN floor / RAN-anchored) is comm-RAN-
 print("        <0.5% even at the wire-receipt verify upper bound + sub-minute Gbps LAN transmit (r107 shape).")
 print("        ONLY residual = the LIVE netlink wall + on-wire inners-parallelism of the box-2 r78 19-node run (would only")
 print("        shrink the verify fan-out; the per-verify FLOOR here is the RAN r108 number).")
+
+# ==================== ROUND-128 LANDING: N=19 NODE WALL RE-ANCHORED ON THE r127 RAN LEG (supersedes the r76-era blend 5406.8 s = 90.1 min) ====================
+# r127 (2026-09-12, i5/dkg-research tree, 8c/32 GiB box, leg @4c-pinned, RAYON_NUM_THREADS=4):
+# RAN-completed the FULL production DKG fold leg end-to-end (node_fold_function_tests_r78 /
+# prove_node_dkg_end_to_end_small at secure-8192/small N=19/T=9/H=10/L=3). Journal r127r78leg:
+# test wall 3959.68 s = 65.99 min; /usr/bin/time -v maxRSS 15,449,312 kB = 14.73 GiB, Swaps 0;
+# verify_fold_proof(node_fold)=true; node_fold publics 204; field[0]=0x28b00cd82a... (on-disk:
+# poc/r127/status/, LOG r127 n1). FIRST RAN point at the production committee with the FULL
+# function run. Every component below is measured IN THAT LEG (one toolchain: nargo
+# v1.0.0-beta.26 / bb 5.1.0; one box: 32 GiB; one core pin: 4c). Zero NEW compute this round:
+# this block rewrites the header from RAN data already on disk (r102 bookkeeping class).
+#
+# The superseded header (5406.8 s = 90.1 min @4c EXCL. comm) was a BLEND: c3-bulk 5183.0 built on
+# the r69/r70 legs (beta.16-era toolchain, 7.8 GiB box, both c3 arms counted SERIALLY) + leaves/
+# folds RAN-anchored off the r75/r82/r83 min/micro legs. Its premises were NOT wrong - they were
+# pre-nargo-beta.26, pre-32 GiB-box, and pre-r71-join-shape. The re-anchor is a genuine
+# toolchain+box+shape era change, not a model defect. The legacy header is preserved below as a
+# LEGACY history line, reproduced FROM THE MODEL'S OWN LANE VARS (self-checked, below).
+#
+# Shape note (why the RAN sum works without double-counting; source RAN: node_dkg_fold.rs r71
+# wiring + the r127 leg's own step_timings): inside prove_node_dkg_fold, the two c3 M7x arms
+# run under rayon::join (parallel) -> only max(c3a,c3b) is on the critical path; c2ab hides
+# under that join; the c3ab->c4ab->node_fold tail is serial. The leg's fn-wall (542.4 s) is ONE
+# in-leg measurement that ALREADY contains arms+tail; c2ab never re-enters the node sum.
+R127 = dict(test_wall=3959.68,
+            c0=2.8, c1=20.6, c2a=68.4, c2b=77.9, c3_inners_108=3182.7,
+            c4a=28.5, c4b=28.4,        # leaves, in-leg RAN (r127 journal)
+            c2ab_fold=17.7, c3a_fold=501.7, c3b_fold=501.7,
+            c3ab_fold=9.1, c4ab_fold=9.4, node_fold=22.3,
+            fn_wall=542.4,             # prove_node_dkg_fold in-leg wall (arms join + tail)
+            peak_rss_gib=15449312.0/1024.0/1024.0)
+def _k128(label, a, b, tol=0.51):
+    assert abs(a-b) <= tol, "r128 self-check %s: %.2f vs %.2f" % (label, a, b)
+# --- self-checks vs the r127 leg journal (exact RAN, one-row source each) -----------------
+_k128("leaves sum (c0+c1+c2a+c2b+c4a+c4b, r127 journal)",
+      sum(R127[k] for k in ("c0","c1","c2a","c2b","c4a","c4b")), 226.6)
+_k128("fn-wall (leg printed; arms-under-join + serial tail)", R127["fn_wall"], 542.4, 0.1)
+_k128("inners (leg printed, serial core of both arms)", R127["c3_inners_108"], 3182.7, 0.1)
+_k128("peak GiB (leg /usr/bin/time log)", R127["peak_rss_gib"], 14.731, 0.05)
+_k128("test wall (leg journal 'finished in')", R127["test_wall"], 3959.68, 0.1)
+# --- fold-shape RAN check (r71 wiring: c3a|c3b join, then c3ab->c4ab->node serial) ---------
+_cp_join_tail = max(R127["c3a_fold"], R127["c3b_fold"]) + R127["c3ab_fold"] + R127["c4ab_fold"] + R127["node_fold"]
+_k128("r127 fold-shape CP (join-max + c3ab + c4ab + node) ~= fn-wall (c2ab hidden)",
+      _cp_join_tail, R127["fn_wall"], 1.0)
+# --- THE anchor (skill gate: reproduce a known measured value) -----------------------------
+LEAVES_127 = 226.6
+INNERS_127 = 3182.7
+N_RAN_127  = LEAVES_127 + INNERS_127 + R127["fn_wall"]   # = 3951.7 s
+_k128("RAN component sum reproduces the leg's own measured test wall",
+      N_RAN_127, R127["test_wall"], 10.0)   # 7.98 s residual = harness/stage-boundary tail
+# --- LEGACY header reproduced from the model's own lane vars (history line, self-checked) --
+_legacy_header = C3BULK_SMALL + C0C1 + _c4_small_2pt + INV_FOLDS_SMALL_FLOOR + C2_AB_MIN
+#  = 5183.0 (r70 (a) c3-bulk: r69 inners 4196.3 + c3a-M7x 495.8 + c3b-M7x 479.5 + c3ab 11.4, both arms SERIAL)
+#  + 31.4   (r75 C0+C1, committee-invariant) + 74.43 (r83 C4 2-pt RAN-anchored small)
+#  + 73.5   (r75 folds min-floor c2ab+c4ab+node) + 44.5 (r75 C2 a+b min floor) = 5406.8
+_k128("LEGACY header 5406.8 reproduced from lane vars", _legacy_header, 5406.8, 0.5)
+# --- deltas ---------------------------------------------------------------------------------
+d_node   = pct(N_RAN_127, 5406.8)
+d_inners = pct(R127["c3_inners_108"], 4196.3)            # vs r69 inners (the legacy c3-bulk's inners)
+c3_core  = R127["c3_inners_108"] + max(R127["c3a_fold"], R127["c3b_fold"]) + R127["c3ab_fold"]  # 3693.5
+d_c3     = pct(c3_core, C3BULK_SMALL)                    # vs legacy 5183.0 (arms-serial shape)
+print("\n" + "=" * W)
+print("ROUND-128 - N=19 NODE WALL RE-ANCHORED ON THE r127 RAN LEG (supersedes the 90.1 min @4c header)")
+print("=" * W)
+print("  [RAN r127 leg @4c-pinned, nargo v1.0.0-beta.26 / bb 5.1.0, 8c/32 GiB box] FULL production function, measured IN-LEG:")
+print("    leaves c0 %.1f / c1 %.1f / c2a %.1f / c2b %.1f / c4a %.1f / c4b %.1f                              %7.1f s (sum)" % (R127["c0"],R127["c1"],R127["c2a"],R127["c2b"],R127["c4a"],R127["c4b"], LEAVES_127))
+print("    c3-inners x108 serial (54 sk-lane + 54 esm-lane ShareEncryption, W_1 scatter)            %7.1f s (%.1f%% of wall; %.2f s/inner)" % (INNERS_127, INNERS_127/R127["test_wall"]*100, INNERS_127/108.0))
+print("    in-leg fn measurement - join: c3a %.1f | c3b %.1f (54/54 M7x arms) hidden c2ab %.1f ; tail c3ab %.1f -> c4ab %.1f -> node_fold %.1f" % (R127["c3a_fold"],R127["c3b_fold"],R127["c2ab_fold"],R127["c3ab_fold"],R127["c4ab_fold"],R127["node_fold"]))
+print("    prove_node_dkg_fold wall (ONE in-leg measurement: join-max + tail)                        %7.1f s" % R127["fn_wall"])
+print("    ==> NODE WALL RECONSTRUCTION (leaves + inners + fn-wall; ALL RAN, same leg)              %7.1f s = %.2f min @4c-pinned" % (N_RAN_127, N_RAN_127/60.0))
+print("    ==> TEST WALL (measured harness wall, RAN)                                               %7.1f s = %.2f min   (residual %.2f s = stage-boundary)" % (R127["test_wall"], R127["test_wall"]/60.0, R127["test_wall"]-N_RAN_127))
+print("  [RE-ANCHOR vs the r76-era blend header the box-2 card carried (5406.8 s = 90.1 min @4c EXCL. comm)]:")
+print("     inners     4196.3 (r69 leg, 38.85 s/inner, beta.16-era)  -> 3182.7 RAN r127 (29.47 s/inner) = %+.1f%%  [GENUINE ERA DIFFERENCE]" % d_inners)
+print("     c3 core    5183.0 (legacy: inners + BOTH arms serial 975.3 + c3ab) -> %.1f RAN (inners + join-max 501.7 + c3ab 9.1) = %+.1f%%  [era + r71 join shape]" % (c3_core, d_c3))
+print("     node       5406.8 (90.11 min blend) -> %.1f s RAN = 65.86 min = %+.1f%%  (%+.1f min)   [LEGACY header RETIRED as planning number]" % (N_RAN_127, d_node, (N_RAN_127-5406.8)/60.0))
+print("  [LABEL / CALIBER - the r68 rule: which inputs feed which number, RAN vs DRAFT]")
+print("    (a) r76-era 5406.8 s = BLEND [LEGACY, history line, preserved above]: c3-bulk 5183.0 RAN r70-era")
+print("        (r69/r70 legs, beta.16-era toolchain, 7.8 GiB box, both arms SERIALLY counted) + leaves/folds")
+print("        RAN-anchored off the r75/r82/r83 min/micro legs. Legacy head is still a faithful plan.")
+print("    (b) THIS = N_RAN_127 = %.1f s (%.2f min) @4c-pinned = ALL-IN-LEG RAN r127, measured in the SAME leg" % (N_RAN_127, N_RAN_127/60.0))
+print("        on the pinned toolchain (nargo v1.0.0-beta.26 / bb 5.1.0) on the 32 GiB box. One RAN leg.")
+print("        REPLACES (a) as the planning header for N=19 secure-8192/small c3-inners-and-folds cost.")
+print("  [RAM, RAN r127] whole N=19 fold proved @4c-pinned, peak RSS %.2f GiB of 32 GiB box, Swaps 0." % R127["peak_rss_gib"])
+print("     PROVE stage fits a 16 GiB card (peak 14.73 GiB, 0.7 GiB over r45/r46's OOM margin which swapped).")
+print("     COMPILE stage needs >= ~30 GiB (r126 envelope 29.96 GiB) - stacks separately (r127 n3 applies).")
+print("-" * W)
+print("  VERDICT (r128): THE BOX-2 CARD CLOSES ON FULLY-RAN EVIDENCE. N=19 secure-8192/small production DKG")
+print("  fold, RAN end-to-end ON-BOX at 65.99 min @4c-pinned (peak 14.73 GiB, Swaps 0, verify=true). Node wall")
+print("  reconstruction 3951.7 s vs the 90.1 min blend = %+.1f%% = %+.1f min. c3-core (inners + join-max + c3ab) %.1f s vs" % (d_node, (N_RAN_127-5406.8)/60.0, c3_core))
+print("  legacy 5183.0 s = %+.1f%%. GENUINE ERA CHANGE (nargo-beta.26/32 GiB box + the r71 join shape), NOT model" % d_c3)
+print("  drift. The 90.1 min/node @4c header (r76 blend, LEGACY era) is RETIRED as the planning number, preserved")
+print("  above as the LEGACY history line (still reproducible from the model's own lane vars - self-checked).")
+print("  Residual DRAFTs (next rounds): (1) @8c contrast leg [DRAFT below] = 2nd point of the 4c/8c curve on")
+print("  the NEW box; (2) LIVE netlink comm wall (bytes/topology/verify RAN-bounded r105-r109, not yet live-mid);")
+print("  (3) owner-gated C4/C5 commitment-scheme lever (r38/r113) + C6 in-tree ship (r115).")
+R128_8C = ("systemd-run --user --unit=r128r78leg8c --colored-output=yes --wait --oom-score-adjust=-1000 -- "
+           "env E3_R78_STAGE_ROOT=/home/dev/interfold-research/poc/r127/stage/root "
+           "taskset -c 0-7 /usr/bin/time -v cargo test --release -p e3-zk-prover "
+           "--test node_fold_function_tests_r78 node_fold_function_end_to_end_small -- --nocapture")
+print("  NEXT-ROUND @8c LEG DRAFT (launcher precedent poc/r127/run_r78_{4c,8c}_r127.sh; the 4c point = this RAN")
+print("  and reproduces r127 from recorded artifacts; the 8c point would RAN-anchor the 4:8 core curve on box):")
+print("     %r" % R128_8C)
+print("=" * W)

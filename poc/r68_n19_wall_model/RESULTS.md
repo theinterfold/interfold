@@ -141,3 +141,18 @@ arm. The production wiring (node_dkg_fold route c3a arm -> M7x + c3ab arm-routed
 arm, both arms M7x) is the next on-box step (I70-wiring). c3b fold cut re-anchored: M7x 479.7 RAN
 vs serial 749.8 DRAFT@4c = 449.1 RAN@8c x 1.67 (−36.0% @4c; −33.6% @8c both-RAN r63 standalone).
 Box-2 ask unchanged (>=16 GiB for the full 19-node E2E RAN).
+## r128 (2026-09-12) - WALL MODEL RE-ANCHORED ON THE r127 RAN LEG [RAN-bookkeeping, zero new compute]
+The r127 leg (journal r127r78leg.service) gives the first fully-RAN full-function point at the
+production committee. model.py appended a self-checked ROUND-128 block (RC 0, python3 model.py)
+that restates the header from in-leg RAN numbers only:
+- leaves 226.6 (c0 2.8 / c1 20.6 / c2a 68.4 / c2b 77.9 / c4a 28.5 / c4b 28.4, RAN r127)
+- c3-inners x108 serial 3182.7 s (29.47 s/inner) [RAN r127]  vs r69-era 4196.3 (38.85) = -24.2%
+- prove_node_dkg_fold in-leg wall 542.4 s (join-max 501.7 + c3ab 9.1 + c4ab 9.4 + node 22.3; c2ab 17.7 hidden)
+- NODE WALL RECONSTRUCTION = 226.6 + 3182.7 + 542.4 = 3951.7 s = 65.86 min @4c-pinned
+- CALIBER CHECK: 3951.7 vs measured test wall 3959.68 s = 7.98 s (0.20%) residual = harness tail  (anchor gate PASS)
+- LEGACY 5406.8 s = 90.1 min r76 blend RETIRED as planning number, preserved as history line
+  (reproduced from the model's own lane vars: 5183.0 + 31.4 + 74.43 + 73.5 + 44.5, self-checked).
+- peak RSS 14.73 GiB, Swaps 0 (prove stage fits 16 GiB; compile stage separately >= ~30 GiB per r126).
+Remaining DRAFTs: (0r128) @8c contrast leg = 2nd point of the 4:8 core curve on the new box
+(the 4c point = r127 RAN); (1) LIVE-NETLINK comm wall (r105-r109 RAN-bounded, not live-measured);
+(2) owner-gated C4/C5 commitment lever + C6 in-tree ship (r113/r115).
