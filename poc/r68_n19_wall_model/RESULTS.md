@@ -156,3 +156,20 @@ that restates the header from in-leg RAN numbers only:
 Remaining DRAFTs: (0r128) @8c contrast leg = 2nd point of the 4:8 core curve on the new box
 (the 4c point = r127 RAN); (1) LIVE-NETLINK comm wall (r105-r109 RAN-bounded, not live-measured);
 (2) owner-gated C4/C5 commitment lever + C6 in-tree ship (r113/r115).
+## r129 (2026-09-12) - @8c CONTRAST LEG RAN [RAN, 47.2 min wall on the leg; zero compile]
+The r128 residual DRAFT (0r128) is RAN-converted: the full production 19-node DKG fold
+(node_fold_function_tests_r78, secure-8192/small N=19/T=9/H=10/L=3) ran at FULL 8c
+(taskset -c 0-7, no RAYON cap, isolated r129 stage tree byte-copied from r127's).
+- test wall 2833.06 s = 47.22 min; 1 passed / 0 failed; verify_fold_proof(node_fold) = true
+- leaves 154.4 (c0 1.7 / c1 14.8 / c2a 47.7 / c2b 52.8 / c4a 18.8 / c4b 18.6, RAN r129)
+- c3-inners x108 serial 2346.9 s (21.73 s/inner) [RAN r129]
+- prove_node_dkg_fold in-leg wall 324.4 s (join-max 298.5 + c3ab 5.7 + c4ab 5.9 + node 14.3; c2ab 9.5 hidden)
+- NODE WALL RECONSTRUCTION = 154.4 + 2346.9 + 324.4 = 2825.7 s = 47.10 min @8c
+- CALIBER CHECK: 2825.7 vs measured test wall 2833.06 s = 7.36 s (0.26%) residual  (anchor gate PASS)
+- CONTRAST vs r127 4c point (same stage tree shape, in-leg RAN both): 3951.7 -> 2825.7 s = -28.5%,
+  width-ratio 1.398 (leaves 1.468 / inners 1.356 / fn 1.672) - NOT 2.0: the 108 SERIAL inners
+  (82.8% of the 8c wall) dominate the critical path; rayon adds only bound per-inner work (r72 class).
+- peak: per-process maxRSS 15,432,264 kB = 14.71 GiB (/usr/bin/time -v) vs 14.73 GiB @4c (r127)
+  = SAME-CALIBER FLAT; session cgroup peak 21.4 GiB (systemd) vs 16.2 GiB @4c; Swaps 0 (both).
+  The 4c-pinned PROVE stage keeps fitting 16 GiB; the 8c session needs >=24 GiB end-to-end.
+Planning headers now RAN at BOTH endpoints: 65.86 min @4c-pinned (r127/r128) | 47.10 min @8c (r129).

@@ -749,11 +749,64 @@ print("  above as the LEGACY history line (still reproducible from the model's o
 print("  Residual DRAFTs (next rounds): (1) @8c contrast leg [DRAFT below] = 2nd point of the 4c/8c curve on")
 print("  the NEW box; (2) LIVE netlink comm wall (bytes/topology/verify RAN-bounded r105-r109, not yet live-mid);")
 print("  (3) owner-gated C4/C5 commitment-scheme lever (r38/r113) + C6 in-tree ship (r115).")
-R128_8C = ("systemd-run --user --unit=r128r78leg8c --colored-output=yes --wait --oom-score-adjust=-1000 -- "
-           "env E3_R78_STAGE_ROOT=/home/dev/interfold-research/poc/r127/stage/root "
-           "taskset -c 0-7 /usr/bin/time -v cargo test --release -p e3-zk-prover "
-           "--test node_fold_function_tests_r78 node_fold_function_end_to_end_small -- --nocapture")
-print("  NEXT-ROUND @8c LEG DRAFT (launcher precedent poc/r127/run_r78_{4c,8c}_r127.sh; the 4c point = this RAN")
-print("  and reproduces r127 from recorded artifacts; the 8c point would RAN-anchor the 4:8 core curve on box):")
-print("     %r" % R128_8C)
+# ==================== ROUND-129 LANDING: @8c CONTRAST LEG RAN (2nd point of the 4c/8c curve on the NEW box; DRAFT-1 from r128 RAN-converted) ====================
+R129 = dict(  # the r78 production 19-node DKG fold E2E at FULL 8c (taskset -c 0-7, NO RAYON cap),
+              # OMP/rayon default = 8 worker threads. All RAN r129, in-leg, same stage tree shape
+              # as r127 (poc/r129/stage/root, 82 files, byte-copied from the r127 stage; the r127
+              # 4c leg is the reference point). nargo v1.0.0-beta.26 / bb 5.1.0, 8c/32 GiB box.
+    test_wall=2833.06,          # harness wall, RAN (cargo test reported, RAN)
+    c0=1.7, c1=14.8, c2a=47.7, c2b=52.8, c4a=18.8, c4b=18.6,
+    c3_inners_108=2346.9,       # 54 sk-lane + 54 esm-lane ShareEncryption inners, serial
+    c3a_fold=298.5, c3b_fold=298.5,   # 54/54 M7x arms under rayon::join
+    c2ab_fold=9.5, c3ab_fold=5.7, c4ab_fold=5.9, node_fold=14.3,
+    fn_wall=324.4,              # prove_node_dkg_fold in-leg wall (join + tail), RAN
+    peak_rss_gib=15432264.0/1024.0/1024.0,   # per-process maxRSS (/usr/bin/time -v), RAN; Swaps 0
+)
+def _k129(name, got, want, tol_s=10.0):
+    d = abs(got - want)
+    tag = "OK " if d <= tol_s else "FAIL"
+    print("  [%s] %-58s got=%.2f want=%.2f (|d|=%.2f s tol %.0f s)" % (tag, name, got, want, d, tol_s))
+    assert d <= tol_s, name
+LEAVES_129 = R129["c0"] + R129["c1"] + R129["c2a"] + R129["c2b"] + R129["c4a"] + R129["c4b"]   # 154.4
+_k129("R129-fold-shape CP (join-max + tail == in-leg fn wall)",
+      max(R129["c3a_fold"], R129["c3b_fold"]) + R129["c3ab_fold"] + R129["c4ab_fold"] + R129["node_fold"],
+      R129["fn_wall"], 1.0)
+N_RAN_129 = LEAVES_129 + R129["c3_inners_108"] + R129["fn_wall"]   # 2825.7 s
+_k129("RAN component sum reproduces the 8c leg's own measured test wall",
+      N_RAN_129, R129["test_wall"], 10.0)    # 7.36 s residual (0.26%) = harness/stage-boundary tail
+_gain = (R127["test_wall"] - R129["test_wall"]) / R127["test_wall"] * 100.0
+_r_leaves = LEAVES_127 / LEAVES_129
+_r_inners = R127["c3_inners_108"] / R129["c3_inners_108"]
+_r_fn     = R127["fn_wall"] / R129["fn_wall"]
+print("\n" + "=" * W)
+print("ROUND-129 - @8c CONTRAST LEG RAN (2nd point of the 4c/8c curve on the NEW box; the r128 DRAFT RAN-converted)")
+print("=" * W)
+print("  [RAN r129 leg @full-8c (taskset 0-7, no RAYON cap), same stage tree shape as r127, in-leg measurements:]")
+print("    leaves c0 %.1f / c1 %.1f / c2a %.1f / c2b %.1f / c4a %.1f / c4b %.1f        %7.1f s (sum; %+.1f%% of wall)" % (R129["c0"],R129["c1"],R129["c2a"],R129["c2b"],R129["c4a"],R129["c4b"], LEAVES_129, LEAVES_129/R129["test_wall"]*100))
+print("    c3-inners x108 serial (54 sk + 54 esm-lane ShareEncryption, W_1 scatter)        %7.1f s (%.1f%% of wall; %.2f s/inner)" % (R129["c3_inners_108"], R129["c3_inners_108"]/R129["test_wall"]*100, R129["c3_inners_108"]/108.0))
+print("    fn: join c3a %.1f | c3b %.1f (M7x 54/54) hidden c2ab %.1f ; tail c3ab %.1f -> c4ab %.1f -> node_fold %.1f" % (R129["c3a_fold"],R129["c3b_fold"],R129["c2ab_fold"],R129["c3ab_fold"],R129["c4ab_fold"],R129["node_fold"]))
+print("    prove_node_dkg_fold in-leg wall                                            %7.1f s ;  verify_fold_proof(node_fold) = true" % R129["fn_wall"])
+print("    ==> NODE WALL RECONSTRUCTION (leaves + inners + fn-wall; ALL RAN, same leg)   %7.1f s = %.2f min @8c" % (N_RAN_129, N_RAN_129/60.0))
+print("    ==> TEST WALL (measured harness, RAN)                                        %7.1f s = %.2f min  (residual %.2f%%)" % (R129["test_wall"], R129["test_wall"]/60.0, (R129["test_wall"]-N_RAN_129)/R129["test_wall"]*100.0))
+print("  [CONTRAST vs the r127 4c-pinned point (same stage tree, same function, in-leg RAN both)]")
+print("    node wall     %.1f s @4c (65.86 min)  ->  %.1f s @8c (%.2f min)   = %+.1f%% (%+.1f min faster)  width-ratio %.3f" % (N_RAN_127, N_RAN_129, N_RAN_129/60.0, -_gain, (N_RAN_127-N_RAN_129)/60.0, N_RAN_127/N_RAN_129))
+print("    leaves        %.1f  ->  %.1f  s   width-ratio %.3f" % (LEAVES_127, LEAVES_129, _r_leaves))
+print("    inners        %.1f  ->  %.1f  s   width-ratio %.3f   (29.47 -> 21.73 s/inner)" % (R127["c3_inners_108"], R129["c3_inners_108"], _r_inners))
+print("    fn-wall       %.1f  ->  %.1f  s   width-ratio %.3f" % (R127["fn_wall"], R129["fn_wall"], _r_fn))
+print("  [SHAPE - why 8c is not ~2x the 4c: the serial inners dominate the wall and scale sub-linearly]")
+print("    inners = %.1f%% of the 8c wall (was %.1f%% at 4c); the floor at 8c is the serial inners themselves" % (R129["c3_inners_108"]/R129["test_wall"]*100, R127["c3_inners_108"]/R127["test_wall"]*100))
+print("    (~2346.9 s of it) + fn join-max (~298.5 s) + ~210 s leaves/tail => ~2855 s floor, vs measured 2833.06.")
+print("    The 4c:8c wall ratio is 1.398 (leaves 1.468 / inners 1.356 / fn 1.672) - NOT 2.0: the critical path is")
+print("    dominated by the 108 SERIAL inners (r72 class: CPU-conserved, rayon add only bounds the per-inner).")
+print("  [RAM RAN r129] whole N=19 fold @8c: session cgroup peak 21.4 GiB (systemd MemoryPeak), "
+      "per-process maxRSS 15,432,264 kB = 14.71 GiB (/usr/bin/time -v), Swaps 0 (both sources).")
+print("     Same-caliber per-process read: @8c 14.71 vs @4c 14.73 GiB (r127) = FLAT; the session-level")
+print("     +5.2 GiB (16.2 -> 21.4 G) is the added concurrency of the 8c inner segments. 4c-pinned PROVE")
+print("     stage fits the 16 GiB card; 8c session peak 21.4 GiB needs >=24 GiB for the whole unit.")
+print("-" * W)
+print("  VERDICT (r129): the @8c point RAN (47.22 min @8c vs 65.86 min @4c = 28.7% faster, width-ratio 1.398).")
+print("  The 4c/8c wall curve is now RAN-anchored at BOTH endpoints on the new box. Planning headers:")
+print("     4c-pinned 3951.7 s = 65.86 min (r127/r128) | full-8c 2825.7 s = 47.10 min (this r129).")
+print("  Next: (2) LIVE-NETLINK comm wall (r105-r109 RAN-bounded, owner-gated); (3) C4/C5 commitment lever +")
+print("  C6 in-tree ship (owner-gated); (4) fixture-bootstrap deadlock composite fix + leg re-run (UPSTREAM-PR).")
 print("=" * W)

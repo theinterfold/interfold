@@ -1,0 +1,59 @@
+warning: unused variable: `circuit_committee_n`
+  --> crates/aggregator/src/public_key_aggregation/effects/aggregate_dkg_proofs.rs:22:13
+   |
+22 |             circuit_committee_n,
+   |             ^^^^^^^^^^^^^^^^^^^ help: try ignoring the field: `circuit_committee_n: _`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `circuit_committee_h`
+  --> crates/aggregator/src/public_key_aggregation/effects/aggregate_dkg_proofs.rs:23:13
+   |
+23 |             circuit_committee_h,
+   |             ^^^^^^^^^^^^^^^^^^^ help: try ignoring the field: `circuit_committee_h: _`
+
+warning: `e3-aggregator` (lib) generated 2 warnings
+    Finished `release` profile [optimized] target(s) in 0.29s
+     Running tests/node_fold_function_tests_r78.rs (target/release/deps/node_fold_function_tests_r78-7c853b0b08cf1ef1)
+
+running 1 test
+test node_fold_function_end_to_end_small has been running for over 60 seconds
+R78-fn node_fold public fields = 204 (NODE_FOLD_PUBLIC_LEN secure-small = 11+19+2*(19+10)*3 = 204)  RAN
+R78-fn step timings: c2ab_fold=9.5s  c3a_fold=298.5s  c3b_fold=298.5s  c3ab_fold=5.7s  c4ab_fold=5.9s  node_fold=14.3s   RAN
+R78-fn prove_node_dkg_fold wall = 324.4s  RAN
+R78-fn verify_fold_proof(node_fold) = true  RAN
+R78-fn party-binding field[0] = 0x0b94e64b7fd8c4464f401ef4a7fb21dd5bec3340aae80af406f167e937f323cf RAN
+R78-leaf c0 = 1.7s  RAN
+R78-leaf c1 = 14.8s  RAN
+R78-leaf c2a = 47.7s  RAN
+R78-leaf c2b = 52.8s  RAN
+R78-leaf c3-inners x108 serial = 2346.9s  RAN
+R78-leaf c4a = 18.8s  RAN
+R78-leaf c4b = 18.6s  RAN
+test node_fold_function_end_to_end_small ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2833.06s
+
+	Command being timed: "taskset -c 0-7 cargo test --release -p e3-zk-prover --test node_fold_function_tests_r78 -- --nocapture"
+	User time (seconds): 11507.28
+	System time (seconds): 336.85
+	Percent of CPU this job got: 418%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 47:13.41
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 15432264
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 75
+	Minor (reclaiming a frame) page faults: 320314374
+	Voluntary context switches: 2900762
+	Involuntary context switches: 623167
+	Swaps: 0
+	File system inputs: 194064
+	File system outputs: 4490304
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
