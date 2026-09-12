@@ -1,0 +1,10 @@
+= r126 c2a box census PRE 04:16:52 =
+nproc=8
+MemTotal:       32866100 kB
+MemAvailable:   31910724 kB
+SwapTotal:             0 kB
+0.00 0.01 0.00 1/209 18072
+= r126 c2a box census POST 04:37:20 =
+MemTotal:       32866100 kB
+MemAvailable:   31102456 kB
+SwapTotal:             0 kB
