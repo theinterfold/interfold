@@ -191,7 +191,7 @@ export function validateArtifactChecksums(dir: string): void {
   const sums: Record<string, unknown> = {}
   const lines = readFileSync(sumsPath, 'utf8').split(/\r?\n/).filter(Boolean)
   for (const line of lines) {
-    const match = /^([0-9a-f]{64})  (.+)$/i.exec(line)
+    const match = /^([0-9a-f]{64}) {2}(.+)$/i.exec(line)
     if (!match || sums[match[2]] !== undefined) {
       throw new Error(`Invalid SHA256SUMS entry: ${line}`)
     }
