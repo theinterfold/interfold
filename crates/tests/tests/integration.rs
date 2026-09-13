@@ -405,7 +405,8 @@ async fn setup_test_zk_backend(
         compile_error!("Integration tests require unix symlink support");
 
         let preset_out = circuits_dir.join(preset_subdir).join(committee_str);
-        let circuits_bin_marker = repo_root.join("circuits/bin/dkg/target/pk.json");
+        let circuits_bin_marker = repo_root.join("circuits/bin/dkg/pk/target/pk.json");
+        let circuits_bin_group_marker = repo_root.join("circuits/bin/dkg/target/pk.json");
         // `circuits/bin` is preset-agnostic on disk — only `.active-preset.json` records which
         // preset+committee the most recent local build targeted. Without it we cannot tell
         // whether `circuits/bin` matches `preset_subdir`, and copying wrong artifacts would
@@ -414,7 +415,9 @@ async fn setup_test_zk_backend(
 
         if uses_dist_preset_artifacts(preset_subdir, committee_str) {
             copy_dir_recursive(&dist_preset, &preset_out).await?;
-        } else if !circuits_bin_marker.exists() || !preset_build_stamp.exists() {
+        } else if (!circuits_bin_marker.exists() && !circuits_bin_group_marker.exists())
+            || !preset_build_stamp.exists()
+        {
             // Either no local build exists, or the local build cannot be proven to match
             // the requested preset; download the pinned release tarball instead.
             println!(
@@ -432,8 +435,26 @@ async fn setup_test_zk_backend(
             return Ok((backend, temp));
         } else {
             let circuits_build_root = repo_root.join("circuits").join("bin");
-            let dkg_target = circuits_build_root.join("dkg").join("target");
-            let threshold_target = circuits_build_root.join("threshold").join("target");
+            let circuit_target = |group: &str, circuit: &str| {
+                let target = circuits_build_root.join(group).join(circuit).join("target");
+                if target.join(format!("{circuit}.json")).exists() {
+                    target
+                } else {
+                    circuits_build_root.join(group).join("target")
+                }
+            };
+            let dkg_pk_target = circuit_target("dkg", "pk");
+            let dkg_sk_share_computation_chunk_target =
+                circuit_target("dkg", "sk_share_computation_chunk");
+            let dkg_esm_share_computation_chunk_target =
+                circuit_target("dkg", "esm_share_computation_chunk");
+            let dkg_share_encryption_target = circuit_target("dkg", "share_encryption");
+            let dkg_share_decryption_target = circuit_target("dkg", "share_decryption");
+            let threshold_pk_generation_target = circuit_target("threshold", "pk_generation");
+            let threshold_pk_aggregation_target = circuit_target("threshold", "pk_aggregation");
+            let threshold_share_decryption_target = circuit_target("threshold", "share_decryption");
+            let threshold_decrypted_shares_aggregation_target =
+                circuit_target("threshold", "decrypted_shares_aggregation");
             let c3_fold_target = circuits_build_root
                 .join("recursive_aggregation")
                 .join("c3_fold")
@@ -545,7 +566,7 @@ async fn setup_test_zk_backend(
 
             // T0 (pk)
             copy_circuit(
-                &dkg_target,
+                &dkg_pk_target,
                 &rv.join("dkg/pk"),
                 "pk",
                 ".vk_noir",
@@ -554,7 +575,7 @@ async fn setup_test_zk_backend(
             .await?;
             // C1 (pk_generation)
             copy_circuit(
-                &threshold_target,
+                &threshold_pk_generation_target,
                 &rv.join("threshold/pk_generation"),
                 "pk_generation",
                 ".vk_noir",
@@ -563,7 +584,7 @@ async fn setup_test_zk_backend(
             .await?;
             // C2a chunk (sk_share_computation_chunk)
             copy_circuit(
-                &dkg_target,
+                &dkg_sk_share_computation_chunk_target,
                 &rv.join("dkg/sk_share_computation_chunk"),
                 "sk_share_computation_chunk",
                 ".vk_noir",
@@ -572,7 +593,7 @@ async fn setup_test_zk_backend(
             .await?;
             // C2b chunk (esm_share_computation_chunk)
             copy_circuit(
-                &dkg_target,
+                &dkg_esm_share_computation_chunk_target,
                 &rv.join("dkg/esm_share_computation_chunk"),
                 "esm_share_computation_chunk",
                 ".vk_noir",
@@ -581,7 +602,7 @@ async fn setup_test_zk_backend(
             .await?;
             // C3 (share_encryption)
             copy_circuit(
-                &dkg_target,
+                &dkg_share_encryption_target,
                 &rv.join("dkg/share_encryption"),
                 "share_encryption",
                 ".vk_noir",
@@ -590,7 +611,7 @@ async fn setup_test_zk_backend(
             .await?;
             // C4 (dkg/share_decryption)
             copy_circuit(
-                &dkg_target,
+                &dkg_share_decryption_target,
                 &rv.join("dkg/share_decryption"),
                 "share_decryption",
                 ".vk_noir",
@@ -599,7 +620,7 @@ async fn setup_test_zk_backend(
             .await?;
             // C5 (pk_aggregation)
             copy_circuit(
-                &threshold_target,
+                &threshold_pk_aggregation_target,
                 &rv.join("threshold/pk_aggregation"),
                 "pk_aggregation",
                 ".vk_noir",
@@ -608,7 +629,7 @@ async fn setup_test_zk_backend(
             .await?;
             // C6 (threshold/share_decryption)
             copy_circuit(
-                &threshold_target,
+                &threshold_share_decryption_target,
                 &rv.join("threshold/share_decryption"),
                 "share_decryption",
                 ".vk_noir",
@@ -617,7 +638,7 @@ async fn setup_test_zk_backend(
             .await?;
             // C7 (decrypted_shares_aggregation)
             copy_circuit(
-                &threshold_target,
+                &threshold_decrypted_shares_aggregation_target,
                 &rv.join("threshold/decrypted_shares_aggregation"),
                 "decrypted_shares_aggregation",
                 ".vk_noir",
@@ -632,7 +653,7 @@ async fn setup_test_zk_backend(
             // C5 (pk_aggregation) — proven with noir-recursive-no-zk and folded into
             // DkgAggregator, so it must be staged under default/ too.
             copy_circuit(
-                &threshold_target,
+                &threshold_pk_aggregation_target,
                 &dv.join("threshold/pk_aggregation"),
                 "pk_aggregation",
                 ".vk_recursive",
@@ -763,7 +784,7 @@ async fn setup_test_zk_backend(
             // C7 (decrypted_shares_aggregation) — proven with noir-recursive-no-zk and
             // folded into DecryptionAggregator, so it must also be staged under default/.
             copy_circuit(
-                &threshold_target,
+                &threshold_decrypted_shares_aggregation_target,
                 &dv.join("threshold/decrypted_shares_aggregation"),
                 "decrypted_shares_aggregation",
                 ".vk_recursive",
@@ -795,7 +816,7 @@ async fn setup_test_zk_backend(
             .await?;
             // C7 (decrypted_shares_aggregation) — EVM-targeted
             copy_circuit(
-                &threshold_target,
+                &threshold_decrypted_shares_aggregation_target,
                 &ev.join("threshold/decrypted_shares_aggregation"),
                 "decrypted_shares_aggregation",
                 ".vk",

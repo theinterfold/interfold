@@ -14,6 +14,7 @@ use std::fs;
 use std::path::Path;
 
 /// Inner circuit VK artifacts for recursive verification.
+#[derive(Clone)]
 pub struct VkArtifacts {
     pub verification_key: Vec<String>,
     pub key_hash: String,

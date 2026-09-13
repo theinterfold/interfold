@@ -7,7 +7,7 @@
 use e3_data::{Repositories, Repository};
 use e3_events::{E3id, StoreKeys};
 
-use crate::{ThresholdKeyshareRecoveryState, ThresholdKeyshareState};
+use crate::{LbfvGenerationStateV1, ThresholdKeyshareRecoveryState, ThresholdKeyshareState};
 
 pub trait ThresholdKeyshareRepositoryFactory {
     fn threshold_keyshare(&self, e3_id: &E3id) -> Repository<ThresholdKeyshareState>;
@@ -15,6 +15,8 @@ pub trait ThresholdKeyshareRepositoryFactory {
         &self,
         e3_id: &E3id,
     ) -> Repository<ThresholdKeyshareRecoveryState>;
+    fn threshold_keyshare_lbfv_generation(&self, e3_id: &E3id)
+        -> Repository<LbfvGenerationStateV1>;
 }
 
 impl ThresholdKeyshareRepositoryFactory for Repositories {
@@ -29,6 +31,16 @@ impl ThresholdKeyshareRepositoryFactory for Repositories {
         Repository::new(
             self.store
                 .scope(StoreKeys::threshold_keyshare_recovery(e3_id)),
+        )
+    }
+
+    fn threshold_keyshare_lbfv_generation(
+        &self,
+        e3_id: &E3id,
+    ) -> Repository<LbfvGenerationStateV1> {
+        Repository::new(
+            self.store
+                .scope(StoreKeys::threshold_keyshare_lbfv_generation(e3_id)),
         )
     }
 }

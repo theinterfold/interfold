@@ -14,7 +14,7 @@ use e3_events::AccusationQuorumReached;
 
 /// Encode `AccusationQuorumReached` into the attestation evidence format expected
 /// by both `SlashingManager.proposeSlash()` and `SlashingManager.proposeSlashByDkgParty()`:
-/// `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes, bytes evidence, uint256 issuedAt, uint256 deadline, bytes[] signatures)`
+/// `abi.encode(uint256 proofType, uint256 proofInstance, address[] voters, bytes32[] dataHashes, bytes evidence, uint256 issuedAt, uint256 deadline, bytes[] signatures)`
 ///
 /// Voters are sorted ascending by address to satisfy the contract's duplicate-prevention
 /// check. All `votes_for` share the same `issued_at` and `deadline` values. The
@@ -33,6 +33,7 @@ pub fn encode_attestation_evidence(data: &AccusationQuorumReached) -> Option<Vec
     votes.sort_by_key(|v| v.voter);
 
     let proof_type = U256::from(data.proof_type as u8);
+    let proof_instance = U256::from(data.proof_instance);
     let voters: Vec<Address> = votes.iter().map(|v| v.voter).collect();
     let data_hashes: Vec<[u8; 32]> = votes.iter().map(|v| v.data_hash).collect();
     let evidence = data.evidence.clone();
@@ -48,6 +49,7 @@ pub fn encode_attestation_evidence(data: &AccusationQuorumReached) -> Option<Vec
     Some(
         (
             proof_type,
+            proof_instance,
             voters,
             data_hashes,
             evidence,
@@ -84,6 +86,7 @@ mod tests {
             accuser: Address::repeat_byte(0xFF),
             accused: Address::repeat_byte(0xEE),
             proof_type: ProofType::C0PkBfv,
+            proof_instance: 0,
             votes_for,
             outcome: AccusationOutcome::AccusedFaulted,
             evidence: evidence.to_vec().into(),
@@ -110,13 +113,19 @@ mod tests {
         let q = quorum(vec![vote(hi, 100), vote(lo, 100)], b"evidence");
         let encoded = encode_attestation_evidence(&q).expect("should encode");
 
-        let decoded =
-            <(U256, Vec<Address>, Vec<B256>, Bytes, U256, U256, Vec<Bytes>)>::abi_decode_params(
-                &encoded,
-            )
-            .expect("decodes");
-        assert_eq!(decoded.1, vec![lo, hi]);
-        assert_eq!(decoded.4, U256::from(90u64));
-        assert_eq!(decoded.5, U256::from(100u64));
+        let decoded = <(
+            U256,
+            U256,
+            Vec<Address>,
+            Vec<B256>,
+            Bytes,
+            U256,
+            U256,
+            Vec<Bytes>,
+        )>::abi_decode_params(&encoded)
+        .expect("decodes");
+        assert_eq!(decoded.2, vec![lo, hi]);
+        assert_eq!(decoded.5, U256::from(90u64));
+        assert_eq!(decoded.6, U256::from(100u64));
     }
 }

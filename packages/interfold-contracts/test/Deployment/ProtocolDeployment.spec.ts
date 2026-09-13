@@ -43,19 +43,19 @@ describe("Protocol deployment", function () {
   it("derives one release identity for the Rust and contract tooling", function () {
     const release = currentNodeRelease();
     expect(release.version).to.match(/^\d+\.\d+\.\d+/);
-    expect(release.protocolVersion).to.be.greaterThan(0);
-    expect(release.nodeGeneration).to.be.greaterThan(0);
+    expect(release.protocolVersion).to.equal(4);
+    expect(release.nodeGeneration).to.equal(1);
     expect(release.releaseId).to.equal(
       ethersLib.id(`interfold.node.release:v1:${release.version}`),
     );
   });
 
   it("updates the node release policy only when the release advances", function () {
-    const release = { protocolVersion: 3, nodeGeneration: 1 };
+    const release = { protocolVersion: 4, nodeGeneration: 1 };
 
-    expect(requiresNodeReleasePolicyUpdate(release, 2n, 1n)).to.equal(true);
-    expect(requiresNodeReleasePolicyUpdate(release, 3n, 1n)).to.equal(false);
-    expect(() => requiresNodeReleasePolicyUpdate(release, 4n, 1n)).to.throw(
+    expect(requiresNodeReleasePolicyUpdate(release, 3n, 1n)).to.equal(true);
+    expect(requiresNodeReleasePolicyUpdate(release, 4n, 1n)).to.equal(false);
+    expect(() => requiresNodeReleasePolicyUpdate(release, 5n, 1n)).to.throw(
       "cannot move backwards",
     );
   });

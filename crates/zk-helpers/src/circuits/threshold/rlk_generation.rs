@@ -10,11 +10,15 @@ use crate::math::{
     cyclotomic_polynomial, decompose_residue, fhe_poly_to_crt_centered_checked,
     fhe_secret_key_to_crt_centered, validate_fhe_poly_context,
 };
+use crate::threshold::lbfv_proof_domain::{
+    lbfv_proof_session, sample_lbfv_proof_domain, validate_lbfv_generation_party_id,
+};
 use crate::utils::{validate_crt_shape, verify_crt_shapes};
 use crate::{
     calculate_bit_width, polynomial_to_toml_json, Artifacts, CiphernodesCommittee, Circuit,
     CircuitCodegen, CircuitComputation, CircuitsErrors, CodegenConfigs, CodegenToml, Computation,
 };
+use e3_committee_hash::LbfvProofDomainContext;
 use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe::bfv::{BfvParameters, CommonRandomPolyVec, SecretKey};
@@ -53,6 +57,10 @@ impl Circuit for RlkGenerationLimbCircuit {
 pub struct RlkGenerationCircuitData {
     /// Committee values used to select the circuit bounds.
     pub committee: CiphernodesCommittee,
+    /// Protocol context used to derive the public proof-session identifier.
+    pub proof_domain: LbfvProofDomainContext,
+    /// Zero-based party ID in the finalized committee.
+    pub party_id: u32,
     /// Gadget-row index proved by the circuit.
     pub row_index: u32,
     /// Secret key shared with the matching C1 proof.
@@ -85,6 +93,9 @@ pub struct RlkGenerationLimbCircuitData {
 
 /// Borrowed prover input for one CRT limb of a validated RLK row.
 pub struct RlkGenerationLimbInput<'a> {
+    pub session_id_hi: u128,
+    pub session_id_lo: u128,
+    pub party_id: u32,
     pub row_index: u32,
     pub limb_index: u32,
     pub sk: &'a Polynomial,
@@ -103,6 +114,9 @@ impl RlkGenerationLimbInput<'_> {
     /// Convert the borrowed limb input to the JSON shape required by the Noir ABI.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
+            "session_id_hi": self.session_id_hi.to_string(),
+            "session_id_lo": self.session_id_lo.to_string(),
+            "party_id": self.party_id,
             "row_index": self.row_index,
             "limb_index": self.limb_index,
             "sk": polynomial_to_toml_json(self.sk),
@@ -166,6 +180,9 @@ pub struct RlkGenerationBounds {
 /// Prover inputs for one CRT limb of one RLK gadget row.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct RlkGenerationLimbInputs {
+    pub session_id_hi: u128,
+    pub session_id_lo: u128,
+    pub party_id: u32,
     pub row_index: u32,
     pub limb_index: u32,
     pub sk: Polynomial,
@@ -323,6 +340,9 @@ impl Computation for RlkGenerationLimbInputs {
         })?;
 
         Ok(Self {
+            session_id_hi: limb.session_id_hi,
+            session_id_lo: limb.session_id_lo,
+            party_id: limb.party_id,
             row_index: limb.row_index,
             limb_index: limb.limb_index,
             sk: limb.sk.clone(),
@@ -340,6 +360,9 @@ impl Computation for RlkGenerationLimbInputs {
 
     fn to_json(&self) -> serde_json::Result<serde_json::Value> {
         Ok(serde_json::json!({
+            "session_id_hi": self.session_id_hi.to_string(),
+            "session_id_lo": self.session_id_lo.to_string(),
+            "party_id": self.party_id,
             "row_index": self.row_index,
             "limb_index": self.limb_index,
             "sk": polynomial_to_toml_json(&self.sk),
@@ -363,6 +386,8 @@ pub fn derive_rlk_generation_limb_inputs(
 ) -> Result<Vec<RlkGenerationLimbInput<'_>>, CircuitsErrors> {
     let (params, _) =
         build_pair_for_preset(preset).map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+    validate_lbfv_generation_party_id(row.party_id, &row.committee)?;
+    let session = lbfv_proof_session(row.proof_domain)?;
     lbfv_crs_seed(preset)
         .ok_or_else(|| CircuitsErrors::Other(format!("l-BFV CRS is not enabled for {preset:?}")))?;
     let l = params.moduli().len();
@@ -402,6 +427,9 @@ pub fn derive_rlk_generation_limb_inputs(
 
     Ok((0..l)
         .map(|limb_index| RlkGenerationLimbInput {
+            session_id_hi: session.session_id_hi,
+            session_id_lo: session.session_id_lo,
+            party_id: row.party_id,
             row_index: row.row_index,
             limb_index: limb_index as u32,
             sk: &row.sk,
@@ -591,6 +619,8 @@ impl RlkGenerationAdapter {
     pub fn row_data(
         &self,
         committee: CiphernodesCommittee,
+        proof_domain: LbfvProofDomainContext,
+        party_id: u32,
         row_index: u32,
         sk: &SecretKey,
         share: &RelinKeyShare,
@@ -676,6 +706,8 @@ impl RlkGenerationAdapter {
 
         Ok(RlkGenerationCircuitData {
             committee,
+            proof_domain,
+            party_id,
             row_index,
             sk,
             r,
@@ -694,6 +726,8 @@ impl RlkGenerationAdapter {
     pub fn all_rows_data(
         &self,
         committee: CiphernodesCommittee,
+        proof_domain: LbfvProofDomainContext,
+        party_id: u32,
         sk: &SecretKey,
         share: &RelinKeyShare,
         witness: RlkWitness,
@@ -703,6 +737,8 @@ impl RlkGenerationAdapter {
             .map(|row_index| {
                 self.row_data(
                     committee.clone(),
+                    proof_domain,
+                    party_id,
                     row_index as u32,
                     sk,
                     share,
@@ -739,7 +775,7 @@ impl RlkGenerationAdapter {
         Ok(())
     }
 
-    fn from_rows(
+    pub(crate) fn from_rows(
         params: &Arc<BfvParameters>,
         crp_d1: &CommonRandomPolyVec,
         crp_a: &CommonRandomPolyVec,
@@ -847,7 +883,15 @@ impl RlkGenerationCircuitData {
             RelinKeyShare::contribution_with_crp_extended(&sk, &crp_d1, &crp_a, 0, 0, &mut rng)?;
         let adapter = RlkGenerationAdapter::from_rows(&params, &crp_d1, &crp_a)?;
         let witness = RlkWitnessGuard::new(witness);
-        adapter.row_data(committee, row_index, &sk, &share, witness.as_ref())
+        adapter.row_data(
+            committee,
+            sample_lbfv_proof_domain(),
+            0,
+            row_index,
+            &sk,
+            &share,
+            witness.as_ref(),
+        )
     }
 }
 
@@ -909,7 +953,14 @@ mod tests {
         )?;
         let committee = CiphernodesCommitteeSize::Minimum.values();
 
-        let rows = adapter.all_rows_data(committee, &secret_key, &share, witness)?;
+        let rows = adapter.all_rows_data(
+            committee,
+            sample_lbfv_proof_domain(),
+            0,
+            &secret_key,
+            &share,
+            witness,
+        )?;
         for (row_index, data) in rows.iter().enumerate() {
             assert_eq!(data.row_index, row_index as u32);
             assert_eq!(data.d0.limbs.len(), params.moduli().len());
@@ -992,6 +1043,9 @@ mod tests {
     fn limb_toml_contains_only_one_polynomial_per_crt_value() -> Result<(), CircuitsErrors> {
         let polynomial = Polynomial::new(vec![1.into(), (-1).into()]);
         let inputs = RlkGenerationLimbInputs {
+            session_id_hi: 1,
+            session_id_lo: 2,
+            party_id: 0,
             row_index: 2,
             limb_index: 3,
             sk: polynomial.clone(),
@@ -1028,6 +1082,8 @@ mod tests {
         };
         let row = RlkGenerationCircuitData {
             committee: CiphernodesCommitteeSize::Minimum.values(),
+            proof_domain: sample_lbfv_proof_domain(),
+            party_id: 0,
             row_index: 0,
             sk: polynomial(metadata.degree),
             r: polynomial(metadata.degree),

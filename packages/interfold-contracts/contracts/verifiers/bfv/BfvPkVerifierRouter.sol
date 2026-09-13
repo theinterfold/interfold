@@ -10,6 +10,7 @@ import { IPkVerifier } from "../../interfaces/IPkVerifier.sol";
 interface IBfvPkVerifierRoute is IPkVerifier {
     function expectedNodesFoldKeyHash() external view returns (bytes32);
     function expectedC5KeyHash() external view returns (bytes32);
+    function expectedPublicInputsLen() external view returns (uint256);
 }
 
 /// @notice Dispatches BFV DKG proofs to the verifier that matches their VK anchors.
@@ -46,7 +47,7 @@ contract BfvPkVerifierRouter is IPkVerifier {
             routes.push(
                 Route({
                     verifier: route,
-                    expectedPublicInputsLen: (3 * routeH) + 24,
+                    expectedPublicInputsLen: route.expectedPublicInputsLen(),
                     expectedNodesFoldKeyHash: route.expectedNodesFoldKeyHash(),
                     expectedC5KeyHash: route.expectedC5KeyHash()
                 })

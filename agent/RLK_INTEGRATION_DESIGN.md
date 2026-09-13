@@ -1,10 +1,24 @@
 # Threshold l-BFV RLK Integration Design
 
 Status: pure adapters and all l-BFV public-key and RLK helper/prover boundaries are implemented. The
-direct five-limb RLK generation and row-finalizer proof flow is verified end to end. Runtime
-collection, recursive aggregation, storage, and publication remain pending. This document records
-verified interfaces, the integration boundary, and decisions that require protocol approval. It does
-not define a wire schema or on-chain ABI.
+local compute boundary generates both key shares from the legacy C1 secret contribution. Stable
+operation IDs make local retries deterministic. `ThresholdKeyshare` now persists one versioned
+secure-16384 generation workflow, collects the signed C1 proof, signs ten row proofs, publishes two
+content-addressed documents and their signed manifest, and redrives incomplete work after restart.
+The direct five-limb RLK generation and row-finalizer proof flow is verified end to end. The
+verification boundary accepts only complete public-key and RLK row bundles. Its versioned dispatch
+context supplies the authoritative proof domain and accepted generation commitments. Every
+public-key aggregator now persists remote manifests, conflicts, fetch retries, documents, validation
+outcomes, candidate verification identity, and the sealed H-party set. The active aggregator resumes
+the legacy C5 path only after that seal is durable. The secure-16384 recursive fold circuits, Rust
+  prover requests, and local document-to-node-fold handoff are now wired. l-BFV row aggregation and
+  operational RLK storage are implemented. The active aggregator persists and redrives a durable
+  `LbfvPublicKeyAggregated` publication intent. The registry writer adapts this event to the existing
+ public-key publication gate and submits the V2 proof with its attestation bundle. A pure validator
+ decodes the exact V1 PK and RLK share bytes. It checks all five ordered PK, D0, and D2 commitments
+  against the fixed-shape row statements. This document does not define an additional on-chain ABI.
+  The initial V2 verifier route supports `secure-16384/minimum`; requests for `micro` and `small`
+  remain disabled until those pair-specific V2 artifacts and routes exist.
 
 ## Scope
 
@@ -109,16 +123,17 @@ The repository contains row-level circuits:
 - `circuits/bin/threshold/lbfv_pk_generation/src/main.nr` proves `(commit(sk), commit(pk_row))` for
   one `row_index`.
 - `circuits/bin/threshold/lbfv_pk_aggregation/src/main.nr` proves the sum of `H` public-key rows for
-  one `row_index`.
+  one `row_index`. Its public inputs bind the proof session, aggregator party, and
+  accepted-party-set hash.
 - `circuits/bin/threshold/rlk_generation_limb/src/main.nr` proves one CRT limb of one RLK row. Its
   public statement is
-  `(row_index, limb_index, sk_commitment, r_commitment, e0_commitment, e2_commitment, d0_limb_commitment, d2_limb_commitment)`.
+  `(session_id_hi, session_id_lo, party_id, row_index, limb_index, sk_commitment, r_commitment, e0_commitment, e2_commitment, d0_limb_commitment, d2_limb_commitment)`.
 - `circuits/bin/threshold/rlk_generation/src/main.nr` verifies exactly `L` ZK limb proofs in CRT
   order. It privately receives the complete `d0` and `d2` rows, binds each limb to the matching leaf
   commitment, and restores the legacy full-row commitments. Its public statement is
-  `(row_index, sk_commitment, r_commitment, d0_commitment, d2_commitment, limb_vk_hash)`.
+  `(session_id_hi, session_id_lo, party_id, row_index, sk_commitment, r_commitment, d0_commitment, d2_commitment, limb_vk_hash)`.
 - `circuits/bin/threshold/rlk_aggregation/src/main.nr` proves the sum of `H` parties' `d0` and `d2`
-  rows for one `row_index`.
+  rows for one `row_index`. It binds the same aggregation identity as public-key aggregation.
 - The circuits use compile-time row constants. The RLK generation circuit requires each `a` row to
   equal the corresponding l-BFV public-key CRS row.
 - The `secure-16384` preset now contains generated fixed CRS, URS, and Garner rows. Unsupported
@@ -127,8 +142,8 @@ The repository contains row-level circuits:
 The production C1 circuit and proof flow still use one summation-only proof per party. A separate
 `lbfv_pk_generation` circuit now proves each fixed l-BFV public-key row. It reuses the C1 relation
 with zero smudging noise and returns only the secret-key and row commitments. This design preserves
-the C1 ABI and C1-to-C5 public-key commitment. The runtime request, response, recursive circuit, and
-proof collection path remain deferred.
+the C1 ABI and C1-to-C5 public-key commitment. The actor generation and collection paths use these
+proofs. Recursive circuit integration remains deferred.
 
 The direct l-BFV Rust proof paths provide circuit computation, `Prover.toml` generation, and
 row-selectable CLI samples. RLK limb samples also select `limb_index`. The RLK terminal input helper
@@ -139,8 +154,24 @@ witness after proving. Before terminal proving, it requires the preset's exact l
 all leaf public statements, and compares the staged leaf VK hash with a trusted caller-supplied
 hash. `CircuitName::RlkGeneration`, `CircuitName::RlkAggregation`, `CircuitName::LbfvPkGeneration`,
 and `CircuitName::LbfvPkAggregation` use durable discriminants 27, 28, 29, and 30.
-`CircuitName::RlkGenerationLimb` appends discriminant 31. No l-BFV `ProofType`, request, response,
-or runtime event is defined yet.
+`CircuitName::RlkGenerationLimb` appends discriminant 31. The externally signed row proof families
+use append-only `ProofType` discriminants 11 through 14. The limb proof remains a local temporary
+and has no `ProofType`. Append-only TrBFV request and response variants generate the public shares
+and encrypted RLK witness. Append-only ZK request and response variants handle row proofs locally.
+Every request recomputes its operation ID from the proof session, party role, proof family, row,
+canonical Keccak accepted-party-set hash, and public-artifact digest. The effect gate and
+Barretenberg work directory use this identity for restart-stable retries. The share verifier accepts
+generation bundles only as C1 followed by five public-key rows and five RLK rows. It accepts
+aggregation bundles only as five public-key rows followed by five RLK rows. It validates row order,
+exact public signal shape, the authoritative E3 proof session, party role, accepted set, SK
+commitment, and RLK R commitment before heavy verification. Aggregation verification also requires
+exactly `H` unique ascending party IDs and checks every expected PK, RLK D0, and RLK D2 commitment
+against the accepted generation results in the dispatch context. PK and RLK rows must use the same
+accepted-set hash. The generation consistency batch includes C1, so all l-BFV SK commitments are
+eligible for the C1 link in the same decision. Before generic proof verification, the receiving
+worker checks each terminal RLK proof's public `limb_vk_hash` against the checksum-verified staged
+limb VK hash. `ThresholdKeyshare` produces the generation bundles. Every public-key aggregator
+collects them, and the active aggregator dispatches their verification.
 
 ### Compilation measurements
 
@@ -169,41 +200,42 @@ proved the row finalizer, and verified all six proofs with `bb` 5.1.0. Row gener
 between 8.37 and 9.23 milliseconds. Total wall time was 1,393.44 seconds, and maximum resident set
 size was 16,788,504,576 bytes.
 
-The same test compared the terminal's six public fields with Rust commitments and the trusted leaf
-VK hash. It also replaced the staged leaf VK with the terminal VK while it retained the trusted leaf
-hash. Proof generation can complete with this invalid witness, but the resulting terminal proof does
-not verify. The test requires this rejection.
+The same test compared the terminal's nine public fields with the proof session, party and row, Rust
+commitments, and the trusted leaf VK hash. It also replaced the staged leaf VK with the terminal VK
+while it retained the trusted leaf hash. Proof generation can complete with this invalid witness,
+but the resulting terminal proof does not verify. The test requires this rejection.
 
 ## Proposed Protocol Shape
 
 ### 1. Establish one l-BFV key-generation session
 
-The E3 workflow must create one RLK session context containing:
+For `secure-16384`, `ThresholdKeyshareExtension` creates one local generation context containing:
 
 - `chain_id`, `interfold`, and the complete `e3_id`;
 - the request-time crypto configuration ID and preset;
 - the canonical committee order;
-- the accepted party set used for l-BFV public-key and RLK aggregation;
+- the finalized committee order; the later collector derives the accepted aggregation set from it;
 - the l-BFV CRS rows for `a` and the selected URS rows for `d1`;
 - the RLK ciphertext and key levels;
 - a versioned domain identifier for proof signatures and durable records.
 
-The session context must derive the accepted participant set from canonical protocol data. It must
-not accept participant metadata supplied by a peer. The RLK session belongs to one E3 and must never
-be reused by another E3.
+The context derives its party slot and committee hash from `CiphernodeSelected`, checks that the
+injected signer occupies that slot, and derives the crypto configuration from the admitted BFV
+parameters. It does not accept participant metadata supplied by a peer. The RLK session belongs to
+one E3 and must never be reused by another E3.
 
 ### 2. Generate contributions locally
 
-Each party must use the same secret-key contribution that the existing key path binds to its RLK
-contribution. The effect runner must:
+Each party uses the same secret-key contribution that the existing C1 path binds to its RLK
+contribution. The durable local effect runner:
 
 1. Build the `PublicKeyShare` with the fixed `a` CRS.
 2. Build the `RelinKeyShare` with the same `a` CRS and the shared `d1` URS.
 3. Retain the `RlkWitness` only in encrypted local pending-proof state.
 4. Serialize the public contribution for the authenticated protocol event.
-5. Create one l-BFV public-key proof request for every gadget row.
-6. Create one RLK limb proof request for every `(row_index, limb_index)` pair.
-7. Create one RLK row-finalizer request after all `L` limb proofs for that row exist.
+5. Creates one l-BFV public-key proof request for every gadget row.
+6. Sends one RLK row request to the worker, which creates one limb proof for every CRT limb.
+7. Receives and signs only the terminal RLK row proof; limb proofs remain worker-local.
 
 The public-key request for row `j` must carry `row_index = j`, the secret key, the row's public-key
 share and error, and the quotient polynomials. An RLK leaf request must carry one CRT limb of the
@@ -212,12 +244,34 @@ polynomials. The row finalizer privately receives the complete `d0` and `d2` row
 proofs. All requests must carry the session's preset and committee scope. Sensitive values must use
 the existing encrypted-at-rest wrapper.
 
+The public transport boundary uses `LbfvKeyShareDocument`. Its append-only V1 variants store the
+public-key contribution with C1 and five signed public-key row proofs, or the RLK contribution with
+five signed terminal RLK row proofs. Each document repeats the E3, proof domain, proof session, and
+party slot. The DHT stores each variant as a separate record and uses SHA-256 over the exact bincode
+bytes as its content key. Each document must fit the 25 MiB DHT limit. The measured 5,222,596-byte
+public-key share and 5,222,618-byte RLK share each leave more than 19 MiB for the document context
+and proof bundle.
+
+`SignedLbfvKeyShareManifest` uses a versioned payload. Its Ethereum signature binds the protocol,
+chain, Interfold address, E3, crypto configuration, finalized-committee hash, l-BFV constants
+version, levels, proof session, party slot, and both DHT hashes. The manifest has a stable replay
+key of `(version, e3_id, proof_session_id, party_id)`. Validation requires ordered proof rows, one
+signer for both proof bundles and the manifest, exact document hashes, and a signer that matches the
+party slot in the canonical finalized committee. The publishing adapter validates the schema,
+signatures, proof order, and size. Generic l-BFV DHT notifications do not start a fetch. A versioned
+targeted fetch identity binds the E3, proof session, party, document role, SHA-256 hash, and
+attempt. The bounded handler publishes the validated document or a typed unavailable/invalid-data
+failure. The local generation workflow supplies the canonical committee. The remote collector
+persists the first manifest and one conflict, then emits targeted fetch requests. It persists each
+artifact before its sidecar marker and dispatches proof verification only after all submitted
+parties settle. The public documents never contain `RlkWitness` data.
+
 ### 3. Complete the l-BFV public-key row path
 
-The runtime must add the separate proof family without changing the existing C1 proof:
+The local runtime adds the separate proof family without changing the existing C1 proof:
 
-- generate and collect `GADGET_DIM` `LbfvPkGeneration` proofs per party;
-- key pending proofs by `(party_id, row_index)`;
+- generate and collect `GADGET_DIM` `LbfvPkGeneration` proofs for the local party;
+- key pending proofs by stable `ProofIdentity` and operation ID;
 - require all l-BFV public-key rows for one party to expose the same `sk_commitment`;
 - require that commitment to equal the party's legacy C1 `sk_commitment`;
 - preserve the existing C1-to-C2 and C1-to-C5 links;
@@ -258,8 +312,13 @@ The new row metadata must therefore be public circuit input, part of the signed 
 The implementation must not rely on an unsigned event field for row identity.
 
 Receiving nodes must validate the sender, committee slot, session, row, proof type, signature, and
-public-input shape before they dispatch heavy ZK verification. Runtime requests and collection are
-not implemented in this circuit slice.
+public-input shape before they dispatch heavy ZK verification. `ShareVerificationDispatched` carries
+an optional, versioned l-BFV context. Legacy verification kinds require no context. l-BFV generation
+and aggregation require the V1 context, whose proof domain is authoritative for the session hash.
+Aggregation also receives the canonical accepted party IDs and their PK, RLK D0, and RLK D2 row
+commitments. The local generation actor and remote collection actor now produce and verify these
+bundles. The Noir recursive circuits are implemented. Rust recursive-proof dispatch and contract
+publication are not implemented.
 
 ### 5. Aggregate the accepted contributions
 
@@ -270,7 +329,8 @@ secret-key sum.
 Legacy C5 cannot prove l-BFV row aggregation because its binary pins the single TrBFV `CRP`.
 `lbfv_pk_aggregation` provides the separate pure circuit boundary. It reuses the C5 aggregation
 relation, selects `LBFV_CRS_GADGET_ROWS[row_index]`, and exposes the aggregate row commitment. The
-legacy C5 ABI remains unchanged. The runtime and recursive paths do not use this boundary yet.
+legacy C5 ABI remains unchanged. The runtime and recursive paths use this boundary for the
+secure-16384 row proof family.
 
 For each row, the aggregator must:
 
@@ -343,19 +403,48 @@ aggregation API.
 
 ## Durable State
 
-The RLK capability needs versioned durable records for:
+The local generation path uses `//threshold_keyshare_lbfv_generation/v1/{e3_id}`. Its V1 snapshot
+stores:
 
-- the session context and accepted participant set;
-- each party's serialized RLK share and generation-proof bundle;
-- per-row proof status and commitment results;
-- the selected honest set and aggregation operation;
+- the proof context and canonical finalized committee;
+- the deterministic generation request and encrypted seed;
+- the generated shares and encrypted pending RLK witness;
+- the signed C1 proof and signed PK/RLK row slots;
+- the two finalized documents, signed manifest, and terminal failure.
+
+The snapshot derives missing row requests from the stored generation request and response. It clears
+the generation request, seed, secret key, response, and encrypted witness when the complete
+publication bundle is committed. For a terminal error, the actor commits `KeyshareState::Failed`
+before it clears the sidecar secrets. Recovery treats that main failure as authoritative and repairs
+an interrupted sidecar update before it redrives `E3Failed`. Existing threshold-keyshare snapshots
+remain unchanged.
+
+Remote collection uses `//publickey_lbfv_collection/v1/{e3_id}` for its versioned sidecar and
+`//publickey_lbfv_document/v1/{e3_id}/{sha256}` for immutable artifacts. The sidecar stores:
+
+- the proof session, committee, and H threshold;
+- the first manifest and one conflicting manifest per party;
+- document hashes, durable markers, fetch attempts, and absolute retry times;
+- invalid-data and committee-exclusion status;
+- validated PK, RLK D0, and RLK D2 row commitments;
+- the complete verification candidate set and its derived identity;
+- the immutable H-party accepted set or terminal failure.
+
+The artifact write completes before the sidecar records that a document is durable. The active
+aggregator persists `Ready` and `Dispatched` before it publishes verification work. It accepts only
+a completion with the derived candidate-set identity. It then persists `Sealed` before it stores the
+legacy C5 state and publishes the C5 request. Recovery validates a party left at `DocumentsDurable`,
+re-arms the earliest fetch retry, redrives a persisted dispatch, or applies the sealed set.
+
+The remaining RLK capability needs versioned durable records for:
+
+- the l-BFV row aggregation operation and proof progress;
 - the serialized operational RLK or a replayable derivation record;
-- pending proof, publication, and aggregation effects;
-- terminal failure and deadline state.
+- pending RLK publication and aggregation effects.
 
-Private `RlkWitness` values must not enter gossip, peer history, or durable event payloads. Local
-pending-proof storage must encrypt them and must delete them after proof completion or terminal
-failure according to the existing secret-retention policy.
+Private `RlkWitness` values do not enter the versioned DHT documents, compact manifest, gossip, peer
+history, or durable event payloads. Local pending-proof storage must encrypt them and must delete
+them after proof completion or terminal failure according to the existing secret-retention policy.
 
 Every new durable record requires an explicit schema version and a checked-in compatibility fixture.
 Stable operation IDs must include the E3 domain, session version, party slot, proof family, and row.
@@ -387,12 +476,12 @@ decodable, but the extended proof requires a new protocol release and artifact s
 
 ## Preset Matrix
 
-The initial supported matrix is:
+The initial supported preset matrix is:
 
 | Preset         | Existing C0-C7 path | l-BFV PK generation | l-BFV PK aggregation | RLK generation | RLK aggregation |
 | -------------- | ------------------- | ------------------- | -------------------- | -------------- | --------------- |
 | `secure-8192`  | supported           | not enabled         | not enabled          | not enabled    | not enabled     |
-| `secure-16384` | supported           | enabled             | enabled              | enabled        | enabled         |
+| `secure-16384` | supported for minimum only | enabled for minimum only | enabled for minimum only | enabled for minimum only | enabled for minimum only |
 
 The `insecure` preset does not support the l-BFV row path in the initial implementation. The build,
 artifact, verifier, and runtime gates must fail closed when an l-BFV request targets `insecure` or
@@ -422,16 +511,30 @@ The pure circuit slice now includes:
 - the row-indexed l-BFV public-key aggregation circuit, which preserves the legacy C5 ABI;
 - recursive synchronization and drift checks for generated l-BFV CRS and URS modules;
 - secure-16384 build selection and complete l-BFV row artifact cache gates;
+- preset-scoped artifact source hashes that exclude secure-16384-only packages from unsupported
+  preset hashes;
 - artifact source hashes that include shared Noir relation and commitment sources;
+- semantic l-BFV operation-ID validation and deterministic encrypted generation seeds;
+- exact combined generation and aggregation verification bundles keyed by `ProofIdentity`;
+- C1-to-l-BFV secret-key commitment consistency checking;
+- authoritative l-BFV session and accepted-generation commitment checks at dispatch preflight;
+- receiving-side terminal RLK limb VK checks against checksum-verified staged artifacts;
+- pure V1 transport-byte validation that returns `LbfvAcceptedPartyCommitments` only after all five
+  PK, D0, and D2 row commitments match;
+- durable remote manifest admission, conflict evidence, content-addressed artifact persistence,
+  targeted fetch retries, and committee exclusions;
+- generation-proof dispatch with a stable candidate-set identity and stale-completion rejection;
+- exact-H accepted-set sealing before the existing C5 path, including restart reconciliation and
+  redrive;
 
-The remaining capability additions are:
+The implemented capability additions for `secure-16384/minimum` are:
 
-- l-BFV public-key proof requests and runtime collection changes;
-- generated RLK leaf and terminal verifier artifacts for the `secure-16384` preset;
-- runtime requests and collection for RLK leaf and terminal proofs;
-- recursive `NodeFold`, `NodesFold`, and `DkgAggregator` changes so RLK proofs reach the existing
-  EVM-facing DKG verifier;
+- generated RLK and V2 recursive verifier artifacts;
+- Rust prover and witness wiring for the V2 recursive family;
 - Solidity verifier wrapper and publication route for the recursive proof;
+- operational RLK derivation, storage, and multiplication/relinearization integration.
+
+V2 routes for `secure-16384/micro` and `secure-16384/small` are not supported in this release.
 
 Generated circuit configuration, parity data, verification keys, and verifier contracts must be
 regenerated by the existing build tools. No generated artifact must be edited by hand.
@@ -457,14 +560,15 @@ The implementation must add tests at these levels:
 
 The following decisions are resolved:
 
-- RLK is enabled only for `secure-16384` in the initial release.
+- RLK is enabled only for `secure-16384/minimum` in the initial release. The `micro` and `small`
+  committee pairs remain rejected until their V2 verifier routes exist.
 - RLK aggregation uses the canonical honest `H` set used by public-key aggregation.
 - RLK generation runs once per E3. Secret material and operational RLK artifacts are discarded after
   E3 cleanup. Durable proof and commitment history remains domain-bound and is never reused by
   another E3.
 - RLK generation and aggregation proofs are verified on chain.
-- The row proof uses the recursive RLK finalizer. The later protocol path extends `NodeFold`,
-  `NodesFold`, and `DkgAggregator` instead of adding another RLK aggregation chain.
+- The row proof uses the recursive RLK finalizer. The protocol adds separate V2 recursive packages
+  and leaves the legacy `NodeFold`, `NodesFold`, and `DkgAggregator` ABIs unchanged.
 - CRS and URS values use one defined source for the l-BFV row vectors and the C1/RLK circuits.
 - l-BFV public randomness uses fixed, domain-separated `secure-16384` seeds. `a_j` and `d1_j` are
   generated with `CommonRandomPolyVec::from_seed`; Garner scalars come from the level-0
@@ -473,15 +577,18 @@ The following decisions are resolved:
   separate E3-scoped publication method is the fallback when measured gas or transaction size is too
   large.
 
-The following decisions remain open. They affect later protocol layers and do not block the pure
-adapter, circuit, or prover work in steps 1 through 4 of the implementation order:
+The following decision remains open. It affects the later publication layer:
 
 1. **Combined publication limits:** Does the extended `publishCommittee` call fit every supported
    chain's gas and transaction-size limits? Measure this in step 9. Use the combined call when it
-   fits. Use the versioned fallback method only when measurement shows that it does not.
-2. **Wire and storage names:** Step 5 must define stable names and schema versions for the RLK
-   session, accepted-party records, proof bundles, aggregation effects, and publication intents.
+   fits. Use the versioned fallback method only when measurement shows that it does not. The local
+   generation snapshot uses `//threshold_keyshare_lbfv_generation/v1/{e3_id}`. The append-only V1
+   DHT documents and signed manifest define the local contribution wire names. Remote collection
+   uses `//publickey_lbfv_collection/v1/{e3_id}` and
+   `//publickey_lbfv_document/v1/{e3_id}/{sha256}`. Aggregation and publication state use the
+   versioned repositories `//publickey_lbfv_aggregation/v1/{e3_id}` and
+   `//publickey_lbfv_publication/v1/{e3_id}`. The operational RLK remains E3-scoped and is not
+   published on chain.
 
-Do not add contract calls or publication behavior before the step 9 measurements. Do not add durable
-records or wire events without the step 5 schema names and versions. Continue the implementation
-order through the pure, circuit, prover, and local aggregation layers.
+Do not select a publication path until step 9 measurements confirm that the transaction fits the
+target chain's gas and transaction-size limits.

@@ -23,7 +23,11 @@ impl ThresholdKeyshare {
             msg.party_id, msg.e3_id
         );
 
-        self.store_signed_pk_generation_proof(&ec, msg.signed_proof)?;
+        self.store_signed_pk_generation_proof(&ec, msg.signed_proof.clone())?;
+        if let Err(error) = self.record_lbfv_c1_proof(msg.signed_proof, ec.clone()) {
+            error!("Rejected local l-BFV C1 proof: {error}");
+            return self.fail_lbfv_generation(ec);
+        }
         self.try_finish_deferred_keyshare_publish(ec)?;
 
         Ok(())
@@ -94,6 +98,14 @@ impl ThresholdKeyshare {
                 TrBFVResponse::GenPkShareAndSkSss(_) => {
                     self.handle_gen_pk_share_and_sk_sss_response(msg)
                 }
+                TrBFVResponse::GenLbfvKeyShares(_) => {
+                    let ec = msg.get_ctx().clone();
+                    if let Err(error) = self.handle_lbfv_generation_response(msg) {
+                        error!("Rejected local l-BFV generation response: {error}");
+                        self.fail_lbfv_generation(ec)?;
+                    }
+                    Ok(())
+                }
                 TrBFVResponse::CalculateDecryptionKey(_) => {
                     self.handle_calculate_decryption_key_response(msg, self_addr)
                 }
@@ -104,6 +116,16 @@ impl ThresholdKeyshare {
             },
             // ZK responses: proofs and verification are handled by
             // ProofRequestActor and ShareVerificationActor respectively.
+            ComputeResponseKind::Zk(
+                ZkResponse::LbfvPkGeneration(_) | ZkResponse::RlkGeneration(_),
+            ) => {
+                let ec = msg.get_ctx().clone();
+                if let Err(error) = self.handle_lbfv_proof_response(msg) {
+                    error!("Rejected local l-BFV row proof response: {error}");
+                    self.fail_lbfv_generation(ec)?;
+                }
+                Ok(())
+            }
             ComputeResponseKind::Zk(_) => Ok(()),
         }
     }

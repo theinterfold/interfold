@@ -32,4 +32,6 @@ actix = { workspace = true }
 zeroize = { workspace = true }
 
 [dev-dependencies]
+alloy = { workspace = true }
 e3-ciphernode-builder = { workspace = true }
+e3-committee-hash = { workspace = true }

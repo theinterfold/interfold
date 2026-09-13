@@ -118,56 +118,56 @@ pub enum CircuitName {
     PkBfv = 0,
     /// TrBFV public key share proof (C1).
     PkGeneration = 1,
-    /// Share encryption proof (C3).
-    ShareEncryption = 2,
-    /// DKG share decryption proof (C4).
-    DkgShareDecryption = 3,
-    /// Public key aggregation proof (C5).
-    PkAggregation = 4,
-    /// Decryption share proof (C6).
-    ThresholdShareDecryption = 5,
-    /// Decrypted shares aggregation proof (C7).
-    DecryptedSharesAggregation = 6,
-    /// Sequential C3 fold: inner ZK + optional prior `c3_fold` non-ZK proof.
-    C3Fold = 7,
-    /// Bootstrap circuit for [`CircuitName::C3Fold`] genesis accumulator proof (same ABI, no acc verify).
-    C3FoldKernel = 8,
-    /// Sequential C6 fold: inner ZK + prior `c6_fold` non-ZK proof (phase-7 aggregator).
-    C6Fold = 9,
-    /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
-    C6FoldKernel = 10,
-    /// Ad-hoc: final sk `c3_fold` + final e_sm `c3_fold`.
-    C3abFold = 11,
-    /// Ad-hoc: C4a + C4b.
-    C4abFold = 12,
-    /// Per-node DKG fold (C0..C4 links).
-    NodeFold = 13,
-    /// Sequential fold of `H` `node_fold` proofs (non-ZK) before `dkg_aggregator`.
-    NodesFold = 14,
-    /// Bootstrap circuit for [`CircuitName::NodesFold`] genesis accumulator proof (same ABI, no acc verify).
-    NodesFoldKernel = 15,
-    /// DKG aggregator (folded `node_fold` via `nodes_fold` + C5).
-    DkgAggregator = 16,
-    /// Phase-7 decryption aggregator (folded C6 via `c6_fold` + C7).
-    DecryptionAggregator = 17,
-    /// SK coefficient-range proof used by the root-committed chunk pipeline.
-    SkShareComputationChunk = 18,
-    /// ESM coefficient-range proof used by the root-committed chunk pipeline.
-    ESmShareComputationChunk = 19,
-    /// Recursive batch of C2 chunk proofs.
-    C2ChunkBatch = 20,
-    /// Type-bound SK terminal projection from a complete C2 chunk accumulator.
-    SkC2ChunkFinalize = 21,
-    /// Type-bound ESM terminal projection from a complete C2 chunk accumulator.
-    ESmC2ChunkFinalize = 22,
-    /// Combines type-bound terminal C2a and C2b chunk proofs.
-    C2abChunkFold = 23,
-    /// Legacy Sk share computation (C2a). Retain for bincode compatibility. Do not produce.
-    SkShareComputation = 24,
+    /// Legacy SK share computation (C2a). Retain for bincode compatibility. Do not produce.
+    SkShareComputation = 2,
     /// Legacy ESM share computation (C2b). Retain for bincode compatibility. Do not produce.
-    ESmShareComputation = 25,
+    ESmShareComputation = 3,
+    /// Share encryption proof (C3).
+    ShareEncryption = 4,
+    /// DKG share decryption proof (C4).
+    DkgShareDecryption = 5,
+    /// Public key aggregation proof (C5).
+    PkAggregation = 6,
+    /// Decryption share proof (C6).
+    ThresholdShareDecryption = 7,
+    /// Decrypted shares aggregation proof (C7).
+    DecryptedSharesAggregation = 8,
+    /// Sequential C3 fold: inner ZK + optional prior `c3_fold` non-ZK proof.
+    C3Fold = 9,
+    /// Bootstrap circuit for [`CircuitName::C3Fold`] genesis accumulator proof (same ABI, no acc verify).
+    C3FoldKernel = 10,
+    /// Sequential C6 fold: inner ZK + prior `c6_fold` non-ZK proof (phase-7 aggregator).
+    C6Fold = 11,
+    /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
+    C6FoldKernel = 12,
     /// Legacy ad-hoc aggregation C2a + C2b. Retain for bincode compatibility. Do not produce.
-    C2abFold = 26,
+    C2abFold = 13,
+    /// Ad-hoc: final sk `c3_fold` + final e_sm `c3_fold`.
+    C3abFold = 14,
+    /// Ad-hoc: C4a + C4b.
+    C4abFold = 15,
+    /// Per-node DKG fold (C0..C4 links).
+    NodeFold = 16,
+    /// Sequential fold of `H` `node_fold` proofs (non-ZK) before `dkg_aggregator`.
+    NodesFold = 17,
+    /// Bootstrap circuit for [`CircuitName::NodesFold`] genesis accumulator proof (same ABI, no acc verify).
+    NodesFoldKernel = 18,
+    /// DKG aggregator (folded `node_fold` via `nodes_fold` + C5).
+    DkgAggregator = 19,
+    /// Phase-7 decryption aggregator (folded C6 via `c6_fold` + C7).
+    DecryptionAggregator = 20,
+    /// SK coefficient-range proof used by the root-committed chunk pipeline.
+    SkShareComputationChunk = 21,
+    /// ESM coefficient-range proof used by the root-committed chunk pipeline.
+    ESmShareComputationChunk = 22,
+    /// Recursive batch of C2 chunk proofs.
+    C2ChunkBatch = 23,
+    /// Type-bound SK terminal projection from a complete C2 chunk accumulator.
+    SkC2ChunkFinalize = 24,
+    /// Type-bound ESM terminal projection from a complete C2 chunk accumulator.
+    ESmC2ChunkFinalize = 25,
+    /// Combines type-bound terminal C2a and C2b chunk proofs.
+    C2abChunkFold = 26,
     /// Row-level l-BFV relinearization-key generation proof.
     RlkGeneration = 27,
     /// Row-level l-BFV relinearization-key aggregation proof.
@@ -178,6 +178,22 @@ pub enum CircuitName {
     LbfvPkAggregation = 30,
     /// One CRT limb of one l-BFV relinearization-key row.
     RlkGenerationLimb = 31,
+    /// Secure-16384 fold of the five l-BFV generation rows.
+    LbfvGenerationFold = 32,
+    /// Genesis accumulator for [`CircuitName::LbfvGenerationFold`].
+    LbfvGenerationFoldKernel = 33,
+    /// Secure-16384 per-node fold with l-BFV generation commitments.
+    NodeFoldV2 = 34,
+    /// Secure-16384 cross-node fold with l-BFV generation commitments.
+    NodesFoldV2 = 35,
+    /// Genesis accumulator for [`CircuitName::NodesFoldV2`].
+    NodesFoldV2Kernel = 36,
+    /// Secure-16384 fold of the five l-BFV aggregation rows.
+    LbfvAggregationFold = 37,
+    /// Genesis accumulator for [`CircuitName::LbfvAggregationFold`].
+    LbfvAggregationFoldKernel = 38,
+    /// Secure-16384 DKG aggregator with l-BFV commitments.
+    DkgAggregatorV2 = 39,
 }
 
 impl CircuitName {
@@ -187,9 +203,6 @@ impl CircuitName {
             CircuitName::PkGeneration => "pk_generation",
             CircuitName::SkShareComputation => "sk_share_computation",
             CircuitName::ESmShareComputation => "e_sm_share_computation",
-            CircuitName::SkShareComputationChunk => "sk_share_computation_chunk",
-            CircuitName::ESmShareComputationChunk => "esm_share_computation_chunk",
-            CircuitName::C2ChunkBatch => "c2_chunk_batch",
             CircuitName::ShareEncryption => "share_encryption",
             CircuitName::DkgShareDecryption => "share_decryption",
             CircuitName::PkAggregation => "pk_aggregation",
@@ -197,9 +210,6 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => "decrypted_shares_aggregation",
             CircuitName::C3Fold => "c3_fold",
             CircuitName::C3FoldKernel => "c3_fold_kernel",
-            CircuitName::SkC2ChunkFinalize => "sk_c2_chunk_finalize",
-            CircuitName::ESmC2ChunkFinalize => "esm_c2_chunk_finalize",
-            CircuitName::C2abChunkFold => "c2ab_chunk_fold",
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
             CircuitName::C2abFold => "c2ab_fold",
@@ -210,11 +220,25 @@ impl CircuitName {
             CircuitName::NodesFoldKernel => "nodes_fold_kernel",
             CircuitName::DkgAggregator => "dkg_aggregator",
             CircuitName::DecryptionAggregator => "decryption_aggregator",
+            CircuitName::SkShareComputationChunk => "sk_share_computation_chunk",
+            CircuitName::ESmShareComputationChunk => "esm_share_computation_chunk",
+            CircuitName::C2ChunkBatch => "c2_chunk_batch",
+            CircuitName::SkC2ChunkFinalize => "sk_c2_chunk_finalize",
+            CircuitName::ESmC2ChunkFinalize => "esm_c2_chunk_finalize",
+            CircuitName::C2abChunkFold => "c2ab_chunk_fold",
             CircuitName::RlkGeneration => "rlk_generation",
             CircuitName::RlkAggregation => "rlk_aggregation",
             CircuitName::LbfvPkGeneration => "lbfv_pk_generation",
             CircuitName::LbfvPkAggregation => "lbfv_pk_aggregation",
             CircuitName::RlkGenerationLimb => "rlk_generation_limb",
+            CircuitName::LbfvGenerationFold => "lbfv_generation_fold",
+            CircuitName::LbfvGenerationFoldKernel => "lbfv_generation_fold_kernel",
+            CircuitName::NodeFoldV2 => "node_fold_v2",
+            CircuitName::NodesFoldV2 => "nodes_fold_v2",
+            CircuitName::NodesFoldV2Kernel => "nodes_fold_v2_kernel",
+            CircuitName::LbfvAggregationFold => "lbfv_aggregation_fold",
+            CircuitName::LbfvAggregationFoldKernel => "lbfv_aggregation_fold_kernel",
+            CircuitName::DkgAggregatorV2 => "dkg_aggregator_v2",
         }
     }
 
@@ -251,7 +275,15 @@ impl CircuitName {
             | CircuitName::NodesFold
             | CircuitName::NodesFoldKernel
             | CircuitName::DkgAggregator
-            | CircuitName::DecryptionAggregator => "recursive_aggregation",
+            | CircuitName::DecryptionAggregator
+            | CircuitName::LbfvGenerationFold
+            | CircuitName::LbfvGenerationFoldKernel
+            | CircuitName::NodeFoldV2
+            | CircuitName::NodesFoldV2
+            | CircuitName::NodesFoldV2Kernel
+            | CircuitName::LbfvAggregationFold
+            | CircuitName::LbfvAggregationFoldKernel
+            | CircuitName::DkgAggregatorV2 => "recursive_aggregation",
         }
     }
 
@@ -319,7 +351,15 @@ impl CircuitName {
             | CircuitName::NodesFold
             | CircuitName::NodesFoldKernel
             | CircuitName::DkgAggregator
-            | CircuitName::DecryptionAggregator => CircuitOutputLayout::None,
+            | CircuitName::DecryptionAggregator
+            | CircuitName::LbfvGenerationFold
+            | CircuitName::LbfvGenerationFoldKernel
+            | CircuitName::NodeFoldV2
+            | CircuitName::NodesFoldV2
+            | CircuitName::NodesFoldV2Kernel
+            | CircuitName::LbfvAggregationFold
+            | CircuitName::LbfvAggregationFoldKernel
+            | CircuitName::DkgAggregatorV2 => CircuitOutputLayout::None,
         }
     }
 
@@ -362,6 +402,52 @@ impl fmt::Display for CircuitName {
 mod tests {
     use super::*;
 
+    const LEGACY_CIRCUIT_NAME_FIXTURES: &[(CircuitName, u32, [u8; 4])] = &[
+        (CircuitName::PkBfv, 0, [0, 0, 0, 0]),
+        (CircuitName::PkGeneration, 1, [1, 0, 0, 0]),
+        (CircuitName::SkShareComputation, 2, [2, 0, 0, 0]),
+        (CircuitName::ESmShareComputation, 3, [3, 0, 0, 0]),
+        (CircuitName::ShareEncryption, 4, [4, 0, 0, 0]),
+        (CircuitName::DkgShareDecryption, 5, [5, 0, 0, 0]),
+        (CircuitName::PkAggregation, 6, [6, 0, 0, 0]),
+        (CircuitName::ThresholdShareDecryption, 7, [7, 0, 0, 0]),
+        (CircuitName::DecryptedSharesAggregation, 8, [8, 0, 0, 0]),
+        (CircuitName::C3Fold, 9, [9, 0, 0, 0]),
+        (CircuitName::C3FoldKernel, 10, [10, 0, 0, 0]),
+        (CircuitName::C6Fold, 11, [11, 0, 0, 0]),
+        (CircuitName::C6FoldKernel, 12, [12, 0, 0, 0]),
+        (CircuitName::C2abFold, 13, [13, 0, 0, 0]),
+        (CircuitName::C3abFold, 14, [14, 0, 0, 0]),
+        (CircuitName::C4abFold, 15, [15, 0, 0, 0]),
+        (CircuitName::NodeFold, 16, [16, 0, 0, 0]),
+        (CircuitName::NodesFold, 17, [17, 0, 0, 0]),
+        (CircuitName::NodesFoldKernel, 18, [18, 0, 0, 0]),
+        (CircuitName::DkgAggregator, 19, [19, 0, 0, 0]),
+        (CircuitName::DecryptionAggregator, 20, [20, 0, 0, 0]),
+    ];
+
+    const NEW_CIRCUIT_NAME_FIXTURES: &[(CircuitName, u32, [u8; 4])] = &[
+        (CircuitName::SkShareComputationChunk, 21, [21, 0, 0, 0]),
+        (CircuitName::ESmShareComputationChunk, 22, [22, 0, 0, 0]),
+        (CircuitName::C2ChunkBatch, 23, [23, 0, 0, 0]),
+        (CircuitName::SkC2ChunkFinalize, 24, [24, 0, 0, 0]),
+        (CircuitName::ESmC2ChunkFinalize, 25, [25, 0, 0, 0]),
+        (CircuitName::C2abChunkFold, 26, [26, 0, 0, 0]),
+        (CircuitName::RlkGeneration, 27, [27, 0, 0, 0]),
+        (CircuitName::RlkAggregation, 28, [28, 0, 0, 0]),
+        (CircuitName::LbfvPkGeneration, 29, [29, 0, 0, 0]),
+        (CircuitName::LbfvPkAggregation, 30, [30, 0, 0, 0]),
+        (CircuitName::RlkGenerationLimb, 31, [31, 0, 0, 0]),
+        (CircuitName::LbfvGenerationFold, 32, [32, 0, 0, 0]),
+        (CircuitName::LbfvGenerationFoldKernel, 33, [33, 0, 0, 0]),
+        (CircuitName::NodeFoldV2, 34, [34, 0, 0, 0]),
+        (CircuitName::NodesFoldV2, 35, [35, 0, 0, 0]),
+        (CircuitName::NodesFoldV2Kernel, 36, [36, 0, 0, 0]),
+        (CircuitName::LbfvAggregationFold, 37, [37, 0, 0, 0]),
+        (CircuitName::LbfvAggregationFoldKernel, 38, [38, 0, 0, 0]),
+        (CircuitName::DkgAggregatorV2, 39, [39, 0, 0, 0]),
+    ];
+
     fn make_proof(circuit: CircuitName, signals: &[u8]) -> Proof {
         Proof::new(
             circuit,
@@ -371,67 +457,32 @@ mod tests {
     }
 
     #[test]
-    fn circuit_name_discriminants_preserve_durable_order() {
-        let expected = [
-            (CircuitName::PkBfv, 0),
-            (CircuitName::PkGeneration, 1),
-            (CircuitName::ShareEncryption, 2),
-            (CircuitName::DkgShareDecryption, 3),
-            (CircuitName::PkAggregation, 4),
-            (CircuitName::ThresholdShareDecryption, 5),
-            (CircuitName::DecryptedSharesAggregation, 6),
-            (CircuitName::C3Fold, 7),
-            (CircuitName::C3FoldKernel, 8),
-            (CircuitName::C6Fold, 9),
-            (CircuitName::C6FoldKernel, 10),
-            (CircuitName::C3abFold, 11),
-            (CircuitName::C4abFold, 12),
-            (CircuitName::NodeFold, 13),
-            (CircuitName::NodesFold, 14),
-            (CircuitName::NodesFoldKernel, 15),
-            (CircuitName::DkgAggregator, 16),
-            (CircuitName::DecryptionAggregator, 17),
-            (CircuitName::SkShareComputationChunk, 18),
-            (CircuitName::ESmShareComputationChunk, 19),
-            (CircuitName::C2ChunkBatch, 20),
-            (CircuitName::SkC2ChunkFinalize, 21),
-            (CircuitName::ESmC2ChunkFinalize, 22),
-            (CircuitName::C2abChunkFold, 23),
-            (CircuitName::SkShareComputation, 24),
-            (CircuitName::ESmShareComputation, 25),
-            (CircuitName::C2abFold, 26),
-            (CircuitName::RlkGeneration, 27),
-            (CircuitName::RlkAggregation, 28),
-            (CircuitName::LbfvPkGeneration, 29),
-            (CircuitName::LbfvPkAggregation, 30),
-            (CircuitName::RlkGenerationLimb, 31),
-        ];
-
-        for (circuit, discriminant) in expected {
+    fn legacy_circuit_name_discriminants_and_bincode_match_origin_main() {
+        for &(circuit, discriminant, encoded) in LEGACY_CIRCUIT_NAME_FIXTURES {
             assert_eq!(circuit as u32, discriminant, "{circuit:?}");
+            assert_eq!(
+                bincode::serialize(&circuit).unwrap(),
+                encoded,
+                "{circuit:?}"
+            );
+            assert_eq!(
+                bincode::deserialize::<CircuitName>(&encoded).unwrap(),
+                circuit
+            );
         }
     }
 
     #[test]
-    fn circuit_name_legacy_bincode_bytes_decode_to_the_same_variants() {
-        let expected = [
-            ([2u8, 0, 0, 0], CircuitName::ShareEncryption),
-            ([13u8, 0, 0, 0], CircuitName::NodeFold),
-            ([16u8, 0, 0, 0], CircuitName::DkgAggregator),
-            ([17u8, 0, 0, 0], CircuitName::DecryptionAggregator),
-            ([24u8, 0, 0, 0], CircuitName::SkShareComputation),
-            ([25u8, 0, 0, 0], CircuitName::ESmShareComputation),
-            ([26u8, 0, 0, 0], CircuitName::C2abFold),
-            ([27u8, 0, 0, 0], CircuitName::RlkGeneration),
-            ([28u8, 0, 0, 0], CircuitName::RlkAggregation),
-            ([29u8, 0, 0, 0], CircuitName::LbfvPkGeneration),
-            ([30u8, 0, 0, 0], CircuitName::LbfvPkAggregation),
-            ([31u8, 0, 0, 0], CircuitName::RlkGenerationLimb),
-        ];
-
-        for (bytes, circuit) in expected {
+    fn new_circuit_name_discriminants_and_bincode_are_append_only() {
+        for &(circuit, discriminant, encoded) in NEW_CIRCUIT_NAME_FIXTURES {
+            assert_eq!(circuit as u32, discriminant, "{circuit:?}");
             assert_eq!(
-                bincode::deserialize::<CircuitName>(&bytes).unwrap(),
+                bincode::serialize(&circuit).unwrap(),
+                encoded,
+                "{circuit:?}"
+            );
+            assert_eq!(
+                bincode::deserialize::<CircuitName>(&encoded).unwrap(),
                 circuit
             );
         }
@@ -570,13 +621,13 @@ mod tests {
 
     #[test]
     fn rlk_generation_layout_tracks_row_and_commitments() {
-        let mut signals = vec![0u8; 192];
-        signals[31] = 3;
-        signals[32..64].copy_from_slice(&[0x11; 32]);
-        signals[64..96].copy_from_slice(&[0x22; 32]);
-        signals[96..128].copy_from_slice(&[0x33; 32]);
-        signals[128..160].copy_from_slice(&[0x44; 32]);
-        signals[160..192].copy_from_slice(&[0x55; 32]);
+        let mut signals = vec![0u8; 288];
+        signals[127] = 3;
+        signals[128..160].copy_from_slice(&[0x11; 32]);
+        signals[160..192].copy_from_slice(&[0x22; 32]);
+        signals[192..224].copy_from_slice(&[0x33; 32]);
+        signals[224..256].copy_from_slice(&[0x44; 32]);
+        signals[256..288].copy_from_slice(&[0x55; 32]);
         let proof = make_proof(CircuitName::RlkGeneration, &signals);
 
         assert_eq!(proof.extract_input("row_index").unwrap()[31], 3);
@@ -598,11 +649,11 @@ mod tests {
 
     #[test]
     fn rlk_generation_limb_layout_tracks_selectors_and_commitments() {
-        let mut signals = vec![0u8; 256];
-        signals[31] = 3;
-        signals[63] = 4;
-        signals[64..96].copy_from_slice(&[0x11; 32]);
-        signals[224..256].copy_from_slice(&[0x66; 32]);
+        let mut signals = vec![0u8; 352];
+        signals[127] = 3;
+        signals[159] = 4;
+        signals[160..192].copy_from_slice(&[0x11; 32]);
+        signals[320..352].copy_from_slice(&[0x66; 32]);
         let proof = make_proof(CircuitName::RlkGenerationLimb, &signals);
 
         assert_eq!(proof.extract_input("row_index").unwrap()[31], 3);
@@ -619,10 +670,10 @@ mod tests {
 
     #[test]
     fn lbfv_pk_generation_layout_tracks_row_and_commitments() {
-        let mut signals = vec![0u8; 96];
-        signals[31] = 2;
-        signals[32..64].copy_from_slice(&[0x11; 32]);
-        signals[64..96].copy_from_slice(&[0x22; 32]);
+        let mut signals = vec![0u8; 192];
+        signals[127] = 2;
+        signals[128..160].copy_from_slice(&[0x11; 32]);
+        signals[160..192].copy_from_slice(&[0x22; 32]);
         let proof = make_proof(CircuitName::LbfvPkGeneration, &signals);
 
         assert_eq!(proof.extract_input("row_index").unwrap()[31], 2);
@@ -638,10 +689,10 @@ mod tests {
 
     #[test]
     fn rlk_aggregation_layout_tracks_row_and_commitments() {
-        let mut signals = vec![0u8; 160];
-        signals[31] = 4;
-        signals[96..128].copy_from_slice(&[0x55; 32]);
-        signals[128..160].copy_from_slice(&[0x66; 32]);
+        let mut signals = vec![0u8; 384];
+        signals[191] = 4;
+        signals[320..352].copy_from_slice(&[0x55; 32]);
+        signals[352..384].copy_from_slice(&[0x66; 32]);
         let proof = make_proof(CircuitName::RlkAggregation, &signals);
 
         assert_eq!(proof.extract_input("row_index").unwrap()[31], 4);
@@ -657,9 +708,9 @@ mod tests {
 
     #[test]
     fn lbfv_pk_aggregation_layout_tracks_row_and_tail_commitment() {
-        let mut signals = vec![0u8; 128];
-        signals[31] = 4;
-        signals[96..128].copy_from_slice(&[0x77; 32]);
+        let mut signals = vec![0u8; 288];
+        signals[191] = 4;
+        signals[256..288].copy_from_slice(&[0x77; 32]);
         let proof = make_proof(CircuitName::LbfvPkAggregation, &signals);
 
         assert_eq!(proof.extract_input("row_index").unwrap()[31], 4);
@@ -667,16 +718,16 @@ mod tests {
             &*proof.extract_output("pk_agg_commitment").unwrap(),
             &[0x77; 32]
         );
-        assert_eq!(proof.circuit.input_layout().field_count(), Some(1));
+        assert_eq!(proof.circuit.input_layout().field_count(), Some(6));
     }
 
     #[test]
     fn extract_input_from_share_encryption() {
-        // C3: 2 pub inputs at HEAD + ct_commitment return at tail
-        let mut signals = vec![0u8; 96];
+        // C3: four public inputs at the head and ct_commitment at the tail.
+        let mut signals = vec![0u8; 160];
         signals[0..32].copy_from_slice(&[0xAA; 32]); // expected_pk_commitment
         signals[32..64].copy_from_slice(&[0xBB; 32]); // expected_message_commitment
-        signals[64..96].copy_from_slice(&[0xCC; 32]); // ct_commitment
+        signals[128..160].copy_from_slice(&[0xCC; 32]); // ct_commitment
 
         let proof = make_proof(CircuitName::ShareEncryption, &signals);
         assert_eq!(

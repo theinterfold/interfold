@@ -96,10 +96,9 @@ pub fn flatten<let A: u32, let L: u32, let BIT: u32>(
 /// - `A`: number of input values.
 /// - `BIT`: per-value bit bound; rounded up to `nibble_bits` by `packing_layout`.
 ///
-/// ## Preconditions / Notes
-/// - Call with the raw coefficients whose magnitudes already satisfy the BIT bound
-///   (as enforced by the upstream range checks); `pack` performs the signed -> unsigned
-///   shift internally via `v + base`.
+/// ## Range constraint
+/// - `pack` constrains each shifted digit to `[0, radix)`. This prevents carry collisions between
+///   adjacent digits when a caller supplies an out-of-range coefficient.
 /// - `group >= 1` is enforced by `packing_layout::<BIT>()`.
 /// - Padding with `digit = 2^nibble_bits` encodes `zero limb` consistently.
 ///
@@ -127,7 +126,9 @@ pub fn pack<let A: u32, let BIT: u32>(values: [Field; A]) -> [Field] {
         let mut acc = 0;
         for i in 0..take {
             let v = values[chunk * group + i];
-            acc = acc * radix + (v + base);
+            let digit = v + base;
+            digit.assert_max_bit_size::<((BIT + 3) / 4) * 4 + 4>();
+            acc = acc * radix + digit;
         }
 
         // Pad remaining limb slots with the canonical zero-limb `digit = base`.
@@ -334,4 +335,35 @@ fn test_pack_determinism() {
     for i in 0..packed1.len() {
         assert(packed1[i] == packed2[i]);
     }
+}
+
+#[test]
+fn test_pack_accepts_valid_signed_and_native_values() {
+    let signed = pack::<3, 4>([-16, 0, 15]);
+    let native = pack::<3, 4>([0, 8, 15]);
+
+    assert(signed.len() == 1);
+    assert(native.len() == 1);
+}
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_pack_rejects_lower_digit_carry_collision() {
+    let base = 16;
+    let radix = 256;
+    let valid = (base * radix) + base;
+    let colliding = ((base + 1) * radix) + (base - radix);
+    assert(valid == colliding);
+
+    let _ = pack::<2, 4>([1, -radix]);
+}
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_pack_rejects_upper_digit_carry_collision() {
+    let base = 16;
+    let radix = 256;
+    let valid = (base * radix) + base;
+    let colliding = ((base - 1) * radix) + (base + radix);
+    assert(valid == colliding);
+
+    let _ = pack::<2, 4>([-1, radix]);
 }

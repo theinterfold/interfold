@@ -4,9 +4,12 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use lib::configs::default::H;
+use lib::configs::default::{H, N_PARTIES};
 use lib::configs::default::threshold::{
     GADGET_DIM, L, N, RLK_AGGREGATION_BIT_D, RLK_AGGREGATION_CONFIGS,
+};
+use lib::core::threshold::lbfv_proof_domain::{
+    LbfvAcceptedPartySet, LbfvProofSession, validate_aggregation_statement,
 };
 use lib::core::threshold::rlk_aggregation::RlkAggregation;
 use lib::math::polynomial::Polynomial;
@@ -18,13 +21,17 @@ use lib::math::polynomial::Polynomial;
 /// `d1`/`a` are not circuit inputs here: both are compile-time constants
 /// pinned by the verification key (same as `pk_generation`/`pk_aggregation`'s
 /// `CRP`), so binding them into this proof's output would be redundant.
-/// `row_index` is kept as a public output purely so downstream consumers can
-/// correlate/group per-row aggregation proofs; it is not otherwise constrained.
+/// `row_index` is a public input and is constrained to the compiled gadget-row range.
 ///
 /// TODO: when folding lands, this may be replaced/supplemented by a batched
 /// entry point that loops all GADGET_DIM rows into one proof instead of one
 /// row per invocation.
 fn main(
+    session_id_hi: pub Field,
+    session_id_lo: pub Field,
+    aggregator_party_id: pub u32,
+    accepted_party_set_hash_hi: pub Field,
+    accepted_party_set_hash_lo: pub Field,
     row_index: pub u32,
     expected_d0_commitments: pub [Field; H],
     expected_d2_commitments: pub [Field; H],
@@ -33,7 +40,15 @@ fn main(
     d0_agg: [Polynomial<N>; L],
     d2_agg: [Polynomial<N>; L],
 ) -> pub (Field, Field) {
-    assert(row_index < GADGET_DIM, "row_index out of range");
+    validate_aggregation_statement::<N_PARTIES, GADGET_DIM>(
+        LbfvProofSession { session_id_hi, session_id_lo },
+        aggregator_party_id,
+        LbfvAcceptedPartySet {
+            hash_hi: accepted_party_set_hash_hi,
+            hash_lo: accepted_party_set_hash_lo,
+        },
+        row_index,
+    );
 
     let rlk_aggregation: RlkAggregation<N, H, L, RLK_AGGREGATION_BIT_D> = RlkAggregation::new(
         RLK_AGGREGATION_CONFIGS,

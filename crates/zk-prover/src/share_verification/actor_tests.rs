@@ -9,7 +9,7 @@ use actix::{Actor, Context, Handler};
 use alloy::signers::local::PrivateKeySigner;
 use e3_events::{
     hlc_factory::HlcFactory, Event, EventBus, EventBusBarrier, EventBusConfig, EventPublisher,
-    Proof, ProofPayload, Sequencer, StoreEventRequested, StoreEventResponse,
+    Proof, ProofPayload, ProofType, Sequencer, StoreEventRequested, StoreEventResponse,
 };
 use e3_fhe_params::BfvPreset;
 use e3_utils::utility_types::ArcBytes;
@@ -102,6 +102,8 @@ async fn restored_committee_authorizes_c6_without_replayed_finalization_event() 
         pre_dishonest: BTreeSet::new(),
         params_preset: BfvPreset::InsecureThreshold512,
         committee_size: CiphernodesCommitteeSize::Minimum,
+        lbfv_context: None,
+        verification_id: None,
     })
     .expect("publish C6 verification dispatch");
 

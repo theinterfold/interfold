@@ -50,8 +50,7 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │       be buffered while this node is still finishing earlier DKG phases
 │   │
 │   └─ Collector timeouts are derived from the DKG stage budget:
-│         ├─ shared base window from `E3_DKG_WINDOW_SECS` (default 7200s,
-│         │  matching current production `Interfold` deployment config)
+│         ├─ shared local base window from `E3_DKG_WINDOW_SECS` (default 7200s)
 │         ├─ EncryptionKeyCollector cutoff at 10% of the DKG window
 │         ├─ ThresholdShareCollector cutoff at 60% of the DKG window
 │         └─ per-collector env vars still override these derived defaults
@@ -338,6 +337,12 @@ witness computation. The compiled circuits and committed `configs.nr` defaults u
 non-512 `--chunk-size` produces artifacts that are valid only if the C2/C3/C4 circuits are
 recompiled against the generated `configs.nr` — the default production path keeps chunk size 512.
 
+All packed polynomial commitments constrain each shifted coefficient to one radix digit. An
+out-of-range C2 secret chunk or C4 decrypted share cannot carry into an adjacent digit and collide
+with a valid packed value. The same constraint applies to C6 aggregate and decrypted-share
+commitments and to packed Fiat-Shamir transcripts. The witness and public-input layouts do not
+change.
+
 C1, normal C2, C3, C4 per-share checks, and `NodeFold` now use the same root commitment scheme. C3
 fold steps bind each inner proof's recipient and modulus indices to its accumulator slot, including
 the first genesis step. C3Fold and NodesFold also bind the current accumulator VK and the prior
@@ -447,12 +452,13 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   }
 │   │
 │   ├─ CommitmentConsistencyChecker (per-E3 actor) receives this:
-│   │   ├─ Caches each party's (address, proof_type) → {public_signals, data_hash}
+│   │   ├─ Caches each party's (address, ProofIdentity) → {public_signals, data_hash}
 │   │   ├─ Evaluates all registered CommitmentLinks:
 │   │   │     C0→C3   (SourceMustExistInTargets): C3's expected_pk_commitment ∈ any C0 pk_commitment
 │   │   │     C1→C2a  (SameParty):                C1's sk_commitment == C2a's expected_secret_commitment
 │   │   │     C1→C2b  (SameParty):                C1's e_sm_commitment == C2b's expected_secret_commitment
 │   │   │     C1→C5   (CrossParty):               C1's pk_commitment ∈ C5 expected pk inputs
+│   │   │     l-BFV→C1 (SameParty):               each l-BFV PK row uses C1's sk_commitment
 │   │   │     C2→C3   (SameParty):                C3's expected_message_commitment ∈ C2's share commitments
 │   │   │     C2→C4   (SourceMustExistInTargets): C2's L share commitments for recipient R exactly
 │   │   │                                          match C4_R's expected_commitments row for sender X
@@ -467,18 +473,70 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │   separate `lbfv_pk_generation` circuit proves one fixed l-BFV public-key row and exposes
 │   │   │   `row_index`, `sk_commitment`, and `pk_commitment`. The `lbfv_pk_aggregation` circuit
 │   │   │   aggregates exactly `H` generation-bound rows against the selected fixed CRS row. Both
-│   │   │   helper/prover boundaries exist, and the legacy C5 ABI remains unchanged. `NodeFold`,
-│   │   │   pending proof state, and request/response types do not collect these proofs yet.
+│   │   │   aggregation circuits bind the proof session, aggregator party, accepted-party-set hash,
+│   │   │   and row. The legacy C5 ABI remains unchanged. Remote contribution collection verifies
+│   │   │   the generation rows. The separate V2 recursive family consumes these proofs.
 │   │   │   RLK generation uses one reusable `rlk_generation_limb` circuit for each CRT limb. Its
 │   │   │   row finalizer verifies exactly `L` ZK leaf proofs in canonical limb order, reconstructs
 │   │   │   the unchanged full-row D0/D2 commitments, and exposes the bound leaf VK hash at the
 │   │   │   public-statement tail. `CircuitName::RlkGeneration`, `CircuitName::RlkAggregation`, and
 │   │   │   `CircuitName::LbfvPkGeneration` use appended discriminants 27, 28, and 29.
 │   │   │   `CircuitName::LbfvPkAggregation` and `CircuitName::RlkGenerationLimb` use appended
-│   │   │   discriminants 30 and 31. No l-BFV `ProofType` or runtime event exists yet. NodeFold and
-│   │   │   runtime integration remain pending. A real `secure-16384/minimum` test proves and
-│   │   │   verifies five recursive limbs and one row finalizer. It checks all six terminal public
-│   │   │   fields and rejects a terminal proof made with the wrong leaf VK. The test took 1,393.44
+│   │   │   discriminants 30 and 31. The externally signed row proof families use append-only
+│   │   │   `ProofType` discriminants 11 through 14. The limb proof remains a local temporary and
+│   │   │   has no `ProofType`. Append-only TrBFV compute variants generate local public-key and RLK
+│   │   │   shares from the C1 secret contribution. The response encrypts the RLK witness at rest.
+│   │   │   Append-only `ZkRequest` handlers build and prove each row. Each handler recomputes the
+│   │   │   stable operation ID from the session, party role, family, row, canonical accepted set,
+│   │   │   and public artifacts before witness work. Retries use an encrypted 32-byte seed and one
+│   │   │   operation-ID Barretenberg namespace. Generation verification requires C1, five
+│   │   │   public-key rows, and five RLK rows in canonical order. Aggregation requires only the ten
+│   │   │   l-BFV rows. The generation consistency payload includes C1, so one decision checks every
+│   │   │   l-BFV SK commitment against C1. Verification also checks exact public-input shape and
+│   │   │   uses the versioned dispatch context as the authoritative session. Aggregation requires
+│   │   │   exactly `H` unique ascending parties, one accepted-set hash for both families, and PK,
+│   │   │   RLK D0, and RLK D2 input commitments that match accepted generation results. Before
+│   │   │   generic ZK verification, each terminal RLK proof's limb VK hash must match the
+│   │   │   checksum-verified staged artifact. Versioned DHT transport stores each party's public-key
+│   │   │   contribution and RLK contribution in separate `LbfvKeyShareDocument` records. The PK
+│   │   │   document carries C1 and five signed PK row proofs. The RLK document carries five signed
+│   │   │   terminal RLK row proofs. A compact `SignedLbfvKeyShareManifest` binds the complete proof
+│   │   │   domain, party slot, and the SHA-256 hash of each exact DHT payload. Generic l-BFV DHT
+│   │   │   notifications are ignored. A versioned targeted fetch request identifies the exact E3,
+│   │   │   proof session, party, document role, hash, and attempt. The bounded fetch handler checks
+│   │   │   the SHA-256 hash, full identity, schema, proof order, and signer consistency. It publishes
+│   │   │   a validated document or a typed unavailable/invalid-data failure. The network adapter
+│   │   │   enforces the 25 MiB record limit and forwards only manifests with a recoverable
+│   │   │   signature. For `secure-16384`, `ThresholdKeyshare` persists the generation request and
+│   │   │   encrypted seed in `//threshold_keyshare_lbfv_generation/v1/{e3_id}`. It dispatches share
+│   │   │   generation, derives and redrives missing row requests by stable operation ID, and collects the signed C1
+│   │   │   proof, signs ten returned row proofs, and commits both documents plus the manifest before
+│   │   │   publishing them.
+│   │   │   It checks the injected signer against the canonical committee slot and delays
+│   │   │   `KeyshareCreated` until the local bundle is durable. Completion clears the stored secret,
+│   │   │   seed, and encrypted RLK witness. A terminal path commits the main failure first. Restart
+│   │   │   then repairs an interrupted sidecar cleanup before it redrives the saved failure.
+│   │   │   Restart republishes a completed bundle or resumes its earliest incomplete effect. Each
+│   │   │   public-key aggregator persists manifest replay or conflict decisions and emits targeted
+│   │   │   fetch requests. The pure document boundary decodes the exact V1 PK and RLK share bytes. It
+│   │   │   accepts `LbfvAcceptedPartyCommitments` only when all five ordered PK, D0, and D2
+│   │   │   commitments match the fixed-shape row statements.
+│   │   │   `lbfv_generation_fold` verifies five ordered PK/RLK pairs. `node_fold_v2` reverifies
+│   │   │   C0-C4 and links each l-BFV SK commitment to C1. `nodes_fold_v2` folds exactly H parties
+│   │   │   in ascending order. `lbfv_aggregation_fold` verifies five ordered aggregation pairs.
+│   │   │   `dkg_aggregator_v2` verifies those folds plus legacy C5 and compares every generation
+│   │   │   commitment. It recomputes the accepted-set hash from the folded canonical party IDs.
+│   │   │   A NodeFoldV2 public statement contains four public-prefix fields and an 85-field return,
+│   │   │   for 89 fields in total. NodesFoldV2 preserves that full statement for each of H parties;
+│   │   │   its secure-16384/minimum accumulator statement therefore contains 184 fields.
+│   │   │   Rust recursive request dispatch, the local document-to-node-fold handoff, row aggregation,
+│   │   │   and operational RLK storage are wired. The active aggregator persists and redrives a
+│   │   │   secure-16384 `LbfvPublicKeyAggregated` publication intent. The registry writer adapts the
+│   │   │   local intent to the existing public-key submission gate and passes the V2 proof and
+│   │   │   attestation bundle to `publishCommittee`. A real
+│   │   │   `secure-16384/minimum` test proves and verifies five recursive limbs and one row
+│   │   │   finalizer. It checks the four terminal domain/identity inputs and five outputs, and
+│   │   │   rejects a terminal proof made with the wrong leaf VK. The test took 1,393.44
 │   │   │   seconds and 16,788,504,576 bytes maximum RSS. The prior equation-wide circuit did not
 │   │   │   complete compilation after more than 31 minutes. Sequential circuit compilation measured
 │   │   │   512.58 seconds and 26,388,774,912 bytes maximum RSS for the limb, then 57.36 seconds and
@@ -638,6 +696,59 @@ phase.
 
 ## Phase 2: Public Key Aggregation (Committee-Buffered, Active Aggregator Submits)
 
+For `secure-16384`, remote l-BFV collection extends the persisted-input gate before the existing C5
+path.
+
+**Files:**
+
+- `crates/aggregator/src/public_key_aggregation/lbfv_contribution_collection.rs`
+- `crates/aggregator/src/public_key_aggregation/effects/collect_lbfv_contributions.rs`
+- `crates/aggregator/src/public_key_aggregation/effects/complete_lbfv_verification.rs`
+- `crates/aggregator/src/repo.rs`
+
+```
+SignedLbfvKeyShareManifest arrives at every PublicKeyAggregator
+│
+├─ Validate the proof domain, proof session, party slot, committee signer, and two distinct hashes
+├─ Persist the first manifest in //publickey_lbfv_collection/v1/{e3_id}
+│  ├─ An identical replay is idempotent
+│  └─ Persist the first different signed payload as equivocation evidence
+├─ Publish one targeted fetch per document role after the manifest is durable
+│  ├─ Public-key document first, then RLK document
+│  └─ The request binds E3, session, party, role, hash, and attempt
+├─ On a validated document:
+│  ├─ Write //publickey_lbfv_document/v1/{e3_id}/{sha256} first
+│  └─ Then mark that document slot durable in the collection sidecar
+├─ On an unavailable result:
+│  ├─ Persist the next attempt and absolute retry_at
+│  └─ Re-arm the actor-owned timer; restart uses the same stored deadline
+├─ On invalid data or CommitteeMemberExcluded:
+│  ├─ Persist a terminal party status
+│  └─ Invalidate an unsealed candidate set that included the party
+├─ When both documents are durable and KeyshareCreated supplies C1:
+│  ├─ Require the document C1 payload to equal the submitted C1 payload
+│  ├─ Validate all five PK, RLK D0, and RLK D2 row commitments
+│  └─ Persist Ready or InvalidData
+├─ Publish AggregationInputsReady only after every submitted party is settled
+│  └─ Settled = Ready, Equivocated, InvalidData, or Excluded
+└─ The active aggregator proceeds:
+   ├─ Require at least H Ready parties, sorted by party_id
+   ├─ Persist Ready(candidate_party_ids), then Dispatched(candidate_party_ids)
+   ├─ Derive verification_id from the proof session and complete candidate set
+   ├─ Dispatch C1 + five PK rows + five RLK rows for every candidate
+   ├─ Ignore ShareVerificationComplete with another verification_id
+   ├─ Select the lowest H honest candidates
+   ├─ Persist Sealed with the exact validated commitments for those H parties
+   └─ Persist the legacy C5 state before publishing PkAggregationProofPending
+```
+
+Hydration reconstructs only a missing initial sidecar from the durable E3 and committee context. It
+does not replace an existing record. After `EffectsEnabled`, recovery validates each submitted party
+left at `DocumentsDurable`, publishes due fetches, re-arms the earliest retry, redrives a persisted
+verification dispatch with the same candidate ID, or applies the immutable sealed set. Every standby
+stores the same inputs and collection outcomes. Only the active aggregator dispatches proof or C5
+work.
+
 ```
   All committee members receive KeyshareCreated events
 │
@@ -652,7 +763,9 @@ phase.
   │
   ├─ When every non-excluded member has submitted a keyshare:
 │   │   → The live count can fall below N after a confirmed fault, but it must still be at least H
-│   │   → Persist VerifyingC1 before publishing AggregationInputsReady(PublicKey)
+│   │   → Persist VerifyingC1
+│   │   → For secure-16384, wait until every submitted l-BFV contribution is settled
+│   │   → Then publish AggregationInputsReady(PublicKey)
 │   │   → CiphernodeSelector starts the 10-minute failover budget only now
 │   │
 │   ├─ Only the active aggregator starts C1 verification and later proof/compute effects
@@ -717,7 +830,11 @@ phase.
 │   │     └─ A mixed Some/None honest NodeFold-proof set is treated as the same terminal DKG
 │   │         failure instead of only surfacing as InterfoldError telemetry
 │   │
-│   └─ 6. Publish PublicKeyAggregated {
+│   └─ 6. Publish the protocol-specific key intent:
+│         secure-16384 → persist and publish `LbfvPublicKeyAggregated` with
+│           e3_id, pubkey, pk_commitment, nodes, committee_addresses,
+│           honest_committee_addresses, dkg_aggregator_v2_proof
+│         other presets → publish `PublicKeyAggregated` {
 │         e3_id, pubkey: aggregate_pk, pk_commitment, nodes,
 │         committee_addresses,          // length N — full on-chain topNodes binding
 │         honest_committee_addresses,  // length H — canonical honest subset
@@ -725,7 +842,10 @@ phase.
 │       }
 │         → forwarded to peers so every committee member can bind C6 proofs to the aggregated key
 │
-└─ CiphernodeRegistrySolWriter receives PublicKeyAggregated:
+└─ Existing CiphernodeRegistrySolWriter receives `PublicKeyAggregated` or a local
+  secure-16384 `LbfvPublicKeyAggregated` intent:
+  ├─ Adapts the secure event to the existing public-key submission gate, preserving the V2 proof and
+  │  attestation bundle
   ├─ Accepts publication intents only from locally produced events; peer copies only distribute
   │  protocol state
   ├─ During live operation, requires active_aggregators[e3_id] == true when admitting the intent
@@ -751,7 +871,7 @@ phase.
        after 30s
      → RPC request-size rejection and permanent contract or payload errors are terminal for the
        running writer. They produce one final error instead of an unbounded 30-second retry loop
-     → A restart replays the intent, so an unfinished publication still reaches the chain.
+      → A restart replays the legacy intent, so an unfinished publication still reaches the chain.
        E3RequestComplete that arrives before EffectsEnabled comes from that same replay and
        drops the intent: a completed request published its candidate in an earlier run, and
        repeating it only spends gas
@@ -799,7 +919,7 @@ phase.
         │  │  publishCommitteePublicKey(e3Id, hash, i, n, len, chunk) { │
         │  │    1. require the proven commitment                │
         │  │    2. require caller is a request-time committee member │
-        │  │    3. require len <= 512 KiB and canonical 90 KiB chunks │
+        │  │    3. require len <= 6 MiB and canonical 90 KiB chunks │
         │  │    4. Emit CommitteePublicKeyChunkPublished        │
         │  │  }                                                  │
         │  └─────────────────────────────────────────────────────┘
@@ -816,18 +936,20 @@ an attestation. The registry uses the same frozen verifier when the committee pu
 attestation from another registry or verifier therefore fails even when both registries use the same
 E3 ID and committee.
 
-The serialized key is transported in Ethereum event chunks; it is not on-chain authority. Only a
-request-time committee member can emit chunks while the E3 remains in `KeyPublished`. This includes
-a retained expelled member, whose bytes receive no extra trust but can still repair availability.
-Terminal E3s reject new chunks, so late publishers cannot recreate assemblies after cleanup.
-Consumers accept the first candidate hash from each member. The ciphernode coordinator and
-`e3-indexer` group the canonical chunks by E3, publisher, and candidate hash. They require a
-complete sequence, check `keccak256(serializedKey) == candidateHash`, decode the BFV key, recompute
-the circuit's public-key commitment with the request-time parameter set, and require equality with
-the proven on-chain `pkCommitment`. Only then do they produce the existing `CommitteePublished`
-runtime event or store the key for encryption. Invalid candidates do not consume another committee
-member's candidate. Production also verifies the C5-backed final DKG proof on-chain; the explicit
-test/CI skip mode works only with mock verifiers.
+The serialized key is transported in Ethereum event chunks; it is not on-chain authority. The
+transport accepts at most 6 MiB and keeps the canonical chunk size at 90 KiB. The 5,222,596-byte
+secure-16384 aggregate public key uses 57 chunks. Only a request-time committee member can emit
+chunks while the E3 remains in `KeyPublished`. This includes a retained expelled member, whose bytes
+receive no extra trust but can still repair availability. Terminal E3s reject new chunks, so late
+publishers cannot recreate assemblies after cleanup. Consumers accept the first candidate hash from
+each member. The ciphernode coordinator and `e3-indexer` group the canonical chunks by E3,
+publisher, and candidate hash. They require a complete sequence, check
+`keccak256(serializedKey) == candidateHash`, decode the BFV key, recompute the circuit's public-key
+commitment with the request-time parameter set, and require equality with the proven on-chain
+`pkCommitment`. Only then do they produce the existing `CommitteePublished` runtime event or store
+the key for encryption. Invalid candidates do not consume another committee member's candidate.
+Production verifies the C5-backed legacy final DKG proof or the `DkgAggregatorV2` final proof
+on-chain; the explicit test/CI skip mode works only with mock verifiers.
 
 > **C-08 (BfvPkVerifier domain binding) — implemented** The wrapper exposes a
 > `verify(e3Id, committeeRoot, sortedNodes, pkCommitment, committeeHash, proof)` signature.
@@ -840,6 +962,9 @@ test/CI skip mode works only with mock verifiers.
 > **Verifier deployment anchors:** `BfvPkVerifier` and `BfvDecryptionVerifier` constructors reject
 > zero/EOA circuit-verifier addresses and zero recursive VK hashes. Production deployment tooling
 > additionally compares the immutable VK hashes with the version-controlled circuit artifacts.
+
+The E3 configuration ID binds these BFV proof routes to the `interfold-bfv-v2` circuit identity. The
+identity update does not change `CircuitName`, BFV parameter hashes, or packed commitments.
 
 The decryption wrapper exposes
 `verify(e3Id, decryptionDomain, plaintextOutputHash, committeeHash, ciphertextCommitment, proof)`.
@@ -1062,6 +1187,13 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 ## Phase 5: Plaintext Aggregation (Committee-Buffered, Active Aggregator Submits)
 
 ```
+  PublicKeyAggregated or secure-16384 LbfvPublicKeyAggregated arrives
+│
+  └─ ThresholdPlaintextAggregatorExtension:
+      ├─ Validates the secure event E3 ID and DkgAggregatorV2 circuit
+      ├─ Stores the full committee and honest committee dependencies
+      └─ Starts the plaintext actor when a ciphertext is already pending
+│
   All committee members receive DecryptionshareCreated events
 │
   ├─ DecryptionshareCreatedBuffer validates exclusion state:
@@ -1413,12 +1545,14 @@ the old timer and clears the phase-local skip set. Startup migrates the v0.12 fa
 discarding its pre-readiness timers and skip set.
 
 The Interfold and registry writers also subscribe before EventStore replay. A locally sourced
-`PlaintextAggregated` or `PublicKeyAggregated` event is the durable publication intent. Each writer
-coalesces the intent by E3, waits for `EffectsEnabled`, checks chain state before submitting, and
-keeps retryable failures for a later attempt. `E3RequestComplete` does not erase an unfinished
-publication, and only an active aggregator can start a retained submission. `PlaintextAggregated` is
-not gossiped or returned by historical peer sync; only the producing node can create this EVM write
-intent.
+`PlaintextAggregated` or `PublicKeyAggregated` event is the durable publication intent. Secure-16384
+stores its `LbfvPublicKeyAggregated` intent in a separate versioned sidecar and redrives it after a
+restart; the registry writer adapts it to the existing public-key gate and submits the V2 proof and
+attestation bundle. Each existing writer coalesces the intent by E3, waits for `EffectsEnabled`,
+checks chain state before submitting, and keeps retryable failures for a later attempt.
+`E3RequestComplete` does not erase an unfinished publication, and only an active aggregator can
+start a retained submission. `PlaintextAggregated` is not gossiped or returned by historical peer
+sync; only the producing node can create this EVM write intent.
 
 The CRISP server writes its request record at `E3Requested` and writes the generic E3 record only
 after the indexer verifies the committee public key against the on-chain commitment. Current-round
@@ -1438,12 +1572,12 @@ retry can repeat proof work, but it cannot publish a second result: `Interfold` 
 output only from `KeyPublished`, and the callback treats an E3 that already reached
 `CiphertextReady` or `Complete` as success.
 
-Secure-8192 committee public-key bytes do not use one oversized transaction. `publishCommittee`
-first records the proof-backed commitment. The selected publisher then sends the bytes through
-bounded `publishCommitteePublicKey` chunks. Readers assemble one canonical chunk set and accept the
-key only when its recomputed commitment equals the value already stored on chain. `KeyPublished`
-alone therefore does not mean that a client has usable key bytes. The application becomes ready only
-after the complete key publication arrives and passes that commitment check.
+Secure committee public-key bytes do not use one oversized transaction. `publishCommittee` first
+records the proof-backed commitment. The selected publisher then sends the bytes through bounded
+`publishCommitteePublicKey` chunks. Readers assemble one canonical chunk set and accept the key only
+when its recomputed commitment equals the value already stored on chain. `KeyPublished` alone
+therefore does not mean that a client has usable key bytes. The application becomes ready only after
+the complete key publication arrives and passes that commitment check.
 
 ### What the compute-provider crate guarantees, and what an E3 program decides
 

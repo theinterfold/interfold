@@ -16,6 +16,7 @@ use e3_zk_helpers::circuits::commitments::{
     compute_rlk_d0_commitment, compute_rlk_d2_commitment, compute_rlk_r_commitment,
     compute_sc_sk_secret_root_commitment,
 };
+use e3_zk_helpers::threshold::lbfv_proof_domain::lbfv_proof_session;
 use e3_zk_helpers::threshold::rlk_generation::{RlkGenerationCircuitData, RlkGenerationConfigs};
 use e3_zk_helpers::{CiphernodesCommitteeSize, Computation};
 use e3_zk_prover::test_utils::load_vk_artifacts;
@@ -117,10 +118,14 @@ async fn secure_rlk_limbs_finalize_one_row() {
     println!("RLK terminal verification time: {:?}", started.elapsed());
 
     let configs = RlkGenerationConfigs::compute(preset, &committee).expect("RLK constants");
-    let actual = (0..6)
+    let actual = (0..9)
         .map(|field_index| extract_field(&proofs.terminal_proof.public_signals, field_index))
         .collect::<Vec<_>>();
+    let session = lbfv_proof_session(row.proof_domain).expect("valid proof domain");
     let expected = vec![
+        BigInt::from(session.session_id_hi),
+        BigInt::from(session.session_id_lo),
+        BigInt::from(row.party_id),
         BigInt::from(row.row_index),
         compute_sc_sk_secret_root_commitment(&row.sk, configs.bits.sk_bit, 512),
         compute_rlk_r_commitment(&row.r, configs.bits.r_bit),

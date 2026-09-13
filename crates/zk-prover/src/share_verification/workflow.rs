@@ -15,11 +15,12 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use alloy::primitives::{keccak256, Address, Bytes};
+use alloy::primitives::{keccak256, Address, Bytes, B256};
 use alloy::sol_types::SolValue;
 use e3_events::{
     E3id, EventContext, PartyProofData, PartyProofsToVerify, PartyShareDecryptionProofsToVerify,
-    PartyVerificationResult, ProofType, Sequenced, SignedProofPayload, VerificationKind,
+    PartyVerificationResult, ProofIdentity, ProofType, Sequenced, SignedProofPayload,
+    VerificationKind,
 };
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::CiphernodesCommitteeSize;

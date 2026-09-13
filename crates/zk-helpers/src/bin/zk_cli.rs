@@ -12,8 +12,10 @@
 //!
 //! **Share-computation (C2) configs.nr:** set `INTERFOLD_CIRCUITS_ROOT` to the repo `circuits`
 //! directory (or run from the Interfold repo so it is auto-discovered). After `pnpm build:circuits`,
-//! `circuits/bin/dkg/target/` contains `sk_share_computation.vk_recursive_hash` and
-//! `e_sm_share_computation.vk_recursive_hash` for the inner recursive circuits; the aggregation
+//! `circuits/bin/dkg/sk_share_computation_chunk/target/` contains
+//! `sk_share_computation_chunk.vk_recursive_hash`, and
+//! `circuits/bin/dkg/esm_share_computation_chunk/target/` contains
+//! `esm_share_computation_chunk.vk_recursive_hash` for the inner recursive circuits; the aggregation
 //! wrapper emits `share_computation.vk_recursive_hash` under
 //! `circuits/bin/recursive_aggregation/wrapper/dkg/share_computation/target/` (from
 //! `scripts/build-circuits.ts`). If `INTERFOLD_CIRCUITS_ROOT` is set and those files are missing,

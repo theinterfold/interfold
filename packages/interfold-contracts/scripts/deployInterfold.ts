@@ -8,7 +8,10 @@ import hre from "hardhat";
 import { autoCleanForLocalhost } from "./cleanIgnitionState";
 import { configureLocalSlashingPolicies } from "./configureLocalSlashingPolicies";
 import { deployAndSaveBfvDecryptionVerifier } from "./deployAndSave/bfvDecryptionVerifier";
-import { deployAndSaveBfvPkVerifier } from "./deployAndSave/bfvPkVerifier";
+import {
+  deployAndSaveBfvPkVerifier,
+  deployAndSaveBfvPkVerifierV2,
+} from "./deployAndSave/bfvPkVerifier";
 import { deployAndSaveBondedCheckpoints } from "./deployAndSave/bondedCheckpoints";
 import { deployAndSaveBondedVotes } from "./deployAndSave/bondedVotes";
 import { deployAndSaveBondingRegistry } from "./deployAndSave/bondingRegistry";
@@ -42,7 +45,7 @@ import {
  * Default timeout configuration (in seconds)
  */
 const DEFAULT_TIMEOUT_CONFIG = {
-  dkgWindow: 7200,
+  dkgWindow: Number(ACTIVE_BFV_PARAM_SET) === 2 ? 21_600 : 7200,
   computeWindow: 86400,
   decryptionWindow: 3600,
 };
@@ -86,6 +89,7 @@ export const deployInterfold = async (
 
   const encodedInsecure = encodeBfvParams(BFV_PARAMS.insecure512);
   const encodedSecure = encodeBfvParams(BFV_PARAMS.secure8192);
+  const encodedSecure16384 = encodeBfvParams(BFV_PARAMS.secure16384);
 
   const THIRTY_DAYS_IN_SECONDS = 60 * 60 * 24 * 30;
   const SEVEN_DAYS_IN_SECONDS = 60 * 60 * 24 * 7;
@@ -546,7 +550,12 @@ export const deployInterfold = async (
   // Register BFV param sets
   console.log("Registering BFV param sets...");
   const activeParamSet = Number(ACTIVE_BFV_PARAM_SET);
-  const activeParams = activeParamSet === 0 ? encodedInsecure : encodedSecure;
+  const activeParams =
+    activeParamSet === 0
+      ? encodedInsecure
+      : activeParamSet === 1
+        ? encodedSecure
+        : encodedSecure16384;
   await send(
     interfold.setParamSet(activeParamSet, activeParams),
     "interfold.setParamSet",
@@ -700,8 +709,17 @@ export const deployInterfold = async (
 
   if (shouldHaveZKVerification) {
     console.log("Deploying BfvPkVerifier and registering for prod...");
-    const { bfvPkVerifier } = await deployAndSaveBfvPkVerifier(hre);
-    const bfvPkVerifierAddress = await bfvPkVerifier.getAddress();
+    let bfvPkVerifierAddress: string;
+    if (Number(ACTIVE_BFV_PARAM_SET) === 2) {
+      const { bfvPkVerifierV2 } = await deployAndSaveBfvPkVerifierV2(
+        hre,
+        ciphernodeRegistryAddress,
+      );
+      bfvPkVerifierAddress = await bfvPkVerifierV2.getAddress();
+    } else {
+      const { bfvPkVerifier } = await deployAndSaveBfvPkVerifier(hre);
+      bfvPkVerifierAddress = await bfvPkVerifier.getAddress();
+    }
     const deployedPkVerifier = await interfold.pkVerifiers(encryptionSchemeId);
     if (deployedPkVerifier !== bfvPkVerifierAddress) {
       const tx = await interfold.setPkVerifier(

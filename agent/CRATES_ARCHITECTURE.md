@@ -472,8 +472,12 @@ flowchart LR
     SyncManager --> Budget[one startup budget: 512 pages / 50k events / 128 MiB / 5 min]
     Budget --> Direct[versioned direct request/response]
     Envelope --> Notice[DHT document notification]
-    Notice --> Fetch[content-addressed DHT fetch]
-    Fetch --> MetaCheck{E3, kind, and party filter match payload?}
+    Notice --> NoticeKind{l-BFV kind?}
+    NoticeKind -->|yes| Drop
+    NoticeKind -->|no| Fetch[content-addressed DHT fetch]
+    Bus --> TargetedFetch[versioned l-BFV fetch request]
+    TargetedFetch --> Fetch
+    Fetch --> MetaCheck{expected hash and document identity match payload?}
     MetaCheck -->|yes| Handle
     MetaCheck -->|no| Reject
     Handle --> Bus[durable event pipeline]
@@ -515,11 +519,31 @@ create a durable request context. Once admitted, committee and proof validationâ
 identity aloneâ€”decides whether the artifact is usable.
 
 The gossiped `DocumentMeta` is independent of the DHT content hash, so
-`EventConversionService::validate_received` decodes the fetched payload and binds the metadata E3
-identifier, `TrBFV` kind, and party-filter shape to that payload before a `DocumentReceived` event
-is persisted. Transport and gossipsub identities authenticate the sending peer; they do not by
-themselves prove that a peer is an authorized member of a particular E3 committee. Committee
-authorization and durable peer reputation remain separate protocol-hardening work.
+`EventConversionService::validate_received` decodes a legacy fetched payload and binds the metadata
+E3 identifier, document kind, and party-filter shape to that payload before a `DocumentReceived`
+event is persisted. Versioned l-BFV transport uses separate public-key and RLK payload variants under
+the append-only `LbfvKeyShare` kind. Generic notifications for this kind are ignored and cannot start
+a fetch. `LbfvKeyShareDocumentFetchRequested::V1` supplies the exact E3, proof session, party, role,
+SHA-256 content hash, and attempt. The bounded DHT handler validates that identity and the document
+schema before it publishes `LbfvKeyShareDocumentReceived`; unavailable and invalid records produce
+`LbfvKeyShareDocumentFetchFailed::V1`. A compact signed manifest is the only l-BFV transport event
+that normal gossip and historical peer sync forward. It binds the full proof domain, party slot, and
+SHA-256 content hash of both DHT records. The network adapter rejects an invalid schema, context,
+proof order, signature, or 25 MiB size before publication or local event conversion. Transport and
+gossipsub identities authenticate the sending peer; they do not by themselves prove that a peer is
+an authorized member of a particular E3 committee. Local secure-16384 generation stores the
+canonical committee in the versioned `threshold_keyshare_lbfv_generation/v1` snapshot, checks the
+injected signer against its party slot, persists deterministic generation and row-proof progress,
+and commits both documents and the manifest before publication. It clears local generation secrets
+and the encrypted RLK witness at completion. Each public-key aggregator uses the versioned
+`//publickey_lbfv_collection/v1/{e3_id}` sidecar and content-addressed
+`//publickey_lbfv_document/v1/{e3_id}/{sha256}` records.
+It compares each manifest signer with the canonical slot, persists first-payload and conflict
+decisions, and publishes targeted fetch requests only after the manifest is durable. It writes each
+artifact before its sidecar marker. It persists unavailable retry times, permanent invalid-data
+results, and committee exclusions. The active aggregator dispatches generation verification only
+after every submitted party has a settled collection status. Restart validates durable bundles,
+re-arms retries, redrives the candidate-set dispatch, or applies the immutable sealed H-party set.
 
 ## E3 lifecycle
 
@@ -606,11 +630,14 @@ validator must not silently infer that extension.
 
 `InterfoldSolWriter` and `CiphernodeRegistrySolWriter` subscribe before EventStore replay. Locally
 produced `PlaintextAggregated` and `PublicKeyAggregated` events form durable publication intents.
-Their process-local gates are rebuilt from replay, coalesce by E3, and release work only after
-`EffectsEnabled`. Live admission requires the active aggregator role. Replay can retain a local
-intent while the persisted role is restored, but the writer starts a submission only while the node
-is the active aggregator. Contract-state preflights provide cross-restart idempotency. Terminal
-outcomes remove the intent; retryable failures retain it and retry after 30 seconds.
+Secure-16384 uses a separate versioned `LbfvPublicKeyAggregated` sidecar and redrives the intent after
+restart. The registry writer adapts that local event to the existing public-key submission gate and
+passes its V2 proof and attestation bundle to `publishCommittee`. Existing writer gates are rebuilt
+from replay, coalesce by E3, and release work only after `EffectsEnabled`. Live admission requires the
+active aggregator role. Replay can retain a local intent while the persisted role is restored, but the
+writer starts a submission only while the node is the active aggregator.
+Contract-state preflights provide cross-restart idempotency. Terminal outcomes remove the intent;
+retryable failures retain it and retry after 30 seconds.
 
 Only locally sourced result events cross these EVM write boundaries. A remote result cannot make a
 node submit a transaction. `E3RequestComplete` does not discard an unfinished publication intent,
@@ -1027,9 +1054,9 @@ starts Registry readers only on Ethereum mainnet, Sepolia, and local development
 | `e3-evm`                           | Read chain history under the automatic confirmation policy and submit typed contract transactions.   | Per-chain gateways, provider handles, chain buffers, nonce mutexes, canonical deadline watches, durable per-chain slash outboxes, and result-publication gates.    | Malformed logs and reverted receipts fail. Public RPC logs wait one block; loopback RPCs read the head. Local result events rebuild idempotent publication intents before effects. Slash intents persist before policy or submission and transient failures retry. Selected nodes reconstruct DKG/decryption failure watches from canonical stage events, stagger by party ID, and preflight `markE3Failed`. Nonce allocation is serialized in-process; there is no full transaction journal or reorg rollback. | Provider/contract helpers; must not own off-chain proof policy.                                                           |
 | `e3-request`                       | Route E3-scoped events and enforce lifecycle progress.                                               | `E3Router`, canonical recovery checkpoint, lifecycle state, typed `(E3, recipient)` buffers, and request actor contexts; depends on event and protocol actor APIs. | Legal progress is monotonic; cursors never move backwards; peer events cannot create unknown contexts; derived selections resume only at `SyncEffect`; local aggregation is not terminal; canonical EVM completion drives teardown; buffered history precedes the recipient-creating event. Active buffer size and child `do_send` remain residual risks.                                                                                                                                                       | Domain lifecycle/routing functions; must not implement storage, network framing, or contract decoding.                    |
 | `e3-sortition`                     | Track registry/tickets and derive canonical selection/committee observations.                        | Node registry, ticket state, selector backend, chain-derived committee state, versioned delayed-input recovery, and aggregator-failover deadlines.                 | On-chain ordering is authoritative. Request, seed, and early membership changes survive restart. The lowest eligible party is active. A phase deadline starts only after durable aggregation readiness, survives restart, and promotes standbys in order. Canonical progress clears phase-local skips. Terminal cleanup releases local participation and failover state.                                                                                                                                        | Sortition backend; must not construct cryptographic proofs.                                                               |
-| `e3-keyshare`                      | Coordinate request-local DKG, shares, and decryption work.                                           | Threshold keyshare actor state and repositories; depends on FHE/ZK services and the event bus.                                                                     | Party IDs index the canonical committee; each recipient gets C2a/C2b singletons and C3a/C3b per threshold Shamir row. Resumable determined outputs redrive only after `EffectsEnabled`. Fatal collector timeouts commit `Failed` before `E3Failed`, freeze its payload, and redrive that failure after hydration.                                                                                                                                                                                               | Cryptographic backend/task pool; must not own transport frames or ABI decoding.                                           |
+| `e3-keyshare`                      | Coordinate request-local DKG, shares, l-BFV generation, and decryption work.                          | Threshold keyshare state, recovery state, and versioned l-BFV generation snapshots; depends on FHE/ZK services and the event bus.                                  | Party IDs index the canonical committee; each recipient gets C2a/C2b singletons and C3a/C3b per threshold Shamir row. Secure-16384 generation persists its seed, source, response, and signed row slots; restart derives missing operations by stable ID; completion commits both documents and the manifest before publication and clears secret generation inputs. `KeyshareCreated` waits for that durable bundle. Fatal errors commit `Failed` before `E3Failed`.                                                     | Cryptographic backend/task pool; must not own transport frames or ABI decoding.                                           |
 | `e3-zk-prover`                     | Build and verify typed proof jobs/statements.                                                        | Backend job state, circuit registry, verification outcomes, and durable-seeded in-memory committee/preset caches.                                                  | Statement shapes, canonical committee dimensions, signer/slot binding, and proof multiplicity are checked before acceptance; DKG presets normalize to their threshold counterpart when deriving C3 row counts. Finalized slots plus C0 preset/threshold context load before replay so snapshot cursors cannot erase signer authority or artifact selection on restart.                                                                                                                                          | ZK backend and registry; must not add committee policy absent from the proof statement.                                   |
-| `e3-aggregator`                    | Aggregate canonical verified public-key/plaintext shares and schedule committee finalization.        | Explicit per-E3 aggregation states plus a versioned finalizer request/ticket repository shared across chains.                                                      | One signer-bound share/proof occupies each canonical party slot and output multiplicity is exact. Every standby persists valid inputs; only the active party launches aggregation effects. Promotion resumes the persisted phase. Finalization timers re-arm after effects with the E3's chain provider and retry temporary timestamp failures. Invalid or duplicate contributions are rejected.                                                                                                                | Pure aggregation states and proof backend; must not own EVM transaction policy.                                           |
+| `e3-aggregator`                    | Aggregate canonical verified public-key/plaintext shares and schedule committee finalization.        | Explicit per-E3 aggregation states, secure-16384 l-BFV collection, aggregation, and publication sidecars plus content-addressed artifacts, plus a versioned finalizer request/ticket repository shared across chains. | One signer-bound share/proof occupies each canonical party slot and output multiplicity is exact. Every standby persists valid inputs; only the active party launches aggregation effects. The l-BFV path persists manifest conflicts, fetch retries, validation results, candidate identity, the sealed H-party set, and the V2 publication intent before dependent effects. Promotion resumes the persisted phase. Finalization, l-BFV retry, and publication redrive logic re-arm after effects. Invalid or duplicate contributions are rejected. | Pure aggregation states and proof backend; must not own EVM transaction policy.                                           |
 | `e3-slashing`                      | Attribute proof failures, collect authenticated votes, and emit quorum outcomes.                     | Recreated per-E3 accusation/checker actors and process-local evidence/vote state; depends on durable committee data, verification, and events.                     | Honest threshold decides quorum and only structurally attributable failures become evidence. Active actors recover from committee snapshots, but partial vote tallies and timers do not survive a process exit.                                                                                                                                                                                                                                                                                                 | Voting/evidence domain modules; must not generate proofs or assign ambiguous blame.                                       |
 | `e3-program-server`                | Serve bounded development compute requests and deliver results to caller-supplied HTTP(S) callbacks. | Runner closure, callback client, and job semaphore.                                                                                                                | Zero job capacity fails build; overload returns 429; callbacks reject unsafe URL forms and use bounded delivery timeouts. The test endpoint does not authenticate callers, does not allowlist callback targets, and must not be exposed as a production service. Detached tasks are not recoverable.                                                                                                                                                                                                            | Runner callback; must not become durable protocol state or be treated as a production trust boundary.                     |
 | `e3-ciphernode-builder`            | Construct stores, adapters, actor extensions, migration projections, and startup barriers.           | Composition handles, reconciled startup snapshots, and validated configuration; durable state remains in repositories and logs.                                    | Schema and recovery preflight run before state-writing actors. Contradictory committee snapshots, missing active metadata, or an unsupported recovery version fail startup. Required components and startup readiness must succeed before returning a handle.                                                                                                                                                                                                                                                   | Concrete factories/extensions; must not accumulate live protocol policy or durable business state.                        |

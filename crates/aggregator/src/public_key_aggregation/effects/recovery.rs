@@ -24,6 +24,13 @@ impl PublicKeyAggregator {
             return Ok(());
         };
 
+        if self.is_lbfv() {
+            if let Some(mut aggregation) = self.lbfv_aggregation_state()? {
+                aggregation.clear_process_correlations();
+                self.set_lbfv_aggregation(aggregation, &effects_context)?;
+            }
+        }
+
         match state {
             PublicKeyAggregatorState::VerifyingC1 {
                 submission_order,
@@ -76,10 +83,17 @@ impl PublicKeyAggregator {
                     )?;
                 }
 
+                if self.is_lbfv() {
+                    self.try_dispatch_lbfv_aggregation_rows(&causal_context)?;
+                    self.try_dispatch_lbfv_aggregation_fold(&causal_context)?;
+                }
                 self.try_dispatch_nodes_fold_step(&causal_context)?;
                 self.try_publish_complete()
             }
             PublicKeyAggregatorState::Complete { .. } => {
+                if self.is_lbfv() {
+                    return self.try_publish_complete();
+                }
                 if let Some(publication) = recovery.pending_publication {
                     self.bus
                         .publish(publication, recovery.last_ec.unwrap_or(effects_context))?;

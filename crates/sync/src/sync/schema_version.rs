@@ -12,7 +12,7 @@
 /// marker is the guardrail: bump it whenever a persisted format changes in a
 /// non-additive way. On boot the persisted value is compared against this
 /// constant (see `decide_schema_version`).
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -64,8 +64,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_schema_is_v3() {
-        assert_eq!(SCHEMA_VERSION, 3);
+    fn current_schema_is_v4() {
+        assert_eq!(SCHEMA_VERSION, 4);
+        assert!(matches!(
+            decide_schema_version(Some(3), SCHEMA_VERSION, true),
+            SchemaVersionDecision::Halt(_)
+        ));
     }
 
     #[test]

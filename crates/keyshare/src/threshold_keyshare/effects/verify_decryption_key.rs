@@ -111,6 +111,8 @@ impl ThresholdKeyshare {
                 pre_dishonest,
                 params_preset: self.share_enc_preset,
                 committee_size,
+                lbfv_context: None,
+                verification_id: None,
             },
             ec,
         )?;
@@ -144,6 +146,15 @@ impl ThresholdKeyshare {
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
+
+        if !self.lbfv_bundle_ready()? {
+            warn!(
+                "Deferring KeyshareCreated for party {} E3 {} until the l-BFV bundle is ready",
+                party_id, e3_id
+            );
+            self.pending.keyshare_publish = true;
+            return Ok(());
+        }
 
         if signed_pk_generation_proof.is_none() {
             warn!(

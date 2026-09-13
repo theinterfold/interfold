@@ -6,11 +6,16 @@
 
 //! Conversion and aggregation of threshold l-BFV public-key share rows.
 
+use crate::threshold::lbfv_proof_domain::{
+    lbfv_accepted_party_set, lbfv_proof_session, sample_lbfv_proof_domain,
+    validate_lbfv_generation_party_id,
+};
 use crate::{
     bigint_1d_to_json_values, compute_modulus_bit, compute_threshold_pk_commitment,
     crt_polynomial_to_toml_json, Artifacts, CiphernodesCommittee, Circuit, CircuitCodegen,
     CircuitComputation, CircuitsErrors, CodegenConfigs, CodegenToml, Computation,
 };
+use e3_committee_hash::LbfvProofDomainContext;
 use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe::bfv::{CommonRandomPolyVec, SecretKey};
@@ -32,6 +37,9 @@ impl Circuit for LbfvPkAggregationCircuit {
 /// Selected public-key shares for one gadget row, in canonical party order.
 pub struct LbfvPkAggregationCircuitData {
     pub committee: CiphernodesCommittee,
+    pub proof_domain: LbfvProofDomainContext,
+    pub aggregator_party_id: u32,
+    pub party_ids: Vec<u32>,
     pub row_index: u32,
     pub shares: Vec<PublicKeyShare>,
 }
@@ -60,6 +68,11 @@ pub struct LbfvPkAggregationBits {
 /// Prover inputs for one aggregated l-BFV public-key gadget row.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct LbfvPkAggregationInputs {
+    pub session_id_hi: u128,
+    pub session_id_lo: u128,
+    pub aggregator_party_id: u32,
+    pub accepted_party_set_hash_hi: u128,
+    pub accepted_party_set_hash_lo: u128,
     pub row_index: u32,
     pub expected_pk_generation_commitments: Vec<BigInt>,
     pub pk0: Vec<CrtPolynomial>,
@@ -125,6 +138,9 @@ impl Computation for LbfvPkAggregationInputs {
         let canonical =
             crate::ciphernodes_committee::canonical_committee_for_circuit(&data.committee)
                 .map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+        let session = lbfv_proof_session(data.proof_domain)?;
+        validate_lbfv_generation_party_id(data.aggregator_party_id, &data.committee)?;
+        let accepted = lbfv_accepted_party_set(&data.party_ids, &data.committee)?;
         if data.shares.len() != canonical.h {
             return Err(CircuitsErrors::Other(format!(
                 "l-BFV public-key aggregation requires exactly {} shares; received {}",
@@ -149,6 +165,11 @@ impl Computation for LbfvPkAggregationInputs {
         let pk0_agg = aggregate_rows(&pk0, params.moduli(), params.degree())?;
 
         Ok(Self {
+            session_id_hi: session.session_id_hi,
+            session_id_lo: session.session_id_lo,
+            aggregator_party_id: data.aggregator_party_id,
+            accepted_party_set_hash_hi: accepted.accepted_party_set_hash_hi,
+            accepted_party_set_hash_lo: accepted.accepted_party_set_hash_lo,
             row_index: data.row_index,
             expected_pk_generation_commitments,
             pk0,
@@ -163,6 +184,11 @@ impl Computation for LbfvPkAggregationInputs {
             .map(crt_polynomial_to_toml_json)
             .collect::<Vec<_>>();
         Ok(serde_json::json!({
+            "session_id_hi": self.session_id_hi.to_string(),
+            "session_id_lo": self.session_id_lo.to_string(),
+            "aggregator_party_id": self.aggregator_party_id,
+            "accepted_party_set_hash_hi": self.accepted_party_set_hash_hi.to_string(),
+            "accepted_party_set_hash_lo": self.accepted_party_set_hash_lo.to_string(),
             "row_index": self.row_index,
             "expected_pk_generation_commitments": bigint_1d_to_json_values(
                 &self.expected_pk_generation_commitments,
@@ -242,6 +268,9 @@ impl LbfvPkAggregationCircuitData {
 
         Ok(Self {
             committee,
+            proof_domain: sample_lbfv_proof_domain(),
+            aggregator_party_id: 0,
+            party_ids: (0..canonical.h).map(|party_id| party_id as u32).collect(),
             row_index,
             shares,
         })

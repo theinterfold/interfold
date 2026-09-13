@@ -17,6 +17,9 @@ import { DkgFoldAttestationLib } from "../lib/DkgFoldAttestationLib.sol";
  * @notice Stateless verifier for DKG fold attestations at committee publication.
  */
 contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
+    uint256 private constant V2_PUBLIC_INPUTS_LEN = 63;
+    uint256 private constant V2_H = 2;
+
     struct BundleData {
         bytes32[] publicInputs;
         DkgFoldAttestationLib.Attestation[] attestations;
@@ -182,6 +185,9 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
     function _honestPartyCount(
         bytes32[] memory publicInputs
     ) private pure returns (uint256 h) {
+        if (publicInputs.length == V2_PUBLIC_INPUTS_LEN) {
+            return V2_H;
+        }
         require(
             publicInputs.length >= 27 && (publicInputs.length - 24) % 3 == 0,
             ICiphernodeRegistry.InvalidFoldAttestation()

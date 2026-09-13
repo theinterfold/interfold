@@ -13,6 +13,7 @@
 //! hard-coding byte offsets.
 
 use serde::{Deserialize, Serialize};
+use std::ops::Range;
 
 /// Size of a single Noir `Field` element in bytes (BN254 scalar).
 pub const FIELD_BYTE_LEN: usize = 32;
@@ -174,20 +175,121 @@ pub const SHARE_ENCRYPTION_INPUTS: &[OutputField] = &[
     f("mod_idx"),
 ];
 
-/// Public l-BFV relinearization-key row selector.
-pub const RLK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
+/// Public l-BFV relinearization-key generation domain and row identity.
+pub const RLK_GENERATION_INPUTS: &[OutputField] = &[
+    f("session_id_hi"),
+    f("session_id_lo"),
+    f("party_id"),
+    f("row_index"),
+];
 
-/// Public row and CRT-limb selectors for an RLK leaf proof.
-pub const RLK_GENERATION_LIMB_INPUTS: &[OutputField] = &[f("row_index"), f("limb_index")];
+/// Public generation domain, row, and CRT-limb identity for an RLK leaf proof.
+pub const RLK_GENERATION_LIMB_INPUTS: &[OutputField] = &[
+    f("session_id_hi"),
+    f("session_id_lo"),
+    f("party_id"),
+    f("row_index"),
+    f("limb_index"),
+];
 
-/// Public l-BFV public-key row selector.
-pub const LBFV_PK_GENERATION_INPUTS: &[OutputField] = &[f("row_index")];
+/// Public l-BFV public-key generation domain and row identity.
+pub const LBFV_PK_GENERATION_INPUTS: &[OutputField] = &[
+    f("session_id_hi"),
+    f("session_id_lo"),
+    f("party_id"),
+    f("row_index"),
+];
 
-/// Public row selector for threshold l-BFV public-key aggregation.
-pub const LBFV_PK_AGGREGATION_INPUTS: &[OutputField] = &[f("row_index")];
+/// Public domain, accepted party-set hash, and row for public-key aggregation.
+pub const LBFV_PK_AGGREGATION_INPUTS: &[OutputField] = &[
+    f("session_id_hi"),
+    f("session_id_lo"),
+    f("aggregator_party_id"),
+    f("accepted_party_set_hash_hi"),
+    f("accepted_party_set_hash_lo"),
+    f("row_index"),
+];
 
-/// Public row selector for l-BFV relinearization-key aggregation.
-pub const RLK_AGGREGATION_INPUTS: &[OutputField] = &[f("row_index")];
+/// Public domain, accepted party-set hash, and row for RLK aggregation.
+pub const RLK_AGGREGATION_INPUTS: &[OutputField] = &[
+    f("session_id_hi"),
+    f("session_id_lo"),
+    f("aggregator_party_id"),
+    f("accepted_party_set_hash_hi"),
+    f("accepted_party_set_hash_lo"),
+    f("row_index"),
+];
+
+/// Exact field positions for one l-BFV public-key aggregation statement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LbfvPkAggregationPublicLayout {
+    pub session_id_hi: usize,
+    pub session_id_lo: usize,
+    pub aggregator_party_id: usize,
+    pub accepted_party_set_hash_hi: usize,
+    pub accepted_party_set_hash_lo: usize,
+    pub row_index: usize,
+    pub expected_pk_generation_commitments: Range<usize>,
+    pub pk_agg_commitment: usize,
+    pub field_count: usize,
+}
+
+impl LbfvPkAggregationPublicLayout {
+    pub fn new(committee_h: usize) -> Self {
+        let expected_pk_generation_commitments = 6..6 + committee_h;
+        let pk_agg_commitment = expected_pk_generation_commitments.end;
+        Self {
+            session_id_hi: 0,
+            session_id_lo: 1,
+            aggregator_party_id: 2,
+            accepted_party_set_hash_hi: 3,
+            accepted_party_set_hash_lo: 4,
+            row_index: 5,
+            expected_pk_generation_commitments,
+            pk_agg_commitment,
+            field_count: pk_agg_commitment + 1,
+        }
+    }
+}
+
+/// Exact field positions for one RLK aggregation statement.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RlkAggregationPublicLayout {
+    pub session_id_hi: usize,
+    pub session_id_lo: usize,
+    pub aggregator_party_id: usize,
+    pub accepted_party_set_hash_hi: usize,
+    pub accepted_party_set_hash_lo: usize,
+    pub row_index: usize,
+    pub expected_d0_commitments: Range<usize>,
+    pub expected_d2_commitments: Range<usize>,
+    pub d0_agg_commitment: usize,
+    pub d2_agg_commitment: usize,
+    pub field_count: usize,
+}
+
+impl RlkAggregationPublicLayout {
+    pub fn new(committee_h: usize) -> Self {
+        let expected_d0_commitments = 6..6 + committee_h;
+        let expected_d2_commitments =
+            expected_d0_commitments.end..expected_d0_commitments.end + committee_h;
+        let d0_agg_commitment = expected_d2_commitments.end;
+        let d2_agg_commitment = d0_agg_commitment + 1;
+        Self {
+            session_id_hi: 0,
+            session_id_lo: 1,
+            aggregator_party_id: 2,
+            accepted_party_set_hash_hi: 3,
+            accepted_party_set_hash_lo: 4,
+            row_index: 5,
+            expected_d0_commitments,
+            expected_d2_commitments,
+            d0_agg_commitment,
+            d2_agg_commitment,
+            field_count: d2_agg_commitment + 1,
+        }
+    }
+}
 
 /// Describes the public input layout of a circuit.
 ///
@@ -473,6 +575,21 @@ mod tests {
             Some(4)
         );
         assert_eq!(CircuitInputLayout::None.field_count(), Some(0));
+    }
+
+    #[test]
+    fn lbfv_aggregation_layouts_name_exact_dynamic_ranges() {
+        let pk = LbfvPkAggregationPublicLayout::new(2);
+        assert_eq!(pk.expected_pk_generation_commitments, 6..8);
+        assert_eq!(pk.pk_agg_commitment, 8);
+        assert_eq!(pk.field_count, 9);
+
+        let rlk = RlkAggregationPublicLayout::new(2);
+        assert_eq!(rlk.expected_d0_commitments, 6..8);
+        assert_eq!(rlk.expected_d2_commitments, 8..10);
+        assert_eq!(rlk.d0_agg_commitment, 10);
+        assert_eq!(rlk.d2_agg_commitment, 11);
+        assert_eq!(rlk.field_count, 12);
     }
 
     /// C7 (`DecryptedSharesAggregation`) has no `-> pub` return values; metadata uses `None`.

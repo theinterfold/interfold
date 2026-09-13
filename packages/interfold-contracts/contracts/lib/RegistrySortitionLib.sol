@@ -19,7 +19,7 @@ library RegistrySortitionLib {
 
     uint256 private constant MIN_RANDOMNESS_REQUEST_TIMEOUT = 60;
     uint256 private constant MAX_RANDOMNESS_REQUEST_TIMEOUT = 1 days;
-    uint256 private constant MAX_COMMITTEE_PUBLIC_KEY_BYTES = 512 * 1024;
+    uint256 private constant MAX_COMMITTEE_PUBLIC_KEY_BYTES = 6 * 1024 * 1024;
     uint256 private constant MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES = 90 * 1024;
 
     /// @notice Validates and emits one deterministic public-key chunk from registry storage.

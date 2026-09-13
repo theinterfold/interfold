@@ -38,6 +38,9 @@ impl PublicKeyAggregator {
         c1_proofs: &[Option<SignedProofPayload>],
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
+        if self.is_lbfv() {
+            return Ok(());
+        }
         let C1Dispatch {
             party_proofs,
             no_proof_parties,
@@ -78,6 +81,8 @@ impl PublicKeyAggregator {
                 pre_dishonest: no_proof_parties.into_iter().collect(),
                 params_preset: self.params_preset,
                 committee_size: self.committee_size,
+                lbfv_context: None,
+                verification_id: None,
             },
             ec,
         )?;
@@ -237,24 +242,20 @@ impl PublicKeyAggregator {
         let keyshare_bytes: Vec<ArcBytes> = honest_keyshares.clone();
 
         let pubkey = ArcBytes::from_bytes(&pubkey);
-        info!("Publishing PkAggregationProofPending for C5 proof generation...");
-        self.bus.publish(
-            PkAggregationProofPending {
-                e3_id: self.e3_id.clone(),
-                proof_request: PkAggregationProofRequest {
-                    keyshare_bytes: keyshare_bytes.clone(),
-                    aggregated_pk_bytes: pubkey.clone(),
-                    params_preset: self.params_preset,
-                    // C5 witness uses `committee_h` keyshares; artifact lookup needs canonical (N, H, T).
-                    committee_n: circuit_committee_n,
-                    committee_h,
-                    committee_threshold: threshold_m,
-                },
-                public_key: pubkey.clone(),
-                nodes: honest_nodes_set.clone(),
+        let pending = PkAggregationProofPending {
+            e3_id: self.e3_id.clone(),
+            proof_request: PkAggregationProofRequest {
+                keyshare_bytes: keyshare_bytes.clone(),
+                aggregated_pk_bytes: pubkey.clone(),
+                params_preset: self.params_preset,
+                // C5 witness uses `committee_h` keyshares; artifact lookup needs canonical (N, H, T).
+                committee_n: circuit_committee_n,
+                committee_h,
+                committee_threshold: threshold_m,
             },
-            ec.clone(),
-        )?;
+            public_key: pubkey.clone(),
+            nodes: honest_nodes_set.clone(),
+        };
 
         // Proof binding uses the full immutable committee, including a member excluded before it
         // produced a keyshare. Deriving this map from keyshare submitters would shorten the roster
@@ -288,6 +289,8 @@ impl PublicKeyAggregator {
                 nodes_fold_step_correlation: None,
             })
         })?;
+        info!("Publishing PkAggregationProofPending for C5 proof generation...");
+        self.bus.publish(pending, ec.clone())?;
 
         // Replay any DKG proofs that arrived before we entered GeneratingC5Proof.
         let early = std::mem::take(&mut self.early_dkg_proofs);

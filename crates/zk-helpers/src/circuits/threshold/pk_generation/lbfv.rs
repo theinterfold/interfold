@@ -10,11 +10,15 @@ use crate::math::{
     cyclotomic_polynomial, decompose_residue, fhe_poly_to_crt_centered_checked,
     fhe_secret_key_to_crt_centered, validate_fhe_poly_context,
 };
+use crate::threshold::lbfv_proof_domain::{
+    lbfv_proof_session, sample_lbfv_proof_domain, validate_lbfv_generation_party_id,
+};
 use crate::utils::verify_crt_shapes;
 use crate::{
     crt_polynomial_to_toml_json, polynomial_to_toml_json, Artifacts, CiphernodesCommittee, Circuit,
     CircuitCodegen, CircuitComputation, CircuitsErrors, CodegenToml, Computation,
 };
+use e3_committee_hash::LbfvProofDomainContext;
 use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe::bfv::{BfvParameters, CommonRandomPolyVec, SecretKey};
@@ -40,6 +44,10 @@ impl Circuit for LbfvPkGenerationCircuit {
 pub struct LbfvPkGenerationCircuitData {
     /// Committee values used by the matching circuit configuration.
     pub committee: CiphernodesCommittee,
+    /// Protocol context used to derive the public proof-session identifier.
+    pub proof_domain: LbfvProofDomainContext,
+    /// Zero-based party ID in the finalized committee.
+    pub party_id: u32,
     /// Gadget-row index proved by the circuit.
     pub row_index: u32,
     /// Secret-dependent `b` row in centered circuit form.
@@ -62,6 +70,9 @@ pub struct LbfvPkGenerationComputationOutput {
 /// Prover inputs for one l-BFV public-key row.
 #[derive(serde::Serialize, serde::Deserialize)]
 pub struct LbfvPkGenerationInputs {
+    pub session_id_hi: u128,
+    pub session_id_lo: u128,
+    pub party_id: u32,
     pub row_index: u32,
     pub eek: Polynomial,
     pub sk: Polynomial,
@@ -102,6 +113,9 @@ impl Computation for LbfvPkGenerationInputs {
 
     fn to_json(&self) -> serde_json::Result<serde_json::Value> {
         Ok(serde_json::json!({
+            "session_id_hi": self.session_id_hi.to_string(),
+            "session_id_lo": self.session_id_lo.to_string(),
+            "party_id": self.party_id,
             "row_index": self.row_index,
             "eek": polynomial_to_toml_json(&self.eek),
             "sk": polynomial_to_toml_json(&self.sk),
@@ -117,6 +131,8 @@ fn compute_inputs(
     adapter: &LbfvPkGenerationAdapter,
     data: &LbfvPkGenerationCircuitData,
 ) -> Result<LbfvPkGenerationInputs, CircuitsErrors> {
+    validate_lbfv_generation_party_id(data.party_id, &data.committee)?;
+    let session = lbfv_proof_session(data.proof_domain)?;
     if adapter.crs_row(data.row_index)? != data.a {
         return Err(CircuitsErrors::Other(
             "l-BFV public-key row does not match the fixed CRS".to_string(),
@@ -165,6 +181,9 @@ fn compute_inputs(
     }
 
     Ok(LbfvPkGenerationInputs {
+        session_id_hi: session.session_id_hi,
+        session_id_lo: session.session_id_lo,
+        party_id: data.party_id,
         row_index: data.row_index,
         eek: data.eek.clone(),
         sk: data.sk.clone(),
@@ -240,6 +259,8 @@ impl LbfvPkGenerationAdapter {
     pub fn row_data(
         &self,
         committee: CiphernodesCommittee,
+        proof_domain: LbfvProofDomainContext,
+        party_id: u32,
         row_index: u32,
         secret_key: &SecretKey,
         public_key: &PublicKeyShare,
@@ -282,6 +303,8 @@ impl LbfvPkGenerationAdapter {
 
         Ok(LbfvPkGenerationCircuitData {
             committee,
+            proof_domain,
+            party_id,
             row_index,
             pk0_share,
             a,
@@ -340,7 +363,7 @@ impl LbfvPkGenerationAdapter {
         })
     }
 
-    fn from_crp(
+    pub(crate) fn from_crp(
         params: &Arc<BfvParameters>,
         crp: &CommonRandomPolyVec,
     ) -> Result<Self, CircuitsErrors> {
@@ -398,7 +421,14 @@ impl LbfvPkGenerationCircuitData {
         let secret_key = SecretKey::random(&params, &mut rng);
         let public_key = PublicKeyShare::contribute_with_crp(&secret_key, &crp, &mut rng)?;
         let adapter = LbfvPkGenerationAdapter::from_crp(&params, &crp)?;
-        adapter.row_data(committee, row_index, &secret_key, &public_key)
+        adapter.row_data(
+            committee,
+            sample_lbfv_proof_domain(),
+            0,
+            row_index,
+            &secret_key,
+            &public_key,
+        )
     }
 }
 
@@ -428,6 +458,8 @@ mod tests {
         for row_index in 0..adapter.row_count() {
             let data = adapter.row_data(
                 committee.clone(),
+                sample_lbfv_proof_domain(),
+                0,
                 row_index as u32,
                 &secret_key,
                 &public_key,
@@ -471,12 +503,21 @@ mod tests {
             }
         }
 
-        let mut mismatched = adapter.row_data(committee, 0, &secret_key, &public_key)?;
+        let mut mismatched = adapter.row_data(
+            committee,
+            sample_lbfv_proof_domain(),
+            0,
+            0,
+            &secret_key,
+            &public_key,
+        )?;
         mismatched.a = adapter.crs_row(1)?;
         assert!(compute_inputs(&params, &adapter, &mismatched).is_err());
 
         let mut inconsistent = adapter.row_data(
             CiphernodesCommitteeSize::Minimum.values(),
+            sample_lbfv_proof_domain(),
+            0,
             0,
             &secret_key,
             &public_key,
@@ -512,6 +553,8 @@ mod tests {
         assert!(adapter
             .row_data(
                 CiphernodesCommitteeSize::Minimum.values(),
+                sample_lbfv_proof_domain(),
+                0,
                 0,
                 &secret_key,
                 &public_key,
@@ -534,6 +577,8 @@ mod tests {
         let degree = params.degree();
         let data = LbfvPkGenerationCircuitData {
             committee: CiphernodesCommitteeSize::Minimum.values(),
+            proof_domain: sample_lbfv_proof_domain(),
+            party_id: 0,
             row_index: 0,
             pk0_share: CrtPolynomial::new(
                 params

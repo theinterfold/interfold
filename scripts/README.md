@@ -324,11 +324,11 @@ set and committee size.
 Noir circuits.
 
 The generated `.sol` files under `packages/interfold-contracts/contracts/verifiers/bfv/honk/` are
-**committed to git**. The root files correspond to `(insecure, minimum)`, which is the
-development / CI / benchmark default. Non-canonical pairs are committed under
-`honk/<preset>/<committee>/`. The Honk verifiers bake in the recursive VKs of `dkg_aggregator` /
-`decryption_aggregator`, which are preset- and committee-dependent. Different BFV parameter sets or
-`H/T` sizes compile to different VKs and therefore different `.sol` bytes.
+**committed to git**. The root files correspond to `(insecure, minimum)`, which is the development /
+CI / benchmark default. Non-canonical pairs are committed under `honk/<preset>/<committee>/`. The
+Honk verifiers bake in the recursive VKs of `dkg_aggregator` / `decryption_aggregator`, which are
+preset- and committee-dependent. Different BFV parameter sets or `H/T` sizes compile to different
+VKs and therefore different `.sol` bytes.
 
 The generator enforces this: both `--check` and `--write` refuse to run unless
 `dist/circuits/<preset>/<committee>/.build-stamp.json` exists and reports the requested preset, and
@@ -339,7 +339,7 @@ refuses with a clear fix recipe instead of silently producing the wrong `.sol`.
 
 For non-canonical pairs, pass `--preset <name> --committee <name>`; the verifiers land under
 `honk/<preset>/<committee>/` so the canonical `.sol` files committed to git are not clobbered.
-`--check` compares that pair with its committed files. CI hydrates and checks all six supported
+`--check` compares that pair with its committed files. CI hydrates and checks all seven supported
 pairs.
 
 The script has two modes:

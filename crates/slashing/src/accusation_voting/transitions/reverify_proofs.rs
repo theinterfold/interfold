@@ -62,6 +62,7 @@ impl AccusationVoting {
         self.cache_verification_result(
             reverif.accused,
             reverif.proof_type,
+            reverif.proof_instance,
             reverif.data_hash,
             zk_passed,
             reverif.evidence.clone(),

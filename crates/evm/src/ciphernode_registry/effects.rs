@@ -20,8 +20,20 @@ alloy::sol! {
 }
 
 const TICKET_GAS_SAFETY_MULTIPLIER: u64 = 2;
-const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
+const MAX_PUBLIC_KEY_BYTES: usize = 6 * 1024 * 1024;
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
+
+fn public_key_chunk_count(public_key_length: usize) -> Result<u16> {
+    anyhow::ensure!(public_key_length != 0, "committee public key is empty");
+    anyhow::ensure!(
+        public_key_length <= MAX_PUBLIC_KEY_BYTES,
+        "committee public key is {public_key_length} bytes; maximum is {MAX_PUBLIC_KEY_BYTES}"
+    );
+    public_key_length
+        .div_ceil(PUBLIC_KEY_CHUNK_BYTES)
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("committee public key has too many chunks"))
+}
 
 fn ticket_gas_limit(estimate: u64) -> u64 {
     estimate.saturating_mul(TICKET_GAS_SAFETY_MULTIPLIER)
@@ -353,25 +365,12 @@ pub async fn publish_committee_public_key_to_registry<
 ) -> Result<TransactionReceipt> {
     let e3_id_u256: U256 = e3_id.try_into()?;
     let public_key_bytes = Bytes::from(public_key.extract_bytes());
-    anyhow::ensure!(
-        !public_key_bytes.is_empty(),
-        "committee public key is empty"
-    );
-    anyhow::ensure!(
-        public_key_bytes.len() <= MAX_PUBLIC_KEY_BYTES,
-        "committee public key is {} bytes; maximum is {MAX_PUBLIC_KEY_BYTES}",
-        public_key_bytes.len()
-    );
+    let chunk_count = public_key_chunk_count(public_key_bytes.len())?;
 
     let total_length: u32 = public_key_bytes
         .len()
         .try_into()
         .map_err(|_| anyhow::anyhow!("committee public key exceeds uint32 length"))?;
-    let chunk_count: u16 = public_key_bytes
-        .len()
-        .div_ceil(PUBLIC_KEY_CHUNK_BYTES)
-        .try_into()
-        .map_err(|_| anyhow::anyhow!("committee public key has too many chunks"))?;
     let candidate_hash = alloy::primitives::keccak256(&public_key_bytes);
     let mut last_receipt = None;
 
@@ -516,8 +515,8 @@ pub async fn fetch_randomness_providers<P: Provider + Clone>(
 #[cfg(test)]
 mod tests {
     use super::{
-        committee_publication_error_is_terminal, reverts_with, ticket_gas_limit,
-        ticket_submission_error_is_terminal,
+        committee_publication_error_is_terminal, public_key_chunk_count, reverts_with,
+        ticket_gas_limit, ticket_submission_error_is_terminal, MAX_PUBLIC_KEY_BYTES,
     };
     use crate::contracts::{ICiphernodeRegistry, IInterfold};
     use alloy::sol_types::{Revert, SolError};
@@ -567,6 +566,15 @@ mod tests {
     fn doubles_ticket_gas_estimate_without_overflow() {
         assert_eq!(ticket_gas_limit(250_000), 500_000);
         assert_eq!(ticket_gas_limit(u64::MAX), u64::MAX);
+    }
+
+    #[test]
+    fn public_key_size_boundary_covers_secure_16384() {
+        assert_eq!(MAX_PUBLIC_KEY_BYTES, 6 * 1024 * 1024);
+        assert_eq!(public_key_chunk_count(5_222_596).unwrap(), 57);
+        assert_eq!(public_key_chunk_count(MAX_PUBLIC_KEY_BYTES).unwrap(), 69);
+        assert!(public_key_chunk_count(0).is_err());
+        assert!(public_key_chunk_count(MAX_PUBLIC_KEY_BYTES + 1).is_err());
     }
 
     #[test]

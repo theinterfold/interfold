@@ -26,6 +26,9 @@ const { loadFixture } = networkHelpers;
 const data = "0xda7a";
 const dataHash = ethers.id(data);
 const SORTITION_SUBMISSION_WINDOW = 60;
+const PUBLIC_KEY_CHUNK_BYTES = 90 * 1024;
+const MAX_PUBLIC_KEY_BYTES = 6 * 1024 * 1024;
+const SECURE_16384_PUBLIC_KEY_BYTES = 5_222_596;
 
 describe("CiphernodeRegistryOwnable", function () {
   let firstE3Id: bigint;
@@ -997,17 +1000,20 @@ describe("CiphernodeRegistryOwnable", function () {
         "publishCommitteePublicKey(uint256,bytes32,uint16,uint16,uint32,bytes)",
       );
       const maxLength = await registry.MAX_COMMITTEE_PUBLIC_KEY_BYTES();
-      const observedSecure8192PublicKeyLength = 356_384n;
-      expect(maxLength).to.be.gte(observedSecure8192PublicKeyLength);
+      expect(maxLength).to.equal(BigInt(MAX_PUBLIC_KEY_BYTES));
+      const secureChunkCount = Math.ceil(
+        SECURE_16384_PUBLIC_KEY_BYTES / PUBLIC_KEY_CHUNK_BYTES,
+      );
+      expect(secureChunkCount).to.equal(57);
 
       await expect(
         publishPublicKey(
           firstE3Id,
           ethers.keccak256("0xdead"),
           0,
-          6,
+          Math.ceil((MAX_PUBLIC_KEY_BYTES + 1) / PUBLIC_KEY_CHUNK_BYTES),
           maxLength + 1n,
-          "0xdead",
+          new Uint8Array(PUBLIC_KEY_CHUNK_BYTES),
         ),
       ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
       await expect(
@@ -1043,6 +1049,46 @@ describe("CiphernodeRegistryOwnable", function () {
           "0xdead",
         ),
       ).to.be.revertedWithCustomError(registry, "InvalidPublicKeyChunk");
+
+      const secureLastChunk = new Uint8Array(
+        SECURE_16384_PUBLIC_KEY_BYTES -
+          (secureChunkCount - 1) * PUBLIC_KEY_CHUNK_BYTES,
+      );
+      await expect(
+        registry
+          .connect(operator3)
+          .getFunction(
+            "publishCommitteePublicKey(uint256,bytes32,uint16,uint16,uint32,bytes)",
+          )(
+          firstE3Id,
+          ethers.keccak256("0xcafe"),
+          secureChunkCount - 1,
+          secureChunkCount,
+          SECURE_16384_PUBLIC_KEY_BYTES,
+          secureLastChunk,
+        ),
+      ).to.emit(registry, "CommitteePublicKeyChunkPublished");
+
+      const maxChunkCount = Math.ceil(
+        MAX_PUBLIC_KEY_BYTES / PUBLIC_KEY_CHUNK_BYTES,
+      );
+      const maxLastChunk = new Uint8Array(
+        MAX_PUBLIC_KEY_BYTES - (maxChunkCount - 1) * PUBLIC_KEY_CHUNK_BYTES,
+      );
+      await expect(
+        registry
+          .connect(operator2)
+          .getFunction(
+            "publishCommitteePublicKey(uint256,bytes32,uint16,uint16,uint32,bytes)",
+          )(
+          firstE3Id,
+          ethers.keccak256("0xbeef"),
+          maxChunkCount - 1,
+          maxChunkCount,
+          MAX_PUBLIC_KEY_BYTES,
+          maxLastChunk,
+        ),
+      ).to.emit(registry, "CommitteePublicKeyChunkPublished");
 
       const candidate = "0xdead";
       const candidateHash = ethers.keccak256(candidate);
@@ -1155,7 +1201,7 @@ describe("CiphernodeRegistryOwnable", function () {
         "0x01",
       );
 
-      const firstChunk = new Uint8Array(90 * 1024).fill(0x11);
+      const firstChunk = new Uint8Array(PUBLIC_KEY_CHUNK_BYTES).fill(0x11);
       const secondChunk = new Uint8Array([0x22]);
       const complete = ethers.concat([firstChunk, secondChunk]);
       const candidateHash = ethers.keccak256(complete);

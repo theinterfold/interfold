@@ -1,0 +1,9 @@
+[package]
+name = "dkg_aggregator_v2"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+lib = { path = "../../../lib" }
+bb_proof_verification = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v5.1.0", directory = "barretenberg/noir/bb_proof_verification" }
+keccak256 = { tag = "v0.1.2", git = "https://github.com/noir-lang/keccak256" }

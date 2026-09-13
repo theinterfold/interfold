@@ -7,6 +7,7 @@ import { expect } from "chai";
 
 import {
   buildMockDkgAttestationFixtureData,
+  encodeMockDkgV2ProofForAttestation,
   deployInterfoldSystem,
   ethers,
   networkHelpers,
@@ -61,6 +62,40 @@ describe("DkgFoldAttestationVerifier", function () {
     expect(partyIds.map((v: bigint) => Number(v))).to.deep.equal([0, 1, 2]);
     expect(skAggCommits).to.deep.equal(skCommits);
     expect(esmAggCommits).to.deep.equal(esmCommits);
+  });
+
+  it("verifies a secure-16384 V2 bundle", async function () {
+    const { owner, mockRegistry, verifier, operators } =
+      await loadFixture(setup);
+    const fixture = await buildMockDkgAttestationFixtureData(
+      operators.slice(0, 2),
+      e3Id,
+      ethers.id(`pk-v2-${e3Id}`),
+      await verifier.getAddress(),
+      await mockRegistry.getAddress(),
+    );
+    const proof = encodeMockDkgV2ProofForAttestation(
+      ethers.id(`pk-v2-${e3Id}`),
+      fixture.partyIds,
+      fixture.skCommits,
+      fixture.esmCommits,
+    );
+    await mockRegistry.connect(owner).setCommitteeNodes(
+      e3Id,
+      fixture.ordered.map((o) => o.addr),
+    );
+
+    const [partyIds, skAggCommits, esmAggCommits] = await verifier.verify(
+      await mockRegistry.getAddress(),
+      31337,
+      e3Id,
+      proof,
+      fixture.bundle,
+    );
+
+    expect(partyIds.map((v: bigint) => Number(v))).to.deep.equal([0, 1]);
+    expect(skAggCommits).to.deep.equal(fixture.skCommits);
+    expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
   });
 
   it("rejects a bundle signed for another registry", async function () {

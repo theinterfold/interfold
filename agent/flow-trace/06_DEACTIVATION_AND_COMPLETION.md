@@ -358,6 +358,7 @@ flowchart TD
         RecoveryRepo["Versioned recovery records<br/>sortition, finalizer, slash outbox"]
         PublicKeyRepo["PublicKeyAggregatorState<br/>full committee; sometimes honest set"]
         KeyshareRepo["ThresholdKeyshareState<br/>honest_parties, aggregated_pk, local phase"]
+        LbfvRepo["LbfvGenerationStateV1<br/>local request, signed rows, publication bundle"]
         PlaintextRepo["ThresholdPlaintextAggregatorState<br/>only exists after ciphertext"]
     end
 
@@ -371,6 +372,7 @@ flowchart TD
     Hydrate --> PTAHydrate["ThresholdPlaintextAggregatorExtension recovers plaintext deps"]
     SelectorRepo --> Hydrate
     RecoveryRepo --> Hydrate
+    LbfvRepo --> KeyHydrate
 
     PublicKeyRepo --> PTAHydrate
     KeyshareRepo --> PTAHydrate
@@ -388,7 +390,7 @@ flowchart TD
     Effects --> Gate["ComputeEffectGate releases replay-safe compute work"]
     Replay --> PublicationGate["EVM writers retain local publication intents"]
     Effects --> PublicationGate
-    Effects --> RecoveryWork["Re-arm sortition, committee finalization,<br/>and slash-writer recovery work"]
+    Effects --> RecoveryWork["Re-arm sortition, committee finalization,<br/>l-BFV generation, and slash-writer recovery work"]
     Effects --> SyncEffect["SyncEffect"]
     SyncEffect --> Selection["Apply derived local selection<br/>inside hydrated context; do not persist it"]
 
@@ -442,9 +444,10 @@ state. The synchronous `on_event` path must not read actor-backed repositories d
 blocking the router while waiting for the store can freeze live gossip and make peers time out. If
 `CiphertextOutputPublished` arrives before those committee dependencies are ready, the extension
 records the ciphertext in the E3 context and retries plaintext actor creation when
-`PublicKeyAggregated` or `CommitteePublished` supplies the missing facts; the router's existing
-recipient buffer then drains any ciphertext/decryption-share events into the newly-created plaintext
-path.
+`PublicKeyAggregated`, secure-16384 `LbfvPublicKeyAggregated`, or `CommitteePublished` supplies the
+missing facts; the secure event must carry the matching E3 ID and `DkgAggregatorV2` proof circuit.
+The router's existing recipient buffer then drains any ciphertext/decryption-share events into the
+newly-created plaintext path.
 
 `ShareVerificationActor` gates C1/C6 proof verification behind `CommitmentConsistencyCheckRequested`
 / `CommitmentConsistencyCheckComplete`. The per-E3 `CommitmentConsistencyChecker` is therefore

@@ -506,7 +506,7 @@ contract SlashingManager is
     ///      `keccak256(abi.encodePacked(proofType))` (prevents cross-reason replay).
     ///      Execution is atomic when `policy.appealWindow == 0`, otherwise deferred so
     ///      the accused can {fileAppeal}. Evidence format:
-    ///      `abi.encode(uint256 proofType, address[] voters, bytes32[] dataHashes,
+    ///      `abi.encode(uint256 proofType, uint256 proofInstance, address[] voters, bytes32[] dataHashes,
     ///      bytes evidence, uint256 issuedAt, uint256 deadline, bytes[] signatures)`.
     ///      Voters sign the EIP-712
     ///      `AccusationVote` against this contract's domain; all `dataHash` values

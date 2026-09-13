@@ -24,16 +24,16 @@
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use actix::{Actor, Addr, Context, Handler};
-use alloy::primitives::{keccak256, Address, Bytes};
+use alloy::primitives::{keccak256, Address, Bytes, B256};
 use alloy::sol_types::SolValue;
 use e3_events::{
     BusHandle, CommitmentConsistencyCheckComplete, CommitmentConsistencyCheckRequested, Committee,
     ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId, E3id,
     EventContext, EventPublisher, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
-    PartyVerificationResult, ProofType, ProofVerificationFailed, ProofVerificationPassed,
-    Sequenced, ShareVerificationComplete, ShareVerificationDispatched, SignedProofFailed,
-    SignedProofPayload, TypedEvent, VerificationKind, VerifyShareDecryptionProofsRequest,
-    VerifyShareProofsRequest, ZkRequest, ZkResponse,
+    PartyVerificationResult, ProofVerificationFailed, ProofVerificationPassed, Sequenced,
+    ShareVerificationComplete, ShareVerificationDispatched, SignedProofFailed, SignedProofPayload,
+    TypedEvent, VerificationKind, VerifyShareDecryptionProofsRequest, VerifyShareProofsRequest,
+    ZkRequest, ZkResponse,
 };
 use e3_utils::utility_types::ArcBytes;
 use e3_utils::NotifySync;

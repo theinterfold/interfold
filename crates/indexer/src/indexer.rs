@@ -43,7 +43,7 @@ use tracing::{error, info, warn};
 type E3Id = String;
 
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
-const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
+const MAX_PUBLIC_KEY_BYTES: usize = 6 * 1024 * 1024;
 
 #[derive(Clone, Debug, Serialize, serde::Deserialize)]
 struct PublicKeyChunkAssembly {
@@ -451,7 +451,7 @@ async fn store_committee_public_key<S: DataStore, R: ProviderType>(
         (
             keccak256(b"fhe.rs:BFV"),
             keccak256(&e3_params),
-            keccak256(b"interfold-bfv-v1"),
+            keccak256(b"interfold-bfv-v2"),
         )
             .abi_encode(),
     );
@@ -1161,11 +1161,61 @@ fn u64_try_from(input: Uint<256, 4>) -> Result<u64> {
 #[cfg(test)]
 mod public_key_chunk_tests {
     use super::{
-        mark_public_key_assembly, DataStore, InMemoryStore, PublicKeyChunkAssembly, SharedStore,
+        mark_public_key_assembly, CommitteePublicKeyChunkPublished, DataStore, InMemoryStore,
+        PublicKeyChunkAssembly, SharedStore, MAX_PUBLIC_KEY_BYTES, PUBLIC_KEY_CHUNK_BYTES,
     };
-    use alloy::primitives::Address;
+    use alloy::primitives::{keccak256, Address, Bytes, B256, U256};
     use std::sync::Arc;
     use tokio::sync::RwLock;
+
+    fn chunk_event(bytes: &[u8], chunk_index: u16) -> CommitteePublicKeyChunkPublished {
+        let chunk_count = bytes.len().div_ceil(PUBLIC_KEY_CHUNK_BYTES) as u16;
+        let offset = usize::from(chunk_index) * PUBLIC_KEY_CHUNK_BYTES;
+        let end = (offset + PUBLIC_KEY_CHUNK_BYTES).min(bytes.len());
+        CommitteePublicKeyChunkPublished {
+            e3Id: U256::from(7),
+            publisher: Address::ZERO,
+            candidateHash: keccak256(bytes),
+            nodes: vec![Address::ZERO],
+            pkCommitment: B256::repeat_byte(1),
+            chunkIndex: chunk_index,
+            chunkCount: chunk_count,
+            totalLength: bytes.len() as u32,
+            chunk: Bytes::copy_from_slice(&bytes[offset..end]),
+        }
+    }
+
+    #[test]
+    fn secure_16384_chunks_reassemble_in_index_order() {
+        let bytes = (0..5_222_596)
+            .map(|index| (index % 251) as u8)
+            .collect::<Vec<_>>();
+        let mut events = (0..bytes.len().div_ceil(PUBLIC_KEY_CHUNK_BYTES) as u16)
+            .map(|index| chunk_event(&bytes, index))
+            .collect::<Vec<_>>();
+        let mut assembly = PublicKeyChunkAssembly::from_event(&events[0]);
+
+        assert_eq!(events.len(), 57);
+        events.reverse();
+        for event in &events {
+            assert!(PublicKeyChunkAssembly::event_shape_is_valid(event));
+            assembly.insert(event);
+        }
+
+        assert_eq!(assembly.bytes().as_deref(), Some(bytes.as_slice()));
+    }
+
+    #[test]
+    fn public_key_total_length_boundary_is_enforced() {
+        let bytes = vec![3; PUBLIC_KEY_CHUNK_BYTES];
+        let mut event = chunk_event(&bytes, 0);
+        event.totalLength = MAX_PUBLIC_KEY_BYTES as u32;
+        event.chunkCount = MAX_PUBLIC_KEY_BYTES.div_ceil(PUBLIC_KEY_CHUNK_BYTES) as u16;
+        assert!(PublicKeyChunkAssembly::event_shape_is_valid(&event));
+
+        event.totalLength += 1;
+        assert!(!PublicKeyChunkAssembly::event_shape_is_valid(&event));
+    }
 
     #[tokio::test]
     async fn completed_assembly_drops_temporary_chunk_bytes() {

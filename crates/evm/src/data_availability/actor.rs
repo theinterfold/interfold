@@ -26,7 +26,7 @@ use std::{
 use tracing::{info, warn};
 
 const OUTPUT_RETRY_DELAY: Duration = Duration::from_secs(30);
-const MAX_PUBLIC_KEY_BYTES: usize = 512 * 1024;
+const MAX_PUBLIC_KEY_BYTES: usize = 6 * 1024 * 1024;
 const PUBLIC_KEY_CHUNK_BYTES: usize = 90 * 1024;
 pub const DATA_AVAILABILITY_RECOVERY_SCHEMA_VERSION: u32 = 2;
 
@@ -536,14 +536,16 @@ mod tests {
     }
 
     #[test]
-    fn deterministic_chunks_reassemble_in_index_order() {
-        let bytes = (0..(3 * PUBLIC_KEY_CHUNK_BYTES + 17))
+    fn secure_16384_chunks_reassemble_in_index_order() {
+        let bytes = (0..5_222_596)
             .map(|index| (index % 251) as u8)
             .collect::<Vec<_>>();
         let mut events = (0..bytes.len().div_ceil(PUBLIC_KEY_CHUNK_BYTES) as u16)
             .map(|index| chunk_event(&bytes, index))
             .collect::<Vec<_>>();
         let mut assembly = KeyAssembly::new(&events[0]);
+
+        assert_eq!(events.len(), 57);
 
         events.reverse();
         for event in &events {
@@ -552,6 +554,18 @@ mod tests {
         }
 
         assert_eq!(assembly.bytes().as_deref(), Some(bytes.as_slice()));
+    }
+
+    #[test]
+    fn public_key_total_length_boundary_is_enforced() {
+        let bytes = vec![3; PUBLIC_KEY_CHUNK_BYTES];
+        let mut event = chunk_event(&bytes, 0);
+        event.total_length = MAX_PUBLIC_KEY_BYTES as u32;
+        event.chunk_count = MAX_PUBLIC_KEY_BYTES.div_ceil(PUBLIC_KEY_CHUNK_BYTES) as u16;
+        assert!(KeyAssembly::event_shape_is_valid(&event));
+
+        event.total_length += 1;
+        assert!(!KeyAssembly::event_shape_is_valid(&event));
     }
 
     #[test]

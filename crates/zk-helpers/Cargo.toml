@@ -8,10 +8,12 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
+alloy = { workspace = true }
 ark-bn254 = { workspace = true }
 clap = { workspace = true }
 ark-ff = { workspace = true }
 e3-polynomial = { workspace = true, features = ["serde"] }
+e3-committee-hash = { workspace = true }
 e3-safe = { workspace = true }
 e3-fhe-params = { workspace = true }
 fhe = { workspace = true }

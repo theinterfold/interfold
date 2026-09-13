@@ -71,8 +71,9 @@ impl SlashIntentKey {
     }
 
     pub(crate) fn from_execution(event: &SlashExecuted) -> Result<Option<Self>> {
-        let proof_type = (ProofType::C0PkBfv as u8..=ProofType::C7DecryptedSharesAggregation as u8)
-            .find(|proof_type| slash_reason_u8(*proof_type) == B256::from(event.reason));
+        let proof_type = ProofType::ALL
+            .into_iter()
+            .find(|proof_type| proof_type.attestation_slash_reason() == B256::from(event.reason));
         let Some(proof_type) = proof_type else {
             return Ok(None);
         };
@@ -84,7 +85,7 @@ impl SlashIntentKey {
                 .try_into()
                 .context("slash execution has a non-numeric E3 id")?,
             operator: event.operator,
-            proof_type,
+            proof_type: proof_type as u8,
         }))
     }
 }
@@ -187,10 +188,6 @@ pub(crate) fn slash_reason(proof_type: ProofType) -> B256 {
     proof_type.attestation_slash_reason()
 }
 
-fn slash_reason_u8(proof_type: u8) -> B256 {
-    alloy::primitives::keccak256(U256::from(proof_type).to_be_bytes::<32>())
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SlashPolicyState {
     Disabled,
@@ -271,6 +268,7 @@ mod tests {
             accuser: Address::repeat_byte(9),
             accused: Address::repeat_byte(8),
             proof_type: ProofType::C0PkBfv,
+            proof_instance: 0,
             votes_for: voters.into_iter().map(vote).collect(),
             outcome: AccusationOutcome::AccusedFaulted,
             evidence: Bytes::from_static(b"evidence"),
@@ -339,6 +337,39 @@ mod tests {
                 0, 0, 0, 1,
             ])
         );
+    }
+
+    #[test]
+    fn slash_execution_recovers_every_proof_type() {
+        for proof_type in ProofType::ALL {
+            let event = SlashExecuted {
+                e3_id: E3id::new("1", 1),
+                proposal_id: 1,
+                operator: Address::repeat_byte(8),
+                reason: proof_type.attestation_slash_reason().0,
+                ticket_amount: 0,
+                ciphernode_bond_amount: 0,
+            };
+
+            let key = SlashIntentKey::from_execution(&event)
+                .unwrap()
+                .expect("known proof type must be recovered");
+            assert_eq!(key.proof_type, proof_type as u8, "{proof_type:?}");
+        }
+    }
+
+    #[test]
+    fn slash_execution_ignores_an_unknown_reason() {
+        let event = SlashExecuted {
+            e3_id: E3id::new("1", 1),
+            proposal_id: 1,
+            operator: Address::repeat_byte(8),
+            reason: keccak256(U256::from(255).to_be_bytes::<32>()).0,
+            ticket_amount: 0,
+            ciphernode_bond_amount: 0,
+        };
+
+        assert!(SlashIntentKey::from_execution(&event).unwrap().is_none());
     }
 
     #[test]

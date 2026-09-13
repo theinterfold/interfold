@@ -11,6 +11,7 @@ use crate::{
 };
 use actix::Actor;
 use alloy::primitives::Address;
+use alloy::signers::local::PrivateKeySigner;
 use anyhow::{anyhow, ensure, Result};
 use async_trait::async_trait;
 use e3_crypto::Cipher;
@@ -26,6 +27,7 @@ pub struct ThresholdKeyshareExtension {
     cipher: Arc<Cipher>,
     address: String,
     interfold_addresses: HashMap<u64, Address>,
+    signer: PrivateKeySigner,
 }
 
 impl ThresholdKeyshareExtension {
@@ -34,12 +36,14 @@ impl ThresholdKeyshareExtension {
         cipher: &Arc<Cipher>,
         address: &str,
         interfold_addresses: HashMap<u64, Address>,
+        signer: PrivateKeySigner,
     ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
             cipher: cipher.to_owned(),
             address: address.to_owned(),
             interfold_addresses,
+            signer,
         })
     }
 }
@@ -77,6 +81,22 @@ impl E3Extension for ThresholdKeyshareExtension {
                 .err(EType::KeyGeneration, anyhow!(ERROR_KEYSHARE_META_MISSING));
             return;
         };
+        let lbfv_initial = if data.params_preset == e3_fhe_params::BfvPreset::SecureThreshold16384 {
+            match crate::LbfvGenerationStateV1::from_selection(
+                data,
+                interfold_address,
+                self.signer.address(),
+                e3_config::current_node_release().protocol_version,
+            ) {
+                Ok(state) => Some(state),
+                Err(error) => {
+                    self.bus.err(EType::KeyGeneration, error);
+                    return;
+                }
+            }
+        } else {
+            None
+        };
         let repo = ctx.repositories().threshold_keyshare(&e3_id);
         let container = repo.send(Some(ThresholdKeyshareState::new(
             e3_id.clone(),
@@ -95,6 +115,10 @@ impl E3Extension for ThresholdKeyshareExtension {
                 last_ec: Some(evt.get_ctx().clone()),
                 ..Default::default()
             }));
+        let lbfv_repo = ctx
+            .repositories()
+            .threshold_keyshare_lbfv_generation(&e3_id);
+        let lbfv_generation = lbfv_repo.send(lbfv_initial);
 
         // New container with None
         ctx.set_event_recipient(
@@ -110,6 +134,8 @@ impl E3Extension for ThresholdKeyshareExtension {
                         .unwrap_or(meta.params_preset),
                     interfold_address,
                     recovery,
+                    lbfv_generation,
+                    signer: self.signer.clone(),
                 })
                 .start()
                 .into(),
@@ -143,6 +169,11 @@ impl E3Extension for ThresholdKeyshareExtension {
             "threshold-keyshare for E3 {} has no restart recovery record",
             snapshot.e3_id
         );
+        let lbfv_generation = ctx
+            .repositories()
+            .threshold_keyshare_lbfv_generation(&snapshot.e3_id)
+            .load()
+            .await?;
         ensure!(
             recovery.get().is_some_and(|value| {
                 value.schema_version == THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION
@@ -159,6 +190,20 @@ impl E3Extension for ThresholdKeyshareExtension {
             .params_preset
             .dkg_counterpart()
             .unwrap_or(meta.params_preset);
+        if meta.params_preset == e3_fhe_params::BfvPreset::SecureThreshold16384 {
+            let lbfv_state = lbfv_generation.get().ok_or_else(|| {
+                anyhow!(
+                    "secure-16384 threshold-keyshare for E3 {} has no l-BFV generation record",
+                    snapshot.e3_id
+                )
+            })?;
+            lbfv_state.validate_loaded()?;
+            ensure!(
+                lbfv_state.expected_signer()? == self.signer.address(),
+                "persisted l-BFV party slot for E3 {} does not match the node signer",
+                snapshot.e3_id
+            );
+        }
         let interfold_address = self
             .interfold_addresses
             .get(&snapshot.e3_id.chain_id())
@@ -178,6 +223,8 @@ impl E3Extension for ThresholdKeyshareExtension {
             share_enc_preset,
             interfold_address,
             recovery,
+            lbfv_generation,
+            signer: self.signer.clone(),
         })
         .start()
         .into();

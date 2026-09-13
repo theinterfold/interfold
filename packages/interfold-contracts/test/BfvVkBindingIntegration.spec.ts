@@ -15,6 +15,7 @@ import {
   BFV_THRESHOLD_T,
   assertBfvDecryptionVerifierSubCircuitVkHashes,
   assertBfvPkVerifierSubCircuitVkHashes,
+  assertBfvPkVerifierV2VkHashes,
   bfvDecCiphertextCommitmentIndex,
   bfvDecCommitteeHashIndices,
   bfvDecDomainIndices,
@@ -26,11 +27,14 @@ import {
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
   getBfvPkVkBindingHashPaths,
+  getBfvV2SubCircuitVkHashPaths,
+  getBfvV2VkBindingHashPaths,
   readVkRecursiveHash,
 } from "../scripts/utils";
 import type {
   BfvDecryptionVerifier,
   BfvPkVerifier,
+  BfvPkVerifierV2,
   MockCiphernodeRegistry,
 } from "../types";
 
@@ -49,6 +53,25 @@ const INSECURE_INTEGRATION_SUMMARY = path.join(
 );
 const readExpectedVkBinding = () =>
   getBfvPkVkBindingHashPaths().map((filePath) => readVkRecursiveHash(filePath));
+
+const hasActiveCircuitSelection = (
+  preset: string,
+  committee: string,
+): boolean => {
+  const activePath = path.join(repoRoot, "circuits/bin/.active-preset.json");
+  if (!fs.existsSync(activePath)) {
+    return false;
+  }
+  try {
+    const active = JSON.parse(fs.readFileSync(activePath, "utf8")) as {
+      preset?: string;
+      committee?: string;
+    };
+    return active.preset === preset && active.committee === committee;
+  } catch {
+    return false;
+  }
+};
 
 type FoldedArtifacts = {
   dkg_aggregator: { proof_hex: string; public_inputs_hex: string };
@@ -109,12 +132,22 @@ const loadFoldedArtifacts = (): FoldedArtifacts | null =>
   resolveFoldedArtifacts();
 
 const hasCompiledVkArtifacts = (): boolean =>
+  hasActiveCircuitSelection("insecure", "minimum") &&
   Object.values(getBfvPkSubCircuitVkHashPaths()).every((p) =>
     fs.existsSync(p),
   ) &&
   Object.values(getBfvDecryptionSubCircuitVkHashPaths()).every((p) =>
     fs.existsSync(p),
   );
+
+const hasCompiledV2VkArtifacts = (): boolean =>
+  hasActiveCircuitSelection("secure-16384", "minimum") &&
+  [
+    getBfvV2SubCircuitVkHashPaths().nodesFold,
+    ...Object.values(getBfvPkSubCircuitVkHashPaths()),
+    ...getBfvPkVkBindingHashPaths(),
+    ...getBfvV2VkBindingHashPaths(),
+  ].every((p) => fs.existsSync(p));
 
 const describeDeployTimeVkChecks = hasCompiledVkArtifacts()
   ? describe
@@ -319,6 +352,72 @@ describe("BfvVkBindingIntegration", function () {
       ).to.not.be.rejected;
     });
   });
+
+  (hasCompiledV2VkArtifacts() ? describe : describe.skip)(
+    "V2 deploy-time VK staleness checks",
+    function () {
+      it("rejects BfvPkVerifierV2 with stale immutable VK anchors", async function () {
+        const circuit = await ethers.deployContract("MockCircuitVerifier");
+        await circuit.waitForDeployment();
+        const registry = await ethers.deployContract("MockCiphernodeRegistry");
+        await registry.waitForDeployment();
+
+        const expectedNodesFoldKeyHash = readVkRecursiveHash(
+          getBfvV2SubCircuitVkHashPaths().nodesFold,
+        );
+        const pkPaths = getBfvPkSubCircuitVkHashPaths();
+        const expectedC5KeyHash = readVkRecursiveHash(pkPaths.c5);
+        const expectedSkC2ChunkKeyHash = readVkRecursiveHash(pkPaths.skC2Chunk);
+        const expectedESmC2ChunkKeyHash = readVkRecursiveHash(
+          pkPaths.esmC2Chunk,
+        );
+        const expectedLegacyVkBinding = getBfvPkVkBindingHashPaths().map(
+          (filePath) => readVkRecursiveHash(filePath),
+        );
+        const expectedV2VkBinding = getBfvV2VkBindingHashPaths().map(
+          (filePath) => readVkRecursiveHash(filePath),
+        );
+        const deploy = async (
+          legacyVkBinding: string[],
+          v2VkBinding: string[],
+        ) => {
+          const verifier = await ethers.deployContract("BfvPkVerifierV2", [
+            await circuit.getAddress(),
+            await registry.getAddress(),
+            expectedNodesFoldKeyHash,
+            expectedC5KeyHash,
+            expectedSkC2ChunkKeyHash,
+            expectedESmC2ChunkKeyHash,
+            legacyVkBinding,
+            v2VkBinding,
+          ]);
+          await verifier.waitForDeployment();
+          return verifier;
+        };
+
+        const staleLegacyVkBinding = [...expectedLegacyVkBinding];
+        staleLegacyVkBinding[0] = ethers.id("stale-v2-legacy-vk");
+        const stale = await deploy(staleLegacyVkBinding, expectedV2VkBinding);
+        const current = await deploy(
+          expectedLegacyVkBinding,
+          expectedV2VkBinding,
+        );
+
+        await expect(
+          assertBfvPkVerifierV2VkHashes(
+            stale as unknown as BfvPkVerifierV2,
+            await stale.getAddress(),
+          ),
+        ).to.be.rejectedWith(/stale sub-circuit VK immutables/);
+        await expect(
+          assertBfvPkVerifierV2VkHashes(
+            current as unknown as BfvPkVerifierV2,
+            await current.getAddress(),
+          ),
+        ).to.not.be.rejected;
+      });
+    },
+  );
 
   (runFoldedProofIntegration ? it : it.skip)(
     "folded aggregator proofs: artifact VK hashes match publicInputs[0..1] and verify passes",

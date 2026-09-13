@@ -36,6 +36,8 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *      execution context and keeps lifecycle code out of its runtime bytecode.
  */
 library InterfoldLifecycle {
+    uint256 private constant SECURE_16384_MIN_DKG_WINDOW = 21_600;
+
     // keccak256(abi.encode(uint256(keccak256("interfold.storage.CiphertextVerifier")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant CIPHERTEXT_VERIFIER_STORAGE_SLOT =
         0xfc399dd26441dab88259cd69fffcf8b5f96dd87f2db63f29285d86101a4d1500;
@@ -613,6 +615,7 @@ library InterfoldLifecycle {
         uint256[2] calldata inputWindow,
         uint256 nowTs,
         address registryAddress,
+        uint8 paramSet,
         IInterfold.E3TimeoutConfig calldata timeoutConfig,
         uint256 maxDuration
     ) external view {
@@ -620,6 +623,10 @@ library InterfoldLifecycle {
             revert IInterfold.InvalidInputDeadlineStart(inputWindow[0]);
         if (inputWindow[1] < inputWindow[0])
             revert IInterfold.InvalidInputDeadlineEnd(inputWindow[1]);
+        if (
+            paramSet == ActiveCryptoConfig.SECURE_16384_PARAM_SET &&
+            timeoutConfig.dkgWindow < SECURE_16384_MIN_DKG_WINDOW
+        ) revert IInterfold.InvalidTimeoutWindow();
         uint256 totalDuration = requestLifecycleDuration(
             inputWindow[1],
             nowTs,

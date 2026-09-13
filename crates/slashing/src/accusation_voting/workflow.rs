@@ -35,10 +35,10 @@ use alloy::sol_types::SolValue;
 use e3_events::{
     AccusationOutcome, AccusationQuorumReached, AccusationVote, CommitmentConsistencyViolation,
     ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId, E3id,
-    EventContext, PartyProofsToVerify, ProofFailureAccusation, ProofType, ProofVerificationFailed,
-    ProofVerificationPassed, Sequenced, SignedProofPayload, SlashExecuted, TypedEvent,
-    VerifyShareProofsRequest, ZkRequest, ZkResponse, VOTE_DOMAIN_NAME, VOTE_DOMAIN_VERSION,
-    VOTE_TYPEHASH_STR,
+    EventContext, PartyProofsToVerify, ProofFailureAccusation, ProofIdentity, ProofType,
+    ProofVerificationFailed, ProofVerificationPassed, Sequenced, SignedProofPayload, SlashExecuted,
+    TypedEvent, VerifyShareProofsRequest, ZkRequest, ZkResponse, VOTE_DOMAIN_NAME,
+    VOTE_DOMAIN_VERSION, VOTE_TYPEHASH_STR,
 };
 use e3_utils::ArcBytes;
 use e3_zk_helpers::CiphernodesCommitteeSize;

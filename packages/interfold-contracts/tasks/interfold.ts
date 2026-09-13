@@ -25,13 +25,13 @@ import { stageMockDataAvailabilityObject } from "./mockDataAvailability";
 
 function cryptoConfigIdForParamSet(paramSet: number): string {
   if (paramSet === 0) {
-    return "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78";
+    return "0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d";
   }
   if (paramSet === 1) {
-    return "0x2af9e43a7b95b11300b6185f3ffaece530facafd2ce98c5e1a1cece8a80ad3cb";
+    return "0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31";
   }
   if (paramSet === 2) {
-    return "0x81f3edb4c49db1c2baf578d6ade4aea6839ee6a71d7458c1bfc79670d2ece7cd";
+    return "0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8";
   }
   throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
 }

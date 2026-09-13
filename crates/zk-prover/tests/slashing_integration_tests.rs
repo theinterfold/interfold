@@ -1875,6 +1875,7 @@ async fn test_onchain_actor_signed_vote_accepted() {
         accuser: voter1.address(),
         accused: operator_addr,
         proof_type: ProofType::C0PkBfv,
+        proof_instance: 0,
         votes_for,
         outcome: AccusationOutcome::AccusedFaulted,
         evidence: raw_evidence_bytes,

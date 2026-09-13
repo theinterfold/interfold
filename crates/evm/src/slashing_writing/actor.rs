@@ -217,6 +217,7 @@ mod tests {
             accuser: Address::repeat_byte(1),
             accused: Address::repeat_byte(2),
             proof_type: ProofType::C1PkGeneration,
+            proof_instance: 0,
             votes_for: Vec::new(),
             outcome: AccusationOutcome::AccusedFaulted,
             evidence: Bytes::new(),

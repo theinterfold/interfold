@@ -577,6 +577,7 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 ├─ 4. Encode attestation evidence:
 │     proof = abi.encode(
 │       proofType,       // uint256 — which proof failed (C0-C7)
+│       proofInstance,   // uint256 — row index for multirow l-BFV proof families
 │       voters[],        // address[] — sorted ascending
 │       dataHashes[],    // bytes32[] — per-voter data hashes
 │       evidence,        // bytes — shared evidence preimage
@@ -603,9 +604,11 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 Anyone calls: SlashingManager.proposeSlash(e3Id, operator, proof)
 │
 ├─ 1. Decode proof:
-│     (proofType, voters[], dataHashes[], evidence,
+│     (proofType, proofInstance, voters[], dataHashes[], evidence,
 │      issuedAt, deadline, signatures[])
 │     = abi.decode(proof, (...))
+│     → proofInstance must be zero for single-instance proof types
+│     → proofInstance must be less than five for multirow l-BFV proof types
 │
 ├─ 2. Derive slash reason deterministically:
 │     reason = keccak256(abi.encodePacked(proofType))
@@ -1131,16 +1134,21 @@ Constraints:
 - execution always uses `InsufficientCommitteeMembers` when an expulsion breaks viability
   → stored policies with older supplier reasons remain readable, but cannot change attribution
 
-Slash Reasons (derived from ProofType for Lane A):
+Lane A reason keys and stable runtime categories:
   reason = keccak256(abi.encodePacked(proofType))
-  ┌─────────────────┬──────────────────────────┐
-  │ ProofType       │ Slash Reason             │
-  ├─────────────────┼──────────────────────────┤
-  │ C0, C1-C4       │ E3_BAD_DKG_PROOF         │
-  │ C5              │ E3_BAD_PK_AGGREGATION    │
-  │ C6              │ E3_BAD_DECRYPTION_PROOF   │
-  │ C7              │ E3_BAD_AGGREGATION_PROOF │
-  └─────────────────┴──────────────────────────┘
+  ProofType::slash_reason() returns these stable categories:
+  ┌──────────────────────────────────┬─────────────────────────────────┐
+  │ ProofType                        │ Stable Slash Category           │
+  ├──────────────────────────────────┼─────────────────────────────────┤
+  │ C0, C1-C4                        │ E3_BAD_DKG_PROOF                │
+  │ C5, LbfvPkAggregation            │ E3_BAD_PK_AGGREGATION_PROOF     │
+  │ C6                               │ E3_BAD_DECRYPTION_PROOF         │
+  │ C7                               │ E3_BAD_AGGREGATION_PROOF        │
+  │ LbfvPkGeneration, RlkGeneration  │ E3_BAD_DKG_GENERATION_PROOF     │
+  │ RlkAggregation                   │ E3_BAD_RLK_AGGREGATION_PROOF    │
+  └──────────────────────────────────┴─────────────────────────────────┘
+
+  `RlkGenerationLimb` is not externally signed and has no ProofType.
 ```
 
 ### End-to-End: Proof Failure → On-Chain Slash

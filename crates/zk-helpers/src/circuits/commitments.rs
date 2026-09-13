@@ -12,15 +12,33 @@
 
 use crate::packing::flatten;
 use crate::utils::compute_safe;
+use alloy::primitives::B256;
 use ark_bn254::Fr as Field;
 use ark_ff::BigInteger;
 use ark_ff::PrimeField;
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};
 use e3_polynomial::{CrtPolynomial, Polynomial};
 use fhe::bfv::PublicKey;
+use fhe::trlbfv::{PublicKeyShare as LbfvPublicKeyShare, RelinKeyShare};
 use fhe_traits::DeserializeParametrized;
 use num_bigint::BigInt;
 use std::slice::from_ref;
+
+use super::output_layout::{
+    CircuitInputLayout, CircuitOutputLayout, FIELD_BYTE_LEN, LBFV_PK_GENERATION_INPUTS,
+    LBFV_PK_GENERATION_OUTPUTS, RLK_GENERATION_INPUTS, RLK_GENERATION_OUTPUTS,
+};
+
+/// Number of rows in one serialized l-BFV public-key or RLK share.
+pub const LBFV_SHARE_ROW_COUNT: usize = 5;
+
+/// Commitments recomputed from one party's serialized l-BFV PK and RLK shares.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct LbfvShareCommitments {
+    pub pk_generation_commitments: [B256; LBFV_SHARE_ROW_COUNT],
+    pub rlk_d0_commitments: [B256; LBFV_SHARE_ROW_COUNT],
+    pub rlk_d2_commitments: [B256; LBFV_SHARE_ROW_COUNT],
+}
 
 // ============================================================================
 // DOMAIN SEPARATORS
@@ -678,6 +696,208 @@ pub fn compute_rlk_aggregation_commitment(component: &CrtPolynomial, bit_d: u32)
     field_to_bigint(compute_commitments(payload, DS_RLK_AGGREGATION, io)[0])
 }
 
+/// Validate that serialized l-BFV PK and RLK shares match their row-proof outputs.
+///
+/// This function validates only the public statement shape, row order, deserialization, and
+/// commitments. The caller must validate proof signatures and verify the proofs separately.
+pub fn validate_lbfv_serialized_share_commitments(
+    preset: BfvPreset,
+    public_key_share_bytes: &[u8],
+    rlk_share_bytes: &[u8],
+    public_key_row_signals: &[&[u8]],
+    rlk_row_signals: &[&[u8]],
+) -> Result<LbfvShareCommitments, crate::CircuitsErrors> {
+    let (params, _) = build_pair_for_preset(preset)
+        .map_err(|error| crate::CircuitsErrors::Other(error.to_string()))?;
+    let public_key_adapter = crate::threshold::pk_generation::LbfvPkGenerationAdapter::new(preset)?;
+    let rlk_adapter = crate::threshold::rlk_generation::RlkGenerationAdapter::new(preset)?;
+    validate_lbfv_serialized_share_commitments_with_adapters(
+        &params,
+        &public_key_adapter,
+        &rlk_adapter,
+        public_key_share_bytes,
+        rlk_share_bytes,
+        public_key_row_signals,
+        rlk_row_signals,
+    )
+}
+
+fn validate_lbfv_serialized_share_commitments_with_adapters(
+    params: &std::sync::Arc<fhe::bfv::BfvParameters>,
+    public_key_adapter: &crate::threshold::pk_generation::LbfvPkGenerationAdapter,
+    rlk_adapter: &crate::threshold::rlk_generation::RlkGenerationAdapter,
+    public_key_share_bytes: &[u8],
+    rlk_share_bytes: &[u8],
+    public_key_row_signals: &[&[u8]],
+    rlk_row_signals: &[&[u8]],
+) -> Result<LbfvShareCommitments, crate::CircuitsErrors> {
+    validate_lbfv_row_signals(
+        "public-key",
+        public_key_row_signals,
+        LBFV_PK_GENERATION_INPUTS,
+        LBFV_PK_GENERATION_OUTPUTS,
+    )?;
+    validate_lbfv_row_signals(
+        "RLK",
+        rlk_row_signals,
+        RLK_GENERATION_INPUTS,
+        RLK_GENERATION_OUTPUTS,
+    )?;
+    if public_key_adapter.row_count() != LBFV_SHARE_ROW_COUNT
+        || rlk_adapter.row_count() != LBFV_SHARE_ROW_COUNT
+    {
+        return Err(crate::CircuitsErrors::Other(format!(
+            "l-BFV adapters must expose {LBFV_SHARE_ROW_COUNT} rows"
+        )));
+    }
+
+    let public_key_share =
+        LbfvPublicKeyShare::from_bytes(public_key_share_bytes, params).map_err(|error| {
+            crate::CircuitsErrors::Other(format!("l-BFV public-key share deserialize: {error}"))
+        })?;
+    let rlk_share = RelinKeyShare::from_bytes(rlk_share_bytes, params).map_err(|error| {
+        crate::CircuitsErrors::Other(format!("l-BFV RLK share deserialize: {error}"))
+    })?;
+    let bit = crate::compute_modulus_bit(params);
+    let pk_layout = CircuitOutputLayout::Fixed {
+        fields: LBFV_PK_GENERATION_OUTPUTS,
+    };
+    let rlk_layout = CircuitOutputLayout::Fixed {
+        fields: RLK_GENERATION_OUTPUTS,
+    };
+    let mut pk_generation_commitments = Vec::with_capacity(LBFV_SHARE_ROW_COUNT);
+    let mut rlk_d0_commitments = Vec::with_capacity(LBFV_SHARE_ROW_COUNT);
+    let mut rlk_d2_commitments = Vec::with_capacity(LBFV_SHARE_ROW_COUNT);
+
+    for row in 0..LBFV_SHARE_ROW_COUNT {
+        let (_, pk0) = public_key_adapter.share_row_components(row as u32, &public_key_share)?;
+        let actual_pk = bigint_commitment_to_b256(compute_threshold_pk_commitment(&pk0, bit))?;
+        let expected_pk = extract_commitment(
+            &pk_layout,
+            public_key_row_signals[row],
+            "pk_commitment",
+            "public-key",
+            row,
+        )?;
+        if actual_pk != expected_pk {
+            return Err(crate::CircuitsErrors::Other(format!(
+                "l-BFV public-key commitment mismatch at row {row}"
+            )));
+        }
+        pk_generation_commitments.push(actual_pk);
+
+        let (d0, d2) = rlk_adapter.share_row_components(row as u32, &rlk_share)?;
+        let actual_d0 = bigint_commitment_to_b256(compute_rlk_d0_commitment(&d0, bit))?;
+        let actual_d2 = bigint_commitment_to_b256(compute_rlk_d2_commitment(&d2, bit))?;
+        let expected_d0 = extract_commitment(
+            &rlk_layout,
+            rlk_row_signals[row],
+            "d0_commitment",
+            "RLK d0",
+            row,
+        )?;
+        let expected_d2 = extract_commitment(
+            &rlk_layout,
+            rlk_row_signals[row],
+            "d2_commitment",
+            "RLK d2",
+            row,
+        )?;
+        if actual_d0 != expected_d0 {
+            return Err(crate::CircuitsErrors::Other(format!(
+                "l-BFV RLK d0 commitment mismatch at row {row}"
+            )));
+        }
+        if actual_d2 != expected_d2 {
+            return Err(crate::CircuitsErrors::Other(format!(
+                "l-BFV RLK d2 commitment mismatch at row {row}"
+            )));
+        }
+        rlk_d0_commitments.push(actual_d0);
+        rlk_d2_commitments.push(actual_d2);
+    }
+
+    Ok(LbfvShareCommitments {
+        pk_generation_commitments: pk_generation_commitments
+            .try_into()
+            .expect("the l-BFV PK row count is fixed"),
+        rlk_d0_commitments: rlk_d0_commitments
+            .try_into()
+            .expect("the l-BFV RLK row count is fixed"),
+        rlk_d2_commitments: rlk_d2_commitments
+            .try_into()
+            .expect("the l-BFV RLK row count is fixed"),
+    })
+}
+
+fn validate_lbfv_row_signals(
+    family: &str,
+    signals: &[&[u8]],
+    inputs: &'static [super::output_layout::OutputField],
+    outputs: &'static [super::output_layout::OutputField],
+) -> Result<(), crate::CircuitsErrors> {
+    if signals.len() != LBFV_SHARE_ROW_COUNT {
+        return Err(crate::CircuitsErrors::Other(format!(
+            "l-BFV {family} proof bundle has {} rows; expected {LBFV_SHARE_ROW_COUNT}",
+            signals.len()
+        )));
+    }
+    let expected_len = (inputs.len() + outputs.len()) * FIELD_BYTE_LEN;
+    let input_layout = CircuitInputLayout::Fixed { fields: inputs };
+    for (row, public_signals) in signals.iter().enumerate() {
+        if public_signals.len() != expected_len {
+            return Err(crate::CircuitsErrors::Other(format!(
+                "l-BFV {family} proof row {row} has {} public bytes; expected {expected_len}",
+                public_signals.len()
+            )));
+        }
+        let row_field = input_layout
+            .extract_field(public_signals, "row_index")
+            .expect("the fixed l-BFV input layout contains row_index");
+        if row_field[..28].iter().any(|byte| *byte != 0)
+            || u32::from_be_bytes(
+                row_field[28..]
+                    .try_into()
+                    .expect("the row field has a four-byte suffix"),
+            ) != row as u32
+        {
+            return Err(crate::CircuitsErrors::Other(format!(
+                "l-BFV {family} proof is not in row {row}"
+            )));
+        }
+    }
+    Ok(())
+}
+
+fn extract_commitment(
+    layout: &CircuitOutputLayout,
+    public_signals: &[u8],
+    field: &str,
+    family: &str,
+    row: usize,
+) -> Result<B256, crate::CircuitsErrors> {
+    layout
+        .extract_field(public_signals, field)
+        .map(B256::from_slice)
+        .ok_or_else(|| {
+            crate::CircuitsErrors::Other(format!(
+                "l-BFV {family} proof row {row} is missing {field}"
+            ))
+        })
+}
+
+fn bigint_commitment_to_b256(commitment: BigInt) -> Result<B256, crate::CircuitsErrors> {
+    let (sign, bytes) = commitment.to_bytes_be();
+    if sign == num_bigint::Sign::Minus || bytes.len() > FIELD_BYTE_LEN {
+        return Err(crate::CircuitsErrors::Other(
+            "l-BFV commitment does not fit one field".to_string(),
+        ));
+    }
+    let mut field = [0u8; FIELD_BYTE_LEN];
+    field[FIELD_BYTE_LEN - bytes.len()..].copy_from_slice(&bytes);
+    Ok(B256::from(field))
+}
+
 /// Compute aggregation commitment.
 ///
 /// This matches the Noir `compute_recursive_aggregation_commitment` function exactly.
@@ -908,10 +1128,260 @@ pub fn compute_threshold_share_decryption_challenge(payload: Vec<Field>) -> BigI
 mod tests {
     use super::*;
     use e3_polynomial::CrtPolynomial;
+    use fhe::bfv::{BfvParametersBuilder, CommonRandomPolyVec, SecretKey};
+    use fhe::trlbfv::{PublicKeyShare as LbfvPublicKeyShare, RelinKeyShare};
+    use fhe_traits::Serialize;
 
     fn field_to_bigint(value: Field) -> BigInt {
         let bytes = value.into_bigint().to_bytes_le();
         BigInt::from_bytes_le(num_bigint::Sign::Plus, &bytes)
+    }
+
+    struct LbfvShareFixture {
+        params: std::sync::Arc<fhe::bfv::BfvParameters>,
+        public_key_adapter: crate::threshold::pk_generation::LbfvPkGenerationAdapter,
+        rlk_adapter: crate::threshold::rlk_generation::RlkGenerationAdapter,
+        public_key_share_bytes: Vec<u8>,
+        rlk_share_bytes: Vec<u8>,
+        other_public_key_share_bytes: Vec<u8>,
+        other_rlk_share_bytes: Vec<u8>,
+        public_key_row_signals: [Vec<u8>; LBFV_SHARE_ROW_COUNT],
+        rlk_row_signals: [Vec<u8>; LBFV_SHARE_ROW_COUNT],
+    }
+
+    fn lbfv_share_fixture() -> Result<LbfvShareFixture, crate::CircuitsErrors> {
+        let mut rng = rand::rng();
+        let params = BfvParametersBuilder::new()
+            .set_degree(8)
+            .set_plaintext_modulus(1153)
+            .set_moduli_sizes(&[62; LBFV_SHARE_ROW_COUNT])
+            .build_arc()
+            .map_err(|error| crate::CircuitsErrors::Other(error.to_string()))?;
+        let crp_d1 = CommonRandomPolyVec::new(&params, &mut rng)?;
+        let crp_a = CommonRandomPolyVec::new(&params, &mut rng)?;
+        let public_key_adapter =
+            crate::threshold::pk_generation::LbfvPkGenerationAdapter::from_crp(&params, &crp_a)?;
+        let rlk_adapter = crate::threshold::rlk_generation::RlkGenerationAdapter::from_rows(
+            &params, &crp_d1, &crp_a,
+        )?;
+        let secret_key = SecretKey::random(&params, &mut rng);
+        let public_key_share =
+            LbfvPublicKeyShare::contribute_with_crp(&secret_key, &crp_a, &mut rng)?;
+        let (rlk_share, _) = RelinKeyShare::contribution_with_crp_extended(
+            &secret_key,
+            &crp_d1,
+            &crp_a,
+            0,
+            0,
+            &mut rng,
+        )?;
+        let other_secret_key = SecretKey::random(&params, &mut rng);
+        let other_public_key_share =
+            LbfvPublicKeyShare::contribute_with_crp(&other_secret_key, &crp_a, &mut rng)?;
+        let (other_rlk_share, _) = RelinKeyShare::contribution_with_crp_extended(
+            &other_secret_key,
+            &crp_d1,
+            &crp_a,
+            0,
+            0,
+            &mut rng,
+        )?;
+        let bit = crate::compute_modulus_bit(&params);
+        let mut public_key_row_signals: [Vec<u8>; LBFV_SHARE_ROW_COUNT] =
+            std::array::from_fn(|_| {
+                vec![
+                    0;
+                    (LBFV_PK_GENERATION_INPUTS.len() + LBFV_PK_GENERATION_OUTPUTS.len())
+                        * FIELD_BYTE_LEN
+                ]
+            });
+        let mut rlk_row_signals: [Vec<u8>; LBFV_SHARE_ROW_COUNT] = std::array::from_fn(|_| {
+            vec![0; (RLK_GENERATION_INPUTS.len() + RLK_GENERATION_OUTPUTS.len()) * FIELD_BYTE_LEN]
+        });
+        let pk_commitment_field = LBFV_PK_GENERATION_INPUTS.len()
+            + LBFV_PK_GENERATION_OUTPUTS
+                .iter()
+                .position(|field| field.name == "pk_commitment")
+                .unwrap();
+        let d0_commitment_field = RLK_GENERATION_INPUTS.len()
+            + RLK_GENERATION_OUTPUTS
+                .iter()
+                .position(|field| field.name == "d0_commitment")
+                .unwrap();
+        let d2_commitment_field = RLK_GENERATION_INPUTS.len()
+            + RLK_GENERATION_OUTPUTS
+                .iter()
+                .position(|field| field.name == "d2_commitment")
+                .unwrap();
+
+        for row in 0..LBFV_SHARE_ROW_COUNT {
+            public_key_row_signals[row][3 * FIELD_BYTE_LEN + 28..4 * FIELD_BYTE_LEN]
+                .copy_from_slice(&(row as u32).to_be_bytes());
+            rlk_row_signals[row][3 * FIELD_BYTE_LEN + 28..4 * FIELD_BYTE_LEN]
+                .copy_from_slice(&(row as u32).to_be_bytes());
+            let (_, pk0) =
+                public_key_adapter.share_row_components(row as u32, &public_key_share)?;
+            let pk_commitment =
+                bigint_commitment_to_b256(compute_threshold_pk_commitment(&pk0, bit))?;
+            public_key_row_signals[row]
+                [pk_commitment_field * FIELD_BYTE_LEN..(pk_commitment_field + 1) * FIELD_BYTE_LEN]
+                .copy_from_slice(pk_commitment.as_slice());
+
+            let (d0, d2) = rlk_adapter.share_row_components(row as u32, &rlk_share)?;
+            let d0_commitment = bigint_commitment_to_b256(compute_rlk_d0_commitment(&d0, bit))?;
+            let d2_commitment = bigint_commitment_to_b256(compute_rlk_d2_commitment(&d2, bit))?;
+            rlk_row_signals[row]
+                [d0_commitment_field * FIELD_BYTE_LEN..(d0_commitment_field + 1) * FIELD_BYTE_LEN]
+                .copy_from_slice(d0_commitment.as_slice());
+            rlk_row_signals[row]
+                [d2_commitment_field * FIELD_BYTE_LEN..(d2_commitment_field + 1) * FIELD_BYTE_LEN]
+                .copy_from_slice(d2_commitment.as_slice());
+        }
+
+        Ok(LbfvShareFixture {
+            params,
+            public_key_adapter,
+            rlk_adapter,
+            public_key_share_bytes: public_key_share.to_bytes(),
+            rlk_share_bytes: rlk_share.to_bytes(),
+            other_public_key_share_bytes: other_public_key_share.to_bytes(),
+            other_rlk_share_bytes: other_rlk_share.to_bytes(),
+            public_key_row_signals,
+            rlk_row_signals,
+        })
+    }
+
+    fn validate_fixture(
+        fixture: &LbfvShareFixture,
+        public_key_share_bytes: &[u8],
+        rlk_share_bytes: &[u8],
+        public_key_row_signals: &[Vec<u8>],
+        rlk_row_signals: &[Vec<u8>],
+    ) -> Result<LbfvShareCommitments, crate::CircuitsErrors> {
+        let public_key_row_signals = public_key_row_signals
+            .iter()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        let rlk_row_signals = rlk_row_signals
+            .iter()
+            .map(Vec::as_slice)
+            .collect::<Vec<_>>();
+        validate_lbfv_serialized_share_commitments_with_adapters(
+            &fixture.params,
+            &fixture.public_key_adapter,
+            &fixture.rlk_adapter,
+            public_key_share_bytes,
+            rlk_share_bytes,
+            &public_key_row_signals,
+            &rlk_row_signals,
+        )
+    }
+
+    #[test]
+    fn lbfv_serialized_share_commitments_accept_valid_rows() -> Result<(), crate::CircuitsErrors> {
+        let fixture = lbfv_share_fixture()?;
+        let commitments = validate_fixture(
+            &fixture,
+            &fixture.public_key_share_bytes,
+            &fixture.rlk_share_bytes,
+            &fixture.public_key_row_signals,
+            &fixture.rlk_row_signals,
+        )?;
+
+        assert_eq!(commitments.pk_generation_commitments.len(), 5);
+        assert_eq!(commitments.rlk_d0_commitments.len(), 5);
+        assert_eq!(commitments.rlk_d2_commitments.len(), 5);
+        Ok(())
+    }
+
+    #[test]
+    fn lbfv_serialized_share_commitments_reject_mutated_shares() -> Result<(), crate::CircuitsErrors>
+    {
+        let fixture = lbfv_share_fixture()?;
+        let pk_error = validate_fixture(
+            &fixture,
+            &fixture.other_public_key_share_bytes,
+            &fixture.rlk_share_bytes,
+            &fixture.public_key_row_signals,
+            &fixture.rlk_row_signals,
+        )
+        .unwrap_err();
+        assert!(pk_error
+            .to_string()
+            .contains("public-key commitment mismatch"));
+
+        let rlk_error = validate_fixture(
+            &fixture,
+            &fixture.public_key_share_bytes,
+            &fixture.other_rlk_share_bytes,
+            &fixture.public_key_row_signals,
+            &fixture.rlk_row_signals,
+        )
+        .unwrap_err();
+        assert!(rlk_error.to_string().contains("RLK d0 commitment mismatch"));
+        Ok(())
+    }
+
+    #[test]
+    fn lbfv_serialized_share_commitments_reject_mutated_outputs(
+    ) -> Result<(), crate::CircuitsErrors> {
+        let fixture = lbfv_share_fixture()?;
+        let mut public_key_row_signals = fixture.public_key_row_signals.clone();
+        *public_key_row_signals[0].last_mut().unwrap() ^= 1;
+        let pk_error = validate_fixture(
+            &fixture,
+            &fixture.public_key_share_bytes,
+            &fixture.rlk_share_bytes,
+            &public_key_row_signals,
+            &fixture.rlk_row_signals,
+        )
+        .unwrap_err();
+        assert!(pk_error
+            .to_string()
+            .contains("public-key commitment mismatch"));
+
+        let mut rlk_row_signals = fixture.rlk_row_signals.clone();
+        rlk_row_signals[0][7 * FIELD_BYTE_LEN + 31] ^= 1;
+        let rlk_error = validate_fixture(
+            &fixture,
+            &fixture.public_key_share_bytes,
+            &fixture.rlk_share_bytes,
+            &fixture.public_key_row_signals,
+            &rlk_row_signals,
+        )
+        .unwrap_err();
+        assert!(rlk_error.to_string().contains("RLK d2 commitment mismatch"));
+        Ok(())
+    }
+
+    #[test]
+    fn lbfv_serialized_share_commitments_reject_wrong_row_order(
+    ) -> Result<(), crate::CircuitsErrors> {
+        let fixture = lbfv_share_fixture()?;
+        let mut public_key_row_signals = fixture.public_key_row_signals.clone();
+        public_key_row_signals.swap(0, 1);
+        let pk_error = validate_fixture(
+            &fixture,
+            &fixture.public_key_share_bytes,
+            &fixture.rlk_share_bytes,
+            &public_key_row_signals,
+            &fixture.rlk_row_signals,
+        )
+        .unwrap_err();
+        assert!(pk_error.to_string().contains("not in row 0"));
+
+        let mut rlk_row_signals = fixture.rlk_row_signals.clone();
+        rlk_row_signals.swap(0, 1);
+        let rlk_error = validate_fixture(
+            &fixture,
+            &fixture.public_key_share_bytes,
+            &fixture.rlk_share_bytes,
+            &fixture.public_key_row_signals,
+            &rlk_row_signals,
+        )
+        .unwrap_err();
+        assert!(rlk_error.to_string().contains("not in row 0"));
+        Ok(())
     }
 
     #[test]

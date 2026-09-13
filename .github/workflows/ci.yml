@@ -1098,8 +1098,12 @@ jobs:
               --committee "$committee" \
               --hydrate-bin-only \
               --no-clean-targets
+            verifier_circuits="dkg_aggregator,decryption_aggregator"
+            if [[ "$preset" == "secure-16384" && "$committee" == "minimum" ]]; then
+              verifier_circuits+=",dkg_aggregator_v2"
+            fi
             pnpm generate:verifiers \
-              --circuits dkg_aggregator,decryption_aggregator \
+              --circuits "$verifier_circuits" \
               --preset "$preset" \
               --committee "$committee" \
               --check \
@@ -1111,8 +1115,6 @@ jobs:
           secure-8192 micro
           secure-8192 small
           secure-16384 minimum
-          secure-16384 micro
-          secure-16384 small
           insecure minimum
           EOF
 

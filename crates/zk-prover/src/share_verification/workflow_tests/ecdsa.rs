@@ -130,12 +130,13 @@ fn prepare_rejects_one_signer_relabelled_across_other_party_slots() {
 
     let outcome = ShareVerifier::validate_and_prepare(
         &parties,
-        &e3.to_string(),
+        &e3,
         &VerificationKind::PkGenerationProofs,
         "C1",
         Some(&committee),
         BfvPreset::InsecureDkg512,
         CiphernodesCommitteeSize::Minimum,
+        None,
     );
 
     assert_eq!(outcome.ecdsa_passed_parties.len(), 1);
