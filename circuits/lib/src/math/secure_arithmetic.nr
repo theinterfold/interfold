@@ -32,6 +32,10 @@ pub global DS: [u8; 64] = [
 /// `K` is the configured bit width of `(q-1)/2`, which every parameter set already publishes as its
 /// public-key bit width. The interval is compared against the modulus itself rather than against a
 /// bit width, so this holds for any modulus, whatever its distance from a power of two.
+///
+/// The body is a single range check, so this reads as a redundant wrapper. It is kept as the named
+/// home for the representation helpers the remaining circuits need — converting between canonical
+/// native and centered forms, and reducing a bounded sum — which all rest on this same interval.
 pub fn centered<let N: u32, let K: u32>(a: Polynomial<N>, q: Field) {
     let half = (q - 1) / 2;
     a.range_check_2bounds::<K>(half, half);
