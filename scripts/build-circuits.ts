@@ -73,6 +73,23 @@ interface BuildOptions {
   committee?: CircuitCommittee | 'all'
   /** Skip writing BFV_DKG_H/T into `packages/interfold-contracts/scripts/utils.ts`. */
   skipUtilsPatch?: boolean
+  /**
+   * Skip the nested `cargo run --release --bin generate_parity_matrices` step.
+   *
+   * Parity matrices under
+   * `circuits/lib/src/configs/committee/<committee>/parity_{insecure,secure}.nr`
+   * are committed source and the authoritative input to circuit witnesses.
+   * Regenering them is a dev-time / top-level concern. When `build:circuits`
+   * is invoked from inside an outer `cargo` process (e.g. via
+   * `crates/zk-prover/scripts/build_fixtures.sh` reached from
+   * `crates/zk-prover/build.rs`), the nested `cargo run` deadlocks on the
+   * outer `target/release/.cargo-lock` (parent waits on build.rs, which waits
+   * on pnpm, which waits on the nested cargo, which waits on the outer lock).
+   * Set this flag in that case and trust the on-disk matrices — any genuine
+   * matrix change must be produced by running `pnpm build:circuits --committee <x>`
+   * from OUTSIDE cargo.
+   */
+  skipRegenParity?: boolean
 }
 
 interface PresetBuildStamp {
@@ -232,6 +249,14 @@ class NoirCircuitBuilder {
    * prover would compute at witness time.
    */
   private regenerateParityMatrices(committee: CircuitCommittee): void {
+    if (this.options.skipRegenParity) {
+      console.log(
+        `   ℹ️  --skip-regen-parity: trusting the committed on-disk parity matrices for committee ${committee} ` +
+          `(the nested cargo run would deadlock against the outer .cargo-lock). ` +
+          `To refresh them after a BFV-constant change, run \`pnpm build:circuits --committee ${committee}\` from outside cargo.`,
+      )
+      return
+    }
     const libDir = join(this.rootDir, 'circuits', 'lib')
     try {
       execSync(`cargo run --quiet --release --bin generate_parity_matrices -- --committee ${committee}`, {
@@ -826,7 +851,16 @@ library ActiveCryptoConfig {
       // Workspace roots ([workspace]) are not circuits; recurse to find leaf packages
       if (this.isWorkspaceOnly(nargoPath)) {
         this.findCircuitsInDir(fullPath, name, group, out)
-      } else if (!this.options.circuits || this.options.circuits.includes(name)) {
+        continue
+      }
+      // Noir lib packages (type = "lib") are dep-only, not standalone circuits:
+      // `nargo compile` returns RC 0 with no artifact emitted, which the
+      // artifact-existence check after would reject. Consumers pull them in
+      // as path deps at their own compile time.
+      if (this.isLibOnly(nargoPath)) {
+        continue
+      }
+      if (!this.options.circuits || this.options.circuits.includes(name)) {
         out.push({ name, group, path: fullPath })
       }
     }
@@ -835,6 +869,19 @@ library ActiveCryptoConfig {
   private isWorkspaceOnly(nargoPath: string): boolean {
     const content = readFileSync(nargoPath, 'utf-8')
     return /^\s*\[workspace\]/m.test(content) && !/^\s*\[package\]/m.test(content)
+  }
+
+  /** True for Noir library packages (Nargo.toml `[package] type = "lib"`), which are
+   *  path-dep-only and never emit a compiled artifact of their own. */
+  private isLibOnly(nargoPath: string): boolean {
+    const content = readFileSync(nargoPath, 'utf-8')
+    // ONLY recognize `type = "lib"` inside the [package] block (not a stray match in deps).
+    const pkgStart = content.indexOf('[package]')
+    if (pkgStart < 0) return false
+    const pkgEndMatch = content.search(/\n\s*\[/)
+    const pkgEnd = pkgEndMatch < 0 ? content.length : pkgEndMatch
+    const pkgBlock = content.slice(pkgStart, pkgEnd)
+    return /^\s*type\s*=\s*"lib"\s*$/m.test(pkgBlock)
   }
 
   /** Search dirs for compiled JSON; include parent targets (workspace members output to workspace root). */
@@ -1244,6 +1291,7 @@ async function main() {
       }
       options.committee = val as CircuitCommittee | 'all'
     } else if (arg === '--skip-utils-patch') options.skipUtilsPatch = true
+    else if (arg === '--skip-regen-parity') options.skipRegenParity = true
     else if (['hash', 'build', 'sync-config'].includes(arg)) command = arg
   }
 
@@ -1279,6 +1327,10 @@ Options:
   --preset <preset>   Parameter preset: insecure-512 (default), secure-8192, or all
   --committee <name>  Committee size: minimum (default), micro, small, or all
   --skip-utils-patch  Don't rewrite BFV_DKG_H/T in packages/interfold-contracts/scripts/utils.ts
+  --skip-regen-parity Skip the nested cargo parity-matrices step; trust the committed parity
+                      matrices on disk. Required when invoked from inside an outer cargo
+                      process (e.g. build.rs -> build_fixtures.sh) to avoid the nested-cargo
+                      .cargo-lock deadlock.
   --skip-vk           Skip verification key generation
   --skip-checksums    Skip checksum generation
   -o, --output <dir>  Output directory (default: dist/circuits)
