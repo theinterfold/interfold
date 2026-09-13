@@ -509,8 +509,10 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     Before C4 witness layout, merge external honest party_ids with own_party_id,
 │     sort ascending, and keep the lowest H — same rule as PublicKeyAggregator C5 cap
 │     (`e3_zk_helpers::canonical_honest_party_ids_with_own`). Persisted as `honest_parties`.
-│     Parties outside the lowest H still complete KeyshareCreated but are not in the
-│     aggregator's NodeFold / `honest_committee_addresses` roster.
+│     Parties outside the lowest H build C4 from all H selected senders' encrypted
+│     shares. They do not insert their own dealer share. They can complete
+│     KeyshareCreated, but they are not in the aggregator's NodeFold /
+│     `honest_committee_addresses` roster.
 │
 ├─ 3. PUBLISH C4 PROOF REQUESTS:
 │     DecryptionShareProofsPending {

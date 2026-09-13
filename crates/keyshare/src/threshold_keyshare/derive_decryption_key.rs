@@ -162,6 +162,7 @@ pub(crate) fn build_decryption_key_plan(
             true
         })
         .collect();
+    honest_shares.sort_unstable_by_key(|share| share.party_id);
 
     if !dimension_excluded.is_empty() {
         warn!(
@@ -201,32 +202,22 @@ pub(crate) fn build_decryption_key_plan(
     );
 
     let canonical_sorted: Vec<u64> = honest_party_ids.iter().copied().collect();
-    let own_in_canonical = honest_party_ids.contains(&own_party_id);
-    let own_plaintext_idx = if let Some(idx) =
-        canonical_sorted.iter().position(|&pid| pid == own_party_id)
-    {
-        idx
-    } else {
+    let own_plaintext_idx = canonical_sorted.iter().position(|&pid| pid == own_party_id);
+    if own_plaintext_idx.is_none() {
         warn!(
-                "Party {own_party_id} is outside the canonical honest roster (H={committee_h}, roster={honest_party_ids:?}) for E3 {e3_id}; \
-                 NodeFold/C5 on the aggregator will not include this party"
-            );
-        canonical_sorted.len().saturating_sub(1)
-    };
+            "Party {own_party_id} is outside the canonical honest roster (H={committee_h}, roster={honest_party_ids:?}) for E3 {e3_id}; \
+             NodeFold/C5 on the aggregator will not include this party"
+        );
+    }
     let num_honest = honest_party_ids.len();
-    let external_for_c4: &[&Arc<ThresholdShare>] = if own_in_canonical {
-        &honest_shares
-    } else {
-        &honest_shares[..num_honest.saturating_sub(1).min(honest_shares.len())]
-    };
+    let external_for_c4: &[&Arc<ThresholdShare>] = &honest_shares;
 
     info!(
         "Decrypting shares from {} honest parties (canonical roster size H={}) for E3 {}",
         num_honest, committee_h, e3_id
     );
 
-    // External ciphertexts for C4: own slot omitted from wire (rides as `own_share_raw`).
-    // C4a: sk_sss external ciphertexts [(H-1) * L]
+    // The own slot has no ciphertext. A party outside the roster decrypts all H slots.
     let num_moduli_sk = expected_num_moduli_sk;
     let mut sk_ciphertexts_raw = Vec::new();
     for ts in external_for_c4 {
@@ -269,12 +260,9 @@ pub(crate) fn build_decryption_key_plan(
         })
         .collect::<Result<_>>()?;
 
-    // Splice own sk share at the sorted-party position (when in the canonical roster).
-    let own_sk_shamir = vec_of_rows_to_shamir_share(&own_sk_rows, degree)?;
-    if own_in_canonical {
-        sk_sss_collected.insert(own_plaintext_idx, own_sk_shamir);
-    } else {
-        sk_sss_collected.push(own_sk_shamir);
+    if let Some(idx) = own_plaintext_idx {
+        let own_sk_shamir = vec_of_rows_to_shamir_share(&own_sk_rows, degree)?;
+        sk_sss_collected.insert(idx, own_sk_shamir);
     }
 
     // Decrypt per-party ESI shares: shape [external_party][esm_idx]
@@ -294,15 +282,12 @@ pub(crate) fn build_decryption_key_plan(
         })
         .collect::<Result<_>>()?;
 
-    // Splice own esi shares (one per smudging noise).
-    let own_esi_shamirs: Vec<ShamirShare> = own_esi_rows_per_esi
-        .iter()
-        .map(|rows| vec_of_rows_to_shamir_share(rows, degree))
-        .collect::<Result<_>>()?;
-    if own_in_canonical {
-        per_party_esi.insert(own_plaintext_idx, own_esi_shamirs);
-    } else {
-        per_party_esi.push(own_esi_shamirs);
+    if let Some(idx) = own_plaintext_idx {
+        let own_esi_shamirs: Vec<ShamirShare> = own_esi_rows_per_esi
+            .iter()
+            .map(|rows| vec_of_rows_to_shamir_share(rows, degree))
+            .collect::<Result<_>>()?;
+        per_party_esi.insert(idx, own_esi_shamirs);
     }
 
     // Transpose to [esm_idx][party] — CalculateDecryptionKey aggregates per smudging noise
@@ -336,7 +321,7 @@ pub(crate) fn build_decryption_key_plan(
         num_honest_parties: num_honest,
         num_moduli: num_moduli_sk,
         own_plaintext_idx,
-        own_share_raw: current.own_sk_share_raw.clone(),
+        own_share_raw: own_plaintext_idx.map(|_| current.own_sk_share_raw.clone()),
         dkg_input_type: DkgInputType::SecretKey,
         params_preset: threshold_preset,
         committee_size: committee,
@@ -351,7 +336,7 @@ pub(crate) fn build_decryption_key_plan(
             num_honest_parties: num_honest,
             num_moduli: num_moduli_esi,
             own_plaintext_idx,
-            own_share_raw: current.own_esi_shares_raw[esi_idx].clone(),
+            own_share_raw: own_plaintext_idx.map(|_| current.own_esi_shares_raw[esi_idx].clone()),
             dkg_input_type: DkgInputType::SmudgingNoise,
             params_preset: threshold_preset,
             committee_size: committee,

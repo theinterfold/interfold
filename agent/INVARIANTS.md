@@ -475,6 +475,9 @@ design citation alone does not establish current runtime behavior.
 - In the DKG aggregator, C3 key slots and C2 share slots use the selected recipient's full-committee
   `party_id`. C4 expected-commitment slots use the sender's position in the H-row fold. These
   indices differ when the selected H-subset skips a committee member. — `flow-trace/04`
+- A recipient outside the selected H dealers builds C4 from all H encrypted dealer shares.
+  It must not replace a selected dealer share with its own plaintext share. A selected
+  recipient uses its plaintext share only at its own row. — `flow-trace/04`
 - Proof multiplicity: C2a/C2b singleton per recipient; C3a/C3b follow configured Shamir
   multiplicities. Witness dimensions come from the **active preset**, never incidental vector sizes.
   — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
