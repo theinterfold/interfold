@@ -134,7 +134,8 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
             // implies the configured bound rather than replacing it, and leaves the global noise
             // distribution and its sampler unchanged.
             self.configs.e_sm_bound.assert_max_bit_size::<BIT_E_SM>();
-            (self.configs.e_sm_bound - (self.configs.qis[l] - 1) / 2).assert_max_bit_size::<BIT_E_SM>();
+            (self.configs.e_sm_bound - (self.configs.qis[l] - 1) / 2)
+                .assert_max_bit_size::<BIT_E_SM>();
             centered::<N, BIT_PK>(self.e_sm[l], self.configs.qis[l]);
         }
 
@@ -149,9 +150,15 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         // Step 5: bind every independent operand before drawing the checking point. pk0 and sk are
         // bound through their commitments; eek and the quotients are packed directly; the moduli
         // and `a` are configuration constants.
-        let mut payload =
-            [101, N as Field, L as Field, sk_commitment, pk_commitment, e_sm_commitment]
-                .as_vector();
+        let mut payload = [
+            101,
+            N as Field,
+            L as Field,
+            sk_commitment,
+            pk_commitment,
+            e_sm_commitment,
+        ]
+            .as_vector();
         payload = append::<N, BIT_EEK + 1>(payload, self.eek, self.configs.eek_bound);
         for l in 0..L {
             payload = payload.push_back(self.configs.qis[l]);

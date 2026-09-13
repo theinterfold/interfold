@@ -124,9 +124,18 @@ fn centered_accepts_both_interval_ends() {
     let q8192 = 288230376164294657;
     let q16384 = 1125899917262849;
     let q512 = 68719403009;
-    centered::<5, 58>(Polynomial::new([-(q8192 - 1) / 2, -1, 0, 1, (q8192 - 1) / 2]), q8192);
-    centered::<5, 50>(Polynomial::new([-(q16384 - 1) / 2, -1, 0, 1, (q16384 - 1) / 2]), q16384);
-    centered::<5, 35>(Polynomial::new([-(q512 - 1) / 2, -1, 0, 1, (q512 - 1) / 2]), q512);
+    centered::<5, 58>(
+        Polynomial::new([-(q8192 - 1) / 2, -1, 0, 1, (q8192 - 1) / 2]),
+        q8192,
+    );
+    centered::<5, 50>(
+        Polynomial::new([-(q16384 - 1) / 2, -1, 0, 1, (q16384 - 1) / 2]),
+        q16384,
+    );
+    centered::<5, 35>(
+        Polynomial::new([-(q512 - 1) / 2, -1, 0, 1, (q512 - 1) / 2]),
+        q512,
+    );
 }
 
 #[test(should_fail)]
