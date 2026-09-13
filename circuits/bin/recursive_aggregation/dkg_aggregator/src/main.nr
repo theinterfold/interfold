@@ -216,9 +216,8 @@ fn test_non_prefix_c0_c3_rejects_wrong_recipient() {
 fn test_non_prefix_c2_c4_rejects_wrong_recipient() {
     let (mut nodes_fold_public, party_ids) = non_prefix_fixture();
     let recipient_id = party_ids[H - 1] as u32;
-    nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-        + NF_C2A_BASE_IDX
-        + recipient_id * L_THRESHOLD] = 0;
+    nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2A_BASE_IDX + recipient_id * L_THRESHOLD] =
+        0;
     assert_selected_c2_c4_links(nodes_fold_public, party_ids);
 }
 
