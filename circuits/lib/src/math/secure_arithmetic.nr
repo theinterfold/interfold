@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Compact arithmetic for the secure-8192 circuit paths.
+//! Compact arithmetic for the circuit paths that work in `Z[X]/(X^N+1)`.
 //!
 //! The routines here let a circuit prove a BFV relation in `Z[X]/(X^N+1)` instead of `Z[X]`.
 //! Reduction modulo `q_l` becomes an additive `q_l * short` term rather than an operation, and the
@@ -17,14 +17,6 @@
 
 use crate::math::helpers::compute_safe;
 use crate::math::polynomial::Polynomial;
-
-/// Widest gap these routines accept above a modulus' power-of-two floor.
-///
-/// Every secure threshold prime is `2^K + gap` with `gap` below 24 bits, so this holds for the
-/// whole family with a bit to spare. A modulus whose gap does not fit is rejected by `check_split`,
-/// which is what keeps the insecure parameter set out: its gap is as wide as its floor.
-pub global SPLIT_GAP_BITS: u32 = 25;
-
 // INTERFOLD_MAX_SUITE_V1. The circuit identifier is also absorbed into each transcript.
 pub global DS: [u8; 64] = [
     73, 78, 84, 69, 82, 70, 79, 76, 68, 95, 77, 65, 88, 95, 83, 85, 73, 84, 69, 95, 86, 49, 0, 0, 0,
@@ -32,49 +24,17 @@ pub global DS: [u8; 64] = [
     0, 0, 0, 0, 0, 0, 0,
 ];
 
-// Flags are hints only. check_split proves both the flag and the exact interval.
-unconstrained fn flags_hint<let N: u32, let K: u32>(a: [Field; N], offset: Field) -> [Field; N] {
-    let mut out = [0; N];
-    for j in 0..N {
-        out[j] = ((((a[j] + offset) as u128) >> (K as u128)) & 1) as Field;
-    }
-    out
-}
-
-/// Constrains `v` to `[0, 2^K + gap)` for a bound that sits just above a power of two.
-///
-/// With `b` the one-bit flag and `r = v - b * 2^K`, the three checks accept `[0, 2^K)` when `b = 0`
-/// and `[2^K, 2^K + gap)` when `b = 1`. The union is exact, not an approximation: negative values
-/// fail because their wrapped representatives cannot fit either interval.
-pub fn check_split<let K: u32, let G: u32>(v: Field, gap: Field, flag: Field) {
-    assert(K > G);
-    assert(K <= 62);
-    assert(G > 0);
-    gap.assert_max_bit_size::<G>();
-    assert(gap != 0);
-    flag.assert_max_bit_size::<1>();
-    let low = v - flag * 2.pow_32(K as Field);
-    low.assert_max_bit_size::<K>();
-    (gap - 1 - flag * low).assert_max_bit_size::<G>();
-}
-
 /// Constrains every coefficient to the canonical centered interval `[-(q-1)/2, (q-1)/2]`.
 ///
 /// This fixes one representative per residue class, so a commitment over the result binds to a
 /// value rather than to whichever lift the prover preferred.
 ///
-/// `K` is the modulus' power-of-two floor, which for every threshold parameter set is the same
-/// value the configuration already publishes as its public-key bit width. The gap above that floor
-/// is derived here rather than configured, and `check_split` rejects a modulus whose gap does not
-/// fit `SPLIT_GAP_BITS`.
+/// `K` is the configured bit width of `(q-1)/2`, which every parameter set already publishes as its
+/// public-key bit width. The interval is compared against the modulus itself rather than against a
+/// bit width, so this holds for any modulus, whatever its distance from a power of two.
 pub fn centered<let N: u32, let K: u32>(a: Polynomial<N>, q: Field) {
     let half = (q - 1) / 2;
-    let gap = q - 2.pow_32(K as Field);
-    // Safety: check_split constrains each flag and the exact centered interval.
-    let flags = unsafe { flags_hint::<N, K>(a.coefficients, half) };
-    for j in 0..N {
-        check_split::<K, SPLIT_GAP_BITS>(a.coefficients[j] + half, gap, flags[j]);
-    }
+    a.range_check_2bounds::<K>(half, half);
 }
 
 /// Packs range-checked coefficients into field carriers for a challenge transcript.
@@ -154,50 +114,28 @@ pub fn fold_negacyclic<let N: u32>(poly: Polynomial<2 * N - 1>) -> Polynomial<N>
 }
 
 #[test]
-fn split_exact_boundaries() {
-    check_split::<5, 3>(0, 5, 0);
-    check_split::<5, 3>(31, 5, 0);
-    check_split::<5, 3>(32, 5, 1);
-    check_split::<5, 3>(36, 5, 1);
-}
-#[test(should_fail)]
-fn split_rejects_upper() {
-    check_split::<5, 3>(37, 5, 1);
-}
-#[test(should_fail)]
-fn split_rejects_bad_flag() {
-    check_split::<5, 3>(32, 5, 0);
-}
-#[test(should_fail)]
-fn split_rejects_negative() {
-    check_split::<5, 3>(-1, 5, 0);
-}
-
-#[test]
-fn split_covers_every_secure_modulus() {
-    // One modulus from each secure parameter set: 2^58 + gap and 2^50 + gap.
+fn centered_accepts_both_interval_ends() {
+    // One modulus from each parameter set, including the insecure one, whose distance from a power
+    // of two differs in every case.
     let q8192 = 288230376164294657;
     let q16384 = 1125899917262849;
-    check_split::<58, SPLIT_GAP_BITS>(0, q8192 - 288230376151711744, 0);
-    check_split::<58, SPLIT_GAP_BITS>(q8192 - 1, q8192 - 288230376151711744, 1);
-    check_split::<50, SPLIT_GAP_BITS>(0, q16384 - 1125899906842624, 0);
-    check_split::<50, SPLIT_GAP_BITS>(q16384 - 1, q16384 - 1125899906842624, 1);
-}
-
-#[test]
-fn centered_accepts_both_interval_ends() {
-    let q = 288230376164294657;
-    let half = (q - 1) / 2;
-    let p = Polynomial::new([-half, -1, 0, 1, half]);
-    centered::<5, 58>(p, q);
+    let q512 = 68719403009;
+    centered::<5, 58>(Polynomial::new([-(q8192 - 1) / 2, -1, 0, 1, (q8192 - 1) / 2]), q8192);
+    centered::<5, 50>(Polynomial::new([-(q16384 - 1) / 2, -1, 0, 1, (q16384 - 1) / 2]), q16384);
+    centered::<5, 35>(Polynomial::new([-(q512 - 1) / 2, -1, 0, 1, (q512 - 1) / 2]), q512);
 }
 
 #[test(should_fail)]
 fn centered_rejects_non_canonical() {
     let q = 288230376164294657;
     // One coefficient lifted by a whole modulus: congruent, but not the canonical representative.
-    let p = Polynomial::new([0, 0, q, 0, 0]);
-    centered::<5, 58>(p, q);
+    centered::<5, 58>(Polynomial::new([0, 0, q, 0, 0]), q);
+}
+
+#[test(should_fail)]
+fn centered_rejects_just_past_the_interval() {
+    let q = 288230376164294657;
+    centered::<5, 58>(Polynomial::new([0, 0, (q - 1) / 2 + 1, 0, 0]), q);
 }
 
 #[test]

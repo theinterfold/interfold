@@ -55,11 +55,8 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 /// - `commit(pk_trbfv)` -> C5 (pk aggregation).
 /// - `commit(e_sm)` -> C2b (share computation).
 ///
-/// `BIT_PK` doubles as the power-of-two floor of each modulus, and `BIT_R1` sets the quotient
-/// window. Both come from the configuration, so the circuit covers every secure parameter set
-/// without per-preset constants. Insecure parameters are not supported: their moduli sit too far
-/// above a power of two for the interval check, which rejects them rather than accepting a weaker
-/// bound.
+/// `BIT_PK` bounds each centered coefficient and `BIT_R1` sets the quotient window. Both come from
+/// the configuration, so the circuit covers every parameter set without per-preset constants.
 pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
     /// Cryptographic parameters including bounds, moduli, and constants.
     configs: Configs<N, L>,
