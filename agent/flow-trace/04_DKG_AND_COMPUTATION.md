@@ -664,6 +664,8 @@ phase.
 │   │     │   → exactly N ordered committee addresses from `CommitteeFinalized` (`topNodes`),
 │   │     │     including a member excluded before it submitted a keyshare
 │   │     │   → Rust validates both dimensions before invoking the compiled circuit
+│   │     │   → `dkg_aggregator` uses each selected party ID for N-wide C3 and C2 recipient slots;
+│   │     │     H-wide C4 sender slots use the selected party's fold-row position
 │   │     ├─ Tracks the in-flight correlation id
 │   │     ├─ ComputeRequestError now emits
 │   │     │   E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGInvalidShares }

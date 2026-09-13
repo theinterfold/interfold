@@ -11,9 +11,8 @@
 //!
 //! Committee sizing: `committee_members` covers the **full registered committee** of size
 //! `N_PARTIES`, matching `topNodes` on-chain. The H folded `party_ids` are indices into that
-//! full committee (today `H == N_PARTIES`; after future honest-set selection `H` may be smaller
-//! than `N_PARTIES`). `committee_members` must be supplied in the same order as on-chain
-//! `topNodes`; the hash equality is what pins that order.
+//! full committee. `H` may be smaller than `N_PARTIES`. Supply `committee_members` in the same
+//! order as on-chain `topNodes`; the hash equality pins that order.
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::dkg::L_THRESHOLD;
@@ -68,9 +67,8 @@ fn main(
     assert(expected_lo == committee_hash_lo);
 
     // Range-check each folded `party_ids[i]` against the full committee size `N_PARTIES`.
-    // This makes `committee_members[party_ids[i]]` a well-defined committee slot (today
-    // `H == N_PARTIES`; preserves soundness once `H < N_PARTIES`) and is the structural
-    // pre-condition for future per-party signer/identity constraints.
+    // This makes `committee_members[party_ids[i]]` a well-defined committee slot and is the
+    // structural pre-condition for future per-party signer/identity constraints.
     for i in 0..H {
         let id = party_ids[i] as u32;
         assert(id < N_PARTIES);
@@ -95,61 +93,8 @@ fn main(
         );
     }
 
-    // Cross-node C0 to C3: each row's c3_pk[j] (recipient pk used in party i's C3 encryption for
-    // recipient j) must equal party j's own c0_pk.
-    for i in 0..H {
-        for j in 0..H {
-            assert(
-                nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-                    + i * NODE_FOLD_PUBLIC_LEN
-                    + NF_C3_PK_BASE_IDX
-                    + j]
-                    == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-                        + j * NODE_FOLD_PUBLIC_LEN
-                        + NF_C0_PK_IDX],
-            );
-        }
-    }
-
-    // Cross-party C2 to C4 (first chain).
-    for i in 0..H {
-        for j in 0..H {
-            for l in 0..L_THRESHOLD {
-                assert(
-                    nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-                        + j * NODE_FOLD_PUBLIC_LEN
-                        + NF_C4A_BASE_IDX
-                        + i * L_THRESHOLD
-                        + l]
-                        == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-                            + i * NODE_FOLD_PUBLIC_LEN
-                            + NF_C2A_BASE_IDX
-                            + j * L_THRESHOLD
-                            + l],
-                );
-            }
-        }
-    }
-
-    // Cross-party C2 to C4 (second chain).
-    for i in 0..H {
-        for j in 0..H {
-            for l in 0..L_THRESHOLD {
-                assert(
-                    nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-                        + j * NODE_FOLD_PUBLIC_LEN
-                        + NF_C4B_BASE_IDX
-                        + i * L_THRESHOLD
-                        + l]
-                        == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-                            + i * NODE_FOLD_PUBLIC_LEN
-                            + NF_C2B_BASE_IDX
-                            + j * L_THRESHOLD
-                            + l],
-                );
-            }
-        }
-    }
+    assert_selected_c0_c3_links(nodes_fold_public, party_ids);
+    assert_selected_c2_c4_links(nodes_fold_public, party_ids);
 
     // Cross-circuit C5 to `node_fold`: C5 row `i` matches that node's `c1_pk` public field.
     for i in 0..H {
@@ -177,4 +122,140 @@ fn main(
     let aggregated_pk_commit = c5_public[H];
 
     (key_hash, sk_agg_commits, esm_agg_commits, aggregated_pk_commit)
+}
+
+fn assert_selected_c0_c3_links(
+    nodes_fold_public: [Field; NODES_FOLD_PUBLIC_LEN],
+    party_ids: [Field; H],
+) {
+    // C3 recipient slots use full-committee party IDs, not folded row positions.
+    for i in 0..H {
+        for j in 0..H {
+            let recipient_id = party_ids[j] as u32;
+            assert(
+                nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+                    + i * NODE_FOLD_PUBLIC_LEN
+                    + NF_C3_PK_BASE_IDX
+                    + recipient_id]
+                    == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+                        + j * NODE_FOLD_PUBLIC_LEN
+                        + NF_C0_PK_IDX],
+            );
+        }
+    }
+}
+
+fn assert_selected_c2_c4_links(
+    nodes_fold_public: [Field; NODES_FOLD_PUBLIC_LEN],
+    party_ids: [Field; H],
+) {
+    // C2 recipient slots use full-committee party IDs. C4 sender slots use folded row positions.
+    for i in 0..H {
+        for j in 0..H {
+            let recipient_id = party_ids[j] as u32;
+            for l in 0..L_THRESHOLD {
+                assert(
+                    nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+                        + j * NODE_FOLD_PUBLIC_LEN
+                        + NF_C4A_BASE_IDX
+                        + i * L_THRESHOLD
+                        + l]
+                        == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+                            + i * NODE_FOLD_PUBLIC_LEN
+                            + NF_C2A_BASE_IDX
+                            + recipient_id * L_THRESHOLD
+                            + l],
+                );
+            }
+        }
+    }
+
+    // Cross-party C2 to C4 (second chain).
+    for i in 0..H {
+        for j in 0..H {
+            let recipient_id = party_ids[j] as u32;
+            for l in 0..L_THRESHOLD {
+                assert(
+                    nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+                        + j * NODE_FOLD_PUBLIC_LEN
+                        + NF_C4B_BASE_IDX
+                        + i * L_THRESHOLD
+                        + l]
+                        == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+                            + i * NODE_FOLD_PUBLIC_LEN
+                            + NF_C2B_BASE_IDX
+                            + recipient_id * L_THRESHOLD
+                            + l],
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn test_non_prefix_c0_c3_links() {
+    let (nodes_fold_public, party_ids) = non_prefix_fixture();
+    assert_selected_c0_c3_links(nodes_fold_public, party_ids);
+}
+
+#[test]
+fn test_non_prefix_c2_c4_links() {
+    let (nodes_fold_public, party_ids) = non_prefix_fixture();
+    assert_selected_c2_c4_links(nodes_fold_public, party_ids);
+}
+
+#[test(should_fail)]
+fn test_non_prefix_c0_c3_rejects_wrong_recipient() {
+    let (mut nodes_fold_public, party_ids) = non_prefix_fixture();
+    let recipient_id = party_ids[H - 1] as u32;
+    nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C3_PK_BASE_IDX + recipient_id] = 0;
+    assert_selected_c0_c3_links(nodes_fold_public, party_ids);
+}
+
+#[test(should_fail)]
+fn test_non_prefix_c2_c4_rejects_wrong_recipient() {
+    let (mut nodes_fold_public, party_ids) = non_prefix_fixture();
+    let recipient_id = party_ids[H - 1] as u32;
+    nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+        + NF_C2A_BASE_IDX
+        + recipient_id * L_THRESHOLD] = 0;
+    assert_selected_c2_c4_links(nodes_fold_public, party_ids);
+}
+
+fn non_prefix_fixture() -> ([Field; NODES_FOLD_PUBLIC_LEN], [Field; H]) {
+    assert(H < N_PARTIES);
+    let mut party_ids: [Field; H] = [0; H];
+    for row in 0..H {
+        party_ids[row] = row as Field;
+    }
+    party_ids[H - 1] = (N_PARTIES - 1) as Field;
+
+    let mut nodes_fold_public: [Field; NODES_FOLD_PUBLIC_LEN] = [0; NODES_FOLD_PUBLIC_LEN];
+    for row in 0..H {
+        let base = NODES_FOLD_PARAM_PUBLIC_LEN + row * NODE_FOLD_PUBLIC_LEN;
+        nodes_fold_public[base + NF_PARTY_ID_IDX] = party_ids[row];
+        nodes_fold_public[base + NF_C0_PK_IDX] = 100 + party_ids[row];
+    }
+
+    for sender_row in 0..H {
+        let sender_base = NODES_FOLD_PARAM_PUBLIC_LEN + sender_row * NODE_FOLD_PUBLIC_LEN;
+        for recipient_row in 0..H {
+            let recipient_id = party_ids[recipient_row] as u32;
+            let recipient_base = NODES_FOLD_PARAM_PUBLIC_LEN + recipient_row * NODE_FOLD_PUBLIC_LEN;
+            nodes_fold_public[sender_base + NF_C3_PK_BASE_IDX + recipient_id] =
+                nodes_fold_public[recipient_base + NF_C0_PK_IDX];
+
+            for l in 0..L_THRESHOLD {
+                let c2_slot = recipient_id * L_THRESHOLD + l;
+                let c4_slot = sender_row * L_THRESHOLD + l;
+                let value = (1000 + sender_row * N_PARTIES * L_THRESHOLD + c2_slot) as Field;
+                nodes_fold_public[sender_base + NF_C2A_BASE_IDX + c2_slot] = value;
+                nodes_fold_public[recipient_base + NF_C4A_BASE_IDX + c4_slot] = value;
+                nodes_fold_public[sender_base + NF_C2B_BASE_IDX + c2_slot] = value + 1000;
+                nodes_fold_public[recipient_base + NF_C4B_BASE_IDX + c4_slot] = value + 1000;
+            }
+        }
+    }
+
+    (nodes_fold_public, party_ids)
 }

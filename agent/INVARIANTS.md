@@ -472,6 +472,9 @@ design citation alone does not establish current runtime behavior.
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert
   `H == N`. A mixed Some/None NodeFold set is terminal DKG failure. — `ARCHITECTURE.md`;
   `flow-trace/04`
+- In the DKG aggregator, C3 key slots and C2 share slots use the selected recipient's full-committee
+  `party_id`. C4 expected-commitment slots use the sender's position in the H-row fold. These
+  indices differ when the selected H-subset skips a committee member. — `flow-trace/04`
 - Proof multiplicity: C2a/C2b singleton per recipient; C3a/C3b follow configured Shamir
   multiplicities. Witness dimensions come from the **active preset**, never incidental vector sizes.
   — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
