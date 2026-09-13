@@ -217,13 +217,13 @@ Both GenPkShareAndSkSss and GenEsiSss complete
 │
 ├─ handle_shares_generated():
 │   │
-│   ├─ 1. For EACH collected recipient slot in sorted real-party order:
-│   │     Map compact recipient slot → real party_id (expelled parties may be absent)
-│   │     Encrypt sk_sss[real_party_id] under that party's BFV public key
-│   │     Encrypt esi_sss[*][real_party_id] under that party's BFV public key
-│   │     Leave the sender's own slot empty (own plaintext rides locally into C4)
+│   ├─ 1. Build an N-slot C3 fan-out in finalized committee order:
+│   │     For each party with a collected C0 key, encrypt that party's share under its key.
+│   │     For a party without a collected C0 key, encrypt its share under the sender's
+│   │     C0 key to fill the C3 proof slot. Do not deliver that placeholder share.
+│   │     Leave the sender's own slot empty (own plaintext rides locally into C4).
 │   │     → BfvEncryptedShares::encrypt_all_extended_for_share_indices()
-│   │     → Only the mapped real party can decrypt their share
+│   │     → C3 still proves all N-1 non-own slots; only parties with C0 keys get shares.
 │   │
 │   ├─ 2. Build ThresholdShare struct:
 │   │     {
@@ -251,7 +251,7 @@ Both GenPkShareAndSkSss and GenEsiSss complete
 │   │       e_sm_share_computation_request(C2b),
 │   │       sk_share_encryption_requests(C3a[]),
 │   │       e_sm_share_encryption_requests(C3b[]),
-│   │       recipient_party_ids
+│   │       recipient_party_ids // parties with collected C0 keys, not placeholder slots
 │   │     }
 │   │     → ProofRequestActor picks this up
 │   │

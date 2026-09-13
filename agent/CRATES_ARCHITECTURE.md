@@ -595,7 +595,9 @@ validator therefore normalizes a DKG preset to its threshold counterpart before 
 C3 request for each threshold Shamir row even though the row is encrypted and proven with the paired
 DKG BFV parameters. The invariant is independent of committee size for one recipient; full sender
 fanout has `(N - 1) * L_THRESHOLD` C3a proofs and the same number of C3b proofs because the sender
-does not encrypt its own slot.
+does not encrypt its own slot. If a party's C0 key is absent, the sender uses its own C0 key to fill
+that party's C3 proof slot. The placeholder ciphertext is not delivered to the absent party. This
+keeps the N-wide circuit witness intact; it does not resolve roster agreement or collector timeouts.
 
 The current TrBFV implementation creates exactly one smudging-noise share set (`Z = 1`). The general
 C3b multiplicity would be `Z * L_THRESHOLD` per recipient. Supporting multiple ESI/smudging-noise
