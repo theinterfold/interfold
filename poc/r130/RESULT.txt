@@ -1,0 +1,103 @@
+r130 RESULT (closing leg — 2026-09-13, i5/dkg-research on origin/main base 95c38d70, 72/0)
+=================================================================
+Idea: I-r130 (r127 n2 queue item 4) — composite fix for the fixture-bootstrap
+nested-cargo deadlock (outer cargo test/build -> build.rs -> build_fixtures.sh
+-> pnpm build:circuits -> nested `cargo run generate_parity_matrices` -> waits
+on the outer target/release/.cargo-lock -> deadlock on any lean checkout).
+
+Composite fix (re-authored this tick after a prior session crashed mid-round
+leaving the tree dirty; re-verified from scratch per skill pitfall #4):
+  FIX1 scripts/build-circuits.ts: new `--skip-regen-parity` flag;
+      regenerateParityMatrices() early-returns trusting the COMMITTED parity
+      matrices (git-tracked literals under circuits/lib/src/configs/committee/
+      <committee>/parity_{insecure,secure}.nr; documented refresh path = top-
+      level `pnpm build:circuits --committee <x>` from OUTSIDE cargo).
+  FIX2 crates/zk-prover/scripts/build_fixtures.sh: passes --skip-regen-parity.
+  FIX3 scripts/build-circuits.ts: new isLibOnly() classifier — Noir
+      `[package] type = "lib"` packages (c3_fold_batch_lib) are dep-only;
+      `nargo compile` RC 0 emits no artifact, which the artifact-existence
+      check rejected (this was the residual build failure after FIX1/FIX2;
+      RAN-observed in r130_final.log the prior tick: "Built 36... 
+      c3_fold_batch_lib: compiled artifact not found").
+
+RAN evidence (this tick, ALL executed, numbers below):
+  (a) v5 semantic leg (run_r130_v5.sh, as systemd-run --user unit r130v5.service,
+      MemoryMax=28G):
+        T0 2026-09-13T06:09:16Z -> T1 2026-09-13T06:12:16Z = 180.0 s wall,
+        RC=0, under an OUTER -x flock on target/release/.cargo-lock (the r127
+        n2 shape: cargo holds this lock while build.rs runs).
+        Pre-state: the 4 commit-required artifacts DELETED (lean-checkout
+        precondition; .active-preset.json + c3_fold + c6_fold +
+        c6_fold_kernel json absent).
+        Build: "Found 36 circuit(s)" ... "✅ Built 36 circuits for preset:
+        insecure-512/minimum", circuits_success=true, source_hash=5efe5df10c056317
+        (lean checkout before the FIX3 round had "Found 37" and FAILED at the
+        lib-only package — FIX3 makes the failure path pass end to end).
+        Short-circuit marker present in log: "ℹ️  --skip-regen-parity: trusting
+        the committed on-disk parity matrices for committee minimum".
+        NESTED-CARGO OBSERVABLE (PATH cargo-trap at bin-trap/cargo, front of
+        PATH for the whole leg): ZERO lines logged = zero cargo processes
+        spawned across the entire fixed build_fixtures.sh run. Pre-fix, this
+        exact path is what deadlocks (r127 n2, 45-min flatline,
+        wchan=locks_lock_inode_wait).
+        Artifact byte-determinism (re-gated post-run):
+          c3_fold.json          sha 240cd86c156a68dd2fa7c55acb34ddbe67764d92152d11dac937f0c063be0891 = r111 anchor DIGIT-EXACT
+          c6_fold.json          sha 27571a52e377d4e6ab78def9594a22d2a15c848f659451f0262e7ae9992863bc = r111 anchor DIGIT-EXACT
+          c6_fold_kernel.json   sha eed9aea56e2eeba9f2943297aff1c87ff7ac1c366b6a12ed1175ddf69bfc0199 = r111 anchor DIGIT-EXACT
+        Preset stays committed default: .active-preset.json =
+        {preset: insecure-512, committee: minimum, sourceHash: 5efe5df10c056317};
+        configs/default/mod.nr + committee/active.nr untouched (git-clean).
+        System: 304% CPU, peak RSS 9,748,792 kB = 9.30 GiB, Swaps 0.
+  (b) lib-only classifier unit check (libonly_check.cjs): RC 0 — c3_fold_batch_lib
+      classified LIB/skipped; c3_fold_service + c3_fold classified PKG/built.
+  (c) Regression test crates/zk-prover/tests/bootstrap_fixtures_r130.rs
+      (in-repo, re-runnable; asserts FIX1 hook+guard precedence, FIX2 flag,
+      FIX3 classifier presence): `cargo test --release -p e3-zk-prover --test
+      bootstrap_fixtures_r130` = 1 passed / 0 failed [RAN this tick].
+      NOTE: the prior tick's test file was authoring-corrupted (TS-style
+      `const X = "..."` no type, broken panic! strings, workspace-relative
+      paths, a brittle `matches("cargo run").count()==1` that broke the
+      moment doc comments mentioned "cargo run"). All fixed this tick; the
+      guard-to-call check now anchors on the execSync call site.
+  (d) Gate: cargo check --workspace RC 0 (2.80 s) [RAN this tick].
+
+Prior-tick evidence retained (re-verified on-disk this tick, not re-run):
+  - v4 anchor leg: `cargo build --release -p e3-zk-prover` from the lean tree
+    RAN 1:04.89 wall / peak 1.34 GiB Swaps 0 RC 0 (watcher_full.log) — same
+    diff content, so the in-cargo bootstrap path compiles the crate.
+  - r130_final.log (prior tick): the PRE-FIX3 failure mode (c3_fold_batch_lib
+    artifact-not-found -> build.rs assert fail) — the exact bug FIX3 closes;
+    its FIX1/FIX2 behavior (skip marker fired, 36 circuits built, byte-restore
+    of the 4 deleted artifacts at r111 SHAs) is the same code as (a) above.
+  - Infratge note (RAN): the agent's terminal-executor worker cgroup SIGKILLs
+    background `cargo build` at ~4 GiB anon-rss (dmesg class CONSTRAINT_MEMCG,
+    r126 finding) even though the box has ~29 GiB free; v5 above ran as a
+    systemd-run --user unit with MemoryMax=28G and survived (peak 9.30 GiB).
+    DURABLE PROTOCOL: run the r130 legs (any in-cargo bootstrap compile) as a
+    systemd-run --user unit, never as a bare background job from the agent
+    terminal.
+
+Infra (this tick, READ-ONLY):
+  - dkg_chain_gate.py (scripts/dkg_chain_gate.py) reproduces its current stdout
+    exactly: "HOLD run=4e9ee60f.. claimed=2026-09-13T01:08:44.." — i.e. it keys
+    on the CURRENT in-flight round row (this session) in ~/.hermes/cron/
+    executions.db, not on stale state. No DB mutation was performed this tick;
+    the HOLD line reported at tick start is the expected steady state while the
+    round runs (the gate prints HOLD for any inflight row and fires on its
+    terminal transition). The prior 2026-09-12 gate diff (run=be55351b..) and
+    the 21:36–21:39 spike of four consecutive `failed` rows (rowids 751–754)
+    predate this tick and are unchanged here.
+
+Tree state at handoff:
+  porcelain = M crates/zk-prover/scripts/build_fixtures.sh , M scripts/build-
+  circuits.ts , ?? crates/zk-prover/tests/bootstrap_fixtures_r130.rs (+poc/r130/),
+  i5/dkg-research @ origin/main 95c38d70 (base), 72 ahead / 0 behind, NO REBASE
+  (r129's base stands).
+
+UPSTREAM-PR: the FIX1/FIX2/FIX3 diff (scripts/build-circuits.ts +
+crates/zk-prover/scripts/build_fixtures.sh + tests/bootstrap_fixtures_r130.rs)
+is a build-infra reproducibility fix that belongs upstream itself — it repairs
+any clone/build on a lean checkout (the r127-n2 deadlock + the r130 lib-only
+artifact check failure), is fully RAN-verified (reproducible GREEN path +
+regression test), and touches no circuit/crypto semantics. Commit SHAs added
+at commit time. Flag only — owner opens/decides the PR.

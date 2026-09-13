@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: LGPL-3.0-only
+//
 //! r130 regression: fixture-bootstrap nested-cargo deadlock (r127 n2, composite fix).
 //!
 //! Deadlock mechanism (r127 RAN diagnosis): `crates/zk-prover/build.rs` runs

@@ -1,0 +1,181 @@
+   Compiling once_cell v1.21.3
+   Compiling either v1.15.0
+   Compiling hmac v0.12.1
+   Compiling crunchy v0.2.4
+   Compiling tiny-keccak v2.0.2
+   Compiling futures-io v0.3.31
+   Compiling displaydoc v0.2.5
+   Compiling base64ct v1.8.3
+   Compiling rustls-webpki v0.103.13
+   Compiling rfc6979 v0.4.0
+   Compiling tracing-core v0.1.36
+   Compiling ecdsa v0.16.9
+   Compiling itertools v0.14.0
+   Compiling ahash v0.8.12
+   Compiling futures-util v0.3.31
+   Compiling c-kzg v2.1.5
+   Compiling pem-rfc7468 v1.0.0
+   Compiling tinystr v0.8.2
+   Compiling tracing v0.1.41
+   Compiling k256 v0.13.4
+   Compiling icu_locale_core v2.1.1
+   Compiling zerotrie v0.2.3
+   Compiling icu_collections v2.1.1
+   Compiling alloy-primitives v1.4.1
+   Compiling itertools v0.15.0
+   Compiling rustls v0.23.36
+   Compiling icu_provider v2.1.1
+   Compiling icu_normalizer v2.1.1
+   Compiling alloy-json-abi v1.4.1
+   Compiling alloy-eip2124 v0.2.0
+   Compiling alloy-eip2930 v0.2.1
+   Compiling alloy-serde v1.0.41
+   Compiling alloy-eip7702 v0.6.1
+   Compiling alloy-sol-types v1.4.1
+   Compiling alloy-trie v0.9.3
+   Compiling icu_properties v2.1.2
+   Compiling tower v0.5.3
+   Compiling alloy-eips v1.0.41
+   Compiling der v0.8.1
+   Compiling idna_adapter v1.2.1
+   Compiling idna v1.1.0
+   Compiling url v2.5.4
+   Compiling alloy-consensus v1.0.41
+   Compiling alloy-json-rpc v1.0.41
+   Compiling h2 v0.4.13
+   Compiling futures-executor v0.3.31
+   Compiling openssl v0.10.75
+   Compiling futures v0.3.31
+   Compiling ark-poly v0.6.0
+   Compiling tokio-rustls v0.26.4
+   Compiling spki v0.8.0
+   Compiling sec1 v0.8.1
+   Compiling pkcs8 v0.11.0
+   Compiling alloy-transport v1.0.41
+   Compiling alloy-consensus-any v1.0.41
+   Compiling alloy-network-primitives v1.0.41
+   Compiling alloy-rpc-types-eth v1.0.41
+   Compiling ark-ec v0.6.0
+   Compiling rayon v1.10.0
+   Compiling hyper v1.8.1
+   Compiling native-tls v0.2.14
+   Compiling ark-bn254 v0.6.0
+   Compiling hyper-util v0.1.19
+   Compiling tokio-native-tls v0.3.1
+   Compiling elliptic-curve v0.14.1
+   Compiling tungstenite v0.26.2
+   Compiling tempfile v3.20.0
+   Compiling hyper-tls v0.6.0
+   Compiling hyper-rustls v0.27.7
+   Compiling alloy-pubsub v1.0.41
+   Compiling tower-http v0.6.8
+   Compiling alloy-rpc-types-any v1.0.41
+   Compiling alloy-dyn-abi v1.4.1
+   Compiling alloy-signer v1.0.41
+   Compiling serde_bytes v0.11.19
+   Compiling reqwest v0.12.22
+   Compiling acir_field v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling ecdsa v0.17.0
+   Compiling alloy-network v1.0.41
+   Compiling primeorder v0.14.0
+   Compiling tokio-tungstenite v0.26.2
+   Compiling alloy-chains v0.2.30
+   Compiling itertools v0.10.5
+   Compiling itertools v0.13.0
+   Compiling alloy-hardforks v0.2.13
+   Compiling prime_factorization v1.0.5
+   Compiling alloy-transport-http v1.0.41
+   Compiling ark-ff v0.5.0
+   Compiling alloy-transport-ws v1.0.41
+   Compiling alloy-signer-local v1.0.41
+   Compiling brillig v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling alloy-transport-ipc v1.0.41
+   Compiling num-bigint-dig v0.9.1
+   Compiling alloy-rpc-types-trace v1.0.41
+   Compiling alloy-rpc-types-txpool v1.0.41
+   Compiling alloy-rpc-types-anvil v1.0.41
+   Compiling alloy-genesis v1.0.41
+   Compiling alloy-rpc-types-debug v1.0.41
+   Compiling hashbrown v0.14.5
+   Compiling acir v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling dashmap v6.1.0
+   Compiling fhe-util v0.2.1 (https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d225)
+   Compiling alloy-node-bindings v1.0.41
+   Compiling alloy-rpc-client v1.0.41
+   Compiling k256 v0.14.0
+   Compiling ark-poly v0.5.0
+   Compiling p256 v0.14.0
+   Compiling fhe-math v0.2.1 (https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d225)
+   Compiling acvm_blackbox_solver v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling alloy-provider v1.0.41
+   Compiling ark-ec v0.5.0
+   Compiling alloy-rpc-types v1.0.41
+   Compiling alloy-core v1.3.0
+   Compiling fhe v0.2.1 (https://github.com/gnosisguild/fhe.rs?tag=v0.2.2#f2c1d225)
+   Compiling brillig_vm v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling tracing-log v0.2.0
+   Compiling tracing-subscriber v0.3.20
+   Compiling actix v0.13.5
+   Compiling acvm v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling ark-bn254 v0.5.0
+   Compiling e3-polynomial v0.14.0 (/home/dev/interfold-research/interfold/crates/polynomial)
+   Compiling taceo-poseidon2 v0.2.1
+   Compiling e3-fhe-params v0.14.0 (/home/dev/interfold-research/interfold/crates/fhe-params)
+   Compiling e3-safe v0.14.0 (/home/dev/interfold-research/interfold/crates/safe)
+   Compiling password-hash v0.5.0
+   Compiling tracing-test v0.2.5
+   Compiling argon2 v0.5.3
+   Compiling e3-zk-helpers v0.14.0 (/home/dev/interfold-research/interfold/crates/zk-helpers)
+   Compiling alloy-contract v1.0.41
+   Compiling alloy v1.0.41
+   Compiling e3-utils v0.14.0 (/home/dev/interfold-research/interfold/crates/utils)
+   Compiling noirc_printable_type v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling e3-crypto v0.14.0 (/home/dev/interfold-research/interfold/crates/crypto)
+   Compiling e3-bfv-client v0.14.0 (/home/dev/interfold-research/interfold/crates/bfv-client)
+   Compiling petname v2.0.2
+   Compiling e3-committee-hash v0.14.0 (/home/dev/interfold-research/interfold/crates/committee-hash)
+   Compiling noirc_abi v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling e3-trbfv v0.14.0 (/home/dev/interfold-research/interfold/crates/trbfv)
+   Compiling ark-grumpkin v0.6.0
+   Compiling bn254_blackbox_solver v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling figment v0.10.19
+   Compiling jsonrpsee-core v0.26.0
+   Compiling noirc_artifacts v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling e3-events v0.14.0 (/home/dev/interfold-research/interfold/crates/events)
+   Compiling noirc_frontend v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling noir_greybox_fuzzer v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling jsonrpsee v0.26.0
+   Compiling console v0.15.11
+   Compiling indicatif v0.17.11
+   Compiling e3-zk-prover v0.14.0 (/home/dev/interfold-research/interfold/crates/zk-prover)
+   Compiling e3-config v0.14.0 (/home/dev/interfold-research/interfold/crates/config)
+   Compiling e3-data v0.14.0 (/home/dev/interfold-research/interfold/crates/data)
+   Compiling e3-request v0.14.0 (/home/dev/interfold-research/interfold/crates/request)
+   Compiling e3-slashing v0.14.0 (/home/dev/interfold-research/interfold/crates/slashing)
+   Compiling noirc_evaluator v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling noirc_driver v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+   Compiling nargo v1.0.0-beta.26 (https://github.com/noir-lang/noir?tag=v1.0.0-beta.26#40d6574f)
+    Finished `release` profile [optimized] target(s) in 1m 04s
+	Command being timed: "cargo build --release -p e3-zk-prover"
+	User time (seconds): 435.58
+	System time (seconds): 15.29
+	Percent of CPU this job got: 694%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 1:04.89
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1340536
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 204
+	Minor (reclaiming a frame) page faults: 7971942
+	Voluntary context switches: 17514
+	Involuntary context switches: 25062
+	Swaps: 0
+	File system inputs: 47832
+	File system outputs: 1550792
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0

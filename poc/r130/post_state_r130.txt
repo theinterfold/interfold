@@ -1,0 +1,5 @@
+=== POST-STATE (T1=2026-09-13T01:00:20Z) ===
+circuits/bin/.active-preset.json | sha256=480274cf1ade72aa95781bce61e750490c8e5388e922675ce135d7afec57e757 | size=134
+circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.json | sha256=240cd86c156a68dd2fa7c55acb34ddbe67764d92152d11dac937f0c063be0891 | size=23755
+circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json | sha256=27571a52e377d4e6ab78def9594a22d2a15c848f659451f0262e7ae9992863bc | size=23628
+circuits/bin/recursive_aggregation/c6_fold_kernel/target/c6_fold_kernel.json | sha256=eed9aea56e2eeba9f2943297aff1c87ff7ac1c366b6a12ed1175ddf69bfc0199 | size=19983

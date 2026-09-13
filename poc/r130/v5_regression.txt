@@ -1,0 +1,41 @@
+44 | #[test]
+   | - unexpected token
+
+error: missing type for `const` item
+  --> crates/zk-prover/tests/bootstrap_fixtures_r130.rs:41:17
+   |
+41 | const FIXTURE_SH = "crates/zk-prover/scripts/build_fixtures.sh"
+   |                 ^ help: provide a type for the constant: `: &str`
+
+error: missing type for `const` item
+  --> crates/zk-prover/tests/bootstrap_fixtures_r130.rs:42:15
+   |
+42 | const BUILD_TS = "scripts/build-circuits.ts"
+   |               ^ help: provide a type for the constant: `: &str`
+
+error: could not compile `e3-zk-prover` (test "bootstrap_fixtures_r130") due to 4 previous errors
+Command exited with non-zero status 101
+	Command being timed: "cargo test --release -p e3-zk-prover --test bootstrap_fixtures_r130"
+	User time (seconds): 113.39
+	System time (seconds): 3.00
+	Percent of CPU this job got: 643%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 0:18.08
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 1076156
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 23
+	Minor (reclaiming a frame) page faults: 1490611
+	Voluntary context switches: 1906
+	Involuntary context switches: 3778
+	Swaps: 0
+	File system inputs: 5008
+	File system outputs: 185904
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 101
+REG_EXIT=0
