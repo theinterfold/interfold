@@ -6,9 +6,6 @@
 
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-pub(crate) const DKG_WINDOW_ENV: &str = "E3_DKG_WINDOW_SECS";
-pub(crate) const DEFAULT_DKG_WINDOW_SECS: u64 = 7200;
-
 const ENCRYPTION_KEY_CUTOFF_BPS: u64 = 1000;
 const THRESHOLD_SHARE_CUTOFF_BPS: u64 = 6000;
 const DECRYPTION_KEY_SHARED_CUTOFF_BPS: u64 = 10000;
@@ -66,67 +63,50 @@ pub(crate) fn now_unix_secs() -> u64 {
 
 pub(crate) fn resolve_timeout(
     phase: DkgTimeoutPhase,
-    dkg_started_at_unix_secs: Option<u64>,
-) -> DerivedTimeout {
+    dkg_deadline_unix_secs: Option<u64>,
+    dkg_window_secs: Option<u64>,
+) -> anyhow::Result<DerivedTimeout> {
     let collector_override = parse_env_secs(phase.override_env());
-    let dkg_window_secs = parse_env_secs(DKG_WINDOW_ENV).unwrap_or(DEFAULT_DKG_WINDOW_SECS);
+    let deadline = dkg_deadline_unix_secs
+        .ok_or_else(|| anyhow::anyhow!("canonical DKG deadline is unavailable"))?;
+    let window =
+        dkg_window_secs.ok_or_else(|| anyhow::anyhow!("frozen DKG window is unavailable"))?;
 
-    resolve_timeout_from_inputs(
-        phase,
-        collector_override,
-        dkg_window_secs,
-        dkg_started_at_unix_secs,
-        now_unix_secs(),
-    )
+    resolve_timeout_from_inputs(phase, collector_override, deadline, window, now_unix_secs())
 }
 
 pub(crate) fn resolve_timeout_from_inputs(
     phase: DkgTimeoutPhase,
     collector_override_secs: Option<u64>,
+    dkg_deadline_unix_secs: u64,
     dkg_window_secs: u64,
-    dkg_started_at_unix_secs: Option<u64>,
     now_unix_secs: u64,
-) -> DerivedTimeout {
-    if let Some(override_secs) = collector_override_secs {
-        return DerivedTimeout {
-            duration: Duration::from_secs(override_secs),
-            description: format!(
-                "{} timeout override from {}={}s",
-                phase.label(),
-                phase.override_env(),
-                override_secs
-            ),
-        };
-    }
+) -> anyhow::Result<DerivedTimeout> {
+    anyhow::ensure!(
+        dkg_deadline_unix_secs > 0 && dkg_window_secs > 0,
+        "canonical DKG timing is invalid"
+    );
+    let start = dkg_deadline_unix_secs.saturating_sub(dkg_window_secs);
+    let cutoff = start
+        .saturating_add(phase_cutoff_secs(dkg_window_secs, phase.cutoff_bps()))
+        .min(dkg_deadline_unix_secs);
+    let remaining_secs = cutoff.saturating_sub(now_unix_secs);
+    let duration_secs = collector_override_secs
+        .map(|override_secs| override_secs.min(remaining_secs))
+        .unwrap_or(remaining_secs);
 
-    let cutoff_secs = phase_cutoff_secs(dkg_window_secs, phase.cutoff_bps());
-    let remaining_secs = match dkg_started_at_unix_secs {
-        Some(started_at) => cutoff_secs.saturating_sub(now_unix_secs.saturating_sub(started_at)),
-        None => cutoff_secs,
-    };
-
-    let description = match dkg_started_at_unix_secs {
-        Some(started_at) => format!(
-            "{} timeout derived from {}={}s, DKG start {}, cutoff {}% of DKG window",
+    Ok(DerivedTimeout {
+        duration: Duration::from_secs(duration_secs),
+        description: format!(
+            "{} cutoff {} ({}% of frozen {}s DKG window, canonical deadline {}); optional {} can only shorten it",
             phase.label(),
-            DKG_WINDOW_ENV,
+            cutoff,
+            phase.cutoff_bps() / 100,
             dkg_window_secs,
-            started_at,
-            phase.cutoff_bps() / 100
+            dkg_deadline_unix_secs,
+            phase.override_env(),
         ),
-        None => format!(
-            "{} timeout derived from {}={}s with missing DKG start, using full cutoff budget of {}%",
-            phase.label(),
-            DKG_WINDOW_ENV,
-            dkg_window_secs,
-            phase.cutoff_bps() / 100
-        ),
-    };
-
-    DerivedTimeout {
-        duration: Duration::from_secs(remaining_secs),
-        description,
-    }
+    })
 }
 
 fn parse_env_secs(name: &str) -> Option<u64> {
@@ -151,13 +131,14 @@ mod tests {
         let timeout = resolve_timeout_from_inputs(
             DkgTimeoutPhase::EncryptionKeyCollection,
             None,
+            8_200,
             7200,
-            Some(1_000),
             1_600,
-        );
+        )
+        .unwrap();
 
         assert_eq!(timeout.duration, Duration::from_secs(120));
-        assert!(timeout.description.contains(DKG_WINDOW_ENV));
+        assert!(timeout.description.contains("canonical deadline"));
     }
 
     #[test]
@@ -165,27 +146,71 @@ mod tests {
         let timeout = resolve_timeout_from_inputs(
             DkgTimeoutPhase::ThresholdShareCollection,
             None,
+            8_200,
             7200,
-            Some(1_000),
             2_000,
-        );
+        )
+        .unwrap();
 
         assert_eq!(timeout.duration, Duration::from_secs(3320));
     }
 
     #[test]
-    fn collector_override_wins_over_dkg_window() {
+    fn collector_override_can_only_shorten_canonical_budget() {
         let timeout = resolve_timeout_from_inputs(
             DkgTimeoutPhase::DecryptionKeySharedCollection,
             Some(45),
+            8_200,
             7200,
-            Some(1_000),
             8_000,
-        );
+        )
+        .unwrap();
 
         assert_eq!(timeout.duration, Duration::from_secs(45));
         assert!(timeout
             .description
             .contains(DkgTimeoutPhase::DecryptionKeySharedCollection.override_env()));
+
+        let past = resolve_timeout_from_inputs(
+            DkgTimeoutPhase::DecryptionKeySharedCollection,
+            Some(45),
+            8_200,
+            7200,
+            8_300,
+        )
+        .unwrap();
+        assert_eq!(past.duration, Duration::ZERO);
+    }
+
+    #[test]
+    fn each_e3_keeps_its_frozen_deadline_across_restart() {
+        let short = resolve_timeout_from_inputs(
+            DkgTimeoutPhase::ThresholdShareCollection,
+            None,
+            4_600,
+            3_600,
+            2_000,
+        )
+        .unwrap();
+        let long = resolve_timeout_from_inputs(
+            DkgTimeoutPhase::ThresholdShareCollection,
+            None,
+            8_200,
+            7_200,
+            2_000,
+        )
+        .unwrap();
+        let restarted_short = resolve_timeout_from_inputs(
+            DkgTimeoutPhase::ThresholdShareCollection,
+            None,
+            4_600,
+            3_600,
+            2_600,
+        )
+        .unwrap();
+
+        assert_eq!(short.duration, Duration::from_secs(1_160));
+        assert_eq!(long.duration, Duration::from_secs(3_320));
+        assert_eq!(restarted_short.duration, Duration::from_secs(560));
     }
 }

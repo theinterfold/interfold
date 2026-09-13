@@ -177,7 +177,7 @@ pub trait SequenceIndex: Unpin + 'static {
 pub trait EventLog: Unpin + 'static {
     /// Append an event to the log, returning its sequence number
     fn append(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<u64>;
-    /// Flush buffered log and index data before a clean process exit.
+    /// Sync the log before a stored event can be broadcast or on clean exit.
     ///
     /// In-memory and test implementations may use the default no-op. Durable
     /// implementations should override this and propagate I/O failures.

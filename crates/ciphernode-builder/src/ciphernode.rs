@@ -68,6 +68,7 @@ pub struct CiphernodeHandle {
     pub network_status: NetworkStatus,
     pub eventstore: EventStoreReader,
     pub aggregate_ids: Vec<usize>,
+    pub persistence_health: tokio::sync::watch::Receiver<Option<String>>,
 }
 
 impl PartialEq for CiphernodeHandle {
@@ -101,6 +102,10 @@ impl CiphernodeHandle {
 
     pub fn eventstore(&self) -> EventStoreReader {
         self.eventstore.clone()
+    }
+
+    pub fn persistence_health(&self) -> tokio::sync::watch::Receiver<Option<String>> {
+        self.persistence_health.clone()
     }
 
     pub fn aggregate_ids(&self) -> &[usize] {

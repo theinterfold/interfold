@@ -184,8 +184,8 @@ use std::{
     hash::Hash,
 };
 
-/// Commit-log records may be larger than the network's 10 MiB transport frame, but never exceed
-/// the 32 MiB durable record cap configured by `e3-data`.
+/// Maximum size for an inline event record or a network-decoded event.
+/// Larger local events use the private blob path in `e3-data`.
 pub const MAX_ENCODED_EVENT_BYTES: u64 = 32 * 1024 * 1024;
 
 /// Macro to generate EventType enum and implement From traits
@@ -502,6 +502,21 @@ mod serialization_tests {
     use super::*;
 
     #[test]
+    fn document_events_use_their_e3_chain_aggregate() {
+        let meta = DocumentMeta::new(E3id::new("7", 1), DocumentKind::TrBFV, vec![], None);
+        let value = e3_utils::ArcBytes::from_bytes(b"document");
+        let publish = InterfoldEventData::PublishDocumentRequested(PublishDocumentRequested {
+            meta: meta.clone(),
+            value: value.clone(),
+        });
+        let received = InterfoldEventData::DocumentReceived(DocumentReceived { meta, value });
+        let expected = AggregateId::from_chain_id(Some(1));
+
+        assert_eq!(publish.get_aggregate_id(), expected);
+        assert_eq!(received.get_aggregate_id(), expected);
+    }
+
+    #[test]
     fn event_decode_rejects_trailing_bytes() {
         let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
             TestEvent::new("bounded", 1).into(),
@@ -623,6 +638,8 @@ impl InterfoldEventData {
             InterfoldEventData::KeyshareCreated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::E3Requested(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::E3RequestComplete(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::PublishDocumentRequested(ref data) => Some(data.meta.e3_id.clone()),
+            InterfoldEventData::DocumentReceived(ref data) => Some(data.meta.e3_id.clone()),
             InterfoldEventData::PublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CiphertextOutputPublished(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionKeyShared(ref data) => Some(data.e3_id.clone()),

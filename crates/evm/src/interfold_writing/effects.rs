@@ -12,6 +12,28 @@ pub(in crate::actors::interfold_sol_writer) enum MarkFailureOutcome {
     StageAdvanced,
 }
 
+pub(in crate::actors::interfold_sol_writer) enum FailureSettlementOutcome {
+    Submitted(Box<TransactionReceipt>),
+    Pending,
+    Completed,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SettlementPreflight {
+    Pending,
+    Completed,
+    Ready,
+}
+
+fn settlement_preflight(stage: u8) -> Result<SettlementPreflight> {
+    Ok(match stage {
+        1..=4 => SettlementPreflight::Pending,
+        5 => SettlementPreflight::Completed,
+        6 => SettlementPreflight::Ready,
+        _ => anyhow::bail!("cannot settle E3 failure at unknown contract stage {stage}"),
+    })
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::actors::interfold_sol_writer) struct FailureSchedule {
     pub deadline: u64,
@@ -229,10 +251,18 @@ pub(in crate::actors::interfold_sol_writer) async fn process_e3_failure<
     provider: EthProvider<P>,
     contract_address: Address,
     e3_id: E3id,
-) -> Result<TransactionReceipt> {
+) -> Result<FailureSettlementOutcome> {
     let e3_id: U256 = e3_id.try_into()?;
 
     info!("processE3Failure() e3_id={:?}", e3_id);
+
+    let contract = IInterfold::new(contract_address, provider.provider());
+    let stage = contract.getE3Stage(e3_id).call().await?;
+    match settlement_preflight(stage)? {
+        SettlementPreflight::Pending => return Ok(FailureSettlementOutcome::Pending),
+        SettlementPreflight::Completed => return Ok(FailureSettlementOutcome::Completed),
+        SettlementPreflight::Ready => {}
+    }
 
     let _nonce_guard = transaction_nonce_guard(&provider).await;
     let from_address = provider.provider().default_signer_address();
@@ -241,13 +271,12 @@ pub(in crate::actors::interfold_sol_writer) async fn process_e3_failure<
         .get_transaction_count(from_address)
         .pending()
         .await?;
-    let contract = IInterfold::new(contract_address, provider.provider());
     let builder = contract.processE3Failure(e3_id).nonce(current_nonce);
     let pending = builder.send().await?;
     drop(_nonce_guard);
     let receipt = pending.get_receipt().await?;
     require_successful_receipt("process E3 failure", &receipt)?;
-    Ok(receipt)
+    Ok(FailureSettlementOutcome::Submitted(Box::new(receipt)))
 }
 
 pub(in crate::actors::interfold_sol_writer) fn failure_settlement_error_is_terminal(
@@ -263,10 +292,24 @@ pub(in crate::actors::interfold_sol_writer) fn failure_settlement_error_is_termi
 mod tests {
     use super::{
         failure_settlement_error_is_terminal, failure_stage_code, requested_failure_deadline,
+        settlement_preflight, SettlementPreflight,
     };
     use crate::contracts::IInterfold;
     use alloy::sol_types::SolError;
     use e3_events::E3Stage;
+
+    #[test]
+    fn local_failure_cannot_start_chain_settlement() {
+        assert_eq!(
+            settlement_preflight(2).unwrap(),
+            SettlementPreflight::Pending
+        );
+        assert_eq!(
+            settlement_preflight(5).unwrap(),
+            SettlementPreflight::Completed
+        );
+        assert_eq!(settlement_preflight(6).unwrap(), SettlementPreflight::Ready);
+    }
 
     #[test]
     fn all_contract_failure_stages_are_watched() {

@@ -58,6 +58,9 @@ impl Handler<TypedEvent<E3Requested>> for CiphernodeSelector {
     type Result = ();
 
     fn handle(&mut self, msg: TypedEvent<E3Requested>, _: &mut Self::Context) -> Self::Result {
+        if self.terminal_e3s.contains(&msg.e3_id) {
+            return;
+        }
         trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
             self.state.try_mutate(msg.get_ctx(), |mut state| {
                 state
@@ -78,6 +81,9 @@ impl Handler<WithSortitionTicket<TypedEvent<E3Requested>>> for CiphernodeSelecto
         data: WithSortitionTicket<TypedEvent<E3Requested>>,
         _: &mut Self::Context,
     ) -> Self::Result {
+        if self.terminal_e3s.contains(&data.e3_id) {
+            return;
+        }
         trap(EType::Sortition, &self.bus.with_ec(data.get_ctx()), || {
             self.state.try_mutate(data.get_ctx(), |mut state| {
                 info!(
@@ -134,6 +140,7 @@ impl Handler<TypedEvent<E3RequestComplete>> for CiphernodeSelector {
                     state.is_aggregator.remove(&msg.e3_id);
                     Ok(state)
                 })?;
+                self.terminal_e3s.insert(msg.e3_id.clone());
                 self.observed_phases.remove(&msg.e3_id);
                 self.ready_phases.remove(&msg.e3_id);
                 self.failover.try_mutate(msg.get_ctx(), |mut state| {
@@ -156,6 +163,9 @@ impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {
         msg: TypedEvent<CommitteeFinalized>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
+        if self.terminal_e3s.contains(&msg.e3_id) {
+            return;
+        }
         trap(
             EType::Sortition,
             &self.bus.with_ec(msg.get_ctx()),
@@ -335,6 +345,9 @@ impl Handler<TypedEvent<E3StageChanged>> for CiphernodeSelector {
 
     fn handle(&mut self, msg: TypedEvent<E3StageChanged>, ctx: &mut Self::Context) -> Self::Result {
         trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
+            if matches!(msg.new_stage, E3Stage::Complete | E3Stage::Failed) {
+                self.terminal_e3s.insert(msg.e3_id.clone());
+            }
             if matches!(&msg.new_stage, E3Stage::None | E3Stage::Requested) {
                 return Ok(());
             }

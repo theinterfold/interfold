@@ -67,6 +67,7 @@ const DHT_MAX_TTL: Duration = Duration::from_secs(31 * 24 * 60 * 60);
 const DHT_MAX_PROVIDERS_PER_KEY: usize = 20;
 const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 3;
 const STALE_PEER_COOLDOWN: Duration = Duration::from_secs(30 * 60);
+const CONFIGURED_PEER_REDIAL_INTERVAL: Duration = Duration::from_secs(15);
 pub(crate) const EVENT_CHANNEL_SIZE: usize = 1000;
 const CMD_CHANNEL_SIZE: usize = 1000;
 const LIBP2P_ESTABLISHED_PER_PEER_LIMIT_TEXT: &str = "established connections per peer";
@@ -82,6 +83,7 @@ struct PeerConnectionFailures {
     dial: PeerFailureTracker,
     identity_mismatch: PeerFailureTracker,
     quarantined_until: HashMap<libp2p::PeerId, Instant>,
+    identity_quarantined: HashSet<libp2p::PeerId>,
 }
 
 impl PeerConnectionFailures {
@@ -90,6 +92,7 @@ impl PeerConnectionFailures {
             dial: PeerFailureTracker::new(),
             identity_mismatch: PeerFailureTracker::new(),
             quarantined_until: HashMap::new(),
+            identity_quarantined: HashSet::new(),
         }
     }
 
@@ -97,6 +100,7 @@ impl PeerConnectionFailures {
         self.dial.reset(peer_id);
         self.identity_mismatch.reset(peer_id);
         self.quarantined_until.remove(peer_id);
+        self.identity_quarantined.remove(peer_id);
     }
 
     fn record_dial_failure(&mut self, peer_id: &libp2p::PeerId) -> Option<u32> {
@@ -111,6 +115,19 @@ impl PeerConnectionFailures {
         self.dial.reset(peer_id);
         self.quarantined_until
             .insert(*peer_id, Instant::now() + STALE_PEER_COOLDOWN);
+    }
+
+    fn quarantine_identity(&mut self, peer_id: &libp2p::PeerId) {
+        self.quarantine(peer_id);
+        self.identity_quarantined.insert(*peer_id);
+    }
+
+    fn is_identity_quarantined(&mut self, peer_id: &libp2p::PeerId) -> bool {
+        if !self.is_quarantined(peer_id) {
+            self.identity_quarantined.remove(peer_id);
+            return false;
+        }
+        self.identity_quarantined.contains(peer_id)
     }
 
     fn is_quarantined(&mut self, peer_id: &libp2p::PeerId) -> bool {
@@ -295,6 +312,21 @@ impl Libp2pNetInterface {
         let mut dht_records_by_peer: HashMap<libp2p::PeerId, HashSet<Vec<u8>>> = HashMap::new();
         let mut admission_tick = tokio::time::interval(Duration::from_secs(5));
         admission_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut configured_peer_tick = tokio::time::interval(CONFIGURED_PEER_REDIAL_INTERVAL);
+        configured_peer_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        configured_peer_tick.tick().await;
+        let mut configured_peers: Vec<_> = self
+            .peers
+            .iter()
+            .filter_map(|address| {
+                let address: Multiaddr = address.parse().ok()?;
+                let peer_id = match address.iter().last() {
+                    Some(Protocol::P2p(peer_id)) => Some(peer_id),
+                    _ => None,
+                };
+                Some((peer_id, strip_peer_id(address)))
+            })
+            .collect();
         // Limit repeated backpressure warnings.
         let mut last_backpressure_warn = Instant::now();
 
@@ -366,6 +398,14 @@ impl Libp2pNetInterface {
                         }
                     }
                 }
+                _ = configured_peer_tick.tick() => {
+                    redial_disconnected_configured_peers(
+                        &mut self.swarm,
+                        &configured_peers,
+                        &mut peer_failures,
+                        &peer_admission,
+                    );
+                }
                 // Process commands
                 Some(command) = cmd_rx.recv() => {
                     if let NetCommand::Shutdown = command {
@@ -373,6 +413,16 @@ impl Libp2pNetInterface {
                             error!("Error processing NetCommand: {e}");
                         }
                         break;
+                    }
+
+                    if let NetCommand::ConfiguredPeerAdmitted { address, peer_id } = command {
+                        let address = strip_peer_id(address);
+                        for (configured_id, configured_address) in &mut configured_peers {
+                            if *configured_address == address {
+                                *configured_id = Some(peer_id);
+                            }
+                        }
+                        continue;
                     }
 
                     if let Err(e) = process_swarm_command(
@@ -395,6 +445,7 @@ impl Libp2pNetInterface {
                         &mut correlator,
                         &mut peer_failures,
                         &mut peer_admission,
+                        &mut configured_peers,
                         &mut dht_records_by_peer,
                         &self.network,
                         &self.status,
@@ -417,6 +468,34 @@ impl Libp2pNetInterface {
 
         info!("Event loop exited");
         Ok(())
+    }
+}
+
+fn redial_disconnected_configured_peers(
+    swarm: &mut Swarm<NodeBehaviour>,
+    configured: &[(Option<libp2p::PeerId>, Multiaddr)],
+    failures: &mut PeerConnectionFailures,
+    admission: &PeerAdmission,
+) {
+    for (peer_id, address) in configured {
+        let Some(peer_id) = peer_id else {
+            continue;
+        };
+        if *peer_id == *swarm.local_peer_id()
+            || swarm.is_connected(peer_id)
+            || failures.is_identity_quarantined(peer_id)
+            || admission.is_rejected(peer_id)
+        {
+            continue;
+        }
+        let options = DialOpts::peer_id(*peer_id)
+            .addresses(vec![address.clone()])
+            .build();
+        match swarm.dial(options) {
+            Ok(()) => debug!(%peer_id, %address, "Redialing a disconnected configured peer"),
+            Err(DialError::DialPeerConditionFalse(_)) => {}
+            Err(error) => debug!(%peer_id, %address, %error, "Configured peer redial skipped"),
+        }
     }
 }
 
@@ -516,6 +595,7 @@ async fn process_swarm_event(
     correlator: &mut Correlator,
     peer_failures: &mut PeerConnectionFailures,
     peer_admission: &mut PeerAdmission,
+    configured_peers: &mut [(Option<libp2p::PeerId>, Multiaddr)],
     dht_records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
     network: &NetworkPolicy,
     status: &NetworkStatus,
@@ -552,6 +632,10 @@ async fn process_swarm_event(
                         .add_address(&peer_id, remote_addr);
                 }
                 event_tx.send(NetEvent::ConnectionEstablished { connection_id })?;
+                event_tx.send(NetEvent::ConfiguredDialAdmitted {
+                    connection_id,
+                    peer_id,
+                })?;
             } else if let Err(kind) = peer_admission.stage(
                 peer_id,
                 PeerAdmission::pending(
@@ -591,7 +675,7 @@ async fn process_swarm_event(
                     let remote_addr = address.clone();
                     let mismatch_count =
                         peer_failures.identity_mismatch.record_failure(failed_peer);
-                    peer_failures.quarantine(failed_peer);
+                    peer_failures.quarantine_identity(failed_peer);
                     if mismatch_count == 1 {
                         info!(
                             "Peer ID mismatch at {remote_addr}: expected {failed_peer}, got {obtained} — \
@@ -609,6 +693,17 @@ async fn process_swarm_event(
                         // Strip the stale /p2p/<old-id> suffix, otherwise dials to the
                         // new peer via this address fail with WrongPeerId forever.
                         let corrected_addr = strip_peer_id(remote_addr.clone());
+                        for (configured_id, configured_addr) in configured_peers.iter_mut() {
+                            if *configured_id == Some(*failed_peer)
+                                && (*configured_addr == corrected_addr
+                                    || matches!(
+                                        configured_addr.iter().next(),
+                                        Some(Protocol::Dnsaddr(_))
+                                    ))
+                            {
+                                *configured_id = Some(obtained);
+                            }
+                        }
 
                         // Redial the node under its actual identity — a direct dial
                         // doesn't propagate the address, so no loopback filtering is
@@ -1083,6 +1178,10 @@ async fn process_swarm_event(
                 event_tx.send(NetEvent::ConnectionEstablished {
                     connection_id: pending.connection_id,
                 })?;
+                event_tx.send(NetEvent::ConfiguredDialAdmitted {
+                    connection_id: pending.connection_id,
+                    peer_id,
+                })?;
             }
         }
 
@@ -1207,8 +1306,8 @@ async fn process_swarm_command(
             handle_response(swarm, responder)?;
             Ok(())
         }
-        NetCommand::Shutdown => {
-            unreachable!("shutdown command must be handled in Libp2pNetInterface::start")
+        NetCommand::Shutdown | NetCommand::ConfiguredPeerAdmitted { .. } => {
+            unreachable!("control commands must be handled in Libp2pNetInterface::start")
         }
     }
 }
@@ -1530,6 +1629,23 @@ mod tests {
 
         failures.quarantine(&peer);
         assert_eq!(failures.record_dial_failure(&peer), None);
+    }
+
+    #[test]
+    fn configured_peer_redial_distinguishes_unavailable_from_wrong_identity() {
+        let unavailable = PeerId::random();
+        let wrong_identity = PeerId::random();
+        let mut failures = super::PeerConnectionFailures::new();
+
+        failures.quarantine(&unavailable);
+        failures.quarantine_identity(&wrong_identity);
+
+        assert!(failures.is_quarantined(&unavailable));
+        assert!(!failures.is_identity_quarantined(&unavailable));
+        assert!(failures.is_identity_quarantined(&wrong_identity));
+
+        failures.connection_succeeded(&wrong_identity);
+        assert!(!failures.is_identity_quarantined(&wrong_identity));
     }
 
     #[test]

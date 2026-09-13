@@ -22,8 +22,9 @@ impl ThresholdKeyshare {
         let own_party_id = state.party_id;
         let timeout = resolve_timeout(
             DkgTimeoutPhase::ThresholdShareCollection,
-            state.dkg_started_at_unix_secs,
-        );
+            state.dkg_deadline_unix_secs,
+            state.dkg_window_secs,
+        )?;
         info!(
             e3_id = %e3_id,
             timeout = ?timeout.duration,
@@ -58,8 +59,9 @@ impl ThresholdKeyshare {
         let threshold_n = state.threshold_n;
         let timeout = resolve_timeout(
             DkgTimeoutPhase::EncryptionKeyCollection,
-            state.dkg_started_at_unix_secs,
-        );
+            state.dkg_deadline_unix_secs,
+            state.dkg_window_secs,
+        )?;
         info!(
             e3_id = %e3_id,
             timeout = ?timeout.duration,
@@ -95,8 +97,9 @@ impl ThresholdKeyshare {
         let e3_id = state.e3_id.clone();
         let timeout = resolve_timeout(
             DkgTimeoutPhase::DecryptionKeySharedCollection,
-            state.dkg_started_at_unix_secs,
-        );
+            state.dkg_deadline_unix_secs,
+            state.dkg_window_secs,
+        )?;
         info!(
             e3_id = %e3_id,
             timeout = ?timeout.duration,

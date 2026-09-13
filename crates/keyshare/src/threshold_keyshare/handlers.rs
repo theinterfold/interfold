@@ -50,17 +50,56 @@ impl Handler<TypedEvent<ComputeResponse>> for ThresholdKeyshare {
 }
 
 impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
-    type Result = ();
+    type Result = ResponseActFuture<Self, ()>;
     fn handle(
         &mut self,
         msg: TypedEvent<CiphernodeSelected>,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        trap(
-            EType::KeyGeneration,
-            &self.bus.with_ec(msg.get_ctx()),
-            || self.handle_ciphernode_selected(msg, ctx.address()),
-        )
+        if self
+            .state
+            .get()
+            .is_some_and(|state| !matches!(state.state, KeyshareState::Init))
+        {
+            return Box::pin(async {}.into_actor(self));
+        }
+        let timing = self
+            .state
+            .get()
+            .and_then(|state| state.dkg_deadline_unix_secs.zip(state.dkg_window_secs));
+        if timing.is_some() {
+            trap(
+                EType::KeyGeneration,
+                &self.bus.with_ec(msg.get_ctx()),
+                || self.handle_ciphernode_selected(msg, ctx.address()),
+            );
+            return Box::pin(async {}.into_actor(self));
+        }
+        if self.selection_timing_pending {
+            return Box::pin(async {}.into_actor(self));
+        }
+
+        self.selection_timing_pending = true;
+        let reader = self.dkg_timing_reader.clone();
+        let e3_id = msg.e3_id.clone();
+        Box::pin(async move { reader(e3_id).await }.into_actor(self).map(
+            move |result, actor, ctx| {
+                actor.selection_timing_pending = false;
+                let result = result.and_then(|(deadline, window)| {
+                    anyhow::ensure!(deadline > 0 && window > 0, "invalid frozen DKG timing");
+                    actor.state.try_mutate_without_context(|mut state| {
+                        state.dkg_deadline_unix_secs = Some(deadline);
+                        state.dkg_window_secs = Some(window);
+                        Ok(state)
+                    })?;
+                    actor.handle_ciphernode_selected(msg.clone(), ctx.address())
+                });
+                if let Err(error) = result {
+                    actor.bus.err(EType::KeyGeneration, error);
+                    ctx.notify_later(msg, std::time::Duration::from_secs(15));
+                }
+            },
+        ))
     }
 }
 

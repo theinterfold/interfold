@@ -100,6 +100,7 @@ pub struct CiphernodeSelector {
     observed_phases: HashMap<E3id, AggregatorPhase>,
     ready_phases: HashMap<E3id, AggregatorPhase>,
     failover_timers: HashMap<E3id, SpawnHandle>,
+    terminal_e3s: HashSet<E3id>,
     effects_enabled: bool,
     failover_policy: FailoverPolicy,
     clock: Arc<dyn Clock>,
@@ -137,6 +138,11 @@ impl CiphernodeSelector {
         lifecycle: HashMap<E3id, E3Stage>,
         clock: Arc<dyn Clock>,
     ) -> Self {
+        let terminal_e3s = lifecycle
+            .iter()
+            .filter(|(_, stage)| matches!(stage, E3Stage::Complete | E3Stage::Failed))
+            .map(|(e3_id, _)| e3_id.clone())
+            .collect();
         let observed_phases = lifecycle
             .into_iter()
             .filter_map(|(e3_id, stage)| phase_for_stage(&stage).map(|phase| (e3_id, phase)))
@@ -149,6 +155,7 @@ impl CiphernodeSelector {
             observed_phases,
             ready_phases: HashMap::new(),
             failover_timers: HashMap::new(),
+            terminal_e3s,
             effects_enabled: false,
             failover_policy: FailoverPolicy::new(AGGREGATOR_PROGRESS_TIMEOUT),
             clock,

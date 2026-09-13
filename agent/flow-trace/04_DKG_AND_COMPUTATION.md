@@ -25,6 +25,11 @@ The bond owner never signs DKG, key-publication, computation, or decryption mess
 ```
 CiphernodeSelected event arrives at ThresholdKeyshare
 │
+├─ Read `getDeadlines(e3Id)` and `getE3TimeoutConfig(e3Id)` from Interfold.
+│  Require the E3 to be at `CommitteeFinalized`. Persist the frozen DKG
+│  deadline and window before creating keys or collectors. Retry the read
+│  if the RPC is unavailable; do not use a local window as a fallback.
+│
 ├─ handle_ciphernode_selected():
 │   │
 │   ├─ 1. Generate fresh BFV keypair:
@@ -49,12 +54,13 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │     → These collectors start immediately so early peer keys/shares can
 │   │       be buffered while this node is still finishing earlier DKG phases
 │   │
-│   └─ Collector timeouts are derived from the DKG stage budget:
-│         ├─ shared base window from `E3_DKG_WINDOW_SECS` (default 7200s,
-│         │  matching current production `Interfold` deployment config)
-│         ├─ EncryptionKeyCollector cutoff at 10% of the DKG window
-│         ├─ ThresholdShareCollector cutoff at 60% of the DKG window
-│         └─ per-collector env vars still override these derived defaults
+│   └─ Collector cutoffs use the frozen per-E3 window and absolute deadline:
+│         ├─ EncryptionKeyCollector: 10% of the window
+│         ├─ ThresholdShareCollector: 60% of the window
+│         └─ DecryptionKeySharedCollector: the on-chain DKG deadline
+│      Restart uses the remaining time, not a new full window. Optional
+│      per-collector env values can shorten a timeout but cannot extend it.
+│      The separate missing-member recovery gap remains open until SC-15.
 ```
 
 ### Step 2: C0 Proof Generation → EncryptionKeyCreated
@@ -1399,6 +1405,17 @@ keeps retryable failures for a later attempt. `E3RequestComplete` does not erase
 publication, and only an active aggregator can start a retained submission. `PlaintextAggregated` is
 not gossiped or returned by historical peer sync; only the producing node can create this EVM write
 intent.
+
+The document publisher rebuilds its active outbox and received-document set from the durable
+event log before network effects start. Document publication and receipt events use their E3's
+chain aggregate. Recovery scans one event at a time to bound memory. During DKG,
+it repeats DHT publication and gossip announcements after transient failures, including when no
+peer subscribed to the topic at the first attempt. A receiver holds early notifications until its
+committee slot is known, retries failed DHT reads, and suppresses duplicate documents. A canonical
+`KeyPublished` stage stops DKG-document announcements and prunes local DHT records. C4
+`DecryptionKeyShared` is a DKG document; later `DecryptionshareCreated` events use event gossip,
+not the DHT document path. Recovery retains the DKG closure across restart. A local
+`E3RequestComplete` does not mean that the contract has reached a terminal stage.
 
 The CRISP server writes its request record at `E3Requested` and writes the generic E3 record only
 after the indexer verifies the committee public key against the on-chain commitment. Current-round

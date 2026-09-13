@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use e3_events::{E3StageChanged, EventConstructorWithTimestamp, EventSource, Unsequenced};
 
 #[actix::test]
 async fn test_notified_of_document() -> Result<()> {
@@ -160,5 +161,131 @@ async fn notification_cannot_relabel_payload_for_another_e3() -> Result<()> {
             .any(|event| matches!(event.get_data(), InterfoldEventData::DocumentReceived(_))),
         "mismatched document must not be persisted"
     );
+    Ok(())
+}
+
+#[actix::test]
+async fn notification_before_selection_is_fetched_once_after_selection() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, history, _, _) = setup_test()?;
+    let e3_id = E3id::new("early", 1);
+    let value = EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
+        e3_id: e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(1, ArcBytes::from_bytes(b"public key"))),
+        external: false,
+    })?
+    .expect("local key should produce a document")
+    .value;
+    let key = ContentHash::from_content(&value);
+    let notification = DocumentPublishedNotification {
+        key: key.clone(),
+        meta: DocumentMeta::new(
+            e3_id.clone(),
+            DocumentKind::TrBFV,
+            vec![],
+            Some(Utc::now() + chrono::Duration::hours(1)),
+        ),
+        ts: 100,
+    };
+    net_events.send(NetEvent::GossipData(
+        GossipData::DocumentPublishedNotification(notification.clone()),
+    ))?;
+    assert!(timeout(Duration::from_millis(150), commands.recv())
+        .await
+        .is_err());
+
+    bus.publish_without_context(CiphernodeSelected {
+        e3_id,
+        threshold_m: 2,
+        threshold_n: 3,
+        ..CiphernodeSelected::default()
+    })?;
+    let Some(NetCommand::DhtGetRecord { correlation_id, .. }) =
+        timeout(Duration::from_secs(1), commands.recv()).await?
+    else {
+        bail!("expected the buffered document to be fetched");
+    };
+    net_events.send(NetEvent::DhtGetRecordSucceeded {
+        key: key.clone(),
+        correlation_id,
+        value,
+    })?;
+    sleep(Duration::from_millis(100)).await;
+    let events = history.send(GetEvents::new()).await?;
+    assert!(events
+        .iter()
+        .any(|event| { matches!(event.get_data(), InterfoldEventData::DocumentReceived(_)) }));
+
+    net_events.send(NetEvent::GossipData(
+        GossipData::DocumentPublishedNotification(notification),
+    ))?;
+    assert!(timeout(Duration::from_millis(200), commands.recv())
+        .await
+        .is_err());
+    Ok(())
+}
+
+#[actix::test]
+async fn terminal_stage_cancels_an_inflight_document_fetch() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, history, _, publisher) =
+        setup_test()?;
+    let e3_id = E3id::new("terminal-fetch", 1);
+    let value = EventConversionService::encryption_key_to_request(EncryptionKeyCreated {
+        e3_id: e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(1, ArcBytes::from_bytes(b"public key"))),
+        external: false,
+    })?
+    .expect("local key should produce a document")
+    .value;
+    let key = ContentHash::from_content(&value);
+
+    bus.publish_without_context(CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        threshold_m: 2,
+        threshold_n: 3,
+        ..CiphernodeSelected::default()
+    })?;
+    net_events.send(NetEvent::GossipData(
+        GossipData::DocumentPublishedNotification(DocumentPublishedNotification {
+            key: key.clone(),
+            meta: DocumentMeta::new(
+                e3_id.clone(),
+                DocumentKind::TrBFV,
+                vec![],
+                Some(Utc::now() + chrono::Duration::hours(1)),
+            ),
+            ts: 100,
+        }),
+    ))?;
+    let Some(NetCommand::DhtGetRecord { correlation_id, .. }) =
+        timeout(Duration::from_secs(1), commands.recv()).await?
+    else {
+        bail!("expected DHT get");
+    };
+
+    let stage = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        E3StageChanged {
+            e3_id,
+            previous_stage: E3Stage::CiphertextReady,
+            new_stage: E3Stage::Complete,
+        }
+        .into(),
+        None,
+        101,
+        None,
+        EventSource::Evm,
+    )
+    .into_sequenced(1);
+    publisher.send(stage).await?;
+    net_events.send(NetEvent::DhtGetRecordSucceeded {
+        key,
+        correlation_id,
+        value,
+    })?;
+    sleep(Duration::from_millis(100)).await;
+
+    let events = history.send(GetEvents::new()).await?;
+    assert!(!events
+        .iter()
+        .any(|event| matches!(event.get_data(), InterfoldEventData::DocumentReceived(_))));
     Ok(())
 }

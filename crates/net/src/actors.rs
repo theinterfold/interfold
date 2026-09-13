@@ -18,7 +18,8 @@ mod net_event_translator;
 mod net_sync_manager;
 
 pub use document_publisher::{
-    handle_document_published_notification, handle_publish_document_requested, DocumentPublisher,
+    handle_document_published_notification, handle_publish_document_requested,
+    recover_document_state, DocumentPublisher, RecoveredDocumentState,
 };
 pub use event_converter::EventConverter;
 pub use net_event_buffer::{

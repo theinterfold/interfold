@@ -340,6 +340,15 @@ as startup and refuses to remove indexed records. Runtime EventStore query failu
 the correlated caller rather than panicking the actor; committed corruption remains a
 startup/integrity failure.
 
+Large local events use content-addressed blob files beside the commit log. The log stores a small
+versioned reference only after the blob is synced. Open, replay, and tail recovery verify the blob
+length and hash before decoding it. The 32 MiB inline and network event limits stay in place.
+An EventStore append or flush failure stops the actor and signals the node supervisor. Startup and
+the CLI then exit with a nonzero status instead of leaving a dead storage actor inside an online
+process. The EventStore syncs each appended log record before it indexes or broadcasts the event.
+The current storage schema marker is version 3; older node databases must be reset for
+this release, not silently decoded.
+
 For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state. It
 atomically moves the legacy `.enclave` custom-config root to `.interfold`, preserves the encrypted
 operator/libp2p identity, and lets the v0.2.3 binary stamp schema version 1 before later binaries

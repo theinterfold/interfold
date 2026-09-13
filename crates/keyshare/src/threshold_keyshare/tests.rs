@@ -12,13 +12,75 @@ use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
 use e3_events::{
-    hlc_factory::HlcFactory, BusHandle, ComputeRequestKind, E3Stage, E3id, EffectsEnabled,
+    hlc_factory::HlcFactory, BusHandle, ComputeRequestKind, E3Stage, E3id, EffectsEnabled, Event,
     EventBus, EventBusConfig, EventSource, FailureReason, GetEvents, HistoryCollector,
     InterfoldEvent, InterfoldEventData, Sequencer, StoreEventRequested, StoreEventResponse,
     TakeEvents, Unsequenced,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use std::sync::Arc;
+
+#[actix::test]
+async fn selection_waits_for_frozen_timing_and_rejects_expired_dkg() -> Result<()> {
+    let (bus, history) = test_bus();
+    let e3_id = E3id::new("43", 1);
+    let (mut state, repo) = test_state(&e3_id, KeyshareState::Init);
+    state.try_mutate_without_context(|mut state| {
+        state.dkg_deadline_unix_secs = None;
+        state.dkg_window_secs = None;
+        Ok(state)
+    })?;
+    let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let read_calls = Arc::clone(&calls);
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        recovery: test_recovery(),
+        dkg_timing_reader: Arc::new(move |_| {
+            read_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Box::pin(async {
+                Ok((
+                    crate::domain::timeout_policy::now_unix_secs().saturating_sub(1),
+                    3_600,
+                ))
+            })
+        }),
+    })
+    .start();
+    let selection = CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        ..CiphernodeSelected::default()
+    };
+    let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        selection.into(),
+        None,
+        1,
+        None,
+        EventSource::Evm,
+    )
+    .into_sequenced(1);
+    actor.send(event).await?;
+
+    actix::clock::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            if matches!(
+                repo.read().await?.expect("persisted keyshare state").state,
+                KeyshareState::Failed { .. }
+            ) {
+                break Ok::<(), anyhow::Error>(());
+            }
+            actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
+    let event = next_event(&history).await?;
+    assert!(matches!(event.get_data(), InterfoldEventData::E3Failed(_)));
+    Ok(())
+}
 
 #[derive(Default)]
 struct TestEventStore {
@@ -58,7 +120,7 @@ fn test_state(
 ) {
     let store = InMemStore::new(false).start();
     let repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
-    let state = ThresholdKeyshareState::new(
+    let mut state = ThresholdKeyshareState::new(
         e3_id.clone(),
         0,
         keyshare_state,
@@ -67,6 +129,9 @@ fn test_state(
         ArcBytes::from_bytes(b"params"),
         Address::ZERO.to_string(),
     );
+    state.dkg_deadline_unix_secs =
+        Some(crate::domain::timeout_policy::now_unix_secs().saturating_add(7_200));
+    state.dkg_window_secs = Some(7_200);
     (repo.send(Some(state)), repo)
 }
 
@@ -94,6 +159,7 @@ async fn start_actor_with_state(
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
         recovery: test_recovery(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
     .start();
 
@@ -343,6 +409,7 @@ async fn restart_skips_dkg_work_after_public_key_context_is_persisted() -> Resul
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
         recovery,
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
     .start();
     let effects_enabled = InterfoldEvent::<Unsequenced>::new_with_timestamp(

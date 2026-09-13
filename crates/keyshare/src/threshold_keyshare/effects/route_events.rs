@@ -10,7 +10,8 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
         let (msg, ec) = msg.into_components();
         match msg {
             InterfoldEventData::CiphernodeSelected(data) => {
-                self.notify_sync(ctx, TypedEvent::new(data, ec))
+                let timing = self.notify_sync(ctx, TypedEvent::new(data, ec));
+                ctx.spawn(timing);
             }
             InterfoldEventData::CiphertextOutputPublished(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))

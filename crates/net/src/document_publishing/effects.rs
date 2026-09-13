@@ -39,13 +39,12 @@ pub async fn handle_publish_document_requested(
 pub async fn handle_document_published_notification(
     net_cmds: mpsc::Sender<NetCommand>,
     net_events: NetEventSubscriber,
-    bus: BusHandle,
     ids: HashMap<E3id, PartyId>,
     event: DocumentPublishedNotification,
-) -> Result<()> {
+) -> Result<Option<DocumentReceived>> {
     let Some(party_id) = DocumentPublishingService::interest_in(&ids, &event) else {
         debug!("Node not interested in id {}", event.meta.e3_id);
-        return Ok(());
+        return Ok(None);
     };
 
     debug!(
@@ -65,18 +64,10 @@ pub async fn handle_document_published_notification(
     // interested in can inject a content-addressed document for a different E3 or party route.
     EventConversionService::validate_received(&event.meta, &value)?;
 
-    debug!("Sending received event...");
-    bus.publish_from_remote(
-        DocumentReceived {
-            meta: event.meta,
-            value,
-        },
-        event.ts,
-        None,
-        EventSource::Net,
-    )?;
-
-    Ok(())
+    Ok(Some(DocumentReceived {
+        meta: event.meta,
+        value,
+    }))
 }
 
 /// Call DhtPutRecord Command on the Libp2pNetInterface and handle the results

@@ -3939,6 +3939,7 @@ dependencies = [
  "e3-utils",
  "once_cell",
  "serde",
+ "sha2 0.10.9",
  "sled",
  "tempfile",
  "tokio",

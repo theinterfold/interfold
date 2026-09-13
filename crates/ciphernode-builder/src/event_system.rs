@@ -94,6 +94,7 @@ pub struct EventSystem {
     /// Global shared eventstore. This can allow commands to access the eventstore while a node is
     /// running.
     global_shared_eventstore: bool,
+    failure_signal: tokio::sync::watch::Sender<Option<String>>,
 }
 
 impl Default for EventSystem {
@@ -110,6 +111,7 @@ impl EventSystem {
 
     /// Create an in memory EventSystem
     pub fn in_mem() -> Self {
+        let (failure_signal, _) = tokio::sync::watch::channel(None);
         Self {
             backend: EventSystemBackend::InMem(InMemBackend {
                 eventstores: OnceCell::new(),
@@ -123,11 +125,13 @@ impl EventSystem {
             eventstore_addrs: OnceCell::new(),
             global_shared_store: false,
             global_shared_eventstore: false,
+            failure_signal,
         }
     }
 
     /// Create an in memory EventSystem with a given store
     pub fn in_mem_from_store(store: &Addr<InMemStore>) -> Self {
+        let (failure_signal, _) = tokio::sync::watch::channel(None);
         Self {
             backend: EventSystemBackend::InMem(InMemBackend {
                 eventstores: OnceCell::new(),
@@ -141,11 +145,13 @@ impl EventSystem {
             eventstore_addrs: OnceCell::new(),
             global_shared_store: false,
             global_shared_eventstore: false,
+            failure_signal,
         }
     }
 
     /// Create a persisted EventSystem with datafiles at the given paths
     pub fn persisted(log_path: PathBuf, sled_path: PathBuf) -> Self {
+        let (failure_signal, _) = tokio::sync::watch::channel(None);
         Self {
             backend: EventSystemBackend::Persisted(PersistedBackend {
                 log_path,
@@ -161,7 +167,12 @@ impl EventSystem {
             eventstore_addrs: OnceCell::new(),
             global_shared_store: false,
             global_shared_eventstore: false,
+            failure_signal,
         }
+    }
+
+    pub fn failure_receiver(&self) -> tokio::sync::watch::Receiver<Option<String>> {
+        self.failure_signal.subscribe()
     }
 
     /// Pass in a specific given event bus
@@ -265,6 +276,7 @@ impl EventSystem {
                                             InMemEventLog::new(),
                                         )
                                         .expect("in-memory EventStore reconciliation cannot fail")
+                                        .with_failure_signal(self.failure_signal.clone())
                                         .start(),
                                     );
                                 }
@@ -297,6 +309,7 @@ impl EventSystem {
                                                      {index}"
                                                 )
                                             })?
+                                            .with_failure_signal(self.failure_signal.clone())
                                             .start(),
                                     );
                                 }

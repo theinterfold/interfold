@@ -26,7 +26,7 @@ use crate::{ReplayDecision, SyncPlanner};
 
 const REPLAY_QUERY_PAGE_SIZE: usize = 1_024;
 const REPLAY_MERGE_FAN_IN: usize = 32;
-const MAX_SPOOLED_EVENT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_SPOOLED_EVENT_BYTES: usize = e3_data::MAX_BLOB_BYTES + 1024;
 const REPLAY_PROGRESS_INTERVAL: usize = 10_000;
 
 fn first_replay_sequence(snapshot_cursor: u64) -> u64 {
@@ -360,11 +360,15 @@ fn read_event(reader: &mut impl Read) -> Result<Option<InterfoldEvent>> {
             MAX_SPOOLED_EVENT_BYTES
         );
     }
-    let mut bytes = vec![0u8; len];
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(len)
+        .context("cannot reserve memory for replay spool event")?;
+    bytes.resize(len, 0);
     reader
         .read_exact(&mut bytes)
         .context("truncated replay spool event")?;
-    bincode::deserialize(&bytes)
+    e3_utils::deserialize_bounded(&bytes, MAX_SPOOLED_EVENT_BYTES as u64)
         .context("failed to decode replay spool event")
         .map(Some)
 }
@@ -449,6 +453,21 @@ mod tests {
     fn fresh_snapshot_cursor_starts_at_first_one_based_log_sequence() {
         assert_eq!(first_replay_sequence(0), 1);
         assert_eq!(first_replay_sequence(7), 7);
+    }
+
+    #[test]
+    fn replay_spool_round_trips_event_above_old_limit() -> Result<()> {
+        let message = "x".repeat(64 * 1024 * 1024);
+        let event = InterfoldEvent::<e3_events::Unsequenced>::test_event(&message)
+            .seq(1)
+            .build();
+        let mut file = NamedTempFile::new()?;
+        write_event(file.as_file_mut(), &event)?;
+        let mut reader = BufReader::new(file.reopen()?);
+        let restored = read_event(&mut reader)?.context("missing replay event")?;
+        assert!(restored == event);
+        assert!(read_event(&mut reader)?.is_none());
+        Ok(())
     }
 
     #[actix::test]

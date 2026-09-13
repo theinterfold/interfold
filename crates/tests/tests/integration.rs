@@ -1382,6 +1382,21 @@ async fn test_trbfv_actor() -> Result<()> {
 
     let pubkey_flow_timeout = benchmark_params.pubkey_flow_timeout;
     let plaintext_flow_timeout = benchmark_params.plaintext_flow_timeout;
+    // This benchmark has no enabled EVM provider. Give every synthetic node the same
+    // frozen deadline. The first phase gets 10% of this window, matching the
+    // benchmark's public-key bound. Production nodes read timing from the contract.
+    let dkg_window_secs = pubkey_flow_timeout.as_secs().saturating_mul(10).max(1);
+    let dkg_start = Arc::new(std::sync::OnceLock::<u64>::new());
+    let dkg_timing_reader: e3_keyshare::DkgTimingReader = Arc::new(move |_| {
+        let deadline = *dkg_start.get_or_init(|| {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs()
+                .saturating_add(dkg_window_secs)
+        });
+        Box::pin(async move { Ok((deadline, dkg_window_secs)) })
+    });
 
     let params_raw = BfvParamSet::from(benchmark_params.bfv_preset).build_arc();
 
@@ -1482,6 +1497,7 @@ async fn test_trbfv_actor() -> Result<()> {
                     .with_eventstore_aggregate_config_for_testing(
                         benchmark_aggregate_config.clone(),
                     )
+                    .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
                     .with_chains(std::slice::from_ref(&bench_chain_config))
                     .with_logging();
                 if !proof_aggregation_enabled {
@@ -1512,6 +1528,7 @@ async fn test_trbfv_actor() -> Result<()> {
                         .with_eventstore_aggregate_config_for_testing(
                             benchmark_aggregate_config.clone(),
                         )
+                        .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
                         .with_chains(std::slice::from_ref(&bench_chain_config))
                         .with_logging();
                     if !proof_aggregation_enabled {

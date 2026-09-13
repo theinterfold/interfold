@@ -387,10 +387,8 @@ mod tests {
         let history = EventBus::<InterfoldEvent>::history(&bus);
         let errors = EventBus::<InterfoldEvent>::error(&bus);
 
-        let bus = EventSystem::new()
-            .with_event_bus(bus)
-            .handle()?
-            .enable("test");
+        let event_system = EventSystem::new().with_event_bus(bus);
+        let bus = event_system.handle()?.enable("test");
 
         // Mock event store for EventStoreReader
         let mock_es = MockEventStore.start();
@@ -407,6 +405,7 @@ mod tests {
             network_status: NetworkStatus::default(),
             eventstore,
             aggregate_ids: vec![],
+            persistence_health: event_system.failure_receiver(),
         })
     }
 

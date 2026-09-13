@@ -28,8 +28,6 @@ use std::{
     sync::Arc,
 };
 
-use crate::domain::timeout_policy::now_unix_secs;
-
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct CollectingEncryptionKeysData {
     pub(crate) sk_bfv: SensitiveBytes,
@@ -211,7 +209,8 @@ pub struct ThresholdKeyshareState {
     /// Honest party IDs in deterministic ascending order (`BTreeSet` guarantees this).
     /// Downstream proof circuits index parties by position in this sorted set.
     pub honest_parties: Option<BTreeSet<u64>>,
-    pub dkg_started_at_unix_secs: Option<u64>,
+    pub dkg_deadline_unix_secs: Option<u64>,
+    pub dkg_window_secs: Option<u64>,
     /// Set once `KeyshareCreated` has actually been published from an authorized
     /// path (after C4 honest-set verification, the no-C4-proofs path, or the
     /// sole-honest fast path). `ReadyForDecryption` is entered *before* that
@@ -243,7 +242,8 @@ impl ThresholdKeyshareState {
             decryption_domain: None,
             expelled_parties: HashSet::new(),
             honest_parties: None,
-            dkg_started_at_unix_secs: Some(now_unix_secs()),
+            dkg_deadline_unix_secs: None,
+            dkg_window_secs: None,
             keyshare_published: false,
         }
     }

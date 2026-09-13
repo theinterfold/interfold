@@ -12,7 +12,7 @@
 /// marker is the guardrail: bump it whenever a persisted format changes in a
 /// non-additive way. On boot the persisted value is compared against this
 /// constant (see `decide_schema_version`).
-pub const SCHEMA_VERSION: u32 = 2;
+pub const SCHEMA_VERSION: u32 = 3;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
-    ThresholdKeyshare, ThresholdKeyshareParams, ThresholdKeyshareRecoveryState,
+    DkgTimingReader, ThresholdKeyshare, ThresholdKeyshareParams, ThresholdKeyshareRecoveryState,
     ThresholdKeyshareRepositoryFactory, ThresholdKeyshareState,
     THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
 };
@@ -26,6 +26,7 @@ pub struct ThresholdKeyshareExtension {
     cipher: Arc<Cipher>,
     address: String,
     interfold_addresses: HashMap<u64, Address>,
+    dkg_timing_reader: DkgTimingReader,
 }
 
 impl ThresholdKeyshareExtension {
@@ -34,12 +35,14 @@ impl ThresholdKeyshareExtension {
         cipher: &Arc<Cipher>,
         address: &str,
         interfold_addresses: HashMap<u64, Address>,
+        dkg_timing_reader: DkgTimingReader,
     ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
             cipher: cipher.to_owned(),
             address: address.to_owned(),
             interfold_addresses,
+            dkg_timing_reader,
         })
     }
 }
@@ -110,6 +113,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                         .unwrap_or(meta.params_preset),
                     interfold_address,
                     recovery,
+                    dkg_timing_reader: self.dkg_timing_reader.clone(),
                 })
                 .start()
                 .into(),
@@ -178,6 +182,7 @@ impl E3Extension for ThresholdKeyshareExtension {
             share_enc_preset,
             interfold_address,
             recovery,
+            dkg_timing_reader: self.dkg_timing_reader.clone(),
         })
         .start()
         .into();

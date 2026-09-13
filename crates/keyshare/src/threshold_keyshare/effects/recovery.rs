@@ -192,7 +192,8 @@ impl ThresholdKeyshare {
                 let selected = recovery
                     .ciphernode_selected
                     .ok_or_else(|| anyhow!("missing CiphernodeSelected recovery input"))?;
-                self.handle_ciphernode_selected(selected, self_addr)
+                self_addr.try_send(selected)?;
+                Ok(())
             }
             KeyshareState::CollectingEncryptionKeys(data) => {
                 let collector = self.ensure_encryption_key_collector(self_addr)?;

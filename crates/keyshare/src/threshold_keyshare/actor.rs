@@ -14,7 +14,7 @@ use e3_events::{
     CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest, ComputeResponse,
     ComputeResponseKind, CorrelationId, DecryptionKeyShared, DecryptionShareProofSigned,
     DecryptionShareProofsPending, Die, DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed,
-    E3RequestComplete, E3Stage, EType, EncryptionKey, EncryptionKeyCollectionFailed,
+    E3RequestComplete, E3Stage, E3id, EType, EncryptionKey, EncryptionKeyCollectionFailed,
     EncryptionKeyCreated, EncryptionKeyPending, EventContext, FailureReason, InterfoldEvent,
     InterfoldEventData, KeyshareCreated, PartyProofsToVerify, PartyShareDecryptionProofsToVerify,
     PkGenerationProofSigned, ProofType, Sequenced, ShareDecryptionProofPending,
@@ -40,6 +40,8 @@ use e3_zk_helpers::CiphernodesCommitteeSize;
 use fhe_traits::Serialize;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
+    future::Future,
+    pin::Pin,
     sync::Arc,
 };
 use tracing::{error, info, trace, warn};
@@ -121,7 +123,11 @@ pub struct ThresholdKeyshareParams {
     pub share_enc_preset: BfvPreset,
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
+    pub dkg_timing_reader: DkgTimingReader,
 }
+
+pub type DkgTimingFuture = Pin<Box<dyn Future<Output = Result<(u64, u64)>> + Send>>;
+pub type DkgTimingReader = Arc<dyn Fn(E3id) -> DkgTimingFuture + Send + Sync>;
 
 /// Process-local bridge data rebuilt from the versioned keyshare recovery record.
 #[derive(Default)]
@@ -151,6 +157,8 @@ pub struct ThresholdKeyshare {
     recovery: Persistable<ThresholdKeyshareRecoveryState>,
     share_enc_preset: BfvPreset,
     interfold_address: Address,
+    dkg_timing_reader: DkgTimingReader,
+    selection_timing_pending: bool,
     pending: PendingKeyshareWork,
 }
 
@@ -185,6 +193,8 @@ impl ThresholdKeyshare {
             recovery: params.recovery,
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
+            dkg_timing_reader: params.dkg_timing_reader,
+            selection_timing_pending: false,
             pending: PendingKeyshareWork {
                 shares: pending_shares,
                 share_decryption_data,

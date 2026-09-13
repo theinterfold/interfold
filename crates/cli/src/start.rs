@@ -10,7 +10,7 @@ use crate::{
     cli::{Cli, RemoteCli},
     owo,
 };
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use e3_ciphernode_builder::CiphernodeHandle;
 use e3_config::AppConfig;
 use e3_console::Console;
@@ -95,10 +95,34 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
         node.peer_id
     );
 
-    shutdown.await;
-    graceful_shutdown(Some(node)).await?;
+    let mut persistence_health = node.persistence_health();
+    tokio::select! {
+        _ = &mut shutdown => graceful_shutdown(Some(node)).await?,
+        failure = wait_for_persistence_failure(&mut persistence_health) => {
+            let failure = failure?;
+            error!(%failure, "Ciphernode stopped after a fatal event storage failure");
+            if let Some(logs) = e3_logger::LogCollector::global() {
+                logs.flush();
+            }
+            bail!("fatal event storage failure: {failure}");
+        }
+    }
 
     Ok(())
+}
+
+async fn wait_for_persistence_failure(
+    health: &mut tokio::sync::watch::Receiver<Option<String>>,
+) -> Result<String> {
+    loop {
+        if let Some(failure) = health.borrow_and_update().clone() {
+            return Ok(failure);
+        }
+        health
+            .changed()
+            .await
+            .context("event storage health monitor stopped")?;
+    }
 }
 
 /// Launch a socket server to read RemoteCli commands
@@ -167,5 +191,21 @@ pub async fn graceful_shutdown(node: Option<CiphernodeHandle>) -> Result<()> {
             error!(%error, "Graceful shutdown failed; process will exit unsuccessfully");
             Err(error)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn persistence_failure_is_reported_after_publish() -> Result<()> {
+        let (signal, mut health) = tokio::sync::watch::channel(None);
+        signal.send_replace(Some("append failed".to_string()));
+        assert_eq!(
+            wait_for_persistence_failure(&mut health).await?,
+            "append failed"
+        );
+        Ok(())
     }
 }
