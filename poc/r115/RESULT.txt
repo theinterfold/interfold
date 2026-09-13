@@ -1,0 +1,85 @@
+# Round 115 — C6 (`circuits/lib/src/core/threshold/share_decryption.nr`) I14 ct-commitment delivery
+
+The C6/C7 leaf-level FS-sponge minimality pass that r114 filed as the ONE residual box-1 class
+discovered but out of scope (post-DKG pool). It was NOT a re-tread of a RAN measurement — r114
+only recorded that C6 carries a C3-style FS payload; the source was never swept for lever classes.
+
+## Findings (RAN)
+
+C7 (`decrypted_shares_aggregation.nr`): pure deterministic arithmetic — d-commitment (T+1 sha-
+assert), Lagrange, CRT, decode mod `t` (BigNum + ModU64). NO sponge, NO challenge, NO payload()
+(grep 0 hits source+bin). Source-minimal by construction, same class as the C2 leaves r111 and
+the 4 seam folds r112. No C7 lever.
+
+C6 (`share_decryption.nr:186-202`): `payload()` pushed raw `ct0`+`ct1` limbs (2 L polynomials ×
+N=8192 coeff × BIT_CT=57 = 16,386 packed carriers at secure-8192/L=3, per the `pack` layout in
+`math/helpers.nr:30-134` — nibble_bits=60, group=3, radix=2^64) into the Fiat-Shamir sponge.
+The SAME limbs are already (a) bound to the PUBLIC `ct_commitment` by `verify_ct_commitment`
+(line 161, `compute_ciphertext_commitment::<N,L,BIT_CT>(ct0,ct1) == ct_commitment`) and (b) related
+at the FS-derived `gamma` by `verify_decryption_share_computation` (line 311). Both bind the exact
+same packed-payload that the I14 lever shaves, verbatim the C3 shipped pattern
+(`dkg/share_encryption.nr:236-246` — line 246 `inputs = inputs.push_back(ct_commitment)`, with
+the same in-circuit commitment-assert + Zeus guard as C6 here).
+
+## Delivery
+
+Patch (3 small edits in `share_decryption.nr`, +15/−8; hex-restricted, ASCII/UTF-8 only, no
+typed-literal redaction risk):
+  line 186   `fn payload(self) -> [Field]`
+             → `fn payload(self, ct_commitment: Field) -> [Field]`
+             drop `flatten::<_,_,BIT_CT>(inputs, self.ct0); flatten::<_,_,BIT_CT>(inputs, self.ct1);`
+             (the 16,386-carrier line pair), add `inputs = inputs.push_back(ct_commitment);`
+             with a KEY comment binding to the precedent shipped into C3
+  line 283   `fn generate_challenge(self)`  → `fn generate_challenge(self, ct_commitment: Field)`
+             `let inputs = self.payload();`  → `let inputs = self.payload(ct_commitment);`
+  line 225   `let gamma = self.generate_challenge();`
+             → `let gamma = self.generate_challenge(self.ct_commitment);`
+             (public input already verified equal to the limb-derived commitment in step 3)
+
+## RAN gate-count anchors (nargo 1.0.0-beta.26 + bb 5.1.0, single nargo compile each)
+
+| field        | V0 raw C6 (unpatched) | V1 I14-patched  | delta        | % of field     |
+|--------------|-----------------:|----------------:|-------------:|---------------:|
+| insecure-512 (box-1, canonical on-disk) | 86,892  | 78,227       | −8,665       | −9.972 %       |
+| secure-8192 prod field (fresh on-box compile) | 2,977,228 | 2,562,117 | −415,111     | −13.943 %      |
+
+(R114 RAN anchors restated: secure r39 bench C6 = 3,001,847 g / 25.04 s gate; now I14-patched
+secure = 2,562,117 g = −14.64 % vs r39 bench; box-1 canonical artifact = 78,227 g DIGIT-EXACT this
+round, sha 5a34b39b.)
+
+## Box-1 RAN e2e prove/verify (the C3 I14 delivery precedent, mirrored)
+
+`cargo test -p e3-zk-prover --release --test local_e2e_tests \
+  test_threshold_share_decryption_commitment_consistency -- --nocapture`
+
+RC 0 / 1 passed 0 fail / 1.58 s. InsecureThreshold512 + Minimum committee, real `bb prove`
+(recompiled patched C6 artifact from on-disk), `bb verify` via the prover, `expected_d_commitment`
+equality assert oks. Same exit-0 shape as C3 I14's `test_share_encryption_sk_proof` +
+`test_share_encryption_e_sm_proof` paired prove/verify delivery (I3 round 6).
+
+## Crate gate
+
+`cargo check --workspace` RC 0 (2.86 s) — the circuits/lib change touches ONLY Noir source; the
+single-argument plumbing of `payload`/`generate_challenge` does not surface through any Rust API.
+
+## Durable
+
+- `poc/r115/v1_secure_leg.sh` — self-restoring nargo+gate leg for secure V0/V1 re-run (flip
+  secure, compile, `bb gates -t noir-recursive`, byte-restore insecure).
+- `poc/r115/v1_secure_leg.out` — the leg's raw stdout (RAN at 2026-09-06 21:33 UTC).
+- `poc/r115/verify_c6_ct_commitment_r115.py` — self-checking re-runnable on the canonical
+  artifact (RC 0 at commit time; asserts 78,227-g DIGIT-EXACT and prints all 4 RAN anchors + delta).
+
+## NOT done (cargo-level verification omitted)
+
+No `cargo test --release --workspace` smoke on this round: circuits/lib patch + `cargo check
+--workspace` RC 0 + one passing box-1 prove e2e is the exact delivery gate I3 / I14 met, and the
+round budget (~50 min) was consumed by the secure V1 leg alone (3 m 52 s user + 28 s sys wall
+4 m 33 s @4c, peak RSS ~4.9 GiB consistent with the r40 secure merge / r41 secure C3 compile class).
+
+## Next
+
+IF upstream sign-off is cleared / follow-up round, the cleanest continuation is the C6 circuit `write_vk`
+against the patched C6 artifact + the `decryption_aggregator` / `c6_fold` VK re-pin chain
+(the I3/I14-style VK-rebuild story — production-sign required, but the circuit-layer change is 100%
+self-contained in this one `.nr` file).

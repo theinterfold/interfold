@@ -1,0 +1,9 @@
+config swapped: committee=small, preset=secure
+min on-disk C7 json snapshot sha16: 9f3c75b2e5db27a4
+nargo compile secure/small C7 wall 5.18 s
+secure/small C7 json sha16: a72912c3915355b6
+secure/small C7 gates = 334161 142900 ACIR
+STAGE NOTE: gate 334161 vs bench anchor 136374 (bench row is the cons figure; the next bb gates read on the durable json is the durable re-anchor)
+stage tree materialized: C7 json + noir-recursive-no-zk vk + vk_hash
+config + min on-disk C7 json byte-restored ASSERTED (sha 9f3c75b2e5db27a4; porcelain 0)
+STAGE SELF-CHECK OK

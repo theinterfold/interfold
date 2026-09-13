@@ -1,0 +1,10 @@
+= r126 c2b box census PRE 04:37:23 =
+nproc=8
+MemTotal:       32866100 kB
+MemAvailable:   31152004 kB
+SwapTotal:             0 kB
+0.93 0.99 0.77 1/207 18565
+= r126 c2b box census POST 04:59:36 =
+MemTotal:       32866100 kB
+MemAvailable:   31427988 kB
+SwapTotal:             0 kB

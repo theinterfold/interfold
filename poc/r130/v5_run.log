@@ -1,0 +1,147 @@
+=== T0=2026-09-13T06:09:16Z v5 run: outer flock -x on .cargo-lock (r127 n2 shape) ===
+--- outer flock -x acquired; executing crates/zk-prover/scripts/build_fixtures.sh (the r127 n2 script) ---
+Building circuits (missing: ./circuits/bin/.active-preset.json ./circuits/bin/recursive_aggregation/c3_fold/target/c3_fold.json ./circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json ./circuits/bin/recursive_aggregation/c6_fold_kernel/target/c6_fold_kernel.json)...
+examples/CRISP/client                    |  WARN  The field "pnpm.overrides" was found in /home/dev/interfold-research/interfold/examples/CRISP/client/package.json. This will not take effect. You should configure "pnpm.overrides" at the root of the workspace instead.
+templates/default                        |  WARN  The field "pnpm.overrides" was found in /home/dev/interfold-research/interfold/templates/default/package.json. This will not take effect. You should configure "pnpm.overrides" at the root of the workspace instead.
+Scope: all 17 workspace projects
+Progress: resolved 1, reused 0, downloaded 0, added 0
+ WARN  deprecated glob@11.0.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+Progress: resolved 1351, reused 1200, downloaded 0, added 0
+Progress: resolved 2312, reused 2163, downloaded 0, added 0
+ WARN  28 deprecated subdependencies found: @metamask/sdk-analytics@0.0.5, @metamask/sdk-communication-layer@0.33.1, @metamask/sdk-install-modal-web@0.32.1, @metamask/sdk@0.33.1, @paulmillr/qr@0.2.1, @safe-global/safe-gateway-typescript-sdk@3.23.1, @types/minimatch@6.0.0, @walletconnect/ethereum-provider@2.21.1, @walletconnect/sign-client@2.21.0, @walletconnect/sign-client@2.21.1, @walletconnect/universal-provider@2.21.0, @walletconnect/universal-provider@2.21.1, fstream@1.0.12, glob@10.3.10, glob@10.5.0, glob@5.0.15, glob@7.1.7, glob@7.2.3, glob@8.1.0, inflight@1.0.6, intersection-observer@0.12.2, lodash.get@4.4.2, rimraf@2.7.1, source-map@0.8.0-beta.0, tsconfck@3.1.6, uuid@10.0.0, uuid@8.3.2, uuid@9.0.1
+Packages: +1
++
+Progress: resolved 2312, reused 2163, downloaded 0, added 1, done
+. prepare$ husky
+. prepare: Done
+ WARN  Issues with peer dependencies found
+examples/CRISP
+└─┬ @synthetixio/synpress 4.1.1
+  ├─┬ @synthetixio/synpress-cache 0.0.13
+  │ └── ✕ unmet peer playwright-core@1.48.2: found 1.52.0
+  ├─┬ @synthetixio/ethereum-wallet-mock 0.0.13
+  │ └─┬ @depay/web3-client 10.18.6
+  │   └── ✕ unmet peer ethers@^5.7.1: found 6.17.0
+  └─┬ @synthetixio/synpress-phantom 0.0.13
+    └── ✕ unmet peer @playwright/test@1.48.2: found 1.52.0
+
+examples/CRISP/packages/crisp-contracts
+├─┬ @nomicfoundation/hardhat-ethers-chai-matchers 3.0.1
+│ └── ✕ unmet peer chai@^5.1.2: found 6.2.2
+├─┬ @nomicfoundation/hardhat-toolbox-mocha-ethers 3.0.0
+│ └── ✕ unmet peer chai@^5.1.2: found 6.2.2
+├─┬ hardhat-deploy 0.12.4
+│ └─┬ zksync-ethers 5.11.2
+│   └── ✕ unmet peer ethers@~5.7.0: found 5.8.0 in hardhat-deploy
+├─┬ hardhat-gas-reporter 1.0.10
+│ └── ✕ unmet peer hardhat@^2.0.2: found 3.0.11
+└─┬ solidity-coverage 0.8.17
+  └── ✕ unmet peer hardhat@^2.11.0: found 3.0.11
+
+packages/interfold-contracts
+├─┬ @typescript-eslint/parser 7.18.0
+│ └── ✕ unmet peer eslint@^8.56.0: found 9.39.1
+├─┬ @typescript-eslint/eslint-plugin 7.18.0
+│ ├── ✕ unmet peer eslint@^8.56.0: found 9.39.1
+│ └─┬ @typescript-eslint/type-utils 7.18.0
+│   ├── ✕ unmet peer eslint@^8.56.0: found 9.39.1
+│   └─┬ @typescript-eslint/utils 7.18.0
+│     └── ✕ unmet peer eslint@^8.56.0: found 9.39.1
+├─┬ @typechain/hardhat 9.1.0
+│ └── ✕ unmet peer hardhat@^2.9.9: found 3.0.11
+├─┬ hardhat-gas-reporter 2.3.0
+│ └── ✕ unmet peer hardhat@^2.16.0: found 3.0.11
+├─┬ @chainlink/contracts 1.5.0
+│ └─┬ @eth-optimism/contracts 0.6.0
+│   └── ✕ unmet peer ethers@^5: found 6.17.0
+└─┬ @openzeppelin/contracts-upgradeable 5.0.2
+  └── ✕ unmet peer @openzeppelin/contracts@5.0.2: found 5.3.0
+
+╭ Warning ─────────────────────────────────────────────────────────────────────╮
+│                                                                              │
+│   Ignored build scripts: @arbitrum/nitro-contracts.                          │
+│   Run "pnpm approve-builds" to pick which dependencies should be allowed     │
+│   to run scripts.                                                            │
+│                                                                              │
+╰──────────────────────────────────────────────────────────────────────────────╯
+
+Done in 3.3s using pnpm v10.7.1
+
+> @interfold/main@0.14.0 build:circuits /home/dev/interfold-research/interfold
+> tsx scripts/build-circuits.ts --skip-regen-parity
+
+🔮 Building Noir circuits for preset(s): insecure-512, committee(s): minimum...
+
+🔮 Building preset: insecure-512, committee: minimum...
+   Found 36 circuit(s)
+   📋 Set Noir config to: insecure (preset: insecure-512)
+   📋 Set Noir committee to: minimum
+   ℹ️  --skip-regen-parity: trusting the committed on-disk parity matrices for committee minimum (the nested cargo run would deadlock against the outer .cargo-lock). To refresh them after a BFV-constant change, run `pnpm build:circuits --committee minimum` from outside cargo.
+   ⚠️  patchUtilsTs: <generated-committee-doc> block in /home/dev/interfold-research/interfold/packages/interfold-contracts/scripts/utils.ts did not change (committee=minimum)
+   📋 Wrote ActiveCryptoConfig.sol for insecure-512/minimum
+   🧹 Cleaned 5 stale target dir(s)
+   ✓ dkg/e_sm_share_computation
+   ✓ dkg/pk
+   ✓ dkg/share_decryption
+   ✓ dkg/share_encryption
+   ✓ dkg/sk_share_computation
+   ✓ threshold/decrypted_shares_aggregation
+   ✓ threshold/pk_aggregation
+   ✓ threshold/pk_generation
+   ✓ threshold/share_decryption
+   ✓ threshold/user_data_encryption
+   ✓ threshold/user_data_encryption_ct0
+   ✓ threshold/user_data_encryption_ct1
+   ✓ recursive_aggregation/c2ab_fold
+   ✓ recursive_aggregation/c3_fold
+   ✓ recursive_aggregation/c3_fold_batch_b10
+   ✓ recursive_aggregation/c3_fold_batch_b2
+   ✓ recursive_aggregation/c3_fold_batch_b3
+   ✓ recursive_aggregation/c3_fold_batch_b6
+   ✓ recursive_aggregation/c3_fold_batch_merge_m0
+   ✓ recursive_aggregation/c3_fold_batch_merge_m1
+   ✓ recursive_aggregation/c3_fold_batch_merge_m2
+   ✓ recursive_aggregation/c3_fold_batch_merge_m7
+   ✓ recursive_aggregation/c3_fold_batch_merge_m7x
+   ✓ recursive_aggregation/c3_fold_batch_n2
+   ✓ recursive_aggregation/c3_fold_batch_n3
+   ✓ recursive_aggregation/c3_fold_batch_n4
+   ✓ recursive_aggregation/c3_fold_kernel
+   ✓ recursive_aggregation/c3ab_fold
+   ✓ recursive_aggregation/c4ab_fold
+   ✓ recursive_aggregation/c6_fold
+   ✓ recursive_aggregation/c6_fold_kernel
+   ✓ recursive_aggregation/decryption_aggregator
+   ✓ recursive_aggregation/dkg_aggregator
+   ✓ recursive_aggregation/node_fold
+   ✓ recursive_aggregation/nodes_fold
+   ✓ recursive_aggregation/nodes_fold_kernel
+
+✅ Built 36 circuits for preset: insecure-512/minimum
+
+📋 CI Output: circuits_built=36, circuits_success=true, source_hash=5efe5df10c056317, artifacts_dir=/home/dev/interfold-research/interfold/dist/circuits
+	Command being timed: "bash crates/zk-prover/scripts/build_fixtures.sh"
+	User time (seconds): 517.71
+	System time (seconds): 29.66
+	Percent of CPU this job got: 304%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 3:00.00
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 9748792
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 0
+	Minor (reclaiming a frame) page faults: 29558190
+	Voluntary context switches: 115683
+	Involuntary context switches: 13339
+	Swaps: 0
+	File system inputs: 1952
+	File system outputs: 82648
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+=== T1=2026-09-13T06:12:16Z v5 fixture-script RC=0 ===
+=== R130v5 final RC=0 ===

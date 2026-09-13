@@ -1,0 +1,138 @@
+   Compiling e3-zk-prover v0.14.0 (/home/dev/interfold-research/interfold/crates/zk-prover)
+error: failed to run custom build command for `e3-zk-prover v0.14.0 (/home/dev/interfold-research/interfold/crates/zk-prover)`
+
+Caused by:
+  process didn't exit successfully: `/home/dev/interfold-research/interfold/target/release/build/e3-zk-prover-1b54ee58c3ab1c6a/build-script-build` (exit status: 101)
+  --- stdout
+  cargo:rerun-if-env-changed=FORCE_BUILD
+  cargo:rerun-if-changed=versions.json
+  Building circuits (missing: ./circuits/bin/.active-preset.json ./circuits/bin/recursive_aggregation/c6_fold/target/c6_fold.json ./circuits/bin/recursive_aggregation/c6_fold_kernel/target/c6_fold_kernel.json)...
+  examples/CRISP/client                    |  WARN  The field "pnpm.overrides" was found in /home/dev/interfold-research/interfold/examples/CRISP/client/package.json. This will not take effect. You should configure "pnpm.overrides" at the root of the workspace instead.
+  templates/default                        |  WARN  The field "pnpm.overrides" was found in /home/dev/interfold-research/interfold/templates/default/package.json. This will not take effect. You should configure "pnpm.overrides" at the root of the workspace instead.
+  Scope: all 17 workspace projects
+  Progress: resolved 1, reused 0, downloaded 0, added 0
+   WARN  deprecated glob@11.0.3: Old versions of glob are not supported, and contain widely publicized security vulnerabilities, which have been fixed in the current version. Please update. Support for old versions may be purchased (at exorbitant rates) by contacting i@izs.me
+  Progress: resolved 1264, reused 1108, downloaded 0, added 0
+  Progress: resolved 2312, reused 2163, downloaded 0, added 0
+   WARN  28 deprecated subdependencies found: @metamask/sdk-analytics@0.0.5, @metamask/sdk-communication-layer@0.33.1, @metamask/sdk-install-modal-web@0.32.1, @metamask/sdk@0.33.1, @paulmillr/qr@0.2.1, @safe-global/safe-gateway-typescript-sdk@3.23.1, @types/minimatch@6.0.0, @walletconnect/ethereum-provider@2.21.1, @walletconnect/sign-client@2.21.0, @walletconnect/sign-client@2.21.1, @walletconnect/universal-provider@2.21.0, @walletconnect/universal-provider@2.21.1, fstream@1.0.12, glob@10.3.10, glob@10.5.0, glob@5.0.15, glob@7.1.7, glob@7.2.3, glob@8.1.0, inflight@1.0.6, intersection-observer@0.12.2, lodash.get@4.4.2, rimraf@2.7.1, source-map@0.8.0-beta.0, tsconfck@3.1.6, uuid@10.0.0, uuid@8.3.2, uuid@9.0.1
+  Packages: +1
+  +
+  Progress: resolved 2312, reused 2163, downloaded 0, added 1, done
+  . prepare$ husky
+  . prepare: Done
+   WARN  Issues with peer dependencies found
+  examples/CRISP
+  └─┬ @synthetixio/synpress 4.1.1
+    ├─┬ @synthetixio/synpress-cache 0.0.13
+    │ └── ✕ unmet peer playwright-core@1.48.2: found 1.52.0
+    ├─┬ @synthetixio/ethereum-wallet-mock 0.0.13
+    │ └─┬ @depay/web3-client 10.18.6
+    │   └── ✕ unmet peer ethers@^5.7.1: found 6.17.0
+    └─┬ @synthetixio/synpress-phantom 0.0.13
+      └── ✕ unmet peer @playwright/test@1.48.2: found 1.52.0
+
+  examples/CRISP/packages/crisp-contracts
+  ├─┬ @nomicfoundation/hardhat-ethers-chai-matchers 3.0.1
+  │ └── ✕ unmet peer chai@^5.1.2: found 6.2.2
+  ├─┬ @nomicfoundation/hardhat-toolbox-mocha-ethers 3.0.0
+  │ └── ✕ unmet peer chai@^5.1.2: found 6.2.2
+  ├─┬ hardhat-deploy 0.12.4
+  │ └─┬ zksync-ethers 5.11.2
+  │   └── ✕ unmet peer ethers@~5.7.0: found 5.8.0 in hardhat-deploy
+  ├─┬ hardhat-gas-reporter 1.0.10
+  │ └── ✕ unmet peer hardhat@^2.0.2: found 3.0.11
+  └─┬ solidity-coverage 0.8.17
+    └── ✕ unmet peer hardhat@^2.11.0: found 3.0.11
+
+  packages/interfold-contracts
+  ├─┬ @typescript-eslint/parser 7.18.0
+  │ └── ✕ unmet peer eslint@^8.56.0: found 9.39.1
+  ├─┬ @typescript-eslint/eslint-plugin 7.18.0
+  │ ├── ✕ unmet peer eslint@^8.56.0: found 9.39.1
+  │ └─┬ @typescript-eslint/type-utils 7.18.0
+  │   ├── ✕ unmet peer eslint@^8.56.0: found 9.39.1
+  │   └─┬ @typescript-eslint/utils 7.18.0
+  │     └── ✕ unmet peer eslint@^8.56.0: found 9.39.1
+  ├─┬ @typechain/hardhat 9.1.0
+  │ └── ✕ unmet peer hardhat@^2.9.9: found 3.0.11
+  ├─┬ hardhat-gas-reporter 2.3.0
+  │ └── ✕ unmet peer hardhat@^2.16.0: found 3.0.11
+  ├─┬ @chainlink/contracts 1.5.0
+  │ └─┬ @eth-optimism/contracts 0.6.0
+  │   └── ✕ unmet peer ethers@^5: found 6.17.0
+  └─┬ @openzeppelin/contracts-upgradeable 5.0.2
+    └── ✕ unmet peer @openzeppelin/contracts@5.0.2: found 5.3.0
+
+  ╭ Warning ─────────────────────────────────────────────────────────────────────╮
+  │                                                                              │
+  │   Ignored build scripts: @arbitrum/nitro-contracts.                          │
+  │   Run "pnpm approve-builds" to pick which dependencies should be allowed     │
+  │   to run scripts.                                                            │
+  │                                                                              │
+  ╰──────────────────────────────────────────────────────────────────────────────╯
+
+  Done in 3.2s using pnpm v10.7.1
+
+  > @interfold/main@0.14.0 build:circuits /home/dev/interfold-research/interfold
+  > tsx scripts/build-circuits.ts --skip-regen-parity
+
+  🔮 Building Noir circuits for preset(s): insecure-512, committee(s): minimum...
+
+  🔮 Building preset: insecure-512, committee: minimum...
+     Found 37 circuit(s)
+     📋 Set Noir config to: insecure (preset: insecure-512)
+     📋 Set Noir committee to: minimum
+     ℹ️  --skip-regen-parity: trusting the committed on-disk parity matrices for committee minimum (the nested cargo run would deadlock against the outer .cargo-lock). To refresh them after a BFV-constant change, run `pnpm build:circuits --committee minimum` from outside cargo.
+     📋 Wrote ActiveCryptoConfig.sol for insecure-512/minimum
+     🧹 Cleaned 5 stale target dir(s)
+     ✓ dkg/e_sm_share_computation
+     ✓ dkg/pk
+     ✓ dkg/share_decryption
+     ✓ dkg/share_encryption
+     ✓ dkg/sk_share_computation
+     ✓ threshold/decrypted_shares_aggregation
+     ✓ threshold/pk_aggregation
+     ✓ threshold/pk_generation
+     ✓ threshold/share_decryption
+     ✓ threshold/user_data_encryption
+     ✓ threshold/user_data_encryption_ct0
+     ✓ threshold/user_data_encryption_ct1
+     ✓ recursive_aggregation/c2ab_fold
+     ✓ recursive_aggregation/c3_fold
+     ✓ recursive_aggregation/c3_fold_batch_b10
+     ✓ recursive_aggregation/c3_fold_batch_b2
+     ✓ recursive_aggregation/c3_fold_batch_b3
+     ✓ recursive_aggregation/c3_fold_batch_b6
+     ✓ recursive_aggregation/c3_fold_batch_merge_m0
+     ✓ recursive_aggregation/c3_fold_batch_merge_m1
+     ✓ recursive_aggregation/c3_fold_batch_merge_m2
+     ✓ recursive_aggregation/c3_fold_batch_merge_m7
+     ✓ recursive_aggregation/c3_fold_batch_merge_m7x
+     ✓ recursive_aggregation/c3_fold_batch_n2
+     ✓ recursive_aggregation/c3_fold_batch_n3
+     ✓ recursive_aggregation/c3_fold_batch_n4
+     ✓ recursive_aggregation/c3_fold_kernel
+     ✓ recursive_aggregation/c3ab_fold
+     ✓ recursive_aggregation/c4ab_fold
+     ✓ recursive_aggregation/c6_fold
+     ✓ recursive_aggregation/c6_fold_kernel
+     ✓ recursive_aggregation/decryption_aggregator
+     ✓ recursive_aggregation/dkg_aggregator
+     ✓ recursive_aggregation/node_fold
+     ✓ recursive_aggregation/nodes_fold
+     ✓ recursive_aggregation/nodes_fold_kernel
+
+  ✅ Built 36 circuits for preset: insecure-512/minimum
+
+  📋 CI Output: circuits_built=36, circuits_success=false, source_hash=7169eeb33b770a24, artifacts_dir=/home/dev/interfold-research/interfold/dist/circuits
+   ELIFECYCLE  Command failed with exit code 1.
+
+  --- stderr
+     ⚠️  patchUtilsTs: <generated-committee-doc> block in /home/dev/interfold-research/interfold/packages/interfold-contracts/scripts/utils.ts did not change (committee=minimum)
+
+  ❌ Failed circuits:
+     insecure-512/minimum/c3_fold_batch_lib: recursive_aggregation/c3_fold_batch_lib: compiled artifact not found. Searched for c3_fold_batch_lib.json in: /home/dev/interfold-research/interfold/circuits/bin/recursive_aggregation/c3_fold_batch_lib/target, /home/dev/interfold-research/interfold/circuits/bin/recursive_aggregation/target, /home/dev/interfold-research/interfold/circuits/bin/recursive_aggregation/target, /home/dev/interfold-research/interfold/circuits/bin/target
+
+  thread 'main' (128453) panicked at crates/zk-prover/build.rs:12:5:
+  assertion failed: Command::new("bash").arg("./scripts/build_fixtures.sh").status().unwrap().success()
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace

@@ -1,0 +1,7 @@
+= r126 c4 4c-pinned box census 02:50:03 =
+nproc=8
+taskset_cpus=0-3 (4c)
+MemTotal:       32866100 kB
+MemAvailable:   31924628 kB
+SwapTotal:             0 kB
+0.00 0.00 0.00 1/209 15433

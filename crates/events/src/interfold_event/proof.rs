@@ -128,6 +128,39 @@ pub enum CircuitName {
     C3Fold,
     /// Bootstrap circuit for [`CircuitName::C3Fold`] genesis accumulator proof (same ABI, no acc verify).
     C3FoldKernel,
+    /// I5 PoC (not shipped): batched non-recursive c3 fold, 1 leaf verified over the kernel genesis.
+    C3FoldBatchN2,
+    /// I5 PoC (not shipped): batched non-recursive c3 fold, 2 leaves verified over the kernel genesis.
+    C3FoldBatchN3,
+    /// I5 PoC (not shipped): batched non-recursive c3 fold, 3 leaves verified over the kernel genesis.
+    C3FoldBatchN4,
+    /// I5 r9 (not shipped): production-fit batched non-recursive c3 fold, 2 leaves,
+    /// same public ABI as `c3_fold` (4-field prefix + 3*C3_SLOTS), runtime slots.
+    C3FoldBatchB2,
+    /// I5 r9 (not shipped): production-fit batched non-recursive c3 fold, 3 leaves.
+    C3FoldBatchB3,
+    /// I5 r51 (not shipped): production-fit batched non-recursive c3 fold, 6 leaves
+    /// (N=19 tree-split sub-gate; requires C3_SLOTS >= 7, e.g. micro committee).
+    C3FoldBatchB6,
+    /// I5 r51 (not shipped): production-fit batched non-recursive c3 fold, 10 leaves
+    /// (N=19 tree-split sub-gate; requires C3_SLOTS >= 11, e.g. micro committee).
+    C3FoldBatchB10,
+    /// I5a r53 (not shipped): MERGE tier M1 — anchor + 1 b6 sub-gate verify
+    /// (in-circuit verifies the b6 sub-gate's non-ZK proof; emits c3_fold's exact
+    /// 4+3*C3_SLOTS public ABI over the combined slot array).
+    C3FoldBatchMergeM1,
+    /// I5a r55 (not shipped): PRODUCTION-SHAPE MERGE tier M7 — anchor + 7 in-circuit
+    /// sub-gate verifies (5 x B10 + 2 x B2 = 54 leaves = (N-1)*L at N=19, secure-8192/small)
+    /// + slot-fold into the combined 3 x C3_SLOTS state (C3_SLOTS = N_PARTIES * L_THRESHOLD);
+    /// emits c3_fold's exact 4+3*C3_SLOTS public ABI (c3ab_fold / node_fold VK-rebuild-only).
+    C3FoldBatchMergeM7,
+    /// I5a r61 (not shipped): PRODUCTION-SCHEDULE MERGE tier M7x — anchor (slot0, parameterized)
+    /// + 6 in-circuit sub-gate verifies (5 x B10 + 1 x B3 = 53 covered slots, a public
+    /// slot-index array) + membership slot-fold of the combined 3 x C3_SLOTS state; covers the
+    /// production C3b geometry (N=19, L=3, C3_SLOTS = 57, per-node scheduled slots W_P =
+    /// {0..57}\{3P, 3P+1, 3P+2}); emits c3_fold's exact 4+3*C3_SLOTS public ABI
+    /// (c3ab_fold / node_fold VK-rebuild-only).
+    C3FoldBatchMergeM7x,
     /// Sequential C6 fold: inner ZK + prior `c6_fold` non-ZK proof (phase-7 aggregator).
     C6Fold,
     /// Bootstrap circuit for [`CircuitName::C6Fold`] genesis accumulator proof (same ABI, no acc verify).
@@ -164,6 +197,16 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => "decrypted_shares_aggregation",
             CircuitName::C3Fold => "c3_fold",
             CircuitName::C3FoldKernel => "c3_fold_kernel",
+            CircuitName::C3FoldBatchN2 => "c3_fold_batch_n2",
+            CircuitName::C3FoldBatchN3 => "c3_fold_batch_n3",
+            CircuitName::C3FoldBatchN4 => "c3_fold_batch_n4",
+            CircuitName::C3FoldBatchB2 => "c3_fold_batch_b2",
+            CircuitName::C3FoldBatchB3 => "c3_fold_batch_b3",
+            CircuitName::C3FoldBatchB6 => "c3_fold_batch_b6",
+            CircuitName::C3FoldBatchB10 => "c3_fold_batch_b10",
+            CircuitName::C3FoldBatchMergeM1 => "c3_fold_batch_merge_m1",
+            CircuitName::C3FoldBatchMergeM7 => "c3_fold_batch_merge_m7",
+            CircuitName::C3FoldBatchMergeM7x => "c3_fold_batch_merge_m7x",
             CircuitName::C6Fold => "c6_fold",
             CircuitName::C6FoldKernel => "c6_fold_kernel",
             CircuitName::C2abFold => "c2ab_fold",
@@ -199,6 +242,16 @@ impl CircuitName {
             | CircuitName::NodesFold
             | CircuitName::NodesFoldKernel
             | CircuitName::DkgAggregator
+            | CircuitName::C3FoldBatchN2
+            | CircuitName::C3FoldBatchN3
+            | CircuitName::C3FoldBatchN4
+            | CircuitName::C3FoldBatchB2
+            | CircuitName::C3FoldBatchB3
+            | CircuitName::C3FoldBatchB6
+            | CircuitName::C3FoldBatchB10
+            | CircuitName::C3FoldBatchMergeM1
+            | CircuitName::C3FoldBatchMergeM7
+            | CircuitName::C3FoldBatchMergeM7x
             | CircuitName::DecryptionAggregator => "recursive_aggregation",
         }
     }
@@ -236,6 +289,16 @@ impl CircuitName {
             CircuitName::DecryptedSharesAggregation => CircuitOutputLayout::None,
             CircuitName::C3Fold
             | CircuitName::C3FoldKernel
+            | CircuitName::C3FoldBatchN2
+            | CircuitName::C3FoldBatchN3
+            | CircuitName::C3FoldBatchN4
+            | CircuitName::C3FoldBatchB2
+            | CircuitName::C3FoldBatchB3
+            | CircuitName::C3FoldBatchB6
+            | CircuitName::C3FoldBatchB10
+            | CircuitName::C3FoldBatchMergeM1
+            | CircuitName::C3FoldBatchMergeM7
+            | CircuitName::C3FoldBatchMergeM7x
             | CircuitName::C6Fold
             | CircuitName::C6FoldKernel
             | CircuitName::C2abFold

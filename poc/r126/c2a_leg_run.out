@@ -1,0 +1,28 @@
+R126-LEG C2a 4c-pinned nargo compile cwd=/home/dev/interfold-research/interfold/circuits/bin/dkg/sk_share_computation threads=4 cputaset=0-3
+R126-LEG C2a rc=0
+	Command being timed: "nargo compile"
+	User time (seconds): 1200.52
+	System time (seconds): 18.41
+	Percent of CPU this job got: 99%
+	Elapsed (wall clock) time (h:mm:ss or m:ss): 20:19.12
+	Average shared text size (kbytes): 0
+	Average unshared data size (kbytes): 0
+	Average stack size (kbytes): 0
+	Average total size (kbytes): 0
+	Maximum resident set size (kbytes): 30878452
+	Average resident set size (kbytes): 0
+	Major (requiring I/O) page faults: 23
+	Minor (reclaiming a frame) page faults: 18558973
+	Voluntary context switches: 3409
+	Involuntary context switches: 7056
+	Swaps: 0
+	File system inputs: 4560
+	File system outputs: 115912
+	Socket messages sent: 0
+	Socket messages received: 0
+	Signals delivered: 0
+	Page size (bytes): 4096
+	Exit status: 0
+R126-LEG C2a artifact: 59343001 1789187831
+R126-LEG C2a artifact sha16=0c727f73cba3a28a
+bb gates rc=0

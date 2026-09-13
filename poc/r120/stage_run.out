@@ -1,0 +1,8 @@
+config swapped: committee=small, preset=secure
+min on-disk C5 json snapshot sha16: 9b5924fca2f11989
+nargo compile secure/small C5 wall 65.07 s
+secure/small C5 json sha16: 443213a2ecda13a0
+secure/small C5 gates = 2554248 193909 ACIR
+stage tree materialized: stages C5 json + noir-recursive-no-zk vk + vk_hash
+config + min on-disk C5 json byte-restored ASSERTED (sha 9b5924fca2f11989; porcelain 0)
+STAGE SELF-CHECK OK

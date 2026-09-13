@@ -1,0 +1,15 @@
+config swapped: committee=small, preset=secure
+c6_fold {'wall_s': 0.88, 'rc': 0, 'gates': 1449894, 'acir': 233, 'sha16': '2898129208760196', 'acc_public_inputs_len': 46}
+c6_fold_kernel {'wall_s': 0.87, 'rc': 0, 'gates': 703953, 'acir': 79, 'sha16': '1518029834632311', 'acc_public_inputs_len': 46}
+decryption_aggregator {'wall_s': 1.08, 'rc': 0, 'gates': 1493885, 'acir': 9526, 'sha16': '1192422675816716', 'c6_fold_public_len': 46, 'committee_members_len': 19}
+config byte-restored (asserted)
+--- restoring min on-disk artifacts from pre-secure snapshot ---
+restored c6_fold
+restored c6_fold_kernel
+restored decryption_aggregator
+--- TS-min: on-disk min artifacts vs r114 pre-patch anchors ---
+PASS c6_fold gates 1448603 acir 57 vs pre-patch 1448603 57
+PASS c6_fold_kernel gates 703873 acir 23 vs pre-patch 703873 23
+PASS decryption_aggregator gates 1448924 acir 1643 vs pre-patch 1448924 1643
+records -> /home/dev/interfold-research/interfold/poc/r117/c6_consumers_secure_r117.json
+FULL SELF-CHECK OK

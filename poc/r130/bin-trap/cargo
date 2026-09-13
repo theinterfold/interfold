@@ -1,0 +1,3 @@
+#!/usr/bin/env bash
+echo "CARGO-TRAP $(date -u +%FT%TZ) pid=$$ ppid=$PPID role=${0} args: $*" >> /tmp/r130_v5_cargo_trap.log
+exec /home/dev/.cargo/bin/cargo "$@"

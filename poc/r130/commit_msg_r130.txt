@@ -1,0 +1,47 @@
+r130: close the fixture-bootstrap nested-cargo deadlock (FIX1+2+3) — RAN-GREEN
+
+Fix stack for the r127-n2 deadlock (outer cargo test/build -> build.rs ->
+build_fixtures.sh -> pnpm build:circuits -> nested `cargo run
+generate_parity_matrices` waits on the outer target/release/.cargo-lock):
+
+- FIX1 scripts/build-circuits.ts: new --skip-regen-parity flag;
+  regenerateParityMatrices() early-returns trusting the COMMITTED parity
+  matrices (git-tracked literals under circuits/lib/src/configs/committee
+  <committee>/parity_{insecure,secure}.nr; documented refresh path is the
+  top-level `pnpm build:circuits --committee <x>` run OUTSIDE cargo).
+- FIX2 crates/zk-prover/scripts/build_fixtures.sh: passes --skip-regen-parity.
+- FIX3 scripts/build-circuits.ts: isLibOnly() classifier — Nargo
+  [package] type = "lib" packages (c3_fold_batch_lib) are dep-only; nargo
+  compile RC 0 emits no target dir, so the artifact-existence check must
+  skip them (this was the residual build failure on the lean tree).
+- Test crates/zk-prover/tests/bootstrap_fixtures_r130.rs: regression asserts
+  the flag wiring, the skip-guard precedence, and the lib classifier policy.
+
+RAN verification (this tick, 8c/32GB box, prior tick dead-session residue
+rejected and re-derived from disk per skill #4):
+- v5 composite leg (run_r130_v5.sh; systemd-run --user unit r130v5.service,
+  MemoryMax=28G; outer -x flock on the cargo lock = r127-n2 shape; the 4
+  commit-pinned artifacts deleted; PATH cargo-trap watching for nested cargo):
+  RC 0 in 180.0 s wall ("Built 36/36 circuits, preset insecure-512/minimum");
+  ZERO nested cargo processes; peak RSS 9.30 GiB, Swap 0.
+- Artifacts byte-identical to r111 anchors after the run: c3_fold.json
+  240cd86c156a... c6_fold.json 27571a52e377... c6_fold_kernel.json
+  eed9aea56e2e... (the audit commit's committed SHAs); skipped-fix branch
+  asserted present in the log (no parity regen run).
+- cargo check --workspace RC 0 (2.80 s); regression test 1 passed / 0 failed;
+  classifier unit (node libonly_check.cjs) RC 0.
+- Known wall (RAN, r126 + re-hit this tick): the agent-terminal process
+  cgroup kills in-cargo bootstrap builds at ~4 GiB anon RSS (dmesg
+  CONSTRAINT_MEMCG)
+  despite ~29 GiB free system-wide; systemd-run --user ... MemoryMax=28G is
+  the sanctioned runner (recorded in STATE.md).
+
+PROVENANCE: parent a4db7604 (r129); origin/main rebased at 95c38d70;
+72 commits ahead (all research/proj). This round = attempt v5; v1–v4
+history + the r130 crashed-session (4e9ee60f) dead-session reclamation trail
+are in poc/r130/RESULT.txt and r130_final.log.
+
+UPSTREAM-PR: candidate — the FIX1/2/3 stack changes build infra
+(scripts/ + a crates script + a test), touches no circuit/protocol logic,
+and fixes a reproducibility hole (fresh-clone cargo build deadlocks) that
+affects all upstream builders. SHA + title in LOG.md round entry.

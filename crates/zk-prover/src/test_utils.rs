@@ -14,6 +14,26 @@ use tempfile::TempDir;
 use crate::error::ZkError;
 
 pub use crate::circuits::vk::load_vk_artifacts;
+// I5 PoC (wall-clock tests): reuse the fold-circuit witness surface + inner C3 transcript
+// extraction so the batch wall test exercises the exact production code paths.
+pub use crate::circuits::aggregation::helpers::{
+    extract_single_field, field_keys,
+};
+pub use serde_json;
+
+/// I5 PoC (wall-clock tests): prove the `c3_fold_kernel` genesis for one inner C3 proof —
+/// the same call the sequential fold makes on its first step. Batch arms anchor at this proof.
+pub fn c3_fold_kernel_genesis(
+    prover: &crate::prover::ZkProver,
+    inner: &e3_events::Proof,
+    total_slots: usize,
+    artifacts_dir: &str,
+    e3_id: &str,
+) -> Result<e3_events::Proof, ZkError> {
+    crate::circuits::aggregation::c3_accumulator::generate_c3_fold_kernel_genesis_proof(
+        prover, inner, total_slots, artifacts_dir, e3_id,
+    )
+}
 
 /// Field strings for recursive aggregation witness I/O (integration tests only).
 pub fn fold_witness_field_strings(bytes: &[u8]) -> Result<Vec<String>, ZkError> {

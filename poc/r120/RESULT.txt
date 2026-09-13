@@ -1,0 +1,113 @@
+# r120 — C5 (threshold/pk_aggregation) production-field prove-wall + witness anchor
+
+**Status: RAN-GREEN, reproducible (2 runs @4c release).**
+
+## Claim (I-r120)
+The r97-class "witness-layer family" that r119 declared "COMPLETE on box-1" listed
+C1 r97 / C2 r98 / C3 r41 / C4 r98 / C6 r119 — but **never C5**. C5 = pk_aggregation
+= the LARGEST single circuit in the DKG DAG (2,554,248 g secure-8192/small,
+r113/r39/r44 — the r44 2.2M-cons class; (a) per-honest re-commit block = 2,157,441 g
+= 84.46 % of C5-secure, r113). Its whole secure/small 3-arm gate split (r113's
+verify_c5_secure_split_r113.py) was a **GATE read** (0 inners, 0 witness), and its
+prove wall at the production committee (N=19/T=9/H=10, L=3) had **never once been
+RAN on box-1** — the bench P2 span 400.03 s (r28-class "Aggregator P2:
+PkAggregation pending → PublicKeyAggregated") is an integration-level number
+inherited from the main-net/M4 Pro benchmark report, NOT RAN here. Separately, the
+C5 secure/small **witness layer** at T=9/H=10 — the exact r97 witness-risk class
+(r87 killed the C1 insecure/micro cell on it) — had **never been RAN-exercised**
+for C5. This round closes both for the 6th leaf, mirroring r119's C6 leg.
+
+## Premise vet (source RAN, cheapest-first)
+- `C5 = threshold/pk_aggregation` — group `threshold`, `dir_path = threshold/
+  pk_aggregation`, `resolved_name = PkAggregation`; variant Default uses
+  `circuits_dir(Default)/threshold/pk_aggregation/pk_aggregation.{json,vk,vk_hash}`
+  (crates/zk-prover/src/prover.rs:42-44 + proof.rs:259-261 dir_path, 195/232 as_str/group).
+- C5 is a base DKG/threshold circuit — Default VK type = **noir-recursive-no-zk**
+  (scripts/build-circuits.ts lines 991-993: "aggregation fold circuits" are non-ZK;
+  = the same 3 VK variants the staged leg materializes).
+- `PkAggregationCircuitData::generate_sample(preset, committee) -> Self` (sample.rs:
+  20-63) is independent per call (fresh H=10 SecretKey::random + pk_shares for
+  each party, then aggregate).
+- RAM headroom: C5 2,554,248 g < C3-small 2,966,353 g (r43 RAN-compiled 5.87 GiB)
+  and ~C6-small 2,562,117 g (r119 RAN-compiled 4.9 GiB, RAN-proved 3.46 GiB) ⇒
+  C5 is RAN-eligible on box-1 4c/7.8 GiB.
+
+## Method (RAN, box-1, ~4 min compute)
+1. Stage (poc/r120/stage_c5_secure_small_r120.py, self-restoring config swap
+   committee min→small + preset insecure→secure; on-disk min C5 json snapshotted
+   sha 9b5924fca2f11989 194,553 B; re-compile + write_vk + materialize + restore):
+   - nargo secure/small C5 compile wall **65.07 s** @4c.
+   - Gate re-measure: **2,554,248 g / 193,909 ACIR** (DIGIT-EXACT r113 V0 anchor).
+   - bb write_vk -t noir-recursive-no-zk → staged into
+     `poc/r120/root/secure-8192/small/default/threshold/pk_aggregation/`
+     (`pk_aggregation.{json,vk,vk_hash}`).
+   - Config + min on-disk C5 json **byte-restored ASSERTED** (sha back to
+     9b5924fca2f11989; `git status --porcelain -- circuits/lib/src/configs/` = 0
+     lines).
+2. Leg (crates/zk-prover/tests/c5_secure_small_r120.rs), RAN via:
+   `E3_R120_STAGE_ROOT=$(pwd)/poc/r120/root cargo test --release -p e3-zk-prover
+   --test c5_secure_small_r120 -- --nocapture` under `/usr/bin/time -v`:
+   - 5 independent C5 samples at secure/small (H=10, fresh pk_sks per party +
+     pk aggregate): **0.25 s total**.
+   - 5 C5 PROVES at secure/small (CircuitVariant::Default, into the r120-staged
+     noir-recursive-no-zk vk set): **26.6-27.2 s each, avg 26.8 s, total
+     134.2 s** (run 1) / **26.4-27.2 s, avg 26.7 s, total 133.4 s** (run 2).
+     r97-class witness anchor at T=9/H=10: every BIT_PK range-check (59-bit
+     pk_share limbs + aggregated public key vs the configured secure bound),
+     the crp + pk_agg relation, and the (a) per-honest re-commit block
+     (2,157,441 g = 84.46 % of C5-secure, r113) all RAN-execute + pass for
+     the FIRST time at the production committee on box-1.
+   - 5 proof-VERIFIES (Default variant, staged vk): **all ok=true, ~0.01 s
+     each** — coherence of the staged vk + artifact (the r117 stale-vk class).
+   - time -v run 1: peak RSS 3,464,068 kB = **3.30 GiB** / Swaps 0 / wall
+     2:16.59 @4c / 297 % CPU / user 389.33 s.
+   - time -v run 2 (reproducible-durable `poc/r120/leg_run.out`): peak RSS
+     3,464,192 kB / Swaps 0 / wall 2:14.22 @4c.
+   - `test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered
+     out; finished in 134.51 s` (run 1) / 133.69 s (run 2).
+
+## Findings (RAN, exact)
+1. PRODUCTION-FIELD C5 PROVE-WALL RAN-GREEN: 5 PROVES + 5 VERIFIES ok=true at
+   secure-8192/small H=10. The stage gate 2,554,248 g is DIGIT-EXACT to the r113
+   V0 anchor — no cone drift between the r113 gate read and this prove.
+2. **C5 single-prove platform datum (box-1 4c, release): avg 26.7-26.8 s** on
+   C5 2,554,248 g. This is the box-1 single-prove anchor for the C5 sub-span of
+   the r28-class P2 400.03 s bench integration wall. Cross-band reference (DRAFT
+   framing, RAN inputs): the on-disk main-net bench (circuits/benchmarks/
+   results_secure_agg_small/report.md, tracked job ZkPkAggregation) = 49.19 s on
+   the M4 Pro => box-1 4c release reproduces the single-prove at 0.54x of the
+   main-net machine (a plain platform-speed fact, both numbers RAN; 4-core
+   Linux vs the M4 Pro single-package). This RAN-converts a single-prove
+   bench-inherited number on box-1 for the largest circuit in the DAG.
+3. WITNESS LAYER r97-class RAN-CLOSED for C5 (the 6th leaf): C5 secure/small
+   T=9/H=10 = RAN-GREEN for the first time (r97 C1 / r98 C2+C4 / r119 C6 / r41
+   C3 = the previous 5-leaf family; C5 closes it). C5's (a) re-commit block
+   (2,157,441 g = 84.46 % of C5-secure, r113) is RAN-witness-clean at H=10.
+4. N=19 wall table 90.1 min/node @4c EXCL. comm **UNTOUCHED** — C5 is P2-side /
+   aggregator, NOT per-node; the P2 span is a separate wall (r28-class, now
+   single-prove-RAN-anchored; its multi-job / network / P2-driver fan-out
+   remains a box-2 scope).
+
+## Gate / tree RAN
+- `cargo check --workspace` RC 0 (1.91 s)
+- `cargo check --workspace --tests` RC 0 (1.63 s)
+- `git status --porcelain` = 0 tracked lines at commit; untracked =
+  poc/r120/{pre-secure/ root/ vktmp/} (byte-conserved build output, rebuildable
+  by the stage script in ~65 s @4c).
+- Touched files:  test leg + stage script + RESULT.txt + secure_gates_r120.json
+  (re-measured gate) + stage_run.out (RAN stage) + leg_run.out (RAN leg, run 2).
+  Zero circuits/ / crates/ config change (crate-source 0 delta; new test file
+  only).
+- No UPSTREAM-PR (test + poc scaffolding only, matches r110-r119).
+
+## Scope discipline
+- leg wall 2:14-2:16 @4c / peak 3.30 GiB / Swaps 0 — + stage compile 65 s @4c
+  = ~4 min compute total, inside the 30-60 min budget.
+- NOT RAN: the P2 integration span 400.03 s (r28-class) — that's P2-side
+  multi-job fan-out + network, box-2 scope (r78 card). This round RAN-anchors
+  the single-prove sub-span only, at the production committee.
+- The C4/C5 commitment-scheme lever (I18/I19 family, r113-class, -84.46 % fire)
+  stays **HELD** pending owner sign-off (not a round advance — owner decision).
+
+Durable records (re-runnable): `stage_c5_secure_small_r120.py` + `leg_run.out`
+(raw stdout /usr/bin/time -v record).
