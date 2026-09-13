@@ -40,7 +40,6 @@ impl<let N: u32, let L: u32> Configs<N, L> {
     }
 }
 
-
 /// Threshold public key contribution (C1), for the secure parameter sets.
 ///
 /// **Role:** Prove one party's TrBFV public-key contribution from hidden `sk`, `eek`, and `e_sm`
@@ -104,10 +103,10 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
     ///
     /// Returns `(commit(sk), commit(pk_trbfv), commit(e_sm))` as documented on the struct.
     pub fn execute(self) -> (Field, Field, Field) {
+        // A ternary secret is the one parameter this circuit cannot read off the config. The
+        // generated `r1_bounds`, and so the quotient window below, are derived from a formula that
+        // assumes it; a wider secret would make that window too narrow to hold the quotient.
         assert(self.configs.sk_bound == 1);
-        assert(self.configs.eek_bound == 20);
-        assert(BIT_EEK == 5);
-        assert(BIT_SK == 1);
 
         // Step 1: bound the small secrets to their configured distributions.
         self.sk.range_check_2bounds::<BIT_SK>(self.configs.sk_bound, self.configs.sk_bound);
@@ -129,14 +128,14 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         // one public key opens under several distinct commitments.
         for l in 0..L {
             centered::<N, BIT_PK>(self.pk0[l], self.configs.qis[l]);
+            // Keeps the noise commitment packing injective: a centered residue is below 2^BIT_PK,
+            // so the encoding needs at least that many bits per digit, or the shifted value goes
+            // negative and wraps. The upper end is already enforced by `packing_layout`.
+            assert(BIT_E_SM >= BIT_PK);
             // The generator already centers each noise residue modulo q_l. Prove the configured
             // global bound contains that interval, then check the narrower canonical one. This
             // implies the configured bound rather than replacing it, and leaves the global noise
             // distribution and its sampler unchanged.
-            // The lower end keeps the commitment packing injective: a centered residue is below
-            // 2^BIT_PK, so the encoding needs at least that many bits per digit. The upper end is
-            // where `packing_layout` stops fitting one digit in a field element.
-            assert((BIT_E_SM >= BIT_PK) & (BIT_E_SM <= 248));
             self.configs.e_sm_bound.assert_max_bit_size::<BIT_E_SM>();
             (self.configs.e_sm_bound - (self.configs.qis[l] - 1) / 2).assert_max_bit_size::<BIT_E_SM>();
             centered::<N, BIT_PK>(self.e_sm[l], self.configs.qis[l]);
@@ -156,7 +155,7 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         let mut payload =
             [101, N as Field, L as Field, sk_commitment, pk_commitment, e_sm_commitment]
                 .as_vector();
-        payload = append::<N, 6>(payload, self.eek, self.configs.eek_bound);
+        payload = append::<N, BIT_EEK + 1>(payload, self.eek, self.configs.eek_bound);
         for l in 0..L {
             payload = payload.push_back(self.configs.qis[l]);
             payload = append::<N, BIT_R1 + 1>(payload, q_short[l], short_offset);
