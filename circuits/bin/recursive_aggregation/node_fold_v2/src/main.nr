@@ -36,10 +36,7 @@ pub global GF_D0_COMMITMENTS_START: u32 = GF_PK_COMMITMENTS_START + LBFV_ROWS;
 pub global GF_D2_COMMITMENTS_START: u32 = GF_D0_COMMITMENTS_START + LBFV_ROWS;
 pub global LEGACY_NODE_FOLD_C1_KEY_HASH_IDX: u32 = 2;
 
-fn assert_bridge_c1_key_hash(
-    node_fold_public: [Field; NODE_FOLD_PUBLIC_LEN],
-    c1_key_hash: Field,
-) {
+fn assert_bridge_c1_key_hash(node_fold_public: [Field; NODE_FOLD_PUBLIC_LEN], c1_key_hash: Field) {
     assert(node_fold_public[LEGACY_NODE_FOLD_C1_KEY_HASH_IDX] == c1_key_hash);
 }
 
