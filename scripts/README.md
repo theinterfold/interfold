@@ -340,7 +340,8 @@ procedure instead of producing the wrong `.sol`.
 For non-canonical pairs, pass `--preset <name> --committee <name>`; the verifiers land under
 `honk/<preset>/<committee>/` so the canonical `.sol` files committed to git are not clobbered.
 `--check` compares that pair with its committed files. CI checks all seven supported pairs directly
-from the release artifact matrix.
+from the release artifact matrix. The pre-push hook checks the canonical `insecure/minimum` pair so
+it does not require a local copy of the complete release matrix.
 
 The script has two modes:
 

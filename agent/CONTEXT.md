@@ -102,7 +102,8 @@ for that chain.
   documented behavior changed), `check:addresses` (contract addresses in the docs, dashboard,
   DAppNode package, and CRISP example must match `deployments/manifest.json`), `check:invariants`
   (grep-enforced invariants: `do_send` ratchet, skip-proof feature containment — baselines in
-  `scripts/invariant-baselines.env`), `check:verifiers`.
+  `scripts/invariant-baselines.env`), and the canonical `insecure/minimum` verifier check. CI runs
+  `check:verifiers` against the complete release matrix.
 - **Docs MCP server:** `.mcp.json`, `.codex/config.toml`, and `opencode.json` expose
   `@interfold/mcp` (`interfold-docs`) to their respective agents. The launch configs run the
   TypeScript source through the workspace toolchain; `pnpm mcp:build` builds the publishable
