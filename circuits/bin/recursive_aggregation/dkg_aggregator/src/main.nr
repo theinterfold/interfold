@@ -66,13 +66,7 @@ fn main(
     assert(expected_hi == committee_hash_hi);
     assert(expected_lo == committee_hash_lo);
 
-    // Range-check each folded `party_ids[i]` against the full committee size `N_PARTIES`.
-    // This makes `committee_members[party_ids[i]]` a well-defined committee slot and is the
-    // structural pre-condition for future per-party signer/identity constraints.
-    for i in 0..H {
-        let id = party_ids[i] as u32;
-        assert(id < N_PARTIES);
-    }
+    assert_canonical_party_ids(party_ids);
 
     verify_honk_proof_non_zk(
         nodes_fold_vk,
@@ -145,6 +139,17 @@ fn assert_selected_c0_c3_links(
     }
 }
 
+fn assert_canonical_party_ids(party_ids: [Field; H]) {
+    for i in 0..H {
+        let id = party_ids[i] as u32;
+        assert(party_ids[i] == id as Field);
+        assert(id < N_PARTIES);
+        if i > 0 {
+            assert((party_ids[i - 1] as u32) < id);
+        }
+    }
+}
+
 fn assert_selected_c2_c4_links(
     nodes_fold_public: [Field; NODES_FOLD_PUBLIC_LEN],
     party_ids: [Field; H],
@@ -196,6 +201,26 @@ fn assert_selected_c2_c4_links(
 fn test_non_prefix_c0_c3_links() {
     let (nodes_fold_public, party_ids) = non_prefix_fixture();
     assert_selected_c0_c3_links(nodes_fold_public, party_ids);
+}
+
+#[test]
+fn test_non_prefix_party_ids_are_canonical() {
+    let (_, party_ids) = non_prefix_fixture();
+    assert_canonical_party_ids(party_ids);
+}
+
+#[test(should_fail)]
+fn test_duplicate_party_ids_are_rejected() {
+    let (_, mut party_ids) = non_prefix_fixture();
+    party_ids[H - 1] = party_ids[H - 2];
+    assert_canonical_party_ids(party_ids);
+}
+
+#[test(should_fail)]
+fn test_out_of_range_party_id_is_rejected() {
+    let (_, mut party_ids) = non_prefix_fixture();
+    party_ids[H - 1] = N_PARTIES as Field;
+    assert_canonical_party_ids(party_ids);
 }
 
 #[test]

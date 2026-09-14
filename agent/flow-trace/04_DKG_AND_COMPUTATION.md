@@ -692,6 +692,7 @@ phase.
 │   │     │   → Rust validates both dimensions before invoking the compiled circuit
 │   │     │   → `dkg_aggregator` uses each selected party ID for N-wide C3 and C2 recipient slots;
 │   │     │     H-wide C4 sender slots use the selected party's fold-row position
+│   │     │   → The circuit requires H distinct, ascending, in-range party IDs
 │   │     ├─ Tracks the in-flight correlation id
 │   │     ├─ ComputeRequestError now emits
 │   │     │   E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGInvalidShares }
