@@ -375,6 +375,55 @@ async fn restart_redrives_a_decryption_share_compute_request() -> Result<()> {
 }
 
 #[actix::test]
+async fn a_replayed_decryption_share_response_does_not_fault_after_the_state_advances() -> Result<()>
+{
+    let generating = GeneratingDecryptionProof {
+        pk_share: ArcBytes::from_bytes(&[1]),
+        decryption_share: vec![ArcBytes::from_bytes(&[2])],
+        signed_pk_generation_proof: None,
+        signed_sk_share_computation_proof: None,
+        signed_e_sm_share_computation_proof: None,
+        signed_sk_share_encryption_proofs: Vec::new(),
+        signed_e_sm_share_encryption_proofs: Vec::new(),
+    };
+    let (actor, history, e3_id, repo) =
+        start_actor_with_state(KeyshareState::GeneratingDecryptionProof(generating)).await?;
+    let ec = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        EffectsEnabled::new().into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(1)
+    .get_ctx()
+    .clone();
+    actor
+        .send(TypedEvent::new(
+            ComputeResponse::trbfv(
+                TrBFVResponse::CalculateDecryptionShare(CalculateDecryptionShareResponse {
+                    d_share_poly: vec![ArcBytes::from_bytes(&[3])],
+                }),
+                CorrelationId::new(),
+                e3_id,
+            ),
+            ec,
+        ))
+        .await?;
+
+    let events = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
+    assert!(events
+        .events
+        .iter()
+        .all(|event| !matches!(event.get_data(), InterfoldEventData::InterfoldError(_))));
+    assert!(matches!(
+        repo.read().await?.expect("persisted keyshare state").state,
+        KeyshareState::GeneratingDecryptionProof(_)
+    ));
+    Ok(())
+}
+
+#[actix::test]
 async fn restart_skips_dkg_work_after_public_key_context_is_persisted() -> Result<()> {
     let e3_id = E3id::new("42", 1);
     let ready = ReadyForDecryption {

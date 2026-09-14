@@ -126,6 +126,14 @@ impl ThresholdKeyshare {
         let msg: CalculateDecryptionShareResponse = res.try_into()?;
         let state = self.state.try_get()?;
         let e3_id = state.e3_id.clone();
+        if !matches!(state.state, KeyshareState::Decrypting(_)) {
+            tracing::debug!(
+                e3_id = %e3_id,
+                state = %state.variant_name(),
+                "Ignoring a decryption-share response after leaving Decrypting"
+            );
+            return Ok(());
+        }
         let decrypting: Decrypting = state.clone().try_into()?;
         let d_share_poly = msg.d_share_poly;
 

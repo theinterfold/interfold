@@ -1425,6 +1425,10 @@ or audit state. If restart gives the same compute operation a new correlation ID
 the work once and sends its response or error to each waiting ID. A later duplicate receives the
 saved outcome.
 
+If a decryption-share response arrives after `ThresholdKeyshare` has left `Decrypting`, the actor
+ignores that late response. The share and C6 proof request from the first response remain in the
+saved state; a replay does not report a false state error or start the work again.
+
 `CiphernodeSelector` also observes replay before it enables failover effects. Its versioned
 repository stores a readiness-gated phase, assigned party, absolute deadline, and locally
 unresponsive party IDs. `CommitteeFinalized` and `CiphertextOutputPublished` identify the canonical
