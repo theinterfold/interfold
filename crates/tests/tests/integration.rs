@@ -97,20 +97,31 @@ fn select_benchmark_params() -> BenchmarkParams {
         None
     };
 
-    let pubkey_flow_timeout = if is_secure_mode && is_small_committee {
+    let default_pubkey_flow_timeout = if is_secure_mode && is_small_committee {
         Duration::from_secs(45_000) // Small: conservative upper bound
     } else if is_secure_mode {
         Duration::from_secs(15_000)
     } else {
         Duration::from_secs(5_000)
     };
-    let plaintext_flow_timeout = if is_secure_mode && is_small_committee {
+    let default_plaintext_flow_timeout = if is_secure_mode && is_small_committee {
         Duration::from_secs(6_000) // Small: conservative upper bound; smaller than DKG
     } else if is_secure_mode {
         Duration::from_secs(3_000)
     } else {
         Duration::from_secs(1_000)
     };
+    // Shared-host proof benchmarks can take longer than the default observation budget.
+    // These overrides affect the test harness only; protocol deadlines remain frozen by the
+    // synthetic DKG timing reader or the contract.
+    let pubkey_flow_timeout = benchmark_flow_timeout(
+        "BENCHMARK_PUBKEY_FLOW_TIMEOUT_SECS",
+        default_pubkey_flow_timeout,
+    );
+    let plaintext_flow_timeout = benchmark_flow_timeout(
+        "BENCHMARK_PLAINTEXT_FLOW_TIMEOUT_SECS",
+        default_plaintext_flow_timeout,
+    );
 
     BenchmarkParams {
         preset_subdir,
@@ -120,6 +131,15 @@ fn select_benchmark_params() -> BenchmarkParams {
         pubkey_flow_timeout,
         plaintext_flow_timeout,
     }
+}
+
+fn benchmark_flow_timeout(name: &str, default: Duration) -> Duration {
+    std::env::var(name)
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|&seconds| seconds > 0)
+        .map(Duration::from_secs)
+        .unwrap_or(default)
 }
 
 /// Registered ciphernodes (excluding the observer collector) for benchmark sortition.
