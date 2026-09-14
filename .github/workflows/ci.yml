@@ -287,7 +287,7 @@ jobs:
         run: 'cargo test --test integration -- --nocapture'
 
   zk_prover_integration:
-    needs: [detect_changes]
+    needs: [detect_changes, integration_prebuild]
     if: needs.detect_changes.outputs.zk_prover_integration == 'true'
     timeout-minutes: 30
     runs-on:
@@ -321,21 +321,18 @@ jobs:
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
 
+      - name: Download source-aligned ZK fixtures
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: integration-noir-artifacts
+          path: .ci-noir/
+
       - name: Prepare source-aligned circuit archive
         run: |
-          SOURCE_HASH=$(pnpm tsx scripts/build-circuits.ts hash)
-          git fetch origin circuit-artifacts
-          ARTIFACT_SOURCE_HASH=$(git show origin/circuit-artifacts:SOURCE_HASH)
-          if [ "$ARTIFACT_SOURCE_HASH" != "$SOURCE_HASH" ]; then
-            echo "::error::Circuit artifacts do not match this source tree."
-            exit 1
-          fi
+          test -f .ci-noir/circuits/insecure-512/minimum/default/dkg/pk/pk.json
           mkdir -p "$RUNNER_TEMP/circuit-release"
-          git archive \
-            --format=tar.gz \
-            --prefix=circuits/ \
-            --output="$RUNNER_TEMP/circuit-release/circuits-candidate.tar.gz" \
-            origin/circuit-artifacts
+          tar -czf "$RUNNER_TEMP/circuit-release/circuits-candidate.tar.gz" \
+            -C .ci-noir circuits
 
       - name: Cache Barretenberg binary
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
