@@ -286,6 +286,18 @@ jobs:
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
         run: 'cargo test --test integration -- --nocapture'
 
+      - name: Run offline DKG integration test with full proofs
+        timeout-minutes: 20
+        env:
+          BENCHMARK_MODE: insecure
+          BENCHMARK_OFFLINE_AFTER_C0_PARTY_ID: '1'
+          BENCHMARK_DKG_WINDOW_SECS: '1200'
+          CIPHERNODE_SKIP_PROOF_AGGREGATION: 'false'
+          E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
+          E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '120'
+          E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
+        run: 'cargo test -p e3-tests --test integration test_trbfv_actor -- --exact --nocapture'
+
   zk_prover_integration:
     needs: [detect_changes, integration_prebuild]
     if: needs.detect_changes.outputs.zk_prover_integration == 'true'
