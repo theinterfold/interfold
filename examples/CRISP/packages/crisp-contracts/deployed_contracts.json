@@ -138,11 +138,11 @@
     },
     "Faucet": {
       "constructorArgs": {
-        "fold": "0x9752444A6a955D420402EaFf5f818afCddb9c340",
-        "feeToken": "0xC35B783cA97710be47Fc81D10dADc895EfcD865c"
+        "fold": "0xbdE5ccA4773f0FCd0515eD0d3Edca28Be0B94B3F",
+        "feeToken": "0x90424F5fF8192c37798BCd6FDF4A82A5EE134f00"
       },
-      "blockNumber": 11534982,
-      "address": "0x6e281411C055BEEbD74bDFcB9aB095aa98907F85"
+      "blockNumber": 11704118,
+      "address": "0x325e74e41a81DBc6d92C565AE96D3E65b85A24F0"
     },
     "MockComputeProvider": {
       "blockNumber": 11534986,
