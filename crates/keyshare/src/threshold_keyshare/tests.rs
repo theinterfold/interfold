@@ -38,6 +38,7 @@ async fn selection_waits_for_frozen_timing_and_rejects_expired_dkg() -> Result<(
         state,
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
         recovery: test_recovery(),
         dkg_timing_reader: Arc::new(move |_| {
             read_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -158,6 +159,7 @@ async fn start_actor_with_state(
         state,
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
         recovery: test_recovery(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -408,6 +410,7 @@ async fn restart_skips_dkg_work_after_public_key_context_is_persisted() -> Resul
         state,
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
         recovery,
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })

@@ -49,8 +49,8 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │   → ZK proof actor picks this up
 │   │
 │   ├─ 5. Create child actors:
-│   │     ├─ EncryptionKeyCollector (waits for all N parties' keys)
-│   │     └─ ThresholdShareCollector (waits for all N parties' shares)
+│   │     ├─ EncryptionKeyCollector (accepts all N keys or at least H at cutoff)
+│   │     └─ ThresholdShareCollector (accepts all N−1 external shares or at least H−1 at cutoff)
 │   │     → These collectors start immediately so early peer keys/shares can
 │   │       be buffered while this node is still finishing earlier DKG phases
 │   │
@@ -60,7 +60,7 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │         └─ DecryptionKeySharedCollector: the on-chain DKG deadline
 │      Restart uses the remaining time, not a new full window. Optional
 │      per-collector env values can shorten a timeout but cannot extend it.
-│      The separate missing-member recovery gap remains open until SC-15.
+│      A cutoff below the minimum still fails the E3.
 ```
 
 ### Step 2: C0 Proof Generation → EncryptionKeyCreated
@@ -121,15 +121,17 @@ ProofRequestActor receives EncryptionKeyPending
             → Triggers accusation pipeline (see Part 5)
 ```
 
-### Step 3: Collect All Encryption Keys
+### Step 3: Collect Encryption Keys
 
 ```
-EncryptionKeyCollector waits for EncryptionKeyCreated from ALL N parties
+EncryptionKeyCollector collects verified EncryptionKeyCreated events
 │
 ├─ On each arrival: store (party_id → bfv_public_key)
 │
 ├─ On TIMEOUT (derived DKG-phase cutoff):
-│   └─ Send EncryptionKeyCollectionFailed to parent ThresholdKeyshare
+│   ├─ With at least H keys, including this party's key:
+│   │    send AllEncryptionKeysCollected with the available keys
+│   └─ Otherwise send EncryptionKeyCollectionFailed to parent ThresholdKeyshare
 │      ├─ ThresholdKeyshare persists KeyshareState::Failed {
 │      │    failed_at_stage: CommitteeFinalized,
 │      │    reason: DKGTimeout
@@ -141,7 +143,7 @@ EncryptionKeyCollector waits for EncryptionKeyCreated from ALL N parties
 │      │  }
 │      └─ ThresholdKeyshare actor stops
 │
-└─ When ALL N collected:
+└─ When ALL N collected before cutoff:
     └─ Send AllEncryptionKeysCollected to parent ThresholdKeyshare
 ```
 
@@ -151,7 +153,7 @@ EncryptionKeyCollector waits for EncryptionKeyCreated from ALL N parties
 ThresholdKeyshare receives AllEncryptionKeysCollected
 │
 ├─ State: CollectingEncryptionKeys → GeneratingThresholdShare
-├─ Stores all parties' BFV public keys
+├─ Stores the verified BFV public keys available at the cutoff
 │
 ├─ COMPUTE REQUEST 1: GenPkShareAndSkSss
 │   │
@@ -297,16 +299,15 @@ ProofRequestActor receives ThresholdSharePending
 ├─ 6. Publish events:
 │     ├─ PkGenerationProofSigned { e3_id, party_id, signed_proof(C1) }
 │     ├─ DkgProofSigned { signed_proof } × (C2a, C2b, each C3a, each C3b)
-│     └─ ThresholdShareCreated {
-│          e3_id, party_id,
-│          threshold_share,               // pk_share + encrypted shares
-│          signed_pk_generation_proof,     // C1
+│     └─ ThresholdShareCreated for each recipient with a collected C0 key {
+│          e3_id, party_id, target_party_id,
+│          threshold_share,               // pk_share + this recipient's encrypted shares
 │          signed_sk_computation_proof,    // C2a
 │          signed_esm_computation_proof,   // C2b
-│          signed_sk_encryption_proofs,    // C3a[] indexed by (recipient, row)
-│          signed_esm_encryption_proofs    // C3b[] indexed by (esi, recipient, row)
+│          signed_sk_encryption_proofs,    // C3a[] for this recipient
+│          signed_esm_encryption_proofs    // C3b[] for this recipient
 │        }
-│        → Broadcast to all nodes via libp2p gossip
+│        → Broadcast to nodes via libp2p gossip; the recipient filters by target_party_id
 │
 └─ IMPORTANT: ThresholdShareCreated is NOT published until ALL proofs complete
    → Ensures no incomplete data is gossiped
@@ -343,21 +344,22 @@ artifact will not be published. DKG-path proofs (`C0` through `C5`) emit
 (`C6` and `C7`) emit
 `E3Failed { failed_at_stage: CiphertextReady, reason: DecryptionInvalidShares }`.
 
-### Step 6: Collect All Threshold Shares (with C2/C3 Verification)
+### Step 6: Collect Threshold Shares (with C2/C3 Verification)
 
 ```
-ThresholdShareCollector waits for ThresholdShareCreated from ALL N parties
+ThresholdShareCollector collects this recipient's shares from the other N−1 parties
 │
 ├─ Each ThresholdShareCreated arrives via libp2p P2P network
 │
 ├─ ThresholdKeyshare.handle_threshold_share_created():
 │   ├─ Filters: only process shares where target_party_id == MY party_id
-│   │   → Each share blob contains material for ALL parties
-│   │   → This node only extracts what's encrypted for it
+│   │   → Each published share contains this recipient's encrypted material
 │   └─ Forwards filtered share to ThresholdShareCollector
 │
 ├─ On TIMEOUT (derived DKG-phase cutoff):
-│   └─ Send ThresholdShareCollectionFailed to parent ThresholdKeyshare
+│   ├─ With at least H−1 external shares:
+│   │    send AllThresholdSharesCollected with the available shares
+│   └─ Otherwise send ThresholdShareCollectionFailed to parent ThresholdKeyshare
 │      ├─ ThresholdKeyshare persists KeyshareState::Failed {
 │      │    failed_at_stage: CommitteeFinalized,
 │      │    reason: DKGTimeout
@@ -369,7 +371,7 @@ ThresholdShareCollector waits for ThresholdShareCreated from ALL N parties
 │      │  }
 │      └─ ThresholdKeyshare actor stops
 │
-└─ When ALL N shares collected:
+└─ When all N−1 external shares arrive before cutoff:
     ├─ Send AllThresholdSharesCollected to ThresholdKeyshare
     │
     └─ DISPATCH C2/C3 VERIFICATION:
@@ -423,13 +425,15 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   ├─ CommitmentConsistencyChecker (per-E3 actor) receives this:
 │   │   ├─ Caches each party's (address, proof_type) → {public_signals, data_hash}
 │   │   ├─ Evaluates all registered CommitmentLinks:
-│   │   │     C0→C3   (SourceMustExistInTargets): C3's expected_pk_commitment ∈ any C0 pk_commitment
+│   │   │     C0→C3   (SourceMustExistInTargets): local-cache absence accusations are disabled;
+│   │   │                                          each recipient checks its own C0 against C3
 │   │   │     C1→C2a  (SameParty):                C1's sk_commitment == C2a's expected_secret_commitment
 │   │   │     C1→C2b  (SameParty):                C1's e_sm_commitment == C2b's expected_secret_commitment
 │   │   │     C1→C5   (CrossParty):               C1's pk_commitment ∈ C5 expected pk inputs
 │   │   │     C2→C3   (SameParty):                C3's expected_message_commitment ∈ C2's share commitments
-│   │   │     C2→C4   (SourceMustExistInTargets): C2's L share commitments for recipient R exactly
-│   │   │                                          match C4_R's expected_commitments row for sender X
+│   │   │     C2→C4   (SourceMustExistInTargets): after all selected C4 targets arrive,
+│   │   │                                          C2's L share commitments for recipient R match
+│   │   │                                          C4_R's row for sender X in the H-roster order
 │   │   │     C4a→C6  (SameParty):                C4a's commitment == C6's expected_sk_commitment
 │   │   │     C4b→C6  (SameParty):                C4b's commitment == C6's expected_e_sm_commitment
 │   │   │     C6→C7   (CrossParty):               C6's d_commitment matches C7's expected_d_commitment
@@ -467,19 +471,34 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │          }
 │
 └─ ThresholdKeyshare receives ShareVerificationComplete:
-    ├─ If dishonest_parties is empty: proceed to Step 7
-    └─ If dishonest_parties is non-empty:
-        → Accusation pipeline handles slashing (see Part 5)
-        → DKG may still proceed if enough honest parties remain
+    ├─ Excludes failed C2/C3 proofs and C3 proofs that target a different
+    │  recipient key
+    ├─ Saves the verified dealer IDs and their exact contribution hashes
+    ├─ Publishes a signed DkgCoordination::Ready list when at least H dealers,
+    │  including this party, remain
+    ├─ If fewer than H pass locally, stays outside C4 without failing the E3
+    └─ Waits for one H-dealer roster before Step 7
+
+The roster proposer selects H parties whose signed Ready lists all contain the same selected
+dealer contributions. Each selected party checks the roster against its own saved Ready list.
+The accepted roster is saved before C4 starts. Party 0 proposes first. After the frozen share
+cutoff, backup parties get ordered time slots to propose if no roster arrived. A node accepts only
+one roster. If a proposer reaches only some peers before it stops and a backup proposes a
+different roster, the nodes can split and the E3 can fail. This crash-only path does not provide
+consensus under arbitrary message delay; a canonical roster anchor would be needed for that.
+If a selected party stops permanently after the roster is accepted, this path does not select a
+replacement or rebuild C4. The E3 can fail even when other committee members remain online.
+The cutoff omits missing nodes but does not accuse or slash them: a local timeout is not proof
+that a peer failed to publish.
 ```
 
 ### Step 7: Calculate Decryption Key (with C4 Proofs & Verification)
 
 ```
-ThresholdKeyshare receives AllThresholdSharesCollected
+ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 │
-├─ 1. Decrypt each received share using THIS node's BFV secret key:
-│     For each party j's share:
+├─ 1. Each selected party decrypts its shares from the selected dealers:
+│     For each other selected party j:
 │       sk_sss_j = BFV::decrypt(encrypted_sk_sss_j, my_bfv_sk)
 │       esi_sss_j = BFV::decrypt(encrypted_esi_sss_j, my_bfv_sk)
 │
@@ -487,32 +506,29 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │
 │     │  ┌─── TrBFV Computation ──────────────────────────────┐
 │     │  │                                                     │
-│     │  │  Inputs: all sk_sss shares, all esi_sss shares     │
+│     │  │  Inputs: selected sk_sss and esi_sss shares       │
 │     │  │                                                     │
 │     │  │  1. Reconstruct summed secret key polynomial:       │
 │     │  │     sk_poly_sum = Shamir::reconstruct(              │
-│     │  │       [sk_sss_1, sk_sss_2, ..., sk_sss_N]          │
+│     │  │       [sk_sss_j for j in the accepted H roster]   │
 │     │  │     )                                               │
 │     │  │     → This is NOT the full secret key               │
 │     │  │     → It's this node's PORTION of the summed key    │
 │     │  │                                                     │
 │     │  │  2. Reconstruct summed ESI polynomials:             │
 │     │  │     es_poly_sum = Shamir::reconstruct(              │
-│     │  │       [esi_sss_1, esi_sss_2, ..., esi_sss_N]       │
+│     │  │       [esi_sss_j for j in the accepted H roster]  │
 │     │  │     )                                               │
 │     │  │                                                     │
 │     │  │  Output: (sk_poly_sum, es_poly_sum)                 │
 │     │  │  → Stored encrypted locally for later decryption    │
 │     │  └─────────────────────────────────────────────────────┘
 │
-├─ 2b. CANONICAL H ROSTER (when H < N):
-│     Before C4 witness layout, merge external honest party_ids with own_party_id,
-│     sort ascending, and keep the lowest H — same rule as PublicKeyAggregator C5 cap
-│     (`e3_zk_helpers::canonical_honest_party_ids_with_own`). Persisted as `honest_parties`.
-│     Parties outside the lowest H build C4 from all H selected senders' encrypted
-│     shares. They do not insert their own dealer share. They can complete
-│     KeyshareCreated, but they are not in the aggregator's NodeFold /
-│     `honest_committee_addresses` roster.
+├─ 2b. ACCEPTED H ROSTER:
+│     Use the saved, sorted H-dealer roster for the C4 witness. Do not choose
+│     the lowest H entries in a node's local share cache. A party outside the
+│     accepted roster can create C4 only when it holds all H selected shares.
+│     Its C4 does not add a dealer row to the C5 key.
 │
 ├─ 3. PUBLISH C4 PROOF REQUESTS:
 │     DecryptionShareProofsPending {
@@ -546,8 +562,9 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │         → Broadcast to all committee nodes via P2P gossip
 │     │         → This is Protocol Exchange #3 (decryption key sharing)
 │
-├─ 5. COLLECT C4 SHARES FROM ALL PARTIES:
-│     ThresholdKeyshare waits for DecryptionKeyShared from ALL N parties
+├─ 5. COLLECT C4 SHARES FROM THE ACCEPTED ROSTER:
+│     Each selected party waits for DecryptionKeyShared from the other H−1
+│     selected parties
 │     │
 │     ├─ On timeout:
 │     │  ├─ Persist KeyshareState::Failed {
@@ -557,7 +574,7 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │  ├─ Emit the matching E3Failed event
 │     │  └─ Stop the ThresholdKeyshare actor
 │     │
-│     └─ When all collected → AllDecryptionKeySharesCollected
+│     └─ When all selected shares are collected → AllDecryptionKeySharesCollected
 │
 ├─ 6. C4 VERIFICATION:
 │     ThresholdKeyshare.dispatch_c4_verification()
@@ -603,23 +620,20 @@ phase.
   │   └─ Buffers only until CommitteeFinalized provides the canonical party-slot map
   │   └─ Then forwards every valid keyshare into each committee member's persisted actor state
 │
-  ├─ Every committee member persists the same collected keyshares
+  ├─ Committee members buffer received keyshares and the accepted H roster
   │
-  ├─ When every non-excluded member has submitted a keyshare:
-│   │   → The live count can fall below N after a confirmed fault, but it must still be at least H
+  ├─ When every member of the accepted H roster has submitted a keyshare:
 │   │   → Persist VerifyingC1 before publishing AggregationInputsReady(PublicKey)
 │   │   → CiphernodeSelector starts the 10-minute failover budget only now
 │   │
 │   ├─ Only the active aggregator starts C1 verification and later proof/compute effects
 │   │   → A promoted standby resumes from its persisted phase; it does not need a RAM buffer
 │   │   → A demoted node ignores late worker results and cannot publish a stale aggregate
-│   ├─ C1 verification runs over all collected non-excluded submitters; failures are dishonest
+│   ├─ C1 verification runs over the exact H selected submitters; failures stop DKG
 │   │
 │   ├─ Honest-set selection (compile-time H from `committee::active`, may be < N):
-│   │     • Require at least H parties with valid C1 proofs; otherwise E3Failed
-│   │     • If more than H parties pass C1, keep the H lowest `party_id`s as the canonical
-│   │       honest set (extras remain in the full committee roster for `committee_hash`
-│   │       binding but do not receive NodeFold / C5 inputs)
+│   │     • Require valid C1 proofs from all H roster members; otherwise E3Failed
+│   │     • Preserve the accepted roster order for NodeFold and C5 inputs
 │   │
 │   ├─ 1. Aggregate public key shares (H honest keyshares):
 │   │     aggregate_pk = Fhe::get_aggregate_public_key(

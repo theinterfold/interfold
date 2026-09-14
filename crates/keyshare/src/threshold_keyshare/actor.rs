@@ -6,14 +6,16 @@
 
 use actix::prelude::*;
 use alloy::primitives::Address;
+use alloy::signers::local::PrivateKeySigner;
 use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_data::Persistable;
 use e3_events::{
     prelude::*, trap, BusHandle, CiphernodeSelected, CiphertextOutputPublished,
-    CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest, ComputeResponse,
-    ComputeResponseKind, CorrelationId, DecryptionKeyShared, DecryptionShareProofSigned,
-    DecryptionShareProofsPending, Die, DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed,
+    CommitmentRosterSelected, CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest,
+    ComputeResponse, ComputeResponseKind, CorrelationId, DecryptionKeyShared,
+    DecryptionShareProofSigned, DecryptionShareProofsPending, Die, DkgCoordination,
+    DkgCoordinationKind, DkgDealer, DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed,
     E3RequestComplete, E3Stage, E3id, EType, EncryptionKey, EncryptionKeyCollectionFailed,
     EncryptionKeyCreated, EncryptionKeyPending, EventContext, FailureReason, InterfoldEvent,
     InterfoldEventData, KeyshareCreated, PartyProofsToVerify, PartyShareDecryptionProofsToVerify,
@@ -56,12 +58,15 @@ use crate::actors::encryption_key_collector::{
 use crate::actors::threshold_share_collector::{
     ExpelPartyFromShareCollection, ThresholdShareCollector,
 };
-use crate::domain::timeout_policy::{resolve_timeout, DkgTimeoutPhase};
+use crate::domain::timeout_policy::{
+    now_unix_secs, phase_cutoff_unix_secs, resolve_timeout, DkgTimeoutPhase,
+};
 use crate::domain::{
-    build_decryption_key_plan, build_shares_generated_plan, generate_bfv_keypair,
-    AggregatingDecryptionKey, BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting,
-    DecryptionKeyPlan, GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState,
-    ProofRequestData, ReadyForDecryption, ReceivedShareProofs, ThresholdKeyshareState,
+    build_decryption_key_plan, build_shares_generated_plan, dealer_identity, generate_bfv_keypair,
+    select_ready_roster, AggregatingDecryptionKey, BfvKeypairMaterial,
+    CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan, GeneratingDecryptionProof,
+    GeneratingThresholdShareData, KeyshareState, ProofRequestData, ReadyForDecryption,
+    ReceivedShareProofs, ThresholdKeyshareState,
 };
 
 #[path = "recovery_state.rs"]
@@ -80,6 +85,10 @@ pub struct GenEsiSss {
     pub ciphernode_selected: CiphernodeSelected,
     pub e_sm_raw: SensitiveBytes,
 }
+
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct DkgRosterLeadershipCheck;
 
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -124,6 +133,7 @@ pub struct ThresholdKeyshareParams {
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
     pub dkg_timing_reader: DkgTimingReader,
+    pub signer: PrivateKeySigner,
 }
 
 pub type DkgTimingFuture = Pin<Box<dyn Future<Output = Result<(u64, u64)>> + Send>>;
@@ -158,6 +168,7 @@ pub struct ThresholdKeyshare {
     share_enc_preset: BfvPreset,
     interfold_address: Address,
     dkg_timing_reader: DkgTimingReader,
+    signer: PrivateKeySigner,
     selection_timing_pending: bool,
     pending: PendingKeyshareWork,
 }
@@ -194,6 +205,7 @@ impl ThresholdKeyshare {
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
             dkg_timing_reader: params.dkg_timing_reader,
+            signer: params.signer,
             selection_timing_pending: false,
             pending: PendingKeyshareWork {
                 shares: pending_shares,

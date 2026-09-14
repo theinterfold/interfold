@@ -3,7 +3,7 @@
 //! C1 verification and honest-keyshare selection.
 
 use super::*;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 impl PublicKeyAggregator {
     pub fn add_keyshare(
@@ -14,13 +14,16 @@ impl PublicKeyAggregator {
         c1_proof: Option<SignedProofPayload>,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
-        if matches!(
-            self.state.get().as_ref(),
-            Some(PublicKeyAggregatorState::Complete { .. })
-        ) {
-            info!("Ignoring replayed keyshare after public-key aggregation completed");
+        if self
+            .state
+            .get()
+            .as_ref()
+            .is_some_and(|state| !matches!(state, PublicKeyAggregatorState::Collecting { .. }))
+        {
+            info!("Ignoring keyshare after public-key aggregation left collection");
             return Ok(());
         }
+        let selected_roster = self.recovery.try_get()?.selected_roster;
         self.state.try_mutate(ec, |state| {
             PublicKeyAggregation::add_keyshare(
                 state,
@@ -28,8 +31,60 @@ impl PublicKeyAggregator {
                 node.clone(),
                 party_id,
                 c1_proof.clone(),
+                selected_roster.as_ref(),
             )
         })
+    }
+
+    pub(in crate::actors::publickey_aggregator) fn accept_dkg_roster(
+        &mut self,
+        roster: CommitmentRosterSelected,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        if roster.e3_id != self.e3_id {
+            return Ok(());
+        }
+        let selected: BTreeSet<u64> = roster.party_ids.iter().copied().collect();
+        anyhow::ensure!(
+            selected.len() == self.committee_size.values().h
+                && roster
+                    .party_ids
+                    .iter()
+                    .copied()
+                    .eq(selected.iter().copied())
+                && selected
+                    .iter()
+                    .all(|&party_id| party_id < self.committee_size.values().n as u64),
+            "invalid accepted DKG roster for public-key aggregation"
+        );
+        let recovery = self.recovery.try_get()?;
+        if let Some(existing) = recovery.selected_roster {
+            anyhow::ensure!(existing == selected, "conflicting accepted DKG roster");
+        } else {
+            self.recovery.try_mutate(&ec, |mut recovery| {
+                recovery.selected_roster = Some(selected.clone());
+                recovery.last_ec = Some(ec.clone());
+                Ok(recovery)
+            })?;
+        }
+        let was_ready = self.aggregation_inputs_ready();
+        self.state.try_mutate(&ec, |state| {
+            PublicKeyAggregation::begin_selected_c1(state, Some(&selected))
+        })?;
+        if !was_ready && self.aggregation_inputs_ready() {
+            self.publish_inputs_ready(ec.clone())?;
+            if self.can_run_aggregation_effects() {
+                if let Some(PublicKeyAggregatorState::VerifyingC1 {
+                    submission_order,
+                    c1_proofs,
+                    ..
+                }) = self.state.get()
+                {
+                    self.dispatch_c1_verification(&submission_order, &c1_proofs, ec)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     pub(in crate::actors::publickey_aggregator) fn dispatch_c1_verification(

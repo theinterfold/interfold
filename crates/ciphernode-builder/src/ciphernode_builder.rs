@@ -1056,6 +1056,7 @@ impl CiphernodeBuilder {
                 addr,
                 interfold_addresses,
                 dkg_timing_reader,
+                _signer.clone(),
             ));
 
             info!("Setting up ZK actors");

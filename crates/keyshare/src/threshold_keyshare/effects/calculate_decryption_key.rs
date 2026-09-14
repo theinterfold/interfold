@@ -16,9 +16,34 @@ impl ThresholdKeyshare {
         let e3_id = state.get_e3_id();
         let trbfv_config = state.get_trbfv_config();
 
-        // Get our BFV secret key from state, pending shares from the actor
+        // Rebuild the exact verified batch from durable input after a restart.
         let current: AggregatingDecryptionKey = state.clone().try_into()?;
-        let shares = std::mem::take(&mut self.pending.shares);
+        let selected_party_ids = state
+            .honest_parties
+            .as_ref()
+            .ok_or_else(|| anyhow!("DKG roster is not selected"))?;
+        let recovery = self.recovery.try_get()?;
+        let verified = recovery
+            .verified_dealer_ids
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing verified DKG dealer set"))?;
+        let collected = recovery
+            .collected_threshold_share_ids
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing durable DKG verification batch"))?;
+        let shares = collected
+            .iter()
+            .filter(|&&party_id| {
+                verified.contains(&party_id) && selected_party_ids.contains(&party_id)
+            })
+            .map(|party_id| {
+                recovery
+                    .threshold_shares
+                    .get(party_id)
+                    .map(|event| event.share.clone())
+                    .ok_or_else(|| anyhow!("verified DKG dealer has no stored share"))
+            })
+            .collect::<Result<Vec<_>>>()?;
 
         let plan = build_decryption_key_plan(
             &self.cipher,
@@ -30,6 +55,7 @@ impl ThresholdKeyshare {
             &current,
             shares,
             dishonest_parties,
+            selected_party_ids,
             e3_id,
         )?;
 
@@ -51,20 +77,19 @@ impl ThresholdKeyshare {
                 esm_requests,
                 honest_party_ids,
             } => {
-                // Publish CalculateDecryptionKey request before persisting (ordering preserved).
+                // Persist the selected set before dispatch. Restart reissues the
+                // calculation from the durable verification batch.
                 let event = ComputeRequest::trbfv(
                     TrBFVRequest::CalculateDecryptionKey(calc_request),
                     CorrelationId::new(),
                     e3_id.clone(),
                 );
-                self.bus.publish(event, ec.clone())?;
-
-                // Store honest parties and C4 data on the actor (transient coordination)
                 self.state.try_mutate(&ec, |mut s| {
                     s.honest_parties = Some(honest_party_ids.clone());
                     Ok(s)
                 })?;
                 self.pending.share_decryption_data = Some((sk_request, esm_requests));
+                self.bus.publish(event, ec.clone())?;
             }
         }
 

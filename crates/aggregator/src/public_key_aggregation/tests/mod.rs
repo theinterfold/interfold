@@ -236,8 +236,13 @@ async fn standby_persists_and_resumes_public_key_work() -> Result<()> {
             &ec,
         )?;
     }
-    aggregator.publish_inputs_ready(ec)?;
-
+    aggregator.accept_dkg_roster(
+        CommitmentRosterSelected {
+            e3_id: e3_id.clone(),
+            party_ids: vec![0, 1],
+        },
+        ec.clone(),
+    )?;
     assert!(matches!(
         aggregator.state.get(),
         Some(PublicKeyAggregatorState::VerifyingC1 { .. })

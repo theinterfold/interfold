@@ -42,10 +42,53 @@ impl ThresholdKeyshare {
         let party_id = event.share.party_id;
         let ec = event.get_ctx().clone();
         self.recovery.try_mutate(&ec, |mut recovery| {
-            recovery.threshold_shares.insert(party_id, event);
+            recovery.threshold_shares.entry(party_id).or_insert(event);
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn record_collected_threshold_shares(
+        &mut self,
+        event: &TypedEvent<AllThresholdSharesCollected>,
+    ) -> Result<()> {
+        let ec = event.get_ctx().clone();
+        let ids = event.shares.iter().map(|share| share.party_id).collect();
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            if recovery.collected_threshold_share_ids.is_none() {
+                recovery.collected_threshold_share_ids = Some(ids);
+            }
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })
+    }
+
+    fn rebuild_collected_threshold_shares(
+        recovery: &ThresholdKeyshareRecoveryState,
+    ) -> Result<AllThresholdSharesCollected> {
+        let ids = recovery
+            .collected_threshold_share_ids
+            .as_ref()
+            .ok_or_else(|| anyhow!("missing durable DKG dealer snapshot"))?;
+        let mut shares = HashMap::new();
+        let mut proofs = HashMap::new();
+        for &party_id in ids {
+            let event = recovery
+                .threshold_shares
+                .get(&party_id)
+                .ok_or_else(|| anyhow!("DKG dealer snapshot has no stored share"))?;
+            shares.insert(party_id, event.share.clone());
+            proofs.insert(
+                party_id,
+                ReceivedShareProofs {
+                    signed_c2a_proof: event.signed_c2a_proof.clone(),
+                    signed_c2b_proof: event.signed_c2b_proof.clone(),
+                    signed_c3a_proofs: event.signed_c3a_proofs.clone(),
+                    signed_c3b_proofs: event.signed_c3b_proofs.clone(),
+                },
+            );
+        }
+        Ok(AllThresholdSharesCollected::new(shares, proofs))
     }
 
     pub(in crate::actors::threshold_keyshare) fn record_decryption_key_share(
@@ -68,9 +111,30 @@ impl ThresholdKeyshare {
     ) -> Result<()> {
         let event = event.clone();
         let ec = event.get_ctx().clone();
+        let verified_dealer_ids = if event.kind == VerificationKind::ShareProofs {
+            let recovery = self.recovery.try_get()?;
+            let state = self.state.try_get()?;
+            let collected = recovery
+                .collected_threshold_share_ids
+                .ok_or_else(|| anyhow!("missing durable DKG verification batch"))?;
+            Some(
+                collected
+                    .into_iter()
+                    .filter(|party_id| {
+                        !event.dishonest_parties.contains(party_id)
+                            && !state.expelled_parties.contains(party_id)
+                    })
+                    .collect::<BTreeSet<u64>>(),
+            )
+        } else {
+            None
+        };
         self.recovery.try_mutate(&ec, |mut recovery| {
             match event.kind {
-                VerificationKind::ShareProofs => recovery.share_verification_complete = Some(event),
+                VerificationKind::ShareProofs => {
+                    recovery.verified_dealer_ids = verified_dealer_ids;
+                    recovery.share_verification_complete = Some(event);
+                }
                 VerificationKind::DecryptionProofs => {
                     recovery.decryption_verification_complete = Some(event)
                 }
@@ -223,11 +287,33 @@ impl ThresholdKeyshare {
                     let (pending, pending_ec) = pending.into_components();
                     self.bus.publish(pending, pending_ec)?;
                 }
-                if let Some(verification) = recovery.share_verification_complete.clone() {
-                    self.handle_share_verification_complete(verification)
-                } else {
-                    self.replay_threshold_shares(&recovery, self_addr)
+                if let Some(roster) = recovery.dkg_roster.clone() {
+                    self.accept_dkg_roster(roster, ec.clone())?;
+                    if recovery.dkg_ready.is_some() {
+                        return Ok(());
+                    }
+                    if let Some(verification) = recovery.share_verification_complete.clone() {
+                        return self.handle_share_verification_complete(verification);
+                    }
+                    if recovery.collected_threshold_share_ids.is_some() {
+                        let batch = Self::rebuild_collected_threshold_shares(&recovery)?;
+                        return self
+                            .handle_all_threshold_shares_collected(TypedEvent::new(batch, ec));
+                    }
+                    return self.replay_threshold_shares(&recovery, self_addr);
                 }
+                if let Some(verification) = recovery.share_verification_complete.clone() {
+                    self.handle_share_verification_complete(verification)?;
+                    if let Some(ready) = self.recovery.try_get()?.dkg_ready {
+                        self.bus.publish(ready, ec.clone())?;
+                    }
+                    return self.propose_dkg_roster(ec);
+                }
+                if recovery.collected_threshold_share_ids.is_some() {
+                    let batch = Self::rebuild_collected_threshold_shares(&recovery)?;
+                    return self.handle_all_threshold_shares_collected(TypedEvent::new(batch, ec));
+                }
+                self.replay_threshold_shares(&recovery, self_addr)
             }
             KeyshareState::ReadyForDecryption(_) => {
                 // PublicKeyAggregated is a newer durable fact than the retained C2/C3/C4
@@ -280,5 +366,17 @@ impl ThresholdKeyshare {
                 ec,
             ),
         }
+    }
+}
+
+#[cfg(test)]
+mod dealer_snapshot_tests {
+    use super::*;
+
+    #[test]
+    fn a_dealer_snapshot_cannot_replay_without_its_stored_share() {
+        let mut recovery = ThresholdKeyshareRecoveryState::default();
+        recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
+        assert!(ThresholdKeyshare::rebuild_collected_threshold_shares(&recovery).is_err());
     }
 }

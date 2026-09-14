@@ -19,6 +19,7 @@ mod ciphernode_selected;
 mod ciphertext_output_published;
 mod ciphertext_output_reference_published;
 mod commitment_consistency;
+mod commitment_roster_selected;
 mod committee_activation_changed;
 mod committee_finalize_requested;
 mod committee_finalized;
@@ -35,6 +36,7 @@ mod decryption_share_proof_signed;
 mod decryption_share_proofs;
 mod decryptionshare_created;
 mod die;
+mod dkg_coordination;
 mod dkg_fold_attestation;
 mod dkg_fold_attestation_context_established;
 mod dkg_inner_proof_ready;
@@ -102,6 +104,7 @@ pub use ciphernode_selected::*;
 pub use ciphertext_output_published::*;
 pub use ciphertext_output_reference_published::*;
 pub use commitment_consistency::*;
+pub use commitment_roster_selected::*;
 pub use committee_activation_changed::*;
 pub use committee_finalize_requested::*;
 pub use committee_finalized::*;
@@ -118,6 +121,7 @@ pub use decryption_share_proof_signed::*;
 pub use decryption_share_proofs::*;
 pub use decryptionshare_created::*;
 pub use die::*;
+pub use dkg_coordination::*;
 pub use dkg_fold_attestation::*;
 pub use dkg_fold_attestation_context_established::*;
 pub use dkg_inner_proof_ready::*;
@@ -360,6 +364,8 @@ pub enum InterfoldEventData {
     AggregationInputsReady(AggregationInputsReady),
     CommitteePublicKeyChunkPublished(CommitteePublicKeyChunkPublished),
     CiphertextOutputReferencePublished(CiphertextOutputReferencePublished),
+    DkgCoordination(DkgCoordination),
+    CommitmentRosterSelected(CommitmentRosterSelected),
 }
 
 impl InterfoldEventData {
@@ -682,6 +688,8 @@ impl InterfoldEventData {
                 Some(data.e3_id.clone())
             }
             InterfoldEventData::DKGInnerProofReady(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::DkgCoordination(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::CommitmentRosterSelected(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CommitmentConsistencyCheckRequested(ref data) => {
                 Some(data.e3_id.clone())
             }
@@ -822,7 +830,9 @@ impl_event_types!(
     CommitteeMemberExcluded,
     AggregationInputsReady,
     CommitteePublicKeyChunkPublished,
-    CiphertextOutputReferencePublished
+    CiphertextOutputReferencePublished,
+    DkgCoordination,
+    CommitmentRosterSelected
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

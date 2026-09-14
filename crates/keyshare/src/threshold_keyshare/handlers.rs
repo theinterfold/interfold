@@ -71,7 +71,10 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
             trap(
                 EType::KeyGeneration,
                 &self.bus.with_ec(msg.get_ctx()),
-                || self.handle_ciphernode_selected(msg, ctx.address()),
+                || {
+                    self.handle_ciphernode_selected(msg, ctx.address())?;
+                    self.schedule_roster_leadership_check(ctx)
+                },
             );
             return Box::pin(async {}.into_actor(self));
         }
@@ -92,7 +95,8 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
                         state.dkg_window_secs = Some(window);
                         Ok(state)
                     })?;
-                    actor.handle_ciphernode_selected(msg.clone(), ctx.address())
+                    actor.handle_ciphernode_selected(msg.clone(), ctx.address())?;
+                    actor.schedule_roster_leadership_check(ctx)
                 });
                 if let Err(error) = result {
                     actor.bus.err(EType::KeyGeneration, error);
@@ -100,6 +104,25 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
                 }
             },
         ))
+    }
+}
+
+impl Handler<DkgRosterLeadershipCheck> for ThresholdKeyshare {
+    type Result = ();
+
+    fn handle(&mut self, _: DkgRosterLeadershipCheck, _: &mut Self::Context) -> Self::Result {
+        let result = self
+            .recovery
+            .try_get()
+            .and_then(|recovery| {
+                recovery
+                    .last_ec
+                    .ok_or_else(|| anyhow!("missing DKG event context for roster leadership"))
+            })
+            .and_then(|ec| self.propose_dkg_roster(ec));
+        if let Err(error) = result {
+            self.bus.err(EType::KeyGeneration, error);
+        }
     }
 }
 
@@ -125,6 +148,13 @@ impl Handler<TypedEvent<ShareVerificationComplete>> for ThresholdKeyshare {
         msg: TypedEvent<ShareVerificationComplete>,
         _: &mut Self::Context,
     ) -> Self::Result {
+        if self
+            .state
+            .get()
+            .is_some_and(|state| state.e3_id != msg.e3_id)
+        {
+            return;
+        }
         trap(
             EType::KeyGeneration,
             &self.bus.with_ec(msg.get_ctx()),
@@ -146,7 +176,10 @@ impl Handler<TypedEvent<AllThresholdSharesCollected>> for ThresholdKeyshare {
         trap(
             EType::KeyGeneration,
             &self.bus.with_ec(msg.get_ctx()),
-            || self.handle_all_threshold_shares_collected(msg),
+            || {
+                self.record_collected_threshold_shares(&msg)?;
+                self.handle_all_threshold_shares_collected(msg)
+            },
         )
     }
 }

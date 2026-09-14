@@ -11,6 +11,7 @@ use crate::{
 };
 use actix::Actor;
 use alloy::primitives::Address;
+use alloy::signers::local::PrivateKeySigner;
 use anyhow::{anyhow, ensure, Result};
 use async_trait::async_trait;
 use e3_crypto::Cipher;
@@ -27,6 +28,7 @@ pub struct ThresholdKeyshareExtension {
     address: String,
     interfold_addresses: HashMap<u64, Address>,
     dkg_timing_reader: DkgTimingReader,
+    signer: PrivateKeySigner,
 }
 
 impl ThresholdKeyshareExtension {
@@ -36,6 +38,7 @@ impl ThresholdKeyshareExtension {
         address: &str,
         interfold_addresses: HashMap<u64, Address>,
         dkg_timing_reader: DkgTimingReader,
+        signer: PrivateKeySigner,
     ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
@@ -43,6 +46,7 @@ impl ThresholdKeyshareExtension {
             address: address.to_owned(),
             interfold_addresses,
             dkg_timing_reader,
+            signer,
         })
     }
 }
@@ -114,6 +118,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                     interfold_address,
                     recovery,
                     dkg_timing_reader: self.dkg_timing_reader.clone(),
+                    signer: self.signer.clone(),
                 })
                 .start()
                 .into(),
@@ -183,6 +188,7 @@ impl E3Extension for ThresholdKeyshareExtension {
             interfold_address,
             recovery,
             dkg_timing_reader: self.dkg_timing_reader.clone(),
+            signer: self.signer.clone(),
         })
         .start()
         .into();

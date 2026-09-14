@@ -12,8 +12,8 @@ use e3_events::{E3id, Event, EventContextAccessors, InterfoldEvent, SeqState};
 use libp2p::{identify::Info, StreamProtocol};
 use sha2::{Digest, Sha256};
 
-pub(crate) const GOSSIP_WIRE_MAJOR: u16 = 2;
-pub(crate) const SYNC_WIRE_MAJOR: u16 = 2;
+pub(crate) const GOSSIP_WIRE_MAJOR: u16 = 3;
+pub(crate) const SYNC_WIRE_MAJOR: u16 = 3;
 const IDENTIFY_MAJOR: u16 = 1;
 const KADEMLIA_VERSION: &str = "1.0.0";
 

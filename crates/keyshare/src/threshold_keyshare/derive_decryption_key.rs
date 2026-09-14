@@ -25,7 +25,7 @@ use e3_trbfv::{
 };
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::{canonical_honest_party_ids_with_own, CiphernodesCommitteeSize};
+use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::collections::{BTreeSet, HashSet};
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -60,6 +60,7 @@ pub(crate) fn build_decryption_key_plan(
     current: &AggregatingDecryptionKey,
     shares: Vec<Arc<ThresholdShare>>,
     dishonest_parties: Option<HashSet<u64>>,
+    selected_party_ids: &BTreeSet<u64>,
     e3_id: &E3id,
 ) -> Result<DecryptionKeyPlan> {
     let party_id = own_party_id as usize;
@@ -177,22 +178,23 @@ pub(crate) fn build_decryption_key_plan(
         }
     }
 
-    // Noir C4 is parameterized by `H` (honest-set size), not full committee `N`.
-    // Use the same lowest-`H` roster rule as the public-key aggregator (C5 / NodeFold).
+    // Noir C4 is parameterized by the H dealers named in the accepted roster.
     let committee =
         CiphernodesCommitteeSize::from_threshold(threshold_m as usize, threshold_n as usize)?;
     let committee_h = committee.values().h;
-    let external_party_ids: Vec<u64> = honest_shares.iter().map(|s| s.party_id).collect();
-    if external_party_ids.len().saturating_add(1) > committee_h {
-        warn!(
-            "Capping honest roster to committee H={committee_h} for E3 {} (had {} external honest shares)",
-            e3_id,
-            external_party_ids.len()
-        );
+    if selected_party_ids.len() != committee_h
+        || selected_party_ids
+            .iter()
+            .any(|&party_id| party_id >= threshold_n)
+    {
+        bail!("selected DKG roster does not match committee H and N");
     }
-    let honest_party_ids =
-        canonical_honest_party_ids_with_own(committee_h, external_party_ids, own_party_id);
+    let honest_party_ids = selected_party_ids.clone();
     honest_shares.retain(|s| honest_party_ids.contains(&s.party_id));
+    let expected_external = committee_h - usize::from(honest_party_ids.contains(&own_party_id));
+    if honest_shares.len() != expected_external {
+        return Ok(DecryptionKeyPlan::Insufficient);
+    }
 
     debug_assert!(
         honest_shares

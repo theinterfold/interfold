@@ -21,8 +21,8 @@ pub(crate) const MAX_GOSSIP_BYTES: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_DIRECT_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
 pub(crate) const MAX_DHT_DOCUMENT_BYTES: usize = 25 * 1024 * 1024;
 
-const GOSSIP_MAGIC: [u8; 4] = *b"IFG2";
-const SYNC_MAGIC: [u8; 4] = *b"IFS2";
+const GOSSIP_MAGIC: [u8; 4] = *b"IFG3";
+const SYNC_MAGIC: [u8; 4] = *b"IFS3";
 const GOSSIP_SCHEMA_VERSION: u16 = GOSSIP_WIRE_MAJOR;
 const SYNC_SCHEMA_VERSION: u16 = SYNC_WIRE_MAJOR;
 
@@ -276,11 +276,11 @@ mod tests {
     }
 
     #[test]
-    fn sync_envelope_v2_fixture_is_stable() {
+    fn sync_envelope_v3_fixture_is_stable() {
         let bytes = encode_sync(SyncMessageKind::FetchEvents, &7u64).unwrap();
         assert_eq!(
             hex::encode(bytes),
-            "49465332020000000000aae89fc0f03e2959ae4d701a80cc3915918c950b159f6abb6c92c1433b1a853408000000000000000700000000000000"
+            "49465333030000000000aae89fc0f03e2959ae4d701a80cc3915918c950b159f6abb6c92c1433b1a853408000000000000000700000000000000"
         );
     }
 }

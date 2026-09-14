@@ -86,10 +86,7 @@ pub(crate) fn resolve_timeout_from_inputs(
         dkg_deadline_unix_secs > 0 && dkg_window_secs > 0,
         "canonical DKG timing is invalid"
     );
-    let start = dkg_deadline_unix_secs.saturating_sub(dkg_window_secs);
-    let cutoff = start
-        .saturating_add(phase_cutoff_secs(dkg_window_secs, phase.cutoff_bps()))
-        .min(dkg_deadline_unix_secs);
+    let cutoff = phase_cutoff_unix_secs(dkg_deadline_unix_secs, dkg_window_secs, phase);
     let remaining_secs = cutoff.saturating_sub(now_unix_secs);
     let duration_secs = collector_override_secs
         .map(|override_secs| override_secs.min(remaining_secs))
@@ -120,6 +117,17 @@ fn phase_cutoff_secs(dkg_window_secs: u64, cutoff_bps: u64) -> u64 {
     let scaled = dkg_window_secs.saturating_mul(cutoff_bps);
     let secs = scaled / 10_000;
     secs.max(1)
+}
+
+pub(crate) fn phase_cutoff_unix_secs(
+    dkg_deadline_unix_secs: u64,
+    dkg_window_secs: u64,
+    phase: DkgTimeoutPhase,
+) -> u64 {
+    let start = dkg_deadline_unix_secs.saturating_sub(dkg_window_secs);
+    start
+        .saturating_add(phase_cutoff_secs(dkg_window_secs, phase.cutoff_bps()))
+        .min(dkg_deadline_unix_secs)
 }
 
 #[cfg(test)]

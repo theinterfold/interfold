@@ -34,9 +34,9 @@
 
 use actix::{Actor, Addr, Context, Handler};
 use e3_events::{
-    BusHandle, CommitmentConsistencyCheckRequested, CommitmentLink, E3id, EventPublisher,
-    EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, ProofVerificationPassed,
-    TypedEvent,
+    BusHandle, CommitmentConsistencyCheckRequested, CommitmentLink, CommitmentRosterSelected, E3id,
+    EventPublisher, EventSubscriber, EventType, InterfoldEvent, InterfoldEventData,
+    ProofVerificationPassed, TypedEvent,
 };
 use e3_utils::NotifySync;
 use tracing::{error, info};
@@ -81,6 +81,7 @@ impl CommitmentConsistencyChecker {
             addr.clone().into(),
         );
         bus.subscribe(EventType::ProofVerificationPassed, addr.clone().into());
+        bus.subscribe(EventType::CommitmentRosterSelected, addr.clone().into());
         addr
     }
 }
@@ -109,7 +110,27 @@ impl Handler<InterfoldEvent> for CommitmentConsistencyChecker {
             InterfoldEventData::ProofVerificationPassed(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::CommitmentRosterSelected(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             _ => (),
+        }
+    }
+}
+
+impl Handler<TypedEvent<CommitmentRosterSelected>> for CommitmentConsistencyChecker {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<CommitmentRosterSelected>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        let (data, ec) = msg.into_components();
+        for violation in self.consistency.on_roster_selected(data) {
+            if let Err(err) = self.bus.publish(violation, ec.clone()) {
+                error!("Failed to publish CommitmentConsistencyViolation: {err}");
+            }
         }
     }
 }

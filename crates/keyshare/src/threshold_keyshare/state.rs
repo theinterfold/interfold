@@ -112,7 +112,7 @@ pub struct GeneratingDecryptionProof {
 pub enum KeyshareState {
     // Before anything
     Init,
-    // Collecting BFV encryption keys from all parties
+    // Collecting BFV encryption keys until all arrive or the H-key cutoff
     CollectingEncryptionKeys(CollectingEncryptionKeysData),
     // Generating TrBFV share material
     GeneratingThresholdShare(GeneratingThresholdShareData),

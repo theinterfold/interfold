@@ -76,7 +76,7 @@ pub(crate) fn build_shares_generated_plan(
     let derived_committee_size =
         CiphernodesCommitteeSize::from_threshold(threshold_m as usize, threshold_n as usize)?;
 
-    // Get collected BFV public keys from all parties (from persisted state)
+    // Read the BFV public keys collected by the C0 cutoff from persisted state.
     let encryption_keys = collected_encryption_keys;
 
     // Convert to BFV public keys using DKG params

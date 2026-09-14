@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::simulate_libp2p_net;
+use crate::{libp2p_mock::Libp2pMock, simulate_libp2p_net};
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
@@ -90,9 +90,11 @@ impl<'a> CiphernodeSystemBuilder<'a> {
             }
         }
 
-        if self.simulate {
-            simulate_libp2p_net(&nodes).await;
-        }
+        let network_mock = if self.simulate {
+            Some(simulate_libp2p_net(&nodes).await)
+        } else {
+            None
+        };
 
         for then_fn in self.thens {
             for node in nodes.iter() {
@@ -100,15 +102,75 @@ impl<'a> CiphernodeSystemBuilder<'a> {
             }
         }
 
-        Ok(CiphernodeSystem(nodes))
+        Ok(CiphernodeSystem {
+            nodes,
+            network_mock,
+        })
     }
 }
 
-pub struct CiphernodeSystem(Vec<CiphernodeHandle>);
+pub struct CiphernodeSystem {
+    nodes: Vec<CiphernodeHandle>,
+    network_mock: Option<Libp2pMock>,
+}
 
 impl CiphernodeSystem {
+    pub async fn restart_node<F>(&mut self, index: usize, rebuild: F) -> Result<()>
+    where
+        F: Future<Output = Result<CiphernodeHandle>>,
+    {
+        if index >= self.nodes.len() {
+            bail!("ciphernode index is out of range");
+        }
+        let old = self.nodes.remove(index);
+        if let Some(mock) = &self.network_mock {
+            mock.disconnect_node(old.peer_id).await;
+        }
+        old.shutdown(Duration::from_secs(30))
+            .await
+            .context("ciphernode shutdown before restart failed")?;
+        let replacement = rebuild
+            .await
+            .context("ciphernode rebuild after restart failed")?;
+        if let Some(mock) = &self.network_mock {
+            mock.add_node(replacement.peer_id, replacement.channel_bridge()?)
+                .await;
+        }
+        self.nodes.insert(index, replacement);
+        Ok(())
+    }
+
+    pub async fn disconnect_node(&self, index: usize) -> Result<()> {
+        let node = self
+            .nodes
+            .get(index)
+            .context("ciphernode index is out of range")?;
+        let mock = self
+            .network_mock
+            .as_ref()
+            .context("ciphernode system has no simulated network")?;
+        mock.disconnect_node(node.peer_id).await;
+        Ok(())
+    }
+
+    pub async fn reconnect_node(&self, index: usize) -> Result<()> {
+        let node = self
+            .nodes
+            .get(index)
+            .context("ciphernode index is out of range")?;
+        let mock = self
+            .network_mock
+            .as_ref()
+            .context("ciphernode system has no simulated network")?;
+        let bridge = node
+            .channel_bridge()
+            .context("ciphernode has no network bridge")?;
+        mock.reconnect_node(node.peer_id, bridge).await;
+        Ok(())
+    }
+
     pub async fn get_history(&self, index: usize) -> Result<CiphernodeHistory> {
-        let Some(node) = self.0.get(index) else {
+        let Some(node) = self.nodes.get(index) else {
             return Ok(CiphernodeHistory(vec![]));
         };
 
@@ -204,7 +266,7 @@ impl CiphernodeSystem {
         event_to: Option<Duration>,
     ) -> Result<CiphernodeHistory> {
         let start = Instant::now();
-        let Some(node) = self.0.get(index) else {
+        let Some(node) = self.nodes.get(index) else {
             bail!("No node found");
         };
 
@@ -288,7 +350,7 @@ impl CiphernodeSystem {
     }
 
     pub async fn flush_all_history(&self, millis: u64) -> Result<()> {
-        let nodes = &self.0;
+        let nodes = &self.nodes;
         for node in nodes.iter() {
             let Some(history) = node.history() else {
                 break;
@@ -321,7 +383,7 @@ impl Deref for CiphernodeSystem {
     type Target = Vec<CiphernodeHandle>;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.nodes
     }
 }
 

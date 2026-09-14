@@ -19,6 +19,11 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
             InterfoldEventData::KeyshareCreated(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::CommitmentRosterSelected(data) => {
+                trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
+                    self.accept_dkg_roster(data, ec)
+                });
+            }
             InterfoldEventData::ShareVerificationComplete(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }

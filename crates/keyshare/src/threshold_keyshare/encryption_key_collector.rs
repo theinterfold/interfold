@@ -18,9 +18,9 @@ use tracing::{info, warn};
 use crate::actors::threshold_keyshare::ThresholdKeyshare;
 use crate::domain::{CollectOutcome, EncryptionKeyCollection};
 
-/// Message sent when all encryption keys have been collected.
+/// Message sent when all keys arrive or the cutoff retains at least H keys.
 ///
-/// This contains all parties' BFV public keys, sorted by party_id,
+/// This contains the available BFV public keys, sorted by party_id,
 /// ready to be used for encrypting shares.
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -63,6 +63,9 @@ pub struct EncryptionKeyCollector {
     parent: Addr<ThresholdKeyshare>,
     collection: EncryptionKeyCollection,
     timeout: Duration,
+    minimum_keys: usize,
+    own_party_id: PartyId,
+    last_ec: Option<EventContext<Sequenced>>,
     timeout_handle: Option<SpawnHandle>,
 }
 
@@ -70,6 +73,8 @@ impl EncryptionKeyCollector {
     pub fn setup(
         parent: Addr<ThresholdKeyshare>,
         total: u64,
+        minimum_keys: usize,
+        own_party_id: PartyId,
         e3_id: E3id,
         timeout: Duration,
     ) -> Addr<Self> {
@@ -80,6 +85,9 @@ impl EncryptionKeyCollector {
                 e3_id,
                 parent,
                 timeout,
+                minimum_keys,
+                own_party_id,
+                last_ec: None,
                 timeout_handle: None,
             }
         })
@@ -128,6 +136,9 @@ impl Handler<TypedEvent<EncryptionKeyCreated>> for EncryptionKeyCollector {
         let (msg, ec) = msg.into_components();
         info!("EncryptionKeyCollector: EncryptionKeyCreated received");
         let outcome = self.collection.receive(msg.key);
+        if !matches!(outcome, CollectOutcome::Ignored) {
+            self.last_ec = Some(ec.clone());
+        }
         self.complete(ctx, ec, outcome);
     }
 }
@@ -139,6 +150,23 @@ impl Handler<EncryptionKeyCollectionTimeout> for EncryptionKeyCollector {
         _: EncryptionKeyCollectionTimeout,
         ctx: &mut Self::Context,
     ) -> Self::Result {
+        if let Some(ec) = self.last_ec.clone() {
+            if let Some(keys) = self
+                .collection
+                .complete_at_cutoff(self.minimum_keys, self.own_party_id)
+            {
+                info!(
+                    e3_id = %self.e3_id,
+                    available = keys.len(),
+                    minimum = self.minimum_keys,
+                    "Continuing DKG with available encryption keys"
+                );
+                self.complete(ctx, ec, CollectOutcome::Completed(keys));
+                ctx.stop();
+                return;
+            }
+        }
+
         let Some(missing_parties) = self.collection.timeout() else {
             return;
         };

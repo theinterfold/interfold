@@ -283,34 +283,145 @@ fn pre_zk_check_flags_and_evicts_inconsistent_party() {
     assert!(v.is_empty(), "evicted faulty party must not resurface");
 }
 
-#[test]
-fn c2_sender_at_or_above_h_skips_c4_cross_check() {
-    let link = Box::new(TestLink {
-        scope: LinkScope::SourceMustExistInTargets,
-        source: ProofType::C2aSkShareComputation,
-        target: ProofType::C4aSkShareDecryption,
-    });
-    let mut svc = CommitmentConsistency::new(e3(), vec![link], 2);
+struct SelectedRowLink;
 
-    // Party 2 (>= H) C2 cannot appear in C4 rows; must not be faulted.
-    svc.on_proof_verified(passed(
+impl CommitmentLink for SelectedRowLink {
+    fn name(&self) -> &'static str {
+        "selected_row"
+    }
+    fn source_proof_type(&self) -> ProofType {
+        ProofType::C2aSkShareComputation
+    }
+    fn target_proof_type(&self) -> ProofType {
+        ProofType::C4aSkShareDecryption
+    }
+    fn scope(&self) -> LinkScope {
+        LinkScope::SourceMustExistInTargets
+    }
+    fn extract_source_values(&self, _: &[u8]) -> Vec<FieldValue> {
+        vec![[1; 32]]
+    }
+    fn check_consistency(
+        &self,
+        _: &[FieldValue],
+        target_public_signals: &[u8],
+        source_row: u64,
+        _: u64,
+    ) -> bool {
+        target_public_signals.first().copied() == Some(source_row as u8)
+    }
+}
+
+#[test]
+fn c2_c4_uses_selected_row_not_full_committee_id() {
+    let mut svc = CommitmentConsistency::new(e3(), vec![Box::new(SelectedRowLink)], 2);
+    let c2_party_two = passed(
         e3(),
         2,
         addr(0x22),
         ProofType::C2aSkShareComputation,
         [0xc2; 32],
         signals(0x22),
+    );
+    assert!(svc.on_proof_verified(c2_party_two).is_empty());
+    assert!(svc
+        .on_proof_verified(passed(
+            e3(),
+            1,
+            addr(0x11),
+            ProofType::C4aSkShareDecryption,
+            [0xc4; 32],
+            signals(1),
+        ))
+        .is_empty());
+    assert!(svc
+        .on_roster_selected(CommitmentRosterSelected {
+            e3_id: e3(),
+            party_ids: vec![1, 2],
+        })
+        .is_empty());
+    assert!(svc
+        .on_proof_verified(passed(
+            e3(),
+            2,
+            addr(0x22),
+            ProofType::C4aSkShareDecryption,
+            [0xd4; 32],
+            signals(1),
+        ))
+        .is_empty());
+    assert!(svc
+        .on_proof_verified(passed(
+            e3(),
+            0,
+            addr(0x00),
+            ProofType::C2aSkShareComputation,
+            [0xd2; 32],
+            signals(0),
+        ))
+        .is_empty());
+}
+
+#[test]
+fn c2_c4_reports_a_selected_row_mismatch() {
+    let mut svc = CommitmentConsistency::new(e3(), vec![Box::new(SelectedRowLink)], 2);
+    svc.on_proof_verified(passed(
+        e3(),
+        2,
+        addr(0x22),
+        ProofType::C4aSkShareDecryption,
+        [0xc4; 32],
+        signals(1),
     ));
+    svc.on_proof_verified(passed(
+        e3(),
+        1,
+        addr(0x11),
+        ProofType::C2aSkShareComputation,
+        [0xc2; 32],
+        signals(0),
+    ));
+    assert!(svc
+        .on_roster_selected(CommitmentRosterSelected {
+            e3_id: e3(),
+            party_ids: vec![1, 2],
+        })
+        .is_empty());
     let violations = svc.on_proof_verified(passed(
         e3(),
         1,
         addr(0x11),
         ProofType::C4aSkShareDecryption,
-        [0xc4; 32],
+        [0xd4; 32],
+        signals(1),
+    ));
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0].accused_party_id, 1);
+}
+
+#[test]
+fn missing_c0_cannot_accuse_a_c3_sender() {
+    let link = Box::new(TestLink {
+        scope: LinkScope::SourceMustExistInTargets,
+        source: ProofType::C3aSkShareEncryption,
+        target: ProofType::C0PkBfv,
+    });
+    let mut svc = CommitmentConsistency::new(e3(), vec![link], 2);
+    svc.on_proof_verified(passed(
+        e3(),
+        0,
+        addr(0x00),
+        ProofType::C0PkBfv,
+        [0xc0; 32],
         signals(0x11),
     ));
-    assert!(
-        violations.is_empty(),
-        "party_id >= H must be outside C4 expected_commitments roster"
-    );
+    let violations = svc.on_proof_verified(passed(
+        e3(),
+        1,
+        addr(0x11),
+        ProofType::C3aSkShareEncryption,
+        [0xc3; 32],
+        signals(0x22),
+    ));
+    assert!(violations.is_empty());
 }

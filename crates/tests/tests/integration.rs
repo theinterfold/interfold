@@ -156,6 +156,14 @@ fn benchmark_multithread_concurrent_jobs() -> usize {
 
 static NEXT_BENCHMARK_NODE_RNG_SALT: AtomicU64 = AtomicU64::new(1);
 
+#[derive(Clone)]
+struct BenchmarkRestartIdentity {
+    rng: e3_utils::SharedRng,
+    signer: PrivateKeySigner,
+    log_path: PathBuf,
+    kv_path: PathBuf,
+}
+
 /// One ChaCha20 mutex per ciphernode in `test_trbfv_actor` (see `derive_shared_rng`).
 fn next_benchmark_node_rng(base_seed: u64) -> e3_utils::SharedRng {
     let salt = NEXT_BENCHMARK_NODE_RNG_SALT.fetch_add(1, Ordering::Relaxed);
@@ -1016,16 +1024,6 @@ fn collect_honest_run_faults(
     faults
 }
 
-fn assert_honest_run_safeguards(history: &[InterfoldEvent], e3_id: &E3id, context: &str) {
-    let faults = collect_honest_run_faults(history, e3_id, context);
-    assert!(
-        faults.is_empty(),
-        "honest-run safeguard failures ({}):\n{}",
-        context,
-        faults.join("\n")
-    );
-}
-
 async fn wait_for_history_match<F>(
     nodes: &CiphernodeSystem,
     node_index: usize,
@@ -1383,9 +1381,14 @@ async fn test_trbfv_actor() -> Result<()> {
     let pubkey_flow_timeout = benchmark_params.pubkey_flow_timeout;
     let plaintext_flow_timeout = benchmark_params.plaintext_flow_timeout;
     // This benchmark has no enabled EVM provider. Give every synthetic node the same
-    // frozen deadline. The first phase gets 10% of this window, matching the
-    // benchmark's public-key bound. Production nodes read timing from the contract.
-    let dkg_window_secs = pubkey_flow_timeout.as_secs().saturating_mul(10).max(1);
+    // frozen deadline. An optional shorter window lets an omission test reach
+    // the share cutoff without waiting for the production-scale benchmark bound.
+    // Production nodes read timing from the contract.
+    let dkg_window_secs = std::env::var("BENCHMARK_DKG_WINDOW_SECS")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or_else(|| pubkey_flow_timeout.as_secs().saturating_mul(10).max(1));
     let dkg_start = Arc::new(std::sync::OnceLock::<u64>::new());
     let dkg_timing_reader: e3_keyshare::DkgTimingReader = Arc::new(move |_| {
         let deadline = *dkg_start.get_or_init(|| {
@@ -1472,24 +1475,42 @@ async fn test_trbfv_actor() -> Result<()> {
     // Setup ZK backend for proof generation/verification
     let (zk_backend, _zk_temp) = setup_test_zk_backend(benchmark_params.preset_subdir).await?;
     let proof_aggregation_enabled = benchmark_proof_aggregation_enabled();
+    let restart_storage = std::env::var("BENCHMARK_RESTART_PARTY_ID")
+        .ok()
+        .map(|_| tempfile::tempdir())
+        .transpose()?;
+    let restart_root = restart_storage.as_ref().map(|dir| dir.path().to_path_buf());
+    let restart_identities = Arc::new(std::sync::Mutex::new(HashMap::<
+        String,
+        BenchmarkRestartIdentity,
+    >::new()));
 
-    let nodes = CiphernodeSystemBuilder::new()
+    let mut nodes = CiphernodeSystemBuilder::new()
         // All nodes run the same binary under the aggregator-committee model.
         // Node 0 stays an observer only because it is excluded from sortition registration.
         // Participant count scales with active committee (N + sortition buffer).
         .add_group(1, || async {
             let node_rng = next_benchmark_node_rng(BENCHMARK_NODE_RNG_BASE);
             let addr = rand_eth_addr(&node_rng);
+            let signer = PrivateKeySigner::random();
+            let paths = restart_root
+                .as_ref()
+                .map(|root| {
+                    let node_dir = root.join(format!("{addr}"));
+                    fs::create_dir_all(&node_dir)?;
+                    Ok::<_, anyhow::Error>((node_dir.join("log"), node_dir.join("kv")))
+                })
+                .transpose()?;
             println!("Building collector {}!", addr);
             {
-                let mut b = CiphernodeBuilder::new(node_rng, cipher.clone())
+                let mut b = CiphernodeBuilder::new(node_rng.clone(), cipher.clone())
                     .with_history_collector()
                     .with_shared_taskpool(&task_pool)
                     .with_multithread_concurrent_jobs(concurrent_jobs)
                     .with_shared_multithread_report(&multithread_report)
                     .with_trbfv()
                     .with_zkproof(zk_backend.clone())
-                    .with_signer(PrivateKeySigner::random())
+                    .with_signer(signer.clone())
                     .with_pubkey_aggregation()
                     .with_sortition_score()
                     .with_threshold_plaintext_aggregation()
@@ -1503,7 +1524,22 @@ async fn test_trbfv_actor() -> Result<()> {
                 if !proof_aggregation_enabled {
                     b = b.with_proof_aggregation_disabled_for_testing();
                 }
-                b.build().await
+                if let Some((log_path, kv_path)) = &paths {
+                    b = b.with_persistence(log_path, kv_path);
+                }
+                let node = b.build().await?;
+                if let Some((log_path, kv_path)) = paths {
+                    restart_identities.lock().unwrap().insert(
+                        node.address(),
+                        BenchmarkRestartIdentity {
+                            rng: node_rng.clone(),
+                            signer,
+                            log_path,
+                            kv_path,
+                        },
+                    );
+                }
+                Ok(node)
             }
         })
         .add_group(
@@ -1511,16 +1547,25 @@ async fn test_trbfv_actor() -> Result<()> {
             || async {
                 let node_rng = next_benchmark_node_rng(BENCHMARK_NODE_RNG_BASE);
                 let addr = rand_eth_addr(&node_rng);
+                let signer = PrivateKeySigner::random();
+                let paths = restart_root
+                    .as_ref()
+                    .map(|root| {
+                        let node_dir = root.join(format!("{addr}"));
+                        fs::create_dir_all(&node_dir)?;
+                        Ok::<_, anyhow::Error>((node_dir.join("log"), node_dir.join("kv")))
+                    })
+                    .transpose()?;
                 println!("Building normal {}", &addr);
                 {
-                    let mut b = CiphernodeBuilder::new(node_rng, cipher.clone())
+                    let mut b = CiphernodeBuilder::new(node_rng.clone(), cipher.clone())
                         .with_history_collector()
                         .with_shared_taskpool(&task_pool)
                         .with_multithread_concurrent_jobs(concurrent_jobs)
                         .with_shared_multithread_report(&multithread_report)
                         .with_trbfv()
                         .with_zkproof(zk_backend.clone())
-                        .with_signer(PrivateKeySigner::random())
+                        .with_signer(signer.clone())
                         .with_pubkey_aggregation()
                         .with_sortition_score()
                         .with_threshold_plaintext_aggregation()
@@ -1534,7 +1579,22 @@ async fn test_trbfv_actor() -> Result<()> {
                     if !proof_aggregation_enabled {
                         b = b.with_proof_aggregation_disabled_for_testing();
                     }
-                    b.build().await
+                    if let Some((log_path, kv_path)) = &paths {
+                        b = b.with_persistence(log_path, kv_path);
+                    }
+                    let node = b.build().await?;
+                    if let Some((log_path, kv_path)) = paths {
+                        restart_identities.lock().unwrap().insert(
+                            node.address(),
+                            BenchmarkRestartIdentity {
+                                rng: node_rng.clone(),
+                                signer,
+                                log_path,
+                                kv_path,
+                            },
+                        );
+                    }
+                    Ok(node)
                 }
             },
         )
@@ -1643,6 +1703,15 @@ async fn test_trbfv_actor() -> Result<()> {
         &eth_addrs,
         &collector_addr,
     )?;
+    let mut finalized = CommitteeFinalized {
+        e3_id: e3_id.clone(),
+        committee,
+        scores: committee_scores,
+        chain_id,
+    };
+    finalized.sort_by_address();
+    let committee = finalized.committee;
+    let committee_scores = finalized.scores;
 
     report.show(&format!(
         "Committee selected: {} nodes, {} buffer nodes",
@@ -1658,6 +1727,25 @@ async fn test_trbfv_actor() -> Result<()> {
         "Resolved active aggregator: node index {} ({})",
         active_aggregator_index, active_aggregator_addr
     );
+
+    let mut offline_node_index = if let Some(offline_party_id) =
+        std::env::var("BENCHMARK_OFFLINE_PARTY_ID")
+            .ok()
+            .and_then(|value| value.parse::<usize>().ok())
+    {
+        let address = committee
+            .get(offline_party_id)
+            .ok_or_else(|| anyhow::anyhow!("offline party is outside the finalized committee"))?;
+        let node_index = find_node_index_by_address(&nodes, address)?;
+        nodes.disconnect_node(node_index).await?;
+        println!(
+            "Disconnected committee party {} at node index {} before DKG",
+            offline_party_id, node_index
+        );
+        Some(node_index)
+    } else {
+        None
+    };
 
     nodes
         .expect_events(&["CommitteeRequested", "E3Requested"])
@@ -1686,37 +1774,79 @@ async fn test_trbfv_actor() -> Result<()> {
         committee_finalized_timer.elapsed(),
     ));
 
+    if let Some(offline_party_id) = std::env::var("BENCHMARK_OFFLINE_AFTER_C0_PARTY_ID")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+    {
+        anyhow::ensure!(
+            offline_node_index.is_none(),
+            "select only one offline test mode"
+        );
+        let address = committee
+            .get(offline_party_id)
+            .ok_or_else(|| anyhow::anyhow!("offline party is outside the finalized committee"))?;
+        let node_index = find_node_index_by_address(&nodes, address)?;
+        actix::clock::timeout(Duration::from_secs(180), async {
+            loop {
+                let history = nodes.get_history(node_index).await?;
+                if history.iter().any(|event| {
+                    matches!(
+                        event.get_data(),
+                        InterfoldEventData::EncryptionKeyCreated(key)
+                            if key.e3_id == e3_id && key.key.party_id == offline_party_id as u64
+                    )
+                }) {
+                    break Ok::<(), anyhow::Error>(());
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await??;
+        let witness_party_id = (0..committee.len())
+            .find(|&party_id| party_id != offline_party_id)
+            .context("committee has no other party to observe C0")?;
+        let witness_node_index = find_node_index_by_address(&nodes, &committee[witness_party_id])?;
+        actix::clock::timeout(Duration::from_secs(180), async {
+            loop {
+                let history = nodes.get_history(witness_node_index).await?;
+                if history.iter().any(|event| {
+                    matches!(
+                        event.get_data(),
+                        InterfoldEventData::EncryptionKeyCreated(key)
+                            if key.e3_id == e3_id && key.key.party_id == offline_party_id as u64
+                    )
+                }) {
+                    break Ok::<(), anyhow::Error>(());
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await??;
+        nodes.disconnect_node(node_index).await?;
+        offline_node_index = Some(node_index);
+        println!(
+            "Disconnected committee party {offline_party_id} at node index {node_index} after C0"
+        );
+    }
+
     // Node 0 is a non-committee observer. It only sees bus-global events and the forwardable
     // gossip events from the active aggregator flow.
     let shares_to_pubkey_agg_timer = Instant::now();
-    // KeyshareCreated is gossiped by each committee member (N). The aggregator folds H honest
-    // keyshares into PublicKeyAggregated; DKGRecursiveAggregationComplete is one per member (N).
-    let ks_n: Vec<&'static str> = vec!["KeyshareCreated"; threshold_n];
-    let dkg_n: Vec<&'static str> = vec!["DKGRecursiveAggregationComplete"; threshold_n];
+    // Every selected dealer must produce C4. A non-dealer that holds the full
+    // selected roster can produce C4 too, but it is not an input to C5.
     let mut active_aggregator_c1_c5: Vec<&'static str> = vec![
         "ShareVerificationDispatched",
         "CommitmentConsistencyCheckRequested",
         "CommitmentConsistencyCheckComplete",
     ];
-    // C1 verification dispatches ALL N submitted keyshare proofs (the protocol needs to know
-    // who's dishonest before it can pick the H honest set), so N ProofVerificationPassed events
-    // fire. The aggregator subsequently truncates to H for C5 input only.
-    active_aggregator_c1_c5.extend(std::iter::repeat_n("ProofVerificationPassed", threshold_n));
+    // C1 verification checks exactly the accepted H keyshare proofs.
+    active_aggregator_c1_c5.extend(std::iter::repeat_n("ProofVerificationPassed", committee_h));
     active_aggregator_c1_c5.extend_from_slice(&[
         "ShareVerificationComplete",
         "PkAggregationProofPending",
         "PkAggregationProofSigned",
     ]);
 
-    let mut expected_events: Vec<&'static str> = vec!["AggregatorChanged"];
-    if proof_aggregation_enabled {
-        expected_events.extend_from_slice(&ks_n);
-        expected_events.extend_from_slice(&dkg_n);
-    } else {
-        expected_events.extend_from_slice(&dkg_n);
-        expected_events.extend_from_slice(&ks_n);
-    }
-    expected_events.push("PublicKeyAggregated");
     // Gossip can duplicate KeyshareCreated; wait until PublicKeyAggregated rather than a fixed take count.
     let h = nodes
         .take_history_until_last_event(
@@ -1755,22 +1885,15 @@ async fn test_trbfv_actor() -> Result<()> {
             _ => None,
         })
         .collect();
-    // Unlike KeyshareCreated (cheap, gossiped early — all N arrive before aggregation), the
-    // per-node recursive fold proof (DKGRecursiveAggregationComplete) is expensive and late.
-    // `PublicKeyAggregated` fires once the aggregator selects and aggregates the honest set, so
-    // only the H honest folds are guaranteed to have reached node 0 by this barrier; the extra
-    // N-H members' folds race against it (and may land afterward). Assert the guaranteed floor
-    // and that every observed fold party is a committee member, not the racy `== N`.
+    // Observer gossip can arrive after PublicKeyAggregated. The aggregator
+    // must still collect all H selected folds before it publishes the key.
     assert!(
-        dkg_parties.len() >= committee_h
-            && dkg_parties.len() <= threshold_n
-            && dkg_parties.iter().all(|p| (*p as usize) < threshold_n),
-        "node 0: expected DKGRecursiveAggregationComplete from {committee_h}..={threshold_n} committee members before PublicKeyAggregated (only the H honest folds are guaranteed by this barrier), got parties {dkg_parties:?}"
+        dkg_parties.len() <= threshold_n && dkg_parties.iter().all(|p| (*p as usize) < threshold_n),
+        "node 0: observed an invalid DKG fold before PublicKeyAggregated: {dkg_parties:?}"
     );
-    assert_eq!(
-        ks_parties.len(),
-        threshold_n,
-        "node 0: expected KeyshareCreated from each committee member (N={threshold_n}), got parties {ks_parties:?}"
+    assert!(
+        ks_parties.len() <= threshold_n && ks_parties.iter().all(|p| (*p as usize) < threshold_n),
+        "node 0: observed an invalid keyshare before PublicKeyAggregated: {ks_parties:?}"
     );
     let pk_agg = h
         .iter()
@@ -1787,13 +1910,46 @@ async fn test_trbfv_actor() -> Result<()> {
     );
 
     let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
+    let accepted_rosters: Vec<Vec<u64>> = active_aggregator_history
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::CommitmentRosterSelected(data) if data.e3_id == e3_id => {
+                Some(data.party_ids.clone())
+            }
+            _ => None,
+        })
+        .collect();
+    assert!(
+        !accepted_rosters.is_empty(),
+        "aggregator did not accept a DKG roster"
+    );
+    assert!(
+        accepted_rosters
+            .iter()
+            .all(|roster| roster == &accepted_rosters[0]),
+        "aggregator accepted conflicting DKG rosters"
+    );
+    if let Some(node_index) = offline_node_index {
+        let offline_party_id = committee
+            .iter()
+            .position(|address| address == &nodes[node_index].address())
+            .context("disconnected node is outside the committee")?;
+        assert!(
+            !accepted_rosters[0].contains(&(offline_party_id as u64)),
+            "disconnected party was selected for the DKG roster"
+        );
+    }
+    let selected_addresses: Vec<Address> = accepted_rosters[0]
+        .iter()
+        .map(|&party_id| pk_agg.committee_addresses[party_id as usize])
+        .collect();
+    assert_eq!(selected_addresses, pk_agg.honest_committee_addresses);
     let active_aggregator_pubkey_history_len = active_aggregator_history.len();
     let mut expected_active_aggregator_pubkey_events = vec![
         "CommitteeFinalized",
         "CiphernodeSelected",
         "AggregatorChanged",
     ];
-    expected_active_aggregator_pubkey_events.extend_from_slice(&ks_n);
     expected_active_aggregator_pubkey_events.extend_from_slice(&active_aggregator_c1_c5);
     expected_active_aggregator_pubkey_events.push("PublicKeyAggregated");
 
@@ -1808,8 +1964,17 @@ async fn test_trbfv_actor() -> Result<()> {
     let active_aggregator_pubkey_events = project_history(&active_aggregator_history, |data| {
         publickey_aggregator_marker(data, &e3_id)
     });
+    let keyshare_count = active_aggregator_pubkey_events
+        .iter()
+        .filter(|&&event| event == "KeyshareCreated")
+        .count();
+    assert!(
+        (committee_h..=threshold_n).contains(&keyshare_count),
+        "Active aggregator received {keyshare_count} keyshares; expected at least the selected H={committee_h} and at most N={threshold_n}"
+    );
     let mut actual_sorted = active_aggregator_pubkey_events.clone();
-    actual_sorted.retain(|event| *event != "DKGRecursiveAggregationComplete");
+    actual_sorted
+        .retain(|event| *event != "DKGRecursiveAggregationComplete" && *event != "KeyshareCreated");
     let mut expected_sorted = expected_active_aggregator_pubkey_events.clone();
     actual_sorted.sort();
     expected_sorted.sort();
@@ -1853,6 +2018,68 @@ async fn test_trbfv_actor() -> Result<()> {
         "E3Request -> PublicKeyAggregated",
         e3_requested_timer.elapsed(),
     ));
+    if let Some(requested_party_id) = std::env::var("BENCHMARK_RESTART_PARTY_ID")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+    {
+        let restart_party_id = if accepted_rosters[0].contains(&(requested_party_id as u64))
+            && committee
+                .get(requested_party_id)
+                .is_some_and(|address| address != &active_aggregator_addr)
+        {
+            requested_party_id
+        } else {
+            accepted_rosters[0]
+                .iter()
+                .copied()
+                .map(|party_id| party_id as usize)
+                .find(|&party_id| {
+                    committee
+                        .get(party_id)
+                        .is_some_and(|address| address != &active_aggregator_addr)
+                })
+                .context("selected DKG roster has no non-aggregator restart target")?
+        };
+        let address = committee
+            .get(restart_party_id)
+            .ok_or_else(|| anyhow::anyhow!("restart party is outside the finalized committee"))?;
+        let node_index = find_node_index_by_address(&nodes, address)?;
+        let identity = restart_identities
+            .lock()
+            .unwrap()
+            .get(&nodes[node_index].address())
+            .cloned()
+            .context("restart identity is missing")?;
+        println!("Stopping committee party {restart_party_id} at node index {node_index}");
+        nodes
+            .restart_node(node_index, async {
+                let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
+                    .with_history_collector()
+                    .with_shared_taskpool(&task_pool)
+                    .with_multithread_concurrent_jobs(concurrent_jobs)
+                    .with_shared_multithread_report(&multithread_report)
+                    .with_trbfv()
+                    .with_zkproof(zk_backend.clone())
+                    .with_signer(identity.signer)
+                    .with_pubkey_aggregation()
+                    .with_sortition_score()
+                    .with_threshold_plaintext_aggregation()
+                    .with_forked_bus(bus.event_bus())
+                    .with_eventstore_aggregate_config_for_testing(
+                        benchmark_aggregate_config.clone(),
+                    )
+                    .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
+                    .with_chains(std::slice::from_ref(&bench_chain_config))
+                    .with_persistence(&identity.log_path, &identity.kv_path)
+                    .with_logging();
+                if !proof_aggregation_enabled {
+                    builder = builder.with_proof_aggregation_disabled_for_testing();
+                }
+                builder.build().await
+            })
+            .await?;
+        println!("Restarted committee party {restart_party_id} at node index {node_index}");
+    }
     let app_gen_timer = Instant::now();
 
     // First we get the public key from the collector-visible gossip event.
@@ -2216,18 +2443,32 @@ async fn test_trbfv_actor() -> Result<()> {
         assert_eq!(res, exp);
     }
 
-    // All-honest safeguard: scan every participant and the observer for spurious accusations,
-    // commitment mismatches (including C4 DecryptionProofs on ThresholdKeyshare), and traps.
+    // Check every connected participant and the observer for false accusations,
+    // commitment mismatches, and actor errors. The disconnected node cannot
+    // collect its own DKG shares, so it can fail locally without failing the E3.
+    let mut safeguard_faults = Vec::new();
     for index in 1..=participant_count {
+        if Some(index) == offline_node_index {
+            continue;
+        }
         let history = nodes.get_history(index).await?;
-        assert_honest_run_safeguards(
+        safeguard_faults.extend(collect_honest_run_faults(
             &history,
             &e3_id,
             &format!("participant node {index} ({})", nodes[index].address()),
-        );
+        ));
     }
     let observer_history = nodes.get_history(0).await?;
-    assert_honest_run_safeguards(&observer_history, &e3_id, "observer node 0");
+    safeguard_faults.extend(collect_honest_run_faults(
+        &observer_history,
+        &e3_id,
+        "observer node 0",
+    ));
+    assert!(
+        safeguard_faults.is_empty(),
+        "honest-run safeguard failures:\n{}",
+        safeguard_faults.join("\n")
+    );
 
     let mt_report = multithread_report.send(ToReport).await.unwrap();
     println!("{}", mt_report);

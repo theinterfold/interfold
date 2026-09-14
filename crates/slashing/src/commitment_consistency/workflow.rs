@@ -25,8 +25,8 @@ use alloy::primitives::Address;
 use alloy::sol_types::SolValue;
 use e3_events::{
     CommitmentConsistencyCheckComplete, CommitmentConsistencyCheckRequested,
-    CommitmentConsistencyViolation, CommitmentLink, E3id, LinkScope, ProofType,
-    ProofVerificationPassed,
+    CommitmentConsistencyViolation, CommitmentLink, CommitmentRosterSelected, E3id, LinkScope,
+    ProofType, ProofVerificationPassed,
 };
 use e3_utils::utility_types::ArcBytes;
 use std::collections::{BTreeSet, HashMap};
@@ -71,9 +71,10 @@ pub(crate) struct PreZkOutcome {
 pub(crate) struct CommitmentConsistency {
     e3_id: E3id,
     links: Vec<Box<dyn CommitmentLink>>,
-    /// Canonical honest-party count H. C4 `expected_commitments` only bind the lowest H
-    /// senders; C2 proofs from `party_id >= H` are outside the circuit roster.
+    /// Number of selected C4 dealer rows.
     committee_h: usize,
+    /// Full-committee party IDs in the accepted C4 row order.
+    roster: Option<Vec<u64>>,
     /// Verified proof outputs: `(address, proof_type) → data`.
     /// Multiple proofs per key are supported (e.g. N-1 C3a proofs per sender).
     verified: HashMap<(Address, ProofType), Vec<VerifiedProofData>>,
@@ -89,6 +90,7 @@ impl CommitmentConsistency {
             e3_id,
             links,
             committee_h,
+            roster: None,
             verified: HashMap::new(),
         }
     }
@@ -96,6 +98,49 @@ impl CommitmentConsistency {
     /// Number of registered links (for actor startup logging).
     pub(crate) fn link_count(&self) -> usize {
         self.links.len()
+    }
+
+    pub(crate) fn on_roster_selected(
+        &mut self,
+        event: CommitmentRosterSelected,
+    ) -> Vec<CommitmentConsistencyViolation> {
+        if event.e3_id != self.e3_id
+            || event.party_ids.len() != self.committee_h
+            || !event.party_ids.windows(2).all(|pair| pair[0] < pair[1])
+        {
+            return Vec::new();
+        }
+        if let Some(existing) = &self.roster {
+            if existing != &event.party_ids {
+                warn!(e3_id = %self.e3_id, "Ignoring conflicting DKG commitment roster");
+            }
+            return Vec::new();
+        }
+        self.roster = Some(event.party_ids);
+        let mut violations = self.check_links(ProofType::C4aSkShareDecryption);
+        violations.extend(self.check_links(ProofType::C4bESmShareDecryption));
+        violations
+    }
+
+    fn source_row(&self, link: &dyn CommitmentLink, party_id: u64) -> Option<u64> {
+        if matches!(
+            (link.source_proof_type(), link.target_proof_type()),
+            (
+                ProofType::C2aSkShareComputation,
+                ProofType::C4aSkShareDecryption
+            ) | (
+                ProofType::C2bESmShareComputation,
+                ProofType::C4bESmShareDecryption
+            )
+        ) {
+            return self
+                .roster
+                .as_ref()?
+                .iter()
+                .position(|&selected| selected == party_id)
+                .map(|index| index as u64);
+        }
+        Some(party_id)
     }
 
     /// Insert a proof into the cache, deduplicating by `data_hash` to avoid
@@ -132,12 +177,15 @@ impl CommitmentConsistency {
                         continue;
                     };
                     for src in srcs {
+                        let Some(src_row) = self.source_row(link, src.party_id) else {
+                            continue;
+                        };
                         let vals = link.extract_source_values(&src.public_signals);
                         for tgt in tgts {
                             if !link.check_consistency(
                                 &vals,
                                 &tgt.public_signals,
-                                src.party_id,
+                                src_row,
                                 tgt.party_id,
                             ) {
                                 mismatches.push(Mismatch {
@@ -178,9 +226,9 @@ impl CommitmentConsistency {
                         continue;
                     }
                     for src in srcs {
-                        if self.skip_c2_to_c4_source(src_type, src.party_id) {
+                        let Some(src_row) = self.source_row(link, src.party_id) else {
                             continue;
-                        }
+                        };
                         let vals = link.extract_source_values(&src.public_signals);
                         if vals.is_empty() {
                             continue;
@@ -190,7 +238,7 @@ impl CommitmentConsistency {
                             link.check_consistency(
                                 &vals,
                                 &tgt.public_signals,
-                                src.party_id,
+                                src_row,
                                 tgt.party_id,
                             )
                         });
@@ -209,11 +257,20 @@ impl CommitmentConsistency {
                 mismatches
             }
 
-            // Each source claims a value that must exist among any target's
-            // outputs. Fault the source (e.g. C3) when no target (e.g. C0)
-            // matches. If no targets are cached yet, skip — the check will
-            // run when a target arrives via post-ZK ProofVerificationPassed.
+            // A negative lookup needs a complete target set. C3-to-C0 has no
+            // closed C0 set when members are absent, so it cannot accuse from
+            // a local cache miss. C2-to-C4 waits for all selected C4 targets.
             LinkScope::SourceMustExistInTargets => {
+                if tgt_type == ProofType::C0PkBfv
+                    && matches!(
+                        src_type,
+                        ProofType::C3aSkShareEncryption | ProofType::C3bESmShareEncryption
+                    )
+                {
+                    // An omitted C0 may arrive later. Its absence from this
+                    // node's cache cannot prove that a C3 recipient key is bad.
+                    return Vec::new();
+                }
                 let all_targets: Vec<&VerifiedProofData> = self
                     .verified
                     .iter()
@@ -224,6 +281,28 @@ impl CommitmentConsistency {
                 if all_targets.is_empty() {
                     return Vec::new();
                 }
+                if matches!(
+                    (src_type, tgt_type),
+                    (
+                        ProofType::C2aSkShareComputation,
+                        ProofType::C4aSkShareDecryption
+                    ) | (
+                        ProofType::C2bESmShareComputation,
+                        ProofType::C4bESmShareDecryption
+                    )
+                ) {
+                    let Some(roster) = &self.roster else {
+                        return Vec::new();
+                    };
+                    let received_targets: BTreeSet<u64> = all_targets
+                        .iter()
+                        .map(|target| target.party_id)
+                        .filter(|party_id| roster.contains(party_id))
+                        .collect();
+                    if received_targets.len() < self.committee_h {
+                        return Vec::new();
+                    }
+                }
 
                 let mut mismatches = Vec::new();
                 for ((_, pt), srcs) in &self.verified {
@@ -231,9 +310,9 @@ impl CommitmentConsistency {
                         continue;
                     }
                     for src in srcs {
-                        if self.skip_c2_to_c4_source(src_type, src.party_id) {
+                        let Some(src_row) = self.source_row(link, src.party_id) else {
                             continue;
-                        }
+                        };
                         let vals = link.extract_source_values(&src.public_signals);
                         if vals.is_empty() {
                             continue;
@@ -242,7 +321,7 @@ impl CommitmentConsistency {
                             link.check_consistency(
                                 &vals,
                                 &tgt.public_signals,
-                                src.party_id,
+                                src_row,
                                 tgt.party_id,
                             )
                         });
@@ -261,14 +340,6 @@ impl CommitmentConsistency {
                 mismatches
             }
         }
-    }
-
-    /// C4 circuits only witness `expected_commitments` for the lowest `H` senders.
-    fn skip_c2_to_c4_source(&self, proof_type: ProofType, party_id: u64) -> bool {
-        matches!(
-            proof_type,
-            ProofType::C2aSkShareComputation | ProofType::C2bESmShareComputation
-        ) && party_id as usize >= self.committee_h
     }
 
     /// Build the [`CommitmentConsistencyViolation`] for a mismatch, computing

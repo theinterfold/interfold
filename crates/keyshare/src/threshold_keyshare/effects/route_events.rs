@@ -34,6 +34,31 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 let _ =
                     self.handle_threshold_share_created(TypedEvent::new(data, ec), ctx.address());
             }
+            InterfoldEventData::DkgCoordination(data) => {
+                let is_ready = matches!(data.kind, DkgCoordinationKind::Ready);
+                let result = self
+                    .record_dkg_coordination(data, ec.clone())
+                    .and_then(|_| {
+                        if is_ready {
+                            self.propose_dkg_roster(ec.clone())
+                        } else {
+                            Ok(())
+                        }
+                    });
+                if let Err(err) = result {
+                    error!("DKG roster coordination failed: {err}");
+                    if let Some(state) = self.state.get() {
+                        let _ = self.bus.publish(
+                            E3Failed {
+                                e3_id: state.e3_id,
+                                failed_at_stage: E3Stage::CommitteeFinalized,
+                                reason: FailureReason::DKGInvalidShares,
+                            },
+                            ec,
+                        );
+                    }
+                }
+            }
             InterfoldEventData::EncryptionKeyCreated(data) => {
                 let _ =
                     self.handle_encryption_key_created(TypedEvent::new(data, ec), ctx.address());
@@ -179,6 +204,9 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 // in-flight work that a crash may have interrupted (idempotent downstream).
                 if let Err(err) = self.resume_in_flight_work(ec, ctx.address()) {
                     warn!("resume_in_flight_work failed: {err}");
+                }
+                if let Err(err) = self.schedule_roster_leadership_check(ctx) {
+                    warn!("Could not schedule DKG roster leadership: {err}");
                 }
             }
             _ => (),
