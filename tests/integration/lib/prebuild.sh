@@ -26,7 +26,10 @@ rm -rf "${INTEGRATION_NOIR}/circuits"
 mkdir -p "${INTEGRATION_NOIR}/circuits" "${INTEGRATION_NOIR}/bin"
 
 if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
-  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure-512 -o "${INTEGRATION_NOIR}/circuits")
+  # The verifier check reads the build stamp from dist/circuits.
+  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure-512)
+  mkdir -p "${INTEGRATION_NOIR}/circuits/insecure-512"
+  cp -R "${ROOT_DIR}/dist/circuits/insecure-512/minimum" "${INTEGRATION_NOIR}/circuits/insecure-512/"
   # `--check`: verify the committed Honk Solidity verifiers in
   # packages/interfold-contracts/contracts/verifiers/bfv/honk/ match the
   # freshly-built circuits' recursive VKs. Fails loudly on drift instead of

@@ -277,6 +277,7 @@ jobs:
       - name: Stage source-aligned circuit fixtures
         run: |
           chmod +x .ci-noir/bin/bb
+          test -f .ci-noir/circuits/insecure-512/minimum/default/recursive_aggregation/c2ab_fold/c2ab_fold.json
           mkdir -p dist/circuits/insecure-512
           cp -R .ci-noir/circuits/insecure-512/minimum dist/circuits/insecure-512/
 
@@ -597,6 +598,8 @@ jobs:
         run: 'pnpm install --frozen-lockfile'
 
       - name: 'Run prebuild'
+        env:
+          CIPHERNODE_SKIP_PROOF_AGGREGATION: 'false'
         run: 'pnpm test:integration prebuild'
 
       - name: 'Verify build artifacts exist'
