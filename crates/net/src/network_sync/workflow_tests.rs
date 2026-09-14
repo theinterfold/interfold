@@ -61,6 +61,7 @@ fn net_event(ts: u128) -> InterfoldEvent {
             node: "node-1".to_string(),
             party_id: 1,
             signed_pk_generation_proof: None,
+            roster_hash: [0; 32],
         }
         .into(),
         None,

@@ -157,6 +157,8 @@ pub(crate) struct PendingDecryptionProofs {
     pub(crate) sk_proof: Option<Proof>,
     pub(crate) esm_proofs: HashMap<usize, Proof>,
     pub(crate) expected_esm_count: usize,
+    /// Hash of the DKG roster the C4 proofs are built over.
+    pub(crate) roster_hash: [u8; 32],
 }
 
 impl PendingDecryptionProofs {

@@ -159,6 +159,7 @@ fn decryption_completes_when_sk_and_all_esm_present() {
         sk_proof: None,
         esm_proofs: HashMap::new(),
         expected_esm_count: 2,
+        roster_hash: [0; 32],
     };
     assert!(!d.is_complete());
     d.sk_proof = Some(proof(1));
@@ -177,6 +178,7 @@ fn decryption_requires_contiguous_esm_indices() {
         sk_proof: Some(proof(1)),
         esm_proofs: HashMap::new(),
         expected_esm_count: 2,
+        roster_hash: [0; 32],
     };
     // Two entries but indices {0,2} — count matches but index 1 missing.
     d.esm_proofs.insert(0, proof(2));

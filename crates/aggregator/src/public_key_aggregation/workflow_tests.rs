@@ -26,8 +26,8 @@ fn collecting(threshold_n: usize, threshold_m: usize) -> PublicKeyAggregatorStat
 fn add_keyshare_below_threshold_stays_collecting() {
     // minimum committee maps (m=1, n=3) -> needs 3 parties.
     let state = collecting(3, 1);
-    let next =
-        PublicKeyAggregation::add_keyshare(state, ks(1), "node-0".into(), 0, None).expect("add ok");
+    let next = PublicKeyAggregation::add_keyshare(state, ks(1), "node-0".into(), 0, None, [0; 32])
+        .expect("add ok");
     match next {
         PublicKeyAggregatorState::Collecting {
             submission_order, ..
@@ -39,8 +39,10 @@ fn add_keyshare_below_threshold_stays_collecting() {
 #[test]
 fn add_keyshare_duplicate_party_is_idempotent() {
     let state = collecting(3, 1);
-    let state = PublicKeyAggregation::add_keyshare(state, ks(1), "node-0".into(), 0, None).unwrap();
-    let state = PublicKeyAggregation::add_keyshare(state, ks(9), "node-0".into(), 0, None).unwrap();
+    let state = PublicKeyAggregation::add_keyshare(state, ks(1), "node-0".into(), 0, None, [0; 32])
+        .unwrap();
+    let state = PublicKeyAggregation::add_keyshare(state, ks(9), "node-0".into(), 0, None, [0; 32])
+        .unwrap();
     match state {
         PublicKeyAggregatorState::Collecting {
             submission_order,
@@ -55,6 +57,84 @@ fn add_keyshare_duplicate_party_is_idempotent() {
 }
 
 #[test]
+fn add_keyshare_completes_when_a_dkg_roster_is_complete() {
+    // minimum committee (n=3, h=2): parties {0, 2} built their C4 over roster [0, 2].
+    // Their two keyshares complete the aggregation without party 1.
+    let roster = vec![0u64, 2];
+    let hash = e3_events::DkgRosterProposed::roster_hash(&roster);
+    let state = collecting(3, 1);
+    let state =
+        PublicKeyAggregation::add_keyshare(state, ks(1), "node-0".into(), 0, None, hash).unwrap();
+    assert!(matches!(state, PublicKeyAggregatorState::Collecting { .. }));
+    let state =
+        PublicKeyAggregation::add_keyshare(state, ks(3), "node-2".into(), 2, None, hash).unwrap();
+    match state {
+        PublicKeyAggregatorState::VerifyingC1 {
+            submission_order,
+            roster: got,
+            ..
+        } => {
+            assert_eq!(got, Some(roster));
+            let ids: Vec<u64> = submission_order.iter().map(|(pid, _, _)| *pid).collect();
+            assert_eq!(ids, vec![0, 2]);
+        }
+        other => panic!("expected VerifyingC1, got {other:?}"),
+    }
+}
+
+#[test]
+fn add_keyshare_ignores_keyshares_from_another_roster_epoch() {
+    // Party 1 submitted for roster [0, 1] (epoch 0) before it vanished. Parties 0 and 2
+    // then completed roster [0, 2]. Only the [0, 2] keyshares are forwarded to C1.
+    let old = e3_events::DkgRosterProposed::roster_hash(&[0, 1]);
+    let new = e3_events::DkgRosterProposed::roster_hash(&[0, 2]);
+    let state = collecting(3, 1);
+    let state =
+        PublicKeyAggregation::add_keyshare(state, ks(1), "node-1".into(), 1, None, old).unwrap();
+    let state =
+        PublicKeyAggregation::add_keyshare(state, ks(2), "node-0".into(), 0, None, old).unwrap();
+    // Two keyshares carry `old`, but `old` is the hash of [0, 1] and both are present, so
+    // roster [0, 1] is complete: the aggregator proceeds with it.
+    assert!(matches!(
+        state,
+        PublicKeyAggregatorState::VerifyingC1 { roster: Some(ref r), .. } if r == &[0, 1]
+    ));
+
+    // Party 0 re-submits for the new roster; the old entry is replaced.
+    let state = collecting(3, 1);
+    let state =
+        PublicKeyAggregation::add_keyshare(state, ks(2), "node-0".into(), 0, None, old).unwrap();
+    let state =
+        PublicKeyAggregation::add_keyshare(state, ks(5), "node-0".into(), 0, None, new).unwrap();
+    let state =
+        PublicKeyAggregation::add_keyshare(state, ks(3), "node-2".into(), 2, None, new).unwrap();
+    match state {
+        PublicKeyAggregatorState::VerifyingC1 {
+            submission_order,
+            roster,
+            ..
+        } => {
+            assert_eq!(roster, Some(vec![0, 2]));
+            let ids: Vec<u64> = submission_order.iter().map(|(pid, _, _)| *pid).collect();
+            assert_eq!(ids, vec![0, 2]);
+        }
+        other => panic!("expected VerifyingC1, got {other:?}"),
+    }
+}
+
+#[test]
+fn add_keyshare_does_not_complete_on_a_mismatched_roster_hash() {
+    // Two parties claim the same hash but it is not the hash of their own id set.
+    let bogus = [7u8; 32];
+    let state = collecting(3, 1);
+    let state =
+        PublicKeyAggregation::add_keyshare(state, ks(1), "node-0".into(), 0, None, bogus).unwrap();
+    let state =
+        PublicKeyAggregation::add_keyshare(state, ks(3), "node-2".into(), 2, None, bogus).unwrap();
+    assert!(matches!(state, PublicKeyAggregatorState::Collecting { .. }));
+}
+
+#[test]
 fn add_keyshare_reaching_threshold_transitions_to_verifying_c1() {
     let mut state = collecting(3, 1);
     for pid in 0..3u64 {
@@ -64,6 +144,7 @@ fn add_keyshare_reaching_threshold_transitions_to_verifying_c1() {
             format!("node-{pid}"),
             pid,
             None,
+            [0; 32],
         )
         .unwrap();
     }
@@ -96,8 +177,9 @@ fn add_keyshare_wrong_state_errors() {
         c1_proofs: vec![],
         no_proof_parties: vec![],
         canonical_party_nodes: HashMap::new(),
+        roster: None,
     };
-    let err = PublicKeyAggregation::add_keyshare(state, ks(1), "n".into(), 0, None);
+    let err = PublicKeyAggregation::add_keyshare(state, ks(1), "n".into(), 0, None, [0; 32]);
     assert!(err.is_err());
 }
 
@@ -174,6 +256,7 @@ fn handle_member_expelled_removes_and_reduces_threshold() {
             node.to_owned(),
             pid as u64,
             None,
+            [0; 32],
         )
         .unwrap();
     }
@@ -233,6 +316,7 @@ fn handle_member_expelled_transitions_when_enough_remain() {
             (1, "0x2222222222222222222222222222222222222222".to_string()),
             (2, "0x3333333333333333333333333333333333333333".to_string()),
         ]),
+        roster_hashes: vec![[0; 32], [0; 32]],
     };
     let next = PublicKeyAggregation::handle_member_expelled(
         state,

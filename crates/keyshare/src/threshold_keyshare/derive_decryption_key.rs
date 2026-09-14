@@ -6,12 +6,12 @@
 
 //! Pure decryption-key aggregation crypto.
 //!
-//! After C2/C3 verification, [`build_decryption_key_plan`] decrypts this party's
-//! row from every honest sender, splices in the locally cached own share, builds
+//! After the DKG roster is accepted, [`build_decryption_key_plan`] decrypts this party's
+//! row from every roster sender, splices in the locally cached own share, and builds
 //! the [`CalculateDecryptionKeyRequest`] and the C4 (share-decryption) proof
-//! requests, and selects the canonical honest roster. No actix/persistence/bus
-//! access — the actor publishes the compute request, persists the honest set and
-//! stashes the C4 requests from the returned plan.
+//! requests over exactly that roster. No actix/persistence/bus access — the actor
+//! publishes the compute request, persists the honest set and stashes the C4 requests
+//! from the returned plan.
 
 use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::Cipher;
@@ -25,8 +25,8 @@ use e3_trbfv::{
 };
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::computation::DkgInputType;
-use e3_zk_helpers::{canonical_honest_party_ids_with_own, CiphernodesCommitteeSize};
-use std::collections::{BTreeSet, HashSet};
+use e3_zk_helpers::CiphernodesCommitteeSize;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 use tracing::{info, warn};
 
@@ -34,8 +34,9 @@ use crate::domain::{vec_of_rows_to_shamir_share, AggregatingDecryptionKey};
 
 /// Outcome of decryption-key aggregation planning.
 pub(crate) enum DecryptionKeyPlan {
-    /// Too few honest parties remain after dimension filtering — the caller
-    /// should publish `E3Failed(InsufficientCommitteeMembers)`.
+    /// A roster member's bundle is missing or has wrong dimensions — the caller should
+    /// publish `E3Failed(InsufficientCommitteeMembers)`. The roster is chosen from
+    /// verified ready sets, so this is a local inconsistency, not a liveness gap.
     Insufficient,
     /// Proceed: dispatch `CalculateDecryptionKey`, persist `honest_party_ids` and
     /// stash the C4 proof requests.
@@ -59,7 +60,7 @@ pub(crate) fn build_decryption_key_plan(
     trbfv_config: TrBFVConfig,
     current: &AggregatingDecryptionKey,
     shares: Vec<Arc<ThresholdShare>>,
-    dishonest_parties: Option<HashSet<u64>>,
+    roster: &BTreeSet<u64>,
     e3_id: &E3id,
 ) -> Result<DecryptionKeyPlan> {
     let party_id = own_party_id as usize;
@@ -94,15 +95,21 @@ pub(crate) fn build_decryption_key_plan(
         .map(|rows| rows.len())
         .unwrap_or(0);
 
-    // Filter to honest external parties (collector already excludes self).
+    // Keep exactly the roster's external senders (collector already excludes self).
     let honest_shares: Vec<_> = shares
         .iter()
-        .filter(|ts| {
-            dishonest_parties
-                .as_ref()
-                .is_none_or(|dp| !dp.contains(&ts.party_id))
-        })
+        .filter(|ts| ts.party_id != own_party_id && roster.contains(&ts.party_id))
         .collect();
+    let expected_external = roster.iter().filter(|id| **id != own_party_id).count();
+    if honest_shares.len() != expected_external {
+        warn!(
+            "Roster for E3 {} needs {} external bundles but only {} are held",
+            e3_id,
+            expected_external,
+            honest_shares.len()
+        );
+        return Ok(DecryptionKeyPlan::Insufficient);
+    }
 
     // Validate per-party dimensions and exclude mismatched parties.
     let mut dimension_excluded: Vec<u64> = Vec::new();
@@ -164,34 +171,30 @@ pub(crate) fn build_decryption_key_plan(
         .collect();
 
     if !dimension_excluded.is_empty() {
+        // A roster member with wrong dimensions cannot be replaced here: every roster member
+        // must build C4 over the same set.
         warn!(
-            "Excluded {} parties with dimension mismatches: {:?}",
-            dimension_excluded.len(),
-            dimension_excluded
+            "Roster members with dimension mismatches for E3 {}: {:?}",
+            e3_id, dimension_excluded
         );
-        // Re-check threshold after exclusion (+1 for own share).
-        let threshold = threshold_m;
-        if (honest_shares.len() as u64 + 1) <= threshold {
-            return Ok(DecryptionKeyPlan::Insufficient);
-        }
+        return Ok(DecryptionKeyPlan::Insufficient);
     }
 
-    // Noir C4 is parameterized by `H` (honest-set size), not full committee `N`.
-    // Use the same lowest-`H` roster rule as the public-key aggregator (C5 / NodeFold).
+    // Noir C4 is parameterized by `H` (honest-set size), not full committee `N`. The
+    // roster is exactly `H` members chosen by the epoch leader.
     let committee =
         CiphernodesCommitteeSize::from_threshold(threshold_m as usize, threshold_n as usize)?;
     let committee_h = committee.values().h;
-    let external_party_ids: Vec<u64> = honest_shares.iter().map(|s| s.party_id).collect();
-    if external_party_ids.len().saturating_add(1) > committee_h {
-        warn!(
-            "Capping honest roster to committee H={committee_h} for E3 {} (had {} external honest shares)",
-            e3_id,
-            external_party_ids.len()
+    if roster.len() != committee_h {
+        bail!(
+            "roster has {} members but the circuit needs H={} for E3 {}",
+            roster.len(),
+            committee_h,
+            e3_id
         );
     }
-    let honest_party_ids =
-        canonical_honest_party_ids_with_own(committee_h, external_party_ids, own_party_id);
-    honest_shares.retain(|s| honest_party_ids.contains(&s.party_id));
+    let honest_party_ids: BTreeSet<u64> = roster.clone();
+    honest_shares.sort_by_key(|s| s.party_id);
 
     debug_assert!(
         honest_shares

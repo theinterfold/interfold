@@ -16,6 +16,8 @@ use std::{
 use e3_events::{E3id, PartyId, SignedProofPayload, ThresholdShare};
 use tracing::info;
 
+use crate::domain::CutoffOutcome;
+
 /// Proofs received alongside a threshold share from a sender.
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ReceivedShareProofs {
@@ -57,18 +59,22 @@ pub(crate) struct ThresholdShareCollection {
     todo: HashSet<PartyId>,
     shares: HashMap<PartyId, Arc<ThresholdShare>>,
     share_proofs: HashMap<PartyId, ReceivedShareProofs>,
+    /// Smallest number of external shares that lets the DKG continue at the cutoff.
+    minimum: usize,
     phase: CollectionPhase,
 }
 
 impl ThresholdShareCollection {
     /// Expect shares from parties `0..total` excluding `own_party_id`
-    /// (own share is consumed locally for C4).
-    pub fn new(e3_id: E3id, total: u64, own_party_id: u64) -> Self {
+    /// (own share is consumed locally for C4). The cutoff completes with at least
+    /// `minimum` external shares.
+    pub fn new(e3_id: E3id, total: u64, own_party_id: u64, minimum: usize) -> Self {
         Self {
             e3_id,
             todo: (0..total).filter(|p| *p != own_party_id).collect(),
             shares: HashMap::new(),
             share_proofs: HashMap::new(),
+            minimum,
             phase: CollectionPhase::Collecting,
         }
     }
@@ -140,12 +146,28 @@ impl ThresholdShareCollection {
         self.finish_if_done()
     }
 
-    pub fn timeout(&mut self) -> Option<Vec<PartyId>> {
+    /// Apply the collection cutoff. Completes with the shares collected so far when at least
+    /// `minimum` external parties delivered. Otherwise the collection times out and the
+    /// missing parties are returned.
+    pub fn cutoff(&mut self) -> CutoffOutcome<ShareCollectOutcome> {
         if !self.is_collecting() {
-            return None;
+            return CutoffOutcome::Inert;
+        }
+        if self.shares.len() >= self.minimum {
+            info!(
+                e3_id = %self.e3_id,
+                collected = self.shares.len(),
+                missing = ?self.todo,
+                "Threshold share cutoff reached with enough shares; continuing without the missing parties"
+            );
+            self.phase = CollectionPhase::Finished;
+            return CutoffOutcome::Completed(ShareCollectOutcome::Completed {
+                shares: self.shares.clone(),
+                proofs: std::mem::take(&mut self.share_proofs),
+            });
         }
         self.phase = CollectionPhase::TimedOut;
-        Some(self.todo.iter().copied().collect())
+        CutoffOutcome::Failed(self.todo.iter().copied().collect())
     }
 
     fn finish_if_done(&mut self) -> ShareCollectOutcome {
@@ -185,8 +207,8 @@ mod tests {
     }
 
     fn collection() -> ThresholdShareCollection {
-        // total 3, own party 1 -> expect parties {0, 2}
-        ThresholdShareCollection::new(E3id::new("1", 1), 3, 1)
+        // total 3, own party 1 -> expect parties {0, 2}; H = 2 so minimum external = 1
+        ThresholdShareCollection::new(E3id::new("1", 1), 3, 1, 1)
     }
 
     #[test]
@@ -245,11 +267,28 @@ mod tests {
     }
 
     #[test]
-    fn timeout_reports_missing() {
+    fn cutoff_below_minimum_reports_missing() {
         let mut c = collection();
-        let mut missing = c.timeout().expect("missing");
+        let CutoffOutcome::Failed(mut missing) = c.cutoff() else {
+            panic!("expected Failed");
+        };
         missing.sort();
         assert_eq!(missing, vec![0, 2]);
-        assert!(c.timeout().is_none());
+        assert!(matches!(c.cutoff(), CutoffOutcome::Inert));
+    }
+
+    #[test]
+    fn cutoff_at_minimum_completes_with_partial_roster() {
+        let mut c = collection();
+        c.receive(share(2), proofs());
+        match c.cutoff() {
+            CutoffOutcome::Completed(ShareCollectOutcome::Completed { shares, proofs }) => {
+                let ids: Vec<_> = shares.keys().copied().collect();
+                assert_eq!(ids, vec![2], "party 0 is absent");
+                assert_eq!(proofs.len(), 1);
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+        assert!(!c.is_collecting());
     }
 }

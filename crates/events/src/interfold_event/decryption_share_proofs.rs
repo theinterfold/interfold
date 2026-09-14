@@ -27,4 +27,7 @@ pub struct DecryptionShareProofsPending {
     pub sk_request: DkgShareDecryptionProofRequest,
     /// C4b proof requests (SmudgingNoise decryption), one per ESI index.
     pub esm_requests: Vec<DkgShareDecryptionProofRequest>,
+    /// Hash of the DKG roster the C4 proofs are built over.
+    #[serde(default)]
+    pub roster_hash: [u8; 32],
 }

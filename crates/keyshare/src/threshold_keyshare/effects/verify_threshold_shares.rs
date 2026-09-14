@@ -123,31 +123,14 @@ impl ThresholdKeyshare {
         }
 
         if party_proofs_to_verify.is_empty() {
-            // All non-self parties are dishonest (missing or incomplete proofs), none to verify
-            let threshold = state.threshold_m;
-            let total = state.threshold_n;
-            let dishonest_count = (pre_dishonest.len() as u64).min(total);
-            let honest_count = total - dishonest_count;
-
-            if honest_count <= threshold {
-                warn!(
-                    "Too few honest parties for E3 {} ({} honest, need at least {}) after C2/C3 pre-dishonest filtering — cannot proceed",
-                    e3_id, honest_count, threshold + 1
-                );
-                self.pending.shares.clear();
-                self.bus.publish(
-                    E3Failed {
-                        e3_id: e3_id.clone(),
-                        failed_at_stage: E3Stage::CommitteeFinalized,
-                        reason: FailureReason::InsufficientCommitteeMembers,
-                    },
-                    ec,
-                )?;
-                return Ok(());
-            }
-
-            let dishonest_set: HashSet<u64> = pre_dishonest.into_iter().collect();
-            return self.proceed_with_decryption_key_calculation(Some(dishonest_set), ec);
+            // Every received bundle is incomplete. This member holds no usable bundle, so it
+            // reports an empty ready set. The round fails only when no `H`-member roster can
+            // be formed from the committee's reports.
+            warn!(
+                "No complete C2/C3 proof set received for E3 {} — reporting an empty ready set",
+                e3_id
+            );
+            return self.publish_dkg_ready(BTreeSet::new(), Some(ec));
         }
 
         info!(
@@ -170,6 +153,7 @@ impl ThresholdKeyshare {
                 pre_dishonest,
                 params_preset: self.share_enc_preset,
                 committee_size,
+                dkg_roster: None,
             },
             ec,
         )?;
@@ -188,94 +172,52 @@ impl ThresholdKeyshare {
 
         match msg.kind {
             VerificationKind::ShareProofs => {
-                // C2/C3 verification complete
-                if msg.dishonest_parties.is_empty() {
+                // C2/C3 verification complete. The verified senders form this member's ready
+                // set. The DKG roster is chosen from every member's ready set, so the
+                // decryption key is not computed here.
+                let dishonest: HashSet<u64> = msg.dishonest_parties.iter().copied().collect();
+                let held: BTreeSet<u64> = self
+                    .pending
+                    .shares
+                    .iter()
+                    .map(|share| share.party_id)
+                    .filter(|pid| *pid != state.party_id && !dishonest.contains(pid))
+                    .collect();
+                if dishonest.is_empty() {
                     info!(
-                        "All parties passed C2/C3 verification for E3 {} — proceeding",
+                        "All parties passed C2/C3 verification for E3 {} — reporting ready set",
                         e3_id
                     );
-                    self.proceed_with_decryption_key_calculation(None, ec)
                 } else {
-                    let threshold = state.threshold_m;
-                    let total = state.threshold_n;
-                    let dishonest_count = (msg.dishonest_parties.len() as u64).min(total);
-                    let honest_count = total - dishonest_count;
-
-                    if honest_count <= threshold {
-                        warn!(
-                            "Too few honest parties for E3 {} ({} honest, need at least {}) — cannot proceed",
-                            e3_id, honest_count, threshold + 1
-                        );
-                        // Clear pending shares
-                        self.pending.shares.clear();
-                        self.bus.publish(
-                            E3Failed {
-                                e3_id: e3_id.clone(),
-                                failed_at_stage: E3Stage::CommitteeFinalized,
-                                reason: FailureReason::InsufficientCommitteeMembers,
-                            },
-                            ec,
-                        )?;
-                        return Ok(());
-                    }
-
-                    let dishonest_set: HashSet<u64> = msg.dishonest_parties.into_iter().collect();
                     info!(
-                        "Proceeding with {} honest parties for E3 {} ({} dishonest excluded)",
-                        honest_count,
+                        "Reporting ready set of {} parties for E3 {} ({} dishonest excluded)",
+                        held.len(),
                         e3_id,
-                        dishonest_set.len()
+                        dishonest.len()
                     );
-                    self.proceed_with_decryption_key_calculation(Some(dishonest_set), ec)
                 }
+                self.publish_dkg_ready(held, Some(ec))
             }
             VerificationKind::DecryptionProofs => {
-                // C4 verification complete — update honest set and publish KeyshareCreated
+                // C4 verification complete. A dishonest C4 inside the roster cannot simply
+                // be dropped: the aggregator circuit checks every C4 row against every C2
+                // row of the roster, so the honest set must stay the roster. Treat the
+                // dishonest members like silent ones — leave their ready entries and
+                // rotate the epoch. The accusation path slashes them separately.
                 if !msg.dishonest_parties.is_empty() {
-                    self.state.try_mutate(&ec, |mut s| {
-                        if let Some(ref mut honest) = s.honest_parties {
-                            honest.retain(|pid| !msg.dishonest_parties.contains(pid));
-                        }
-                        Ok(s)
-                    })?;
-
-                    let state = self.state.try_get()?;
-                    let threshold = state.threshold_m;
-                    let honest_count = state
-                        .honest_parties
-                        .as_ref()
-                        .map(|h| h.len() as u64)
-                        .unwrap_or(0);
-
-                    if honest_count <= threshold {
-                        warn!(
-                            "Too few honest parties after C4 for E3 {} ({} honest, need at least {})",
-                            e3_id, honest_count, threshold + 1
-                        );
-                        self.bus.publish(
-                            E3Failed {
-                                e3_id: e3_id.clone(),
-                                failed_at_stage: E3Stage::CommitteeFinalized,
-                                reason: FailureReason::InsufficientCommitteeMembers,
-                            },
-                            ec,
-                        )?;
-                        return Ok(());
-                    }
-
-                    info!(
-                        "Updated honest set after C4 for E3 {}: {} honest ({} removed)",
-                        e3_id,
-                        honest_count,
-                        msg.dishonest_parties.len()
+                    warn!(
+                        "Dishonest C4 from {:?} inside the DKG roster for E3 {} — rotating the roster epoch",
+                        msg.dishonest_parties, e3_id
                     );
-                } else {
-                    info!(
-                        "All parties passed C4 verification for E3 {} — publishing KeyshareCreated",
-                        e3_id
-                    );
+                    self.decryption_key_shared_collector = None;
+                    let dishonest: Vec<u64> = msg.dishonest_parties.iter().copied().collect();
+                    return self.handle_roster_epoch_timeout(&dishonest, Some(ec));
                 }
 
+                info!(
+                    "All parties passed C4 verification for E3 {} — publishing KeyshareCreated",
+                    e3_id
+                );
                 self.publish_keyshare_created(ec)
             }
             _ => Ok(()),

@@ -47,6 +47,10 @@ pub struct ShareVerificationDispatched {
     pub params_preset: e3_fhe_params::BfvPreset,
     /// Committee size for per-committee circuit artifact resolution.
     pub committee_size: CiphernodesCommitteeSize,
+    /// The DKG roster (ascending party ids) the C4 proofs were built over, when known.
+    /// C4 witness rows are indexed by roster position, not by party id.
+    #[serde(default)]
+    pub dkg_roster: Option<Vec<u64>>,
 }
 
 /// ShareVerificationActor → ThresholdKeyshare: verification results.

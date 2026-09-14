@@ -68,6 +68,8 @@ impl ProofRequestActor {
                         party_id: msg.full_share.party_id,
                         proof: c0_proof,
                         seq: 0,
+
+                        roster_hash: [0; 32],
                     },
                     ec.clone(),
                 ) {

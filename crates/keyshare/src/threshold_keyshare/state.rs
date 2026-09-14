@@ -97,6 +97,62 @@ pub struct Decrypting {
     pub(crate) signed_e_sm_share_encryption_proofs: Vec<SignedProofPayload>,
 }
 
+/// Durable DKG roster coordination for one E3.
+///
+/// The roster is the exact `H`-member set every member builds its C4 share over. The epoch
+/// leader proposes it from the signed ready reports. A member keeps every accepted epoch
+/// until the chain publishes the key, then keeps the one matching on-chain `dkgPartyIds`.
+#[derive(Debug, Clone, PartialEq, Default, serde::Serialize, serde::Deserialize)]
+pub struct DkgRosterState {
+    /// Senders whose complete C2/C3-verified bundle this member holds (excludes self).
+    pub held: BTreeSet<u64>,
+    /// Ready sets reported by committee members, keyed by reporter. Each includes the
+    /// reporter itself.
+    pub ready: std::collections::BTreeMap<u64, BTreeSet<u64>>,
+    /// Highest epoch this member accepted (proposed by itself or received).
+    pub epoch: Option<u32>,
+    /// Roster of the accepted epoch (ascending, exactly `H`).
+    pub roster: Vec<u64>,
+    /// `keccak256(abi.encode(roster))` of the accepted epoch.
+    pub roster_hash: [u8; 32],
+    /// True when this member is in the accepted roster and has started C4 for it.
+    pub serving: bool,
+    /// True when the accepted epoch missed (C4 collection timed out or a roster member
+    /// delivered a dishonest C4). Only then may the next epoch be proposed.
+    #[serde(default)]
+    pub epoch_missed: bool,
+    /// Epochs whose leader never proposed within the proposal budget. Leadership rotates
+    /// past them: the next proposal uses the first epoch above both the accepted epoch and
+    /// every skipped epoch.
+    #[serde(default)]
+    pub skipped_epochs: BTreeSet<u32>,
+    /// Parties this member excludes from every later roster: they missed a C4 delivery
+    /// for an epoch this member served, or stayed silent when they led an epoch. A later
+    /// `DkgReady` from such a party does not readmit it.
+    #[serde(default)]
+    pub unresponsive: BTreeSet<u64>,
+}
+
+impl DkgRosterState {
+    /// The epoch the next proposal must carry: one above the highest epoch that was either
+    /// accepted or skipped, or 0 when none exists.
+    pub fn next_epoch(&self) -> u32 {
+        let accepted = self.epoch.map_or(0, |e| e.saturating_add(1));
+        let skipped = self
+            .skipped_epochs
+            .iter()
+            .next_back()
+            .map_or(0, |e| e.saturating_add(1));
+        accepted.max(skipped)
+    }
+
+    /// True when a proposal for the next epoch may be accepted or made: no epoch is
+    /// accepted yet, or the accepted epoch missed.
+    pub fn awaiting_proposal(&self) -> bool {
+        self.epoch.is_none() || self.epoch_missed
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct GeneratingDecryptionProof {
     pub(crate) pk_share: ArcBytes,
@@ -211,6 +267,17 @@ pub struct ThresholdKeyshareState {
     pub honest_parties: Option<BTreeSet<u64>>,
     pub dkg_deadline_unix_secs: Option<u64>,
     pub dkg_window_secs: Option<u64>,
+    /// DKG roster coordination. `None` for a record persisted before roster epochs existed.
+    #[serde(default)]
+    pub roster: Option<DkgRosterState>,
+    /// Finalized committee addresses in party-id order, kept after the selection payload is
+    /// no longer part of the phase data. `None` for a record persisted before this field.
+    #[serde(default)]
+    pub committee: Option<Vec<String>>,
+    /// Aggregating-phase material kept after `ReadyForDecryption` so a later DKG roster
+    /// epoch can compute the decryption key share again over a different roster.
+    #[serde(default)]
+    pub aggregating: Option<AggregatingDecryptionKey>,
     /// Set once `KeyshareCreated` has actually been published from an authorized
     /// path (after C4 honest-set verification, the no-C4-proofs path, or the
     /// sole-honest fast path). `ReadyForDecryption` is entered *before* that
@@ -244,6 +311,9 @@ impl ThresholdKeyshareState {
             honest_parties: None,
             dkg_deadline_unix_secs: None,
             dkg_window_secs: None,
+            roster: None,
+            committee: None,
+            aggregating: None,
             keyshare_published: false,
         }
     }
@@ -284,6 +354,15 @@ impl ThresholdKeyshareState {
         &self.address
     }
 
+    /// Committee sizing `(N, H, T)` derived from the persisted `(threshold_m, threshold_n)`.
+    pub fn committee(&self) -> Result<e3_zk_helpers::CiphernodesCommittee> {
+        Ok(e3_zk_helpers::CiphernodesCommitteeSize::from_threshold(
+            self.threshold_m as usize,
+            self.threshold_n as usize,
+        )?
+        .values())
+    }
+
     pub fn variant_name(&self) -> &str {
         self.state.variant_name()
     }
@@ -314,6 +393,11 @@ impl TryInto<AggregatingDecryptionKey> for ThresholdKeyshareState {
     fn try_into(self) -> std::result::Result<AggregatingDecryptionKey, Self::Error> {
         match self.state {
             KeyshareState::AggregatingDecryptionKey(s) => Ok(s),
+            // A later roster epoch re-enters from `ReadyForDecryption` with the retained
+            // aggregating material.
+            KeyshareState::ReadyForDecryption(_) => self
+                .aggregating
+                .ok_or_else(|| anyhow!("aggregating material missing for a new roster epoch")),
             _ => Err(anyhow!("Invalid state")),
         }
     }

@@ -96,6 +96,8 @@ impl ProofRequestActor {
                         party_id: meta.party_id,
                         proof: proof.clone(),
                         seq: 0,
+
+                        roster_hash: [0; 32],
                     },
                     ec.clone(),
                 ) {

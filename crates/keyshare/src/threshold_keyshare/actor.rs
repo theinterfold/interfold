@@ -124,6 +124,8 @@ pub struct ThresholdKeyshareParams {
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
     pub dkg_timing_reader: DkgTimingReader,
+    /// Operator key used to sign DKG roster coordination messages.
+    pub signer: alloy::signers::local::PrivateKeySigner,
 }
 
 pub type DkgTimingFuture = Pin<Box<dyn Future<Output = Result<(u64, u64)>> + Send>>;
@@ -134,10 +136,11 @@ pub type DkgTimingReader = Arc<dyn Fn(E3id) -> DkgTimingFuture + Send + Sync>;
 struct PendingKeyshareWork {
     /// Shares awaiting the C2/C3 verification result.
     shares: Vec<Arc<ThresholdShare>>,
-    /// C4 requests awaiting the threshold-decryption-key result.
+    /// C4 requests awaiting the threshold-decryption-key result, with the roster hash.
     share_decryption_data: Option<(
         DkgShareDecryptionProofRequest,
         Vec<DkgShareDecryptionProofRequest>,
+        [u8; 32],
     )>,
     /// Peer C4 artifacts awaiting verification.
     c4_verification_shares: Option<HashMap<u64, DecryptionKeyShared>>,
@@ -158,8 +161,13 @@ pub struct ThresholdKeyshare {
     share_enc_preset: BfvPreset,
     interfold_address: Address,
     dkg_timing_reader: DkgTimingReader,
+    signer: alloy::signers::local::PrivateKeySigner,
     selection_timing_pending: bool,
     pending: PendingKeyshareWork,
+    /// Own actor address, set at `started`; used by roster effects that create collectors.
+    self_addr: Option<Addr<Self>>,
+    /// Epoch the roster proposal watchdog is armed for, if any.
+    roster_watchdog_epoch: Option<u32>,
 }
 
 impl ThresholdKeyshare {
@@ -172,10 +180,17 @@ impl ThresholdKeyshare {
             .filter(|event| Some(event.share.party_id) != own_party_id)
             .map(|event| event.share.clone())
             .collect();
-        let share_decryption_data = recovered
-            .decryption_share_proofs_pending
-            .as_ref()
-            .map(|event| (event.sk_request.clone(), event.esm_requests.clone()));
+        let share_decryption_data =
+            recovered
+                .decryption_share_proofs_pending
+                .as_ref()
+                .map(|event| {
+                    (
+                        event.sk_request.clone(),
+                        event.esm_requests.clone(),
+                        event.roster_hash,
+                    )
+                });
         let c4_verification_shares = (!recovered.decryption_key_shares.is_empty()).then(|| {
             recovered
                 .decryption_key_shares
@@ -194,7 +209,10 @@ impl ThresholdKeyshare {
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
             dkg_timing_reader: params.dkg_timing_reader,
+            signer: params.signer,
             selection_timing_pending: false,
+            self_addr: None,
+            roster_watchdog_epoch: None,
             pending: PendingKeyshareWork {
                 shares: pending_shares,
                 share_decryption_data,
@@ -263,6 +281,7 @@ impl Actor for ThresholdKeyshare {
     type Context = actix::Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
         ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        self.self_addr = Some(ctx.address());
     }
 }
 

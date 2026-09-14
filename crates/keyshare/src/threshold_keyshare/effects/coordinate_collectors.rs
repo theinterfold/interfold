@@ -20,6 +20,8 @@ impl ThresholdKeyshare {
         let e3_id = state.e3_id.clone();
         let threshold_n = state.threshold_n;
         let own_party_id = state.party_id;
+        // Own share is local, so `H - 1` external shares make an `H`-member roster possible.
+        let minimum = state.committee()?.h.saturating_sub(1);
         let timeout = resolve_timeout(
             DkgTimeoutPhase::ThresholdShareCollection,
             state.dkg_deadline_unix_secs,
@@ -36,6 +38,7 @@ impl ThresholdKeyshare {
                 self_addr,
                 threshold_n,
                 own_party_id,
+                minimum,
                 e3_id,
                 timeout.duration,
             )
@@ -57,6 +60,7 @@ impl ThresholdKeyshare {
         );
         let e3_id = state.e3_id.clone();
         let threshold_n = state.threshold_n;
+        let minimum = state.committee()?.h;
         let timeout = resolve_timeout(
             DkgTimeoutPhase::EncryptionKeyCollection,
             state.dkg_deadline_unix_secs,
@@ -69,7 +73,7 @@ impl ThresholdKeyshare {
             timeout.description
         );
         let addr = self.encryption_key_collector.get_or_insert_with(|| {
-            EncryptionKeyCollector::setup(self_addr, threshold_n, e3_id, timeout.duration)
+            EncryptionKeyCollector::setup(self_addr, threshold_n, minimum, e3_id, timeout.duration)
         });
         Ok(addr.clone())
     }
@@ -95,19 +99,20 @@ impl ThresholdKeyshare {
             .collect();
 
         let e3_id = state.e3_id.clone();
-        let timeout = resolve_timeout(
-            DkgTimeoutPhase::DecryptionKeySharedCollection,
+        // One roster epoch, not the whole remaining window: when a roster member does not
+        // deliver C4 in time, the next epoch is proposed without it.
+        let timeout = crate::domain::timeout_policy::resolve_roster_epoch_timeout(
             state.dkg_deadline_unix_secs,
             state.dkg_window_secs,
         )?;
         info!(
             e3_id = %e3_id,
-            timeout = ?timeout.duration,
-            "{}",
-            timeout.description
+            timeout = ?timeout,
+            epoch = ?state.roster.as_ref().and_then(|r| r.epoch),
+            "DecryptionKeyShared collection budget for this roster epoch"
         );
         let addr = self.decryption_key_shared_collector.get_or_insert_with(|| {
-            DecryptionKeySharedCollector::setup(self_addr, expected, e3_id, timeout.duration)
+            DecryptionKeySharedCollector::setup(self_addr, expected, e3_id, timeout)
         });
         Ok(addr.clone())
     }

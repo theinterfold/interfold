@@ -9,16 +9,23 @@ impl ThresholdKeyshare {
     /// C4 proof generation is deferred to ProofRequestActor via DecryptionShareProofsPending.
     pub(in crate::actors::threshold_keyshare) fn proceed_with_decryption_key_calculation(
         &mut self,
-        dishonest_parties: Option<HashSet<u64>>,
-        ec: EventContext<Sequenced>,
+        roster: BTreeSet<u64>,
+        roster_hash: [u8; 32],
+        ec: Option<EventContext<Sequenced>>,
+        self_addr: Addr<Self>,
     ) -> Result<()> {
         let state = self.state.try_get()?;
         let e3_id = state.get_e3_id();
         let trbfv_config = state.get_trbfv_config();
+        let publish = |bus: &BusHandle, data: InterfoldEventData| match &ec {
+            Some(ec) => bus.publish(data, ec.clone()),
+            None => bus.publish_without_context(data),
+        };
 
-        // Get our BFV secret key from state, pending shares from the actor
+        // Get our BFV secret key from state. The verified shares stay on the actor so a
+        // later roster epoch can compute C4 again over a different roster.
         let current: AggregatingDecryptionKey = state.clone().try_into()?;
-        let shares = std::mem::take(&mut self.pending.shares);
+        let shares = self.pending.shares.clone();
 
         let plan = build_decryption_key_plan(
             &self.cipher,
@@ -29,20 +36,20 @@ impl ThresholdKeyshare {
             trbfv_config,
             &current,
             shares,
-            dishonest_parties,
+            &roster,
             e3_id,
         )?;
 
         match plan {
             DecryptionKeyPlan::Insufficient => {
-                self.pending.shares.clear();
-                self.bus.publish(
+                publish(
+                    &self.bus,
                     E3Failed {
                         e3_id: e3_id.clone(),
                         failed_at_stage: E3Stage::CommitteeFinalized,
                         reason: FailureReason::InsufficientCommitteeMembers,
-                    },
-                    ec,
+                    }
+                    .into(),
                 )?;
             }
             DecryptionKeyPlan::Proceed {
@@ -57,14 +64,21 @@ impl ThresholdKeyshare {
                     CorrelationId::new(),
                     e3_id.clone(),
                 );
-                self.bus.publish(event, ec.clone())?;
+                publish(&self.bus, event.into())?;
 
                 // Store honest parties and C4 data on the actor (transient coordination)
-                self.state.try_mutate(&ec, |mut s| {
+                let mutator = |mut s: ThresholdKeyshareState| {
                     s.honest_parties = Some(honest_party_ids.clone());
                     Ok(s)
-                })?;
-                self.pending.share_decryption_data = Some((sk_request, esm_requests));
+                };
+                match &ec {
+                    Some(ec) => self.state.try_mutate(ec, mutator)?,
+                    None => self.state.try_mutate_without_context(mutator)?,
+                }
+                self.pending.share_decryption_data = Some((sk_request, esm_requests, roster_hash));
+                // A later epoch can reach this point from `ReadyForDecryption`. The C4
+                // collector for the new roster is created when the proofs are requested.
+                let _ = self_addr;
             }
         }
 
@@ -87,7 +101,7 @@ impl ThresholdKeyshare {
         let (sk_poly_sum, es_poly_sum) = (output.sk_poly_sum, output.es_poly_sum);
 
         // Keep C4 inputs until the recovery record and phase transition succeed.
-        let (sk_request, esm_requests) = self
+        let (sk_request, esm_requests, roster_hash) = self
             .pending
             .share_decryption_data
             .clone()
@@ -120,6 +134,7 @@ impl ThresholdKeyshare {
             node,
             sk_request,
             esm_requests,
+            roster_hash,
         };
         self.recovery.try_mutate(&ec, |mut recovery| {
             recovery.decryption_share_proofs_pending =
@@ -128,12 +143,25 @@ impl ThresholdKeyshare {
             Ok(recovery)
         })?;
 
-        // Transition to ReadyForDecryption only after the recovery input is accepted.
-        self.state.try_mutate(&ec, |s| {
+        // Transition to ReadyForDecryption only after the recovery input is accepted. A later
+        // roster epoch re-enters ReadyForDecryption with a new key share; the aggregating
+        // material is kept on the state so the next epoch can be computed again.
+        self.state.try_mutate(&ec, |mut s| {
             use KeyshareState as K;
             info!("Try store decryption key");
 
-            let current: AggregatingDecryptionKey = s.clone().try_into()?;
+            let current = match &s.state {
+                K::AggregatingDecryptionKey(current) => current.clone(),
+                K::ReadyForDecryption(_) => s.aggregating.clone().ok_or_else(|| {
+                    anyhow!("aggregating material missing for a new roster epoch")
+                })?,
+                other => bail!(
+                    "Invalid state {} for a decryption key",
+                    other.variant_name()
+                ),
+            };
+            s.aggregating = Some(current.clone());
+            s.keyshare_published = false;
 
             let next = K::ReadyForDecryption(ReadyForDecryption {
                 pk_share: current.pk_share,

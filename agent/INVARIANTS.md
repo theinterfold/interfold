@@ -472,6 +472,15 @@ design citation alone does not establish current runtime behavior.
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert
   `H == N`. A mixed Some/None NodeFold set is terminal DKG failure. — `ARCHITECTURE.md`;
   `flow-trace/04`
+- The DKG roster is any strictly ascending `H`-subset of `0..N-1`, not the prefix `0..H-1`.
+  `dkg_aggregator.nr` indexes cross-row C0/C2/C3 checks by `party_ids[j]`, never by fold row `j`.
+  Every roster member builds C4 over the same roster (`sk_poly_sum = Σ_{i∈S} share_i`); the
+  circuit ties `row_j.C4[i] == row_i.C2[j]` for all pairs, so members with different rosters
+  cannot fold. Roster agreement is an off-chain liveness protocol (leader-proposed epochs,
+  `DkgReady`/`DkgRosterProposed`); safety never depends on it. — `flow-trace/04` Step 6b
+- A share bundle covers every registered slot `0..N-1`. A slot whose C0 never arrived is
+  encrypted under the sender's own C0 key; `node_fold.nr` needs a C3 per slot, and the
+  cross-row C0→C3 check runs only for roster members. — `flow-trace/04` Step 3
 - Proof multiplicity: C2a/C2b singleton per recipient; C3a/C3b follow configured Shamir
   multiplicities. Witness dimensions come from the **active preset**, never incidental vector sizes.
   — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`

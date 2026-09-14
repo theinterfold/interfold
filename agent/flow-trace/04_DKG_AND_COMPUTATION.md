@@ -49,8 +49,8 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │   → ZK proof actor picks this up
 │   │
 │   ├─ 5. Create child actors:
-│   │     ├─ EncryptionKeyCollector (waits for all N parties' keys)
-│   │     └─ ThresholdShareCollector (waits for all N parties' shares)
+│   │     ├─ EncryptionKeyCollector (up to N keys; at least H by the cutoff)
+│   │     └─ ThresholdShareCollector (up to N-1 bundles; at least H-1 by the cutoff)
 │   │     → These collectors start immediately so early peer keys/shares can
 │   │       be buffered while this node is still finishing earlier DKG phases
 │   │
@@ -60,7 +60,13 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │         └─ DecryptionKeySharedCollector: the on-chain DKG deadline
 │      Restart uses the remaining time, not a new full window. Optional
 │      per-collector env values can shorten a timeout but cannot extend it.
-│      The separate missing-member recovery gap remains open until SC-15.
+│
+│   └─ Partial committees: a cutoff completes a collection when at least the
+│      minimum number of parties delivered (`H` encryption keys, `H - 1`
+│      external share bundles). Members that never deliver are left out of the
+│      DKG roster (Step 6b). A round fails only when a cutoff passes with fewer
+│      than the minimum, or when the canonical deadline passes with no complete
+│      roster epoch.
 ```
 
 ### Step 2: C0 Proof Generation → EncryptionKeyCreated
@@ -124,11 +130,17 @@ ProofRequestActor receives EncryptionKeyPending
 ### Step 3: Collect All Encryption Keys
 
 ```
-EncryptionKeyCollector waits for EncryptionKeyCreated from ALL N parties
+EncryptionKeyCollector waits for EncryptionKeyCreated from up to N parties
 │
 ├─ On each arrival: store (party_id → bfv_public_key)
 │
-├─ On TIMEOUT (derived DKG-phase cutoff):
+├─ On CUTOFF (10% of the window) with at least H keys:
+│   └─ Send AllEncryptionKeysCollected with the keys held (the same as ALL N)
+│      → Share generation covers every registered slot 0..N-1. A slot whose C0
+│        never arrived is encrypted under the SENDER's own C0 key (the share is
+│        the sender's own secret; no leak). node_fold still needs a C3 per slot.
+│
+├─ On CUTOFF with fewer than H keys:
 │   └─ Send EncryptionKeyCollectionFailed to parent ThresholdKeyshare
 │      ├─ ThresholdKeyshare persists KeyshareState::Failed {
 │      │    failed_at_stage: CommitteeFinalized,
@@ -346,7 +358,7 @@ artifact will not be published. DKG-path proofs (`C0` through `C5`) emit
 ### Step 6: Collect All Threshold Shares (with C2/C3 Verification)
 
 ```
-ThresholdShareCollector waits for ThresholdShareCreated from ALL N parties
+ThresholdShareCollector waits for ThresholdShareCreated from up to N-1 parties
 │
 ├─ Each ThresholdShareCreated arrives via libp2p P2P network
 │
@@ -356,7 +368,10 @@ ThresholdShareCollector waits for ThresholdShareCreated from ALL N parties
 │   │   → This node only extracts what's encrypted for it
 │   └─ Forwards filtered share to ThresholdShareCollector
 │
-├─ On TIMEOUT (derived DKG-phase cutoff):
+├─ On CUTOFF (60% of the window) with at least H-1 external bundles:
+│   └─ Send AllThresholdSharesCollected with the bundles held (the same as ALL N)
+│
+├─ On CUTOFF with fewer than H-1 external bundles:
 │   └─ Send ThresholdShareCollectionFailed to parent ThresholdKeyshare
 │      ├─ ThresholdKeyshare persists KeyshareState::Failed {
 │      │    failed_at_stage: CommitteeFinalized,
@@ -369,7 +384,7 @@ ThresholdShareCollector waits for ThresholdShareCreated from ALL N parties
 │      │  }
 │      └─ ThresholdKeyshare actor stops
 │
-└─ When ALL N shares collected:
+└─ When ALL N-1 shares collected (or the cutoff rule above):
     ├─ Send AllThresholdSharesCollected to ThresholdKeyshare
     │
     └─ DISPATCH C2/C3 VERIFICATION:
@@ -473,10 +488,84 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
         → DKG may still proceed if enough honest parties remain
 ```
 
+### Step 6b: DKG Roster Agreement (leader-proposed, `H` members)
+
+Every member of the roster must build its C4 over the SAME `H` contributions:
+`dkg_aggregator.nr` asserts `row_j.C4[i] == row_i.C2[j]` for every pair of roster
+rows, so two members with different rosters cannot fold. The roster is chosen
+off-chain by an epoch leader; safety does not depend on the leader (a wrong or
+conflicting roster fails closed in the fold and `publishCommittee` is single-shot).
+
+Code: `crates/keyshare/src/threshold_keyshare/roster.rs` (pure selection),
+`effects/roster_coordination.rs` (actor), events `DkgReady`, `DkgRosterProposed`
+(`crates/events/src/interfold_event/dkg_ready.rs`, `dkg_roster_proposed.rs`).
+
+```
+ShareVerificationComplete { kind: ShareProofs } arrives (Step 6a)
+│
+├─ 1. READY REPORT: this member signs DkgReady { held: senders whose C2/C3 passed }
+│     and gossips it. Reports are recorded per sender (latest wins).
+│
+├─ 2. LEADER: Leader(epoch) = eligible[epoch mod |eligible|], eligible = party ids
+│     0..N-1 minus expelled. Only the leader of the NEXT epoch may propose.
+│     The leader picks the ascending H-subset S such that every j in S reported
+│     every other member of S (`select_roster`: greedy over the closure of the
+│     ready graph, lowest ids first). It signs DkgRosterProposed { epoch, S }.
+│
+├─ 3. ACCEPT: every member validates a proposal (well-formed, signed by the
+│     leader of that epoch, no expelled party, epoch > current) and adopts it.
+│     `honest_parties := S`, `roster_hash := keccak(S)`. A member in S that holds
+│     every other member's bundle SERVES the epoch (Step 7 over S). A member
+│     outside S idles but keeps its bundles for a later epoch.
+│
+├─ 4. EPOCH MISS: the C4 collector for the epoch uses the roster-epoch budget
+│     (10% of the window, or less near the deadline). On a miss before the
+│     deadline the missing members are dropped from every ready set and the
+│     next leader proposes epoch+1. A dishonest C4 inside S is handled the same
+│     way (the roster cannot shrink; the fold needs all H rows).
+│
+├─ 4b. SILENT LEADER: a member that awaits another party's proposal arms a
+│     proposal watchdog (1% of the window, `E3_DKG_ROSTER_PROPOSAL_SECS` can
+│     shorten it). When it fires with no proposal accepted for that epoch, the
+│     epoch is recorded in `skipped_epochs`, the silent leader is added to
+│     `unresponsive` (if it had reported ready), and leadership moves to the
+│     next party id. `next_epoch` = 1 + max(accepted epoch, highest skipped).
+│
+├─ 4c. IDLE MEMBERS: a member outside the roster (or in it without every
+│     bundle) has no C4 collector. It arms an epoch watchdog for the same
+│     roster-epoch budget; when it fires with the epoch still live, the roster
+│     members whose gossiped `DecryptionKeyShared` for this roster never
+│     arrived are the missing ones (they are kept in `pending` while idle).
+│     The idle member then follows the same miss path as a serving member.
+│
+├─ 4d. UNRESPONSIVE SET: parties that missed a C4 for a served epoch or led
+│     an epoch in silence are never readmitted by a later `DkgReady`, and are
+│     excluded from every roster this member proposes. A proposal from a
+│     leader that has not yet learned of them is still served (refusing would
+│     make THIS member look unresponsive); that epoch misses and rotates.
+│     A higher-epoch proposal from its rightful leader is accepted even while
+│     this member still considers the current epoch live; only proposals for
+│     epochs this member already skipped are ignored.
+│
+└─ 5. DEADLINE: a miss at or after the canonical deadline is terminal
+      (E3Failed { DecryptionTimeout }).
+```
+
+Durable state: `ThresholdKeyshareState.roster` (`DkgRosterState`: held, ready,
+epoch, roster, roster_hash, serving, epoch_missed, skipped_epochs, unresponsive).
+Rotation is possible in `AggregatingDecryptionKey` and in `ReadyForDecryption`
+while `aggregating` is retained and no `PublicKeyAggregated` has been recorded. Restart in `AggregatingDecryptionKey`
+re-reports readiness and re-serves the persisted epoch (`resume_accepted_roster`).
+
+Each C4 proof, `DecryptionShareProofsPending`, `DKGInnerProofReady`,
+`DKGRecursiveAggregationComplete`, and `KeyshareCreated` carry `roster_hash`.
+A new epoch supersedes the pending C4 job in `ProofRequestActor` and drops
+folded C4 rows from an older epoch in `NodeProofAggregator`.
+
 ### Step 7: Calculate Decryption Key (with C4 Proofs & Verification)
 
 ```
-ThresholdKeyshare receives AllThresholdSharesCollected
+ThresholdKeyshare accepts the DKG roster S (Step 6b) and serves the epoch
 │
 ├─ 1. Decrypt each received share using THIS node's BFV secret key:
 │     For each party j's share:
@@ -505,12 +594,10 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │  │  → Stored encrypted locally for later decryption    │
 │     │  └─────────────────────────────────────────────────────┘
 │
-├─ 2b. CANONICAL H ROSTER (when H < N):
-│     Before C4 witness layout, merge external honest party_ids with own_party_id,
-│     sort ascending, and keep the lowest H — same rule as PublicKeyAggregator C5 cap
-│     (`e3_zk_helpers::canonical_honest_party_ids_with_own`). Persisted as `honest_parties`.
-│     Parties outside the lowest H still complete KeyshareCreated but are not in the
-│     aggregator's NodeFold / `honest_committee_addresses` roster.
+├─ 2b. ROSTER (when H < N):
+│     The C4 witness is laid out over the accepted roster S (Step 6b), ascending,
+│     persisted as `honest_parties`. `sk_poly_sum = Σ_{i∈S} share_i`. Members
+│     outside S do not publish KeyshareCreated for this epoch.
 │
 ├─ 3. PUBLISH C4 PROOF REQUESTS:
 │     DecryptionShareProofsPending {
@@ -544,10 +631,14 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │         → Broadcast to all committee nodes via P2P gossip
 │     │         → This is Protocol Exchange #3 (decryption key sharing)
 │
-├─ 5. COLLECT C4 SHARES FROM ALL PARTIES:
-│     ThresholdKeyshare waits for DecryptionKeyShared from ALL N parties
+├─ 5. COLLECT C4 SHARES FROM THE ROSTER:
+│     ThresholdKeyshare waits for DecryptionKeyShared from the other H-1 roster
+│     members. Shares with a different roster_hash are dropped.
 │     │
-│     ├─ On timeout:
+│     ├─ On timeout before the canonical deadline:
+│     │  └─ Roster epoch miss (Step 6b.4): the next leader proposes epoch+1
+│     │
+│     ├─ On timeout at or after the deadline:
 │     │  ├─ Persist KeyshareState::Failed {
 │     │  │    failed_at_stage: CommitteeFinalized,
 │     │  │    reason: DecryptionTimeout
@@ -555,7 +646,7 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │  ├─ Emit the matching E3Failed event
 │     │  └─ Stop the ThresholdKeyshare actor
 │     │
-│     └─ When all collected → AllDecryptionKeySharesCollected
+│     └─ When all H-1 collected → AllDecryptionKeySharesCollected
 │
 ├─ 6. C4 VERIFICATION:
 │     ThresholdKeyshare.dispatch_c4_verification()
@@ -603,9 +694,14 @@ phase.
 │
   ├─ Every committee member persists the same collected keyshares
   │
-  ├─ When every non-excluded member has submitted a keyshare:
-│   │   → The live count can fall below N after a confirmed fault, but it must still be at least H
-│   │   → Persist VerifyingC1 before publishing AggregationInputsReady(PublicKey)
+  ├─ When one DKG roster is complete (`complete_roster` in `transitions.rs`):
+│   │   → Every KeyshareCreated carries the roster_hash its C4 was built over. The
+│   │     aggregator groups submitters by hash; H submitters whose ascending ids hash
+│   │     to that value form the roster. Their keyshares alone proceed; others are dropped.
+│   │   → A party that resubmits for a newer epoch replaces its earlier keyshare.
+│   │   → Legacy senders (zero roster_hash) complete under the old rule: every
+│   │     non-excluded live member (may fall below N after a fault, never below H)
+│   │   → Persist VerifyingC1 { roster } before publishing AggregationInputsReady(PublicKey)
 │   │   → CiphernodeSelector starts the 10-minute failover budget only now
 │   │
 │   ├─ Only the active aggregator starts C1 verification and later proof/compute effects
@@ -614,10 +710,14 @@ phase.
 │   ├─ C1 verification runs over all collected non-excluded submitters; failures are dishonest
 │   │
 │   ├─ Honest-set selection (compile-time H from `committee::active`, may be < N):
-│   │     • Require at least H parties with valid C1 proofs; otherwise E3Failed
-│   │     • If more than H parties pass C1, keep the H lowest `party_id`s as the canonical
-│   │       honest set (extras remain in the full committee roster for `committee_hash`
-│   │       binding but do not receive NodeFold / C5 inputs)
+│   │     • With a roster: the honest set IS the roster. A C1 failure inside the roster
+│   │       fails the aggregation (the C4 rows of the other members bind to it); the
+│   │       keyshare side rotates the roster epoch and resubmits.
+│   │     • Legacy (no roster): require at least H parties with valid C1 proofs; if more
+│   │       than H pass, keep the H lowest `party_id`s (extras remain in the full
+│   │       committee roster for `committee_hash` binding but get no NodeFold / C5 inputs)
+│   │     • DKGRecursiveAggregationComplete with a roster_hash that is not the hash of
+│   │       the honest set is rejected.
 │   │
 │   ├─ 1. Aggregate public key shares (H honest keyshares):
 │   │     aggregate_pk = Fhe::get_aggregate_public_key(

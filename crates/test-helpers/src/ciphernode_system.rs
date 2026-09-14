@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::simulate_libp2p_net;
+use crate::{simulate_libp2p_net, Libp2pMock};
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
@@ -90,9 +90,11 @@ impl<'a> CiphernodeSystemBuilder<'a> {
             }
         }
 
-        if self.simulate {
-            simulate_libp2p_net(&nodes).await;
-        }
+        let mock = if self.simulate {
+            Some(simulate_libp2p_net(&nodes).await)
+        } else {
+            None
+        };
 
         for then_fn in self.thens {
             for node in nodes.iter() {
@@ -100,15 +102,51 @@ impl<'a> CiphernodeSystemBuilder<'a> {
             }
         }
 
-        Ok(CiphernodeSystem(nodes))
+        Ok(CiphernodeSystem { nodes, mock })
     }
 }
 
-pub struct CiphernodeSystem(Vec<CiphernodeHandle>);
+pub struct CiphernodeSystem {
+    nodes: Vec<CiphernodeHandle>,
+    mock: Option<Libp2pMock>,
+}
+
+impl CiphernodeSystem {
+    /// Restart the node at `index`: detach it from the simulated network, run its shutdown
+    /// barrier, build a replacement with `rebuild` (which must reuse the node's signer and
+    /// persisted data directory), and attach the replacement in the same slot. Requires
+    /// `simulate_libp2p()` and a node built with `with_persistence`.
+    pub async fn restart_node<F, Fut>(
+        &mut self,
+        index: usize,
+        shutdown_deadline: Duration,
+        rebuild: F,
+    ) -> Result<()>
+    where
+        F: FnOnce(String) -> Fut,
+        Fut: Future<Output = Result<CiphernodeHandle>>,
+    {
+        let Some(mock) = self.mock.clone() else {
+            bail!("restart_node requires simulate_libp2p()");
+        };
+        if index >= self.nodes.len() {
+            bail!("no node at index {index}");
+        }
+        let old = self.nodes.remove(index);
+        let address = old.address.clone();
+        mock.remove_node(old.peer_id).await;
+        old.shutdown(shutdown_deadline).await?;
+        let replacement = rebuild(address).await?;
+        let bridge = replacement.channel_bridge()?;
+        mock.add_node(replacement.peer_id, bridge).await;
+        self.nodes.insert(index, replacement);
+        Ok(())
+    }
+}
 
 impl CiphernodeSystem {
     pub async fn get_history(&self, index: usize) -> Result<CiphernodeHistory> {
-        let Some(node) = self.0.get(index) else {
+        let Some(node) = self.nodes.get(index) else {
             return Ok(CiphernodeHistory(vec![]));
         };
 
@@ -204,7 +242,7 @@ impl CiphernodeSystem {
         event_to: Option<Duration>,
     ) -> Result<CiphernodeHistory> {
         let start = Instant::now();
-        let Some(node) = self.0.get(index) else {
+        let Some(node) = self.nodes.get(index) else {
             bail!("No node found");
         };
 
@@ -288,7 +326,7 @@ impl CiphernodeSystem {
     }
 
     pub async fn flush_all_history(&self, millis: u64) -> Result<()> {
-        let nodes = &self.0;
+        let nodes = &self.nodes;
         for node in nodes.iter() {
             let Some(history) = node.history() else {
                 break;
@@ -317,11 +355,26 @@ impl CiphernodeSystem {
     }
 }
 
+impl CiphernodeSystem {
+    /// Silence the node at `index`: its gossip and DHT writes are dropped from now on while
+    /// it keeps receiving. Requires `simulate_libp2p()`.
+    pub async fn silence_node(&self, index: usize) -> Result<()> {
+        let Some(node) = self.nodes.get(index) else {
+            bail!("no node at index {index}");
+        };
+        let Some(mock) = &self.mock else {
+            bail!("silence_node requires simulate_libp2p()");
+        };
+        mock.silence(node.peer_id).await;
+        Ok(())
+    }
+}
+
 impl Deref for CiphernodeSystem {
     type Target = Vec<CiphernodeHandle>;
 
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &self.nodes
     }
 }
 

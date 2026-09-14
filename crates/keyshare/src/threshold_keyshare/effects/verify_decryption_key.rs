@@ -111,6 +111,10 @@ impl ThresholdKeyshare {
                 pre_dishonest,
                 params_preset: self.share_enc_preset,
                 committee_size,
+                dkg_roster: state
+                    .honest_parties
+                    .as_ref()
+                    .map(|h| h.iter().copied().collect()),
             },
             ec,
         )?;
@@ -156,6 +160,11 @@ impl ThresholdKeyshare {
 
         info!("Publishing Exchange #4 (KeyshareCreated) for E3 {}", e3_id);
 
+        let roster_hash = state
+            .roster
+            .as_ref()
+            .map(|r| r.roster_hash)
+            .unwrap_or([0; 32]);
         self.bus.publish(
             KeyshareCreated {
                 pubkey: pk_share.clone(),
@@ -163,6 +172,7 @@ impl ThresholdKeyshare {
                 node: address,
                 party_id,
                 signed_pk_generation_proof: signed_pk_generation_proof.clone(),
+                roster_hash,
             },
             ec.clone(),
         )?;

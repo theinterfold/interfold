@@ -117,6 +117,21 @@ impl PublicKeyAggregator {
             return Ok(());
         }
 
+        // A fold built over a different DKG roster cannot join this aggregation: the
+        // aggregator circuit checks every C4 row against every C2 row of the roster.
+        let expected_roster_hash = {
+            let mut ids: Vec<u64> = honest_party_ids.iter().copied().collect();
+            ids.sort_unstable();
+            e3_events::DkgRosterProposed::roster_hash(&ids)
+        };
+        if msg.roster_hash != [0; 32] && msg.roster_hash != expected_roster_hash {
+            warn!(
+                party_id = msg.party_id,
+                "DKG fold built over a different DKG roster — rejecting"
+            );
+            return Ok(());
+        }
+
         if honest_party_ids.contains(&msg.party_id) {
             let Some(expected_node) = party_nodes.get(&msg.party_id) else {
                 warn!(

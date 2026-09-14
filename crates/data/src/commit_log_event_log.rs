@@ -702,6 +702,7 @@ mod tests {
                     node: node.clone(),
                     party_id: 0,
                     signed_pk_generation_proof: None,
+                    roster_hash: [0; 32],
                 }
                 .into(),
             ),
@@ -713,6 +714,7 @@ mod tests {
                     node: node.clone(),
                     party_id: 0,
                     signed_pk_generation_proof: Some(empty_signed_proof.clone()),
+                    roster_hash: [0; 32],
                 }
                 .into(),
             ),
@@ -759,6 +761,7 @@ mod tests {
                     signed_sk_decryption_proof: empty_signed_proof.clone(),
                     signed_e_sm_decryption_proofs: vec![],
                     external: false,
+                    roster_hash: [0; 32],
                 }
                 .into(),
             ),

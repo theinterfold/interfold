@@ -27,6 +27,7 @@ pub struct ThresholdKeyshareExtension {
     address: String,
     interfold_addresses: HashMap<u64, Address>,
     dkg_timing_reader: DkgTimingReader,
+    signer: alloy::signers::local::PrivateKeySigner,
 }
 
 impl ThresholdKeyshareExtension {
@@ -36,6 +37,7 @@ impl ThresholdKeyshareExtension {
         address: &str,
         interfold_addresses: HashMap<u64, Address>,
         dkg_timing_reader: DkgTimingReader,
+        signer: alloy::signers::local::PrivateKeySigner,
     ) -> Box<Self> {
         Box::new(Self {
             bus: bus.clone(),
@@ -43,6 +45,7 @@ impl ThresholdKeyshareExtension {
             address: address.to_owned(),
             interfold_addresses,
             dkg_timing_reader,
+            signer,
         })
     }
 }
@@ -114,6 +117,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                     interfold_address,
                     recovery,
                     dkg_timing_reader: self.dkg_timing_reader.clone(),
+                    signer: self.signer.clone(),
                 })
                 .start()
                 .into(),
@@ -183,11 +187,13 @@ impl E3Extension for ThresholdKeyshareExtension {
             interfold_address,
             recovery,
             dkg_timing_reader: self.dkg_timing_reader.clone(),
+            signer: self.signer.clone(),
         })
         .start()
         .into();
 
         // send to context
+        tracing::info!(e3_id = %snapshot.e3_id, "Hydrated threshold-keyshare actor from snapshot");
         ctx.set_event_recipient("threshold_keyshare", Some(value));
 
         Ok(())

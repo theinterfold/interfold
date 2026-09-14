@@ -172,6 +172,7 @@ fn verifying_c1_non_square_state(
             c1_proofs,
             no_proof_parties: vec![],
             canonical_party_nodes,
+            roster: None,
         },
         threshold_n,
         threshold_m,
@@ -197,6 +198,7 @@ async fn restart_redrives_c1_verification() -> Result<()> {
         c1_proofs: vec![Some(c1_proof_with_pk_commitment(&e3_id, [7; 32]))],
         no_proof_parties: Vec::new(),
         canonical_party_nodes: HashMap::from([(0, Address::ZERO.to_string())]),
+        roster: None,
     };
     let (mut aggregator, history, _) = build_public_key_aggregator(state).await?;
 
@@ -233,6 +235,7 @@ async fn standby_persists_and_resumes_public_key_work() -> Result<()> {
             node,
             party_id,
             Some(c1_proof_with_pk_commitment(&e3_id, [7; 32])),
+            [0; 32],
             &ec,
         )?;
     }

@@ -8,11 +8,12 @@
 
 use actix::{Actor, Context, Handler, Recipient};
 use e3_events::{
-    ComputeRequestKind, E3Stage, E3id, Event, EventContextAccessors, EventSubscriber, EventType,
-    InterfoldEvent, InterfoldEventData, ProofType, VerifyShareProofsRequest, ZkRequest,
+    ComputeRequestKind, ComputeResponse, CorrelationId, E3Stage, E3id, Event,
+    EventContextAccessors, EventPublisher, EventSubscriber, EventType, InterfoldEvent,
+    InterfoldEventData, ProofType, VerifyShareProofsRequest, ZkRequest,
 };
 use e3_utils::MAILBOX_LIMIT;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use tracing::{debug, info};
 
 use e3_events::BusHandle;
@@ -33,21 +34,40 @@ type RequestKey = (E3id, ComputeRequestKind);
 /// terminal events, bounding growth to live E3s.
 pub(crate) struct ComputeEffectGate {
     target: Recipient<InterfoldEvent>,
+    bus: Option<BusHandle>,
     enabled: bool,
     pending: HashMap<RequestKey, InterfoldEvent>,
-    forwarded: HashSet<RequestKey>,
+    /// Forwarded requests keyed by semantic key, with the correlation id that reached the
+    /// worker. A duplicate is not computed twice, but its own correlation id must still
+    /// receive the response: after a restart the requesting actor only knows the id it
+    /// re-drove, not the id of the pre-crash copy released from the replay buffer.
+    forwarded: HashMap<RequestKey, ForwardedRequest>,
     stages: HashMap<E3id, E3Stage>,
+}
+
+struct ForwardedRequest {
+    correlation_id: CorrelationId,
+    /// Correlation ids of suppressed duplicates that still await the response.
+    waiting: Vec<CorrelationId>,
+    /// The response, once it arrived, so a duplicate that comes later is answered too.
+    response: Option<ComputeResponse>,
 }
 
 impl ComputeEffectGate {
     fn new(target: Recipient<InterfoldEvent>, initial_stages: HashMap<E3id, E3Stage>) -> Self {
         Self {
             target,
+            bus: None,
             enabled: false,
             pending: HashMap::new(),
-            forwarded: HashSet::new(),
+            forwarded: HashMap::new(),
             stages: initial_stages,
         }
+    }
+
+    fn with_bus(mut self, bus: BusHandle) -> Self {
+        self.bus = Some(bus);
+        self
     }
 
     fn stage_rank(stage: &E3Stage) -> u8 {
@@ -158,13 +178,82 @@ impl ComputeEffectGate {
                 debug!(e3_id = %key.0, "dropping compute effect made obsolete by lifecycle stage");
                 return false;
             }
-            if !self.forwarded.insert(key) {
-                debug!("dropping duplicate compute effect (already forwarded)");
+            let InterfoldEventData::ComputeRequest(request) = event.get_data() else {
                 return false;
+            };
+            let correlation_id = request.correlation_id;
+            match self.forwarded.get_mut(&key) {
+                Some(forwarded) if forwarded.correlation_id == correlation_id => {
+                    debug!("dropping duplicate compute effect (same correlation id)");
+                    return false;
+                }
+                Some(forwarded) => {
+                    // Same compute, different requester id. Do not compute again; answer
+                    // this id with the same response.
+                    debug!(
+                        e3_id = %key.0,
+                        "duplicate compute effect re-driven under a new correlation id; will mirror the response"
+                    );
+                    match &forwarded.response {
+                        Some(response) => {
+                            let mirrored = ComputeResponse::new(
+                                response.response.clone(),
+                                correlation_id,
+                                response.e3_id.clone(),
+                            );
+                            self.publish_response(mirrored, &event);
+                        }
+                        None => forwarded.waiting.push(correlation_id),
+                    }
+                    return false;
+                }
+                None => {
+                    self.forwarded.insert(
+                        key,
+                        ForwardedRequest {
+                            correlation_id,
+                            waiting: Vec::new(),
+                            response: None,
+                        },
+                    );
+                }
             }
         }
         self.target.do_send(event);
         true
+    }
+
+    /// Record a worker response and answer every suppressed duplicate under its own id.
+    fn on_response(&mut self, event: &InterfoldEvent) {
+        let InterfoldEventData::ComputeResponse(response) = event.get_data() else {
+            return;
+        };
+        let Some(forwarded) = self
+            .forwarded
+            .values_mut()
+            .find(|f| f.correlation_id == response.correlation_id)
+        else {
+            return;
+        };
+        forwarded.response = Some(response.clone());
+        let waiting = std::mem::take(&mut forwarded.waiting);
+        for correlation_id in waiting {
+            let mirrored = ComputeResponse::new(
+                response.response.clone(),
+                correlation_id,
+                response.e3_id.clone(),
+            );
+            self.publish_response(mirrored, event);
+        }
+    }
+
+    fn publish_response(&self, response: ComputeResponse, cause: &InterfoldEvent) {
+        let Some(bus) = &self.bus else {
+            return;
+        };
+        if let Err(err) = bus.publish(response, cause.get_ctx().clone()) {
+            tracing::error!("failed to mirror a compute response to a duplicate request: {err}");
+        }
     }
 
     pub(crate) fn attach(
@@ -172,10 +261,13 @@ impl ComputeEffectGate {
         target: Recipient<InterfoldEvent>,
         initial_stages: HashMap<E3id, E3Stage>,
     ) {
-        let gate = Self::new(target, initial_stages).start();
+        let gate = Self::new(target, initial_stages)
+            .with_bus(bus.clone())
+            .start();
         bus.subscribe_all(
             &[
                 EventType::ComputeRequest,
+                EventType::ComputeResponse,
                 EventType::EffectsEnabled,
                 EventType::E3RequestComplete,
                 EventType::E3Failed,
@@ -218,7 +310,7 @@ impl ComputeEffectGate {
         self.pending
             .retain(|(pending_id, _), _| pending_id != e3_id);
         self.forwarded
-            .retain(|(forwarded_id, _)| forwarded_id != e3_id);
+            .retain(|(forwarded_id, _), _| forwarded_id != e3_id);
     }
 }
 
@@ -239,6 +331,7 @@ impl Handler<InterfoldEvent> for ComputeEffectGate {
                 self.forward(event);
             }
             InterfoldEventData::ComputeRequest(_) => self.queue(event),
+            InterfoldEventData::ComputeResponse(_) => self.on_response(&event),
             InterfoldEventData::EffectsEnabled(_) => self.enable(),
             InterfoldEventData::E3RequestComplete(complete) => {
                 self.record_stage(complete.e3_id.clone(), E3Stage::Complete);
@@ -473,5 +566,150 @@ mod tests {
         gate.send(effects_enabled()).await.unwrap();
 
         assert_eq!(recorder.send(Received).await.unwrap(), vec![correlation_id]);
+    }
+}
+
+#[cfg(test)]
+mod response_mirroring_tests {
+    use super::*;
+    use actix::{Actor, Addr, Handler, Message, ResponseFuture};
+    use e3_events::{
+        hlc_factory::HlcFactory, ComputeRequest, ComputeResponseKind, CorrelationId,
+        EffectsEnabled, EventBus, EventBusConfig, EventConstructorWithTimestamp, EventSource,
+        HistoryCollector, PkBfvProofRequest, Proof, Sequencer, StoreEventRequested,
+        StoreEventResponse, TakeEvents, Unsequenced, ZkRequest, ZkResponse,
+    };
+    use e3_fhe_params::BfvPreset;
+    use e3_utils::ArcBytes;
+    use e3_zk_helpers::CiphernodesCommitteeSize;
+
+    #[derive(Default)]
+    struct TestEventStore {
+        next_seq: u64,
+    }
+
+    impl Actor for TestEventStore {
+        type Context = Context<Self>;
+    }
+
+    impl Handler<StoreEventRequested> for TestEventStore {
+        type Result = ();
+        fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) -> Self::Result {
+            let StoreEventRequested { event, sender } = msg;
+            let seq = self.next_seq;
+            self.next_seq += 1;
+            let _ = sender.try_send(StoreEventResponse(event.into_sequenced(seq)));
+        }
+    }
+
+    #[derive(Message)]
+    #[rtype(result = "Vec<CorrelationId>")]
+    struct Received;
+
+    #[derive(Default)]
+    struct Recorder(Vec<CorrelationId>);
+
+    impl Actor for Recorder {
+        type Context = Context<Self>;
+    }
+
+    impl Handler<InterfoldEvent> for Recorder {
+        type Result = ();
+        fn handle(&mut self, event: InterfoldEvent, _: &mut Self::Context) {
+            if let InterfoldEventData::ComputeRequest(request) = event.get_data() {
+                self.0.push(request.correlation_id);
+            }
+        }
+    }
+
+    impl Handler<Received> for Recorder {
+        type Result = ResponseFuture<Vec<CorrelationId>>;
+        fn handle(&mut self, _: Received, _: &mut Self::Context) -> Self::Result {
+            let out = self.0.clone();
+            Box::pin(async move { out })
+        }
+    }
+
+    fn test_bus() -> (BusHandle, Addr<HistoryCollector<InterfoldEvent>>) {
+        let event_bus =
+            EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
+        let store = TestEventStore::default().start();
+        let sequencer = Sequencer::new(&event_bus, store.recipient()).start();
+        let bus = BusHandle::new(event_bus, sequencer, HlcFactory::new()).enable("test-gate");
+        let history = bus.history();
+        (bus, history)
+    }
+
+    fn request(correlation_id: CorrelationId) -> ComputeRequest {
+        ComputeRequest::zk(
+            ZkRequest::PkBfv(PkBfvProofRequest::new(
+                ArcBytes::from_bytes(&[7]),
+                BfvPreset::default(),
+                CiphernodesCommitteeSize::Micro,
+            )),
+            correlation_id,
+            E3id::new("9", 1),
+        )
+    }
+
+    fn event(data: impl Into<InterfoldEventData>, ts: u128, seq: u64) -> InterfoldEvent {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            data.into(),
+            None,
+            ts,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(seq)
+    }
+
+    #[actix::test]
+    async fn redriven_duplicate_receives_the_response_under_its_own_correlation_id() {
+        // After a restart the hydrated actor re-drives its C4 job under a NEW correlation
+        // id while the pre-crash copy (old id) is released from the replay buffer. The
+        // worker must compute once, and the actor must be answered under the id it knows.
+        let (bus, history) = test_bus();
+        let recorder = Recorder::default().start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new())
+            .with_bus(bus.clone())
+            .start();
+        let old = CorrelationId::new();
+        let new = CorrelationId::new();
+
+        gate.send(event(request(old), 10, 1)).await.unwrap();
+        gate.send(event(EffectsEnabled::new(), 30, 2))
+            .await
+            .unwrap();
+        gate.send(event(request(new), 40, 3)).await.unwrap();
+        assert_eq!(
+            recorder.send(Received).await.unwrap(),
+            vec![old],
+            "the compute runs once, under the released id"
+        );
+
+        // The worker answers the released id; the gate mirrors it to the re-driven id.
+        let response = ComputeResponse::new(
+            ComputeResponseKind::Zk(ZkResponse::PkBfv(e3_events::PkBfvProofResponse::new(
+                Proof::new(
+                    e3_events::CircuitName::PkBfv,
+                    ArcBytes::from_bytes(&[1]),
+                    ArcBytes::from_bytes(&[2]),
+                ),
+            ))),
+            old,
+            E3id::new("9", 1),
+        );
+        gate.send(event(response, 50, 4)).await.unwrap();
+
+        let mut result = history
+            .send(TakeEvents::<InterfoldEvent>::new(1))
+            .await
+            .unwrap();
+        assert!(!result.timed_out, "expected a mirrored ComputeResponse");
+        let mirrored = result.events.pop().unwrap();
+        let InterfoldEventData::ComputeResponse(mirrored) = mirrored.into_data() else {
+            panic!("expected ComputeResponse");
+        };
+        assert_eq!(mirrored.correlation_id, new);
     }
 }

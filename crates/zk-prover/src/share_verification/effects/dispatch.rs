@@ -19,6 +19,7 @@ impl ShareVerificationActor {
 
         let params_preset = msg.params_preset;
         let committee_size = msg.committee_size;
+        let dkg_roster = msg.dkg_roster.clone();
         match msg.kind {
             VerificationKind::ShareProofs
             | VerificationKind::ThresholdDecryptionProofs
@@ -32,6 +33,7 @@ impl ShareVerificationActor {
                     ec,
                     params_preset,
                     committee_size,
+                    dkg_roster,
                     |pending, passed| {
                         pending.ecdsa_passed_share_proofs = passed;
                     },
@@ -46,6 +48,7 @@ impl ShareVerificationActor {
                     ec,
                     params_preset,
                     committee_size,
+                    dkg_roster,
                     |pending, passed| {
                         pending.ecdsa_passed_decryption_proofs = passed;
                     },

@@ -302,6 +302,34 @@ impl Drop for EnvTimeoutVarsGuard {
     }
 }
 
+/// `BENCHMARK_SILENT_MEMBERS=<k>` silences `k` committee members (never the active
+/// aggregator) right after `CommitteeFinalized`. A silenced member keeps running and keeps
+/// receiving gossip, but nothing it publishes reaches anyone. The DKG must still complete
+/// with an `H`-member roster that excludes every silenced member. `k` must be at most
+/// `N - H`.
+fn benchmark_silent_members() -> usize {
+    std::env::var("BENCHMARK_SILENT_MEMBERS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0)
+}
+
+/// `BENCHMARK_SILENT_AFTER_SHARES=1` delays the silencing until the members have published
+/// their share bundles. They are then in every ready set, so the first roster epoch
+/// includes them, misses on C4, and the round must recover through the roster epoch
+/// rotation (including a silent epoch leader when party 1 is the silenced member).
+fn benchmark_silent_after_shares() -> bool {
+    std::env::var("BENCHMARK_SILENT_AFTER_SHARES").is_ok_and(|v| v == "1")
+}
+
+/// `BENCHMARK_RESTART_MID_EPOCH=1` restarts one serving roster member (never the active
+/// aggregator) right after it accepted DKG roster epoch 0 and dispatched its C4 job. The
+/// node is shut down through its barrier and rebuilt on the same signer and in-memory
+/// store, so it must resume the epoch from durable state and the round must complete.
+fn benchmark_restart_mid_epoch() -> bool {
+    std::env::var("BENCHMARK_RESTART_MID_EPOCH").is_ok_and(|v| v == "1")
+}
+
 /// RAII guard that restores a single env var on scope exit.
 #[allow(dead_code)]
 struct ScopedEnvVar {
@@ -1368,7 +1396,18 @@ async fn test_trbfv_actor() -> Result<()> {
     // Parameters selected by benchmark mode.
     let benchmark_params = select_benchmark_params();
     let _env_guard = EnvTimeoutVarsGuard::new();
-    if let Some((enc, threshold, dec_shared)) = benchmark_params.collection_timeout_secs {
+    let silent_members = benchmark_silent_members();
+    if silent_members > 0 {
+        // A silenced member never delivers, so every collection runs to its cutoff. Keep
+        // the cutoffs short; the roster epoch budget is capped by the same override.
+        std::env::set_var("E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS", "20");
+        std::env::set_var("E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS", "600");
+        std::env::set_var("E3_DECRYPTION_KEY_SHARED_COLLECTION_TIMEOUT_SECS", "600");
+        // Silence after shares: the C4 epoch that includes the silent member must miss
+        // quickly, and its silent leader must be skipped quickly.
+        std::env::set_var("E3_DKG_ROSTER_EPOCH_SECS", "300");
+        std::env::set_var("E3_DKG_ROSTER_PROPOSAL_SECS", "60");
+    } else if let Some((enc, threshold, dec_shared)) = benchmark_params.collection_timeout_secs {
         std::env::set_var("E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS", enc.to_string());
         std::env::set_var(
             "E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS",
@@ -1473,7 +1512,59 @@ async fn test_trbfv_actor() -> Result<()> {
     let (zk_backend, _zk_temp) = setup_test_zk_backend(benchmark_params.preset_subdir).await?;
     let proof_aggregation_enabled = benchmark_proof_aggregation_enabled();
 
-    let nodes = CiphernodeSystemBuilder::new()
+    // Signers by lowercase address so a restarted node keeps its identity.
+    let signers: Arc<std::sync::Mutex<HashMap<String, PrivateKeySigner>>> =
+        Arc::new(std::sync::Mutex::new(HashMap::new()));
+    // Persisted data directories for the restart scenario (one per participant address).
+    let persist_tempdir = get_tempdir()?;
+    let persist_root: PathBuf = persist_tempdir.path().to_path_buf();
+    let build_participant = {
+        let cipher = cipher.clone();
+        let task_pool = task_pool.clone();
+        let multithread_report = multithread_report.clone();
+        let zk_backend = zk_backend.clone();
+        let bus = bus.clone();
+        let benchmark_aggregate_config = benchmark_aggregate_config.clone();
+        let dkg_timing_reader = dkg_timing_reader.clone();
+        let bench_chain_config = bench_chain_config.clone();
+        move |node_rng: e3_utils::SharedRng, signer: PrivateKeySigner, data_dir: Option<PathBuf>| {
+            let cipher = cipher.clone();
+            let task_pool = task_pool.clone();
+            let multithread_report = multithread_report.clone();
+            let zk_backend = zk_backend.clone();
+            let bus = bus.clone();
+            let benchmark_aggregate_config = benchmark_aggregate_config.clone();
+            let dkg_timing_reader = dkg_timing_reader.clone();
+            let bench_chain_config = bench_chain_config.clone();
+            async move {
+                let mut b = CiphernodeBuilder::new(node_rng, cipher)
+                    .with_history_collector()
+                    .with_shared_taskpool(&task_pool)
+                    .with_multithread_concurrent_jobs(concurrent_jobs)
+                    .with_shared_multithread_report(&multithread_report)
+                    .with_trbfv()
+                    .with_zkproof(zk_backend)
+                    .with_signer(signer)
+                    .with_pubkey_aggregation()
+                    .with_sortition_score()
+                    .with_threshold_plaintext_aggregation()
+                    .with_forked_bus(bus.event_bus())
+                    .with_eventstore_aggregate_config_for_testing(benchmark_aggregate_config)
+                    .with_dkg_timing_reader_for_testing(dkg_timing_reader)
+                    .with_chains(std::slice::from_ref(&bench_chain_config))
+                    .with_logging();
+                if let Some(dir) = data_dir {
+                    b = b.with_persistence(&dir.join("events.log"), &dir.join("kv.sled"));
+                }
+                if !proof_aggregation_enabled {
+                    b = b.with_proof_aggregation_disabled_for_testing();
+                }
+                b.build().await
+            }
+        }
+    };
+
+    let mut nodes = CiphernodeSystemBuilder::new()
         // All nodes run the same binary under the aggregator-committee model.
         // Node 0 stays an observer only because it is excluded from sortition registration.
         // Participant count scales with active committee (N + sortition buffer).
@@ -1512,30 +1603,22 @@ async fn test_trbfv_actor() -> Result<()> {
                 let node_rng = next_benchmark_node_rng(BENCHMARK_NODE_RNG_BASE);
                 let addr = rand_eth_addr(&node_rng);
                 println!("Building normal {}", &addr);
-                {
-                    let mut b = CiphernodeBuilder::new(node_rng, cipher.clone())
-                        .with_history_collector()
-                        .with_shared_taskpool(&task_pool)
-                        .with_multithread_concurrent_jobs(concurrent_jobs)
-                        .with_shared_multithread_report(&multithread_report)
-                        .with_trbfv()
-                        .with_zkproof(zk_backend.clone())
-                        .with_signer(PrivateKeySigner::random())
-                        .with_pubkey_aggregation()
-                        .with_sortition_score()
-                        .with_threshold_plaintext_aggregation()
-                        .with_forked_bus(bus.event_bus())
-                        .with_eventstore_aggregate_config_for_testing(
-                            benchmark_aggregate_config.clone(),
-                        )
-                        .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
-                        .with_chains(std::slice::from_ref(&bench_chain_config))
-                        .with_logging();
-                    if !proof_aggregation_enabled {
-                        b = b.with_proof_aggregation_disabled_for_testing();
-                    }
-                    b.build().await
-                }
+                let signer = PrivateKeySigner::random();
+                let address = signer.address().to_string().to_lowercase();
+                signers
+                    .lock()
+                    .expect("signer registry")
+                    .insert(address.clone(), signer.clone());
+                // Every participant may be the restart target (chosen by roster order
+                // later), so with the restart knob every participant persists to disk.
+                let data_dir = if benchmark_restart_mid_epoch() {
+                    let dir = persist_root.join(&address);
+                    fs::create_dir_all(&dir)?;
+                    Some(dir)
+                } else {
+                    None
+                };
+                build_participant(node_rng, signer, data_dir).await
             },
         )
         .simulate_libp2p()
@@ -1681,6 +1764,141 @@ async fn test_trbfv_actor() -> Result<()> {
 
     nodes.expect_events(&["CommitteeFinalized"]).await?;
 
+    // Silence `silent_members` committee members that are not the active aggregator. They
+    // stay up and keep receiving; their C0 never reaches anyone, so every other member's
+    // bundle encrypts their slot under the sender's own key and the roster excludes them.
+    anyhow::ensure!(
+        silent_members <= threshold_n - committee_h,
+        "BENCHMARK_SILENT_MEMBERS={silent_members} exceeds N - H = {}",
+        threshold_n - committee_h
+    );
+    // Party ids follow the address-sorted committee; pick the lowest party ids after the
+    // active aggregator (party 0) so a silenced party 1 also leads roster epoch 1.
+    let mut sorted_committee = committee.clone();
+    sorted_committee.sort_by_key(|a| a.to_lowercase());
+    let silence_targets: Vec<(usize, String)> = sorted_committee
+        .iter()
+        .filter(|m| !m.eq_ignore_ascii_case(&active_aggregator_addr))
+        .take(silent_members)
+        .map(|m| find_node_index_by_address(&nodes, m).map(|i| (i, m.clone())))
+        .collect::<Result<_>>()?;
+    let silenced_addrs: Vec<String> = silence_targets.iter().map(|(_, a)| a.clone()).collect();
+    let silence_after_shares = benchmark_silent_after_shares();
+    // True when every silence target was included in an accepted roster before it was cut
+    // off, so the rotation path is guaranteed to run.
+    let mut targets_were_in_a_roster = true;
+    if !silence_after_shares {
+        for (index, member) in &silence_targets {
+            nodes.silence_node(*index).await?;
+            println!("Silenced committee member node index {index} ({member})");
+        }
+    } else if !silence_targets.is_empty() {
+        // Wait until a DkgRosterProposed that includes the target has reached the active
+        // aggregator, then cut the target off. It never delivers C4 for that epoch, so
+        // the epoch misses and the round must rotate. With party 1 as the target, epoch
+        // 1's leader is the silent node and must be skipped by the proposal watchdog.
+        let deadline = Instant::now() + pubkey_flow_timeout;
+        let target_party_ids: Vec<u64> = silence_targets
+            .iter()
+            .map(|(_, member)| {
+                sorted_committee
+                    .iter()
+                    .position(|m| m.eq_ignore_ascii_case(member))
+                    .expect("silence target is in the committee") as u64
+            })
+            .collect();
+        for ((index, member), party_id) in silence_targets.iter().zip(target_party_ids) {
+            loop {
+                let proposals: Vec<Vec<u64>> = nodes
+                    .get_history(active_aggregator_index)
+                    .await?
+                    .iter()
+                    .filter_map(|e| match e.get_data() {
+                        InterfoldEventData::DkgRosterProposed(d) if d.e3_id == e3_id => {
+                            Some(d.roster.clone())
+                        }
+                        _ => None,
+                    })
+                    .collect();
+                if proposals.iter().any(|r| r.contains(&party_id)) {
+                    break;
+                }
+                if !proposals.is_empty() {
+                    // The first roster already excludes the target (its DkgReady lost the
+                    // race). Silence it now; the run degrades to the plain silent case.
+                    targets_were_in_a_roster = false;
+                    break;
+                }
+                anyhow::ensure!(
+                    Instant::now() < deadline,
+                    "no DkgRosterProposed including party {party_id} (node {index}) reached the aggregator in time"
+                );
+                sleep(Duration::from_millis(500)).await;
+            }
+            nodes.silence_node(*index).await?;
+            println!(
+                "Silenced committee member node index {index} ({member}, party {party_id}) after a roster included it"
+            );
+        }
+    }
+
+    // Restart one serving roster member mid-epoch: wait until a non-aggregator member has
+    // accepted epoch 0 and dispatched its C4 job (its local `DecryptionShareProofsPending`
+    // is in its history), then shut it down and rebuild it on the same signer and store.
+    let mut restarted_addr: Option<String> = None;
+    if benchmark_restart_mid_epoch() {
+        let deadline = Instant::now() + pubkey_flow_timeout;
+        let candidates: Vec<(usize, String)> = sorted_committee
+            .iter()
+            .filter(|m| !m.eq_ignore_ascii_case(&active_aggregator_addr))
+            .map(|m| find_node_index_by_address(&nodes, m).map(|i| (i, m.clone())))
+            .collect::<Result<_>>()?;
+        let target = 'found: loop {
+            for (index, member) in &candidates {
+                let dispatched = nodes.get_history(*index).await?.iter().any(|e| {
+                    matches!(
+                        e.get_data(),
+                        InterfoldEventData::DecryptionShareProofsPending(d)
+                            if d.e3_id == e3_id && d.node.eq_ignore_ascii_case(member)
+                    )
+                });
+                if dispatched {
+                    break 'found (*index, member.clone());
+                }
+            }
+            anyhow::ensure!(
+                Instant::now() < deadline,
+                "no non-aggregator member dispatched its C4 job in time"
+            );
+            sleep(Duration::from_millis(500)).await;
+        };
+        let (index, member) = target;
+        let signer = signers
+            .lock()
+            .expect("signer registry")
+            .get(&member.to_lowercase())
+            .cloned()
+            .expect("signer for the restarted member");
+        let build = build_participant.clone();
+        let data_dir = persist_root.join(member.to_lowercase());
+        let restart_timer = Instant::now();
+        nodes
+            .restart_node(index, Duration::from_secs(60), move |_address| {
+                let node_rng = next_benchmark_node_rng(BENCHMARK_NODE_RNG_BASE);
+                build(node_rng, signer, Some(data_dir))
+            })
+            .await?;
+        println!(
+            "Restarted committee member node index {index} ({member}) mid roster epoch in {:?}",
+            restart_timer.elapsed()
+        );
+        anyhow::ensure!(
+            nodes[index].address().eq_ignore_ascii_case(&member),
+            "restarted node must keep its address"
+        );
+        restarted_addr = Some(member);
+    }
+
     report.push((
         "Committee Finalization Complete",
         committee_finalized_timer.elapsed(),
@@ -1689,19 +1907,19 @@ async fn test_trbfv_actor() -> Result<()> {
     // Node 0 is a non-committee observer. It only sees bus-global events and the forwardable
     // gossip events from the active aggregator flow.
     let shares_to_pubkey_agg_timer = Instant::now();
-    // KeyshareCreated is gossiped by each committee member (N). The aggregator folds H honest
-    // keyshares into PublicKeyAggregated; DKGRecursiveAggregationComplete is one per member (N).
-    let ks_n: Vec<&'static str> = vec!["KeyshareCreated"; threshold_n];
-    let dkg_n: Vec<&'static str> = vec!["DKGRecursiveAggregationComplete"; threshold_n];
+    // Only the H members of the accepted DKG roster compute C4 and publish KeyshareCreated;
+    // members outside the roster idle. The aggregator folds those H keyshares into
+    // PublicKeyAggregated; DKGRecursiveAggregationComplete is one per roster member (H).
+    let ks_n: Vec<&'static str> = vec!["KeyshareCreated"; committee_h];
+    let dkg_n: Vec<&'static str> = vec!["DKGRecursiveAggregationComplete"; committee_h];
     let mut active_aggregator_c1_c5: Vec<&'static str> = vec![
         "ShareVerificationDispatched",
         "CommitmentConsistencyCheckRequested",
         "CommitmentConsistencyCheckComplete",
     ];
-    // C1 verification dispatches ALL N submitted keyshare proofs (the protocol needs to know
-    // who's dishonest before it can pick the H honest set), so N ProofVerificationPassed events
-    // fire. The aggregator subsequently truncates to H for C5 input only.
-    active_aggregator_c1_c5.extend(std::iter::repeat_n("ProofVerificationPassed", threshold_n));
+    // C1 verification dispatches the H roster keyshare proofs, so H ProofVerificationPassed
+    // events fire.
+    active_aggregator_c1_c5.extend(std::iter::repeat_n("ProofVerificationPassed", committee_h));
     active_aggregator_c1_c5.extend_from_slice(&[
         "ShareVerificationComplete",
         "PkAggregationProofPending",
@@ -1755,22 +1973,21 @@ async fn test_trbfv_actor() -> Result<()> {
             _ => None,
         })
         .collect();
-    // Unlike KeyshareCreated (cheap, gossiped early — all N arrive before aggregation), the
-    // per-node recursive fold proof (DKGRecursiveAggregationComplete) is expensive and late.
-    // `PublicKeyAggregated` fires once the aggregator selects and aggregates the honest set, so
-    // only the H honest folds are guaranteed to have reached node 0 by this barrier; the extra
-    // N-H members' folds race against it (and may land afterward). Assert the guaranteed floor
-    // and that every observed fold party is a committee member, not the racy `== N`.
+    // Exactly the H roster members publish a fold and a keyshare; every one of them is a
+    // committee member.
     assert!(
-        dkg_parties.len() >= committee_h
-            && dkg_parties.len() <= threshold_n
+        dkg_parties.len() == committee_h
             && dkg_parties.iter().all(|p| (*p as usize) < threshold_n),
-        "node 0: expected DKGRecursiveAggregationComplete from {committee_h}..={threshold_n} committee members before PublicKeyAggregated (only the H honest folds are guaranteed by this barrier), got parties {dkg_parties:?}"
+        "node 0: expected DKGRecursiveAggregationComplete from the H={committee_h} roster members before PublicKeyAggregated, got parties {dkg_parties:?}"
     );
     assert_eq!(
         ks_parties.len(),
-        threshold_n,
-        "node 0: expected KeyshareCreated from each committee member (N={threshold_n}), got parties {ks_parties:?}"
+        committee_h,
+        "node 0: expected KeyshareCreated from each roster member (H={committee_h}), got parties {ks_parties:?}"
+    );
+    assert_eq!(
+        dkg_parties, ks_parties,
+        "node 0: the fold parties and the keyshare parties must be the same DKG roster"
     );
     let pk_agg = h
         .iter()
@@ -1785,6 +2002,43 @@ async fn test_trbfv_actor() -> Result<()> {
         committee_h,
         "PublicKeyAggregated must list H={committee_h} honest nodes"
     );
+    for silenced in &silenced_addrs {
+        assert!(
+            !pk_agg
+                .nodes
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(silenced)),
+            "silenced member {silenced} must not be in the DKG roster {:?}",
+            pk_agg.nodes
+        );
+    }
+    if let Some(restarted) = &restarted_addr {
+        assert!(
+            pk_agg
+                .nodes
+                .iter()
+                .any(|n| n.eq_ignore_ascii_case(restarted)),
+            "restarted member {restarted} must still be in the DKG roster {:?}",
+            pk_agg.nodes
+        );
+    }
+    if silence_after_shares && !silenced_addrs.is_empty() && targets_were_in_a_roster {
+        // The first epoch included the silenced member, so the final roster must come from
+        // a later epoch: the rotation (and the silent-leader skip) really ran.
+        let max_epoch = nodes
+            .get_history(active_aggregator_index)
+            .await?
+            .iter()
+            .filter_map(|e| match e.get_data() {
+                InterfoldEventData::DkgRosterProposed(d) if d.e3_id == e3_id => Some(d.epoch),
+                _ => None,
+            })
+            .max();
+        assert!(
+            max_epoch.is_some_and(|e| e >= 1),
+            "expected a roster epoch after the missed one, got max epoch {max_epoch:?}"
+        );
+    }
 
     let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
     let active_aggregator_pubkey_history_len = active_aggregator_history.len();
@@ -2434,6 +2688,7 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
         node: "node-1".to_string(),
         party_id: 0,
         signed_pk_generation_proof: None,
+        roster_hash: [0; 32],
     };
 
     let evt_2 = KeyshareCreated {
@@ -2442,6 +2697,7 @@ async fn test_p2p_actor_forwards_events_to_network() -> Result<()> {
         node: "node-2".to_string(),
         party_id: 1,
         signed_pk_generation_proof: None,
+        roster_hash: [0; 32],
     };
 
     let local_evt_3 = CiphernodeSelected {
@@ -2510,6 +2766,7 @@ async fn test_p2p_actor_forwards_events_to_bus() -> Result<()> {
         node: "node-1".to_string(),
         party_id: 0,
         signed_pk_generation_proof: None,
+        roster_hash: [0; 32],
     };
 
     // lets send an event from the network

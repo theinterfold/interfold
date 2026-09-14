@@ -256,6 +256,38 @@ impl Handler<TypedEvent<AllDecryptionKeySharesCollected>> for ThresholdKeyshare 
     }
 }
 
+/// The proposal budget for a DKG roster epoch elapsed.
+#[derive(actix::Message, Clone, Copy, Debug)]
+#[rtype(result = "()")]
+pub(in crate::actors::threshold_keyshare) struct RosterProposalWatchdog {
+    pub epoch: u32,
+}
+
+impl Handler<RosterProposalWatchdog> for ThresholdKeyshare {
+    type Result = ();
+    fn handle(&mut self, msg: RosterProposalWatchdog, _ctx: &mut Self::Context) -> Self::Result {
+        trap(EType::KeyGeneration, &self.bus.clone(), || {
+            self.handle_roster_proposal_watchdog(msg.epoch)
+        });
+    }
+}
+
+/// The roster-epoch budget elapsed on a member that is not serving the epoch.
+#[derive(actix::Message, Clone, Copy, Debug)]
+#[rtype(result = "()")]
+pub(in crate::actors::threshold_keyshare) struct RosterEpochWatchdog {
+    pub epoch: u32,
+}
+
+impl Handler<RosterEpochWatchdog> for ThresholdKeyshare {
+    type Result = ();
+    fn handle(&mut self, msg: RosterEpochWatchdog, _ctx: &mut Self::Context) -> Self::Result {
+        trap(EType::KeyGeneration, &self.bus.clone(), || {
+            self.handle_roster_epoch_watchdog(msg.epoch)
+        });
+    }
+}
+
 impl Handler<DecryptionKeySharedCollectionFailed> for ThresholdKeyshare {
     type Result = ();
     fn handle(
@@ -272,6 +304,15 @@ impl Handler<DecryptionKeySharedCollectionFailed> for ThresholdKeyshare {
             );
 
             self.decryption_key_shared_collector = None;
+
+            // Before the canonical deadline a missed epoch rotates the roster leader instead
+            // of failing the round. The E3 fails only when no time is left.
+            let state = self.state.try_get()?;
+            let deadline = state.dkg_deadline_unix_secs.unwrap_or(0);
+            if crate::domain::timeout_policy::now_unix_secs() < deadline {
+                let ec = self.recovery.get().and_then(|r| r.last_ec);
+                return self.handle_roster_epoch_timeout(&msg.missing_parties, ec);
+            }
 
             self.persist_terminal_failure(
                 E3Stage::CommitteeFinalized,

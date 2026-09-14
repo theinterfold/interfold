@@ -10,6 +10,19 @@ const ENCRYPTION_KEY_CUTOFF_BPS: u64 = 1000;
 const THRESHOLD_SHARE_CUTOFF_BPS: u64 = 6000;
 const DECRYPTION_KEY_SHARED_CUTOFF_BPS: u64 = 10000;
 
+/// Share of the DKG window one roster epoch may use to collect every C4 share before the
+/// next epoch is proposed. The C4 phase spans 40% of the window (from the 60% share cutoff
+/// to the deadline), so 10% allows up to four epochs. Measure C4 wall time on the
+/// production preset before lowering this.
+const ROSTER_EPOCH_BPS: u64 = 1000;
+pub(crate) const ROSTER_EPOCH_ENV: &str = "E3_DKG_ROSTER_EPOCH_SECS";
+/// Budget for an epoch leader to publish its proposal, as basis points of the frozen DKG
+/// window (1% = 186s on the 18600s floor). A leader that stays silent for this long is
+/// skipped and the next party id leads. Gossip latency is seconds, so 1% is generous;
+/// members that are not yet ready re-arm the same budget on every epoch they wait for.
+const ROSTER_PROPOSAL_BPS: u64 = 100;
+pub(crate) const ROSTER_PROPOSAL_ENV: &str = "E3_DKG_ROSTER_PROPOSAL_SECS";
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 // Variant names mirror the DKG collection phases they gate; the shared `Collection`
 // suffix is intentional domain vocabulary, not redundant naming.
@@ -59,6 +72,47 @@ pub(crate) fn now_unix_secs() -> u64 {
         .duration_since(UNIX_EPOCH)
         .unwrap_or_default()
         .as_secs()
+}
+
+/// Budget for one roster epoch: the smaller of `ROSTER_EPOCH_BPS` of the window and the
+/// time left until the canonical deadline. The epoch env value and the existing
+/// decryption-key-shared collection override can only shorten it.
+pub(crate) fn resolve_roster_epoch_timeout(
+    dkg_deadline_unix_secs: Option<u64>,
+    dkg_window_secs: Option<u64>,
+) -> anyhow::Result<Duration> {
+    let deadline = dkg_deadline_unix_secs
+        .ok_or_else(|| anyhow::anyhow!("canonical DKG deadline is unavailable"))?;
+    let window =
+        dkg_window_secs.ok_or_else(|| anyhow::anyhow!("frozen DKG window is unavailable"))?;
+    let remaining = deadline.saturating_sub(now_unix_secs());
+    let epoch = phase_cutoff_secs(window, ROSTER_EPOCH_BPS).min(remaining);
+    let epoch = [
+        parse_env_secs(ROSTER_EPOCH_ENV),
+        parse_env_secs(DkgTimeoutPhase::DecryptionKeySharedCollection.override_env()),
+    ]
+    .into_iter()
+    .flatten()
+    .fold(epoch, u64::min);
+    Ok(Duration::from_secs(epoch))
+}
+
+/// Budget for one roster proposal: `ROSTER_PROPOSAL_BPS` of the window, capped by the time
+/// left until the deadline. The env value can only shorten it.
+pub(crate) fn resolve_roster_proposal_timeout(
+    dkg_deadline_unix_secs: Option<u64>,
+    dkg_window_secs: Option<u64>,
+) -> anyhow::Result<Duration> {
+    let deadline = dkg_deadline_unix_secs
+        .ok_or_else(|| anyhow::anyhow!("canonical DKG deadline is unavailable"))?;
+    let window =
+        dkg_window_secs.ok_or_else(|| anyhow::anyhow!("frozen DKG window is unavailable"))?;
+    let remaining = deadline.saturating_sub(now_unix_secs());
+    let budget = phase_cutoff_secs(window, ROSTER_PROPOSAL_BPS).min(remaining);
+    let budget = parse_env_secs(ROSTER_PROPOSAL_ENV)
+        .map(|secs| secs.min(budget))
+        .unwrap_or(budget);
+    Ok(Duration::from_secs(budget))
 }
 
 pub(crate) fn resolve_timeout(

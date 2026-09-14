@@ -38,7 +38,9 @@ mod die;
 mod dkg_fold_attestation;
 mod dkg_fold_attestation_context_established;
 mod dkg_inner_proof_ready;
+mod dkg_ready;
 mod dkg_recursive_aggregation_complete;
+mod dkg_roster_proposed;
 mod e3_failed;
 mod e3_request_complete;
 mod e3_requested;
@@ -121,7 +123,9 @@ pub use die::*;
 pub use dkg_fold_attestation::*;
 pub use dkg_fold_attestation_context_established::*;
 pub use dkg_inner_proof_ready::*;
+pub use dkg_ready::*;
 pub use dkg_recursive_aggregation_complete::*;
+pub use dkg_roster_proposed::*;
 pub use e3_failed::*;
 pub use e3_request_complete::*;
 pub use e3_requested::*;
@@ -338,6 +342,8 @@ pub enum InterfoldEventData {
     AggregationProofSigned(AggregationProofSigned),
     DKGInnerProofReady(DKGInnerProofReady),
     DKGRecursiveAggregationComplete(DKGRecursiveAggregationComplete),
+    DkgReady(DkgReady),
+    DkgRosterProposed(DkgRosterProposed),
     CommitmentConsistencyCheckRequested(CommitmentConsistencyCheckRequested),
     CommitmentConsistencyCheckComplete(CommitmentConsistencyCheckComplete),
     CommitmentConsistencyViolation(CommitmentConsistencyViolation),
@@ -647,6 +653,8 @@ impl InterfoldEventData {
             InterfoldEventData::PlaintextAggregated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::PkGenerationProofSigned(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DkgProofSigned(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::DkgReady(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::DkgRosterProposed(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CiphernodeSelected(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::ThresholdShareCreated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::ThresholdSharePending(ref data) => Some(data.e3_id.clone()),
@@ -804,6 +812,8 @@ impl_event_types!(
     AggregationProofSigned,
     DKGInnerProofReady,
     DKGRecursiveAggregationComplete,
+    DkgReady,
+    DkgRosterProposed,
     CommitmentConsistencyCheckRequested,
     CommitmentConsistencyCheckComplete,
     CommitmentConsistencyViolation,

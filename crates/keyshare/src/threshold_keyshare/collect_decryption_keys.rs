@@ -169,6 +169,7 @@ mod tests {
             signed_sk_decryption_proof: proof(),
             signed_e_sm_decryption_proofs: Vec::new(),
             external: false,
+            roster_hash: [0; 32],
         }
     }
 

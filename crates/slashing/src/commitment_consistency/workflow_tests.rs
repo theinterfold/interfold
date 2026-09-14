@@ -201,6 +201,7 @@ fn foreign_e3_id_is_ignored() {
         kind: VerificationKind::ShareProofs,
         correlation_id: CorrelationId::new(),
         party_proofs: vec![],
+        dkg_roster: None,
     };
     assert!(
         svc.on_check_requested(req).is_none(),
@@ -256,6 +257,7 @@ fn pre_zk_check_flags_and_evicts_inconsistent_party() {
                 ],
             },
         ],
+        dkg_roster: None,
     };
 
     let outcome = svc.on_check_requested(req).expect("same e3");

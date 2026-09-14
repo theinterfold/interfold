@@ -4,7 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use e3_net::{
     events::{NetCommand, NetEvent},
@@ -19,6 +22,9 @@ use tracing::{error, warn};
 pub struct Libp2pMock {
     store: Arc<RwLock<HashMap<ContentHash, ArcBytes>>>,
     nodes: Arc<RwLock<HashMap<PeerId, NetChannelBridge>>>,
+    /// Peers whose outbound gossip and DHT writes are dropped. Models a member that is
+    /// running but unreachable: it still receives everything, nobody receives it.
+    silenced: Arc<RwLock<HashSet<PeerId>>>,
 }
 
 impl Default for Libp2pMock {
@@ -32,7 +38,20 @@ impl Libp2pMock {
         Self {
             store: Arc::new(RwLock::new(HashMap::new())),
             nodes: Arc::new(RwLock::new(HashMap::new())),
+            silenced: Arc::new(RwLock::new(HashSet::new())),
         }
+    }
+
+    /// Drop every outbound gossip message and DHT write from `peer_id` from now on.
+    pub async fn silence(&self, peer_id: PeerId) {
+        self.silenced.write().await.insert(peer_id);
+    }
+
+    /// Detach `peer_id` from the network: it neither receives nor sends from now on. Used
+    /// before a node is shut down and rebuilt under a fresh peer id.
+    pub async fn remove_node(&self, peer_id: PeerId) {
+        self.nodes.write().await.remove(&peer_id);
+        self.silenced.write().await.remove(&peer_id);
     }
 
     pub async fn add_node(&self, peer_id: PeerId, handle: NetChannelBridge) {
@@ -42,6 +61,7 @@ impl Libp2pMock {
         let mut src_cmd_rx = handle.cmd_rx();
         let store = self.store.clone();
         let nodes = self.nodes.clone();
+        let silenced = self.silenced.clone();
         let self_peer_id = peer_id;
 
         tokio::spawn(async move {
@@ -52,15 +72,19 @@ impl Libp2pMock {
                         correlation_id,
                         ..
                     }) => {
-                        // Broadcast to all other nodes
-                        let peers = nodes.read().await;
-                        for (id, peer) in peers.iter() {
-                            if *id == self_peer_id {
-                                continue;
-                            }
-                            if let Err(e) = peer.event_tx().send(NetEvent::GossipData(data.clone()))
-                            {
-                                error!("Libp2pMock: failed to forward GossipData to {id}: {e}");
+                        // Broadcast to all other nodes unless this peer is silenced. The
+                        // publisher still sees GossipPublished, like a partitioned node.
+                        if !silenced.read().await.contains(&self_peer_id) {
+                            let peers = nodes.read().await;
+                            for (id, peer) in peers.iter() {
+                                if *id == self_peer_id {
+                                    continue;
+                                }
+                                if let Err(e) =
+                                    peer.event_tx().send(NetEvent::GossipData(data.clone()))
+                                {
+                                    error!("Libp2pMock: failed to forward GossipData to {id}: {e}");
+                                }
                             }
                         }
 
@@ -79,7 +103,9 @@ impl Libp2pMock {
                         value,
                         ..
                     }) => {
-                        store.write().await.insert(key.clone(), value);
+                        if !silenced.read().await.contains(&self_peer_id) {
+                            store.write().await.insert(key.clone(), value);
+                        }
 
                         if let Err(e) = src_event_tx.send(NetEvent::DhtPutRecordSucceeded {
                             key,

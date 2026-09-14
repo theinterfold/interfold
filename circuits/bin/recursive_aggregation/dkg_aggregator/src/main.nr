@@ -67,13 +67,18 @@ fn main(
     assert(expected_hi == committee_hash_hi);
     assert(expected_lo == committee_hash_lo);
 
-    // Range-check each folded `party_ids[i]` against the full committee size `N_PARTIES`.
-    // This makes `committee_members[party_ids[i]]` a well-defined committee slot (today
-    // `H == N_PARTIES`; preserves soundness once `H < N_PARTIES`) and is the structural
-    // pre-condition for future per-party signer/identity constraints.
+    // Range-check each folded `party_ids[i]` against the full committee size `N_PARTIES` and
+    // require a strictly ascending roster. Every preset has `H < N_PARTIES`, so the honest
+    // roster is a subset of the committee. Row `i` of `nodes_fold` is the honest slot of party
+    // `party_ids[i]`. The recipient-indexed C2/C3 columns are `N_PARTIES` wide, so a cross-row
+    // lookup for honest slot `j` must use `party_ids[j]`, not `j`. `DkgFoldAttestationVerifier`
+    // repeats the ascending check on-chain.
     for i in 0..H {
         let id = party_ids[i] as u32;
         assert(id < N_PARTIES);
+        if i > 0 {
+            assert(party_ids[i - 1] as u32 < id);
+        }
     }
 
     verify_honk_proof_non_zk(
@@ -95,15 +100,16 @@ fn main(
         );
     }
 
-    // Cross-node C0 to C3: each row's c3_pk[j] (recipient pk used in party i's C3 encryption for
-    // recipient j) must equal party j's own c0_pk.
+    // Cross-node C0 to C3: row i's c3_pk[r] (recipient pk used in party i's C3 encryption for
+    // recipient party id r) must equal the c0_pk of the honest row j that owns party id r.
     for i in 0..H {
         for j in 0..H {
+            let recipient = party_ids[j] as u32;
             assert(
                 nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
                     + i * NODE_FOLD_PUBLIC_LEN
                     + NF_C3_PK_BASE_IDX
-                    + j]
+                    + recipient]
                     == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
                         + j * NODE_FOLD_PUBLIC_LEN
                         + NF_C0_PK_IDX],
@@ -111,9 +117,11 @@ fn main(
         }
     }
 
-    // Cross-party C2 to C4 (first chain).
+    // Cross-party C2 to C4 (first chain): row j's C4 slot i (share received from honest slot i)
+    // must equal row i's C2 share for recipient party id `party_ids[j]`.
     for i in 0..H {
         for j in 0..H {
+            let recipient = party_ids[j] as u32;
             for l in 0..L_THRESHOLD {
                 assert(
                     nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
@@ -124,7 +132,7 @@ fn main(
                         == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
                             + i * NODE_FOLD_PUBLIC_LEN
                             + NF_C2A_BASE_IDX
-                            + j * L_THRESHOLD
+                            + recipient * L_THRESHOLD
                             + l],
                 );
             }
@@ -134,6 +142,7 @@ fn main(
     // Cross-party C2 to C4 (second chain).
     for i in 0..H {
         for j in 0..H {
+            let recipient = party_ids[j] as u32;
             for l in 0..L_THRESHOLD {
                 assert(
                     nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
@@ -144,7 +153,7 @@ fn main(
                         == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
                             + i * NODE_FOLD_PUBLIC_LEN
                             + NF_C2B_BASE_IDX
-                            + j * L_THRESHOLD
+                            + recipient * L_THRESHOLD
                             + l],
                 );
             }

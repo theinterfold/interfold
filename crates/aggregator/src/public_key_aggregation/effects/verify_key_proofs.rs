@@ -3,7 +3,7 @@
 //! C1 verification and honest-keyshare selection.
 
 use super::*;
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap};
 
 impl PublicKeyAggregator {
     pub fn add_keyshare(
@@ -12,6 +12,7 @@ impl PublicKeyAggregator {
         node: String,
         party_id: u64,
         c1_proof: Option<SignedProofPayload>,
+        roster_hash: [u8; 32],
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
         if matches!(
@@ -28,6 +29,7 @@ impl PublicKeyAggregator {
                 node.clone(),
                 party_id,
                 c1_proof.clone(),
+                roster_hash,
             )
         })
     }
@@ -78,6 +80,7 @@ impl PublicKeyAggregator {
                 pre_dishonest: no_proof_parties.into_iter().collect(),
                 params_preset: self.params_preset,
                 committee_size: self.committee_size,
+                dkg_roster: None,
             },
             ec,
         )?;
@@ -113,6 +116,7 @@ impl PublicKeyAggregator {
             circuit_committee_h,
             c1_proofs,
             canonical_party_nodes,
+            roster,
             ..
         } = self
             .state
@@ -178,17 +182,39 @@ impl PublicKeyAggregator {
             honest_entries.retain(|(pid, _, _, _)| !dishonest_parties.contains(pid));
         }
 
-        // Sort, fail-closed below H, cap to the H lowest party_ids, and fail when
-        // <= threshold_m remain. All pure decision logic lives in the service; the
-        // actor only publishes E3Failed on the Fail outcome.
-        let (honest_entries, honest_party_ids) = match PublicKeyAggregation::select_honest_set(
-            &self.e3_id,
-            honest_entries,
-            &dishonest_parties,
-            circuit_h,
-            threshold_m,
-            collected,
-        ) {
+        // With a DKG roster, the honest set is exactly the roster: every member's C4 was
+        // built over it, so a dishonest roster member cannot be replaced here. Without a
+        // roster (legacy sender), sort, fail-closed below H, and cap to the H lowest ids.
+        let selection = match &roster {
+            Some(roster) => {
+                let roster_set: BTreeSet<u64> = roster.iter().copied().collect();
+                let all_present = roster
+                    .iter()
+                    .all(|pid| honest_entries.iter().any(|(id, _, _, _)| id == pid));
+                if all_present && honest_entries.len() == circuit_h {
+                    honest_entries.sort_by_key(|(pid, _, _, _)| *pid);
+                    HonestSelection::Proceed {
+                        honest_entries,
+                        honest_party_ids: roster_set,
+                    }
+                } else {
+                    error!(
+                        "DKG roster {:?} for E3 {} lost a member at C1 (dishonest: {:?}); the roster cannot be aggregated",
+                        roster, self.e3_id, dishonest_parties
+                    );
+                    HonestSelection::Fail
+                }
+            }
+            None => PublicKeyAggregation::select_honest_set(
+                &self.e3_id,
+                honest_entries,
+                &dishonest_parties,
+                circuit_h,
+                threshold_m,
+                collected,
+            ),
+        };
+        let (honest_entries, honest_party_ids) = match selection {
             HonestSelection::Fail => {
                 self.bus.publish(
                     E3Failed {

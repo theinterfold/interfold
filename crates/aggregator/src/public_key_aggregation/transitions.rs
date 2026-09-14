@@ -26,15 +26,20 @@ pub(crate) enum HonestSelection {
 pub(crate) struct PublicKeyAggregation;
 
 impl PublicKeyAggregation {
-    /// Add a keyshare to a `Collecting` state. When every currently expected party has submitted,
-    /// this transitions to `VerifyingC1`. The expected count starts at N and decreases after an
-    /// E3-scoped exclusion. Reusing a `party_id` is idempotent.
+    /// Add a keyshare to a `Collecting` state. Reusing a `party_id` is idempotent.
+    ///
+    /// The transition to `VerifyingC1` happens when one DKG roster is complete: every
+    /// party of the roster has submitted a keyshare that carries that roster's hash. The
+    /// roster has exactly `H` members, so the aggregator no longer waits for all `N`.
+    /// A keyshare with a zero roster hash comes from a legacy sender; those complete
+    /// under the old rule (all `N` live parties).
     pub(crate) fn add_keyshare(
         mut state: PublicKeyAggregatorState,
         keyshare: ArcBytes,
         node: String,
         party_id: u64,
         c1_proof: Option<SignedProofPayload>,
+        roster_hash: [u8; 32],
     ) -> Result<PublicKeyAggregatorState> {
         let PublicKeyAggregatorState::Collecting {
             threshold_n,
@@ -46,18 +51,37 @@ impl PublicKeyAggregation {
             nodes,
             submission_order,
             canonical_party_nodes,
+            roster_hashes,
             ..
         } = &mut state
         else {
             return Err(anyhow::anyhow!("Can only add keyshare in Collecting state"));
         };
 
-        if submission_order.iter().any(|(pid, _, _)| *pid == party_id) {
-            return Ok(state);
+        if let Some(idx) = submission_order
+            .iter()
+            .position(|(pid, _, _)| *pid == party_id)
+        {
+            // A later DKG roster epoch replaces this party's earlier keyshare.
+            if roster_hashes
+                .get(idx)
+                .is_some_and(|prev| *prev != roster_hash)
+            {
+                info!(
+                    "add_keyshare: party_id={party_id} resubmitted for a new DKG roster; replacing"
+                );
+                let (_, _, old) = submission_order.remove(idx);
+                keyshares.remove(&old);
+                c1_proofs.remove(idx);
+                roster_hashes.remove(idx);
+            } else {
+                return Ok(state);
+            }
         }
 
         keyshares.insert(keyshare.clone());
         c1_proofs.push(c1_proof);
+        roster_hashes.push(roster_hash);
         nodes.insert(node.clone());
         info!(
             "add_keyshare: node={node} party_id={party_id} (arrival slot={})",
@@ -72,12 +96,32 @@ impl PublicKeyAggregation {
         info!(
             "PublicKeyAggregator got keyshares {unique_parties}/{n} distinct parties (circuit_n={committee_n}, committee_h={committee_h})"
         );
-        // Collect all N committee keyshares before C1. C5 then requires exactly H honest
-        // proofs afterward (micro had N=H so waiting for H was equivalent).
-        if unique_parties >= n {
+
+        let complete_roster = Self::complete_roster(submission_order, roster_hashes, committee_h);
+        let legacy_complete = roster_hash == [0; 32] && unique_parties >= n;
+        if complete_roster.is_some() || legacy_complete {
+            let roster = complete_roster.clone();
             info!(
-                "Collected keyshares from {unique_parties} distinct parties (>= live_n={n}, circuit_n={committee_n}), transitioning to VerifyingC1..."
+                "Collected keyshares from {unique_parties} distinct parties (roster={roster:?}, live_n={n}, circuit_n={committee_n}), transitioning to VerifyingC1..."
             );
+            // Keep only the roster's keyshares so C1 verification and C5 see one roster.
+            if let Some(roster) = &roster {
+                let keep: Vec<bool> = submission_order
+                    .iter()
+                    .zip(roster_hashes.iter())
+                    .map(|((pid, _, _), hash)| roster.contains(pid) && *hash == roster_hash)
+                    .collect();
+                let mut kept_order = Vec::new();
+                let mut kept_proofs = Vec::new();
+                for (i, keep) in keep.into_iter().enumerate() {
+                    if keep {
+                        kept_order.push(submission_order[i].clone());
+                        kept_proofs.push(c1_proofs[i].clone());
+                    }
+                }
+                *submission_order = kept_order;
+                *c1_proofs = kept_proofs;
+            }
             return Ok(PublicKeyAggregatorState::VerifyingC1 {
                 submission_order: std::mem::take(submission_order),
                 threshold_m: m,
@@ -86,10 +130,38 @@ impl PublicKeyAggregation {
                 c1_proofs: std::mem::take(c1_proofs),
                 no_proof_parties: Vec::new(),
                 canonical_party_nodes: std::mem::take(canonical_party_nodes),
+                roster,
             });
         }
 
         Ok(state)
+    }
+
+    /// The DKG roster whose every member has submitted a keyshare carrying that roster's
+    /// hash, when one exists. The roster is recovered from the submitters: `H` parties
+    /// that agree on one non-zero hash form it. Their ascending ids are returned.
+    fn complete_roster(
+        submission_order: &[(u64, String, ArcBytes)],
+        roster_hashes: &[[u8; 32]],
+        committee_h: usize,
+    ) -> Option<Vec<u64>> {
+        use std::collections::BTreeMap;
+        let mut by_hash: BTreeMap<[u8; 32], Vec<u64>> = BTreeMap::new();
+        for ((pid, _, _), hash) in submission_order.iter().zip(roster_hashes.iter()) {
+            if *hash != [0; 32] {
+                by_hash.entry(*hash).or_default().push(*pid);
+            }
+        }
+        for (hash, mut parties) in by_hash {
+            parties.sort_unstable();
+            parties.dedup();
+            if parties.len() == committee_h
+                && e3_events::DkgRosterProposed::roster_hash(&parties) == hash
+            {
+                return Some(parties);
+            }
+        }
+        None
     }
 
     /// Split the collected keyshare submissions into parties with a C1 proof to verify and
@@ -205,6 +277,7 @@ impl PublicKeyAggregation {
             nodes,
             submission_order,
             canonical_party_nodes,
+            roster_hashes,
             ..
         } = &mut state
         else {
@@ -221,6 +294,9 @@ impl PublicKeyAggregation {
             let (_, _, expelled_keyshare) = submission_order.remove(idx);
             keyshares.remove(&expelled_keyshare);
             c1_proofs.remove(idx);
+            if idx < roster_hashes.len() {
+                roster_hashes.remove(idx);
+            }
         }
 
         let expelled_node = nodes
@@ -264,6 +340,7 @@ impl PublicKeyAggregation {
                 c1_proofs: std::mem::take(c1_proofs),
                 no_proof_parties: Vec::new(),
                 canonical_party_nodes: std::mem::take(canonical_party_nodes),
+                roster: None,
             });
         }
 

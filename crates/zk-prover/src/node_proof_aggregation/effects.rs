@@ -24,6 +24,7 @@ impl NodeProofAggregator {
                     party_id: msg.full_share.party_id,
                     aggregated_proof: None,
                     fold_attestation: None,
+                    roster_hash: [0; 32],
                 },
                 ec,
             ) {
@@ -105,14 +106,29 @@ impl NodeProofAggregator {
         };
 
         if state.fold_correlation.is_some() {
-            warn!(
-                "NodeProofAggregator: seq={} arrived while NodeDkgFold in flight — dropped",
-                msg.seq
-            );
-            return;
+            if msg.seq >= state.c4_base_seq() && msg.roster_hash != state.roster_hash {
+                // A new DKG roster arrived while the previous roster's fold is running. The
+                // running fold result will be discarded and this proof starts the next one.
+                info!(
+                    "NodeProofAggregator: C4 seq={} for a new DKG roster arrived while NodeDkgFold in flight for E3 {} — superseding",
+                    msg.seq, e3_id
+                );
+                if let Some(corr) = state.fold_correlation.take() {
+                    self.fold_correlation.remove(&corr);
+                }
+            } else {
+                warn!(
+                    "NodeProofAggregator: seq={} arrived while NodeDkgFold in flight — dropped",
+                    msg.seq
+                );
+                return;
+            }
         }
 
-        state.buffer.insert(msg.seq, msg.proof);
+        let Some(state) = self.states.get_mut(&e3_id) else {
+            return;
+        };
+        state.accept(msg.seq, msg.roster_hash, msg.proof);
         state.last_ec = ec;
 
         info!(
@@ -195,13 +211,18 @@ impl NodeProofAggregator {
             return;
         };
 
-        let Some(state) = self.states.remove(&e3_id) else {
+        // Keep the collection state: a later DKG roster epoch replaces the C4 proofs and
+        // folds again. The C0 to C3 proofs stay valid across epochs.
+        let Some(state) = self.states.get_mut(&e3_id) else {
             error!(
                 "NodeProofAggregator: NodeDkgFold response for unknown E3 {}",
                 e3_id
             );
             return;
         };
+        state.fold_correlation = None;
+        let last_ec = state.last_ec.clone();
+        let roster_hash = state.roster_hash;
 
         let party_id = state.meta.party_id;
         let committee_n = state.meta.committee_n;
@@ -275,7 +296,7 @@ impl NodeProofAggregator {
                     failed_at_stage: E3Stage::CommitteeFinalized,
                     reason: FailureReason::DKGInvalidShares,
                 },
-                state.last_ec,
+                last_ec,
             ) {
                 error!(
                     "NodeProofAggregator: failed to publish E3Failed for E3 {}: {err}",
@@ -296,8 +317,9 @@ impl NodeProofAggregator {
                 party_id,
                 aggregated_proof: Some(proof),
                 fold_attestation,
+                roster_hash,
             },
-            state.last_ec,
+            last_ec,
         ) {
             error!(
                 "NodeProofAggregator: failed to publish DKGRecursiveAggregationComplete for E3 {}: {err}",

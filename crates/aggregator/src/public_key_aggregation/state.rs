@@ -50,6 +50,10 @@ pub enum PublicKeyAggregatorState {
         /// Full finalized committee keyed by stable sortition party ID.
         /// This roster is required to resume aggregation after a restart.
         canonical_party_nodes: HashMap<u64, String>,
+        /// DKG roster hash each keyshare was built over, aligned with `submission_order`.
+        /// Zero for a sender that predates roster epochs.
+        #[serde(default)]
+        roster_hashes: Vec<[u8; 32]>,
     },
     VerifyingC1 {
         /// Insertion-ordered (party_id, node, keyshare) triples from Collecting.
@@ -66,6 +70,10 @@ pub enum PublicKeyAggregatorState {
         /// Full finalized committee keyed by stable sortition party ID.
         /// This roster is required to resume aggregation after a restart.
         canonical_party_nodes: HashMap<u64, String>,
+        /// The DKG roster the collected keyshares were built over, ascending. `None` for
+        /// a legacy collection that reached this state through the all-`N` rule.
+        #[serde(default)]
+        roster: Option<Vec<u64>>,
     },
     GeneratingC5Proof {
         public_key: ArcBytes,
@@ -161,6 +169,7 @@ impl PublicKeyAggregatorState {
             nodes: OrderedSet::new(),
             submission_order: Vec::new(),
             canonical_party_nodes,
+            roster_hashes: Vec::new(),
         }
     }
 }

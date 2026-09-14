@@ -23,6 +23,9 @@ pub struct KeyshareCreated {
     /// would silently default to 0 and mis-route shares.
     pub party_id: u64,
     pub signed_pk_generation_proof: Option<SignedProofPayload>,
+    /// Hash of the DKG roster this keyshare was built over. Zero for a legacy sender.
+    #[serde(default)]
+    pub roster_hash: [u8; 32],
 }
 
 impl Display for KeyshareCreated {

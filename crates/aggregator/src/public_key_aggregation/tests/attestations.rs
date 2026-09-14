@@ -50,12 +50,14 @@ async fn replayed_c1_artifacts_are_ignored_after_completion() -> Result<()> {
         "0x0000000000000000000000000000000000000001".to_string(),
         0,
         None,
+        [0; 32],
         &test_ctx(KeyshareCreated {
             pubkey: ArcBytes::from_bytes(&[4, 5, 6]),
             e3_id,
             node: "0x0000000000000000000000000000000000000001".to_string(),
             party_id: 0,
             signed_pk_generation_proof: None,
+            roster_hash: [0; 32],
         }),
     )?;
 
@@ -87,6 +89,7 @@ async fn honest_dkg_fold_without_attestation_is_not_buffered() -> Result<()> {
         party_id: 2,
         aggregated_proof: Some(dummy_proof(CircuitName::NodeFold)),
         fold_attestation: None,
+        roster_hash: [0; 32],
     });
 
     aggregator.handle_dkg_recursive_aggregation_complete(TypedEvent::new(
@@ -95,6 +98,7 @@ async fn honest_dkg_fold_without_attestation_is_not_buffered() -> Result<()> {
             party_id: 2,
             aggregated_proof: Some(dummy_proof(CircuitName::NodeFold)),
             fold_attestation: None,
+            roster_hash: [0; 32],
         },
         ec,
     ))?;

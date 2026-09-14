@@ -41,6 +41,8 @@ impl ProofRequestActor {
                         party_id: meta.party_id,
                         proof: proof_for_agg,
                         seq,
+
+                        roster_hash: [0; 32],
                     },
                     ec.clone(),
                 ) {

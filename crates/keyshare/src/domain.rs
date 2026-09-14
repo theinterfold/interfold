@@ -19,6 +19,8 @@ mod decryption_key_shared_collection;
 mod encryption_key_collection;
 #[path = "threshold_keyshare/state.rs"]
 mod keyshare_state;
+#[path = "threshold_keyshare/roster.rs"]
+pub(crate) mod roster;
 #[path = "threshold_keyshare/generate_shares.rs"]
 mod share_generation;
 #[path = "threshold_keyshare/collect_threshold_shares.rs"]

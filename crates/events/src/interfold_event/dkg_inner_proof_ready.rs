@@ -27,4 +27,7 @@ pub struct DKGInnerProofReady {
     pub proof: Proof,
     /// Deterministic sequence index for ordered folding.
     pub seq: usize,
+    /// Hash of the DKG roster a C4 proof was built over. Zero for C0 to C3 proofs.
+    #[serde(default)]
+    pub roster_hash: [u8; 32],
 }

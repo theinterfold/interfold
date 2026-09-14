@@ -209,3 +209,31 @@ fn gdp() -> GeneratingDecryptionProof {
         signed_e_sm_share_encryption_proofs: Vec::new(),
     }
 }
+
+#[test]
+fn roster_next_epoch_skips_past_silent_leaders() {
+    // No epoch yet: the first proposal is epoch 0 and a proposal is awaited.
+    let mut roster = DkgRosterState::default();
+    assert_eq!(roster.next_epoch(), 0);
+    assert!(roster.awaiting_proposal());
+
+    // Epoch 0 accepted and live: no proposal is awaited.
+    roster.epoch = Some(0);
+    assert!(!roster.awaiting_proposal());
+    assert_eq!(roster.next_epoch(), 1);
+
+    // Epoch 0 missed: epoch 1 is next. Its leader stays silent, so it is skipped and
+    // epoch 2 becomes the next proposal.
+    roster.epoch_missed = true;
+    assert!(roster.awaiting_proposal());
+    roster.skipped_epochs.insert(1);
+    assert_eq!(roster.next_epoch(), 2);
+    roster.skipped_epochs.insert(2);
+    assert_eq!(roster.next_epoch(), 3);
+
+    // Accepting epoch 3 clears the wait; a later miss continues from 4.
+    roster.epoch = Some(3);
+    roster.epoch_missed = false;
+    assert!(!roster.awaiting_proposal());
+    assert_eq!(roster.next_epoch(), 4);
+}

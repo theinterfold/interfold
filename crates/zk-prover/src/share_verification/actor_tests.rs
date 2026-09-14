@@ -102,6 +102,7 @@ async fn restored_committee_authorizes_c6_without_replayed_finalization_event() 
         pre_dishonest: BTreeSet::new(),
         params_preset: BfvPreset::InsecureThreshold512,
         committee_size: CiphernodesCommitteeSize::Minimum,
+        dkg_roster: None,
     })
     .expect("publish C6 verification dispatch");
 

@@ -214,7 +214,9 @@ mod tests {
                     party_id: 7,
                     aggregated_proof: None,
                     fold_attestation: None,
+                    roster_hash: [0; 32],
                 }),
+                roster_hash: [0; 32],
             },
         );
         aggregator
@@ -252,6 +254,7 @@ mod tests {
                 party_id: 7,
                 aggregated_proof: None,
                 fold_attestation: None,
+                roster_hash: [0; 32],
             }),
         ));
 
@@ -283,12 +286,14 @@ mod tests {
                 party_id: 7,
                 proof: early_proof.clone(),
                 seq: 0,
+                roster_hash: [0; 32],
             },
             test_ctx(DKGInnerProofReady {
                 e3_id: e3_id.clone(),
                 party_id: 7,
                 proof: early_proof.clone(),
                 seq: 0,
+                roster_hash: [0; 32],
             }),
         ));
 
@@ -320,6 +325,7 @@ mod tests {
                 party_id: 7,
                 aggregated_proof: None,
                 fold_attestation: None,
+                roster_hash: [0; 32],
             }),
         );
 
@@ -340,12 +346,14 @@ mod tests {
                     party_id: 7,
                     proof: proof.clone(),
                     seq,
+                    roster_hash: [0; 32],
                 },
                 test_ctx(DKGInnerProofReady {
                     e3_id: e3_id.clone(),
                     party_id: 7,
                     proof,
                     seq,
+                    roster_hash: [0; 32],
                 }),
             ));
         }

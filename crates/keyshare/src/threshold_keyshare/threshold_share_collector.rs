@@ -16,9 +16,11 @@ use e3_utils::MAILBOX_LIMIT;
 use tracing::{info, warn};
 
 use crate::actors::threshold_keyshare::{AllThresholdSharesCollected, ThresholdKeyshare};
-use crate::domain::{ReceivedShareProofs, ShareCollectOutcome, ThresholdShareCollection};
+use crate::domain::{
+    CutoffOutcome, ReceivedShareProofs, ShareCollectOutcome, ThresholdShareCollection,
+};
 
-/// Message sent when threshold share collection times out.
+/// Message sent when the threshold share collection cutoff is reached.
 #[derive(Message, Clone, Debug)]
 #[rtype(result = "()")]
 pub struct ThresholdShareCollectionTimeout;
@@ -33,12 +35,17 @@ pub struct ExpelPartyFromShareCollection {
 
 /// Thin actix shell around [`ThresholdShareCollection`]; owns the mailbox,
 /// timeout timer and the handle to the parent keyshare actor.
+///
+/// Completes when every external share arrived, or at the cutoff when at least `H - 1`
+/// external shares arrived. Fails at the cutoff otherwise.
 pub struct ThresholdShareCollector {
     e3_id: E3id,
     parent: Addr<ThresholdKeyshare>,
     collection: ThresholdShareCollection,
     timeout: Duration,
     timeout_handle: Option<SpawnHandle>,
+    /// Causal context of the last accepted share. A cutoff completion continues from it.
+    last_ec: Option<EventContext<Sequenced>>,
 }
 
 impl ThresholdShareCollector {
@@ -47,17 +54,24 @@ impl ThresholdShareCollector {
         parent: Addr<ThresholdKeyshare>,
         total: u64,
         own_party_id: u64,
+        minimum: usize,
         e3_id: E3id,
         timeout: Duration,
     ) -> Addr<Self> {
         Self::create(|ctx| {
             ctx.set_mailbox_capacity(MAILBOX_LIMIT);
             Self {
-                collection: ThresholdShareCollection::new(e3_id.clone(), total, own_party_id),
+                collection: ThresholdShareCollection::new(
+                    e3_id.clone(),
+                    total,
+                    own_party_id,
+                    minimum,
+                ),
                 e3_id,
                 parent,
                 timeout,
                 timeout_handle: None,
+                last_ec: None,
             }
         })
     }
@@ -77,6 +91,26 @@ impl ThresholdShareCollector {
                 TypedEvent::new(AllThresholdSharesCollected::new(shares, proofs), ec);
             self.parent.do_send(event);
         }
+    }
+
+    fn fail(&mut self, ctx: &mut actix::Context<Self>, missing_parties: Vec<PartyId>) {
+        warn!(
+            e3_id = %self.e3_id,
+            missing_parties = ?missing_parties,
+            "Threshold share collection timed out, {} parties missing",
+            missing_parties.len()
+        );
+
+        self.parent.do_send(ThresholdShareCollectionFailed {
+            e3_id: self.e3_id.clone(),
+            reason: format!(
+                "Timeout waiting for threshold shares from {} parties",
+                missing_parties.len()
+            ),
+            missing_parties,
+        });
+
+        ctx.stop();
     }
 }
 
@@ -111,6 +145,9 @@ impl Handler<TypedEvent<ThresholdShareCreated>> for ThresholdShareCollector {
             signed_c3b_proofs: msg.signed_c3b_proofs,
         };
         let outcome = self.collection.receive(msg.share, proofs);
+        if !matches!(outcome, ShareCollectOutcome::Ignored) {
+            self.last_ec = Some(ec.clone());
+        }
         self.complete(ctx, ec, outcome);
     }
 }
@@ -122,27 +159,23 @@ impl Handler<ThresholdShareCollectionTimeout> for ThresholdShareCollector {
         _: ThresholdShareCollectionTimeout,
         ctx: &mut Self::Context,
     ) -> Self::Result {
-        let Some(missing_parties) = self.collection.timeout() else {
-            return;
-        };
-
-        warn!(
-            e3_id = %self.e3_id,
-            missing_parties = ?missing_parties,
-            "Threshold share collection timed out, {} parties missing",
-            missing_parties.len()
-        );
-
-        self.parent.do_send(ThresholdShareCollectionFailed {
-            e3_id: self.e3_id.clone(),
-            reason: format!(
-                "Timeout waiting for threshold shares from {} parties",
-                missing_parties.len()
-            ),
-            missing_parties,
-        });
-
-        ctx.stop();
+        match self.collection.cutoff() {
+            CutoffOutcome::Inert => {}
+            CutoffOutcome::Completed(outcome) => {
+                // A completion requires at least one accepted share, so a context exists.
+                if let Some(ec) = self.last_ec.clone() {
+                    self.complete(ctx, ec, outcome);
+                    ctx.stop();
+                } else {
+                    warn!(
+                        e3_id = %self.e3_id,
+                        "Threshold share cutoff completed without a causal context; treating as failed"
+                    );
+                    self.fail(ctx, Vec::new());
+                }
+            }
+            CutoffOutcome::Failed(missing_parties) => self.fail(ctx, missing_parties),
+        }
     }
 }
 

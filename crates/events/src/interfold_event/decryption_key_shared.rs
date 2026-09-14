@@ -27,6 +27,9 @@ pub struct DecryptionKeyShared {
     pub signed_e_sm_decryption_proofs: Vec<SignedProofPayload>,
     /// Whether this was received from the network.
     pub external: bool,
+    /// Hash of the DKG roster the C4 proofs were built over. Zero for a legacy sender.
+    #[serde(default)]
+    pub roster_hash: [u8; 32],
 }
 
 impl Display for DecryptionKeyShared {

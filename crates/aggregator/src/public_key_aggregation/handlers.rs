@@ -184,6 +184,7 @@ impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {
             let node = event.node.clone();
             let party_id = event.party_id;
             let c1_proof = event.signed_pk_generation_proof.clone();
+            let roster_hash = event.roster_hash;
 
             if e3_id != self.e3_id {
                 error!("Wrong e3_id sent to aggregator. This should not happen.");
@@ -191,7 +192,7 @@ impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {
             }
 
             let was_ready = self.aggregation_inputs_ready();
-            self.add_keyshare(pubkey, node, party_id, c1_proof, &ec)?;
+            self.add_keyshare(pubkey, node, party_id, c1_proof, roster_hash, &ec)?;
             let became_ready = !was_ready && self.aggregation_inputs_ready();
             if became_ready {
                 self.publish_inputs_ready(ec.clone())?;

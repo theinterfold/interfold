@@ -21,7 +21,6 @@ use e3_events::{CircuitName, CircuitVariant, Proof};
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use serde::Serialize;
-use std::collections::HashSet;
 use std::time::Instant;
 
 fn proof_field_strings(proof: &Proof) -> Result<Vec<String>, ZkError> {
@@ -404,7 +403,7 @@ fn validate_dkg_aggregation_shape(
         )));
     }
 
-    let mut seen = HashSet::with_capacity(party_ids.len());
+    let mut previous: Option<u64> = None;
     for &party_id in party_ids {
         let party_index = usize::try_from(party_id).map_err(|_| {
             ZkError::InvalidInput(format!(
@@ -417,11 +416,14 @@ fn validate_dkg_aggregation_shape(
                 expected.n
             )));
         }
-        if !seen.insert(party_id) {
+        // The circuit and `DkgFoldAttestationVerifier` both require a strictly ascending
+        // roster; a duplicate or reordered id would fail the proof, so reject it here.
+        if previous.is_some_and(|prev| prev >= party_id) {
             return Err(ZkError::InvalidInput(format!(
-                "DkgAggregator party id {party_id} is duplicated"
+                "DkgAggregator party id {party_id} is duplicated or not ascending"
             )));
         }
+        previous = Some(party_id);
     }
     Ok(())
 }
@@ -712,5 +714,22 @@ mod tests {
             validate_dkg_aggregation_shape(2, &[0, 3], 3, CiphernodesCommitteeSize::Minimum)
                 .unwrap_err();
         assert!(out_of_range.to_string().contains("outside committee N=3"));
+    }
+
+    #[test]
+    fn dkg_aggregation_accepts_a_non_prefix_ascending_roster() {
+        // Party 1 absent: the honest roster is {0, 2}, not the prefix {0, 1}.
+        validate_dkg_aggregation_shape(2, &[0, 2], 3, CiphernodesCommitteeSize::Minimum)
+            .expect("any ascending H-subset of the committee is a valid roster");
+        validate_dkg_aggregation_shape(2, &[1, 2], 3, CiphernodesCommitteeSize::Minimum)
+            .expect("a roster that omits party 0 is valid");
+    }
+
+    #[test]
+    fn dkg_aggregation_rejects_a_descending_roster() {
+        let error =
+            validate_dkg_aggregation_shape(2, &[2, 0], 3, CiphernodesCommitteeSize::Minimum)
+                .unwrap_err();
+        assert!(error.to_string().contains("not ascending"));
     }
 }

@@ -14,6 +14,7 @@ mod create_decryption_share;
 mod generate_threshold_share;
 mod initialize_dkg;
 mod recovery;
+mod roster_coordination;
 mod route_events;
 mod track_proofs;
 mod verify_decryption_key;

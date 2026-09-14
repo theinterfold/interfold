@@ -48,6 +48,8 @@ pub(crate) struct DkgProofCollectionState {
     pub(crate) buffer: BTreeMap<usize, Proof>,
     pub(crate) fold_correlation: Option<CorrelationId>,
     pub(crate) last_ec: EventContext<Sequenced>,
+    /// Roster hash of the buffered C4 proofs. Zero until the first C4 proof arrives.
+    pub(crate) roster_hash: [u8; 32],
 }
 
 impl DkgProofCollectionState {
@@ -61,7 +63,24 @@ impl DkgProofCollectionState {
             buffer,
             fold_correlation: None,
             last_ec,
+            roster_hash: [0; 32],
         }
+    }
+
+    /// First `seq` of the C4 proofs (`c4a`; `c4b` follows).
+    pub(crate) fn c4_base_seq(&self) -> usize {
+        4 + self.meta.sk_enc_count + self.meta.e_sm_enc_count
+    }
+
+    /// Accept an inner proof. A C4 proof for a newer DKG roster replaces the C4 proofs of
+    /// the previous roster, because the fold must carry one consistent roster.
+    pub(crate) fn accept(&mut self, seq: usize, roster_hash: [u8; 32], proof: Proof) {
+        if seq >= self.c4_base_seq() && roster_hash != self.roster_hash {
+            let base = self.c4_base_seq();
+            self.buffer.retain(|s, _| *s < base);
+            self.roster_hash = roster_hash;
+        }
+        self.buffer.insert(seq, proof);
     }
 
     /// True once every `seq` in `0..total_expected` has been buffered.

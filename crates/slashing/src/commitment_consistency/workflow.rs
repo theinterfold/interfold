@@ -71,9 +71,11 @@ pub(crate) struct PreZkOutcome {
 pub(crate) struct CommitmentConsistency {
     e3_id: E3id,
     links: Vec<Box<dyn CommitmentLink>>,
-    /// Canonical honest-party count H. C4 `expected_commitments` only bind the lowest H
-    /// senders; C2 proofs from `party_id >= H` are outside the circuit roster.
+    /// Canonical honest-party count H. C4 `expected_commitments` bind exactly H senders.
     committee_h: usize,
+    /// The DKG roster (ascending party ids) the C4 proofs were built over. C4 witness rows
+    /// are indexed by roster position. Until a roster is known the prefix `0..H` is assumed.
+    dkg_roster: Option<Vec<u64>>,
     /// Verified proof outputs: `(address, proof_type) → data`.
     /// Multiple proofs per key are supported (e.g. N-1 C3a proofs per sender).
     verified: HashMap<(Address, ProofType), Vec<VerifiedProofData>>,
@@ -89,6 +91,7 @@ impl CommitmentConsistency {
             e3_id,
             links,
             committee_h,
+            dkg_roster: None,
             verified: HashMap::new(),
         }
     }
@@ -187,12 +190,9 @@ impl CommitmentConsistency {
                         }
                         // Source must match AT LEAST ONE target.
                         let found = all_targets.iter().any(|tgt| {
-                            link.check_consistency(
-                                &vals,
-                                &tgt.public_signals,
-                                src.party_id,
-                                tgt.party_id,
-                            )
+                            let (src_id, tgt_id) =
+                                self.link_party_ids(src_type, src.party_id, tgt.party_id);
+                            link.check_consistency(&vals, &tgt.public_signals, src_id, tgt_id)
                         });
                         if !found {
                             mismatches.push(Mismatch {
@@ -239,12 +239,9 @@ impl CommitmentConsistency {
                             continue;
                         }
                         let found = all_targets.iter().any(|tgt| {
-                            link.check_consistency(
-                                &vals,
-                                &tgt.public_signals,
-                                src.party_id,
-                                tgt.party_id,
-                            )
+                            let (src_id, tgt_id) =
+                                self.link_party_ids(src_type, src.party_id, tgt.party_id);
+                            link.check_consistency(&vals, &tgt.public_signals, src_id, tgt_id)
                         });
                         if !found {
                             mismatches.push(Mismatch {
@@ -263,12 +260,49 @@ impl CommitmentConsistency {
         }
     }
 
-    /// C4 circuits only witness `expected_commitments` for the lowest `H` senders.
+    /// The DKG roster in effect: the accepted roster, or the prefix `0..H` before one is
+    /// known.
+    fn roster(&self) -> Vec<u64> {
+        self.dkg_roster
+            .clone()
+            .unwrap_or_else(|| (0..self.committee_h as u64).collect())
+    }
+
+    /// C4 witness row of `party_id`: its position in the roster. `None` outside the roster.
+    fn c4_row(&self, party_id: u64) -> Option<u64> {
+        self.roster()
+            .iter()
+            .position(|id| *id == party_id)
+            .map(|row| row as u64)
+    }
+
+    /// C4 circuits only witness `expected_commitments` for roster senders.
     fn skip_c2_to_c4_source(&self, proof_type: ProofType, party_id: u64) -> bool {
         matches!(
             proof_type,
             ProofType::C2aSkShareComputation | ProofType::C2bESmShareComputation
-        ) && party_id as usize >= self.committee_h
+        ) && self.c4_row(party_id).is_none()
+    }
+
+    /// Party context handed to a link. For C2→C4 the source id is the sender's C4 row
+    /// (its roster position); every other link sees raw party ids.
+    fn link_party_ids(
+        &self,
+        proof_type: ProofType,
+        src_party_id: u64,
+        tgt_party_id: u64,
+    ) -> (u64, u64) {
+        if matches!(
+            proof_type,
+            ProofType::C2aSkShareComputation | ProofType::C2bESmShareComputation
+        ) {
+            (
+                self.c4_row(src_party_id).unwrap_or(src_party_id),
+                tgt_party_id,
+            )
+        } else {
+            (src_party_id, tgt_party_id)
+        }
     }
 
     /// Build the [`CommitmentConsistencyViolation`] for a mismatch, computing
@@ -375,6 +409,10 @@ impl CommitmentConsistency {
 
         let mut inconsistent_parties = BTreeSet::new();
         let mut violations = Vec::new();
+
+        if let Some(roster) = &data.dkg_roster {
+            self.dkg_roster = Some(roster.clone());
+        }
 
         // Cache each party's proof data for link evaluation.
         for party in &data.party_proofs {

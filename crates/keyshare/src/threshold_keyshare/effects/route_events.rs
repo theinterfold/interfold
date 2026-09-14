@@ -44,6 +44,16 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             InterfoldEventData::DkgProofSigned(data) => {
                 let _ = self.handle_share_computation_proof_signed(TypedEvent::new(data, ec));
             }
+            InterfoldEventData::DkgReady(data) => {
+                if let Err(err) = self.handle_dkg_ready(data, Some(ec)) {
+                    error!("Failed to handle DkgReady: {err}");
+                }
+            }
+            InterfoldEventData::DkgRosterProposed(data) => {
+                if let Err(err) = self.handle_dkg_roster_proposed(data, Some(ec), ctx.address()) {
+                    error!("Failed to handle DkgRosterProposed: {err}");
+                }
+            }
             InterfoldEventData::E3RequestComplete(data) => self.notify_sync(ctx, data),
             InterfoldEventData::E3Failed(data) => {
                 warn!(
@@ -99,6 +109,18 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                             );
                             return;
                         }
+                        if state
+                            .roster
+                            .as_ref()
+                            .is_some_and(|r| r.roster_hash != data.roster_hash)
+                        {
+                            trace!(
+                                party_id = data.party_id,
+                                e3_id = %data.e3_id,
+                                "Dropping DecryptionKeyShared built over a different DKG roster"
+                            );
+                            return;
+                        }
                         let recovered_event = TypedEvent::new(data.clone(), ec.clone());
                         if let Err(err) = self.record_decryption_key_share(&recovered_event) {
                             error!("Failed to persist DecryptionKeyShared recovery input: {err}");
@@ -114,11 +136,12 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                                     collector.do_send(TypedEvent::new(data, ec));
                                     Ok(())
                                 } else {
-                                    warn!(
-                                        "DecryptionKeyShared from party {} dropped — no collector (sole honest party)",
-                                        data.party_id
-                                    );
-                                    Ok(())
+                                    // No collector: this member is not serving the
+                                    // current epoch (idle after an earlier epoch) or its
+                                    // C4 job is still running. Keep the share so an idle
+                                    // member can tell who missed, and so a later
+                                    // collector can replay it.
+                                    self.handle_early_decryption_key_share(data, ec)
                                 }
                             }
                             other => {

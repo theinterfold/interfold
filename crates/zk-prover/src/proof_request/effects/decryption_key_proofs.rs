@@ -14,12 +14,23 @@ impl ProofRequestActor {
         let e3_id = msg.e3_id.clone();
         let esm_count = msg.esm_requests.len();
 
-        if self.pending_decryption.contains_key(&e3_id) {
-            warn!(
-                "Duplicate DecryptionShareProofsPending for E3 {} — ignoring",
+        if let Some(pending) = self.pending_decryption.get(&e3_id) {
+            if pending.roster_hash == msg.roster_hash {
+                warn!(
+                    "Duplicate DecryptionShareProofsPending for E3 {} — ignoring",
+                    e3_id
+                );
+                return;
+            }
+            // A new DKG roster epoch supersedes the C4 job of the previous epoch. Drop the
+            // old correlations so a late result for the old roster is not published.
+            info!(
+                "New DKG roster for E3 {} — replacing the pending C4 proof job",
                 e3_id
             );
-            return;
+            self.decryption_correlation
+                .retain(|_, (eid, _, _)| *eid != e3_id);
+            self.pending_decryption.remove(&e3_id);
         }
 
         self.pending_decryption.insert(
@@ -31,6 +42,7 @@ impl ProofRequestActor {
                 sk_proof: None,
                 esm_proofs: HashMap::new(),
                 expected_esm_count: esm_count,
+                roster_hash: msg.roster_hash,
             },
         );
 
@@ -101,6 +113,7 @@ impl ProofRequestActor {
                         party_id: meta.party_id,
                         proof: proof_for_agg,
                         seq,
+                        roster_hash: pending.roster_hash,
                     },
                     ec.clone(),
                 ) {
@@ -174,6 +187,7 @@ impl ProofRequestActor {
                 signed_sk_decryption_proof: signed_sk,
                 signed_e_sm_decryption_proofs: signed_esms,
                 external: false,
+                roster_hash: pending.roster_hash,
             },
             pending.ec,
         ) {

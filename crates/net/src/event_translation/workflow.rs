@@ -61,6 +61,8 @@ impl EventTranslationService {
                 | InterfoldEventData::PublicKeyAggregated(_)
                 | InterfoldEventData::ProofFailureAccusation(_)
                 | InterfoldEventData::AccusationVote(_)
+                | InterfoldEventData::DkgReady(_)
+                | InterfoldEventData::DkgRosterProposed(_)
         )
     }
 
@@ -154,6 +156,7 @@ mod tests {
                 node: "node-1".to_string(),
                 party_id: 1,
                 signed_pk_generation_proof: None,
+                roster_hash: [0; 32],
             }
             .into(),
             None,

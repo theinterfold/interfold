@@ -30,6 +30,7 @@ use fhe::bfv::PublicKey;
 use fhe_traits::{DeserializeParametrized, Serialize as _};
 use rand::rngs::OsRng;
 use rand_core::UnwrapErr;
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::info;
 
@@ -84,38 +85,54 @@ pub(crate) fn build_shares_generated_plan(
         .threshold_counterpart()
         .ok_or_else(|| anyhow!("No threshold counterpart for {:?}", share_enc_preset))?;
     let (_, params) = build_pair_for_preset(threshold_preset)?;
-    let recipient_pks: Vec<PublicKey> = encryption_keys
-        .iter()
-        .map(|k| {
-            PublicKey::from_bytes(&k.pk_bfv, &params)
-                .map_err(|e| anyhow!("Failed to deserialize BFV public key: {:?}", e))
-        })
-        .collect::<Result<_>>()?;
     // Share-encryption fan-out targets every registered party (`N`); `own_idx` is then
     // skipped in `encrypt_all_extended_for_share_indices`, producing N-1 ciphertexts.
-    // The C3a/C3b NodeFold slots are sized for `N`, so any drift between the collected
-    // encryption-key roster and the configured committee would corrupt the fold witness.
-    if recipient_pks.len() != derived_committee_size.values().n {
-        bail!(
-            "share-encryption recipients ({}) do not match committee N ({}); C3 fan-out would mis-size the NodeFold slots",
-            recipient_pks.len(),
-            derived_committee_size.values().n
+    // The C3a/C3b NodeFold slots are sized for `N`, so any drift between the recipient roster
+    // and the configured committee would corrupt the fold witness.
+    //
+    // A committee member whose C0 key never arrived cannot be in the final honest roster.
+    // Its slot still needs a C3 proof in `node_fold`, so that slot is encrypted under this
+    // node's own C0 key. Nothing leaks: the plaintext is this node's own Shamir share for that
+    // recipient. `dkg_aggregator` checks `c3_pk[r]` against C0 only for honest `r`.
+    let committee_n = derived_committee_size.values().n;
+    let mut pk_by_party: HashMap<u64, PublicKey> = HashMap::with_capacity(encryption_keys.len());
+    for key in encryption_keys {
+        if key.party_id as usize >= committee_n {
+            bail!(
+                "collected encryption key for party {} is outside committee N={}",
+                key.party_id,
+                committee_n
+            );
+        }
+        let pk = PublicKey::from_bytes(&key.pk_bfv, &params)
+            .map_err(|e| anyhow!("Failed to deserialize BFV public key: {:?}", e))?;
+        pk_by_party.insert(key.party_id, pk);
+    }
+    let own_pk = pk_by_party.get(&party_id).cloned().ok_or_else(|| {
+        anyhow!(
+            "own party {} missing from collected encryption keys",
+            party_id
+        )
+    })?;
+    let mut absent_recipients: Vec<u64> = Vec::new();
+    let recipient_pks: Vec<PublicKey> = (0..committee_n as u64)
+        .map(|recipient| match pk_by_party.remove(&recipient) {
+            Some(pk) => pk,
+            None => {
+                absent_recipients.push(recipient);
+                own_pk.clone()
+            }
+        })
+        .collect();
+    if !absent_recipients.is_empty() {
+        info!(
+            "Party {} encrypts slots {:?} under its own C0 key: those recipients did not publish a C0 key",
+            party_id, absent_recipients
         );
     }
-    let recipient_party_ids: Vec<u64> = encryption_keys.iter().map(|k| k.party_id).collect();
-    let recipient_share_indices: Vec<usize> = recipient_party_ids
-        .iter()
-        .map(|&recipient_party_id| recipient_party_id as usize)
-        .collect();
-    let own_idx = recipient_party_ids
-        .iter()
-        .position(|&recipient_party_id| recipient_party_id == party_id)
-        .ok_or_else(|| {
-            anyhow!(
-                "own party {} missing from collected encryption keys",
-                party_id
-            )
-        })?;
+    let recipient_party_ids: Vec<u64> = (0..committee_n as u64).collect();
+    let recipient_share_indices: Vec<usize> = (0..committee_n).collect();
+    let own_idx = party_id as usize;
 
     // Serialize for C2a/C2b proof requests (encrypted at rest)
     let sk_sss_raw = SensitiveBytes::new(

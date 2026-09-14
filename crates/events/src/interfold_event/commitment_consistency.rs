@@ -47,6 +47,9 @@ pub struct CommitmentConsistencyCheckRequested {
     pub kind: VerificationKind,
     pub correlation_id: CorrelationId,
     pub party_proofs: Vec<PartyProofData>,
+    /// The DKG roster (ascending party ids) the C4 proofs were built over, when known.
+    #[serde(default)]
+    pub dkg_roster: Option<Vec<u64>>,
 }
 
 /// Response from [`CommitmentConsistencyChecker`].

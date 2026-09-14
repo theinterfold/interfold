@@ -239,6 +239,7 @@ mod tests {
                     },
                     signed_e_sm_decryption_proofs: vec![],
                     external: false,
+                    roster_hash: [0; 32],
                 })
                 .to_bytes()?,
             ),

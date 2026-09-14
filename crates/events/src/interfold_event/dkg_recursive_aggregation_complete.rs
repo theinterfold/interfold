@@ -23,6 +23,9 @@ pub struct DKGRecursiveAggregationComplete {
     pub aggregated_proof: Option<Proof>,
     /// Binds the fold to the operator's registered address via `sk_agg` / `esm_agg` commits.
     pub fold_attestation: Option<SignedDkgFoldAttestation>,
+    /// Hash of the DKG roster the folded C4 proofs were built over. Zero for a legacy sender.
+    #[serde(default)]
+    pub roster_hash: [u8; 32],
 }
 
 impl DKGRecursiveAggregationComplete {
@@ -31,12 +34,14 @@ impl DKGRecursiveAggregationComplete {
         party_id: u64,
         aggregated_proof: Option<Proof>,
         fold_attestation: Option<SignedDkgFoldAttestation>,
+        roster_hash: [u8; 32],
     ) -> Self {
         Self {
             e3_id,
             party_id,
             aggregated_proof,
             fold_attestation,
+            roster_hash,
         }
     }
 }

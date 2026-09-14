@@ -34,6 +34,7 @@ fn decryption_publication(e3_id: E3id) -> Result<PublishDocumentRequested> {
         signed_sk_decryption_proof: proof,
         signed_e_sm_decryption_proofs: vec![],
         external: false,
+        roster_hash: [0; 32],
     })
     .to_bytes()?;
     Ok(PublishDocumentRequested {

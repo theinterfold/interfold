@@ -20,6 +20,7 @@ impl ShareVerificationActor {
         ec: EventContext<Sequenced>,
         params_preset: e3_fhe_params::BfvPreset,
         committee_size: e3_zk_helpers::CiphernodesCommitteeSize,
+        dkg_roster: Option<Vec<u64>>,
         store_passed_proofs: impl FnOnce(&mut PendingConsistencyCheck, Vec<P>),
     ) {
         let e3_id_str = e3_id.to_string();
@@ -84,6 +85,7 @@ impl ShareVerificationActor {
                 kind: kind.clone(),
                 correlation_id,
                 party_proofs: outcome.consistency_party_data,
+                dkg_roster,
             },
             ec.clone(),
         ) {

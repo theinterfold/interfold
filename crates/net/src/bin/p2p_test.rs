@@ -259,6 +259,7 @@ fn network_signal(name: &str, marker: &[u8], id: u8) -> Result<GossipData> {
             node: name.to_string(),
             party_id: u64::from(id),
             signed_pk_generation_proof: None,
+            roster_hash: [0; 32],
         }
         .into(),
         None,

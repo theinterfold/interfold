@@ -48,6 +48,7 @@ async fn selection_waits_for_frozen_timing_and_rejects_expired_dkg() -> Result<(
                 ))
             })
         }),
+        signer: alloy::signers::local::PrivateKeySigner::random(),
     })
     .start();
     let selection = CiphernodeSelected {
@@ -118,6 +119,21 @@ fn test_state(
     Persistable<ThresholdKeyshareState>,
     Repository<ThresholdKeyshareState>,
 ) {
+    test_state_with_deadline(
+        e3_id,
+        keyshare_state,
+        crate::domain::timeout_policy::now_unix_secs().saturating_add(7_200),
+    )
+}
+
+fn test_state_with_deadline(
+    e3_id: &E3id,
+    keyshare_state: KeyshareState,
+    deadline_unix_secs: u64,
+) -> (
+    Persistable<ThresholdKeyshareState>,
+    Repository<ThresholdKeyshareState>,
+) {
     let store = InMemStore::new(false).start();
     let repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
     let mut state = ThresholdKeyshareState::new(
@@ -129,8 +145,7 @@ fn test_state(
         ArcBytes::from_bytes(b"params"),
         Address::ZERO.to_string(),
     );
-    state.dkg_deadline_unix_secs =
-        Some(crate::domain::timeout_policy::now_unix_secs().saturating_add(7_200));
+    state.dkg_deadline_unix_secs = Some(deadline_unix_secs);
     state.dkg_window_secs = Some(7_200);
     (repo.send(Some(state)), repo)
 }
@@ -149,9 +164,25 @@ async fn start_actor_with_state(
     E3id,
     Repository<ThresholdKeyshareState>,
 )> {
+    start_actor_with_state_and_deadline(
+        keyshare_state,
+        crate::domain::timeout_policy::now_unix_secs().saturating_add(7_200),
+    )
+    .await
+}
+
+async fn start_actor_with_state_and_deadline(
+    keyshare_state: KeyshareState,
+    deadline_unix_secs: u64,
+) -> Result<(
+    Addr<ThresholdKeyshare>,
+    Addr<HistoryCollector<InterfoldEvent>>,
+    E3id,
+    Repository<ThresholdKeyshareState>,
+)> {
     let (bus, history) = test_bus();
     let e3_id = E3id::new("42", 1);
-    let (state, repo) = test_state(&e3_id, keyshare_state);
+    let (state, repo) = test_state_with_deadline(&e3_id, keyshare_state, deadline_unix_secs);
     let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
         bus,
         cipher: Arc::new(Cipher::from_password("test-password").await?),
@@ -160,6 +191,7 @@ async fn start_actor_with_state(
         interfold_address: Address::ZERO,
         recovery: test_recovery(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+        signer: alloy::signers::local::PrivateKeySigner::random(),
     })
     .start();
 
@@ -270,7 +302,13 @@ async fn threshold_share_collection_failure_preserves_telemetry_and_emits_e3_fai
 
 #[actix::test]
 async fn decryption_key_shared_collection_failure_emits_e3_failed() -> Result<()> {
-    let (actor, history, e3_id, repo) = start_actor().await?;
+    // Past the canonical DKG deadline no roster epoch can be proposed, so the miss is
+    // terminal.
+    let (actor, history, e3_id, repo) = start_actor_with_state_and_deadline(
+        KeyshareState::Init,
+        crate::domain::timeout_policy::now_unix_secs().saturating_sub(1),
+    )
+    .await?;
     let failure = DecryptionKeySharedCollectionFailed {
         e3_id,
         reason: "missing decryption key shares".to_string(),
@@ -293,6 +331,33 @@ async fn decryption_key_shared_collection_failure_emits_e3_failed() -> Result<()
             failed_at_stage: E3Stage::CommitteeFinalized,
             reason: FailureReason::DecryptionTimeout,
         }
+    ));
+
+    Ok(())
+}
+
+#[actix::test]
+async fn decryption_key_shared_miss_before_deadline_rotates_the_roster_epoch() -> Result<()> {
+    // Before the deadline a missed C4 collection is a roster epoch miss, not a round
+    // failure: the missing parties leave every ready set and no `E3Failed` is published.
+    let (actor, history, e3_id, repo) = start_actor().await?;
+    let failure = DecryptionKeySharedCollectionFailed {
+        e3_id,
+        reason: "missing decryption key shares".to_string(),
+        missing_parties: vec![2],
+    };
+
+    actor.send(failure.clone()).await?;
+
+    let result = history.send(TakeEvents::<InterfoldEvent>::new(1)).await?;
+    assert!(
+        result.timed_out,
+        "no event expected before the deadline, got {:?}",
+        result.events.first().map(|e| e.event_type())
+    );
+    assert!(!matches!(
+        repo.read().await?.expect("persisted keyshare state").state,
+        KeyshareState::Failed { .. }
     ));
 
     Ok(())
@@ -410,6 +475,7 @@ async fn restart_skips_dkg_work_after_public_key_context_is_persisted() -> Resul
         interfold_address: Address::ZERO,
         recovery,
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+        signer: alloy::signers::local::PrivateKeySigner::random(),
     })
     .start();
     let effects_enabled = InterfoldEvent::<Unsequenced>::new_with_timestamp(

@@ -38,21 +38,35 @@ pub(crate) enum CollectOutcome {
     Completed(Vec<Arc<EncryptionKey>>),
 }
 
+/// Result of the collection cutoff.
+#[derive(Debug)]
+pub(crate) enum CutoffOutcome<T> {
+    /// The collection had already finished or timed out.
+    Inert,
+    /// At least the minimum number of parties delivered before the cutoff.
+    Completed(T),
+    /// Fewer than the minimum delivered. Carries the parties still missing.
+    Failed(Vec<PartyId>),
+}
+
 /// Pure tally for the encryption-key collection phase.
 pub(crate) struct EncryptionKeyCollection {
     e3_id: E3id,
     todo: HashSet<PartyId>,
     keys: HashMap<PartyId, Arc<EncryptionKey>>,
+    /// Smallest number of collected keys that lets the DKG continue at the cutoff.
+    minimum: usize,
     phase: CollectionPhase,
 }
 
 impl EncryptionKeyCollection {
-    /// Expect keys from parties `0..total`.
-    pub fn new(e3_id: E3id, total: u64) -> Self {
+    /// Expect keys from parties `0..total`. The cutoff completes with at least `minimum` keys.
+    pub fn new(e3_id: E3id, total: u64, minimum: usize) -> Self {
         Self {
             e3_id,
             todo: (0..total).collect(),
             keys: HashMap::new(),
+            minimum,
             phase: CollectionPhase::Collecting,
         }
     }
@@ -127,14 +141,25 @@ impl EncryptionKeyCollection {
         self.finish_if_done()
     }
 
-    /// Mark the collection as timed out, returning the missing parties if it
-    /// was still collecting (otherwise `None`).
-    pub fn timeout(&mut self) -> Option<Vec<PartyId>> {
+    /// Apply the collection cutoff. Completes with the keys collected so far when at least
+    /// `minimum` parties delivered. Otherwise the collection times out and the missing
+    /// parties are returned.
+    pub fn cutoff(&mut self) -> CutoffOutcome<Vec<Arc<EncryptionKey>>> {
         if !self.is_collecting() {
-            return None;
+            return CutoffOutcome::Inert;
+        }
+        if self.keys.len() >= self.minimum {
+            info!(
+                e3_id = %self.e3_id,
+                collected = self.keys.len(),
+                missing = ?self.todo,
+                "Encryption key cutoff reached with enough keys; continuing without the missing parties"
+            );
+            self.phase = CollectionPhase::Finished;
+            return CutoffOutcome::Completed(self.sorted_keys());
         }
         self.phase = CollectionPhase::TimedOut;
-        Some(self.todo.iter().copied().collect())
+        CutoffOutcome::Failed(self.todo.iter().copied().collect())
     }
 
     fn finish_if_done(&mut self) -> CollectOutcome {
@@ -166,7 +191,8 @@ mod tests {
     }
 
     fn collection() -> EncryptionKeyCollection {
-        EncryptionKeyCollection::new(E3id::new("1", 1), 3)
+        // N = 3, H = 2.
+        EncryptionKeyCollection::new(E3id::new("1", 1), 3, 2)
     }
 
     #[test]
@@ -233,13 +259,31 @@ mod tests {
     }
 
     #[test]
-    fn timeout_reports_missing_then_is_inert() {
+    fn cutoff_below_minimum_reports_missing_then_is_inert() {
         let mut c = collection();
         c.receive(key(0));
-        let mut missing = c.timeout().expect("missing parties");
+        let CutoffOutcome::Failed(mut missing) = c.cutoff() else {
+            panic!("expected Failed");
+        };
         missing.sort();
         assert_eq!(missing, vec![1, 2]);
         assert!(!c.is_collecting());
-        assert!(c.timeout().is_none(), "second timeout is a no-op");
+        assert!(matches!(c.cutoff(), CutoffOutcome::Inert));
+    }
+
+    #[test]
+    fn cutoff_at_minimum_completes_with_partial_roster() {
+        let mut c = collection();
+        c.receive(key(2));
+        c.receive(key(0));
+        match c.cutoff() {
+            CutoffOutcome::Completed(keys) => {
+                let ids: Vec<_> = keys.iter().map(|k| k.party_id).collect();
+                assert_eq!(ids, vec![0, 2], "party 1 is absent, roster is not a prefix");
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+        assert!(!c.is_collecting());
+        assert!(matches!(c.receive(key(1)), CollectOutcome::Ignored));
     }
 }

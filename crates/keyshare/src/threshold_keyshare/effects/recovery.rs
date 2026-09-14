@@ -186,6 +186,15 @@ impl ThresholdKeyshare {
         );
         let ec = recovery.last_ec.clone().unwrap_or(effects_context);
         let state = self.state.try_get()?;
+        info!(
+            e3_id = %state.e3_id,
+            party_id = state.party_id,
+            phase = state.state.variant_name(),
+            roster_epoch = ?state.roster.as_ref().and_then(|r| r.epoch),
+            has_c4_pending = recovery.decryption_share_proofs_pending.is_some(),
+            has_verification = recovery.share_verification_complete.is_some(),
+            "Resuming threshold-keyshare in-flight work after restart"
+        );
 
         match state.state {
             KeyshareState::Init => {
@@ -224,7 +233,12 @@ impl ThresholdKeyshare {
                     self.bus.publish(pending, pending_ec)?;
                 }
                 if let Some(verification) = recovery.share_verification_complete.clone() {
-                    self.handle_share_verification_complete(verification)
+                    // Re-report readiness, then resume the accepted roster epoch when one
+                    // was persisted. The C4 computation is a compute-request job, so a
+                    // crash between accepting the roster and receiving the key response
+                    // must issue it again.
+                    self.handle_share_verification_complete(verification)?;
+                    self.resume_accepted_roster(ec, self_addr)
                 } else {
                     self.replay_threshold_shares(&recovery, self_addr)
                 }
@@ -248,6 +262,10 @@ impl ThresholdKeyshare {
                     self.handle_share_verification_complete(verification)
                 } else if Self::needs_keyshare_republication(&state, &recovery) {
                     self.publish_keyshare_created(ec)
+                } else if state.roster.as_ref().is_some_and(|r| r.epoch_missed) {
+                    // The served epoch missed before the restart. Its C4 shares are stale;
+                    // look for the next epoch instead of waiting for them again.
+                    self.resume_roster_rotation(ec)
                 } else {
                     self.replay_decryption_key_shares(&recovery, self_addr)
                 }

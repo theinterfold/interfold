@@ -54,8 +54,10 @@ impl ThresholdKeyshare {
         } = generate_bfv_keypair(&self.share_enc_preset, &self.cipher)?;
 
         let e3_id = state.e3_id.clone();
+        let committee = msg.committee.clone();
 
-        self.state.try_mutate(&ec, |s| {
+        self.state.try_mutate(&ec, |mut s| {
+            s.committee = Some(committee.clone());
             s.new_state(KeyshareState::CollectingEncryptionKeys(
                 CollectingEncryptionKeysData {
                     sk_bfv: sk_bfv_encrypted.clone(),
