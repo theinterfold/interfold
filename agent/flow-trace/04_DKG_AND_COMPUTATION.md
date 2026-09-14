@@ -859,6 +859,12 @@ deadlines, recovery flow, and remaining trust.
 
 ### Ciphertext Output Publication
 
+The support host sends raw bincode input by default. `BOUNDLESS_INPUT_ENCODING=risc0-serde` selects
+the older byte-vector wrapper for an external Boundless guest and requires `PROGRAM_URL`.
+The embedded guest always receives raw bincode. This compatibility setting does not change the
+guest or its image ID. The selected external guest must match the deployed verifiers and produce
+the same journal as the host for the round inputs.
+
 The RISC Zero guest commits nine 32-byte fields in this order: chain ID, Interfold address, E3 ID,
 encryption scheme ID, committee public key, output hash, SAFE commitment, parameter hash, and input
 root. RISC Zero serializes these fields as a 1,188-byte journal. The support app returns the seal,
