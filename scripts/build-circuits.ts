@@ -5,9 +5,21 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { execSync } from 'child_process'
+import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs'
+import { tmpdir } from 'os'
 import { basename, join, resolve } from 'path'
 import { AbiCoder, id, keccak256 } from 'ethers'
 import { BFV_PARAMS } from '../packages/interfold-contracts/scripts/protocol/constants'
@@ -659,8 +671,70 @@ library ActiveCryptoConfig {
     if (committee) {
       this.setNoirCommittee(committee)
       this.regenerateParityMatrices(committee)
+      this.syncCommitteeBounds(preset, committee)
       this.patchUtilsTs(preset, committee)
       this.writeActiveCryptoConfig(preset, committee)
+    }
+  }
+
+  private syncCommitteeBounds(preset: CircuitPreset, committee: CircuitCommittee): void {
+    const tier = PRESET_NOIR_CONFIG[preset]
+    const configDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', tier)
+    const temporaryDir = mkdtempSync(join(tmpdir(), 'interfold-noir-config-'))
+    const sources = [
+      { circuit: 'pk-generation', file: 'threshold.nr', prefix: 'PK_GENERATION_' },
+      { circuit: 'share-computation', file: 'dkg.nr', prefix: 'SHARE_COMPUTATION_' },
+    ]
+
+    try {
+      for (const source of sources) {
+        const outputDir = join(temporaryDir, source.circuit)
+        mkdirSync(outputDir)
+        execFileSync(
+          'cargo',
+          [
+            'run',
+            '--quiet',
+            '-p',
+            'e3-zk-helpers',
+            '--bin',
+            'zk_cli',
+            '--',
+            '--circuit',
+            source.circuit,
+            '--preset',
+            tier,
+            '--committee',
+            committee,
+            '--output',
+            outputDir,
+          ],
+          { cwd: this.rootDir, stdio: 'pipe' },
+        )
+      }
+
+      for (const source of sources) {
+        const targetPath = join(configDir, source.file)
+        const generated = readFileSync(join(temporaryDir, source.circuit, 'configs.nr'), 'utf8')
+        const original = readFileSync(targetPath, 'utf8')
+        let updated = original
+        let count = 0
+        for (const match of generated.matchAll(/^pub global ([A-Z0-9_]+):[^;]*;/gm)) {
+          const name = match[1]
+          if (!name.startsWith(source.prefix)) continue
+          const declaration = new RegExp(`^pub global ${name}:[^;]*;`, 'm')
+          if (!declaration.test(updated)) {
+            throw new Error(`Missing ${name} in ${targetPath}`)
+          }
+          updated = updated.replace(declaration, match[0])
+          count++
+        }
+        if (count === 0) throw new Error(`No ${source.prefix} constants generated for ${preset}/${committee}`)
+        if (updated !== original) writeFileSync(targetPath, updated)
+      }
+      console.log(`   📋 Regenerated C1/C2 bounds for ${preset}/${committee}`)
+    } finally {
+      rmSync(temporaryDir, { recursive: true, force: true })
     }
   }
 
@@ -687,12 +761,12 @@ library ActiveCryptoConfig {
         return result
       }
 
-      const sourceHash = this.computeSourceHash(preset, committee)
-      result.sourceHash = sourceHash
-
       if (modNrPath) {
         this.syncPresetAndCommittee(modNrPath, preset, committee)
       }
+
+      const sourceHash = this.computeSourceHash(preset, committee)
+      result.sourceHash = sourceHash
 
       if (this.options.hydrateBinOnly) {
         if (!this.isDistPresetUpToDate(preset, committee, sourceHash)) {
