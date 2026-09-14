@@ -1080,13 +1080,17 @@ jobs:
       - name: Check generated verifiers are in sync
         run: pnpm check:verifiers --no-compile
 
+      # A PR tests circuits built from its source. Non-PR runs also verify the shared release matrix.
       - name: Pull the complete circuit matrix
+        if: github.event_name != 'pull_request'
         run: pnpm store:circuits pull
 
       - name: Verify release circuit provenance
+        if: github.event_name != 'pull_request'
         run: pnpm store:circuits verify-release
 
       - name: Check every generated BFV verifier
+        if: github.event_name != 'pull_request'
         run: |
           while read -r preset committee
           do
