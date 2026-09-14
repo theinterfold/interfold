@@ -9,6 +9,7 @@ import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
+import { NoirCircuitBuilder } from './build-circuits'
 import { RELEASE_REQUIRED_PAIRS, requiredArtifactMarkers, validateArtifactSet, validateReleaseArtifacts } from './circuit-artifacts'
 
 function sourceHash(preset: string, committee: string): string {
@@ -29,6 +30,37 @@ function makeCompleteMatrix(): string {
   }
   return dir
 }
+
+test('pair source hash ignores generated bounds but tracks other Noir config', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-hash-'))
+  const configDir = join(dir, 'circuits', 'lib', 'src', 'configs', 'insecure')
+  mkdirSync(configDir, { recursive: true })
+  const thresholdPath = join(configDir, 'threshold.nr')
+  const dkgPath = join(configDir, 'dkg.nr')
+  writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 10;\npub global L: u32 = 2;\n')
+  writeFileSync(dkgPath, 'pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 28;\n')
+
+  try {
+    const builder = new NoirCircuitBuilder(dir, { preset: 'insecure-512', committee: 'micro' })
+    const originalHash = builder.computeSourceHash('insecure-512', 'micro')
+    writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global L: u32 = 2;\n')
+    writeFileSync(dkgPath, 'pub global SHARE_COMPUTATION_E_SM_BIT_SECRET: u32 = 30;\n')
+    assert.equal(builder.computeSourceHash('insecure-512', 'micro'), originalHash)
+
+    writeFileSync(thresholdPath, 'pub global PK_GENERATION_E_SM_BOUND: Field = 20;\npub global L: u32 = 3;\n')
+    assert.notEqual(builder.computeSourceHash('insecure-512', 'micro'), originalHash)
+
+    const generatorDir = join(dir, 'crates', 'zk-helpers', 'src')
+    mkdirSync(generatorDir, { recursive: true })
+    const generatorPath = join(generatorDir, 'generator.rs')
+    writeFileSync(generatorPath, 'first')
+    const generatorHash = builder.computeSourceHash('insecure-512', 'micro')
+    writeFileSync(generatorPath, 'second')
+    assert.notEqual(builder.computeSourceHash('insecure-512', 'micro'), generatorHash)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
 
 test('accepts the exact supported circuit matrix', () => {
   const dir = makeCompleteMatrix()

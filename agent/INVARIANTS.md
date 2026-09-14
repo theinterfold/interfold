@@ -457,6 +457,8 @@ design citation alone does not establish current runtime behavior.
   build stamp with the exact preset, committee, and source hash. `checksums.json` and `SHA256SUMS`
   must cover the archive contents. Nodes select the artifact directory from the E3's on-chain
   parameter set and committee size.
+- The pair source hash ignores generated C1/C2 bound values and includes the Rust sources that
+  generate them. Switching the active committee must not change another pair's source hash.
 
 ### DKG / threshold structure
 
