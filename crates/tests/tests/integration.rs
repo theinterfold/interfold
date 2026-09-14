@@ -2059,6 +2059,27 @@ async fn test_trbfv_actor() -> Result<()> {
             "disconnected party was selected for the DKG roster"
         );
     }
+    if proof_aggregation_enabled && offline_node_index.is_none() {
+        let standby_party_id = (0..threshold_n)
+            .find(|party_id| !accepted_rosters[0].contains(&(*party_id as u64)))
+            .context("DKG roster has no standby party")?;
+        let standby_node_index = find_node_index_by_address(&nodes, &committee[standby_party_id])?;
+        wait_for_history_match(
+            &nodes,
+            standby_node_index,
+            0,
+            "standby party C4 share",
+            pubkey_flow_timeout.min(Duration::from_secs(300)),
+            |data| {
+                matches!(
+                    data,
+                    InterfoldEventData::DecryptionKeyShared(share)
+                        if share.e3_id == e3_id && share.party_id == standby_party_id as u64
+                )
+            },
+        )
+        .await?;
+    }
     let selected_addresses: Vec<Address> = accepted_rosters[0]
         .iter()
         .map(|&party_id| pk_agg.committee_addresses[party_id as usize])
