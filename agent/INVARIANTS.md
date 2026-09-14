@@ -692,6 +692,11 @@ design citation alone does not establish current runtime behavior.
   It persists a completed fold before publication. Restart must restore inputs or the completed
   output and resume only after `EffectsEnabled`. `KeyPublished` and terminal E3 events release the
   saved node-fold data. — `flow-trace/04`; `flow-trace/06`
+- On restart in `ReadyForDecryption`, rebuild the C4 collector from the saved roster and replay
+  saved peer C4 shares. A restored C4 proof job cannot advance DKG if its peer-share collector is
+  absent. After collection is complete, a duplicate C4 share must not start another collector.
+  Saved C0 and C4 inputs must keep the first message from each party, as the live collectors do.
+  — `flow-trace/04`
 - A fatal threshold-keyshare collector timeout commits `KeyshareState::Failed` before it publishes
   `E3Failed`. The persisted failure stage and reason are immutable. After hydration,
   `EffectsEnabled` redrives the saved failure and does not resume the earlier DKG phase. —

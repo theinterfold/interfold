@@ -28,7 +28,7 @@ impl ThresholdKeyshare {
         let party_id = event.key.party_id;
         let ec = event.get_ctx().clone();
         self.recovery.try_mutate(&ec, |mut recovery| {
-            recovery.encryption_keys.insert(party_id, event);
+            recovery.encryption_keys.entry(party_id).or_insert(event);
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })
@@ -99,7 +99,10 @@ impl ThresholdKeyshare {
         let party_id = event.party_id;
         let ec = event.get_ctx().clone();
         self.recovery.try_mutate(&ec, |mut recovery| {
-            recovery.decryption_key_shares.insert(party_id, event);
+            recovery
+                .decryption_key_shares
+                .entry(party_id)
+                .or_insert(event);
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })
@@ -165,9 +168,6 @@ impl ThresholdKeyshare {
         recovery: &ThresholdKeyshareRecoveryState,
         self_addr: Addr<Self>,
     ) -> Result<()> {
-        if recovery.decryption_key_shares.is_empty() {
-            return Ok(());
-        }
         let collector = self.ensure_decryption_key_shared_collector(self_addr)?;
         for event in recovery.decryption_key_shares.values() {
             collector.try_send(event.clone())?;
@@ -250,6 +250,12 @@ impl ThresholdKeyshare {
         );
         let ec = recovery.last_ec.clone().unwrap_or(effects_context);
         let state = self.state.try_get()?;
+        info!(
+            e3_id = %state.e3_id,
+            ready_for_decryption = matches!(&state.state, KeyshareState::ReadyForDecryption(_)),
+            c4_proof_intent = recovery.decryption_share_proofs_pending.is_some(),
+            "resuming persisted threshold keyshare work"
+        );
 
         match state.state {
             KeyshareState::Init => {
@@ -322,6 +328,11 @@ impl ThresholdKeyshare {
                 if Self::public_key_context_is_recovered(&state) {
                     return Ok(());
                 }
+                if recovery.decryption_verification_complete.is_none()
+                    && !Self::needs_keyshare_republication(&state, &recovery)
+                {
+                    self.replay_decryption_key_shares(&recovery, self_addr)?;
+                }
                 if let Some(pending) = recovery.threshold_share_pending.clone() {
                     let (pending, pending_ec) = pending.into_components();
                     self.bus.publish(pending, pending_ec)?;
@@ -335,7 +346,7 @@ impl ThresholdKeyshare {
                 } else if Self::needs_keyshare_republication(&state, &recovery) {
                     self.publish_keyshare_created(ec)
                 } else {
-                    self.replay_decryption_key_shares(&recovery, self_addr)
+                    Ok(())
                 }
             }
             KeyshareState::Decrypting(_) => {

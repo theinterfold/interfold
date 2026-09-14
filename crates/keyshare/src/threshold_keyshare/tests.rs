@@ -12,12 +12,14 @@ use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
 use e3_events::{
-    hlc_factory::HlcFactory, BusHandle, ComputeRequestKind, E3Stage, E3id, EffectsEnabled, Event,
-    EventBus, EventBusConfig, EventSource, FailureReason, GetEvents, HistoryCollector,
-    InterfoldEvent, InterfoldEventData, Sequencer, StoreEventRequested, StoreEventResponse,
-    TakeEvents, Unsequenced,
+    hlc_factory::HlcFactory, BusHandle, CircuitName, ComputeRequestKind, DecryptionKeyShared,
+    E3Stage, E3id, EffectsEnabled, EncryptionKey, EncryptionKeyCreated, Event, EventBus,
+    EventBusConfig, EventSource, FailureReason, GetEvents, HistoryCollector, InterfoldEvent,
+    InterfoldEventData, Proof, ProofPayload, ProofType, Sequencer, SignedProofPayload,
+    StoreEventRequested, StoreEventResponse, TakeEvents, Unsequenced, VerificationKind,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
+use std::collections::BTreeSet;
 use std::sync::Arc;
 
 #[actix::test]
@@ -430,4 +432,190 @@ async fn restart_skips_dkg_work_after_public_key_context_is_persisted() -> Resul
     let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
     assert!(events.is_empty(), "restart replayed superseded DKG work");
     Ok(())
+}
+
+#[actix::test]
+async fn restart_rebuilds_c4_collector_before_peer_share_arrives() -> Result<()> {
+    let e3_id = E3id::new("44", 1);
+    let (bus, history) = test_bus();
+    let (mut state, _) = test_state(
+        &e3_id,
+        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
+    );
+    state.try_mutate_without_context(|mut state| {
+        state.honest_parties = Some(BTreeSet::from([0, 1]));
+        Ok(state)
+    })?;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        recovery: test_recovery(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .start();
+    let effects_enabled = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        EffectsEnabled::new().into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(1);
+    actor.send(effects_enabled).await?;
+
+    actor.send(peer_c4_event(&e3_id, 2)).await?;
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::ShareVerificationDispatched(data)
+            if data.kind == VerificationKind::DecryptionProofs
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn duplicate_c4_after_collection_does_not_start_another_collector() -> Result<()> {
+    let e3_id = E3id::new("45", 1);
+    let (bus, history) = test_bus();
+    let (mut state, _) = test_state(
+        &e3_id,
+        KeyshareState::ReadyForDecryption(ready_for_c4_test()),
+    );
+    state.try_mutate_without_context(|mut state| {
+        state.honest_parties = Some(BTreeSet::from([0, 1]));
+        Ok(state)
+    })?;
+    let duplicate = peer_c4_event(&e3_id, 2);
+    let mut recovery = test_recovery();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.decryption_key_shares.insert(
+            1,
+            TypedEvent::new(
+                match duplicate.get_data() {
+                    InterfoldEventData::DecryptionKeyShared(data) => data.clone(),
+                    _ => unreachable!(),
+                },
+                duplicate.get_ctx().clone(),
+            ),
+        );
+        Ok(recovery)
+    })?;
+    let actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        recovery,
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    })
+    .start();
+    actor.send(duplicate).await?;
+    actix::clock::sleep(std::time::Duration::from_millis(25)).await;
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(events.is_empty(), "duplicate C4 restarted collection");
+    Ok(())
+}
+
+#[actix::test]
+async fn recovery_keeps_the_first_c0_and_c4_from_each_party() -> Result<()> {
+    let e3_id = E3id::new("46", 1);
+    let (bus, _) = test_bus();
+    let (state, _) = test_state(&e3_id, KeyshareState::Init);
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        recovery: test_recovery(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+    let first_c4_event = peer_c4_event(&e3_id, 1);
+    let ec = first_c4_event.get_ctx().clone();
+    let first_c0 = EncryptionKeyCreated {
+        e3_id: e3_id.clone(),
+        key: Arc::new(EncryptionKey::new(1, ArcBytes::from_bytes(&[1]))),
+        external: true,
+    };
+    let later_c0 = EncryptionKeyCreated {
+        key: Arc::new(EncryptionKey::new(1, ArcBytes::from_bytes(&[2]))),
+        ..first_c0.clone()
+    };
+    actor.record_encryption_key(&TypedEvent::new(first_c0.clone(), ec.clone()))?;
+    actor.record_encryption_key(&TypedEvent::new(later_c0, ec.clone()))?;
+
+    let InterfoldEventData::DecryptionKeyShared(first_c4) = first_c4_event.get_data() else {
+        unreachable!();
+    };
+    let mut later_c4 = first_c4.clone();
+    later_c4.signed_sk_decryption_proof.signature = ArcBytes::from_bytes(&[9]);
+    actor.record_decryption_key_share(&TypedEvent::new(first_c4.clone(), ec.clone()))?;
+    actor.record_decryption_key_share(&TypedEvent::new(later_c4, ec))?;
+
+    let recovery = actor.recovery.try_get()?;
+    assert_eq!(recovery.encryption_keys.get(&1).unwrap().key, first_c0.key);
+    assert_eq!(
+        recovery
+            .decryption_key_shares
+            .get(&1)
+            .unwrap()
+            .clone()
+            .into_inner(),
+        first_c4.clone()
+    );
+    Ok(())
+}
+
+fn ready_for_c4_test() -> ReadyForDecryption {
+    ReadyForDecryption {
+        pk_share: ArcBytes::from_bytes(&[1]),
+        sk_poly_sum: SensitiveBytes::from_encrypted(&[2]),
+        es_poly_sum: vec![SensitiveBytes::from_encrypted(&[3])],
+        signed_pk_generation_proof: None,
+        signed_sk_share_computation_proof: None,
+        signed_e_sm_share_computation_proof: None,
+        signed_sk_share_encryption_proofs: Vec::new(),
+        signed_e_sm_share_encryption_proofs: Vec::new(),
+    }
+}
+
+fn peer_c4_event(e3_id: &E3id, seq: u64) -> InterfoldEvent {
+    let proof = SignedProofPayload {
+        payload: ProofPayload {
+            e3_id: e3_id.clone(),
+            proof_type: ProofType::C4aSkShareDecryption,
+            proof: Proof::new(
+                CircuitName::DkgShareDecryption,
+                ArcBytes::from_bytes(&[]),
+                ArcBytes::from_bytes(&[]),
+            ),
+        },
+        signature: ArcBytes::from_bytes(&[]),
+    };
+    let mut esm_proof = proof.clone();
+    esm_proof.payload.proof_type = ProofType::C4bESmShareDecryption;
+    let share = DecryptionKeyShared {
+        e3_id: e3_id.clone(),
+        party_id: 1,
+        node: Address::ZERO.to_string(),
+        signed_sk_decryption_proof: proof,
+        signed_e_sm_decryption_proofs: vec![esm_proof],
+        external: true,
+    };
+    InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        share.into(),
+        None,
+        seq.into(),
+        None,
+        EventSource::Net,
+    )
+    .into_sequenced(seq)
 }

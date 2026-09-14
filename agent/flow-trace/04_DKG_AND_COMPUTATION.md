@@ -126,7 +126,8 @@ ProofRequestActor receives EncryptionKeyPending
 ```
 EncryptionKeyCollector collects verified EncryptionKeyCreated events
 │
-├─ On each arrival: store (party_id → bfv_public_key)
+├─ On each arrival: store the first (party_id → bfv_public_key) message;
+│  replay keeps that same first message if a later duplicate arrives
 │
 ├─ On TIMEOUT (derived DKG-phase cutoff):
 │   ├─ With at least H keys, including this party's key:
@@ -567,6 +568,13 @@ ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 ├─ 5. COLLECT C4 SHARES FROM THE ACCEPTED ROSTER:
 │     Each selected party waits for DecryptionKeyShared from the other H−1
 │     selected parties
+│     On restart, rebuild the collector from the saved roster and feed it saved
+│     peer shares before new shares arrive. A valid new share also creates the
+│     collector if it is still absent.
+│     After all selected peer shares arrive, ignore late duplicates so they do
+│     not start another collector and cause a false timeout.
+│     The saved replay map also keeps the first C4 message from each party,
+│     matching the live collector.
 │     │
 │     ├─ On timeout:
 │     │  ├─ Persist KeyshareState::Failed {

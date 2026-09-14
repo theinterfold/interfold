@@ -123,8 +123,9 @@ impl CiphernodeSystem {
             bail!("ciphernode index is out of range");
         }
         let old = self.nodes.remove(index);
+        let old_peer_id = old.peer_id;
         if let Some(mock) = &self.network_mock {
-            mock.disconnect_node(old.peer_id).await;
+            mock.disconnect_node_for_restart(old_peer_id).await;
         }
         old.shutdown(Duration::from_secs(30))
             .await
@@ -133,8 +134,12 @@ impl CiphernodeSystem {
             .await
             .context("ciphernode rebuild after restart failed")?;
         if let Some(mock) = &self.network_mock {
-            mock.add_node(replacement.peer_id, replacement.channel_bridge()?)
-                .await;
+            mock.add_replacement_node(
+                old_peer_id,
+                replacement.peer_id,
+                replacement.channel_bridge()?,
+            )
+            .await;
         }
         self.nodes.insert(index, replacement);
         Ok(())

@@ -124,6 +124,35 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                             );
                             return;
                         }
+                        if matches!(state.state, KeyshareState::ReadyForDecryption(_))
+                            && self.decryption_key_shared_collector.is_none()
+                        {
+                            let recovery = match self.recovery.try_get() {
+                                Ok(recovery) => recovery,
+                                Err(err) => {
+                                    error!("Failed to inspect DecryptionKeyShared recovery state: {err}");
+                                    return;
+                                }
+                            };
+                            let collection_complete = state.keyshare_published
+                                || recovery.decryption_verification_complete.is_some()
+                                || state.honest_parties.as_ref().is_some_and(|parties| {
+                                    parties
+                                        .iter()
+                                        .filter(|&&party_id| party_id != state.party_id)
+                                        .all(|party_id| {
+                                            recovery.decryption_key_shares.contains_key(party_id)
+                                        })
+                                });
+                            if collection_complete {
+                                trace!(
+                                    party_id = data.party_id,
+                                    e3_id = %data.e3_id,
+                                    "Ignoring DecryptionKeyShared after C4 collection completed"
+                                );
+                                return;
+                            }
+                        }
                         let recovered_event = TypedEvent::new(data.clone(), ec.clone());
                         if let Err(err) = self.record_decryption_key_share(&recovered_event) {
                             error!("Failed to persist DecryptionKeyShared recovery input: {err}");
@@ -133,19 +162,11 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                             KeyshareState::AggregatingDecryptionKey(_) => {
                                 self.handle_early_decryption_key_share(data, ec)
                             }
-                            KeyshareState::ReadyForDecryption(_) => {
-                                // Delegate to the collector actor
-                                if let Some(ref collector) = self.decryption_key_shared_collector {
+                            KeyshareState::ReadyForDecryption(_) => self
+                                .ensure_decryption_key_shared_collector(ctx.address())
+                                .map(|collector| {
                                     collector.do_send(TypedEvent::new(data, ec));
-                                    Ok(())
-                                } else {
-                                    warn!(
-                                        "DecryptionKeyShared from party {} dropped — no collector (sole honest party)",
-                                        data.party_id
-                                    );
-                                    Ok(())
-                                }
-                            }
+                                }),
                             other => {
                                 trace!(
                                     "DecryptionKeyShared from party {} in unexpected state {:?}, ignoring",

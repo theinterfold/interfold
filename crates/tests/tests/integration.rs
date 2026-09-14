@@ -16,9 +16,9 @@ use e3_events::{
     hlc::HlcTimestamp, prelude::*, AggregateConfig, AggregateId, BusHandle,
     CiphertextOutputPublished, CommitteeFinalized, CommitteeRequested, ComputeRequestKind,
     ComputeResponseKind, ConfigurationUpdated, DkgFoldAttestationContextEstablished, E3Requested,
-    E3id, InterfoldEvent, InterfoldEventData, OperatorActivationChanged, PlaintextAggregated,
-    ProofType, Seed, TakeEvents, TicketBalanceUpdated, VerificationKind, ZkRequest, ZkResponse,
-    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    E3id, EventType, InterfoldEvent, InterfoldEventData, OperatorActivationChanged,
+    PlaintextAggregated, ProofType, Seed, TakeEvents, TicketBalanceUpdated, Unsubscribe,
+    VerificationKind, ZkRequest, ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
@@ -1902,6 +1902,12 @@ async fn test_trbfv_actor() -> Result<()> {
             .cloned()
             .context("restart identity is missing")?;
         println!("Stopping committee party {restart_party_id} during C4");
+        bus.event_bus()
+            .send(Unsubscribe::new(
+                EventType::All,
+                nodes[node_index].bus().event_bus().clone().recipient(),
+            ))
+            .await?;
         nodes
             .restart_node(node_index, async {
                 let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
@@ -2013,6 +2019,17 @@ async fn test_trbfv_actor() -> Result<()> {
     );
 
     let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
+    if offline_node_index.is_some() {
+        assert!(
+            !active_aggregator_history.iter().any(|event| {
+                matches!(
+                    event.get_data(),
+                    InterfoldEventData::E3Failed(data) if data.e3_id == e3_id
+                )
+            }),
+            "active aggregator marked the E3 failed despite selecting an available DKG roster"
+        );
+    }
     let accepted_rosters: Vec<Vec<u64>> = active_aggregator_history
         .iter()
         .filter_map(|event| match event.get_data() {
@@ -2155,6 +2172,12 @@ async fn test_trbfv_actor() -> Result<()> {
             .cloned()
             .context("restart identity is missing")?;
         println!("Stopping committee party {restart_party_id} at node index {node_index}");
+        bus.event_bus()
+            .send(Unsubscribe::new(
+                EventType::All,
+                nodes[node_index].bus().event_bus().clone().recipient(),
+            ))
+            .await?;
         nodes
             .restart_node(node_index, async {
                 let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
