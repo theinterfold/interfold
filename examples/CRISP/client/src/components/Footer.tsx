@@ -15,7 +15,7 @@ const Footer: React.FC = () => {
         <span>© 2026 — Crisp Protocol</span>
         <span className='muted'>Secret-ballot voting with FHE + threshold MPC</span>
         <div className='links' style={{ alignItems: 'center' }}>
-          <a href='https://github.com/gnosisguild/interfold' target='_blank' rel='noopener noreferrer' aria-label='GitHub'>
+          <a href='https://github.com/theinterfold/interfold' target='_blank' rel='noopener noreferrer' aria-label='GitHub'>
             <GithubLogo size={18} />
           </a>
           <a href='https://x.com/theinterfold' target='_blank' rel='noopener noreferrer' aria-label='X'>

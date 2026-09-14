@@ -51,10 +51,10 @@ You can add Metamask as an extension to your browser following the official
 ### Install the Interfold CLI
 
 The easiest way to install the Interfold CLI is using our installer script:
-`curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash`
+`curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash`
 
 Or if you prefer wget:
-`wget -qO- https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash`
+`wget -qO- https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash`
 
 This script will download and install interfoldup, which is the standalone installer for the
 Interfold CLI.

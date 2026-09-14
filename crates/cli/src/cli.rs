@@ -264,7 +264,7 @@ pub enum Commands {
         /// Path to the location where the project should be initialized
         path: Option<PathBuf>,
 
-        /// Template repository to use. Expecting the form `git+https://github.com/gnosisguild/interfold.git#main:template/default`
+        /// Template repository to use. Expecting the form `git+https://github.com/theinterfold/interfold.git#main:template/default`
         #[arg(long)]
         template: Option<String>,
 
