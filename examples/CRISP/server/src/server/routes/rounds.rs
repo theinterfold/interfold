@@ -25,6 +25,7 @@ use alloy::sol_types::{SolEvent, SolValue};
 use e3_sdk::evm_helpers::contracts::{
     CommitteeSize, InterfoldContract, InterfoldRead, InterfoldWrite,
 };
+use evm_helpers::CRISPContract;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 
@@ -57,6 +58,8 @@ sol! {
 const INPUTS_READ_COST: usize = 4;
 const CENSUS_MODE_TOKEN: u64 = 0;
 const CENSUS_MODE_ONCHAIN: u64 = 2;
+/// Extra time for the request transaction to be mined after the worst-case key deadline.
+const VOTING_START_BUFFER_SECS: u64 = 120;
 
 #[derive(Debug, Deserialize)]
 pub struct RoundInputsRequest {
@@ -549,9 +552,25 @@ pub async fn initialize_crisp_round(
         _ => return Err(format!("Invalid committee size: {}", CONFIG.e3_committee_size).into()),
     };
 
-    let current_timestamp = get_current_timestamp_rpc().await?;
-    // Buffer so tx can mine before window opens; end = start + duration so voting window equals e3_duration
-    let window_start = current_timestamp + 20;
+    let crisp_program = CRISPContract::new(
+        &CONFIG.http_rpc_url,
+        &CONFIG.private_key,
+        &CONFIG.e3_program_address,
+    )
+    .await?;
+    let avail_window = crisp_program.availability_finalization_window().await?;
+    let base = if avail_window == U256::ZERO {
+        get_current_timestamp_rpc().await?
+    } else {
+        crisp_program.earliest_voting_start().await?.try_into()?
+    };
+    let window_start = base
+        .checked_add(if avail_window == U256::ZERO {
+            20
+        } else {
+            VOTING_START_BUFFER_SECS
+        })
+        .ok_or_else(|| anyhow::anyhow!("voting start overflow"))?;
     let input_window: [U256; 2] = [
         U256::from(window_start),
         U256::from(window_start + CONFIG.e3_duration),

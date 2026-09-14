@@ -70,6 +70,7 @@ sol! {
         function inputAvailabilitySigner() external view returns (address);
         function INPUT_AVAILABILITY_ATTESTATION_TTL() external view returns (uint64);
         function availabilityFinalizationWindow() external view returns (uint256);
+        function earliestVotingStart() external view returns (uint256);
         function MIN_VOTING_DURATION() external view returns (uint256);
         function pendingInputCount(uint256 e3Id) external view returns (uint40);
         function inputCommitmentDeadline(uint256 e3Id) external view returns (uint256);
@@ -420,6 +421,12 @@ impl CRISPContract<CRISPWriteProvider> {
     pub async fn availability_finalization_window(&self) -> Result<U256> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
         Ok(contract.availabilityFinalizationWindow().call().await?)
+    }
+
+    /// Read the earliest voting start from the CRISP program's current committee timeouts.
+    pub async fn earliest_voting_start(&self) -> Result<U256> {
+        let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
+        Ok(contract.earliestVotingStart().call().await?)
     }
 
     pub async fn minimum_voting_duration(&self) -> Result<U256> {

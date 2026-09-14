@@ -61,8 +61,8 @@ struct CTRequest {
     ct_bytes: Vec<u8>,
 }
 
-/// Seconds between `block.timestamp` and `inputWindow[0]` (covers approve + enable txs on Anvil).
-const INPUT_WINDOW_START_BUFFER_SECS: u64 = 60;
+/// Extra time for the request transaction to be mined after the worst-case key deadline.
+const INPUT_WINDOW_START_BUFFER_SECS: u64 = 120;
 
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
@@ -320,6 +320,12 @@ pub async fn initialize_crisp_round(
         batch_size: CONFIG.e3_compute_provider_batch_size,
     };
     let compute_provider_params_bytes = Bytes::from(serde_json::to_vec(&compute_provider_params)?);
+    let crisp_program = CRISPContract::new(
+        &CONFIG.http_rpc_url,
+        &CONFIG.private_key,
+        &CONFIG.e3_program_address,
+    )
+    .await?;
 
     info!("Getting fee quote...");
 
@@ -328,8 +334,21 @@ pub async fn initialize_crisp_round(
         "Debug Before Fee Quote - current timestamp: {:?}",
         current_timestamp
     );
-    // Buffer so tx can mine before window opens; end = start + duration so voting window equals e3_duration
-    let window_start = current_timestamp + INPUT_WINDOW_START_BUFFER_SECS;
+    // Local mock rounds retain their short start buffer. Avail rounds start only after the
+    // program's worst-case key deadline. E3_DURATION includes the finalization tail in both.
+    let avail_window = crisp_program.availability_finalization_window().await?;
+    let base = if avail_window == U256::ZERO {
+        current_timestamp
+    } else {
+        crisp_program.earliest_voting_start().await?.try_into()?
+    };
+    let window_start = base
+        .checked_add(if avail_window == U256::ZERO {
+            60
+        } else {
+            INPUT_WINDOW_START_BUFFER_SECS
+        })
+        .ok_or_else(|| anyhow!("voting start overflow"))?;
     let input_window: [U256; 2] = [
         U256::from(window_start),
         U256::from(window_start + CONFIG.e3_duration),
@@ -373,8 +392,18 @@ pub async fn initialize_crisp_round(
     // Recompute the current timestamp to ensure it's as up-to-date as possible before sending the transaction,
     // since there are multiple steps (fee quote, token approval) that could take time.
     let current_timestamp = get_current_timestamp().await?;
-    // Buffer so tx can mine before window opens; end = start + duration so voting window equals e3_duration
-    let window_start = current_timestamp + INPUT_WINDOW_START_BUFFER_SECS;
+    let base = if avail_window == U256::ZERO {
+        current_timestamp
+    } else {
+        crisp_program.earliest_voting_start().await?.try_into()?
+    };
+    let window_start = base
+        .checked_add(if avail_window == U256::ZERO {
+            60
+        } else {
+            INPUT_WINDOW_START_BUFFER_SECS
+        })
+        .ok_or_else(|| anyhow!("voting start overflow"))?;
     let input_window: [U256; 2] = [
         U256::from(window_start),
         U256::from(window_start + CONFIG.e3_duration),
