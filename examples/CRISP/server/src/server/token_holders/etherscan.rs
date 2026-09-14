@@ -1103,10 +1103,28 @@ impl EtherscanClient {
     ) -> Result<Vec<TokenHolder>> {
         log::info!("Starting token holder discovery for {}", token_address);
 
-        // Where the power is actually emitted from. For a `BondedVotes` adapter the round's token
-        // emits nothing at all: wallet power comes from the underlying token's logs and bonded
-        // power from the registry's, so scanning `token_address` alone would find nobody.
         let sources = Self::resolve_voting_power_sources(token_address, rpc_url).await;
+        self.get_token_holders_with_voting_power_from_sources(
+            token_address,
+            snapshot_timepoint,
+            rpc_url,
+            threshold,
+            divisor_override,
+            sources,
+        )
+        .await
+    }
+
+    async fn get_token_holders_with_voting_power_from_sources(
+        &self,
+        token_address: Address,
+        snapshot_timepoint: u64,
+        rpc_url: &str,
+        threshold: U256,
+        divisor_override: Option<U256>,
+        sources: VotingPowerSources,
+    ) -> Result<Vec<TokenHolder>> {
+        // The adapter has no logs. Scan its token and registry for candidates.
         if sources.registry.is_some() {
             log::info!(
                 "{} is a bonded-votes adapter: scanning token {} and registry {:?}",
@@ -1219,10 +1237,10 @@ impl EtherscanClient {
         Ok(token_holders)
     }
 
-    /// Get all token holders with a constant balance
-    /// Returns all addresses that either have a token balance or have delegation,
-    /// with their balance set to the provided constant value.
-    /// No RPC verification - eligibility is based purely on log analysis.
+    /// Get token holders with a constant voting credit.
+    /// A bonded-votes adapter emits no transfer logs. Discover its underlying token and bond
+    /// owners, then check their votes at the snapshot before assigning the constant credit.
+    /// Plain tokens keep the transfer-log census, which also supports tokens without IVotes.
     pub async fn get_token_holders_with_constant_balance(
         &self,
         token_address: Address,
@@ -1234,6 +1252,21 @@ impl EtherscanClient {
             "Starting token holder discovery (constant balance) for {}",
             token_address
         );
+
+        let sources = Self::resolve_voting_power_sources(token_address, rpc_url).await;
+        if sources.registry.is_some() {
+            let holders = self
+                .get_token_holders_with_voting_power_from_sources(
+                    token_address,
+                    snapshot_timepoint,
+                    rpc_url,
+                    U256::from(1),
+                    Some(U256::from(1)),
+                    sources,
+                )
+                .await?;
+            return Ok(Self::assign_constant_balance(holders, balance));
+        }
 
         // Step 1: Determine the block range
         let start_block = self
@@ -1298,6 +1331,16 @@ impl EtherscanClient {
         );
 
         Ok(token_holders)
+    }
+
+    fn assign_constant_balance(holders: Vec<TokenHolder>, balance: U256) -> Vec<TokenHolder> {
+        holders
+            .into_iter()
+            .map(|holder| TokenHolder {
+                address: holder.address,
+                balance: balance.to_string(),
+            })
+            .collect()
     }
 }
 
@@ -1526,6 +1569,18 @@ mod tests {
             .find(|v| v.address == addr_b)
             .unwrap();
         assert!(voter_b.has_delegation); // B is a delegate
+    }
+
+    #[test]
+    fn constant_credit_preserves_verified_voters() {
+        let voters = vec![TokenHolder {
+            address: "0xa0b86991c6218b36c1d19d4a2e9eb0ce3606eb48".to_string(),
+            balance: "200000000000000000000".to_string(),
+        }];
+
+        let credited = EtherscanClient::assign_constant_balance(voters, U256::from(1));
+        assert_eq!(credited.len(), 1);
+        assert_eq!(credited[0].balance, "1");
     }
 
     #[test]
