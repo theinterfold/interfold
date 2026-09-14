@@ -1778,6 +1778,7 @@ async fn test_trbfv_actor() -> Result<()> {
         .ok()
         .and_then(|value| value.parse::<usize>().ok())
     {
+        let c0_observation_timeout = pubkey_flow_timeout.min(Duration::from_secs(dkg_window_secs));
         anyhow::ensure!(
             offline_node_index.is_none(),
             "select only one offline test mode"
@@ -1786,7 +1787,7 @@ async fn test_trbfv_actor() -> Result<()> {
             .get(offline_party_id)
             .ok_or_else(|| anyhow::anyhow!("offline party is outside the finalized committee"))?;
         let node_index = find_node_index_by_address(&nodes, address)?;
-        actix::clock::timeout(pubkey_flow_timeout, async {
+        actix::clock::timeout(c0_observation_timeout, async {
             loop {
                 let history = nodes.get_history(node_index).await?;
                 if history.iter().any(|event| {
@@ -1806,7 +1807,7 @@ async fn test_trbfv_actor() -> Result<()> {
             .find(|&party_id| party_id != offline_party_id)
             .context("committee has no other party to observe C0")?;
         let witness_node_index = find_node_index_by_address(&nodes, &committee[witness_party_id])?;
-        actix::clock::timeout(pubkey_flow_timeout, async {
+        actix::clock::timeout(c0_observation_timeout, async {
             loop {
                 let history = nodes.get_history(witness_node_index).await?;
                 if history.iter().any(|event| {
