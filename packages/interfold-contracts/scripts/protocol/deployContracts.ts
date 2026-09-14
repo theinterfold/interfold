@@ -290,7 +290,7 @@ async function deployMockCiphertextVerifier(ethers: any) {
   return deployedAddress(verifier);
 }
 
-function bfvHonkSource(
+export function bfvHonkSource(
   config: ActiveBfvConfig,
   contractName: "DkgAggregatorVerifier" | "DecryptionAggregatorVerifier",
 ): string {
