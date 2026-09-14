@@ -5,7 +5,8 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 
-import { ethers } from "./fixtures/connection";
+import dkgAggregatorV2VerifierModule from "../ignition/modules/dkgAggregatorV2Verifier";
+import { ethers, ignition } from "./fixtures/connection";
 
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 const NODES_FOLD_KEY_HASH = ethers.id("v2-nodes-fold");
@@ -120,6 +121,14 @@ function encodeProof(publicInputValues: string[]): string {
 }
 
 describe("BfvPkVerifierV2", function () {
+  it("deploys the linked V2 circuit verifier", async function () {
+    const { dkgAggregatorV2Verifier } = await ignition.deploy(
+      dkgAggregatorV2VerifierModule,
+    );
+
+    expect(await dkgAggregatorV2Verifier.getAddress()).to.be.properAddress;
+  });
+
   async function deployFixture() {
     const circuit = await ethers.deployContract("MockCircuitVerifier");
     await circuit.waitForDeployment();

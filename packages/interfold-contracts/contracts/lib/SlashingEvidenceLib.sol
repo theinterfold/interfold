@@ -58,8 +58,7 @@ library SlashingEvidenceLib {
         bool isMultirow = attestation.proofType >= FIRST_MULTIROW_PROOF_TYPE &&
             attestation.proofType <= LAST_MULTIROW_PROOF_TYPE;
         if (
-            (isMultirow &&
-                attestation.proofInstance >= LBFV_ROW_INSTANCES) ||
+            (isMultirow && attestation.proofInstance >= LBFV_ROW_INSTANCES) ||
             (!isMultirow && attestation.proofInstance != 0)
         ) revert ISlashingManager.InvalidProof();
         uint256 numVotes = attestation.voters.length;
@@ -118,7 +117,16 @@ library SlashingEvidenceLib {
             attestation.signatures
         ) = abi.decode(
             proof,
-            (uint256, uint256, address[], bytes32[], bytes, uint256, uint256, bytes[])
+            (
+                uint256,
+                uint256,
+                address[],
+                bytes32[],
+                bytes,
+                uint256,
+                uint256,
+                bytes[]
+            )
         );
     }
 
@@ -131,12 +139,7 @@ library SlashingEvidenceLib {
         if (proofInstance == 0) {
             return
                 keccak256(
-                    abi.encodePacked(
-                        block.chainid,
-                        e3Id,
-                        operator,
-                        proofType
-                    )
+                    abi.encodePacked(block.chainid, e3Id, operator, proofType)
                 );
         }
         return

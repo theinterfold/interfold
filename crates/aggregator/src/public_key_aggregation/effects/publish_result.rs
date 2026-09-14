@@ -150,6 +150,13 @@ impl PublicKeyAggregator {
             .get()
             .ok_or_else(|| anyhow::anyhow!("Expected public-key aggregation state"))?;
 
+        if self
+            .lbfv_aggregation_state()?
+            .is_some_and(|aggregation| aggregation.is_failed())
+        {
+            return Ok(());
+        }
+
         if matches!(&state, PublicKeyAggregatorState::Complete { .. }) {
             let Some(publication) = self
                 .lbfv_publication_state()?

@@ -274,6 +274,51 @@ async fn secure_16384_restart_redrives_publication_intent() -> Result<()> {
 }
 
 #[actix::test]
+async fn secure_16384_restart_redrives_terminal_aggregation_failure() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::fixture;
+
+    let fixture = fixture();
+    let e3_id = fixture.state.e3_id.clone();
+    let mut aggregation =
+        LbfvAggregationStateV1::new(e3_id.clone(), fixture.state.proof_domain, vec![0, 1])?;
+    aggregation.fail("worker failed")?;
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let mut aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: Some(test_state(aggregation)),
+            lbfv_publication: None,
+            initial_is_aggregator: true,
+            effects_enabled: true,
+        },
+        test_state(generating_c5_state(CorrelationId::new())),
+    );
+
+    aggregator.resume_in_flight_work(test_ctx(EffectsEnabled::new()))?;
+
+    assert!(matches!(
+        next_event(&history).await?.into_data(),
+        InterfoldEventData::E3Failed(event)
+            if event.e3_id == e3_id
+                && event.failed_at_stage == E3Stage::CommitteeFinalized
+                && event.reason == FailureReason::DKGInvalidShares
+    ));
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert_eq!(events.len(), 1);
+    Ok(())
+}
+
+#[actix::test]
 async fn standby_persists_and_resumes_public_key_work() -> Result<()> {
     let e3_id = E3id::new("42", 1);
     let committee = CiphernodesCommitteeSize::Minimum.values();

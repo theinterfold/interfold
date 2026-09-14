@@ -390,8 +390,25 @@ impl LbfvAggregationStateV1 {
         Ok(())
     }
 
+    pub fn is_failed(&self) -> bool {
+        self.failure.is_some()
+    }
+
     pub fn fail(&mut self, reason: impl Into<String>) -> Result<()> {
-        self.failure = Some(reason.into());
+        let reason = reason.into();
+        ensure!(
+            !reason.trim().is_empty(),
+            "l-BFV aggregation failure is empty"
+        );
+        if let Some(existing) = &self.failure {
+            ensure!(
+                existing == &reason,
+                "l-BFV aggregation failure is already terminal"
+            );
+        } else {
+            self.failure = Some(reason);
+        }
+        self.clear_process_correlations();
         self.validate_loaded()
     }
 }
@@ -447,4 +464,58 @@ fn clear_row_correlation(
     );
     slots[index] = None;
     Ok(())
+}
+
+#[cfg(test)]
+mod aggregation_tests {
+    use super::*;
+    use alloy::primitives::{Address, B256, U256};
+
+    fn aggregation_state() -> LbfvAggregationStateV1 {
+        LbfvAggregationStateV1::new(
+            E3id::new("7", 1),
+            LbfvProofDomainContext {
+                protocol_version: 4,
+                chain_id: 1,
+                interfold_address: Address::repeat_byte(0x11),
+                e3_id: U256::from(7),
+                crypto_config_id: B256::repeat_byte(0x22),
+                finalized_committee_hash: B256::repeat_byte(0x33),
+                lbfv_constants_version: 1,
+                ciphertext_level: 0,
+                key_level: 0,
+            },
+            vec![0, 2],
+        )
+        .expect("state must be valid")
+    }
+
+    #[test]
+    fn failure_is_immutable_and_clears_process_correlations() {
+        let mut state = aggregation_state();
+        state.public_key_aggregation_correlations[0] = Some(CorrelationId::new());
+        state.rlk_aggregation_correlations[1] = Some(CorrelationId::new());
+        state.aggregation_fold_correlation = Some(CorrelationId::new());
+        state.dkg_aggregation_correlation = Some(CorrelationId::new());
+
+        state
+            .fail("worker failed")
+            .expect("first failure must persist");
+        state
+            .fail("worker failed")
+            .expect("the same failure must be idempotent");
+
+        assert!(state.is_failed());
+        assert!(state
+            .public_key_aggregation_correlations
+            .iter()
+            .all(Option::is_none));
+        assert!(state
+            .rlk_aggregation_correlations
+            .iter()
+            .all(Option::is_none));
+        assert!(state.aggregation_fold_correlation.is_none());
+        assert!(state.dkg_aggregation_correlation.is_none());
+        assert!(state.fail("another failure").is_err());
+    }
 }

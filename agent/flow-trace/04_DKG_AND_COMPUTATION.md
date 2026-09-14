@@ -50,7 +50,7 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │       be buffered while this node is still finishing earlier DKG phases
 │   │
 │   └─ Collector timeouts are derived from the DKG stage budget:
-│         ├─ shared local base window from `E3_DKG_WINDOW_SECS` (default 7200s)
+│         ├─ shared local base window from `E3_DKG_WINDOW_SECS` (default 21600s)
 │         ├─ EncryptionKeyCollector cutoff at 10% of the DKG window
 │         ├─ ThresholdShareCollector cutoff at 60% of the DKG window
 │         └─ per-collector env vars still override these derived defaults
@@ -521,9 +521,11 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │   fetch requests. The pure document boundary decodes the exact V1 PK and RLK share bytes. It
 │   │   │   accepts `LbfvAcceptedPartyCommitments` only when all five ordered PK, D0, and D2
 │   │   │   commitments match the fixed-shape row statements.
-│   │   │   `lbfv_generation_fold` verifies five ordered PK/RLK pairs. `node_fold_v2` reverifies
-│   │   │   C0-C4 and links each l-BFV SK commitment to C1. `nodes_fold_v2` folds exactly H parties
-│   │   │   in ascending order. `lbfv_aggregation_fold` verifies five ordered aggregation pairs.
+│   │   │   `lbfv_generation_fold` verifies five ordered PK/RLK pairs. `node_fold_v2` verifies a
+│   │   │   legacy `NodeFold` proof, C1, and the terminal generation fold. It links each l-BFV SK
+│   │   │   commitment to C1 and returns the legacy node statement as a prefix. `nodes_fold_v2`
+│   │   │   folds exactly H parties in ascending order. `lbfv_aggregation_fold` verifies five
+│   │   │   ordered aggregation pairs.
 │   │   │   `dkg_aggregator_v2` verifies those folds plus legacy C5 and compares every generation
 │   │   │   commitment. It recomputes the accepted-set hash from the folded canonical party IDs.
 │   │   │   A NodeFoldV2 public statement contains four public-prefix fields and an 85-field return,
@@ -739,6 +741,7 @@ SignedLbfvKeyShareManifest arrives at every PublicKeyAggregator
    ├─ Ignore ShareVerificationComplete with another verification_id
    ├─ Select the lowest H honest candidates
    ├─ Persist Sealed with the exact validated commitments for those H parties
+   ├─ Persist the l-BFV aggregation sidecar with both accepted document families
    └─ Persist the legacy C5 state before publishing PkAggregationProofPending
 ```
 
@@ -748,6 +751,17 @@ left at `DocumentsDurable`, publishes due fetches, re-arms the earliest retry, r
 verification dispatch with the same candidate ID, or applies the immutable sealed set. Every standby
 stores the same inputs and collection outcomes. Only the active aggregator dispatches proof or C5
 work.
+
+The active secure-16384 aggregator dispatches five PK aggregation proofs and five RLK aggregation
+proofs from the accepted documents. It folds each ordered proof pair into one five-row accumulator.
+After the fold completes, it derives the operational RLK from the same accepted PK and RLK shares.
+It persists that key in `//publickey_lbfv_aggregation/v1/{e3_id}` before final V2 proof dispatch.
+Restart clears process-local correlations and resumes missing row or fold work. If the fold is
+complete but the operational RLK is absent, restart derives and persists the same key again.
+
+An l-BFV aggregation worker error persists one immutable terminal failure before it publishes
+`E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGInvalidShares }`. Restart republishes
+only that failure. It does not resume row, fold, final V2 proof, or publication work.
 
 ```
   All committee members receive KeyshareCreated events
@@ -824,6 +838,9 @@ work.
 │   │     │   → exactly N ordered committee addresses from `CommitteeFinalized` (`topNodes`),
 │   │     │     including a member excluded before it submitted a keyshare
 │   │     │   → Rust validates both dimensions before invoking the compiled circuit
+│   │     │   → secure-16384 dispatches DkgAggregationV2 with NodesFoldV2, C5, and the
+│   │     │     completed l-BFV aggregation fold
+│   │     │   → secure-16384 also requires the persisted operational RLK before dispatch
 │   │     ├─ Tracks the in-flight correlation id
 │   │     ├─ ComputeRequestError now emits
 │   │     │   E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGInvalidShares }
@@ -892,13 +909,14 @@ work.
         │  │         e3Id, committeeRoot, c.topNodes,            │
         │  │         pkCommitment, committeeHash, proof          │
         │  │       ), InvalidProof())                            │
-        │  │       → BFV: `BfvPkVerifier` (DkgAggregator Honk)  │
-        │  │         • M-34: immutable nodesFold / C5 VK hashes  │
-        │  │           checked against publicInputs[0..1]        │
-        │  │         • C-08: committee_hash_hi/lo (slots         │
-        │  │           [2+H] & [3+H]) vs committeeHash           │
-        │  │         • last PI == pkCommitment                   │
-        │  │         • M-35: revert on failure (no `bool false`) │
+        │  │       → BFV route selects one verifier per config   │
+        │  │         • legacy: `BfvPkVerifier`                    │
+        │  │         • secure-16384/minimum: `BfvPkVerifierV2`   │
+        │  │         • V2 requires exactly 63 public inputs      │
+        │  │         • V2 checks both independent VK manifests  │
+        │  │         • V2 checks session, accepted set, registry,│
+        │  │           committee, and aggregate PK commitment    │
+        │  │         • all routes revert on verification failure │
         │  │       and verify/store per-node fold attestations   │
         │  │    6. c.publicKey = pkCommitment                    │
         │  │       publicKeyHashes[e3Id] = pkCommitment          │

@@ -36,6 +36,7 @@ import {
   bfvConfigsForChain,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
+  getBfvV2SubCircuitVkHashPaths,
   readVkRecursiveHash,
 } from "../utils";
 import { proxyImplementation } from "./safeProxyUpgrade";
@@ -193,6 +194,14 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     [plan.nodeReleaseRegistry, "NodeReleaseRegistry"],
     ...plan.bfvVerifierRoutes.flatMap((route) => [
       [route.pkVerifier, `${route.preset}/${route.committee} PK verifier`],
+      ...(route.pkVerifierV2
+        ? [
+            [
+              route.pkVerifierV2,
+              `${route.preset}/${route.committee} V2 PK verifier`,
+            ],
+          ]
+        : []),
       [
         route.decryptionVerifier,
         `${route.preset}/${route.committee} decryption verifier`,
@@ -201,6 +210,14 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
         route.dkgAggregatorVerifier,
         `${route.preset}/${route.committee} DKG aggregator verifier`,
       ],
+      ...(route.dkgAggregatorV2Verifier
+        ? [
+            [
+              route.dkgAggregatorV2Verifier,
+              `${route.preset}/${route.committee} V2 DKG aggregator verifier`,
+            ],
+          ]
+        : []),
       [
         route.decryptionAggregatorVerifier,
         `${route.preset}/${route.committee} decryption aggregator verifier`,
@@ -524,10 +541,17 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
 
     const pkRoute = await pkRouter.routeAt(index);
     const decryptionRoute = await decryptionRouter.routeAt(index);
-    equalAddress(pkRoute[0], recorded.pkVerifier, `PK route ${index}`);
+    const isV2 = expected.preset === "secure-16384";
+    const expectedPkVerifier = isV2
+      ? recorded.pkVerifierV2
+      : recorded.pkVerifier;
+    if (!expectedPkVerifier) {
+      throw new Error(`Recorded BFV route ${index} is missing its V2 verifier`);
+    }
+    equalAddress(pkRoute[0], expectedPkVerifier, `PK route ${index}`);
     equalValue(
       pkRoute[1],
-      3 * expected.h + 24,
+      isV2 ? 63 : 3 * expected.h + 24,
       `PK route ${index} public input count`,
     );
     equalAddress(
@@ -542,8 +566,8 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     );
 
     const pkVerifier = await ethers.getContractAt(
-      "BfvPkVerifier",
-      recorded.pkVerifier,
+      isV2 ? "BfvPkVerifierV2" : "BfvPkVerifier",
+      expectedPkVerifier,
     );
     const decryptionVerifier = await ethers.getContractAt(
       "BfvDecryptionVerifier",
@@ -555,11 +579,31 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
       expected.t,
       `decryption route ${index} threshold`,
     );
+    const expectedDkgAggregator = isV2
+      ? recorded.dkgAggregatorV2Verifier
+      : recorded.dkgAggregatorVerifier;
+    if (!expectedDkgAggregator) {
+      throw new Error(
+        `Recorded BFV route ${index} is missing its DKG aggregator verifier`,
+      );
+    }
     equalAddress(
       await pkVerifier.circuitVerifier(),
-      recorded.dkgAggregatorVerifier,
+      expectedDkgAggregator,
       `PK route ${index} aggregator`,
     );
+    if (isV2) {
+      if (!recorded.dkgAggregatorV2Verifier) {
+        throw new Error(
+          `Recorded BFV route ${index} is missing its V2 DKG aggregator verifier`,
+        );
+      }
+      equalAddress(
+        await pkVerifier.ciphernodeRegistry(),
+        plan.registryProxy,
+        `PK route ${index} registry`,
+      );
+    }
     equalAddress(
       await decryptionVerifier.circuitVerifier(),
       recorded.decryptionAggregatorVerifier,
@@ -571,10 +615,13 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
       `decryption route ${index} registry`,
     );
     const pkPaths = getBfvPkSubCircuitVkHashPaths(expected);
+    const nodesFoldPath = isV2
+      ? getBfvV2SubCircuitVkHashPaths(expected).nodesFold
+      : pkPaths.nodesFold;
     const decryptionPaths = getBfvDecryptionSubCircuitVkHashPaths(expected);
     equalValue(
       pkRoute[2],
-      readVkRecursiveHash(pkPaths.nodesFold, expected),
+      readVkRecursiveHash(nodesFoldPath, expected),
       `PK route ${index} nodes-fold VK`,
     );
     equalValue(

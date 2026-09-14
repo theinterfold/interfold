@@ -45,7 +45,7 @@ import {
  * Default timeout configuration (in seconds)
  */
 const DEFAULT_TIMEOUT_CONFIG = {
-  dkgWindow: Number(ACTIVE_BFV_PARAM_SET) === 2 ? 21_600 : 7200,
+  dkgWindow: 21_600,
   computeWindow: 86400,
   decryptionWindow: 3600,
 };

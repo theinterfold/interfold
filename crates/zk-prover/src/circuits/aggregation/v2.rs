@@ -25,6 +25,24 @@ use std::collections::HashSet;
 const LBFV_ROWS: usize = 5;
 const LEGACY_VK_BINDING_LEN: usize = 16;
 const V2_VK_BINDING_LEN: usize = 12;
+const SECURE_16384_MINIMUM_N: usize = 3;
+const SECURE_16384_MINIMUM_H: usize = 2;
+const SECURE_16384_MINIMUM_L: usize = 5;
+const C1_PUBLIC_FIELDS: usize = 3;
+const LBFV_PK_GENERATION_PUBLIC_FIELDS: usize = 6;
+const RLK_GENERATION_PUBLIC_FIELDS: usize = 9;
+const GENERATION_FOLD_PUBLIC_FIELDS: usize = 8 + 5 + (3 * LBFV_ROWS);
+const NODE_FOLD_PUBLIC_FIELDS: usize = 14
+    + SECURE_16384_MINIMUM_N
+    + (2 * (SECURE_16384_MINIMUM_N + SECURE_16384_MINIMUM_H) * SECURE_16384_MINIMUM_L);
+const NODE_FOLD_V2_PUBLIC_FIELDS: usize = 4 + NODE_FOLD_PUBLIC_FIELDS + 3 + (3 * LBFV_ROWS);
+const NODES_FOLD_V2_PUBLIC_FIELDS: usize =
+    6 + (SECURE_16384_MINIMUM_H * NODE_FOLD_V2_PUBLIC_FIELDS);
+const LBFV_PK_AGGREGATION_PUBLIC_FIELDS: usize = 6 + SECURE_16384_MINIMUM_H + 1;
+const RLK_AGGREGATION_PUBLIC_FIELDS: usize = 6 + (2 * SECURE_16384_MINIMUM_H) + 2;
+const AGGREGATION_FOLD_PUBLIC_FIELDS: usize =
+    7 + 5 + (3 * LBFV_ROWS * SECURE_16384_MINIMUM_H) + (3 * LBFV_ROWS);
+const C5_PUBLIC_FIELDS: usize = SECURE_16384_MINIMUM_H + 1;
 
 fn proof_fields(proof: &Proof) -> Result<Vec<String>, ZkError> {
     bytes_to_field_strings(proof.data.as_ref())
@@ -32,6 +50,28 @@ fn proof_fields(proof: &Proof) -> Result<Vec<String>, ZkError> {
 
 fn public_fields(proof: &Proof) -> Result<Vec<String>, ZkError> {
     bytes_to_field_strings(proof.public_signals.as_ref())
+}
+
+fn checked_public_fields(
+    proof: &Proof,
+    expected_circuit: CircuitName,
+    expected_len: usize,
+    label: &str,
+) -> Result<Vec<String>, ZkError> {
+    if proof.circuit != expected_circuit {
+        return Err(ZkError::InvalidInput(format!(
+            "{label} must be a {expected_circuit} proof, got {}",
+            proof.circuit
+        )));
+    }
+    let fields = public_fields(proof)?;
+    if fields.len() != expected_len {
+        return Err(ZkError::InvalidInput(format!(
+            "{label} must contain {expected_len} public fields, got {}",
+            fields.len()
+        )));
+    }
+    Ok(fields)
 }
 
 fn one_field(bytes: &ArcBytes, label: &str) -> Result<String, ZkError> {
@@ -108,6 +148,18 @@ fn generation_fold_witness(
             "generation fold row {row_index} is out of range"
         )));
     }
+    let pk_public = checked_public_fields(
+        pk_proof,
+        CircuitName::LbfvPkGeneration,
+        LBFV_PK_GENERATION_PUBLIC_FIELDS,
+        "l-BFV PK generation proof",
+    )?;
+    let rlk_public = checked_public_fields(
+        rlk_proof,
+        CircuitName::RlkGeneration,
+        RLK_GENERATION_PUBLIC_FIELDS,
+        "RLK generation proof",
+    )?;
     let pk_vk = load_vk(
         prover,
         CircuitVariant::Recursive,
@@ -153,7 +205,16 @@ fn generation_fold_witness(
                     fold_vk.key_hash.clone()
                 },
                 proof_fields(prior)?,
-                public_fields(prior)?,
+                checked_public_fields(
+                    prior,
+                    if row_index == 1 {
+                        CircuitName::LbfvGenerationFoldKernel
+                    } else {
+                        CircuitName::LbfvGenerationFold
+                    },
+                    GENERATION_FOLD_PUBLIC_FIELDS,
+                    "prior l-BFV generation accumulator",
+                )?,
                 false,
             )
         } else {
@@ -177,10 +238,10 @@ fn generation_fold_witness(
         GenerationFoldWitness {
             pk_vk: pk_vk.verification_key,
             pk_proof: proof_fields(pk_proof)?,
-            pk_public: public_fields(pk_proof)?,
+            pk_public,
             rlk_vk: rlk_vk.verification_key,
             rlk_proof: proof_fields(rlk_proof)?,
-            rlk_public: public_fields(rlk_proof)?,
+            rlk_public,
             acc_vk: acc_vk.verification_key,
             acc_proof,
             acc_public,
@@ -247,22 +308,24 @@ pub fn prove_node_dkg_fold_v2(
     job_id: &str,
     artifacts_dir: &str,
 ) -> Result<Proof, ZkError> {
-    if legacy_node_fold_proof.circuit != CircuitName::NodeFold {
-        return Err(ZkError::InvalidInput(
-            "V2 node fold requires a legacy NodeFold proof".into(),
-        ));
-    }
+    let node_fold_public = checked_public_fields(
+        legacy_node_fold_proof,
+        CircuitName::NodeFold,
+        NODE_FOLD_PUBLIC_FIELDS,
+        "V2 legacy node fold",
+    )?;
     let node_fold_vk = load_vk(
         prover,
         CircuitVariant::Default,
         artifacts_dir,
         CircuitName::NodeFold,
     )?;
-    if c1_proof.circuit != CircuitName::PkGeneration {
-        return Err(ZkError::InvalidInput(
-            "V2 node fold requires a legacy C1 proof".into(),
-        ));
-    }
+    let c1_public = checked_public_fields(
+        c1_proof,
+        CircuitName::PkGeneration,
+        C1_PUBLIC_FIELDS,
+        "V2 legacy C1",
+    )?;
     let c1_vk = load_vk(
         prover,
         CircuitVariant::Recursive,
@@ -275,17 +338,23 @@ pub fn prove_node_dkg_fold_v2(
         artifacts_dir,
         CircuitName::LbfvGenerationFold,
     )?;
+    let generation_public = checked_public_fields(
+        generation_proof,
+        CircuitName::LbfvGenerationFold,
+        GENERATION_FOLD_PUBLIC_FIELDS,
+        "V2 generation fold",
+    )?;
 
     let witness = NodeFoldV2Witness {
         node_fold_vk: node_fold_vk.verification_key,
         node_fold_proof: proof_fields(legacy_node_fold_proof)?,
-        node_fold_public: public_fields(legacy_node_fold_proof)?,
+        node_fold_public,
         c1_vk: c1_vk.verification_key,
         c1_proof: proof_fields(c1_proof)?,
-        c1_public: public_fields(c1_proof)?,
+        c1_public,
         generation_vk: generation_vk.verification_key,
         generation_proof: proof_fields(generation_proof)?,
-        generation_public: public_fields(generation_proof)?,
+        generation_public,
         generation_key_hash: generation_vk.key_hash.clone(),
         node_fold_key_hash: node_fold_vk.key_hash,
         c1_key_hash: c1_vk.key_hash,
@@ -325,6 +394,18 @@ fn prove_nodes_fold_v2_step_impl(
     job_id: &str,
     artifacts_dir: &str,
 ) -> Result<Proof, ZkError> {
+    if total_slots != SECURE_16384_MINIMUM_H {
+        return Err(ZkError::InvalidInput(format!(
+            "V2 node folding requires {} slots, got {total_slots}",
+            SECURE_16384_MINIMUM_H
+        )));
+    }
+    let node_fields = checked_public_fields(
+        inner_proof,
+        CircuitName::NodeFoldV2,
+        NODE_FOLD_V2_PUBLIC_FIELDS,
+        "V2 node proof",
+    )?;
     let inner_vk = load_vk(
         prover,
         CircuitVariant::Default,
@@ -343,8 +424,7 @@ fn prove_nodes_fold_v2_step_impl(
         artifacts_dir,
         CircuitName::NodesFoldV2,
     )?;
-    let node_fields = public_fields(inner_proof)?;
-    let accumulator_fields = 6 + total_slots * node_fields.len();
+    let accumulator_fields = NODES_FOLD_V2_PUBLIC_FIELDS;
 
     let (circuit, acc_vk, acc_key_hash, acc_proof, acc_public, is_first_step) =
         if let Some(prior) = prior_accumulator {
@@ -366,7 +446,16 @@ fn prove_nodes_fold_v2_step_impl(
                     fold_vk.key_hash.clone()
                 },
                 proof_fields(prior)?,
-                public_fields(prior)?,
+                checked_public_fields(
+                    prior,
+                    if slot_index == 1 {
+                        CircuitName::NodesFoldV2Kernel
+                    } else {
+                        CircuitName::NodesFoldV2
+                    },
+                    NODES_FOLD_V2_PUBLIC_FIELDS,
+                    "prior V2 nodes accumulator",
+                )?,
                 false,
             )
         } else {
@@ -457,6 +546,24 @@ fn aggregation_fold_witness(
             "aggregation fold row {row_index} is out of range"
         )));
     }
+    if committee_h != SECURE_16384_MINIMUM_H {
+        return Err(ZkError::InvalidInput(format!(
+            "l-BFV aggregation folding requires H={}, got {committee_h}",
+            SECURE_16384_MINIMUM_H
+        )));
+    }
+    let pk_public = checked_public_fields(
+        pk_proof,
+        CircuitName::LbfvPkAggregation,
+        LBFV_PK_AGGREGATION_PUBLIC_FIELDS,
+        "l-BFV PK aggregation proof",
+    )?;
+    let rlk_public = checked_public_fields(
+        rlk_proof,
+        CircuitName::RlkAggregation,
+        RLK_AGGREGATION_PUBLIC_FIELDS,
+        "RLK aggregation proof",
+    )?;
     let pk_vk = load_vk(
         prover,
         CircuitVariant::Recursive,
@@ -481,7 +588,7 @@ fn aggregation_fold_witness(
         artifacts_dir,
         CircuitName::LbfvAggregationFold,
     )?;
-    let accumulator_fields = 7 + 5 + (3 * LBFV_ROWS * committee_h) + (3 * LBFV_ROWS);
+    let accumulator_fields = AGGREGATION_FOLD_PUBLIC_FIELDS;
 
     let (circuit, acc_vk, acc_key_hash, acc_proof, acc_public, is_first_step) =
         if let Some(prior) = prior_accumulator {
@@ -503,7 +610,16 @@ fn aggregation_fold_witness(
                     fold_vk.key_hash.clone()
                 },
                 proof_fields(prior)?,
-                public_fields(prior)?,
+                checked_public_fields(
+                    prior,
+                    if row_index == 1 {
+                        CircuitName::LbfvAggregationFoldKernel
+                    } else {
+                        CircuitName::LbfvAggregationFold
+                    },
+                    AGGREGATION_FOLD_PUBLIC_FIELDS,
+                    "prior l-BFV aggregation accumulator",
+                )?,
                 false,
             )
         } else {
@@ -527,10 +643,10 @@ fn aggregation_fold_witness(
         AggregationFoldWitness {
             pk_vk: pk_vk.verification_key,
             pk_proof: proof_fields(pk_proof)?,
-            pk_public: public_fields(pk_proof)?,
+            pk_public,
             rlk_vk: rlk_vk.verification_key,
             rlk_proof: proof_fields(rlk_proof)?,
-            rlk_public: public_fields(rlk_proof)?,
+            rlk_public,
             acc_vk: acc_vk.verification_key,
             acc_proof,
             acc_public,
@@ -674,7 +790,17 @@ pub fn prove_dkg_aggregation_v2(
     preset: BfvPreset,
     committee: CiphernodesCommitteeSize,
 ) -> Result<Proof, ZkError> {
+    if preset != BfvPreset::SecureThreshold16384 || committee != CiphernodesCommitteeSize::Minimum {
+        return Err(ZkError::InvalidInput(
+            "V2 DKG aggregation requires secure-16384/minimum artifacts".into(),
+        ));
+    }
     let expected = committee.values();
+    if expected.n != SECURE_16384_MINIMUM_N || expected.h != SECURE_16384_MINIMUM_H {
+        return Err(ZkError::InvalidInput(
+            "secure-16384/minimum dimensions do not match the compiled V2 circuit".into(),
+        ));
+    }
     if party_ids.len() != expected.h || committee_addresses.len() != expected.n {
         return Err(ZkError::InvalidInput(format!(
             "V2 DKG aggregation requires H={} party IDs and N={} committee addresses",
@@ -695,6 +821,21 @@ pub fn prove_dkg_aggregation_v2(
             "V2 DKG aggregation party IDs must be ascending".into(),
         ));
     }
+
+    let nodes_fold_public = checked_public_fields(
+        nodes_fold_proof,
+        CircuitName::NodesFoldV2,
+        NODES_FOLD_V2_PUBLIC_FIELDS,
+        "V2 nodes fold",
+    )?;
+    let c5_public =
+        checked_public_fields(c5_proof, CircuitName::PkAggregation, C5_PUBLIC_FIELDS, "C5")?;
+    let aggregation_fold_public = checked_public_fields(
+        aggregation_fold_proof,
+        CircuitName::LbfvAggregationFold,
+        AGGREGATION_FOLD_PUBLIC_FIELDS,
+        "l-BFV aggregation fold",
+    )?;
 
     let artifacts_dir = prover.resolve_artifacts_dir(preset, committee.as_str());
     let artifacts_dir = artifacts_dir.as_str();
@@ -729,10 +870,10 @@ pub fn prove_dkg_aggregation_v2(
     let witness = DkgAggregationV2Witness {
         nodes_fold_vk: nodes_vk.verification_key,
         nodes_fold_proof: proof_fields(nodes_fold_proof)?,
-        nodes_fold_public: public_fields(nodes_fold_proof)?,
+        nodes_fold_public,
         c5_vk: c5_vk.verification_key,
         c5_proof: proof_fields(c5_proof)?,
-        c5_public: public_fields(c5_proof)?,
+        c5_public,
         nodes_fold_key_hash: nodes_vk.key_hash,
         c5_key_hash: c5_vk.key_hash,
         party_ids: party_ids.iter().copied().map(u64_to_field_hex).collect(),
@@ -748,7 +889,7 @@ pub fn prove_dkg_aggregation_v2(
             .collect(),
         aggregation_fold_vk: aggregation_vk.verification_key,
         aggregation_fold_proof: proof_fields(aggregation_fold_proof)?,
-        aggregation_fold_public: public_fields(aggregation_fold_proof)?,
+        aggregation_fold_public,
         aggregation_fold_key_hash: aggregation_vk.key_hash,
         v2_vk_binding: v2.into_iter().map(|artifact| artifact.key_hash).collect(),
     };
@@ -770,4 +911,59 @@ pub fn prove_dkg_aggregation_v2(
         CircuitVariant::Evm,
         artifacts_dir,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn proof_with_public_fields(circuit: CircuitName, count: usize) -> Proof {
+        Proof::new(
+            circuit,
+            ArcBytes::from_bytes(&[]),
+            ArcBytes::from_bytes(&vec![0; count * 32]),
+        )
+    }
+
+    #[test]
+    fn secure_v2_public_shapes_are_fixed() {
+        assert_eq!(NODE_FOLD_PUBLIC_FIELDS, 67);
+        assert_eq!(NODE_FOLD_V2_PUBLIC_FIELDS, 89);
+        assert_eq!(NODES_FOLD_V2_PUBLIC_FIELDS, 184);
+        assert_eq!(GENERATION_FOLD_PUBLIC_FIELDS, 28);
+        assert_eq!(AGGREGATION_FOLD_PUBLIC_FIELDS, 57);
+        assert_eq!(C5_PUBLIC_FIELDS, 3);
+    }
+
+    #[test]
+    fn checked_public_fields_rejects_an_off_by_one_shape() {
+        let proof =
+            proof_with_public_fields(CircuitName::NodeFoldV2, NODE_FOLD_V2_PUBLIC_FIELDS - 1);
+        let error = checked_public_fields(
+            &proof,
+            CircuitName::NodeFoldV2,
+            NODE_FOLD_V2_PUBLIC_FIELDS,
+            "V2 node proof",
+        )
+        .expect_err("an invalid shape must fail");
+        assert!(error.to_string().contains("must contain 89 public fields"));
+    }
+
+    #[test]
+    fn checked_public_fields_rejects_the_wrong_circuit() {
+        let proof = proof_with_public_fields(CircuitName::NodeFold, NODE_FOLD_V2_PUBLIC_FIELDS);
+        let error = checked_public_fields(
+            &proof,
+            CircuitName::NodeFoldV2,
+            NODE_FOLD_V2_PUBLIC_FIELDS,
+            "V2 node proof",
+        )
+        .expect_err("the wrong circuit must fail");
+        assert!(matches!(
+            error,
+            ZkError::InvalidInput(message)
+                if message.contains("V2 node proof must be a")
+                    && message.contains(&CircuitName::NodeFoldV2.to_string())
+        ));
+    }
 }

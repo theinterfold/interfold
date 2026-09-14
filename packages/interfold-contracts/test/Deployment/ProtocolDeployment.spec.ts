@@ -10,7 +10,10 @@ import { network } from "hardhat";
 import os from "os";
 import path from "path";
 
-import { deployProtocolContracts } from "../../scripts/protocol/deployContracts";
+import {
+  deployProtocolContracts,
+  selectBfvPkVerifierAddresses,
+} from "../../scripts/protocol/deployContracts";
 import {
   currentNodeRelease,
   requiresNodeReleasePolicyUpdate,
@@ -40,6 +43,15 @@ import { BondingRegistry__factory as BondingRegistryFactory } from "../../types"
 const { ethers } = await network.connect();
 
 describe("Protocol deployment", function () {
+  it("selects only the V2 PK verifier when a route provides one", function () {
+    expect(
+      selectBfvPkVerifierAddresses([
+        { pkVerifier: "legacy-a" },
+        { pkVerifier: "legacy-b", pkVerifierV2: "v2-b" },
+      ]),
+    ).to.deep.equal(["legacy-a", "v2-b"]);
+  });
+
   it("derives one release identity for the Rust and contract tooling", function () {
     const release = currentNodeRelease();
     expect(release.version).to.match(/^\d+\.\d+\.\d+/);
@@ -194,6 +206,29 @@ describe("Protocol deployment", function () {
       fs.writeFileSync(configFile, JSON.stringify(config));
       expect(() => loadConfig(configFile)).to.throw(
         "Config name may only contain letters, numbers, underscores and hyphens",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a short DKG window when the chain supports secure-16384", function () {
+    const source = new URL(
+      "../../deploy/protocol/example.protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-dkg-window-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.protocolOwner = "0x0000000000000000000000000000000000000001";
+      config.interfold.timeoutConfig.dkgWindow = "7200";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "dkgWindow must be at least 21600 seconds",
       );
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });

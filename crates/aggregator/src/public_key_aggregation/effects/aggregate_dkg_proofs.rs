@@ -24,8 +24,8 @@ impl PublicKeyAggregator {
             c5_proof_pending,
             dkg_aggregation_correlation,
             dkg_aggregated_proof,
-            circuit_committee_n,
-            circuit_committee_h,
+            circuit_committee_n: _circuit_committee_n,
+            circuit_committee_h: _circuit_committee_h,
             nodes_fold_accumulator,
             nodes_fold_completed_slots,
             ..
@@ -173,12 +173,12 @@ impl PublicKeyAggregator {
         {
             debug_assert_eq!(
                 committee_addresses.len(),
-                *circuit_committee_n,
+                *_circuit_committee_n,
                 "DkgAggregator committee_addresses must have N entries (full topNodes)"
             );
             debug_assert_eq!(
                 party_ids.len(),
-                *circuit_committee_h,
+                *_circuit_committee_h,
                 "DkgAggregator party_ids must have H entries (honest set)"
             );
         }
@@ -272,7 +272,9 @@ impl PublicKeyAggregator {
         let Some(mut aggregation) = self.lbfv_aggregation_state()? else {
             return Ok(());
         };
-        if aggregation.dkg_aggregation_correlation.is_some()
+        if aggregation.is_failed()
+            || aggregation.operational_rlk.is_none()
+            || aggregation.dkg_aggregation_correlation.is_some()
             || aggregation.dkg_aggregated_proof.is_some()
             || aggregation.aggregation_fold_completed_rows != LBFV_ROW_COUNT as u32
         {
@@ -339,6 +341,9 @@ impl PublicKeyAggregator {
         let Some(mut aggregation) = self.lbfv_aggregation_state()? else {
             return Ok(());
         };
+        if aggregation.is_failed() {
+            return Ok(());
+        }
         aggregation.complete_dkg(correlation, proof)?;
         self.set_lbfv_aggregation(aggregation, ec)?;
         self.try_publish_complete()

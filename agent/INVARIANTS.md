@@ -204,6 +204,12 @@ design citation alone does not establish current runtime behavior.
   `H`. The current circuit identity label is `interfold-bfv-v2`. It changes each configuration ID
   without changing the parameter hash or committee matrix. `N <= numActiveOperators` at
   `requestCommittee`. — `flow-trace/03`
+- A BFV PK verifier router must contain one concrete route for each supported parameter-set and
+  committee pair. The `secure-16384/minimum` pair must use `BfvPkVerifierV2`, its 63-field public
+  statement, and its `DkgAggregatorV2` and `NodesFoldV2` anchors. The router must not also expose
+  the legacy verifier for that pair. Two routes with the same dispatch identity can make the legacy
+  verifier an unintended bypass. — `BfvPkVerifierRouter.sol`; `protocol/deployContracts.ts`;
+  `flow-trace/04`
 - Mainnet CRISP activation is one paused and drained governance batch. It upgrades Interfold to the
   secure crypto configuration, installs every secure BFV verifier route, registers secure BFV
   parameters, wires the receipt verifier, registers CRISP, binds CRISP, and raises the required node
@@ -276,8 +282,9 @@ design citation alone does not establish current runtime behavior.
   The compute deadline starts at the later of key publication and the end of the input window.
   Request validation reserves the full worst-case randomness, sortition, DKG, compute, and
   decryption lifecycle. A `secure-16384` request requires a snapshotted DKG window of at least
-  21,600 seconds. The `insecure` and `secure-8192` parameter sets continue to accept the
-  7,200-second deployment default. — `InterfoldLifecycle.validateRequest`; `flow-trace/03`
+  21,600 seconds. The local runtime and deployment defaults are 21,600 seconds. The `insecure` and
+  `secure-8192` parameter sets still accept a 7,200-second configured window. —
+  `InterfoldLifecycle.validateRequest`; `flow-trace/03`
 - Known open issue: `gracePeriod` is stored/validated but never applied in any deadline check (dead
   code). — `Interfold.sol`; INDEX concern #3
 
@@ -384,12 +391,18 @@ design citation alone does not establish current runtime behavior.
   release workflow rejects a different value because the ciphernode resolves both the GitHub release
   and `circuits-{version}.tar.gz` from this field.
 - A circuit release archive that supports current deployments must include every
-  `insecure/{minimum,micro,small}`, `secure-8192/{minimum,micro,small}`, and
-  `secure-16384/minimum` pair. Each pair has a build stamp with the exact preset, committee, and
-  source hash. A pair hash includes shared compile-bearing sources and only the circuit packages
-  enabled for that preset. A secure-16384-only circuit change must not invalidate an `insecure` or
-  `secure-8192` pair. `checksums.json` and `SHA256SUMS` must cover the archive contents. Nodes
-  select the artifact directory from the E3's on-chain parameter set and committee size.
+  `insecure/{minimum,micro,small}`, `secure-8192/{minimum,micro,small}`, and `secure-16384/minimum`
+  pair. Each pair has a build stamp with the exact preset, committee, and source hash. A pair hash
+  includes shared compile-bearing sources and only the circuit packages enabled for that preset. A
+  secure-16384-only circuit change must not invalidate an `insecure` or `secure-8192` pair.
+  `checksums.json` and `SHA256SUMS` must cover the archive contents. Nodes select the artifact
+  directory from the E3's on-chain parameter set and committee size.
+- The secure-16384 l-BFV CRS and URS use constants version 1 and different fixed SHA-256 domain
+  labels. The runtime and circuit generator expand both values with
+  `CommonRandomPolyVec::from_seed`. The CRS, URS, Garner rows, parameter set, level, and row
+  serialization form one compatibility unit. A change to one value requires a new constants version
+  and regenerated circuit artifacts. — `crates/fhe-params/src/lbfv.rs`;
+  `generate_config_modules.rs`; `flow-trace/04`
 
 ### DKG / threshold structure
 
@@ -545,13 +558,17 @@ design citation alone does not establish current runtime behavior.
   both the current accumulator VK and each prior accumulator's expected kernel or fold VK hash.
   `BfvPkVerifier` checks these values against deployment-time anchors before it calls the Honk
   verifier. — `dkg_aggregator`, `BfvPkVerifier`
-- **Secure-16384 recursive families are versioned:** `node_fold_v2` reverifies C0-C4 and preserves
-  the legacy node statement as a prefix. It does not wrap `node_fold`. `dkg_aggregator_v2` preserves
-  the legacy DKG statement as a prefix and appends the l-BFV statement. Its V2 VK manifest binds the
-  generation and aggregation folds, both kernels, both row circuits, the RLK limb circuit,
-  `node_fold_v2`, and both `nodes_fold_v2` circuits. Legacy recursive circuits and ABIs remain
-  unchanged. The V2 DKG circuit recomputes the accepted-set hash from its canonical party IDs. It
-  also binds the replaced legacy NodeFold and NodesFold kernel anchor slots to their V2 hashes.
+- **Secure-16384 recursive families are versioned:** `node_fold_v2` verifies a legacy `NodeFold`
+  proof, C1, and the terminal generation fold. It links the l-BFV SK commitment to C1 and preserves
+  the legacy node statement as a prefix. `dkg_aggregator_v2` preserves the legacy DKG statement as a
+  prefix and appends the l-BFV statement. Its V2 VK manifest binds the generation and aggregation
+  folds, both kernels, both row circuits, the RLK limb circuit, `node_fold_v2`, and both
+  `nodes_fold_v2` circuits. Legacy recursive circuits and ABIs remain unchanged. The V2 DKG circuit
+  recomputes the accepted-set hash from its canonical party IDs. It binds the outer `NodeFoldV2` and
+  `NodesFoldV2` VK slots separately from the embedded legacy `NodeFold` anchor. A `NodeFoldV2` proof
+  has four verifier-prefix fields and 85 returned fields. Its 89-field statement takes the session
+  limbs from generation-fold fields 8 and 9. `DkgAggregatorV2` binds the legacy and V2 recursive VK
+  manifests independently. It must not require corresponding legacy and V2 VK hashes to be equal.
 - **l-BFV proof identity and retries:** the proof session is Keccak-derived from the complete E3,
   deployment, crypto-configuration, committee, constants-version, and level domain. The accepted
   aggregation party set uses the canonical `e3-committee-hash` Keccak function. Local operation IDs
@@ -678,12 +695,21 @@ design citation alone does not establish current runtime behavior.
   a process exit interrupts a cross-repository failure update. Recovery removes pending l-BFV
   secrets before it redrives the saved failure. Existing threshold-keyshare snapshots remain
   unchanged. — `flow-trace/04`
-- Secure-16384 public-key publication uses the separate
-   `//publickey_lbfv_publication/v1/{e3_id}` snapshot. It validates the E3 identity and
-   `DkgAggregatorV2` circuit, commits the `LbfvPublicKeyAggregated` intent before emission, and
-   redrives the intent after restart. The registry writer adapts the local event to the existing
-   public-key submission gate and passes the V2 proof and attestation bundle to `publishCommittee`.
-   The legacy public-key recovery schema remains unchanged. — `flow-trace/04`
+- Secure-16384 public-key publication uses the separate `//publickey_lbfv_publication/v1/{e3_id}`
+  snapshot. It validates the E3 identity and `DkgAggregatorV2` circuit, commits the
+  `LbfvPublicKeyAggregated` intent before emission, and redrives the intent after restart. The
+  registry writer adapts the local event to the existing public-key submission gate and passes the
+  V2 proof and attestation bundle to `publishCommittee`. The legacy public-key recovery schema
+  remains unchanged. — `flow-trace/04`
+- Secure-16384 l-BFV row aggregation uses `//publickey_lbfv_aggregation/v1/{e3_id}`. The sidecar
+  binds the proof domain, the immutable ascending accepted-party set, both accepted document
+  families, five PK proofs, five RLK proofs, the fold cursor, the operational RLK, and the final V2
+  proof. The active aggregator derives the operational RLK only from those accepted documents after
+  the five-row fold completes. Restart must derive a missing operational RLK from the same durable
+  documents before it dispatches the final V2 proof. A persisted aggregation failure is terminal and
+  immutable. Restart must clear process-local correlations, publish `E3Failed(DKGInvalidShares)`,
+  and suppress all proof and publication work. — `LbfvAggregationStateV1`; `aggregate_lbfv.rs`;
+  `flow-trace/04`
 
 ### Ordering, backpressure, effects
 

@@ -141,6 +141,26 @@ fn assert_expected_commitment(expected: Field, folded: Field) {
     assert(expected == folded);
 }
 
+fn assert_node_vk_binding(
+    nodes_fold_public: [Field; NODES_FOLD_V2_PUBLIC_LEN],
+    row: u32,
+    vk_binding: [Field; VK_BINDING_LEN],
+    v2_vk_binding: [Field; V2_VK_BINDING_LEN],
+    expected_node_manifest: Field,
+    expected_generation_manifest: Field,
+) {
+    assert(nodes_fold_public[row] == v2_vk_binding[V2_VK_GENERATION_FOLD]);
+    assert(nodes_fold_public[row + 1] == vk_binding[VK_NODE_FOLD]);
+    assert(nodes_fold_public[row + 2] == vk_binding[VK_C1]);
+    assert(nodes_fold_public[row + 5] == vk_binding[VK_C0]);
+    assert(nodes_fold_public[row + 6] == vk_binding[VK_C1]);
+    assert(nodes_fold_public[row + 7] == vk_binding[VK_C2AB]);
+    assert(nodes_fold_public[row + 8] == vk_binding[VK_C3AB]);
+    assert(nodes_fold_public[row + 9] == vk_binding[VK_C4AB]);
+    assert(nodes_fold_public[row + NF_NODE_VK_MANIFEST_IDX] == expected_node_manifest);
+    assert(nodes_fold_public[row + NF_LBFV_VK_MANIFEST_IDX] == expected_generation_manifest);
+}
+
 fn main(
     nodes_fold_vk: UltraHonkVerificationKey,
     nodes_fold_proof: UltraHonkProof,
@@ -181,8 +201,6 @@ fn main(
 
     assert(nodes_fold_key_hash == v2_vk_binding[V2_VK_NODES_FOLD]);
     assert(nodes_fold_public[0] == v2_vk_binding[V2_VK_NODE_FOLD]);
-    assert(vk_binding[VK_NODE_FOLD] == v2_vk_binding[V2_VK_NODE_FOLD]);
-    assert(vk_binding[VK_NODES_FOLD_KERNEL] == v2_vk_binding[V2_VK_NODES_FOLD_KERNEL]);
     assert(nodes_fold_public[2] == 0);
     assert(nodes_fold_public[3] == (H - 1) as Field);
     assert(nodes_fold_public[4] == v2_vk_binding[V2_VK_NODES_FOLD_KERNEL]);
@@ -250,13 +268,14 @@ fn main(
 
     for i in 0..H {
         let row = NODES_FOLD_V2_PREFIX_LEN + i * NODE_FOLD_V2_PUBLIC_LEN;
-        assert(nodes_fold_public[row + 1] == vk_binding[VK_C0]);
-        assert(nodes_fold_public[row + 2] == vk_binding[VK_C1]);
-        assert(nodes_fold_public[row + 3] == vk_binding[VK_C2AB]);
-        assert(nodes_fold_public[row + 4] == vk_binding[VK_C3AB]);
-        assert(nodes_fold_public[row + 5] == vk_binding[VK_C4AB]);
-        assert(nodes_fold_public[row + NF_NODE_VK_MANIFEST_IDX] == expected_node_manifest);
-        assert(nodes_fold_public[row + NF_LBFV_VK_MANIFEST_IDX] == expected_generation_manifest);
+        assert_node_vk_binding(
+            nodes_fold_public,
+            row,
+            vk_binding,
+            v2_vk_binding,
+            expected_node_manifest,
+            expected_generation_manifest,
+        );
     }
 
     for i in 0..H {
@@ -429,4 +448,60 @@ fn test_accepted_party_set_hash_matches_rust_vector() {
         assert(hi == 0x1331941941e2bdb6998a5b4676e3adbb);
         assert(lo == 0x9dcc20d884d5b54129886199ff0b7e9a);
     }
+}
+
+#[test]
+fn test_node_vk_binding_accepts_distinct_legacy_and_v2_hashes() {
+    let mut nodes_public: [Field; NODES_FOLD_V2_PUBLIC_LEN] = [0; NODES_FOLD_V2_PUBLIC_LEN];
+    let mut legacy: [Field; VK_BINDING_LEN] = [0; VK_BINDING_LEN];
+    let mut v2: [Field; V2_VK_BINDING_LEN] = [0; V2_VK_BINDING_LEN];
+    let row = NODES_FOLD_V2_PREFIX_LEN;
+    legacy[VK_NODE_FOLD] = 101;
+    legacy[VK_C0] = 102;
+    legacy[VK_C1] = 103;
+    legacy[VK_C2AB] = 104;
+    legacy[VK_C3AB] = 105;
+    legacy[VK_C4AB] = 106;
+    v2[V2_VK_NODE_FOLD] = 202;
+    v2[V2_VK_GENERATION_FOLD] = 201;
+    nodes_public[row] = 201;
+    nodes_public[row + 1] = 101;
+    nodes_public[row + 2] = 103;
+    nodes_public[row + 5] = 102;
+    nodes_public[row + 6] = 103;
+    nodes_public[row + 7] = 104;
+    nodes_public[row + 8] = 105;
+    nodes_public[row + 9] = 106;
+    nodes_public[row + NF_NODE_VK_MANIFEST_IDX] = 301;
+    nodes_public[row + NF_LBFV_VK_MANIFEST_IDX] = 302;
+
+    assert_node_vk_binding(nodes_public, row, legacy, v2, 301, 302);
+}
+
+#[test(should_fail)]
+fn test_node_vk_binding_rejects_wrong_embedded_c0_hash() {
+    let mut nodes_public: [Field; NODES_FOLD_V2_PUBLIC_LEN] = [0; NODES_FOLD_V2_PUBLIC_LEN];
+    let mut legacy: [Field; VK_BINDING_LEN] = [0; VK_BINDING_LEN];
+    let mut v2: [Field; V2_VK_BINDING_LEN] = [0; V2_VK_BINDING_LEN];
+    let row = NODES_FOLD_V2_PREFIX_LEN;
+    legacy[VK_NODE_FOLD] = 101;
+    legacy[VK_C0] = 102;
+    legacy[VK_C1] = 103;
+    legacy[VK_C2AB] = 104;
+    legacy[VK_C3AB] = 105;
+    legacy[VK_C4AB] = 106;
+    v2[V2_VK_NODE_FOLD] = 202;
+    v2[V2_VK_GENERATION_FOLD] = 201;
+    nodes_public[row] = 201;
+    nodes_public[row + 1] = 101;
+    nodes_public[row + 2] = 103;
+    nodes_public[row + 5] = 999;
+    nodes_public[row + 6] = 103;
+    nodes_public[row + 7] = 104;
+    nodes_public[row + 8] = 105;
+    nodes_public[row + 9] = 106;
+    nodes_public[row + NF_NODE_VK_MANIFEST_IDX] = 301;
+    nodes_public[row + NF_LBFV_VK_MANIFEST_IDX] = 302;
+
+    assert_node_vk_binding(nodes_public, row, legacy, v2, 301, 302);
 }

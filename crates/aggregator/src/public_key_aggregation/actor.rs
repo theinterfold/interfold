@@ -213,9 +213,7 @@ impl PublicKeyAggregator {
             .lbfv_aggregation
             .as_mut()
             .ok_or_else(|| anyhow::anyhow!("secure-16384 aggregator has no l-BFV sidecar"))?;
-        sidecar.set_ctx(ec.clone());
-        sidecar.set(state);
-        Ok(())
+        sidecar.try_mutate(ec, |_| Ok(state))
     }
 
     pub(in crate::actors::publickey_aggregator) fn lbfv_publication_state(

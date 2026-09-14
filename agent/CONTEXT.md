@@ -76,9 +76,9 @@ The protocol release can carry more than one circuit artifact set. Current deplo
 matrix:
 
 - Ethereum mainnet supports `secure-8192/minimum`, `secure-8192/micro`, and `secure-8192/small`.
-- Sepolia and local chains support `insecure` and `secure-8192` with `minimum`, `micro`, and
-  `small` committees. Secure-16384 currently supports the `minimum` committee only because its V2
-  verifier route is available only for that pair.
+- Sepolia and local chains support `insecure` and `secure-8192` with `minimum`, `micro`, and `small`
+  committees. Secure-16384 currently supports the `minimum` committee only because its V2 verifier
+  route is available only for that pair.
 
 `ActiveCryptoConfig.sol` selects the parameter sets and committee shapes supported by
 `block.chainid`. Deployment tooling mirrors that matrix with `bfvConfigsForChain(chainId)` and reads
@@ -136,16 +136,18 @@ opentelemetry/tracing.
   verifies remote bundles. The active aggregator seals the canonical H-party generation set before
   it starts the legacy C5 path. A separate secure-16384 recursive family verifies the generation
   rows, aggregation rows, and legacy C0-C5 chain. Rust recursive request/prover wiring and the local
-  document-to-node-fold handoff, row aggregation, and operational RLK storage are implemented. The
-   active aggregator also persists and redrives a secure-16384 `LbfvPublicKeyAggregated` publication
-   intent. The registry writer adapts that local intent to the existing replay-safe publication gate
-   and submits the V2 proof and attestation bundle. A real `secure-16384/minimum` test generates five recursive limb proofs, finalizes one
-  row, verifies all six proofs, checks the nine terminal public fields, and rejects a terminal proof
-  made with the wrong leaf VK. Under `secure-16384/minimum`, sequential production compilation
-  measured 512.58 seconds and 26,388,774,912 bytes maximum RSS for the limb, then 57.36 seconds and
-  8,039,219,200 bytes maximum RSS for the terminal. The end-to-end test took 1,393.44 seconds and
-  16,788,504,576 bytes maximum RSS. The prior equation-wide circuit did not complete compilation
-  after more than 31 minutes.
+  document-to-node-fold handoff, row aggregation, and operational RLK storage are implemented.
+  Restart reconstructs a missing operational RLK from the durable accepted documents after the row
+  fold completes. A terminal row-aggregation failure suppresses later proof and publication work.
+  The active aggregator also persists and redrives a secure-16384 `LbfvPublicKeyAggregated`
+  publication intent. The registry writer adapts that local intent to the existing replay-safe
+  publication gate and submits the V2 proof and attestation bundle. A real `secure-16384/minimum`
+  test generates five recursive limb proofs, finalizes one row, verifies all six proofs, checks the
+  nine terminal public fields, and rejects a terminal proof made with the wrong leaf VK. Under
+  `secure-16384/minimum`, sequential production compilation measured 512.58 seconds and
+  26,388,774,912 bytes maximum RSS for the limb, then 57.36 seconds and 8,039,219,200 bytes maximum
+  RSS for the terminal. The end-to-end test took 1,393.44 seconds and 16,788,504,576 bytes maximum
+  RSS. The prior equation-wide circuit did not complete compilation after more than 31 minutes.
 - **Recursive aggregation** (`circuits/bin/recursive_aggregation/`): fold kernels
   (`c2ab_chunk_fold`, `c3_fold`, `c6_fold`, `node_fold`, `nodes_fold`, …) and the top-level
   `dkg_aggregator` / `decryption_aggregator`, which produce the on-chain Honk verifiers. A separate

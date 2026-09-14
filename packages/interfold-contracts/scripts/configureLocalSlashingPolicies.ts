@@ -13,8 +13,8 @@ import {
 import type { ISlashingManager } from "../types/contracts/interfaces/ISlashingManager";
 import { getDeploymentChain, readDeploymentArgs } from "./utils";
 
-/** Proof types 0–7: DKG-stage proofs (C0–C4). */
-const DKG_PROOF_TYPES = [0, 1, 2, 3, 4, 5, 6, 7] as const;
+/** Proof types 0–7 and 11–14: DKG-stage proofs. */
+const DKG_PROOF_TYPES = [0, 1, 2, 3, 4, 5, 6, 7, 11, 12, 13, 14] as const;
 /** Proof types 8–10: aggregation / decryption (C5–C7). */
 const DECRYPTION_PROOF_TYPES = [8, 9, 10] as const;
 
@@ -48,7 +48,7 @@ function localAttestationSlashPolicy(
 }
 
 /**
- * Enables Lane A (`proposeSlash`) policies for all `ProofType` values (0–10).
+ * Enables Lane A (`proposeSlash`) policies for all `ProofType` values (0–14).
  * Local dev deploys omit this by default, which causes `SlashReasonDisabled` reverts.
  */
 export async function configureLocalSlashingPolicies(
@@ -71,7 +71,7 @@ export async function configureLocalSlashingPolicies(
     );
 
   console.log(
-    "Configuring local SlashingManager policies (proof types 0–10)...",
+    "Configuring local SlashingManager policies (proof types 0–14)...",
   );
 
   for (const proofType of DKG_PROOF_TYPES) {

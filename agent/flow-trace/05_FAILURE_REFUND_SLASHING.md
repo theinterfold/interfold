@@ -482,9 +482,14 @@ slashing manager before that submission deadline passes.
 
 ```text
 Accusation ID (deterministic, same on Rust + Solidity):
-  accusation_id = keccak256(abi.encodePacked(
-    chainId, e3Id, accused_address, proofType
-  ))
+  if proofInstance == 0:
+    accusation_id = keccak256(abi.encodePacked(
+      chainId, e3Id, accused_address, proofType
+    ))
+  else:
+    accusation_id = keccak256(abi.encodePacked(
+      chainId, e3Id, accused_address, proofType, proofInstance
+    ))
 
 Vote Digest (EIP-712 signed, verified on-chain):
   struct_hash = keccak256(abi.encode(

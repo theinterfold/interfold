@@ -37,10 +37,11 @@ use e3_trbfv::{TrBFVRequest, TrBFVResponse};
 use e3_utils::utility_types::ArcBytes;
 use e3_utils::{colorize, rand_eth_addr, Color};
 use e3_zk_prover::test_utils::get_tempdir;
-use e3_zk_prover::{VersionInfo, ZkBackend};
+use e3_zk_prover::{load_staged_rlk_generation_limb_vk_hash, VersionInfo, ZkBackend, ZkProver};
 use fhe::bfv::PublicKey;
 use fhe_traits::{DeserializeParametrized, Serialize};
 use num_bigint::BigUint;
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::ffi::OsString;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -226,6 +227,17 @@ fn resolve_preset_stamp_path(preset_subdir: &str, committee_str: &str) -> PathBu
     }
 }
 
+fn build_stamp_matches(path: &std::path::Path, preset: &str, committee: &str) -> bool {
+    let Ok(raw) = std::fs::read_to_string(path) else {
+        return false;
+    };
+    let Ok(stamp) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return false;
+    };
+    stamp.get("preset").and_then(|value| value.as_str()) == Some(preset)
+        && stamp.get("committee").and_then(|value| value.as_str()) == Some(committee)
+}
+
 /// Reads the active committee from `circuits/bin/.active-preset.json`, which is written by every
 /// `pnpm build:circuits` invocation and is the canonical source for the new per-committee layout.
 ///
@@ -370,6 +382,80 @@ async fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> Res
     Ok(())
 }
 
+async fn write_local_lbfv_checksum_manifest(
+    circuits_dir: &std::path::Path,
+    preset_subdir: &str,
+    committee_str: &str,
+) -> Result<()> {
+    let relative_path = format!(
+        "{preset_subdir}/{committee_str}/recursive/threshold/rlk_generation_limb/rlk_generation_limb.vk_hash"
+    );
+    let hash_path = circuits_dir.join(&relative_path);
+    let hash_bytes = tokio::fs::read(&hash_path).await?;
+    let files = HashMap::from([(relative_path, format!("{:x}", Sha256::digest(hash_bytes)))]);
+    let manifest = serde_json::json!({
+        "algorithm": "sha256",
+        "generated": "integration-test",
+        "files": files,
+    });
+    tokio::fs::write(
+        circuits_dir.join("checksums.json"),
+        serde_json::to_vec_pretty(&manifest)?,
+    )
+    .await?;
+    Ok(())
+}
+
+async fn validate_secure_v2_fixture(backend: &ZkBackend, committee: &str) -> Result<()> {
+    let artifacts_dir = format!("secure-16384/{committee}");
+    let required_circuits = [
+        ("recursive/threshold", "lbfv_pk_generation"),
+        ("recursive/threshold", "rlk_generation"),
+        ("recursive/threshold", "rlk_generation_limb"),
+        ("recursive/threshold", "lbfv_pk_aggregation"),
+        ("recursive/threshold", "rlk_aggregation"),
+        ("default/recursive_aggregation", "lbfv_generation_fold"),
+        (
+            "default/recursive_aggregation",
+            "lbfv_generation_fold_kernel",
+        ),
+        ("default/recursive_aggregation", "node_fold_v2"),
+        ("default/recursive_aggregation", "nodes_fold_v2"),
+        ("default/recursive_aggregation", "nodes_fold_v2_kernel"),
+        ("default/recursive_aggregation", "lbfv_aggregation_fold"),
+        (
+            "default/recursive_aggregation",
+            "lbfv_aggregation_fold_kernel",
+        ),
+        ("default/recursive_aggregation", "dkg_aggregator_v2"),
+        ("evm/recursive_aggregation", "dkg_aggregator_v2"),
+    ];
+
+    for (parent, circuit) in required_circuits {
+        let circuit_dir = backend
+            .circuits_dir
+            .join(&artifacts_dir)
+            .join(parent)
+            .join(circuit);
+        for extension in ["json", "vk", "vk_hash"] {
+            let path = circuit_dir.join(format!("{circuit}.{extension}"));
+            let metadata = tokio::fs::metadata(&path)
+                .await
+                .with_context(|| format!("secure V2 fixture is missing {}", path.display()))?;
+            anyhow::ensure!(
+                metadata.is_file() && metadata.len() > 0,
+                "secure V2 fixture artifact is empty: {}",
+                path.display()
+            );
+        }
+    }
+
+    let prover = ZkProver::new(backend);
+    load_staged_rlk_generation_limb_vk_hash(&prover, &artifacts_dir)
+        .context("validate the secure V2 RLK limb VK checksum")?;
+    Ok(())
+}
+
 /// Create a ZkBackend for integration tests.
 /// If a local bb binary is found, uses it with fixture files (fast path).
 /// Otherwise, calls `ensure_installed()` to download bb + circuits (CI path).
@@ -415,8 +501,20 @@ async fn setup_test_zk_backend(
 
         if uses_dist_preset_artifacts(preset_subdir, committee_str) {
             copy_dir_recursive(&dist_preset, &preset_out).await?;
+            let dist_checksums = repo_root.join("dist/circuits/checksums.json");
+            if dist_checksums.exists() {
+                tokio::fs::copy(&dist_checksums, circuits_dir.join("checksums.json"))
+                    .await
+                    .with_context(|| {
+                        format!(
+                            "copy circuit artifact {} -> {}",
+                            dist_checksums.display(),
+                            circuits_dir.join("checksums.json").display()
+                        )
+                    })?;
+            }
         } else if (!circuits_bin_marker.exists() && !circuits_bin_group_marker.exists())
-            || !preset_build_stamp.exists()
+            || !build_stamp_matches(&preset_build_stamp, preset_subdir, committee_str)
         {
             // Either no local build exists, or the local build cannot be proven to match
             // the requested preset; download the pinned release tarball instead.
@@ -432,6 +530,9 @@ async fn setup_test_zk_backend(
                 .ensure_installed()
                 .await
                 .context("download ZK circuits for integration tests")?;
+            if preset_subdir == "secure-16384" {
+                validate_secure_v2_fixture(&backend, committee_str).await?;
+            }
             return Ok((backend, temp));
         } else {
             let circuits_build_root = repo_root.join("circuits").join("bin");
@@ -452,6 +553,14 @@ async fn setup_test_zk_backend(
             let dkg_share_decryption_target = circuit_target("dkg", "share_decryption");
             let threshold_pk_generation_target = circuit_target("threshold", "pk_generation");
             let threshold_pk_aggregation_target = circuit_target("threshold", "pk_aggregation");
+            let threshold_lbfv_pk_generation_target =
+                circuit_target("threshold", "lbfv_pk_generation");
+            let threshold_lbfv_pk_aggregation_target =
+                circuit_target("threshold", "lbfv_pk_aggregation");
+            let threshold_rlk_generation_target = circuit_target("threshold", "rlk_generation");
+            let threshold_rlk_generation_limb_target =
+                circuit_target("threshold", "rlk_generation_limb");
+            let threshold_rlk_aggregation_target = circuit_target("threshold", "rlk_aggregation");
             let threshold_share_decryption_target = circuit_target("threshold", "share_decryption");
             let threshold_decrypted_shares_aggregation_target =
                 circuit_target("threshold", "decrypted_shares_aggregation");
@@ -514,6 +623,38 @@ async fn setup_test_zk_backend(
             let decryption_aggregator_target = circuits_build_root
                 .join("recursive_aggregation")
                 .join("decryption_aggregator")
+                .join("target");
+            let lbfv_generation_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("lbfv_generation_fold")
+                .join("target");
+            let lbfv_generation_fold_kernel_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("lbfv_generation_fold_kernel")
+                .join("target");
+            let node_fold_v2_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("node_fold_v2")
+                .join("target");
+            let nodes_fold_v2_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("nodes_fold_v2")
+                .join("target");
+            let nodes_fold_v2_kernel_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("nodes_fold_v2_kernel")
+                .join("target");
+            let lbfv_aggregation_fold_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("lbfv_aggregation_fold")
+                .join("target");
+            let lbfv_aggregation_fold_kernel_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("lbfv_aggregation_fold_kernel")
+                .join("target");
+            let dkg_aggregator_v2_target = circuits_build_root
+                .join("recursive_aggregation")
+                .join("dkg_aggregator_v2")
                 .join("target");
 
             // Helper: copy {name}.json + VK artifacts into a destination directory.
@@ -645,6 +786,25 @@ async fn setup_test_zk_backend(
                 ".vk_noir_hash",
             )
             .await?;
+
+            if preset_subdir == "secure-16384" {
+                for (target, name) in [
+                    (&threshold_lbfv_pk_generation_target, "lbfv_pk_generation"),
+                    (&threshold_rlk_generation_target, "rlk_generation"),
+                    (&threshold_rlk_generation_limb_target, "rlk_generation_limb"),
+                    (&threshold_lbfv_pk_aggregation_target, "lbfv_pk_aggregation"),
+                    (&threshold_rlk_aggregation_target, "rlk_aggregation"),
+                ] {
+                    copy_circuit(
+                        target,
+                        &rv.join("threshold").join(name),
+                        name,
+                        ".vk_noir",
+                        ".vk_noir_hash",
+                    )
+                    .await?;
+                }
+            }
 
             // ── default/ variant (recursive aggregation bins, uses .vk_recursive) ───
 
@@ -792,6 +952,34 @@ async fn setup_test_zk_backend(
             )
             .await?;
 
+            if preset_subdir == "secure-16384" {
+                for (target, name) in [
+                    (&lbfv_generation_fold_target, "lbfv_generation_fold"),
+                    (
+                        &lbfv_generation_fold_kernel_target,
+                        "lbfv_generation_fold_kernel",
+                    ),
+                    (&node_fold_v2_target, "node_fold_v2"),
+                    (&nodes_fold_v2_target, "nodes_fold_v2"),
+                    (&nodes_fold_v2_kernel_target, "nodes_fold_v2_kernel"),
+                    (&lbfv_aggregation_fold_target, "lbfv_aggregation_fold"),
+                    (
+                        &lbfv_aggregation_fold_kernel_target,
+                        "lbfv_aggregation_fold_kernel",
+                    ),
+                    (&dkg_aggregator_v2_target, "dkg_aggregator_v2"),
+                ] {
+                    copy_circuit(
+                        target,
+                        &dv.join("recursive_aggregation").join(name),
+                        name,
+                        ".vk_recursive",
+                        ".vk_recursive_hash",
+                    )
+                    .await?;
+                }
+            }
+
             // ── evm/ variant (on-chain verification: DKG aggregator, C7) ───────────
 
             let ev = preset_dir.join("evm");
@@ -823,9 +1011,29 @@ async fn setup_test_zk_backend(
                 ".vk_hash",
             )
             .await?;
+
+            if preset_subdir == "secure-16384" {
+                copy_circuit(
+                    &dkg_aggregator_v2_target,
+                    &ev.join("recursive_aggregation/dkg_aggregator_v2"),
+                    "dkg_aggregator_v2",
+                    ".vk",
+                    ".vk_hash",
+                )
+                .await?;
+            }
+        }
+
+        let checksums_path = circuits_dir.join("checksums.json");
+        if !checksums_path.exists() && preset_subdir == "secure-16384" {
+            write_local_lbfv_checksum_manifest(&circuits_dir, preset_subdir, committee_str).await?;
         }
 
         let backend = ZkBackend::new(BBPath::Default(bb_binary), circuits_dir, work_dir);
+
+        if preset_subdir == "secure-16384" {
+            validate_secure_v2_fixture(&backend, committee_str).await?;
+        }
 
         // `CiphernodeBuilder` calls `ensure_installed()`, which deletes `circuits_dir` and downloads
         // the release tarball whenever `version.json` does not record the pinned bb/circuits
@@ -848,8 +1056,19 @@ async fn setup_test_zk_backend(
             .ensure_installed()
             .await
             .expect("Failed to download and install ZK backend");
+        if preset_subdir == "secure-16384" {
+            validate_secure_v2_fixture(&backend, active_committee(preset_subdir).as_str()).await?;
+        }
         Ok((backend, temp))
     }
+}
+
+#[actix::test]
+#[serial_test::serial]
+#[ignore = "requires secure-16384 circuit artifacts"]
+async fn test_secure_16384_fixture_setup() -> Result<()> {
+    let (_backend, _temp) = setup_test_zk_backend("secure-16384").await?;
+    Ok(())
 }
 
 pub fn save_snapshot(file_name: &str, bytes: &[u8]) {

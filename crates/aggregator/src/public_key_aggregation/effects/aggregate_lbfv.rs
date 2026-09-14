@@ -22,6 +22,9 @@ impl PublicKeyAggregator {
             return Ok(());
         };
         state.validate_loaded()?;
+        if state.is_failed() {
+            return Ok(());
+        }
         let expected_h = self.committee_size.values().h;
         anyhow::ensure!(
             state.accepted_party_ids.len() == expected_h,
@@ -115,6 +118,9 @@ impl PublicKeyAggregator {
         let Some(mut state) = self.lbfv_aggregation_state()? else {
             return Ok(());
         };
+        if state.is_failed() {
+            return Ok(());
+        }
         match response {
             ZkResponse::LbfvPkAggregation(response) => {
                 let row = response.row_index;
@@ -190,6 +196,9 @@ impl PublicKeyAggregator {
         let Some(mut state) = self.lbfv_aggregation_state()? else {
             return Ok(false);
         };
+        if state.is_failed() {
+            return Ok(false);
+        }
         let mut matched = false;
         for row in 0..LBFV_ROW_COUNT as u32 {
             let index = row as usize;
@@ -239,6 +248,9 @@ impl PublicKeyAggregator {
             return Ok(());
         };
         state.validate_loaded()?;
+        if state.is_failed() {
+            return Ok(());
+        }
         if state.aggregation_fold_completed_rows == LBFV_ROW_COUNT as u32
             || state.aggregation_fold_correlation.is_some()
         {
@@ -283,9 +295,18 @@ impl PublicKeyAggregator {
         let Some(mut state) = self.lbfv_aggregation_state()? else {
             return Ok(());
         };
+        state.validate_loaded()?;
+        if state.is_failed() {
+            return Ok(());
+        }
         if state.operational_rlk.is_some() {
             return Ok(());
         }
+        anyhow::ensure!(
+            state.aggregation_fold_completed_rows == LBFV_ROW_COUNT as u32
+                && state.aggregation_fold_proof.is_some(),
+            "operational l-BFV RLK requires a completed aggregation fold"
+        );
         let public_key_shares = document_shares(
             &state,
             |document| matches!(document, LbfvKeyShareDocument::PublicKeyV1(_)),

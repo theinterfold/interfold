@@ -346,18 +346,15 @@ export async function deployBfvVerifierRoutes(
     routes.push(await deployBfvVerifierRoute(ethers, registry, config));
   }
 
-  let pkVerifier = routes[0].pkVerifier;
+  const pkVerifierAddresses = selectBfvPkVerifierAddresses(routes);
+  let pkVerifier = pkVerifierAddresses[0];
   let decryptionVerifier = routes[0].decryptionVerifier;
   if (routes.length > 1) {
     const pkRouterFactory = await ethers.getContractFactory(
       "BfvPkVerifierRouter",
     );
     const pkRouter = await pkRouterFactory.deploy(
-      routes.flatMap((route) =>
-        route.pkVerifierV2
-          ? [route.pkVerifier, route.pkVerifierV2]
-          : [route.pkVerifier],
-      ),
+      pkVerifierAddresses,
       defaultConfig.h,
     );
     await pkRouter.waitForDeployment();
@@ -387,6 +384,12 @@ export async function deployBfvVerifierRoutes(
     decryptionVerifierRelationsLib: routes[0].decryptionVerifierRelationsLib,
     bfvVerifierRoutes: routes,
   };
+}
+
+export function selectBfvPkVerifierAddresses(
+  routes: readonly { pkVerifier: string; pkVerifierV2?: string }[],
+): string[] {
+  return routes.map((route) => route.pkVerifierV2 ?? route.pkVerifier);
 }
 
 async function deployBfvVerifierRoute(

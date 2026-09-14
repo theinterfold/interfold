@@ -7,8 +7,8 @@ import { expect } from "chai";
 
 import {
   buildMockDkgAttestationFixtureData,
-  encodeMockDkgV2ProofForAttestation,
   deployInterfoldSystem,
+  encodeMockDkgV2ProofForAttestation,
   ethers,
   networkHelpers,
 } from "../fixtures";
