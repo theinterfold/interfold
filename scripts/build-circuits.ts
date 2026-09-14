@@ -128,8 +128,15 @@ function requiredLbfvDistMarkers(dist: string, preset: string): string[] {
 function requiredLbfvBinMarkers(bin: string, preset: string): string[] {
   if (preset !== CIRCUIT_PRESETS.SECURE_16384) return []
   return SECURE_16384_ARTIFACT_CIRCUITS.flatMap(({ name, group, binExtensions }) =>
-    binExtensions.map((extension) => join(bin, group, name, 'target', `${name}.${extension}`)),
+    binExtensions.map((extension) => join(hydratedCircuitTargetDir(bin, group, name), `${name}.${extension}`)),
   )
+}
+
+function hydratedCircuitTargetDir(bin: string, group: CircuitGroup, name: string): string {
+  if (group === CIRCUIT_GROUPS.DKG || group === CIRCUIT_GROUPS.THRESHOLD) {
+    return join(bin, group, 'target')
+  }
+  return join(bin, group, name, 'target')
 }
 
 interface CircuitInfo {
@@ -781,7 +788,7 @@ library ActiveCryptoConfig {
 
     for (const circuit of circuits) {
       const packageName = this.getPackageName(circuit.path)
-      const targetDir = join(circuit.path, 'target')
+      const targetDir = hydratedCircuitTargetDir(this.circuitsDir, circuit.group, circuit.name)
       mkdirSync(targetDir, { recursive: true })
 
       const copyPair = (from: string, to: string) => {
@@ -818,7 +825,9 @@ library ActiveCryptoConfig {
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.DKG, 'pk', 'pk.json'),
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation', 'pk_aggregation.json'),
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'dkg_aggregator.json'),
+      join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'dkg_aggregator.vk'),
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.json'),
+      join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.vk'),
       ...requiredLbfvDistMarkers(dist, preset),
     ]
   }
@@ -827,12 +836,12 @@ library ActiveCryptoConfig {
   private requiredBinMarkers(preset: string): string[] {
     const bin = this.circuitsDir
     return [
-      join(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'target', 'dkg_aggregator.json'),
-      join(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'target', 'dkg_aggregator.vk_recursive'),
-      join(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'target', 'decryption_aggregator.json'),
-      join(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'target', 'decryption_aggregator.vk_recursive'),
-      join(bin, CIRCUIT_GROUPS.DKG, 'pk', 'target', 'pk.json'),
-      join(bin, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation', 'target', 'pk_aggregation.json'),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator'), 'dkg_aggregator.json'),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator'), 'dkg_aggregator.vk_recursive'),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator'), 'decryption_aggregator.json'),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator'), 'decryption_aggregator.vk_recursive'),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.DKG, 'pk'), 'pk.json'),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation'), 'pk_aggregation.json'),
       ...requiredLbfvBinMarkers(bin, preset),
     ]
   }
@@ -1630,6 +1639,7 @@ export {
   CIRCUIT_VERSION_LABEL,
   configModuleFiles,
   generatedConfigDrift,
+  hydratedCircuitTargetDir,
   requiredLbfvBinMarkers,
   requiredLbfvDistMarkers,
   syncGeneratedConfigModules,

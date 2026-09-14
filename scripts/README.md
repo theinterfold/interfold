@@ -330,17 +330,17 @@ Honk verifiers bake in the recursive VKs of `dkg_aggregator` / `decryption_aggre
 preset- and committee-dependent. Different BFV parameter sets or `H/T` sizes compile to different
 VKs and therefore different `.sol` bytes.
 
-The generator enforces this: both `--check` and `--write` refuse to run unless
-`dist/circuits/<preset>/<committee>/.build-stamp.json` exists and reports the requested preset, and
-`circuits/bin/.active-preset.json` matches the requested preset and committee. The stamps are
-written by [`pnpm build:circuits --preset <preset> --committee <name>`](#circuit-builder) and record
-which `(preset, committee)` produced the artifacts. If either dimension drifts, the generator
-refuses with a clear fix recipe instead of silently producing the wrong `.sol`.
+The generator requires `dist/circuits/<preset>/<committee>/.build-stamp.json` to report the
+requested preset, committee, and current source hash. All-pairs mode reads artifacts directly from
+`dist/circuits`; it does not hydrate `circuits/bin` or change the active selectors. Single-pair mode
+also requires `circuits/bin/.active-preset.json` to match the requested preset and committee. The
+build command writes both stamps. If the pair or sources drift, the generator refuses with a fix
+procedure instead of producing the wrong `.sol`.
 
 For non-canonical pairs, pass `--preset <name> --committee <name>`; the verifiers land under
 `honk/<preset>/<committee>/` so the canonical `.sol` files committed to git are not clobbered.
-`--check` compares that pair with its committed files. CI hydrates and checks all seven supported
-pairs.
+`--check` compares that pair with its committed files. CI checks all seven supported pairs directly
+from the release artifact matrix.
 
 The script has two modes:
 
@@ -350,16 +350,17 @@ The script has two modes:
   and `circuits/benchmarks/scripts/replay_folded_verify_gas.sh` invoke the script — so accidental
   drift between committed verifiers and current circuit VKs surfaces as a failure rather than a
   silent rewrite mid-test.
-- **`--write` (default for manual runs)** — regenerate and overwrite the committed files. Use this
-  when you intentionally bump the canonical-preset circuits or the Noir/bb toolchain.
+- **`--write` (default for manual runs)** — regenerate every supported preset/committee pair from
+  `dist/circuits` when no pair is selected. It verifies the exact generated-contract inventory. Use
+  `--preset` and `--committee` to process one pair.
 
 ### Usage
 
 ```bash
-# Verify committed verifiers match current circuit VKs (CI/tests use this)
+# Verify every supported pair and the exact committed inventory (CI uses this)
 pnpm generate:verifiers --check
 
-# Regenerate (default; equivalent to --write)
+# Regenerate every supported pair (default; equivalent to --write)
 pnpm generate:verifiers
 
 # Generate for non-canonical pairs
@@ -391,17 +392,18 @@ pnpm generate:verifiers --no-compile
 
 Automates the full pipeline from Noir circuits to on-chain Solidity verifiers:
 
-1. **Discovers circuits** in `circuits/bin/{dkg,threshold,recursive_aggregation}/`
-2. **Compiles circuits** with `nargo compile` (if not already compiled)
-3. **Generates verification keys** using `bb write_vk -t evm`
-4. **Generates Solidity verifiers** using `bb write_solidity_verifier`
-5. **Post-processes** the generated Solidity:
+1. **Reads supported pairs** from `SUPPORTED_PRESET_COMMITTEE_PAIRS`.
+2. **Reads each pair** from `dist/circuits/<preset>/<committee>` without changing the active circuit
+   selectors or targets.
+3. **Generates Solidity verifiers** for the on-chain DKG and decryption aggregators. The
+   secure-16384/minimum pair also includes `DkgAggregatorV2Verifier`.
+4. **Post-processes** the generated Solidity:
    - Renames contract from `HonkVerifier` to descriptive name (e.g., `DkgAggregatorVerifier`,
      `DecryptionAggregatorVerifier`)
    - Replaces Apache-2.0 license header with LGPL-3.0-only
    - Runs `prettier-plugin-solidity` so on-disk format matches the rest of the repo (and so
      `--check` doesn't trip on whitespace differences vs. raw `bb` output)
-6. **Outputs / verifies** at `packages/interfold-contracts/contracts/verifiers/bfv/honk/`:
+5. **Outputs / verifies** at `packages/interfold-contracts/contracts/verifiers/bfv/honk/`:
    - In `--write` mode: overwrites the committed `.sol` files.
    - In `--check` mode: diffs the freshly generated content against the committed `.sol` and exits
      non-zero on any drift, printing the offending files and a fix recipe.
@@ -410,10 +412,10 @@ Automates the full pipeline from Noir circuits to on-chain Solidity verifiers:
 
 There are two distinct failure modes — the error output tells you which one:
 
-**1. Target preset and committee not built** — the generator refuses up front because
-`dist/circuits/<preset>/<committee>/.build-stamp.json` is missing or reports a different preset. The
-committed verifier root is pinned to `insecure/minimum`; non-canonical pairs use their own
-subdirectories under `honk/<preset>/<committee>/`.
+**1. Target pair not built from the current sources** — the generator refuses up front because
+`dist/circuits/<preset>/<committee>/.build-stamp.json` is missing or reports a different preset,
+committee, or source hash. The committed verifier root is pinned to `insecure/minimum`;
+non-canonical pairs use their own subdirectories under `honk/<preset>/<committee>/`.
 
 To fix:
 
@@ -432,19 +434,20 @@ the bytes don't match. Typical causes:
 To fix:
 
 1. Verify your `nargo` / `bb` versions match `crates/zk-prover/versions.json`.
-2. Run `pnpm build:circuits --preset insecure --committee minimum`.
-3. Run `pnpm generate:verifiers --preset insecure --committee minimum --write`.
-4. Run the same build and generate commands for each non-canonical pair.
-5. Commit the resulting diff under `packages/interfold-contracts/contracts/verifiers/bfv/honk/`.
+2. Run `pnpm store:circuits pull` or build every supported pair.
+3. Run `pnpm generate:verifiers --write`.
+4. Commit the resulting diff under `packages/interfold-contracts/contracts/verifiers/bfv/honk/`.
 
 ### Options
-
-The `generate:verifiers` script in package.json passes `--circuits` with the on-chain used list.
 
 - `--check` - Verify committed verifiers match current VKs (no writes). Exits non-zero on drift.
 - `--write` - Write/overwrite committed verifiers. Default when neither `--check` nor `--write` is
   passed.
-- `--circuits <list>` - Circuit names, comma-separated. Omit to generate all.
+- `--all-supported` - Process all supported pairs. This is the default when no pair or circuit is
+  selected.
+- `--on-chain` - Select the on-chain verifier circuits for one pair.
+- `--prune-unsupported` - Remove generated directories for unsupported pairs, then exit.
+- `--circuits <list>` - Circuit names, comma-separated. This selects one pair.
 - `--group <groups>` - Circuit groups (comma-separated: dkg,threshold,recursive_aggregation)
 - `--clean` - Remove existing verifier directory before generating (write mode only)
 - `--no-compile` - Don't compile circuits automatically (fail if not already compiled)

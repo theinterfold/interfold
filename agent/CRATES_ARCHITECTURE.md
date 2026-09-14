@@ -541,9 +541,12 @@ sidecar and content-addressed `//publickey_lbfv_document/v1/{e3_id}/{sha256}` re
 each manifest signer with the canonical slot, persists first-payload and conflict decisions, and
 publishes targeted fetch requests only after the manifest is durable. It writes each artifact before
 its sidecar marker. It persists unavailable retry times, permanent invalid-data results, and
-committee exclusions. The active aggregator dispatches generation verification only after every
-submitted party has a settled collection status. Restart validates durable bundles, re-arms retries,
-redrives the candidate-set dispatch, or applies the immutable sealed H-party set.
+committee exclusions. Each node persists the first ascending H-party ready quorum. The active
+aggregator can then dispatch generation verification without waiting for unrelated submitted
+parties. A failed candidate becomes durably invalid before the next ready party is selected and the
+replacement exact-H set is dispatched. If no quorum exists, the phase fails only after every
+submitted party has a settled status. Restart validates durable bundles, re-arms retries, redrives
+the candidate-set dispatch, or applies the immutable sealed H-party set.
 
 ## E3 lifecycle
 

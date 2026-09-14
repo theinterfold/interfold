@@ -9,7 +9,9 @@ use crate::workflow::publickey_aggregation::{
     check_c1_keyshare_commitments, extract_pk_commitment, verify_dkg_fold_attestation, C1Dispatch,
     HonestSelection, PublicKeyAggregation,
 };
-use crate::{LbfvAggregationStateV1, LbfvPublicKeyPublicationStateV1};
+use crate::{
+    LbfvAggregationStateV1, LbfvContributionVerificationStateV1, LbfvPublicKeyPublicationStateV1,
+};
 use actix::prelude::*;
 use anyhow::Result;
 use e3_data::{Persistable, Repositories};
@@ -147,20 +149,16 @@ impl PublicKeyAggregator {
 
     fn aggregation_inputs_ready(&self) -> bool {
         match self.state.get() {
-            Some(PublicKeyAggregatorState::VerifyingC1 {
-                submission_order, ..
-            }) if self.is_lbfv() => {
-                let Some(submitted_party_ids) = submission_order
-                    .iter()
-                    .map(|(party_id, _, _)| u32::try_from(*party_id).ok())
-                    .collect::<Option<Vec<_>>>()
-                else {
-                    return false;
-                };
-                self.lbfv_collection_state()
-                    .and_then(|state| state.all_submitted_parties_settled(&submitted_party_ids))
-                    .unwrap_or(false)
-            }
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. }) if self.is_lbfv() => self
+                .lbfv_collection_state()
+                .and_then(|state| match state.verification {
+                    LbfvContributionVerificationStateV1::Ready { .. }
+                    | LbfvContributionVerificationStateV1::Dispatched { .. }
+                    | LbfvContributionVerificationStateV1::Sealed { .. } => Ok(true),
+                    LbfvContributionVerificationStateV1::Collecting
+                    | LbfvContributionVerificationStateV1::Failed { .. } => Ok(false),
+                })
+                .unwrap_or(false),
             Some(
                 PublicKeyAggregatorState::VerifyingC1 { .. }
                 | PublicKeyAggregatorState::GeneratingC5Proof { .. }

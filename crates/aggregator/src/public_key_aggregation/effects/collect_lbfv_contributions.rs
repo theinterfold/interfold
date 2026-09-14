@@ -458,7 +458,13 @@ impl PublicKeyAggregator {
         ec: EventContext<Sequenced>,
         ctx: &mut Context<Self>,
     ) {
-        if !self.is_lbfv() || !self.can_run_aggregation_effects() {
+        if !self.is_lbfv() {
+            return;
+        }
+        if self.persist_lbfv_ready_quorum(ec.clone(), ctx) {
+            return;
+        }
+        if !self.can_run_aggregation_effects() {
             return;
         }
         let Some(submitted_party_ids) = self.submitted_lbfv_parties() else {
@@ -488,17 +494,23 @@ impl PublicKeyAggregator {
             LbfvContributionVerificationStateV1::Collecting
             | LbfvContributionVerificationStateV1::Ready { .. } => {}
         }
-        let Ok(settled) = state.all_submitted_parties_settled(&submitted_party_ids) else {
-            return;
-        };
-        if !settled {
-            return;
-        }
-        let Ok(ready_party_ids) = state.ready_party_ids(&submitted_party_ids) else {
-            return;
+        let ready_party_ids = match &state.verification {
+            LbfvContributionVerificationStateV1::Ready { party_ids } => party_ids.clone(),
+            LbfvContributionVerificationStateV1::Collecting => {
+                let Ok(ready_party_ids) = state.ready_party_ids(&submitted_party_ids) else {
+                    return;
+                };
+                ready_party_ids
+            }
+            _ => return,
         };
         if ready_party_ids.len() < state.committee_h as usize {
-            self.persist_lbfv_failure(state, ec, ctx);
+            if state
+                .all_submitted_parties_settled(&submitted_party_ids)
+                .unwrap_or(false)
+            {
+                self.persist_lbfv_failure(state, ec, ctx);
+            }
             return;
         }
 
@@ -515,7 +527,7 @@ impl PublicKeyAggregator {
             return;
         }
         let pre_dishonest = state
-            .ineligible_party_ids(&submitted_party_ids)
+            .ineligible_party_ids(&ready_party_ids)
             .unwrap_or_default()
             .into_iter()
             .map(u64::from)
@@ -553,6 +565,54 @@ impl PublicKeyAggregator {
         );
     }
 
+    fn persist_lbfv_ready_quorum(
+        &mut self,
+        ec: EventContext<Sequenced>,
+        ctx: &mut Context<Self>,
+    ) -> bool {
+        let Some(submitted_party_ids) = self.submitted_lbfv_parties() else {
+            return false;
+        };
+        let Ok(state) = self.lbfv_collection_state() else {
+            return false;
+        };
+        if !matches!(
+            state.verification,
+            LbfvContributionVerificationStateV1::Collecting
+        ) {
+            return false;
+        }
+        let Ok(Some(party_ids)) = state.ready_quorum_party_ids(&submitted_party_ids) else {
+            return false;
+        };
+        let mut ready = state.clone();
+        if let Err(error) = ready.mark_ready(party_ids) {
+            self.bus.err(EType::PublickeyAggregation, error);
+            return false;
+        }
+        let repositories = self.repositories.clone();
+        ctx.wait(
+            async move {
+                repositories
+                    .persist_publickey_lbfv_transition(&state, &ready)
+                    .await?;
+                Ok::<_, anyhow::Error>(ready)
+            }
+            .into_actor(self)
+            .map(move |result, actor, ctx| match result {
+                Ok(ready) => {
+                    actor.replace_lbfv_collection(ready);
+                    if let Err(error) = actor.publish_inputs_ready(ec.clone()) {
+                        actor.bus.err(EType::PublickeyAggregation, error);
+                    }
+                    actor.try_progress_lbfv_verification(ec, ctx);
+                }
+                Err(error) => actor.bus.err(EType::PublickeyAggregation, error),
+            }),
+        );
+        true
+    }
+
     pub(in crate::actors::publickey_aggregator) fn resume_lbfv_work(
         &mut self,
         ec: EventContext<Sequenced>,
@@ -583,9 +643,6 @@ impl PublicKeyAggregator {
         if !self.can_run_aggregation_effects() {
             return;
         }
-        let Some(submitted_party_ids) = self.submitted_lbfv_parties() else {
-            return;
-        };
         let c1_by_party = party_ids
             .iter()
             .filter_map(|party_id| {
@@ -602,7 +659,7 @@ impl PublicKeyAggregator {
             return;
         }
         let pre_dishonest = state
-            .ineligible_party_ids(&submitted_party_ids)
+            .ineligible_party_ids(party_ids)
             .unwrap_or_default()
             .into_iter()
             .map(u64::from)
@@ -691,14 +748,14 @@ impl PublicKeyAggregator {
 async fn prepare_lbfv_dispatch(
     repositories: Repositories,
     state: crate::LbfvContributionCollectionStateV1,
-    ready_party_ids: Vec<u32>,
+    candidate_party_ids: Vec<u32>,
     c1_by_party: Vec<(u32, SignedProofPayload)>,
     pre_dishonest: BTreeSet<u64>,
     preset: BfvPreset,
     committee_size: CiphernodesCommitteeSize,
 ) -> Result<PreparedLbfvDispatch> {
-    let mut party_proofs = Vec::with_capacity(ready_party_ids.len());
-    for party_id in &ready_party_ids {
+    let mut party_proofs = Vec::with_capacity(candidate_party_ids.len());
+    for party_id in &candidate_party_ids {
         let party = &state.parties[party_id];
         let manifest = party.manifest.as_ref().expect("ready party has a manifest");
         let (public_key_hash, rlk_hash) =
@@ -763,7 +820,7 @@ async fn prepare_lbfv_dispatch(
         ready.verification,
         LbfvContributionVerificationStateV1::Collecting
     ) {
-        ready.mark_ready(ready_party_ids)?;
+        ready.mark_ready(candidate_party_ids)?;
         repositories
             .persist_publickey_lbfv_transition(&state, &ready)
             .await?;
@@ -778,6 +835,17 @@ async fn prepare_lbfv_dispatch(
             .persist_publickey_lbfv_transition(&ready, &dispatched)
             .await?;
     }
+    let LbfvContributionVerificationStateV1::Dispatched { party_ids } = &dispatched.verification
+    else {
+        anyhow::bail!("l-BFV dispatch did not persist its candidate set");
+    };
+    anyhow::ensure!(
+        party_proofs
+            .iter()
+            .map(|proofs| proofs.sender_party_id)
+            .eq(party_ids.iter().copied().map(u64::from)),
+        "l-BFV dispatch proofs do not match the persisted candidate set"
+    );
     let event = lbfv_dispatch_event(
         &dispatched,
         party_proofs,

@@ -63,6 +63,9 @@ const dataAvailabilityInterface = new ethersLib.Interface([
 const availBridgeInterface = new ethersLib.Interface([
   "function vectorx() view returns (address)",
 ]);
+const bfvPkVerifierV2Interface = new ethersLib.Interface([
+  "function LBFV_PROTOCOL_VERSION() view returns (uint256)",
+]);
 
 function planPath(config: ProtocolConfigFile): string {
   return path.join(protocolDir, `${config.name}.secure-crisp.upgrade.json`);
@@ -240,6 +243,23 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     codeAddresses.map(([target, label]) =>
       requireContract(ethers.provider, target, label),
     ),
+  );
+  await Promise.all(
+    plan.bfvVerifierRoutes
+      .filter((route) => route.pkVerifierV2)
+      .map(async (route) => {
+        const protocolVersion = await readContract(
+          ethers.provider,
+          route.pkVerifierV2!,
+          bfvPkVerifierV2Interface,
+          "LBFV_PROTOCOL_VERSION",
+        );
+        equalValue(
+          protocolVersion,
+          sourceRelease.protocolVersion,
+          `${route.preset}/${route.committee} V2 protocol version`,
+        );
+      }),
   );
   equalAddress(
     await proxyImplementation(ethers, deployment.interfold),

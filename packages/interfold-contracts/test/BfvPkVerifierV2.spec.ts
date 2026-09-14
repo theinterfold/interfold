@@ -6,6 +6,7 @@
 import { expect } from "chai";
 
 import dkgAggregatorV2VerifierModule from "../ignition/modules/dkgAggregatorV2Verifier";
+import { currentNodeRelease } from "../scripts/protocol/nodeRelease";
 import { ethers, ignition } from "./fixtures/connection";
 
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
@@ -21,6 +22,7 @@ const V2_VK_BINDING = Array.from({ length: 12 }, (_, index) =>
 );
 const SECURE_16384_CONFIG_ID =
   "0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8";
+const LBFV_PROTOCOL_VERSION = currentNodeRelease().protocolVersion;
 
 function limbs(hash: string): [string, string] {
   const value = BigInt(hash);
@@ -50,6 +52,7 @@ function sessionId(
   interfold: string,
   e3Id: bigint,
   finalizedCommitteeHash: string,
+  protocolVersion = LBFV_PROTOCOL_VERSION,
 ): string {
   return ethers.keccak256(
     abiCoder.encode(
@@ -69,7 +72,7 @@ function sessionId(
       [
         ethers.id("interfold.lbfv.proof-domain:v1"),
         1,
-        4,
+        protocolVersion,
         chainId,
         interfold,
         e3Id,
@@ -88,13 +91,14 @@ function publicInputs(
   interfold: string,
   e3Id: bigint,
   pkCommitment: string,
+  protocolVersion = LBFV_PROTOCOL_VERSION,
 ): string[] {
   const inputs = Array.from({ length: 63 }, () => ethers.ZeroHash);
   const hash = committeeHash(nodes);
   const [committeeHi, committeeLo] = limbs(hash);
   const [acceptedHi, acceptedLo] = limbs(acceptedSetHash(0, 2));
   const [sessionHi, sessionLo] = limbs(
-    sessionId(31337n, interfold, e3Id, hash),
+    sessionId(31337n, interfold, e3Id, hash, protocolVersion),
   );
 
   inputs[0] = NODES_FOLD_KEY_HASH;
@@ -175,6 +179,37 @@ describe("BfvPkVerifierV2", function () {
         proof,
       ),
     ).to.equal(true);
+    expect(
+      await verifier.getFunction("LBFV_PROTOCOL_VERSION").staticCall(),
+    ).to.equal(LBFV_PROTOCOL_VERSION);
+  });
+
+  it("rejects a proof from another protocol version", async function () {
+    const { interfold, verifier } = await deployFixture();
+    const [first, second, third] = await ethers.getSigners();
+    const nodes = [first.address, second.address, third.address];
+    const e3Id = 7n;
+    const pkCommitment = ethers.id("v2-pk");
+    const proof = encodeProof(
+      publicInputs(
+        nodes,
+        await interfold.getAddress(),
+        e3Id,
+        pkCommitment,
+        LBFV_PROTOCOL_VERSION + 1,
+      ),
+    );
+
+    await expect(
+      verifier.verify.staticCall(
+        e3Id,
+        0,
+        nodes,
+        pkCommitment,
+        committeeHash(nodes),
+        proof,
+      ),
+    ).to.be.revertedWithCustomError(verifier, "DomainBindingMismatch");
   });
 
   it("rejects a proof bound to another committee", async function () {

@@ -437,15 +437,15 @@ async fn secure_16384_never_dispatches_standalone_c1_verification() -> Result<()
 }
 
 #[actix::test]
-async fn secure_16384_publishes_inputs_ready_only_after_collection_settles() -> Result<()> {
+async fn secure_16384_publishes_inputs_ready_after_a_durable_quorum() -> Result<()> {
     use crate::domain::lbfv_contribution_collection::tests::{complete_party, fixture};
 
     let fixture = fixture();
     let pending_collection = fixture.state.clone();
-    let mut settled_collection = pending_collection.clone();
-    for party_id in 0..3 {
-        complete_party(&mut settled_collection, &fixture, party_id);
-    }
+    let mut quorum_collection = pending_collection.clone();
+    complete_party(&mut quorum_collection, &fixture, 0);
+    complete_party(&mut quorum_collection, &fixture, 2);
+    quorum_collection.mark_ready(vec![0, 2])?;
     let submissions = fixture
         .state
         .committee
@@ -502,7 +502,7 @@ async fn secure_16384_publishes_inputs_ready_only_after_collection_settles() -> 
         .await?
         .is_empty());
 
-    aggregator.replace_lbfv_collection(settled_collection);
+    aggregator.replace_lbfv_collection(quorum_collection);
     aggregator.publish_inputs_ready(ec)?;
     assert!(matches!(
         next_event(&history).await?.into_data(),
@@ -776,7 +776,7 @@ async fn lbfv_expulsion_durably_invalidates_an_in_flight_dispatch() -> Result<()
     for party_id in 0..3 {
         complete_party(&mut collection, &fixture, party_id);
     }
-    collection.mark_ready(vec![0, 1, 2])?;
+    collection.mark_ready(vec![0, 1])?;
     collection.mark_verification_dispatched()?;
     let repositories = Repositories::in_mem();
     repositories
@@ -877,7 +877,8 @@ async fn lbfv_expulsion_durably_invalidates_an_in_flight_dispatch() -> Result<()
     );
     assert!(matches!(
         persisted.verification,
-        crate::LbfvContributionVerificationStateV1::Collecting
+        crate::LbfvContributionVerificationStateV1::Ready { ref party_ids }
+            if party_ids == &[0, 2]
     ));
     Ok(())
 }
@@ -891,7 +892,7 @@ async fn lbfv_stale_verification_completion_is_ignored() -> Result<()> {
     for party_id in 0..3 {
         complete_party(&mut collection, &fixture, party_id);
     }
-    collection.mark_ready(vec![0, 1, 2])?;
+    collection.mark_ready(vec![0, 1])?;
     collection.mark_verification_dispatched()?;
     let repositories = Repositories::in_mem();
     repositories
@@ -992,7 +993,7 @@ async fn sealed_sidecar_recovery_applies_the_exact_accepted_set() -> Result<()> 
     for party_id in 0..3 {
         complete_party(&mut collection, &fixture, party_id);
     }
-    collection.mark_ready(vec![0, 1, 2])?;
+    collection.mark_ready(vec![0, 2])?;
     collection.mark_verification_dispatched()?;
     collection.seal(vec![accepted_commitments(0), accepted_commitments(2)])?;
     let repositories = Repositories::in_mem();
@@ -1072,8 +1073,11 @@ async fn sealed_sidecar_recovery_applies_the_exact_accepted_set() -> Result<()> 
 
     assert!(matches!(
         repositories.publickey(&collection.e3_id).read().await?,
-        Some(PublicKeyAggregatorState::GeneratingC5Proof { honest_party_ids, .. })
-            if honest_party_ids == BTreeSet::from([0, 2])
+        Some(PublicKeyAggregatorState::GeneratingC5Proof {
+            honest_party_ids,
+            dishonest_parties,
+            ..
+        }) if honest_party_ids == BTreeSet::from([0, 2]) && dishonest_parties.is_empty()
     ));
     let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
     assert!(events.iter().any(|event| matches!(

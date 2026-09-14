@@ -34,6 +34,14 @@ pub global GF_SK_COMMITMENT_IDX: u32 = 11;
 pub global GF_PK_COMMITMENTS_START: u32 = 13;
 pub global GF_D0_COMMITMENTS_START: u32 = GF_PK_COMMITMENTS_START + LBFV_ROWS;
 pub global GF_D2_COMMITMENTS_START: u32 = GF_D0_COMMITMENTS_START + LBFV_ROWS;
+pub global LEGACY_NODE_FOLD_C1_KEY_HASH_IDX: u32 = 2;
+
+fn assert_bridge_c1_key_hash(
+    node_fold_public: [Field; NODE_FOLD_PUBLIC_LEN],
+    c1_key_hash: Field,
+) {
+    assert(node_fold_public[LEGACY_NODE_FOLD_C1_KEY_HASH_IDX] == c1_key_hash);
+}
 
 fn build_public_statement(
     node_fold_public: [Field; NODE_FOLD_PUBLIC_LEN],
@@ -87,6 +95,7 @@ fn main(
     );
 
     assert(node_fold_public[0] == party_id);
+    assert_bridge_c1_key_hash(node_fold_public, c1_key_hash);
     assert(generation_public[GF_ACC_VK_IDX] == generation_key_hash);
     assert(generation_public[GF_ROW_INDEX_IDX] == (LBFV_ROWS - 1) as Field);
     assert(generation_public[GF_EXPECTED_FOLD_IDX] == generation_key_hash);
@@ -123,4 +132,18 @@ fn test_public_statement_projects_generation_session() {
     assert(out[NODE_FOLD_PUBLIC_LEN + 1] == 22);
     assert(out[NODE_FOLD_PUBLIC_LEN + 2] == 31);
     assert(out[NODE_FOLD_V2_PUBLIC_LEN - 1] == 51);
+}
+
+#[test]
+fn test_bridge_c1_key_hash_matches_legacy_node_fold() {
+    let mut node_public: [Field; NODE_FOLD_PUBLIC_LEN] = [0; NODE_FOLD_PUBLIC_LEN];
+    node_public[LEGACY_NODE_FOLD_C1_KEY_HASH_IDX] = 41;
+    assert_bridge_c1_key_hash(node_public, 41);
+}
+
+#[test(should_fail)]
+fn test_bridge_c1_key_hash_rejects_another_vk() {
+    let mut node_public: [Field; NODE_FOLD_PUBLIC_LEN] = [0; NODE_FOLD_PUBLIC_LEN];
+    node_public[LEGACY_NODE_FOLD_C1_KEY_HASH_IDX] = 41;
+    assert_bridge_c1_key_hash(node_public, 42);
 }

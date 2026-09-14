@@ -11,6 +11,7 @@ import {
   BfvPkVerifierV2,
   BfvPkVerifierV2__factory as BfvPkVerifierV2Factory,
 } from "../../types";
+import { currentNodeRelease } from "../protocol/nodeRelease";
 import {
   BFV_DKG_H,
   assertBfvPkVerifierSubCircuitVkHashes,
@@ -183,18 +184,26 @@ export const deployAndSaveBfvPkVerifierV2 = async (
       existing.address,
       signer,
     );
-    const [onChainCircuitVerifier, onChainRegistry] = await Promise.all([
-      bfvPkVerifierV2.circuitVerifier(),
-      bfvPkVerifierV2.ciphernodeRegistry(),
-    ]);
+    const [onChainCircuitVerifier, onChainRegistry, onChainProtocolVersion] =
+      await Promise.all([
+        bfvPkVerifierV2.circuitVerifier(),
+        bfvPkVerifierV2.ciphernodeRegistry(),
+        bfvPkVerifierV2.getFunction("LBFV_PROTOCOL_VERSION").staticCall(),
+      ]);
+    const expectedProtocolVersion = BigInt(
+      currentNodeRelease().protocolVersion,
+    );
     if (
       onChainCircuitVerifier.toLowerCase() !==
         circuitVerifierArgs.address.toLowerCase() ||
-      onChainRegistry.toLowerCase() !== ciphernodeRegistryAddress.toLowerCase()
+      onChainRegistry.toLowerCase() !==
+        ciphernodeRegistryAddress.toLowerCase() ||
+      onChainProtocolVersion !== expectedProtocolVersion
     ) {
       throw new Error(
         `BfvPkVerifierV2 at ${existing.address} has stale verifier dependencies. ` +
-          `Expected circuitVerifier=${circuitVerifierArgs.address}, ciphernodeRegistry=${ciphernodeRegistryAddress}. ` +
+          `Expected circuitVerifier=${circuitVerifierArgs.address}, ciphernodeRegistry=${ciphernodeRegistryAddress}, ` +
+          `protocolVersion=${expectedProtocolVersion}. ` +
           "Redeploy after the verifier dependencies change.",
       );
     }

@@ -97,8 +97,9 @@ pub fn flatten<let A: u32, let L: u32, let BIT: u32>(
 /// - `BIT`: per-value bit bound; rounded up to `nibble_bits` by `packing_layout`.
 ///
 /// ## Range constraint
-/// - `pack` constrains each shifted digit to `[0, radix)`. This prevents carry collisions between
-///   adjacent digits when a caller supplies an out-of-range coefficient.
+/// - `pack` computes `digit = v + base` in the BN254 field, then constrains `digit` to
+///   `[0, radix)`. Values near the field modulus can wrap below `base` and encode negative
+///   coefficients. The constraint applies to the shifted digit, not to the canonical value of `v`.
 /// - `group >= 1` is enforced by `packing_layout::<BIT>()`.
 /// - Padding with `digit = 2^nibble_bits` encodes `zero limb` consistently.
 ///

@@ -40,7 +40,7 @@ contract BfvPkVerifierV2 is IPkVerifier {
     uint256 private constant V2_VK_BINDING_START = 51;
 
     uint256 private constant LBFV_PROOF_DOMAIN_VERSION = 1;
-    uint256 private constant LBFV_PROTOCOL_VERSION = 4;
+    uint256 public constant LBFV_PROTOCOL_VERSION = 4;
     uint256 private constant LBFV_CONSTANTS_VERSION = 1;
     bytes32 private constant LBFV_PROOF_DOMAIN_LABEL_HASH =
         keccak256("interfold.lbfv.proof-domain:v1");

@@ -46,6 +46,7 @@ export function encodeMockDkgProofForAttestation(
 /** Encode the secure-16384 V2 public-input shape used by fold attestations. */
 export function encodeMockDkgV2ProofForAttestation(
   pkCommitment: string,
+  committeeHash: string,
   partyIds: number[],
   skCommits: string[],
   esmCommits: string[],
@@ -61,7 +62,31 @@ export function encodeMockDkgV2ProofForAttestation(
     { length: 63 },
     () => ethers.ZeroHash,
   );
+  const toLimbs = (hash: string): [string, string] => {
+    const value = BigInt(hash);
+    return [
+      ethers.toBeHex(value >> 128n, 32),
+      ethers.toBeHex(value & ((1n << 128n) - 1n), 32),
+    ];
+  };
+  const acceptedSetHash = ethers.keccak256(
+    ethers.solidityPacked(
+      ["bytes32", "uint32", "uint32", "uint32"],
+      [
+        ethers.id("interfold.lbfv.accepted-party-set:v1"),
+        2,
+        partyIds[0],
+        partyIds[1],
+      ],
+    ),
+  );
+  const [committeeHi, committeeLo] = toLimbs(committeeHash);
+  const [acceptedSetHi, acceptedSetLo] = toLimbs(acceptedSetHash);
   publicInputs[29] = pkCommitment;
+  publicInputs[4] = committeeHi;
+  publicInputs[5] = committeeLo;
+  publicInputs[34] = acceptedSetHi;
+  publicInputs[35] = acceptedSetLo;
   for (let i = 0; i < partyIds.length; i++) {
     publicInputs[2 + i] = ethers.zeroPadValue(ethers.toBeHex(partyIds[i]), 32);
     publicInputs[25 + i] = skCommits[i];

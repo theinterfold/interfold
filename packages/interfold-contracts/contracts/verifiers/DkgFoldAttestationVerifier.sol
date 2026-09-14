@@ -11,6 +11,7 @@ import {
     IDkgFoldAttestationVerifier
 } from "../interfaces/IDkgFoldAttestationVerifier.sol";
 import { DkgFoldAttestationLib } from "../lib/DkgFoldAttestationLib.sol";
+import { CommitteeHashLib } from "../lib/CommitteeHashLib.sol";
 
 /**
  * @title DkgFoldAttestationVerifier
@@ -19,6 +20,14 @@ import { DkgFoldAttestationLib } from "../lib/DkgFoldAttestationLib.sol";
 contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
     uint256 private constant V2_PUBLIC_INPUTS_LEN = 63;
     uint256 private constant V2_H = 2;
+    uint256 private constant V2_N = 3;
+    uint256 private constant V2_PARTY_ID_START = 2;
+    uint256 private constant V2_COMMITTEE_HASH_HI_IDX = 4;
+    uint256 private constant V2_COMMITTEE_HASH_LO_IDX = 5;
+    uint256 private constant V2_ACCEPTED_SET_HI_IDX = 34;
+    uint256 private constant V2_ACCEPTED_SET_LO_IDX = 35;
+    bytes32 private constant LBFV_ACCEPTED_SET_LABEL_HASH =
+        keccak256("interfold.lbfv.accepted-party-set:v1");
 
     struct BundleData {
         bytes32[] publicInputs;
@@ -43,11 +52,18 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
             bytes32[] memory esmAggCommits
         )
     {
-        BundleData memory data = _loadBundle(proof, dkgAttestationBundle);
+        BundleData memory data = _loadBundle(
+            registry,
+            e3Id,
+            proof,
+            dkgAttestationBundle
+        );
         return _fillAnchors(registry, chainId, e3Id, data);
     }
 
     function _loadBundle(
+        address registry,
+        uint256 e3Id,
         bytes calldata proof,
         bytes calldata dkgAttestationBundle
     ) private view returns (BundleData memory data) {
@@ -58,7 +74,7 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         } catch {
             revert ICiphernodeRegistry.InvalidFoldAttestation();
         }
-        data.h = _honestPartyCount(data.publicInputs);
+        data.h = _honestPartyCount(registry, e3Id, data.publicInputs);
         // Defense in depth: require the public-inputs `partyId` slots
         // (`publicInputs[2..2+h]`) to be strictly ascending. The zk circuit
         // already enforces this, but rejecting duplicates here prevents two
@@ -183,9 +199,11 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
     }
 
     function _honestPartyCount(
+        address registry,
+        uint256 e3Id,
         bytes32[] memory publicInputs
-    ) private pure returns (uint256 h) {
-        if (publicInputs.length == V2_PUBLIC_INPUTS_LEN) {
+    ) private view returns (uint256 h) {
+        if (_isV2Statement(registry, e3Id, publicInputs)) {
             return V2_H;
         }
         require(
@@ -197,6 +215,42 @@ contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
         // a zero-honest-party proof would otherwise pass this verifier with no
         // attestations to check and write empty anchors to the registry.
         require(h > 0, ICiphernodeRegistry.InvalidFoldAttestation());
+    }
+
+    function _isV2Statement(
+        address registry,
+        uint256 e3Id,
+        bytes32[] memory publicInputs
+    ) private view returns (bool) {
+        if (publicInputs.length != V2_PUBLIC_INPUTS_LEN) return false;
+
+        uint256 first = uint256(publicInputs[V2_PARTY_ID_START]);
+        uint256 second = uint256(publicInputs[V2_PARTY_ID_START + 1]);
+        if (first >= V2_N || second >= V2_N || first >= second) return false;
+
+        bytes32 committeeHash = ICiphernodeRegistry(registry).getCommitteeHash(
+            e3Id
+        );
+        if (
+            publicInputs[V2_COMMITTEE_HASH_HI_IDX] !=
+            CommitteeHashLib.hi(committeeHash) ||
+            publicInputs[V2_COMMITTEE_HASH_LO_IDX] !=
+            CommitteeHashLib.lo(committeeHash)
+        ) return false;
+
+        bytes32 acceptedSetHash = keccak256(
+            abi.encodePacked(
+                LBFV_ACCEPTED_SET_LABEL_HASH,
+                uint32(V2_H),
+                uint32(first),
+                uint32(second)
+            )
+        );
+        return
+            publicInputs[V2_ACCEPTED_SET_HI_IDX] ==
+            CommitteeHashLib.hi(acceptedSetHash) &&
+            publicInputs[V2_ACCEPTED_SET_LO_IDX] ==
+            CommitteeHashLib.lo(acceptedSetHash);
     }
 
     function _verifyBinding(

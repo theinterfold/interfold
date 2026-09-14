@@ -19,6 +19,7 @@ import {
   NoirCircuitBuilder,
   configModuleFiles,
   generatedConfigDrift,
+  hydratedCircuitTargetDir,
   requiredLbfvBinMarkers,
   requiredLbfvDistMarkers,
   syncGeneratedConfigModules,
@@ -40,11 +41,12 @@ test('the v2 circuit label changes the insecure configuration ID', () => {
 })
 
 test('does not advertise unsupported secure-16384 committee pairs', () => {
-  assert.doesNotThrow(() =>
-    new NoirCircuitBuilder(undefined, {
-      preset: CIRCUIT_PRESETS.SECURE_16384,
-      committee: CIRCUIT_COMMITTEES.MINIMUM,
-    }),
+  assert.doesNotThrow(
+    () =>
+      new NoirCircuitBuilder(undefined, {
+        preset: CIRCUIT_PRESETS.SECURE_16384,
+        committee: CIRCUIT_COMMITTEES.MINIMUM,
+      }),
   )
   for (const committee of [CIRCUIT_COMMITTEES.MICRO, CIRCUIT_COMMITTEES.SMALL]) {
     assert.throws(
@@ -233,7 +235,7 @@ function hydrationFixture(): {
     const circuitDir = join(bin, group, circuit)
     mkdirSync(circuitDir, { recursive: true })
     writeFileSync(join(circuitDir, 'Nargo.toml'), `[package]\nname = "${circuit}"\ntype = "bin"\n`)
-    const targetDir = join(circuitDir, 'target')
+    const targetDir = hydratedCircuitTargetDir(bin, group as (typeof CIRCUIT_GROUPS)[keyof typeof CIRCUIT_GROUPS], circuit)
     mkdirSync(targetDir, { recursive: true })
     writeFileSync(join(targetDir, `${circuit}.obsolete`), 'stale')
   }
@@ -242,10 +244,12 @@ function hydrationFixture(): {
     join(pairDir, 'default', CIRCUIT_GROUPS.DKG, 'pk', 'pk.json'),
     join(pairDir, 'default', CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation', 'pk_aggregation.json'),
     join(pairDir, 'default', CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'dkg_aggregator.json'),
+    join(pairDir, 'default', CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'dkg_aggregator.vk'),
     join(pairDir, 'default', CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.json'),
+    join(pairDir, 'default', CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.vk'),
     ...requiredLbfvDistMarkers(pairDir, CIRCUIT_PRESETS.SECURE_16384),
-    join(bin, CIRCUIT_GROUPS.DKG, 'pk', 'target', 'pk.json'),
-    join(bin, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation', 'target', 'pk_aggregation.json'),
+    join(bin, CIRCUIT_GROUPS.DKG, 'target', 'pk.json'),
+    join(bin, CIRCUIT_GROUPS.THRESHOLD, 'target', 'pk_aggregation.json'),
     join(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'target', 'dkg_aggregator.json'),
     join(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'target', 'dkg_aggregator.vk_recursive'),
     join(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'target', 'decryption_aggregator.json'),
@@ -275,14 +279,8 @@ test('hydrates the complete l-BFV family and removes stale target artifacts', ()
     for (const marker of requiredLbfvBinMarkers(join(fixture.root, 'circuits', 'bin'), CIRCUIT_PRESETS.SECURE_16384)) {
       assert.equal(existsSync(marker), true)
     }
-    assert.equal(
-      existsSync(join(fixture.root, 'circuits', 'bin', 'threshold', 'rlk_generation', 'target', 'rlk_generation.obsolete')),
-      false,
-    )
-    assert.equal(
-      existsSync(join(fixture.root, 'circuits', 'bin', 'threshold', 'rlk_generation_limb', 'target', 'rlk_generation_limb.obsolete')),
-      false,
-    )
+    assert.equal(existsSync(join(fixture.root, 'circuits', 'bin', 'threshold', 'target', 'rlk_generation.obsolete')), false)
+    assert.equal(existsSync(join(fixture.root, 'circuits', 'bin', 'threshold', 'target', 'rlk_generation_limb.obsolete')), false)
     assert.equal(JSON.parse(readFileSync(join(fixture.root, 'circuits', 'bin', '.active-preset.json'), 'utf8')).sourceHash, 'source-hash')
   } finally {
     rmSync(fixture.root, { recursive: true, force: true })
@@ -305,12 +303,15 @@ test('rejects l-BFV hydration before writing a stamp when an artifact is missing
   }
 })
 
-test('rejects hydration before writing a stamp when a base artifact is missing', () => {
+test('rejects hydration before changing targets when a base source artifact is missing', () => {
   const fixture = hydrationFixture()
   try {
-    unlinkSync(join(fixture.root, 'circuits', 'bin', CIRCUIT_GROUPS.DKG, 'pk', 'target', 'pk.json'))
+    const target = join(fixture.root, 'circuits', 'bin', CIRCUIT_GROUPS.DKG, 'target', 'pk.json')
+    const original = readFileSync(target, 'utf8')
+    unlinkSync(join(fixture.outputDir, CIRCUIT_PRESETS.SECURE_16384, 'minimum', 'default', CIRCUIT_GROUPS.DKG, 'pk', 'pk.json'))
 
-    assert.throws(fixture.hydrate, /Cannot hydrate circuits\/bin: missing hydrated artifact/)
+    assert.throws(fixture.hydrate, /Cannot hydrate circuits\/bin: missing artifact/)
+    assert.equal(readFileSync(target, 'utf8'), original)
     assert.equal(existsSync(join(fixture.root, 'circuits', 'bin', '.active-preset.json')), false)
   } finally {
     rmSync(fixture.root, { recursive: true, force: true })

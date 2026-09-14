@@ -73,7 +73,7 @@
                   → Rust normalizes finalized committee into ascending address order
                   → active aggregator = lowest eligible party_id in that normalized order
                    → each secure-16384 node durably fetches and verifies submitted l-BFV bundles
-                   → each node first persists all aggregation inputs and settled l-BFV outcomes
+                   → each node persists the first H-party l-BFV ready quorum as its candidate set
                    → a durable 10-minute ready-work deadline promotes standbys in order
                    → active aggregator verifies candidates and seals exactly H ascending parties
                    → active aggregator folds the same parties' PK and RLK rows

@@ -285,7 +285,7 @@ impl LbfvContributionCollectionStateV1 {
             LbfvContributionVerificationStateV1::Collecting => {}
             LbfvContributionVerificationStateV1::Ready { party_ids }
             | LbfvContributionVerificationStateV1::Dispatched { party_ids } => {
-                self.validate_candidate_parties(party_ids)?;
+                self.validate_persisted_candidate_parties(party_ids)?;
             }
             LbfvContributionVerificationStateV1::Sealed {
                 candidate_party_ids,
@@ -484,7 +484,7 @@ impl LbfvContributionCollectionStateV1 {
         self.validate_loaded()?;
         match &self.verification {
             LbfvContributionVerificationStateV1::Collecting => {
-                self.validate_candidate_parties(&party_ids)?;
+                self.validate_new_candidate_parties(&party_ids)?;
                 self.verification = LbfvContributionVerificationStateV1::Ready { party_ids };
                 Ok(true)
             }
@@ -754,6 +754,16 @@ impl LbfvContributionCollectionStateV1 {
         Ok(party_ids)
     }
 
+    /// Return the canonical ready set after this collector has a verification quorum.
+    pub fn ready_quorum_party_ids(&self, submitted_party_ids: &[u32]) -> Result<Option<Vec<u32>>> {
+        let mut party_ids = self.ready_party_ids(submitted_party_ids)?;
+        if party_ids.len() < self.committee_h as usize {
+            return Ok(None);
+        }
+        party_ids.truncate(self.committee_h as usize);
+        Ok(Some(party_ids))
+    }
+
     pub fn ineligible_party_ids(&self, submitted_party_ids: &[u32]) -> Result<Vec<u32>> {
         self.validate_loaded()?;
         Ok(submitted_party_ids
@@ -855,14 +865,10 @@ impl LbfvContributionCollectionStateV1 {
         manifest.verify_committee_signer(&self.committee)
     }
 
-    fn validate_candidate_parties(&self, party_ids: &[u32]) -> Result<()> {
+    fn validate_persisted_candidate_parties(&self, party_ids: &[u32]) -> Result<()> {
         ensure!(
-            party_ids.len() >= self.committee_h as usize,
-            "l-BFV candidate set contains fewer than H parties"
-        );
-        ensure!(
-            party_ids.len() <= self.committee.len(),
-            "l-BFV candidate set contains more than N parties"
+            (self.committee_h as usize..=self.committee.len()).contains(&party_ids.len()),
+            "persisted l-BFV candidate set does not contain H through N parties"
         );
         ensure!(
             party_ids.windows(2).all(|pair| pair[0] < pair[1]),
@@ -879,12 +885,21 @@ impl LbfvContributionCollectionStateV1 {
         Ok(())
     }
 
+    fn validate_new_candidate_parties(&self, party_ids: &[u32]) -> Result<()> {
+        self.validate_persisted_candidate_parties(party_ids)?;
+        ensure!(
+            party_ids.len() == self.committee_h as usize,
+            "new l-BFV candidate set does not contain exactly H parties"
+        );
+        Ok(())
+    }
+
     fn validate_sealed_parties(
         &self,
         candidate_party_ids: &[u32],
         accepted_parties: &[LbfvAcceptedPartyCommitments],
     ) -> Result<()> {
-        self.validate_candidate_parties(candidate_party_ids)?;
+        self.validate_persisted_candidate_parties(candidate_party_ids)?;
         let accepted_party_ids = accepted_parties
             .iter()
             .map(|party| party.party_id)
@@ -1365,13 +1380,58 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn ready_quorum_does_not_wait_for_an_unavailable_party() {
+        let fixture = fixture();
+        let mut state = fixture.state.clone();
+        complete_party(&mut state, &fixture, 0);
+        complete_party(&mut state, &fixture, 2);
+
+        assert!(!state.all_submitted_parties_settled(&[2, 1, 0]).unwrap());
+        assert_eq!(
+            state.ready_quorum_party_ids(&[2, 1, 0]).unwrap(),
+            Some(vec![0, 2])
+        );
+    }
+
+    #[test]
+    fn ready_quorum_keeps_exactly_the_first_h_ascending_parties() {
+        let fixture = fixture();
+        let mut state = fixture.state.clone();
+        for party_id in 0..3 {
+            complete_party(&mut state, &fixture, party_id);
+        }
+
+        assert_eq!(
+            state.ready_quorum_party_ids(&[2, 1, 0]).unwrap(),
+            Some(vec![0, 1])
+        );
+    }
+
+    #[test]
+    fn persisted_candidate_set_does_not_change_after_a_late_arrival() {
+        let fixture = fixture();
+        let mut state = fixture.state.clone();
+        complete_party(&mut state, &fixture, 0);
+        complete_party(&mut state, &fixture, 2);
+        state.mark_ready(vec![0, 2]).unwrap();
+
+        complete_party(&mut state, &fixture, 1);
+
+        assert!(matches!(
+            state.verification,
+            LbfvContributionVerificationStateV1::Ready { ref party_ids }
+                if party_ids == &[0, 2]
+        ));
+    }
+
+    #[test]
     fn exclusion_invalidates_an_unsealed_dispatch_and_survives_hydration() {
         let fixture = fixture();
         let mut state = fixture.state.clone();
         for party_id in 0..3 {
             complete_party(&mut state, &fixture, party_id);
         }
-        state.mark_ready(vec![0, 1, 2]).unwrap();
+        state.mark_ready(vec![0, 1]).unwrap();
         state.mark_verification_dispatched().unwrap();
         let first_verification_id = state.dispatched_verification_id().unwrap();
 
@@ -1388,6 +1448,35 @@ pub(crate) mod tests {
         assert_eq!(state.ready_party_ids(&[2, 1, 0]).unwrap(), vec![0, 2]);
         assert_eq!(state.ineligible_party_ids(&[2, 1, 0]).unwrap(), vec![1]);
         assert!(state.all_submitted_parties_settled(&[2, 1, 0]).unwrap());
+        state.mark_ready(vec![0, 2]).unwrap();
+        state.mark_verification_dispatched().unwrap();
+        assert_ne!(
+            state.dispatched_verification_id().unwrap(),
+            first_verification_id
+        );
+
+        let encoded = bincode::serialize(&state).unwrap();
+        let restored: LbfvContributionCollectionStateV1 = bincode::deserialize(&encoded).unwrap();
+        restored.validate_loaded().unwrap();
+        assert_eq!(restored, state);
+    }
+
+    #[test]
+    fn failed_candidate_selects_the_next_ready_quorum() {
+        let fixture = fixture();
+        let mut state = fixture.state.clone();
+        for party_id in 0..3 {
+            complete_party(&mut state, &fixture, party_id);
+        }
+        state.mark_ready(vec![0, 1]).unwrap();
+        state.mark_verification_dispatched().unwrap();
+        let first_verification_id = state.dispatched_verification_id().unwrap();
+
+        assert!(state.mark_party_invalid(1).unwrap());
+        assert_eq!(
+            state.ready_quorum_party_ids(&[0, 1, 2]).unwrap(),
+            Some(vec![0, 2])
+        );
         state.mark_ready(vec![0, 2]).unwrap();
         state.mark_verification_dispatched().unwrap();
         assert_ne!(
@@ -1423,7 +1512,7 @@ pub(crate) mod tests {
         for party_id in 0..3 {
             complete_party(&mut state, &fixture, party_id);
         }
-        assert!(state.mark_ready(vec![0, 1, 2]).unwrap());
+        assert!(state.mark_ready(vec![0, 2]).unwrap());
         assert!(state.mark_verification_dispatched().unwrap());
         assert!(state.seal(accepted_parties(&[0, 1, 2])).is_err());
         assert!(state.seal(accepted_parties(&[2, 0])).is_err());
@@ -1446,7 +1535,7 @@ pub(crate) mod tests {
             LbfvContributionVerificationStateV1::Sealed {
                 candidate_party_ids,
                 accepted_parties,
-            } if candidate_party_ids == &[0, 1, 2] && accepted_parties == &accepted
+            } if candidate_party_ids == &[0, 2] && accepted_parties == &accepted
         ));
 
         let sealed = state.clone();
@@ -1487,6 +1576,7 @@ pub(crate) mod tests {
         assert!(state.mark_ready(vec![1, 0]).is_err());
         assert!(state.mark_ready(vec![0, 0]).is_err());
         assert!(state.mark_ready(vec![0, 3]).is_err());
+        assert!(state.mark_ready(vec![0, 1, 2]).is_err());
     }
 
     #[test]
@@ -1528,9 +1618,19 @@ pub(crate) mod tests {
         state.mark_party_validated(accepted_commitments(0)).unwrap();
         complete_party(&mut state, &fixture, 1);
         complete_party(&mut state, &fixture, 2);
-        state.mark_ready(vec![0, 1, 2]).unwrap();
-        state.mark_verification_dispatched().unwrap();
-        state.seal(accepted_parties(&[0, 2])).unwrap();
+        state.verification = LbfvContributionVerificationStateV1::Ready {
+            party_ids: vec![0, 1, 2],
+        };
+        state.validate_loaded().unwrap();
+        state.verification = LbfvContributionVerificationStateV1::Dispatched {
+            party_ids: vec![0, 1, 2],
+        };
+        state.validate_loaded().unwrap();
+        state.verification = LbfvContributionVerificationStateV1::Sealed {
+            candidate_party_ids: vec![0, 1, 2],
+            accepted_parties: accepted_parties(&[0, 2]),
+        };
+        state.validate_loaded().unwrap();
 
         let encoded = bincode::serialize(&state).unwrap();
         assert_eq!(

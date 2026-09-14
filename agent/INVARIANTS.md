@@ -418,6 +418,10 @@ design citation alone does not establish current runtime behavior.
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert
   `H == N`. A mixed Some/None NodeFold set is terminal DKG failure. — `ARCHITECTURE.md`;
   `flow-trace/04`
+- Secure-16384 persists the first exact-H ascending ready candidate set before verification
+  dispatch. If a candidate fails, persist its invalid status before selecting and dispatching the
+  next exact-H ready set. Only the sealed accepted set is immutable. Persisted V1 sidecars can
+  contain H through N candidates; new V1 transitions must contain exactly H. — `flow-trace/04`
 - Proof multiplicity: C2a/C2b singleton per recipient; C3a/C3b follow configured Shamir
   multiplicities. Witness dimensions come from the **active preset**, never incidental vector sizes.
   — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
@@ -575,6 +579,14 @@ design citation alone does not establish current runtime behavior.
   use SHA-256 over that session digest, party role, proof family, row, accepted-set digest, and
   public-artifact digest. Every worker recomputes the ID before witness work; retries use the same
   encrypted 32-byte seed and operation-ID work namespace.
+- **Lane A l-BFV slashing is one penalty per proof family:** `proofInstance` identifies the failed
+  row in the signed accusation, but the on-chain replay key is deliberately
+  `(chainId, e3Id, operator, proofType)`. It excludes `proofInstance` so one operator cannot receive
+  multiple economic penalties for rows in the same proof family and E3.
+- **The l-BFV aggregator ID is statement metadata, not transaction authorization:** the circuits
+  bind one in-range committee party ID across the aggregation rows. `BfvPkVerifierV2` checks the
+  range but does not require that party to submit the transaction. `publishCommittee` remains
+  permissionless and replay-safe.
 - **l-BFV row bundles are complete identities:** generation verification requires C1 followed by
   exactly five public-key rows and five RLK rows. Aggregation verification requires the
   corresponding ten l-BFV rows without C1. Rows are ordered from 0 through 4 within each family and
@@ -597,19 +609,25 @@ design citation alone does not establish current runtime behavior.
   aggregator stores the first signed manifest, one conflicting manifest, both content-addressed
   artifacts, fetch attempts, absolute retry times, exclusions, validated row commitments, and the
   verification phase. The artifact write completes before the sidecar marks its slot durable. The
-  actor starts the failover budget only after every submitted party is `Ready`, `Equivocated`,
-  `InvalidData`, or `Excluded`. It persists the candidate set before verification and accepts a
-  result only when its stable candidate-set ID matches. A successful result seals exactly H
-  ascending parties with commitments equal to their validated records before the C5 state or effect
-  can advance. Restart reconstructs only a missing initial sidecar, validates any `DocumentsDurable`
-  bundle, re-arms the earliest retry, redrives a persisted dispatch, or applies an immutable sealed
-  set. — `flow-trace/04`
+  actor persists the first ascending `H`-party ready quorum and starts the failover budget without
+  waiting for unrelated submitted parties. If no quorum exists, failure is terminal only after every
+  submitted party is `Ready`, `Equivocated`, `InvalidData`, or `Excluded`. Verification reuses the
+  persisted candidate set and accepts a result only when its stable candidate-set ID matches. A
+  failed candidate becomes durably invalid before the collector selects and dispatches the next
+  exact-`H` ready set. A successful result seals those exact `H` parties with commitments equal to
+  their validated records before the C5 state or effect can advance. A late failure from a
+  non-candidate does not mark that party dishonest. Restart reconstructs only a missing initial
+  sidecar, validates any `DocumentsDurable` bundle, re-arms the earliest retry, redrives a persisted
+  dispatch, or applies an immutable sealed set. Persisted V1 candidate sets of `H..=N` remain valid;
+  all new V1 candidate sets contain exactly `H`. — `flow-trace/04`
 - Circuit soundness fixes to preserve: `ModU64::div_mod` verifies
   `result*divisor == dividend (mod modulus)` (IF-001); C7 compares **every** decoded coefficient,
   including zeros, to the claimed message (IF-002), and uses `U384` so the secure-16384
-  `t * u mod Q` decode does not wrap at 256 bits (IF-005). Every `pack` call constrains each shifted
-  digit to its radix before the packed value enters a commitment or Fiat-Shamir transcript. This
-  constraint prevents adjacent out-of-range digits from producing the same packed field value.
+  `t * u mod Q` decode does not wrap at 256 bits (IF-005). Every `pack` call constrains the shifted
+  digit, after BN254 field addition, to its radix before the packed value enters a commitment or
+  Fiat-Shamir transcript. Values near the field modulus can wrap below the offset and represent
+  negative coefficients; the range check applies to the shifted digit, not the canonical field
+  value.
 
 ## Node / actor runtime
 
@@ -748,9 +766,10 @@ design citation alone does not establish current runtime behavior.
 - **Never hand-edit generated files:** parity matrices, `utils.ts` H/T values, verifier contracts
   (`generate-verifiers.ts` output), `.active-preset.json`, `crates/support/contracts/ImageID.sol`,
   `crates/support/tests/Elf.sol`.
-- **Generated verifiers must match the built VKs** — pre-push checks the canonical pair. CI hydrates
-  and compares every supported preset and committee pair. A drift means a deployed verifier accepts
-  a different circuit from the tree.
+- **Generated verifiers must match the built VKs** — pre-push checks the canonical pair. CI reads
+  each supported preset and committee pair directly from `dist/circuits` and compares it without
+  changing active circuit selectors or targets. A drift means a deployed verifier accepts a
+  different circuit from the tree.
 - **`Elf.sol` is never committed.** `crates/support/methods/build.rs` writes it with a machine-local
   guest ELF path, so it is generated per checkout and `.gitignore`d.
 - **A release publishes a complete provenance manifest** — `pnpm provenance:manifest`. It ties
@@ -804,6 +823,15 @@ Known residual gaps:
 - Live EventBus subscriber fan-out still includes unacknowledged `do_send` edges (#11). EventStore
   replay is paged through bounded temporary runs and uses an acknowledged fan-out barrier.
 - `ComputeEffectGate` is in-memory only — no durable external-effect outbox yet.
+- `DataAvailabilityCoordinator` keeps incomplete public-key chunk bodies in its schema-2 recovery
+  snapshot and clones the full map on each write. The 6 MiB per-candidate limit and one candidate
+  for each publisher do not provide a global memory or snapshot-size bound. The required fix is a
+  schema-versioned migration to content-addressed disk records with bounded in-memory metadata and
+  terminal cleanup; do not add an eviction policy that can remove the only recoverable candidate.
+- Encrypted l-BFV generation material can remain in historical protocol-event records after terminal
+  snapshot cleanup. The EventStore is append-only and has no selective retention boundary. A fix
+  requires a replay-compatible event indirection or cryptographic key-retirement design; it is not a
+  plaintext logging or generic network-gossip issue.
 - Residual runtime risks: `e3-evm` in-process nonce serialization without a durable tx outbox or
   full reorg rollback; accusation votes/timers lack complete durable reconstruction;
   `e3-program-server` test endpoint is unauthenticated (never a production boundary); cancellation

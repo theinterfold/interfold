@@ -731,16 +731,20 @@ SignedLbfvKeyShareManifest arrives at every PublicKeyAggregator
 │  ├─ Require the document C1 payload to equal the submitted C1 payload
 │  ├─ Validate all five PK, RLK D0, and RLK D2 row commitments
 │  └─ Persist Ready or InvalidData
-├─ Publish AggregationInputsReady only after every submitted party is settled
+├─ When the first H parties are Ready:
+│  ├─ Persist their ascending party IDs as the exact candidate set
+│  └─ Publish AggregationInputsReady without waiting for unrelated submitted parties
+├─ If fewer than H parties are Ready, fail only after every submitted party is settled
 │  └─ Settled = Ready, Equivocated, InvalidData, or Excluded
 └─ The active aggregator proceeds:
-   ├─ Require at least H Ready parties, sorted by party_id
+   ├─ Reuse the persisted H-party candidate set
    ├─ Persist Ready(candidate_party_ids), then Dispatched(candidate_party_ids)
    ├─ Derive verification_id from the proof session and complete candidate set
    ├─ Dispatch C1 + five PK rows + five RLK rows for every candidate
    ├─ Ignore ShareVerificationComplete with another verification_id
-   ├─ Select the lowest H honest candidates
-   ├─ Persist Sealed with the exact validated commitments for those H parties
+   ├─ Reject an ineligible candidate without attributing a late non-candidate failure
+   ├─ If a candidate proof fails, persist InvalidData and promote the next exact-H ready set
+   ├─ Persist Sealed with the exact validated commitments for the candidate parties
    ├─ Persist the l-BFV aggregation sidecar with both accepted document families
    └─ Persist the legacy C5 state before publishing PkAggregationProofPending
 ```
@@ -778,20 +782,18 @@ only that failure. It does not resume row, fold, final V2 proof, or publication 
   ├─ When every non-excluded member has submitted a keyshare:
 │   │   → The live count can fall below N after a confirmed fault, but it must still be at least H
 │   │   → Persist VerifyingC1
-│   │   → For secure-16384, wait until every submitted l-BFV contribution is settled
+│   │   → For secure-16384, persist the first H-party ready quorum
 │   │   → Then publish AggregationInputsReady(PublicKey)
 │   │   → CiphernodeSelector starts the 10-minute failover budget only now
 │   │
 │   ├─ Only the active aggregator starts C1 verification and later proof/compute effects
 │   │   → A promoted standby resumes from its persisted phase; it does not need a RAM buffer
 │   │   → A demoted node ignores late worker results and cannot publish a stale aggregate
-│   ├─ C1 verification runs over all collected non-excluded submitters; failures are dishonest
-│   │
-│   ├─ Honest-set selection (compile-time H from `committee::active`, may be < N):
-│   │     • Require at least H parties with valid C1 proofs; otherwise E3Failed
-│   │     • If more than H parties pass C1, keep the H lowest `party_id`s as the canonical
-│   │       honest set (extras remain in the full committee roster for `committee_hash`
-│   │       binding but do not receive NodeFold / C5 inputs)
+│   ├─ Legacy presets verify all collected non-excluded C1 proofs, then keep the H lowest valid IDs
+│   ├─ Secure-16384 verifies only its persisted exact-H candidates
+│   │   → A failed candidate is persisted as InvalidData before the next ready standby is selected
+│   │   → Each replacement dispatch has a new stable verification ID
+│   │   → Fail only when fewer than H submitted parties can still become valid
 │   │
 │   ├─ 1. Aggregate public key shares (H honest keyshares):
 │   │     aggregate_pk = Fhe::get_aggregate_public_key(

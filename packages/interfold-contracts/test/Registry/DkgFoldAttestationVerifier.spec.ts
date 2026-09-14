@@ -74,15 +74,16 @@ describe("DkgFoldAttestationVerifier", function () {
       await verifier.getAddress(),
       await mockRegistry.getAddress(),
     );
-    const proof = encodeMockDkgV2ProofForAttestation(
-      ethers.id(`pk-v2-${e3Id}`),
-      fixture.partyIds,
-      fixture.skCommits,
-      fixture.esmCommits,
-    );
     await mockRegistry.connect(owner).setCommitteeNodes(
       e3Id,
       fixture.ordered.map((o) => o.addr),
+    );
+    const proof = encodeMockDkgV2ProofForAttestation(
+      ethers.id(`pk-v2-${e3Id}`),
+      await mockRegistry.getCommitteeHash(e3Id),
+      fixture.partyIds,
+      fixture.skCommits,
+      fixture.esmCommits,
     );
 
     const [partyIds, skAggCommits, esmAggCommits] = await verifier.verify(
@@ -94,6 +95,34 @@ describe("DkgFoldAttestationVerifier", function () {
     );
 
     expect(partyIds.map((v: bigint) => Number(v))).to.deep.equal([0, 1]);
+    expect(skAggCommits).to.deep.equal(fixture.skCommits);
+    expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
+  });
+
+  it("does not classify a 63-input legacy statement as V2", async function () {
+    const { owner, mockRegistry, verifier } = await loadFixture(setup);
+    const signers = await ethers.getSigners();
+    const fixture = await buildMockDkgAttestationFixtureData(
+      signers.slice(2, 15),
+      e3Id,
+      ethers.id(`pk-legacy-h13-${e3Id}`),
+      await verifier.getAddress(),
+      await mockRegistry.getAddress(),
+    );
+    await mockRegistry.connect(owner).setCommitteeNodes(
+      e3Id,
+      fixture.ordered.map((operator) => operator.addr),
+    );
+
+    const [partyIds, skAggCommits, esmAggCommits] = await verifier.verify(
+      await mockRegistry.getAddress(),
+      31337,
+      e3Id,
+      fixture.proof,
+      fixture.bundle,
+    );
+
+    expect(partyIds).to.have.length(13);
     expect(skAggCommits).to.deep.equal(fixture.skCommits);
     expect(esmAggCommits).to.deep.equal(fixture.esmCommits);
   });

@@ -44,10 +44,17 @@ impl PublicKeyAggregator {
         let Ok(collection) = self.lbfv_collection_state() else {
             return;
         };
-        let LbfvContributionVerificationStateV1::Dispatched { .. } = &collection.verification
+        let LbfvContributionVerificationStateV1::Dispatched { party_ids } =
+            &collection.verification
         else {
             return;
         };
+        let candidate_party_ids = party_ids.clone();
+        let candidate_ids = candidate_party_ids
+            .iter()
+            .copied()
+            .map(u64::from)
+            .collect::<BTreeSet<_>>();
         let expected_verification_id = match collection.dispatched_verification_id() {
             Ok(verification_id) => verification_id,
             Err(error) => {
@@ -74,22 +81,27 @@ impl PublicKeyAggregator {
         else {
             return;
         };
-
-        let submitted_ids = submission_order
-            .iter()
-            .filter_map(|(party_id, _, _)| u32::try_from(*party_id).ok())
-            .collect::<Vec<_>>();
-        let mut dishonest_parties = msg.dishonest_parties;
+        let mut dishonest_parties = msg
+            .dishonest_parties
+            .into_iter()
+            .filter(|party_id| candidate_ids.contains(party_id))
+            .collect::<BTreeSet<_>>();
         for party_id in collection
-            .ineligible_party_ids(&submitted_ids)
+            .ineligible_party_ids(&candidate_party_ids)
             .unwrap_or_default()
         {
             dishonest_parties.insert(u64::from(party_id));
         }
+        if !dishonest_parties.is_empty() {
+            self.persist_lbfv_candidate_rejection(collection, dishonest_parties, ec, ctx);
+            return;
+        }
         let mut honest_entries = submission_order
             .into_iter()
             .zip(c1_proofs)
-            .filter(|((party_id, _, _), _)| !dishonest_parties.contains(party_id))
+            .filter(|((party_id, _, _), _)| {
+                candidate_ids.contains(party_id) && !dishonest_parties.contains(party_id)
+            })
             .map(|((party_id, node, keyshare), c1)| (party_id, node, keyshare, c1))
             .collect::<Vec<_>>();
         let audit = check_c1_keyshare_commitments(&honest_entries, &self.fhe);
@@ -113,20 +125,27 @@ impl PublicKeyAggregator {
             }
         }
         honest_entries.retain(|(party_id, _, _, _)| !dishonest_parties.contains(party_id));
+        if !dishonest_parties.is_empty() {
+            self.persist_lbfv_candidate_rejection(collection, dishonest_parties, ec, ctx);
+            return;
+        }
         let selected = PublicKeyAggregation::select_honest_set(
             &self.e3_id,
             honest_entries,
             &dishonest_parties,
             circuit_committee_h,
             threshold_m,
-            submitted_ids.len(),
+            candidate_ids.len(),
         );
         let HonestSelection::Proceed {
             honest_entries,
             honest_party_ids,
         } = selected
         else {
-            self.persist_lbfv_verification_failure(collection, ec, ctx);
+            self.bus.err(
+                EType::PublickeyAggregation,
+                anyhow::anyhow!("verified l-BFV candidate set contains fewer than H parties"),
+            );
             return;
         };
         let accepted_parties = honest_party_ids
@@ -203,8 +222,8 @@ impl PublicKeyAggregator {
             return;
         };
         let LbfvContributionVerificationStateV1::Sealed {
+            ref candidate_party_ids,
             ref accepted_parties,
-            ..
         } = collection.verification
         else {
             return;
@@ -224,10 +243,11 @@ impl PublicKeyAggregator {
             .iter()
             .map(|party| u64::from(party.party_id))
             .collect::<BTreeSet<_>>();
-        let dishonest_parties = submission_order
-            .iter()
-            .map(|(party_id, _, _)| *party_id)
-            .filter(|party_id| !accepted_ids.contains(party_id))
+        let dishonest_parties = collection
+            .ineligible_party_ids(candidate_party_ids)
+            .unwrap_or_default()
+            .into_iter()
+            .map(u64::from)
             .collect::<BTreeSet<_>>();
         let honest_entries = submission_order
             .into_iter()
@@ -395,39 +415,36 @@ impl PublicKeyAggregator {
         self.try_dispatch_dkg_aggregation(&ec)
     }
 
-    fn persist_lbfv_verification_failure(
+    fn persist_lbfv_candidate_rejection(
         &mut self,
         collection: crate::LbfvContributionCollectionStateV1,
+        dishonest_parties: BTreeSet<u64>,
         ec: EventContext<Sequenced>,
         ctx: &mut Context<Self>,
     ) {
-        let mut failed = collection.clone();
-        if let Err(error) = failed.fail("fewer than H valid l-BFV contributions") {
-            self.bus.err(EType::PublickeyAggregation, error);
-            return;
+        let mut collecting = collection.clone();
+        for party_id in dishonest_parties {
+            let Ok(party_id) = u32::try_from(party_id) else {
+                continue;
+            };
+            if let Err(error) = collecting.mark_party_invalid(party_id) {
+                self.bus.err(EType::PublickeyAggregation, error);
+                return;
+            }
         }
         let repositories = self.repositories.clone();
         ctx.wait(
             async move {
                 repositories
-                    .persist_publickey_lbfv_transition(&collection, &failed)
+                    .persist_publickey_lbfv_transition(&collection, &collecting)
                     .await?;
-                anyhow::Ok(failed)
+                anyhow::Ok(collecting)
             }
             .into_actor(self)
-            .map(move |result, actor, _| match result {
-                Ok(failed) => {
-                    actor.replace_lbfv_collection(failed);
-                    if let Err(error) = actor.bus.publish(
-                        E3Failed {
-                            e3_id: actor.e3_id.clone(),
-                            failed_at_stage: E3Stage::CommitteeFinalized,
-                            reason: FailureReason::DKGInvalidShares,
-                        },
-                        ec,
-                    ) {
-                        actor.bus.err(EType::PublickeyAggregation, error);
-                    }
+            .map(move |result, actor, ctx| match result {
+                Ok(collecting) => {
+                    actor.replace_lbfv_collection(collecting);
+                    actor.try_progress_lbfv_verification(ec, ctx);
                 }
                 Err(error) => actor.bus.err(EType::PublickeyAggregation, error),
             }),
