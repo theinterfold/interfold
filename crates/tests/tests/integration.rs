@@ -1484,6 +1484,12 @@ async fn test_trbfv_actor() -> Result<()> {
         String,
         BenchmarkRestartIdentity,
     >::new()));
+    let restart_during_dkg =
+        std::env::var("BENCHMARK_RESTART_DURING_DKG").is_ok_and(|value| value == "1");
+    anyhow::ensure!(
+        !restart_during_dkg || restart_storage.is_some(),
+        "BENCHMARK_RESTART_DURING_DKG requires BENCHMARK_RESTART_PARTY_ID"
+    );
 
     let mut nodes = CiphernodeSystemBuilder::new()
         // All nodes run the same binary under the aggregator-committee model.
@@ -1830,6 +1836,102 @@ async fn test_trbfv_actor() -> Result<()> {
         );
     }
 
+    if restart_during_dkg {
+        let roster = actix::clock::timeout(pubkey_flow_timeout, async {
+            loop {
+                let history = nodes.get_history(active_aggregator_index).await?;
+                if let Some(roster) = history.iter().find_map(|event| match event.get_data() {
+                    InterfoldEventData::CommitmentRosterSelected(data) if data.e3_id == e3_id => {
+                        Some(data.party_ids.clone())
+                    }
+                    _ => None,
+                }) {
+                    break Ok::<_, anyhow::Error>(roster);
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await??;
+        let requested_party_id = std::env::var("BENCHMARK_RESTART_PARTY_ID")?.parse::<usize>()?;
+        let restart_party_id = roster
+            .iter()
+            .copied()
+            .map(|party_id| party_id as usize)
+            .find(|&party_id| {
+                party_id == requested_party_id
+                    && committee
+                        .get(party_id)
+                        .is_some_and(|address| address != &active_aggregator_addr)
+            })
+            .or_else(|| {
+                roster
+                    .iter()
+                    .copied()
+                    .map(|party_id| party_id as usize)
+                    .find(|&party_id| {
+                        committee
+                            .get(party_id)
+                            .is_some_and(|address| address != &active_aggregator_addr)
+                    })
+            })
+            .context("selected DKG roster has no non-aggregator restart target")?;
+        let address = committee
+            .get(restart_party_id)
+            .context("restart party is outside the finalized committee")?;
+        let node_index = find_node_index_by_address(&nodes, address)?;
+        actix::clock::timeout(pubkey_flow_timeout, async {
+            loop {
+                let history = nodes.get_history(node_index).await?;
+                if history.iter().any(|event| {
+                    matches!(
+                        event.get_data(),
+                        InterfoldEventData::DecryptionShareProofsPending(data)
+                            if data.e3_id == e3_id && data.party_id == restart_party_id as u64
+                    )
+                }) {
+                    break Ok::<(), anyhow::Error>(());
+                }
+                sleep(Duration::from_millis(50)).await;
+            }
+        })
+        .await??;
+        let identity = restart_identities
+            .lock()
+            .unwrap()
+            .get(&nodes[node_index].address())
+            .cloned()
+            .context("restart identity is missing")?;
+        println!("Stopping committee party {restart_party_id} during C4");
+        nodes
+            .restart_node(node_index, async {
+                let mut builder = CiphernodeBuilder::new(identity.rng, cipher.clone())
+                    .with_history_collector()
+                    .with_shared_taskpool(&task_pool)
+                    .with_multithread_concurrent_jobs(concurrent_jobs)
+                    .with_shared_multithread_report(&multithread_report)
+                    .with_trbfv()
+                    .with_zkproof(zk_backend.clone())
+                    .with_signer(identity.signer)
+                    .with_pubkey_aggregation()
+                    .with_sortition_score()
+                    .with_threshold_plaintext_aggregation()
+                    .with_forked_bus(bus.event_bus())
+                    .with_eventstore_aggregate_config_for_testing(
+                        benchmark_aggregate_config.clone(),
+                    )
+                    .with_dkg_timing_reader_for_testing(dkg_timing_reader.clone())
+                    .with_chains(std::slice::from_ref(&bench_chain_config))
+                    .with_persistence(&identity.log_path, &identity.kv_path)
+                    .with_logging();
+                if !proof_aggregation_enabled {
+                    builder = builder.with_proof_aggregation_disabled_for_testing();
+                }
+                builder.build().await
+            })
+            .await?;
+        println!("Restarted committee party {restart_party_id} during C4");
+    }
+
     // Node 0 is a non-committee observer. It only sees bus-global events and the forwardable
     // gossip events from the active aggregator flow.
     let shares_to_pubkey_agg_timer = Instant::now();
@@ -2019,8 +2121,9 @@ async fn test_trbfv_actor() -> Result<()> {
         "E3Request -> PublicKeyAggregated",
         e3_requested_timer.elapsed(),
     ));
-    if let Some(requested_party_id) = std::env::var("BENCHMARK_RESTART_PARTY_ID")
-        .ok()
+    if let Some(requested_party_id) = (!restart_during_dkg)
+        .then(|| std::env::var("BENCHMARK_RESTART_PARTY_ID").ok())
+        .flatten()
         .and_then(|value| value.parse::<usize>().ok())
     {
         let restart_party_id = if accepted_rosters[0].contains(&(requested_party_id as u64))

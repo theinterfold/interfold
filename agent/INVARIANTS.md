@@ -688,6 +688,10 @@ design citation alone does not establish current runtime behavior.
   deadlines, and undispatched external effects are durable unless a stronger authority can
   deterministically recreate them. An actor-local cache is not durable just because the actor
   outlives the process. — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
+- `NodeProofAggregator` persists ordered DKG inner proofs and fold metadata before it accepts them.
+  It persists a completed fold before publication. Restart must restore inputs or the completed
+  output and resume only after `EffectsEnabled`. `KeyPublished` and terminal E3 events release the
+  saved node-fold data. — `flow-trace/04`; `flow-trace/06`
 - A fatal threshold-keyshare collector timeout commits `KeyshareState::Failed` before it publishes
   `E3Failed`. The persisted failure stage and reason are immutable. After hydration,
   `EffectsEnabled` redrives the saved failure and does not resume the earlier DKG phase. —
@@ -705,7 +709,8 @@ design citation alone does not establish current runtime behavior.
   the injected clock and deterministically re-arm or fire overdue. — `ARCHITECTURE.md`
 - Effects stay disabled until durable replay completes and both historical sources merge in HLC
   order. Startup fences `EffectsEnabled` → `SyncEffect` → canonical history → `SyncEnded` in that
-  order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. —
+  order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. It mirrors the same
+  response or error to each regenerated correlation ID for one semantic request. —
   `CRATES_ARCHITECTURE.md`
 - Sortition delays, committee-finalization timers, and slash submissions persist their semantic
   inputs before effects run. Restart re-arms them only after `EffectsEnabled`; an additive migration

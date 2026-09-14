@@ -992,11 +992,14 @@ impl CiphernodeBuilder {
             .await?
             .map(|state| state.e3_cache)
             .unwrap_or_default();
-        let zk_recovery = ZkActorRecovery::new(
+        let mut zk_recovery = ZkActorRecovery::new(
             persisted_committees.clone(),
             persisted_e3_metadata,
             dkg_fold_contexts_by_e3.clone(),
         );
+        zk_recovery
+            .hydrate_node_proofs(&repositories, lifecycle_stages)
+            .await?;
 
         // ── Threshold keyshare + ZK actors ──
         if let Some(KeyshareKind::Threshold) = self.keyshare {
@@ -1067,6 +1070,7 @@ impl CiphernodeBuilder {
                 dkg_fold_context_by_chain.clone(),
                 zk_recovery.clone(),
                 self.proof_aggregation_enabled,
+                repositories.clone(),
             );
         }
 
@@ -1093,6 +1097,7 @@ impl CiphernodeBuilder {
                     dkg_fold_context_by_chain.clone(),
                     zk_recovery,
                     self.proof_aggregation_enabled,
+                    repositories.clone(),
                 );
             }
         }

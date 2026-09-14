@@ -11,6 +11,14 @@ impl NodeProofAggregator {
     ) {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
+        if self
+            .recovery_index
+            .entries
+            .get(&e3_id)
+            .is_some_and(|entry| entry.completed.is_some())
+        {
+            return;
+        }
 
         if !self.proof_aggregation_enabled {
             self.pending_inner_proofs.remove(&e3_id);
@@ -18,15 +26,17 @@ impl NodeProofAggregator {
                 "NodeProofAggregator: test/CI skip flag active for E3 {}",
                 e3_id
             );
-            if let Err(err) = self.bus.publish(
-                DKGRecursiveAggregationComplete {
-                    e3_id: e3_id.clone(),
-                    party_id: msg.full_share.party_id,
-                    aggregated_proof: None,
-                    fold_attestation: None,
-                },
-                ec,
-            ) {
+            let output = DKGRecursiveAggregationComplete {
+                e3_id: e3_id.clone(),
+                party_id: msg.full_share.party_id,
+                aggregated_proof: None,
+                fold_attestation: None,
+            };
+            if let Err(err) = self.persist_completed(&output, &ec) {
+                error!("NodeProofAggregator: could not persist skipped fold for E3 {e3_id}: {err}");
+                return;
+            }
+            if let Err(err) = self.bus.publish(output, ec) {
                 error!(
                     "NodeProofAggregator: failed to publish skipped DKGRecursiveAggregationComplete for E3 {}: {err}",
                     e3_id
@@ -82,6 +92,20 @@ impl NodeProofAggregator {
             e3_id, meta.party_id, total_expected,
         );
 
+        if let Some(existing) = self.states.get(&e3_id) {
+            if existing.meta != meta {
+                error!("NodeProofAggregator: conflicting fold metadata for E3 {e3_id}");
+                return;
+            }
+            self.try_dispatch_node_dkg_fold(&e3_id);
+            return;
+        }
+
+        if let Err(err) = self.persist_meta(&e3_id, &meta, &ec) {
+            error!("NodeProofAggregator: could not persist fold metadata for E3 {e3_id}: {err}");
+            return;
+        }
+
         self.initialize_collection_state(e3_id, meta, ec);
     }
 
@@ -91,6 +115,40 @@ impl NodeProofAggregator {
     ) {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
+        if self
+            .recovery_index
+            .entries
+            .get(&e3_id)
+            .is_some_and(|entry| entry.completed.is_some())
+        {
+            return;
+        }
+
+        let existing = self
+            .states
+            .get(&e3_id)
+            .and_then(|state| state.buffer.get(&msg.seq))
+            .or_else(|| {
+                self.pending_inner_proofs
+                    .get(&e3_id)
+                    .and_then(|pending| pending.get(&msg.seq))
+            });
+        if let Some(existing) = existing {
+            if existing != &msg.proof {
+                error!(
+                    "NodeProofAggregator: conflicting proof seq={} for E3 {e3_id}",
+                    msg.seq
+                );
+            }
+            return;
+        }
+        if let Err(err) = self.persist_proof(&e3_id, msg.seq, &msg.proof, &ec) {
+            error!(
+                "NodeProofAggregator: could not persist proof seq={} for E3 {e3_id}: {err}",
+                msg.seq
+            );
+            return;
+        }
 
         let Some(state) = self.states.get_mut(&e3_id) else {
             let pending = self.pending_inner_proofs.entry(e3_id.clone()).or_default();
@@ -149,12 +207,18 @@ impl NodeProofAggregator {
         self.try_dispatch_node_dkg_fold(&e3_id);
     }
 
-    fn try_dispatch_node_dkg_fold(&mut self, e3_id: &E3id) {
+    pub(in crate::actors::node_proof_aggregator) fn try_dispatch_node_dkg_fold(
+        &mut self,
+        e3_id: &E3id,
+    ) {
         let state = match self.states.get_mut(e3_id) {
             Some(s) => s,
             None => return,
         };
         if !state.is_ready() {
+            return;
+        }
+        if state.fold_correlation.is_some() {
             return;
         }
 
@@ -290,15 +354,20 @@ impl NodeProofAggregator {
             e3_id, party_id
         );
 
-        if let Err(err) = self.bus.publish(
-            DKGRecursiveAggregationComplete {
-                e3_id: e3_id.clone(),
-                party_id,
-                aggregated_proof: Some(proof),
-                fold_attestation,
-            },
-            state.last_ec,
-        ) {
+        let output = DKGRecursiveAggregationComplete {
+            e3_id: e3_id.clone(),
+            party_id,
+            aggregated_proof: Some(proof),
+            fold_attestation,
+        };
+        if let Err(err) = self.persist_completed(&output, &state.last_ec) {
+            error!("NodeProofAggregator: could not persist completed fold for E3 {e3_id}: {err}");
+            let mut state = state;
+            state.fold_correlation = None;
+            self.states.insert(e3_id, state);
+            return;
+        }
+        if let Err(err) = self.bus.publish(output, state.last_ec) {
             error!(
                 "NodeProofAggregator: failed to publish DKGRecursiveAggregationComplete for E3 {}: {err}",
                 e3_id

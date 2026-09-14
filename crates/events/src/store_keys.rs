@@ -49,6 +49,18 @@ impl StoreKeys {
         format!("//dkg_fold_attestation_context/{e3_id}")
     }
 
+    pub fn node_dkg_fold_recovery() -> String {
+        String::from("//node_dkg_fold/recovery/v1")
+    }
+
+    pub fn node_dkg_inner_proof(e3_id: &E3id, seq: usize) -> String {
+        format!("//node_dkg_fold/proofs/{e3_id}/{seq}")
+    }
+
+    pub fn node_dkg_fold_meta(e3_id: &E3id) -> String {
+        format!("//node_dkg_fold/meta/{e3_id}")
+    }
+
     pub fn context(e3_id: &E3id) -> String {
         format!("//context/{e3_id}")
     }

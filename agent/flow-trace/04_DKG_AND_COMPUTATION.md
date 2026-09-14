@@ -331,9 +331,11 @@ implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proo
 `NodeProofAggregator` prebuffers `DKGInnerProofReady` proofs that arrive before
 `ThresholdSharePending`, drains those buffered proofs into collection state once
 `ThresholdSharePending` arrives, and issues one `NodeDkgFold` request when the full ordered proof
-set is available. If that `NodeDkgFold` compute request fails, it publishes
-`DKGRecursiveAggregationComplete { aggregated_proof: None }` so the downstream DKG/public-key
-aggregation path can terminate deterministically instead of stalling on missing node-fold output.
+set is available. It persists each proof, the fold metadata, and a completed output before
+publication. Restart restores the ordered proofs and reissues an incomplete fold after
+`EffectsEnabled`. If the compute request fails, it publishes `E3Failed` with
+`DKGInvalidShares` instead of waiting for a missing node-fold output. A canonical
+`KeyPublished` stage or a terminal E3 event removes the saved node-fold data.
 `PublicKeyAggregator` and `ThresholdPlaintextAggregator` dispatch the aggregator requests instead of
 pairwise folding.
 
@@ -1410,7 +1412,9 @@ lifecycle snapshot. If an E3 has already reached `KeyPublished`, it discards rep
 proof jobs because the chain has made that work obsolete; decryption jobs remain eligible. C1-C3 and
 C6 verification share one compute-request variant, so the gate uses the signed proof type to keep C6
 threshold-decryption verification eligible. The gate changes effect timing, not durable event order
-or audit state.
+or audit state. If restart gives the same compute operation a new correlation ID, the gate forwards
+the work once and sends its response or error to each waiting ID. A later duplicate receives the
+saved outcome.
 
 `CiphernodeSelector` also observes replay before it enables failover effects. Its versioned
 repository stores a readiness-gated phase, assigned party, absolute deadline, and locally

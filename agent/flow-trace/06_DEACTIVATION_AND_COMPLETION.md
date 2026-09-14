@@ -300,6 +300,8 @@ On restart:
 │   8. Enable effects (writers may submit only after this point)
 │      → Gate cancels work for terminal E3s and releases only the newest
 │        pending request for each in-flight semantic compute operation
+│      → Gate mirrors a completed response or error to regenerated correlation IDs
+│      → NodeProofAggregator restores persisted inner proofs and resumes incomplete folds
 │      → Durable sortition, committee-finalizer, and slash-writer work is re-armed
 │   9. SyncEffect restores each derived local selection inside its hydrated E3 context
 │      → No new CiphernodeSelected event is persisted
