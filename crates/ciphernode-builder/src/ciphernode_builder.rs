@@ -33,9 +33,9 @@ use e3_evm::{
     ensure_node_release, fetch_accusation_vote_validity, fetch_randomness_providers,
     read_canonical_dkg_timing, BondingRegistrySolReader, CiphernodeRegistrySol,
     CiphernodeRegistrySolReader, DataAvailabilityCoordinator, DataAvailabilityRepositoryFactory,
-    EvmChainGatewayHandle, InterfoldSolReader, InterfoldSolWriter, ProviderConfig,
-    RandomnessProviderSolReader, SlashingManagerSolReader, SlashingManagerSolWriter,
-    SlashingWriterRepositoryFactory,
+    EvmChainGatewayHandle, GatewayFailureReceiver, InterfoldSolReader, InterfoldSolWriter,
+    ProviderConfig, RandomnessProviderSolReader, SlashingManagerSolReader,
+    SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
@@ -759,6 +759,10 @@ impl CiphernodeBuilder {
         e3_builder.build().await?;
 
         // Run the sync routine
+        let gateway_failures: Vec<GatewayFailureReceiver> = evm_gateways
+            .iter()
+            .map(EvmChainGatewayHandle::failure_receiver)
+            .collect();
         let mut persistence_health = event_system.failure_receiver();
         tokio::select! {
             result = async { tokio::try_join!(
@@ -797,6 +801,7 @@ impl CiphernodeBuilder {
             eventstore,
             aggregate_ids: eventstore_aggregate_config.indexed_ids(),
             persistence_health: event_system.failure_receiver(),
+            gateway_failures,
         })
     }
 
@@ -1468,10 +1473,12 @@ async fn setup_evm_system(
             }
             for randomness_address in randomness_addresses {
                 let randomness_read_provider = provider.clone();
+                let randomness_provider_factory = provider_factory.clone();
                 system.with_contract(randomness_address, move |next| {
-                    RandomnessProviderSolReader::setup(
+                    RandomnessProviderSolReader::setup_with_factory(
                         &next,
                         randomness_read_provider,
+                        Some(randomness_provider_factory),
                         contract_address,
                     )
                     .recipient()

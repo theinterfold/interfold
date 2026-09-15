@@ -698,6 +698,10 @@ design citation alone does not establish current runtime behavior.
 - On restart in `ReadyForDecryption`, rebuild the C4 collector from the saved roster and replay
   saved peer C4 shares. A restored C4 proof job cannot advance DKG if its peer-share collector is
   absent. After collection is complete, a duplicate C4 share must not start another collector.
+- A graceful-shutdown deadline must be longer than the EventBus fanout timeout, and every external
+  supervisor must wait longer than the node deadline before it sends `SIGKILL`. A process that must
+  outlive its CLI launcher must use the detached spawn path; dropping an owning child handle stops
+  that child. — `flow-trace/06`
   Saved C0 and C4 inputs must keep the first message from each party, as the live collectors do.
   — `flow-trace/04`
 - A fatal threshold-keyshare collector timeout commits `KeyshareState::Failed` before it publishes
@@ -729,6 +733,12 @@ design citation alone does not establish current runtime behavior.
   router's `on_event` path must not do synchronous store reads. — `flow-trace/06`
 - A well-formed `E3Requested` with an unsupported committee-size/preset enum is a benign skip (emit
   `Processed` so ordering advances); ABI-decode failures still fail closed. — INDEX concern #13
+- A randomness fulfillment reader must retry a failed registry read once with a new provider for the
+  same chain. It must retain the new provider after a successful reconnect and reject the log if the
+  retry still cannot verify the accepted request. — `flow-trace/03`
+- A chain gateway that fails closed after startup must make the node exit unsuccessfully after a
+  durability shutdown. A running node must not report healthy after chain ingestion stops. —
+  `flow-trace/03`; `flow-trace/06`
 
 ### Schema evolution
 

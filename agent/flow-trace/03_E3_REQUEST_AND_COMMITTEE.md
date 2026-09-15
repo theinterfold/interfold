@@ -232,6 +232,8 @@ RandomnessProviderSolReader decodes RandomnessFulfilled
 │  → A successful `ready = false` result proves that the response is unusable
 │  → If historical state is unavailable, current state is accepted only when `ready = true`
 │  → Registry verification is bounded to 15 seconds
+│  → After a read failure, rebuilds the read provider and retries once on the same chain
+│  → Keeps the replacement provider for later fulfillment logs
 │  → An RPC failure, timeout, or unverifiable result rejects the log so restart replay can retry it
 │  → The reader does not poll or silently discard uncertain fulfillment state
 │  → Sortition starts only after the Registry accepts the response
@@ -240,6 +242,11 @@ RandomnessProviderSolReader decodes RandomnessFulfilled
 │  → seed = keccak256(randomWord, chainId, registry, e3Id, requestId)
 ├─ Reads the frozen threshold, request timepoint, ticket price, and submission deadline
 └─ Publishes the existing durable CommitteeRequested event for the sortition actors
+
+If an EVM chain gateway rejects a log after startup, it reports the fatal state to the node run
+loop. The node completes its durability shutdown barrier and exits unsuccessfully so its supervisor
+can restart it and replay the missing chain history. It must not remain healthy while chain
+ingestion has stopped.
 
 InterfoldSolReader decodes IInterfold::E3Requested log
 │

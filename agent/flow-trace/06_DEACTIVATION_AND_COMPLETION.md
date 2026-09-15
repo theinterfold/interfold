@@ -241,7 +241,7 @@ interfold start → running node
     ├─ Persists Shutdown and waits for acknowledged EventBus fanout
     ├─ Flushes the sequencer and event-store pipeline
     ├─ Drains open snapshot batches in event order, flushes the backing store, and closes it
-    ├─ Enforces a 30-second deadline and exits unsuccessfully on failure
+    ├─ Enforces a 60-second deadline and exits unsuccessfully on failure
     └─ Flushes the optional operational JSON log collector
 
 On restart:
@@ -315,6 +315,12 @@ The shutdown barrier proves that the persisted `Shutdown` event reached its curr
 event pipeline flushed, open snapshot batches drained, and the backing store flushed within the
 deadline. Detached work that is not owned by those barriers can still be cancelled by process exit;
 operators must continue to follow the production shutdown precautions.
+
+`NODE_SHUTDOWN_DEADLINE` is 60 seconds: the 30-second EventBus fanout limit plus 30 seconds for the
+event and store flushes. The swarm daemon waits 65 seconds before it sends `SIGKILL`, and the Docker
+configurations use the same 65-second grace. The `nodes up` launcher uses a detached child process
+and confirms that its control socket becomes ready; dropping the launcher process must not stop the
+daemon it just started.
 
 The three long-lived libp2p `NetEvent` broadcast consumers (`NetEventTranslator`,
 `DocumentPublisher`, and `NetSyncManager`) treat Tokio's `Lagged(n)` receive result as a recoverable

@@ -24,7 +24,12 @@ use super::nodes::{
     spawn_process, CommandMap, ProcessMap, ProcessRecord, ProcessStatus, SwarmStatus,
 };
 
-const GRACEFUL_CHILD_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(30);
+const GRACEFUL_CHILD_SHUTDOWN_TIMEOUT: Duration =
+    Duration::from_secs(e3_events::NODE_SHUTDOWN_DEADLINE.as_secs() + 5);
+const _: () = assert!(
+    GRACEFUL_CHILD_SHUTDOWN_TIMEOUT.as_secs() > e3_events::NODE_SHUTDOWN_DEADLINE.as_secs(),
+    "the daemon must outwait the node shutdown deadline"
+);
 const OUTPUT_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Forward stdout from child process to parent's stdout
