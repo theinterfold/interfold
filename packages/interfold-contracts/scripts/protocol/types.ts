@@ -265,6 +265,7 @@ export interface SecureCrispUpgradePlan {
     nodeGeneration: number;
     releaseId: string;
   };
+  timeoutConfig: TimeoutConfig;
   cryptoConfigId: string;
   paramSet: number;
   pkVerifier: string;

@@ -79,6 +79,7 @@ governance batch that:
 
 ```text
 upgrade Interfold to the secure chain-aware crypto configuration
+  -> apply the complete configured timeout values
   -> register the secure BFV parameter set and all committee thresholds
   -> install the secure minimum, micro, and small verifier routes
   -> install the PK, decryption, and ciphertext verifiers
@@ -88,12 +89,12 @@ upgrade Interfold to the secure chain-aware crypto configuration
 ```
 
 Run `upgrade:secure-crisp:validate` after governance executes the batch. The validator checks the
-implementation, every verifier route and VK anchor, the CRISP receipt-verifier binding, and the
-paused and drained state. Publish a new SemVer ciphernode artifact from the same release source
-before governance executes the batch. Restart matching ciphernodes after execution, and resume only
-after at least the largest configured committee size has acknowledged the new protocol and is
-online. Do not use the older CRISP-only builder on mainnet because it cannot install the
-protocol-side secure configuration.
+implementation, the live timeout configuration, every verifier route and VK anchor, the CRISP
+receipt-verifier binding, and the paused and drained state. Publish a new SemVer ciphernode artifact
+from the same release source before governance executes the batch. Restart matching ciphernodes
+after execution, and resume only after at least the largest configured committee size has
+acknowledged the new protocol and is online. Do not use the older CRISP-only builder on mainnet
+because it cannot install the protocol-side secure configuration.
 
 After the nodes restart, run
 `upgrade:secure-crisp:resume -- --network mainnet --ciphernodes-restarted`. It reruns the complete

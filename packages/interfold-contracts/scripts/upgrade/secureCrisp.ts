@@ -45,6 +45,7 @@ import {
   encodeBfvParams,
   loadConfig,
   requireContract,
+  timeoutConfig,
 } from "../protocol/values";
 import {
   PRODUCTION_BFV_CONFIG,
@@ -86,6 +87,12 @@ type CrispDeploymentRecord = Record<
   string,
   Record<string, { address?: string }>
 >;
+
+type OnchainTimeoutConfig = {
+  dkgWindow: bigint;
+  computeWindow: bigint;
+  decryptionWindow: bigint;
+};
 
 function planPath(config: ProtocolConfigFile): string {
   return path.join(protocolDir, `${config.name}.secure-crisp.upgrade.json`);
@@ -184,6 +191,17 @@ export function upgradeTransaction(
       implementation,
       "0x",
     ]),
+  );
+}
+
+export function requiresTimeoutConfigUpdate(
+  current: OnchainTimeoutConfig,
+  target: OnchainTimeoutConfig,
+): boolean {
+  return (
+    current.dkgWindow !== target.dkgWindow ||
+    current.computeWindow !== target.computeWindow ||
+    current.decryptionWindow !== target.decryptionWindow
   );
 }
 
@@ -541,6 +559,8 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
       "The registered secure BFV parameter set does not match this release",
     );
   }
+  const targetTimeoutConfig = timeoutConfig(config.interfold.timeoutConfig);
+  const currentTimeoutConfig = await interfold.getTimeoutConfig();
 
   const [operator] = await ethers.getSigners();
   const verifierDefault = activeBfvConfigForChain(chainId);
@@ -582,6 +602,16 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
       interfoldUpgrade.implementation,
     ),
   ];
+  if (requiresTimeoutConfigUpdate(currentTimeoutConfig, targetTimeoutConfig)) {
+    txs.push(
+      safeTx(
+        deployment.interfold,
+        interfold.interface.encodeFunctionData("setTimeoutConfig", [
+          targetTimeoutConfig,
+        ]),
+      ),
+    );
+  }
   if (currentParams === "0x") {
     txs.push(
       safeTx(
@@ -729,6 +759,7 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     sortitionLibrary: registryUpgrade.sortitionLibrary,
     nodeReleaseRegistry: deployment.nodeReleaseRegistry,
     nodeRelease,
+    timeoutConfig: config.interfold.timeoutConfig,
     cryptoConfigId: PRODUCTION_BFV_CONFIG.configId,
     paramSet: SECURE_PARAM_SET,
     pkVerifier: verifierDeployment.pkVerifier,
@@ -767,6 +798,7 @@ Secure CRISP activation prepared
   retired initial program:   ${plan.retiredE3Program ?? "none"}
   DA verifier:               ${plan.dataAvailabilityVerifier}
   input availability signer: ${plan.inputAvailabilitySigner}
+  DKG window:                ${plan.timeoutConfig.dkgWindow} seconds
   required node release:     ${plan.nodeRelease.version} (protocol ${plan.nodeRelease.protocolVersion}, generation ${plan.nodeRelease.nodeGeneration})
   governance batch:          ${plan.safeTransactions}
   Aragon Safe batch:         ${plan.governanceSafeBuilder ?? "not configured"}

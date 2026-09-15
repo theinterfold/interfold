@@ -154,6 +154,21 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     deployment.nodeReleaseRegistry,
     "NodeReleaseRegistry",
   );
+  equalValue(
+    plan.timeoutConfig.dkgWindow,
+    config.interfold.timeoutConfig.dkgWindow,
+    "upgrade plan DKG window",
+  );
+  equalValue(
+    plan.timeoutConfig.computeWindow,
+    config.interfold.timeoutConfig.computeWindow,
+    "upgrade plan compute window",
+  );
+  equalValue(
+    plan.timeoutConfig.decryptionWindow,
+    config.interfold.timeoutConfig.decryptionWindow,
+    "upgrade plan decryption window",
+  );
   const sourceRelease = currentNodeRelease();
   equalValue(
     sourceRelease.version,
@@ -293,6 +308,22 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     "Interfold owner",
   );
   equalValue(await interfold.activeE3Count(), 0n, "active E3 count");
+  const liveTimeoutConfig = await interfold.getTimeoutConfig();
+  equalValue(
+    liveTimeoutConfig.dkgWindow,
+    plan.timeoutConfig.dkgWindow,
+    "Interfold DKG window",
+  );
+  equalValue(
+    liveTimeoutConfig.computeWindow,
+    plan.timeoutConfig.computeWindow,
+    "Interfold compute window",
+  );
+  equalValue(
+    liveTimeoutConfig.decryptionWindow,
+    plan.timeoutConfig.decryptionWindow,
+    "Interfold decryption window",
+  );
   equalValue(
     await registry.unreleasedCommitteeCount(),
     0n,
@@ -531,6 +562,11 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     "BfvDecryptionVerifierRouter",
     plan.decryptionVerifier,
   );
+  equalAddress(
+    await pkRouter.ciphernodeRegistry(),
+    plan.registryProxy,
+    "PK router registry",
+  );
   equalValue(await pkRouter.h(), verifierDefault.h, "PK router default h");
   equalValue(
     await decryptionRouter.threshold(),
@@ -569,6 +605,11 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
       throw new Error(`Recorded BFV route ${index} is missing its V2 verifier`);
     }
     equalAddress(pkRoute[0], expectedPkVerifier, `PK route ${index}`);
+    equalValue(
+      pkRoute[4],
+      expected.paramSet,
+      `PK route ${index} parameter set`,
+    );
     equalValue(
       pkRoute[1],
       isV2 ? 63 : 3 * expected.h + 24,

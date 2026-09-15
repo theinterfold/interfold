@@ -208,10 +208,9 @@ impl PublicKeyAggregator {
             return Ok(());
         };
         aggregation.validate_loaded()?;
-        anyhow::ensure!(
-            aggregation.operational_rlk.is_some(),
-            "l-BFV publication requires the operational RLK"
-        );
+        if aggregation.operational_rlk.is_none() {
+            return Ok(());
+        }
         let Some(dkg_aggregator_v2_proof) = aggregation.dkg_aggregated_proof else {
             return Ok(());
         };

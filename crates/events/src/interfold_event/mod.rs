@@ -655,6 +655,7 @@ impl InterfoldEventData {
             InterfoldEventData::TicketSubmitted(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::EncryptionKeyCreated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::ComputeResponse(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::ComputeRequestError(ref data) => Some(data.request().e3_id.clone()),
             InterfoldEventData::TestEvent(ref data) => data.e3_id.clone(),
             InterfoldEventData::SignedProofFailed(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionShareProofsPending(ref data) => Some(data.e3_id.clone()),

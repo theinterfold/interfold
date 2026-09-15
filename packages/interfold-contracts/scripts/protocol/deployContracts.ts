@@ -354,7 +354,9 @@ export async function deployBfvVerifierRoutes(
       "BfvPkVerifierRouter",
     );
     const pkRouter = await pkRouterFactory.deploy(
+      registry,
       pkVerifierAddresses,
+      routes.map((route) => route.paramSet),
       defaultConfig.h,
     );
     await pkRouter.waitForDeployment();

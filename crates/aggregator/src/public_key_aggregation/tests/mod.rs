@@ -274,6 +274,75 @@ async fn secure_16384_restart_redrives_publication_intent() -> Result<()> {
 }
 
 #[actix::test]
+async fn secure_16384_waits_for_operational_rlk_after_c5() -> Result<()> {
+    use crate::domain::lbfv_contribution_collection::tests::fixture;
+
+    let fixture = fixture();
+    let e3_id = fixture.state.e3_id.clone();
+    let mut initial_state = generating_c5_state(CorrelationId::new());
+    if let PublicKeyAggregatorState::GeneratingC5Proof {
+        c5_proof_pending, ..
+    } = &mut initial_state
+    {
+        *c5_proof_pending = None;
+    }
+    let aggregation =
+        LbfvAggregationStateV1::new(e3_id.clone(), fixture.state.proof_domain, vec![0, 1])?;
+    let (bus, rng, _seed, params, crp, _errors, history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let mut aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe: Arc::new(Fhe::new(params, crp, rng)),
+            bus,
+            e3_id: e3_id.clone(),
+            params_preset: BfvPreset::SecureThreshold16384,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: Some(test_state(aggregation)),
+            lbfv_publication: None,
+            initial_is_aggregator: true,
+            effects_enabled: true,
+        },
+        test_state(initial_state),
+    );
+    let ec = test_ctx(EffectsEnabled::new());
+    aggregator.handle_pk_aggregation_proof_signed(TypedEvent::new(
+        PkAggregationProofSigned {
+            e3_id: e3_id.clone(),
+            signed_proof: SignedProofPayload {
+                payload: ProofPayload {
+                    e3_id: e3_id.clone(),
+                    proof_type: ProofType::C5PkAggregation,
+                    proof: dummy_proof(CircuitName::PkAggregation),
+                },
+                signature: ArcBytes::from_bytes(&[0; 65]),
+            },
+        },
+        ec,
+    ))?;
+
+    assert!(matches!(
+        aggregator.state.get(),
+        Some(PublicKeyAggregatorState::GeneratingC5Proof {
+            c5_proof_pending: Some(_),
+            ..
+        })
+    ));
+    assert!(aggregator
+        .lbfv_aggregation_state()?
+        .is_some_and(|state| state.operational_rlk.is_none()));
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    Ok(())
+}
+
+#[actix::test]
 async fn secure_16384_restart_redrives_terminal_aggregation_failure() -> Result<()> {
     use crate::domain::lbfv_contribution_collection::tests::fixture;
 

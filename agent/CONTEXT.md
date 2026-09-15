@@ -83,7 +83,8 @@ matrix:
 `ActiveCryptoConfig.sol` selects the parameter sets and committee shapes supported by
 `block.chainid`. Deployment tooling mirrors that matrix with `bfvConfigsForChain(chainId)` and reads
 VK hashes from `dist/circuits/<preset>/<committee>/...`. A verifier router can sit behind the BFV
-scheme mapping and dispatch proofs to the concrete verifier for each generated pair.
+scheme mapping. It dispatches proofs by the E3 parameter set, public-input length, and VK anchors to
+the concrete verifier for each generated pair.
 
 `circuits/bin/.active-preset.json` only records the local hydrated circuit cache. It can point at a
 different pair than the target chain uses, provided `dist/circuits/` contains every required pair

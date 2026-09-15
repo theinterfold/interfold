@@ -250,6 +250,7 @@ impl<S: SeqState> EventLogging for InterfoldEvent<S> {
             .unwrap_or_default();
         let error_message = match data {
             InterfoldEventData::InterfoldError(error) => compact_error(&error.message),
+            InterfoldEventData::ComputeRequestError(error) => compact_error(&error.to_string()),
             _ => String::new(),
         };
         let stage = stage(data);

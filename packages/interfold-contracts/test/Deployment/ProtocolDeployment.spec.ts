@@ -38,6 +38,7 @@ import type {
 } from "../../scripts/protocol/types";
 import { loadConfig } from "../../scripts/protocol/values";
 import { requiredActiveOperatorsForSecureCrisp } from "../../scripts/upgrade/resumeSecureCrisp";
+import { requiresTimeoutConfigUpdate } from "../../scripts/upgrade/secureCrisp";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
 const { ethers } = await network.connect();
@@ -86,6 +87,19 @@ describe("Protocol deployment", function () {
     expect(() =>
       requiredActiveOperatorsForSecureCrisp(thresholds, 1, "0"),
     ).to.throw("only for a Sepolia rehearsal");
+  });
+
+  it("updates the timeout configuration only when a configured value differs", function () {
+    const target = {
+      dkgWindow: 21_600n,
+      computeWindow: 3_600n,
+      decryptionWindow: 3_600n,
+    };
+
+    expect(requiresTimeoutConfigUpdate(target, target)).to.equal(false);
+    expect(
+      requiresTimeoutConfigUpdate({ ...target, dkgWindow: 7_200n }, target),
+    ).to.equal(true);
   });
 
   it("requires a ciphernode restart acknowledgement before resume", function () {

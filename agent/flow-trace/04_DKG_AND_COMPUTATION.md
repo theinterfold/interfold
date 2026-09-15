@@ -760,6 +760,8 @@ The active secure-16384 aggregator dispatches five PK aggregation proofs and fiv
 proofs from the accepted documents. It folds each ordered proof pair into one five-row accumulator.
 After the fold completes, it derives the operational RLK from the same accepted PK and RLK shares.
 It persists that key in `//publickey_lbfv_aggregation/v1/{e3_id}` before final V2 proof dispatch.
+If C5 completes before the RLK is available, the aggregator waits and retries publication after the
+RLK is persisted.
 Restart clears process-local correlations and resumes missing row or fold work. If the fold is
 complete but the operational RLK is absent, restart derives and persists the same key again.
 
@@ -784,7 +786,7 @@ only that failure. It does not resume row, fold, final V2 proof, or publication 
 │   │   → Persist VerifyingC1
 │   │   → For secure-16384, persist the first H-party ready quorum
 │   │   → Then publish AggregationInputsReady(PublicKey)
-│   │   → CiphernodeSelector starts the 10-minute failover budget only now
+│   │   → CiphernodeSelector starts the 60-minute failover budget only now
 │   │
 │   ├─ Only the active aggregator starts C1 verification and later proof/compute effects
 │   │   → A promoted standby resumes from its persisted phase; it does not need a RAM buffer
@@ -912,6 +914,8 @@ only that failure. It does not resume row, fold, final V2 proof, or publication 
         │  │         pkCommitment, committeeHash, proof          │
         │  │       ), InvalidProof())                            │
         │  │       → BFV route selects one verifier per config   │
+        │  │         • route must match the E3 parameter set,    │
+        │  │           public-input count, and both VK anchors   │
         │  │         • legacy: `BfvPkVerifier`                    │
         │  │         • secure-16384/minimum: `BfvPkVerifierV2`   │
         │  │         • V2 requires exactly 63 public inputs      │
@@ -1227,7 +1231,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │
   ├─ Once all required honest shares are durable:
   │   ├─ Persist VerifyingC6 before publishing AggregationInputsReady(Plaintext)
-  │   ├─ Start the 10-minute failover budget only at this readiness boundary
+  │   ├─ Start the 60-minute failover budget only at this readiness boundary
   │   └─ A promoted standby resumes the persisted phase
 │
   ├─ C6 VERIFICATION (per-share, active aggregator only):

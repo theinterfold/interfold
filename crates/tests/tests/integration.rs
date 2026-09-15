@@ -1732,9 +1732,7 @@ async fn test_trbfv_actor() -> Result<()> {
         rpc_url: "http://localhost:8545".into(),
         rpc_auth: Default::default(),
         contracts: e3_config::ContractAddresses {
-            interfold: e3_config::Contract::AddressOnly(
-                "0x0000000000000000000000000000000000000000".into(),
-            ),
+            interfold: e3_config::Contract::AddressOnly(Address::repeat_byte(0x11).to_string()),
             ciphernode_registry: e3_config::Contract::AddressOnly(
                 "0x0000000000000000000000000000000000000000".into(),
             ),
@@ -1874,7 +1872,7 @@ async fn test_trbfv_actor() -> Result<()> {
     // Prepare round
     let e3_requested_timer = Instant::now();
     // Trigger actor DKG
-    let e3_id = E3id::new("0", 1);
+    let e3_id = E3id::new("1", 1);
     let request_block = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() + 1;
 
     println!(
