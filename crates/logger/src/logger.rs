@@ -253,6 +253,18 @@ fn error_message_for(data: &InterfoldEventData) -> String {
             "{} of {} nodes submitted",
             data.nodes_submitted, data.threshold_required
         )),
+        InterfoldEventData::ProofVerificationFailed(data) => compact_error(&format!(
+            "{:?} proof from party {} ({}) failed verification",
+            data.proof_type, data.accused_party_id, data.accused_address
+        )),
+        InterfoldEventData::SignedProofFailed(data) => compact_error(&format!(
+            "{:?} proof from node {} failed signature checks",
+            data.proof_type, data.faulting_node
+        )),
+        InterfoldEventData::CommitmentConsistencyViolation(data) => compact_error(&format!(
+            "{:?} commitment from party {} ({}) is inconsistent",
+            data.proof_type, data.accused_party_id, data.accused_address
+        )),
         _ => String::new(),
     }
 }
@@ -316,7 +328,12 @@ impl<S: SeqState> EventLogging for InterfoldEvent<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_events::{E3Failed, E3id, FailureReason};
+    use alloy::primitives::{Address, Bytes};
+    use e3_events::{
+        CircuitName, CommitmentConsistencyViolation, E3Failed, E3id, FailureReason, Proof,
+        ProofPayload, ProofType, ProofVerificationFailed, SignedProofFailed, SignedProofPayload,
+    };
+    use e3_utils::utility_types::ArcBytes;
 
     #[test]
     fn lifecycle_and_failure_stages_are_explicit() {
@@ -347,6 +364,80 @@ mod tests {
         assert!(
             message.contains("CommitteeFinalized"),
             "error field must carry the stage, got {message:?}"
+        );
+    }
+
+    fn signed_payload(proof_type: ProofType) -> SignedProofPayload {
+        SignedProofPayload {
+            payload: ProofPayload {
+                e3_id: E3id::new("7", 31337),
+                proof_type,
+                proof: Proof {
+                    circuit: CircuitName::PkBfv,
+                    data: ArcBytes::from_bytes(&[1]),
+                    public_signals: ArcBytes::from_bytes(&[2]),
+                },
+            },
+            signature: ArcBytes::from_bytes(&[3]),
+        }
+    }
+
+    /// Accusation-bearing failures must name the proof type and the accused party. Without them
+    /// an operator cannot tell which party or which proof caused the failure.
+    #[test]
+    fn accusation_failures_report_proof_type_and_accused_party() {
+        let accused = Address::repeat_byte(0xab);
+
+        let verification = InterfoldEventData::ProofVerificationFailed(ProofVerificationFailed {
+            e3_id: E3id::new("7", 31337),
+            accused_party_id: 3,
+            accused_address: accused,
+            proof_type: ProofType::C5PkAggregation,
+            data_hash: [0u8; 32],
+            signed_payload: signed_payload(ProofType::C5PkAggregation),
+        });
+        assert!(matches!(severity(&verification), Severity::Error));
+        let message = error_message_for(&verification);
+        assert!(
+            message.contains("C5PkAggregation"),
+            "expected the proof type, got {message:?}"
+        );
+        assert!(
+            message.contains("party 3") && message.to_lowercase().contains("0xabab"),
+            "expected the accused party and address, got {message:?}"
+        );
+
+        let signed = InterfoldEventData::SignedProofFailed(SignedProofFailed {
+            e3_id: E3id::new("7", 31337),
+            faulting_node: accused,
+            proof_type: ProofType::C0PkBfv,
+            signed_payload: signed_payload(ProofType::C0PkBfv),
+        });
+        assert!(matches!(severity(&signed), Severity::Error));
+        let message = error_message_for(&signed);
+        assert!(
+            message.contains("C0PkBfv") && message.to_lowercase().contains("0xabab"),
+            "expected the proof type and faulting node, got {message:?}"
+        );
+
+        let violation =
+            InterfoldEventData::CommitmentConsistencyViolation(CommitmentConsistencyViolation {
+                e3_id: E3id::new("7", 31337),
+                accused_party_id: 9,
+                accused_address: accused,
+                proof_type: ProofType::C1PkGeneration,
+                data_hash: [0u8; 32],
+                evidence: Bytes::new(),
+            });
+        assert!(matches!(severity(&violation), Severity::Error));
+        let message = error_message_for(&violation);
+        assert!(
+            message.contains("C1PkGeneration"),
+            "expected the proof type, got {message:?}"
+        );
+        assert!(
+            message.contains("party 9") && message.to_lowercase().contains("0xabab"),
+            "expected the accused party and address, got {message:?}"
         );
     }
 
