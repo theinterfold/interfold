@@ -128,10 +128,9 @@ impl PublicKeyAggregator {
         let party_ids: Vec<u64> = pairs.iter().map(|(pid, _)| *pid).collect();
         let node_fold_proofs: Vec<Proof> = pairs.into_iter().map(|(_, p)| p).collect();
         if node_fold_proofs.is_empty() {
-            // Proof aggregation was disabled by the node's test setting. Do NOT call
-            // `try_publish_complete` here — it
-            // is the most common entry into this method, so re-entering it would create
-            // unbounded mutual recursion (stack overflow in deployed nodes).
+            // Recursive aggregation is disabled for this test build. Return here because
+            // `try_publish_complete` normally enters through this method and would recurse
+            // indefinitely.
             info!("PublicKeyAggregator: test-only proof aggregation is disabled");
             return Ok(());
         }
