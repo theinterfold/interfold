@@ -659,7 +659,9 @@ mod recovery_tests {
             let StoreEventRequested { event, sender } = msg;
             let seq = self.next_seq;
             self.next_seq += 1;
-            sender.do_send(StoreEventResponse(event.into_sequenced(seq)));
+            sender
+                .try_send(StoreEventResponse(event.into_sequenced(seq)))
+                .expect("sequencer mailbox must accept the stored event response");
         }
     }
 
