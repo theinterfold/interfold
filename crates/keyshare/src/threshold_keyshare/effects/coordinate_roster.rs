@@ -8,6 +8,9 @@ use anyhow::ensure;
 const ROSTER_BACKUP_SLOT_BPS: u64 = 200;
 const ROSTER_BACKUP_MIN_SECS: u64 = 30;
 const ROSTER_BACKUP_MAX_SECS: u64 = 120;
+// A sender can cross a slot boundary just before a receiver whose clock is slightly behind.
+// Keep this allowance much shorter than the minimum backup slot.
+const ROSTER_CLOCK_SKEW_SECS: u64 = 5;
 
 impl ThresholdKeyshare {
     pub(in crate::actors::threshold_keyshare) fn schedule_roster_leadership_check(
@@ -210,7 +213,14 @@ impl ThresholdKeyshare {
                 })?;
             }
             DkgCoordinationKind::Roster { view } => {
+                let view_has_started = state
+                    .dkg_deadline_unix_secs
+                    .zip(state.dkg_window_secs)
+                    .is_some_and(|(deadline, window)| {
+                        roster_view_has_started(deadline, window, view, now_unix_secs())
+                    });
                 if view != message.party_id
+                    || !view_has_started
                     || state.expelled_parties.contains(&message.party_id)
                     || message.dealers.len() != committee_h
                     || message
@@ -382,6 +392,11 @@ fn roster_view_bounds(deadline: u64, window: u64, party_id: u64) -> Option<(u64,
     (start < end).then_some((start, end))
 }
 
+fn roster_view_has_started(deadline: u64, window: u64, party_id: u64, now: u64) -> bool {
+    roster_view_bounds(deadline, window, party_id)
+        .is_some_and(|(start, _)| now.saturating_add(ROSTER_CLOCK_SKEW_SECS) >= start)
+}
+
 fn roster_leader_at(deadline: u64, window: u64, committee_n: u64, now: u64) -> Option<u64> {
     (0..committee_n).find(|&party_id| {
         roster_view_bounds(deadline, window, party_id)
@@ -407,7 +422,7 @@ fn next_roster_check_after(deadline: u64, window: u64, committee_n: u64, now: u6
 mod leadership_tests {
     use super::{
         next_roster_check_after, ready_contains_roster, roster_check_at_or_after, roster_leader_at,
-        roster_view_bounds,
+        roster_view_bounds, roster_view_has_started, ROSTER_CLOCK_SKEW_SECS,
     };
     use e3_events::{DkgCoordination, DkgCoordinationKind, DkgDealer, E3id};
     use e3_utils::ArcBytes;
@@ -468,5 +483,26 @@ mod leadership_tests {
         );
         assert_eq!(roster_leader_at(deadline, window, 3, 8_740), Some(2));
         assert_eq!(next_roster_check_after(deadline, window, 3, 8_740), None);
+    }
+
+    #[test]
+    fn receiver_rejects_a_future_leader_but_accepts_delayed_messages() {
+        let deadline = 10_000;
+        let window = 3_600;
+        let (start, end) = roster_view_bounds(deadline, window, 2).unwrap();
+
+        assert!(!roster_view_has_started(
+            deadline,
+            window,
+            2,
+            start - ROSTER_CLOCK_SKEW_SECS - 1,
+        ));
+        assert!(roster_view_has_started(
+            deadline,
+            window,
+            2,
+            start - ROSTER_CLOCK_SKEW_SECS,
+        ));
+        assert!(roster_view_has_started(deadline, window, 2, end + 1));
     }
 }
