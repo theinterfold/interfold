@@ -44,7 +44,7 @@ impl PublicKeyAggregator {
             return Ok(());
         }
 
-        // Proof aggregation is a node-level test/CI setting and must be configured consistently
+        // Proof aggregation is a node-level test setting and must be configured consistently
         // across a test swarm. Honest-party proofs should therefore be uniformly Some
         // (aggregation on) or uniformly None (aggregation skipped). A mixed bag would silently
         // truncate the dispatched request below; reject it explicitly.
@@ -127,25 +127,12 @@ impl PublicKeyAggregator {
         pairs.sort_by_key(|(pid, _)| *pid);
         let party_ids: Vec<u64> = pairs.iter().map(|(pid, _)| *pid).collect();
         let node_fold_proofs: Vec<Proof> = pairs.into_iter().map(|(_, p)| p).collect();
-        info!(
-            "ORDER-DEBUG dispatch DkgAggregation: honest_party_ids(submission-idx)={:?} \
-             dkg_node_proofs_keys(real party_id from DKGRecursiveAggregationComplete)={:?} \
-             party_ids_passed_to_circuit={:?}",
-            honest_party_ids.iter().collect::<Vec<_>>(),
-            {
-                let mut k: Vec<u64> = dkg_node_proofs.keys().copied().collect();
-                k.sort();
-                k
-            },
-            party_ids
-        );
-
         if node_fold_proofs.is_empty() {
-            // Proof aggregation was skipped by the node's test/CI setting. Do NOT call
+            // Proof aggregation was disabled by the node's test setting. Do NOT call
             // `try_publish_complete` here — it
             // is the most common entry into this method, so re-entering it would create
             // unbounded mutual recursion (stack overflow in deployed nodes).
-            info!("PublicKeyAggregator: test/CI skip flag active — skipping DkgAggregation");
+            info!("PublicKeyAggregator: test-only proof aggregation is disabled");
             return Ok(());
         }
 

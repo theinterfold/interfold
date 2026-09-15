@@ -125,11 +125,13 @@ impl DkgCoordination {
 mod tests {
     use super::*;
 
+    const TEST_CHAIN_ID: u64 = 1;
+
     #[test]
     fn signature_binds_roster_and_deployment() {
         let signer = PrivateKeySigner::random();
         let message = DkgCoordination::sign(
-            E3id::new("7", 11155111),
+            E3id::new("7", TEST_CHAIN_ID),
             Address::repeat_byte(0x11),
             2,
             DkgCoordinationKind::Roster { view: 2 },
@@ -153,7 +155,7 @@ mod tests {
     fn dealer_ids_must_be_sorted_and_in_range() {
         let signer = PrivateKeySigner::random();
         let message = DkgCoordination::sign(
-            E3id::new("7", 11155111),
+            E3id::new("7", TEST_CHAIN_ID),
             Address::repeat_byte(0x11),
             2,
             DkgCoordinationKind::Ready,

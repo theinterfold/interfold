@@ -58,8 +58,6 @@ sol! {
 const INPUTS_READ_COST: usize = 4;
 const CENSUS_MODE_TOKEN: u64 = 0;
 const CENSUS_MODE_ONCHAIN: u64 = 2;
-/// Extra time for the request transaction to be mined after the worst-case key deadline.
-const VOTING_START_BUFFER_SECS: u64 = 120;
 
 #[derive(Debug, Deserialize)]
 pub struct RoundInputsRequest {
@@ -565,11 +563,7 @@ pub async fn initialize_crisp_round(
         crisp_program.earliest_voting_start().await?.try_into()?
     };
     let window_start = base
-        .checked_add(if avail_window == U256::ZERO {
-            20
-        } else {
-            VOTING_START_BUFFER_SECS
-        })
+        .checked_add(CONFIG.voting_start_buffer_seconds)
         .ok_or_else(|| anyhow::anyhow!("voting start overflow"))?;
     let input_window: [U256; 2] = [
         U256::from(window_start),

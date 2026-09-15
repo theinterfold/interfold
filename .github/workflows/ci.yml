@@ -293,7 +293,6 @@ jobs:
           BENCHMARK_MODE: insecure
           BENCHMARK_OFFLINE_AFTER_C0_PARTY_ID: '1'
           BENCHMARK_DKG_WINDOW_SECS: '1200'
-          CIPHERNODE_SKIP_PROOF_AGGREGATION: 'false'
           E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
           E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '180'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
@@ -304,7 +303,6 @@ jobs:
         env:
           BENCHMARK_MODE: insecure
           BENCHMARK_DKG_WINDOW_SECS: '1200'
-          CIPHERNODE_SKIP_PROOF_AGGREGATION: 'false'
           E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
           E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '120'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
@@ -609,8 +607,6 @@ jobs:
         run: 'pnpm install --frozen-lockfile'
 
       - name: 'Run prebuild'
-        env:
-          CIPHERNODE_SKIP_PROOF_AGGREGATION: 'false'
         run: 'pnpm test:integration prebuild'
 
       - name: 'Verify build artifacts exist'
@@ -1105,7 +1101,7 @@ jobs:
       - name: Check generated verifiers are in sync
         run: pnpm check:verifiers --no-compile
 
-      # A PR tests circuits built from its source. Non-PR runs also verify the shared release matrix.
+      # Release workflows also verify the promoted six-pair circuit matrix.
       - name: Pull the complete circuit matrix
         if: github.event_name != 'pull_request'
         run: pnpm store:circuits pull

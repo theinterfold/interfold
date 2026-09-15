@@ -266,9 +266,9 @@ impl Handler<TypedEvent<DKGRecursiveAggregationComplete>> for PublicKeyAggregato
         msg: TypedEvent<DKGRecursiveAggregationComplete>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
-            return;
-        }
+        // Standbys need the same durable fold inputs as the active aggregator. If the active
+        // node disappears, the promoted node must not wait for proofs that were published once
+        // and will not be emitted again.
         trap(
             EType::PublickeyAggregation,
             &self.bus.with_ec(msg.get_ctx()),

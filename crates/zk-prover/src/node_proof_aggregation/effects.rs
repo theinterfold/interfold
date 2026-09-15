@@ -23,7 +23,7 @@ impl NodeProofAggregator {
         if !self.proof_aggregation_enabled {
             self.pending_inner_proofs.remove(&e3_id);
             info!(
-                "NodeProofAggregator: test/CI skip flag active for E3 {}",
+                "NodeProofAggregator: test-only proof aggregation is disabled for E3 {}",
                 e3_id
             );
             let output = DKGRecursiveAggregationComplete {

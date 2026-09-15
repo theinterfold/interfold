@@ -11,6 +11,7 @@ use serde::Deserialize;
 
 const AVAIL_FINALIZATION_WINDOW_SECONDS: u64 = 10_800;
 const DEFAULT_DA_PENDING_BYTES: u64 = 1024 * 1024 * 1024;
+const DEFAULT_VOTING_START_BUFFER_SECONDS: u64 = 120;
 
 // Do not derive `Debug`: this structure owns private keys and other secrets.
 #[derive(Deserialize)]
@@ -55,6 +56,9 @@ pub struct Config {
     pub e3_param_set: u8,      // 0=InsecureThreshold512, 1=SecureThreshold8192
     pub e3_committee_size: u8, // 0=Minimum, 1=Micro, 2=Small
     pub e3_duration: u64,
+    /// Time allowed for the E3 request transaction to be mined before voting can start.
+    #[serde(default = "default_voting_start_buffer_seconds")]
+    pub voting_start_buffer_seconds: u64,
     pub e3_compute_provider_name: String,
     pub e3_compute_provider_parallel: bool,
     pub e3_compute_provider_batch_size: u32,
@@ -201,6 +205,10 @@ impl Config {
 
 const fn default_da_pending_bytes() -> u64 {
     DEFAULT_DA_PENDING_BYTES
+}
+
+const fn default_voting_start_buffer_seconds() -> u64 {
+    DEFAULT_VOTING_START_BUFFER_SECONDS
 }
 
 pub static CONFIG: Lazy<Config> =

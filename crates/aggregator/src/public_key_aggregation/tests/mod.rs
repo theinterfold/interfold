@@ -270,5 +270,67 @@ async fn standby_persists_and_resumes_public_key_work() -> Result<()> {
     Ok(())
 }
 
+#[actix::test]
+async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
+    let (bus, rng, _seed, params, crp, _errors, _history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let e3_id = E3id::new("42", 1);
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let party_id = 2;
+    let mut initial_state = generating_c5_state(CorrelationId::new());
+    let PublicKeyAggregatorState::GeneratingC5Proof {
+        party_nodes,
+        honest_party_ids,
+        ..
+    } = &mut initial_state
+    else {
+        unreachable!();
+    };
+    party_nodes.insert(party_id, Address::repeat_byte(0x22).to_string());
+    honest_party_ids.insert(party_id);
+
+    let state_store = InMemStore::new(false).start();
+    let state_repository = Repository::new(DataStore::from_in_mem(&state_store));
+    let state = state_repository.send(Some(initial_state));
+    let aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe,
+            bus,
+            e3_id: e3_id.clone(),
+            params_preset: BfvPreset::InsecureThreshold512,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            initial_is_aggregator: false,
+            effects_enabled: true,
+        },
+        state,
+    )
+    .start();
+
+    let fold = DKGRecursiveAggregationComplete {
+        e3_id,
+        party_id,
+        aggregated_proof: None,
+        fold_attestation: None,
+    };
+    aggregator
+        .send(TypedEvent::new(fold.clone(), test_ctx(fold)))
+        .await?;
+
+    let persisted = state_repository
+        .read()
+        .await?
+        .expect("persisted public-key aggregator state");
+    let PublicKeyAggregatorState::GeneratingC5Proof {
+        dkg_node_proofs, ..
+    } = persisted
+    else {
+        panic!("expected GeneratingC5Proof state");
+    };
+    assert_eq!(dkg_node_proofs.get(&party_id), Some(&None));
+    Ok(())
+}
+
 mod attestations;
 mod failures;

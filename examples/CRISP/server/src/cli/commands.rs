@@ -61,9 +61,6 @@ struct CTRequest {
     ct_bytes: Vec<u8>,
 }
 
-/// Extra time for the request transaction to be mined after the worst-case key deadline.
-const INPUT_WINDOW_START_BUFFER_SECS: u64 = 120;
-
 const ZERO_ADDRESS: &str = "0x0000000000000000000000000000000000000000";
 
 /// `InsufficientCiphernodes(uint256,uint256)` on CiphernodeRegistry.
@@ -334,8 +331,8 @@ pub async fn initialize_crisp_round(
         "Debug Before Fee Quote - current timestamp: {:?}",
         current_timestamp
     );
-    // Local mock rounds retain their short start buffer. Avail rounds start only after the
-    // program's worst-case key deadline. E3_DURATION includes the finalization tail in both.
+    // Local rounds start from the current time. Avail rounds start after the program's
+    // worst-case key deadline. E3_DURATION includes the finalization tail in both modes.
     let avail_window = crisp_program.availability_finalization_window().await?;
     let base = if avail_window == U256::ZERO {
         current_timestamp
@@ -343,11 +340,7 @@ pub async fn initialize_crisp_round(
         crisp_program.earliest_voting_start().await?.try_into()?
     };
     let window_start = base
-        .checked_add(if avail_window == U256::ZERO {
-            60
-        } else {
-            INPUT_WINDOW_START_BUFFER_SECS
-        })
+        .checked_add(CONFIG.voting_start_buffer_seconds)
         .ok_or_else(|| anyhow!("voting start overflow"))?;
     let input_window: [U256; 2] = [
         U256::from(window_start),
@@ -398,11 +391,7 @@ pub async fn initialize_crisp_round(
         crisp_program.earliest_voting_start().await?.try_into()?
     };
     let window_start = base
-        .checked_add(if avail_window == U256::ZERO {
-            60
-        } else {
-            INPUT_WINDOW_START_BUFFER_SECS
-        })
+        .checked_add(CONFIG.voting_start_buffer_seconds)
         .ok_or_else(|| anyhow!("voting start overflow"))?;
     let input_window: [U256; 2] = [
         U256::from(window_start),
@@ -413,7 +402,7 @@ pub async fn initialize_crisp_round(
         "Requesting E3 with input_window [{}, {}] (buffer {}s)",
         window_start,
         window_start + CONFIG.e3_duration,
-        INPUT_WINDOW_START_BUFFER_SECS
+        CONFIG.voting_start_buffer_seconds
     );
 
     let (res, e3_id) = contract

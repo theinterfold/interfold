@@ -636,6 +636,49 @@ impl CiphernodeSelector {
 #[cfg(test)]
 mod recovery_tests {
     use super::*;
+    use actix::{Actor, Handler};
+    use e3_data::{DataStore, InMemStore};
+    use e3_events::{
+        hlc_factory::HlcFactory, EventBus, EventBusConfig, EventSource, Sequencer,
+        StoreEventRequested, StoreEventResponse, Unsequenced,
+    };
+
+    #[derive(Default)]
+    struct TestEventStore {
+        next_seq: u64,
+    }
+
+    impl Actor for TestEventStore {
+        type Context = actix::Context<Self>;
+    }
+
+    impl Handler<StoreEventRequested> for TestEventStore {
+        type Result = ();
+
+        fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) {
+            let StoreEventRequested { event, sender } = msg;
+            let seq = self.next_seq;
+            self.next_seq += 1;
+            sender.do_send(StoreEventResponse(event.into_sequenced(seq)));
+        }
+    }
+
+    fn test_bus() -> BusHandle {
+        let event_bus =
+            EventBus::<InterfoldEvent>::new(EventBusConfig { deduplicate: true }).start();
+        let store = TestEventStore::default().start();
+        let sequencer = Sequencer::new(&event_bus, store.recipient()).start();
+        BusHandle::new(event_bus, sequencer, HlcFactory::new()).enable("selector-test")
+    }
+
+    fn test_persistable<T>(value: T) -> (Persistable<T>, Repository<T>)
+    where
+        T: serde::Serialize + serde::de::DeserializeOwned + Clone + Send + Sync + 'static,
+    {
+        let store = InMemStore::new(false).start();
+        let repository = Repository::new(DataStore::from_in_mem(&store));
+        (repository.send(Some(value)), repository)
+    }
 
     #[test]
     fn terminal_selector_entries_are_pruned() {
@@ -659,5 +702,63 @@ mod recovery_tests {
         assert!(state.committees.contains_key(&active));
         assert!(state.expelled.contains_key(&active));
         assert!(state.is_aggregator.contains_key(&active));
+    }
+
+    #[actix::test]
+    async fn ready_standby_is_promoted_after_active_aggregator_timeout() -> Result<()> {
+        let e3_id = E3id::new("1", 1);
+        let committee = Committee::new(vec!["0xa".into(), "0xb".into()]);
+        let selector_state = CiphernodeSelectorState {
+            committees: HashMap::from([(e3_id.clone(), committee)]),
+            expelled: HashMap::from([(e3_id.clone(), Vec::new())]),
+            ..Default::default()
+        };
+        let (state, _) = test_persistable(selector_state);
+        let (failover, failover_repository) = test_persistable(AggregatorFailoverState::default());
+        let bus = test_bus();
+        let lifecycle = HashMap::from([(e3_id.clone(), E3Stage::CommitteeFinalized)]);
+        let mut selector = CiphernodeSelector::new_with_clock(
+            &bus,
+            state,
+            failover,
+            "0xb",
+            lifecycle,
+            Arc::new(SystemClock),
+        );
+        selector.failover_policy = FailoverPolicy::new(Duration::from_secs(1));
+        let selector = selector.start();
+
+        selector.send(EffectsEnabled::new()).await?;
+        let ready = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            AggregationInputsReady {
+                e3_id: e3_id.clone(),
+                phase: AggregatorPhase::PublicKey,
+            }
+            .into(),
+            None,
+            1,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(0);
+        selector.send(ready).await?;
+
+        actix::clock::timeout(Duration::from_secs(3), async {
+            loop {
+                let state = selector.send(GetCiphernodeSelectorState).await??;
+                if state.is_aggregator.get(&e3_id) == Some(&true) {
+                    break Ok::<(), anyhow::Error>(());
+                }
+                actix::clock::sleep(Duration::from_millis(20)).await;
+            }
+        })
+        .await??;
+
+        let failover = failover_repository
+            .read()
+            .await?
+            .expect("persisted failover state");
+        assert_eq!(failover.unresponsive.get(&e3_id), Some(&vec![0]));
+        Ok(())
     }
 }
