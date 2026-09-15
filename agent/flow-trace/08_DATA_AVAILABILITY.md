@@ -162,7 +162,7 @@ open voting before `S`; a key that misses its deadline does not move the vote to
 
 For a request mined at `R`, the earliest allowed `S` is `R + randomnessRequestTimeout +
 sortitionSubmissionWindow + dkgWindow`. The program validates that bound against the E3's
-request-time timeout snapshot. The app shows the current bound and suggests a two-minute buffer
+request-time timeout snapshot. The app shows the current bound and suggests a ten-minute buffer
 for the create transaction to be mined. For the current mainnet timing example, the setup budget
 is 25,800 seconds (1 hour VRF, 10 minutes sortition, 6 hours DKG).
 Direct CRISP server and CLI requests also read the program's earliest start in Avail mode. Their
