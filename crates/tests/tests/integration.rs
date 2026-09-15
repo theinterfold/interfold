@@ -901,18 +901,6 @@ fn active_aggregator_address(
     e3_id: &E3id,
     chain_id: u64,
 ) -> String {
-    committee_in_party_order(committee, scores, e3_id, chain_id)
-        .into_iter()
-        .next()
-        .expect("committee must be non-empty")
-}
-
-fn committee_in_party_order(
-    committee: &[String],
-    scores: &[String],
-    e3_id: &E3id,
-    chain_id: u64,
-) -> Vec<String> {
     let mut finalized = CommitteeFinalized {
         e3_id: e3_id.clone(),
         committee: committee.to_vec(),
@@ -920,7 +908,11 @@ fn committee_in_party_order(
         chain_id,
     };
     finalized.sort_by_address();
-    finalized.committee
+    finalized
+        .committee
+        .first()
+        .cloned()
+        .expect("committee must be non-empty")
 }
 
 fn find_node_index_by_address(nodes: &CiphernodeSystem, address: &str) -> Result<usize> {
@@ -1971,10 +1963,10 @@ async fn test_trbfv_actor() -> Result<()> {
     // connected member in the finalized committee order when an earlier aggregator is offline.
     let active_aggregator_addr = if let Some(offline_index) = offline_node_index {
         let mut first_connected = None;
-        for address in committee_in_party_order(&committee, &committee_scores, &e3_id, chain_id) {
-            let node_index = find_node_index_by_address(&nodes, &address)?;
+        for address in &committee {
+            let node_index = find_node_index_by_address(&nodes, address)?;
             if node_index != offline_index {
-                first_connected = Some(address);
+                first_connected = Some(address.clone());
                 break;
             }
         }
