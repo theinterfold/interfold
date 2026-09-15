@@ -13,17 +13,17 @@ use alloy::signers::local::PrivateKeySigner;
 use alloy::sol_types::SolValue;
 use e3_events::{
     AggregationProofPending, AggregationProofSigned, BusHandle, ComputeRequest,
-    ComputeRequestError, ComputeRequestErrorKind, ComputeResponse, ComputeResponseKind,
-    CorrelationId, DKGInnerProofReady, DecryptionKeyShared, DecryptionShareProofSigned,
-    DecryptionShareProofsPending, DecryptionshareCreated, DkgProofSigned, E3Failed, E3Stage, E3id,
-    EncryptionKeyCreated, EncryptionKeyPending, EventContext, EventPublisher, EventSubscriber,
-    EventType, FailureReason, InterfoldEvent, InterfoldEventData, PkAggregationProofPending,
-    PkAggregationProofSigned, PkBfvProofRequest, PkGenerationProofSigned, Proof, ProofPayload,
-    ProofType, ProofVerificationPassed, Sequenced, ShareDecryptionProofPending, SignedProofPayload,
+    ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId, DKGInnerProofReady,
+    DecryptionKeyShared, DecryptionShareProofSigned, DecryptionShareProofsPending,
+    DecryptionshareCreated, DkgProofSigned, E3Failed, E3Stage, E3id, EncryptionKeyCreated,
+    EncryptionKeyPending, EventContext, EventPublisher, EventSubscriber, EventType, FailureReason,
+    InterfoldEvent, InterfoldEventData, PkAggregationProofPending, PkAggregationProofSigned,
+    PkBfvProofRequest, PkGenerationProofSigned, Proof, ProofPayload, ProofType,
+    ProofVerificationPassed, Sequenced, ShareDecryptionProofPending, SignedProofPayload,
     ThresholdShareCreated, ThresholdSharePending, TypedEvent, ZkRequest, ZkResponse,
 };
 use e3_utils::NotifySync;
-use tracing::{error, info, trace, warn};
+use tracing::{debug, error, info, trace, warn};
 
 use crate::workflow::proof_request::{
     plan_decryption_dispatch, plan_threshold_dispatch, DecryptionProofKind, NodeAggregationMeta,
