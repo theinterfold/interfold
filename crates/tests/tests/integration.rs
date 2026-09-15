@@ -1745,13 +1745,14 @@ async fn test_trbfv_actor() -> Result<()> {
         buffer_nodes.len()
     ));
 
-    let active_aggregator_addr =
+    let initial_active_aggregator_addr =
         active_aggregator_address(&committee, &committee_scores, &e3_id, chain_id);
-    let active_aggregator_index = find_node_index_by_address(&nodes, &active_aggregator_addr)?;
+    let initial_active_aggregator_index =
+        find_node_index_by_address(&nodes, &initial_active_aggregator_addr)?;
 
     println!(
         "Resolved active aggregator: node index {} ({})",
-        active_aggregator_index, active_aggregator_addr
+        initial_active_aggregator_index, initial_active_aggregator_addr
     );
 
     let mut offline_node_index = if let Some(offline_party_id) =
@@ -1859,7 +1860,7 @@ async fn test_trbfv_actor() -> Result<()> {
     if restart_during_dkg {
         let roster = actix::clock::timeout(pubkey_flow_timeout, async {
             loop {
-                let history = nodes.get_history(active_aggregator_index).await?;
+                let history = nodes.get_history(initial_active_aggregator_index).await?;
                 if let Some(roster) = history.iter().find_map(|event| match event.get_data() {
                     InterfoldEventData::CommitmentRosterSelected(data) if data.e3_id == e3_id => {
                         Some(data.party_ids.clone())
@@ -1881,7 +1882,7 @@ async fn test_trbfv_actor() -> Result<()> {
                 party_id == requested_party_id
                     && committee
                         .get(party_id)
-                        .is_some_and(|address| address != &active_aggregator_addr)
+                        .is_some_and(|address| address != &initial_active_aggregator_addr)
             })
             .or_else(|| {
                 roster
@@ -1891,7 +1892,7 @@ async fn test_trbfv_actor() -> Result<()> {
                     .find(|&party_id| {
                         committee
                             .get(party_id)
-                            .is_some_and(|address| address != &active_aggregator_addr)
+                            .is_some_and(|address| address != &initial_active_aggregator_addr)
                     })
             })
             .context("selected DKG roster has no non-aggregator restart target")?;
@@ -1956,6 +1957,29 @@ async fn test_trbfv_actor() -> Result<()> {
             })
             .await?;
         println!("Restarted committee party {restart_party_id} during C4");
+    }
+
+    // The fault modes disconnect at most one committee member. The runtime promotes the first
+    // connected member in the finalized committee order when an earlier aggregator is offline.
+    let active_aggregator_addr = if let Some(offline_index) = offline_node_index {
+        let mut first_connected = None;
+        for address in &committee {
+            let node_index = find_node_index_by_address(&nodes, address)?;
+            if node_index != offline_index {
+                first_connected = Some(address.clone());
+                break;
+            }
+        }
+        first_connected.context("committee has no connected aggregator")?
+    } else {
+        initial_active_aggregator_addr.clone()
+    };
+    let active_aggregator_index = find_node_index_by_address(&nodes, &active_aggregator_addr)?;
+    if active_aggregator_index != initial_active_aggregator_index {
+        println!(
+            "Expected aggregator failover: node index {} ({})",
+            active_aggregator_index, active_aggregator_addr
+        );
     }
 
     // Node 0 is a non-committee observer. It only sees bus-global events and the forwardable
