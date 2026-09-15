@@ -427,6 +427,9 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │
 │   ├─ CommitmentConsistencyChecker (per-E3 actor) receives this:
 │   │   ├─ Caches each party's (address, proof_type) → {public_signals, data_hash}
+│   │   ├─ Persists the complete proof cache and accepted H-roster in the same
+│   │   │  snapshot batch as the event that changed them
+│   │   │  → Hydration restores both before recovered proof checks resume
 │   │   ├─ Evaluates all registered CommitmentLinks:
 │   │   │     C0→C3   (SourceMustExistInTargets): local-cache absence accusations are disabled;
 │   │   │                                          each recipient checks its own C0 against C3

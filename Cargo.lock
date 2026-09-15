@@ -4400,6 +4400,7 @@ dependencies = [
  "alloy",
  "anyhow",
  "async-trait",
+ "bincode",
  "chrono",
  "e3-data",
  "e3-events",

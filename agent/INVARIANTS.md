@@ -698,12 +698,17 @@ design citation alone does not establish current runtime behavior.
 - On restart in `ReadyForDecryption`, rebuild the C4 collector from the saved roster and replay
   saved peer C4 shares. A restored C4 proof job cannot advance DKG if its peer-share collector is
   absent. After collection is complete, a duplicate C4 share must not start another collector.
+  Saved C0 and C4 inputs must keep the first message from each party, as the live collectors do.
+  — `flow-trace/04`
+- `CommitmentConsistencyChecker` persists its complete verified-proof cache and accepted DKG roster
+  in the same snapshot batch as each event that changes them. Hydration restores this state before
+  recovered proof work resumes. A restarted checker must not evaluate C2, C3, C4, or aggregate
+  proofs against an empty or partial pre-crash history. Successful E3 teardown clears the durable
+  checker state in the completion event's snapshot batch. — `flow-trace/04`; `flow-trace/06`
 - A graceful-shutdown deadline must be longer than the EventBus fanout timeout, and every external
   supervisor must wait longer than the node deadline before it sends `SIGKILL`. A process that must
   outlive its CLI launcher must use the detached spawn path; dropping an owning child handle stops
   that child. — `flow-trace/06`
-  Saved C0 and C4 inputs must keep the first message from each party, as the live collectors do.
-  — `flow-trace/04`
 - A fatal threshold-keyshare collector timeout commits `KeyshareState::Failed` before it publishes
   `E3Failed`. The persisted failure stage and reason are immutable. After hydration,
   `EffectsEnabled` redrives the saved failure and does not resume the earlier DKG phase. —

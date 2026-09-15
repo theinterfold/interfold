@@ -1142,6 +1142,7 @@ impl CiphernodeBuilder {
             info!("Setting up CommitmentConsistencyCheckerExtension");
             e3_builder = e3_builder.with(CommitmentConsistencyCheckerExtension::create(
                 bus,
+                &repositories.store,
                 e3_zk_prover::default_links,
             ));
         }

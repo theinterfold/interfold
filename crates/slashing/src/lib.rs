@@ -11,6 +11,7 @@
 
 mod actors;
 mod domain;
+mod repo;
 mod workflow;
 
 pub mod accusation_manager_ext;

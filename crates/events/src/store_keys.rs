@@ -65,6 +65,11 @@ impl StoreKeys {
         format!("//context/{e3_id}")
     }
 
+    /// Durable state for the per-E3 commitment-consistency checker.
+    pub fn commitment_consistency(e3_id: &E3id) -> String {
+        format!("//commitment_consistency/v1/{e3_id}")
+    }
+
     pub fn router() -> String {
         String::from("//router")
     }

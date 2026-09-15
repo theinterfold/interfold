@@ -23,16 +23,21 @@
 
 use alloy::primitives::Address;
 use alloy::sol_types::SolValue;
+use anyhow::ensure;
 use e3_events::{
     CommitmentConsistencyCheckComplete, CommitmentConsistencyCheckRequested,
     CommitmentConsistencyViolation, CommitmentLink, CommitmentRosterSelected, E3id, LinkScope,
     ProofType, ProofVerificationPassed,
 };
 use e3_utils::utility_types::ArcBytes;
+use serde::{Deserialize, Serialize};
 use std::collections::{BTreeSet, HashMap};
 use tracing::warn;
 
+const COMMITMENT_CONSISTENCY_SNAPSHOT_VERSION: u32 = 1;
+
 /// Cached data from a verified proof.
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct VerifiedProofData {
     party_id: u64,
     address: Address,
@@ -43,6 +48,40 @@ struct VerifiedProofData {
     /// forwarded to slashing so the on-chain contract can verify the dataHash
     /// bound in voter signatures.
     proof_data: ArcBytes,
+}
+
+/// Durable state needed to make consistency decisions identical after restart.
+///
+/// Event replay starts after the aggregate snapshot cursor. A new checker therefore
+/// cannot reconstruct proof inputs that it consumed before the snapshot. Persisting
+/// the complete cache and accepted roster prevents recovered work from being checked
+/// against an empty or partial history.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct CommitmentConsistencySnapshot {
+    version: u32,
+    roster: Option<Vec<u64>>,
+    entries: Vec<(Address, ProofType, Vec<VerifiedProofData>)>,
+}
+
+impl Default for CommitmentConsistencySnapshot {
+    fn default() -> Self {
+        Self {
+            version: COMMITMENT_CONSISTENCY_SNAPSHOT_VERSION,
+            roster: None,
+            entries: Vec::new(),
+        }
+    }
+}
+
+impl CommitmentConsistencySnapshot {
+    fn validate(&self) -> anyhow::Result<()> {
+        ensure!(
+            self.version == COMMITMENT_CONSISTENCY_SNAPSHOT_VERSION,
+            "unsupported commitment-consistency snapshot version {}",
+            self.version
+        );
+        Ok(())
+    }
 }
 
 /// Describes a source entry whose commitments are inconsistent with a target.
@@ -78,6 +117,8 @@ pub(crate) struct CommitmentConsistency {
     /// Verified proof outputs: `(address, proof_type) → data`.
     /// Multiple proofs per key are supported (e.g. N-1 C3a proofs per sender).
     verified: HashMap<(Address, ProofType), Vec<VerifiedProofData>>,
+    /// Whether the durable representation changed since the last snapshot write.
+    dirty: bool,
 }
 
 impl CommitmentConsistency {
@@ -92,7 +133,62 @@ impl CommitmentConsistency {
             committee_h,
             roster: None,
             verified: HashMap::new(),
+            dirty: false,
         }
+    }
+
+    pub(crate) fn snapshot(&self) -> CommitmentConsistencySnapshot {
+        let mut entries = self
+            .verified
+            .iter()
+            .map(|((address, proof_type), entries)| {
+                let mut entries = entries.clone();
+                entries.sort_by_key(|entry| entry.data_hash);
+                (*address, *proof_type, entries)
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|(address, proof_type, _)| (*address, *proof_type as u8));
+        CommitmentConsistencySnapshot {
+            version: COMMITMENT_CONSISTENCY_SNAPSHOT_VERSION,
+            roster: self.roster.clone(),
+            entries,
+        }
+    }
+
+    pub(crate) fn take_snapshot_if_changed(&mut self) -> Option<CommitmentConsistencySnapshot> {
+        if !self.dirty {
+            return None;
+        }
+        self.dirty = false;
+        Some(self.snapshot())
+    }
+
+    pub(crate) fn retry_snapshot(&mut self) {
+        self.dirty = true;
+    }
+
+    pub(crate) fn restore(
+        &mut self,
+        snapshot: CommitmentConsistencySnapshot,
+    ) -> anyhow::Result<()> {
+        snapshot.validate()?;
+        self.roster = snapshot.roster;
+        self.verified = snapshot
+            .entries
+            .into_iter()
+            .map(|(address, proof_type, entries)| ((address, proof_type), entries))
+            .collect();
+        self.dirty = false;
+        Ok(())
+    }
+
+    pub(crate) fn cached_proof_count(&self) -> usize {
+        self.verified.values().map(Vec::len).sum()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn accepted_roster(&self) -> Option<&[u64]> {
+        self.roster.as_deref()
     }
 
     /// Number of registered links (for actor startup logging).
@@ -117,6 +213,7 @@ impl CommitmentConsistency {
             return Vec::new();
         }
         self.roster = Some(event.party_ids);
+        self.dirty = true;
         let mut violations = self.check_links(ProofType::C4aSkShareDecryption);
         violations.extend(self.check_links(ProofType::C4bESmShareDecryption));
         violations
@@ -155,6 +252,7 @@ impl CommitmentConsistency {
         let entries = self.verified.entry((address, proof_type)).or_default();
         if !entries.iter().any(|e| e.data_hash == data.data_hash) {
             entries.push(data);
+            self.dirty = true;
         }
     }
 
@@ -485,10 +583,12 @@ impl CommitmentConsistency {
         // Remove cached entries for inconsistent parties so they don't
         // participate in future post-ZK `find_mismatches` evaluations.
         if !inconsistent_parties.is_empty() {
+            let cached_before = self.cached_proof_count();
             self.verified.retain(|_, entries| {
                 entries.retain(|v| !inconsistent_parties.contains(&v.party_id));
                 !entries.is_empty()
             });
+            self.dirty |= self.cached_proof_count() != cached_before;
         }
 
         Some(PreZkOutcome {

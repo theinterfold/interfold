@@ -465,11 +465,13 @@ path.
 
 `ShareVerificationActor` gates C1/C6 proof verification behind `CommitmentConsistencyCheckRequested`
 / `CommitmentConsistencyCheckComplete`. The per-E3 `CommitmentConsistencyChecker` is therefore
-restart-critical even though it has no durable state of its own: after context hydration,
-`CommitmentConsistencyCheckerExtension` recreates it from the recovered `E3Meta` so restarted active
-aggregators can complete C6 verification. Without this recipient, the restarted node can collect
-honest decryption shares and then wait forever for a consistency-check response that no actor is
-subscribed to publish.
+restart-critical. It stores its verified-proof cache and accepted DKG roster in a per-E3 repository,
+using the causal event's snapshot batch for each mutation. After context hydration,
+`CommitmentConsistencyCheckerExtension` restores that state and recreates the actor from the
+recovered `E3Meta`. Without the recipient, a restarted node can collect honest decryption shares and
+then wait forever for a consistency-check response. Without the restored cache, it can also compare
+recovered proofs with an empty or partial pre-crash history. `E3RequestComplete` clears the checker
+snapshot in the same event batch before the request context is discarded.
 
 The global `ShareVerificationActor` also requires the finalized committee's ordered party-slot map
 for signer ownership checks. It is seeded from `Repositories::finalized_committees` during builder
