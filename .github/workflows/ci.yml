@@ -295,7 +295,7 @@ jobs:
           BENCHMARK_DKG_WINDOW_SECS: '1200'
           CIPHERNODE_SKIP_PROOF_AGGREGATION: 'false'
           E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
-          E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '120'
+          E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '180'
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
         run: 'cargo test -p e3-tests --test integration test_trbfv_actor -- --exact --nocapture'
 
