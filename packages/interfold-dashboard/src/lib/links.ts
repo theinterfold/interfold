@@ -14,7 +14,7 @@ export const LINKS = {
   docs: 'https://docs.theinterfold.com/introduction',
   architecture: 'https://docs.theinterfold.com/architecture-overview',
   crisp: 'https://docs.theinterfold.com/CRISP/introduction',
-  repo: 'https://github.com/gnosisguild/interfold',
+  repo: 'https://github.com/theinterfold/interfold',
   explorer: EXPLORER_URL,
 } as const
 

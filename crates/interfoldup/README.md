@@ -9,19 +9,19 @@ A standalone installer for the Interfold CLI tool.
 Use the provided install script to download and install `interfoldup`:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
 ```
 
 Or with wget:
 
 ```bash
-wget -qO- https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
+wget -qO- https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
 ```
 
 ### Manual Installation
 
 1. Download the appropriate binary for your platform from the
-   [releases page](https://github.com/gnosisguild/interfold/releases)
+   [releases page](https://github.com/theinterfold/interfold/releases)
 2. Extract the binary and place it in your PATH (e.g., `~/.local/bin` or `/usr/local/bin`)
 3. Make sure the binary is executable: `chmod +x interfoldup`
 
@@ -35,6 +35,9 @@ interfoldup install
 
 # Install to /usr/local/bin (requires sudo)
 interfoldup install --system
+
+# Install a specific release
+interfoldup install --version v0.13.0
 ```
 
 ### Update the Interfold CLI
@@ -45,6 +48,9 @@ interfoldup update
 
 # Update from /usr/local/bin
 interfoldup update --system
+
+# Move to a specific release, forward or backward
+interfoldup update --version v0.13.0
 ```
 
 ### Uninstall the Interfold CLI

@@ -14,8 +14,8 @@ use std::{
 };
 use tokio::sync::Mutex;
 
-const LATEST_RELEASE: &str = "https://api.github.com/repos/gnosisguild/interfold/releases/latest";
-const RELEASES_PAGE: &str = "https://github.com/gnosisguild/interfold/releases";
+const LATEST_RELEASE: &str = "https://api.github.com/repos/theinterfold/interfold/releases/latest";
+const RELEASES_PAGE: &str = "https://github.com/theinterfold/interfold/releases";
 const CACHE_TTL: Duration = Duration::from_secs(60 * 60);
 const ERROR_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
 

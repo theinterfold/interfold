@@ -8,5 +8,5 @@
     "arm64-linux": "cdb7cb6d6f6aefd51b9d1e29e368a7e61335c82ce0102b31dd42d1028bb82873",
     "arm64-darwin": "60a238d9d29e85afb9acd4cee87849e81b3be7165a3f967fcaf944050fbd3093"
   },
-  "circuits_download_url": "https://github.com/gnosisguild/interfold/releases/download/v{version}/circuits-{version}.tar.gz"
+  "circuits_download_url": "https://github.com/theinterfold/interfold/releases/download/v{version}/circuits-{version}.tar.gz"
 }

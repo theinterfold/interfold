@@ -26,7 +26,7 @@ export default {
   },
 
   project: {
-    link: 'https://github.com/gnosisguild/interfold',
+    link: 'https://github.com/theinterfold/interfold',
   },
   docsRepositoryBase: 'https://github.com/theinterfold/interfold/tree/main/docs',
   darkMode: false,

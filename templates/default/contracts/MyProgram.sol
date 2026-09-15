@@ -95,7 +95,7 @@ contract MyProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable {
     // This minimal template does not prove that the serialized ciphertext matches its SAFE
     // commitment. Production programs must verify that binding before insertion. Otherwise, an
     // invalid input can prevent the E3 from completing.
-    // EXAMPLE: https://github.com/gnosisguild/interfold/blob/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol
+    // EXAMPLE: https://github.com/theinterfold/interfold/blob/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol
 
     uint256 index = inputs[e3Id].numberOfLeaves;
     inputs[e3Id]._insert(uint256(ciphertextCommitment));

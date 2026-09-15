@@ -97,7 +97,7 @@ ${changelog || 'See CHANGELOG.md for details.'}
 Install the installer:
 
 \`\`\`bash
-curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
 \`\`\`
 
 Install Interfold:
