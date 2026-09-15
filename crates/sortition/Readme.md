@@ -78,6 +78,7 @@ sequenceDiagram
     NodeStateManager-->>Sortition: NodeStateStore { nodes, ticketPrice }
     Sortition->>Sortition: Build sortition list from active nodes
     Sortition->>Sortition: Run score sortition algorithm
+    Sortition->>Sortition: Reserve capacity for this E3
     Sortition->>Sortition: Generate tickets for selected nodes
 
     loop For each selected node
@@ -95,6 +96,7 @@ sequenceDiagram
     Note over EventBus,Sortition: Phase 4: Committee Storage
 
     EventBus->>Sortition: CommitteeFinalized
+    Sortition->>Sortition: Reconcile the reservation with the final committee
     Sortition->>Sortition: Store committee in finalized_committees HashMap
     Sortition->>Sortition: Persist to disk
 
@@ -246,7 +248,7 @@ flowchart LR
 - **State Per Node**:
   - `ticket_balance`: Current ticket balance
   - `active`: Whether node is active (has min ticket balance)
-  - `active_jobs`: Local workload count for voluntary participation limits
+  - `active_jobs`: Local reserved or active workload count
 - **Persistence**: State survives node restarts
 - **Events**:
   - `CiphernodeAdded` / `CiphernodeRemoved`
@@ -254,9 +256,11 @@ flowchart LR
   - `OperatorActivationChanged`
   - `ConfigurationUpdated` (for ticketPrice)
 
-The active-job adjustment applies only when the current node decides whether to submit. Remote
-operators keep their full on-chain-valid ticket ranges in that decision. This local policy does not
-reserve collateral or reduce the range that Solidity accepts. On-chain candidates are authoritative.
+The active-job adjustment applies only when the current node decides whether to submit. The node
+persists a provisional reservation before ticket dispatch. `CommitteeFinalized` confirms the
+reservation or releases it when the node is not in the final committee. Terminal events release all
+remaining reservations. Remote operators keep their full on-chain-valid ticket ranges. This local
+policy does not reserve collateral or reduce the range that Solidity accepts.
 
 ### 4. Sortition Actor
 
@@ -270,7 +274,7 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
   - `GetNodeState`: Get current node state
 - **Event Handlers**:
   - `E3Requested`: Trigger sortition
-  - `CommitteeFinalized`: Store committee
+  - `CommitteeFinalized`: Reconcile capacity and store the committee
   - `TicketBalanceUpdated`, `OperatorActivationChanged`, etc.
 
 ### 5. Committee Query Pattern

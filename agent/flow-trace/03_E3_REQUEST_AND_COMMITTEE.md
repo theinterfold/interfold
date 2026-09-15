@@ -300,16 +300,20 @@ InterfoldSolReader decodes IInterfold::E3Requested log
     │   └─ Select top N nodes (lowest scores win)
     │       → Returns committee list with party indices
     │
+    ├─ If THIS node is in the buffered winner set:
+    │   ├─ Check only this node's voluntary active-job limit
+    │   ├─ Treat an existing reservation for this E3 as capacity during replay
+    │   ├─ If capacity remains:
+    │   │   ├─ Persist one provisional active-job reservation for this E3
+    │   │   ├─ ticket_id = Some(TicketId::Score(best_ticket_number))
+    │   │   └─ party_index = Some(index_in_committee)
+    │   └─ If capacity is exhausted: ticket_id = None
+    │
+    ├─ If NOT selected: ticket_id = None
+    │
     └─ Sends WithSortitionTicket<E3Requested> to CiphernodeSelector
-        │
-        ├─ If THIS node is in the selected committee:
-        │   ├─ Check only this node's voluntary active-job limit
-        │   ├─ If capacity remains:
-        │   │   ticket_id = Some(TicketId::Score(best_ticket_number))
-        │   │   party_index = Some(index_in_committee)
-        │   └─ If capacity is exhausted: ticket_id = None
-        │
-        └─ If NOT selected: ticket_id = None
+        → The reservation exists before the ticket can leave this actor
+        → A concurrent request sees the reduced local capacity
 ```
 
 ### 2b. CiphernodeSelector Processing
@@ -524,6 +528,9 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
 │   }
 │
 ├─ Sortition actor:
+│   ├─ Reconciles the provisional reservation with the finalized N-node committee
+│   │   → A selected node keeps its existing reservation without a second increment
+│   │   → A node outside the final committee releases its provisional reservation
 │   └─ Stores finalized committee as a `Committee` struct in persistent map
 │       → Provides O(1) address→party_id lookup for later expulsion handling
 │       → `CommitteeFinalized` is normalized into ascending address order before storage
@@ -587,7 +594,9 @@ A ready committee must finalize at or before its absolute DKG deadline.
    `requestBlock - 1`. The ticket price is frozen in the request transaction. Rust and Solidity
    consume those same values, so later activation, collateral, or price changes cannot alter the
    candidate set. All nodes compute the same buffered winner set. A selected node can decline its
-   own submission when its local active-job capacity is exhausted.
+   own submission when its local active-job capacity is exhausted. Before ticket dispatch, the node
+   persists a provisional reservation. Committee finalization confirms or releases that reservation.
+   Terminal failure or completion releases every remaining reservation.
 
 3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
    committee into ascending address order before deriving `party_id`. This keeps party IDs,
