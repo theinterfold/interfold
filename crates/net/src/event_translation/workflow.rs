@@ -233,7 +233,7 @@ mod tests {
             e3_id: E3id::new("1", 1),
             interfold_address: Default::default(),
             party_id: 1,
-            kind: DkgCoordinationKind::Roster { view: 1 },
+            kind: DkgCoordinationKind::Roster,
             dealers: vec![DkgDealer {
                 party_id: 1,
                 contribution_hash: [7; 32],

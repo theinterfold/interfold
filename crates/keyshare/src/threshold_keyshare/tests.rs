@@ -12,11 +12,12 @@ use anyhow::Result;
 use e3_crypto::Cipher;
 use e3_data::{AutoPersist, DataStore, InMemStore, Persistable, Repository};
 use e3_events::{
-    hlc_factory::HlcFactory, BusHandle, CircuitName, ComputeRequestKind, DecryptionKeyShared,
-    E3Stage, E3id, EffectsEnabled, EncryptionKey, EncryptionKeyCreated, Event, EventBus,
-    EventBusConfig, EventSource, FailureReason, GetEvents, HistoryCollector, InterfoldEvent,
-    InterfoldEventData, Proof, ProofPayload, ProofType, Sequencer, SignedProofPayload,
-    StoreEventRequested, StoreEventResponse, TakeEvents, Unsequenced, VerificationKind,
+    hlc_factory::HlcFactory, AggregatorChanged, BusHandle, CircuitName, ComputeRequestKind,
+    DecryptionKeyShared, DkgCoordination, DkgCoordinationKind, DkgDealer, E3Stage, E3id,
+    EffectsEnabled, EncryptionKey, EncryptionKeyCreated, Event, EventBus, EventBusConfig,
+    EventSource, FailureReason, GetEvents, HistoryCollector, InterfoldEvent, InterfoldEventData,
+    Proof, ProofPayload, ProofType, Sequencer, SignedProofPayload, StoreEventRequested,
+    StoreEventResponse, TakeEvents, Unsequenced, VerificationKind,
 };
 use e3_fhe_params::DEFAULT_BFV_PRESET;
 use std::collections::BTreeSet;
@@ -41,6 +42,7 @@ async fn selection_waits_for_frozen_timing_and_rejects_expired_dkg() -> Result<(
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
         recovery: test_recovery(),
         dkg_timing_reader: Arc::new(move |_| {
             read_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
@@ -144,6 +146,120 @@ fn test_recovery() -> Persistable<ThresholdKeyshareRecoveryState> {
     repo.send(Some(ThresholdKeyshareRecoveryState::default()))
 }
 
+fn test_ec(seq: u64) -> EventContext<Sequenced> {
+    InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        EffectsEnabled::new().into(),
+        None,
+        seq.into(),
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(seq)
+    .get_ctx()
+    .clone()
+}
+
+fn aggregating_decryption_key_for_roster_test() -> AggregatingDecryptionKey {
+    AggregatingDecryptionKey {
+        pk_share: ArcBytes::from_bytes(&[1]),
+        sk_bfv: SensitiveBytes::from_encrypted(&[2]),
+        own_sk_share_raw: SensitiveBytes::from_encrypted(&[3]),
+        own_esi_shares_raw: vec![SensitiveBytes::from_encrypted(&[4])],
+        signed_pk_generation_proof: None,
+        signed_sk_share_computation_proof: None,
+        signed_e_sm_share_computation_proof: None,
+        signed_sk_share_encryption_proofs: Vec::new(),
+        signed_e_sm_share_encryption_proofs: Vec::new(),
+    }
+}
+
+fn ready_message(party_id: u64, dealer_ids: &[u64], e3_id: &E3id) -> DkgCoordination {
+    DkgCoordination {
+        e3_id: e3_id.clone(),
+        interfold_address: Address::ZERO,
+        party_id,
+        kind: DkgCoordinationKind::Ready,
+        dealers: dealer_ids
+            .iter()
+            .map(|&dealer_id| DkgDealer {
+                party_id: dealer_id,
+                contribution_hash: [dealer_id as u8; 32],
+            })
+            .collect(),
+        signature: ArcBytes::from_bytes(&[]),
+    }
+}
+
+#[actix::test]
+async fn only_the_active_aggregator_proposes_a_ready_roster() -> Result<()> {
+    let (bus, history) = test_bus();
+    let e3_id = E3id::new("47", 1);
+    let store = InMemStore::new(false).start();
+    let state_repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
+    let state = state_repo.send(Some(ThresholdKeyshareState::new(
+        e3_id.clone(),
+        2,
+        KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
+        1,
+        3,
+        ArcBytes::from_bytes(b"params"),
+        Address::ZERO.to_string(),
+    )));
+    let mut recovery = test_recovery();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery
+            .ready_by_party
+            .insert(0, ready_message(0, &[0, 1], &e3_id));
+        recovery
+            .ready_by_party
+            .insert(1, ready_message(1, &[0, 1], &e3_id));
+        Ok(recovery)
+    })?;
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
+        recovery,
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+
+    actor.propose_dkg_roster(test_ec(1))?;
+    assert!(actor.recovery.try_get()?.dkg_roster.is_none());
+
+    actor.handle_aggregator_changed(
+        AggregatorChanged {
+            e3_id: e3_id.clone(),
+            is_aggregator: true,
+        },
+        test_ec(2),
+    )?;
+
+    let roster = next_events(&history, 2)
+        .await?
+        .into_iter()
+        .find_map(|event| match event.into_data() {
+            InterfoldEventData::DkgCoordination(roster) => Some(roster),
+            _ => None,
+        })
+        .expect("expected DKG roster proposal");
+    assert_eq!(
+        roster
+            .dealers
+            .iter()
+            .map(|dealer| dealer.party_id)
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    let recovery = actor.recovery.try_get()?;
+    assert!(recovery.dkg_roster.is_none());
+    assert!(recovery.is_aggregator);
+    Ok(())
+}
+
 async fn start_actor_with_state(
     keyshare_state: KeyshareState,
 ) -> Result<(
@@ -162,6 +278,7 @@ async fn start_actor_with_state(
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
         recovery: test_recovery(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -462,6 +579,7 @@ async fn restart_skips_dkg_work_after_public_key_context_is_persisted() -> Resul
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
         recovery,
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -502,6 +620,7 @@ async fn restart_rebuilds_c4_collector_before_peer_share_arrives() -> Result<()>
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
         recovery: test_recovery(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -561,6 +680,7 @@ async fn duplicate_c4_after_collection_does_not_start_another_collector() -> Res
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
         recovery,
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
@@ -584,6 +704,7 @@ async fn recovery_keeps_the_first_c0_and_c4_from_each_party() -> Result<()> {
         share_enc_preset: DEFAULT_BFV_PRESET,
         interfold_address: Address::ZERO,
         signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: true,
         recovery: test_recovery(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });

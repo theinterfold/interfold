@@ -485,18 +485,19 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
     ├─ If fewer than H pass locally, stays outside C4 without failing the E3
     └─ Waits for one H-dealer roster before Step 7
 
-The roster proposer selects H parties whose signed Ready lists all contain the same selected
-dealer contributions. Each selected party checks the roster against its own saved Ready list.
-The accepted roster is saved before C4 starts. Party 0 proposes first. After the frozen share
-cutoff, backup parties get ordered time slots to propose if no roster arrived. Every online party
-wakes at each slot boundary and derives the current leader from the frozen DKG deadline. If a
-scheduler delivers a wake-up late, only the leader for the current slot can propose. Each party
-rejects a roster from a backup whose slot has not started. It can accept a valid roster after that
-slot ends, so message delay does not invalidate an authorized proposal. Each party then arms the
-next boundary until it accepts a roster. A node accepts only one roster. If a
-proposer reaches only some peers before it stops and a backup proposes a different roster, the
-nodes can split and the E3 can fail. This crash-only path does not provide consensus under
-arbitrary message delay; a canonical roster anchor would be needed for that.
+The active aggregator selects H parties whose signed Ready lists all contain the same selected
+dealer contributions. Each selected party checks the roster against its own saved Ready list. The
+accepted roster is saved before C4 starts. Once a node can derive a valid roster from its durable
+Ready map, it starts the existing 10-minute active-aggregator budget for the DKG-roster phase. If
+the active aggregator does not publish a roster, the selector promotes the next eligible committee
+member. The promoted member uses its saved Ready map and proposes without a separate leader clock
+or election. Roster acceptance ends that phase and clears its local failover skips. The later C5
+public-key aggregation starts a new failover budget only after its own inputs are durable.
+
+A node accepts only one valid roster. This path assumes that committee software does not publish
+conflicting rosters. It does not provide Byzantine agreement for conflicting rosters from a
+malicious member. A canonical roster anchor or a separate agreement protocol is required for that
+threat model.
 If a selected party stops permanently after the roster is accepted, this path does not select a
 replacement or rebuild C4. The E3 can fail even when other committee members remain online.
 The cutoff omits missing nodes but does not accuse or slash them: a local timeout is not proof
@@ -1439,13 +1440,15 @@ saved state; a replay does not report a false state error or start the work agai
 
 `CiphernodeSelector` also observes replay before it enables failover effects. Its versioned
 repository stores a readiness-gated phase, assigned party, absolute deadline, and locally
-unresponsive party IDs. `CommitteeFinalized` and `CiphertextOutputPublished` identify the canonical
-phase but do not start a progress budget. A persisted aggregation actor publishes
-`AggregationInputsReady` only after all inputs are durable. An unchanged ready phase and assignment
-preserve the original deadline. A new assignment gets the full budget. `EffectsEnabled` re-arms the
-remaining duration or processes an overdue deadline immediately. Canonical phase progress cancels
-the old timer and clears the phase-local skip set. Startup migrates the v0.12 failover snapshot by
-discarding its pre-readiness timers and skip set.
+unresponsive party IDs. DKG roster selection, public-key aggregation, and plaintext aggregation use
+separate failover phases. `CommitteeFinalized` and `CiphertextOutputPublished` identify the current
+protocol stage but do not start a progress budget. A persisted actor publishes
+`AggregationInputsReady` only after all inputs for its phase are durable. Accepting a DKG roster
+moves the selector to the public-key phase without starting that phase's timer. An unchanged ready
+phase and assignment preserve the original deadline. A new assignment gets the full budget.
+`EffectsEnabled` re-arms the remaining duration or processes an overdue deadline immediately.
+Protocol progress cancels the old timer and clears the phase-local skip set. Startup rejects an
+unsupported failover schema; operators must clear pre-release protocol-v4 state before rollout.
 
 The Interfold and registry writers also subscribe before EventStore replay. A locally sourced
 `PlaintextAggregated` or `PublicKeyAggregated` event is the durable publication intent. Each writer

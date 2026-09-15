@@ -24,8 +24,8 @@ pub struct DkgDealer {
 pub enum DkgCoordinationKind {
     /// This party has verified and stored the listed dealer contributions.
     Ready,
-    /// The named leader proposes the exact H dealer contributions for C4.
-    Roster { view: u64 },
+    /// The active aggregator proposes the exact H dealer contributions for C4.
+    Roster,
 }
 
 /// Authenticated, E3-scoped DKG readiness or roster message.
@@ -72,9 +72,9 @@ impl DkgCoordination {
             .clone()
             .try_into()
             .map_err(|_| anyhow!("invalid E3 ID in DKG coordination message"))?;
-        let (kind, view) = match self.kind {
-            DkgCoordinationKind::Ready => (0u64, 0u64),
-            DkgCoordinationKind::Roster { view } => (1u64, view),
+        let kind = match self.kind {
+            DkgCoordinationKind::Ready => 0u64,
+            DkgCoordinationKind::Roster => 1u64,
         };
         let ids: Vec<U256> = self
             .dealers
@@ -88,13 +88,12 @@ impl DkgCoordination {
             .collect();
         let dealers_hash = keccak256((ids, hashes).abi_encode());
         let encoded = (
-            keccak256("InterfoldDkgCoordination(uint256 chainId,address interfold,uint256 e3Id,uint256 partyId,uint256 kind,uint256 view,bytes32 dealersHash)"),
+            keccak256("InterfoldDkgCoordination(uint256 chainId,address interfold,uint256 e3Id,uint256 partyId,uint256 kind,bytes32 dealersHash)"),
             U256::from(self.e3_id.chain_id()),
             self.interfold_address,
             e3_id,
             U256::from(self.party_id),
             U256::from(kind),
-            U256::from(view),
             dealers_hash,
         )
             .abi_encode();
@@ -134,7 +133,7 @@ mod tests {
             E3id::new("7", TEST_CHAIN_ID),
             Address::repeat_byte(0x11),
             2,
-            DkgCoordinationKind::Roster { view: 2 },
+            DkgCoordinationKind::Roster,
             vec![DkgDealer {
                 party_id: 2,
                 contribution_hash: [0x42; 32],

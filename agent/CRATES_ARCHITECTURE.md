@@ -584,6 +584,11 @@ committee. The Rust proof boundary validates canonical committee dimensions, uni
 signer-to-slot binding, phase-specific proof multiplicity, and one share/proof per ciphertext
 output. Circuit semantics are deliberately outside this refactor's modification scope.
 
+After C2/C3 verification, each member publishes a signed readiness report. The active aggregator
+selects the first canonical `H` dealers that are mutually complete and announces that roster. The
+existing readiness-gated aggregator failover promotes the next eligible party if this announcement
+stalls. Roster selection and public-key aggregation use separate failover phases and budgets.
+
 Each recipient-scoped threshold-share bundle has one C2a secret-key share-computation proof, one C2b
 smudging-noise share-computation proof, then every C3a proof, then every C3b proof. C3 multiplicity
 follows rows of the threshold-parameter Shamir secret, not the number of CRT moduli in the DKG

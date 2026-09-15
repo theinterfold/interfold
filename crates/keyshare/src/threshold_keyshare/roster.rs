@@ -127,19 +127,19 @@ mod tests {
     }
 
     #[test]
-    fn small_committee_selects_ten_mutually_ready_dealers() {
+    fn small_committee_selects_fourteen_mutually_ready_dealers() {
         let available: Vec<u64> = (0..19).filter(|id| ![2, 7].contains(id)).collect();
         let ready = available
             .iter()
             .map(|&recipient| (recipient, dealers(&available)))
             .collect();
-        let roster = select_ready_roster(&ready, 10).unwrap();
+        let roster = select_ready_roster(&ready, 14).unwrap();
         assert_eq!(
             roster
                 .iter()
                 .map(|dealer| dealer.party_id)
                 .collect::<Vec<_>>(),
-            vec![0, 1, 3, 4, 5, 6, 8, 9, 10, 11]
+            vec![0, 1, 3, 4, 5, 6, 8, 9, 10, 11, 12, 13, 14, 15]
         );
     }
 

@@ -20,10 +20,10 @@ use e3_events::Sequenced;
 use e3_events::TypedEvent;
 use e3_events::{
     prelude::*, trap, AggregationInputsReady, AggregatorChanged, BusHandle, CiphernodeSelected,
-    CiphertextOutputPublished, Committee, CommitteeFinalized, CommitteeMemberExcluded,
-    CommitteeMemberExpelled, E3Failed, E3Requested, E3Stage, E3StageChanged, E3id, EType,
-    EffectsEnabled, EventType, InterfoldEvent, InterfoldEventData, PlaintextOutputPublished,
-    Shutdown, TicketGenerated, TicketId,
+    CiphertextOutputPublished, CommitmentRosterSelected, Committee, CommitteeFinalized,
+    CommitteeMemberExcluded, CommitteeMemberExpelled, E3Failed, E3Requested, E3Stage,
+    E3StageChanged, E3id, EType, EffectsEnabled, EventType, InterfoldEvent, InterfoldEventData,
+    PlaintextOutputPublished, Shutdown, TicketGenerated, TicketId,
 };
 use e3_request::E3Meta;
 use e3_utils::NotifySync;
@@ -49,6 +49,14 @@ fn e3_meta_from(req: &E3Requested) -> E3Meta {
     }
 }
 
+fn selector_phase_for_stage(stage: &E3Stage, dkg_roster_selected: bool) -> Option<AggregatorPhase> {
+    if *stage == E3Stage::CommitteeFinalized && dkg_roster_selected {
+        Some(AggregatorPhase::PublicKey)
+    } else {
+        phase_for_stage(stage)
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize, Default)]
 pub struct CiphernodeSelectorState {
     pub e3_cache: HashMap<E3id, E3Meta>,
@@ -57,6 +65,9 @@ pub struct CiphernodeSelectorState {
     /// fallback. This does not alter the canonical committee roster.
     pub expelled: HashMap<E3id, Vec<u64>>,
     pub is_aggregator: HashMap<E3id, bool>,
+    /// E3s whose first accepted DKG roster already ended the roster failover budget.
+    #[serde(default)]
+    pub dkg_roster_selected: HashSet<E3id>,
 }
 
 impl CiphernodeSelectorState {
@@ -66,6 +77,8 @@ impl CiphernodeSelectorState {
         self.expelled.retain(|e3_id, _| !terminal.contains(e3_id));
         self.is_aggregator
             .retain(|e3_id, _| !terminal.contains(e3_id));
+        self.dkg_roster_selected
+            .retain(|e3_id| !terminal.contains(e3_id));
     }
 }
 
@@ -143,9 +156,16 @@ impl CiphernodeSelector {
             .filter(|(_, stage)| matches!(stage, E3Stage::Complete | E3Stage::Failed))
             .map(|(e3_id, _)| e3_id.clone())
             .collect();
+        let roster_selected = state
+            .get()
+            .map(|state| state.dkg_roster_selected.clone())
+            .unwrap_or_default();
         let observed_phases = lifecycle
             .into_iter()
-            .filter_map(|(e3_id, stage)| phase_for_stage(&stage).map(|phase| (e3_id, phase)))
+            .filter_map(|(e3_id, stage)| {
+                let phase = selector_phase_for_stage(&stage, roster_selected.contains(&e3_id));
+                phase.map(|phase| (e3_id, phase))
+            })
             .collect();
         Self {
             bus: bus.clone(),
@@ -210,6 +230,10 @@ impl CiphernodeSelector {
                 || snapshot
                     .is_aggregator
                     .keys()
+                    .any(|e3_id| terminal.contains(e3_id))
+                || snapshot
+                    .dkg_roster_selected
+                    .iter()
                     .any(|e3_id| terminal.contains(e3_id))
         });
         if selector_has_terminal {
@@ -292,6 +316,10 @@ impl CiphernodeSelector {
         bus.subscribe(EventType::E3StageChanged, addr.clone().recipient());
         bus.subscribe(EventType::E3Failed, addr.clone().recipient());
         bus.subscribe(EventType::AggregationInputsReady, addr.clone().recipient());
+        bus.subscribe(
+            EventType::CommitmentRosterSelected,
+            addr.clone().recipient(),
+        );
         bus.subscribe(EventType::EffectsEnabled, addr.clone().recipient());
         bus.subscribe(EventType::Shutdown, addr.clone().recipient());
 
@@ -433,6 +461,28 @@ impl CiphernodeSelector {
         })?;
         self.reconcile_failover_assignment(&e3_id, Some(ec), ctx)?;
         self.update_aggregator_status(&e3_id, Some(ec), false)
+    }
+
+    fn observe_dkg_roster_selected(
+        &mut self,
+        selected: CommitmentRosterSelected,
+        ec: &EventContext<Sequenced>,
+        ctx: &mut Context<Self>,
+    ) -> Result<()> {
+        let e3_id = selected.e3_id;
+        if self
+            .state
+            .get()
+            .is_some_and(|state| state.dkg_roster_selected.contains(&e3_id))
+        {
+            return Ok(());
+        }
+
+        self.state.try_mutate(ec, |mut state| {
+            state.dkg_roster_selected.insert(e3_id.clone());
+            Ok(state)
+        })?;
+        self.observe_phase(e3_id, Some(AggregatorPhase::PublicKey), false, ec, ctx)
     }
 
     fn reconcile_after_replay(&mut self, ctx: &mut Context<Self>) -> Result<()> {
@@ -682,6 +732,31 @@ mod recovery_tests {
         (repository.send(Some(value)), repository)
     }
 
+    fn test_ec(seq: u64) -> EventContext<Sequenced> {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            EffectsEnabled::new().into(),
+            None,
+            seq.into(),
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(seq)
+        .get_ctx()
+        .clone()
+    }
+
+    #[test]
+    fn selected_roster_keeps_public_key_phase_for_replayed_committee_stage() {
+        assert_eq!(
+            selector_phase_for_stage(&E3Stage::CommitteeFinalized, true),
+            Some(AggregatorPhase::PublicKey)
+        );
+        assert_eq!(
+            selector_phase_for_stage(&E3Stage::CommitteeFinalized, false),
+            Some(AggregatorPhase::DkgRoster)
+        );
+    }
+
     #[test]
     fn terminal_selector_entries_are_pruned() {
         let terminal = E3id::new("1", 1);
@@ -693,6 +768,7 @@ mod recovery_tests {
             ]),
             expelled: HashMap::from([(terminal.clone(), vec![0]), (active.clone(), vec![1])]),
             is_aggregator: HashMap::from([(terminal.clone(), true), (active.clone(), false)]),
+            dkg_roster_selected: HashSet::from([terminal.clone(), active.clone()]),
             ..Default::default()
         };
 
@@ -701,9 +777,11 @@ mod recovery_tests {
         assert!(!state.committees.contains_key(&terminal));
         assert!(!state.expelled.contains_key(&terminal));
         assert!(!state.is_aggregator.contains_key(&terminal));
+        assert!(!state.dkg_roster_selected.contains(&terminal));
         assert!(state.committees.contains_key(&active));
         assert!(state.expelled.contains_key(&active));
         assert!(state.is_aggregator.contains_key(&active));
+        assert!(state.dkg_roster_selected.contains(&active));
     }
 
     #[actix::test]
@@ -734,7 +812,7 @@ mod recovery_tests {
         let ready = InterfoldEvent::<Unsequenced>::new_with_timestamp(
             AggregationInputsReady {
                 e3_id: e3_id.clone(),
-                phase: AggregatorPhase::PublicKey,
+                phase: AggregatorPhase::DkgRoster,
             }
             .into(),
             None,
@@ -761,6 +839,127 @@ mod recovery_tests {
             .await?
             .expect("persisted failover state");
         assert_eq!(failover.unresponsive.get(&e3_id), Some(&vec![0]));
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn accepted_roster_starts_public_key_failover_with_a_fresh_budget() -> Result<()> {
+        let e3_id = E3id::new("2", 1);
+        let committee = Committee::new(vec!["0xa".into(), "0xb".into()]);
+        let selector_state = CiphernodeSelectorState {
+            committees: HashMap::from([(e3_id.clone(), committee)]),
+            expelled: HashMap::from([(e3_id.clone(), Vec::new())]),
+            ..Default::default()
+        };
+        let (state, state_repository) = test_persistable(selector_state);
+        let (failover, failover_repository) = test_persistable(AggregatorFailoverState::default());
+        let bus = test_bus();
+        let lifecycle = HashMap::from([(e3_id.clone(), E3Stage::CommitteeFinalized)]);
+        let selector = CiphernodeSelector::new_with_clock(
+            &bus,
+            state,
+            failover,
+            "0xa",
+            lifecycle,
+            Arc::new(SystemClock),
+        )
+        .start();
+
+        selector.send(EffectsEnabled::new()).await?;
+        selector
+            .send(TypedEvent::new(
+                AggregationInputsReady {
+                    e3_id: e3_id.clone(),
+                    phase: AggregatorPhase::DkgRoster,
+                },
+                test_ec(1),
+            ))
+            .await?;
+        assert_eq!(
+            failover_repository
+                .read()
+                .await?
+                .expect("roster failover state")
+                .rounds[&e3_id]
+                .phase,
+            AggregatorPhase::DkgRoster
+        );
+
+        let selected = CommitmentRosterSelected {
+            e3_id: e3_id.clone(),
+            party_ids: vec![0],
+        };
+        selector
+            .send(TypedEvent::new(selected.clone(), test_ec(2)))
+            .await?;
+        assert!(!failover_repository
+            .read()
+            .await?
+            .expect("cleared roster failover state")
+            .rounds
+            .contains_key(&e3_id));
+
+        selector
+            .send(TypedEvent::new(
+                AggregationInputsReady {
+                    e3_id: e3_id.clone(),
+                    phase: AggregatorPhase::PublicKey,
+                },
+                test_ec(3),
+            ))
+            .await?;
+        assert_eq!(
+            failover_repository
+                .read()
+                .await?
+                .expect("public-key failover state")
+                .rounds[&e3_id]
+                .phase,
+            AggregatorPhase::PublicKey
+        );
+
+        selector.send(TypedEvent::new(selected, test_ec(4))).await?;
+        assert_eq!(
+            failover_repository
+                .read()
+                .await?
+                .expect("preserved public-key failover state")
+                .rounds[&e3_id]
+                .phase,
+            AggregatorPhase::PublicKey
+        );
+        assert!(state_repository
+            .read()
+            .await?
+            .expect("selector state")
+            .dkg_roster_selected
+            .contains(&e3_id));
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn restart_restores_public_key_phase_after_roster_selection() -> Result<()> {
+        let e3_id = E3id::new("3", 1);
+        let selector_state = CiphernodeSelectorState {
+            dkg_roster_selected: HashSet::from([e3_id.clone()]),
+            ..Default::default()
+        };
+        let (state, _) = test_persistable(selector_state);
+        let (failover, _) = test_persistable(AggregatorFailoverState::default());
+        let lifecycle = HashMap::from([(e3_id.clone(), E3Stage::CommitteeFinalized)]);
+        let selector = CiphernodeSelector::new_with_clock(
+            &test_bus(),
+            state,
+            failover,
+            "0xa",
+            lifecycle,
+            Arc::new(SystemClock),
+        );
+
+        assert_eq!(
+            selector.observed_phases.get(&e3_id),
+            Some(&AggregatorPhase::PublicKey)
+        );
         Ok(())
     }
 }

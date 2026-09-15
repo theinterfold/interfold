@@ -119,6 +119,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                     recovery,
                     dkg_timing_reader: self.dkg_timing_reader.clone(),
                     signer: self.signer.clone(),
+                    effects_enabled: true,
                 })
                 .start()
                 .into(),
@@ -189,6 +190,7 @@ impl E3Extension for ThresholdKeyshareExtension {
             recovery,
             dkg_timing_reader: self.dkg_timing_reader.clone(),
             signer: self.signer.clone(),
+            effects_enabled: false,
         })
         .start()
         .into();

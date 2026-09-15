@@ -71,10 +71,7 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
             trap(
                 EType::KeyGeneration,
                 &self.bus.with_ec(msg.get_ctx()),
-                || {
-                    self.handle_ciphernode_selected(msg, ctx.address())?;
-                    self.schedule_roster_leadership_check(ctx)
-                },
+                || self.handle_ciphernode_selected(msg, ctx.address()),
             );
             return Box::pin(async {}.into_actor(self));
         }
@@ -95,8 +92,7 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
                         state.dkg_window_secs = Some(window);
                         Ok(state)
                     })?;
-                    actor.handle_ciphernode_selected(msg.clone(), ctx.address())?;
-                    actor.schedule_roster_leadership_check(ctx)
+                    actor.handle_ciphernode_selected(msg.clone(), ctx.address())
                 });
                 if let Err(error) = result {
                     actor.bus.err(EType::KeyGeneration, error);
@@ -104,28 +100,6 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
                 }
             },
         ))
-    }
-}
-
-impl Handler<DkgRosterLeadershipCheck> for ThresholdKeyshare {
-    type Result = ();
-
-    fn handle(&mut self, _: DkgRosterLeadershipCheck, ctx: &mut Self::Context) -> Self::Result {
-        let result = self
-            .recovery
-            .try_get()
-            .and_then(|recovery| {
-                recovery
-                    .last_ec
-                    .ok_or_else(|| anyhow!("missing DKG event context for roster leadership"))
-            })
-            .and_then(|ec| self.propose_dkg_roster(ec));
-        if let Err(error) = result {
-            self.bus.err(EType::KeyGeneration, error);
-        }
-        if let Err(error) = self.schedule_next_roster_leadership_check(ctx) {
-            self.bus.err(EType::KeyGeneration, error);
-        }
     }
 }
 

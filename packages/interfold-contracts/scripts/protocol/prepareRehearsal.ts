@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 import { deployMockBondingRegistryProxy } from "../sale/deployContracts";
+import { bfvConfigsForChain } from "../utils";
 import { arg, connect } from "./cli";
 import { ZERO } from "./constants";
 import { protocolDir, writeJson } from "./files";
@@ -14,6 +15,29 @@ export async function actionPrepareRehearsal(): Promise<void> {
     throw new Error(
       "Protocol rehearsal preparation is restricted to Sepolia and local Hardhat",
     );
+  }
+
+  const committeeThresholds = new Map<
+    number,
+    { size: string; quorum: string; total: string }
+  >();
+  for (const config of bfvConfigsForChain(chainId)) {
+    const threshold = {
+      size: config.committeeSize.toString(),
+      quorum: config.h.toString(),
+      total: config.n.toString(),
+    };
+    const existing = committeeThresholds.get(config.committeeSize);
+    if (
+      existing &&
+      (existing.quorum !== threshold.quorum ||
+        existing.total !== threshold.total)
+    ) {
+      throw new Error(
+        `BFV presets disagree on committee size ${config.committeeSize}`,
+      );
+    }
+    committeeThresholds.set(config.committeeSize, threshold);
   }
 
   const [operator] = await ethers.getSigners();
@@ -154,11 +178,7 @@ export async function actionPrepareRehearsal(): Promise<void> {
         minCommitteeSize: "3",
         minThreshold: "2",
       },
-      committeeThresholds: [
-        { size: "0", quorum: "2", total: "3" },
-        { size: "1", quorum: "5", total: "9" },
-        { size: "2", quorum: "10", total: "19" },
-      ],
+      committeeThresholds: [...committeeThresholds.values()],
       registerActiveBfvParamSet: true,
       allowFeeToken: true,
     },

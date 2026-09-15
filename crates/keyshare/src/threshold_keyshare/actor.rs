@@ -11,14 +11,15 @@ use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_data::Persistable;
 use e3_events::{
-    prelude::*, trap, BusHandle, CiphernodeSelected, CiphertextOutputPublished,
-    CommitmentRosterSelected, CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest,
-    ComputeResponse, ComputeResponseKind, CorrelationId, DecryptionKeyShared,
-    DecryptionShareProofSigned, DecryptionShareProofsPending, Die, DkgCoordination,
-    DkgCoordinationKind, DkgDealer, DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed,
-    E3RequestComplete, E3Stage, E3id, EType, EncryptionKey, EncryptionKeyCollectionFailed,
-    EncryptionKeyCreated, EncryptionKeyPending, EventContext, FailureReason, InterfoldEvent,
-    InterfoldEventData, KeyshareCreated, PartyProofsToVerify, PartyShareDecryptionProofsToVerify,
+    prelude::*, trap, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
+    CiphernodeSelected, CiphertextOutputPublished, CommitmentRosterSelected,
+    CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest, ComputeResponse,
+    ComputeResponseKind, CorrelationId, DecryptionKeyShared, DecryptionShareProofSigned,
+    DecryptionShareProofsPending, Die, DkgCoordination, DkgCoordinationKind, DkgDealer,
+    DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, E3id,
+    EType, EncryptionKey, EncryptionKeyCollectionFailed, EncryptionKeyCreated,
+    EncryptionKeyPending, EventContext, FailureReason, InterfoldEvent, InterfoldEventData,
+    KeyshareCreated, PartyProofsToVerify, PartyShareDecryptionProofsToVerify,
     PkGenerationProofSigned, ProofType, Sequenced, ShareDecryptionProofPending,
     ShareVerificationComplete, ShareVerificationDispatched, SignedProofPayload, ThresholdShare,
     ThresholdShareCollectionFailed, ThresholdShareCreated, ThresholdShareDecryptionProofRequest,
@@ -58,9 +59,7 @@ use crate::actors::encryption_key_collector::{
 use crate::actors::threshold_share_collector::{
     ExpelPartyFromShareCollection, ThresholdShareCollector,
 };
-use crate::domain::timeout_policy::{
-    now_unix_secs, phase_cutoff_unix_secs, resolve_timeout, DkgTimeoutPhase,
-};
+use crate::domain::timeout_policy::{resolve_timeout, DkgTimeoutPhase};
 use crate::domain::{
     build_decryption_key_plan, build_shares_generated_plan, dealer_identity, generate_bfv_keypair,
     select_ready_roster, AggregatingDecryptionKey, BfvKeypairMaterial,
@@ -85,10 +84,6 @@ pub struct GenEsiSss {
     pub ciphernode_selected: CiphernodeSelected,
     pub e_sm_raw: SensitiveBytes,
 }
-
-#[derive(Message)]
-#[rtype(result = "()")]
-pub struct DkgRosterLeadershipCheck;
 
 #[derive(Message)]
 #[rtype(result = "()")]
@@ -134,6 +129,7 @@ pub struct ThresholdKeyshareParams {
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
     pub dkg_timing_reader: DkgTimingReader,
     pub signer: PrivateKeySigner,
+    pub effects_enabled: bool,
 }
 
 pub type DkgTimingFuture = Pin<Box<dyn Future<Output = Result<(u64, u64)>> + Send>>;
@@ -169,6 +165,10 @@ pub struct ThresholdKeyshare {
     interfold_address: Address,
     dkg_timing_reader: DkgTimingReader,
     signer: PrivateKeySigner,
+    is_aggregator: bool,
+    effects_enabled: bool,
+    roster_inputs_ready: bool,
+    roster_proposal_pending: bool,
     selection_timing_pending: bool,
     pending: PendingKeyshareWork,
 }
@@ -206,6 +206,10 @@ impl ThresholdKeyshare {
             interfold_address: params.interfold_address,
             dkg_timing_reader: params.dkg_timing_reader,
             signer: params.signer,
+            is_aggregator: recovered.is_aggregator,
+            effects_enabled: params.effects_enabled,
+            roster_inputs_ready: false,
+            roster_proposal_pending: false,
             selection_timing_pending: false,
             pending: PendingKeyshareWork {
                 shares: pending_shares,

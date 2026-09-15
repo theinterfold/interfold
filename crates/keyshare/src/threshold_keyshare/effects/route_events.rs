@@ -39,7 +39,8 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 let result = self
                     .record_dkg_coordination(data, ec.clone())
                     .and_then(|_| {
-                        if is_ready {
+                        if is_ready && self.effects_enabled {
+                            self.maybe_publish_roster_inputs_ready(ec.clone())?;
                             self.propose_dkg_roster(ec.clone())
                         } else {
                             Ok(())
@@ -57,6 +58,11 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                             ec,
                         );
                     }
+                }
+            }
+            InterfoldEventData::AggregatorChanged(data) => {
+                if let Err(err) = self.handle_aggregator_changed(data, ec) {
+                    error!("Could not update the DKG aggregator role: {err}");
                 }
             }
             InterfoldEventData::EncryptionKeyCreated(data) => {
@@ -223,11 +229,15 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             InterfoldEventData::EffectsEnabled(_) => {
                 // Broadcast once at the end of boot sync. Re-drive any of this node's own
                 // in-flight work that a crash may have interrupted (idempotent downstream).
-                if let Err(err) = self.resume_in_flight_work(ec, ctx.address()) {
+                self.effects_enabled = true;
+                if let Err(err) = self.resume_in_flight_work(ec.clone(), ctx.address()) {
                     warn!("resume_in_flight_work failed: {err}");
                 }
-                if let Err(err) = self.schedule_roster_leadership_check(ctx) {
-                    warn!("Could not schedule DKG roster leadership: {err}");
+                if let Err(err) = self.maybe_publish_roster_inputs_ready(ec.clone()) {
+                    warn!("Could not signal DKG roster readiness: {err}");
+                }
+                if let Err(err) = self.propose_dkg_roster(ec) {
+                    warn!("Could not propose the DKG roster: {err}");
                 }
             }
             _ => (),

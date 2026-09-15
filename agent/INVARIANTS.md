@@ -429,7 +429,7 @@ design citation alone does not establish current runtime behavior.
   configuration constants with `pnpm build:circuits sync-config --preset <name> --committee <name>`;
   switch and build circuits only with `pnpm build:circuits --committee <name>`. Both paths are
   enforced by `scripts/check-committee.sh`.
-- Canonical sizes: `minimum` (3,1,2) · `micro` (9,4,5) · `small` (19,9,10) — must mirror `mod.nr`
+- Canonical sizes: `minimum` (3,1,2) · `micro` (9,4,5) · `small` (19,9,14) — must mirror `mod.nr`
   and `CiphernodesCommitteeSize::values()`. — `scripts/circuit-constants.ts`
 - Wrapper Solidity verifiers (`BfvPkVerifier`, `BfvDecryptionVerifier`) have an `(H, T)`-specific
   public-input layout and must be redeployed on committee change.
@@ -470,6 +470,10 @@ design citation alone does not establish current runtime behavior.
 - Every committee member persists validated aggregation inputs. Failover starts only after
   `AggregationInputsReady` confirms that the phase can resume from durable state. Only the active
   party can launch aggregation effects or accept their results. — `flow-trace/04`; INDEX concern #42
+- The active aggregator proposes the canonical DKG roster only after it can derive `H` mutually
+  ready dealers from signed readiness reports. Accepting the first valid roster ends only the DKG
+  roster failover phase; public-key aggregation receives a new readiness-gated failover budget. —
+  `flow-trace/04`; INDEX concerns #42 and #52
 - DKG aggregation receives **exactly H** canonical honest NodeFold proofs (unique in-range party
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert
   `H == N`. A mixed Some/None NodeFold set is terminal DKG failure. — `ARCHITECTURE.md`;

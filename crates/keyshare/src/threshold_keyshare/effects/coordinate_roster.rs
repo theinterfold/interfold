@@ -1,66 +1,11 @@
 // SPDX-License-Identifier: LGPL-3.0-only
 
-//! Authenticated readiness and timed-leader DKG roster coordination.
+//! Authenticated readiness and active-aggregator DKG roster coordination.
 
 use super::*;
 use anyhow::ensure;
 
-const ROSTER_BACKUP_SLOT_BPS: u64 = 200;
-const ROSTER_BACKUP_MIN_SECS: u64 = 30;
-const ROSTER_BACKUP_MAX_SECS: u64 = 120;
-// A sender can cross a slot boundary just before a receiver whose clock is slightly behind.
-// Keep this allowance much shorter than the minimum backup slot.
-const ROSTER_CLOCK_SKEW_SECS: u64 = 5;
-
 impl ThresholdKeyshare {
-    pub(in crate::actors::threshold_keyshare) fn schedule_roster_leadership_check(
-        &self,
-        ctx: &mut actix::Context<Self>,
-    ) -> Result<()> {
-        let state = self.state.try_get()?;
-        if self.recovery.try_get()?.dkg_roster.is_some() {
-            return Ok(());
-        }
-        let (Some(deadline), Some(window)) = (state.dkg_deadline_unix_secs, state.dkg_window_secs)
-        else {
-            return Ok(());
-        };
-        let now = now_unix_secs();
-        let Some(check_at) = roster_check_at_or_after(deadline, window, state.threshold_n, now)
-        else {
-            return Ok(());
-        };
-        ctx.notify_later(
-            DkgRosterLeadershipCheck,
-            std::time::Duration::from_secs(check_at.saturating_sub(now)),
-        );
-        Ok(())
-    }
-
-    pub(in crate::actors::threshold_keyshare) fn schedule_next_roster_leadership_check(
-        &self,
-        ctx: &mut actix::Context<Self>,
-    ) -> Result<()> {
-        let state = self.state.try_get()?;
-        if self.recovery.try_get()?.dkg_roster.is_some() {
-            return Ok(());
-        }
-        let (Some(deadline), Some(window)) = (state.dkg_deadline_unix_secs, state.dkg_window_secs)
-        else {
-            return Ok(());
-        };
-        let now = now_unix_secs();
-        let Some(check_at) = next_roster_check_after(deadline, window, state.threshold_n, now)
-        else {
-            return Ok(());
-        };
-        ctx.notify_later(
-            DkgRosterLeadershipCheck,
-            std::time::Duration::from_secs(check_at.saturating_sub(now)),
-        );
-        Ok(())
-    }
-
     pub(in crate::actors::threshold_keyshare) fn maybe_publish_dkg_ready(
         &mut self,
         ec: EventContext<Sequenced>,
@@ -156,9 +101,34 @@ impl ThresholdKeyshare {
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
-        self.bus.publish(ready, ec.clone())?;
-        self.propose_dkg_roster(ec.clone())?;
+        if self.effects_enabled {
+            self.bus.publish(ready, ec.clone())?;
+            self.maybe_publish_roster_inputs_ready(ec.clone())?;
+            self.propose_dkg_roster(ec.clone())?;
+        }
         self.maybe_start_c4_for_accepted_roster(ec)
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn handle_aggregator_changed(
+        &mut self,
+        change: AggregatorChanged,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        let state = self.state.try_get()?;
+        if change.e3_id != state.e3_id {
+            return Ok(());
+        }
+        self.is_aggregator = change.is_aggregator;
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.is_aggregator = change.is_aggregator;
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+        if self.effects_enabled && self.is_aggregator {
+            self.maybe_publish_roster_inputs_ready(ec.clone())?;
+            self.propose_dkg_roster(ec)?;
+        }
+        Ok(())
     }
 
     pub(in crate::actors::threshold_keyshare) fn record_dkg_coordination(
@@ -212,16 +182,8 @@ impl ThresholdKeyshare {
                     Ok(recovery)
                 })?;
             }
-            DkgCoordinationKind::Roster { view } => {
-                let view_has_started = state
-                    .dkg_deadline_unix_secs
-                    .zip(state.dkg_window_secs)
-                    .is_some_and(|(deadline, window)| {
-                        roster_view_has_started(deadline, window, view, now_unix_secs())
-                    });
-                if view != message.party_id
-                    || !view_has_started
-                    || state.expelled_parties.contains(&message.party_id)
+            DkgCoordinationKind::Roster => {
+                if state.expelled_parties.contains(&message.party_id)
                     || message.dealers.len() != committee_h
                     || message
                         .dealers
@@ -242,25 +204,65 @@ impl ThresholdKeyshare {
         Ok(())
     }
 
-    pub(in crate::actors::threshold_keyshare) fn propose_dkg_roster(
+    pub(in crate::actors::threshold_keyshare) fn maybe_publish_roster_inputs_ready(
         &mut self,
         ec: EventContext<Sequenced>,
     ) -> Result<()> {
+        if !self.effects_enabled || self.roster_inputs_ready {
+            return Ok(());
+        }
         let state = self.state.try_get()?;
         if !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_)) {
             return Ok(());
         }
         let recovery = self.recovery.try_get()?;
-        if recovery.dkg_roster.is_some() || recovery.dkg_ready.is_none() {
+        if recovery.dkg_roster.is_some() {
             return Ok(());
         }
-        let (Some(deadline), Some(window)) = (state.dkg_deadline_unix_secs, state.dkg_window_secs)
-        else {
+        let committee_h = CiphernodesCommitteeSize::from_threshold(
+            state.threshold_m as usize,
+            state.threshold_n as usize,
+        )?
+        .values()
+        .h;
+        let ready: std::collections::BTreeMap<u64, Vec<DkgDealer>> = recovery
+            .ready_by_party
+            .iter()
+            .filter(|(party_id, _)| !state.expelled_parties.contains(*party_id))
+            .map(|(&party_id, message)| (party_id, message.dealers.clone()))
+            .collect();
+        if select_ready_roster(&ready, committee_h).is_none() {
             return Ok(());
-        };
-        if !roster_view_bounds(deadline, window, state.party_id)
-            .is_some_and(|(start, end)| (start..end).contains(&now_unix_secs()))
+        }
+
+        self.roster_inputs_ready = true;
+        if let Err(error) = self.bus.publish(
+            AggregationInputsReady {
+                e3_id: state.e3_id,
+                phase: AggregationPhase::DkgRoster,
+            },
+            ec,
+        ) {
+            self.roster_inputs_ready = false;
+            return Err(error);
+        }
+        Ok(())
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn propose_dkg_roster(
+        &mut self,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        let state = self.state.try_get()?;
+        if !self.effects_enabled
+            || !self.is_aggregator
+            || self.roster_proposal_pending
+            || !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_))
         {
+            return Ok(());
+        }
+        let recovery = self.recovery.try_get()?;
+        if recovery.dkg_roster.is_some() {
             return Ok(());
         }
         let committee_h = CiphernodesCommitteeSize::from_threshold(
@@ -282,9 +284,7 @@ impl ThresholdKeyshare {
             state.e3_id,
             self.interfold_address,
             state.party_id,
-            DkgCoordinationKind::Roster {
-                view: state.party_id,
-            },
+            DkgCoordinationKind::Roster,
             dealers,
             &self.signer,
         )?;
@@ -294,8 +294,11 @@ impl ThresholdKeyshare {
             party_ids = ?roster.dealers.iter().map(|dealer| dealer.party_id).collect::<Vec<_>>(),
             "Proposing DKG roster"
         );
-        self.accept_dkg_roster(roster.clone(), ec.clone())?;
-        self.bus.publish(roster, ec)?;
+        self.roster_proposal_pending = true;
+        if let Err(error) = self.bus.publish(roster, ec) {
+            self.roster_proposal_pending = false;
+            return Err(error);
+        }
         Ok(())
     }
 
@@ -325,6 +328,8 @@ impl ThresholdKeyshare {
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
+        self.roster_proposal_pending = false;
+        self.roster_inputs_ready = false;
         self.state.try_mutate(&ec, |mut state| {
             state.honest_parties = Some(party_ids.clone());
             Ok(state)
@@ -347,7 +352,8 @@ impl ThresholdKeyshare {
 
     fn maybe_start_c4_for_accepted_roster(&mut self, ec: EventContext<Sequenced>) -> Result<()> {
         let state = self.state.try_get()?;
-        if !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_))
+        if !self.effects_enabled
+            || !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_))
             || self.pending.share_decryption_data.is_some()
         {
             return Ok(());
@@ -373,57 +379,9 @@ fn ready_contains_roster(ready: &DkgCoordination, roster: &DkgCoordination) -> b
         .all(|dealer| ready.dealers.contains(dealer))
 }
 
-fn roster_view_bounds(deadline: u64, window: u64, party_id: u64) -> Option<(u64, u64)> {
-    if deadline == 0 || window == 0 {
-        return None;
-    }
-    let share_cutoff =
-        phase_cutoff_unix_secs(deadline, window, DkgTimeoutPhase::ThresholdShareCollection);
-    let grace = (window.saturating_mul(ROSTER_BACKUP_SLOT_BPS) / 10_000)
-        .clamp(ROSTER_BACKUP_MIN_SECS, ROSTER_BACKUP_MAX_SECS);
-    let start = if party_id == 0 {
-        deadline.saturating_sub(window)
-    } else {
-        share_cutoff.saturating_add(grace.saturating_mul(party_id))
-    };
-    let end = share_cutoff
-        .saturating_add(grace.saturating_mul(party_id.saturating_add(1)))
-        .min(deadline);
-    (start < end).then_some((start, end))
-}
-
-fn roster_view_has_started(deadline: u64, window: u64, party_id: u64, now: u64) -> bool {
-    roster_view_bounds(deadline, window, party_id)
-        .is_some_and(|(start, _)| now.saturating_add(ROSTER_CLOCK_SKEW_SECS) >= start)
-}
-
-fn roster_leader_at(deadline: u64, window: u64, committee_n: u64, now: u64) -> Option<u64> {
-    (0..committee_n).find(|&party_id| {
-        roster_view_bounds(deadline, window, party_id)
-            .is_some_and(|(start, end)| (start..end).contains(&now))
-    })
-}
-
-fn roster_check_at_or_after(deadline: u64, window: u64, committee_n: u64, now: u64) -> Option<u64> {
-    let (_, primary_end) = roster_view_bounds(deadline, window, 0)?;
-    if now < primary_end {
-        return Some(primary_end);
-    }
-    roster_leader_at(deadline, window, committee_n, now).map(|_| now)
-}
-
-fn next_roster_check_after(deadline: u64, window: u64, committee_n: u64, now: u64) -> Option<u64> {
-    let current_leader = roster_leader_at(deadline, window, committee_n, now)?;
-    let (_, current_end) = roster_view_bounds(deadline, window, current_leader)?;
-    (current_leader + 1 < committee_n && current_end < deadline).then_some(current_end)
-}
-
 #[cfg(test)]
-mod leadership_tests {
-    use super::{
-        next_roster_check_after, ready_contains_roster, roster_check_at_or_after, roster_leader_at,
-        roster_view_bounds, roster_view_has_started, ROSTER_CLOCK_SKEW_SECS,
-    };
+mod coordination_tests {
+    use super::ready_contains_roster;
     use e3_events::{DkgCoordination, DkgCoordinationKind, DkgDealer, E3id};
     use e3_utils::ArcBytes;
 
@@ -449,60 +407,5 @@ mod leadership_tests {
         let roster = message(1, &[1, 2]);
         assert!(ready_contains_roster(&message(0, &[0, 1, 2]), &roster));
         assert!(!ready_contains_roster(&message(0, &[0, 1]), &roster));
-    }
-
-    #[test]
-    fn backup_views_follow_the_frozen_share_cutoff() {
-        let deadline = 10_000;
-        let window = 3_600;
-        let primary = roster_view_bounds(deadline, window, 0).unwrap();
-        let backup = roster_view_bounds(deadline, window, 1).unwrap();
-        let second_backup = roster_view_bounds(deadline, window, 2).unwrap();
-        assert_eq!(primary, (6_400, 8_632));
-        assert_eq!(backup, (8_632, 8_704));
-        assert_eq!(second_backup, (8_704, 8_776));
-    }
-
-    #[test]
-    fn delayed_check_uses_the_current_backup_view() {
-        let deadline = 10_000;
-        let window = 3_600;
-
-        assert_eq!(
-            roster_check_at_or_after(deadline, window, 3, 8_000),
-            Some(8_632)
-        );
-        assert_eq!(
-            roster_check_at_or_after(deadline, window, 3, 8_650),
-            Some(8_650)
-        );
-        assert_eq!(roster_leader_at(deadline, window, 3, 8_650), Some(1));
-        assert_eq!(
-            next_roster_check_after(deadline, window, 3, 8_650),
-            Some(8_704)
-        );
-        assert_eq!(roster_leader_at(deadline, window, 3, 8_740), Some(2));
-        assert_eq!(next_roster_check_after(deadline, window, 3, 8_740), None);
-    }
-
-    #[test]
-    fn receiver_rejects_a_future_leader_but_accepts_delayed_messages() {
-        let deadline = 10_000;
-        let window = 3_600;
-        let (start, end) = roster_view_bounds(deadline, window, 2).unwrap();
-
-        assert!(!roster_view_has_started(
-            deadline,
-            window,
-            2,
-            start - ROSTER_CLOCK_SKEW_SECS - 1,
-        ));
-        assert!(roster_view_has_started(
-            deadline,
-            window,
-            2,
-            start - ROSTER_CLOCK_SKEW_SECS,
-        ));
-        assert!(roster_view_has_started(deadline, window, 2, end + 1));
     }
 }

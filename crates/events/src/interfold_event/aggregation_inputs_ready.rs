@@ -8,6 +8,7 @@ use std::fmt::{self, Display};
 /// Aggregation work that can move between deterministic committee members.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AggregationPhase {
+    DkgRoster,
     PublicKey,
     Plaintext,
 }
@@ -15,6 +16,7 @@ pub enum AggregationPhase {
 impl Display for AggregationPhase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DkgRoster => write!(f, "DKG roster"),
             Self::PublicKey => write!(f, "public-key"),
             Self::Plaintext => write!(f, "plaintext"),
         }
