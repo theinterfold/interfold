@@ -68,6 +68,8 @@ const DHT_MAX_PROVIDERS_PER_KEY: usize = 20;
 const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 3;
 const STALE_PEER_COOLDOWN: Duration = Duration::from_secs(30 * 60);
 const CONFIGURED_PEER_REDIAL_INTERVAL: Duration = Duration::from_secs(15);
+const GOSSIP_HEALTH_INTERVAL: Duration = Duration::from_secs(5);
+const GOSSIP_SUBSCRIPTION_GRACE: Duration = Duration::from_secs(30);
 pub(crate) const EVENT_CHANNEL_SIZE: usize = 1000;
 const CMD_CHANNEL_SIZE: usize = 1000;
 const LIBP2P_ESTABLISHED_PER_PEER_LIMIT_TEXT: &str = "established connections per peer";
@@ -146,6 +148,33 @@ impl PeerConnectionFailures {
         let now = Instant::now();
         self.quarantined_until.retain(|_, until| *until > now);
         self.quarantined_until.keys().copied().collect()
+    }
+}
+
+#[derive(Default)]
+struct GossipSubscriptionHealth {
+    missing_since: HashMap<libp2p::PeerId, Instant>,
+}
+
+impl GossipSubscriptionHealth {
+    fn stale_peers(
+        &mut self,
+        connected: &HashSet<libp2p::PeerId>,
+        subscribed: &HashSet<libp2p::PeerId>,
+        now: Instant,
+    ) -> Vec<libp2p::PeerId> {
+        self.missing_since
+            .retain(|peer, _| connected.contains(peer) && !subscribed.contains(peer));
+        for peer in connected.difference(subscribed) {
+            self.missing_since.entry(*peer).or_insert(now);
+        }
+        self.missing_since
+            .iter()
+            .filter_map(|(peer, since)| {
+                (now.saturating_duration_since(*since) >= GOSSIP_SUBSCRIPTION_GRACE)
+                    .then_some(*peer)
+            })
+            .collect()
     }
 }
 
@@ -315,6 +344,10 @@ impl Libp2pNetInterface {
         let mut configured_peer_tick = tokio::time::interval(CONFIGURED_PEER_REDIAL_INTERVAL);
         configured_peer_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
         configured_peer_tick.tick().await;
+        let mut gossip_health_tick = tokio::time::interval(GOSSIP_HEALTH_INTERVAL);
+        gossip_health_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        gossip_health_tick.tick().await;
+        let mut gossip_health = GossipSubscriptionHealth::default();
         let mut configured_peers: Vec<_> = self
             .peers
             .iter()
@@ -406,6 +439,15 @@ impl Libp2pNetInterface {
                         &peer_admission,
                     );
                 }
+                _ = gossip_health_tick.tick() => {
+                    reconcile_gossip_subscriptions(
+                        &mut self.swarm,
+                        &peer_admission,
+                        &self.topic,
+                        &self.status,
+                        &mut gossip_health,
+                    );
+                }
                 // Process commands
                 Some(command) = cmd_rx.recv() => {
                     if let NetCommand::Shutdown = command {
@@ -468,6 +510,40 @@ impl Libp2pNetInterface {
 
         info!("Event loop exited");
         Ok(())
+    }
+}
+
+fn reconcile_gossip_subscriptions(
+    swarm: &mut Swarm<NodeBehaviour>,
+    admission: &PeerAdmission,
+    topic: &gossipsub::IdentTopic,
+    status: &NetworkStatus,
+    health: &mut GossipSubscriptionHealth,
+) {
+    let topic_hash = topic.hash();
+    let subscribed: HashSet<_> = swarm
+        .behaviour()
+        .gossipsub
+        .all_peers()
+        .filter(|(peer, topics)| admission.is_admitted(peer) && topics.contains(&&topic_hash))
+        .map(|(peer, _)| *peer)
+        .collect();
+    status.gossip_peers(subscribed.len());
+
+    let connected: HashSet<_> = swarm
+        .connected_peers()
+        .filter(|peer| admission.is_admitted(peer))
+        .copied()
+        .collect();
+    for peer in health.stale_peers(&connected, &subscribed, Instant::now()) {
+        warn!(
+            %peer,
+            grace_seconds = GOSSIP_SUBSCRIPTION_GRACE.as_secs(),
+            "Replacing peer connections that did not establish the gossip subscription"
+        );
+        if swarm.disconnect_peer_id(peer).is_ok() {
+            health.missing_since.remove(&peer);
+        }
     }
 }
 
@@ -1601,7 +1677,58 @@ mod tests {
     use libp2p::kad::{Record, RecordKey};
     use libp2p::swarm::{ConnectionDenied, ConnectionId, ListenError, NetworkBehaviour};
     use libp2p::{Multiaddr, PeerId};
+    use std::collections::HashSet;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn missing_gossip_subscription_becomes_stale_after_grace_period() {
+        let peer = PeerId::random();
+        let connected = HashSet::from([peer]);
+        let subscribed = HashSet::new();
+        let started = Instant::now();
+        let mut health = super::GossipSubscriptionHealth::default();
+
+        assert!(health
+            .stale_peers(&connected, &subscribed, started)
+            .is_empty());
+        assert!(health
+            .stale_peers(
+                &connected,
+                &subscribed,
+                started + super::GOSSIP_SUBSCRIPTION_GRACE - Duration::from_millis(1),
+            )
+            .is_empty());
+        assert_eq!(
+            health.stale_peers(
+                &connected,
+                &subscribed,
+                started + super::GOSSIP_SUBSCRIPTION_GRACE,
+            ),
+            vec![peer]
+        );
+    }
+
+    #[test]
+    fn gossip_subscription_clears_missing_peer_state() {
+        let peer = PeerId::random();
+        let connected = HashSet::from([peer]);
+        let started = Instant::now();
+        let mut health = super::GossipSubscriptionHealth::default();
+
+        assert!(health
+            .stale_peers(&connected, &HashSet::new(), started)
+            .is_empty());
+        assert!(health
+            .stale_peers(&connected, &HashSet::from([peer]), started)
+            .is_empty());
+        assert!(health
+            .stale_peers(
+                &connected,
+                &HashSet::new(),
+                started + super::GOSSIP_SUBSCRIPTION_GRACE,
+            )
+            .is_empty());
+    }
 
     #[test]
     fn quarantined_peer_is_restored_after_a_successful_admission() {

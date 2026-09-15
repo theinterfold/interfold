@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use anyhow::{Context, Result};
 use e3_net::events::{NetCommand, NetEvent};
-use e3_net::{Libp2pKeypair, Libp2pNetInterface, NetInterface, NetworkPolicy};
+use e3_net::{Libp2pKeypair, Libp2pNetInterface, NetInterface, NetInterfaceHandle, NetworkPolicy};
 use tokio::time::{sleep, timeout};
 
 fn free_udp_port() -> Result<u16> {
@@ -26,6 +26,19 @@ async fn wait_for_connection(rx: &mut tokio::sync::broadcast::Receiver<NetEvent>
     })
     .await
     .context("configured peer did not connect before the deadline")?
+}
+
+async fn wait_for_gossip_subscription(handle: &NetInterfaceHandle) -> Result<()> {
+    timeout(Duration::from_secs(15), async {
+        loop {
+            if handle.status().snapshot().gossip_subscribed_peers == 1 {
+                return;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .context("configured peer did not establish its gossip subscription")
 }
 
 async fn reconnect_after_restart(pinned: bool) -> Result<()> {
@@ -63,6 +76,9 @@ async fn reconnect_after_restart(pinned: bool) -> Result<()> {
     let mut local_events = local_handle.rx();
     let local_task = tokio::spawn(async move { local.start().await });
     wait_for_connection(&mut local_events)
+        .await
+        .context("initial configured dial")?;
+    wait_for_gossip_subscription(&local_handle)
         .await
         .context("initial configured dial")?;
 
@@ -109,6 +125,9 @@ async fn reconnect_after_restart(pinned: bool) -> Result<()> {
         .await
         .context("configured peer redial after restart")?;
     assert_eq!(local_handle.status().snapshot().connected_peers.len(), 1);
+    wait_for_gossip_subscription(&local_handle)
+        .await
+        .context("configured peer redial after restart")?;
 
     local_handle.tx().send(NetCommand::Shutdown).await?;
     restarted_handle.tx().send(NetCommand::Shutdown).await?;

@@ -29,6 +29,7 @@ pub struct ConnectedPeer {
 pub struct NetworkSnapshot {
     pub configured_peers: usize,
     pub connected_peers: Vec<ConnectedPeer>,
+    pub gossip_subscribed_peers: usize,
     pub listen_addresses: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub last_error: Option<String>,
@@ -38,6 +39,7 @@ pub struct NetworkSnapshot {
 struct NetworkState {
     configured_peers: usize,
     connected_peers: BTreeMap<String, ConnectedPeer>,
+    gossip_subscribed_peers: usize,
     listen_addresses: Vec<String>,
     last_error: Option<String>,
 }
@@ -110,6 +112,12 @@ impl NetworkStatus {
         }
     }
 
+    pub fn gossip_peers(&self, subscribed: usize) {
+        if let Ok(mut state) = self.0.write() {
+            state.gossip_subscribed_peers = subscribed;
+        }
+    }
+
     pub fn stopped_listening<I, S>(&self, addresses: I)
     where
         I: IntoIterator<Item = S>,
@@ -136,6 +144,7 @@ impl NetworkStatus {
             .map(|state| NetworkSnapshot {
                 configured_peers: state.configured_peers,
                 connected_peers: state.connected_peers.values().cloned().collect(),
+                gossip_subscribed_peers: state.gossip_subscribed_peers,
                 listen_addresses: state.listen_addresses.clone(),
                 last_error: state.last_error.clone(),
             })
@@ -158,6 +167,7 @@ mod tests {
     fn tracks_connections_without_resetting_first_seen_time() {
         let status = NetworkStatus::new(2);
         status.connected("peer-a", "/ip4/127.0.0.1", "outbound", 1);
+        status.gossip_peers(1);
         let first_seen = status.snapshot().connected_peers[0].connected_at_ms;
 
         status.connected("peer-a", "/ip4/127.0.0.1", "outbound", 2);
@@ -167,6 +177,7 @@ mod tests {
         assert_eq!(snapshot.connected_peers.len(), 1);
         assert_eq!(snapshot.connected_peers[0].connections, 2);
         assert_eq!(snapshot.connected_peers[0].connected_at_ms, first_seen);
+        assert_eq!(snapshot.gossip_subscribed_peers, 1);
 
         status.stopped_listening(["/ip4/127.0.0.1/udp/9090/quic-v1"]);
         assert!(status.snapshot().listen_addresses.is_empty());
