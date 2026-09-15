@@ -13,6 +13,10 @@ jointly generate a threshold BFV key (DKG), compute over encrypted inputs, and t
 output — every step backed by ZK proofs verified on-chain.
 
 - Docs: https://docs.theinterfold.com · License: LGPL-3.0-only
+- Canonical repository: `theinterfold/interfold`. Release assets, the `install` script, the
+  `interfoldup` installer, the zk-prover circuit download, and the `init` templates all resolve
+  against this repository. The `gnosisguild/interfold` name is the former location. Keep the
+  separate `gnosisguild` repositories (`fhe.rs`, `risc0-ethereum`, `CRISP`) as they are.
 - Interfold workspace crates and core `@interfold/*` packages share one release version. CRISP is
   versioned and released separately.
 - Reference app: **CRISP** (`examples/CRISP`, excluded from the workspace)

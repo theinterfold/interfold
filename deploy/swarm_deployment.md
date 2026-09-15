@@ -56,7 +56,7 @@ sudo systemctl restart docker
 Clone the repo
 
 ```
-git clone https://github.com/gnosisguild/interfold.git
+git clone https://github.com/theinterfold/interfold.git
 ```
 
 Move to the new folder:
