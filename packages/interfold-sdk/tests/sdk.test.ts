@@ -7,9 +7,18 @@
 import { describe, expect, it } from 'vitest'
 
 import { InterfoldSDK } from '../src/interfold-sdk'
+import { cryptoConfigIdForParamSet } from '../src/utils'
 import { zeroAddress } from 'viem'
 import { hardhat } from 'viem/chains'
 import { generatePublicKey, encryptNumber as standaloneEncryptNumber, encryptVector as standaloneEncryptVector } from '../src/crypto'
+
+describe('crypto configuration IDs', () => {
+  it('uses the v2 circuit identity for every BFV parameter set', () => {
+    expect(cryptoConfigIdForParamSet(0)).to.equal('0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d')
+    expect(cryptoConfigIdForParamSet(1)).to.equal('0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31')
+    expect(cryptoConfigIdForParamSet(2)).to.equal('0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8')
+  })
+})
 
 describe('encryptNumber', () => {
   describe('trbfv', () => {

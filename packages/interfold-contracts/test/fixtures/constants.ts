@@ -33,6 +33,7 @@ export const PROOF = "0x1337";
 
 // ── Active BFV parameter set ────────────────────────────────────────────────
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
+export const CIRCUIT_VERSION = ethers.id("interfold-bfv-v2");
 
 function encodeBfvParams(params: {
   degree: bigint;
@@ -71,7 +72,7 @@ export const ACTIVE_CRYPTO_CONFIG_ID = ethers.keccak256(
     [
       ENCRYPTION_SCHEME_ID,
       ethers.keccak256(BFV_PARAMS_DEFAULT),
-      ethers.id("interfold-bfv-v1"),
+      CIRCUIT_VERSION,
     ],
   ),
 );
@@ -83,10 +84,29 @@ export const PRODUCTION_CRYPTO_CONFIG_ID = ethers.keccak256(
     [
       ENCRYPTION_SCHEME_ID,
       ethers.keccak256(BFV_PARAMS_SECURE),
-      ethers.id("interfold-bfv-v1"),
+      CIRCUIT_VERSION,
     ],
   ),
 );
+
+/** Circuit configuration ID for the secure-16384 parameter set. */
+export const SECURE_16384_CRYPTO_CONFIG_ID = ethers.keccak256(
+  abiCoder.encode(
+    ["bytes32", "bytes32", "bytes32"],
+    [
+      ENCRYPTION_SCHEME_ID,
+      ethers.keccak256(BFV_PARAMS_SECURE_16384),
+      CIRCUIT_VERSION,
+    ],
+  ),
+);
+
+export function cryptoConfigIdForParamSet(paramSet: number): string {
+  if (paramSet === 0) return ACTIVE_CRYPTO_CONFIG_ID;
+  if (paramSet === 1) return PRODUCTION_CRYPTO_CONFIG_ID;
+  if (paramSet === 2) return SECURE_16384_CRYPTO_CONFIG_ID;
+  throw new Error(`Unsupported BFV parameter set: ${paramSet}`);
+}
 
 // ── Timeout configs ──────────────────────────────────────────────────────────
 /** 1h / 1h / 1h — used by short-lifecycle tests. */

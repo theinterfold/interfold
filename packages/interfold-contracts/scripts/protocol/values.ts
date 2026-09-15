@@ -486,7 +486,17 @@ function validateActiveBfvCommitteeConfig(config: ProtocolConfigFile): void {
     throw new Error("interfold.committeeThresholds must be an array");
   }
 
-  for (const active of bfvConfigsForChain(config.chainId)) {
+  const activeConfigs = bfvConfigsForChain(config.chainId);
+  if (
+    activeConfigs.some((active) => active.preset === "secure-16384") &&
+    BigInt(config.interfold.timeoutConfig.dkgWindow) < 21_600n
+  ) {
+    throw new Error(
+      "interfold.timeoutConfig.dkgWindow must be at least 21600 seconds when the chain supports secure-16384",
+    );
+  }
+
+  for (const active of activeConfigs) {
     const found = config.interfold.committeeThresholds.some(
       (threshold) =>
         threshold.size === String(active.committeeSize) &&

@@ -26,7 +26,7 @@ output — every step backed by ZK proofs verified on-chain.
 | Committee    | Ciphernodes serving an E3. Sizes `(N, T, H)`: `minimum` (3,1,2), `micro` (9,4,5), `small` (19,9,10)                             |
 | DKG          | Distributed key generation — joint threshold public key, no party holds the full secret                                         |
 | BFV / TrBFV  | Brakerski–Fan–Vercauteren FHE scheme / its threshold (publicly verifiable) variant                                              |
-| Preset       | BFV parameter set: `insecure` (dev/CI default), `secure-8192`, or `secure-16384`                                                  |
+| Preset       | BFV parameter set: `insecure` (dev/CI default), `secure-8192`, or `secure-16384`                                                |
 | C0–C7        | ZK circuit IDs across the DKG/decryption pipeline (map below)                                                                   |
 | Sortition    | Random committee selection (`crates/sortition`)                                                                                 |
 | Slashing     | Fault attribution, accusation quorum, commitment consistency (`crates/slashing`)                                                |
@@ -76,13 +76,15 @@ The protocol release can carry more than one circuit artifact set. Current deplo
 matrix:
 
 - Ethereum mainnet supports `secure-8192/minimum`, `secure-8192/micro`, and `secure-8192/small`.
-- Sepolia and local chains support `insecure`, `secure-8192`, and `secure-16384` with `minimum`,
-  `micro`, and `small` committees.
+- Sepolia and local chains support `insecure` and `secure-8192` with `minimum`, `micro`, and `small`
+  committees. Secure-16384 currently supports the `minimum` committee only because its V2 verifier
+  route is available only for that pair.
 
 `ActiveCryptoConfig.sol` selects the parameter sets and committee shapes supported by
 `block.chainid`. Deployment tooling mirrors that matrix with `bfvConfigsForChain(chainId)` and reads
 VK hashes from `dist/circuits/<preset>/<committee>/...`. A verifier router can sit behind the BFV
-scheme mapping and dispatch proofs to the concrete verifier for each generated pair.
+scheme mapping. It dispatches proofs by the E3 parameter set, public-input length, and VK anchors to
+the concrete verifier for each generated pair.
 
 `circuits/bin/.active-preset.json` only records the local hydrated circuit cache. It can point at a
 different pair than the target chain uses, provided `dist/circuits/` contains every required pair
@@ -101,7 +103,8 @@ for that chain.
   documented behavior changed), `check:addresses` (contract addresses in the docs, dashboard,
   DAppNode package, and CRISP example must match `deployments/manifest.json`), `check:invariants`
   (grep-enforced invariants: `do_send` ratchet, skip-proof feature containment — baselines in
-  `scripts/invariant-baselines.env`), `check:verifiers`.
+  `scripts/invariant-baselines.env`), and the canonical `insecure/minimum` verifier check. CI runs
+  `check:verifiers` against the complete release matrix.
 - **Docs MCP server:** `.mcp.json`, `.codex/config.toml`, and `opencode.json` expose
   `@interfold/mcp` (`interfold-docs`) to their respective agents. The launch configs run the
   TypeScript source through the workspace toolchain; `pnpm mcp:build` builds the publishable
@@ -122,12 +125,39 @@ opentelemetry/tracing.
   `esm_share_computation_chunk` · C3 `share_encryption` · C4 `share_decryption`
 - **Threshold** (`circuits/bin/threshold/`): C1 `pk_generation` · C5 `pk_aggregation` · P3
   `user_data_encryption_ct0/ct1` (+ wrapper) · C6 `share_decryption` · C7
-  `decrypted_shares_aggregation`
+  `decrypted_shares_aggregation` · secure-16384 l-BFV row proofs `lbfv_pk_generation`
+  (`CircuitName::LbfvPkGeneration = 29`), `lbfv_pk_aggregation`
+  (`CircuitName::LbfvPkAggregation = 30`), `rlk_generation` (`CircuitName::RlkGeneration = 27`),
+  `rlk_generation_limb` (`CircuitName::RlkGenerationLimb = 31`), and `rlk_aggregation`
+  (`CircuitName::RlkAggregation = 28`). `rlk_generation_limb` proves one CRT limb, and
+  `rlk_generation` recursively finalizes all limbs for one row. These circuits have helper and
+  prover boundaries. Runtime handlers use stable operation IDs for deterministic row-proof retries.
+  Generation verification accepts C1 followed by complete five-row public-key and RLK families;
+  aggregation accepts the two row families without C1. For secure-16384, the per-E3 keyshare actor
+  durably produces and publishes its local bundle. Each public-key aggregator durably collects and
+  verifies remote bundles. The active aggregator verifies the first durable H-party ready quorum. A
+  failed candidate is durably replaced with the next ready party before the aggregator seals the
+  accepted quorum and starts the legacy C5 path. A separate secure-16384 recursive family verifies
+  the generation rows, aggregation rows, and legacy C0-C5 chain. Rust recursive request/prover
+  wiring and the local document-to-node-fold handoff, row aggregation, and operational RLK storage
+  are implemented. Restart reconstructs a missing operational RLK from the durable accepted
+  documents after the row fold completes. A terminal row-aggregation failure suppresses later proof
+  and publication work. The active aggregator also persists and redrives a secure-16384
+  `LbfvPublicKeyAggregated` publication intent. The registry writer adapts that local intent to the
+  existing replay-safe publication gate and submits the V2 proof and attestation bundle. A real
+  `secure-16384/minimum` test generates five recursive limb proofs, finalizes one row, verifies all
+  six proofs, checks the nine terminal public fields, and rejects a terminal proof made with the
+  wrong leaf VK. Under `secure-16384/minimum`, sequential production compilation measured 512.58
+  seconds and 26,388,774,912 bytes maximum RSS for the limb, then 57.36 seconds and 8,039,219,200
+  bytes maximum RSS for the terminal. The end-to-end test took 1,393.44 seconds and 16,788,504,576
+  bytes maximum RSS. The prior equation-wide circuit did not complete compilation after more than 31
+  minutes.
 - **Recursive aggregation** (`circuits/bin/recursive_aggregation/`): fold kernels
   (`c2ab_chunk_fold`, `c3_fold`, `c6_fold`, `node_fold`, `nodes_fold`, …) and the top-level
-  `dkg_aggregator` / `decryption_aggregator`, which produce the on-chain Honk verifiers. The
-  canonical committed root matches `(insecure, minimum)`; other generated pairs live under
-  `honk/<preset>/<committee>/`.
+  `dkg_aggregator` / `decryption_aggregator`, which produce the on-chain Honk verifiers. A separate
+  secure-16384 family adds `lbfv_generation_fold`, `node_fold_v2`, `nodes_fold_v2`,
+  `lbfv_aggregation_fold`, and `dkg_aggregator_v2`. The canonical committed root matches
+  `(insecure, minimum)`; other generated pairs live under `honk/<preset>/<committee>/`.
 - `config` circuit validates preset constants (CRT moduli, bounds, parity matrices). Parity matrices
   for `insecure`, `secure-8192`, and `secure-16384` are generated by the Rust
   `generate_parity_matrices` binary — never hand-edit.

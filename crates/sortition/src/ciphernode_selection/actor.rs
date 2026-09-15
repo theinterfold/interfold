@@ -73,7 +73,7 @@ impl CiphernodeSelectorState {
 #[rtype(result = "Result<CiphernodeSelectorState>")]
 pub struct GetCiphernodeSelectorState;
 
-const AGGREGATOR_PROGRESS_TIMEOUT: Duration = Duration::from_secs(10 * 60);
+const AGGREGATOR_PROGRESS_TIMEOUT: Duration = Duration::from_secs(60 * 60);
 
 trait Clock: Send + Sync {
     fn now_unix_secs(&self) -> u64;

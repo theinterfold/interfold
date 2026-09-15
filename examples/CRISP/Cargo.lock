@@ -3169,6 +3169,7 @@ dependencies = [
  "serde_json",
  "thiserror 1.0.69",
  "toml",
+ "zeroize",
 ]
 
 [[package]]
@@ -3410,9 +3411,8 @@ dependencies = [
 [[package]]
 name = "fhe"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#c2659bedacf1c8e91f1c5ebea8a020e6ce54ae72"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#96981eebe18a63117fb65569b8bf5c2362c29f9a"
 dependencies = [
- "bincode",
  "doc-comment",
  "fhe-math",
  "fhe-traits",
@@ -3436,7 +3436,7 @@ dependencies = [
 [[package]]
 name = "fhe-math"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#c2659bedacf1c8e91f1c5ebea8a020e6ce54ae72"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#96981eebe18a63117fb65569b8bf5c2362c29f9a"
 dependencies = [
  "ethnum",
  "fhe-traits",
@@ -3460,7 +3460,7 @@ dependencies = [
 [[package]]
 name = "fhe-traits"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#c2659bedacf1c8e91f1c5ebea8a020e6ce54ae72"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#96981eebe18a63117fb65569b8bf5c2362c29f9a"
 dependencies = [
  "rand 0.9.4",
 ]
@@ -3468,7 +3468,7 @@ dependencies = [
 [[package]]
 name = "fhe-util"
 version = "0.3.0"
-source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#c2659bedacf1c8e91f1c5ebea8a020e6ce54ae72"
+source = "git+https://github.com/gnosisguild/fhe.rs?branch=dev#96981eebe18a63117fb65569b8bf5c2362c29f9a"
 dependencies = [
  "num-bigint-dig",
  "num-traits",

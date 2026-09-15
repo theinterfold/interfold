@@ -259,6 +259,7 @@ async fn backfill_tracks_unresolved_slash_intents() -> anyhow::Result<()> {
         accuser,
         accused,
         proof_type: ProofType::C1PkGeneration,
+        proof_instance: 0,
         votes_for: Vec::new(),
         outcome: AccusationOutcome::AccusedFaulted,
         evidence: Default::default(),

@@ -10,3 +10,5 @@
 pub mod committee;
 #[path = "committee_hash.rs"]
 pub mod committee_hash;
+#[path = "public_key_aggregation/lbfv_contribution_collection.rs"]
+pub mod lbfv_contribution_collection;

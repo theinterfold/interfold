@@ -9,7 +9,7 @@ use crate::math::modulo::U64::ModU64;
 use crate::math::polynomial::Polynomial;
 use ::bignum::BigNum;
 use ::bignum::bignum::to_field;
-use ::bignum::U256;
+use ::bignum::U384;
 
 /// Parameters for decrypted shares aggregation (C7).
 pub struct Configs<let L: u32> {
@@ -120,47 +120,49 @@ impl<let MAX_MSG_NON_ZERO_COEFFS: u32, let L: u32, let T: u32, let BIT_NOISE: u3
         }
 
         // For centered arithmetic
-        let q_bn = U256::from(q_modulus);
+        let q_bn = U384::from(q_modulus);
 
-        let q_half_bn = q_bn.udiv(&U256::from(2));
+        let q_half_bn = q_bn.udiv(&U384::from(2));
 
         for coeff_idx in 0..MAX_MSG_NON_ZERO_COEFFS {
-            // Compute (t * u_global) mod Q using BigNum
-            let u_bn = U256::from(self.u_global.coefficients[coeff_idx]);
-            let t_bn = U256::from(self.configs.plaintext_modulus);
-            // Q is at most 208 bits and t is about 10 bits, so t * u fits in BN254.
-            let u_bn_mod_q = u_bn.umod(&q_bn);
-            let t_bn_mod_q = t_bn.umod(&q_bn);
-            let t_times_u_bn_q = (t_bn_mod_q * u_bn_mod_q).umod(&q_bn);
-
-            // t ~ 1000; all inputs < t; quotient < t << 2^64: safe for ModU64.
-            let m = ModU64::new(self.configs.plaintext_modulus as u64);
-
-            // Check if centering is needed
-            let needs_centering = t_times_u_bn_q > q_half_bn;
-
-            let computed_message = if needs_centering {
-                // When (t*u) mod Q >= Q/2: treat as negative in centered form
-                // Centered value is conceptually negative: (t_times_u_mod_q - Q)
-                // -Q^{-1} * (negative) = positive result
-                let centered_positive = q_bn - t_times_u_bn_q;
-                let centered_positive_mod_t = centered_positive.umod(&t_bn);
-                let centered_field = to_field(centered_positive_mod_t);
-                m.mul_mod(self.configs.q_inverse_mod_t, centered_field)
-            } else {
-                // When (t*u) mod Q < Q/2: stays positive in centered form
-                // -Q^{-1} * (positive) = negative result = t - result
-                let t_times_u_bn_t = t_times_u_bn_q.umod(&t_bn);
-                let t_times_u_field = to_field(t_times_u_bn_t);
-                let product = m.mul_mod(self.configs.q_inverse_mod_t, t_times_u_field);
-                if product == 0 {
-                    0
-                } else {
-                    self.configs.plaintext_modulus - product
-                }
-            };
+            let computed_message = decode_coefficient(
+                self.u_global.coefficients[coeff_idx],
+                q_bn,
+                q_half_bn,
+                self.configs.plaintext_modulus,
+                self.configs.q_inverse_mod_t,
+            );
 
             assert_decoded_coefficient(computed_message, self.message.coefficients[coeff_idx]);
+        }
+    }
+}
+
+fn decode_coefficient(
+    u_global: Field,
+    q_bn: U384,
+    q_half_bn: U384,
+    plaintext_modulus: Field,
+    q_inverse_mod_t: Field,
+) -> Field {
+    // secure-16384 needs 260 bits for t * (Q - 1), which does not fit in U256.
+    let u_bn = U384::from(u_global);
+    let t_bn = U384::from(plaintext_modulus);
+    let t_times_u_bn_q = (t_bn.umod(&q_bn) * u_bn.umod(&q_bn)).umod(&q_bn);
+    // t is about 1000, so values reduced modulo t fit in ModU64.
+    let m = ModU64::new(plaintext_modulus as u64);
+
+    if t_times_u_bn_q > q_half_bn {
+        let centered_positive = q_bn - t_times_u_bn_q;
+        let centered_field = to_field(centered_positive.umod(&t_bn));
+        m.mul_mod(q_inverse_mod_t, centered_field)
+    } else {
+        let reduced_field = to_field(t_times_u_bn_q.umod(&t_bn));
+        let product = m.mul_mod(q_inverse_mod_t, reduced_field);
+        if product == 0 {
+            0
+        } else {
+            plaintext_modulus - product
         }
     }
 }
@@ -312,4 +314,18 @@ fn test_decoded_zero_coefficient_must_match() {
 fn test_nonzero_decoded_coefficient_cannot_be_claimed_as_zero() {
     // Regression test for IF-002: the old conditional check skipped this case.
     assert_decoded_coefficient(1, 0);
+}
+
+#[test]
+fn test_secure_16384_decode_does_not_wrap_u256() {
+    let qis: [Field; 5] =
+        [1125899917262849, 1125899915886593, 1125899915231233, 1125899915100161, 1125899914510337];
+    let mut q_modulus = 1 as Field;
+    for index in 0..qis.len() {
+        q_modulus *= qis[index];
+    }
+    let q_bn = U384::from(q_modulus);
+    let q_half_bn = q_bn.udiv(&U384::from(2));
+
+    assert(decode_coefficient(q_modulus - 1, q_bn, q_half_bn, 1000, 953) == 0);
 }

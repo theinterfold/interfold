@@ -17,7 +17,7 @@ pub(crate) enum VoteAction {
     PublishAccusation {
         accusation: ProofFailureAccusation,
         ec: EventContext<Sequenced>,
-        dedup_key: (Address, ProofType),
+        dedup_key: (Address, ProofIdentity),
     },
     PublishVote {
         vote: AccusationVote,
@@ -56,6 +56,7 @@ pub(super) struct PendingReVerification {
     pub(super) data_hash: [u8; 32],
     pub(super) accused: Address,
     pub(super) proof_type: ProofType,
+    pub(super) proof_instance: u32,
     pub(super) evidence: Bytes,
 }
 
@@ -70,8 +71,8 @@ pub(crate) struct AccusationVoting {
     pub(super) vote_quorum_h: usize,
     pub(super) committee_n: usize,
     pub(super) pending: HashMap<[u8; 32], PendingAccusation>,
-    pub(super) accused_proofs: HashSet<(Address, ProofType)>,
-    pub(super) received_data: HashMap<(Address, ProofType), ReceivedProofData>,
+    pub(super) accused_proofs: HashSet<(Address, ProofIdentity)>,
+    pub(super) received_data: HashMap<(Address, ProofIdentity), ReceivedProofData>,
     pub(super) buffered_votes: HashMap<[u8; 32], Vec<AccusationVote>>,
     pub(super) pending_reverifications: HashMap<CorrelationId, PendingReVerification>,
     pub(super) vote_timeout: Duration,

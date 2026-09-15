@@ -174,6 +174,7 @@ echo "  [gas] Running integration test (test_trbfv_actor); proof_aggregation=tru
 (
   cd "$REPO_ROOT" && \
   BENCHMARK_MODE="$MODE" \
+  BENCHMARK_PRESET="$PRESET_NAME" \
   CIPHERNODE_SKIP_PROOF_AGGREGATION=false \
   BENCHMARK_FOLDED_OUTPUT="$TMP_JSON_FOLDED" \
   BENCHMARK_SUMMARY_OUTPUT="$TMP_JSON_SUMMARY" \

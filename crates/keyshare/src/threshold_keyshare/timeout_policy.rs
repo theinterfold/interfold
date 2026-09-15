@@ -7,7 +7,7 @@
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 pub(crate) const DKG_WINDOW_ENV: &str = "E3_DKG_WINDOW_SECS";
-pub(crate) const DEFAULT_DKG_WINDOW_SECS: u64 = 7200;
+pub(crate) const DEFAULT_DKG_WINDOW_SECS: u64 = 21_600;
 
 const ENCRYPTION_KEY_CUTOFF_BPS: u64 = 1000;
 const THRESHOLD_SHARE_CUTOFF_BPS: u64 = 6000;
@@ -187,5 +187,10 @@ mod tests {
         assert!(timeout
             .description
             .contains(DkgTimeoutPhase::DecryptionKeySharedCollection.override_env()));
+    }
+
+    #[test]
+    fn default_window_covers_secure_16384() {
+        assert_eq!(DEFAULT_DKG_WINDOW_SECS, 21_600);
     }
 }

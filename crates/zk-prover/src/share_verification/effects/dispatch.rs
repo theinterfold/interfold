@@ -19,10 +19,14 @@ impl ShareVerificationActor {
 
         let params_preset = msg.params_preset;
         let committee_size = msg.committee_size;
+        let lbfv_context = msg.lbfv_context;
+        let verification_id = msg.verification_id;
         match msg.kind {
             VerificationKind::ShareProofs
             | VerificationKind::ThresholdDecryptionProofs
-            | VerificationKind::PkGenerationProofs => {
+            | VerificationKind::PkGenerationProofs
+            | VerificationKind::LbfvGenerationProofs
+            | VerificationKind::LbfvAggregationProofs => {
                 let kind = msg.kind.clone();
                 self.verify_proofs(
                     e3_id,
@@ -32,6 +36,8 @@ impl ShareVerificationActor {
                     ec,
                     params_preset,
                     committee_size,
+                    lbfv_context.as_ref(),
+                    verification_id,
                     |pending, passed| {
                         pending.ecdsa_passed_share_proofs = passed;
                     },
@@ -46,6 +52,8 @@ impl ShareVerificationActor {
                     ec,
                     params_preset,
                     committee_size,
+                    lbfv_context.as_ref(),
+                    verification_id,
                     |pending, passed| {
                         pending.ecdsa_passed_decryption_proofs = passed;
                     },

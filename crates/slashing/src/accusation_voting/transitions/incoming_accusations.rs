@@ -27,6 +27,14 @@ impl AccusationVoting {
             return;
         }
 
+        if (!accusation.proof_type.is_multirow() && accusation.proof_instance != 0)
+            || (accusation.proof_type.is_multirow()
+                && accusation.proof_instance >= ProofType::LBFV_ROW_INSTANCES)
+        {
+            warn!("Ignoring accusation with an invalid proof instance");
+            return;
+        }
+
         let now = self.clock.unix_now_secs();
         if !Self::is_peer_deadline_acceptable(
             accusation.issued_at,
@@ -91,7 +99,11 @@ impl AccusationVoting {
         }
 
         // Determine our position based on our local verification state.
-        let key = (accusation.accused, accusation.proof_type);
+        let identity = ProofIdentity {
+            proof_type: accusation.proof_type,
+            instance: accusation.proof_instance,
+        };
+        let key = (accusation.accused, identity);
         let our_data_hash = if let Some(received) = self.received_data.get(&key) {
             if received.verification_passed {
                 info!(
@@ -196,7 +208,8 @@ impl AccusationVoting {
                     accusation_id,
                     data_hash,
                     accused: key.0,
-                    proof_type: key.1,
+                    proof_type: key.1.proof_type,
+                    proof_instance: key.1.instance,
                     evidence,
                 },
             );

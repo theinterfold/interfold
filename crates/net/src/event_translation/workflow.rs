@@ -59,8 +59,10 @@ impl EventTranslationService {
                 | InterfoldEventData::DKGRecursiveAggregationComplete(_)
                 | InterfoldEventData::KeyshareCreated(_)
                 | InterfoldEventData::PublicKeyAggregated(_)
+                | InterfoldEventData::LbfvPublicKeyAggregated(_)
                 | InterfoldEventData::ProofFailureAccusation(_)
                 | InterfoldEventData::AccusationVote(_)
+                | InterfoldEventData::LbfvKeyShareManifestPublished(_)
         )
     }
 
@@ -83,6 +85,7 @@ impl EventTranslationService {
             trace!(evt_id=%id, "Have seen event before not rebroadcasting!");
             return Ok(None);
         }
+        Self::validate_signed_manifest(&event)?;
         self.network.validate_event(&event)?;
 
         debug!("GossipPublish event: {}", event.event_type());
@@ -119,19 +122,33 @@ impl EventTranslationService {
             "inbound gossip event type {} is not allowed on the protocol gossip channel",
             event.event_type()
         );
+        Self::validate_signed_manifest(&event)?;
         self.network.validate_event(&event)?;
         let id = event.id();
         self.mark_published(id);
         Ok(event)
+    }
+
+    fn validate_signed_manifest<S: SeqState>(event: &InterfoldEvent<S>) -> Result<()> {
+        if let InterfoldEventData::LbfvKeyShareManifestPublished(published) = event.get_data() {
+            published.manifest.recover_address()?;
+        }
+        Ok(())
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::{
+        primitives::{Address, B256, U256},
+        signers::local::PrivateKeySigner,
+    };
+    use e3_committee_hash::{hash_lbfv_proof_session, LbfvProofDomainContext};
     use e3_events::{
-        E3id, EventConstructorWithTimestamp, EventSource, KeyshareCreated, PlaintextAggregated,
-        TestEvent,
+        E3id, EventConstructorWithTimestamp, EventSource, KeyshareCreated,
+        LbfvKeyShareDocumentContextV1, LbfvKeyShareManifest, LbfvKeyShareManifestPublished,
+        LbfvKeyShareManifestV1, PlaintextAggregated, SignedLbfvKeyShareManifest, TestEvent,
     };
     use e3_utils::ArcBytes;
 
@@ -178,6 +195,47 @@ mod tests {
             EventSource::Local,
         );
         unsequenced.into_sequenced(1)
+    }
+
+    fn local_manifest_event() -> InterfoldEvent {
+        let signer: PrivateKeySigner =
+            "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
+                .parse()
+                .unwrap();
+        let e3_id = E3id::new("7", 1);
+        let proof_domain = LbfvProofDomainContext {
+            protocol_version: 4,
+            chain_id: 1,
+            interfold_address: Address::repeat_byte(0x11),
+            e3_id: U256::from(7),
+            crypto_config_id: B256::repeat_byte(0x22),
+            finalized_committee_hash: B256::repeat_byte(0x33),
+            lbfv_constants_version: 1,
+            ciphertext_level: 0,
+            key_level: 0,
+        };
+        let manifest = SignedLbfvKeyShareManifest::sign(
+            LbfvKeyShareManifest::V1(LbfvKeyShareManifestV1 {
+                context: LbfvKeyShareDocumentContextV1 {
+                    e3_id,
+                    proof_domain,
+                    proof_session_id: hash_lbfv_proof_session(proof_domain),
+                    party_id: 1,
+                },
+                public_key_document_hash: B256::repeat_byte(0x44),
+                relinearization_key_document_hash: B256::repeat_byte(0x55),
+            }),
+            &signer,
+        )
+        .unwrap();
+        let event: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
+            LbfvKeyShareManifestPublished { manifest }.into(),
+            None,
+            42,
+            None,
+            EventSource::Local,
+        );
+        event.into_sequenced(1)
     }
 
     #[test]
@@ -237,5 +295,43 @@ mod tests {
         assert!(svc.prepare_outbound(event.clone()).unwrap().is_some());
         svc.mark_published(id);
         assert!(svc.prepare_outbound(event).unwrap().is_none());
+    }
+
+    #[test]
+    fn signed_lbfv_manifest_is_forwardable_and_replay_deduplicated() {
+        let mut service = EventTranslationService::new("topic");
+        let event = local_manifest_event();
+        let (id, data) = service.prepare_outbound(event.clone()).unwrap().unwrap();
+
+        assert!(service.prepare_outbound(event.clone()).unwrap().is_none());
+        service.mark_published(id);
+        assert!(service.prepare_outbound(event).unwrap().is_none());
+        assert!(data.to_bytes().unwrap().len() < crate::domain::wire::MAX_GOSSIP_BYTES);
+    }
+
+    #[test]
+    fn inbound_lbfv_manifest_rejects_an_invalid_signature() {
+        let mut service = EventTranslationService::new("topic");
+        let event = local_manifest_event();
+        let InterfoldEventData::LbfvKeyShareManifestPublished(mut published) =
+            event.get_data().clone()
+        else {
+            unreachable!();
+        };
+        published.manifest.signature = ArcBytes::from_bytes(&[0u8; 64]);
+        let invalid: InterfoldEvent<Unsequenced> = InterfoldEvent::new_with_timestamp(
+            published.into(),
+            None,
+            42,
+            None,
+            EventSource::Local,
+        );
+        let data: GossipData = invalid.into_sequenced(1).try_into().unwrap();
+
+        assert!(service
+            .prepare_inbound(data)
+            .unwrap_err()
+            .to_string()
+            .contains("signature"));
     }
 }

@@ -610,14 +610,15 @@ interface ISlashingManager {
      *      This creates a 1:1 binding between proof types and slash policies, preventing
      *      cross-reason replay attacks.
      *      Evidence format:
-     *        abi.encode(uint256 proofType,
+     *        abi.encode(uint256 proofType, uint256 proofInstance,
      *          address[] voters, bytes32[] dataHashes, bytes evidence,
      *          uint256 issuedAt, uint256 deadline, bytes[] signatures)
      *      Each voter must have signed the EIP-712 digest
      *      `keccak256("\x19\x01" || domainSeparator || structHash)`, where
      *      `structHash = keccak256(abi.encode(VOTE_TYPEHASH, e3Id,
      *      accusationId, voter, dataHash, issuedAt, deadline))`.
-     *      where accusationId = keccak256(abi.encodePacked(block.chainid, e3Id, operator, proofType))
+     *      where accusationId preserves the legacy four-field hash for instance zero and appends
+     *      proofInstance for other instances.
      *      Verifications performed:
      *        1. Number of votes >= committee threshold M
      *        2. Voters are sorted ascending (prevents duplicates)
@@ -630,7 +631,7 @@ interface ISlashingManager {
      * @param e3Id ID of the E3 computation this slash relates to
      * @param operator Address of the ciphernode operator to slash (must be non-zero)
      * @param proof Attestation evidence:
-     *              abi.encode(proofType, voters, dataHashes, evidence,
+     *              abi.encode(proofType, proofInstance, voters, dataHashes, evidence,
      *              issuedAt, deadline, signatures)
      * @return proposalId Sequential ID of the created proposal
      */
@@ -647,7 +648,7 @@ interface ISlashingManager {
      *      This provides an explicit on-chain chain from DKG fold row/slot attribution to operator.
      * @param e3Id ID of the E3 computation this slash relates to
      * @param partyId Canonical committee slot / DKG party identifier
-     * @param proof Attestation evidence: abi.encode(proofType, voters, dataHashes,
+     * @param proof Attestation evidence: abi.encode(proofType, proofInstance, voters, dataHashes,
      *              evidence, issuedAt, deadline, signatures)
      * @return proposalId Sequential ID of the created proposal
      */

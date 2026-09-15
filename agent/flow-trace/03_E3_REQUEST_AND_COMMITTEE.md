@@ -75,11 +75,14 @@ Requester calls: Interfold.request({
 │   ├─ Validate the requested crypto configuration against the chain matrix.
 │   │    The caller selects (paramSet, committeeSize); the target chain must support that pair.
 │   │    Mainnet supports secure-8192 with minimum, micro, and small committees.
-│   │    Sepolia and local chains support insecure, secure-8192, and secure-16384 with all committee sizes.
+│   │    Sepolia and local chains support insecure and secure-8192 with all committee sizes.
+│   │    Secure-16384 currently supports the minimum committee only because its V2 route is minimum-only.
 │   │    A different parameter hash, committee shape, or verifier H/T is rejected.
 │   │    CI derives and compares the full BFV tuple across deployment code, Rust, and Noir.
 │   ├─ inputWindow[0] >= block.timestamp (start in future)
 │   ├─ inputWindow[1] >= inputWindow[0] (end after start)
+│   ├─ If paramSet is secure-16384, require dkgWindow >= 21,600 seconds
+│   │    The insecure and secure-8192 parameter sets still accept 7,200 seconds.
 │   ├─ Snapshot the complete timeout configuration
 │   ├─ Reserve the later of:
 │   │    inputWindow[1], or
@@ -247,7 +250,7 @@ InterfoldSolReader decodes IInterfold::E3Requested log
 │  program-runner requests, compute-proof journals, and webhook responses
 │
 ├─ Rebuilds the crypto configuration ID from the local scheme, BFV parameters,
-│  and circuit version; skips participation if it does not match the event
+│  and the `interfold-bfv-v2` circuit identity; skips participation if it does not match the event
 │
 ├─ If the ABI log is well-formed but its committee-size or BFV-preset enum is newer than this
 │  binary supports, records the provider log as internally processed and skips participation;
@@ -528,7 +531,7 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
 │   │     is_aggregator = (my node has the lowest eligible party_id in the
 │   │                      address-sorted finalized committee)
 │   │   }
-│   │   Persists an absolute 10-minute deadline while a public-key result is pending
+│   │   Persists an absolute 60-minute deadline while a public-key result is pending
 │   └─ If NO: does nothing for this E3
 │
 └─ KeyshareCreatedFilterBuffer:
@@ -583,7 +586,7 @@ A ready committee must finalize at or before its absolute DKG deadline.
 4. **Active aggregator selection**: `CiphernodeSelector` derives `AggregatorChanged` from the
    finalized committee, enriched exclusion events, and its durable phase-local timeout state. The
    active aggregator is the lowest eligible `party_id` in the address-sorted runtime committee. When
-   the expected chain result is absent for 10 minutes, every node promotes the next party in that
+   the expected chain result is absent for 60 minutes, every node promotes the next party in that
    order. The same phase keeps its absolute deadline across restart. Canonical phase progress clears
    the local unresponsive set. The final eligible party remains active after all standby budgets
    expire.

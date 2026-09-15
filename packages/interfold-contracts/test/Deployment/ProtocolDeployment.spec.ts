@@ -10,7 +10,10 @@ import { network } from "hardhat";
 import os from "os";
 import path from "path";
 
-import { deployProtocolContracts } from "../../scripts/protocol/deployContracts";
+import {
+  deployProtocolContracts,
+  selectBfvPkVerifierAddresses,
+} from "../../scripts/protocol/deployContracts";
 import {
   currentNodeRelease,
   requiresNodeReleasePolicyUpdate,
@@ -35,27 +38,37 @@ import type {
 } from "../../scripts/protocol/types";
 import { loadConfig } from "../../scripts/protocol/values";
 import { requiredActiveOperatorsForSecureCrisp } from "../../scripts/upgrade/resumeSecureCrisp";
+import { requiresTimeoutConfigUpdate } from "../../scripts/upgrade/secureCrisp";
 import { BondingRegistry__factory as BondingRegistryFactory } from "../../types";
 
 const { ethers } = await network.connect();
 
 describe("Protocol deployment", function () {
+  it("selects only the V2 PK verifier when a route provides one", function () {
+    expect(
+      selectBfvPkVerifierAddresses([
+        { pkVerifier: "legacy-a" },
+        { pkVerifier: "legacy-b", pkVerifierV2: "v2-b" },
+      ]),
+    ).to.deep.equal(["legacy-a", "v2-b"]);
+  });
+
   it("derives one release identity for the Rust and contract tooling", function () {
     const release = currentNodeRelease();
     expect(release.version).to.match(/^\d+\.\d+\.\d+/);
-    expect(release.protocolVersion).to.be.greaterThan(0);
-    expect(release.nodeGeneration).to.be.greaterThan(0);
+    expect(release.protocolVersion).to.equal(4);
+    expect(release.nodeGeneration).to.equal(1);
     expect(release.releaseId).to.equal(
       ethersLib.id(`interfold.node.release:v1:${release.version}`),
     );
   });
 
   it("updates the node release policy only when the release advances", function () {
-    const release = { protocolVersion: 3, nodeGeneration: 1 };
+    const release = { protocolVersion: 4, nodeGeneration: 1 };
 
-    expect(requiresNodeReleasePolicyUpdate(release, 2n, 1n)).to.equal(true);
-    expect(requiresNodeReleasePolicyUpdate(release, 3n, 1n)).to.equal(false);
-    expect(() => requiresNodeReleasePolicyUpdate(release, 4n, 1n)).to.throw(
+    expect(requiresNodeReleasePolicyUpdate(release, 3n, 1n)).to.equal(true);
+    expect(requiresNodeReleasePolicyUpdate(release, 4n, 1n)).to.equal(false);
+    expect(() => requiresNodeReleasePolicyUpdate(release, 5n, 1n)).to.throw(
       "cannot move backwards",
     );
   });
@@ -74,6 +87,19 @@ describe("Protocol deployment", function () {
     expect(() =>
       requiredActiveOperatorsForSecureCrisp(thresholds, 1, "0"),
     ).to.throw("only for a Sepolia rehearsal");
+  });
+
+  it("updates the timeout configuration only when a configured value differs", function () {
+    const target = {
+      dkgWindow: 21_600n,
+      computeWindow: 3_600n,
+      decryptionWindow: 3_600n,
+    };
+
+    expect(requiresTimeoutConfigUpdate(target, target)).to.equal(false);
+    expect(
+      requiresTimeoutConfigUpdate({ ...target, dkgWindow: 7_200n }, target),
+    ).to.equal(true);
   });
 
   it("requires a ciphernode restart acknowledgement before resume", function () {
@@ -194,6 +220,29 @@ describe("Protocol deployment", function () {
       fs.writeFileSync(configFile, JSON.stringify(config));
       expect(() => loadConfig(configFile)).to.throw(
         "Config name may only contain letters, numbers, underscores and hyphens",
+      );
+    } finally {
+      fs.rmSync(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("rejects a short DKG window when the chain supports secure-16384", function () {
+    const source = new URL(
+      "../../deploy/protocol/example.protocol.config.json",
+      import.meta.url,
+    );
+    const config = JSON.parse(fs.readFileSync(source, "utf8"));
+    const tempDir = fs.mkdtempSync(
+      path.join(os.tmpdir(), "interfold-protocol-dkg-window-"),
+    );
+    const configFile = path.join(tempDir, "protocol.json");
+
+    try {
+      config.protocolOwner = "0x0000000000000000000000000000000000000001";
+      config.interfold.timeoutConfig.dkgWindow = "7200";
+      fs.writeFileSync(configFile, JSON.stringify(config));
+      expect(() => loadConfig(configFile)).to.throw(
+        "dkgWindow must be at least 21600 seconds",
       );
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });

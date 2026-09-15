@@ -61,11 +61,15 @@ each other.
 The initial VRF upgrade follows this combined path because it introduces the controller and changes
 both `Interfold` and `BondingRegistry`.
 
-The BFV preset and chunked DKG release uses `protocol_version = 3`, `GOSSIP_WIRE_MAJOR = 3`, and
-`SYNC_WIRE_MAJOR = 3`. The release changes circuit identities and persisted proof payloads. Drain
-all active E3s, stop old nodes, deploy the matching circuit archive, and start the new release
-before resuming requests. Nodes with schema versions below the release schema must use the explicit
-resync procedure; they must not replay the old event log with the new binary.
+The BFV preset and chunked DKG release used `protocol_version = 3`, `GOSSIP_WIRE_MAJOR = 3`, and
+`SYNC_WIRE_MAJOR = 3`. The `interfold-bfv-v2` circuit identity uses `protocol_version = 4`. It keeps
+`node_generation = 1` because the change is not a separate node-only cutover. The wire majors stay
+at 3 because the wire encoding is unchanged. Drain all active E3s and committees before governance
+activates protocol 4 and the matching contracts. The activation invalidates protocol-3 eligibility
+in O(1). Protocol 4 also raises the local persisted-state schema to 4 because accusation events now
+carry multirow proof identities. A node with a schema-3 store halts before replay; archive that
+drained store and perform the controlled resync before starting the protocol-4 process. Start
+protocol-4 nodes and deploy the matching circuit archive before requests resume.
 
 ## Secure CRISP activation on mainnet
 
@@ -75,6 +79,7 @@ governance batch that:
 
 ```text
 upgrade Interfold to the secure chain-aware crypto configuration
+  -> apply the complete configured timeout values
   -> register the secure BFV parameter set and all committee thresholds
   -> install the secure minimum, micro, and small verifier routes
   -> install the PK, decryption, and ciphertext verifiers
@@ -84,12 +89,12 @@ upgrade Interfold to the secure chain-aware crypto configuration
 ```
 
 Run `upgrade:secure-crisp:validate` after governance executes the batch. The validator checks the
-implementation, every verifier route and VK anchor, the CRISP receipt-verifier binding, and the
-paused and drained state. Publish a new SemVer ciphernode artifact from the same release source
-before governance executes the batch. Restart matching ciphernodes after execution, and resume only
-after at least the largest configured committee size has acknowledged the new protocol and is
-online. Do not use the older CRISP-only builder on mainnet because it cannot install the
-protocol-side secure configuration.
+implementation, the live timeout configuration, every verifier route and VK anchor, the CRISP
+receipt-verifier binding, and the paused and drained state. Publish a new SemVer ciphernode artifact
+from the same release source before governance executes the batch. Restart matching ciphernodes
+after execution, and resume only after at least the largest configured committee size has
+acknowledged the new protocol and is online. Do not use the older CRISP-only builder on mainnet
+because it cannot install the protocol-side secure configuration.
 
 After the nodes restart, run
 `upgrade:secure-crisp:resume -- --network mainnet --ciphernodes-restarted`. It reruns the complete

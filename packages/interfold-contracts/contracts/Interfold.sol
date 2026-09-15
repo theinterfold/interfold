@@ -1095,6 +1095,7 @@ contract Interfold is
             requestParams.inputWindow,
             block.timestamp,
             address(ciphernodeRegistry),
+            requestParams.paramSet,
             _timeoutConfig,
             maxDuration
         );

@@ -953,18 +953,8 @@ impl CiphernodeBuilder {
             persisted_e3_metadata,
             dkg_fold_contexts_by_e3.clone(),
         );
-
-        // ── Threshold keyshare + ZK actors ──
-        if let Some(KeyshareKind::Threshold) = self.keyshare {
-            let _ = self.ensure_multithread(bus, lifecycle_stages);
-            let backend = self
-                .zk_backend
-                .as_ref()
-                .ok_or_else(|| anyhow::anyhow!("ZK backend is required for threshold keyshare"))?;
-            backend.ensure_installed().await?;
-            let _signer = provider_cache.ensure_signer().await?;
-
-            let mut interfold_addresses = HashMap::new();
+        let mut interfold_addresses = HashMap::new();
+        if matches!(self.keyshare, Some(KeyshareKind::Threshold)) || self.pubkey_agg {
             for chain in self.chains.iter().filter(|c| c.enabled.unwrap_or(true)) {
                 let provider = provider_cache.ensure_read_provider(chain).await?;
                 let chain_id = provider.chain_id();
@@ -976,20 +966,33 @@ impl CiphernodeBuilder {
                     interfold_addresses.insert(chain_id, chain.contracts.interfold.address()?);
                 }
             }
+        }
+        let local_signer_address = addr.parse::<Address>()?;
+
+        // ── Threshold keyshare + ZK actors ──
+        if let Some(KeyshareKind::Threshold) = self.keyshare {
+            let _ = self.ensure_multithread(bus, lifecycle_stages);
+            let backend = self
+                .zk_backend
+                .as_ref()
+                .ok_or_else(|| anyhow::anyhow!("ZK backend is required for threshold keyshare"))?;
+            backend.ensure_installed().await?;
+            let signer = provider_cache.ensure_signer().await?;
 
             info!("Setting up ThresholdKeyshareExtension");
             e3_builder = e3_builder.with(ThresholdKeyshareExtension::create(
                 bus,
                 &self.cipher,
                 addr,
-                interfold_addresses,
+                interfold_addresses.clone(),
+                signer.clone(),
             ));
 
             info!("Setting up ZK actors");
             setup_zk_actors(
                 bus,
                 backend,
-                _signer,
+                signer,
                 dkg_fold_context_by_chain.clone(),
                 zk_recovery.clone(),
                 self.proof_aggregation_enabled,
@@ -1003,7 +1006,11 @@ impl CiphernodeBuilder {
 
             info!("Setting up PublicKeyAggregationExtension");
             let _ = self.ensure_multithread(bus, lifecycle_stages);
-            e3_builder = e3_builder.with(PublicKeyAggregatorExtension::create(bus));
+            e3_builder = e3_builder.with(PublicKeyAggregatorExtension::create(
+                bus,
+                interfold_addresses,
+                local_signer_address,
+            ));
 
             if self.keyshare.is_none() {
                 let backend = self

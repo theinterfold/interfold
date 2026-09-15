@@ -291,7 +291,7 @@ jobs:
           tar -xf "$RUNNER_TEMP/circuit-artifacts.tar" -C dist/circuits
 
       - name: Verify circuit artifacts match source
-        # This check requires exactly one source-bound build stamp for each of the six supported
+        # This check requires exactly one source-bound build stamp for each of the seven supported
         # preset/committee pairs before the archive can be created.
         run: pnpm store:circuits verify-release --source-hash "${{ steps.pull.outputs.source_hash }}"
 

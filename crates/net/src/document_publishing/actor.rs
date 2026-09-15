@@ -17,7 +17,7 @@ use anyhow::{Context, Result};
 use e3_events::{
     prelude::*, trap, trap_fut, BusHandle, CiphernodeSelected, CorrelationId, DocumentReceived,
     E3RequestComplete, E3id, EType, EventSource, EventType, InterfoldEvent, InterfoldEventData,
-    PartyId, PublishDocumentRequested, TypedEvent,
+    LbfvKeyShareDocumentFetchRequested, PartyId, PublishDocumentRequested, TypedEvent,
 };
 use e3_utils::ArcBytes;
 use e3_utils::NotifySync;
@@ -94,6 +94,8 @@ impl DocumentPublisher {
                 | InterfoldEventData::ThresholdShareCreated(_)
                 | InterfoldEventData::EncryptionKeyCreated(_)
                 | InterfoldEventData::DecryptionKeyShared(_)
+                | InterfoldEventData::LbfvKeyShareDocumentCreated(_)
+                | InterfoldEventData::LbfvKeyShareDocumentFetchRequested(_)
         )
     }
 
@@ -175,7 +177,10 @@ mod effects;
 #[path = "handlers.rs"]
 mod handlers;
 
-pub use effects::{handle_document_published_notification, handle_publish_document_requested};
+pub use effects::{
+    handle_document_published_notification, handle_lbfv_document_fetch_requested,
+    handle_publish_document_requested,
+};
 
 #[cfg(test)]
 #[path = "tests/mod.rs"]

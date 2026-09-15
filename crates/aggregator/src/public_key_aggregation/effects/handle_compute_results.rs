@@ -9,12 +9,25 @@ impl PublicKeyAggregator {
         &mut self,
         msg: TypedEvent<ComputeResponse>,
     ) -> Result<()> {
-        let (msg, _ec) = msg.into_components();
+        let (msg, ec) = msg.into_components();
         if msg.e3_id != self.e3_id {
             return Ok(());
         }
         match msg.response {
+            ComputeResponseKind::Zk(
+                response @ (ZkResponse::LbfvPkAggregation(_)
+                | ZkResponse::RlkAggregation(_)
+                | ZkResponse::LbfvAggregationFold(_)),
+            ) => {
+                self.handle_lbfv_aggregation_response(msg.correlation_id, response, &ec)?;
+            }
+            ComputeResponseKind::Zk(ZkResponse::DkgAggregationV2(response)) => {
+                self.handle_dkg_aggregation_v2_response(msg.correlation_id, response.proof, &ec)?;
+            }
             ComputeResponseKind::Zk(ZkResponse::NodesFoldStep(resp)) => {
+                self.handle_nodes_fold_step_response(msg.correlation_id, resp.accumulator_proof)?;
+            }
+            ComputeResponseKind::Zk(ZkResponse::NodesFoldV2Step(resp)) => {
                 self.handle_nodes_fold_step_response(msg.correlation_id, resp.accumulator_proof)?;
             }
             ComputeResponseKind::Zk(ZkResponse::DkgAggregation(resp)) => {
@@ -106,6 +119,14 @@ impl PublicKeyAggregator {
     ) -> Result<()> {
         let (msg, ec) = msg.into_components();
         if msg.request().e3_id != self.e3_id {
+            return Ok(());
+        }
+
+        if self.handle_lbfv_aggregation_error(
+            *msg.correlation_id(),
+            &format!("{:?}", msg.get_err()),
+            &ec,
+        )? {
             return Ok(());
         }
 

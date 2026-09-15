@@ -79,6 +79,25 @@ pub fn prove_recursive_circuit(
     )
 }
 
+/// Prove a recursive circuit from an already-derived Noir input map.
+pub(crate) fn prove_recursive_input_map(
+    prover: &ZkProver,
+    circuit_name: CircuitName,
+    input_map: InputMap,
+    e3_id: &str,
+    artifacts_dir: &str,
+) -> Result<Proof, ZkError> {
+    let witness =
+        generate_recursive_witness_from_input_map(prover, circuit_name, input_map, artifacts_dir)?;
+    prover.generate_proof_with_variant(
+        circuit_name,
+        &witness,
+        e3_id,
+        CircuitVariant::Recursive,
+        artifacts_dir,
+    )
+}
+
 /// Shared helper: load compiled circuit from Recursive dir, serialize input, generate witness.
 #[allow(dead_code)]
 fn generate_recursive_witness(
@@ -87,15 +106,24 @@ fn generate_recursive_witness(
     input: &impl serde::Serialize,
     artifacts_dir: &str,
 ) -> Result<Vec<u8>, ZkError> {
+    let json =
+        serde_json::to_value(input).map_err(|e| ZkError::SerializationError(e.to_string()))?;
+    let input_map = inputs_json_to_input_map(&json)?;
+
+    generate_recursive_witness_from_input_map(prover, circuit_name, input_map, artifacts_dir)
+}
+
+fn generate_recursive_witness_from_input_map(
+    prover: &ZkProver,
+    circuit_name: CircuitName,
+    input_map: InputMap,
+    artifacts_dir: &str,
+) -> Result<Vec<u8>, ZkError> {
     let recursive_dir = prover.circuits_dir(CircuitVariant::Recursive, artifacts_dir);
     let circuit_path = recursive_dir
         .join(circuit_name.dir_path())
         .join(format!("{}.json", circuit_name.as_str()));
     let compiled = CompiledCircuit::from_file(&circuit_path)?;
-
-    let json =
-        serde_json::to_value(input).map_err(|e| ZkError::SerializationError(e.to_string()))?;
-    let input_map = inputs_json_to_input_map(&json)?;
 
     let witness_gen = WitnessGenerator::new();
     witness_gen.generate_witness(&compiled, input_map)

@@ -20,6 +20,9 @@ impl Handler<InterfoldEvent> for NodeProofAggregator {
             InterfoldEventData::ThresholdSharePending(data) => {
                 self.handle_threshold_share_pending(TypedEvent::new(data, ec));
             }
+            InterfoldEventData::LbfvKeyShareDocumentCreated(data) => {
+                self.handle_lbfv_document(TypedEvent::new(data, ec));
+            }
             InterfoldEventData::DKGInnerProofReady(data) => {
                 self.handle_inner_proof_ready(TypedEvent::new(data, ec));
             }
@@ -127,14 +130,45 @@ impl NodeProofAggregator {
 
     pub(super) fn handle_compute_response(&mut self, msg: TypedEvent<ComputeResponse>) {
         let (msg, _ec) = msg.into_components();
-        if let ComputeResponseKind::Zk(ZkResponse::NodeDkgFold(resp)) = msg.response {
-            self.handle_node_dkg_response(&msg.correlation_id, resp.proof);
+        match msg.response {
+            ComputeResponseKind::Zk(ZkResponse::LbfvGenerationFold(resp)) => {
+                self.handle_generation_fold_response(&msg.correlation_id, resp.proof);
+            }
+            ComputeResponseKind::Zk(ZkResponse::NodeDkgFold(resp)) => {
+                self.handle_node_dkg_response(&msg.correlation_id, resp.proof);
+            }
+            ComputeResponseKind::Zk(ZkResponse::NodeDkgFoldV2(resp)) => {
+                self.handle_node_dkg_response(&msg.correlation_id, resp.proof);
+            }
+            _ => {}
         }
     }
 
     pub(super) fn handle_compute_request_error(&mut self, msg: TypedEvent<ComputeRequestError>) {
         let (msg, ec) = msg.into_components();
+        if let Some(e3_id) = self
+            .generation_fold_correlation
+            .remove(msg.correlation_id())
+        {
+            self.fold_correlation.remove(msg.correlation_id());
+            self.generation_fold_accumulators.remove(&e3_id);
+            self.generation_fold_next_rows.remove(&e3_id);
+            if let Some(state) = self.states.remove(&e3_id) {
+                if let Err(err) = self.bus.publish(
+                    E3Failed {
+                        e3_id,
+                        failed_at_stage: E3Stage::CommitteeFinalized,
+                        reason: FailureReason::DKGInvalidShares,
+                    },
+                    state.last_ec,
+                ) {
+                    error!("NodeProofAggregator: failed to publish V2 generation failure: {err}");
+                }
+            }
+            return;
+        }
         if let Some(e3_id) = self.fold_correlation.remove(msg.correlation_id()) {
+            self.v2_legacy_correlation.remove(msg.correlation_id());
             error!(
                 "NodeProofAggregator: NodeDkgFold failed for E3 {}: {:?} — aggregation aborted",
                 e3_id,

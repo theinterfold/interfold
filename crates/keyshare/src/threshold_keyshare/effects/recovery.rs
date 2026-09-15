@@ -187,6 +187,27 @@ impl ThresholdKeyshare {
         let ec = recovery.last_ec.clone().unwrap_or(effects_context);
         let state = self.state.try_get()?;
 
+        if let KeyshareState::Failed {
+            failed_at_stage,
+            reason,
+        } = state.state
+        {
+            self.discard_pending_lbfv_generation()?;
+            return self.bus.publish(
+                E3Failed {
+                    e3_id: state.e3_id,
+                    failed_at_stage,
+                    reason,
+                },
+                ec,
+            );
+        }
+        if let Err(error) = self.resume_lbfv_generation(ec.clone()) {
+            error!("Failed to resume local l-BFV generation: {error}");
+            return self.fail_lbfv_generation(ec);
+        }
+        let state = self.state.try_get()?;
+
         match state.state {
             KeyshareState::Init => {
                 let selected = recovery
@@ -267,17 +288,7 @@ impl ThresholdKeyshare {
                 let (pending, pending_ec) = pending.into_components();
                 self.bus.publish(pending, pending_ec)
             }
-            KeyshareState::Failed {
-                failed_at_stage,
-                reason,
-            } => self.bus.publish(
-                E3Failed {
-                    e3_id: state.e3_id,
-                    failed_at_stage,
-                    reason,
-                },
-                ec,
-            ),
+            KeyshareState::Failed { .. } => unreachable!("failed state returned before recovery"),
         }
     }
 }

@@ -11,6 +11,7 @@ const RELEASE_CONTRACTS = [
   "CiphernodeRegistryOwnable",
   "contracts/verifiers/bfv/honk/DkgAggregatorVerifier.sol:DkgAggregatorVerifier",
   "contracts/verifiers/bfv/honk/DecryptionAggregatorVerifier.sol:DecryptionAggregatorVerifier",
+  "contracts/verifiers/bfv/honk/secure-16384/minimum/DkgAggregatorV2Verifier.sol:DkgAggregatorV2Verifier",
 ] as const;
 
 let failed = false;

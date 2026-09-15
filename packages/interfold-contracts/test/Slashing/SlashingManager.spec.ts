@@ -664,6 +664,86 @@ describe("SlashingManager", function () {
       expect(proposal.proposer).to.equal(await proposer.getAddress());
     });
 
+    it("accepts a canonical multirow proof instance", async function () {
+      const {
+        slashingManager,
+        proposer,
+        operatorAddress,
+        voter1,
+        voter2,
+        mockCiphernodeRegistry,
+      } = await loadFixture(setup);
+      const proofType = 11;
+      const reason = ethers.keccak256(
+        ethers.solidityPacked(["uint256"], [proofType]),
+      );
+      await slashingManager.setSlashPolicy(reason, buildProofPolicy());
+      await mockCiphernodeRegistry.setCommitteeNodes(0, [
+        operatorAddress,
+        await voter1.getAddress(),
+        await voter2.getAddress(),
+      ]);
+      await mockCiphernodeRegistry.setThreshold(0, 2);
+
+      const proof = await signAndEncodeAttestation(
+        [voter1, voter2],
+        0,
+        operatorAddress,
+        await slashingManager.getAddress(),
+        proofType,
+        31337,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        4,
+      );
+
+      await expect(
+        slashingManager
+          .connect(proposer)
+          .proposeSlash(0, operatorAddress, proof),
+      ).to.emit(slashingManager, "SlashProposed");
+    });
+
+    it("rejects a nonzero singleton proof instance", async function () {
+      const {
+        slashingManager,
+        proposer,
+        operatorAddress,
+        voter1,
+        voter2,
+        mockCiphernodeRegistry,
+      } = await loadFixture(setup);
+      await slashingManager.setSlashPolicy(REASON_PT_0, buildProofPolicy());
+      await mockCiphernodeRegistry.setCommitteeNodes(0, [
+        operatorAddress,
+        await voter1.getAddress(),
+        await voter2.getAddress(),
+      ]);
+      await mockCiphernodeRegistry.setThreshold(0, 2);
+
+      const proof = await signAndEncodeAttestation(
+        [voter1, voter2],
+        0,
+        operatorAddress,
+        await slashingManager.getAddress(),
+        0,
+        31337,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        1,
+      );
+
+      await expect(
+        slashingManager
+          .connect(proposer)
+          .proposeSlash(0, operatorAddress, proof),
+      ).to.be.revertedWithCustomError(slashingManager, "InvalidProof");
+    });
+
     it("should revert if committee attestation has insufficient votes", async function () {
       const {
         slashingManager,
@@ -796,6 +876,7 @@ describe("SlashingManager", function () {
       const proof = abiCoder.encode(
         [
           "uint256",
+          "uint256",
           "address[]",
           "bytes32[]",
           "bytes",
@@ -803,7 +884,7 @@ describe("SlashingManager", function () {
           "uint256",
           "bytes[]",
         ],
-        [0, voters, dataHashes, evidence, issuedAt, deadline, signatures],
+        [0, 0, voters, dataHashes, evidence, issuedAt, deadline, signatures],
       );
 
       await expect(

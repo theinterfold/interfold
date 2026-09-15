@@ -135,7 +135,9 @@ export interface BfvVerifierRouteDeployment {
   committeeSize: number;
   decryptionVerifier: string;
   pkVerifier: string;
+  pkVerifierV2?: string;
   dkgAggregatorVerifier: string;
+  dkgAggregatorV2Verifier?: string;
   decryptionAggregatorVerifier: string;
   verifierZkTranscriptLib: string;
   dkgVerifierRelationsLib: string;
@@ -170,6 +172,7 @@ export interface ProtocolDeployment {
   pkVerifier?: string;
   dkgFoldAttestationVerifier?: string;
   dkgAggregatorVerifier?: string;
+  dkgAggregatorV2Verifier?: string;
   decryptionAggregatorVerifier?: string;
   verifierZkTranscriptLib?: string;
   dkgVerifierRelationsLib?: string;
@@ -262,6 +265,7 @@ export interface SecureCrispUpgradePlan {
     nodeGeneration: number;
     releaseId: string;
   };
+  timeoutConfig: TimeoutConfig;
   cryptoConfigId: string;
   paramSet: number;
   pkVerifier: string;
@@ -336,6 +340,7 @@ export interface ProtocolContracts {
   pkVerifier?: string;
   dkgFoldAttestationVerifier?: string;
   dkgAggregatorVerifier?: string;
+  dkgAggregatorV2Verifier?: string;
   decryptionAggregatorVerifier?: string;
   verifierZkTranscriptLib?: string;
   dkgVerifierRelationsLib?: string;

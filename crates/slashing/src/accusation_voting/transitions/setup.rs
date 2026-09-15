@@ -78,20 +78,31 @@ impl AccusationVoting {
 
     /// Compute a deterministic ID for an accusation based on its key fields.
     ///
-    /// `keccak256(abi.encodePacked(chainId, e3Id, accused, proofType))`
+    /// Instance zero preserves the legacy four-field ID. Other instances append `proofInstance`.
     pub(crate) fn accusation_id(accusation: &ProofFailureAccusation) -> [u8; 32] {
         let e3_id_u256: U256 = accusation
             .e3_id
             .clone()
             .try_into()
             .expect("E3id should be valid U256");
-        let msg = (
-            U256::from(accusation.e3_id.chain_id()),
-            e3_id_u256,
-            accusation.accused,
-            U256::from(accusation.proof_type as u8),
-        )
-            .abi_encode_packed();
+        let msg = if accusation.proof_instance == 0 {
+            (
+                U256::from(accusation.e3_id.chain_id()),
+                e3_id_u256,
+                accusation.accused,
+                U256::from(accusation.proof_type as u8),
+            )
+                .abi_encode_packed()
+        } else {
+            (
+                U256::from(accusation.e3_id.chain_id()),
+                e3_id_u256,
+                accusation.accused,
+                U256::from(accusation.proof_type as u8),
+                U256::from(accusation.proof_instance),
+            )
+                .abi_encode_packed()
+        };
         keccak256(&msg).into()
     }
 
@@ -113,21 +124,40 @@ impl AccusationVoting {
             .clone()
             .try_into()
             .expect("E3id should be valid U256");
-        let typehash: [u8; 32] = keccak256(
-            "ProofFailureAccusation(uint256 chainId,uint256 e3Id,address accuser,address accused,uint256 proofType,bytes32 dataHash,uint256 issuedAt,uint256 deadline)"
-        ).into();
-        let encoded = (
-            typehash,
-            U256::from(accusation.e3_id.chain_id()),
-            e3_id_u256,
-            accusation.accuser,
-            accusation.accused,
-            U256::from(accusation.proof_type as u8),
-            accusation.data_hash,
-            U256::from(accusation.issued_at),
-            U256::from(accusation.deadline),
-        )
-            .abi_encode();
+        let encoded = if accusation.proof_instance == 0 {
+            let typehash: [u8; 32] = keccak256(
+                "ProofFailureAccusation(uint256 chainId,uint256 e3Id,address accuser,address accused,uint256 proofType,bytes32 dataHash,uint256 issuedAt,uint256 deadline)"
+            ).into();
+            (
+                typehash,
+                U256::from(accusation.e3_id.chain_id()),
+                e3_id_u256,
+                accusation.accuser,
+                accusation.accused,
+                U256::from(accusation.proof_type as u8),
+                accusation.data_hash,
+                U256::from(accusation.issued_at),
+                U256::from(accusation.deadline),
+            )
+                .abi_encode()
+        } else {
+            let typehash: [u8; 32] = keccak256(
+                "ProofFailureAccusationV2(uint256 chainId,uint256 e3Id,address accuser,address accused,uint256 proofType,uint256 proofInstance,bytes32 dataHash,uint256 issuedAt,uint256 deadline)"
+            ).into();
+            (
+                typehash,
+                U256::from(accusation.e3_id.chain_id()),
+                e3_id_u256,
+                accusation.accuser,
+                accusation.accused,
+                U256::from(accusation.proof_type as u8),
+                U256::from(accusation.proof_instance),
+                accusation.data_hash,
+                U256::from(accusation.issued_at),
+                U256::from(accusation.deadline),
+            )
+                .abi_encode()
+        };
         keccak256(&encoded).into()
     }
 
@@ -239,12 +269,19 @@ impl AccusationVoting {
         &mut self,
         accused: Address,
         proof_type: ProofType,
+        proof_instance: u32,
         data_hash: [u8; 32],
         passed: bool,
         evidence: Bytes,
     ) {
         self.received_data.insert(
-            (accused, proof_type),
+            (
+                accused,
+                ProofIdentity {
+                    proof_type,
+                    instance: proof_instance,
+                },
+            ),
             ReceivedProofData {
                 data_hash,
                 verification_passed: passed,
@@ -268,8 +305,21 @@ impl AccusationVoting {
         )
             .abi_encode()
             .into();
+        let Ok(instance) = data
+            .proof_type
+            .instance_from_public_signals(&data.public_signals)
+        else {
+            warn!("Ignoring passed proof with an invalid proof instance");
+            return;
+        };
         self.received_data.insert(
-            (data.address, data.proof_type),
+            (
+                data.address,
+                ProofIdentity {
+                    proof_type: data.proof_type,
+                    instance,
+                },
+            ),
             ReceivedProofData {
                 data_hash: data.data_hash,
                 verification_passed: true,
@@ -283,7 +333,7 @@ impl AccusationVoting {
     /// Roll back an initiation whose accusation broadcast failed. Mirrors the
     /// original actor's behaviour of removing the dedup entry so a future
     /// identical failure may retry.
-    pub(crate) fn rollback_initiation(&mut self, dedup_key: &(Address, ProofType)) {
+    pub(crate) fn rollback_initiation(&mut self, dedup_key: &(Address, ProofIdentity)) {
         self.accused_proofs.remove(dedup_key);
     }
 

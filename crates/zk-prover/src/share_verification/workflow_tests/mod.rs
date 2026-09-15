@@ -5,8 +5,18 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
-use alloy::signers::local::PrivateKeySigner;
-use e3_events::{Proof, ProofPayload, ProofType};
+use alloy::{
+    primitives::{address, B256, U256},
+    signers::local::PrivateKeySigner,
+};
+use e3_committee_hash::{
+    hash_lbfv_accepted_party_set, hash_lbfv_proof_session, split_hash_to_field_limbs,
+    LbfvProofDomainContext,
+};
+use e3_events::{
+    LbfvAcceptedPartyCommitments, LbfvAggregationVerificationContext, LbfvVerificationContext,
+    LbfvVerificationContextV1, Proof, ProofPayload, ProofType,
+};
 use e3_fhe_params::BfvPreset;
 
 fn signer() -> PrivateKeySigner {
@@ -88,6 +98,27 @@ fn signed_pk(s: &PrivateKeySigner, e3_id: &E3id, wrong_circuit: bool) -> SignedP
 
 fn e3() -> E3id {
     E3id::new("1", 1)
+}
+
+fn lbfv_proof_domain(e3_id: &E3id) -> LbfvProofDomainContext {
+    LbfvProofDomainContext {
+        protocol_version: 4,
+        chain_id: e3_id.chain_id(),
+        interfold_address: address!("0x1111111111111111111111111111111111111111"),
+        e3_id: U256::try_from(e3_id.clone()).unwrap(),
+        crypto_config_id: B256::repeat_byte(0x22),
+        finalized_committee_hash: B256::repeat_byte(0x33),
+        lbfv_constants_version: 1,
+        ciphertext_level: 0,
+        key_level: 0,
+    }
+}
+
+fn lbfv_generation_context(e3_id: &E3id) -> LbfvVerificationContext {
+    LbfvVerificationContext::V1(LbfvVerificationContextV1 {
+        proof_domain: lbfv_proof_domain(e3_id),
+        aggregation: None,
+    })
 }
 
 mod ecdsa;

@@ -84,27 +84,29 @@ describe("NodeReleaseRegistry", function () {
     );
   });
 
-  it("does not admit a future protocol release before its cutover", async function () {
+  it("makes protocol-3 nodes ineligible when protocol 4 activates", async function () {
     const { interfold, bondingRegistry, nodeReleaseRegistry, operator1 } =
       await loadFixture(setup);
     const operator = await operator1!.getAddress();
-    const futureProtocol = ethers.id("interfold.node.release:v1:future");
+    const protocol3 = ethers.id("interfold.node.release:v1:protocol-3");
+    const protocol4 = ethers.id("interfold.node.release:v1:protocol-4");
 
+    await interfold.setRequestsPaused(true);
+    await nodeReleaseRegistry.setRequiredNodeRelease(3, 1);
     await nodeReleaseRegistry
       .connect(operator1!)
-      .acknowledgeNodeRelease(futureProtocol, 2, 1);
+      .acknowledgeNodeRelease(protocol3, 3, 1);
 
+    expect(await bondingRegistry.isActive(operator)).to.equal(true);
+    await nodeReleaseRegistry.setRequiredNodeRelease(4, 1);
+    expect(await bondingRegistry.isActive(operator)).to.equal(false);
     expect(await nodeReleaseRegistry.isNodeReleaseReady(operator)).to.equal(
       false,
     );
-    expect(await bondingRegistry.isActive(operator)).to.equal(false);
-    await interfold.setRequestsPaused(true);
-    await nodeReleaseRegistry.setRequiredNodeRelease(2, 1);
-    expect(await bondingRegistry.isActive(operator)).to.equal(false);
 
     await nodeReleaseRegistry
       .connect(operator1!)
-      .acknowledgeNodeRelease(futureProtocol, 2, 1);
+      .acknowledgeNodeRelease(protocol4, 4, 1);
     expect(await bondingRegistry.isActive(operator)).to.equal(true);
   });
 

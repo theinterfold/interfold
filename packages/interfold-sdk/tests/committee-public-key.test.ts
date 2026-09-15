@@ -7,7 +7,11 @@
 import { bytesToHex, keccak256 } from 'viem'
 import { describe, expect, it } from 'vitest'
 
-import { CommitteePublicKeyAssembler, MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES } from '../src/committee-public-key'
+import {
+  CommitteePublicKeyAssembler,
+  MAX_COMMITTEE_PUBLIC_KEY_BYTES,
+  MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES,
+} from '../src/committee-public-key'
 import type { CommitteePublicKeyChunkPublishedData } from '../src/events/types'
 
 const publisher = '0x0000000000000000000000000000000000000001'
@@ -44,6 +48,36 @@ describe('CommitteePublicKeyAssembler', () => {
     expect(result?.nodes).toEqual(nodes)
     expect(result?.pkCommitment).toBe(pkCommitment)
     expect(result?.publicKey).toEqual(bytes)
+  })
+
+  it('assembles the secure-16384 public key in 57 chunks', () => {
+    const bytes = new Uint8Array(5_222_596).map((_, index) => index % 251)
+    const events = eventsFor(bytes).reverse()
+    const assembler = new CommitteePublicKeyAssembler()
+
+    expect(events).toHaveLength(57)
+    let result
+    for (const event of events) result = assembler.add(event) ?? result
+
+    expect(result?.publicKey).toEqual(bytes)
+  })
+
+  it('accepts 6 MiB and rejects one additional byte', () => {
+    const bytes = new Uint8Array(MAX_COMMITTEE_PUBLIC_KEY_BYTES).fill(3)
+    const events = eventsFor(bytes)
+    const assembler = new CommitteePublicKeyAssembler()
+
+    expect(events).toHaveLength(69)
+    let result
+    for (const event of events) result = assembler.add(event) ?? result
+    expect(result?.publicKey).toEqual(bytes)
+
+    expect(() =>
+      new CommitteePublicKeyAssembler().add({
+        ...events[0],
+        totalLength: MAX_COMMITTEE_PUBLIC_KEY_BYTES + 1,
+      }),
+    ).toThrow('Committee public-key total length is outside the supported range')
   })
 
   it('accepts an identical replay but rejects a conflicting duplicate', () => {

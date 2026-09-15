@@ -6,6 +6,7 @@
 
 //! Shared utilities for the pk_generation circuit (e.g. CRP matrix constant).
 
+use crate::math::fhe_poly_to_crt_centered;
 use crate::utils::bigint_to_field;
 use crate::CircuitsErrors;
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
@@ -17,12 +18,10 @@ pub fn deterministic_crp_crt_polynomial(
     threshold_params: &std::sync::Arc<fhe::bfv::BfvParameters>,
 ) -> Result<CrtPolynomial, CircuitsErrors> {
     let crp = create_deterministic_crp_from_default_seed(threshold_params);
-    let mut a = CrtPolynomial::from_fhe_polynomial(crp.poly());
-
-    a.reverse();
-    a.center(threshold_params.moduli())?;
-
-    Ok(a)
+    Ok(fhe_poly_to_crt_centered(
+        crp.poly(),
+        threshold_params.moduli(),
+    )?)
 }
 
 /// Builds the CRP matrix (deterministic common random polynomial) constant string for Noir.

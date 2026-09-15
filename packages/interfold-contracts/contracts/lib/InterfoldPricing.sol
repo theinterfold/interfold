@@ -390,6 +390,7 @@ library InterfoldPricing {
 
         if (!ActiveCryptoConfig.isParamSetSupported(paramSet))
             revert IInterfold.UnsupportedCryptoConfig();
+        ActiveCryptoConfig.validateParamSetCommittee(paramSet, committeeSize);
         IInterfold.CommitteeSize size = IInterfold.CommitteeSize(committeeSize);
         if (threshold[1] == 0)
             revert IInterfold.CommitteeSizeNotConfigured(size);

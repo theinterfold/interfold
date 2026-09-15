@@ -755,6 +755,7 @@ mod tests {
                     accuser: Address::ZERO,
                     accused: Address::ZERO,
                     proof_type: ProofType::C1PkGeneration,
+                    proof_instance: 0,
                     votes_for: vec![],
                     outcome: AccusationOutcome::AccusedFaulted,
                     evidence: Bytes::new(),

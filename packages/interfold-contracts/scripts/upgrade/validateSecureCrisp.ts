@@ -36,6 +36,7 @@ import {
   bfvConfigsForChain,
   getBfvDecryptionSubCircuitVkHashPaths,
   getBfvPkSubCircuitVkHashPaths,
+  getBfvV2SubCircuitVkHashPaths,
   readVkRecursiveHash,
 } from "../utils";
 import { proxyImplementation } from "./safeProxyUpgrade";
@@ -61,6 +62,9 @@ const dataAvailabilityInterface = new ethersLib.Interface([
 ]);
 const availBridgeInterface = new ethersLib.Interface([
   "function vectorx() view returns (address)",
+]);
+const bfvPkVerifierV2Interface = new ethersLib.Interface([
+  "function LBFV_PROTOCOL_VERSION() view returns (uint256)",
 ]);
 
 function planPath(config: ProtocolConfigFile): string {
@@ -150,6 +154,21 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     deployment.nodeReleaseRegistry,
     "NodeReleaseRegistry",
   );
+  equalValue(
+    plan.timeoutConfig.dkgWindow,
+    config.interfold.timeoutConfig.dkgWindow,
+    "upgrade plan DKG window",
+  );
+  equalValue(
+    plan.timeoutConfig.computeWindow,
+    config.interfold.timeoutConfig.computeWindow,
+    "upgrade plan compute window",
+  );
+  equalValue(
+    plan.timeoutConfig.decryptionWindow,
+    config.interfold.timeoutConfig.decryptionWindow,
+    "upgrade plan decryption window",
+  );
   const sourceRelease = currentNodeRelease();
   equalValue(
     sourceRelease.version,
@@ -193,6 +212,14 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     [plan.nodeReleaseRegistry, "NodeReleaseRegistry"],
     ...plan.bfvVerifierRoutes.flatMap((route) => [
       [route.pkVerifier, `${route.preset}/${route.committee} PK verifier`],
+      ...(route.pkVerifierV2
+        ? [
+            [
+              route.pkVerifierV2,
+              `${route.preset}/${route.committee} V2 PK verifier`,
+            ],
+          ]
+        : []),
       [
         route.decryptionVerifier,
         `${route.preset}/${route.committee} decryption verifier`,
@@ -201,6 +228,14 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
         route.dkgAggregatorVerifier,
         `${route.preset}/${route.committee} DKG aggregator verifier`,
       ],
+      ...(route.dkgAggregatorV2Verifier
+        ? [
+            [
+              route.dkgAggregatorV2Verifier,
+              `${route.preset}/${route.committee} V2 DKG aggregator verifier`,
+            ],
+          ]
+        : []),
       [
         route.decryptionAggregatorVerifier,
         `${route.preset}/${route.committee} decryption aggregator verifier`,
@@ -223,6 +258,23 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     codeAddresses.map(([target, label]) =>
       requireContract(ethers.provider, target, label),
     ),
+  );
+  await Promise.all(
+    plan.bfvVerifierRoutes
+      .filter((route) => route.pkVerifierV2)
+      .map(async (route) => {
+        const protocolVersion = await readContract(
+          ethers.provider,
+          route.pkVerifierV2!,
+          bfvPkVerifierV2Interface,
+          "LBFV_PROTOCOL_VERSION",
+        );
+        equalValue(
+          protocolVersion,
+          sourceRelease.protocolVersion,
+          `${route.preset}/${route.committee} V2 protocol version`,
+        );
+      }),
   );
   equalAddress(
     await proxyImplementation(ethers, deployment.interfold),
@@ -256,6 +308,22 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     "Interfold owner",
   );
   equalValue(await interfold.activeE3Count(), 0n, "active E3 count");
+  const liveTimeoutConfig = await interfold.getTimeoutConfig();
+  equalValue(
+    liveTimeoutConfig.dkgWindow,
+    plan.timeoutConfig.dkgWindow,
+    "Interfold DKG window",
+  );
+  equalValue(
+    liveTimeoutConfig.computeWindow,
+    plan.timeoutConfig.computeWindow,
+    "Interfold compute window",
+  );
+  equalValue(
+    liveTimeoutConfig.decryptionWindow,
+    plan.timeoutConfig.decryptionWindow,
+    "Interfold decryption window",
+  );
   equalValue(
     await registry.unreleasedCommitteeCount(),
     0n,
@@ -494,6 +562,11 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     "BfvDecryptionVerifierRouter",
     plan.decryptionVerifier,
   );
+  equalAddress(
+    await pkRouter.ciphernodeRegistry(),
+    plan.registryProxy,
+    "PK router registry",
+  );
   equalValue(await pkRouter.h(), verifierDefault.h, "PK router default h");
   equalValue(
     await decryptionRouter.threshold(),
@@ -524,10 +597,22 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
 
     const pkRoute = await pkRouter.routeAt(index);
     const decryptionRoute = await decryptionRouter.routeAt(index);
-    equalAddress(pkRoute[0], recorded.pkVerifier, `PK route ${index}`);
+    const isV2 = expected.preset === "secure-16384";
+    const expectedPkVerifier = isV2
+      ? recorded.pkVerifierV2
+      : recorded.pkVerifier;
+    if (!expectedPkVerifier) {
+      throw new Error(`Recorded BFV route ${index} is missing its V2 verifier`);
+    }
+    equalAddress(pkRoute[0], expectedPkVerifier, `PK route ${index}`);
+    equalValue(
+      pkRoute[4],
+      expected.paramSet,
+      `PK route ${index} parameter set`,
+    );
     equalValue(
       pkRoute[1],
-      3 * expected.h + 24,
+      isV2 ? 63 : 3 * expected.h + 24,
       `PK route ${index} public input count`,
     );
     equalAddress(
@@ -542,8 +627,8 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     );
 
     const pkVerifier = await ethers.getContractAt(
-      "BfvPkVerifier",
-      recorded.pkVerifier,
+      isV2 ? "BfvPkVerifierV2" : "BfvPkVerifier",
+      expectedPkVerifier,
     );
     const decryptionVerifier = await ethers.getContractAt(
       "BfvDecryptionVerifier",
@@ -555,11 +640,31 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
       expected.t,
       `decryption route ${index} threshold`,
     );
+    const expectedDkgAggregator = isV2
+      ? recorded.dkgAggregatorV2Verifier
+      : recorded.dkgAggregatorVerifier;
+    if (!expectedDkgAggregator) {
+      throw new Error(
+        `Recorded BFV route ${index} is missing its DKG aggregator verifier`,
+      );
+    }
     equalAddress(
       await pkVerifier.circuitVerifier(),
-      recorded.dkgAggregatorVerifier,
+      expectedDkgAggregator,
       `PK route ${index} aggregator`,
     );
+    if (isV2) {
+      if (!recorded.dkgAggregatorV2Verifier) {
+        throw new Error(
+          `Recorded BFV route ${index} is missing its V2 DKG aggregator verifier`,
+        );
+      }
+      equalAddress(
+        await pkVerifier.ciphernodeRegistry(),
+        plan.registryProxy,
+        `PK route ${index} registry`,
+      );
+    }
     equalAddress(
       await decryptionVerifier.circuitVerifier(),
       recorded.decryptionAggregatorVerifier,
@@ -571,10 +676,13 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
       `decryption route ${index} registry`,
     );
     const pkPaths = getBfvPkSubCircuitVkHashPaths(expected);
+    const nodesFoldPath = isV2
+      ? getBfvV2SubCircuitVkHashPaths(expected).nodesFold
+      : pkPaths.nodesFold;
     const decryptionPaths = getBfvDecryptionSubCircuitVkHashPaths(expected);
     equalValue(
       pkRoute[2],
-      readVkRecursiveHash(pkPaths.nodesFold, expected),
+      readVkRecursiveHash(nodesFoldPath, expected),
       `PK route ${index} nodes-fold VK`,
     );
     equalValue(

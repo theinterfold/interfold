@@ -24,6 +24,8 @@ const DEFAULT_KADEMLIA_EXPIRY_DAYS: i64 = 30;
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum DocumentKind {
     TrBFV,
+    /// Versioned l-BFV public-key or relinearization-key share.
+    LbfvKeyShare,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -129,5 +131,17 @@ mod tests {
         assert!(meta.matches(&90));
         assert!(meta.matches(&140));
         assert!(meta.matches(&230));
+    }
+
+    #[test]
+    fn document_kind_bincode_variants_are_append_only() {
+        assert_eq!(
+            bincode::serialize(&DocumentKind::TrBFV).unwrap(),
+            [0, 0, 0, 0]
+        );
+        assert_eq!(
+            bincode::serialize(&DocumentKind::LbfvKeyShare).unwrap(),
+            [1, 0, 0, 0]
+        );
     }
 }

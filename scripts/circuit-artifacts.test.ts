@@ -9,7 +9,41 @@ import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { RELEASE_REQUIRED_PAIRS, requiredArtifactMarkers, validateArtifactSet, validateReleaseArtifacts } from './circuit-artifacts'
+import {
+  RELEASE_REQUIRED_PAIRS,
+  refreshChecksums,
+  requiredArtifactMarkers,
+  validateArtifactChecksums,
+  validateArtifactSet,
+  validateReleaseArtifacts,
+} from './circuit-artifacts'
+
+const REQUIRED_LBFV_MARKERS = [
+  ...['default', 'evm', 'recursive'].flatMap((variant) =>
+    ['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_generation_limb', 'rlk_aggregation'].flatMap((circuit) =>
+      ['.json', '.vk', '.vk_hash'].map((extension) =>
+        join('secure-16384', 'minimum', variant, 'threshold', circuit, `${circuit}${extension}`),
+      ),
+    ),
+  ),
+  ...[
+    'lbfv_generation_fold',
+    'lbfv_generation_fold_kernel',
+    'node_fold_v2',
+    'nodes_fold_v2',
+    'nodes_fold_v2_kernel',
+    'lbfv_aggregation_fold',
+    'lbfv_aggregation_fold_kernel',
+    'dkg_aggregator_v2',
+  ].flatMap((circuit) =>
+    ['.json', '.vk', '.vk_hash'].map((extension) =>
+      join('secure-16384', 'minimum', 'default', 'recursive_aggregation', circuit, `${circuit}${extension}`),
+    ),
+  ),
+  ...['.json', '.vk', '.vk_hash'].map((extension) =>
+    join('secure-16384', 'minimum', 'evm', 'recursive_aggregation', 'dkg_aggregator_v2', `dkg_aggregator_v2${extension}`),
+  ),
+]
 
 function sourceHash(preset: string, committee: string): string {
   return `source:${preset}:${committee}`
@@ -34,6 +68,28 @@ test('accepts the exact supported circuit matrix', () => {
   const dir = makeCompleteMatrix()
   try {
     assert.doesNotThrow(() => validateReleaseArtifacts(dir, sourceHash))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('accepts checksum manifests that cover the complete artifact set', () => {
+  const dir = makeCompleteMatrix()
+  try {
+    refreshChecksums(dir)
+    assert.doesNotThrow(() => validateArtifactChecksums(dir))
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('rejects an artifact modified after checksum generation', () => {
+  const dir = makeCompleteMatrix()
+  try {
+    refreshChecksums(dir)
+    const marker = requiredArtifactMarkers('secure-8192', 'small')[0]
+    writeFileSync(join(dir, marker), 'modified')
+    assert.throws(() => validateArtifactChecksums(dir), /hash mismatch/)
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }
@@ -81,6 +137,28 @@ test('rejects a stamp-valid pair with a missing verification-key artifact', () =
     try {
       const marker = requiredArtifactMarkers('secure-8192', 'small').find((artifact) => artifact.endsWith(extension))
       assert.ok(marker)
+      unlinkSync(join(dir, marker))
+      assert.throws(() => validateReleaseArtifacts(dir, sourceHash), /Incomplete circuit artifacts/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+})
+
+test('requires l-BFV row artifacts only for secure-16384', () => {
+  const secureMarkers = requiredArtifactMarkers('secure-16384', 'minimum').filter((artifact) => REQUIRED_LBFV_MARKERS.includes(artifact))
+  assert.deepEqual(secureMarkers.sort(), REQUIRED_LBFV_MARKERS.toSorted())
+
+  const unsupportedMarkers = requiredArtifactMarkers('secure-8192', 'minimum').filter((artifact) =>
+    REQUIRED_LBFV_MARKERS.includes(artifact),
+  )
+  assert.deepEqual(unsupportedMarkers, [])
+})
+
+test('rejects every missing secure-16384 l-BFV row artifact', () => {
+  for (const marker of REQUIRED_LBFV_MARKERS) {
+    const dir = makeCompleteMatrix()
+    try {
       unlinkSync(join(dir, marker))
       assert.throws(() => validateReleaseArtifacts(dir, sourceHash), /Incomplete circuit artifacts/)
     } finally {

@@ -20,9 +20,10 @@ impl ShareVerificationActor {
         ec: EventContext<Sequenced>,
         params_preset: e3_fhe_params::BfvPreset,
         committee_size: e3_zk_helpers::CiphernodesCommitteeSize,
+        lbfv_context: Option<&e3_events::LbfvVerificationContext>,
+        verification_id: Option<B256>,
         store_passed_proofs: impl FnOnce(&mut PendingConsistencyCheck, Vec<P>),
     ) {
-        let e3_id_str = e3_id.to_string();
         let label = label_for(&kind);
 
         // Pure ECDSA validation + proof-commitment preparation lives in the
@@ -31,12 +32,13 @@ impl ShareVerificationActor {
         let committee = self.committees.get(&e3_id).map(Vec::as_slice);
         let outcome = ShareVerifier::validate_and_prepare(
             &party_proofs,
-            &e3_id_str,
+            &e3_id,
             &kind,
             label,
             committee,
             params_preset,
             committee_size,
+            lbfv_context,
         );
 
         for failure in &outcome.failures {
@@ -53,7 +55,7 @@ impl ShareVerificationActor {
             // All parties failed ECDSA — publish result immediately
             let mut all_dishonest: BTreeSet<u64> = pre_dishonest;
             all_dishonest.extend(outcome.ecdsa_dishonest);
-            self.publish_complete(e3_id, kind, all_dishonest, ec);
+            self.publish_complete(e3_id, kind, verification_id, all_dishonest, ec);
             return;
         }
 
@@ -62,6 +64,7 @@ impl ShareVerificationActor {
         let mut pending = PendingConsistencyCheck {
             e3_id: e3_id.clone(),
             kind: kind.clone(),
+            verification_id,
             ec: ec.clone(),
             ecdsa_dishonest: outcome.ecdsa_dishonest,
             pre_dishonest,
@@ -100,7 +103,7 @@ impl ShareVerificationActor {
                 for p in &pending.ecdsa_passed_decryption_proofs {
                     all_dishonest.insert(p.sender_party_id);
                 }
-                self.publish_complete(e3_id, kind, all_dishonest, ec);
+                self.publish_complete(e3_id, kind, verification_id, all_dishonest, ec);
             }
         }
     }

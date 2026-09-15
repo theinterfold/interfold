@@ -24,7 +24,10 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result};
 use clap::Parser;
-use e3_fhe_params::{build_pair_for_preset, BfvPreset, ParameterType};
+use e3_fhe_params::{
+    build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset, ParameterType,
+};
+use e3_polynomial::CrtPolynomial;
 use e3_zk_helpers::ciphernodes_committee::CiphernodesCommitteeSize;
 use e3_zk_helpers::circuits::dkg::pk::computation::{Bits as DkgPkBits, Configs as DkgPkConfigs};
 use e3_zk_helpers::circuits::dkg::share_encryption::circuit::ShareEncryptionCircuitData;
@@ -33,6 +36,7 @@ use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::computatio
 use e3_zk_helpers::circuits::threshold::pk_aggregation::Configs as PkAggregationConfigs;
 use e3_zk_helpers::circuits::threshold::pk_generation::computation::Configs as PkGenerationConfigs;
 use e3_zk_helpers::circuits::threshold::pk_generation::utils::deterministic_crp_crt_polynomial;
+use e3_zk_helpers::circuits::threshold::rlk_generation::RlkGenerationConfigs;
 use e3_zk_helpers::circuits::threshold::share_decryption::Configs as ThresholdShareDecryptionConfigs;
 use e3_zk_helpers::circuits::threshold::user_data_encryption::Configs as UserDataEncryptionConfigs;
 use e3_zk_helpers::computation::DkgInputType;
@@ -157,11 +161,98 @@ fn crp_block(threshold_params: &std::sync::Arc<fhe::bfv::BfvParameters>) -> Resu
     ))
 }
 
+/// Serialize one fixed l-BFV public-randomness vector as circuit rows.
+///
+/// The outer vector is the l-BFV key-switching slot. Each row contains the CRT limbs of one
+/// concrete polynomial. The values must remain identical to the `CommonRandomPolyVec` used by the
+/// runtime l-BFV key path.
+fn lbfv_rows_block(
+    threshold_params: &std::sync::Arc<fhe::bfv::BfvParameters>,
+    seed: [u8; 32],
+) -> Result<String> {
+    let rows = fhe::bfv::CommonRandomPolyVec::from_seed(threshold_params, seed)?
+        .to_polys()
+        .into_iter()
+        .map(|poly| {
+            let mut row = CrtPolynomial::from_fhe_polynomial(&poly);
+            row.reverse();
+            row.center(threshold_params.moduli())?;
+
+            let limbs = row
+                .limbs
+                .iter()
+                .map(|limb| {
+                    let coefficients = limb
+                        .coefficients()
+                        .iter()
+                        .map(|coefficient| format!("        {},", bigint_to_field(coefficient)))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    format!("    Polynomial::new([\n{}\n    ]),", coefficients)
+                })
+                .collect::<Vec<_>>()
+                .join("\n");
+
+            Ok(format!("[\n{}\n]", limbs))
+        })
+        .collect::<Result<Vec<_>>>()?;
+
+    Ok(format!("[\n{}\n]", rows.join(",\n")))
+}
+
+/// Serialize the fixed Garner coefficients used by the l-BFV key-switching rows.
+fn lbfv_gadget_scalars(
+    threshold_params: &std::sync::Arc<fhe::bfv::BfvParameters>,
+) -> Result<String> {
+    let rns = fhe_math::rns::RnsContext::new(threshold_params.moduli())?;
+    let values = (0..threshold_params.moduli().len())
+        .map(|index| {
+            let coefficient = rns
+                .get_garner(index)
+                .ok_or_else(|| anyhow::anyhow!("missing Garner coefficient at index {index}"))?;
+            Ok(bigint_to_field(&BigInt::from(coefficient.clone())).to_string())
+        })
+        .collect::<Result<Vec<_>>>()?;
+    Ok(format!("[{}]", values.join(", ")))
+}
+
+fn render_lbfv(preset: BfvPreset) -> Result<Option<(String, String, String)>> {
+    let (Some(crs_seed), Some(urs_seed)) = (lbfv_crs_seed(preset), lbfv_urs_seed(preset)) else {
+        return Ok(None);
+    };
+
+    let (threshold_params, _) = build_pair_for_preset(preset)
+        .with_context(|| format!("build_pair_for_preset({preset:?}) failed"))?;
+    let crs_rows = lbfv_rows_block(&threshold_params, crs_seed)?;
+    let urs_rows = lbfv_rows_block(&threshold_params, urs_seed)?;
+    let gadget_scalars = lbfv_gadget_scalars(&threshold_params)?;
+    let slug = preset.noir_config_module();
+    let header = format!(
+        "{LICENSE}\nuse crate::math::polynomial::Polynomial;\nuse super::super::threshold::{{GADGET_DIM, L, N}};\n"
+    );
+    let crs = format!(
+        "{header}\npub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = {crs_rows};\n"
+    );
+    let urs = format!(
+        "{header}\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = {urs_rows};\n"
+    );
+    let module = format!(
+        "{LICENSE}\nuse super::threshold::GADGET_DIM;\n\npub mod crs;\npub mod urs;\n\npub use crate::configs::{slug}::lbfv::crs::LBFV_CRS_GADGET_ROWS;\npub use crate::configs::{slug}::lbfv::urs::LBFV_URS_GADGET_ROWS;\n\npub global G_GADGET_ROWS: [Field; GADGET_DIM] = {gadget_scalars};\n"
+    );
+
+    Ok(Some((module, crs, urs)))
+}
+
 fn render_threshold(preset: BfvPreset) -> Result<String> {
     let committee = CiphernodesCommitteeSize::Minimum.values();
 
     let pkgen = PkGenerationConfigs::compute(preset, &committee)
         .context("PkGenerationConfigs::compute failed")?;
+    let lbfv_enabled = lbfv_crs_seed(preset).is_some() && lbfv_urs_seed(preset).is_some();
+    let rlkgen = lbfv_enabled
+        .then(|| RlkGenerationConfigs::compute(preset, &committee))
+        .transpose()
+        .context("RlkGenerationConfigs::compute failed")?;
     let dsa = DsaConfigs::compute(preset, &()).context("DsaConfigs::compute failed")?;
     let udec = UserDataEncryptionConfigs::compute(preset, &())
         .context("UserDataEncryptionConfigs::compute failed")?;
@@ -187,6 +278,8 @@ fn render_threshold(preset: BfvPreset) -> Result<String> {
 use crate::core::threshold::decrypted_shares_aggregation::Configs as DecryptedSharesAggregationConfigs;
 use crate::core::threshold::pk_aggregation::Configs as PkAggregationConfigs;
 use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;
+use crate::core::threshold::rlk_aggregation::Configs as RlkAggregationConfigs;
+use crate::core::threshold::rlk_generation::Configs as RlkGenerationConfigs;
 use crate::core::threshold::share_decryption::Configs as ShareDecryptionConfigs;
 use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncryptionCt0Configs;
 use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
@@ -273,6 +366,120 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
             join_biguint(&pkgen.bounds.r1_bounds),
             join_biguint(&pkgen.bounds.r2_bounds),
             b_enc,
+        ),
+    );
+
+    let gadget_rows = std::iter::repeat("CRP")
+        .take(pkgen.l as usize)
+        .collect::<Vec<_>>()
+        .join(", ");
+    let lbfv_rows = if lbfv_enabled {
+        "pub use super::lbfv::{G_GADGET_ROWS, LBFV_CRS_GADGET_ROWS, LBFV_URS_GADGET_ROWS};"
+            .to_string()
+    } else {
+        let rows = std::iter::repeat("CRP")
+            .take(pkgen.l as usize)
+            .collect::<Vec<_>>()
+            .join(", ");
+        format!(
+            "pub global LBFV_CRS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global LBFV_URS_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{rows}];\npub global G_GADGET_ROWS: [Field; GADGET_DIM] = [{}];",
+            std::iter::repeat("1")
+                .take(pkgen.l as usize)
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    };
+    let c1_rows_comment = if lbfv_enabled {
+        "// C1 uses the repeated CRP path. The dedicated l-BFV public-key circuit selects rows below."
+    } else {
+        "// C1 uses the repeated CRP path because this preset does not enable l-BFV."
+    };
+    let rlk_generation_constants = if let Some(rlkgen) = rlkgen {
+        format!(
+            "pub global RLK_GENERATION_BIT_R: u32 = {};
+pub global RLK_GENERATION_BIT_SK: u32 = {};
+pub global RLK_GENERATION_BIT_E0: u32 = {};
+pub global RLK_GENERATION_BIT_E2: u32 = {};
+pub global RLK_GENERATION_BIT_R1_D0: u32 = {};
+pub global RLK_GENERATION_BIT_R2_D0: u32 = {};
+pub global RLK_GENERATION_BIT_R1_D2: u32 = {};
+pub global RLK_GENERATION_BIT_R2_D2: u32 = {};
+pub global RLK_GENERATION_BIT_D: u32 = {};
+
+pub global RLK_GENERATION_R_BOUND: Field = {};
+pub global RLK_GENERATION_SK_BOUND: Field = {};
+pub global RLK_GENERATION_E0_BOUND: Field = {};
+pub global RLK_GENERATION_E2_BOUND: Field = {};
+pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = [{}];
+pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = [{}];
+pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = [{}];
+pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = [{}];",
+            rlkgen.bits.r_bit,
+            rlkgen.bits.sk_bit,
+            rlkgen.bits.e0_bit,
+            rlkgen.bits.e2_bit,
+            rlkgen.bits.r1_d0_bit,
+            rlkgen.bits.r2_d0_bit,
+            rlkgen.bits.r1_d2_bit,
+            rlkgen.bits.r2_d2_bit,
+            rlkgen.bits.d_bit,
+            rlkgen.bounds.r_bound,
+            rlkgen.bounds.sk_bound,
+            rlkgen.bounds.e0_bound,
+            rlkgen.bounds.e2_bound,
+            join_biguint(&rlkgen.bounds.r1_d0_bounds),
+            join_biguint(&rlkgen.bounds.r2_d0_bounds),
+            join_biguint(&rlkgen.bounds.r1_d2_bounds),
+            join_biguint(&rlkgen.bounds.r2_d2_bounds),
+        )
+    } else {
+        "pub global RLK_GENERATION_BIT_R: u32 = PK_GENERATION_BIT_SK;
+pub global RLK_GENERATION_BIT_SK: u32 = PK_GENERATION_BIT_SK;
+pub global RLK_GENERATION_BIT_E0: u32 = PK_GENERATION_BIT_EEK;
+pub global RLK_GENERATION_BIT_E2: u32 = PK_GENERATION_BIT_EEK;
+pub global RLK_GENERATION_BIT_R1_D0: u32 = PK_GENERATION_BIT_R1;
+pub global RLK_GENERATION_BIT_R2_D0: u32 = PK_GENERATION_BIT_R2;
+pub global RLK_GENERATION_BIT_R1_D2: u32 = PK_GENERATION_BIT_R1;
+pub global RLK_GENERATION_BIT_R2_D2: u32 = PK_GENERATION_BIT_R2;
+pub global RLK_GENERATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
+
+pub global RLK_GENERATION_R_BOUND: Field = PK_GENERATION_SK_BOUND;
+pub global RLK_GENERATION_SK_BOUND: Field = PK_GENERATION_SK_BOUND;
+pub global RLK_GENERATION_E0_BOUND: Field = PK_GENERATION_EEK_BOUND;
+pub global RLK_GENERATION_E2_BOUND: Field = PK_GENERATION_EEK_BOUND;
+pub global RLK_GENERATION_R1_D0_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
+pub global RLK_GENERATION_R2_D0_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;
+pub global RLK_GENERATION_R1_D2_BOUNDS: [Field; L] = PK_GENERATION_R1_BOUNDS;
+pub global RLK_GENERATION_R2_D2_BOUNDS: [Field; L] = PK_GENERATION_R2_BOUNDS;"
+            .to_string()
+    };
+    let rlk_section = section(
+        "l-BFV relinearization key circuits",
+        &format!(
+            "pub global GADGET_DIM: u32 = L;
+{c1_rows_comment}
+pub global CRP_GADGET_ROWS: [[Polynomial<N>; L]; GADGET_DIM] = [{}];
+// l-BFV rows are fixed public randomness for the supported preset. Unsupported presets retain
+// placeholder declarations because their RLK path is disabled.
+{lbfv_rows}
+
+{rlk_generation_constants}
+
+pub global RLK_GENERATION_CONFIGS: RlkGenerationConfigs<N, L> = RlkGenerationConfigs::new(
+    QIS,
+    RLK_GENERATION_R_BOUND,
+    RLK_GENERATION_SK_BOUND,
+    RLK_GENERATION_E0_BOUND,
+    RLK_GENERATION_E2_BOUND,
+    RLK_GENERATION_R1_D0_BOUNDS,
+    RLK_GENERATION_R2_D0_BOUNDS,
+    RLK_GENERATION_R1_D2_BOUNDS,
+    RLK_GENERATION_R2_D2_BOUNDS,
+);
+
+pub global RLK_AGGREGATION_BIT_D: u32 = PK_GENERATION_BIT_PK;
+pub global RLK_AGGREGATION_CONFIGS: RlkAggregationConfigs<L> = RlkAggregationConfigs::new(QIS);",
+            gadget_rows,
         ),
     );
 
@@ -406,7 +613,7 @@ pub global DECRYPTED_SHARES_AGGREGATION_CONFIGS: DecryptedSharesAggregationConfi
     );
 
     Ok(format!(
-        "{header}{pkgen_section}\n\n{pkagg_section}\n\n{udec_section}\n\n{udec_ct0_section}\n\n{udec_ct1_section}\n\n{tsd_section}\n\n{dsa_section}\n"
+        "{header}{pkgen_section}\n\n{rlk_section}\n\n{pkagg_section}\n\n{udec_section}\n\n{udec_ct0_section}\n\n{udec_ct1_section}\n\n{tsd_section}\n\n{dsa_section}\n"
     ))
 }
 
@@ -579,8 +786,13 @@ pub global SHARE_ENCRYPTION_CONFIGS: ShareEncryptionConfigs<L> = ShareEncryption
     ))
 }
 
-fn render_mod() -> String {
-    format!("{LICENSE}\npub mod dkg;\npub mod threshold;\n")
+fn render_mod(preset: BfvPreset) -> String {
+    let lbfv = if lbfv_crs_seed(preset).is_some() && lbfv_urs_seed(preset).is_some() {
+        "pub mod lbfv;\n"
+    } else {
+        ""
+    };
+    format!("{LICENSE}\npub mod dkg;\n{lbfv}pub mod threshold;\n")
 }
 
 fn main() -> Result<()> {
@@ -600,6 +812,7 @@ fn main() -> Result<()> {
 
     let threshold = render_threshold(preset)?;
     let dkg = render_dkg(preset)?;
+    let lbfv = render_lbfv(preset)?;
 
     let tp = dir.join("threshold.nr");
     let dp = dir.join("dkg.nr");
@@ -607,7 +820,19 @@ fn main() -> Result<()> {
 
     std::fs::write(&tp, threshold).with_context(|| format!("writing {}", tp.display()))?;
     std::fs::write(&dp, dkg).with_context(|| format!("writing {}", dp.display()))?;
-    std::fs::write(&mp, render_mod()).with_context(|| format!("writing {}", mp.display()))?;
+    std::fs::write(&mp, render_mod(preset)).with_context(|| format!("writing {}", mp.display()))?;
+
+    if let Some((module, crs, urs)) = lbfv {
+        let lbfv_dir = dir.join("lbfv");
+        std::fs::create_dir_all(&lbfv_dir)
+            .with_context(|| format!("creating {}", lbfv_dir.display()))?;
+        let lmp = lbfv_dir.join("mod.nr");
+        let lcp = lbfv_dir.join("crs.nr");
+        let lup = lbfv_dir.join("urs.nr");
+        std::fs::write(&lmp, module).with_context(|| format!("writing {}", lmp.display()))?;
+        std::fs::write(&lcp, crs).with_context(|| format!("writing {}", lcp.display()))?;
+        std::fs::write(&lup, urs).with_context(|| format!("writing {}", lup.display()))?;
+    }
 
     println!("{}", tp.display());
     println!("{}", dp.display());

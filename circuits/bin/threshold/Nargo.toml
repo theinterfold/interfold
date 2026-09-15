@@ -2,6 +2,11 @@
 members = [
     "pk_generation",
     "pk_aggregation",
+    "lbfv_pk_generation",
+    "lbfv_pk_aggregation",
+    "rlk_generation",
+    "rlk_generation_limb",
+    "rlk_aggregation",
     "user_data_encryption",
     "user_data_encryption_ct0",
     "user_data_encryption_ct1",
