@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import assert from 'node:assert/strict'
-import { mkdirSync, mkdtempSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
@@ -57,6 +57,76 @@ test('pair source hash ignores generated bounds but tracks other Noir config', (
     const generatorHash = builder.computeSourceHash('insecure-512', 'micro')
     writeFileSync(generatorPath, 'second')
     assert.notEqual(builder.computeSourceHash('insecure-512', 'micro'), generatorHash)
+  } finally {
+    rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test('hydrate replaces stale targets at the paths used by Nargo', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-hydrate-'))
+  const outputDir = join(dir, 'dist', 'circuits')
+  const preset = 'insecure-512'
+  const committee = 'small'
+  const source = 'source-hash'
+
+  const fixtures = [
+    {
+      group: 'dkg',
+      name: 'sk_share_computation',
+      workspace: true,
+      expectedTarget: join(dir, 'circuits', 'bin', 'dkg', 'target'),
+    },
+    {
+      group: 'recursive_aggregation',
+      name: 'c3_fold',
+      workspace: false,
+      expectedTarget: join(dir, 'circuits', 'bin', 'recursive_aggregation', 'c3_fold', 'target'),
+    },
+  ] as const
+
+  try {
+    for (const fixture of fixtures) {
+      const groupDir = join(dir, 'circuits', 'bin', fixture.group)
+      const circuitDir = join(groupDir, fixture.name)
+      mkdirSync(circuitDir, { recursive: true })
+      if (fixture.workspace) {
+        writeFileSync(join(groupDir, 'Nargo.toml'), `[workspace]\nmembers = ["${fixture.name}"]\n`)
+      }
+      writeFileSync(join(circuitDir, 'Nargo.toml'), `[package]\nname = "${fixture.name}"\ntype = "bin"\n`)
+
+      mkdirSync(fixture.expectedTarget, { recursive: true })
+      writeFileSync(join(fixture.expectedTarget, `${fixture.name}.json`), 'stale')
+
+      const pairRoot = join(outputDir, preset, committee)
+      for (const variant of ['default', 'evm', 'recursive']) {
+        const artifactDir = join(pairRoot, variant, fixture.group, fixture.name)
+        mkdirSync(artifactDir, { recursive: true })
+        if (variant === 'default') {
+          writeFileSync(join(artifactDir, `${fixture.name}.json`), `${fixture.name}-fresh`)
+        }
+        writeFileSync(join(artifactDir, `${fixture.name}.vk`), `${variant}-vk`)
+        writeFileSync(join(artifactDir, `${fixture.name}.vk_hash`), `${variant}-hash`)
+      }
+    }
+
+    const builder = new NoirCircuitBuilder(dir, { outputDir, preset, committee })
+    const hydrate = builder as unknown as {
+      hydrateBinFromDist: (selectedPreset: 'insecure-512', selectedCommittee: 'small', hash: string) => void
+    }
+    hydrate.hydrateBinFromDist(preset, committee, source)
+
+    for (const fixture of fixtures) {
+      assert.equal(readFileSync(join(fixture.expectedTarget, `${fixture.name}.json`), 'utf8'), `${fixture.name}-fresh`)
+      assert.equal(readFileSync(join(fixture.expectedTarget, `${fixture.name}.vk_recursive`), 'utf8'), 'default-vk')
+      assert.equal(readFileSync(join(fixture.expectedTarget, `${fixture.name}.vk`), 'utf8'), 'evm-vk')
+      assert.equal(readFileSync(join(fixture.expectedTarget, `${fixture.name}.vk_noir`), 'utf8'), 'recursive-vk')
+    }
+
+    const stamp = JSON.parse(readFileSync(join(dir, 'circuits', 'bin', '.active-preset.json'), 'utf8'))
+    assert.deepEqual(
+      { preset: stamp.preset, committee: stamp.committee, sourceHash: stamp.sourceHash },
+      { preset, committee, sourceHash: source },
+    )
   } finally {
     rmSync(dir, { recursive: true, force: true })
   }

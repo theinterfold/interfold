@@ -564,9 +564,17 @@ library ActiveCryptoConfig {
     const circuits = this.discoverCircuits()
     let copied = 0
 
+    // A Nargo workspace writes every member artifact to the workspace-level
+    // target directory. Remove targets from the previous preset before
+    // hydration so the active stamp cannot describe a mixed artifact tree.
+    this.cleanTargetDirs(circuits)
+
     for (const circuit of circuits) {
       const packageName = this.getPackageName(circuit.path)
-      const targetDir = join(circuit.path, 'target')
+      const groupDir = join(this.circuitsDir, circuit.group)
+      const groupManifest = join(groupDir, 'Nargo.toml')
+      const targetDir =
+        existsSync(groupManifest) && this.isWorkspaceOnly(groupManifest) ? join(groupDir, 'target') : join(circuit.path, 'target')
       mkdirSync(targetDir, { recursive: true })
 
       const copyPair = (from: string, to: string) => {
