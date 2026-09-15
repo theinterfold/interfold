@@ -4240,8 +4240,10 @@ name = "e3-logger"
 version = "0.14.0"
 dependencies = [
  "actix",
+ "alloy",
  "base64 0.22.1",
  "e3-events",
+ "e3-utils",
  "serde",
  "serde_json",
  "tracing",

@@ -691,6 +691,9 @@ impl InterfoldEventData {
             InterfoldEventData::CiphertextOutputReferencePublished(ref data) => {
                 Some(data.e3_id.clone())
             }
+            // The failed request keeps the E3 that the work belonged to. Without this arm the
+            // error logs for a failed computation have an empty `e3_id` field.
+            InterfoldEventData::ComputeRequestError(ref data) => Some(data.request().e3_id.clone()),
             _ => None,
         }
     }

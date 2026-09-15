@@ -10,13 +10,14 @@ impl ProofRequestActor {
         msg: TypedEvent<ComputeRequestError>,
     ) {
         let (msg, ec) = msg.into_components();
-        let ComputeRequestErrorKind::Zk(err) = msg.get_err() else {
-            return;
-        };
 
+        // Every actor that dispatches compute work receives every `ComputeRequestError`, so a
+        // correlation that no map below owns belongs to a different actor. Match on the
+        // correlation first and report the error kind through `Display`: a failure that this
+        // actor owns must fail its round, whether the worker reported a ZK or a TrBFV error.
         if let Some(pending) = self.pending.remove(msg.correlation_id()) {
             error!(
-                "C0 proof request failed for E3 {}: {err} — key will not be published without proof",
+                "C0 proof request failed for E3 {}: {msg} — key will not be published without proof",
                 pending.e3_id
             );
             self.fail_dkg_round(pending.e3_id, &ec, "C0 proof request error");
@@ -25,7 +26,7 @@ impl ProofRequestActor {
 
         if let Some((e3_id, kind, _seq)) = self.threshold_correlation.remove(msg.correlation_id()) {
             error!(
-                "DKG {:?} proof request failed for E3 {}: {err} — threshold share will not be published without proof",
+                "DKG {:?} proof request failed for E3 {}: {msg} — threshold share will not be published without proof",
                 kind, e3_id
             );
             self.threshold_correlation
@@ -38,7 +39,7 @@ impl ProofRequestActor {
         if let Some((e3_id, kind, _seq)) = self.decryption_correlation.remove(msg.correlation_id())
         {
             error!(
-                "C4 {:?} proof request failed for E3 {}: {err} — DecryptionKeyShared will not be published",
+                "C4 {:?} proof request failed for E3 {}: {msg} — DecryptionKeyShared will not be published",
                 kind, e3_id
             );
             self.decryption_correlation
@@ -53,7 +54,7 @@ impl ProofRequestActor {
             .remove(msg.correlation_id())
         {
             error!(
-                "C6 proof request failed for E3 {}: {err} — DecryptionshareCreated will not be published",
+                "C6 proof request failed for E3 {}: {msg} — DecryptionshareCreated will not be published",
                 e3_id
             );
             self.pending_share_decryption.remove(&e3_id);
@@ -63,7 +64,7 @@ impl ProofRequestActor {
 
         if let Some(e3_id) = self.pk_aggregation_correlation.remove(msg.correlation_id()) {
             error!(
-                "C5 proof request failed for E3 {}: {err} — PkAggregationProofSigned will not be published",
+                "C5 proof request failed for E3 {}: {msg} — PkAggregationProofSigned will not be published",
                 e3_id
             );
             self.pending_pk_aggregation.remove(&e3_id);
@@ -74,11 +75,17 @@ impl ProofRequestActor {
 
         if let Some(e3_id) = self.aggregation_correlation.remove(msg.correlation_id()) {
             error!(
-                "C7 proof request failed for E3 {}: {err} — AggregationProofSigned will not be published",
+                "C7 proof request failed for E3 {}: {msg} — AggregationProofSigned will not be published",
                 e3_id
             );
             self.pending_aggregation.remove(&e3_id);
             self.fail_decryption_round(e3_id, &ec, "C7 proof request error");
+            return;
         }
+
+        debug!(
+            "ProofRequestActor: ignored compute error for correlation {:?} held by another actor: {msg}",
+            msg.correlation_id()
+        );
     }
 }
