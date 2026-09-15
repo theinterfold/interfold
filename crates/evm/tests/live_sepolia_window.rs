@@ -49,17 +49,17 @@ async fn live_sepolia_sync_covers_every_block_on_each_endpoint() {
     let address: Address = REGISTRY.parse().expect("registry address");
 
     for (name, url) in ENDPOINTS {
-        let Some(provider) = connect(url).await else {
-            println!("{name}: connect failed, skipping");
-            continue;
-        };
-        let head = match provider.provider().get_block_number().await {
-            Ok(head) => head,
-            Err(error) => {
-                println!("{name}: head unavailable ({error}), skipping");
-                continue;
-            }
-        };
+        // A probe failure fails the test. Skipping on connect or head errors would let the whole
+        // run report success while checking nothing, which is the one outcome a live test must
+        // never produce.
+        let provider = connect(url)
+            .await
+            .unwrap_or_else(|| panic!("{name}: could not create a provider for {url}"));
+        let head = provider
+            .provider()
+            .get_block_number()
+            .await
+            .unwrap_or_else(|error| panic!("{name}: head block unavailable: {error}"));
 
         // The real first sync: the earliest deployed contract's creation block to the head.
         // Taken from the live committee19 inventory, found by bisecting eth_getCode.
@@ -126,12 +126,15 @@ async fn live_sepolia_sync_covers_every_block_on_each_endpoint() {
             .address(address)
             .from_block(from)
             .to_block(from + 9_999);
-        if let Ok(logs) = provider.provider().get_logs(&full).await {
-            for log in &logs {
-                logs_seen += 1;
-                if log.block_timestamp.is_some() {
-                    logs_with_timestamp += 1;
-                }
+        let sample = provider
+            .provider()
+            .get_logs(&full)
+            .await
+            .unwrap_or_else(|error| panic!("{name}: sample chunk failed: {error}"));
+        for log in &sample {
+            logs_seen += 1;
+            if log.block_timestamp.is_some() {
+                logs_with_timestamp += 1;
             }
         }
 
