@@ -183,6 +183,11 @@ impl ShareVerificationActor {
 
         let correlation_id = msg.correlation_id();
         let Some(pending) = self.pending.remove(correlation_id) else {
+            // Every compute-dispatching actor receives every error, so an unowned correlation
+            // is another actor's failure, not a fault here.
+            debug!(
+                "ShareVerificationActor: ignored compute error for correlation {correlation_id:?} held by another actor: {msg}"
+            );
             return;
         };
 

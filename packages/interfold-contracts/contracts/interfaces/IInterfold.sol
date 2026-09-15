@@ -236,6 +236,10 @@ interface IInterfold {
     );
 
     /// @notice Emitted when a recipient claims their accrued E3 reward.
+    /// @dev ZEN2-20: covers both sources of one claim, the pre-upgrade balance
+    ///      held here and the operator-held escrow the refund manager pays to
+    ///      the same frozen recipient. `amount` is their sum, so a consumer
+    ///      that follows this event sees every withdrawal of an E3 reward.
     /// @param e3Id The ID of the E3 computation.
     /// @param account The claimant address.
     /// @param token The ERC20 fee token transferred.
@@ -356,6 +360,14 @@ interface IInterfold {
         FailureReason reason
     );
 
+    /// @notice Emitted when an expulsion corrects an E3's failure reason.
+    /// @dev The stage stays `Failed`; only the party that pays changes.
+    event E3FailureReclassified(
+        uint256 indexed e3Id,
+        FailureReason previousReason,
+        FailureReason reason
+    );
+
     /// @notice Emitted when timeout config is updated
     event TimeoutConfigUpdated(E3TimeoutConfig config);
 
@@ -383,6 +395,12 @@ interface IInterfold {
     /// @notice Thrown when an E3 request uses a program that is not enabled.
     /// @param e3Program The E3 program address that is not allowed.
     error E3ProgramNotAllowed(IE3Program e3Program);
+
+    /// @notice Thrown when a candidate E3 program does not advertise a required interface.
+    /// @dev Interfold probes `IE3Program` and `IE3ProgramDataAvailability` with ERC-165 at
+    ///      registration. A program that omits either one cannot publish an output.
+    /// @param e3Program The rejected program address.
+    error E3ProgramInterfaceMissing(address e3Program);
 
     /// @notice Thrown when attempting to access an E3 that does not exist.
     /// @param e3Id The ID of the non-existent E3.
@@ -491,6 +509,17 @@ interface IInterfold {
     /// @param e3Id The E3 identifier.
     /// @param deadline The last valid publication timestamp.
     error DKGDeadlinePassed(uint256 e3Id, uint256 deadline);
+
+    /// @notice Thrown when a committee publishes its key after the input window closed.
+    /// @dev A round that reaches `KeyPublished` after its input window can no longer receive
+    ///      inputs. It then fails as a requester-paid compute timeout instead of a
+    ///      committee-paid DKG timeout. Refuse the late publication instead.
+    /// @param e3Id The E3 identifier.
+    /// @param inputDeadline The end of the input window.
+    error InputWindowClosedBeforeKeyPublication(
+        uint256 e3Id,
+        uint256 inputDeadline
+    );
 
     /// @notice The Input deadline is invalid
     error InvalidInputDeadline(uint256 deadline);
@@ -812,6 +841,14 @@ interface IInterfold {
 
     /// @notice Called by authorized contracts to mark an E3 as failed with a specific reason.
     /// @dev Updates E3 lifecycle to Failed stage with the given reason.
+    ///      ZEN2-04: when the E3 already failed, the E3's request-time slashing
+    ///      manager may call this with `InsufficientCommitteeMembers` to
+    ///      correct a requester-paid reason another caller recorded first. That
+    ///      path leaves the stage at `Failed` and the active-E3 counter
+    ///      unchanged, so it moves only the recorded payer. It returns without
+    ///      an effect once settlement calculated the distribution or the reason
+    ///      is already supplier-paid, so the expulsion that triggers it still
+    ///      commits.
     /// @param e3Id ID of the E3.
     /// @param reason The failure reason from FailureReason enum.
     function onE3Failed(uint256 e3Id, uint8 reason) external;

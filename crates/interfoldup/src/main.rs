@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tar::Archive;
 
-const GITHUB_REPO: &str = "gnosisguild/interfold";
+const GITHUB_REPO: &str = "theinterfold/interfold";
 const BINARY_NAME: &str = "interfold";
 
 #[derive(Parser)]
@@ -38,12 +38,18 @@ enum Commands {
         /// Install to /usr/local/bin instead of ~/.local/bin
         #[arg(long)]
         system: bool,
+        /// Release tag to install, for example `v0.13.0`. Default: the latest release
+        #[arg(long, value_name = "TAG")]
+        version: Option<String>,
     },
     /// Update interfold to the latest version
     Update {
         /// Install to /usr/local/bin instead of ~/.local/bin
         #[arg(long)]
         system: bool,
+        /// Release tag to move to, for example `v0.13.0`. Default: the latest release
+        #[arg(long, value_name = "TAG")]
+        version: Option<String>,
     },
     /// Remove the installed interfold binary
     Uninstall {
@@ -129,16 +135,41 @@ impl Installer {
             GITHUB_REPO
         );
 
+        self.fetch_release(&url, "latest").await
+    }
+
+    /// Get a release by its tag. The leading `v` is optional: `0.13.0` and
+    /// `v0.13.0` both resolve, because release tags carry the `v` prefix.
+    async fn get_release_by_tag(&self, tag: &str) -> Result<GitHubRelease> {
+        let mut last_error = None;
+
+        for candidate in tag_candidates(tag) {
+            let url = format!(
+                "https://api.github.com/repos/{}/releases/tags/{}",
+                GITHUB_REPO, candidate
+            );
+
+            match self.fetch_release(&url, &candidate).await {
+                Ok(release) => return Ok(release),
+                Err(err) => last_error = Some(err),
+            }
+        }
+
+        Err(last_error.unwrap_or_else(|| anyhow!("Release {} not found", tag)))
+    }
+
+    async fn fetch_release(&self, url: &str, label: &str) -> Result<GitHubRelease> {
         let response = self
             .client
-            .get(&url)
+            .get(url)
             .send()
             .await
-            .context("Failed to fetch latest release")?;
+            .with_context(|| format!("Failed to fetch release {}", label))?;
 
         if !response.status().is_success() {
             return Err(anyhow!(
-                "GitHub API request failed with status: {}",
+                "GitHub API request for release {} failed with status: {}",
+                label,
                 response.status()
             ));
         }
@@ -149,6 +180,14 @@ impl Installer {
             .context("Failed to parse GitHub release response")?;
 
         Ok(release)
+    }
+
+    /// Get the release to install: the requested tag, or the latest release.
+    async fn resolve_release(&self, version: Option<&str>) -> Result<GitHubRelease> {
+        match version {
+            Some(tag) => self.get_release_by_tag(tag).await,
+            None => self.get_latest_release().await,
+        }
     }
 
     async fn download_with_progress(&self, url: &str) -> Result<Vec<u8>> {
@@ -190,14 +229,18 @@ impl Installer {
         Ok(buffer)
     }
 
-    async fn download_and_install(&self, system: bool) -> Result<()> {
+    async fn download_and_install(&self, system: bool, version: Option<&str>) -> Result<()> {
         println!(
             "Detecting platform: {}-{}",
             self.platform.os, self.platform.arch
         );
 
-        let release = self.get_latest_release().await?;
-        println!("Latest release: {}", release.tag_name);
+        let release = self.resolve_release(version).await?;
+        if version.is_some() {
+            println!("Requested release: {}", release.tag_name);
+        } else {
+            println!("Latest release: {}", release.tag_name);
+        }
 
         let asset_pattern = self.platform.asset_pattern();
         let asset = release
@@ -311,7 +354,7 @@ impl Installer {
         Ok(())
     }
 
-    async fn update(&self, system: bool) -> Result<()> {
+    async fn update(&self, system: bool, version: Option<&str>) -> Result<()> {
         let target_dir = self.get_install_dir(system)?;
         let target_path = target_dir.join(BINARY_NAME);
 
@@ -320,25 +363,25 @@ impl Installer {
                 "{} is not installed. Running install instead...",
                 BINARY_NAME
             );
-            return self.download_and_install(system).await;
+            return self.download_and_install(system, version).await;
         }
         let current_version = self.get_current_version(&target_path);
-        let latest_release = self.get_latest_release().await?;
+        let target_release = self.resolve_release(version).await?;
 
         if let Some(current) = current_version {
-            if current == latest_release.tag_name {
-                println!("{} is already up to date ({})", BINARY_NAME, current);
+            if tags_match(&current, &target_release.tag_name) {
+                println!("{} is already at {}", BINARY_NAME, current);
                 return Ok(());
             }
             println!(
                 "Updating {} from {} to {}",
-                BINARY_NAME, current, latest_release.tag_name
+                BINARY_NAME, current, target_release.tag_name
             );
         } else {
-            println!("Updating {} to {}", BINARY_NAME, latest_release.tag_name);
+            println!("Updating {} to {}", BINARY_NAME, target_release.tag_name);
         }
 
-        self.download_and_install(system).await
+        self.download_and_install(system, version).await
     }
 
     fn get_current_version(&self, binary_path: &Path) -> Option<String> {
@@ -356,17 +399,35 @@ impl Installer {
     }
 }
 
+/// Tag forms to try for a requested version, most likely first. Release tags
+/// carry a `v` prefix, so a bare `0.13.0` also resolves.
+fn tag_candidates(tag: &str) -> Vec<String> {
+    let trimmed = tag.trim();
+    if trimmed.starts_with('v') {
+        vec![trimmed.to_string()]
+    } else {
+        vec![format!("v{}", trimmed), trimmed.to_string()]
+    }
+}
+
+/// Compare two version strings, ignoring a leading `v` on either side.
+fn tags_match(a: &str, b: &str) -> bool {
+    a.trim().trim_start_matches('v') == b.trim().trim_start_matches('v')
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let installer = Installer::new()?;
 
     match cli.command {
-        Commands::Install { system } => {
-            installer.download_and_install(system).await?;
+        Commands::Install { system, version } => {
+            installer
+                .download_and_install(system, version.as_deref())
+                .await?;
         }
-        Commands::Update { system } => {
-            installer.update(system).await?;
+        Commands::Update { system, version } => {
+            installer.update(system, version.as_deref()).await?;
         }
         Commands::Uninstall { system } => {
             installer.uninstall(system).await?;
@@ -374,4 +435,34 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{tag_candidates, tags_match};
+
+    #[test]
+    fn prefixed_tag_is_used_as_is() {
+        assert_eq!(tag_candidates("v0.13.0"), vec!["v0.13.0".to_string()]);
+    }
+
+    #[test]
+    fn bare_tag_tries_the_v_prefix_first() {
+        assert_eq!(
+            tag_candidates("0.13.0"),
+            vec!["v0.13.0".to_string(), "0.13.0".to_string()]
+        );
+    }
+
+    #[test]
+    fn surrounding_space_is_removed() {
+        assert_eq!(tag_candidates("  v1.0.0-beta.1 "), vec!["v1.0.0-beta.1"]);
+    }
+
+    #[test]
+    fn tags_match_ignores_the_v_prefix() {
+        assert!(tags_match("0.13.0", "v0.13.0"));
+        assert!(tags_match("v0.13.0", "v0.13.0"));
+        assert!(!tags_match("0.13.0", "v0.14.0"));
+    }
 }

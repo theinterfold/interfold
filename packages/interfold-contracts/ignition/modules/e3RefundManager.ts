@@ -10,7 +10,12 @@ export default buildModule("E3RefundManager", (m) => {
   const interfold = m.getParameter("interfold");
   const treasury = m.getParameter("treasury");
 
-  const e3RefundManagerImpl = m.contract("E3RefundManager", []);
+  // External library keeps the honest-node claim checks out of the
+  // size-constrained E3RefundManager runtime.
+  const refundClaimLib = m.library("RefundClaimLib");
+  const e3RefundManagerImpl = m.contract("E3RefundManager", [], {
+    libraries: { RefundClaimLib: refundClaimLib },
+  });
 
   const initData = m.encodeFunctionCall(e3RefundManagerImpl, "initialize", [
     owner,

@@ -267,7 +267,9 @@ interface ICiphernodeRegistry {
     /// @notice Emitted when the randomness provider changes.
     event RandomnessProviderSet(address indexed randomnessProvider);
 
-    /// @notice Emitted when an expired response disables future randomness requests.
+    /// @notice Emitted when a randomness response expires without a usable result.
+    /// @dev The signal is advisory. New requests continue to use the same provider until
+    ///      governance re-points it with `setRandomnessProvider`.
     event RandomnessCircuitBreakerTripped(
         uint256 indexed e3Id,
         uint256 indexed requestId,
@@ -370,6 +372,13 @@ interface ICiphernodeRegistry {
 
     /// @notice The E3's committee collateral obligations were already released.
     error CommitteeObligationsAlreadyReleased(uint256 e3Id);
+
+    /// @notice A finalized committee cannot release collateral while the
+    ///         slashing manager still accepts accusations for its E3.
+    error CommitteeAccusationWindowOpen(
+        uint256 e3Id,
+        uint64 submissionDeadline
+    );
 
     /// @notice Registry dependencies cannot change while membership or committees remain.
     error RegistryGenerationNotDrained();
@@ -561,7 +570,12 @@ interface ICiphernodeRegistry {
     ) external;
 
     /// @notice Release committee collateral after the E3 completes or fails.
-    /// @dev Permissionless and bound to the request-time Interfold and bonding registry.
+    /// @dev Permissionless and bound to the request-time Interfold, bonding
+    ///      registry, and slashing manager. A committee that never finalized
+    ///      releases as soon as the E3 is terminal. A finalized committee also
+    ///      waits until the slashing manager's accusation submission deadline
+    ///      has passed, so member collateral stays slashable for the full
+    ///      accusation window.
     function releaseCommittee(uint256 e3Id) external;
 
     /// @notice Returns DKG anchor commitments stored at publication (empty if not yet published).
@@ -644,6 +658,10 @@ interface ICiphernodeRegistry {
 
     /// @notice Returns the maximum time allowed for a randomness response.
     function randomnessRequestTimeout() external view returns (uint256);
+
+    /// @notice Tells whether one randomness response expired since the last provider change.
+    /// @dev Advisory only. Governance uses it to decide a provider change.
+    function randomnessDegraded() external view returns (bool);
 
     /// @notice Returns the duration that the exit delay must exceed.
     /// @dev Includes the current randomness and submission windows and the

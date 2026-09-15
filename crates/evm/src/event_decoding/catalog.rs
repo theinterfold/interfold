@@ -110,6 +110,11 @@ const INTERFOLD: &[EvmEventDefinition] = &[
         "E3FailureProcessed(uint256,uint256,uint256)",
         Some(1),
     ),
+    EvmEventDefinition::new(
+        "E3FailureReclassified",
+        "E3FailureReclassified(uint256,uint8,uint8)",
+        Some(1),
+    ),
     EvmEventDefinition::new("E3ProgramRegistered", "E3ProgramRegistered(address)", None),
     EvmEventDefinition::new(
         "E3ProgramUnregistered",

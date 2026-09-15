@@ -181,6 +181,18 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     │
 │     │  ┌─── E3RefundManager.calculateRefund() ────────────────┐
 │     │  │                                                       │
+│     │  │  0. ZEN2-04 gate: revert SettlementBlocked unless     │
+│     │  │     slashingManager.settlementOpen(e3Id):             │
+│     │  │       accusation window closed AND no affectsCommittee│
+│     │  │       proposal open for this E3. The constant        │
+│     │  │       settlementCutoff never bypasses a proposal.    │
+│     │  │     A round with no finalized committee passes at     │
+│     │  │     once. Non-expelling penalties never gate. So on a │
+│     │  │     failed E3 every admitted expulsion resolves here. │
+│     │  │     `honestNodes` is the post-expulsion               │
+│     │  │     roster; the base split never has to be reallocated│
+│     │  │     for a later expulsion.                            │
+│     │  │                                                       │
 │     │  │  1. Read FailureReason and call getFailurePayer():    │
 │     │  │                                                       │
 │     │  │  Requester liability:                                 │
@@ -291,10 +303,46 @@ FROZEN REWARD RECIPIENT claims an honest-node reward:
 SLASH RECIPIENT claims a token-specific entitlement:
   E3RefundManager.claimSlashedFunds(e3Id, actualToken)
 │
-├─ Read _pendingSlashedClaims[e3Id][actualToken][caller]
+├─ Read _pendingSlashedClaims[e3Id][actualToken][caller]  (pre-ZEN2-20 credits)
+├─ ZEN2-20: also drain every operator whose frozen recipient is the caller and
+│  whose entitlement has no pending expelling proposal and no executed
+│  expulsion. Shares stay in _operatorEntitlements[e3Id][operator].heldSlash
+│  until this check passes, so a proposal opened after settlement still holds
+│  them and a shared recipient keeps independent per-operator entitlements
+├─ ZEN2-20 follow-up: heldSlash is one sum, so each credit also records its
+│  penalty target in _heldSlashFrom[e3Id][holder][target]. An expulsion
+│  re-shares the expelled holder's funds one bucket at a time, excluding that
+│  bucket's own target, so a penalty never returns to the operator it was
+│  raised against while every other member still takes its share of every
+│  other penalty. A round-wide "penalized" flag was rejected: it drops a
+│  target from later penalties too, so payouts would depend on proposal order.
+│  Bucket keys are walked over the committee's canonical members
+│  (canonicalCommitteeNodeAt), not the active roster: an expelled target
+│  leaves the roster while its bucket remains. Buckets are cleared with the
+│  sum on every claim path
 ├─ Clear the claim and reduce actualToken's protected liability
 ├─ Transfer that exact token; base refunds never consume the protected reserve
 └─ Emit SlashedFundsClaimed(e3Id, caller, actualToken, amount)
+
+COMMITTEE REWARDS after a successful E3 (ZEN2-20):
+  Interfold.claimReward(e3Id) / claimRewards(e3Ids)
+  E3RefundManager.claimHeldSuccessReward(e3Id)
+  E3RefundManager.claimOperatorHeldSuccessReward(e3Id, operator)   [permissionless]
+  E3RefundManager.claimOperatorSlashedFunds(e3Id, operator)        [permissionless]
+│
+├─ Settlement escrows each member's share against the OPERATOR through
+│  InterfoldPricing._creditReward → holdSuccessReward, rather than crediting
+│  _pendingRewards[e3Id][recipient]. RewardCredited still names the recipient
+├─ Every claim path re-reads pendingExpulsions and excluded, then pays the
+│  recipient frozen at committee finalization
+│   • pending proposal → the allocation is withheld, peers still claim
+│   • executed expulsion → forfeited and reallocated to the remaining members
+│   • otherwise → paid to the frozen recipient
+├─ The permissionless variants let anyone settle an eligible allocation; funds
+│  can only reach the frozen recipient, never the caller
+└─ pendingReward / pendingHeldSuccessReward / pendingSlashedClaim report the
+   legacy balance plus what the caller can claim now, so an account keeps one
+   "claimable" answer across the upgrade
 ```
 
 ### Refund Example: Requester/Compute-Provider Fault
@@ -715,6 +763,11 @@ SLASHER_ROLE calls: SlashingManager.proposeSlashEvidence(
 ├─ 2. Require the snapshotted E3 dependency graph exists and
 │     registry.isCommitteeMember(e3Id, operator)
 │     → Evidence cannot slash an unrelated operator into another E3's escrow
+│     → The shared _openProposal guard rejects affectsCommittee proposals
+│       after slashSubmissionDeadline unless the E3 is Complete. This also
+│       covers overdue E3s that have not yet been marked Failed.
+│     → Late non-expelling penalties and completed-round Lane B proposals remain valid
+│       subject to the existing role, dependency, membership, policy, and collateral checks
 │
 ├─ 3. Replay protection:
 │     evidenceHash = keccak256(abi.encode(e3Id, operator, keccak256(evidence)))
@@ -767,6 +820,18 @@ If governance does not resolve a filed appeal by
 `executableAt + APPEAL_RESOLUTION_GRACE`, anyone may call `expireAppeal`.
 Expiry conclusively upholds the appeal and releases the collateral gate.
 It also clears the E3 entitlement hold.
+
+Failed-E3 settlement requires every admitted expelling proposal to reach a terminal outcome.
+The retained `settlementCutoff` getter equals the reporting deadline plus 30 days plus 7 days.
+It bounds resolution eligibility for timely proposals, not automatic settlement. Unappealed
+proposals and rejected appeals require successful `executeSlash` calls. An unresolved filed appeal
+requires governance resolution or a successful permissionless `expireAppeal` call. An execution
+failure leaves the proposal open and settlement blocked until resolution succeeds.
+
+The reporting deadline remains the scheduled lifecycle deadline plus one day. A late
+`markE3Failed` call does not restart that window. This duration is an operational assumption,
+not a guarantee that fault detection and reporting finish in time. Late evidence cannot change a
+failed round's payer through expulsion; non-expelling penalties do not compensate the requester.
 
 ─── AFTER APPEAL WINDOW ──────────────────────────────────────
 
@@ -866,7 +931,17 @@ _executeSlash(proposalId):
 │     │
 │     └─ If activeCount < thresholdM:
 │         ├─ Read the E3 stage from its request-time Interfold contract
-│         ├─ Complete or Failed: allow the later slash without another callback
+│         ├─ Complete: allow the later slash without another callback
+│         ├─ Failed: call onE3Failed with InsufficientCommitteeMembers to
+│         │  correct a front-run requester-paid reason (ZEN2-04)
+│         │  → Interfold routes an already-Failed E3 to reclassifyFailure
+│         │  → Rewrites only from a requester-paid reason, only before
+│         │    getRefundDistribution().calculated, only from this E3's
+│         │    request-time slashing manager
+│         │  → Stage stays Failed; activeE3Count unchanged; emits
+│         │    E3FailureReclassified
+│         │  → A correction that no longer applies is a no-op, so it
+│         │    never reverts the expulsion
 │         └─ Any other stage: call onE3Failed with InsufficientCommitteeMembers
 │            → No catch-all suppression
 │            → Callback failure rolls back penalties, ban, and expulsion

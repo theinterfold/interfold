@@ -37,7 +37,7 @@ use e3_events::{
 };
 use e3_utils::utility_types::ArcBytes;
 use e3_utils::NotifySync;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::workflow::share_verification::{
     filter_consistent, label_for, PendingConsistencyCheck, PendingVerification, ShareVerifier,

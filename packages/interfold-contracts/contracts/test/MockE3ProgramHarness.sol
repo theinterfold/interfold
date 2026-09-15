@@ -9,11 +9,19 @@ import { IE3Program } from "../interfaces/IE3Program.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {
-    IDataAvailabilityVerifier
+    IDataAvailabilityVerifier,
+    IE3ProgramDataAvailability
 } from "../interfaces/IDataAvailabilityVerifier.sol";
+import {
+    IERC165
+} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
+
+interface ISlashExecutor {
+    function executeSlash(uint256 proposalId) external;
+}
 
 /// @dev Test-only E3 program with controls used to exercise failure and reentrancy paths.
-contract MockE3ProgramHarness is IE3Program {
+contract MockE3ProgramHarness is IE3Program, IERC165 {
     error InvalidParams(bytes e3ProgramParams, bytes computeProviderParams);
     error E3AlreadyInitialized();
     error InvalidInput();
@@ -22,6 +30,10 @@ contract MockE3ProgramHarness is IE3Program {
 
     IInterfold public interfold;
     bool public reenterPlaintextPublication;
+    /// @dev When set, `verify` executes this mature slash proposal before it returns true.
+    ///      This copies an application callback that expels a committee member.
+    address public slashExecutorDuringVerify;
+    uint256 public slashProposalDuringVerify;
     bool public returnMismatchedAvailabilityHash;
     bytes public reentrantPlaintext;
     bytes public reentrantProof;
@@ -33,6 +45,17 @@ contract MockE3ProgramHarness is IE3Program {
     mapping(uint256 e3Id => uint256 requestTime) public validationRequestTimes;
     mapping(uint256 e3Id => bytes32 commitment)
         public expectedCiphertextCommitments;
+
+    /// @inheritdoc IERC165
+    /// @dev Interfold probes these interfaces before it registers a program.
+    function supportsInterface(
+        bytes4 interfaceId
+    ) external pure returns (bool) {
+        return
+            interfaceId == type(IE3Program).interfaceId ||
+            interfaceId == type(IE3ProgramDataAvailability).interfaceId ||
+            interfaceId == type(IERC165).interfaceId;
+    }
 
     function setInterfold(IInterfold _interfold) external {
         interfold = _interfold;
@@ -52,6 +75,14 @@ contract MockE3ProgramHarness is IE3Program {
         reenterPlaintextPublication = true;
         reentrantPlaintext = plaintext;
         reentrantProof = proof;
+    }
+
+    function setSlashDuringVerify(
+        address executor,
+        uint256 proposalId
+    ) external {
+        slashExecutorDuringVerify = executor;
+        slashProposalDuringVerify = proposalId;
     }
 
     function setReturnMismatchedAvailabilityHash(bool enabled) external {
@@ -134,6 +165,11 @@ contract MockE3ProgramHarness is IE3Program {
         bytes32 expected = expectedCiphertextCommitments[e3Id];
         if (expected != bytes32(0) && ciphertextCommitment != expected) {
             return false;
+        }
+        if (slashExecutorDuringVerify != address(0)) {
+            ISlashExecutor(slashExecutorDuringVerify).executeSlash(
+                slashProposalDuringVerify
+            );
         }
         if (reenterPlaintextPublication) {
             interfold.publishPlaintextOutput(

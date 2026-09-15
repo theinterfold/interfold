@@ -326,6 +326,15 @@ pub struct E3Crisp {
     /// were: `Onchain` did not exist when they were written.
     #[serde(default)]
     pub census_mode: CensusMode,
+    /// True while holder discovery for an on-chain round is owed and not yet done.
+    ///
+    /// Set when the round was registered without a census because the stored voting-power
+    /// divisor could not be read. Registration never waits on the divisor, so the round is
+    /// votable from the start, but clients have no mask targets until discovery runs. A retry
+    /// pass reads the divisor again and clears this on success. Durable, so a restart retries
+    /// rather than forgets: the `E3Requested` event is not replayed once the cursor passes it.
+    #[serde(default)]
+    pub discovery_pending: bool,
 }
 
 impl From<E3> for WebResultRequest {

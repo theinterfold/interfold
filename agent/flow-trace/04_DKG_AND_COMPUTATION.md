@@ -932,6 +932,8 @@ only that failure. It does not resume row, fold, final V2 proof, or publication 
         │  │       │  │  onCommitteePublished(e3Id, pk) {   │  │
         │  │       │  │    require(stage==CommitteeFinalized) │  │
         │  │       │  │    require(now <= dkgDeadline)       │  │
+        │  │       │  │    require(block.timestamp <=         │  │
+        │  │       │  │      inputWindow[1])                  │  │
         │  │       │  │    e3.committeePublicKey = pk         │  │
         │  │       │  │    stage = KeyPublished               │  │
         │  │       │  │    Emit E3StageChanged(KeyPublished)  │  │
@@ -1112,6 +1114,12 @@ Compute provider runs computation on encrypted data:
 │  │       → Checks the application fields in the same receipt│
 │  │       → Must return true                                 │
 │  │       → Cannot re-enter ciphertext or plaintext publication│
+│  │    8b. Re-read stage from storage: must be KeyPublished  │
+│  │       Re-check request-time committee viability          │
+│  │       → An application callback can slash a member and   │
+│  │         record Failed through onE3Failed, which is        │
+│  │         outside this reentrancy guard. A revert here      │
+│  │         rolls back that failure and its settlement.       │
 │  │    9. Save output hash and SAFE commitment               │
 │  │       Set stage and decryption deadline                  │
 │  │   10. Emit CiphertextOutputReferencePublished(...)       │
@@ -1119,6 +1127,17 @@ Compute provider runs computation on encrypted data:
     │  │  }                                                      │
     │  └─────────────────────────────────────────────────────────┘
 ```
+
+`IE3Program.verify` is an application hook that can change state (Zenith `ZEN2-26`). Step 8b
+therefore repeats the stage read and the committee-viability check after the application returns.
+Without it, a verifier callback that executes a mature expelling slash could record `Failed`,
+decrement `activeE3Count`, and release the committee, and publication would then overwrite the
+terminal state and leave the counter low. This keeps the "Committee viability loss is atomic"
+invariant true for the output-publication path.
+
+The data-availability adapter rejects a zero content hash (Zenith `ZEN2-05`). Avail pads its
+submitted-data Merkle tree with zero leaves, so a zero expected hash would accept a padding leaf as
+proof of publication.
 
 The accepted event records the content hash and stable Avail coordinates, not the ciphertext bytes.
 Ciphernodes replay that durable reference without network access. After recovery enables effects,
@@ -1130,6 +1149,18 @@ is `max(block.timestamp, inputWindow[1]) + requestTimeComputeWindow`. A late key
 not consume the compute provider's allotted window, and publication still waits until the input
 window closes. The request-time timeout snapshot prevents later governance changes from changing an
 active E3's deadlines.
+
+`onCommitteePublished` also refuses a key that arrives after `inputWindow[1]`, with
+`InputWindowClosedBeforeKeyPublication` (ZEN2-03). Such a round reaches `KeyPublished` but can never
+receive an input, so it fails as a requester-paid `ComputeTimeout` instead of a committee-paid
+`DKGTimeout`. The DKG deadline alone does not stop this, because `dkgDeadline` can fall after
+`inputWindow[1]`. The refusal keeps failure attribution on the committee.
+
+`publishCiphertextOutput` calls `IE3ProgramDataAvailability.verifyDataAvailability` on the
+request-time program without a fallback. A program that omits that selector cannot publish an
+output. `Interfold.registerE3Program` therefore probes the candidate program with ERC-165 for
+`IE3Program` and `IE3ProgramDataAvailability` and reverts with `E3ProgramInterfaceMissing`
+(ZEN2-01). The probe is bounded to 30000 gas and treats a failed, short, or false answer as missing.
 
 ---
 

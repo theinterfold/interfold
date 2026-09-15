@@ -280,6 +280,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       slashingManager,
       bondingRegistry,
       mockVerifier,
+      e3Program,
       usdcToken,
       foldToken,
       ticketToken,
@@ -851,6 +852,58 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       );
       expect((await slashingManager.getSlashProposal(proposalId)).executed).to
         .be.false;
+    });
+
+    it("rejects output publication when the verifier callback fails the E3", async function () {
+      // ZEN2-26: IE3Program.verify can change state. An application callback that executes a
+      // mature expelling slash records a terminal failure through onE3Failed, outside the
+      // publication reentrancy guard. Publication must not overwrite that state.
+      const {
+        interfold,
+        registry,
+        slashingManager,
+        e3Program,
+        prepareMinimumCommittee,
+        slashFirstMember,
+        configureEvidencePolicy,
+        proposeThresholdBreach,
+      } = await loadFixture(setup);
+
+      const reason = await configureEvidencePolicy("PUBLISH_EVIDENCE_SLASH");
+      await prepareMinimumCommittee();
+      await slashFirstMember();
+      const proposalId = await proposeThresholdBreach(reason);
+      await e3Program.setSlashDuringVerify(
+        await slashingManager.getAddress(),
+        proposalId,
+      );
+
+      await time.increaseTo(
+        Number((await interfold.getE3(firstE3Id)).inputWindow[1]),
+      );
+      const activeE3Before = await interfold.activeE3Count();
+
+      const ciphertext = "0x" + "ab".repeat(100);
+      await expect(
+        publishAvailableCiphertextOutput(
+          interfold,
+          firstE3Id,
+          ciphertext,
+          ethers.keccak256(ciphertext),
+          "0x1337",
+        ),
+      ).to.be.revertedWithCustomError(interfold, "InvalidStage");
+
+      // The nested failure, its settlement, and the expulsion all rolled back.
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(3);
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(0);
+      expect(await interfold.activeE3Count()).to.equal(activeE3Before);
+      expect(
+        (await registry.getCommitteeViability(firstE3Id)).activeCount,
+      ).to.equal(2);
+      expect((await interfold.getE3(firstE3Id)).ciphertextOutput).to.equal(
+        ethers.ZeroHash,
+      );
     });
 
     it("allows threshold-reducing slashes after the E3 is terminal", async function () {

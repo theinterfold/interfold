@@ -179,7 +179,6 @@ impl NodeProofAggregator {
                 "NodeProofAggregator: E3 {} NodeDkgFold failed — publishing E3Failed",
                 e3_id
             );
-
             if let Some(_state) = state {
                 if let Err(err) = self.bus.publish(
                     E3Failed {
@@ -195,6 +194,11 @@ impl NodeProofAggregator {
                     );
                 }
             }
+            return;
         }
+        debug!(
+            "NodeProofAggregator: ignored compute error for correlation {:?} held by another actor: {msg}",
+            msg.correlation_id()
+        );
     }
 }

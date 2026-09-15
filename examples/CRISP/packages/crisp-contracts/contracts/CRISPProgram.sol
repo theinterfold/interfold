@@ -19,7 +19,8 @@ import { ECDSA } from "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
 import { IHonkVerifier } from "./interfaces/IHonkVerifier.sol";
 import { IVotesToken } from "./interfaces/IVotesToken.sol";
 import { IERC6372Clock } from "./interfaces/IERC6372Clock.sol";
-import { IDataAvailabilityVerifier } from "@interfold/contracts/contracts/interfaces/IDataAvailabilityVerifier.sol";
+import { IDataAvailabilityVerifier, IE3ProgramDataAvailability } from "@interfold/contracts/contracts/interfaces/IDataAvailabilityVerifier.sol";
+import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 interface IInterfoldProgramRegistry {
   function e3Programs(IE3Program e3Program) external view returns (bool);
@@ -29,7 +30,7 @@ interface IInterfoldRegistryView {
   function ciphernodeRegistry() external view returns (ICiphernodeRegistry);
 }
 
-contract CRISPProgram is IE3Program, Ownable, EIP712 {
+contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable, EIP712 {
   using InternalLazyIMT for LazyIMTData;
 
   /// @notice Enum to represent credit modes
@@ -242,11 +243,17 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   error InputCommitmentDeadlinePassed(uint256 e3Id, uint256 deadline);
   error InputWindowTooShort(uint256 e3Id, uint256 duration, uint256 required);
   error VotingWindowTooShort(uint256 e3Id, uint256 votingStartsAt, uint256 commitmentDeadline, uint256 required);
+  /// @notice The compute window leaves no budget for a late availability receipt.
+  /// @dev ZEN2-02: a receipt that arrives after the compute deadline can never finalize, and the
+  /// round cannot conclude while its input stays pending.
+  error ComputeWindowTooShort(uint256 e3Id, uint256 computeWindow, uint256 required);
   error KeyNotPublished(uint256 e3Id);
+  error E3NotAssignedToProgram(uint256 e3Id);
   error E3NotAcceptingInputs(uint256 e3Id);
   error InvalidComputeContext();
   error InvalidDataAvailabilityVerifier();
   error DataAvailabilityHashMismatch(bytes32 expected, bytes32 actual);
+  error ZeroEncryptedVoteHash();
 
   // Events
   event InterfoldBound(address indexed interfold);
@@ -448,6 +455,10 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
   ) external returns (bytes32) {
     if (msg.sender != address(interfold) && msg.sender != owner()) revert CallerNotAuthorized();
     if (e3Data[e3Id].paramsHash != bytes32(0)) revert E3AlreadyInitialized();
+    // Interfold stores the provisional E3 and its selected program before it calls `validate`.
+    // Read that record and refuse an E3 that Interfold assigned to a different program. Without
+    // this check the owner can create parallel CRISP round state for another program's E3.
+    _requireAssignedE3(e3Id);
 
     // Delegated to its own frame rather than scoped inline: `validate` is close enough to the
     // stack limit that holding the six decoded values alongside the parameters exceeds it.
@@ -462,7 +473,25 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     return ENCRYPTION_SCHEME_ID;
   }
 
-  /// @notice Refuse a round that can close before a worst-case committee leaves one hour to vote.
+  /// @inheritdoc IERC165
+  /// @dev Interfold probes these interfaces before it registers a program.
+  function supportsInterface(bytes4 interfaceId) external pure returns (bool) {
+    return
+      interfaceId == type(IE3Program).interfaceId ||
+      interfaceId == type(IE3ProgramDataAvailability).interfaceId ||
+      interfaceId == type(IERC165).interfaceId;
+  }
+
+  /// @notice Refuse an E3 that Interfold did not assign to this program.
+  /// @dev Interfold records the provisional E3 and its selected program before it calls
+  /// `validate`, so the assignment is readable at initialization time.
+  /// @param e3Id The E3 to check.
+  function _requireAssignedE3(uint256 e3Id) internal view {
+    if (address(interfold.getE3(e3Id).e3Program) != address(this)) revert E3NotAssignedToProgram(e3Id);
+  }
+
+  /// @notice Refuse a round that can close before a worst-case committee leaves one hour to vote,
+  /// or that leaves no budget for a late availability receipt.
   /// @dev Interfold stores the E3 and its timeout snapshot before calling {validate}. Read those
   /// exact values instead of duplicating deployment-time settings. A zero finalization window is
   /// the synchronous local mock and keeps its short test rounds.
@@ -481,6 +510,17 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     uint256 commitmentDeadline = e3.inputWindow[1] - availabilityFinalizationWindow;
     if (commitmentDeadline < votingStartsAt + MIN_VOTING_DURATION) {
       revert VotingWindowTooShort(e3Id, votingStartsAt, commitmentDeadline, MIN_VOTING_DURATION);
+    }
+    // ZEN2-02: `finalizeInput` and `verify` share one cutoff. `_finalizationE3` refuses a receipt
+    // after the compute deadline, and `verify` refuses output while an input stays pending, so an
+    // input whose availability receipt arrives late leaves the round unable to finalize it and
+    // unable to conclude without it. The round then fails as a requester-paid `ComputeTimeout`.
+    // The compute window is the whole recovery time after the inputs close, because Interfold
+    // derives `computeDeadline` from `inputWindow[1]`. Require at least one more finalization
+    // window there, so a receipt that misses the commitment deadline still has the same budget it
+    // gets inside the input window. This rejects the round at request time, before a fee is paid.
+    if (timeouts.computeWindow < availabilityFinalizationWindow) {
+      revert ComputeWindowTooShort(e3Id, timeouts.computeWindow, availabilityFinalizationWindow);
     }
   }
 
@@ -604,7 +644,6 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     if (block.timestamp >= availabilityAttestationExpiresAt) {
       revert InputAvailabilityAttestationExpired(availabilityAttestationExpiresAt);
     }
-
     _verifyInputProof(e3Id, e3, noirProof, slotAddress, encryptedVoteCommitment, encryptedVoteHash, parentIndexPlusOne);
 
     bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
@@ -698,6 +737,8 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
 
   function _keyPublishedE3(uint256 e3Id) internal view returns (E3 memory e3) {
     e3 = interfold.getE3(e3Id);
+    // Defense in depth. `validate` already refuses an E3 that belongs to a different program.
+    if (address(e3.e3Program) != address(this)) revert E3NotAssignedToProgram(e3Id);
     if (interfold.getE3Stage(e3Id) != IInterfold.E3Stage.KeyPublished) {
       revert KeyNotPublished(e3Id);
     }
@@ -734,6 +775,11 @@ contract CRISPProgram is IE3Program, Ownable, EIP712 {
     bytes32 encryptedVoteHash,
     uint40 parentIndexPlusOne
   ) internal view {
+    // A zero content hash matches an Avail padding leaf. Refuse it on every proof path so that
+    // no committed input can later finalize against data that no party published, and so that
+    // `validateInputProof` cannot accept a statement that `publishInput` rejects.
+    if (encryptedVoteHash == bytes32(0)) revert ZeroEncryptedVoteHash();
+
     uint256 leaf = inputLeaf(encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
     if (e3Data[e3Id].appendedLeaf[leaf]) revert InputAlreadyPublished(leaf);
     bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);

@@ -22,7 +22,7 @@ use e3_events::{
 };
 use e3_fhe_params::build_pair_for_preset;
 use e3_utils::ArcBytes;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::domain::node_dkg_fold::{DkgProofCollectionState, NodeDkgFoldMeta};
 use crate::node_fold_public::extract_node_fold_agg_commits;

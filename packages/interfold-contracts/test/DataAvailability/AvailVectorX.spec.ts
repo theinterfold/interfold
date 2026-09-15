@@ -72,6 +72,18 @@ describe("AvailVectorXDataAvailabilityVerifier", function () {
     ).to.be.revertedWithCustomError(verifier, "ContentHashMismatch");
   });
 
+  it("rejects a zero content hash that an Avail padding leaf would satisfy", async function () {
+    const { verifier } = await fixture();
+    // Avail pads its submitted-data Merkle tree with zero leaves. Without this guard a zero
+    // expected hash and a zero padding leaf would mint a receipt for unpublished bytes.
+    await expect(
+      verifier.verifyDataAvailability(
+        ethers.ZeroHash,
+        proof({ leaf: ethers.ZeroHash }),
+      ),
+    ).to.be.revertedWithCustomError(verifier, "ZeroContentHash");
+  });
+
   it("rejects a leaf that the Avail bridge did not verify", async function () {
     const { bridge, verifier } = await fixture();
     await bridge.setProofValid(false);

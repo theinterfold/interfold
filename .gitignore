@@ -24,3 +24,6 @@ circuits/benchmarks/results_*/raw/
 crates/support/tests/Elf.sol
 .vercel
 .vercel-env-backups/
+
+# agent working files
+.hermes/

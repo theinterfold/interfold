@@ -160,10 +160,14 @@ describe("Standards & upgradeability hygiene", function () {
   });
 
   describe("LazyIMT depth cap", function () {
-    it("CiphernodeRegistryOwnable: exposes MAX_CIPHERNODE_LEAVES = 2^20", async function () {
+    it("CiphernodeRegistryOwnable: exposes MAX_CIPHERNODE_LEAVES = 2^20 - 1", async function () {
       const { ciphernodeRegistry } = await deployAll();
       const cap = await ciphernodeRegistry.MAX_CIPHERNODE_LEAVES();
-      expect(cap).to.equal(1n << 20n);
+      // The LazyIMT dependency sets `maxIndex = 2^depth - 1` and rejects an
+      // insertion at an index that is not less than `maxIndex`. The registry
+      // cap must match that limit, or the last insertion passes the registry
+      // check and then reverts inside the dependency.
+      expect(cap).to.equal((1n << 20n) - 1n);
     });
 
     it("addCiphernode succeeds for the first leaf (smoke test of the guard)", async function () {

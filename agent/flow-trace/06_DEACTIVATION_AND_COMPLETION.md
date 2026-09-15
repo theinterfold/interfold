@@ -158,8 +158,10 @@ Deregistration remains an emergency stop for future selection, even when the ope
 finalized committee. Its assets move into the exit queue and remain slashable there. After the exit
 delay, `claimExitsFor` still reverts with `OperatorInActiveCommittee` while any selected committee
 is nonterminal. Anyone can call `releaseCommittee` on the request-time registry after the E3 becomes
-`Complete` or `Failed`; the next claim can then pay the matured assets. This permissionless ticket
-path also lets governance clear old ticket liabilities before a registry generation change.
+`Complete` or `Failed`; for a finalized committee the call also waits until the slashing manager's
+accusation submission deadline has passed. The next claim can then pay the matured assets. This
+permissionless ticket path also lets governance clear old ticket liabilities before a registry
+generation change.
 
 ## E3 Completion (Happy Path)
 

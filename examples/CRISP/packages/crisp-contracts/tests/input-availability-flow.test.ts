@@ -276,10 +276,55 @@ describe('CRISP input availability flow', function () {
       availabilityFinalizationWindow: PRODUCTION_FINALIZATION_WINDOW,
     })
     await (await mockInterfold.setCommitteeSetupWindows(3_600, 600, 21_600)).wait()
+    // Production uses computeWindow 86400 against a 10800 second finalization window. The mock
+    // default of 100 predates ZEN2-02 and would leave a late receipt no budget to finalize.
+    await (await mockInterfold.setComputeWindow(86_400)).wait()
     const now = await latestTimestamp()
     // setInputWindow mines one block, then request mines the block at this timestamp.
     const requestAt = now + 2
     await (await mockInterfold.setInputWindow(requestAt, requestAt + 40_200)).wait()
+
+    await (await mockInterfold.request(await program.getAddress())).wait()
+    expect(await mockInterfold.nextE3Id()).to.equal(1)
+  })
+
+  it('ZEN2-02: rejects a compute window that leaves no budget for a late receipt', async function () {
+    const mockInterfold = await deployMockInterfold()
+    const mockHonk = (await deployContract('MockHonkVerifier')) as unknown as HonkVerifier
+    const program = await deployCRISPProgram({
+      mockInterfold,
+      honkVerifier: mockHonk,
+      onchainHonkVerifier: mockHonk,
+      availabilityFinalizationWindow: FINALIZATION_WINDOW,
+    })
+    // A receipt that misses the commitment deadline needs the compute window to finalize. One
+    // second short of the finalization window leaves an input that can never finalize and a round
+    // that can never conclude without it.
+    await (await mockInterfold.setComputeWindow(FINALIZATION_WINDOW - 1)).wait()
+    const now = await latestTimestamp()
+    const start = now + 5
+    const end = start + FINALIZATION_WINDOW + 7_200
+    await (await mockInterfold.setInputWindow(start, end)).wait()
+
+    await expect(mockInterfold.request(await program.getAddress()))
+      .to.be.revertedWithCustomError(program, 'ComputeWindowTooShort')
+      .withArgs(0, FINALIZATION_WINDOW - 1, FINALIZATION_WINDOW)
+  })
+
+  it('ZEN2-02: accepts a compute window equal to the finalization window', async function () {
+    const mockInterfold = await deployMockInterfold()
+    const mockHonk = (await deployContract('MockHonkVerifier')) as unknown as HonkVerifier
+    const program = await deployCRISPProgram({
+      mockInterfold,
+      honkVerifier: mockHonk,
+      onchainHonkVerifier: mockHonk,
+      availabilityFinalizationWindow: FINALIZATION_WINDOW,
+    })
+    await (await mockInterfold.setComputeWindow(FINALIZATION_WINDOW)).wait()
+    const now = await latestTimestamp()
+    const start = now + 5
+    const end = start + FINALIZATION_WINDOW + 7_200
+    await (await mockInterfold.setInputWindow(start, end)).wait()
 
     await (await mockInterfold.request(await program.getAddress())).wait()
     expect(await mockInterfold.nextE3Id()).to.equal(1)

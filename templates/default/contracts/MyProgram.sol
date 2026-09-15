@@ -12,9 +12,10 @@ import { E3 } from "@interfold/contracts/contracts/interfaces/IE3.sol";
 import { Risc0ComputeProof } from "@interfold/contracts/contracts/lib/Risc0ComputeProof.sol";
 import { IDataAvailabilityVerifier, IE3ProgramDataAvailability } from "@interfold/contracts/contracts/interfaces/IDataAvailabilityVerifier.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import { LazyIMTData, InternalLazyIMT } from "@zk-kit/lazy-imt.sol/InternalLazyIMT.sol";
 
-contract MyProgram is IE3Program, IE3ProgramDataAvailability, Ownable {
+contract MyProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable {
   using InternalLazyIMT for LazyIMTData;
   // Constants
   bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
@@ -57,6 +58,16 @@ contract MyProgram is IE3Program, IE3ProgramDataAvailability, Ownable {
     authorizedContracts[address(_interfold)] = true;
   }
 
+  /// @inheritdoc IERC165
+  /// @dev Interfold probes these interfaces before it registers a program. A program that does
+  /// not advertise them cannot be registered.
+  function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
+    return
+      interfaceId == type(IE3Program).interfaceId ||
+      interfaceId == type(IE3ProgramDataAvailability).interfaceId ||
+      interfaceId == type(IERC165).interfaceId;
+  }
+
   /// @inheritdoc IE3Program
   function validate(uint256 e3Id, uint256, bytes calldata e3ProgramParams, bytes calldata, bytes calldata) external returns (bytes32) {
     require(authorizedContracts[msg.sender] || msg.sender == owner(), CallerNotAuthorized());
@@ -84,7 +95,7 @@ contract MyProgram is IE3Program, IE3ProgramDataAvailability, Ownable {
     // This minimal template does not prove that the serialized ciphertext matches its SAFE
     // commitment. Production programs must verify that binding before insertion. Otherwise, an
     // invalid input can prevent the E3 from completing.
-    // EXAMPLE: https://github.com/gnosisguild/interfold/blob/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol
+    // EXAMPLE: https://github.com/theinterfold/interfold/blob/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol
 
     uint256 index = inputs[e3Id].numberOfLeaves;
     inputs[e3Id]._insert(uint256(ciphertextCommitment));

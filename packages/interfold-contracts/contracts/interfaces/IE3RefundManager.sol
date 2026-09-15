@@ -19,6 +19,12 @@ interface IE3RefundManager {
     /// @notice A settlement transfer delivered a different amount than requested.
     error AssetTransferMismatch(IERC20 token, uint256 expected, uint256 actual);
 
+    /// @notice Settlement is blocked until the accusation window closes and every
+    ///         committee-affecting proposal resolves, or until the hard cutoff.
+    /// @dev Bare, for size. Read `ISlashingManager.settlementOpen`,
+    ///      `accusationSubmissionDeadline` and `settlementCutoff` to see why.
+    error SettlementBlocked();
+
     /// @notice Identifies which collateral pool bears a failed E3's completed-work cost.
     enum FailurePayer {
         None,
@@ -165,6 +171,14 @@ interface IE3RefundManager {
         IERC20 indexed token,
         uint256 amount
     );
+    /// @notice Emitted when the last expelling proposal against an operator
+    ///         clears and its held allocations become claimable again.
+    event OperatorRewardsReleased(
+        uint256 indexed e3Id,
+        address indexed operator,
+        uint256 heldSuccess,
+        uint256 heldSlash
+    );
     /// @notice Emitted when an E3 freezes an operator's reward recipient.
     event RewardRecipientSnapshotted(
         uint256 indexed e3Id,
@@ -260,6 +274,17 @@ interface IE3RefundManager {
         address operator
     ) external view returns (address recipient, bool held);
 
+    /// @notice Return the frozen recipient and the operator's current reward
+    ///         eligibility for an E3.
+    /// @dev `pending` is true while any expelling proposal remains unresolved.
+    ///      `excluded` is true after an executed expulsion. A payout requires
+    ///      both to be false. Unlike `rewardDisposition`, this reports the
+    ///      executed outcome, so a claim path can reject a forfeited reward.
+    function rewardStatus(
+        uint256 e3Id,
+        address operator
+    ) external view returns (address recipient, bool pending, bool excluded);
+
     /// @notice Record an unresolved proposal that can expel a committee member.
     function openExpulsionProposal(
         uint256 e3Id,
@@ -286,6 +311,45 @@ interface IE3RefundManager {
     function claimHeldSuccessReward(
         uint256 e3Id
     ) external returns (uint256 amount);
+
+    /// @notice Pay `account` its claimable successful-E3 rewards for one E3.
+    /// @dev Callable only by the E3's Interfold, which routes `claimReward`
+    ///      here. Returns 0 instead of reverting so batch claims can skip an
+    ///      empty E3. Held and forfeited allocations are excluded.
+    function claimHeldSuccessRewardFor(
+        uint256 e3Id,
+        address account
+    ) external returns (uint256 amount);
+
+    /// @notice Pay an operator's held successful-E3 reward to its frozen recipient.
+    /// @dev Permissionless. Reverts while an expelling proposal is pending and
+    ///      after an executed expulsion forfeited the allocation.
+    function claimOperatorHeldSuccessReward(
+        uint256 e3Id,
+        address operator
+    ) external returns (uint256 amount);
+
+    /// @notice Pay an operator's held slash share to its frozen recipient.
+    /// @dev Permissionless. Same eligibility rule as
+    ///      {claimOperatorHeldSuccessReward}.
+    function claimOperatorSlashedFunds(
+        uint256 e3Id,
+        address operator
+    ) external returns (uint256 amount);
+
+    /// @notice Return how much of a holder's held slash share came from one penalty target.
+    /// @dev ZEN2-20 follow-up. The sum over every target equals `heldSlash`.
+    function heldSlashFrom(
+        uint256 e3Id,
+        address holder,
+        address target
+    ) external view returns (uint256 amount);
+
+    /// @notice Return an operator's held successful-E3 reward and slash share.
+    function operatorHeldRewards(
+        uint256 e3Id,
+        address operator
+    ) external view returns (uint256 heldSuccess, uint256 heldSlash);
 
     /// @notice Return an account's released successful-E3 reward.
     function pendingHeldSuccessReward(
@@ -374,14 +438,6 @@ interface IE3RefundManager {
         uint256 e3Id,
         address operator
     ) external view returns (bool claimed);
-
-    /// @notice Calculate work value for a given stage
-    /// @param stage The stage when E3 failed
-    /// @return workCompletedBps Work completed in basis points
-    /// @return workRemainingBps Work remaining in basis points
-    function calculateWorkValue(
-        IInterfold.E3Stage stage
-    ) external view returns (uint16 workCompletedBps, uint16 workRemainingBps);
 
     /// @notice Set work value allocation
     /// @param allocation The new work allocation

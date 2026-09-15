@@ -27,6 +27,7 @@ import { SlashingEvidenceLib } from "../lib/SlashingEvidenceLib.sol";
  *      is the admin of SLASHER_ROLE. Attestation votes are authenticated via EIP-712
  * and equivocation across voters is rejected.
  */
+// solhint-disable-next-line max-states-count
 contract SlashingManager is
     ISlashingManager,
     AccessControlDefaultAdminRules,
@@ -53,7 +54,7 @@ contract SlashingManager is
     ///         resolve a filed appeal. Expiry is fail-safe in the operator's favour.
     uint64 public constant APPEAL_RESOLUTION_GRACE = 7 days;
 
-    /// @notice Time after the latest possible E3 lifecycle deadline for Lane A reports.
+    /// @notice Reporting time after the latest possible E3 lifecycle deadline.
     uint64 public constant ACCUSATION_REPORTING_WINDOW = 1 days;
 
     /// @notice Emitted when {bondingRegistry} is updated.
@@ -111,8 +112,17 @@ contract SlashingManager is
     mapping(uint256 proposalId => PendingSlashRoute route)
         internal _pendingSlashRoutes;
 
-    uint256 internal constant INITIAL_ROUTE_GAS = 400_000;
-    uint256 internal constant MIN_INITIAL_ROUTE_GAS = 450_000;
+    /// @dev Gas handed to the first routing attempt. The route walks the committee
+    ///      once per eligibility pass and, since the ZEN2-20 follow-up, also skips
+    ///      every operator this E3 has penalized. That check costs about 28k gas
+    ///      on a three-member committee and grows with committee size, so the
+    ///      stipend was widened from 400k rather than trimming the check. A route
+    ///      that still runs out stays pending for `retrySlashRoute`.
+    uint256 internal constant INITIAL_ROUTE_GAS = 500_000;
+    /// @dev Gas the caller must still hold before the routing attempt. Keeps the
+    ///      same margin over `INITIAL_ROUTE_GAS` as before, plus the 63/64 share
+    ///      the EVM withholds from a nested call.
+    uint256 internal constant MIN_INITIAL_ROUTE_GAS = 560_000;
 
     /// @notice Mapping from slash reason hash to its configured policy
     mapping(bytes32 reason => SlashPolicy policy) public slashPolicies;
@@ -136,6 +146,11 @@ contract SlashingManager is
     /// @dev Incremented for every proposal and decremented only at successful execution or terminal
     ///      appeal resolution, so collateral cannot leave during a deferred slash.
     mapping(address operator => uint256 openCount) internal _openProposalCount;
+    /// @notice Open committee-affecting proposals per E3.
+    /// @dev ZEN2-04 follow-up. `settlementOpen` reads it so failed-E3 settlement
+    ///      cannot freeze the payer while an expulsion is still pending. Kept
+    ///      beside the per-operator count and moved with it at every site.
+    mapping(uint256 e3Id => uint256 openCount) internal _openCommitteeProposals;
 
     /// @notice Pending two-step manual ban proposals.
     /// @dev `unbanNode` is single-step because it is strictly less dangerous than ban.
@@ -318,6 +333,73 @@ contract SlashingManager is
             dependencies.accusationVoteValidity,
             dependencies.slashSubmissionDeadline
         );
+    }
+
+    /// @inheritdoc ISlashingManager
+    function accusationSubmissionDeadline(
+        uint256 e3Id
+    ) external view returns (uint64 submissionDeadline) {
+        return _e3Dependencies[e3Id].slashSubmissionDeadline;
+    }
+
+    /// @inheritdoc ISlashingManager
+    function settlementCutoff(
+        uint256 e3Id
+    ) external view returns (uint64 cutoff) {
+        return _settlementCutoff(_e3Dependencies[e3Id].slashSubmissionDeadline);
+    }
+
+    /// @inheritdoc ISlashingManager
+    function settlementOpen(uint256 e3Id) external view returns (bool) {
+        E3Dependencies storage dependencies = _e3Dependencies[e3Id];
+        uint64 deadline = dependencies.slashSubmissionDeadline;
+        if (deadline == 0) return true;
+        if (_openCommitteeProposals[e3Id] != 0) return false;
+        // No committee was ever finalized: there is no member to expel and no
+        // payer to move, so the accusation window is not waited for.
+        // `canonicalCommitteeNodeAt(e3Id, 0)` reverts `CommitteeNotFinalized`
+        // before finalization and answers afterwards, including for a round
+        // that has since lost every member, so it is the one read that tells
+        // the two apart.
+        if (!_committeeFinalized(dependencies.registry, e3Id)) return true;
+        return block.timestamp > deadline;
+    }
+
+    /// @inheritdoc ISlashingManager
+    function openCommitteeProposals(
+        uint256 e3Id
+    ) external view returns (uint256) {
+        return _openCommitteeProposals[e3Id];
+    }
+
+    /// @dev True once the registry finalized a committee for `e3Id`. Reads the
+    ///      canonical slot 0, which the registry refuses to expose before
+    ///      finalization; the `CommitteeNotFinalized()` revert is the signal,
+    ///      so that exact revert is read as "no committee". Every other
+    ///      outcome — another error, an empty revert, a malformed answer, or an
+    ///      address with no code — is read as finalized so the accusation
+    ///      window is waited for: an unreadable registry must delay settlement,
+    ///      never open it early. A low-level call is used because a high-level
+    ///      `try` cannot catch the no-code and bad-return cases.
+    function _committeeFinalized(
+        ICiphernodeRegistry registry,
+        uint256 e3Id
+    ) internal view returns (bool) {
+        (bool ok, bytes memory data) = address(registry).staticcall(
+            abi.encodeCall(
+                ICiphernodeRegistry.canonicalCommitteeNodeAt,
+                (e3Id, 0)
+            )
+        );
+        if (ok) return true;
+        return
+            data.length != 4 ||
+            bytes4(data) != ICiphernodeRegistry.CommitteeNotFinalized.selector;
+    }
+
+    function _settlementCutoff(uint64 deadline) internal pure returns (uint64) {
+        if (deadline == 0) return 0;
+        return deadline + MAX_APPEAL_WINDOW + APPEAL_RESOLUTION_GRACE;
     }
 
     /// @inheritdoc ISlashingManager
@@ -603,7 +685,7 @@ contract SlashingManager is
         // Legacy atomic path: when no challenge window is configured, execute now.
         // Otherwise defer to `executeSlash` after `executableAt`.
         if (policy.appealWindow == 0) {
-            _openProposalCount[operator] -= 1;
+            _closeProposalCount(p);
             _executeSlash(proposalId, Lane.LaneA);
         }
     }
@@ -709,7 +791,7 @@ contract SlashingManager is
         Lane lane = p.proofVerified ? Lane.LaneA : Lane.LaneB;
         // Keep the registry lock until every slash side effect has completed.
         // This local count is only the manager's observable proposal state.
-        _openProposalCount[p.operator] -= 1;
+        _closeProposalCount(p);
 
         _executeSlash(proposalId, lane);
     }
@@ -718,12 +800,30 @@ contract SlashingManager is
     // Internal Execution
     // ======================
 
+    /// @dev Mirror of `_openProposal` for the two counts. Every terminal path
+    ///      calls this exactly once: atomic execution, deferred execution, an
+    ///      upheld appeal, and an expired appeal.
+    function _closeProposalCount(SlashProposal storage proposal) internal {
+        _openProposalCount[proposal.operator] -= 1;
+        if (proposal.affectsCommittee)
+            _openCommitteeProposals[proposal.e3Id] -= 1;
+    }
+
     function _openProposal(
         SlashProposal storage proposal,
         uint256 proposalId
     ) internal {
         E3Dependencies memory dependencies = _dependenciesFor(proposal.e3Id);
+        // Both lanes close payer-affecting admission before failed-E3 settlement.
+        // Check every non-complete stage: a delayed failure call must not reopen it.
+        if (
+            proposal.affectsCommittee &&
+            block.timestamp > dependencies.slashSubmissionDeadline &&
+            dependencies.interfoldContract.getE3Stage(proposal.e3Id) !=
+            IInterfold.E3Stage.Complete
+        ) revert SlashSubmissionDeadlinePassed();
         _openProposalCount[proposal.operator]++;
+        if (proposal.affectsCommittee) _openCommitteeProposals[proposal.e3Id]++;
         dependencies.bonding.openSlashLock(
             proposal.e3Id,
             proposalId,
@@ -824,12 +924,14 @@ contract SlashingManager is
                 IInterfold.E3Stage stage = dependencies
                     .interfoldContract
                     .getE3Stage(p.e3Id);
-                if (
-                    stage != IInterfold.E3Stage.Complete &&
-                    stage != IInterfold.E3Stage.Failed
-                ) {
-                    // This call must succeed with the expulsion. A revert rolls
-                    // back the penalties, ban, and committee membership change.
+                if (stage != IInterfold.E3Stage.Complete) {
+                    // A nonterminal round fails here. A round that a caller
+                    // already failed gets its requester-paid reason corrected,
+                    // because this expulsion is the true cause (ZEN2-04).
+                    // Interfold treats a correction that no longer applies as a
+                    // no-op, so this call reverts only on a real fault, and a
+                    // revert rolls back the penalties, ban, and committee
+                    // membership change.
                     dependencies.interfoldContract.onE3Failed(
                         p.e3Id,
                         uint8(
@@ -997,7 +1099,7 @@ contract SlashingManager is
                     false
                 );
             }
-            _openProposalCount[p.operator] -= 1;
+            _closeProposalCount(p);
             dependencies.bonding.closeSlashLock(proposalId, p.operator);
         }
 
@@ -1032,7 +1134,7 @@ contract SlashingManager is
                 false
             );
         }
-        _openProposalCount[p.operator] -= 1;
+        _closeProposalCount(p);
         dependencies.bonding.closeSlashLock(proposalId, p.operator);
 
         emit AppealResolved(
