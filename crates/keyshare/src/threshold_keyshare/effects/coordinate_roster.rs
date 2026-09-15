@@ -15,23 +15,46 @@ impl ThresholdKeyshare {
         ctx: &mut actix::Context<Self>,
     ) -> Result<()> {
         let state = self.state.try_get()?;
-        if state.party_id == 0 {
+        if self.recovery.try_get()?.dkg_roster.is_some() {
             return Ok(());
         }
         let (Some(deadline), Some(window)) = (state.dkg_deadline_unix_secs, state.dkg_window_secs)
         else {
             return Ok(());
         };
-        let Some((start, end)) = roster_view_bounds(deadline, window, state.party_id) else {
+        let now = now_unix_secs();
+        let Some(check_at) = roster_check_at_or_after(deadline, window, state.threshold_n, now)
+        else {
+            return Ok(());
+        };
+        ctx.notify_later(
+            DkgRosterLeadershipCheck,
+            std::time::Duration::from_secs(check_at.saturating_sub(now)),
+        );
+        Ok(())
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn schedule_next_roster_leadership_check(
+        &self,
+        ctx: &mut actix::Context<Self>,
+    ) -> Result<()> {
+        let state = self.state.try_get()?;
+        if self.recovery.try_get()?.dkg_roster.is_some() {
+            return Ok(());
+        }
+        let (Some(deadline), Some(window)) = (state.dkg_deadline_unix_secs, state.dkg_window_secs)
+        else {
             return Ok(());
         };
         let now = now_unix_secs();
-        if now < end {
-            ctx.notify_later(
-                DkgRosterLeadershipCheck,
-                std::time::Duration::from_secs(start.saturating_sub(now)),
-            );
-        }
+        let Some(check_at) = next_roster_check_after(deadline, window, state.threshold_n, now)
+        else {
+            return Ok(());
+        };
+        ctx.notify_later(
+            DkgRosterLeadershipCheck,
+            std::time::Duration::from_secs(check_at.saturating_sub(now)),
+        );
         Ok(())
     }
 
@@ -131,6 +154,7 @@ impl ThresholdKeyshare {
             Ok(recovery)
         })?;
         self.bus.publish(ready, ec.clone())?;
+        self.propose_dkg_roster(ec.clone())?;
         self.maybe_start_c4_for_accepted_roster(ec)
     }
 
@@ -358,9 +382,33 @@ fn roster_view_bounds(deadline: u64, window: u64, party_id: u64) -> Option<(u64,
     (start < end).then_some((start, end))
 }
 
+fn roster_leader_at(deadline: u64, window: u64, committee_n: u64, now: u64) -> Option<u64> {
+    (0..committee_n).find(|&party_id| {
+        roster_view_bounds(deadline, window, party_id)
+            .is_some_and(|(start, end)| (start..end).contains(&now))
+    })
+}
+
+fn roster_check_at_or_after(deadline: u64, window: u64, committee_n: u64, now: u64) -> Option<u64> {
+    let (_, primary_end) = roster_view_bounds(deadline, window, 0)?;
+    if now < primary_end {
+        return Some(primary_end);
+    }
+    roster_leader_at(deadline, window, committee_n, now).map(|_| now)
+}
+
+fn next_roster_check_after(deadline: u64, window: u64, committee_n: u64, now: u64) -> Option<u64> {
+    let current_leader = roster_leader_at(deadline, window, committee_n, now)?;
+    let (_, current_end) = roster_view_bounds(deadline, window, current_leader)?;
+    (current_leader + 1 < committee_n && current_end < deadline).then_some(current_end)
+}
+
 #[cfg(test)]
 mod leadership_tests {
-    use super::{ready_contains_roster, roster_view_bounds};
+    use super::{
+        next_roster_check_after, ready_contains_roster, roster_check_at_or_after, roster_leader_at,
+        roster_view_bounds,
+    };
     use e3_events::{DkgCoordination, DkgCoordinationKind, DkgDealer, E3id};
     use e3_utils::ArcBytes;
 
@@ -398,5 +446,27 @@ mod leadership_tests {
         assert_eq!(primary, (6_400, 8_632));
         assert_eq!(backup, (8_632, 8_704));
         assert_eq!(second_backup, (8_704, 8_776));
+    }
+
+    #[test]
+    fn delayed_check_uses_the_current_backup_view() {
+        let deadline = 10_000;
+        let window = 3_600;
+
+        assert_eq!(
+            roster_check_at_or_after(deadline, window, 3, 8_000),
+            Some(8_632)
+        );
+        assert_eq!(
+            roster_check_at_or_after(deadline, window, 3, 8_650),
+            Some(8_650)
+        );
+        assert_eq!(roster_leader_at(deadline, window, 3, 8_650), Some(1));
+        assert_eq!(
+            next_roster_check_after(deadline, window, 3, 8_650),
+            Some(8_704)
+        );
+        assert_eq!(roster_leader_at(deadline, window, 3, 8_740), Some(2));
+        assert_eq!(next_roster_check_after(deadline, window, 3, 8_740), None);
     }
 }

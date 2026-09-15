@@ -110,7 +110,7 @@ impl Handler<TypedEvent<CiphernodeSelected>> for ThresholdKeyshare {
 impl Handler<DkgRosterLeadershipCheck> for ThresholdKeyshare {
     type Result = ();
 
-    fn handle(&mut self, _: DkgRosterLeadershipCheck, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, _: DkgRosterLeadershipCheck, ctx: &mut Self::Context) -> Self::Result {
         let result = self
             .recovery
             .try_get()
@@ -121,6 +121,9 @@ impl Handler<DkgRosterLeadershipCheck> for ThresholdKeyshare {
             })
             .and_then(|ec| self.propose_dkg_roster(ec));
         if let Err(error) = result {
+            self.bus.err(EType::KeyGeneration, error);
+        }
+        if let Err(error) = self.schedule_next_roster_leadership_check(ctx) {
             self.bus.err(EType::KeyGeneration, error);
         }
     }
