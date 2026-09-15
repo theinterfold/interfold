@@ -15,6 +15,7 @@ use tokio::sync::watch;
 use tracing::{error, warn};
 
 const INDEX_RECONCILE_PAGE_SIZE: usize = 1_024;
+const INDEX_RECONCILE_PAGE_BYTES: usize = 256 * 1024 * 1024;
 
 pub struct EventStore<I: SequenceIndex, L: EventLog> {
     index: I,
@@ -108,6 +109,16 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         filter: Option<EventStoreFilter>,
         limit: Option<u64>,
     ) -> Result<Vec<InterfoldEvent<Sequenced>>> {
+        self.query_by_ts_with_bounds(query, filter, limit, None)
+    }
+
+    fn query_by_ts_with_bounds(
+        &self,
+        query: u128,
+        filter: Option<EventStoreFilter>,
+        limit: Option<u64>,
+        max_bytes: Option<u64>,
+    ) -> Result<Vec<InterfoldEvent<Sequenced>>> {
         let Some(seq) = self.index.seek(query)? else {
             return Ok(vec![]);
         };
@@ -115,8 +126,13 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         // sync uses this path and must not read/materialize the complete remaining history for a
         // single remote request. A source-filtered query cannot safely apply the limit before the
         // filter without changing its semantics, so it retains the unbounded iterator path.
-        let events = match (filter.as_ref(), limit) {
-            (None, Some(limit)) => self
+        let events = match (filter.as_ref(), limit, max_bytes) {
+            (None, Some(limit), Some(max_bytes)) => self.log.read_from_bounded_by_bytes(
+                seq,
+                usize::try_from(limit).unwrap_or(usize::MAX),
+                usize::try_from(max_bytes).unwrap_or(usize::MAX),
+            )?,
+            (None, Some(limit), None) => self
                 .log
                 .read_from_bounded(seq, usize::try_from(limit).unwrap_or(usize::MAX))?,
             _ => self.log.read_from(seq)?,
@@ -131,6 +147,16 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         query: u64,
         filter: Option<EventStoreFilter>,
         limit: Option<u64>,
+    ) -> Result<Vec<InterfoldEvent<Sequenced>>> {
+        self.query_by_seq_with_bounds(query, filter, limit, None)
+    }
+
+    fn query_by_seq_with_bounds(
+        &self,
+        query: u64,
+        filter: Option<EventStoreFilter>,
+        limit: Option<u64>,
+        max_bytes: Option<u64>,
     ) -> Result<Vec<InterfoldEvent<Sequenced>>> {
         // H7: the replay cursor must never point past the log head. The snapshot
         // cursor is committed atomically with its snapshot data, so a cursor ahead
@@ -149,8 +175,13 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
                  Halting; operator recovery required."
             );
         }
-        let events = match (filter.as_ref(), limit) {
-            (None, Some(limit)) => self
+        let events = match (filter.as_ref(), limit, max_bytes) {
+            (None, Some(limit), Some(max_bytes)) => self.log.read_from_bounded_by_bytes(
+                query,
+                usize::try_from(limit).unwrap_or(usize::MAX),
+                usize::try_from(max_bytes).unwrap_or(usize::MAX),
+            )?,
+            (None, Some(limit), None) => self
                 .log
                 .read_from_bounded(query, usize::try_from(limit).unwrap_or(usize::MAX))?,
             _ => self.log.read_from(query)?,
@@ -200,7 +231,11 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
             let mut page_len = 0usize;
             for (seq, event) in self
                 .log
-                .read_from_bounded(next_sequence, INDEX_RECONCILE_PAGE_SIZE)
+                .read_from_bounded_by_bytes(
+                    next_sequence,
+                    INDEX_RECONCILE_PAGE_SIZE,
+                    INDEX_RECONCILE_PAGE_BYTES,
+                )
                 .with_context(|| {
                     format!(
                         "event log integrity failure during index reconciliation at sequence \
@@ -313,10 +348,13 @@ impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Ts>> for EventStor
         let query = msg.query();
         let id = msg.id();
         let limit = msg.limit();
+        let max_bytes = msg.max_bytes();
         let filter = msg.filter().cloned();
         let sender = msg.sender();
-        let response =
-            EventStoreQueryResponse::from_result(id, self.query_by_ts(query, filter, limit));
+        let response = EventStoreQueryResponse::from_result(
+            id,
+            self.query_by_ts_with_bounds(query, filter, limit, max_bytes),
+        );
         ctx.wait(
             async move {
                 if let Err(error) = deliver_query_response(sender, response).await {
@@ -334,10 +372,13 @@ impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Seq>> for EventSto
         let id = msg.id();
         let query = msg.query();
         let limit = msg.limit();
+        let max_bytes = msg.max_bytes();
         let filter = msg.filter().cloned();
         let sender = msg.sender();
-        let response =
-            EventStoreQueryResponse::from_result(id, self.query_by_seq(query, filter, limit));
+        let response = EventStoreQueryResponse::from_result(
+            id,
+            self.query_by_seq_with_bounds(query, filter, limit, max_bytes),
+        );
         ctx.wait(
             async move {
                 if let Err(error) = deliver_query_response(sender, response).await {

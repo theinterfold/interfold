@@ -25,14 +25,24 @@ pub(crate) fn dealer_identity(
         c2a.payload.e3_id == *e3_id
             && c2b.payload.e3_id == *e3_id
             && c2a.payload.proof_type == ProofType::C2aSkShareComputation
-            && c2b.payload.proof_type == ProofType::C2bESmShareComputation,
-        "dealer proof pair does not match the E3 and C2 proof types"
+            && c2b.payload.proof_type == ProofType::C2bESmShareComputation
+            && c2a
+                .payload
+                .proof_type
+                .circuit_names()
+                .contains(&c2a.payload.proof.circuit)
+            && c2b
+                .payload
+                .proof_type
+                .circuit_names()
+                .contains(&c2b.payload.proof.circuit),
+        "dealer proof pair does not match the E3, C2 proof types, and circuits"
     );
     let contribution_hash: [u8; 32] = keccak256(
         (
             keccak256(&**pk_share),
-            c2a.payload.digest()?,
-            c2b.payload.digest()?,
+            c2a.payload.statement_digest()?,
+            c2b.payload.statement_digest()?,
         )
             .abi_encode(),
     )
@@ -100,6 +110,7 @@ fn select_from(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use e3_events::{CircuitName, Proof, ProofPayload};
 
     fn dealers(ids: &[u64]) -> Vec<DkgDealer> {
         ids.iter()
@@ -108,6 +119,98 @@ mod tests {
                 contribution_hash: [party_id as u8; 32],
             })
             .collect()
+    }
+
+    fn signed_c2(
+        e3_id: &E3id,
+        proof_type: ProofType,
+        circuit: CircuitName,
+        proof_data: &[u8],
+        public_signals: &[u8],
+    ) -> SignedProofPayload {
+        SignedProofPayload {
+            payload: ProofPayload {
+                e3_id: e3_id.clone(),
+                proof_type,
+                proof: Proof::new(
+                    circuit,
+                    ArcBytes::from_bytes(proof_data),
+                    ArcBytes::from_bytes(public_signals),
+                ),
+            },
+            signature: ArcBytes::from_bytes(&[]),
+        }
+    }
+
+    #[test]
+    fn dealer_identity_is_stable_across_equivalent_proofs() {
+        let e3_id = E3id::new("42", 1);
+        let c2a_first = signed_c2(
+            &e3_id,
+            ProofType::C2aSkShareComputation,
+            CircuitName::SkShareComputation,
+            &[1],
+            &[10],
+        );
+        let c2a_second = signed_c2(
+            &e3_id,
+            ProofType::C2aSkShareComputation,
+            CircuitName::SkShareComputation,
+            &[2],
+            &[10],
+        );
+        let c2b_first = signed_c2(
+            &e3_id,
+            ProofType::C2bESmShareComputation,
+            CircuitName::ESmShareComputation,
+            &[3],
+            &[20],
+        );
+        let c2b_second = signed_c2(
+            &e3_id,
+            ProofType::C2bESmShareComputation,
+            CircuitName::ESmShareComputation,
+            &[4],
+            &[20],
+        );
+        let pk_share = ArcBytes::from_bytes(&[30]);
+
+        assert_eq!(
+            dealer_identity(&e3_id, 0, &pk_share, &c2a_first, &c2b_first).unwrap(),
+            dealer_identity(&e3_id, 0, &pk_share, &c2a_second, &c2b_second).unwrap()
+        );
+    }
+
+    #[test]
+    fn dealer_identity_changes_with_public_statement() {
+        let e3_id = E3id::new("42", 1);
+        let c2a = signed_c2(
+            &e3_id,
+            ProofType::C2aSkShareComputation,
+            CircuitName::SkShareComputation,
+            &[1],
+            &[10],
+        );
+        let c2a_changed = signed_c2(
+            &e3_id,
+            ProofType::C2aSkShareComputation,
+            CircuitName::SkShareComputation,
+            &[1],
+            &[11],
+        );
+        let c2b = signed_c2(
+            &e3_id,
+            ProofType::C2bESmShareComputation,
+            CircuitName::ESmShareComputation,
+            &[2],
+            &[20],
+        );
+        let pk_share = ArcBytes::from_bytes(&[30]);
+
+        assert_ne!(
+            dealer_identity(&e3_id, 0, &pk_share, &c2a, &c2b).unwrap(),
+            dealer_identity(&e3_id, 0, &pk_share, &c2a_changed, &c2b).unwrap()
+        );
     }
 
     #[test]

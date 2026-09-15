@@ -147,6 +147,7 @@ impl Handler<TypedEvent<E3RequestComplete>> for CiphernodeSelector {
                 self.terminal_e3s.insert(msg.e3_id.clone());
                 self.observed_phases.remove(&msg.e3_id);
                 self.ready_phases.remove(&msg.e3_id);
+                self.announced_active_parties.remove(&msg.e3_id);
                 self.failover.try_mutate(msg.get_ctx(), |mut state| {
                     state.rounds.remove(&msg.e3_id);
                     state.unresponsive.remove(&msg.e3_id);

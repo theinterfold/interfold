@@ -25,6 +25,7 @@ use tracing::info;
 use crate::{ReplayDecision, SyncPlanner};
 
 const REPLAY_QUERY_PAGE_SIZE: usize = 1_024;
+const REPLAY_QUERY_PAGE_BYTES: usize = 256 * 1024 * 1024;
 const REPLAY_MERGE_FAN_IN: usize = 32;
 const MAX_SPOOLED_EVENT_BYTES: usize = e3_data::MAX_BLOB_BYTES + 1024;
 const REPLAY_PROGRESS_INTERVAL: usize = 10_000;
@@ -260,7 +261,8 @@ async fn query_page(
                 std::collections::HashMap::from([(aggregate_id, cursor)]),
                 addr,
             )
-            .with_limit(REPLAY_QUERY_PAGE_SIZE as u64),
+            .with_limit(REPLAY_QUERY_PAGE_SIZE as u64)
+            .with_max_bytes(REPLAY_QUERY_PAGE_BYTES as u64),
         )
         .await
         .context("EventStore router stopped during paged replay")?;

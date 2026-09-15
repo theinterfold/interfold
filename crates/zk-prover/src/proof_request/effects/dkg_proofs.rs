@@ -43,6 +43,21 @@ impl ProofRequestActor {
         let (msg, ec) = msg.into_components();
         let e3_id = msg.e3_id.clone();
 
+        if self.pending_threshold.contains_key(&e3_id) {
+            let stale_count = self
+                .threshold_correlation
+                .values()
+                .filter(|(pending_e3, _, _)| pending_e3 == &e3_id)
+                .count();
+            self.threshold_correlation
+                .retain(|_, (pending_e3, _, _)| pending_e3 != &e3_id);
+            warn!(
+                e3_id = %e3_id,
+                stale_correlations = stale_count,
+                "Replacing replayed DKG proof work and invalidating its old responses"
+            );
+        }
+
         let sk_enc_count = msg.sk_share_encryption_requests.len();
         let e_sm_enc_count = msg.e_sm_share_encryption_requests.len();
 

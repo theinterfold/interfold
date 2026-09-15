@@ -213,6 +213,58 @@ fn strip_peer_id(mut addr: Multiaddr) -> Multiaddr {
     addr
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ConfiguredPeer {
+    peer_id: Option<libp2p::PeerId>,
+    address: Multiaddr,
+    identity_pinned: bool,
+}
+
+impl ConfiguredPeer {
+    fn from_address(address: Multiaddr) -> Self {
+        let peer_id = match address.iter().last() {
+            Some(Protocol::P2p(peer_id)) => Some(peer_id),
+            _ => None,
+        };
+        Self {
+            peer_id,
+            address: strip_peer_id(address),
+            identity_pinned: peer_id.is_some(),
+        }
+    }
+
+    fn matches_endpoint(&self, peer_id: &libp2p::PeerId, address: &Multiaddr) -> bool {
+        self.peer_id == Some(*peer_id)
+            && (self.address == *address
+                || matches!(self.address.iter().next(), Some(Protocol::Dnsaddr(_))))
+    }
+}
+
+/// Update an unpinned bootstrap identity after a key rotation.
+///
+/// Return `false` when the configuration explicitly pins the old identity. The
+/// caller must then reject the replacement instead of trusting the endpoint.
+fn rebind_configured_peer(
+    configured: &mut [ConfiguredPeer],
+    expected: &libp2p::PeerId,
+    obtained: libp2p::PeerId,
+    address: &Multiaddr,
+) -> bool {
+    let matching = configured
+        .iter()
+        .filter(|peer| peer.matches_endpoint(expected, address));
+    if matching.clone().any(|peer| peer.identity_pinned) {
+        return false;
+    }
+    for configured_peer in configured
+        .iter_mut()
+        .filter(|peer| peer.matches_endpoint(expected, address))
+    {
+        configured_peer.peer_id = Some(obtained);
+    }
+    true
+}
+
 fn is_unspecified_addr(addr: &Multiaddr) -> bool {
     addr.iter().any(|p| match p {
         Protocol::Ip4(ip) => ip.is_unspecified(),
@@ -353,11 +405,7 @@ impl Libp2pNetInterface {
             .iter()
             .filter_map(|address| {
                 let address: Multiaddr = address.parse().ok()?;
-                let peer_id = match address.iter().last() {
-                    Some(Protocol::P2p(peer_id)) => Some(peer_id),
-                    _ => None,
-                };
-                Some((peer_id, strip_peer_id(address)))
+                Some(ConfiguredPeer::from_address(address))
             })
             .collect();
         // Limit repeated backpressure warnings.
@@ -459,9 +507,12 @@ impl Libp2pNetInterface {
 
                     if let NetCommand::ConfiguredPeerAdmitted { address, peer_id } = command {
                         let address = strip_peer_id(address);
-                        for (configured_id, configured_address) in &mut configured_peers {
-                            if *configured_address == address {
-                                *configured_id = Some(peer_id);
+                        for configured_peer in &mut configured_peers {
+                            if configured_peer.address == address
+                                && (!configured_peer.identity_pinned
+                                    || configured_peer.peer_id == Some(peer_id))
+                            {
+                                configured_peer.peer_id = Some(peer_id);
                             }
                         }
                         continue;
@@ -549,28 +600,37 @@ fn reconcile_gossip_subscriptions(
 
 fn redial_disconnected_configured_peers(
     swarm: &mut Swarm<NodeBehaviour>,
-    configured: &[(Option<libp2p::PeerId>, Multiaddr)],
+    configured: &[ConfiguredPeer],
     failures: &mut PeerConnectionFailures,
     admission: &PeerAdmission,
 ) {
-    for (peer_id, address) in configured {
-        let Some(peer_id) = peer_id else {
+    for configured_peer in configured {
+        let Some(peer_id) = configured_peer.peer_id else {
             continue;
         };
-        if *peer_id == *swarm.local_peer_id()
-            || swarm.is_connected(peer_id)
-            || failures.is_identity_quarantined(peer_id)
-            || admission.is_rejected(peer_id)
+        if peer_id == *swarm.local_peer_id()
+            || swarm.is_connected(&peer_id)
+            || failures.is_identity_quarantined(&peer_id)
+            || admission.is_rejected(&peer_id)
         {
             continue;
         }
-        let options = DialOpts::peer_id(*peer_id)
-            .addresses(vec![address.clone()])
+        let options = DialOpts::peer_id(peer_id)
+            .addresses(vec![configured_peer.address.clone()])
             .build();
         match swarm.dial(options) {
-            Ok(()) => debug!(%peer_id, %address, "Redialing a disconnected configured peer"),
+            Ok(()) => debug!(
+                %peer_id,
+                address = %configured_peer.address,
+                "Redialing a disconnected configured peer"
+            ),
             Err(DialError::DialPeerConditionFalse(_)) => {}
-            Err(error) => debug!(%peer_id, %address, %error, "Configured peer redial skipped"),
+            Err(error) => debug!(
+                %peer_id,
+                address = %configured_peer.address,
+                %error,
+                "Configured peer redial skipped"
+            ),
         }
     }
 }
@@ -671,7 +731,7 @@ async fn process_swarm_event(
     correlator: &mut Correlator,
     peer_failures: &mut PeerConnectionFailures,
     peer_admission: &mut PeerAdmission,
-    configured_peers: &mut [(Option<libp2p::PeerId>, Multiaddr)],
+    configured_peers: &mut [ConfiguredPeer],
     dht_records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
     network: &NetworkPolicy,
     status: &NetworkStatus,
@@ -744,10 +804,6 @@ async fn process_swarm_event(
                     ref address,
                 } = error
                 {
-                    // The node at this address has a new PeerId (e.g. restarted with new keys).
-                    // Remove the stale entry and add the new one so we don't loop.
-                    // Other routing tables can advertise the stale identity again. Quarantine
-                    // prevents reinsertion, and concurrent failures remain debug events.
                     let remote_addr = address.clone();
                     let mismatch_count =
                         peer_failures.identity_mismatch.record_failure(failed_peer);
@@ -755,7 +811,7 @@ async fn process_swarm_event(
                     if mismatch_count == 1 {
                         info!(
                             "Peer ID mismatch at {remote_addr}: expected {failed_peer}, got {obtained} — \
-                             replacing stale routing entry"
+                             removing the stale routing entry"
                         );
                     } else {
                         debug!(
@@ -766,33 +822,30 @@ async fn process_swarm_event(
                     let local_peer = *swarm.local_peer_id();
                     swarm.behaviour_mut().kademlia.remove_peer(failed_peer);
                     if obtained != local_peer {
-                        // Strip the stale /p2p/<old-id> suffix, otherwise dials to the
-                        // new peer via this address fail with WrongPeerId forever.
                         let corrected_addr = strip_peer_id(remote_addr.clone());
-                        for (configured_id, configured_addr) in configured_peers.iter_mut() {
-                            if *configured_id == Some(*failed_peer)
-                                && (*configured_addr == corrected_addr
-                                    || matches!(
-                                        configured_addr.iter().next(),
-                                        Some(Protocol::Dnsaddr(_))
-                                    ))
-                            {
-                                *configured_id = Some(obtained);
-                            }
-                        }
+                        let can_rebind = rebind_configured_peer(
+                            configured_peers,
+                            failed_peer,
+                            obtained,
+                            &corrected_addr,
+                        );
 
-                        // Redial the node under its actual identity — a direct dial
-                        // doesn't propagate the address, so no loopback filtering is
-                        // needed. The default dial condition (DisconnectedAndNotDialing)
-                        // makes this a no-op while we are already connected or
-                        // connecting to the real peer, so repeated mismatches cause no
-                        // churn — while a dropped connection is re-attempted on any
-                        // later mismatch (recovery is not one-shot).
-                        let opts = DialOpts::peer_id(obtained)
-                            .addresses(vec![corrected_addr])
-                            .build();
-                        if let Err(e) = swarm.dial(opts) {
-                            debug!("Redial of {obtained} after peer ID replacement skipped: {e}");
+                        if can_rebind {
+                            let opts = DialOpts::peer_id(obtained)
+                                .addresses(vec![corrected_addr])
+                                .build();
+                            if let Err(e) = swarm.dial(opts) {
+                                debug!(
+                                    "Redial of {obtained} after peer ID replacement skipped: {e}"
+                                );
+                            }
+                        } else {
+                            warn!(
+                                %remote_addr,
+                                expected = %failed_peer,
+                                %obtained,
+                                "Rejected a configured peer whose pinned identity changed"
+                            );
                         }
                     }
                 } else {
@@ -1790,6 +1843,67 @@ mod tests {
         );
         // Idempotent on addresses without a /p2p/ suffix
         assert_eq!(super::strip_peer_id(stripped.clone()), stripped);
+    }
+
+    #[test]
+    fn explicit_configured_peer_identity_cannot_rebind() {
+        let expected = PeerId::random();
+        let obtained = PeerId::random();
+        let address: Multiaddr = format!("/ip4/172.20.0.1/udp/9091/quic-v1/p2p/{expected}")
+            .parse()
+            .unwrap();
+        let corrected = super::strip_peer_id(address.clone());
+        let mut configured = vec![super::ConfiguredPeer::from_address(address)];
+
+        assert!(!super::rebind_configured_peer(
+            &mut configured,
+            &expected,
+            obtained,
+            &corrected,
+        ));
+        assert_eq!(configured[0].peer_id, Some(expected));
+    }
+
+    #[test]
+    fn discovered_configured_peer_identity_can_rebind() {
+        let expected = PeerId::random();
+        let obtained = PeerId::random();
+        let address: Multiaddr = "/ip4/172.20.0.1/udp/9091/quic-v1".parse().unwrap();
+        let mut configured = vec![super::ConfiguredPeer::from_address(address.clone())];
+        configured[0].peer_id = Some(expected);
+
+        assert!(super::rebind_configured_peer(
+            &mut configured,
+            &expected,
+            obtained,
+            &address,
+        ));
+        assert_eq!(configured[0].peer_id, Some(obtained));
+    }
+
+    #[test]
+    fn pinned_identity_blocks_rebinding_every_matching_entry() {
+        let expected = PeerId::random();
+        let obtained = PeerId::random();
+        let pinned: Multiaddr = format!("/ip4/172.20.0.1/udp/9091/quic-v1/p2p/{expected}")
+            .parse()
+            .unwrap();
+        let endpoint = super::strip_peer_id(pinned.clone());
+        let mut configured = vec![
+            super::ConfiguredPeer::from_address(endpoint.clone()),
+            super::ConfiguredPeer::from_address(pinned),
+        ];
+        configured[0].peer_id = Some(expected);
+
+        assert!(!super::rebind_configured_peer(
+            &mut configured,
+            &expected,
+            obtained,
+            &endpoint,
+        ));
+        assert!(configured
+            .iter()
+            .all(|configured_peer| configured_peer.peer_id == Some(expected)));
     }
 
     #[test]

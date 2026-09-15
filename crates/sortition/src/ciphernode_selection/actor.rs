@@ -112,6 +112,7 @@ pub struct CiphernodeSelector {
     failover: Persistable<AggregatorFailoverState>,
     observed_phases: HashMap<E3id, AggregatorPhase>,
     ready_phases: HashMap<E3id, AggregatorPhase>,
+    announced_active_parties: HashMap<E3id, Option<u64>>,
     failover_timers: HashMap<E3id, SpawnHandle>,
     terminal_e3s: HashSet<E3id>,
     effects_enabled: bool,
@@ -174,6 +175,7 @@ impl CiphernodeSelector {
             address: address.to_owned(),
             observed_phases,
             ready_phases: HashMap::new(),
+            announced_active_parties: HashMap::new(),
             failover_timers: HashMap::new(),
             terminal_e3s,
             effects_enabled: false,
@@ -348,8 +350,16 @@ impl CiphernodeSelector {
             .get()
             .and_then(|state| state.unresponsive.get(e3_id).cloned())
             .unwrap_or_default();
+        let skipped = expelled
+            .iter()
+            .chain(unresponsive.iter())
+            .copied()
+            .collect::<Vec<_>>();
+        let active_party_id = committee.active_aggregator_party_id(&skipped);
         let is_aggregator = committee.effective_aggregator(&self.address, &expelled, &unresponsive);
         let previous = state.is_aggregator.get(e3_id).copied();
+        let active_party_changed =
+            self.announced_active_parties.get(e3_id).copied() != Some(active_party_id);
 
         let mutate = |mut selector_state: CiphernodeSelectorState| {
             selector_state
@@ -363,9 +373,10 @@ impl CiphernodeSelector {
             self.state.try_mutate_without_context(mutate)?;
         }
 
-        if force_emit || previous != Some(is_aggregator) {
+        if force_emit || previous != Some(is_aggregator) || active_party_changed {
             let event = AggregatorChanged {
                 e3_id: e3_id.clone(),
+                active_party_id,
                 is_aggregator,
             };
             if let Some(ec) = ec {
@@ -373,6 +384,8 @@ impl CiphernodeSelector {
             } else {
                 self.bus.publish_without_context(event)?;
             }
+            self.announced_active_parties
+                .insert(e3_id.clone(), active_party_id);
         }
 
         Ok(())
@@ -839,6 +852,49 @@ mod recovery_tests {
             .await?
             .expect("persisted failover state");
         assert_eq!(failover.unresponsive.get(&e3_id), Some(&vec![0]));
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn standby_observes_leadership_changes_between_other_parties() -> Result<()> {
+        let e3_id = E3id::new("standby-leadership", 1);
+        let selector_state = CiphernodeSelectorState {
+            committees: HashMap::from([(
+                e3_id.clone(),
+                Committee::new(vec!["0xa".into(), "0xb".into(), "0xc".into()]),
+            )]),
+            expelled: HashMap::from([(e3_id.clone(), Vec::new())]),
+            ..Default::default()
+        };
+        let (state, _) = test_persistable(selector_state);
+        let (failover, _) = test_persistable(AggregatorFailoverState::default());
+        let mut selector = CiphernodeSelector::new_with_clock(
+            &test_bus(),
+            state,
+            failover,
+            "0xc",
+            HashMap::new(),
+            Arc::new(SystemClock),
+        );
+
+        selector.update_aggregator_status(&e3_id, None, false)?;
+        assert_eq!(
+            selector.announced_active_parties.get(&e3_id),
+            Some(&Some(0))
+        );
+        assert_eq!(selector.state.try_get()?.is_aggregator[&e3_id], false);
+
+        selector.failover.try_mutate_without_context(|mut state| {
+            state.unresponsive.insert(e3_id.clone(), vec![0]);
+            Ok(state)
+        })?;
+        selector.update_aggregator_status(&e3_id, None, false)?;
+
+        assert_eq!(
+            selector.announced_active_parties.get(&e3_id),
+            Some(&Some(1))
+        );
+        assert_eq!(selector.state.try_get()?.is_aggregator[&e3_id], false);
         Ok(())
     }
 

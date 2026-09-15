@@ -471,9 +471,14 @@ design citation alone does not establish current runtime behavior.
   `AggregationInputsReady` confirms that the phase can resume from durable state. Only the active
   party can launch aggregation effects or accept their results. — `flow-trace/04`; INDEX concern #42
 - The active aggregator proposes the canonical DKG roster only after it can derive `H` mutually
-  ready dealers from signed readiness reports. Accepting the first valid roster ends only the DKG
-  roster failover phase; public-key aggregation receives a new readiness-gated failover budget. —
+  ready dealers from signed readiness reports. `AggregatorChanged` supplies the active party ID,
+  and receivers reject roster signatures from every other party. The first valid roster is durable
+  and immutable; a later conflicting roster is ignored. Accepting it ends only the DKG-roster
+  failover phase. Public-key aggregation receives a new readiness-gated failover budget. —
   `flow-trace/04`; INDEX concerns #42 and #52
+- DKG dealer identity binds the public proof statement, not randomized proof bytes. Replacing a
+  same-E3 proof plan must invalidate every prior correlation ID before the replacement can accept
+  responses. — `flow-trace/04`
 - DKG aggregation receives **exactly H** canonical honest NodeFold proofs (unique in-range party
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert
   `H == N`. A mixed Some/None NodeFold set is terminal DKG failure. — `ARCHITECTURE.md`;
@@ -662,6 +667,10 @@ design citation alone does not establish current runtime behavior.
 - The append-only event log is the durable source of truth; snapshots and the timestamp index are
   derived optimizations. Replay-from-checkpoint and snapshot-hydration at the same logical point
   must produce equivalent state and pending intents. — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
+- Event-log flush synchronizes the active segment, index, and log directory before live dispatch.
+  Startup verifies every committed blob reference before it removes unreferenced blob files.
+  Replay and index reconciliation are bounded by both event count and decoded bytes; one valid
+  event may exceed the page budget so the cursor can still advance. — `CRATES_ARCHITECTURE.md`
 - `E3LifecycleCoordinator` is a projection — rebuildable, never a source of truth, never emits
   protocol events. — `ARCHITECTURE.md`; `flow-trace/06`
 - EventStore duplicate rule: same HLC timestamp + stable event ID + **equal payload** is an

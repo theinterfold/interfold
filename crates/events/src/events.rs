@@ -135,6 +135,7 @@ pub struct EventStoreQueryBy<Q: QueryKind> {
     query: Q::Shape,
     sender: Recipient<EventStoreQueryResponse>,
     limit: Option<u64>,
+    max_bytes: Option<u64>,
     filter: Option<EventStoreFilter>,
 }
 
@@ -149,6 +150,7 @@ impl EventStoreQueryBy<SeqAgg> {
             query,
             sender: sender.into(),
             limit: None,
+            max_bytes: None,
             filter: None,
         }
     }
@@ -187,6 +189,7 @@ impl EventStoreQueryBy<TsAgg> {
             query,
             sender: sender.into(),
             limit: None,
+            max_bytes: None,
             filter: None,
         }
     }
@@ -225,6 +228,7 @@ impl EventStoreQueryBy<Ts> {
             query,
             sender: sender.into(),
             limit: None,
+            max_bytes: None,
             filter: None,
         }
     }
@@ -263,6 +267,7 @@ impl EventStoreQueryBy<Seq> {
             query,
             sender: sender.into(),
             limit: None,
+            max_bytes: None,
             filter: None,
         }
     }
@@ -299,12 +304,29 @@ impl<Q: QueryKind> EventStoreQueryBy<Q> {
         self.sender
     }
 
-    pub fn with_options(mut self, limit: Option<u64>, filter: Option<EventStoreFilter>) -> Self {
+    pub fn max_bytes(&self) -> Option<u64> {
+        self.max_bytes
+    }
+
+    pub fn with_max_bytes(mut self, max_bytes: u64) -> Self {
+        self.max_bytes = Some(max_bytes);
+        self
+    }
+
+    pub fn with_options(
+        mut self,
+        limit: Option<u64>,
+        filter: Option<EventStoreFilter>,
+        max_bytes: Option<u64>,
+    ) -> Self {
         if let Some(l) = limit {
             self.limit = Some(l);
         }
         if let Some(f) = filter {
             self.filter = Some(f);
+        }
+        if let Some(max_bytes) = max_bytes {
+            self.max_bytes = Some(max_bytes);
         }
         self
     }

@@ -44,9 +44,35 @@ impl ThresholdKeyshare {
         }
 
         info!("CiphernodeSelected received.");
-        // Ensure the collectors are created
-        let _ = self.ensure_collector(address.clone());
-        let _ = self.ensure_encryption_key_collector(address.clone());
+        if let Err(error) = resolve_timeout(
+            DkgTimeoutPhase::EncryptionKeyCollection,
+            state.dkg_deadline_unix_secs,
+            state.dkg_window_secs,
+        ) {
+            warn!(
+                e3_id = %state.e3_id,
+                %error,
+                "Cannot start DKG after the encryption-key collection cutoff"
+            );
+            self.state.try_mutate(&ec, |state| {
+                state.new_state(KeyshareState::Failed {
+                    failed_at_stage: E3Stage::CommitteeFinalized,
+                    reason: FailureReason::DKGTimeout,
+                })
+            })?;
+            self.bus.publish(
+                E3Failed {
+                    e3_id: state.e3_id,
+                    failed_at_stage: E3Stage::CommitteeFinalized,
+                    reason: FailureReason::DKGTimeout,
+                },
+                ec,
+            )?;
+            return Ok(());
+        }
+
+        self.ensure_encryption_key_collector(address.clone())?;
+        self.ensure_collector(address.clone())?;
 
         let BfvKeypairMaterial {
             sk_bfv: sk_bfv_encrypted,

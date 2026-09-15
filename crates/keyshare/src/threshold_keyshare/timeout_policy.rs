@@ -87,6 +87,13 @@ pub(crate) fn resolve_timeout_from_inputs(
         "canonical DKG timing is invalid"
     );
     let cutoff = phase_cutoff_unix_secs(dkg_deadline_unix_secs, dkg_window_secs, phase);
+    anyhow::ensure!(
+        now_unix_secs < cutoff,
+        "{} cutoff {} has passed at {}",
+        phase.label(),
+        cutoff,
+        now_unix_secs
+    );
     let remaining_secs = cutoff.saturating_sub(now_unix_secs);
     let duration_secs = collector_override_secs
         .map(|override_secs| override_secs.min(remaining_secs))
@@ -186,8 +193,8 @@ mod tests {
             7200,
             8_300,
         )
-        .unwrap();
-        assert_eq!(past.duration, Duration::ZERO);
+        .unwrap_err();
+        assert!(past.to_string().contains("cutoff 8200 has passed"));
     }
 
     #[test]

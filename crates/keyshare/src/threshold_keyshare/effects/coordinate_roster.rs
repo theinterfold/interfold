@@ -118,8 +118,17 @@ impl ThresholdKeyshare {
         if change.e3_id != state.e3_id {
             return Ok(());
         }
+        ensure!(
+            change.is_aggregator
+                == change
+                    .active_party_id
+                    .is_some_and(|party_id| party_id == state.party_id),
+            "aggregator role does not match the active party"
+        );
+        self.active_aggregator_party_id = change.active_party_id;
         self.is_aggregator = change.is_aggregator;
         self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.active_aggregator_party_id = change.active_party_id;
             recovery.is_aggregator = change.is_aggregator;
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
@@ -183,6 +192,15 @@ impl ThresholdKeyshare {
                 })?;
             }
             DkgCoordinationKind::Roster => {
+                if Some(message.party_id) != self.active_aggregator_party_id {
+                    warn!(
+                        e3_id = %message.e3_id,
+                        proposer = message.party_id,
+                        active_party_id = ?self.active_aggregator_party_id,
+                        "Ignoring a DKG roster from a party that does not own aggregation"
+                    );
+                    return Ok(());
+                }
                 if state.expelled_parties.contains(&message.party_id)
                     || message.dealers.len() != committee_h
                     || message
@@ -194,7 +212,12 @@ impl ThresholdKeyshare {
                 }
                 if let Some(existing) = recovery.dkg_roster {
                     if existing.dealers != message.dealers {
-                        return Err(anyhow!("conflicting DKG rosters for the same E3"));
+                        warn!(
+                            e3_id = %message.e3_id,
+                            accepted_proposer = existing.party_id,
+                            ignored_proposer = message.party_id,
+                            "Ignoring a DKG roster after this node accepted a roster"
+                        );
                     }
                     return Ok(());
                 }
@@ -288,17 +311,24 @@ impl ThresholdKeyshare {
             dealers,
             &self.signer,
         )?;
-        info!(
-            e3_id = %roster.e3_id,
-            proposer = roster.party_id,
-            party_ids = ?roster.dealers.iter().map(|dealer| dealer.party_id).collect::<Vec<_>>(),
-            "Proposing DKG roster"
-        );
+        let e3_id = roster.e3_id.clone();
+        let proposer = roster.party_id;
+        let party_ids = roster
+            .dealers
+            .iter()
+            .map(|dealer| dealer.party_id)
+            .collect::<Vec<_>>();
         self.roster_proposal_pending = true;
         if let Err(error) = self.bus.publish(roster, ec) {
             self.roster_proposal_pending = false;
             return Err(error);
         }
+        info!(
+            %e3_id,
+            proposer,
+            ?party_ids,
+            "Proposed DKG roster"
+        );
         Ok(())
     }
 
@@ -315,13 +345,19 @@ impl ThresholdKeyshare {
             .collect();
         if party_ids.contains(&state.party_id) {
             let recovery = self.recovery.try_get()?;
-            let own_ready = recovery
+            let locally_verified = recovery
                 .dkg_ready
-                .ok_or_else(|| anyhow!("selected DKG party has no verified readiness"))?;
-            ensure!(
-                ready_contains_roster(&own_ready, &roster),
-                "selected DKG party lacks a roster contribution"
-            );
+                .as_ref()
+                .is_some_and(|ready| ready_contains_roster(ready, &roster));
+            if !locally_verified {
+                warn!(
+                    e3_id = %state.e3_id,
+                    proposer = roster.party_id,
+                    party_id = state.party_id,
+                    "Ignoring a DKG roster that does not match this selected party's verified contributions"
+                );
+                return Ok(());
+            }
         }
         self.recovery.try_mutate(&ec, |mut recovery| {
             recovery.dkg_roster = Some(roster.clone());
@@ -366,6 +402,11 @@ impl ThresholdKeyshare {
             return Ok(());
         };
         if !ready_contains_roster(&own_ready, &roster) {
+            warn!(
+                e3_id = %state.e3_id,
+                party_id = state.party_id,
+                "This party cannot start C4 because it does not hold every accepted roster contribution"
+            );
             return Ok(());
         }
         self.proceed_with_decryption_key_calculation(None, ec)

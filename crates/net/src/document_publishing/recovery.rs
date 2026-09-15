@@ -6,14 +6,72 @@ use super::{
     ContentHash, RecoveredDocumentState, MAX_BUFFERED_NOTIFICATIONS, MAX_PENDING_PUBLICATIONS,
     MAX_PENDING_PUBLICATION_BYTES, MAX_RECEIVED_DOCUMENTS,
 };
+use crate::domain::EventConversionService;
 use actix::Recipient;
 use anyhow::{ensure, Context, Result};
 use e3_events::{
     AggregateId, CorrelationId, E3Stage, E3id, Event, EventContextAccessors, EventContextSeq,
-    EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEventData, SeqAgg,
+    EventSource, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEventData,
+    PublishDocumentRequested, SeqAgg,
 };
 use e3_utils::actix::channel;
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet, VecDeque};
+
+fn derived_publication(
+    data: &InterfoldEventData,
+    source: EventSource,
+) -> Result<Option<PublishDocumentRequested>> {
+    if source != EventSource::Local {
+        return Ok(None);
+    }
+    match data {
+        InterfoldEventData::ThresholdShareCreated(event) => {
+            EventConversionService::threshold_share_to_request(event.clone())
+        }
+        InterfoldEventData::EncryptionKeyCreated(event) => {
+            EventConversionService::encryption_key_to_request(event.clone())
+        }
+        InterfoldEventData::DecryptionKeyShared(event) => {
+            EventConversionService::decryption_key_to_request(event.clone())
+        }
+        _ => Ok(None),
+    }
+}
+
+fn track_publication(
+    publications: &mut HashMap<(E3id, ContentHash), PublishDocumentRequested>,
+    publication_bytes: &mut usize,
+    closed: &VecDeque<E3id>,
+    request: PublishDocumentRequested,
+) -> Result<()> {
+    if closed.contains(&request.meta.e3_id) || request.meta.expires_at <= chrono::Utc::now() {
+        return Ok(());
+    }
+    let id = (
+        request.meta.e3_id.clone(),
+        ContentHash::from_content(&request.value),
+    );
+    let publication_count = publications.len();
+    match publications.entry(id) {
+        Entry::Occupied(mut existing) => {
+            existing.insert(request);
+        }
+        Entry::Vacant(entry) => {
+            let new_bytes = publication_bytes
+                .checked_add(request.value.size())
+                .context("document publication outbox size overflow")?;
+            ensure!(
+                publication_count < MAX_PENDING_PUBLICATIONS
+                    && new_bytes <= MAX_PENDING_PUBLICATION_BYTES,
+                "document publication outbox exceeds recovery limits"
+            );
+            *publication_bytes = new_bytes;
+            entry.insert(request);
+        }
+    }
+    Ok(())
+}
 
 pub async fn recover_document_state(
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
@@ -55,26 +113,18 @@ pub async fn recover_document_state(
                 .checked_add(1)
                 .context("document recovery sequence overflow")?;
 
+            if let Some(request) = derived_publication(event.get_data(), event.source())? {
+                track_publication(&mut publications, &mut publication_bytes, &closed, request)?;
+            }
+
             match event.get_data() {
-                InterfoldEventData::PublishDocumentRequested(request)
-                    if !closed.contains(&request.meta.e3_id)
-                        && request.meta.expires_at > chrono::Utc::now() =>
-                {
-                    let id = (
-                        request.meta.e3_id.clone(),
-                        ContentHash::from_content(&request.value),
-                    );
-                    if !publications.contains_key(&id) {
-                        publication_bytes = publication_bytes
-                            .checked_add(request.value.size())
-                            .context("document publication outbox size overflow")?;
-                        ensure!(
-                            publications.len() < MAX_PENDING_PUBLICATIONS
-                                && publication_bytes <= MAX_PENDING_PUBLICATION_BYTES,
-                            "document publication outbox exceeds recovery limits"
-                        );
-                        publications.insert(id, request.clone());
-                    }
+                InterfoldEventData::PublishDocumentRequested(request) => {
+                    track_publication(
+                        &mut publications,
+                        &mut publication_bytes,
+                        &closed,
+                        request.clone(),
+                    )?;
                 }
                 InterfoldEventData::DocumentReceived(document)
                     if interested_e3s.contains(&document.meta.e3_id)
@@ -135,11 +185,12 @@ mod tests {
     use e3_ciphernode_builder::EventSystem;
     use e3_events::{
         AggregateConfig, DecryptionKeyShared, DocumentKind, DocumentMeta, DocumentReceived,
-        E3StageChanged, EventConstructorWithTimestamp, InterfoldEvent, Proof, ProofPayload,
-        ProofType, PublishDocumentRequested, SignedProofPayload, StoreEventRequested,
-        StoreEventResponse, Unsequenced,
+        E3StageChanged, EncryptionKey, EncryptionKeyCreated, EventConstructorWithTimestamp,
+        InterfoldEvent, Proof, ProofPayload, ProofType, PublishDocumentRequested,
+        SignedProofPayload, StoreEventRequested, StoreEventResponse, Unsequenced,
     };
     use e3_utils::ArcBytes;
+    use std::sync::Arc;
     use std::time::Duration;
 
     async fn append(
@@ -278,6 +329,40 @@ mod tests {
         assert!(recovered.publications.is_empty());
         assert!(recovered.received.is_empty());
         assert!(recovered.closed_e3s.contains(&e3_id));
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn persisted_artifact_recovers_missing_publication_request() -> Result<()> {
+        let aggregate = AggregateId::new(1);
+        let system =
+            EventSystem::new()
+                .with_fresh_bus()
+                .with_aggregate_config(AggregateConfig::new(HashMap::from([(
+                    aggregate,
+                    Duration::ZERO,
+                )])));
+        let artifact = EncryptionKeyCreated {
+            e3_id: E3id::new("8", 1),
+            key: Arc::new(EncryptionKey::new(0, ArcBytes::from_bytes(&[9; 32]))),
+            external: false,
+        };
+        append(&system, artifact.clone().into(), 1, EventSource::Local).await?;
+
+        let recovered = recover_document_state(
+            &system.eventstore_reader()?.seq(),
+            &[aggregate],
+            &HashSet::new(),
+        )
+        .await?;
+
+        assert_eq!(recovered.publications.len(), 1);
+        let publication = &recovered.publications[0];
+        assert_eq!(publication.meta.e3_id, artifact.e3_id);
+        assert!(matches!(
+            ReceivableDocument::from_bytes(&publication.value)?,
+            ReceivableDocument::EncryptionKeyCreated(recovered) if recovered == artifact
+        ));
         Ok(())
     }
 }

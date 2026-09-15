@@ -233,6 +233,7 @@ async fn only_the_active_aggregator_proposes_a_ready_roster() -> Result<()> {
     actor.handle_aggregator_changed(
         AggregatorChanged {
             e3_id: e3_id.clone(),
+            active_party_id: Some(2),
             is_aggregator: true,
         },
         test_ec(2),
@@ -256,7 +257,214 @@ async fn only_the_active_aggregator_proposes_a_ready_roster() -> Result<()> {
     );
     let recovery = actor.recovery.try_get()?;
     assert!(recovery.dkg_roster.is_none());
+    assert_eq!(recovery.active_aggregator_party_id, Some(2));
     assert!(recovery.is_aggregator);
+    Ok(())
+}
+
+#[actix::test]
+async fn roster_from_non_active_party_is_ignored() -> Result<()> {
+    let (bus, _history) = test_bus();
+    let e3_id = E3id::new("48", 1);
+    let signers = [
+        alloy::signers::local::PrivateKeySigner::random(),
+        alloy::signers::local::PrivateKeySigner::random(),
+        alloy::signers::local::PrivateKeySigner::random(),
+    ];
+    let committee = signers
+        .iter()
+        .map(|signer| signer.address().to_string())
+        .collect();
+    let legitimate_dealers = vec![
+        DkgDealer {
+            party_id: 0,
+            contribution_hash: [0; 32],
+        },
+        DkgDealer {
+            party_id: 1,
+            contribution_hash: [1; 32],
+        },
+    ];
+    let own_ready = DkgCoordination::sign(
+        e3_id.clone(),
+        Address::ZERO,
+        0,
+        DkgCoordinationKind::Ready,
+        legitimate_dealers,
+        &signers[0],
+    )?;
+    let forged_roster = DkgCoordination::sign(
+        e3_id.clone(),
+        Address::ZERO,
+        2,
+        DkgCoordinationKind::Roster,
+        vec![
+            DkgDealer {
+                party_id: 0,
+                contribution_hash: [9; 32],
+            },
+            DkgDealer {
+                party_id: 1,
+                contribution_hash: [9; 32],
+            },
+        ],
+        &signers[2],
+    )?;
+
+    let store = InMemStore::new(false).start();
+    let state_repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
+    let state = state_repo.send(Some(ThresholdKeyshareState::new(
+        e3_id.clone(),
+        0,
+        KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
+        1,
+        3,
+        ArcBytes::from_bytes(b"params"),
+        Address::ZERO.to_string(),
+    )));
+    let mut recovery = test_recovery();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(
+            CiphernodeSelected {
+                e3_id: e3_id.clone(),
+                threshold_m: 1,
+                threshold_n: 3,
+                party_id: 0,
+                committee,
+                ..Default::default()
+            },
+            test_ec(1),
+        ));
+        recovery.dkg_ready = Some(own_ready);
+        recovery.active_aggregator_party_id = Some(0);
+        recovery.is_aggregator = true;
+        Ok(recovery)
+    })?;
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        signer: signers[0].clone(),
+        effects_enabled: false,
+        recovery,
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+
+    actor.record_dkg_coordination(forged_roster, test_ec(2))?;
+
+    assert!(actor.recovery.try_get()?.dkg_roster.is_none());
+    Ok(())
+}
+
+#[actix::test]
+async fn conflicting_roster_after_acceptance_is_ignored() -> Result<()> {
+    let (bus, _history) = test_bus();
+    let e3_id = E3id::new("49", 1);
+    let signers = [
+        alloy::signers::local::PrivateKeySigner::random(),
+        alloy::signers::local::PrivateKeySigner::random(),
+        alloy::signers::local::PrivateKeySigner::random(),
+    ];
+    let committee = signers
+        .iter()
+        .map(|signer| signer.address().to_string())
+        .collect();
+    let dealer = |party_id| DkgDealer {
+        party_id,
+        contribution_hash: [party_id as u8; 32],
+    };
+    let own_ready = DkgCoordination::sign(
+        e3_id.clone(),
+        Address::ZERO,
+        0,
+        DkgCoordinationKind::Ready,
+        vec![dealer(0), dealer(1), dealer(2)],
+        &signers[0],
+    )?;
+    let first_roster = DkgCoordination::sign(
+        e3_id.clone(),
+        Address::ZERO,
+        0,
+        DkgCoordinationKind::Roster,
+        vec![dealer(0), dealer(1)],
+        &signers[0],
+    )?;
+    let conflicting_roster = DkgCoordination::sign(
+        e3_id.clone(),
+        Address::ZERO,
+        1,
+        DkgCoordinationKind::Roster,
+        vec![dealer(0), dealer(2)],
+        &signers[1],
+    )?;
+
+    let store = InMemStore::new(false).start();
+    let state_repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
+    let state = state_repo.send(Some(ThresholdKeyshareState::new(
+        e3_id.clone(),
+        0,
+        KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
+        1,
+        3,
+        ArcBytes::from_bytes(b"params"),
+        Address::ZERO.to_string(),
+    )));
+    let mut recovery = test_recovery();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(
+            CiphernodeSelected {
+                e3_id: e3_id.clone(),
+                threshold_m: 1,
+                threshold_n: 3,
+                party_id: 0,
+                committee,
+                ..Default::default()
+            },
+            test_ec(1),
+        ));
+        recovery.dkg_ready = Some(own_ready);
+        recovery.active_aggregator_party_id = Some(0);
+        recovery.is_aggregator = true;
+        Ok(recovery)
+    })?;
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        signer: signers[0].clone(),
+        effects_enabled: false,
+        recovery,
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+
+    actor.record_dkg_coordination(first_roster, test_ec(2))?;
+    actor.handle_aggregator_changed(
+        AggregatorChanged {
+            e3_id: e3_id.clone(),
+            active_party_id: Some(1),
+            is_aggregator: false,
+        },
+        test_ec(3),
+    )?;
+    actor.record_dkg_coordination(conflicting_roster, test_ec(4))?;
+
+    let accepted = actor
+        .recovery
+        .try_get()?
+        .dkg_roster
+        .expect("first roster should remain accepted");
+    assert_eq!(
+        accepted
+            .dealers
+            .iter()
+            .map(|entry| entry.party_id)
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
     Ok(())
 }
 

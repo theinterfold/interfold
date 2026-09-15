@@ -486,18 +486,28 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
     └─ Waits for one H-dealer roster before Step 7
 
 The active aggregator selects H parties whose signed Ready lists all contain the same selected
-dealer contributions. Each selected party checks the roster against its own saved Ready list. The
-accepted roster is saved before C4 starts. Once a node can derive a valid roster from its durable
-Ready map, it starts the existing 10-minute active-aggregator budget for the DKG-roster phase. If
-the active aggregator does not publish a roster, the selector promotes the next eligible committee
-member. The promoted member uses its saved Ready map and proposes without a separate leader clock
-or election. Roster acceptance ends that phase and clears its local failover skips. The later C5
+dealer contributions. `AggregatorChanged` carries the active party ID, and threshold-keyshare
+persists that ID. A receiver accepts a roster only when the signer owns that active party slot.
+Each selected party also checks the roster against its own saved Ready list. The accepted roster is
+saved before C4 starts. A later conflicting roster is ignored; it cannot replace the accepted
+roster or fail the E3.
+
+Once a node can derive a valid roster from its durable Ready map, it starts the existing 10-minute
+active-aggregator budget for the DKG-roster phase. If the active aggregator does not publish a
+roster, the selector promotes the next eligible committee member and publishes its new party ID.
+The promoted member uses its saved Ready map and proposes without a separate leader clock or
+election. Roster acceptance ends that phase and clears its local failover skips. The later C5
 public-key aggregation starts a new failover budget only after its own inputs are durable.
 
-A node accepts only one valid roster. This path assumes that committee software does not publish
-conflicting rosters. It does not provide Byzantine agreement for conflicting rosters from a
-malicious member. A canonical roster anchor or a separate agreement protocol is required for that
-threat model.
+Dealer identity binds the E3, proof type, circuit, and public signals. It excludes randomized proof
+bytes, so replaying the same valid statement cannot create a second dealer identity. Replacing a
+same-E3 proof plan invalidates the old correlation IDs before the new plan starts. A late response
+from the old plan therefore cannot enter the replacement bundle.
+
+This coordination is not Byzantine agreement. The active aggregator can choose any roster that
+satisfies the mutually ready H-set rule. The proof and on-chain single-publish checks prevent
+different rosters from producing two accepted keys, but a malicious active aggregator can still
+withhold progress until failover.
 If a selected party stops permanently after the roster is accepted, this path does not select a
 replacement or rebuild C4. The E3 can fail even when other committee members remain online.
 The cutoff omits missing nodes but does not accuse or slash them: a local timeout is not proof

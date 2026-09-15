@@ -369,15 +369,20 @@ against its index. A CRC/length-invalid suffix after the last indexed record is 
 tail and is truncated; complete CRC-valid, decodable frames whose index writes were lost are
 re-indexed. Indexed decode/CRC failures and any offset/index mismatch remain fatal. EventStore
 construction then performs a full integrity scan and reconciles missing timestamp-index rows from
-the log in strict 1,024-record pages. Timestamp admission deduplicates by stable event ID plus
-payload, so the same logical event may return through historical network sync with a different
-transport source without colliding. A different payload at an already-indexed HLC timestamp remains
-an integrity failure. Historical peer-sync cursors contain only chain-bound aggregates allowed by
-the active network policy; local aggregate 0 is never requested from peers or added to recovery
-retries. Post-snapshot events are queried per aggregate in 1,024-event pages and written to secure
-sequence runs. Runs are compacted with bounded fan-in, preserve durable order inside each aggregate,
-and use persisted HLC timestamps to choose between aggregate heads. Memory and open-file use
-therefore do not scale with the entire backlog. Before fanout, the HLC floor advances to the maximum
+the log in pages bounded by both record count and decoded bytes. Event-log flush synchronizes the
+active segment, index, and directory before dispatch. Large local events use content-addressed blob
+files. Startup verifies every committed reference, then removes only blob files that no committed
+record references. Timestamp admission deduplicates by stable event ID plus payload, so the same
+logical event may return through historical network sync with a different transport source without
+colliding. A different payload at an already-indexed HLC timestamp remains an integrity failure.
+Historical peer-sync cursors contain only chain-bound aggregates allowed by the active network
+policy; local aggregate 0 is never requested from peers or added to recovery retries. Post-snapshot
+events are queried per aggregate in pages bounded by 1,024 events and 256 MiB of decoded data, then
+written to secure sequence runs. A single valid event can exceed the page budget so replay always
+makes progress; the 512 MiB per-event limit remains the hard bound. Runs are compacted with bounded
+fan-in, preserve durable order inside each aggregate, and use persisted HLC timestamps to choose
+between aggregate heads. Memory and open-file use therefore do not scale with the entire backlog.
+Before fanout, the HLC floor advances to the maximum
 replay timestamp, which covers a snapshot cursor stalled behind newer log records. Replay then waits
 for concurrent acceptance by all current EventBus subscribers. An unavailable subscriber or a
 subscriber blocked beyond the bounded acceptance timeout aborts recovery. An `EventBusBarrier`
@@ -506,8 +511,11 @@ makes three bounded startup attempts and then retries unavailable peers every 60
 background. Kademlia peers are evicted after three consecutive dial failures and quarantined from
 discovery-based routing-table reinsertion for up to 30 minutes. An admitted connection clears the
 cooldown early. A peer-ID mismatch quarantines the stale identity immediately. Peer health and
-quarantine state are process-local and are rebuilt after restart. An admitted QUIC connection is
-not sufficient evidence that gossip is ready. Network status reports how many admitted peers
+quarantine state are process-local and are rebuilt after restart. A peer ID supplied in explicit
+configuration is pinned and cannot rebind to the identity obtained during a failed dial. A
+discovered address without an explicit identity can adopt the authenticated remote peer ID. An
+admitted QUIC connection is not sufficient evidence that gossip is ready. Network status reports
+how many admitted peers
 advertise the protocol topic. If a connected peer does not advertise the topic within 30 seconds,
 the node closes all connections to that peer. The configured peer dialer then creates a fresh
 connection and repeats the gossip subscription exchange. This repairs a missed subscription
@@ -525,6 +533,9 @@ identifier, `TrBFV` kind, and party-filter shape to that payload before a `Docum
 is persisted. Transport and gossipsub identities authenticate the sending peer; they do not by
 themselves prove that a peer is an authorized member of a particular E3 committee. Committee
 authorization and durable peer reputation remain separate protocol-hardening work.
+Document publication recovery derives a missing publication request from the durable local key or
+share artifact. A crash after the artifact commit but before the derived request commit therefore
+does not lose the DHT publication on restart.
 
 ## E3 lifecycle
 
@@ -587,7 +598,11 @@ output. Circuit semantics are deliberately outside this refactor's modification 
 After C2/C3 verification, each member publishes a signed readiness report. The active aggregator
 selects the first canonical `H` dealers that are mutually complete and announces that roster. The
 existing readiness-gated aggregator failover promotes the next eligible party if this announcement
-stalls. Roster selection and public-key aggregation use separate failover phases and budgets.
+stalls. The active party ID is part of `AggregatorChanged` and is persisted by threshold-keyshare,
+so only that party's signed roster is accepted. The first accepted roster is immutable; delayed
+conflicts are ignored. Roster selection and public-key aggregation use separate failover phases and
+budgets. Dealer hashes bind stable public proof statements instead of randomized proof bytes, and a
+replacement proof plan invalidates the previous plan's response correlations.
 
 Each recipient-scoped threshold-share bundle has one C2a secret-key share-computation proof, one C2b
 smudging-noise share-computation proof, then every C3a proof, then every C3b proof. C3 multiplicity

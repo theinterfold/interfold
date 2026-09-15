@@ -354,7 +354,7 @@ length and hash before decoding it. The 32 MiB inline and network event limits s
 An EventStore append or flush failure stops the actor and signals the node supervisor. Startup and
 the CLI then exit with a nonzero status instead of leaving a dead storage actor inside an online
 process. The EventStore syncs each appended log record before it indexes or broadcasts the event.
-The current storage schema marker is version 3; older node databases must be reset for
+The current storage schema marker is version 4; older node databases must be reset for
 this release, not silently decoded.
 
 For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state. It

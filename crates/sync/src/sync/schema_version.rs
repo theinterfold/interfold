@@ -12,7 +12,7 @@
 /// marker is the guardrail: bump it whenever a persisted format changes in a
 /// non-additive way. On boot the persisted value is compared against this
 /// constant (see `decide_schema_version`).
-pub const SCHEMA_VERSION: u32 = 3;
+pub const SCHEMA_VERSION: u32 = 4;
 
 /// The action a node should take after reading the persisted schema version.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -66,7 +66,7 @@ mod tests {
     #[test]
     fn fresh_store_writes_current() {
         assert_eq!(
-            decide_schema_version(None, 3, false),
+            decide_schema_version(None, 4, false),
             SchemaVersionDecision::WriteCurrent
         );
     }
@@ -74,14 +74,14 @@ mod tests {
     #[test]
     fn exact_match_proceeds() {
         assert_eq!(
-            decide_schema_version(Some(3), 3, true),
+            decide_schema_version(Some(4), 4, true),
             SchemaVersionDecision::Proceed
         );
     }
 
     #[test]
     fn older_on_disk_halts_as_upgrade() {
-        let d = decide_schema_version(Some(2), 3, true);
+        let d = decide_schema_version(Some(3), 4, true);
         match d {
             SchemaVersionDecision::Halt(msg) => {
                 assert!(msg.contains("older"));
@@ -93,7 +93,7 @@ mod tests {
 
     #[test]
     fn newer_on_disk_halts_as_downgrade() {
-        let d = decide_schema_version(Some(4), 3, true);
+        let d = decide_schema_version(Some(5), 4, true);
         match d {
             SchemaVersionDecision::Halt(msg) => {
                 assert!(msg.contains("newer"));
@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn missing_marker_on_existing_state_halts() {
-        let d = decide_schema_version(None, 3, true);
+        let d = decide_schema_version(None, 4, true);
         match d {
             SchemaVersionDecision::Halt(message) => {
                 assert!(message.contains("no schema marker"));
