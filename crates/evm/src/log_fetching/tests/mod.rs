@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::domain::log_window::MAX_LOG_WINDOW;
 use actix::prelude::*;
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
@@ -122,6 +123,15 @@ impl Handler<InterfoldEvmEvent> for TestCollector {
 fn make_test_log(block_number: u64) -> Log {
     Log {
         block_number: Some(block_number),
+        ..Default::default()
+    }
+}
+
+/// A log as a provider that populates `blockTimestamp` returns it.
+fn make_timestamped_log(block_number: u64, timestamp: u64) -> Log {
+    Log {
+        block_number: Some(block_number),
+        block_timestamp: Some(timestamp),
         ..Default::default()
     }
 }
