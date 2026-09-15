@@ -62,7 +62,6 @@ const RANGE_LIMIT_MARKERS: &[&str] = &[
     "query returned more than",
     "too many results",
     "response size exceeded",
-    "query timeout exceeded",
     "reduce the block range",
     "reduce your block range",
 ];
@@ -74,7 +73,13 @@ const RANGE_LIMIT_MARKERS: &[&str] = &[
 /// path: fewer blocks for each call does not raise it, and narrowing the window would send more
 /// calls. The qualifier keeps the block-range wording, as in "eth_getLogs is limited to a 10,000
 /// range".
-const RANGE_QUALIFIED_MARKERS: &[&str] = &["limited to a"];
+///
+/// `query timeout exceeded` needs the same qualifier. A provider sends it for a range it will not
+/// serve, as in Alchemy's "Query timeout exceeded. Consider reducing your block range", and also
+/// for a server-side timeout that a narrower range would not fix. Without the qualifier a run of
+/// plain timeouts narrows the window to one block and then fails the sync, instead of retrying
+/// with backoff.
+const RANGE_QUALIFIED_MARKERS: &[&str] = &["limited to a", "query timeout exceeded"];
 
 /// Word that must accompany a [`RANGE_QUALIFIED_MARKERS`] phrase before it reports a block range.
 const RANGE_CONTEXT_MARKER: &str = "range";
@@ -319,6 +324,37 @@ mod tests {
             "eth_getLogs is limited to a 10,000 range",
             "eth_getLogs is limited to a 10K block range",
             "this endpoint is limited to a range of 1000 blocks",
+        ] {
+            assert!(is_range_limit_error(message), "not detected: {message}");
+        }
+    }
+
+    #[test]
+    fn a_timeout_without_range_wording_keeps_the_backoff_path() {
+        // A server-side timeout is not a range refusal. Narrowing the window for one would let a
+        // run of timeouts reach the one-block floor and fail the sync, where a retry would have
+        // succeeded.
+        for message in [
+            "query timeout exceeded",
+            "Query timeout exceeded while executing the request",
+            "error code -32603: query timeout exceeded",
+        ] {
+            assert!(
+                !is_range_limit_error(message),
+                "a plain timeout must not narrow the window: {message}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_timeout_that_names_the_block_range_still_narrows_the_window() {
+        // Alchemy reports an oversized range as a timeout and names the remedy in the same
+        // message. Dropping the timeout wording entirely would leave this undetected, because no
+        // other marker matches it.
+        for message in [
+            "Query timeout exceeded. Consider reducing your block range or limiting your result \
+             set",
+            "query timeout exceeded, please narrow the block range",
         ] {
             assert!(is_range_limit_error(message), "not detected: {message}");
         }
