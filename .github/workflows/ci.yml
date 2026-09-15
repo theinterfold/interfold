@@ -219,6 +219,9 @@ jobs:
       - name: Checking code format rust
         run: pnpm rust:lint
 
+      - name: Check repository invariants
+        run: pnpm check:invariants
+
       - name: Compile contracts for ABI catalog tests
         run: pnpm evm:build
 
@@ -311,11 +314,10 @@ jobs:
   zk_prover_integration:
     needs: [detect_changes, integration_prebuild]
     if: needs.detect_changes.outputs.zk_prover_integration == 'true'
-    timeout-minutes: 30
+    timeout-minutes: 60
     runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'zk_prover_integration') || 'ubuntu-latest' }}
+      group: enclave-ci
+      labels: [enclave-ci-runner]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -352,6 +354,7 @@ jobs:
       - name: Prepare source-aligned circuit archive
         run: |
           test -f .ci-noir/circuits/insecure-512/minimum/default/dkg/pk/pk.json
+          test -f .ci-noir/circuits/secure-8192/minimum/default/dkg/pk/pk.json
           mkdir -p "$RUNNER_TEMP/circuit-release"
           tar -czf "$RUNNER_TEMP/circuit-release/circuits-candidate.tar.gz" \
             -C .ci-noir circuits
@@ -1026,7 +1029,7 @@ jobs:
   build_circuits:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.build_circuits == 'true'
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
@@ -1105,15 +1108,12 @@ jobs:
 
       # Release workflows also verify the promoted six-pair circuit matrix.
       - name: Pull the complete circuit matrix
-        if: github.event_name != 'pull_request'
         run: pnpm store:circuits pull
 
       - name: Verify release circuit provenance
-        if: github.event_name != 'pull_request'
         run: pnpm store:circuits verify-release
 
       - name: Check every generated BFV verifier
-        if: github.event_name != 'pull_request'
         run: |
           while read -r preset committee
           do
