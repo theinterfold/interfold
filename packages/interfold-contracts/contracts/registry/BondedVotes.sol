@@ -7,15 +7,14 @@ pragma solidity 0.8.28;
 
 import { IVotes } from "@openzeppelin/contracts/governance/utils/IVotes.sol";
 import { IERC5805 } from "@openzeppelin/contracts/interfaces/IERC5805.sol";
-import { SafeCast } from "@openzeppelin/contracts/utils/math/SafeCast.sol";
 import {
     IERC20Metadata
 } from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 import { IBondedCheckpoints } from "../interfaces/IBondedCheckpoints.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
 // FOLD's lock schedule, the same surface the bonding registry reads. Lock-encumbered FOLD sits in
-// the holder's own wallet and cannot be moved, so it can never be deposited into the escrow —
-// which is exactly why it needs counting here rather than being left to the escrow.
+// the holder's own wallet and cannot be moved, so it can never be deposited into the escrow. The
+// adapter can count this term only for live reads because the schedule is not checkpointed.
 import {
     ILockAwareCiphernodeBondToken
 } from "../interfaces/ILockAwareCiphernodeBondToken.sol";
@@ -67,11 +66,14 @@ interface IVotingEscrow {
  * never exceed the supply they are measured against. Reading the denominator off the escrow
  * instead would omit the bonded half entirely and let participation exceed 100%.
  *
- * A THIRD SOURCE, under an escrow votes source only: FOLD still encumbered by FOLD's own vesting
- * locks. That FOLD sits in the holder's own wallet and {InterfoldToken._update} refuses to move
- * it, so it can never reach the escrow — a locked holder would be disenfranchised for the whole
- * lock schedule by a rule they cannot act on. {lockedBalanceAt} is read at the same timepoint as
- * the other two and counted for them.
+ * A THIRD SOURCE, under an escrow votes source only: current FOLD still encumbered by FOLD's own
+ * vesting locks. That FOLD sits in the holder's own wallet and {InterfoldToken._update} refuses to
+ * move it, so it can never reach the escrow. {getVotes} counts this live term so current voting
+ * power can include token-level locks.
+ *
+ * {getPastVotes} does NOT count the token lock schedule. {lockedBalanceAt} walks the account's
+ * current lock list, not a checkpointed history. A claim or link after a proposal snapshot can
+ * otherwise increase voting power at that old snapshot.
  *
  * Escrowed and bonded FOLD cannot overlap: the escrow and the registry custody the token at two
  * different addresses, so the same token can never be at both. LOCKED AND BONDED DO OVERLAP, and
@@ -118,7 +120,7 @@ contract BondedVotes is IERC5805 {
     error TokenMismatch(address ciphernodeBondToken, address votingToken);
 
     /// @notice Thrown when an escrow votes source is paired with a token that has no lock
-    /// schedule to read, which would silently disenfranchise every locked holder.
+    /// schedule to read for live voting power.
     error LockedBalancesUnsupported(address votingToken);
 
     /// @notice Thrown for the delegation entry points, which this view cannot honour.
@@ -206,10 +208,9 @@ contract BondedVotes is IERC5805 {
             revert VotesSourceMismatch(escrowToken, address(_token));
         }
 
-        // Probed once here rather than tolerated on every read. Under an escrow votes source the
-        // lock schedule is the ONLY way an encumbered holder can vote, so a token that cannot
-        // answer for it must not be deployed against silently: a `try/catch` at read time would
-        // return zero and disenfranchise exactly the holders this branch exists to enfranchise.
+        // Probed once here rather than tolerated on every live read. Under an escrow votes source
+        // the lock schedule is the only way an encumbered holder can report current voting power,
+        // so a token that cannot answer for it must not be deployed against silently.
         (bool ok, bytes memory result) = address(_token).staticcall(
             abi.encodeCall(
                 ILockAwareCiphernodeBondToken.lockedBalanceAt,
@@ -239,43 +240,38 @@ contract BondedVotes is IERC5805 {
     }
 
     /// @inheritdoc IVotes
-    /// @dev The numerator: whatever the primary source attributes to the account, plus its bonded
-    /// FOLD, plus — under an escrow votes source — the vesting-locked FOLD it cannot escrow. All
-    /// three are FOLD-denominated and read at the same timepoint.
-    ///
-    /// Cast through `SafeCast` rather than directly. `getPastBonded` already reverts on a
-    /// timepoint that has not settled, which leaves nothing wide enough to truncate — but that
-    /// makes the narrowing safe only because of the order these two lines run in, and only for
-    /// the history this contract happens to be bound to. Reverting on the narrowing itself keeps
-    /// the guarantee local to this line, where a reader can check it.
+    /// @dev The historical numerator: whatever the primary source attributes to the account, plus
+    /// its bonded FOLD. Both sources are checkpointed and read at the same timepoint. The token
+    /// lock schedule is excluded because it is present-state, not checkpointed history.
     function getPastVotes(
         address account,
         uint256 timepoint
     ) external view returns (uint256) {
         uint256 bonded = checkpoints.getPastBonded(account, timepoint);
 
-        return
-            votesSource.getPastVotes(account, timepoint) +
-            bonded +
-            _lockedVotes(account, SafeCast.toUint64(timepoint), bonded);
+        return votesSource.getPastVotes(account, timepoint) + bonded;
     }
 
-    /// @dev The vesting-locked half of the numerator, netted down by the bond.
+    /// @dev The live vesting-locked half of the numerator, netted down by the bond.
     ///
     /// Zero unless the votes source is an escrow. When the token votes for itself, locked FOLD is
     /// wallet FOLD and the token has already counted it — adding it again would simply double
     /// every locked holder's weight.
     ///
     /// Netted, because a bond satisfies a lock: FOLD that is bonded is reported by BOTH
-    /// `lockedBalanceAt` and the bonded history while existing once, and `getPastVotes` already
-    /// counts the bonded side in full. What is left is the part of the obligation the wallet must
-    /// still be holding itself.
+    /// `lockedBalanceAt` and the bonded total while existing once, and the caller already counts
+    /// the bonded side in full. What is left is the part of the obligation the wallet must still
+    /// hold.
     ///
-    /// UNLIKE the other two halves this is not a checkpointed history: `lockedBalanceAt` walks the
-    /// account's CURRENT locks and evaluates them against `timestamp`. A lock created after a
-    /// governance snapshot therefore shows up in that snapshot's answer. That is safe for the
-    /// vesting locks it exists for, which are minted or claimed rather than acquired at will, but
-    /// it is not a general-purpose past balance and must not be treated as one.
+    /// This term is read only by {getVotes}. It is deliberately absent from {getPastVotes} because
+    /// `lockedBalanceAt` walks the account's current locks, not a checkpointed history. A lock
+    /// created after a governance snapshot can appear in that snapshot's answer. That violates the
+    /// snapshot rule that past voting power must not change after the snapshot.
+    ///
+    /// Counting only PENDING would not be sufficient: a later `linkClaim` can move that PENDING
+    /// amount into a real policy, and the token still has no per-lock creation timestamp. Until a
+    /// checkpointed lock source exists, historical governance reads must use only the checkpointed
+    /// votes source and bonded history.
     /// CAPPED at the wallet balance, because netting alone stops being enough once a bond can be
     /// SLASHED. What makes `locked - bonded` a real holding is the token's own transfer rule,
     /// `balance >= locked - bonded`, enforced on every transfer. Slashing cuts the bond without
@@ -283,10 +279,8 @@ contract BondedVotes is IERC5805 {
     /// that bond is left owing more than it holds — and the uncapped term would vote with the
     /// difference, FOLD that is now in the slash recipient's hands and countable there too.
     ///
-    /// The cap reads the present balance even for a past timepoint. It is a bound, never a
-    /// source: it can only lower this term towards what the account demonstrably holds, and the
-    /// only power it can lower is the account's own. That is the right trade for a term already
-    /// evaluated from present-state locks.
+    /// The cap is a bound, never a source: the cap can only lower this term towards what the
+    /// account demonstrably holds. The only power it can lower is the account's own.
     /// @param bonded The account's bonded total at the same timepoint.
     function _lockedVotes(
         address account,
