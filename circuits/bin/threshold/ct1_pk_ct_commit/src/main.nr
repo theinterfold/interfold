@@ -4,11 +4,13 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Round A, groups C+D merged (P3, ct1 leg): commits both `pk1is` and `ct1is` in one circuit.
+//! Round A, ct1 leg: commits both `pk1is` and `ct1is` in one circuit - see `ct0_pk_ct_commit`
+//! for why the two groups share a circuit.
+//!
 //! Each commitment formula MUST stay exactly `compute_multiple_polynomial_commitment` under
-//! `DS_PK_AGGREGATION`/`DS_CIPHERTEXT`, unchanged - the `user_data_encryption` wrapper combines
-//! ct0's and ct1's pk/ct commitments the same way `pk_aggregation.nr`'s C5 does, so this is a
-//! protocol invariant. See `ct0_pk_ct_commit` for why merging removes the combine step entirely.
+//! `DS_PK_AGGREGATION`/`DS_CIPHERTEXT`. The `user_data_encryption` wrapper combines ct0's and
+//! ct1's pk/ct commitments the same way `pk_aggregation.nr`'s C5 does, so these hashes are a
+//! protocol invariant, not an internal choice.
 
 use lib::configs::default::threshold::{
     L, N, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_PK,
