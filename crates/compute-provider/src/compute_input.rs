@@ -7,11 +7,25 @@
 use crate::ciphertext_output::ComputeResult;
 use crate::merkle_tree_builder::MerkleTreeBuilder;
 use crate::policy::InputPolicy;
+#[cfg(test)]
 use e3_bfv_client::client::compute_ct_commitment;
-use e3_fhe_params::decode_bfv_params;
+use e3_bfv_client::client::compute_ct_commitment_with_params;
+use e3_fhe_params::decode_bfv_params_arc;
+use fhe::bfv::BfvParameters;
 use sha3::{Digest, Keccak256};
+use std::sync::Arc;
 
-pub type FHEProcessor = fn(&FHEInputs) -> Vec<u8>;
+pub type FHEProcessor = for<'a> fn(&FHEProcessorInput<'a>) -> Vec<u8>;
+
+/// Inputs passed to an E3 program's homomorphic processor.
+///
+/// The secure process builds BFV parameters once and shares them with the processor. Building the
+/// secure parameter tables is expensive inside a zkVM, and decoding the same immutable bytes twice
+/// adds no verification.
+pub struct FHEProcessorInput<'a> {
+    pub ciphertexts: &'a [(Vec<u8>, u64)],
+    pub params: &'a Arc<BfvParameters>,
+}
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct FHEInputs {
@@ -98,7 +112,7 @@ impl ComputeInput {
         fhe_processor: FHEProcessor,
         policy: InputPolicy,
     ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
-        let params = decode_bfv_params(&self.fhe_inputs.params)
+        let params = decode_bfv_params_arc(&self.fhe_inputs.params)
             .map_err(|e| ComputeError::DecodeParams(e.to_string()))?;
 
         if !self.published.is_empty() && self.published.len() != self.fhe_inputs.ciphertexts.len() {
@@ -121,19 +135,15 @@ impl ComputeInput {
         // The processor sees only what the policy selected. Both the root above and this set are
         // functions of values the root binds, so any prover over the same published inputs reaches
         // the same result.
-        let processed_ciphertext = (fhe_processor)(&FHEInputs {
-            ciphertexts: selected,
-            params: self.fhe_inputs.params.clone(),
+        let processed_ciphertext = (fhe_processor)(&FHEProcessorInput {
+            ciphertexts: &selected,
+            params: &params,
         });
         let processed_hash = Keccak256::digest(&processed_ciphertext).to_vec();
-        let ciphertext_commitment = compute_ct_commitment(
-            processed_ciphertext.clone(),
-            params.degree(),
-            params.plaintext(),
-            params.moduli().to_vec(),
-        )
-        .map_err(|e| ComputeError::OutputCommitment(e.to_string()))?
-        .to_vec();
+        let ciphertext_commitment =
+            compute_ct_commitment_with_params(&processed_ciphertext, &params)
+                .map_err(|e| ComputeError::OutputCommitment(e.to_string()))?
+                .to_vec();
         let params_hash = Keccak256::digest(&self.fhe_inputs.params).to_vec();
 
         Ok((
@@ -158,14 +168,11 @@ mod tests {
     use fhe_traits::{FheEncoder, FheEncrypter, Serialize as FheSerialize};
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
-    use std::sync::Arc;
-
-    fn sum_processor(inputs: &FHEInputs) -> Vec<u8> {
-        let params = Arc::new(decode_bfv_params(&inputs.params).unwrap());
-        let mut sum = Ciphertext::zero(&params);
-        for (bytes, _) in &inputs.ciphertexts {
+    fn sum_processor(inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+        let mut sum = Ciphertext::zero(inputs.params);
+        for (bytes, _) in inputs.ciphertexts {
             use fhe_traits::DeserializeParametrized;
-            sum += &Ciphertext::from_bytes(bytes, &params).unwrap();
+            sum += &Ciphertext::from_bytes(bytes, inputs.params).unwrap();
         }
         sum.to_bytes()
     }
@@ -207,7 +214,7 @@ mod tests {
     #[test]
     fn the_root_is_derived_from_the_processed_ciphertexts() {
         let inputs = encrypted_inputs(&[1, 1, 1]);
-        let params = decode_bfv_params(&inputs.params).unwrap();
+        let params = decode_bfv_params_arc(&inputs.params).unwrap();
 
         let result = process(inputs.clone(), InputPolicy::default()).unwrap();
 
@@ -238,7 +245,7 @@ mod tests {
     #[test]
     fn the_default_policy_uses_the_ciphertext_commitment_and_keeps_every_input() {
         let inputs = encrypted_inputs(&[4, 5]);
-        let params = decode_bfv_params(&inputs.params).unwrap();
+        let params = decode_bfv_params_arc(&inputs.params).unwrap();
 
         let mut builder = MerkleTreeBuilder::new(2);
         let selected = builder
@@ -265,7 +272,7 @@ mod tests {
             Vec::new()
         }
         let inputs = encrypted_inputs(&[1, 2, 3]);
-        let params = decode_bfv_params(&inputs.params).unwrap();
+        let params = decode_bfv_params_arc(&inputs.params).unwrap();
 
         let mut builder = MerkleTreeBuilder::new(3);
         let selected = builder
@@ -295,7 +302,7 @@ mod tests {
             vec![99]
         }
         let inputs = encrypted_inputs(&[1]);
-        let params = decode_bfv_params(&inputs.params).unwrap();
+        let params = decode_bfv_params_arc(&inputs.params).unwrap();
 
         let error = MerkleTreeBuilder::new(1)
             .compute_leaf_hashes(
@@ -337,7 +344,7 @@ mod tests {
     fn the_default_policy_reports_the_index_of_an_undecodable_input() {
         let mut inputs = encrypted_inputs(&[1, 1]);
         inputs.ciphertexts[1].0 = vec![0xff; 8];
-        let params = decode_bfv_params(&inputs.params).unwrap();
+        let params = decode_bfv_params_arc(&inputs.params).unwrap();
 
         let error = MerkleTreeBuilder::new(2)
             .compute_leaf_hashes(&inputs, &[], &params, InputPolicy::default())
@@ -435,7 +442,11 @@ mod tests {
         );
 
         // And it is genuinely the selected subset, not the whole set.
-        let over_everything = sum_processor(&inputs);
+        let params = decode_bfv_params_arc(&inputs.params).unwrap();
+        let over_everything = sum_processor(&FHEProcessorInput {
+            ciphertexts: &inputs.ciphertexts,
+            params: &params,
+        });
         assert_ne!(
             ciphertext, over_everything,
             "the excluded input must not be in the published ciphertext"

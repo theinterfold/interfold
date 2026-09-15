@@ -2,7 +2,7 @@
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
-import { connect, hasFlag } from "../protocol/cli";
+import { arg, connect, hasFlag } from "../protocol/cli";
 import {
   deploymentPath,
   governanceSafeBuilderPath,
@@ -23,6 +23,43 @@ import type {
 } from "../protocol/types";
 import { loadConfig } from "../protocol/values";
 import { validateSecureCrispUpgrade } from "./validateSecureCrisp";
+
+type CommitteeThreshold = {
+  size: string;
+  total: string;
+};
+
+/** Selects the operator-capacity gate for a production resume or a named Sepolia rehearsal. */
+export function requiredActiveOperatorsForSecureCrisp(
+  thresholds: CommitteeThreshold[],
+  chainId: number,
+  rehearsalCommitteeSize?: string,
+): bigint {
+  if (rehearsalCommitteeSize !== undefined) {
+    if (chainId !== 11155111) {
+      throw new Error(
+        "A reduced committee-capacity gate is available only for a Sepolia rehearsal",
+      );
+    }
+    if (!/^\d+$/.test(rehearsalCommitteeSize)) {
+      throw new Error("The rehearsal committee size must be an integer ID");
+    }
+    const selected = thresholds.find(
+      (threshold) => threshold.size === rehearsalCommitteeSize,
+    );
+    if (!selected) {
+      throw new Error(
+        `Committee size ${rehearsalCommitteeSize} is not configured`,
+      );
+    }
+    return BigInt(selected.total);
+  }
+
+  return thresholds.reduce((maximum, threshold) => {
+    const total = BigInt(threshold.total);
+    return total > maximum ? total : maximum;
+  }, 0n);
+}
 
 function planPath(name: string): string {
   return path.join(protocolDir, `${name}.secure-crisp.upgrade.json`);
@@ -45,7 +82,7 @@ export async function prepareSecureCrispResume(): Promise<void> {
 
   const { ethers } = await connect();
   const config = loadConfig();
-  if (!config.governance) {
+  if (config.chainId === 1 && !config.governance) {
     throw new Error("Aragon governance is required for mainnet resume");
   }
   const deployment = readJson<ProtocolDeployment>(deploymentPath(config));
@@ -59,12 +96,11 @@ export async function prepareSecureCrispResume(): Promise<void> {
     config.bondingRegistryProxy,
   );
 
-  const requiredActive = config.interfold.committeeThresholds.reduce(
-    (maximum, threshold) => {
-      const total = BigInt(threshold.total);
-      return total > maximum ? total : maximum;
-    },
-    0n,
+  const rehearsalCommitteeSize = arg("sepolia-committee-size");
+  const requiredActive = requiredActiveOperatorsForSecureCrisp(
+    config.interfold.committeeThresholds,
+    config.chainId,
+    rehearsalCommitteeSize,
   );
   const active = await bonding.numActiveOperators();
   if (active < requiredActive) {
@@ -86,20 +122,26 @@ export async function prepareSecureCrispResume(): Promise<void> {
     "Resume E3 requests after secure CRISP validation and the ciphernode protocol cutover.";
   writeJson(rawBatchFile, batch);
 
-  const safeBuilderFile = governanceSafeBuilderPath({
-    ...config,
-    name: `${config.name}.secure-crisp.resume`,
-  });
-  const safeBatch = aragonAdminSafeBatch(config, txs);
-  safeBatch.meta.name = batch.meta.name;
-  safeBatch.meta.description = batch.meta.description;
-  writeJson(safeBuilderFile, safeBatch);
+  let safeBuilderFile: string | undefined;
+  if (config.governance) {
+    safeBuilderFile = governanceSafeBuilderPath({
+      ...config,
+      name: `${config.name}.secure-crisp.resume`,
+    });
+    const safeBatch = aragonAdminSafeBatch(config, txs);
+    safeBatch.meta.name = batch.meta.name;
+    safeBatch.meta.description = batch.meta.description;
+    writeJson(safeBuilderFile, safeBatch);
+  }
 
   if (hasFlag("propose-safe")) {
+    const proposalTransactions = config.governance
+      ? aragonAdminSafeTransactions(config, txs)
+      : txs;
     await proposeSafeBatch(
       config,
-      aragonAdminSafeTransactions(config, txs),
-      config.governance.proposerSafe,
+      proposalTransactions,
+      config.governance?.proposerSafe ?? config.safe,
     );
   }
 
@@ -107,8 +149,9 @@ export async function prepareSecureCrispResume(): Promise<void> {
 Secure CRISP resume prepared
   node release:       ${plan.nodeRelease.version} (protocol ${plan.nodeRelease.protocolVersion})
   active operators:   ${active}/${requiredActive}
+  rehearsal size:     ${rehearsalCommitteeSize ?? "all configured sizes"}
   governance batch:   ${rawBatchFile}
-  Aragon Safe batch:  ${safeBuilderFile}
+  Aragon Safe batch:  ${safeBuilderFile ?? "not configured"}
 `);
 }
 

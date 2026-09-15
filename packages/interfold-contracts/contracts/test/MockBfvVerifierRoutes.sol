@@ -12,6 +12,7 @@ import { IBfvPkVerifierRoute } from "../verifiers/bfv/BfvPkVerifierRouter.sol";
 
 contract MockBfvPkVerifierRoute is IBfvPkVerifierRoute {
     uint256 public immutable override h;
+    uint256 public immutable override expectedPublicInputsLen;
     bytes32 public immutable override expectedNodesFoldKeyHash;
     bytes32 public immutable override expectedC5KeyHash;
     bool private immutable result;
@@ -23,6 +24,7 @@ contract MockBfvPkVerifierRoute is IBfvPkVerifierRoute {
         bool _result
     ) {
         h = _h;
+        expectedPublicInputsLen = (3 * _h) + 24;
         expectedNodesFoldKeyHash = _expectedNodesFoldKeyHash;
         expectedC5KeyHash = _expectedC5KeyHash;
         result = _result;

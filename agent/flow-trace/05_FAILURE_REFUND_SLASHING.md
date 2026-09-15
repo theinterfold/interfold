@@ -26,12 +26,15 @@ actually slashed and does not require an oracle or relabel one ERC-20 as another
 Anyone can call `markE3Failed()` when a deadline is missed. A ready committee remains finalizable
 through its absolute DKG deadline. It can fail if it remains unfinalized after that deadline.
 
-For the aggregator-owned DKG and decryption stages, each selected ciphernode reconstructs a
-canonical deadline watch from `CiphernodeSelected` and `E3StageChanged` during replay. After
-`EffectsEnabled`, it reads the deadline from `Interfold`, staggers its attempt by canonical party
-ID, confirms that the stage and failure condition still match, and calls `markE3Failed`. A canonical
-stage change cancels the old watch. If a node restarts after the deadline, the party-ID stagger is
-applied from restart time so all committee wallets do not submit at once.
+The Interfold writer watches every stage that `failureCondition` supports: `Requested`,
+`CommitteeFinalized`, `KeyPublished`, and `CiphertextReady`. Startup restores the stage from the
+durable lifecycle map and restores the request-time registry from the DKG context. A finalized
+committee member staggers its attempt by canonical party ID. A `Requested` E3 has no active
+committee yet, so every node waits until the failure grace period ends and uses the permissionless
+path. Before submission, the writer confirms that the stage and failure condition still match. A
+canonical stage change cancels the old watch and invalidates any older stage-discovery RPC. After a
+restart, finalized members keep their party-ID stagger and non-members remain outside the protected
+grace window.
 
 If an honest-node allocation is smaller than the node count, the refund manager credits it to the
 request-time treasury instead of creating zero-value claims.
@@ -149,7 +152,9 @@ charge the protocol-funded subscription.
 Runtime note: `processE3Failure()` is a permissionless cleanup path. The Rust `InterfoldSolWriter`
 may auto-submit it from any effects-enabled node on the same chain, and it must not depend on
 active-aggregator designation because failures can happen before committee finalization or while the
-current aggregator is offline.
+current aggregator is offline. A restart restores failed E3 IDs from the durable lifecycle map. The
+writer retries transient failures and treats `NoPaymentToRefund` as proof that another account has
+already processed the escrow.
 
 ```text
 Anyone calls: Interfold.processE3Failure(e3Id)
@@ -175,6 +180,18 @@ Anyone calls: Interfold.processE3Failure(e3Id)
 │     )
 │     │
 │     │  ┌─── E3RefundManager.calculateRefund() ────────────────┐
+│     │  │                                                       │
+│     │  │  0. ZEN2-04 gate: revert SettlementBlocked unless     │
+│     │  │     slashingManager.settlementOpen(e3Id):             │
+│     │  │       accusation window closed AND no affectsCommittee│
+│     │  │       proposal open for this E3. The constant        │
+│     │  │       settlementCutoff never bypasses a proposal.    │
+│     │  │     A round with no finalized committee passes at     │
+│     │  │     once. Non-expelling penalties never gate. So on a │
+│     │  │     failed E3 every admitted expulsion resolves here. │
+│     │  │     `honestNodes` is the post-expulsion               │
+│     │  │     roster; the base split never has to be reallocated│
+│     │  │     for a later expulsion.                            │
 │     │  │                                                       │
 │     │  │  1. Read FailureReason and call getFailurePayer():    │
 │     │  │                                                       │
@@ -286,10 +303,46 @@ FROZEN REWARD RECIPIENT claims an honest-node reward:
 SLASH RECIPIENT claims a token-specific entitlement:
   E3RefundManager.claimSlashedFunds(e3Id, actualToken)
 │
-├─ Read _pendingSlashedClaims[e3Id][actualToken][caller]
+├─ Read _pendingSlashedClaims[e3Id][actualToken][caller]  (pre-ZEN2-20 credits)
+├─ ZEN2-20: also drain every operator whose frozen recipient is the caller and
+│  whose entitlement has no pending expelling proposal and no executed
+│  expulsion. Shares stay in _operatorEntitlements[e3Id][operator].heldSlash
+│  until this check passes, so a proposal opened after settlement still holds
+│  them and a shared recipient keeps independent per-operator entitlements
+├─ ZEN2-20 follow-up: heldSlash is one sum, so each credit also records its
+│  penalty target in _heldSlashFrom[e3Id][holder][target]. An expulsion
+│  re-shares the expelled holder's funds one bucket at a time, excluding that
+│  bucket's own target, so a penalty never returns to the operator it was
+│  raised against while every other member still takes its share of every
+│  other penalty. A round-wide "penalized" flag was rejected: it drops a
+│  target from later penalties too, so payouts would depend on proposal order.
+│  Bucket keys are walked over the committee's canonical members
+│  (canonicalCommitteeNodeAt), not the active roster: an expelled target
+│  leaves the roster while its bucket remains. Buckets are cleared with the
+│  sum on every claim path
 ├─ Clear the claim and reduce actualToken's protected liability
 ├─ Transfer that exact token; base refunds never consume the protected reserve
 └─ Emit SlashedFundsClaimed(e3Id, caller, actualToken, amount)
+
+COMMITTEE REWARDS after a successful E3 (ZEN2-20):
+  Interfold.claimReward(e3Id) / claimRewards(e3Ids)
+  E3RefundManager.claimHeldSuccessReward(e3Id)
+  E3RefundManager.claimOperatorHeldSuccessReward(e3Id, operator)   [permissionless]
+  E3RefundManager.claimOperatorSlashedFunds(e3Id, operator)        [permissionless]
+│
+├─ Settlement escrows each member's share against the OPERATOR through
+│  InterfoldPricing._creditReward → holdSuccessReward, rather than crediting
+│  _pendingRewards[e3Id][recipient]. RewardCredited still names the recipient
+├─ Every claim path re-reads pendingExpulsions and excluded, then pays the
+│  recipient frozen at committee finalization
+│   • pending proposal → the allocation is withheld, peers still claim
+│   • executed expulsion → forfeited and reallocated to the remaining members
+│   • otherwise → paid to the frozen recipient
+├─ The permissionless variants let anyone settle an eligible allocation; funds
+│  can only reach the frozen recipient, never the caller
+└─ pendingReward / pendingHeldSuccessReward / pendingSlashedClaim report the
+   legacy balance plus what the caller can claim now, so an account keeps one
+   "claimable" answer across the upgrade
 ```
 
 ### Refund Example: Requester/Compute-Provider Fault
@@ -477,9 +530,14 @@ slashing manager before that submission deadline passes.
 
 ```text
 Accusation ID (deterministic, same on Rust + Solidity):
-  accusation_id = keccak256(abi.encodePacked(
-    chainId, e3Id, accused_address, proofType
-  ))
+  if proofInstance == 0:
+    accusation_id = keccak256(abi.encodePacked(
+      chainId, e3Id, accused_address, proofType
+    ))
+  else:
+    accusation_id = keccak256(abi.encodePacked(
+      chainId, e3Id, accused_address, proofType, proofInstance
+    ))
 
 Vote Digest (EIP-712 signed, verified on-chain):
   struct_hash = keccak256(abi.encode(
@@ -572,6 +630,7 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 ├─ 4. Encode attestation evidence:
 │     proof = abi.encode(
 │       proofType,       // uint256 — which proof failed (C0-C7)
+│       proofInstance,   // uint256 — row index for multirow l-BFV proof families
 │       voters[],        // address[] — sorted ascending
 │       dataHashes[],    // bytes32[] — per-voter data hashes
 │       evidence,        // bytes — shared evidence preimage
@@ -598,9 +657,11 @@ AccusationQuorumReached event arrives at SlashingManagerSolWriter
 Anyone calls: SlashingManager.proposeSlash(e3Id, operator, proof)
 │
 ├─ 1. Decode proof:
-│     (proofType, voters[], dataHashes[], evidence,
+│     (proofType, proofInstance, voters[], dataHashes[], evidence,
 │      issuedAt, deadline, signatures[])
 │     = abi.decode(proof, (...))
+│     → proofInstance must be zero for single-instance proof types
+│     → proofInstance must be less than five for multirow l-BFV proof types
 │
 ├─ 2. Derive slash reason deterministically:
 │     reason = keccak256(abi.encodePacked(proofType))
@@ -702,6 +763,11 @@ SLASHER_ROLE calls: SlashingManager.proposeSlashEvidence(
 ├─ 2. Require the snapshotted E3 dependency graph exists and
 │     registry.isCommitteeMember(e3Id, operator)
 │     → Evidence cannot slash an unrelated operator into another E3's escrow
+│     → The shared _openProposal guard rejects affectsCommittee proposals
+│       after slashSubmissionDeadline unless the E3 is Complete. This also
+│       covers overdue E3s that have not yet been marked Failed.
+│     → Late non-expelling penalties and completed-round Lane B proposals remain valid
+│       subject to the existing role, dependency, membership, policy, and collateral checks
 │
 ├─ 3. Replay protection:
 │     evidenceHash = keccak256(abi.encode(e3Id, operator, keccak256(evidence)))
@@ -754,6 +820,18 @@ If governance does not resolve a filed appeal by
 `executableAt + APPEAL_RESOLUTION_GRACE`, anyone may call `expireAppeal`.
 Expiry conclusively upholds the appeal and releases the collateral gate.
 It also clears the E3 entitlement hold.
+
+Failed-E3 settlement requires every admitted expelling proposal to reach a terminal outcome.
+The retained `settlementCutoff` getter equals the reporting deadline plus 30 days plus 7 days.
+It bounds resolution eligibility for timely proposals, not automatic settlement. Unappealed
+proposals and rejected appeals require successful `executeSlash` calls. An unresolved filed appeal
+requires governance resolution or a successful permissionless `expireAppeal` call. An execution
+failure leaves the proposal open and settlement blocked until resolution succeeds.
+
+The reporting deadline remains the scheduled lifecycle deadline plus one day. A late
+`markE3Failed` call does not restart that window. This duration is an operational assumption,
+not a guarantee that fault detection and reporting finish in time. Late evidence cannot change a
+failed round's payer through expulsion; non-expelling penalties do not compensate the requester.
 
 ─── AFTER APPEAL WINDOW ──────────────────────────────────────
 
@@ -853,7 +931,17 @@ _executeSlash(proposalId):
 │     │
 │     └─ If activeCount < thresholdM:
 │         ├─ Read the E3 stage from its request-time Interfold contract
-│         ├─ Complete or Failed: allow the later slash without another callback
+│         ├─ Complete: allow the later slash without another callback
+│         ├─ Failed: call onE3Failed with InsufficientCommitteeMembers to
+│         │  correct a front-run requester-paid reason (ZEN2-04)
+│         │  → Interfold routes an already-Failed E3 to reclassifyFailure
+│         │  → Rewrites only from a requester-paid reason, only before
+│         │    getRefundDistribution().calculated, only from this E3's
+│         │    request-time slashing manager
+│         │  → Stage stays Failed; activeE3Count unchanged; emits
+│         │    E3FailureReclassified
+│         │  → A correction that no longer applies is a no-op, so it
+│         │    never reverts the expulsion
 │         └─ Any other stage: call onE3Failed with InsufficientCommitteeMembers
 │            → No catch-all suppression
 │            → Callback failure rolls back penalties, ban, and expulsion
@@ -1126,16 +1214,21 @@ Constraints:
 - execution always uses `InsufficientCommitteeMembers` when an expulsion breaks viability
   → stored policies with older supplier reasons remain readable, but cannot change attribution
 
-Slash Reasons (derived from ProofType for Lane A):
+Lane A reason keys and stable runtime categories:
   reason = keccak256(abi.encodePacked(proofType))
-  ┌─────────────────┬──────────────────────────┐
-  │ ProofType       │ Slash Reason             │
-  ├─────────────────┼──────────────────────────┤
-  │ C0, C1-C4       │ E3_BAD_DKG_PROOF         │
-  │ C5              │ E3_BAD_PK_AGGREGATION    │
-  │ C6              │ E3_BAD_DECRYPTION_PROOF   │
-  │ C7              │ E3_BAD_AGGREGATION_PROOF │
-  └─────────────────┴──────────────────────────┘
+  ProofType::slash_reason() returns these stable categories:
+  ┌──────────────────────────────────┬─────────────────────────────────┐
+  │ ProofType                        │ Stable Slash Category           │
+  ├──────────────────────────────────┼─────────────────────────────────┤
+  │ C0, C1-C4                        │ E3_BAD_DKG_PROOF                │
+  │ C5, LbfvPkAggregation            │ E3_BAD_PK_AGGREGATION_PROOF     │
+  │ C6                               │ E3_BAD_DECRYPTION_PROOF         │
+  │ C7                               │ E3_BAD_AGGREGATION_PROOF        │
+  │ LbfvPkGeneration, RlkGeneration  │ E3_BAD_DKG_GENERATION_PROOF     │
+  │ RlkAggregation                   │ E3_BAD_RLK_AGGREGATION_PROOF    │
+  └──────────────────────────────────┴─────────────────────────────────┘
+
+  `RlkGenerationLimb` is not externally signed and has no ProofType.
 ```
 
 ### End-to-End: Proof Failure → On-Chain Slash
@@ -1293,16 +1386,18 @@ When CommitteeMemberExpelled event arrives from EVM:
 │   └─ Stores the expelled node as `alloy::Address` and removes/blocks keyshares by parsed
 │       address, so differently cased self-reported node strings cannot bypass expulsion
 │
-└─ When E3Failed(timeout) / E3StageChanged(Complete) arrives:
+└─ When a terminal non-slashing E3Failed / E3StageChanged(Complete) arrives:
     │
     ├─ E3Router (central cleanup orchestrator):
-    │   ├─ E3Failed with a timeout reason (CommitteeFormationTimeout, DKGTimeout,
-    │   │   ComputeTimeout, DecryptionTimeout) → publishes E3RequestComplete
+    │   ├─ E3Failed with a timeout, requester, or external-provider reason
+    │   │   (CommitteeFormationTimeout, DKGTimeout, ComputeTimeout,
+    │   │   DecryptionTimeout, NoInputsReceived, ComputeProviderExpired,
+    │   │   ComputeProviderFailed, RequesterCancelled) → publishes E3RequestComplete
     │   │   → Single cleanup signal for all per-E3 actors
     │   │   NOTE: E3Failed with a misbehaviour reason (DKGInvalidShares, etc.) does
     │   │   NOT trigger E3RequestComplete — the accusation/slashing lifecycle must
     │   │   complete first.
-    │   └─ E3StageChanged(Failed) and E3Failed(timeout) arriving after context teardown
+    │   └─ E3StageChanged(Failed) and the same non-slashing E3Failed arriving after teardown
     │       are silently ignored (expected on-chain lag)
     │
     ├─ CommitteeFinalizer (direct handler — semantic work):

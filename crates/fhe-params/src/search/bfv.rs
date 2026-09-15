@@ -581,7 +581,9 @@ pub fn finalize_second_param(
     let benc = BigUint::from(config.b);
     let term_d_bb_chi = BigUint::from(d) * BigUint::from(config.b) * BigUint::from(config.b_chi);
     let b_fresh = &benc + &term_d_bb_chi + &term_d_bb_chi;
-    let b_c = b_fresh.clone();
+    // Include q mod t in the fresh-noise bound. The remainder is part of the
+    // centered-RNS scaling error and must not be discarded in the second set.
+    let b_c = &b_fresh + BigUint::from(rkq);
 
     // Correctness: 2·B_C < Δ.
     let lhs = &b_c << 1;

@@ -8,14 +8,16 @@ impl ShareVerifier {
     /// Run ECDSA validation across all parties and prepare the cached proof
     /// hashes/signals/data plus the consistency-check request payload for the
     /// parties that passed. Pure: no event publishing.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn validate_and_prepare<P: VerifiableParty>(
         party_proofs: &[P],
-        e3_id_str: &str,
+        e3_id: &E3id,
         kind: &VerificationKind,
         label: &str,
         committee: Option<&[Address]>,
         params_preset: e3_fhe_params::BfvPreset,
         committee_size: CiphernodesCommitteeSize,
+        lbfv_context: Option<&e3_events::LbfvVerificationContext>,
     ) -> EcdsaValidationOutcome<P> {
         let mut ecdsa_dishonest = HashSet::new();
         let mut failures = Vec::new();
@@ -95,6 +97,22 @@ impl ShareVerifier {
                 ecdsa_dishonest.insert(party.party_id());
                 continue;
             }
+            if !Self::has_valid_lbfv_statements(
+                kind,
+                &proofs,
+                party.party_id(),
+                e3_id,
+                committee_size,
+                lbfv_context,
+            ) {
+                info!(
+                    "{} party {} supplied inconsistent l-BFV public statements",
+                    label,
+                    party.party_id()
+                );
+                ecdsa_dishonest.insert(party.party_id());
+                continue;
+            }
 
             let expected_signer = usize::try_from(party.party_id())
                 .ok()
@@ -103,7 +121,7 @@ impl ShareVerifier {
             let result = Self::ecdsa_validate_signed_proofs(
                 party.party_id(),
                 &proofs,
-                e3_id_str,
+                &e3_id.to_string(),
                 label,
                 expected_signer,
             );
@@ -132,29 +150,51 @@ impl ShareVerifier {
         }
 
         // Compute proof hashes and public signals for ECDSA-passed parties.
-        let mut party_proof_hashes: HashMap<u64, Vec<(ProofType, [u8; 32])>> = HashMap::new();
-        let mut party_public_signals: HashMap<u64, Vec<(ProofType, ArcBytes)>> = HashMap::new();
-        let mut party_raw_proof_data: HashMap<u64, Vec<(ProofType, ArcBytes)>> = HashMap::new();
+        let mut party_proof_hashes: HashMap<u64, Vec<(ProofIdentity, [u8; 32])>> = HashMap::new();
+        let mut party_public_signals: HashMap<u64, Vec<(ProofIdentity, ArcBytes)>> = HashMap::new();
+        let mut party_raw_proof_data: HashMap<u64, Vec<(ProofIdentity, ArcBytes)>> = HashMap::new();
         for party in &ecdsa_passed_parties {
-            let hashes: Vec<(ProofType, [u8; 32])> = party
-                .signed_proofs()
-                .iter()
-                .map(|signed| (signed.payload.proof_type, Self::proof_data_hash(signed)))
-                .collect();
-            let signals: Vec<(ProofType, ArcBytes)> = party
+            let hashes: Vec<(ProofIdentity, [u8; 32])> = party
                 .signed_proofs()
                 .iter()
                 .map(|signed| {
                     (
-                        signed.payload.proof_type,
+                        signed
+                            .payload
+                            .proof_type
+                            .identity(&signed.payload.proof)
+                            .expect("canonical proof shape validated the proof identity"),
+                        Self::proof_data_hash(signed),
+                    )
+                })
+                .collect();
+            let signals: Vec<(ProofIdentity, ArcBytes)> = party
+                .signed_proofs()
+                .iter()
+                .map(|signed| {
+                    (
+                        signed
+                            .payload
+                            .proof_type
+                            .identity(&signed.payload.proof)
+                            .expect("canonical proof shape validated the proof identity"),
                         signed.payload.proof.public_signals.clone(),
                     )
                 })
                 .collect();
-            let datas: Vec<(ProofType, ArcBytes)> = party
+            let datas: Vec<(ProofIdentity, ArcBytes)> = party
                 .signed_proofs()
                 .iter()
-                .map(|signed| (signed.payload.proof_type, signed.payload.proof.data.clone()))
+                .map(|signed| {
+                    (
+                        signed
+                            .payload
+                            .proof_type
+                            .identity(&signed.payload.proof)
+                            .expect("canonical proof shape validated the proof identity"),
+                        signed.payload.proof.data.clone(),
+                    )
+                })
                 .collect();
             party_proof_hashes.insert(party.party_id(), hashes);
             party_public_signals.insert(party.party_id(), signals);

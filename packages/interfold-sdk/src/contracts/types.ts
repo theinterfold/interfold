@@ -65,6 +65,14 @@ export interface E3RequestParams extends RequestParams {
   maxFee?: bigint
 }
 
+/** Proof-backed reference to an aggregate ciphertext published on the configured DA layer. */
+export interface CiphertextOutputReference {
+  contentHash: `0x${string}`
+  ciphertextCommitment: `0x${string}`
+  computeProof: `0x${string}`
+  availabilityProof: `0x${string}`
+}
+
 export enum E3Stage {
   None,
   Requested,

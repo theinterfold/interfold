@@ -26,6 +26,9 @@ function proofWithAnchors(
 
 describe("BFV verifier routers", function () {
   it("routes PK proofs by public-input length and VK anchors", async function () {
+    const interfold = await ethers.deployContract("MockBfvV2Interfold", [0]);
+    const registry = await ethers.deployContract("MockCiphernodeRegistry");
+    await registry.setInterfold(await interfold.getAddress());
     const minimum = await ethers.deployContract("MockBfvPkVerifierRoute", [
       2,
       HASH_A,
@@ -39,7 +42,9 @@ describe("BFV verifier routers", function () {
       true,
     ]);
     const router = await ethers.deployContract("BfvPkVerifierRouter", [
+      await registry.getAddress(),
       [await minimum.getAddress(), await small.getAddress()],
+      [0, 0],
       10,
     ]);
 
@@ -86,6 +91,54 @@ describe("BFV verifier routers", function () {
         proofWithAnchors(31, HASH_A, HASH_B),
       ),
     ).to.be.revertedWithCustomError(router, "InvalidPublicInputsLength");
+  });
+
+  it("rejects a PK route for a different E3 parameter set", async function () {
+    const interfold = await ethers.deployContract("MockBfvV2Interfold", [2]);
+    const registry = await ethers.deployContract("MockCiphernodeRegistry");
+    await registry.setInterfold(await interfold.getAddress());
+    const legacy = await ethers.deployContract("MockBfvPkVerifierRoute", [
+      2,
+      HASH_A,
+      HASH_B,
+      true,
+    ]);
+    const secure16384 = await ethers.deployContract("MockBfvPkVerifierRoute", [
+      2,
+      HASH_C,
+      HASH_D,
+      true,
+    ]);
+    const router = await ethers.deployContract("BfvPkVerifierRouter", [
+      await registry.getAddress(),
+      [await legacy.getAddress(), await secure16384.getAddress()],
+      [0, 2],
+      2,
+    ]);
+
+    expect((await router.routeAt(1))[4]).to.equal(2);
+    expect(
+      await router.verify.staticCall(
+        1,
+        2,
+        [],
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        proofWithAnchors(30, HASH_C, HASH_D),
+      ),
+    ).to.equal(true);
+    await expect(
+      router.verify.staticCall(
+        1,
+        2,
+        [],
+        ethers.ZeroHash,
+        ethers.ZeroHash,
+        proofWithAnchors(30, HASH_A, HASH_B),
+      ),
+    )
+      .to.be.revertedWithCustomError(router, "ParamSetRouteMismatch")
+      .withArgs(2);
   });
 
   it("routes decryption proofs by public-input length and VK anchors", async function () {

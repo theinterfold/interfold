@@ -19,7 +19,7 @@ import foldCircuit from '../../../circuits/bin/fold/target/crisp_fold.json'
 import foldOnchainCircuit from '../../../circuits/bin/fold_onchain/target/crisp_onchain_fold.json'
 import userDataEncryptionCircuit from '../../../../../circuits/bin/threshold/target/user_data_encryption.json'
 import { requireCircuits } from './circuits'
-import { bytesToHex, encodeAbiParameters, parseAbiParameters, numberToHex, getAddress } from 'viem/utils'
+import { bytesToHex, encodeAbiParameters, parseAbiParameters, numberToHex, getAddress, keccak256 } from 'viem/utils'
 import { Hex } from 'viem'
 
 // Cached Barretenberg API instance — avoids re-initialising WASM + SRS on every proof.
@@ -378,12 +378,18 @@ export const encodeSolidityProof = ({ publicInputs, proof, encryptedVote, parent
   //   7 final_ct_commitment, 8 committee public key
   const slotAddress = getAddress(numberToHex(BigInt(publicInputs[3]), { size: 20 }))
   const encryptedVoteCommitment = publicInputs[7] as `0x${string}`
+  const encryptedVoteBytes = bytesToHex(encryptedVote)
+  const encryptedVoteHash = keccak256(encryptedVoteBytes)
 
-  return encodeAbiParameters(parseAbiParameters('bytes, address, bytes32, bytes, uint40'), [
+  // The last field contains the ciphertext only while the availability service stages the job.
+  // The service removes it from the proof-commitment transaction, publishes it to Avail, and
+  // later supplies the VectorX proof to `finalizeInput`.
+  return encodeAbiParameters(parseAbiParameters('bytes, address, bytes32, bytes32, uint40, bytes'), [
     bytesToHex(proof),
     slotAddress,
     encryptedVoteCommitment,
-    bytesToHex(encryptedVote),
+    encryptedVoteHash,
     parentIndexPlusOne,
+    encryptedVoteBytes,
   ])
 }

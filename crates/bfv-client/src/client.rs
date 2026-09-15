@@ -9,10 +9,11 @@ use e3_fhe_params::{try_build_bfv_params_arc, BfvParamSet, BfvPreset};
 use e3_zk_helpers::circuits::threshold::user_data_encryption::circuit::UserDataEncryptionCircuitData;
 use e3_zk_helpers::circuits::threshold::user_data_encryption::Inputs as UserDataEncryptionInputs;
 use e3_zk_helpers::circuits::Computation;
-use fhe::bfv::{Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
+use fhe::bfv::{BfvParameters, Ciphertext, Encoding, Plaintext, PublicKey, SecretKey};
 use fhe::Error as FheError;
 use fhe_traits::{DeserializeParametrized, FheEncoder, FheEncrypter, Serialize};
 use rand::rng;
+use std::sync::Arc;
 
 fn build_client_params(
     degree: usize,
@@ -223,14 +224,25 @@ pub fn compute_ct_commitment(
     plaintext_modulus: u64,
     moduli: Vec<u64>,
 ) -> Result<[u8; 32]> {
-    use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_ciphertext_commitment;
-
     let params = build_client_params(degree, plaintext_modulus, &moduli, None)?;
 
-    let ct = Ciphertext::from_bytes(&ct, &params)
+    compute_ct_commitment_with_params(&ct, &params)
+}
+
+/// Computes a ciphertext commitment with BFV parameters that the caller already built.
+///
+/// Use this function when one operation checks multiple ciphertexts with the same parameters. It
+/// avoids rebuilding the large BFV parameter tables for every ciphertext.
+pub fn compute_ct_commitment_with_params(
+    ct: &[u8],
+    params: &Arc<BfvParameters>,
+) -> Result<[u8; 32]> {
+    use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_ciphertext_commitment;
+
+    let ct = Ciphertext::from_bytes(ct, params)
         .map_err(|e| anyhow!("Error deserializing ciphertext: {}", e))?;
 
-    let commitment = compute_ciphertext_commitment(&params, &ct)
+    let commitment = compute_ciphertext_commitment(params, &ct)
         .map_err(|e| anyhow!("Error computing ciphertext commitment: {}", e))?;
 
     Ok(commitment)

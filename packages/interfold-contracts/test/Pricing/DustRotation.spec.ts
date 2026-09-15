@@ -12,13 +12,13 @@ import type { Signer } from "ethers";
 
 import {
   ACTIVE_CRYPTO_CONFIG_ID,
-  SORTITION_SUBMISSION_WINDOW,
   DATA as data,
   deployInterfoldSystem,
   encodeMockDkgProof,
   ethers,
   networkHelpers,
   PROOF as proof,
+  publishAvailableCiphertextOutput,
   setPricingConfig,
 } from "../fixtures";
 
@@ -34,11 +34,12 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
     publicKey: string,
     operators: Signer[],
   ) => {
-    await networkHelpers.mine(1);
+    await time.increase(1);
     for (const operator of operators) {
       await registry.connect(operator).submitTicket(e3Id, 1);
     }
-    await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+    const deadline = await registry.getCommitteeDeadline(e3Id);
+    await time.setNextBlockTimestamp(deadline + 1n);
     await registry.finalizeCommittee(e3Id);
     const pkCommitment = ethers.keccak256(publicKey);
     await registry.publishCommittee(
@@ -168,7 +169,8 @@ describe("Pricing — per-E3 dust rotation across consecutive E3s", function () 
         [operator1, operator2, operator3],
       );
       await time.increase(inputWindowDuration + 200);
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ethers.keccak256(data),

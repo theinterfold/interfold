@@ -50,7 +50,7 @@ fn the_leaf_matches_the_contract_vector() {
 
     assert_eq!(
         leaf_of(&ciphertext(), &COMMITMENT, &metadata),
-        "17910fb4333ca8c834bafea151e216e488db0fdaba00d7acd8d15a9e4a6ba9b4",
+        "066ab2680bd3fc07cea15f68b8b900e880646a54ac9f4e4453d107c91154de0c",
         "the Rust leaf diverged from the vector CRISPProgram.inputLeaf produces"
     );
 }
@@ -63,7 +63,7 @@ fn the_leaf_changes_with_the_parent() {
 
     assert_ne!(first, second);
     assert_eq!(
-        second, "098ef4852f0e5a3ae22bee86209ba3f653af2d34632ab68fadf1525af6b26d40",
+        second, "0d022e529ab12c8fcba37729e02dfe95bce7c4bcb82885915057bf4ddbe41076",
         "the Rust leaf diverged from the vector CRISPProgram.inputLeaf produces"
     );
 }

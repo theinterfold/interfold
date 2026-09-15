@@ -19,6 +19,7 @@ import {
   getRoundResult,
   getRoundStateLite,
   getTokenHolderHashes,
+  getVoteAvailability,
   getVoteStatus,
   requestNewRound,
 } from './api'
@@ -173,6 +174,15 @@ export class CrispSDK {
    */
   async broadcastVote(request: BroadcastVoteRequest): Promise<BroadcastVoteResponse> {
     return broadcastVote(this.serverUrl, request)
+  }
+
+  /**
+   * Read a durable availability job without waiting for Avail or VectorX.
+   * @param jobId - The job id returned by `broadcastVote`
+   * @returns The job's current commitment or availability state
+   */
+  async getVoteAvailability(jobId: string): Promise<BroadcastVoteResponse> {
+    return getVoteAvailability(this.serverUrl, jobId)
   }
 
   /**

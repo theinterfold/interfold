@@ -122,6 +122,33 @@ fn release_committee_jobs_is_idempotent() {
 }
 
 #[test]
+fn duplicate_committee_publication_increments_jobs_once() {
+    let mut store = HashMap::new();
+    let id = e3(1, "17");
+    let nodes = ["0xabc".into(), "0xdef".into()];
+
+    NodeRegistry::record_committee_published(&mut store, &id, &nodes);
+    NodeRegistry::record_committee_published(&mut store, &id, &nodes);
+
+    assert_eq!(store[&1].nodes["0xabc"].active_jobs, 1);
+    assert_eq!(store[&1].nodes["0xdef"].active_jobs, 1);
+    assert_eq!(store[&1].e3_committees.len(), 1);
+}
+
+#[test]
+fn conflicting_committee_replay_preserves_the_first_committee() {
+    let mut store = HashMap::new();
+    let id = e3(1, "18");
+
+    NodeRegistry::record_committee_published(&mut store, &id, &["0xabc".into()]);
+    NodeRegistry::record_committee_published(&mut store, &id, &["0xdef".into()]);
+
+    assert_eq!(store[&1].nodes["0xabc"].active_jobs, 1);
+    assert!(!store[&1].nodes.contains_key("0xdef"));
+    assert_eq!(store[&1].e3_committees[&committee_key(&id)], vec!["0xabc"]);
+}
+
+#[test]
 fn get_nodes_with_tickets_filters_inactive_and_empty() {
     let mut store = HashMap::new();
     NodeRegistry::set_ticket_price(&mut store, 1, U256::from(10));

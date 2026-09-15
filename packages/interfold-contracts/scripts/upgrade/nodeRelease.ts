@@ -7,6 +7,7 @@ import {
   governanceSafeBuilderPath,
   protocolDir,
   readJson,
+  repoRelativePath,
   writeJson,
 } from "../protocol/files";
 import { currentNodeRelease } from "../protocol/nodeRelease";
@@ -184,8 +185,10 @@ async function prepare(): Promise<void> {
     mandatory,
     nodeReleaseRegistry: deployment.nodeReleaseRegistry,
     release,
-    safeTransactions: rawBatchFile,
-    governanceSafeBuilder: safeBuilderFile,
+    safeTransactions: repoRelativePath(rawBatchFile),
+    governanceSafeBuilder: safeBuilderFile
+      ? repoRelativePath(safeBuilderFile)
+      : undefined,
   };
   writeJson(planPath(config.name), plan);
   console.log(

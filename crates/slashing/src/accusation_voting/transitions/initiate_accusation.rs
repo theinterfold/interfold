@@ -41,6 +41,14 @@ impl AccusationVoting {
             return Vec::new();
         }
 
+        let Ok(identity) = event
+            .proof_type
+            .identity(&event.signed_payload.payload.proof)
+        else {
+            warn!("Ignoring proof failure with an invalid proof instance");
+            return Vec::new();
+        };
+
         // Cache the failed verification result.
         let evidence = Bytes::from(
             (
@@ -50,7 +58,7 @@ impl AccusationVoting {
                 .abi_encode(),
         );
         self.received_data.insert(
-            (accused_address, event.proof_type),
+            (accused_address, identity),
             ReceivedProofData {
                 data_hash: event.data_hash,
                 verification_passed: false,
@@ -71,6 +79,7 @@ impl AccusationVoting {
             accused_address,
             event.accused_party_id,
             event.proof_type,
+            identity.instance,
             event.data_hash,
             forwarded_payload,
             ec,
@@ -98,8 +107,20 @@ impl AccusationVoting {
             return Vec::new();
         }
 
+        if (!data.proof_type.is_multirow() && data.proof_instance != 0)
+            || (data.proof_type.is_multirow()
+                && data.proof_instance >= ProofType::LBFV_ROW_INSTANCES)
+        {
+            warn!("Ignoring commitment violation with an invalid proof instance");
+            return Vec::new();
+        }
+        let identity = ProofIdentity {
+            proof_type: data.proof_type,
+            instance: data.proof_instance,
+        };
+
         self.received_data.insert(
-            (data.accused_address, data.proof_type),
+            (data.accused_address, identity),
             ReceivedProofData {
                 data_hash: data.data_hash,
                 verification_passed: false,
@@ -112,6 +133,7 @@ impl AccusationVoting {
             data.accused_address,
             data.accused_party_id,
             data.proof_type,
+            data.proof_instance,
             data.data_hash,
             None,
             ec,
@@ -127,6 +149,7 @@ impl AccusationVoting {
         accused_address: Address,
         accused_party_id: u64,
         proof_type: ProofType,
+        proof_instance: u32,
         data_hash: [u8; 32],
         forwarded_payload: Option<SignedProofPayload>,
         ec: &EventContext<Sequenced>,
@@ -140,7 +163,11 @@ impl AccusationVoting {
             return;
         }
 
-        let key = (accused_address, proof_type);
+        let identity = ProofIdentity {
+            proof_type,
+            instance: proof_instance,
+        };
+        let key = (accused_address, identity);
 
         // Dedup: don't create multiple accusations for the same (accused, proof_type)
         if !self.accused_proofs.insert(key) {
@@ -171,6 +198,7 @@ impl AccusationVoting {
             accused: accused_address,
             accused_party_id,
             proof_type,
+            proof_instance,
             data_hash,
             issued_at,
             deadline,

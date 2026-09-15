@@ -16,6 +16,9 @@ chains:
   - name: '${NETWORK}'
     rpc_url: '${RPC_URL}'
     chain_id: ${CHAIN_ID}
+    data_availability:
+      mode: avail
+      rpc_url: '${AVAIL_RPC_URL}'
     contracts:
       interfold:
         address: '${INTERFOLD_CONTRACT}'

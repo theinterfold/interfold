@@ -56,6 +56,7 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
     isLoading,
     getWebResultByRound,
     displayedRoundIsFallback,
+    currentRoundId,
   } = useVoteManagementContext()
   const { canRegister, isRegistered, isRegistering, register } = useRegistration()
   const navigate = useNavigate()
@@ -226,7 +227,12 @@ const DailyPollSection: React.FC<DailyPollSectionProps> = ({ loading, endTime, t
             <div className='col' style={{ gap: 12 }}>
               <div className='mono muted'>{title}</div>
               {hasPoll && <h1 className='h1'>Choose your favorite</h1>}
-              {!roundState && !isLoading && <p className='lede'>No active poll found. Check back when the next round opens.</p>}
+              {!roundState && !isLoading && currentRoundId && (
+                <p className='lede'>Round #{currentRoundId} is preparing its encryption key. Voting will open when the key is available.</p>
+              )}
+              {!roundState && !isLoading && !currentRoundId && (
+                <p className='lede'>No active poll found. Check back when the next round opens.</p>
+              )}
               {displayedRoundIsFallback && (
                 <p className='cap muted'>Showing the latest completed poll — the current round is still being tallied under encryption.</p>
               )}

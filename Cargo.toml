@@ -11,6 +11,7 @@ members = [
   "crates/dashboard",
   "crates/crypto",
   "crates/data",
+  "crates/data-availability",
   "crates/interfoldup",
   "crates/entrypoint",
   "crates/events",
@@ -85,6 +86,7 @@ e3-dashboard = { version = "0.14.0", path = "./crates/dashboard" }
 e3-ciphernode-builder = { version = "0.14.0", path = "./crates/ciphernode-builder" }
 e3-crypto = { version = "0.14.0", path = "./crates/crypto" }
 e3-data = { version = "0.14.0", path = "./crates/data" }
+e3-data-availability = { version = "0.14.0", path = "./crates/data-availability" }
 e3-hamt = { version = "0.14.0", path = "./crates/hamt" }
 e3-request = { version = "0.14.0", path = "./crates/request" }
 e3-sdk = { version = "0.14.0", path = "./crates/sdk" }
@@ -132,6 +134,7 @@ alloy-primitives = { version = "=1.4.1", default-features = false, features = [
 ] }
 alloy-sol-types = "=1.4.1"
 alloy-dyn-abi = "=1.4.1"
+avail-rust-client = "=0.5.1"
 argon2 = "=0.5.3"
 ark-ff = "0.5.0"
 ark-bn254 = "0.5.0"

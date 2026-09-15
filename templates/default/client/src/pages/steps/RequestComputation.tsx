@@ -4,15 +4,21 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import React, { useState, useEffect } from 'react'
+import React, { useState, useEffect, useRef } from 'react'
 import { CalculatorIcon } from '@phosphor-icons/react'
-import { hexToBytes } from 'viem'
-import type { CommitteePublishedData } from '@interfold/sdk'
+import { bytesToHex, hexToBytes } from 'viem'
+import type { CommitteePublicKeyChunkPublishedData } from '@interfold/sdk'
 import CardContent from '../components/CardContent'
 import Spinner from '../components/Spinner'
 import ErrorDisplay from '../components/ErrorDisplay'
 import { useWizard, WizardStep } from '../../context/WizardContext'
-import { encodeComputeProviderParams, DEFAULT_COMPUTE_PROVIDER_PARAMS, DEFAULT_E3_CONFIG, calculateInputWindow } from '@interfold/sdk'
+import {
+  CommitteePublicKeyAssembler,
+  encodeComputeProviderParams,
+  DEFAULT_COMPUTE_PROVIDER_PARAMS,
+  DEFAULT_E3_CONFIG,
+  calculateInputWindow,
+} from '@interfold/sdk'
 import { getContractAddresses } from '@/utils/env-config'
 
 /**
@@ -32,6 +38,7 @@ const RequestComputation: React.FC = () => {
   const [requestSuccess, setRequestSuccess] = useState(false)
   const [lastTransactionHash, setLocalTransactionHash] = useState<string | undefined>()
   const [showErrorDetails, setShowErrorDetails] = useState(false)
+  const committeeKeyAssembler = useRef(new CommitteePublicKeyAssembler())
 
   // Set up event listeners for this step
   useEffect(() => {
@@ -47,19 +54,22 @@ const RequestComputation: React.FC = () => {
       }))
     }
 
-    const handleCommitteePublished = async (event: { data: CommitteePublishedData }) => {
-      const { e3Id, publicKey, pkCommitment } = event.data
+    const handleCommitteeKeyChunk = async (event: { data: CommitteePublicKeyChunkPublishedData }) => {
+      const { e3Id } = event.data
       if (e3State.id === null || e3Id !== e3State.id || !sdk.sdk) return
 
       try {
-        const isBoundKey = await sdk.sdk.validatePublicKeyCommitment(
-          hexToBytes(publicKey as `0x${string}`),
-          hexToBytes(pkCommitment as `0x${string}`),
-        )
+        const assembled = committeeKeyAssembler.current.add(event.data)
+        if (!assembled) return
+
+        const isBoundKey = await sdk.sdk.validatePublicKeyCommitment(assembled.publicKey, hexToBytes(assembled.pkCommitment))
         if (!isBoundKey) {
-          throw new Error(`Rejected committee public key for E3 ${e3Id}: commitment mismatch`)
+          console.warn(`Rejected committee public-key candidate for E3 ${e3Id}: commitment mismatch`)
+          return
         }
 
+        const publicKey = bytesToHex(assembled.publicKey)
+        committeeKeyAssembler.current.clear(e3Id)
         setE3State((prev) => {
           if (prev.id !== null && e3Id === prev.id) {
             return {
@@ -71,17 +81,16 @@ const RequestComputation: React.FC = () => {
           return prev
         })
       } catch (error) {
-        setRequestError(error)
-        console.error(`Rejected committee public key for E3 ${e3Id}:`, error)
+        console.warn(`Ignored invalid committee public-key chunk for E3 ${e3Id}:`, error)
       }
     }
 
     onInterfoldEvent(InterfoldEventType.E3_REQUESTED, handleE3Requested)
-    onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLISHED, handleCommitteePublished)
+    onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED, handleCommitteeKeyChunk)
 
     return () => {
       off(InterfoldEventType.E3_REQUESTED, handleE3Requested)
-      off(RegistryEventType.COMMITTEE_PUBLISHED, handleCommitteePublished)
+      off(RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED, handleCommitteeKeyChunk)
     }
   }, [isInitialized, onInterfoldEvent, off, InterfoldEventType, RegistryEventType, setE3State, e3State.id, sdk.sdk])
 

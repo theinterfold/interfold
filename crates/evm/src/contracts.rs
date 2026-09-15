@@ -45,6 +45,12 @@ sol! {
             uint256 decryptionDeadline;
         }
 
+        struct E3TimeoutConfig {
+            uint256 dkgWindow;
+            uint256 computeWindow;
+            uint256 decryptionWindow;
+        }
+
         // ── Write functions ─────────────────────────────────────────────────
         function publishPlaintextOutput(
             uint256 e3Id,
@@ -61,11 +67,19 @@ sol! {
 
         function getE3Stage(uint256 e3Id) external view returns (uint8 stage);
 
+        function getFailureReason(uint256 e3Id) external view returns (uint8 reason);
+
         function getDeadlines(uint256 e3Id) external view returns (E3Deadlines memory deadlines);
+
+        function getE3TimeoutConfig(
+            uint256 e3Id
+        ) external view returns (E3TimeoutConfig memory config);
 
         function checkFailureCondition(
             uint256 e3Id
         ) external view returns (bool canFail, uint8 reason);
+
+        function markFailedGracePeriod() external view returns (uint256);
 
         function nodeReleaseRegistry() external view returns (address);
         function bondingRegistry() external view returns (address);
@@ -75,6 +89,13 @@ sol! {
         event E3Requested(uint256 e3Id, E3 e3, bytes32 indexed cryptoConfigId);
         event InputPublished(uint256 indexed e3Id, bytes data, uint256 inputHash, uint256 index);
         event CiphertextOutputPublished(uint256 indexed e3Id, bytes ciphertextOutput, bytes32 ciphertextCommitment);
+        event CiphertextOutputReferencePublished(
+            uint256 indexed e3Id,
+            bytes32 contentHash,
+            bytes32 ciphertextCommitment,
+            uint32 availabilityBlock,
+            uint128 availabilityLeafIndex
+        );
         event PlaintextOutputPublished(uint256 indexed e3Id, bytes plaintextOutput, bytes proof);
         event RewardsDistributed(uint256 indexed e3Id, address[] nodes, uint256[] amounts);
         event RewardCredited(uint256 indexed e3Id, address indexed account, address indexed token, uint256 amount);
@@ -95,6 +116,7 @@ sol! {
         error E3AlreadyFailed(uint256 e3Id);
         error E3AlreadyComplete(uint256 e3Id);
         error MarkE3FailedInGracePeriod(uint256 e3Id, uint256 gracePeriodEnds);
+        error DKGDeadlinePassed(uint256 e3Id, uint256 deadline);
     }
 }
 
@@ -203,10 +225,12 @@ sol! {
             bytes calldata dkgAttestationBundle
         ) external;
 
-        function publishCommitteePublicKey(uint256 e3Id, bytes calldata publicKey) external;
-
         // ── View functions ──────────────────────────────────────────────────
         function isOpen(uint256 e3Id) external view returns (bool);
+
+        function committeeThresholdMet(uint256 e3Id) external view returns (bool);
+
+        function getCommitteeDeadline(uint256 e3Id) external view returns (uint256);
 
         function committeePublicKey(uint256 e3Id) external view returns (bytes32 publicKeyHash);
 
@@ -328,6 +352,18 @@ sol! {
             bytes proof
         );
 
+        event CommitteePublicKeyChunkPublished(
+            uint256 indexed e3Id,
+            address indexed publisher,
+            bytes32 indexed candidateHash,
+            address[] nodes,
+            bytes32 pkCommitment,
+            uint16 chunkIndex,
+            uint16 chunkCount,
+            uint32 totalLength,
+            bytes chunk
+        );
+
         event CommitteeActivationChanged(uint256 indexed e3Id, bool active);
 
         event CommitteeViabilityUpdated(
@@ -368,6 +404,19 @@ sol! {
         error DkgProofRequired();
         error InvalidDkgProof();
         error FoldAttestationsRequired();
+        error FoldAttestationVerifierNotSet();
+        error InvalidFoldAttestation();
+        error PartyIdNotInProof();
+        error AttestationBindingCountMismatch();
+        error PartyIdOutOfBounds(uint256 partyId, uint256 committeeSize);
+        error InvalidProof();
+        error InvalidPublicInputsLength();
+        error VkHashMismatch();
+        error PkCommitmentMismatch();
+        error DomainBindingMismatch();
+        error InvalidPublicKeyLength(uint256 supplied, uint256 maximum);
+        error InvalidPublicKeyChunk();
+        error PublicKeyPublisherNotCommitteeMember();
     }
 }
 

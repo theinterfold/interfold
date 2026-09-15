@@ -39,6 +39,9 @@ ACTIVE_SOL="packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol"
 TASKS_TS="packages/interfold-contracts/tasks/interfold.ts"
 SDK_UTILS_TS="packages/interfold-sdk/src/utils.ts"
 EVM_HELPERS_RS="crates/evm-helpers/src/contracts.rs"
+EVM_EVENTS_RS="crates/evm/src/interfold/events.rs"
+INDEXER_RS="crates/indexer/src/indexer.rs"
+FIXTURE_CONSTANTS_TS="packages/interfold-contracts/test/fixtures/constants.ts"
 RAN_STAMP_CHECK=false
 RAN_PARITY_CHECK=false
 
@@ -53,7 +56,10 @@ for required_file in \
   "$ACTIVE_SOL" \
   "$TASKS_TS" \
   "$SDK_UTILS_TS" \
-  "$EVM_HELPERS_RS"; do
+  "$EVM_HELPERS_RS" \
+  "$EVM_EVENTS_RS" \
+  "$INDEXER_RS" \
+  "$FIXTURE_CONSTANTS_TS"; do
   [[ -f "$required_file" ]] || fail "missing $required_file"
 done
 
@@ -233,6 +239,18 @@ check_bfv_preset secure-16384 secure16384 secure_16384 secure_16384
 # 6. Every chain-supported route in utils.ts must match the Noir committee shape and the
 #    parameter/configuration hashes compiled into ActiveCryptoConfig.sol. Keep this check
 #    dependency-free because the Agent Harness runs it before Node dependencies are installed.
+CIRCUIT_VERSION_LABEL=$(grep -E 'bytes32 internal constant CIRCUIT_VERSION = keccak256\("[^\"]+"\);' "$ACTIVE_SOL" \
+  | sed -E 's/.*keccak256\("([^\"]+)"\).*/\1/' \
+  | head -n1)
+[[ "$CIRCUIT_VERSION_LABEL" == "interfold-bfv-v2" ]] \
+  || fail "$ACTIVE_SOL must use circuit identity interfold-bfv-v2; got ${CIRCUIT_VERSION_LABEL:-missing}"
+grep -Fq 'export const CIRCUIT_VERSION = ethers.id("interfold-bfv-v2");' "$FIXTURE_CONSTANTS_TS" \
+  || fail "$FIXTURE_CONSTANTS_TS must derive configuration IDs from interfold-bfv-v2"
+grep -Fq 'b"interfold-bfv-v2"' "$EVM_EVENTS_RS" \
+  || fail "$EVM_EVENTS_RS must derive configuration IDs from interfold-bfv-v2"
+grep -Fq 'b"interfold-bfv-v2"' "$INDEXER_RS" \
+  || fail "$INDEXER_RS must derive configuration IDs from interfold-bfv-v2"
+
 sol_bytes32() {
   local name="$1"
   grep -A1 -E "bytes32 internal constant $name" "$ACTIVE_SOL" \
@@ -247,7 +265,7 @@ ts_bytes32() {
     | head -n1
 }
 
-for prefix in INSECURE SECURE; do
+for prefix in INSECURE SECURE SECURE_16384; do
   utils_param_hash=$(ts_bytes32 "${prefix}_PARAM_SET_HASH")
   utils_config_id=$(ts_bytes32 "${prefix}_CONFIG_ID")
   sol_param_hash=$(sol_bytes32 "${prefix}_PARAM_SET_HASH")
@@ -275,7 +293,7 @@ extract_rust_config_id() {
     | head -n1
 }
 
-for prefix_and_param_set in INSECURE:0 SECURE:1; do
+for prefix_and_param_set in INSECURE:0 SECURE:1 SECURE_16384:2; do
   prefix="${prefix_and_param_set%%:*}"
   param_set="${prefix_and_param_set##*:}"
   expected_id=$(sol_bytes32 "${prefix}_CONFIG_ID")
@@ -285,7 +303,13 @@ for prefix_and_param_set in INSECURE:0 SECURE:1; do
   if [[ "$task_id" != "$expected_id" || "$sdk_id" != "$expected_id" || "$evm_helper_id" != "$expected_id" ]]; then
     fail "drift: paramSet=${param_set} config ID must match $ACTIVE_SOL in tasks, SDK, and EVM helpers"
   fi
+  grep -Fq "$expected_id" "$EVM_EVENTS_RS" \
+    || fail "drift: paramSet=${param_set} config ID must match $ACTIVE_SOL in the Rust EVM compatibility test"
 done
+
+ORIGIN_V1_INSECURE_CONFIG_ID="0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78"
+[[ "$(sol_bytes32 INSECURE_CONFIG_ID)" != "$ORIGIN_V1_INSECURE_CONFIG_ID" ]] \
+  || fail "$ACTIVE_SOL insecure configuration ID must differ from the origin interfold-bfv-v1 ID"
 
 check_utils_route() {
   local symbol="$1"
@@ -313,18 +337,19 @@ check_utils_route INSECURE_SMALL insecure small 2
 check_utils_route SECURE_MINIMUM secure-8192 minimum 0
 check_utils_route SECURE_MICRO secure-8192 micro 1
 check_utils_route SECURE_SMALL secure-8192 small 2
+check_utils_route SECURE_16384_MINIMUM secure-16384 minimum 0
 
 route_list() {
   local array_name="$1"
   sed -n "/^export const ${array_name}:.*= \[/,/^\] as const;/p" "$UTILS_TS" \
-    | grep -oE '(INSECURE|SECURE)_(MINIMUM|MICRO|SMALL)_BFV_CONFIG' \
+    | grep -oE '(INSECURE|SECURE(_16384)?)_(MINIMUM|MICRO|SMALL)_BFV_CONFIG' \
     | paste -sd, -
 }
 
 TESTNET_ROUTES=$(route_list TESTNET_BFV_CONFIGS)
-EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG"
+EXPECTED_TESTNET_ROUTES="INSECURE_MINIMUM_BFV_CONFIG,INSECURE_MICRO_BFV_CONFIG,INSECURE_SMALL_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_SMALL_BFV_CONFIG,SECURE_16384_MINIMUM_BFV_CONFIG"
 [[ "$TESTNET_ROUTES" == "$EXPECTED_TESTNET_ROUTES" ]] \
-  || fail "$UTILS_TS testnet routes must contain the exact six-pair matrix; got $TESTNET_ROUTES"
+  || fail "$UTILS_TS testnet routes must contain the exact supported-pair matrix; got $TESTNET_ROUTES"
 
 MAINNET_ROUTES=$(route_list MAINNET_BFV_CONFIGS)
 EXPECTED_MAINNET_ROUTES="SECURE_SMALL_BFV_CONFIG,SECURE_MICRO_BFV_CONFIG,SECURE_MINIMUM_BFV_CONFIG"
@@ -494,4 +519,4 @@ else
   echo "  (skipping parity-matrix drift check: $GEN_BIN not built. Run \`cargo build -p e3-zk-helpers --bin generate_parity_matrices --release\` to enable.)" >&2
 fi
 
-echo "✓ check:committee: BFV tuples, configuration IDs, all six routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"
+echo "✓ check:committee: BFV tuples, interfold-bfv-v2 configuration IDs, all supported testnet routes, and local $ACTIVE_COMMITTEE (H=$EXPECTED_H, T=$EXPECTED_T) are consistent across TypeScript, Rust, Noir, and Solidity$([ "$RAN_STAMP_CHECK" = true ] && echo ', .active-preset.json')$([ "$RAN_PARITY_CHECK" = true ] && echo ', parity_*.nr')"

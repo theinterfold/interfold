@@ -1,10 +1,15 @@
 #!/usr/bin/env bash
 
-PINATA_JWT=""
+# Configuration normally arrives through the environment so the Pinata token does not appear in
+# process arguments. Keep the flags for direct, backwards-compatible use.
 while [[ $# -gt 0 ]]; do
   case $1 in
     --pinata-jwt)
       PINATA_JWT="$2"
+      shift 2
+      ;;
+    --ipfs-gateway-url)
+      IPFS_GATEWAY_URL="$2"
       shift 2
       ;;
     *)
@@ -16,9 +21,6 @@ done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTAINER_ARGS=("./scripts/container/upload.sh")
-
-if [[ -n "$PINATA_JWT" ]]; then
-  CONTAINER_ARGS+=("--pinata-jwt" "$PINATA_JWT")
-fi
+export PINATA_JWT IPFS_GATEWAY_URL
 
 exec "$SCRIPT_DIR/container" "${CONTAINER_ARGS[@]}"

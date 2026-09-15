@@ -57,7 +57,7 @@ const sdk = new InterfoldSDK({
     feeToken: import.meta.env.VITE_FEE_TOKEN_ADDRESS,
   },
   chain: sepolia,
-  // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production.
+  // Match the parameter set selected by the target E3.
   thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 ```
@@ -77,7 +77,7 @@ const sdk = InterfoldSDK.create({
   },
   chain: sepolia,
   privateKey: '0x...', // optional — omit for read-only
-  // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production.
+  // Match the parameter set selected by the target E3.
   thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 ```
@@ -87,24 +87,21 @@ const sdk = InterfoldSDK.create({
 The `thresholdBfvParamsPresetName` field selects the BFV encryption parameters used by the client.
 It must match the `paramSet` index registered in the on-chain `Interfold` contract:
 
-| Preset Name              | On-chain `paramSet` | Degree | CRT moduli (L) | Security | Use case                      |
-| ------------------------ | ------------------- | ------ | -------------- | -------- | ----------------------------- |
-| `INSECURE_THRESHOLD_512` | `0`                 | 512    | 2              | ❌ None  | Local development and Sepolia |
-| `SECURE_THRESHOLD_8192`  | `1`                 | 8192   | 3              | ✅ Full  | Production deployments        |
+| Preset Name              | On-chain `paramSet` | Degree | CRT moduli (L) | Security | Use case                   |
+| ------------------------ | ------------------- | ------ | -------------- | -------- | -------------------------- |
+| `INSECURE_THRESHOLD_512` | `0`                 | 512    | 2              | ❌ None  | Fast local or testnet work |
+| `SECURE_THRESHOLD_8192`  | `1`                 | 8192   | 3              | ✅ Full  | Production-equivalent work |
 
 #### Which preset to use on which network
 
-| Network                | Preset                   | `paramSet` |
-| ---------------------- | ------------------------ | ---------- |
-| Local development      | `INSECURE_THRESHOLD_512` | `0`        |
-| Sepolia testnet        | `INSECURE_THRESHOLD_512` | `0`        |
-| Mainnet and production | `SECURE_THRESHOLD_8192`  | `1`        |
+| Network           | Supported presets                                    |
+| ----------------- | ---------------------------------------------------- |
+| Local development | `INSECURE_THRESHOLD_512` and `SECURE_THRESHOLD_8192` |
+| Sepolia testnet   | `INSECURE_THRESHOLD_512` and `SECURE_THRESHOLD_8192` |
+| Ethereum mainnet  | `SECURE_THRESHOLD_8192` only                         |
 
-**Use `INSECURE_THRESHOLD_512` on Sepolia.** The Sepolia ciphernodes run the insecure preset, and
-the circuit artifacts that ship in `@interfold/sdk` are compiled for it. The secure preset adds no
-real security on a testnet that runs mock verifiers; it only makes proof generation slower and
-causes a parameter mismatch. Earlier revisions of this page recommended `SECURE_THRESHOLD_8192` for
-Sepolia — that recommendation was wrong.
+Use the preset that the target E3 selects. A Sepolia deployment can use the insecure preset for fast
+tests or the secure preset for production-equivalent tests. Mainnet rejects the insecure preset.
 
 **Use `SECURE_THRESHOLD_8192` in production.** The insecure preset uses a small polynomial ring
 (N=512) with no cryptographic security guarantees. The secure preset (N=8192) meets standard FHE
@@ -125,7 +122,7 @@ const requestParams = {
     BigInt(Math.floor(Date.now() / 1000) + 5 * 60),
   ] as const,
   e3Program: '0x...',
-  paramSet: 0, // ParamSet.Insecure512 — use 1 (Secure8192) only on a secure network
+  paramSet: 0, // ParamSet.Insecure512. Use 1 for a secure-8192 E3.
   computeProviderParams: '0x',
   customParams: '0x',
 }
@@ -461,8 +458,8 @@ that wraps or complements the core Interfold SDK.
 - **Historical events**: `sdk.getHistoricalEvents(type, fromBlock, toBlock)` fetches logs without a
   WebSocket provider; useful for CRON jobs or health checks.
 - **Publish ciphertext output**:
-  `sdk.publishCiphertextOutput(e3Id, ciphertextOutput, ciphertextCommitment, proof, gasLimit?)`
-  submits the computed ciphertext output for an E3.
+  `sdk.publishCiphertextOutput(e3Id, { contentHash, ciphertextCommitment, computeProof, availabilityProof }, gasLimit?)`
+  submits a proof-backed reference to an aggregate ciphertext published on the configured DA layer.
 - **Gas controls**: pass `gasLimit` to `requestE3`, `publishCiphertextOutput`, or other write
   methods if you want fixed limits when interacting with Interfold on L2s.
 - **Gas estimation**: `sdk.estimateGas(functionName, args, contractAddress, abi)` returns the

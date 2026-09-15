@@ -10,6 +10,7 @@ import {
   deploymentPath,
   governanceSafeBuilderPath,
   readJson,
+  repoRelativePath,
   safeBatchPath,
   writeJson,
 } from "./files";
@@ -247,8 +248,10 @@ export async function actionDeploy(): Promise<void> {
     bondingRegistryProxy: config.bondingRegistryProxy,
     bondingRegistryProxyAdmin: config.bondingRegistryProxyAdmin,
     ...result.contracts,
-    safeTransactions: batchFile,
-    governanceSafeBuilder: governanceSafeBuilderFile,
+    safeTransactions: repoRelativePath(batchFile),
+    governanceSafeBuilder: governanceSafeBuilderFile
+      ? repoRelativePath(governanceSafeBuilderFile)
+      : undefined,
   };
   const deploymentFile = deploymentPath(config);
   writeJson(deploymentFile, deployment);

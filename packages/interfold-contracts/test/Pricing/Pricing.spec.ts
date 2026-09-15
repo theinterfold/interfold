@@ -13,6 +13,7 @@ import {
   ethers,
   networkHelpers,
   PROOF as proof,
+  publishAvailableCiphertextOutput,
   setPricingConfig,
   setupAndPublishCommittee,
 } from "../fixtures";
@@ -553,7 +554,8 @@ describe("E3 Pricing", function () {
 
       // Publish ciphertext
       await time.increase(inputWindowDuration + 200);
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ethers.keccak256(data),
@@ -569,7 +571,13 @@ describe("E3 Pricing", function () {
       // The shared bond owner receives all three operator credits.
       expect(await interfold.pendingReward(e3Id, bondOwner)).to.equal(fee);
       expect(await interfold.pendingReward(e3Id, newOwnerAddress)).to.equal(0);
-      await interfold.connect(owner).claimReward(e3Id);
+      // ZEN2-20: the whole amount now comes from the refund manager's
+      // operator-held escrow, not from Interfold's own ledger. The claim must
+      // still announce itself, or a consumer following RewardClaimed misses
+      // every post-upgrade withdrawal.
+      await expect(interfold.connect(owner).claimReward(e3Id))
+        .to.emit(interfold, "RewardClaimed")
+        .withArgs(e3Id, bondOwner, await usdcToken.getAddress(), fee);
       const ownerAfter = await usdcToken.balanceOf(bondOwner);
 
       expect(ownerAfter - ownerBefore).to.equal(fee);
@@ -635,7 +643,8 @@ describe("E3 Pricing", function () {
 
       // Publish outputs
       await time.increase(inputWindowDuration + 200);
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ethers.keccak256(data),

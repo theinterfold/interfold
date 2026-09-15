@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
+use crate::lbfv_operation::LbfvOperationId;
 use crate::{
     calculate_decryption_key::{CalculateDecryptionKeyRequest, CalculateDecryptionKeyResponse},
     calculate_decryption_share::{
@@ -13,6 +14,7 @@ use crate::{
         CalculateThresholdDecryptionRequest, CalculateThresholdDecryptionResponse,
     },
     gen_esi_sss::{GenEsiSssRequest, GenEsiSssResponse},
+    gen_lbfv_key_shares::{GenLbfvKeySharesRequest, GenLbfvKeySharesResponse},
     gen_pk_share_and_sk_sss::{GenPkShareAndSkSssRequest, GenPkShareAndSkSssResponse},
 };
 use core::fmt;
@@ -22,7 +24,10 @@ use serde::{Deserialize, Serialize};
 // protocol that works across different architectures. Convert these
 // u64 values to usize when entering the library's internal APIs.
 
-/// Input format for TrBFVRequest
+/// Input format for TrBFVRequest.
+///
+/// Bincode encodes this enum by variant order. Add new variants at the end.
+/// Keep existing variants and payloads unchanged for compatibility.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TrBFVRequest {
     GenEsiSss(GenEsiSssRequest),
@@ -30,9 +35,26 @@ pub enum TrBFVRequest {
     CalculateDecryptionKey(CalculateDecryptionKeyRequest),
     CalculateDecryptionShare(CalculateDecryptionShareRequest),
     CalculateThresholdDecryption(CalculateThresholdDecryptionRequest),
+    GenLbfvKeyShares(GenLbfvKeySharesRequest),
 }
 
-/// Result format for TrBFVResponse
+impl TrBFVRequest {
+    /// Return the stable identity for an l-BFV request.
+    pub fn lbfv_operation_id(&self) -> Option<LbfvOperationId> {
+        match self {
+            Self::GenLbfvKeyShares(request) => request
+                .validate_operation_id()
+                .is_ok()
+                .then_some(request.operation_id),
+            _ => None,
+        }
+    }
+}
+
+/// Result format for TrBFVResponse.
+///
+/// Bincode encodes this enum by variant order. Add new variants at the end.
+/// Keep existing variants and payloads unchanged for compatibility.
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TrBFVResponse {
     GenEsiSss(GenEsiSssResponse),
@@ -40,6 +62,17 @@ pub enum TrBFVResponse {
     CalculateDecryptionKey(CalculateDecryptionKeyResponse),
     CalculateDecryptionShare(CalculateDecryptionShareResponse),
     CalculateThresholdDecryption(CalculateThresholdDecryptionResponse),
+    GenLbfvKeyShares(GenLbfvKeySharesResponse),
+}
+
+impl TrBFVResponse {
+    /// Return the stable identity for an l-BFV response.
+    pub fn lbfv_operation_id(&self) -> Option<LbfvOperationId> {
+        match self {
+            Self::GenLbfvKeyShares(response) => Some(response.operation_id),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -49,6 +82,7 @@ pub enum TrBFVError {
     CalculateDecryptionKey(TrBFVFailure),
     CalculateDecryptionShare(TrBFVFailure),
     CalculateThresholdDecryption(TrBFVFailure),
+    GenLbfvKeyShares(TrBFVFailure),
 }
 
 impl TrBFVError {
@@ -59,7 +93,8 @@ impl TrBFVError {
             | TrBFVError::GenPkShareAndSkSss(f)
             | TrBFVError::CalculateDecryptionKey(f)
             | TrBFVError::CalculateDecryptionShare(f)
-            | TrBFVError::CalculateThresholdDecryption(f) => f,
+            | TrBFVError::CalculateThresholdDecryption(f)
+            | TrBFVError::GenLbfvKeyShares(f) => f,
         }
     }
 }
@@ -80,6 +115,7 @@ impl fmt::Display for TrBFVError {
             TrBFVError::CalculateThresholdDecryption(d) => {
                 write!(f, "CalculateThresholdDecryption: {d}")
             }
+            TrBFVError::GenLbfvKeyShares(d) => write!(f, "GenLbfvKeyShares: {d}"),
         }
     }
 }
@@ -213,6 +249,135 @@ impl fmt::Display for ThresholdFailure {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{
+        gen_esi_sss::GenEsiSssResponse,
+        gen_lbfv_key_shares::{
+            EncryptedRlkWitness, GenLbfvKeySharesRequest, GenLbfvKeySharesResponse,
+        },
+        TrBFVConfig,
+    };
+    use e3_crypto::SensitiveBytes;
+    use e3_fhe_params::BfvPreset;
+    use e3_utils::ArcBytes;
+
+    fn operation_id() -> LbfvOperationId {
+        LbfvOperationId([7; 32])
+    }
+
+    #[test]
+    fn legacy_request_and_response_layouts_are_unchanged() {
+        const LEGACY_REQUEST: &[u8] = &[
+            0, 0, 0, 0, // TrBFVRequest::GenEsiSss
+            0, 0, 0, 0, 0, 0, 0, 0, // empty parameter bytes
+            3, 0, 0, 0, 0, 0, 0, 0, // num_parties
+            1, 0, 0, 0, 0, 0, 0, 0, // threshold
+            0, 0, 0, 0, 0, 0, 0, 0, // empty encrypted e_sm bytes
+        ];
+        const LEGACY_RESPONSE: &[u8] = &[
+            0, 0, 0, 0, // TrBFVResponse::GenEsiSss
+            0, 0, 0, 0, 0, 0, 0, 0, // empty esi_sss vector
+        ];
+        let request = TrBFVRequest::GenEsiSss(GenEsiSssRequest {
+            trbfv_config: TrBFVConfig::new(ArcBytes::from_bytes(&[]), 3, 1),
+            e_sm_raw: SensitiveBytes::from_encrypted(&[]),
+        });
+        let response = TrBFVResponse::GenEsiSss(GenEsiSssResponse {
+            esi_sss: Vec::new(),
+        });
+
+        assert_eq!(bincode::serialize(&request).unwrap(), LEGACY_REQUEST);
+        assert_eq!(
+            bincode::deserialize::<TrBFVRequest>(LEGACY_REQUEST).unwrap(),
+            request
+        );
+        assert_eq!(bincode::serialize(&response).unwrap(), LEGACY_RESPONSE);
+        assert_eq!(
+            bincode::deserialize::<TrBFVResponse>(LEGACY_RESPONSE).unwrap(),
+            response
+        );
+    }
+
+    #[test]
+    fn lbfv_variants_are_appended_and_round_trip() {
+        let request = TrBFVRequest::GenLbfvKeyShares(GenLbfvKeySharesRequest {
+            operation_id: operation_id(),
+            session_id: [1; 32],
+            party_id: 0,
+            secret_key_bytes: SensitiveBytes::from_encrypted(&[1]),
+            generation_seed: SensitiveBytes::from_encrypted(&[8]),
+            params_preset: BfvPreset::SecureThreshold16384,
+            ciphertext_level: 0,
+            key_level: 0,
+        });
+        let response = TrBFVResponse::GenLbfvKeyShares(GenLbfvKeySharesResponse {
+            operation_id: operation_id(),
+            public_key_share_bytes: ArcBytes::from_bytes(&[2]),
+            rlk_share_bytes: ArcBytes::from_bytes(&[3]),
+            witness: EncryptedRlkWitness {
+                r_bytes: SensitiveBytes::from_encrypted(&[4]),
+                errors_d0_bytes: vec![SensitiveBytes::from_encrypted(&[5]); 5],
+                errors_d2_bytes: vec![SensitiveBytes::from_encrypted(&[6]); 5],
+            },
+        });
+        let error = TrBFVError::GenLbfvKeyShares(TrBFVFailure::from("failure"));
+
+        for encoded in [
+            bincode::serialize(&request).unwrap(),
+            bincode::serialize(&response).unwrap(),
+            bincode::serialize(&error).unwrap(),
+        ] {
+            assert_eq!(&encoded[..4], &5u32.to_le_bytes());
+        }
+        assert_eq!(
+            bincode::deserialize::<TrBFVRequest>(&bincode::serialize(&request).unwrap()).unwrap(),
+            request
+        );
+        assert_eq!(
+            bincode::deserialize::<TrBFVResponse>(&bincode::serialize(&response).unwrap()).unwrap(),
+            response
+        );
+        assert_eq!(
+            bincode::deserialize::<TrBFVError>(&bincode::serialize(&error).unwrap()).unwrap(),
+            error
+        );
+    }
+
+    #[test]
+    fn lbfv_debug_omits_secret_and_witness_fields() {
+        let request = TrBFVRequest::GenLbfvKeyShares(GenLbfvKeySharesRequest {
+            operation_id: operation_id(),
+            session_id: [1; 32],
+            party_id: 0,
+            secret_key_bytes: SensitiveBytes::from_encrypted(b"secret-key"),
+            generation_seed: SensitiveBytes::from_encrypted(b"generation-seed"),
+            params_preset: BfvPreset::SecureThreshold16384,
+            ciphertext_level: 0,
+            key_level: 0,
+        });
+        let response = TrBFVResponse::GenLbfvKeyShares(GenLbfvKeySharesResponse {
+            operation_id: operation_id(),
+            public_key_share_bytes: ArcBytes::from_bytes(&[]),
+            rlk_share_bytes: ArcBytes::from_bytes(&[]),
+            witness: EncryptedRlkWitness {
+                r_bytes: SensitiveBytes::from_encrypted(b"r-secret"),
+                errors_d0_bytes: vec![SensitiveBytes::from_encrypted(b"d0-secret")],
+                errors_d2_bytes: vec![SensitiveBytes::from_encrypted(b"d2-secret")],
+            },
+        });
+
+        let debug = format!("{request:?} {response:?}");
+        for field in [
+            "secret_key_bytes",
+            "generation_seed",
+            "witness",
+            "r_bytes",
+            "errors_d0_bytes",
+            "errors_d2_bytes",
+            "secret",
+        ] {
+            assert!(!debug.contains(field));
+        }
+    }
 
     #[test]
     fn extracts_malformed_shares_party_id_from_anyhow_chain() {

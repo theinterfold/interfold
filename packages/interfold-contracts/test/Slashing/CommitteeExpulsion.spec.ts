@@ -23,15 +23,15 @@ import {
   COMMITTEE_THRESHOLDS_ONCHAIN,
   LARGE_TIMEOUT_CONFIG,
   ONE_DAY,
-  SORTITION_SUBMISSION_WINDOW,
   deployInterfoldSystem,
   encodeMockDkgProof,
   ethers,
   networkHelpers,
+  publishAvailableCiphertextOutput,
   signAndEncodeAttestation,
 } from "../fixtures";
 
-const { loadFixture, mine, time } = networkHelpers;
+const { loadFixture, time } = networkHelpers;
 
 describe("Committee Expulsion & Fault Tolerance", function () {
   let firstE3Id: bigint;
@@ -171,14 +171,15 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       const fee = await interfold.getE3Quote(requestParams);
       await usdcToken.connect(requester).approve(interfoldAddress, fee);
       await interfold.connect(requester).request(requestParams);
-      await mine(1);
+      await time.increase(1);
     }
 
     async function finalizeCommittee(e3Id: bigint, operators: Signer[]) {
       for (const op of operators)
         await registry.connect(op).submitTicket(e3Id, 1);
 
-      await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+      const deadline = await registry.getCommitteeDeadline(e3Id);
+      await time.setNextBlockTimestamp(deadline + 1n);
       await registry.finalizeCommittee(e3Id);
     }
 
@@ -279,6 +280,7 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       slashingManager,
       bondingRegistry,
       mockVerifier,
+      e3Program,
       usdcToken,
       foldToken,
       ticketToken,
@@ -852,6 +854,58 @@ describe("Committee Expulsion & Fault Tolerance", function () {
         .be.false;
     });
 
+    it("rejects output publication when the verifier callback fails the E3", async function () {
+      // ZEN2-26: IE3Program.verify can change state. An application callback that executes a
+      // mature expelling slash records a terminal failure through onE3Failed, outside the
+      // publication reentrancy guard. Publication must not overwrite that state.
+      const {
+        interfold,
+        registry,
+        slashingManager,
+        e3Program,
+        prepareMinimumCommittee,
+        slashFirstMember,
+        configureEvidencePolicy,
+        proposeThresholdBreach,
+      } = await loadFixture(setup);
+
+      const reason = await configureEvidencePolicy("PUBLISH_EVIDENCE_SLASH");
+      await prepareMinimumCommittee();
+      await slashFirstMember();
+      const proposalId = await proposeThresholdBreach(reason);
+      await e3Program.setSlashDuringVerify(
+        await slashingManager.getAddress(),
+        proposalId,
+      );
+
+      await time.increaseTo(
+        Number((await interfold.getE3(firstE3Id)).inputWindow[1]),
+      );
+      const activeE3Before = await interfold.activeE3Count();
+
+      const ciphertext = "0x" + "ab".repeat(100);
+      await expect(
+        publishAvailableCiphertextOutput(
+          interfold,
+          firstE3Id,
+          ciphertext,
+          ethers.keccak256(ciphertext),
+          "0x1337",
+        ),
+      ).to.be.revertedWithCustomError(interfold, "InvalidStage");
+
+      // The nested failure, its settlement, and the expulsion all rolled back.
+      expect(await interfold.getE3Stage(firstE3Id)).to.equal(3);
+      expect(await interfold.getFailureReason(firstE3Id)).to.equal(0);
+      expect(await interfold.activeE3Count()).to.equal(activeE3Before);
+      expect(
+        (await registry.getCommitteeViability(firstE3Id)).activeCount,
+      ).to.equal(2);
+      expect((await interfold.getE3(firstE3Id)).ciphertextOutput).to.equal(
+        ethers.ZeroHash,
+      );
+    });
+
     it("allows threshold-reducing slashes after the E3 is terminal", async function () {
       const {
         interfold,
@@ -928,7 +982,8 @@ describe("Committee Expulsion & Fault Tolerance", function () {
 
       const ciphertext = "0x" + "ab".repeat(100);
       await expect(
-        interfold.publishCiphertextOutput(
+        publishAvailableCiphertextOutput(
+          interfold,
           firstE3Id,
           ciphertext,
           ethers.keccak256(ciphertext),
@@ -953,7 +1008,8 @@ describe("Committee Expulsion & Fault Tolerance", function () {
       );
 
       const ciphertext = "0x" + "ab".repeat(100);
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         firstE3Id,
         ciphertext,
         ethers.keccak256(ciphertext),

@@ -38,7 +38,7 @@ import { DEFAULT_THRESHOLD_BFV_PARAMS_PRESET_NAME } from './constants'
 
 import type { SDKConfig } from './types'
 import type { AllEventTypes, EventCallback, RandomnessProviderEventCallback, RandomnessProviderEventType } from './events/types'
-import type { E3, E3RequestParams } from './contracts/types'
+import type { CiphertextOutputReference, E3, E3RequestParams } from './contracts/types'
 import { E3Stage, FailureReason } from './contracts/types'
 import type { BfvParams, EncryptedValueAndPublicInputs, ThresholdBfvParamsPresetName, VerifiableEncryptionResult } from './crypto/types'
 
@@ -111,9 +111,9 @@ export class InterfoldSDK {
   /**
    * Validate serialized BFV public-key bytes before using them for encryption.
    *
-   * `CommitteePublished.publicKey` is an untrusted transport value. Consumers
-   * must compare its semantic BFV commitment with the event's on-chain
-   * `pkCommitment` before accepting it.
+   * A reassembled public key is an untrusted transport value. Consumers must
+   * compare its semantic BFV commitment with the on-chain `pkCommitment`
+   * before accepting it.
    */
   public async validatePublicKeyCommitment(publicKey: Uint8Array, expectedCommitment: Uint8Array): Promise<boolean> {
     if (expectedCommitment.length !== 32) {
@@ -168,14 +168,8 @@ export class InterfoldSDK {
     return this.contractClient.getE3PublicKey(e3Id)
   }
 
-  public async publishCiphertextOutput(
-    e3Id: bigint,
-    ciphertextOutput: `0x${string}`,
-    ciphertextCommitment: `0x${string}`,
-    proof: `0x${string}`,
-    gasLimit?: bigint,
-  ): Promise<Hash> {
-    return this.contractClient.publishCiphertextOutput(e3Id, ciphertextOutput, ciphertextCommitment, proof, gasLimit)
+  public async publishCiphertextOutput(e3Id: bigint, outputReference: CiphertextOutputReference, gasLimit?: bigint): Promise<Hash> {
+    return this.contractClient.publishCiphertextOutput(e3Id, outputReference, gasLimit)
   }
 
   public async getE3(e3Id: bigint): Promise<E3> {

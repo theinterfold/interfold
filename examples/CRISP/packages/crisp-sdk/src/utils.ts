@@ -30,6 +30,15 @@ export const generateMerkleTree = (leaves: bigint[]): LeanIMT => {
   return new LeanIMT((a, b) => poseidon2([a, b]), leaves)
 }
 
+/** Parse a Merkle leaf returned by the CRISP server or supplied as an integer. */
+const parseMerkleLeaf = (leaf: bigint | string): bigint => {
+  if (typeof leaf === 'bigint' || leaf.startsWith('0x')) return BigInt(leaf)
+
+  // The server's persisted tree format is a fixed-width, unprefixed hexadecimal string.
+  // Keep accepting decimal strings for callers that used the older SDK input shape.
+  return /^[0-9a-fA-F]{64}$/.test(leaf) ? BigInt(`0x${leaf}`) : BigInt(leaf)
+}
+
 /**
  * Generate a Merkle proof for a given address to prove inclusion in the voters' list
  * @param balance The voter's balance
@@ -38,14 +47,15 @@ export const generateMerkleTree = (leaves: bigint[]): LeanIMT => {
  */
 export const generateMerkleProof = (balance: bigint, address: string, leaves: bigint[] | string[]): MerkleProof => {
   const leaf = hashLeaf(address.toLowerCase(), balance)
+  const parsedLeaves = leaves.map(parseMerkleLeaf)
 
-  const index = leaves.findIndex((l) => BigInt(l) === leaf)
+  const index = parsedLeaves.findIndex((candidate) => candidate === leaf)
 
   if (index === -1) {
     throw new Error('Leaf not found in the tree')
   }
 
-  const tree = generateMerkleTree(leaves.map((l) => BigInt(l)))
+  const tree = generateMerkleTree(parsedLeaves)
 
   const proof = tree.generateProof(index)
 

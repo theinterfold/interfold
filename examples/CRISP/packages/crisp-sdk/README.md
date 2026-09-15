@@ -21,12 +21,12 @@ npm install @crisp-e3/sdk
 ## Choosing a preset
 
 Proving needs the BFV-shaped circuits, and those exist once per parameter set. They are not part of
-the main entry point: the `secure-8192` set is far larger than `insecure`. Each preset has its
+the main entry point: the secure sets are far larger than `insecure`. Each preset has its
 own subpath, so your bundler can pull only the one the round needs.
 
 ```ts
 import { setCircuits } from '@crisp-e3/sdk'
-import { loadCircuits } from '@crisp-e3/sdk/insecure' // or '@crisp-e3/sdk/secure-8192'
+import { loadCircuits } from '@crisp-e3/sdk/insecure' // or '@crisp-e3/sdk/secure-8192' or '@crisp-e3/sdk/secure-16384'
 
 setCircuits(await loadCircuits())
 ```
@@ -39,7 +39,7 @@ In a browser, load it through a dynamic `import()` so the circuits become their 
 app boots without them:
 
 ```ts
-const { loadCircuits } = await import('@crisp-e3/sdk/secure-8192')
+const { loadCircuits } = await import('@crisp-e3/sdk/secure-16384')
 setCircuits(await loadCircuits())
 ```
 

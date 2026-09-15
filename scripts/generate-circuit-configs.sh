@@ -21,7 +21,7 @@
 # path; this script is the deterministic matrix sweep.
 #
 # Usage:
-#   ./scripts/generate-circuit-configs.sh [--preset insecure|secure-8192|secure-16384|all] [--committee minimum|micro|small|all] [--circuits <comma-separated paths>] [--output <dir>]
+#   ./scripts/generate-circuit-configs.sh [--preset insecure|secure-8192|secure-16384|all] [--committee minimum|micro|small|all] [--circuits <comma-separated paths>] [--output <dir>] [--allow-failures]
 
 set -euo pipefail
 
@@ -39,7 +39,10 @@ DEFAULT_OUTPUT="$REPO_ROOT/dist/circuit-codegen"
 # Canonical circuit list. Mirrors `circuits/benchmarks/config.json`; entries are either
 # a plain path string (`"dkg/pk"`) or a `{name, modes}` object (`config`).
 CONFIG_JSON="$REPO_ROOT/circuits/benchmarks/config.json"
-mapfile -t ALL_CIRCUITS < <(jq -r '.circuits[] | if type == "object" then .name else . end' "$CONFIG_JSON")
+ALL_CIRCUITS=()
+while IFS= read -r circuit; do
+    ALL_CIRCUITS+=("$circuit")
+done < <(jq -r '.circuits[] | if type == "object" then .name else . end' "$CONFIG_JSON")
 
 SELECT_PRESETS=()
 SELECT_COMMITTEES=()
@@ -48,39 +51,44 @@ OUTPUT="$DEFAULT_OUTPUT"
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
-        --preset)
-            if [[ "$2" == "all" ]]; then
-                SELECT_PRESETS=("${ALL_PRESETS[@]}")
-            else
-                SELECT_PRESETS+=("$2")
+        --preset|--committee|--circuits|--output)
+            if [[ $# -lt 2 ]]; then
+                echo "Missing value for $1" >&2
+                exit 1
             fi
+            case "$1" in
+                --preset)
+                    if [[ "$2" == "all" ]]; then
+                        SELECT_PRESETS=("${ALL_PRESETS[@]}")
+                    else
+                        SELECT_PRESETS+=("$2")
+                    fi
+                    ;;
+                --committee)
+                    if [[ "$2" == "all" ]]; then
+                        SELECT_COMMITTEES=("${ALL_COMMITTEES[@]}")
+                    else
+                        SELECT_COMMITTEES+=("$2")
+                    fi
+                    ;;
+                --circuits)
+                    IFS=',' read -r -a SELECT_CIRCUITS <<< "$2"
+                    ;;
+                --output)
+                    OUTPUT="$2"
+                    ;;
+            esac
             shift 2
             ;;
-        --committee)
-            if [[ "$2" == "all" ]]; then
-                SELECT_COMMITTEES=("${ALL_COMMITTEES[@]}")
-            else
-                SELECT_COMMITTEES+=("$2")
-            fi
-            shift 2
-            ;;
-        --circuits)
-            IFS=',' read -r -a SELECT_CIRCUITS <<< "$2"
-            shift 2
-            ;;
-        --output)
-            OUTPUT="$2"
-            shift 2
+        --allow-failures)
+            ALLOW_FAILURES=1
+            shift
             ;;
         --strict)
-            # Abort on the first codegen failure. Without it, infeasible (preset, committee)
-            # combinations (e.g. a smudging bound violating the correctness budget) are
-            # recorded in `failures.txt` and the sweep continues.
-            STRICT=1
             shift
             ;;
         -h|--help)
-            echo "Usage: $0 [--preset insecure|secure-8192|secure-16384|all] [--committee minimum|micro|small|all] [--circuits <csv>] [--output <dir>] [--strict]"
+            echo "Usage: $0 [--preset insecure|secure-8192|secure-16384|all] [--committee minimum|micro|small|all] [--circuits <csv>] [--output <dir>] [--allow-failures]"
             exit 0
             ;;
         *)
@@ -110,9 +118,9 @@ echo "   circuits=$(( ${#SELECT_CIRCUITS[@]} ))  output=$OUTPUT"
 
 mkdir -p "$OUTPUT"
 
-STRICT="${STRICT:-0}"
-declare -a MANIFEST
-declare -a FAILURES
+ALLOW_FAILURES="${ALLOW_FAILURES:-0}"
+MANIFEST=()
+FAILURES=()
 
 for preset in "${SELECT_PRESETS[@]}"; do
     zk_preset="$(preset_to_zk_name "$preset")"
@@ -154,11 +162,11 @@ for preset in "${SELECT_PRESETS[@]}"; do
             else
                 printf -v fail "%s\t%s\t%s\t(zk_cli %s %s failed)" "$preset" "$committee" "$circuit_path" "$zk_circuit" "$zk_inputs"
                 FAILURES+=("$fail")
-                if [[ "$STRICT" == "1" ]]; then
+                if [[ "$ALLOW_FAILURES" != "1" ]]; then
                     echo "  ✗ $preset/$committee/$circuit_path failed (strict mode) — aborting" >&2
                     exit 1
                 fi
-                echo "  ✗ $preset/$committee/$circuit_path failed (recorded; continue)" >&2
+                echo "  ✗ $preset/$committee/$circuit_path failed (recorded; --allow-failures)" >&2
             fi
         done
     done

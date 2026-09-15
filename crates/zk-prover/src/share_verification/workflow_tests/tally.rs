@@ -24,12 +24,13 @@ fn prepare_rejects_ambiguous_committee_where_one_signer_owns_multiple_slots() {
 
     let outcome = ShareVerifier::validate_and_prepare(
         &parties,
-        &e3.to_string(),
+        &e3,
         &VerificationKind::PkGenerationProofs,
         "C1",
         Some(&ambiguous_committee),
         BfvPreset::InsecureDkg512,
         CiphernodesCommitteeSize::Minimum,
+        None,
     );
 
     assert!(outcome.ecdsa_passed_parties.is_empty());
@@ -49,12 +50,13 @@ fn prepare_rejects_committee_with_wrong_circuit_dimension() {
 
     let outcome = ShareVerifier::validate_and_prepare(
         &parties,
-        &e3.to_string(),
+        &e3,
         &VerificationKind::PkGenerationProofs,
         "C1",
         Some(&undersized_committee),
         BfvPreset::InsecureDkg512,
         CiphernodesCommitteeSize::Minimum,
+        None,
     );
 
     assert!(outcome.ecdsa_passed_parties.is_empty());

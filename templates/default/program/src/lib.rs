@@ -4,8 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use e3_compute_provider::{FHEInputs, InputPolicy};
-use e3_fhe_params::decode_bfv_params_arc;
+use e3_compute_provider::{FHEProcessorInput, InputPolicy};
 use fhe::bfv::Ciphertext;
 use fhe_traits::{DeserializeParametrized, Serialize};
 
@@ -22,12 +21,10 @@ pub fn policy() -> InputPolicy {
 }
 
 /// Implementation of the CiphertextProcessor function
-pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
-    let params = decode_bfv_params_arc(&fhe_inputs.params).unwrap();
-
-    let mut sum = Ciphertext::zero(&params);
-    for ciphertext_bytes in &fhe_inputs.ciphertexts {
-        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, &params).unwrap();
+pub fn fhe_processor(fhe_inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
+    let mut sum = Ciphertext::zero(fhe_inputs.params);
+    for ciphertext_bytes in fhe_inputs.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, fhe_inputs.params).unwrap();
         sum += &ciphertext;
     }
 
@@ -38,12 +35,13 @@ pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
 mod tests {
     use super::*;
     use anyhow::Result;
+    use e3_compute_provider::FHEInputs;
     use e3_fhe_params::DEFAULT_BFV_PRESET;
-    use e3_fhe_params::{BfvParamSet, build_bfv_params_arc, encode_bfv_params};
+    use e3_fhe_params::{build_bfv_params_arc, encode_bfv_params, BfvParamSet};
     use fhe::bfv::{Encoding, Plaintext, PublicKey, SecretKey};
-    use fhe_traits::{FheDecoder, FheEncoder};
     use fhe_traits::FheEncrypter;
     use fhe_traits::{DeserializeParametrized, FheDecrypter, Serialize};
+    use fhe_traits::{FheDecoder, FheEncoder};
     use rand::thread_rng;
 
     #[test]
@@ -80,7 +78,10 @@ mod tests {
         };
 
         // Run the processor
-        let result = fhe_processor(&fhe_inputs);
+        let result = fhe_processor(&FHEProcessorInput {
+            ciphertexts: &fhe_inputs.ciphertexts,
+            params: &params,
+        });
 
         // Decrypt result
         let decrypted = secret_key.try_decrypt(&Ciphertext::from_bytes(&result, &params)?)?;

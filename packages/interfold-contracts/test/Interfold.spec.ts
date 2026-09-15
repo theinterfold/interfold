@@ -10,13 +10,16 @@ import {
   ADDRESS_TWO as AddressTwo,
   BFV_PARAMS_DEFAULT,
   BFV_PARAMS_SECURE,
+  BFV_PARAMS_SECURE_16384,
   PRODUCTION_CRYPTO_CONFIG_ID,
+  SECURE_16384_CRYPTO_CONFIG_ID,
   buildMockAggregationPublishArgs,
   deployInterfoldSystem,
   ENCRYPTION_SCHEME_ID as encryptionSchemeId,
   ethers,
   makeRequest,
   networkHelpers,
+  publishAvailableCiphertextOutput,
   setupAndPublishCommittee,
   DEFAULT_TIMEOUT_CONFIG as timeoutConfig,
 } from "./fixtures";
@@ -223,9 +226,12 @@ describe("Interfold", function () {
       await expect(interfold.setParamSet(1, BFV_PARAMS_SECURE))
         .to.emit(interfold, "ParamSetRegistered")
         .withArgs(1, BFV_PARAMS_SECURE);
+      await expect(interfold.setParamSet(2, BFV_PARAMS_SECURE_16384))
+        .to.emit(interfold, "ParamSetRegistered")
+        .withArgs(2, BFV_PARAMS_SECURE_16384);
       await expect(
-        interfold.setParamSet(2, BFV_PARAMS_DEFAULT),
-      ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+        interfold.setParamSet(2, BFV_PARAMS_SECURE),
+      ).to.be.revertedWithCustomError(interfold, "ParamSetAlreadyRegistered");
     });
 
     it("does not overwrite the active parameter set", async function () {
@@ -426,6 +432,21 @@ describe("Interfold", function () {
         .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
         .withArgs(AddressTwo);
     });
+    it("reverts if E3 Program does not advertise the required interfaces", async function () {
+      // ZEN2-01. Output publication calls `verifyDataAvailability` on the
+      // request-time program with no fallback, so a program that omits that
+      // selector cannot complete an E3. Reject it at registration, while the
+      // owner can still correct it.
+      const { interfold } = await loadFixture(setup);
+      const notAProgram = await ethers.deployContract("MockComputeProvider");
+      await notAProgram.waitForDeployment();
+      const address = await notAProgram.getAddress();
+
+      await expect(interfold.registerE3Program(address))
+        .to.be.revertedWithCustomError(interfold, "E3ProgramInterfaceMissing")
+        .withArgs(address);
+      expect(await interfold.e3Programs(address)).to.be.false;
+    });
     it("registers E3 Program correctly", async function () {
       const { interfold } = await loadFixture(setup);
       const e3Program = await deployUnregisteredE3Program();
@@ -443,7 +464,152 @@ describe("Interfold", function () {
     });
   });
 
+  describe("unregisterE3Program()", function () {
+    it("closes new request admission without changing existing E3 records", async function () {
+      const {
+        interfold,
+        notTheOwner,
+        request,
+        usdcToken,
+        mocks: { e3Program },
+      } = await loadFixture(setup);
+      const e3ProgramAddress = await e3Program.getAddress();
+
+      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
+      await interfold.request(request);
+      expect((await interfold.getE3(firstE3Id)).e3Program).to.equal(
+        e3ProgramAddress,
+      );
+
+      await expect(
+        interfold.connect(notTheOwner).unregisterE3Program(e3ProgramAddress),
+      )
+        .to.be.revertedWithCustomError(interfold, "OwnableUnauthorizedAccount")
+        .withArgs(notTheOwner);
+
+      await expect(interfold.unregisterE3Program(e3ProgramAddress))
+        .to.emit(interfold, "E3ProgramUnregistered")
+        .withArgs(e3ProgramAddress);
+      expect(await interfold.e3Programs(e3ProgramAddress)).to.be.false;
+      expect((await interfold.getE3(firstE3Id)).e3Program).to.equal(
+        e3ProgramAddress,
+      );
+
+      await expect(interfold.unregisterE3Program(e3ProgramAddress))
+        .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
+        .withArgs(e3ProgramAddress);
+      const requestTime = await time.latest();
+      const requestAfterUnregister = {
+        ...request,
+        inputWindow: [
+          requestTime + 60,
+          requestTime + 60 + inputWindowDuration,
+        ] as [number, number],
+      };
+      await expect(interfold.request(requestAfterUnregister))
+        .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
+        .withArgs(e3ProgramAddress);
+    });
+  });
+
   describe("request()", function () {
+    const legacyDkgWindow = 7_200;
+    const secure16384MinDkgWindow = 21_600;
+
+    for (const [name, paramSet, params, cryptoConfigId] of [
+      ["insecure", 0, BFV_PARAMS_DEFAULT, ACTIVE_CRYPTO_CONFIG_ID],
+      ["secure-8192", 1, BFV_PARAMS_SECURE, PRODUCTION_CRYPTO_CONFIG_ID],
+    ] as const) {
+      it(`accepts the ${name} parameter set with a 7,200-second DKG window`, async function () {
+        const { interfold, request, usdcToken } = await loadFixture(setup);
+        if (paramSet !== 0) await interfold.setParamSet(paramSet, params);
+        await interfold.setTimeoutConfig({
+          ...timeoutConfig,
+          dkgWindow: legacyDkgWindow,
+        });
+        const now = await time.latest();
+
+        await usdcToken.approve(
+          await interfold.getAddress(),
+          ethers.MaxUint256,
+        );
+        await (
+          await interfold.request({
+            ...request,
+            paramSet,
+            inputWindow: [now + 10, now + inputWindowDuration],
+            expectedCryptoConfigId: cryptoConfigId,
+          })
+        ).wait();
+      });
+    }
+
+    it("rejects secure-16384 with a DKG window below 21,600 seconds", async function () {
+      const { interfold, request } = await loadFixture(setup);
+      await interfold.setParamSet(2, BFV_PARAMS_SECURE_16384);
+      await interfold.setTimeoutConfig({
+        ...timeoutConfig,
+        dkgWindow: secure16384MinDkgWindow - 1,
+      });
+      const now = await time.latest();
+
+      await expect(
+        interfold.request({
+          ...request,
+          paramSet: 2,
+          inputWindow: [now + 10, now + inputWindowDuration],
+          expectedCryptoConfigId: SECURE_16384_CRYPTO_CONFIG_ID,
+        }),
+      ).to.be.revertedWithCustomError(interfold, "InvalidTimeoutWindow");
+    });
+
+    it("accepts and snapshots a 21,600-second secure-16384 DKG window", async function () {
+      const { interfold, request, usdcToken } = await loadFixture(setup);
+      await interfold.setParamSet(2, BFV_PARAMS_SECURE_16384);
+      await interfold.setTimeoutConfig({
+        ...timeoutConfig,
+        dkgWindow: secure16384MinDkgWindow,
+      });
+      const now = await time.latest();
+
+      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
+      await interfold.request({
+        ...request,
+        paramSet: 2,
+        inputWindow: [now + 10, now + inputWindowDuration],
+        expectedCryptoConfigId: SECURE_16384_CRYPTO_CONFIG_ID,
+      });
+
+      expect(
+        (await interfold.getE3TimeoutConfig(firstE3Id)).dkgWindow,
+      ).to.equal(secure16384MinDkgWindow);
+      expect(await interfold.e3CryptoConfigIds(firstE3Id)).to.equal(
+        SECURE_16384_CRYPTO_CONFIG_ID,
+      );
+    });
+
+    it("rejects secure-16384 with a non-minimum committee", async function () {
+      const { interfold, request } = await loadFixture(setup);
+      await interfold.setParamSet(2, BFV_PARAMS_SECURE_16384);
+      await interfold.setTimeoutConfig({
+        ...timeoutConfig,
+        dkgWindow: secure16384MinDkgWindow,
+      });
+      const now = await time.latest();
+
+      for (const committeeSize of [1, 2]) {
+        await expect(
+          interfold.getE3Quote({
+            ...request,
+            committeeSize,
+            paramSet: 2,
+            inputWindow: [now + 10, now + inputWindowDuration],
+            expectedCryptoConfigId: SECURE_16384_CRYPTO_CONFIG_ID,
+          }),
+        ).to.be.revertedWithCustomError(interfold, "UnsupportedCryptoConfig");
+      }
+    });
+
     it("rejects a fee token that differs from the accepted quote", async function () {
       const { interfold, request } = await loadFixture(setup);
       await expect(
@@ -458,14 +624,28 @@ describe("Interfold", function () {
       ).to.be.revertedWithCustomError(interfold, "FeeExceedsMaximum");
     });
 
-    it("rejects a circuit configuration that changed after quoting", async function () {
+    it("rejects the origin v1 insecure circuit configuration", async function () {
       const { interfold, request } = await loadFixture(setup);
+      const originV1ConfigId = ethers.keccak256(
+        abiCoder.encode(
+          ["bytes32", "bytes32", "bytes32"],
+          [
+            encryptionSchemeId,
+            ethers.keccak256(BFV_PARAMS_DEFAULT),
+            ethers.id("interfold-bfv-v1"),
+          ],
+        ),
+      );
+      expect(originV1ConfigId).to.not.equal(ACTIVE_CRYPTO_CONFIG_ID);
+
       await expect(
         interfold.request({
           ...request,
-          expectedCryptoConfigId: ethers.ZeroHash,
+          expectedCryptoConfigId: originV1ConfigId,
         }),
-      ).to.be.revertedWithCustomError(interfold, "CryptoConfigChanged");
+      )
+        .to.be.revertedWithCustomError(interfold, "CryptoConfigChanged")
+        .withArgs(originV1ConfigId, ACTIVE_CRYPTO_CONFIG_ID);
     });
 
     it("reverts if USDC allowance is insufficient", async function () {
@@ -521,6 +701,7 @@ describe("Interfold", function () {
     });
     it("allows total duration equal to maxDuration", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
+      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
       const requestAt = BigInt((await time.latest()) + 10);
       const maxDuration = await interfold.maxDuration();
       const inputEnd =
@@ -532,7 +713,6 @@ describe("Interfold", function () {
         ...request,
         inputWindow: [requestAt, inputEnd] as [bigint, bigint],
       };
-      await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
       await time.setNextBlockTimestamp(requestAt);
 
       await interfold.request(exactDurationRequest);
@@ -578,7 +758,12 @@ describe("Interfold", function () {
         .withArgs(ethers.ZeroAddress);
     });
     it("instantiates a new E3", async function () {
-      const { interfold, request, usdcToken } = await loadFixture(setup);
+      const {
+        interfold,
+        request,
+        usdcToken,
+        mocks: { e3Program },
+      } = await loadFixture(setup);
       await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
       const requestAt = BigInt((await time.latest()) + 1);
       const freshRequest = {
@@ -603,6 +788,9 @@ describe("Interfold", function () {
       // bonding registry / token checkpoints across L2s with variable block
       // production.
       expect(e3.requestBlock).to.equal(block.timestamp);
+      expect(await e3Program.validationRequestTimes(firstE3Id)).to.equal(
+        block.timestamp,
+      );
       expect(e3.decryptionVerifier).to.equal(
         abiCoder.decode(["address"], request.computeProviderParams)[0],
       );
@@ -636,7 +824,13 @@ describe("Interfold", function () {
       const { interfold } = await loadFixture(setup);
 
       await expect(
-        interfold.publishCiphertextOutput(0, "0x", ethers.ZeroHash, "0x"),
+        publishAvailableCiphertextOutput(
+          interfold,
+          0,
+          "0x",
+          ethers.ZeroHash,
+          "0x",
+        ),
       )
         .to.be.revertedWithCustomError(interfold, "E3DoesNotExist")
         .withArgs(0);
@@ -672,14 +866,16 @@ describe("Interfold", function () {
       ]);
       await mine(2, { interval: inputWindowDuration });
 
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ciphertextCommitment,
         proof,
       );
       await expect(
-        interfold.publishCiphertextOutput(
+        publishAvailableCiphertextOutput(
+          interfold,
           e3Id,
           data,
           ciphertextCommitment,
@@ -715,7 +911,8 @@ describe("Interfold", function () {
         interval: inputWindowDuration + timeoutConfig.computeWindow,
       });
       await expect(
-        interfold.publishCiphertextOutput(
+        publishAvailableCiphertextOutput(
+          interfold,
           e3Id,
           data,
           ciphertextCommitment,
@@ -751,7 +948,13 @@ describe("Interfold", function () {
       ]);
       await mine(2, { interval: inputWindowDuration });
       await expect(
-        interfold.publishCiphertextOutput(e3Id, "0x", ethers.ZeroHash, "0x"),
+        publishAvailableCiphertextOutput(
+          interfold,
+          e3Id,
+          "0x",
+          ethers.ZeroHash,
+          "0x",
+        ),
       ).to.be.revertedWithCustomError(interfold, "InvalidOutput");
     });
     it("does not assign an unverified ciphertext to the committee", async function () {
@@ -780,7 +983,8 @@ describe("Interfold", function () {
       await mocks.ciphertextVerifier.setResult(false);
 
       await expect(
-        interfold.publishCiphertextOutput(
+        publishAvailableCiphertextOutput(
+          interfold,
           e3Id,
           data,
           ciphertextCommitment,
@@ -792,6 +996,92 @@ describe("Interfold", function () {
       expect(e3.ciphertextOutput).to.equal(ethers.ZeroHash);
       expect(e3.ciphertextCommitment).to.equal(ethers.ZeroHash);
     });
+
+    it("rejects an availability proof for different ciphertext bytes atomically", async function () {
+      const {
+        interfold,
+        request,
+        usdcToken,
+        ciphernodeRegistryContract,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+      const e3Id = firstE3Id;
+
+      await makeRequest(interfold, usdcToken, {
+        ...request,
+        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
+      });
+      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
+        operator1,
+        operator2,
+        operator3,
+      ]);
+      await mine(2, { interval: inputWindowDuration });
+
+      const mismatchedReference = abiCoder.encode(
+        [
+          "tuple(bytes32 contentHash,bytes32 ciphertextCommitment,bytes computeProof,bytes availabilityProof)",
+        ],
+        [
+          {
+            contentHash: ethers.keccak256(data),
+            ciphertextCommitment,
+            computeProof: proof,
+            availabilityProof: "0xdeadbeef",
+          },
+        ],
+      );
+      await expect(
+        interfold.publishCiphertextOutput(e3Id, mismatchedReference),
+      ).to.be.revert(ethers);
+      expect(await interfold.getE3Stage(e3Id)).to.equal(3);
+      expect((await interfold.getE3(e3Id)).ciphertextOutput).to.equal(
+        ethers.ZeroHash,
+      );
+    });
+
+    it("rejects an availability receipt for a different content hash atomically", async function () {
+      const {
+        interfold,
+        request,
+        usdcToken,
+        ciphernodeRegistryContract,
+        operator1,
+        operator2,
+        operator3,
+        mocks,
+      } = await loadFixture(setup);
+      const e3Id = firstE3Id;
+
+      await makeRequest(interfold, usdcToken, {
+        ...request,
+        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
+      });
+      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
+        operator1,
+        operator2,
+        operator3,
+      ]);
+      await mine(2, { interval: inputWindowDuration });
+      await mocks.e3Program.setReturnMismatchedAvailabilityHash(true);
+
+      await expect(
+        publishAvailableCiphertextOutput(
+          interfold,
+          e3Id,
+          data,
+          ciphertextCommitment,
+          proof,
+        ),
+      ).to.be.revertedWithCustomError(interfold, "InvalidOutput");
+      expect(await interfold.getE3Stage(e3Id)).to.equal(3);
+      expect((await interfold.getE3(e3Id)).ciphertextOutput).to.equal(
+        ethers.ZeroHash,
+      );
+    });
+
     it("keeps the request-time verifier after verifier rotation", async function () {
       const {
         interfold,
@@ -823,7 +1113,8 @@ describe("Interfold", function () {
       await mine(2, { interval: inputWindowDuration });
 
       await expect(
-        interfold.publishCiphertextOutput(
+        publishAvailableCiphertextOutput(
+          interfold,
           e3Id,
           data,
           ciphertextCommitment,
@@ -834,13 +1125,14 @@ describe("Interfold", function () {
       await mocks.ciphertextVerifier.setResult(true);
       await replacement.setResult(false);
       await expect(
-        interfold.publishCiphertextOutput(
+        publishAvailableCiphertextOutput(
+          interfold,
           e3Id,
           data,
           ciphertextCommitment,
           proof,
         ),
-      ).to.emit(interfold, "CiphertextOutputPublished");
+      ).to.emit(interfold, "CiphertextOutputReferencePublished");
     });
     it("sets ciphertextOutput correctly", async function () {
       const {
@@ -871,14 +1163,16 @@ describe("Interfold", function () {
         ciphertextCommitment,
       );
       await expect(
-        interfold.publishCiphertextOutput(
+        publishAvailableCiphertextOutput(
+          interfold,
           e3Id,
           data,
           ethers.keccak256("0xbad0"),
           proof,
         ),
       ).to.be.revertedWithCustomError(interfold, "InvalidOutput");
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ciphertextCommitment,
@@ -889,39 +1183,7 @@ describe("Interfold", function () {
       expect(e3.ciphertextCommitment).to.equal(ciphertextCommitment);
     });
 
-    it("returns true if output is published successfully", async function () {
-      const {
-        interfold,
-        request,
-        usdcToken,
-        ciphernodeRegistryContract,
-        operator1,
-        operator2,
-        operator3,
-      } = await loadFixture(setup);
-      const e3Id = firstE3Id;
-
-      await makeRequest(interfold, usdcToken, {
-        ...request,
-        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
-      });
-
-      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
-        operator1,
-        operator2,
-        operator3,
-      ]);
-      await mine(2, { interval: inputWindowDuration });
-      expect(
-        await interfold.publishCiphertextOutput.staticCall(
-          e3Id,
-          data,
-          ciphertextCommitment,
-          proof,
-        ),
-      ).to.equal(true);
-    });
-    it("emits CiphertextOutputPublished event", async function () {
+    it("accepts a valid output reference", async function () {
       const {
         interfold,
         request,
@@ -945,15 +1207,49 @@ describe("Interfold", function () {
       ]);
       await mine(2, { interval: inputWindowDuration });
       await expect(
-        interfold.publishCiphertextOutput(
+        publishAvailableCiphertextOutput(
+          interfold,
+          e3Id,
+          data,
+          ciphertextCommitment,
+          proof,
+        ),
+      ).to.emit(interfold, "CiphertextOutputReferencePublished");
+    });
+    it("emits the verified ciphertext reference", async function () {
+      const {
+        interfold,
+        request,
+        usdcToken,
+        ciphernodeRegistryContract,
+        operator1,
+        operator2,
+        operator3,
+      } = await loadFixture(setup);
+      const e3Id = firstE3Id;
+
+      await makeRequest(interfold, usdcToken, {
+        ...request,
+        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
+      });
+
+      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
+        operator1,
+        operator2,
+        operator3,
+      ]);
+      await mine(2, { interval: inputWindowDuration });
+      await expect(
+        publishAvailableCiphertextOutput(
+          interfold,
           e3Id,
           data,
           ciphertextCommitment,
           proof,
         ),
       )
-        .to.emit(interfold, "CiphertextOutputPublished")
-        .withArgs(e3Id, data, ciphertextCommitment);
+        .to.emit(interfold, "CiphertextOutputReferencePublished")
+        .withArgs(e3Id, ethers.keccak256(data), ciphertextCommitment, 1, 1);
     });
 
     it("blocks plaintext publication during ciphertext verification", async function () {
@@ -982,7 +1278,8 @@ describe("Interfold", function () {
       await mocks.e3Program.setReentrantPlaintextPublication(data, proof);
 
       await expect(
-        interfold.publishCiphertextOutput(
+        publishAvailableCiphertextOutput(
+          interfold,
           e3Id,
           data,
           ciphertextCommitment,
@@ -1055,7 +1352,8 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ciphertextCommitment,
@@ -1088,7 +1386,8 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ciphertextCommitment,
@@ -1133,7 +1432,8 @@ describe("Interfold", function () {
         bundle,
       );
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ciphertextCommitment,
@@ -1169,7 +1469,8 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ciphertextCommitment,
@@ -1203,7 +1504,8 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ciphertextCommitment,
@@ -1237,7 +1539,8 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ciphertextCommitment,
@@ -1270,7 +1573,8 @@ describe("Interfold", function () {
         operator3,
       ]);
       await mine(2, { interval: inputWindowDuration });
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id,
         data,
         ciphertextCommitment,

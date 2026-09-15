@@ -21,7 +21,9 @@ impl ShareVerificationActor {
             (
                 VerificationKind::ShareProofs
                 | VerificationKind::ThresholdDecryptionProofs
-                | VerificationKind::PkGenerationProofs,
+                | VerificationKind::PkGenerationProofs
+                | VerificationKind::LbfvGenerationProofs
+                | VerificationKind::LbfvAggregationProofs,
                 ComputeResponseKind::Zk(ZkResponse::VerifyShareProofs(r)),
             ) => r.party_results,
             (
@@ -33,7 +35,13 @@ impl ShareVerificationActor {
                 let mut all_dishonest: BTreeSet<u64> = pending.pre_dishonest;
                 all_dishonest.extend(pending.ecdsa_dishonest);
                 all_dishonest.extend(pending.dispatched_party_ids);
-                self.publish_complete(pending.e3_id, pending.kind, all_dishonest, pending.ec);
+                self.publish_complete(
+                    pending.e3_id,
+                    pending.kind,
+                    pending.verification_id,
+                    all_dishonest,
+                    pending.ec,
+                );
                 return;
             }
         };
@@ -69,7 +77,7 @@ impl ShareVerificationActor {
                             .unwrap_or_default();
                         let signals = pending.party_public_signals.get(&party_id);
                         let datas = pending.party_proof_data.get(&party_id);
-                        for (i, &(proof_type, data_hash)) in hashes.iter().enumerate() {
+                        for (i, &(identity, data_hash)) in hashes.iter().enumerate() {
                             let public_signals = signals
                                 .and_then(|s| s.get(i))
                                 .map(|(_, ps)| ps.clone())
@@ -83,7 +91,7 @@ impl ShareVerificationActor {
                                     e3_id: pending.e3_id.clone(),
                                     party_id,
                                     address: addr,
-                                    proof_type,
+                                    proof_type: identity.proof_type,
                                     data_hash,
                                     public_signals,
                                     proof_data,
@@ -98,7 +106,13 @@ impl ShareVerificationActor {
             }
         }
 
-        self.publish_complete(pending.e3_id, pending.kind, tally.dishonest, pending.ec);
+        self.publish_complete(
+            pending.e3_id,
+            pending.kind,
+            pending.verification_id,
+            tally.dishonest,
+            pending.ec,
+        );
     }
 
     pub(in crate::actors::share_verification) fn emit_signed_proof_failed(
@@ -169,6 +183,11 @@ impl ShareVerificationActor {
 
         let correlation_id = msg.correlation_id();
         let Some(pending) = self.pending.remove(correlation_id) else {
+            // Every compute-dispatching actor receives every error, so an unowned correlation
+            // is another actor's failure, not a fault here.
+            debug!(
+                "ShareVerificationActor: ignored compute error for correlation {correlation_id:?} held by another actor: {msg}"
+            );
             return;
         };
 
@@ -180,6 +199,12 @@ impl ShareVerificationActor {
         let mut all_dishonest: BTreeSet<u64> = pending.pre_dishonest;
         all_dishonest.extend(pending.ecdsa_dishonest);
         all_dishonest.extend(pending.dispatched_party_ids);
-        self.publish_complete(pending.e3_id, pending.kind, all_dishonest, pending.ec);
+        self.publish_complete(
+            pending.e3_id,
+            pending.kind,
+            pending.verification_id,
+            all_dishonest,
+            pending.ec,
+        );
     }
 }

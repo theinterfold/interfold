@@ -18,7 +18,7 @@ import { defineConfig } from 'tsup'
 //
 // With `CRISP_PRESET` unset the build takes whatever is staged, which is what local development
 // wants.
-const PRESETS = ['insecure', 'secure-8192']
+const PRESETS = ['insecure', 'secure-8192', 'secure-16384']
 
 const staged = (preset) => existsSync(`../../circuits/dist/${preset}/crisp.json`)
 

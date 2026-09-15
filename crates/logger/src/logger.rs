@@ -235,6 +235,40 @@ fn compact_error(value: &str) -> String {
     }
 }
 
+/// Reason text for the `error` field of a protocol event log line.
+///
+/// Every variant that logs at [`Severity::Error`] must return its cause here. A variant that
+/// carries a reason but is absent from this match prints `error=` empty, which hides the one
+/// field an operator needs to diagnose the failure.
+fn error_message_for(data: &InterfoldEventData) -> String {
+    match data {
+        InterfoldEventData::InterfoldError(error) => compact_error(&error.message),
+        InterfoldEventData::ComputeRequestError(error) => compact_error(&error.to_string()),
+        InterfoldEventData::E3Failed(data) => {
+            compact_error(&format!("{:?} at {:?}", data.reason, data.failed_at_stage))
+        }
+        InterfoldEventData::ThresholdShareCollectionFailed(data) => compact_error(&data.reason),
+        InterfoldEventData::EncryptionKeyCollectionFailed(data) => compact_error(&data.reason),
+        InterfoldEventData::CommitteeFormationFailed(data) => compact_error(&format!(
+            "{} of {} nodes submitted",
+            data.nodes_submitted, data.threshold_required
+        )),
+        InterfoldEventData::ProofVerificationFailed(data) => compact_error(&format!(
+            "{:?} proof from party {} ({}) failed verification",
+            data.proof_type, data.accused_party_id, data.accused_address
+        )),
+        InterfoldEventData::SignedProofFailed(data) => compact_error(&format!(
+            "{:?} proof from node {} failed signature checks",
+            data.proof_type, data.faulting_node
+        )),
+        InterfoldEventData::CommitmentConsistencyViolation(data) => compact_error(&format!(
+            "{:?} commitment from party {} ({}) is inconsistent",
+            data.proof_type, data.accused_party_id, data.accused_address
+        )),
+        _ => String::new(),
+    }
+}
+
 impl<S: SeqState> EventLogging for InterfoldEvent<S> {
     fn log(&self, logger_name: &str) {
         let data = self.get_data();
@@ -248,10 +282,7 @@ impl<S: SeqState> EventLogging for InterfoldEvent<S> {
             .get_e3_id()
             .map(|id| id.to_string())
             .unwrap_or_default();
-        let error_message = match data {
-            InterfoldEventData::InterfoldError(error) => compact_error(&error.message),
-            _ => String::new(),
-        };
+        let error_message = error_message_for(data);
         let stage = stage(data);
         let observation = matches!(
             data,
@@ -297,6 +328,12 @@ impl<S: SeqState> EventLogging for InterfoldEvent<S> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::primitives::{Address, Bytes};
+    use e3_events::{
+        CircuitName, CommitmentConsistencyViolation, E3Failed, E3id, FailureReason, Proof,
+        ProofPayload, ProofType, ProofVerificationFailed, SignedProofFailed, SignedProofPayload,
+    };
+    use e3_utils::utility_types::ArcBytes;
 
     #[test]
     fn lifecycle_and_failure_stages_are_explicit() {
@@ -305,5 +342,113 @@ mod tests {
         assert_eq!(failure_stage(&E3Stage::CiphertextReady), "decryption");
         assert_eq!(proof_stage("C5PkAggregation"), "key_publication");
         assert_eq!(proof_stage("C7DecryptionAggregation"), "decryption");
+    }
+
+    /// An error-severity event must report why it failed. An empty `error` field leaves an
+    /// operator with no cause for the events that report a failure.
+    #[test]
+    fn e3_failed_reports_its_reason_and_stage() {
+        let data = InterfoldEventData::E3Failed(E3Failed {
+            e3_id: E3id::new("42", 31337),
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::DKGInvalidShares,
+        });
+
+        assert!(matches!(severity(&data), Severity::Error));
+
+        let message = error_message_for(&data);
+        assert!(
+            message.contains("DKGInvalidShares"),
+            "error field must carry the reason, got {message:?}"
+        );
+        assert!(
+            message.contains("CommitteeFinalized"),
+            "error field must carry the stage, got {message:?}"
+        );
+    }
+
+    fn signed_payload(proof_type: ProofType) -> SignedProofPayload {
+        SignedProofPayload {
+            payload: ProofPayload {
+                e3_id: E3id::new("7", 31337),
+                proof_type,
+                proof: Proof {
+                    circuit: CircuitName::PkBfv,
+                    data: ArcBytes::from_bytes(&[1]),
+                    public_signals: ArcBytes::from_bytes(&[2]),
+                },
+            },
+            signature: ArcBytes::from_bytes(&[3]),
+        }
+    }
+
+    /// Accusation-bearing failures must name the proof type and the accused party. Without them
+    /// an operator cannot tell which party or which proof caused the failure.
+    #[test]
+    fn accusation_failures_report_proof_type_and_accused_party() {
+        let accused = Address::repeat_byte(0xab);
+
+        let verification = InterfoldEventData::ProofVerificationFailed(ProofVerificationFailed {
+            e3_id: E3id::new("7", 31337),
+            accused_party_id: 3,
+            accused_address: accused,
+            proof_type: ProofType::C5PkAggregation,
+            data_hash: [0u8; 32],
+            signed_payload: signed_payload(ProofType::C5PkAggregation),
+        });
+        assert!(matches!(severity(&verification), Severity::Error));
+        let message = error_message_for(&verification);
+        assert!(
+            message.contains("C5PkAggregation"),
+            "expected the proof type, got {message:?}"
+        );
+        assert!(
+            message.contains("party 3") && message.to_lowercase().contains("0xabab"),
+            "expected the accused party and address, got {message:?}"
+        );
+
+        let signed = InterfoldEventData::SignedProofFailed(SignedProofFailed {
+            e3_id: E3id::new("7", 31337),
+            faulting_node: accused,
+            proof_type: ProofType::C0PkBfv,
+            signed_payload: signed_payload(ProofType::C0PkBfv),
+        });
+        assert!(matches!(severity(&signed), Severity::Error));
+        let message = error_message_for(&signed);
+        assert!(
+            message.contains("C0PkBfv") && message.to_lowercase().contains("0xabab"),
+            "expected the proof type and faulting node, got {message:?}"
+        );
+
+        let violation =
+            InterfoldEventData::CommitmentConsistencyViolation(CommitmentConsistencyViolation {
+                e3_id: E3id::new("7", 31337),
+                accused_party_id: 9,
+                accused_address: accused,
+                proof_type: ProofType::C1PkGeneration,
+                proof_instance: 0,
+                data_hash: [0u8; 32],
+                evidence: Bytes::new(),
+            });
+        assert!(matches!(severity(&violation), Severity::Error));
+        let message = error_message_for(&violation);
+        assert!(
+            message.contains("C1PkGeneration"),
+            "expected the proof type, got {message:?}"
+        );
+        assert!(
+            message.contains("party 9") && message.to_lowercase().contains("0xabab"),
+            "expected the accused party and address, got {message:?}"
+        );
+    }
+
+    /// `compact_error` bounds the field so one long cause cannot dominate a log line.
+    #[test]
+    fn long_causes_are_truncated() {
+        let long = "x".repeat(1000);
+        let compact = compact_error(&long);
+
+        assert!(compact.ends_with('\u{2026}'));
+        assert_eq!(compact.chars().count(), 601);
     }
 }

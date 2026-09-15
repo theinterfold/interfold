@@ -25,14 +25,14 @@ const PACKAGE_DIRS = ['packages/crisp-sdk', 'packages/crisp-contracts', 'package
  * Release channels, split by BFV preset.
  *
  * The SDK inlines compiled circuit artifacts. Testing releases carry only the insecure preset so
- * they stay small; production releases carry both presets so one client can select the preset from
+ * they stay small; production releases carry all supported presets so one client can select the preset from
  * the E3's on-chain param set.
  *
  * Testing versions carry a prerelease identifier so npm keeps them out of ordinary ranges: a
  * consumer on `^0.18.0` can never drift onto a testing build through an update.
  *
  * `tracksClient` says whether a channel moves the client onto the version it publishes. The
- * production channel moves it because the published package contains both presets. Testing releases
+ * production channel moves it because the published package contains all supported presets. Testing releases
  * leave it alone.
  *
  * `bumpsRepo` says whether a channel leaves its version behind in the working tree. It follows from
@@ -41,7 +41,7 @@ const PACKAGE_DIRS = ['packages/crisp-sdk', 'packages/crisp-contracts', 'package
  * leaves the workspace and client on the same exact version, so local development uses the
  * workspace and standalone deploys use the matching npm package.
  */
-const PRESETS = ['insecure', 'secure-8192'] as const
+const PRESETS = ['insecure', 'secure-8192', 'secure-16384'] as const
 type Preset = (typeof PRESETS)[number]
 
 const CHANNELS = {
@@ -697,7 +697,7 @@ Arguments:
   version             The new version (e.g., 1.0.0, 1.0.0-beta.1)
 
 Options:
-  --channel <name>    Release channel: 'testing' (insecure) or 'prod' (both presets). Required.
+  --channel <name>    Release channel: 'testing' (insecure) or 'prod' (all presets). Required.
   --tag <name>        npm dist-tag override (default: the channel's tag)
   --skip-git          Skip all git operations (no commit)
   --dry-run           Show what would be done without making changes
@@ -705,9 +705,9 @@ Options:
 
 Channels:
   testing   npm tag 'testing', insecure circuits, prerelease versions only
-  prod      npm tag 'latest',  insecure and secure-8192 circuits, plain release versions only
+  prod      npm tag 'latest',  all supported circuits, plain release versions only
 
-  Testing carries one preset to stay small. Production carries both presets so the client can select
+  Testing carries one preset to stay small. Production carries all supported presets so the client can select
   the required circuit bundle from the E3's on-chain param set.
 
   Testing versions must carry a prerelease identifier. npm keeps prereleases out of ordinary
@@ -718,7 +718,7 @@ Channels:
 
 Prerequisite:
   The SDK build stages the circuit artifacts it needs under circuits/dist/, which git does not
-  track. The testing channel stages only insecure. The production channel stages both presets.
+  track. The testing channel stages only insecure. The production channel stages all supported presets.
   The build refuses stale or missing artifacts (pnpm -C packages/crisp-sdk check:staged <preset>).
 
 Examples:

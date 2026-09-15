@@ -8,7 +8,7 @@ CRISP_CIRCUITS="circuits"
 
 # The generated verifiers are NOT preset-specific. They are written from the fold circuit's
 # verification key, and the fold circuit takes the inner key as an input and checks its hash against
-# either preset's constant, so its own structure carries no BFV degree. Compiling both presets
+# either preset's constant, so its own structure carries no BFV degree. Compiling the supported presets
 # produces byte-identical verifiers; one directory is correct.
 VERIFIER_DIR="packages/crisp-contracts/contracts/verifiers"
 mkdir -p "$VERIFIER_DIR"

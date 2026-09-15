@@ -7,8 +7,8 @@ use actix::prelude::*;
 use anyhow::Result;
 use e3_events::{
     prelude::*, trap, BusHandle, DecryptionKeyShared, DocumentReceived, EType,
-    EncryptionKeyCreated, EventType, InterfoldEvent, InterfoldEventData, ThresholdShareCreated,
-    TypedEvent,
+    EncryptionKeyCreated, EventType, InterfoldEvent, InterfoldEventData,
+    LbfvKeyShareDocumentCreated, ThresholdShareCreated, TypedEvent,
 };
 use e3_utils::NotifySync;
 
@@ -34,6 +34,7 @@ impl EventConverter {
         bus.subscribe(EventType::ThresholdShareCreated, addr.clone().into());
         bus.subscribe(EventType::EncryptionKeyCreated, addr.clone().into());
         bus.subscribe(EventType::DecryptionKeyShared, addr.clone().into());
+        bus.subscribe(EventType::LbfvKeyShareDocumentCreated, addr.clone().into());
         bus.subscribe(EventType::DocumentReceived, addr.clone().into());
         addr
     }
@@ -59,6 +60,16 @@ impl EventConverter {
         if let Some(request) = EventConversionService::decryption_key_to_request(msg)? {
             self.bus.publish(request, ctx)?;
         }
+        Ok(())
+    }
+
+    fn handle_lbfv_key_share_created(
+        &self,
+        msg: TypedEvent<LbfvKeyShareDocumentCreated>,
+    ) -> Result<()> {
+        let (msg, ctx) = msg.into_components();
+        let request = EventConversionService::lbfv_key_share_to_request(msg)?;
+        self.bus.publish(request, ctx)?;
         Ok(())
     }
 
@@ -97,6 +108,9 @@ impl Handler<InterfoldEvent> for EventConverter {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::DecryptionKeyShared(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::LbfvKeyShareDocumentCreated(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
             InterfoldEventData::DocumentReceived(data) => {
@@ -148,6 +162,21 @@ impl Handler<TypedEvent<DecryptionKeyShared>> for EventConverter {
             EType::DocumentPublishing,
             &self.bus.with_ec(msg.get_ctx()),
             || self.handle_decryption_key_shared(msg),
+        )
+    }
+}
+
+impl Handler<TypedEvent<LbfvKeyShareDocumentCreated>> for EventConverter {
+    type Result = ();
+    fn handle(
+        &mut self,
+        msg: TypedEvent<LbfvKeyShareDocumentCreated>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        trap(
+            EType::DocumentPublishing,
+            &self.bus.with_ec(msg.get_ctx()),
+            || self.handle_lbfv_key_share_created(msg),
         )
     }
 }

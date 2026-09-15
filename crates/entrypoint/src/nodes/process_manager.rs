@@ -340,6 +340,32 @@ impl From<CommandMap> for ProcessManager {
 mod tests {
     use super::*;
 
+    async fn wait_for_status(manager: &ProcessManager, id: &str, expected: ProcessStatus) {
+        let observed = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let status = manager.status(id).await;
+                if status == expected {
+                    return status;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("process {id} did not reach {expected:?}"));
+
+        assert_eq!(observed, expected);
+    }
+
+    async fn wait_for_file(path: &std::path::Path) {
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while !path.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .unwrap_or_else(|_| panic!("file was not created: {}", path.display()));
+    }
+
     #[tokio::test]
     async fn exited_child_is_not_reported_as_started_and_can_be_started_again() {
         let commands = CommandMap::from([(
@@ -352,35 +378,34 @@ mod tests {
         let manager = ProcessManager::from(commands);
         manager.start("short").await.unwrap();
 
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(
-            manager.status("short").await,
-            ProcessStatus::Exited { code: Some(7) }
-        );
+        wait_for_status(&manager, "short", ProcessStatus::Exited { code: Some(7) }).await;
 
         manager.start("short").await.unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
-        assert_eq!(
-            manager.status("short").await,
-            ProcessStatus::Exited { code: Some(7) }
-        );
+        wait_for_status(&manager, "short", ProcessStatus::Exited { code: Some(7) }).await;
     }
 
     #[tokio::test]
     async fn stop_sends_sigterm_before_forcing_termination() {
         let directory = tempfile::tempdir().unwrap();
         let marker = directory.path().join("terminated");
-        let script = format!(
-            "trap 'echo terminated > {} ; exit 0' TERM; while true; do sleep 0.05; done",
-            marker.display()
-        );
+        let ready = directory.path().join("ready");
+        let script = r#"trap 'printf "terminated\n" > "$1"; exit 0' TERM; : > "$2"; while :; do sleep 0.05; done"#;
         let commands = CommandMap::from([(
             "long".to_string(),
-            ("sh".to_string(), vec!["-c".to_string(), script]),
+            (
+                "sh".to_string(),
+                vec![
+                    "-c".to_string(),
+                    script.to_string(),
+                    "process-manager-test".to_string(),
+                    marker.to_string_lossy().into_owned(),
+                    ready.to_string_lossy().into_owned(),
+                ],
+            ),
         )]);
         let manager = ProcessManager::from(commands);
         manager.start("long").await.unwrap();
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        wait_for_file(&ready).await;
 
         manager.stop("long").await.unwrap();
 

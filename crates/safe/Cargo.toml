@@ -12,3 +12,10 @@ ark-ff = { workspace = true }
 ark-bn254 = { workspace = true }
 taceo-poseidon2 = { version = "0.2", features = ["bn254", "t4"] }
 hex = { workspace = true }
+
+[target.'cfg(all(target_os = "zkvm", target_arch = "riscv32"))'.dependencies]
+risc0-bigint2 = "=1.4.7"
+
+[dev-dependencies]
+rand = { workspace = true }
+rand_chacha = { workspace = true }

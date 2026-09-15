@@ -25,7 +25,7 @@ use e3_events::{
     TicketGenerated, TypedEvent, Unsequenced,
 };
 #[cfg(test)]
-use e3_events::{EventBusBarrier, EventBusFanout, EventContextAccessors, RequestRouterCheckpoint};
+use e3_events::{EventBusBarrier, EventBusFanout, EventContextAccessors};
 use e3_utils::actix::channel as actix_toolbox;
 use std::{
     collections::{HashMap, HashSet},

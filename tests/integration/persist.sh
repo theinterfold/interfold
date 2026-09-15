@@ -12,6 +12,7 @@ source "$THIS_DIR/lib/utils.sh"
 heading "Start the EVM node"
 
 launch_evm
+launch_mock_data_availability
 
 until curl -sf -X POST http://localhost:8545 -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","method":"eth_blockNumber","params":[],"id":1}' > /dev/null; do
   sleep 1
@@ -66,7 +67,12 @@ ENCODED_PARAMS=0x$($SCRIPT_DIR/lib/pack_e3_params.sh \
 
 CURRENT_TIMESTAMP=$(get_evm_timestamp)
 INPUT_WINDOW_START=$((CURRENT_TIMESTAMP + 20))
-INPUT_WINDOW_END=$((CURRENT_TIMESTAMP + 30))
+# The committee cannot publish its key after the input window closes
+# (`validateCommitteePublication`), and a real DKG on a CI runner takes well over a
+# minute, so the window has to outlast it rather than the other way round. The suite does
+# not wait this out in wall-clock time: `advance_evm_time_past` jumps the chain once the
+# input is in. Override with INTEGRATION_INPUT_WINDOW_SECONDS.
+INPUT_WINDOW_END=$((CURRENT_TIMESTAMP + ${INTEGRATION_INPUT_WINDOW_SECONDS:-600}))
 
 REQUEST_OUTPUT=$(pnpm committee:new \
   --network localhost \
@@ -107,12 +113,19 @@ $SCRIPT_DIR/lib/fake_encrypt.sh --input "$SCRIPT_DIR/output/pubkey.bin" --output
 heading "Mock publish input e3-id"
 pnpm e3-program:publishInput --network localhost --e3-id "$E3_ID" --data 0x12345678
 
-sleep 6 # wait for input deadline to pass
+# The input is in; close the window so the round can move to decryption.
+advance_evm_time_past "$INPUT_WINDOW_END"
 
 waiton "$SCRIPT_DIR/output/output.bin"
 
 heading "Publish ciphertext to EVM"
-pnpm e3:publishCiphertext --e3-id "$E3_ID" --network localhost --data-file "$SCRIPT_DIR/output/output.bin" --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin" --proof 0x12345678
+pnpm e3:publishCiphertext \
+  --e3-id "$E3_ID" \
+  --network localhost \
+  --data-file "$SCRIPT_DIR/output/output.bin" \
+  --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin" \
+  --proof 0x12345678 \
+  --mock-data-availability-directory "$MOCK_DATA_AVAILABILITY_DIRECTORY"
 
 wait_for_plaintext_output "$E3_ID" "$SCRIPT_DIR/output/plaintext.txt"
 

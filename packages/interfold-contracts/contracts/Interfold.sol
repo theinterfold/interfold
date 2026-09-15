@@ -289,7 +289,7 @@ contract Interfold is
     /// @inheritdoc IInterfold
     function request(
         E3RequestParams calldata requestParams
-    ) external returns (uint256 e3Id, E3 memory e3) {
+    ) external nonReentrant returns (uint256 e3Id, E3 memory e3) {
         if (requestsPaused) revert RequestsPaused();
         _validateDependencyGraph();
         // Fee-token allow-list gate: protects requesters from being
@@ -340,22 +340,6 @@ contract Interfold is
         uint256 seed = uint256(keccak256(abi.encode(block.prevrandao, e3Id)));
 
         e3CryptoConfigIds[e3Id] = requestParams.expectedCryptoConfigId;
-        InterfoldPricing.recordRequestPayment(
-            e3Payments,
-            _e3FeeTokens,
-            _e3ProtocolShareBps,
-            _e3ProtocolTreasury,
-            _pendingTreasury,
-            _pricingConfig,
-            e3Id,
-            quotedFee,
-            feeToken
-        );
-
-        // Initialize E3 Lifecycle
-        _e3Stages[e3Id] = E3Stage.Requested;
-        _e3Requesters[e3Id] = msg.sender;
-        activeE3Count++;
 
         e3.seed = seed;
         e3.committeeSize = requestParams.committeeSize;
@@ -367,6 +351,12 @@ contract Interfold is
         e3.paramSet = requestParams.paramSet;
         e3.customParams = requestParams.customParams;
         e3.requester = msg.sender;
+
+        // Programs can validate request timing against the exact E3 and timeout snapshot. Store
+        // the request before the external validation call; the transaction rolls this write back
+        // if validation fails. Its stage and requester remain unset until validation completes,
+        // so lifecycle entry points cannot act on this provisional record.
+        e3s[e3Id] = e3;
 
         bytes32 encryptionSchemeId = requestParams.e3Program.validate(
             e3Id,
@@ -389,18 +379,33 @@ contract Interfold is
             address(pkVerifiers[encryptionSchemeId]) != address(0),
             InvalidEncryptionScheme(encryptionSchemeId)
         );
-        e3.encryptionSchemeId = encryptionSchemeId;
-        e3.decryptionVerifier = decryptionVerifiers[encryptionSchemeId];
-        e3.pkVerifier = pkVerifiers[encryptionSchemeId];
-        // CEI: write all state before external calls below
-        e3s[e3Id] = e3;
+        // Complete the provisional record in place. Copying the full struct a second time wastes
+        // enough runtime bytecode to put this upgrade too close to EIP-170.
+        E3 storage storedE3 = e3s[e3Id];
+        storedE3.encryptionSchemeId = encryptionSchemeId;
+        storedE3.decryptionVerifier = decryptionVerifiers[encryptionSchemeId];
+        storedE3.pkVerifier = pkVerifiers[encryptionSchemeId];
+        // Keep the memory event payload in sync without copying the full dynamic struct back from
+        // storage. Encoding the storage value directly consumes too much proxy runtime bytecode.
+        e3.encryptionSchemeId = storedE3.encryptionSchemeId;
+        e3.decryptionVerifier = storedE3.decryptionVerifier;
+        e3.pkVerifier = storedE3.pkVerifier;
+        _e3Stages[e3Id] = E3Stage.Requested;
+        _e3Requesters[e3Id] = msg.sender;
+        activeE3Count++;
 
-        // Transfer fee after all validations and state changes
-        InterfoldPricing.transferFromExact(
-            feeToken,
-            msg.sender,
-            address(this),
-            quotedFee
+        // Transfer the fee after all validations and state changes, then credit it. The library
+        // pulls the tokens before it writes any claimable balance.
+        InterfoldPricing.recordRequestPayment(
+            e3Payments,
+            _e3FeeTokens,
+            _e3ProtocolShareBps,
+            _e3ProtocolTreasury,
+            _pendingTreasury,
+            _pricingConfig,
+            e3Id,
+            quotedFee,
+            feeToken
         );
 
         require(
@@ -419,22 +424,17 @@ contract Interfold is
     /// @inheritdoc IInterfold
     function publishCiphertextOutput(
         uint256 e3Id,
-        bytes calldata ciphertextOutput,
-        bytes32 ciphertextCommitment,
-        bytes calldata proof
-    ) external nonReentrant returns (bool success) {
-        return
-            InterfoldLifecycle.publishCiphertext(
-                e3s,
-                _e3Stages,
-                _e3Deadlines,
-                address(_registryFor(e3Id)),
-                e3Id,
-                _e3TimeoutConfigs[e3Id].decryptionWindow,
-                ciphertextOutput,
-                ciphertextCommitment,
-                proof
-            );
+        bytes calldata encodedOutputReference
+    ) external nonReentrant {
+        InterfoldLifecycle.publishCiphertext(
+            e3s,
+            _e3Stages,
+            _e3Deadlines,
+            address(_registryFor(e3Id)),
+            e3Id,
+            _e3TimeoutConfigs[e3Id].decryptionWindow,
+            encodedOutputReference
+        );
     }
 
     /// @inheritdoc IInterfold
@@ -514,7 +514,6 @@ contract Interfold is
             _e3ProtocolShareBps,
             _e3ProtocolTreasury,
             _pendingTreasury,
-            _pendingRewards,
             address(_registryFor(e3Id)),
             _refundManagerFor(e3Id),
             e3Id
@@ -580,9 +579,12 @@ contract Interfold is
     function setRandomnessFlatFee(
         uint192 randomnessFlatFee
     ) external onlyOwner {
-        if (randomnessFlatFee == 0) revert PaymentRequired(0);
-        _pricingConfig.randomnessFlatFee = randomnessFlatFee;
-        emit FeeAssetConfigUpdated(feeToken, feeTokenDecimals, _pricingConfig);
+        InterfoldPricing.setRandomnessFlatFee(
+            _pricingConfig,
+            feeToken,
+            feeTokenDecimals,
+            randomnessFlatFee
+        );
     }
 
     /// @inheritdoc IInterfold
@@ -628,7 +630,16 @@ contract Interfold is
             }
             sstore(programSlot, 1)
         }
+        // Reject a program that does not advertise the interfaces Interfold calls. Output
+        // publication calls `verifyDataAvailability` unconditionally, so a program that omits
+        // that selector cannot complete an E3.
+        InterfoldLifecycle.validateE3ProgramInterfaces(address(e3Program));
         emit E3ProgramRegistered(e3Program);
+    }
+
+    /// @inheritdoc IInterfold
+    function unregisterE3Program(IE3Program e3Program) external onlyOwner {
+        InterfoldLifecycle.unregisterE3Program(e3Programs, e3Program);
     }
 
     /// @inheritdoc IInterfold
@@ -779,14 +790,15 @@ contract Interfold is
         uint256 e3Id,
         bytes32 committeePublicKey
     ) external {
+        E3 storage e3 = e3s[e3Id];
         InterfoldLifecycle.validateCommitteePublication(
             msg.sender,
             address(_registryFor(e3Id)),
             e3Id,
             uint8(_e3Stages[e3Id]),
-            _e3Deadlines[e3Id].dkgDeadline
+            _e3Deadlines[e3Id].dkgDeadline,
+            e3.inputWindow[1]
         );
-        E3 storage e3 = e3s[e3Id];
 
         _e3Stages[e3Id] = E3Stage.KeyPublished;
         e3.committeePublicKey = committeePublicKey;
@@ -808,15 +820,22 @@ contract Interfold is
     /// @inheritdoc IInterfold
     function onE3Failed(uint256 e3Id, uint8 reason) external {
         E3Stage current = _e3Stages[e3Id];
-        InterfoldLifecycle.validateReportedFailure(
-            msg.sender,
-            address(_registryFor(e3Id)),
-            address(_slashingManagerFor(e3Id)),
-            e3Id,
-            uint8(current),
-            reason
-        );
-        _markE3FailedWithReason(e3Id, current, FailureReason(reason));
+        E3Dependencies storage dependencies = _e3Dependencies[e3Id];
+        // ZEN2-04: a round that already failed keeps its stage and its
+        // `activeE3Count`. Only a requester-paid reason is corrected, and only
+        // by the expulsion that broke committee viability.
+        if (
+            InterfoldLifecycle.reportFailure(
+                _e3FailureReasons,
+                msg.sender,
+                address(dependencies.registry),
+                address(dependencies.slashManager),
+                address(dependencies.refundManager),
+                e3Id,
+                uint8(current),
+                reason
+            )
+        ) _markE3FailedWithReason(e3Id, current, FailureReason(reason));
     }
 
     ////////////////////////////////////////////////////////////
@@ -1079,6 +1098,7 @@ contract Interfold is
             requestParams.inputWindow,
             block.timestamp,
             address(ciphernodeRegistry),
+            requestParams.paramSet,
             _timeoutConfig,
             maxDuration
         );
@@ -1171,6 +1191,7 @@ contract Interfold is
             InterfoldPricing.claimReward(
                 _pendingRewards,
                 _e3FeeTokens,
+                _refundManagerFor(e3Id),
                 e3Id,
                 account
             );
@@ -1181,7 +1202,13 @@ contract Interfold is
         uint256 e3Id,
         address account
     ) external view returns (uint256) {
-        return _pendingRewards[e3Id][account];
+        return
+            InterfoldPricing.pendingReward(
+                _pendingRewards,
+                _refundManagerFor(e3Id),
+                e3Id,
+                account
+            );
     }
 
     /// @inheritdoc IInterfold

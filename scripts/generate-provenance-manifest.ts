@@ -34,7 +34,8 @@ import path from 'path'
 const REPO_ROOT = path.resolve(__dirname, '..')
 const SUPPORT = path.join(REPO_ROOT, 'crates', 'support')
 const IMAGE_ID_SOL = path.join(SUPPORT, 'contracts', 'ImageID.sol')
-const DOCKERFILE = path.join(SUPPORT, 'Dockerfile')
+const SUPPORT_DOCKERFILE = path.join(SUPPORT, 'Dockerfile')
+const GUEST_BUILDER_DOCKERFILE = path.join(SUPPORT, 'methods', 'guest-builder.Dockerfile')
 
 interface Args {
   rpc?: string
@@ -111,10 +112,9 @@ function pinnedRevisions(): Record<string, string[]> {
  * builds `risczero/risc0-guest-builder:<tag>` from it. Both sources here are therefore suffixes,
  * and the repository prefix belongs on the outside of the choice.
  *
- * `crates/support/methods/build.rs:90-95` always sets the second, from `ARG RISC0_TOOLCHAIN` in
- * `crates/support/Dockerfile`, so `DEFAULT_DOCKER_TAG` is unreachable from this repository.
- * Reading it would record `r0.1.88.0` against a build that pulled `r0.1.91.1` — a builder nobody
- * used, which is the outcome this function exists to avoid.
+ * `crates/support/methods/build.rs` builds the checked-in Protobuf layer and always sets the
+ * second value to `interfold-r0.<toolchain>-protoc-v1`. The compiled-in default is therefore
+ * unreachable from this repository.
  *
  * The tag is mutable and does not identify a build on its own, so record the resolved digest
  * whenever Docker can supply it.
@@ -131,7 +131,7 @@ function builderImage(guestToolchain: string | null) {
   // value would otherwise name the image `risczero/risc0-guest-builder:r0.`.
   const toolchain = guestToolchain?.trim() || null
   if (!toolchain) return { tag: null, digest: null }
-  const suffix = process.env.RISC0_DOCKER_CONTAINER_TAG?.trim() || `r0.${toolchain}`
+  const suffix = process.env.RISC0_DOCKER_CONTAINER_TAG?.trim() || `interfold-r0.${toolchain}-protoc-v1`
   const tag = `risczero/risc0-guest-builder:${suffix}`
   const digest = sh('docker', ['image', 'inspect', '--format', '{{index .RepoDigests 0}}', tag])
   return { tag, digest }
@@ -237,9 +237,10 @@ async function chainFacts(rpc: string, verifier: string) {
 async function main() {
   const args = parseArgs(process.argv.slice(2))
 
-  const dockerfile = readIfPresent(DOCKERFILE)
-  const risc0Version = firstMatch(dockerfile, /^ARG RISC0_VERSION=(.*)$/m)
-  const risc0Toolchain = firstMatch(dockerfile, /^ARG RISC0_TOOLCHAIN=(.*)$/m)
+  const supportDockerfile = readIfPresent(SUPPORT_DOCKERFILE)
+  const guestBuilderDockerfile = readIfPresent(GUEST_BUILDER_DOCKERFILE)
+  const risc0Version = firstMatch(supportDockerfile, /^ARG RISC0_VERSION=(.*)$/m)
+  const risc0Toolchain = firstMatch(guestBuilderDockerfile, /^ARG RISC0_TOOLCHAIN=(.*)$/m)
   // Lowercased for the same reason the RPC answers are: Solidity accepts either case, and this
   // value is compared against `deployment.onchainImageId` as a plain string.
   const committedImageId = firstMatch(readIfPresent(IMAGE_ID_SOL), /(0x[0-9a-fA-F]{64})/)?.toLowerCase() ?? null

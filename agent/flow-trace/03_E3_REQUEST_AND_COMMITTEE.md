@@ -76,10 +76,13 @@ Requester calls: Interfold.request({
 │   │    The caller selects (paramSet, committeeSize); the target chain must support that pair.
 │   │    Mainnet supports secure-8192 with minimum, micro, and small committees.
 │   │    Sepolia and local chains support insecure and secure-8192 with all committee sizes.
+│   │    Secure-16384 currently supports the minimum committee only because its V2 route is minimum-only.
 │   │    A different parameter hash, committee shape, or verifier H/T is rejected.
 │   │    CI derives and compares the full BFV tuple across deployment code, Rust, and Noir.
 │   ├─ inputWindow[0] >= block.timestamp (start in future)
 │   ├─ inputWindow[1] >= inputWindow[0] (end after start)
+│   ├─ If paramSet is secure-16384, require dkgWindow >= 21,600 seconds
+│   │    The insecure and secure-8192 parameter sets still accept 7,200 seconds.
 │   ├─ Snapshot the complete timeout configuration
 │   ├─ Reserve the later of:
 │   │    inputWindow[1], or
@@ -247,7 +250,7 @@ InterfoldSolReader decodes IInterfold::E3Requested log
 │  program-runner requests, compute-proof journals, and webhook responses
 │
 ├─ Rebuilds the crypto configuration ID from the local scheme, BFV parameters,
-│  and circuit version; skips participation if it does not match the event
+│  and the `interfold-bfv-v2` circuit identity; skips participation if it does not match the event
 │
 ├─ If the ABI log is well-formed but its committee-size or BFV-preset enum is newer than this
 │  binary supports, records the provider log as internally processed and skips participation;
@@ -498,7 +501,13 @@ formation grants neither and releases all remaining candidate obligations. Final
 each member's current bond owner as its reward recipient for this E3. Later bond-owner transfers
 apply to later committees, not to payments earned by this committee. Once Interfold reports
 `Complete` or `Failed`, anyone can call `releaseCommittee(e3Id)` on the request-time registry to
-release all member obligations atomically.
+release all member obligations atomically. For a committee that never finalized this happens at
+terminal stage. For a finalized committee the registry also requires
+`block.timestamp > SlashingManager.accusationSubmissionDeadline(e3Id)`, so member collateral stays
+slashable through the whole accusation window (worst-case lifecycle deadline plus
+`ACCUSATION_REPORTING_WINDOW`) even when the E3 ends early. The call reverts with
+`CommitteeAccusationWindowOpen(e3Id, submissionDeadline)` until then. After governance `closeE3`
+deletes the window snapshot, the deadline reads as 0 and release proceeds.
 
 ### 3c. SortitionCommitteeFinalized Event Processing (Rust-Side)
 
@@ -528,7 +537,7 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
 │   │     is_aggregator = (my node has the lowest eligible party_id in the
 │   │                      address-sorted finalized committee)
 │   │   }
-│   │   Persists an absolute 10-minute deadline while a public-key result is pending
+│   │   Persists an absolute 60-minute deadline while a public-key result is pending
 │   └─ If NO: does nothing for this E3
 │
 └─ KeyshareCreatedFilterBuffer:
@@ -583,7 +592,7 @@ A ready committee must finalize at or before its absolute DKG deadline.
 4. **Active aggregator selection**: `CiphernodeSelector` derives `AggregatorChanged` from the
    finalized committee, enriched exclusion events, and its durable phase-local timeout state. The
    active aggregator is the lowest eligible `party_id` in the address-sorted runtime committee. When
-   the expected chain result is absent for 10 minutes, every node promotes the next party in that
+   the expected chain result is absent for 60 minutes, every node promotes the next party in that
    order. The same phase keeps its absolute deadline across restart. Canonical phase progress clears
    the local unresponsive set. The final eligible party remains active after all standby budgets
    expire.
@@ -619,11 +628,14 @@ A ready committee must finalize at or before its absolute DKG deadline.
 10. **E3 program bootstrap and governance**: The production deploy requires one deployed E3 program.
     `Interfold.initialize` registers it before it transfers ownership to `protocolOwner`. For
     DAO-owned deployments, `protocolOwner` is the DAO, not a Safe. Every registration rejects an
-    address without runtime code. After initialization, only the owner can append another program.
-    The deployment can create `MockE3Program` as the initial program. This stateless program accepts
-    the active BFV scheme and applies no application rules. It has no owner, controller, or mutable
+    address without runtime code. After initialization, only the owner can register or retire a
+    program. Retirement closes new request admission without changing existing E3 records. The
+    deployment can create `MockE3Program` as the initial program. This stateless program accepts the
+    active BFV scheme and applies no application rules. It has no owner, controller, or mutable
     configuration. The request-time ciphertext verifier and decryption verifier still verify the
-    protocol proofs.
+    protocol proofs. Its deterministic data-availability receipt is only for tests. Requests remain
+    paused until a production E3 program is registered and wired, and an interface-incompatible
+    bootstrap mock is retired.
 
 ---
 
@@ -641,12 +653,12 @@ Fresh deployment and upgrade validation check the subscription owner, consumer, 
 gas lane, and selected payment balance. The balance must meet the configured
 `minimumSubscriptionBalance`, in wei for native payment or juels for LINK, before requests resume.
 The provider reads the same selected balance before every request and reverts an underfunded request
-before the E3 is accepted. The floor is an admission check, not a reservation for concurrent draws,
-so production uses a dedicated subscription with balance monitoring. Upgrade preparation also checks
-the live exit delay against the planned response timeout and submission window before it deploys any
-implementation. The upgrade plan snapshots the effective subscription and provider settings.
-Validation records that snapshot, and resume rejects stale implementations, provider settings, fees,
-or deployment records.
+before the E3 is accepted. The provider reserves `minimumSubscriptionBalance` for each pending draw
+(see below), and production still uses a dedicated subscription with balance monitoring. Upgrade
+preparation also checks the live exit delay against the planned response timeout and submission
+window before it deploys any implementation. The upgrade plan snapshots the effective subscription
+and provider settings. Validation records that snapshot, and resume rejects stale implementations,
+provider settings, fees, or deployment records.
 
 Each E3 freezes its provider, provider request ID, response deadline, and submission window. Rust
 waits for `RandomnessFulfilled`, then asks the Registry for the accepted seed and frozen request
@@ -661,10 +673,23 @@ it starts after the E3 has failed or completed.
 If no usable response arrives, no party can re-request or replace the random word. After the frozen
 response deadline, the requester can cancel the E3 or any caller can finalize its timeout. Both
 paths classify it as `CommitteeFormationTimeout`, release committee obligations, and return all
-service fee escrow to the requester. The flat randomness fee stays charged. The timeout also clears
-the active provider. New E3 requests then revert until governance pauses requests, investigates the
-failure, and restores a provider. A late callback stays recorded in the request-bound provider but
-cannot restart the E3.
+service fee escrow to the requester. The flat randomness fee stays charged. The timeout also sets an
+advisory `degraded` flag and emits `RandomnessCircuitBreakerTripped`. New E3 requests continue to
+use the same provider. Governance reads `randomnessDegraded()`, investigates the failure, and
+re-points the provider with `setRandomnessProvider`, which clears the flag. A late callback stays
+recorded in the request-bound provider but cannot restart the E3.
+
+The breaker is advisory because it was registry-global (Zenith `ZEN2-07`). Any party can reach the
+expiry path through the `finalizeCommittee` timeout, through `markE3Failed`, and through the
+requester's `cancelE3`. If it cleared the provider, one prepared long-lived round could stop every
+later request until governance paused requests and every committee released.
+
+`ChainlinkVrfRandomnessProvider` also reserves subscription balance for each unfulfilled draw. It
+counts pending requests and requires
+`availableBalance >= minimumSubscriptionBalance * (pending + 1)`. Without that reservation, many
+requests in one block pass the same balance check, and the underfunded draws respond after the
+frozen one-hour deadline. The owner calls `releaseAbandonedRequest(requestId)` to release the
+reservation of a draw that never responds.
 
 The Registry reader acknowledges `RandomnessCircuitBreakerTripped` as a control-plane event. The SDK
 also exposes this event and the request-bound provider's `RandomnessFulfilled` event. Consumers use
@@ -714,3 +739,22 @@ The EVM reader has typed coverage for `CommitteeFormationFailed`, `CommitteeActi
 `CommitteeViabilityUpdated` in addition to ticket submission, finalization, publication, and
 expulsion. These facts are stored in the E3's chain aggregate and projected into the dashboard's
 committee stage, including submitted/required thresholds and post-expulsion viability.
+
+## Zenith 2026-09 additions (post-fix semantics)
+
+### ZEN2-13 — operator tree capacity
+
+`CiphernodeRegistryOwnable.MAX_CIPHERNODE_LEAVES` is `2**TREE_DEPTH - 1` (1,048,575 at depth 20),
+not `2**TREE_DEPTH`. The pinned `@zk-kit/lazy-imt.sol` sets `maxIndex = (1 << depth) - 1` and
+inserts only while `index < maxIndex`. A cap of `2**TREE_DEPTH` let the last append pass the
+registry check in `addCiphernode` and then revert inside the dependency. The comparison operator and
+the free-index reuse list are unchanged. `CIPHERNODE_TREE_WARNING_THRESHOLD` stays at 80 percent of
+the corrected cap.
+
+### ZEN2-03 — committee key publication and the input window
+
+`Interfold.onCommitteePublished` now reverts with `InputWindowClosedBeforeKeyPublication` when
+`block.timestamp > e3.inputWindow[1]`. A relayer with a valid DKG proof could otherwise publish
+before `dkgDeadline` but after the input window, giving a round that reaches `KeyPublished` and
+never accepts an input. That round failed as a requester-paid `ComputeTimeout` instead of a
+committee-paid `DKGTimeout`. See `04_DKG_AND_COMPUTATION.md` for the full publication trace.

@@ -158,8 +158,10 @@ Deregistration remains an emergency stop for future selection, even when the ope
 finalized committee. Its assets move into the exit queue and remain slashable there. After the exit
 delay, `claimExitsFor` still reverts with `OperatorInActiveCommittee` while any selected committee
 is nonterminal. Anyone can call `releaseCommittee` on the request-time registry after the E3 becomes
-`Complete` or `Failed`; the next claim can then pay the matured assets. This permissionless ticket
-path also lets governance clear old ticket liabilities before a registry generation change.
+`Complete` or `Failed`; for a finalized committee the call also waits until the slashing manager's
+accusation submission deadline has passed. The next claim can then pay the matured assets. This
+permissionless ticket path also lets governance clear old ticket liabilities before a registry
+generation change.
 
 ## E3 Completion (Happy Path)
 
@@ -249,12 +251,14 @@ On restart:
 │   → restores complete CRC-valid, decodable frames whose tail index write was lost
 │   → rejects indexed corruption, decode failure, gaps, and offset mismatches
 ├─ Builder recovery before actors start:
-│   1. Check the storage schema and repair the request-router admission projection
+│   1. Check the storage schema and reconcile the request-router admission checkpoint
 │      → The checkpoint is stored at the canonical root key, not below a router-local namespace
 │      → Each aggregate cursor keeps the highest sequence observed, even when contextual snapshot
 │        writes arrive out of HLC or sequence order
 │      → If the checkpoint trails the snapshot cut, only the missing EventStore suffix is applied
 │        to the existing admission state
+│      → A checkpoint that covers the snapshot cut is never moved backward
+│      → Missing context snapshots or cursor disagreement fail startup before actors attach
 │   2. Backfill missing versioned recovery records from the EventStore
 │      → Sortition inputs, committee-finalizer inputs/tickets, and slash intents are reconstructed
 │      → Existing versioned records are not replaced
@@ -271,6 +275,8 @@ On restart:
 │        CiphernodeSelected events are likewise not guaranteed to replay.
 │      → Recovered aggregator roles, selected party IDs, and DHT document interests are injected
 │        directly from snapshots. Startup does not append synthetic recovery events.
+│      → FHE hydration maps legacy parameter bytes that omit `error1_variance` back to the exact
+│        known threshold preset before it deserializes the common random polynomial.
 ├─ Sync module replays:
 │   → Arm the current NetReady listener before the network transport can publish readiness
 │   4. Replay EventStore events since the snapshot cut (effects still disabled)
@@ -354,6 +360,7 @@ flowchart TD
         RecoveryRepo["Versioned recovery records<br/>sortition, finalizer, slash outbox"]
         PublicKeyRepo["PublicKeyAggregatorState<br/>full committee; sometimes honest set"]
         KeyshareRepo["ThresholdKeyshareState<br/>honest_parties, aggregated_pk, local phase"]
+        LbfvRepo["LbfvGenerationStateV1<br/>local request, signed rows, publication bundle"]
         PlaintextRepo["ThresholdPlaintextAggregatorState<br/>only exists after ciphertext"]
     end
 
@@ -367,6 +374,7 @@ flowchart TD
     Hydrate --> PTAHydrate["ThresholdPlaintextAggregatorExtension recovers plaintext deps"]
     SelectorRepo --> Hydrate
     RecoveryRepo --> Hydrate
+    LbfvRepo --> KeyHydrate
 
     PublicKeyRepo --> PTAHydrate
     KeyshareRepo --> PTAHydrate
@@ -384,7 +392,7 @@ flowchart TD
     Effects --> Gate["ComputeEffectGate releases replay-safe compute work"]
     Replay --> PublicationGate["EVM writers retain local publication intents"]
     Effects --> PublicationGate
-    Effects --> RecoveryWork["Re-arm sortition, committee finalization,<br/>and slash-writer recovery work"]
+    Effects --> RecoveryWork["Re-arm sortition, committee finalization,<br/>l-BFV generation, and slash-writer recovery work"]
     Effects --> SyncEffect["SyncEffect"]
     SyncEffect --> Selection["Apply derived local selection<br/>inside hydrated context; do not persist it"]
 
@@ -438,9 +446,10 @@ state. The synchronous `on_event` path must not read actor-backed repositories d
 blocking the router while waiting for the store can freeze live gossip and make peers time out. If
 `CiphertextOutputPublished` arrives before those committee dependencies are ready, the extension
 records the ciphertext in the E3 context and retries plaintext actor creation when
-`PublicKeyAggregated` or `CommitteePublished` supplies the missing facts; the router's existing
-recipient buffer then drains any ciphertext/decryption-share events into the newly-created plaintext
-path.
+`PublicKeyAggregated`, secure-16384 `LbfvPublicKeyAggregated`, or `CommitteePublished` supplies the
+missing facts; the secure event must carry the matching E3 ID and `DkgAggregatorV2` proof circuit.
+The router's existing recipient buffer then drains any ciphertext/decryption-share events into the
+newly-created plaintext path.
 
 `ShareVerificationActor` gates C1/C6 proof verification behind `CommitmentConsistencyCheckRequested`
 / `CommitmentConsistencyCheckComplete`. The per-E3 `CommitmentConsistencyChecker` is therefore
@@ -490,8 +499,9 @@ publish that exclusion leaves the intent retryable.
 The registry writer rebuilds ticket, committee-finalization, and public-key submission gates from
 durable local events. It does not submit during replay. After `EffectsEnabled`, it retries temporary
 RPC or contract-ordering failures, treats already-landed transactions as success, and stops retrying
-a ticket after a permanent eligibility or deadline result. The Interfold writer applies the same
-pattern to plaintext publication.
+a ticket after a permanent eligibility or deadline result. It also stops a public-key submission
+after an RPC request-size rejection or a permanent payload or contract error. The Interfold writer
+applies the same pattern to plaintext publication.
 
 The request router uses one checkpoint at `//router/recovery_checkpoint` for its active contexts,
 completed set, and all aggregate cursors. Per-E3 context snapshots remain below their own router
@@ -503,6 +513,12 @@ into hydrated protocol actors. A checkpoint that already covers the snapshot vec
 backward. Replay preserves durable sequence inside each aggregate and uses HLC order between
 aggregate heads. The final snapshot drain writes open cross-aggregate batches in their original
 event order, so an older batch cannot overwrite the newest checkpoint during shutdown.
+
+Ethereum lifecycle events remain the canonical terminal input. A same-version restart restores the
+durable checkpoint, replays its missing EventStore suffix, and then ingests missing historical EVM
+events through normal chain synchronization. Startup does not run a separate per-context Ethereum
+repair query. The production cutover starts nodes with empty protocol databases, so it does not
+carry the inconsistent projections written by intermediate Sepolia binaries.
 
 ---
 

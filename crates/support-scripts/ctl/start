@@ -1,9 +1,7 @@
 #!/usr/bin/env bash
 
-unset RISC0_DEV_MODE RPC_URL PRIVATE_KEY PINATA_JWT PROGRAM_URL BOUNDLESS_ONCHAIN
-unset BOUNDLESS_MIN_PRICE_ETH BOUNDLESS_MAX_PRICE_ETH
-unset BOUNDLESS_TIMEOUT_SECS BOUNDLESS_LOCK_TIMEOUT_SECS BOUNDLESS_RAMP_UP_SECS
-unset BOUNDLESS_LOCK_COLLATERAL_ZKC
+# Configuration normally arrives through the environment so credentials do not appear in process
+# arguments. Keep the flags for direct, backwards-compatible use.
 
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -21,6 +19,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --pinata-jwt)
       PINATA_JWT="$2"
+      shift 2
+      ;;
+    --ipfs-gateway-url)
+      IPFS_GATEWAY_URL="$2"
       shift 2
       ;;
     --program-url)
@@ -65,52 +67,14 @@ done
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONTAINER_ARGS=("./scripts/container/start.sh")
 
-if [[ -n "$RISC0_DEV_MODE" ]]; then
-  CONTAINER_ARGS+=("--risc0-dev-mode" "$RISC0_DEV_MODE")
-fi
-
-if [[ -n "$RPC_URL" && -n "$PRIVATE_KEY" ]]; then
-  CONTAINER_ARGS+=("--rpc-url" "$RPC_URL")
-  CONTAINER_ARGS+=("--private-key" "$PRIVATE_KEY")
-elif [[ -n "$RPC_URL" || -n "$PRIVATE_KEY" ]]; then
+if [[ -n "${RPC_URL:-}" && -z "${PRIVATE_KEY:-}" ]] || [[ -z "${RPC_URL:-}" && -n "${PRIVATE_KEY:-}" ]]; then
   echo "Error: Both --rpc-url and --private-key must be provided together, or neither"
   exit 1
 fi
 
-if [[ -n "$PINATA_JWT" ]]; then
-  CONTAINER_ARGS+=("--pinata-jwt" "$PINATA_JWT")
-fi
-
-if [[ -n "$PROGRAM_URL" ]]; then
-  CONTAINER_ARGS+=("--program-url" "$PROGRAM_URL")
-fi
-
-if [[ -n "$BOUNDLESS_ONCHAIN" ]]; then
-  CONTAINER_ARGS+=("--boundless-onchain" "$BOUNDLESS_ONCHAIN")
-fi
-
-if [[ -n "$BOUNDLESS_MIN_PRICE_ETH" ]]; then
-  CONTAINER_ARGS+=("--boundless-min-price-eth" "$BOUNDLESS_MIN_PRICE_ETH")
-fi
-
-if [[ -n "$BOUNDLESS_MAX_PRICE_ETH" ]]; then
-  CONTAINER_ARGS+=("--boundless-max-price-eth" "$BOUNDLESS_MAX_PRICE_ETH")
-fi
-
-if [[ -n "$BOUNDLESS_TIMEOUT_SECS" ]]; then
-  CONTAINER_ARGS+=("--boundless-timeout-secs" "$BOUNDLESS_TIMEOUT_SECS")
-fi
-
-if [[ -n "$BOUNDLESS_LOCK_TIMEOUT_SECS" ]]; then
-  CONTAINER_ARGS+=("--boundless-lock-timeout-secs" "$BOUNDLESS_LOCK_TIMEOUT_SECS")
-fi
-
-if [[ -n "$BOUNDLESS_RAMP_UP_SECS" ]]; then
-  CONTAINER_ARGS+=("--boundless-ramp-up-secs" "$BOUNDLESS_RAMP_UP_SECS")
-fi
-
-if [[ -n "$BOUNDLESS_LOCK_COLLATERAL_ZKC" ]]; then
-  CONTAINER_ARGS+=("--boundless-lock-collateral-zkc" "$BOUNDLESS_LOCK_COLLATERAL_ZKC")
-fi
+export RISC0_DEV_MODE RPC_URL PRIVATE_KEY PINATA_JWT IPFS_GATEWAY_URL PROGRAM_URL BOUNDLESS_ONCHAIN
+export BOUNDLESS_MIN_PRICE_ETH BOUNDLESS_MAX_PRICE_ETH
+export BOUNDLESS_TIMEOUT_SECS BOUNDLESS_LOCK_TIMEOUT_SECS BOUNDLESS_RAMP_UP_SECS
+export BOUNDLESS_LOCK_COLLATERAL_ZKC
 
 exec "$SCRIPT_DIR/container" "${CONTAINER_ARGS[@]}"

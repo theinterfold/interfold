@@ -135,7 +135,9 @@ export interface BfvVerifierRouteDeployment {
   committeeSize: number;
   decryptionVerifier: string;
   pkVerifier: string;
+  pkVerifierV2?: string;
   dkgAggregatorVerifier: string;
+  dkgAggregatorV2Verifier?: string;
   decryptionAggregatorVerifier: string;
   verifierZkTranscriptLib: string;
   dkgVerifierRelationsLib: string;
@@ -170,6 +172,7 @@ export interface ProtocolDeployment {
   pkVerifier?: string;
   dkgFoldAttestationVerifier?: string;
   dkgAggregatorVerifier?: string;
+  dkgAggregatorV2Verifier?: string;
   decryptionAggregatorVerifier?: string;
   verifierZkTranscriptLib?: string;
   dkgVerifierRelationsLib?: string;
@@ -177,6 +180,7 @@ export interface ProtocolDeployment {
   bfvVerifierRoutes?: BfvVerifierRouteDeployment[];
   ciphertextVerifier?: string;
   crispProgram?: string;
+  dataAvailabilityVerifier?: string;
   initialE3Program: string;
   ticketToken: string;
   slashingManager: string;
@@ -251,6 +255,9 @@ export interface SecureCrispUpgradePlan {
   lifecycleLibrary: string;
   pricingLibrary: string;
   registryProxy: string;
+  registryProxyAdmin: string;
+  registryImplementation: string;
+  sortitionLibrary: string;
   nodeReleaseRegistry: string;
   nodeRelease: {
     version: string;
@@ -258,12 +265,19 @@ export interface SecureCrispUpgradePlan {
     nodeGeneration: number;
     releaseId: string;
   };
+  timeoutConfig: TimeoutConfig;
   cryptoConfigId: string;
   paramSet: number;
   pkVerifier: string;
   decryptionVerifier: string;
   ciphertextVerifier: string;
   crispProgram: string;
+  /** Bootstrap mock closed to new requests by this activation, when present. */
+  retiredE3Program?: string;
+  dataAvailabilityVerifier: string;
+  inputAvailabilitySigner: string;
+  availBridge: string;
+  vectorx: string;
   bfvVerifierRoutes: BfvVerifierRouteDeployment[];
   safeTransactions: string;
   governanceSafeBuilder?: string;
@@ -326,6 +340,7 @@ export interface ProtocolContracts {
   pkVerifier?: string;
   dkgFoldAttestationVerifier?: string;
   dkgAggregatorVerifier?: string;
+  dkgAggregatorV2Verifier?: string;
   decryptionAggregatorVerifier?: string;
   verifierZkTranscriptLib?: string;
   dkgVerifierRelationsLib?: string;

@@ -9,6 +9,7 @@ import {
   deploymentPath,
   protocolDir,
   readJson,
+  repoRelativePath,
   writeJson,
 } from "../protocol/files";
 import { governanceBatch, proposeSafeBatch, safeTx } from "../protocol/safe";
@@ -145,7 +146,7 @@ export async function proposeProxyUpgrade(
     operator: operatorAddress,
     protocolOwner: config.protocolOwner,
     safe: config.safe,
-    safeTransactions: batchFile,
+    safeTransactions: repoRelativePath(batchFile),
   };
 
   if (hasFlag("propose-safe")) {
@@ -276,6 +277,7 @@ export async function deployUpgradeImplementation(
   lifecycleLibrary?: string;
   pricingLibrary?: string;
   sortitionLibrary?: string;
+  refundClaimLibrary?: string;
 }> {
   if (target === "interfold") {
     const pricingFactory = await ethers.getContractFactory("InterfoldPricing");
@@ -383,10 +385,20 @@ export async function deployUpgradeImplementation(
     };
   }
 
-  const factory = await ethers.getContractFactory("E3RefundManager");
+  const refundClaimFactory = await ethers.getContractFactory("RefundClaimLib");
+  const refundClaim = await refundClaimFactory.deploy();
+  await refundClaim.waitForDeployment();
+  const refundClaimLibrary = await deployedAddress(refundClaim);
+
+  const factory = await ethers.getContractFactory("E3RefundManager", {
+    libraries: { RefundClaimLib: refundClaimLibrary },
+  });
   const implementation = await factory.deploy();
   await implementation.waitForDeployment();
-  return { implementation: await deployedAddress(implementation) };
+  return {
+    implementation: await deployedAddress(implementation),
+    refundClaimLibrary,
+  };
 }
 
 function proxyFor(

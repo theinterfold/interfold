@@ -3,6 +3,7 @@
 //! Interfold contract reads and transaction effects.
 
 use super::*;
+use alloy::sol_types::SolError;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::actors::interfold_sol_writer) enum MarkFailureOutcome {
@@ -11,7 +12,27 @@ pub(in crate::actors::interfold_sol_writer) enum MarkFailureOutcome {
     StageAdvanced,
 }
 
-pub(in crate::actors::interfold_sol_writer) async fn read_aggregation_failure_stage<
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::actors::interfold_sol_writer) struct FailureSchedule {
+    pub deadline: u64,
+    pub permissionless_grace: u64,
+}
+
+fn requested_failure_deadline(
+    committee_deadline: u64,
+    committee_threshold_met: bool,
+    dkg_window: u64,
+) -> Result<u64> {
+    if committee_threshold_met {
+        committee_deadline
+            .checked_add(dkg_window)
+            .ok_or_else(|| anyhow::anyhow!("Requested-stage deadline overflowed"))
+    } else {
+        Ok(committee_deadline)
+    }
+}
+
+pub(in crate::actors::interfold_sol_writer) async fn read_watched_failure_stage<
     P: Provider + WalletProvider + Clone,
 >(
     provider: EthProvider<P>,
@@ -22,7 +43,9 @@ pub(in crate::actors::interfold_sol_writer) async fn read_aggregation_failure_st
     let contract = IInterfold::new(contract_address, provider.provider());
     let stage = contract.getE3Stage(e3_id).call().await?;
     Ok(match stage {
+        1 => Some(E3Stage::Requested),
         2 => Some(E3Stage::CommitteeFinalized),
+        3 => Some(E3Stage::KeyPublished),
         4 => Some(E3Stage::CiphertextReady),
         _ => None,
     })
@@ -35,18 +58,61 @@ pub(in crate::actors::interfold_sol_writer) async fn read_failure_deadline<
     contract_address: Address,
     e3_id: E3id,
     stage: E3Stage,
-) -> Result<u64> {
+    request_registry: Option<Address>,
+) -> Result<FailureSchedule> {
     let e3_id: U256 = e3_id.try_into()?;
     let contract = IInterfold::new(contract_address, provider.provider());
-    let deadlines = contract.getDeadlines(e3_id).call().await?;
-    let deadline = match stage {
-        E3Stage::CommitteeFinalized => deadlines.dkgDeadline,
-        E3Stage::CiphertextReady => deadlines.decryptionDeadline,
-        _ => anyhow::bail!("stage {stage:?} does not have an aggregation failure deadline"),
+    let deadline: u64 = match stage {
+        E3Stage::Requested => {
+            let registry_address = request_registry.ok_or_else(|| {
+                anyhow::anyhow!("request-time registry is unavailable for Requested E3")
+            })?;
+            let registry = ICiphernodeRegistry::new(registry_address, provider.provider());
+            let committee_deadline: u64 = registry
+                .getCommitteeDeadline(e3_id)
+                .call()
+                .await?
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("committee deadline does not fit in u64"))?;
+            let committee_threshold_met = registry.committeeThresholdMet(e3_id).call().await?;
+            let dkg_window = if committee_threshold_met {
+                let dkg_window: u64 = contract
+                    .getE3TimeoutConfig(e3_id)
+                    .call()
+                    .await?
+                    .dkgWindow
+                    .try_into()
+                    .map_err(|_| anyhow::anyhow!("DKG window does not fit in u64"))?;
+                dkg_window
+            } else {
+                0
+            };
+            requested_failure_deadline(committee_deadline, committee_threshold_met, dkg_window)?
+        }
+        E3Stage::CommitteeFinalized | E3Stage::KeyPublished | E3Stage::CiphertextReady => {
+            let deadlines = contract.getDeadlines(e3_id).call().await?;
+            let deadline = match stage {
+                E3Stage::CommitteeFinalized => deadlines.dkgDeadline,
+                E3Stage::KeyPublished => deadlines.computeDeadline,
+                E3Stage::CiphertextReady => deadlines.decryptionDeadline,
+                _ => unreachable!(),
+            };
+            deadline
+                .try_into()
+                .map_err(|_| anyhow::anyhow!("E3 deadline does not fit in u64"))?
+        }
+        _ => anyhow::bail!("stage {stage:?} does not have a failure deadline"),
     };
-    deadline
+    let permissionless_grace = contract
+        .markFailedGracePeriod()
+        .call()
+        .await?
         .try_into()
-        .map_err(|_| anyhow::anyhow!("E3 deadline does not fit in u64"))
+        .map_err(|_| anyhow::anyhow!("mark-failed grace period does not fit in u64"))?;
+    Ok(FailureSchedule {
+        deadline,
+        permissionless_grace,
+    })
 }
 
 pub(in crate::actors::interfold_sol_writer) async fn mark_e3_failed_if_due<
@@ -88,9 +154,11 @@ pub(in crate::actors::interfold_sol_writer) async fn mark_e3_failed_if_due<
 
 fn failure_stage_code(stage: &E3Stage) -> Result<u8> {
     match stage {
+        E3Stage::Requested => Ok(1),
         E3Stage::CommitteeFinalized => Ok(2),
+        E3Stage::KeyPublished => Ok(3),
         E3Stage::CiphertextReady => Ok(4),
-        _ => anyhow::bail!("stage {stage:?} is not watched for aggregation failure"),
+        _ => anyhow::bail!("stage {stage:?} is not watched for failure"),
     }
 }
 
@@ -180,4 +248,52 @@ pub(in crate::actors::interfold_sol_writer) async fn process_e3_failure<
     let receipt = pending.get_receipt().await?;
     require_successful_receipt("process E3 failure", &receipt)?;
     Ok(receipt)
+}
+
+pub(in crate::actors::interfold_sol_writer) fn failure_settlement_error_is_terminal(
+    error: &anyhow::Error,
+) -> bool {
+    contains_error_selector(
+        &format!("{error:?}"),
+        IInterfold::NoPaymentToRefund::SELECTOR,
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        failure_settlement_error_is_terminal, failure_stage_code, requested_failure_deadline,
+    };
+    use crate::contracts::IInterfold;
+    use alloy::sol_types::SolError;
+    use e3_events::E3Stage;
+
+    #[test]
+    fn all_contract_failure_stages_are_watched() {
+        assert_eq!(failure_stage_code(&E3Stage::Requested).unwrap(), 1);
+        assert_eq!(failure_stage_code(&E3Stage::CommitteeFinalized).unwrap(), 2);
+        assert_eq!(failure_stage_code(&E3Stage::KeyPublished).unwrap(), 3);
+        assert_eq!(failure_stage_code(&E3Stage::CiphertextReady).unwrap(), 4);
+        assert!(failure_stage_code(&E3Stage::Complete).is_err());
+    }
+
+    #[test]
+    fn requested_stage_uses_the_registry_deadline_and_frozen_dkg_window() {
+        assert_eq!(requested_failure_deadline(100, false, 50).unwrap(), 100);
+        assert_eq!(requested_failure_deadline(100, true, 50).unwrap(), 150);
+        assert!(requested_failure_deadline(u64::MAX, true, 1).is_err());
+    }
+
+    #[test]
+    fn settled_failure_stops_retries() {
+        let error = anyhow::anyhow!(
+            "execution reverted: 0x{}{}",
+            hex::encode(IInterfold::NoPaymentToRefund::SELECTOR),
+            "00".repeat(32)
+        );
+        assert!(failure_settlement_error_is_terminal(&error));
+        assert!(!failure_settlement_error_is_terminal(&anyhow::anyhow!(
+            "RPC connection reset"
+        )));
+    }
 }

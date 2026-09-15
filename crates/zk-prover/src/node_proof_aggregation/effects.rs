@@ -3,8 +3,49 @@
 //! DKG inner-proof collection and node-fold dispatch.
 
 use super::*;
+use e3_events::{LbfvGenerationFoldRequest, NodeDkgFoldV2Request};
 
 impl NodeProofAggregator {
+    pub(in crate::actors::node_proof_aggregator) fn handle_lbfv_document(
+        &mut self,
+        msg: TypedEvent<LbfvKeyShareDocumentCreated>,
+    ) {
+        let (msg, _) = msg.into_components();
+        let e3_id = msg.document.e3_id().clone();
+        let entry = self
+            .generation_fold_rows
+            .entry(e3_id.clone())
+            .or_insert_with(|| LbfvGenerationRows {
+                pk_proofs: Vec::new(),
+                rlk_proofs: Vec::new(),
+                trusted_limb_key_hash: e3_utils::ArcBytes::from_bytes(&[]),
+            });
+        match msg.document {
+            LbfvKeyShareDocument::PublicKeyV1(document) => {
+                entry.pk_proofs = document
+                    .signed_row_proofs
+                    .into_iter()
+                    .map(|signed| signed.payload.proof)
+                    .collect();
+            }
+            LbfvKeyShareDocument::RelinearizationKeyV1(document) => {
+                entry.rlk_proofs = document
+                    .signed_row_proofs
+                    .into_iter()
+                    .map(|signed| signed.payload.proof)
+                    .collect();
+                if let Some(proof) = entry.rlk_proofs.first() {
+                    let signals: &[u8] = proof.public_signals.as_ref();
+                    if signals.len() >= 9 * 32 {
+                        entry.trusted_limb_key_hash =
+                            e3_utils::ArcBytes::from_bytes(&signals[8 * 32..9 * 32]);
+                    }
+                }
+            }
+        }
+        self.try_dispatch_node_dkg_fold(&e3_id);
+    }
+
     pub(in crate::actors::node_proof_aggregator) fn handle_threshold_share_pending(
         &mut self,
         msg: TypedEvent<ThresholdSharePending>,
@@ -158,6 +199,11 @@ impl NodeProofAggregator {
             return;
         }
 
+        if state.meta.params_preset == e3_fhe_params::BfvPreset::SecureThreshold16384 {
+            self.try_dispatch_v2_generation_fold(e3_id);
+            return;
+        }
+
         let req = match state.build_fold_request() {
             Ok(req) => req,
             Err(err) => {
@@ -218,6 +264,146 @@ impl NodeProofAggregator {
         }
     }
 
+    fn try_dispatch_v2_generation_fold(&mut self, e3_id: &E3id) {
+        let Some(rows) = self.generation_fold_rows.get(e3_id) else {
+            return;
+        };
+        if rows.pk_proofs.len() != 5
+            || rows.rlk_proofs.len() != 5
+            || rows.trusted_limb_key_hash.is_empty()
+        {
+            return;
+        }
+        let Some(state) = self.states.get_mut(e3_id) else {
+            return;
+        };
+        if state.fold_correlation.is_some() {
+            return;
+        }
+        let next_row = *self
+            .generation_fold_next_rows
+            .entry(e3_id.clone())
+            .or_insert(0);
+        if next_row >= 5 {
+            self.try_dispatch_v2_node_fold(e3_id);
+            return;
+        }
+        let prior = self.generation_fold_accumulators.get(e3_id).cloned();
+        let corr = CorrelationId::new();
+        let ec = state.last_ec.clone();
+        state.fold_correlation = Some(corr);
+        self.fold_correlation.insert(corr, e3_id.clone());
+        self.generation_fold_correlation.insert(corr, e3_id.clone());
+        let request = LbfvGenerationFoldRequest {
+            pk_proof: rows.pk_proofs[next_row as usize].clone(),
+            rlk_proof: rows.rlk_proofs[next_row as usize].clone(),
+            prior_accumulator: prior,
+            row_index: next_row,
+            trusted_limb_key_hash: rows.trusted_limb_key_hash.clone(),
+            params_preset: state.meta.params_preset,
+            committee_size: state.meta.committee_size,
+        };
+        if let Err(error) = self.bus.publish(
+            ComputeRequest::zk(ZkRequest::LbfvGenerationFold(request), corr, e3_id.clone()),
+            ec,
+        ) {
+            error!("NodeProofAggregator: failed to publish l-BFV generation fold for E3 {e3_id}: {error}");
+            state.fold_correlation = None;
+            self.fold_correlation.remove(&corr);
+            self.generation_fold_correlation.remove(&corr);
+        }
+    }
+
+    pub(in crate::actors::node_proof_aggregator) fn handle_generation_fold_response(
+        &mut self,
+        correlation_id: &CorrelationId,
+        proof: Proof,
+    ) {
+        let Some(e3_id) = self.generation_fold_correlation.remove(correlation_id) else {
+            return;
+        };
+        self.fold_correlation.remove(correlation_id);
+        if let Some(state) = self.states.get_mut(&e3_id) {
+            state.fold_correlation = None;
+        } else {
+            return;
+        }
+        self.generation_fold_accumulators
+            .insert(e3_id.clone(), proof);
+        self.generation_fold_next_rows
+            .entry(e3_id.clone())
+            .and_modify(|row| *row += 1)
+            .or_insert(1);
+        self.try_dispatch_node_dkg_fold(&e3_id);
+    }
+
+    fn try_dispatch_v2_node_fold(&mut self, e3_id: &E3id) {
+        let Some(state) = self.states.get_mut(e3_id) else {
+            return;
+        };
+        if state.fold_correlation.is_some() {
+            return;
+        }
+        let request = match state.build_fold_request() {
+            Ok(request) => request,
+            Err(error) => {
+                error!("NodeProofAggregator: failed to build V2 node fold for E3 {e3_id}: {error}");
+                return;
+            }
+        };
+        let corr = CorrelationId::new();
+        let ec = state.last_ec.clone();
+        state.fold_correlation = Some(corr);
+        self.fold_correlation.insert(corr, e3_id.clone());
+        self.v2_legacy_correlation.insert(corr, e3_id.clone());
+        if let Err(error) = self.bus.publish(
+            ComputeRequest::zk(ZkRequest::NodeDkgFold(request), corr, e3_id.clone()),
+            ec,
+        ) {
+            error!("NodeProofAggregator: failed to publish V2 node fold for E3 {e3_id}: {error}");
+            state.fold_correlation = None;
+            self.fold_correlation.remove(&corr);
+            self.v2_legacy_correlation.remove(&corr);
+        }
+    }
+
+    fn dispatch_v2_with_legacy_node_fold(&mut self, e3_id: &E3id, legacy_proof: Proof) {
+        let Some(c1_proof) = self
+            .states
+            .get(e3_id)
+            .and_then(|state| state.buffer.get(&1))
+            .cloned()
+        else {
+            return;
+        };
+        let Some(state) = self.states.get_mut(e3_id) else {
+            return;
+        };
+        let Some(generation_proof) = self.generation_fold_accumulators.get(e3_id).cloned() else {
+            return;
+        };
+        let corr = CorrelationId::new();
+        let ec = state.last_ec.clone();
+        let request = NodeDkgFoldV2Request {
+            legacy_node_fold_proof: legacy_proof,
+            c1_proof,
+            generation_proof,
+            party_id: state.meta.party_id,
+            params_preset: state.meta.params_preset,
+            committee_size: state.meta.committee_size,
+        };
+        state.fold_correlation = Some(corr);
+        self.fold_correlation.insert(corr, e3_id.clone());
+        if let Err(error) = self.bus.publish(
+            ComputeRequest::zk(ZkRequest::NodeDkgFoldV2(request), corr, e3_id.clone()),
+            ec,
+        ) {
+            error!("NodeProofAggregator: failed to publish V2 node fold for E3 {e3_id}: {error}");
+            state.fold_correlation = None;
+            self.fold_correlation.remove(&corr);
+        }
+    }
+
     pub(in crate::actors::node_proof_aggregator) fn handle_node_dkg_response(
         &mut self,
         correlation_id: &CorrelationId,
@@ -226,6 +412,14 @@ impl NodeProofAggregator {
         let Some(e3_id) = self.fold_correlation.remove(correlation_id) else {
             return;
         };
+
+        if self.v2_legacy_correlation.remove(correlation_id).is_some() {
+            if let Some(state) = self.states.get_mut(&e3_id) {
+                state.fold_correlation = None;
+            }
+            self.dispatch_v2_with_legacy_node_fold(&e3_id, proof);
+            return;
+        }
 
         let Some(state) = self.states.remove(&e3_id) else {
             error!(

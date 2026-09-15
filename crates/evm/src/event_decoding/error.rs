@@ -57,11 +57,13 @@ pub fn format_evm_error(err: &anyhow::Error) -> String {
     decode_error_from_str(&error_str).unwrap_or(error_str)
 }
 
-/// Return true when an error contains exactly this parameterless custom-error selector.
+/// Return true when an error contains an ABI-shaped custom-error payload with this selector.
 pub(crate) fn contains_error_selector(error_str: &str, selector: [u8; 4]) -> bool {
-    extract_all_hex_blobs(error_str)
-        .iter()
-        .any(|data| data.as_slice() == selector)
+    extract_all_hex_blobs(error_str).iter().any(|data| {
+        data.starts_with(&selector)
+            && data.len() >= selector.len()
+            && (data.len() - selector.len()).is_multiple_of(32)
+    })
 }
 
 /// Extract all hex blobs (0x...) with at least 4 bytes (8 hex chars) from a string.
@@ -155,7 +157,7 @@ mod tests {
     }
 
     #[test]
-    fn selector_match_requires_the_exact_revert_payload() {
+    fn selector_match_requires_an_abi_shaped_revert_payload() {
         let selector = ICiphernodeRegistry::CommitteeAlreadyFinalized::SELECTOR;
         let tx_hash = format!("{}{}", hex::encode(selector), "00".repeat(28));
         assert!(!contains_error_selector(
@@ -164,6 +166,14 @@ mod tests {
         ));
         assert!(contains_error_selector(
             &format!("revert data: 0x{}", hex::encode(selector)),
+            selector
+        ));
+        assert!(contains_error_selector(
+            &format!(
+                "revert data: 0x{}{}",
+                hex::encode(selector),
+                "00".repeat(32)
+            ),
             selector
         ));
     }

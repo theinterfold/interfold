@@ -17,11 +17,16 @@ describe("MockE3Program", function () {
       fragment.type === "function" && "name" in fragment ? [fragment.name] : [],
     );
 
+    // `supportsInterface` is pure. Interfold probes it with ERC-165 before it
+    // registers a program, so the mock must advertise the interfaces it
+    // implements. It adds no mutable state.
     expect(functionNames).to.have.members([
       "ENCRYPTION_SCHEME_ID",
       "publishInput",
+      "supportsInterface",
       "validate",
       "verify",
+      "verifyDataAvailability",
     ]);
   });
 
@@ -49,5 +54,14 @@ describe("MockE3Program", function () {
     expect(await program.validate.staticCall(1, 2, "0x", "0x", "0x")).to.equal(
       scheme,
     );
+
+    const object = "0x1234";
+    const contentHash = ethers.keccak256(object);
+    expect(
+      await program.verifyDataAvailability.staticCall(contentHash, object),
+    ).to.deep.equal([contentHash, 1n, 1n]);
+    await expect(
+      program.verifyDataAvailability.staticCall(ethers.ZeroHash, object),
+    ).to.be.revertedWithCustomError(program, "InvalidDataAvailabilityProof");
   });
 });

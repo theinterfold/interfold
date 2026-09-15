@@ -12,8 +12,8 @@ use thiserror::Error as ThisError;
 
 pub use client::VerifiableEncryptionResult;
 pub use client::{
-    bfv_encrypt, bfv_verifiable_encrypt, compute_ct_commitment, compute_pk_commitment,
-    validate_pk_commitment,
+    bfv_encrypt, bfv_verifiable_encrypt, compute_ct_commitment, compute_ct_commitment_with_params,
+    compute_pk_commitment, validate_pk_commitment,
 };
 
 #[derive(ThisError, Debug)]

@@ -22,9 +22,12 @@ use std::{
     collections::HashMap,
     env, fs,
     path::{Path, PathBuf},
+    process::Command,
 };
 
-use risc0_build::{embed_methods_with_options, DockerOptionsBuilder, GuestOptionsBuilder};
+use risc0_build::{
+    embed_methods_with_options, DockerOptionsBuilder, GuestListEntry, GuestOptionsBuilder,
+};
 use risc0_build_ethereum::generate_solidity_files;
 
 // Paths where the generated Solidity files will be written.
@@ -42,19 +45,13 @@ fn use_docker() -> bool {
     )
 }
 
-/// The guest builder image tag, derived from `ARG RISC0_TOOLCHAIN` in `crates/support/Dockerfile`.
+/// Builds and returns the pinned guest-builder image tag.
 ///
-/// risc0-build does not read that Dockerfile — it generates its own and, left alone, uses its
-/// compiled-in default tag. For risc0-build 3.0.3 that default is `r0.1.88.0`, which carries rustc
-/// 1.88, while the guest's dependency tree pins fhe.rs at an MSRV of 1.91.1. The guest then fails
-/// to compile inside the container with an MSRV error, and the Dockerfile that says 1.91.1 has no
-/// bearing on it.
-///
-/// Reading the tag from `ARG RISC0_TOOLCHAIN` is what ties the two together: the toolchain the
-/// Dockerfile declares becomes the toolchain the ELF is actually built with, rather than the two
-/// being independent values that happen to agree.
+/// risc0-build generates its own Dockerfile. Its default image has the wrong Rust version for the
+/// pinned fhe.rs dependency and does not contain `protoc`. Build the small checked-in layer first,
+/// then tell risc0-build to use it for the deterministic guest build.
 fn guest_builder_tag(support_dir: &Path) -> String {
-    let dockerfile = support_dir.join("Dockerfile");
+    let dockerfile = support_dir.join("methods/guest-builder.Dockerfile");
     println!("cargo:rerun-if-changed={}", dockerfile.display());
 
     let source = fs::read_to_string(&dockerfile).unwrap_or_else(|e| {
@@ -76,7 +73,74 @@ fn guest_builder_tag(support_dir: &Path) -> String {
         dockerfile.display()
     );
 
-    format!("r0.{toolchain}")
+    let tag = format!("interfold-r0.{toolchain}-protoc-v1");
+    let image = format!("risczero/risc0-guest-builder:{tag}");
+    let status = Command::new("docker")
+        .args([
+            "build",
+            "--platform",
+            "linux/amd64",
+            "--load",
+            "--provenance=false",
+            "--tag",
+            &image,
+            "--file",
+        ])
+        .arg(&dockerfile)
+        .arg(support_dir)
+        .status()
+        .unwrap_or_else(|e| panic!("cannot start Docker to build {image}: {e}"));
+    assert!(
+        status.success(),
+        "failed to build the pinned RISC Zero guest-builder image {image}"
+    );
+
+    tag
+}
+
+/// Copies each Docker-built ELF to the path used by the upload command.
+fn copy_docker_elves_to_release(guests: &[GuestListEntry]) {
+    for guest in guests {
+        let source = Path::new(guest.path.as_ref());
+        let docker_dir = source.parent().unwrap_or_else(|| {
+            panic!(
+                "Docker guest ELF has no parent directory: {}",
+                source.display()
+            )
+        });
+        if docker_dir.file_name().and_then(|name| name.to_str()) != Some("docker") {
+            panic!(
+                "Docker guest ELF is outside the Docker profile: {}",
+                source.display()
+            );
+        }
+
+        let profile_root = docker_dir.parent().unwrap_or_else(|| {
+            panic!(
+                "Docker guest profile has no parent: {}",
+                docker_dir.display()
+            )
+        });
+        let release_dir = profile_root.join("release");
+        fs::create_dir_all(&release_dir).unwrap_or_else(|e| {
+            panic!(
+                "cannot create upload artifact directory {}: {e}",
+                release_dir.display()
+            )
+        });
+
+        let file_name = source
+            .file_name()
+            .unwrap_or_else(|| panic!("Docker guest ELF has no file name: {}", source.display()));
+        let destination = release_dir.join(file_name);
+        fs::copy(source, &destination).unwrap_or_else(|e| {
+            panic!(
+                "cannot copy Docker guest ELF from {} to {}: {e}",
+                source.display(),
+                destination.display()
+            )
+        });
+    }
 }
 
 fn main() {
@@ -86,9 +150,13 @@ fn main() {
     println!("cargo:rerun-if-env-changed=RISC0_USE_DOCKER");
     println!("cargo:rerun-if-changed=build.rs");
     let manifest_dir = PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").unwrap());
+    let reproducible = use_docker();
     let mut builder = GuestOptionsBuilder::default();
-    if use_docker() {
+    if reproducible {
         let support_dir = manifest_dir.join("../");
+        // The official guest-builder image is linux/amd64. Set the platform for the nested Docker
+        // build as well, so Apple Silicon developers produce the same ELF as CI.
+        env::set_var("DOCKER_DEFAULT_PLATFORM", "linux/amd64");
         let docker_options = DockerOptionsBuilder::default()
             .root_dir(support_dir.clone())
             .docker_container_tag(guest_builder_tag(&support_dir))
@@ -101,13 +169,24 @@ fn main() {
     // Generate Rust source files for the methods crate.
     let guests = embed_methods_with_options(HashMap::from([("guests", guest_options)]));
 
-    if std::env::var("SKIP_SOLIDITY").unwrap_or_default() != "1" {
+    if reproducible {
+        copy_docker_elves_to_release(&guests);
+    }
+
+    // A native guest build is useful for local development, but its image ID can vary with the
+    // host toolchain. Never let such a build replace the production trust anchor checked into the
+    // repository. Only the pinned Docker build may update ImageID.sol and Elf.sol.
+    if reproducible && std::env::var("SKIP_SOLIDITY").unwrap_or_default() != "1" {
         // Generate Solidity source files for use with Forge.
         let solidity_opts = risc0_build_ethereum::Options::default()
             .with_image_id_sol_path(SOLIDITY_IMAGE_ID_PATH)
             .with_elf_sol_path(SOLIDITY_ELF_PATH);
         generate_solidity_files(guests.as_slice(), &solidity_opts).unwrap();
+    } else if !reproducible {
+        println!(
+            "cargo:warning=Skipping Solidity codegen for a non-reproducible native guest build"
+        );
     } else {
-        println!("cargo:warning=Skipping solidity codegen (SKIP_SOLIDITY set)");
+        println!("cargo:warning=Skipping Solidity codegen (SKIP_SOLIDITY set)");
     }
 }

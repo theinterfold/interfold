@@ -8,12 +8,13 @@ use crate::compute_input::{ComputeError, FHEInputs, PublishedData};
 use crate::policy::{InputPolicy, PublishedInput};
 use ark_bn254::Fr;
 use ark_ff::{BigInt, BigInteger};
-use e3_bfv_client::client::compute_ct_commitment;
+use e3_bfv_client::client::compute_ct_commitment_with_params;
 use fhe::bfv::BfvParameters;
 use light_poseidon::{Poseidon, PoseidonHasher};
 use num_bigint::BigUint;
 use num_traits::Num;
 use std::str::FromStr;
+use std::sync::Arc;
 use zk_kit_imt::imt::IMT;
 
 pub struct MerkleTreeBuilder {
@@ -56,12 +57,9 @@ impl MerkleTreeBuilder {
         &mut self,
         inputs: &FHEInputs,
         published: &[PublishedData],
-        params: &BfvParameters,
+        params: &Arc<BfvParameters>,
         policy: InputPolicy,
     ) -> Result<Vec<(Vec<u8>, u64)>, ComputeError> {
-        let degree = params.degree();
-        let plaintext_modulus = params.plaintext();
-        let moduli = params.moduli().to_vec();
         let empty = PublishedData::default();
 
         let entries: Vec<PublishedInput> = inputs
@@ -79,13 +77,7 @@ impl MerkleTreeBuilder {
                     // published bytes back to what the E3 program proved, and it needs the BFV
                     // parameters. A ciphertext that does not deserialize yields `None`, which is an
                     // unusable input rather than a failure — the bytes are untrusted.
-                    recomputed: compute_ct_commitment(
-                        ciphertext.clone(),
-                        degree,
-                        plaintext_modulus,
-                        moduli.clone(),
-                    )
-                    .ok(),
+                    recomputed: compute_ct_commitment_with_params(ciphertext, params).ok(),
                 }
             })
             .collect();

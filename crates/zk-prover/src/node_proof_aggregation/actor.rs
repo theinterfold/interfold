@@ -16,14 +16,22 @@ use e3_events::{
     CorrelationId, DKGInnerProofReady, DKGRecursiveAggregationComplete, DkgFoldAttestationContext,
     DkgFoldAttestationContextEstablished, DkgFoldAttestationPayload, E3Failed, E3Stage, E3id,
     EventContext, EventPublisher, EventSubscriber, EventType, FailureReason, InterfoldEvent,
-    InterfoldEventData, Proof, Sequenced, SignedDkgFoldAttestation, ThresholdSharePending,
-    TypedEvent, ZkRequest, ZkResponse, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+    InterfoldEventData, LbfvKeyShareDocument, LbfvKeyShareDocumentCreated, Proof, Sequenced,
+    SignedDkgFoldAttestation, ThresholdSharePending, TypedEvent, ZkRequest, ZkResponse,
+    DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
 };
 use e3_fhe_params::build_pair_for_preset;
-use tracing::{error, info, warn};
+use e3_utils::ArcBytes;
+use tracing::{debug, error, info, warn};
 
 use crate::domain::node_dkg_fold::{DkgProofCollectionState, NodeDkgFoldMeta};
 use crate::node_fold_public::extract_node_fold_agg_commits;
+
+struct LbfvGenerationRows {
+    pk_proofs: Vec<Proof>,
+    rlk_proofs: Vec<Proof>,
+    trusted_limb_key_hash: ArcBytes,
+}
 /// Actor that collects DKG inner proofs and dispatches a single [`ZkRequest::NodeDkgFold`].
 pub struct NodeProofAggregator {
     bus: BusHandle,
@@ -35,7 +43,12 @@ pub struct NodeProofAggregator {
     dkg_fold_attestation_contexts_by_chain: HashMap<u64, Option<DkgFoldAttestationContext>>,
     states: HashMap<E3id, DkgProofCollectionState>,
     fold_correlation: HashMap<CorrelationId, E3id>,
+    generation_fold_correlation: HashMap<CorrelationId, E3id>,
+    v2_legacy_correlation: HashMap<CorrelationId, E3id>,
     pending_inner_proofs: HashMap<E3id, BTreeMap<usize, Proof>>,
+    generation_fold_accumulators: HashMap<E3id, Proof>,
+    generation_fold_next_rows: HashMap<E3id, u32>,
+    generation_fold_rows: HashMap<E3id, LbfvGenerationRows>,
 }
 
 impl NodeProofAggregator {
@@ -54,7 +67,12 @@ impl NodeProofAggregator {
             dkg_fold_attestation_contexts_by_chain,
             states: HashMap::new(),
             fold_correlation: HashMap::new(),
+            generation_fold_correlation: HashMap::new(),
+            v2_legacy_correlation: HashMap::new(),
             pending_inner_proofs: HashMap::new(),
+            generation_fold_accumulators: HashMap::new(),
+            generation_fold_next_rows: HashMap::new(),
+            generation_fold_rows: HashMap::new(),
         }
     }
 
@@ -78,6 +96,7 @@ impl NodeProofAggregator {
             addr.clone().into(),
         );
         bus.subscribe(EventType::ThresholdSharePending, addr.clone().into());
+        bus.subscribe(EventType::LbfvKeyShareDocumentCreated, addr.clone().into());
         bus.subscribe(EventType::DKGInnerProofReady, addr.clone().into());
         bus.subscribe(EventType::ComputeResponse, addr.clone().into());
         bus.subscribe(EventType::ComputeRequestError, addr.clone().into());

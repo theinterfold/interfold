@@ -215,3 +215,154 @@ async fn test_publishes_document_fails_with_exponential_backoff() -> Result<()> 
 
     Ok(())
 }
+
+#[actix::test]
+async fn targeted_lbfv_fetch_publishes_validated_document() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _rx, history, _, _) = setup_test()?;
+    let (document, _) = lbfv_documents();
+    let request = lbfv_fetch_request(&document, 1);
+    let value = ArcBytes::from_bytes(&document.to_bytes()?);
+
+    bus.publish_without_context(request.clone())?;
+    let Some(NetCommand::DhtGetRecord {
+        correlation_id,
+        key,
+    }) = timeout(Duration::from_secs(1), net_cmd_rx.recv())
+        .await
+        .expect("did not receive targeted DhtGetRecord")
+    else {
+        bail!("msg not as expected");
+    };
+    assert_eq!(key.as_ref(), request.request().content_hash.as_slice());
+    net_evt_tx.send(NetEvent::DhtGetRecordSucceeded {
+        key,
+        correlation_id,
+        value,
+    })?;
+
+    sleep(Duration::from_millis(100)).await;
+    let events = history.send(GetEvents::new()).await?;
+    let received = events.iter().find_map(|event| match event.get_data() {
+        InterfoldEventData::LbfvKeyShareDocumentReceived(received) => Some(received),
+        _ => None,
+    });
+    let received = received.expect("targeted fetch did not publish the l-BFV document");
+    assert_eq!(received.document, document);
+    assert_eq!(received.content_hash, request.request().content_hash);
+    assert!(!events.iter().any(|event| matches!(
+        event.get_data(),
+        InterfoldEventData::LbfvKeyShareDocumentFetchFailed(_)
+    )));
+    Ok(())
+}
+
+#[actix::test]
+async fn targeted_lbfv_fetch_reports_unavailable_after_bounded_retries() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _rx, history, _, _) = setup_test()?;
+    let (document, _) = lbfv_documents();
+    let request = lbfv_fetch_request(&document, 2);
+
+    bus.publish_without_context(request.clone())?;
+    for _ in 0..4 {
+        let Some(NetCommand::DhtGetRecord {
+            correlation_id,
+            key,
+        }) = timeout(Duration::from_secs(15), net_cmd_rx.recv())
+            .await
+            .expect("did not receive targeted DhtGetRecord retry")
+        else {
+            bail!("msg not as expected");
+        };
+        net_evt_tx.send(NetEvent::DhtGetRecordError {
+            correlation_id,
+            error: GetRecordError::Timeout {
+                key: RecordKey::new(&key),
+            },
+        })?;
+    }
+
+    sleep(Duration::from_millis(100)).await;
+    let events = history.send(GetEvents::new()).await?;
+    let failure = events.iter().find_map(|event| match event.get_data() {
+        InterfoldEventData::LbfvKeyShareDocumentFetchFailed(failure) => Some(failure.failure()),
+        _ => None,
+    });
+    let failure = failure.expect("targeted fetch did not publish an unavailable failure");
+    assert_eq!(
+        failure.failure_class,
+        LbfvKeyShareDocumentFetchFailureClass::Unavailable
+    );
+    assert_eq!(failure.attempt, 2);
+    assert!(failure.retry_at.is_some());
+    assert!(!events.iter().any(|event| matches!(
+        event.get_data(),
+        InterfoldEventData::LbfvKeyShareDocumentReceived(_)
+    )));
+    Ok(())
+}
+
+#[actix::test]
+async fn targeted_lbfv_fetch_rejects_malformed_and_wrong_role_documents() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _rx, history, _, _) = setup_test()?;
+    let (public_key, relinearization_key) = lbfv_documents();
+
+    let malformed = ArcBytes::from_bytes(b"not an l-BFV document");
+    let mut malformed_request = lbfv_fetch_request(&public_key, 1);
+    let LbfvKeyShareDocumentFetchRequested::V1(identity) = &mut malformed_request;
+    identity.content_hash = e3_events::lbfv_document_hash(&malformed);
+    bus.publish_without_context(malformed_request)?;
+    let Some(NetCommand::DhtGetRecord {
+        correlation_id,
+        key,
+    }) = timeout(Duration::from_secs(1), net_cmd_rx.recv())
+        .await
+        .expect("did not receive malformed-document fetch")
+    else {
+        bail!("msg not as expected");
+    };
+    net_evt_tx.send(NetEvent::DhtGetRecordSucceeded {
+        correlation_id,
+        key,
+        value: malformed,
+    })?;
+
+    let mut wrong_role_request = lbfv_fetch_request(&relinearization_key, 1);
+    let LbfvKeyShareDocumentFetchRequested::V1(identity) = &mut wrong_role_request;
+    identity.role = LbfvKeyShareDocumentRole::PublicKey;
+    let wrong_role_value = ArcBytes::from_bytes(&relinearization_key.to_bytes()?);
+    bus.publish_without_context(wrong_role_request)?;
+    let Some(NetCommand::DhtGetRecord {
+        correlation_id,
+        key,
+    }) = timeout(Duration::from_secs(1), net_cmd_rx.recv())
+        .await
+        .expect("did not receive wrong-role fetch")
+    else {
+        bail!("msg not as expected");
+    };
+    net_evt_tx.send(NetEvent::DhtGetRecordSucceeded {
+        correlation_id,
+        key,
+        value: wrong_role_value,
+    })?;
+
+    sleep(Duration::from_millis(100)).await;
+    let events = history.send(GetEvents::new()).await?;
+    let failures: Vec<_> = events
+        .iter()
+        .filter_map(|event| match event.get_data() {
+            InterfoldEventData::LbfvKeyShareDocumentFetchFailed(failure) => Some(failure.failure()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(failures.len(), 2);
+    assert!(failures.iter().all(|failure| {
+        failure.failure_class == LbfvKeyShareDocumentFetchFailureClass::InvalidData
+            && failure.retry_at.is_none()
+    }));
+    assert!(!events.iter().any(|event| matches!(
+        event.get_data(),
+        InterfoldEventData::LbfvKeyShareDocumentReceived(_)
+    )));
+    Ok(())
+}

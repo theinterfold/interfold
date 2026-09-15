@@ -16,8 +16,8 @@ use e3_trbfv::{
     calculate_decryption_key::CalculateDecryptionKeyResponse,
     calculate_decryption_share::CalculateDecryptionShareResponse,
     calculate_threshold_decryption::CalculateThresholdDecryptionResponse,
-    gen_esi_sss::GenEsiSssResponse, gen_pk_share_and_sk_sss::GenPkShareAndSkSssResponse,
-    TrBFVResponse,
+    gen_esi_sss::GenEsiSssResponse, gen_lbfv_key_shares::GenLbfvKeySharesResponse,
+    gen_pk_share_and_sk_sss::GenPkShareAndSkSssResponse, TrBFVResponse,
 };
 use serde::{Deserialize, Serialize};
 
@@ -79,6 +79,7 @@ impl fmt::Display for ComputeRequest {
                 e3_trbfv::TrBFVRequest::CalculateThresholdDecryption(_) => {
                     "CalculateThresholdDecryption"
                 }
+                e3_trbfv::TrBFVRequest::GenLbfvKeyShares(_) => "GenLbfvKeyShares",
             },
             ComputeRequestKind::Zk(req) => match req {
                 ZkRequest::PkBfv(_) => "ZkPkBfv",
@@ -95,6 +96,15 @@ impl fmt::Display for ComputeRequest {
                 ZkRequest::NodesFoldStep(_) => "ZkNodesFoldStep",
                 ZkRequest::DkgAggregation(_) => "ZkDkgAggregation",
                 ZkRequest::DecryptionAggregation(_) => "ZkDecryptionAggregation",
+                ZkRequest::LbfvPkGeneration(_) => "ZkLbfvPkGeneration",
+                ZkRequest::RlkGeneration(_) => "ZkRlkGeneration",
+                ZkRequest::LbfvPkAggregation(_) => "ZkLbfvPkAggregation",
+                ZkRequest::RlkAggregation(_) => "ZkRlkAggregation",
+                ZkRequest::LbfvGenerationFold(_) => "ZkLbfvGenerationFold",
+                ZkRequest::NodeDkgFoldV2(_) => "ZkNodeDkgFoldV2",
+                ZkRequest::NodesFoldV2Step(_) => "ZkNodesFoldV2Step",
+                ZkRequest::LbfvAggregationFold(_) => "ZkLbfvAggregationFold",
+                ZkRequest::DkgAggregationV2(_) => "ZkDkgAggregationV2",
             },
         };
         write!(f, "{}", s)
@@ -260,6 +270,16 @@ impl TryFrom<ComputeResponse> for CalculateThresholdDecryptionResponse {
                     "Expected CalculateThresholdDecryptionResponse in response but it was not found"
                 )
             }
+        }
+    }
+}
+
+impl TryFrom<ComputeResponse> for GenLbfvKeySharesResponse {
+    type Error = anyhow::Error;
+    fn try_from(value: ComputeResponse) -> Result<Self, Self::Error> {
+        match value.response {
+            ComputeResponseKind::TrBFV(TrBFVResponse::GenLbfvKeyShares(data)) => Ok(data),
+            _ => bail!("Expected GenLbfvKeySharesResponse in response but it was not found"),
         }
     }
 }

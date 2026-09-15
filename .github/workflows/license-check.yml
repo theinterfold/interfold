@@ -6,47 +6,31 @@ on:
   pull_request:
     branches: [main, dev]
 
+permissions:
+  contents: read
+
+# Pull requests stay on GitHub-hosted runners. Only protected branch events use RunsOn.
+# Each RunsOn label embeds run id, attempt, and job ID so jobs never share runners.
 jobs:
   license-check:
-    runs-on: ubuntu-latest
+    runs-on:
+      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
+      'license-check') || 'ubuntu-latest' }}
     name: Check SPDX License Headers
     outputs:
       needs-fix: ${{ steps.check-headers.outcome == 'failure' }}
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
 
       - name: Check license headers
         id: check-headers
         run: ./scripts/check-license-headers.sh --check-only
         continue-on-error: true
-
-      - name: Comment on PR if headers are missing
-        if: steps.check-headers.outcome == 'failure' && github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: `❌ **License Header Check Failed**
-              
-              Some files are missing the required SPDX license header. Please add the following header to the beginning of all \`.js\`, \`.jsx\`, \`.nr\`, \`.rs\`, \`.sol\`, \`.ts\`, and \`.tsx\` files:
-              
-              \`\`\`
-              // SPDX-License-Identifier: LGPL-3.0-only
-              //
-              // This file is provided WITHOUT ANY WARRANTY;
-              // without even the implied warranty of MERCHANTABILITY
-              // or FITNESS FOR A PARTICULAR PURPOSE.
-              \`\`\`
-              
-              You can run \`./scripts/check-license-headers.sh --fix\` locally to automatically add missing headers, then commit the changes.
-              
-              Or run \`./scripts/check-license-headers.sh\` to see which files need headers.`
-            })
 
       - name: Fail job if headers are missing (PR only)
         if: steps.check-headers.outcome == 'failure' && github.event_name == 'pull_request'

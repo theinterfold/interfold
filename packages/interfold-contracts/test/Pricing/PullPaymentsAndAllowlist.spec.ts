@@ -8,7 +8,6 @@ import type { MockBlacklistUSDC } from "../../types";
 import { MockFeeOnTransferToken__factory as MockFeeOnTransferTokenFactory } from "../../types";
 import {
   ACTIVE_CRYPTO_CONFIG_ID,
-  SORTITION_SUBMISSION_WINDOW,
   currentPricingConfig,
   DATA as data,
   deployInterfoldSystem,
@@ -16,6 +15,7 @@ import {
   ethers,
   networkHelpers,
   PROOF as proof,
+  publishAvailableCiphertextOutput,
   setPricingConfig,
 } from "../fixtures";
 
@@ -31,11 +31,12 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
     publicKey: string,
     operators: Signer[],
   ) => {
-    await networkHelpers.mine(1);
+    await time.increase(1);
     for (const operator of operators) {
       await registry.connect(operator).submitTicket(e3Id, 1);
     }
-    await time.increase(SORTITION_SUBMISSION_WINDOW + 1);
+    const deadline = await registry.getCommitteeDeadline(e3Id);
+    await time.setNextBlockTimestamp(deadline + 1n);
     await registry.finalizeCommittee(e3Id);
     const pkCommitment = ethers.keccak256(publicKey);
     await registry.publishCommittee(
@@ -154,7 +155,8 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
       operator3,
     ]);
     await time.increase(inputWindowDuration + 200);
-    await interfold.publishCiphertextOutput(
+    await publishAvailableCiphertextOutput(
+      interfold,
       e3Id,
       data,
       ethers.keccak256(data),
@@ -209,7 +211,8 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
         [ctx.operator1, ctx.operator2, ctx.operator3],
       );
       await time.increase(inputWindowDuration + 200);
-      await interfold.publishCiphertextOutput(
+      await publishAvailableCiphertextOutput(
+        interfold,
         e3Id2,
         data,
         ethers.keccak256(data),
@@ -237,6 +240,29 @@ describe("Interfold — pull payments + fee-token allow-list", function () {
   // ─────────────────────────────────────────────────────────────────────────
 
   describe("M-02 — treasury pull isolates failures", function () {
+    it("does not credit treasury until the request payment is in custody", async function () {
+      const ctx = await loadFixture(fixturePlain);
+      const { interfold, feeToken, treasury, request } = ctx;
+      const e3Program = await ethers.getContractAt(
+        "MockE3ProgramHarness",
+        request.e3Program,
+      );
+      const treasuryAddress = await treasury.getAddress();
+      const tokenAddress = await feeToken.getAddress();
+
+      await e3Program.observeTreasuryDuringValidation(
+        treasuryAddress,
+        tokenAddress,
+      );
+      await feeToken.approve(await interfold.getAddress(), ethers.MaxUint256);
+      await interfold.request(request);
+
+      expect(await e3Program.pendingTreasuryDuringValidation()).to.equal(0n);
+      expect(
+        await interfold.pendingTreasuryClaim(treasuryAddress, tokenAddress),
+      ).to.be.gt(0n);
+    });
+
     it("blacklisting treasury does not brick publishPlaintextOutput; other claimants unaffected", async function () {
       const ctx = await loadFixture(fixtureBlacklist);
       const { interfold, feeToken, treasury, owner } = ctx;

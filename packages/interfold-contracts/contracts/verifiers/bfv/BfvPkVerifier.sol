@@ -59,7 +59,7 @@ contract BfvPkVerifier is IPkVerifier {
     uint256 internal immutable committeeHashLoIdx;
 
     /// @dev Total expected length of EVM public inputs for `dkg_aggregator`.
-    uint256 internal immutable expectedPublicInputsLen;
+    uint256 public immutable expectedPublicInputsLen;
 
     /// @dev Index of `pkCommitment` (last return field).
     uint256 internal immutable pkCommitmentIdx;

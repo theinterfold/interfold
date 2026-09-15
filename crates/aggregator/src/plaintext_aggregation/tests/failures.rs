@@ -62,6 +62,7 @@ async fn insufficient_honest_c6_shares_emit_e3_failed() -> Result<()> {
         ShareVerificationComplete {
             e3_id: e3_id.clone(),
             kind: VerificationKind::ThresholdDecryptionProofs,
+            verification_id: None,
             dishonest_parties: BTreeSet::from([1]),
         },
         test_ctx(E3Failed {

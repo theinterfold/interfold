@@ -22,6 +22,19 @@ fn update_request_registry(
     true
 }
 
+fn into_public_key_publication(data: e3_events::LbfvPublicKeyAggregated) -> PublicKeyAggregated {
+    PublicKeyAggregated {
+        pubkey: data.pubkey,
+        e3_id: data.e3_id,
+        nodes: data.nodes,
+        committee_addresses: data.committee_addresses,
+        honest_committee_addresses: data.honest_committee_addresses,
+        pk_commitment: data.pk_commitment,
+        dkg_aggregator_proof: Some(data.dkg_aggregator_v2_proof),
+        dkg_attestation_bundle: data.dkg_attestation_bundle,
+    }
+}
+
 fn mark_request_complete(
     active_aggregators: &mut HashMap<E3id, bool>,
     completed_requests: &mut HashSet<E3id>,
@@ -136,6 +149,12 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                 if source == EventSource::Local && self.provider.chain_id() == data.e3_id.chain_id()
                 {
                     ctx.notify(data);
+                }
+            }
+            InterfoldEventData::LbfvPublicKeyAggregated(data) => {
+                if source == EventSource::Local && self.provider.chain_id() == data.e3_id.chain_id()
+                {
+                    ctx.notify(into_public_key_publication(data));
                 }
             }
             InterfoldEventData::CommitteeFinalizeRequested(data) => {
@@ -385,13 +404,14 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitCommitteeFina
 #[cfg(test)]
 mod tests {
     use super::{
-        finish_completed_publication, mark_request_complete,
+        finish_completed_publication, into_public_key_publication, mark_request_complete,
         settle_publication_for_completed_request, update_request_registry, ReplaySubmissionGate,
     };
     use alloy::primitives::Address;
     use e3_events::{
-        DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3id, OrderedSet,
-        PublicKeyAggregated, DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
+        CircuitName, DkgFoldAttestationContext, DkgFoldAttestationContextEstablished, E3id,
+        LbfvPublicKeyAggregated, OrderedSet, Proof, PublicKeyAggregated,
+        DKG_FOLD_ATTESTATION_CONTEXT_SCHEMA_VERSION,
     };
     use e3_utils::ArcBytes;
     use std::collections::{HashMap, HashSet};
@@ -430,6 +450,43 @@ mod tests {
 
         assert!(!update_request_registry(&mut registries, &event));
         assert!(!registries.contains_key(&e3_id));
+    }
+
+    #[test]
+    fn lbfv_publication_preserves_proof_and_attestation_payloads() {
+        let e3_id = E3id::new("9", 1);
+        let event = LbfvPublicKeyAggregated {
+            pubkey: ArcBytes::from_bytes(&[1, 2, 3]),
+            e3_id: e3_id.clone(),
+            nodes: OrderedSet::from_iter(["node".to_owned()]),
+            committee_addresses: vec![Address::repeat_byte(1)],
+            honest_committee_addresses: vec![Address::repeat_byte(1)],
+            pk_commitment: [7; 32],
+            dkg_aggregator_v2_proof: Proof::new(
+                CircuitName::DkgAggregatorV2,
+                ArcBytes::from_bytes(&[4]),
+                ArcBytes::from_bytes(&[5]),
+            ),
+            dkg_attestation_bundle: Some(ArcBytes::from_bytes(&[6, 7])),
+        };
+
+        let publication: PublicKeyAggregated = into_public_key_publication(event);
+
+        assert_eq!(publication.e3_id, e3_id);
+        assert_eq!(
+            publication
+                .dkg_aggregator_proof
+                .as_ref()
+                .map(|proof| proof.circuit),
+            Some(CircuitName::DkgAggregatorV2)
+        );
+        assert_eq!(
+            publication
+                .dkg_attestation_bundle
+                .as_ref()
+                .map(|bundle| bundle.as_ref()),
+            Some(&[6, 7][..])
+        );
     }
 
     fn publication_intent(e3_id: &E3id) -> PublicKeyAggregated {
@@ -562,11 +619,16 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPublicKey>
                         false
                     }
                     Err(err) => {
+                        let terminal = committee_publication_error_is_terminal(&err);
                         error!(
                             "Failed to preflight publishCommittee: {}",
                             format_evm_error(&err)
                         );
-                        return (e3_id, false);
+                        if terminal {
+                            error!(e3_id = %e3_id, "Committee publication failed permanently; stopping retries");
+                        }
+                        bus.err(EType::Evm, err);
+                        return (e3_id, terminal);
                     }
                     Ok(true) => true,
                 };
@@ -607,12 +669,16 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<SubmitPublicKey>
                 match result {
                     Ok(()) => (e3_id, true),
                     Err(err) => {
+                        let terminal = committee_publication_error_is_terminal(&err);
                         error!(
                             "Failed to publish committee data: {}",
                             format_evm_error(&err)
                         );
+                        if terminal {
+                            error!(e3_id = %e3_id, "Committee publication failed permanently; stopping retries");
+                        }
                         bus.err(EType::Evm, err);
-                        (e3_id, false)
+                        (e3_id, terminal)
                     }
                 }
             }

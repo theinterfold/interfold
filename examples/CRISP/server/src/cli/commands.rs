@@ -15,7 +15,6 @@ use super::approve;
 use super::CLI_DB;
 use alloy::primitives::{Address, Bytes, U256};
 use alloy::providers::{Provider, ProviderBuilder};
-use alloy::sol;
 use alloy::sol_types::SolValue;
 use anyhow::anyhow;
 use crisp::config::CONFIG;
@@ -31,19 +30,6 @@ use fhe_traits::{
 };
 use rand::rng;
 use std::sync::Arc;
-
-sol! {
-    #[sol(rpc)]
-    interface CiphernodeRegistryReadiness {
-        event CommitteePublished(
-            uint256 indexed e3Id,
-            address[] nodes,
-            bytes publicKey,
-            bytes32 pkCommitment,
-            bytes proof
-        );
-    }
-}
 
 // Legacy interactive CLI flows; kept for revival alongside the HTTP server path.
 #[allow(dead_code)]
@@ -219,18 +205,24 @@ pub async fn get_current_timestamp() -> Result<u64, Box<dyn std::error::Error + 
 pub async fn check_committee_key_published(
     e3_id: &str,
 ) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-    let e3_id = U256::from_str_radix(e3_id, 10)?;
-    let provider = ProviderBuilder::new().connect(&CONFIG.http_rpc_url).await?;
-    let registry_address: Address = CONFIG.ciphernode_registry_address.parse()?;
-    let registry = CiphernodeRegistryReadiness::new(registry_address, provider);
-    let events = registry
-        .CommitteePublished_filter()
-        .from_block(0)
-        .topic1(e3_id)
-        .query()
+    let e3_id = U256::from_str_radix(e3_id, 10)?.to_string();
+    let response = Client::new()
+        .post(format!(
+            "{}/rounds/public-key",
+            CONFIG.interfold_server_url_for_clients()
+        ))
+        .json(&PKRequest {
+            round_id: e3_id,
+            pk_bytes: Vec::new(),
+        })
+        .send()
         .await?;
 
-    Ok(!events.is_empty())
+    if response.status() == reqwest::StatusCode::NOT_FOUND {
+        return Ok(false);
+    }
+    response.error_for_status()?;
+    Ok(true)
 }
 
 pub async fn initialize_crisp_round(

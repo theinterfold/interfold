@@ -25,6 +25,7 @@ pub use actors::{
     ShareVerificationActor, ZkVerificationRequest, ZkVerificationResponse,
 };
 pub use domain::commitment_links::default_links;
+pub use domain::commitment_links::lbfv_share_transport::validate_lbfv_key_share_document_commitments;
 
 pub use backend::{SetupStatus, ZkBackend};
 pub use circuits::aggregation::c2_terminal_validation::{
@@ -40,9 +41,17 @@ pub use circuits::aggregation::node_dkg_fold::{
 pub use circuits::aggregation::nodes_fold_accumulator::{
     generate_nodes_fold_step, generate_sequential_nodes_fold,
 };
+pub use circuits::aggregation::v2::{
+    prove_dkg_aggregation_v2, prove_lbfv_aggregation_fold_step, prove_lbfv_generation_fold_step,
+    prove_node_dkg_fold_v2, prove_nodes_fold_v2_step,
+};
 pub use circuits::dkg::share_computation::{
     prove_chunked_share_computation, prove_chunked_share_computation_with_chunk_size,
     ChunkedShareComputationProofs, DEFAULT_C2_CHUNK_SIZE,
+};
+pub use circuits::threshold::rlk_generation::{
+    finalize_rlk_generation_row, load_staged_rlk_generation_limb_vk_hash, prove_rlk_generation_row,
+    validate_rlk_generation_terminal_proof, RlkGenerationRowProof,
 };
 pub use config::{verify_checksum, BbTarget, CircuitInfo, VersionInfo, ZkConfig};
 pub use dkg_attestation_bundle::encode_dkg_attestation_bundle;

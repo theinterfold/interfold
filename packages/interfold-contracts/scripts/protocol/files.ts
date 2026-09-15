@@ -36,6 +36,10 @@ export function resolvePath(input: string): string {
   return path.join(repoRoot, input);
 }
 
+export function repoRelativePath(input: string): string {
+  return path.relative(repoRoot, input).split(path.sep).join("/");
+}
+
 export function defaultConfigPath(): string {
   return path.join(protocolDir, `${networkName()}-protocol.config.json`);
 }

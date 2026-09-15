@@ -22,9 +22,9 @@ import { fileURLToPath } from 'node:url'
 import { circuitSourcesDigest } from './circuit-sources.mjs'
 
 const CRISP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
-const PRESETS = ['insecure', 'secure-8192']
+const PRESETS = ['insecure', 'secure-8192', 'secure-16384']
 
-const RESTAGE = 'Run `pnpm build:presets` for one preset, or `pnpm build:presets:all` for both presets, from examples/CRISP.'
+const RESTAGE = 'Run `pnpm build:presets` for one preset, or `pnpm build:presets:all` for all presets, from examples/CRISP.'
 
 const fail = (...lines) => {
   for (const line of lines) console.error(line)

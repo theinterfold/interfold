@@ -15,7 +15,11 @@ impl ThresholdKeyshare {
                 failed_at_stage,
                 reason,
             })
-        })
+        })?;
+        if let Err(error) = self.discard_pending_lbfv_generation() {
+            error!("Failed to clear l-BFV generation secrets after the main failure: {error}");
+        }
+        Ok(())
     }
 }
 
@@ -254,6 +258,9 @@ impl Handler<DecryptionKeySharedCollectionFailed> for ThresholdKeyshare {
 impl Handler<E3RequestComplete> for ThresholdKeyshare {
     type Result = ();
     fn handle(&mut self, _: E3RequestComplete, ctx: &mut Self::Context) -> Self::Result {
+        if let Err(error) = self.discard_pending_lbfv_generation() {
+            error!("Failed to discard pending l-BFV generation secrets: {error}");
+        }
         self.encryption_key_collector = None;
         self.decryption_key_collector = None;
         self.decryption_key_shared_collector = None;

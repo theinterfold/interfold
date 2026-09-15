@@ -70,16 +70,14 @@ pub enum BfvPreset {
     /// a standard BFV key-pair to encrypt secret shares. These are temporary keys used
     /// only during the key generation process.
     SecureDkg8192,
-    /// Secure threshold BFV parameters (degree 16384), available for generation but not enabled
-    /// in the current deployment matrix.
+    /// Secure threshold BFV parameters (degree 16384), enabled on Sepolia and local chains.
     ///
     /// Used for threshold encryption (GRECO) and threshold decryption operations with
     /// multiplicative depth up to 3 (l-BFV support; the regenerated constants satisfy
     /// the runtime `2*(B_C + n*B_sm) < Delta` correctness budget at depth 3). These
     /// parameters define the threshold public key that data providers use to encrypt inputs.
     SecureThreshold16384,
-    /// Secure DKG parameters (degree 16384), available for generation but not enabled in the
-    /// current deployment matrix.
+    /// Secure DKG parameters (degree 16384), enabled on Sepolia and local chains.
     ///
     /// Used during Phase 0-1 (BFV Key Setup and DKG) where each ciphernode generates
     /// a standard BFV key-pair to encrypt secret shares. These are temporary keys used

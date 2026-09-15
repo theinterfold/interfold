@@ -39,8 +39,11 @@ pub fn project_request_router_event(
     match RequestRouter::route_with_context(event, &checkpoint.completed, has_context) {
         RoutingDecision::Process {
             e3_id,
-            post_forward: PostForward::Teardown,
+            post_forward: PostForward::Teardown | PostForward::PublishComplete,
         } => {
+            // The live router publishes E3RequestComplete after PublishComplete and then
+            // tears the context down. Recovery projects the resulting terminal state directly
+            // so it does not depend on that derived local event being present in an older log.
             checkpoint.contexts.retain(|context| context != &e3_id);
             checkpoint.completed.insert(e3_id);
         }

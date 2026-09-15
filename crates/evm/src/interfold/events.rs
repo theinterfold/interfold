@@ -13,15 +13,16 @@ use anyhow::{anyhow, Context as _, Result};
 use e3_events::E3id;
 use e3_events::InterfoldEventData;
 use e3_events::{
-    E3Failed, E3Stage, E3StageChanged, FailureReason, InputPublished, PlaintextOutputPublished,
-    RewardClaimed, RewardCredited, RewardsDistributed,
+    CiphertextOutputReferencePublished, E3Failed, E3Stage, E3StageChanged, FailureReason,
+    InputPublished, PlaintextOutputPublished, RewardClaimed, RewardCredited, RewardsDistributed,
 };
 use e3_fhe_params::{encode_bfv_params, BfvParamSet, BfvPreset};
 use e3_trbfv::helpers::calculate_error_size;
 use e3_utils::ArcBytes;
 use e3_zk_helpers::CiphernodesCommitteeSize;
-use num_bigint::BigUint;
 use tracing::{info, trace, warn};
+
+const CIRCUIT_VERSION_LABEL: &[u8] = b"interfold-bfv-v2";
 
 struct E3RequestedWithChainId(pub IInterfold::E3Requested, pub u64);
 
@@ -30,7 +31,7 @@ fn crypto_config_id(params: &[u8]) -> B256 {
         (
             keccak256(b"fhe.rs:BFV"),
             keccak256(params),
-            keccak256(b"interfold-bfv-v1"),
+            keccak256(CIRCUIT_VERSION_LABEL),
         )
             .abi_encode(),
     )
@@ -89,32 +90,25 @@ impl E3RequestedWithChainId {
             .map(|sd| sd.mult_depth)
             .ok_or_else(|| anyhow::anyhow!("Failed to get search defaults for preset"))?;
 
-        let error_size = match calculate_error_size(
+        let error_size = calculate_error_size(
             params_arc,
             threshold_n,
             threshold_m,
             mult_depth,
             lambda,
-        ) {
-            Ok(size) => {
-                let size_bytes = size.to_bytes_be();
-                info!(
-                        "Calculated error_size for E3 (threshold_n={}, threshold_m={}, lambda={}): {} bytes",
-                        threshold_n, threshold_m, lambda_value, size_bytes.len()
-                    );
-                ArcBytes::from_bytes(&size_bytes)
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to calculate error_size, using fallback: {}. \
-                        This may cause decryption failures!",
-                    e
-                );
-                ArcBytes::from_bytes(
-                    &BigUint::from(36128399948547143872891754381312u128).to_bytes_be(),
-                )
-            }
-        };
+        )
+        .context("failed to calculate the E3 error size")
+        .map(|size| {
+            let size_bytes = size.to_bytes_be();
+            info!(
+                "Calculated error_size for E3 (threshold_n={}, threshold_m={}, lambda={}): {} bytes",
+                threshold_n,
+                threshold_m,
+                lambda_value,
+                size_bytes.len()
+            );
+            ArcBytes::from_bytes(&size_bytes)
+        })?;
 
         Ok(e3_events::E3Requested {
             params_preset,
@@ -147,6 +141,29 @@ impl From<CiphertextOutputPublishedWithChainId> for InterfoldEventData {
     fn from(value: CiphertextOutputPublishedWithChainId) -> Self {
         let payload: e3_events::CiphertextOutputPublished = value.into();
         payload.into()
+    }
+}
+
+struct CiphertextOutputReferenceWithChainId(
+    pub IInterfold::CiphertextOutputReferencePublished,
+    pub u64,
+);
+
+impl From<CiphertextOutputReferenceWithChainId> for CiphertextOutputReferencePublished {
+    fn from(value: CiphertextOutputReferenceWithChainId) -> Self {
+        Self {
+            e3_id: E3id::new(value.0.e3Id.to_string(), value.1),
+            content_hash: value.0.contentHash.into(),
+            ciphertext_commitment: value.0.ciphertextCommitment.into(),
+            availability_block: value.0.availabilityBlock,
+            availability_leaf_index: value.0.availabilityLeafIndex,
+        }
+    }
+}
+
+impl From<CiphertextOutputReferenceWithChainId> for InterfoldEventData {
+    fn from(value: CiphertextOutputReferenceWithChainId) -> Self {
+        CiphertextOutputReferencePublished::from(value).into()
     }
 }
 
@@ -376,6 +393,16 @@ pub(crate) fn extractor(
                 CiphertextOutputPublishedWithChainId(event, chain_id),
             )))
         }
+        Some(&IInterfold::CiphertextOutputReferencePublished::SIGNATURE_HASH) => {
+            let mut event = IInterfold::CiphertextOutputReferencePublished::decode_log_data(data)
+                .context(
+                "failed to decode CiphertextOutputReferencePublished after its topic matched",
+            )?;
+            event.e3Id = indexed_u256(topics, 1, "CiphertextOutputReferencePublished")?;
+            Ok(Some(
+                CiphertextOutputReferenceWithChainId(event, chain_id).into(),
+            ))
+        }
         Some(&IInterfold::InputPublished::SIGNATURE_HASH) => {
             let mut event = IInterfold::InputPublished::decode_log_data(data)
                 .context("failed to decode InputPublished after its topic matched")?;
@@ -500,11 +527,15 @@ mod tests {
         let expected = [
             (
                 0,
-                "0x04f3677e73b0f5066d6caf5cbd92e3fb2e38338edaf5cfc971ab28f7b684da78",
+                "0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d",
             ),
             (
                 1,
-                "0x2af9e43a7b95b11300b6185f3ffaece530facafd2ce98c5e1a1cece8a80ad3cb",
+                "0xac5490c59e158cbb104642bba0ab7b3fd11ca49dd4bb05ce7bec8089ce3c8c31",
+            ),
+            (
+                2,
+                "0xde3c303973a0bf2b841cd0e7266ae68a7e48f8b271ffd629b245485e52dc8cd8",
             ),
         ];
 
@@ -537,6 +568,29 @@ mod tests {
                 .unwrap();
             assert_eq!(converted.params_preset, preset);
         }
+    }
+
+    #[test]
+    fn insecure_v2_config_id_differs_from_origin_v1() {
+        let params = encode_bfv_params(
+            &BfvParamSet::from(BfvPreset::from_on_chain_param_set(0).unwrap()).build_arc(),
+        );
+        let origin_v1 = keccak256(
+            (
+                keccak256(b"fhe.rs:BFV"),
+                keccak256(&params),
+                keccak256(b"interfold-bfv-v1"),
+            )
+                .abi_encode(),
+        );
+
+        assert_eq!(
+            crypto_config_id(&params),
+            "0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d"
+                .parse::<B256>()
+                .unwrap()
+        );
+        assert_ne!(crypto_config_id(&params), origin_v1);
     }
 
     #[test]

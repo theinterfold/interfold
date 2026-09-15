@@ -5,23 +5,29 @@ description: 'How voting power, proposals, voting, and execution work in the Int
 
 # Interfold Governance
 
-Interfold governance is the decision-making system for the Interfold DAO, built on [Aragon OSx](https://aragon.org/osx). It uses FOLD voting power and is centered on receipt-free secret-ballot voting through [CRISP](/CRISP/introduction).
+Interfold governance is the decision-making system for the Interfold DAO, built on
+[Aragon OSx](https://aragon.org/osx). It uses FOLD voting power and is centered on receipt-free
+secret-ballot voting through [CRISP](/CRISP/introduction).
 
-The standard Interfold governance proposal is an IPP (Interfold Protocol Proposal), which uses CRISP for receipt-free secret-ballot voting.
+The standard Interfold governance proposal is an IPP (Interfold Protocol Proposal), which uses CRISP
+for receipt-free secret-ballot voting.
 
-A FIPP (Fallback Interfold Protocol Proposal) provides a transparent voting path if CRISP cannot be used. FIPPs are strictly a fallback mechanism, not an alternative default voting mode.
+A FIPP (Fallback Interfold Protocol Proposal) provides a transparent voting path if CRISP cannot be
+used. FIPPs are strictly a fallback mechanism, not an alternative default voting mode.
 
 The current proposal lifecycle is:
 
 **Proposal → Community vote → Foundation approval → Execution**
 
-This page is the reference for how voting power, proposals, voting, and execution currently work in the Interfold DAO.
+This page is the reference for how voting power, proposals, voting, and execution currently work in
+the Interfold DAO.
 
 ---
 
 # 1. Voting power
 
-Voting power comes from committed FOLD, not simply FOLD held in a wallet. Each committed FOLD counts 1:1 toward voting power.
+Voting power comes from committed FOLD, not simply FOLD held in a wallet. Each committed FOLD counts
+1:1 toward voting power.
 
 FOLD can contribute voting power in three ways:
 
@@ -29,15 +35,20 @@ FOLD can contribute voting power in three ways:
 2. **Bonded FOLD**
 3. **Vesting FOLD**
 
-A transferable FOLD balance held in a wallet does not provide voting power unless it is committed through one of these mechanisms.
+A transferable FOLD balance held in a wallet does not provide voting power unless it is committed
+through one of these mechanisms.
 
 ## 1.1 Locked FOLD
 
-FOLD can be locked through the [Interfold governance interface](https://governance.theinterfold.com/) to create a voting position. Locked FOLD only contributes voting power once it has been delegated, and the lock remains under the control of the wallet that created it.
+FOLD can be locked through the
+[Interfold governance interface](https://governance.theinterfold.com/) to create a voting position.
+Locked FOLD only contributes voting power once it has been delegated, and the lock remains under the
+control of the wallet that created it.
 
 ### Delegation
 
-Locked FOLD can be delegated to the holder's own address or to another address, and the delegate can be changed later. Delegation applies to the holder's current and future locks.
+Locked FOLD can be delegated to the holder's own address or to another address, and the delegate can
+be changed later. Delegation applies to the holder's current and future locks.
 
 Delegation transfers voting power, not ownership of the underlying FOLD.
 
@@ -51,15 +62,21 @@ Locked FOLD can be unlocked at any time, subject to a 30-day delay:
 
 ## 1.2 Bonded FOLD
 
-FOLD bonded to a ciphernode counts automatically toward governance voting power and does not require separate delegation.
+FOLD bonded to a ciphernode counts automatically toward governance voting power and does not require
+separate delegation.
 
-Bonded FOLD is already committed to network participation. Ciphernode operators post economic collateral to participate in the network and are subject to a 30-day exit delay when decommissioning their nodes. The ciphernode system also uses sUSDS-denominated tickets, which contribute to committee sortition weight.
+Bonded FOLD is already committed to network participation. Ciphernode operators post economic
+collateral to participate in the network and are subject to a 30-day exit delay when decommissioning
+their nodes. The ciphernode system also uses sUSDS-denominated tickets, which contribute to
+committee sortition weight.
 
-See the [ciphernode documentation](/ciphernode-operators) for bonding, tickets, committee selection, and operator penalties.
+See the [ciphernode documentation](/ciphernode-operators) for bonding, tickets, committee selection,
+and operator penalties.
 
 ## 1.3 Vesting FOLD
 
-Eligible vesting FOLD counts automatically toward governance voting power and does not require delegation.
+Eligible vesting FOLD counts automatically toward governance voting power and does not require
+delegation.
 
 Locked, bonded, and vesting FOLD have the same governance weight once active: **1 FOLD = 1 vote.**
 
@@ -67,15 +84,18 @@ Locked, bonded, and vesting FOLD have the same governance weight once active: **
 
 # 2. Creating proposals
 
-Governance participants with at least 12K FOLD of active voting power can create proposals through the [Interfold governance interface](https://governance.theinterfold.com/).
+Governance participants with at least 12K FOLD of active voting power can create proposals through
+the [Interfold governance interface](https://governance.theinterfold.com/).
 
-The standard proposal type is an IPP, which uses CRISP for receipt-free secret-ballot voting. FIPPs exist only as a fallback when CRISP cannot be used.
+The standard proposal type is an IPP, which uses CRISP for receipt-free secret-ballot voting. FIPPs
+exist only as a fallback when CRISP cannot be used.
 
 ---
 
 # 3. Voting weight and eligibility
 
-A participant's voting weight is determined by active FOLD voting power. **1 FOLD of active voting power = 1 vote.** Locked, bonded, and vesting FOLD are not weighted differently once active.
+A participant's voting weight is determined by active FOLD voting power. **1 FOLD of active voting
+power = 1 vote.** Locked, bonded, and vesting FOLD are not weighted differently once active.
 
 ## 3.1 Eligibility to vote
 
@@ -83,7 +103,8 @@ Any non-Foundation holder with active committed FOLD voting power is eligible to
 
 ## 3.2 Voting-power snapshot
 
-Voting power for a proposal is determined from the snapshot taken immediately before proposal creation (proposal creation timestamp − 1). The governance interface displays:
+Voting power for a proposal is determined from the snapshot taken immediately before proposal
+creation (proposal creation timestamp − 1). The governance interface displays:
 
 - the connected wallet's voting power at snapshot
 - total voting power eligible for the proposal
@@ -94,7 +115,8 @@ Changes to voting power after the snapshot do not change voting weight for that 
 
 # 4. Proposal types
 
-Interfold governance uses CRISP-based secret-ballot voting as its standard governance path. Transparent voting exists as a fallback mechanism rather than a co-equal voting mode.
+Interfold governance uses CRISP-based secret-ballot voting as its standard governance path.
+Transparent voting exists as a fallback mechanism rather than a co-equal voting mode.
 
 The underlying FOLD voting-power rules are the same for both proposal types.
 
@@ -102,9 +124,13 @@ The underlying FOLD voting-power rules are the same for both proposal types.
 
 An IPP is the standard Interfold governance proposal.
 
-IPPs use [CRISP (Coercion-Resistant Impartial Selection Protocol)](/CRISP/introduction), Interfold's reference implementation for receipt-free secret-ballot voting. CRISP applies Interfold's confidential coordination model to governance: private ballots contribute to a shared result without exposing individual votes.
+IPPs use [CRISP (Coercion-Resistant Impartial Selection Protocol)](/CRISP/introduction), Interfold's
+reference implementation for receipt-free secret-ballot voting. CRISP applies Interfold's
+confidential coordination model to governance: private ballots contribute to a shared result without
+exposing individual votes.
 
-Ballots are encrypted client-side and tallied under encryption within an Encrypted Execution Environment (E3). Individual votes are never revealed.
+Ballots are encrypted client-side and tallied under encryption within an Encrypted Execution
+Environment (E3). Individual votes are never revealed.
 
 A CRISP voting round proceeds broadly as follows:
 
@@ -118,29 +144,38 @@ A CRISP voting round proceeds broadly as follows:
 
 No single ciphernode controls output decryption.
 
-CRISP therefore separates ballot visibility from outcome verifiability: individual choices remain confidential while the resulting decision remains verifiable.
+CRISP therefore separates ballot visibility from outcome verifiability: individual choices remain
+confidential while the resulting decision remains verifiable.
 
 ### Changing a vote
 
-A participant can submit a new encrypted vote before voting closes. Only the valid vote in effect when voting closes is included in the final tally.
+A participant can submit a new encrypted vote before voting closes. Only the valid vote in effect
+when voting closes is included in the final tally.
 
 ### Vote masking and receipt-freeness
 
-IPPs also support vote masking, a mechanism designed to make observable ballot activity unreliable as evidence of how someone voted.
+IPPs also support vote masking, a mechanism designed to make observable ballot activity unreliable
+as evidence of how someone voted.
 
-A mask creates a valid encrypted update without changing the underlying vote. Because genuine vote updates and masks are computationally indistinguishable, an outside observer cannot reliably determine whether visible activity reflects a voter's true or final choice.
+A mask creates a valid encrypted update without changing the underlying vote. Because genuine vote
+updates and masks are computationally indistinguishable, an outside observer cannot reliably
+determine whether visible activity reflects a voter's true or final choice.
 
-This helps CRISP provide receipt-freeness: voters cannot produce reliable proof of how they voted, even if their onchain activity is observed.
+This helps CRISP provide receipt-freeness: voters cannot produce reliable proof of how they voted,
+even if their onchain activity is observed.
 
-Detailed masking mechanics are covered in this [technical blog post](https://blog.theinterfold.com/vote-masking-receipt-freeness-secret-ballots/).
+Detailed masking mechanics are covered in this
+[technical blog post](https://blog.theinterfold.com/vote-masking-receipt-freeness-secret-ballots/).
 
 ## 4.2 FIPP — Fallback Interfold Protocol Proposal
 
 A FIPP is the transparent fallback proposal type.
 
-FIPPs are used strictly when CRISP is unavailable or an issue prevents the standard IPP voting process from being used. Individual votes and tallies are visible onchain.
+FIPPs are used strictly when CRISP is unavailable or an issue prevents the standard IPP voting
+process from being used. Individual votes and tallies are visible onchain.
 
-FIPPs use the same FOLD voting-power model as IPPs and proceed through the same governance lifecycle after voting.
+FIPPs use the same FOLD voting-power model as IPPs and proceed through the same governance lifecycle
+after voting.
 
 ---
 
@@ -152,23 +187,33 @@ Interfold governance currently uses a multi-stage process:
 
 ## 5.1 Community vote
 
-After a proposal is created, eligible FOLD voting power determines whether it passes its voting stage.
+After a proposal is created, eligible FOLD voting power determines whether it passes its voting
+stage.
 
-IPPs use receipt-free secret-ballot voting through CRISP. FIPPs use transparent voting only when the fallback mechanism is required.
+IPPs use receipt-free secret-ballot voting through CRISP. FIPPs use transparent voting only when the
+fallback mechanism is required.
 
 ## 5.2 Foundation approval
 
-A proposal that passes the community vote does not execute automatically. It moves to Foundation Approval, where the Interfold Foundation Board reviews the proposal before implementation.
+A proposal that passes the community vote does not execute automatically. It moves to Foundation
+Approval, where the Interfold Foundation Board reviews the proposal before implementation.
 
-Under the Foundation’s governing framework, the Board is expected to approve implementation unless it reasonably determines that a defined constraint applies — for example, because implementation would be unlawful, unsafe or impracticable, inconsistent with the Foundation’s purposes or governing documents, breach a binding obligation, or create material legal, regulatory, security, solvency, or operational risk.
+Under the Foundation’s governing framework, the Board is expected to approve implementation unless
+it reasonably determines that a defined constraint applies — for example, because implementation
+would be unlawful, unsafe or impracticable, inconsistent with the Foundation’s purposes or governing
+documents, breach a binding obligation, or create material legal, regulatory, security, solvency, or
+operational risk.
 
-If one of those grounds applies, the Board may reject, defer, condition, or return the proposal for modification and must publish its reasons.
+If one of those grounds applies, the Board may reject, defer, condition, or return the proposal for
+modification and must publish its reasons.
 
 Once the Board approves implementation, the passed proposal becomes a DAO Resolution.
 
 ## 5.3 Execution
 
-Once the Board approves implementation, the passed proposal becomes a DAO Resolution. It can then be implemented or executed in accordance with the Foundation’s governing documents and the configured Aragon OSx rules.
+Once the Board approves implementation, the passed proposal becomes a DAO Resolution. It can then be
+implemented or executed in accordance with the Foundation’s governing documents and the configured
+Aragon OSx rules.
 
 ---
 
@@ -176,17 +221,25 @@ Once the Board approves implementation, the passed proposal becomes a DAO Resolu
 
 The Interfold DAO and the Foundation have distinct roles within the governance system.
 
-Token holders can submit and vote on proposals concerning matters within the Foundation’s purposes. Passed proposals that complete Foundation review become DAO Resolutions, which the Directors are responsible for implementing subject to their legal and fiduciary duties.
+Token holders can submit and vote on proposals concerning matters within the Foundation’s purposes.
+Passed proposals that complete Foundation review become DAO Resolutions, which the Directors are
+responsible for implementing subject to their legal and fiduciary duties.
 
-The DAO also has direct governance powers over parts of the Foundation’s structure, including electing Directors, changing the size of the Board, and removing Directors. Director-removal votes do not require Board approval.
+The DAO also has direct governance powers over parts of the Foundation’s structure, including
+electing Directors, changing the size of the Board, and removing Directors. Director-removal votes
+do not require Board approval.
 
-Certain matters may also be designated as Reserved Matters, meaning the Foundation cannot act on them without prior approval through a DAO Resolution.
+Certain matters may also be designated as Reserved Matters, meaning the Foundation cannot act on
+them without prior approval through a DAO Resolution.
 
 ## Interfold Constitution
 
-The Interfold Constitution is the charter of the Interfold DAO. It defines the DAO’s governing principles, processes, and relationship with the Interfold Foundation.
+The Interfold Constitution is the charter of the Interfold DAO. It defines the DAO’s governing
+principles, processes, and relationship with the Interfold Foundation.
 
-Protocol users do not adopt the Constitution merely by using Interfold. Participants opt in through specified governance actions, including locking FOLD, submitting or voting on proposals, and receiving payments made under DAO Resolutions.
+Protocol users do not adopt the Constitution merely by using Interfold. Participants opt in through
+specified governance actions, including locking FOLD, submitting or voting on proposals, and
+receiving payments made under DAO Resolutions.
 
 [**Read the Interfold Constitution →**](/constitution)
 
@@ -196,26 +249,29 @@ Protocol users do not adopt the Constitution merely by using Interfold. Particip
 
 This table is the reference for the live Interfold DAO configuration.
 
-| Parameter | Current setting |
-| --- | --- |
-| Governance asset | FOLD |
-| Voting-power model | 1 active FOLD = 1 vote |
-| Locked FOLD | Counts after delegation |
-| Bonded FOLD | Counts automatically |
-| Vesting FOLD | Counts automatically |
-| Lock withdrawal cooldown | 30 days |
-| Voting power after withdrawal starts | Stops immediately |
-| Standard proposal type | IPP |
-| Standard voting | Receipt-free secret ballot through CRISP |
-| Fallback proposal type | FIPP |
-| Fallback voting | Transparent onchain voting |
-| Foundation approval | Board review and approval required before implementation |
-| Minimum voting power to vote | No additional minimum beyond active voting power |
-| Minimum voting power to create a proposal | 12K FOLD |
-| Voting duration | 5 days |
-| Minimum participation / quorum | 2% |
-| Approval threshold | >50% |
-| Execution delay | None |
+| Parameter                                 | Current setting                                           |
+| ----------------------------------------- | --------------------------------------------------------- |
+| Governance asset                          | FOLD                                                      |
+| Voting-power model                        | 1 active FOLD = 1 vote                                    |
+| Locked FOLD                               | Counts after delegation                                   |
+| Bonded FOLD                               | Counts automatically                                      |
+| Vesting FOLD                              | Counts automatically                                      |
+| Lock withdrawal cooldown                  | 30 days                                                   |
+| Voting power after withdrawal starts      | Stops immediately                                         |
+| Standard proposal type                    | IPP                                                       |
+| Standard voting                           | Receipt-free secret ballot through CRISP                  |
+| Fallback proposal type                    | FIPP                                                      |
+| Fallback voting                           | Transparent onchain voting                                |
+| Foundation approval                       | Board review and approval required before implementation  |
+| Minimum voting power to vote              | No additional minimum beyond active voting power          |
+| Minimum voting power to create a proposal | 12K FOLD                                                  |
+| Proposal input window                     | 5 days                                                    |
+| Voting opens                              | When the ciphernode committee key is ready                |
+| New vote commitment cutoff                | 3 hours before the input window ends                      |
+| Guaranteed voting time                    | 4 days, 13 hours, and 50 minutes with the five-day window |
+| Minimum participation / quorum            | 2%                                                        |
+| Approval threshold                        | >50%                                                      |
+| Execution delay                           | None                                                      |
 
 ---
 

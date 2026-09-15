@@ -24,7 +24,7 @@ const CRISP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(CRISP, '..', '..')
 
 /** Degree the preset's polynomials carry, used to prove the artifact matches its directory. */
-const EXPECTED_DEGREE = { insecure: 512, 'secure-8192': 8192 }
+const EXPECTED_DEGREE = { insecure: 512, 'secure-8192': 8192, 'secure-16384': 16384 }
 
 const ARTIFACTS = [
   { name: 'crisp', from: join(CRISP, 'circuits/bin/crisp/target/crisp.json') },

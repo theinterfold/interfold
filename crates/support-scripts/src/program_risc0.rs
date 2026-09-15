@@ -6,6 +6,7 @@
 
 use std::env;
 
+use crate::utils::run_bash_script_with_env;
 use crate::{ensure_script_exists, run_bash_script, traits::ProgramSupportApi};
 use anyhow::{bail, Result};
 use async_trait::async_trait;
@@ -34,54 +35,54 @@ impl ProgramSupportApi for ProgramSupportRisc0 {
             bail!("start must be run with risc0 config available");
         };
 
-        let mut args: Vec<String> = vec![
-            "--risc0-dev-mode".into(),
+        let mut environment = vec![(
+            "RISC0_DEV_MODE".to_owned(),
             risc0_config.risc0_dev_mode.to_string(),
-        ];
+        )];
 
         // Boundless support
         if let Some(boundless) = &risc0_config.boundless {
-            args.extend_from_slice(&[
-                "--rpc-url".into(),
-                boundless.rpc_url.clone(),
-                "--private-key".into(),
-                boundless.private_key.clone(),
+            environment.extend([
+                ("RPC_URL".to_owned(), boundless.rpc_url.clone()),
+                ("PRIVATE_KEY".to_owned(), boundless.private_key.clone()),
             ]);
 
             if let Some(jwt) = &boundless.pinata_jwt {
-                args.extend_from_slice(&["--pinata-jwt".into(), jwt.clone()]);
+                environment.push(("PINATA_JWT".to_owned(), jwt.clone()));
+            }
+
+            if let Some(url) = &boundless.ipfs_gateway_url {
+                environment.push(("IPFS_GATEWAY_URL".to_owned(), url.clone()));
             }
 
             if let Some(url) = &boundless.program_url {
-                args.extend_from_slice(&["--program-url".into(), url.clone()]);
+                environment.push(("PROGRAM_URL".to_owned(), url.clone()));
             }
 
             let onchain = if boundless.onchain { "true" } else { "false" };
-            args.extend_from_slice(&["--boundless-onchain".into(), onchain.into()]);
+            environment.push(("BOUNDLESS_ONCHAIN".to_owned(), onchain.to_owned()));
 
-            // Offer params — push flag + value as owned Strings
             if let Some(v) = boundless.min_price_eth {
-                args.extend_from_slice(&["--boundless-min-price-eth".into(), v.to_string()]);
+                environment.push(("BOUNDLESS_MIN_PRICE_ETH".to_owned(), v.to_string()));
             }
             if let Some(v) = boundless.max_price_eth {
-                args.extend_from_slice(&["--boundless-max-price-eth".into(), v.to_string()]);
+                environment.push(("BOUNDLESS_MAX_PRICE_ETH".to_owned(), v.to_string()));
             }
             if let Some(v) = boundless.timeout_secs {
-                args.extend_from_slice(&["--boundless-timeout-secs".into(), v.to_string()]);
+                environment.push(("BOUNDLESS_TIMEOUT_SECS".to_owned(), v.to_string()));
             }
             if let Some(v) = boundless.lock_timeout_secs {
-                args.extend_from_slice(&["--boundless-lock-timeout-secs".into(), v.to_string()]);
+                environment.push(("BOUNDLESS_LOCK_TIMEOUT_SECS".to_owned(), v.to_string()));
             }
             if let Some(v) = boundless.ramp_up_secs {
-                args.extend_from_slice(&["--boundless-ramp-up-secs".into(), v.to_string()]);
+                environment.push(("BOUNDLESS_RAMP_UP_SECS".to_owned(), v.to_string()));
             }
             if let Some(v) = boundless.lock_collateral_zkc {
-                args.extend_from_slice(&["--boundless-lock-collateral-zkc".into(), v.to_string()]);
+                environment.push(("BOUNDLESS_LOCK_COLLATERAL_ZKC".to_owned(), v.to_string()));
             }
         }
 
-        let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-        run_bash_script(&cwd, &script, &arg_refs).await?;
+        run_bash_script_with_env(&cwd, &script, &[], &environment).await?;
         Ok(())
     }
 
@@ -91,17 +92,20 @@ impl ProgramSupportApi for ProgramSupportRisc0 {
         let script = cwd.join(".interfold/support/ctl/upload");
         ensure_script_exists(&script).await?;
 
-        let mut args = vec![];
+        let mut environment = vec![];
 
         if let Some(risc0_config) = self.0.risc0() {
             if let Some(boundless) = &risc0_config.boundless {
                 if let Some(jwt) = &boundless.pinata_jwt {
-                    args.extend(["--pinata-jwt", jwt.as_str()]);
+                    environment.push(("PINATA_JWT".to_owned(), jwt.clone()));
+                }
+                if let Some(url) = &boundless.ipfs_gateway_url {
+                    environment.push(("IPFS_GATEWAY_URL".to_owned(), url.clone()));
                 }
             }
         }
 
-        run_bash_script(&cwd, &script, &args).await?;
+        run_bash_script_with_env(&cwd, &script, &[], &environment).await?;
         Ok(())
     }
 }

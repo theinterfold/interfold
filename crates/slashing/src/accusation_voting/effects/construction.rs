@@ -230,11 +230,18 @@ impl AccusationManager {
         &mut self,
         accused: Address,
         proof_type: ProofType,
+        proof_instance: u32,
         data_hash: [u8; 32],
         passed: bool,
         evidence: Bytes,
     ) {
-        self.voting
-            .cache_verification_result(accused, proof_type, data_hash, passed, evidence);
+        self.voting.cache_verification_result(
+            accused,
+            proof_type,
+            proof_instance,
+            data_hash,
+            passed,
+            evidence,
+        );
     }
 }

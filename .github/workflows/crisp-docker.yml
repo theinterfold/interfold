@@ -23,10 +23,15 @@ permissions:
   contents: read
   packages: write
 
+# Pull requests stay on GitHub-hosted runners. Only protected branch events use RunsOn.
+# Each RunsOn label embeds run id, attempt, and job ID so jobs never share runners.
 jobs:
   build:
     name: Build & Push Image
-    runs-on: ubuntu-latest
+    runs-on:
+      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
+      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16/spot=false', github.run_id,
+      github.run_attempt, 'build') || 'ubuntu-latest' }}
     outputs:
       image_tag: ${{ steps.version.outputs.version }}
     steps:

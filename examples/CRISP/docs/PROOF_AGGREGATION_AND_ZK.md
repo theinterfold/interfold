@@ -10,8 +10,8 @@
 | `CRISP_SKIP_PROOF_AGGREGATION` | `true`         | Enables the ciphernode-only local-dev/test skip flag  |
 
 `pnpm dev:setup` copies the example if missing and builds recursive circuits only when the skip flag
-is `false`. It also writes the matching `E3_PARAM_SET` into `server/.env`: `0` for `insecure`
-and `1` for `secure-8192`. `pnpm dev:up` → `crisp_deploy.sh` deploys real verifiers for full
+is `false`. It also writes the matching `E3_PARAM_SET` into `server/.env`: `0` for `insecure`,
+`1` for `secure-8192`, and `2` for `secure-16384`. `pnpm dev:up` → `crisp_deploy.sh` deploys real verifiers for full
 aggregation and mock verifiers for skipped local-dev runs.
 
 After changing `crisp.dev.env`, re-run `pnpm dev:setup` and a fresh `pnpm dev:up` (wipe
@@ -82,7 +82,7 @@ CRISP_SKIP_PROOF_AGGREGATION=false
 ```
 
 CRISP `requestE3` reads `E3_PARAM_SET` from `server/.env`. Keep it aligned with `CRISP_BFV_PRESET`:
-`0` for `insecure`, `1` for `secure-8192`.
+`0` for `insecure`, `1` for `secure-8192`, and `2` for `secure-16384`.
 
 ### Steps
 

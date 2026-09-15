@@ -13,7 +13,7 @@ export type { BfvParams, ThresholdBfvParamsPresetName, VerifiableEncryptionResul
 
 export { ThresholdBfvParamsPresetNames } from './crypto/types'
 
-export type { ContractAddresses, E3, E3RequestParams } from './contracts/types'
+export type { CiphertextOutputReference, ContractAddresses, E3, E3RequestParams } from './contracts/types'
 export { E3Stage, FailureReason, CommitteeSize, validateCommitteeSize } from './contracts/types'
 
 export { InterfoldEventType, RandomnessProviderEventType, RegistryEventType } from './events/types'
@@ -28,6 +28,7 @@ export type {
   E3RequestedData,
   E3ActivatedData,
   CiphertextOutputPublishedData,
+  CiphertextOutputReferencePublishedData,
   PlaintextOutputPublishedData,
   CiphernodeAddedData,
   CiphernodeRemovedData,
@@ -38,6 +39,7 @@ export type {
   RandomnessProviderEvent,
   RandomnessProviderEventCallback,
   CommitteePublishedData,
+  CommitteePublicKeyChunkPublishedData,
   CommitteeFinalizedData,
   InterfoldEventData,
   RegistryEventData,

@@ -15,7 +15,14 @@ before(async () => {
   setCircuits(await loadCircuits())
 })
 import { expect } from 'chai'
-import { deployCRISPProgram, deployHonkVerifier, deployMockInterfold, deployOnchainHonkVerifier, ethers } from './utils'
+import {
+  deployCRISPProgram,
+  deployHonkVerifier,
+  deployMockInterfold,
+  deployOnchainHonkVerifier,
+  ethers,
+  publishAvailableInput,
+} from './utils'
 import type { CRISPProgram, HonkVerifier, MockInterfold } from '../types'
 
 const CUSTOM = 1
@@ -228,7 +235,7 @@ describe('CRISP on-chain census', function () {
   it('publishes an ONCHAIN ballot end to end', async function () {
     await (await mockInterfold.setCommitteePublicKey(voteProof.publicInputs[8])).wait()
 
-    await crispProgram.publishInput(e3Id, encodeSolidityProof(voteProof))
+    await publishAvailableInput(crispProgram, e3Id, encodeSolidityProof(voteProof))
   })
 
   /// The contract reads the power from the token rather than trusting the ballot. A proof built
@@ -242,13 +249,13 @@ describe('CRISP on-chain census', function () {
 
     const inflated = await buildOnchainProof(votingPower * 2n, round)
     await (await mockInterfold.setCommitteePublicKey(inflated.publicInputs[8])).wait()
-    await expect(crispProgram.publishInput(round, encodeSolidityProof(inflated))).to.be.revert(ethers)
+    await expect(publishAvailableInput(crispProgram, round, encodeSolidityProof(inflated))).to.be.revert(ethers)
 
     // Positive control in the same round and the same slot: the honest power publishes. The only
     // difference between the two ballots is the power, so the revert above is attributable to it.
     const honest = await buildOnchainProof(votingPower, round)
     await (await mockInterfold.setCommitteePublicKey(honest.publicInputs[8])).wait()
-    await crispProgram.publishInput(round, encodeSolidityProof(honest))
+    await publishAvailableInput(crispProgram, round, encodeSolidityProof(honest))
   })
 
   /// The divisor is what keeps token weighting meaningful. The circuit enforces

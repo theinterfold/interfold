@@ -269,7 +269,9 @@ sequenceDiagram
     participant RandomnessProvider
     participant E3Program
     participant ComputeProvider
+    participant CiphertextVerifier
     participant DecryptionVerifier
+    participant Ciphernodes
 
     Users->>Interfold: request(parameters)
     Interfold->>E3Program: validate(e3ProgramParams)
@@ -291,23 +293,34 @@ sequenceDiagram
     Interfold->>Interfold: Set expiration and committeePublicKey
     Interfold-->>Users: success
 
-    Users->>Interfold: publishInput(e3Id, data)
-    Interfold->>E3Program: validateInput(msg.sender, data)
-    E3Program-->>Interfold: input, success
-    Interfold->>Interfold: Store input
-    Interfold-->>Users: success
+    Users->>CRISPServer: stage encrypted input + Noir proof
+    CRISPServer-->>Users: signed compact commitment
+    Users->>E3Program: publishInput(e3Id, commitment)
+    E3Program-->>Users: InputCommitted
+    CRISPServer->>Avail: submit_data(encryptedInput)
+    CRISPServer->>E3Program: finalizeInput(e3Id, VectorX receipt)
+    E3Program-->>CRISPServer: InputPublished
 
-    Users->>Interfold: publishCiphertextOutput(e3Id, data)
-    Interfold->>DecryptionVerifier: verify(e3Id, data)
-    DecryptionVerifier-->>Interfold: output, success
+    ComputeProvider-->>CRISPServer: aggregateCiphertext + RISC Zero proof
+    CRISPServer->>E3Program: verify output proof (read only)
+    CRISPServer->>Avail: submit_data(aggregateCiphertext)
+    CRISPServer->>Interfold: publishCiphertextOutput(e3Id, reference + VectorX receipt)
+    Interfold->>E3Program: verifyDataAvailability(contentHash, receipt)
+    Interfold->>CiphertextVerifier: verify compute proof
+    CiphertextVerifier-->>Interfold: success
+    Interfold->>E3Program: verify compute proof
+    E3Program-->>Interfold: success
     Interfold->>Interfold: Store ciphertextOutput
-    Interfold-->>Users: success
+    Interfold-->>CRISPServer: success
 
-    Users->>Interfold: publishPlaintextOutput(e3Id, data)
+    Ciphernodes->>Avail: retrieve aggregateCiphertext
+    Ciphernodes->>Interfold: publishPlaintextOutput(e3Id, data)
     Interfold->>E3Program: verify(e3Id, data)
     E3Program-->>Interfold: output, success
+    Interfold->>DecryptionVerifier: verify plaintext proof
+    DecryptionVerifier-->>Interfold: success
     Interfold->>Interfold: Store plaintextOutput
-    Interfold-->>Users: success
+    Interfold-->>Ciphernodes: success
 ```
 
 ## 🚀 Release Process
@@ -379,17 +392,17 @@ The Interfold follows [Semantic Versioning](https://semver.org/):
 Use stable versions only:
 
 ```bash
-interfoldup install              # Latest stable
-interfoldup install v1.0.0       # Specific stable version
+interfoldup install                     # Latest release
+interfoldup install --version v1.0.0    # Specific stable version
 ```
 
 #### For Testing (Testnet)
 
-You can use pre-release versions:
+You can use pre-release versions. Name the tag, because `install` without `--version` always
+selects the latest release:
 
 ```bash
-interfoldup install --pre-release # Latest pre-release
-interfoldup install v1.0.0-beta.1 # Specific pre-release
+interfoldup install --version v1.0.0-beta.1 # Specific pre-release
 ```
 
 #### For Development
@@ -397,7 +410,7 @@ interfoldup install v1.0.0-beta.1 # Specific pre-release
 Build from source:
 
 ```bash
-git clone https://github.com/gnosisguild/interfold.git
+git clone https://github.com/theinterfold/interfold.git
 cd interfold
 cargo build --release
 ```
@@ -415,10 +428,10 @@ cargo build --release
 
 ```bash
 # Latest stable release (recommended for production)
-curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/stable/install | bash
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/stable/install | bash
 
 # Latest development version (may be unstable)
-curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
 ```
 
 ## 📋 Release Checklist
@@ -477,7 +490,7 @@ If a release has issues:
 
 ## 📊 Version History
 
-Check our [Releases page](https://github.com/gnosisguild/interfold/releases) for full version
+Check our [Releases page](https://github.com/theinterfold/interfold/releases) for full version
 history and changelogs.
 
 ## Security and Liability
@@ -489,8 +502,8 @@ FITNESS FOR A PARTICULAR PURPOSE.
 
 This repo created under the [LGPL-3.0+ license](LICENSE.md).
 
-[gha]: https://github.com/gnosisguild/interfold/actions
-[gha-badge]: https://github.com/gnosisguild/interfold/actions/workflows/ci.yml/badge.svg
+[gha]: https://github.com/theinterfold/interfold/actions
+[gha-badge]: https://github.com/theinterfold/interfold/actions/workflows/ci.yml/badge.svg
 [hardhat]: https://hardhat.org/
 [hardhat-badge]: https://img.shields.io/badge/Built%20with-Hardhat-FFDB1C.svg
 [license]: https://opensource.org/license/lgpl-3-0

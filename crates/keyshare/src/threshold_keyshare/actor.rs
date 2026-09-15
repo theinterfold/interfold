@@ -5,22 +5,24 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use actix::prelude::*;
-use alloy::primitives::Address;
+use alloy::{primitives::Address, signers::local::PrivateKeySigner};
 use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_data::Persistable;
 use e3_events::{
     prelude::*, trap, BusHandle, CiphernodeSelected, CiphertextOutputPublished,
-    CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest, ComputeResponse,
-    ComputeResponseKind, CorrelationId, DecryptionKeyShared, DecryptionShareProofSigned,
-    DecryptionShareProofsPending, Die, DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed,
-    E3RequestComplete, E3Stage, EType, EncryptionKey, EncryptionKeyCollectionFailed,
-    EncryptionKeyCreated, EncryptionKeyPending, EventContext, FailureReason, InterfoldEvent,
-    InterfoldEventData, KeyshareCreated, PartyProofsToVerify, PartyShareDecryptionProofsToVerify,
-    PkGenerationProofSigned, ProofType, Sequenced, ShareDecryptionProofPending,
-    ShareVerificationComplete, ShareVerificationDispatched, SignedProofPayload, ThresholdShare,
-    ThresholdShareCollectionFailed, ThresholdShareCreated, ThresholdShareDecryptionProofRequest,
-    ThresholdSharePending, TypedEvent, VerificationKind,
+    CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest, ComputeRequestError,
+    ComputeRequestKind, ComputeResponse, ComputeResponseKind, CorrelationId, DecryptionKeyShared,
+    DecryptionShareProofSigned, DecryptionShareProofsPending, Die, DkgProofSigned,
+    DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, EType, EncryptionKey,
+    EncryptionKeyCollectionFailed, EncryptionKeyCreated, EncryptionKeyPending, EventContext,
+    FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
+    LbfvKeyShareDocumentCreated, LbfvKeyShareManifestPublished, PartyProofsToVerify,
+    PartyShareDecryptionProofsToVerify, PkGenerationProofSigned, ProofPayload, ProofType,
+    Sequenced, ShareDecryptionProofPending, ShareVerificationComplete, ShareVerificationDispatched,
+    SignedLbfvKeyShareManifest, SignedProofPayload, ThresholdShare, ThresholdShareCollectionFailed,
+    ThresholdShareCreated, ThresholdShareDecryptionProofRequest, ThresholdSharePending, TypedEvent,
+    VerificationKind, ZkRequest, ZkResponse,
 };
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::BfvPreset;
@@ -30,7 +32,9 @@ use e3_trbfv::{
         CalculateDecryptionShareRequest, CalculateDecryptionShareResponse,
     },
     gen_esi_sss::{GenEsiSssRequest, GenEsiSssResponse},
+    gen_lbfv_key_shares::GenLbfvKeySharesRequest,
     gen_pk_share_and_sk_sss::{GenPkShareAndSkSssRequest, GenPkShareAndSkSssResponse},
+    lbfv_operation::LbfvOperationId,
     shares::SharedSecret,
     TrBFVConfig, TrBFVRequest, TrBFVResponse,
 };
@@ -59,7 +63,8 @@ use crate::domain::{
     build_decryption_key_plan, build_shares_generated_plan, generate_bfv_keypair,
     AggregatingDecryptionKey, BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting,
     DecryptionKeyPlan, GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState,
-    ProofRequestData, ReadyForDecryption, ReceivedShareProofs, ThresholdKeyshareState,
+    LbfvGenerationStateV1, ProofRequestData, ReadyForDecryption, ReceivedShareProofs,
+    ThresholdKeyshareState,
 };
 
 #[path = "recovery_state.rs"]
@@ -121,6 +126,8 @@ pub struct ThresholdKeyshareParams {
     pub share_enc_preset: BfvPreset,
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
+    pub lbfv_generation: Persistable<LbfvGenerationStateV1>,
+    pub signer: PrivateKeySigner,
 }
 
 /// Process-local bridge data rebuilt from the versioned keyshare recovery record.
@@ -151,6 +158,8 @@ pub struct ThresholdKeyshare {
     recovery: Persistable<ThresholdKeyshareRecoveryState>,
     share_enc_preset: BfvPreset,
     interfold_address: Address,
+    lbfv_generation: Persistable<LbfvGenerationStateV1>,
+    signer: PrivateKeySigner,
     pending: PendingKeyshareWork,
 }
 
@@ -185,6 +194,8 @@ impl ThresholdKeyshare {
             recovery: params.recovery,
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
+            lbfv_generation: params.lbfv_generation,
+            signer: params.signer,
             pending: PendingKeyshareWork {
                 shares: pending_shares,
                 share_decryption_data,
@@ -246,6 +257,19 @@ impl ThresholdKeyshare {
         }
         self.pending.keyshare_publish = false;
         self.publish_keyshare_created(ec)
+    }
+
+    fn discard_pending_lbfv_generation(&mut self) -> Result<()> {
+        if !self.lbfv_generation.has() {
+            return Ok(());
+        }
+        self.lbfv_generation
+            .try_mutate_without_context(|mut state| {
+                if !state.is_ready() {
+                    state.record_failure("E3 ended before l-BFV generation completed");
+                }
+                Ok(state)
+            })
     }
 }
 

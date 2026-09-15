@@ -16,6 +16,7 @@ services:
     environment:
       # Required
       RPC_URL: ''
+      AVAIL_RPC_URL: ''
       # Network & node config
       NETWORK: 'mainnet'
       CHAIN_ID: '1'

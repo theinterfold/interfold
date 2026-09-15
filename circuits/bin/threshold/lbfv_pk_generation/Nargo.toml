@@ -1,0 +1,7 @@
+[package]
+name = "lbfv_pk_generation"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+lib = { path = "../../../lib" }

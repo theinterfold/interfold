@@ -7,4 +7,4 @@ pnpm check:committee
 pnpm check:docs
 pnpm check:addresses
 pnpm check:invariants
-pnpm check:verifiers
+pnpm generate:verifiers --preset insecure --committee minimum --on-chain --check --no-compile

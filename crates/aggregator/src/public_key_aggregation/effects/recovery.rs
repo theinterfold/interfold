@@ -3,6 +3,7 @@
 //! Restart recovery for persisted public-key aggregation phases.
 
 use super::super::*;
+use crate::LBFV_ROW_COUNT;
 use anyhow::ensure;
 
 impl PublicKeyAggregator {
@@ -23,6 +24,26 @@ impl PublicKeyAggregator {
         let Some(state) = self.state.get() else {
             return Ok(());
         };
+
+        if self.is_lbfv() {
+            if let Some(mut aggregation) = self.lbfv_aggregation_state()? {
+                if aggregation.is_failed() {
+                    aggregation.clear_process_correlations();
+                    self.set_lbfv_aggregation(aggregation, &effects_context)?;
+                    self.bus.publish(
+                        E3Failed {
+                            e3_id: self.e3_id.clone(),
+                            failed_at_stage: E3Stage::CommitteeFinalized,
+                            reason: FailureReason::DKGInvalidShares,
+                        },
+                        effects_context,
+                    )?;
+                    return Ok(());
+                }
+                aggregation.clear_process_correlations();
+                self.set_lbfv_aggregation(aggregation, &effects_context)?;
+            }
+        }
 
         match state {
             PublicKeyAggregatorState::VerifyingC1 {
@@ -76,10 +97,24 @@ impl PublicKeyAggregator {
                     )?;
                 }
 
+                if self.is_lbfv() {
+                    self.try_dispatch_lbfv_aggregation_rows(&causal_context)?;
+                    self.try_dispatch_lbfv_aggregation_fold(&causal_context)?;
+                    let fold_complete = self.lbfv_aggregation_state()?.is_some_and(|state| {
+                        state.aggregation_fold_completed_rows == LBFV_ROW_COUNT as u32
+                            && state.aggregation_fold_proof.is_some()
+                    });
+                    if fold_complete {
+                        self.persist_operational_lbfv_rlk(&causal_context)?;
+                    }
+                }
                 self.try_dispatch_nodes_fold_step(&causal_context)?;
                 self.try_publish_complete()
             }
             PublicKeyAggregatorState::Complete { .. } => {
+                if self.is_lbfv() {
+                    return self.try_publish_complete();
+                }
                 if let Some(publication) = recovery.pending_publication {
                     self.bus
                         .publish(publication, recovery.last_ec.unwrap_or(effects_context))?;

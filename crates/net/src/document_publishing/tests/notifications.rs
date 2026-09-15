@@ -162,3 +162,39 @@ async fn notification_cannot_relabel_payload_for_another_e3() -> Result<()> {
     );
     Ok(())
 }
+
+#[actix::test]
+async fn generic_lbfv_notification_does_not_trigger_a_fetch() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut net_cmd_rx, net_evt_tx, _rx, history, _, _) = setup_test()?;
+    let e3_id = E3id::new("9", 1);
+
+    bus.publish_without_context(CiphernodeSelected {
+        e3_id: e3_id.clone(),
+        party_id: 1,
+        threshold_m: 1,
+        threshold_n: 2,
+        ..CiphernodeSelected::default()
+    })?;
+    net_evt_tx.send(NetEvent::GossipData(
+        GossipData::DocumentPublishedNotification(DocumentPublishedNotification {
+            key: ContentHash::from_content(b"unsolicited l-BFV document"),
+            meta: DocumentMeta::new(
+                e3_id,
+                DocumentKind::LbfvKeyShare,
+                vec![],
+                Some(Utc::now() + chrono::Duration::days(1)),
+            ),
+            ts: 100,
+        }),
+    ))?;
+
+    assert!(timeout(Duration::from_millis(250), net_cmd_rx.recv())
+        .await
+        .is_err());
+    let events = history.send(GetEvents::new()).await?;
+    assert!(!events.iter().any(|event| matches!(
+        event.get_data(),
+        InterfoldEventData::LbfvKeyShareDocumentReceived(_)
+    )));
+    Ok(())
+}

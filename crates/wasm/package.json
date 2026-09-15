@@ -10,6 +10,7 @@
     "dist/node/**",
     "dist/web/**",
     "init_node.js",
+    "init_node.mjs",
     "init_node.cjs",
     "init_web.js",
     "init.d.ts"
@@ -46,7 +47,7 @@
     "./init": {
       "node": {
         "types": "./init.d.ts",
-        "import": "./init_node.js",
+        "import": "./init_node.mjs",
         "require": "./init_node.cjs"
       },
       "browser": {
@@ -55,7 +56,7 @@
       },
       "default": {
         "types": "./init.d.ts",
-        "import": "./init_node.js",
+        "import": "./init_node.mjs",
         "require": "./init_node.cjs",
         "default": "./init_web.js"
       }

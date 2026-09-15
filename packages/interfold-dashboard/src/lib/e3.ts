@@ -26,16 +26,21 @@ const REGISTRY_COMMITTEE_FINALIZED = eventAbi(ciphernodeRegistryAbi as any, 'Sor
 
 // CRISP votes are NOT published through Interfold (its IInterfold.InputPublished
 // event is declared but never emitted). Each E3 program records its own inputs.
-// CRISPProgram emits this on every accepted ballot; a re-vote reuses the same
-// `index` (the vote's Merkle-tree leaf), so the true ballot count is the number
-// of DISTINCT indexes, not the event count.
+// CRISPProgram emits this after the availability proof for an accepted input succeeds. Every
+// accepted input, including a re-vote, has its own tree index. Count distinct indexes so an
+// overlapping log scan cannot count the same event twice.
 const CRISP_INPUT_PUBLISHED = {
   type: 'event',
   name: 'InputPublished',
   inputs: [
     { name: 'e3Id', type: 'uint256', indexed: true },
-    { name: 'encryptedVote', type: 'bytes', indexed: false },
+    { name: 'slotAddress', type: 'address', indexed: true },
+    { name: 'encryptedVoteCommitment', type: 'bytes32', indexed: false },
+    { name: 'encryptedVoteHash', type: 'bytes32', indexed: false },
+    { name: 'availabilityBlock', type: 'uint32', indexed: false },
+    { name: 'availabilityLeafIndex', type: 'uint128', indexed: false },
     { name: 'index', type: 'uint256', indexed: false },
+    { name: 'parentIndexPlusOne', type: 'uint40', indexed: false },
   ],
 } as const
 
@@ -171,7 +176,7 @@ export type E3FullDetails = E3Summary & {
   resultTxHash?: `0x${string}`
   resultAt?: number
   resultBlock?: bigint
-  // Fees, in fee-token base units (MockUSDC, 6 decimals). feeEscrowed is the
+  // Fees, in fee-token base units. feeEscrowed is the
   // amount currently held for the E3 — note Interfold zeroes it on settlement or
   // refund, so a completed/refunded E3 reads 0. committeeReward is the real
   // total paid out to the committee (only known once RewardsDistributed fires).

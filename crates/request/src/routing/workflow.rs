@@ -120,6 +120,10 @@ impl RequestRouter {
             if is_late_terminal {
                 return RoutingDecision::Ignore;
             }
+            // Duplicate or overlapping EVM history cannot reopen a completed local context.
+            if msg.source() == EventSource::Evm {
+                return RoutingDecision::Ignore;
+            }
             return RoutingDecision::AlreadyCompleted(e3_id);
         }
 

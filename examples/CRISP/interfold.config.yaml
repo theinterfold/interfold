@@ -4,6 +4,9 @@ chains:
   - name: localhost
     enabled: true
     rpc_url: ws://localhost:8545
+    data_availability:
+      mode: mock_http
+      rpc_url: http://127.0.0.1:4000/availability
     contracts:
       e3_program:
         address: "0x8198f5d8F8CfFE8f9C413d98a0A55aEB8ab9FbB7"
@@ -27,6 +30,9 @@ chains:
     enabled: false
     rpc_url: "wss://ethereum-rpc.publicnode.com"
     chain_id: 1
+    data_availability:
+      mode: avail
+      rpc_url: "https://avail-rpc.publicnode.com/"
     contracts:
       # CRISPProgram is not yet deployed on mainnet (packages/crisp-contracts/deployed_contracts.json
       # has no mainnet entry). Fill in after `pnpm deploy:contracts --network mainnet`.
@@ -52,6 +58,9 @@ chains:
     enabled: false
     rpc_url: "wss://ethereum-sepolia-rpc.publicnode.com"
     chain_id: 11155111
+    data_availability:
+      mode: avail
+      rpc_url: "https://turing-rpc.avail.so/rpc"
     contracts:
       e3_program:
         address: "0x8654F380760c46857188097Fa0AD0bf995603124"
@@ -82,15 +91,16 @@ program:
   #     rpc_url: "https://sepolia.infura.io/v3/YOUR_KEY"
   #     private_key: "PRIVATE_KEY" # Use env vars for secrets
   #     pinata_jwt: "PINATA_JWT" # For uploading programs
-  #     program_url: "https://gateway.pinata.cloud/ipfs/QmNMRAB7DW43JSmENfzGmD96G6sqaeBBNfTVrrq5WQae3D" # Pre-uploaded program
+  #     ipfs_gateway_url: "https://gateway.pinata.cloud" # Public full-download gateway for programs and inputs
+  #     program_url: "https://gateway.pinata.cloud/ipfs/QmdSmZPD9ArQYY754pbvji9bfiqAmG1rmoLci1fN9vMPdF" # Guest for ImageID.sol
   #     onchain: true # true = onchain requests, false = offchain
   #     Optional — custom auction parameters (defaults shown):
   #     min_price_eth: 0.00005
-  #     max_price_eth: 0.002
-  #     timeout_secs: 600
-  #     lock_timeout_secs: 300
-  #     ramp_up_secs: 60
-  #     lock_collateral_zkc: 2.0
+  #     max_price_eth: 0.004
+  #     timeout_secs: 28800
+  #     lock_timeout_secs: 14400
+  #     ramp_up_secs: 7200
+  #     lock_collateral_zkc: 100.0
   # Default profile: multithread uses (logical CPUs - 1) Rayon workers and the same concurrent job
   # limit. Reserve threads with `multithread_reserve_threads` (default 1 for Actix / libp2p).
   # Example override on a 16-core host:

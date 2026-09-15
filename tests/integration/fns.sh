@@ -5,6 +5,7 @@ set -euo pipefail  # Stricter error handling
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR="$(cd "$SCRIPT_DIR/../.." && pwd)"
 PLAINTEXT="4,0"
+MOCK_DATA_AVAILABILITY_DIRECTORY="$SCRIPT_DIR/output/data-availability"
 
 # Set by test.sh via export_integration_flags
 FULL_PROOF_AGGREGATION="${FULL_PROOF_AGGREGATION:-false}"
@@ -266,10 +267,33 @@ kill_em_all() {
   pkill -9 -f "target/debug/interfold" || true
   pkill -9 -f "interfold start" || true
   pkill -9 -f "anvil" || true
+  pkill -9 -f "$SCRIPT_DIR/lib/mock-data-availability.mjs" || true
 }
 
 launch_evm() {
   anvil --host 0.0.0.0 --chain-id 31337 --block-time 1 --mnemonic 'test test test test test test test test test test test junk' --silent &
+}
+
+launch_mock_data_availability() {
+  mkdir -p "$MOCK_DATA_AVAILABILITY_DIRECTORY"
+  DATA_AVAILABILITY_DIRECTORY="$MOCK_DATA_AVAILABILITY_DIRECTORY" \
+    PORT=4000 \
+    node "$SCRIPT_DIR/lib/mock-data-availability.mjs" &
+  local server_pid=$!
+
+  for _ in {1..30}; do
+    if curl -sf http://127.0.0.1:4000/health >/dev/null; then
+      return 0
+    fi
+    if ! kill -0 "$server_pid" 2>/dev/null; then
+      wait "$server_pid"
+      return 1
+    fi
+    sleep 1
+  done
+
+  echo "Mock data-availability server did not become ready" >&2
+  return 1
 }
 
 ensure_process_count_equals() {

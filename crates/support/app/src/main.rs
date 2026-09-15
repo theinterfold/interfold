@@ -7,10 +7,11 @@
 use actix_web::{middleware::Logger, web, App, HttpResponse, HttpServer, Result as ActixResult};
 use e3_compute_provider::FHEInputs;
 use e3_compute_provider::PublishedData;
-use std::sync::{Arc, OnceLock};
-use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use e3_support_types::{ComputeDomain, ComputeRequest, WebhookPayload};
 use serde::Serialize;
+use std::sync::{Arc, OnceLock};
+use std::time::Duration;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 #[derive(Serialize, Debug)]
 struct ProcessingResponse {
@@ -45,25 +46,47 @@ async fn call_webhook(callback_url: &str, payload: &WebhookPayload) -> anyhow::R
 
     println!("Sending webhook to: {}", callback_url);
 
-    let response = reqwest::Client::new()
-        .post(callback_url)
-        .json(payload)
-        .send()
-        .await?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    let mut last_error = None;
 
-    println!("Webhook response status: {}", response.status());
-    if !response.status().is_success() {
-        let error_body = response.text().await?;
-        println!("Webhook error response: {}", error_body);
-        return Err(anyhow::anyhow!(
-            "Webhook failed with status and body: {}",
-            error_body
-        ));
+    for attempt in 1_u32..=5 {
+        match client.post(callback_url).json(payload).send().await {
+            Ok(response) if response.status().is_success() => {
+                println!("Webhook response status: {}", response.status());
+                println!("✓ Webhook called successfully for E3 {}", e3_id);
+                return Ok(());
+            }
+            Ok(response) => {
+                let status = response.status();
+                let retryable = status.is_server_error()
+                    || status == reqwest::StatusCode::REQUEST_TIMEOUT
+                    || status == reqwest::StatusCode::TOO_MANY_REQUESTS;
+                let error_body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|error| format!("could not read response body: {error}"));
+                let error = anyhow::anyhow!("webhook returned {status}: {error_body}");
+                if !retryable {
+                    return Err(error);
+                }
+                last_error = Some(error);
+            }
+            Err(error) => last_error = Some(error.into()),
+        }
+
+        if attempt < 5 {
+            let delay = Duration::from_secs(1_u64 << (attempt - 1));
+            println!(
+                "Webhook attempt {attempt} failed; retrying in {} seconds",
+                delay.as_secs()
+            );
+            tokio::time::sleep(delay).await;
+        }
     }
 
-    response.error_for_status()?;
-    println!("✓ Webhook called successfully for E3 {}", e3_id);
-    Ok(())
+    Err(last_error.unwrap_or_else(|| anyhow::anyhow!("webhook delivery failed")))
 }
 
 async fn run_computation_async(
@@ -286,7 +309,9 @@ const MAX_PARENT: u64 = (1u64 << (8 * PARENT_BYTES as u64)) - 1;
 /// metadata the E3 program never published, and the only symptom is an input root the guest
 /// derives and the contract rejects.
 fn published_from(req: &ComputeRequest) -> ActixResult<Vec<PublishedData>> {
-    if req.input_commitments.is_empty() && req.input_slots.is_empty() && req.input_parents.is_empty()
+    if req.input_commitments.is_empty()
+        && req.input_slots.is_empty()
+        && req.input_parents.is_empty()
     {
         return Ok(Vec::new());
     }

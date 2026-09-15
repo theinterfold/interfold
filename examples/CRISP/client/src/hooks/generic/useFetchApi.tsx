@@ -8,6 +8,10 @@ import { useState } from 'react'
 import axios, { AxiosRequestConfig, Method } from 'axios'
 import { handleGenericError } from '@/utils/handle-generic-error'
 
+type FetchConfig = AxiosRequestConfig & {
+  suppressNotFound?: boolean
+}
+
 export const useApi = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false)
 
@@ -15,13 +19,15 @@ export const useApi = () => {
     url: string,
     method: Method = 'get',
     data?: U,
-    config?: AxiosRequestConfig,
+    config?: FetchConfig,
   ): Promise<T | undefined> => {
     setIsLoading(true)
+    const { suppressNotFound = false, ...axiosConfig } = config ?? {}
     try {
-      const response = method === 'get' ? await axios.get<T>(`${url}`, config) : await axios.post<T>(`${url}`, data, config)
+      const response = method === 'get' ? await axios.get<T>(`${url}`, axiosConfig) : await axios.post<T>(`${url}`, data, axiosConfig)
       return response.data
     } catch (error) {
+      if (suppressNotFound && axios.isAxiosError(error) && error.response?.status === 404) return undefined
       handleGenericError(`API Error - ${url}`, error as Error)
     } finally {
       setIsLoading(false)

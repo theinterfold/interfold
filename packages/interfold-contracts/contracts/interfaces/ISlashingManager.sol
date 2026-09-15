@@ -508,6 +508,42 @@ interface ISlashingManager {
         uint256 e3Id
     ) external view returns (uint64 voteValidity, uint64 submissionDeadline);
 
+    /// @notice Returns the accusation submission deadline frozen for an E3.
+    /// @dev Returns 0 when no snapshot exists. `closeE3` deletes the snapshot
+    ///      only after the deadline has passed, so 0 never hides an open window
+    ///      for an E3 that once had one. Does not revert, so registries can use
+    ///      it to gate collateral release.
+    function accusationSubmissionDeadline(
+        uint256 e3Id
+    ) external view returns (uint64 submissionDeadline);
+
+    /// @notice Returns the resolution eligibility bound for reports admitted by the deadline.
+    /// @dev Equals the submission deadline plus the
+    ///      maximum appeal window plus the resolution grace. By this time,
+    ///      anyone can execute an unappealed proposal or one with a rejected
+    ///      appeal, or expire an unresolved appeal. These transactions must
+    ///      succeed before settlement. This timestamp never bypasses an open
+    ///      proposal. Returns 0 when no snapshot exists.
+    function settlementCutoff(
+        uint256 e3Id
+    ) external view returns (uint64 cutoff);
+
+    /// @notice Whether failed-E3 settlement may proceed now.
+    /// @dev Settlement freezes the payer. Both lanes reject new expelling
+    ///      proposals after the reporting deadline unless the E3 is Complete.
+    ///      Settlement requires the window to close and every expelling
+    ///      proposal to reach a terminal outcome, even after settlementCutoff.
+    ///      Non-expelling penalties never gate. An E3 without a snapshot, or
+    ///      without a finalized committee and any open expelling proposal,
+    ///      settles without waiting for the window.
+    /// @param e3Id The E3 being settled.
+    function settlementOpen(uint256 e3Id) external view returns (bool);
+
+    /// @notice Committee-affecting proposals still open for an E3.
+    function openCommitteeProposals(
+        uint256 e3Id
+    ) external view returns (uint256);
+
     /// @notice Return a slash route that remains pending after an initial failure.
     function getPendingSlashRoute(
         uint256 proposalId
@@ -610,14 +646,15 @@ interface ISlashingManager {
      *      This creates a 1:1 binding between proof types and slash policies, preventing
      *      cross-reason replay attacks.
      *      Evidence format:
-     *        abi.encode(uint256 proofType,
+     *        abi.encode(uint256 proofType, uint256 proofInstance,
      *          address[] voters, bytes32[] dataHashes, bytes evidence,
      *          uint256 issuedAt, uint256 deadline, bytes[] signatures)
      *      Each voter must have signed the EIP-712 digest
      *      `keccak256("\x19\x01" || domainSeparator || structHash)`, where
      *      `structHash = keccak256(abi.encode(VOTE_TYPEHASH, e3Id,
      *      accusationId, voter, dataHash, issuedAt, deadline))`.
-     *      where accusationId = keccak256(abi.encodePacked(block.chainid, e3Id, operator, proofType))
+     *      where accusationId preserves the legacy four-field hash for instance zero and appends
+     *      proofInstance for other instances.
      *      Verifications performed:
      *        1. Number of votes >= committee threshold M
      *        2. Voters are sorted ascending (prevents duplicates)
@@ -630,7 +667,7 @@ interface ISlashingManager {
      * @param e3Id ID of the E3 computation this slash relates to
      * @param operator Address of the ciphernode operator to slash (must be non-zero)
      * @param proof Attestation evidence:
-     *              abi.encode(proofType, voters, dataHashes, evidence,
+     *              abi.encode(proofType, proofInstance, voters, dataHashes, evidence,
      *              issuedAt, deadline, signatures)
      * @return proposalId Sequential ID of the created proposal
      */
@@ -647,7 +684,7 @@ interface ISlashingManager {
      *      This provides an explicit on-chain chain from DKG fold row/slot attribution to operator.
      * @param e3Id ID of the E3 computation this slash relates to
      * @param partyId Canonical committee slot / DKG party identifier
-     * @param proof Attestation evidence: abi.encode(proofType, voters, dataHashes,
+     * @param proof Attestation evidence: abi.encode(proofType, proofInstance, voters, dataHashes,
      *              evidence, issuedAt, deadline, signatures)
      * @return proposalId Sequential ID of the created proposal
      */
@@ -660,6 +697,8 @@ interface ISlashingManager {
     /**
      * @notice Creates a new slash proposal with evidence (Lane B - SLASHER_ROLE required)
      * @dev Only callable by SLASHER_ROLE. Evidence-based slashes have appeal windows.
+     *      After the E3 reporting deadline, an expelling policy requires a Complete E3.
+     *      Non-expelling policies do not have this admission deadline.
      * @param e3Id ID of the E3 computation this slash relates to
      * @param operator Address of the ciphernode operator to slash (must be non-zero)
      * @param reason Hash of the slash reason (must have an enabled non-proof policy)

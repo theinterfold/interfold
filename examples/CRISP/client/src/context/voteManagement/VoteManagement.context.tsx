@@ -6,7 +6,7 @@
 
 import { createGenericContext } from '@/utils/create-generic-context'
 import { VoteManagementContextType, VoteManagementProviderProps } from '@/context/voteManagement'
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useAccount, useChainId } from 'wagmi'
 import { VoteStateLite, VotingRound } from '@/model/vote.model'
 import { useInterfoldServer } from '@/hooks/interfold/useInterfoldServer'
@@ -28,6 +28,8 @@ const getVoteCacheKey = (chainId: number, roundId: string, address: string): str
 }
 
 const nowInSeconds = (): number => Math.floor(Date.now() / 1000)
+const ROUND_POLL_INITIAL_MS = 10_000
+const ROUND_POLL_MAX_MS = 60_000
 
 const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   /**
@@ -47,6 +49,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
   const [txUrl, setTxUrl] = useState<string | undefined>(undefined)
   const [pollResult, setPollResult] = useState<PollResult | null>(null)
   const [currentRoundId, setCurrentRoundId] = useState<string | null>(null)
+  const [pendingCurrentRoundId, setPendingCurrentRoundId] = useState<string | null>(null)
   const [displayedRoundIsFallback, setDisplayedRoundIsFallback] = useState<boolean>(false)
   const [hasVotedInCurrentRound, setHasVotedInCurrentRound] = useState<boolean>(false)
 
@@ -67,6 +70,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     getWebResult,
     getCurrentRound,
     broadcastVote,
+    getVoteAvailability,
   } = useInterfoldServer()
 
   /// Purely local — see the note on `getVoteCacheKey`. Async only to keep the signature the
@@ -102,16 +106,39 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     [chainId, userAddress, currentRoundId],
   )
 
+  const applyRoundState = useCallback((fetchedRoundState: VoteStateLite) => {
+    if (fetchedRoundState.committee_public_key.length === 1 && fetchedRoundState.committee_public_key[0] === 0) {
+      handleGenericError('getRoundStateLite', {
+        message: 'Interfold server failed generating the necessary pk bytes',
+        name: 'getRoundStateLite',
+      })
+    }
+
+    const startBlockNumber = Number(fetchedRoundState.start_block)
+    setRoundState({ ...fetchedRoundState, start_block: startBlockNumber })
+    setVotingRound({ round_id: fetchedRoundState.id, pk_bytes: fetchedRoundState.committee_public_key })
+    setPollOptions(generatePoll({ round_id: fetchedRoundState.id, emojis: fetchedRoundState.emojis }))
+    setRoundEndDate(convertTimestampToDate(fetchedRoundState.end_time))
+  }, [])
+
   const initialLoad = async () => {
     const currentRound = await getCurrentRound()
     if (!currentRound) return
-    setCurrentRoundId(currentRound.id)
 
     // If the current round has ended without a published tally, the page would
     // otherwise sit forever in "Over · Tallying…". Fall back to the latest past
     // round that does have a tally so the user sees something useful.
     const fetched = await getRoundStateLiteRequest(currentRound.id)
-    if (!fetched) return
+    const confirmedRound = await getCurrentRound()
+    if (!confirmedRound || confirmedRound.id !== currentRound.id) {
+      return
+    }
+    setCurrentRoundId(currentRound.id)
+    if (!fetched) {
+      setPendingCurrentRoundId(currentRound.id)
+      return
+    }
+    setPendingCurrentRoundId(null)
 
     const ended = Number(fetched.end_time) <= nowInSeconds()
     let fallbackRoundId: string | null = null
@@ -135,27 +162,167 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
     }
 
     setDisplayedRoundIsFallback(fallbackRoundId !== null)
-    await getRoundStateLite(fallbackRoundId ?? currentRound.id)
+    if (fallbackRoundId) {
+      await getRoundStateLite(fallbackRoundId)
+    } else {
+      applyRoundState(fetched)
+    }
   }
 
   const getRoundStateLite = async (roundId: string) => {
     const fetchedRoundState = await getRoundStateLiteRequest(roundId)
 
-    if (fetchedRoundState?.committee_public_key.length === 1 && fetchedRoundState.committee_public_key[0] === 0) {
-      handleGenericError('getRoundStateLite', {
-        message: 'Interfold server failed generating the necessary pk bytes',
-        name: 'getRoundStateLite',
-      })
-    }
     if (fetchedRoundState) {
-      const startBlockNumber = Number(fetchedRoundState.start_block)
-      setRoundState({ ...fetchedRoundState, start_block: startBlockNumber })
-      setVotingRound({ round_id: fetchedRoundState.id, pk_bytes: fetchedRoundState.committee_public_key })
-      setPollOptions(generatePoll({ round_id: fetchedRoundState.id, emojis: fetchedRoundState.emojis }))
-      setRoundEndDate(convertTimestampToDate(fetchedRoundState.end_time))
-      setCurrentRoundId(fetchedRoundState.id)
+      applyRoundState(fetchedRoundState)
     }
   }
+
+  const getRoundStateLiteRequestRef = useRef(getRoundStateLiteRequest)
+  useEffect(() => {
+    getRoundStateLiteRequestRef.current = getRoundStateLiteRequest
+  }, [getRoundStateLiteRequest])
+
+  const getCurrentRoundRef = useRef(getCurrentRound)
+  useEffect(() => {
+    getCurrentRoundRef.current = getCurrentRound
+  }, [getCurrentRound])
+
+  useEffect(() => {
+    if (currentRoundId !== null) return
+
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let delay = ROUND_POLL_INITIAL_MS
+
+    function schedule(wait = delay) {
+      if (cancelled || document.hidden) return
+      timer = setTimeout(() => {
+        timer = null
+        void poll()
+      }, wait)
+    }
+
+    async function poll() {
+      if (cancelled) return
+
+      const currentRound = await getCurrentRoundRef.current()
+      if (cancelled) return
+
+      if (currentRound) {
+        const fetched = await getRoundStateLiteRequestRef.current(currentRound.id)
+        if (cancelled) return
+
+        // The current-round pointer can change while its state is in flight. Confirm it again
+        // before committing either value, or this effect stops polling on a stale round.
+        const confirmedRound = await getCurrentRoundRef.current()
+        if (cancelled) return
+        if (!confirmedRound || confirmedRound.id !== currentRound.id) {
+          schedule(1_000)
+          return
+        }
+
+        // Fetch the state before storing the round ID. Storing the ID reruns this
+        // effect and cancels the current request. If we store it first, a round
+        // that becomes active after page load can discard its successful state
+        // response and leave the page in the preparing state permanently.
+        setCurrentRoundId(currentRound.id)
+        setDisplayedRoundIsFallback(false)
+
+        if (fetched) {
+          applyRoundState(fetched)
+          setPendingCurrentRoundId(null)
+        } else {
+          setPendingCurrentRoundId(currentRound.id)
+        }
+        return
+      }
+
+      delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
+      schedule()
+    }
+
+    function resumeWhenVisible() {
+      if (!document.hidden && !cancelled && !timer) {
+        delay = ROUND_POLL_INITIAL_MS
+        void poll()
+      }
+    }
+    document.addEventListener('visibilitychange', resumeWhenVisible)
+    schedule()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', resumeWhenVisible)
+    }
+  }, [currentRoundId, applyRoundState])
+
+  useEffect(() => {
+    if (!pendingCurrentRoundId) return
+    const pendingRoundId = pendingCurrentRoundId
+
+    let cancelled = false
+    let timer: ReturnType<typeof setTimeout> | null = null
+    let delay = ROUND_POLL_INITIAL_MS
+
+    function schedule() {
+      if (cancelled || document.hidden) return
+      timer = setTimeout(() => {
+        timer = null
+        void poll()
+      }, delay)
+    }
+
+    async function poll() {
+      if (cancelled) return
+
+      const currentRound = await getCurrentRoundRef.current()
+      if (cancelled) return
+      if (currentRound && currentRound.id !== pendingRoundId) {
+        // A newer round replaced the one whose key we were waiting for. Reset discovery instead
+        // of keeping the page attached to an old round that may never become readable.
+        setPendingCurrentRoundId(null)
+        setCurrentRoundId(null)
+        return
+      }
+
+      const fetched = await getRoundStateLiteRequestRef.current(pendingRoundId)
+      if (cancelled) return
+      if (fetched) {
+        const confirmedRound = await getCurrentRoundRef.current()
+        if (cancelled) return
+        if (!confirmedRound) {
+          delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
+          schedule()
+          return
+        }
+        if (confirmedRound.id !== pendingRoundId) {
+          setPendingCurrentRoundId(null)
+          setCurrentRoundId(null)
+          return
+        }
+        applyRoundState(fetched)
+        setPendingCurrentRoundId(null)
+        return
+      }
+
+      delay = Math.min(delay * 2, ROUND_POLL_MAX_MS)
+      schedule()
+    }
+
+    function resumeWhenVisible() {
+      if (!document.hidden && !cancelled && !timer) {
+        delay = ROUND_POLL_INITIAL_MS
+        void poll()
+      }
+    }
+    document.addEventListener('visibilitychange', resumeWhenVisible)
+    schedule()
+    return () => {
+      cancelled = true
+      if (timer) clearTimeout(timer)
+      document.removeEventListener('visibilitychange', resumeWhenVisible)
+    }
+  }, [pendingCurrentRoundId, applyRoundState])
 
   const getPastPolls = async () => {
     try {
@@ -212,6 +379,7 @@ const VoteManagementProvider = ({ children }: VoteManagementProviderProps) => {
         setPollOptions,
         initialLoad,
         broadcastVote,
+        getVoteAvailability,
         setVotingRound,
         checkVoteStatus,
         markVotedInRound,

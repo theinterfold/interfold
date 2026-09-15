@@ -6,6 +6,7 @@
 pragma solidity >=0.8.27;
 
 import { IInterfold } from "../interfaces/IInterfold.sol";
+import { IE3Program } from "../interfaces/IE3Program.sol";
 import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IE3RefundManager } from "../interfaces/IE3RefundManager.sol";
 import { IBondingRegistry } from "../interfaces/IBondingRegistry.sol";
@@ -17,12 +18,20 @@ import {
 import { IDecryptionVerifier } from "../interfaces/IDecryptionVerifier.sol";
 import { IPkVerifier } from "../interfaces/IPkVerifier.sol";
 import { ICiphertextVerifier } from "../interfaces/ICiphertextVerifier.sol";
+import {
+    IDataAvailabilityVerifier,
+    IE3ProgramDataAvailability
+} from "../interfaces/IDataAvailabilityVerifier.sol";
 import { E3 } from "../interfaces/IE3.sol";
 import {
     CiphertextVerifierStorage
 } from "../storage/CiphertextVerifierStorage.sol";
 import { ActiveCryptoConfig } from "./ActiveCryptoConfig.sol";
+import { FailurePayerLib } from "./FailurePayerLib.sol";
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {
+    IERC165
+} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 /**
  * @title InterfoldLifecycle
@@ -31,9 +40,52 @@ import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
  *      execution context and keeps lifecycle code out of its runtime bytecode.
  */
 library InterfoldLifecycle {
+    uint256 private constant SECURE_16384_MIN_DKG_WINDOW = 21_600;
+
     // keccak256(abi.encode(uint256(keccak256("interfold.storage.CiphertextVerifier")) - 1)) & ~bytes32(uint256(0xff))
     bytes32 private constant CIPHERTEXT_VERIFIER_STORAGE_SLOT =
         0xfc399dd26441dab88259cd69fffcf8b5f96dd87f2db63f29285d86101a4d1500;
+
+    /// @notice Gas limit for one ERC-165 probe of a candidate E3 program.
+    uint256 private constant PROGRAM_PROBE_GAS = 30000;
+
+    /// @notice Refuses a program that does not advertise the interfaces Interfold calls.
+    /// @dev Interfold calls `verifyDataAvailability` on every output publication. A program that
+    ///      omits that selector cannot publish an output, and the E3 fails after the requester
+    ///      paid. Reject the program at registration, when the owner can still correct it.
+    /// @param e3Program The candidate program.
+    function validateE3ProgramInterfaces(address e3Program) external view {
+        if (
+            !_advertisesInterface(e3Program, type(IE3Program).interfaceId) ||
+            !_advertisesInterface(
+                e3Program,
+                type(IE3ProgramDataAvailability).interfaceId
+            )
+        ) revert IInterfold.E3ProgramInterfaceMissing(e3Program);
+    }
+
+    /// @dev Returns true only when the target answers one ERC-165 probe with `true`.
+    function _advertisesInterface(
+        address target,
+        bytes4 interfaceId
+    ) private view returns (bool advertised) {
+        (bool success, bytes memory result) = target.staticcall{
+            gas: PROGRAM_PROBE_GAS
+        }(abi.encodeCall(IERC165.supportsInterface, (interfaceId)));
+        return success && result.length == 32 && abi.decode(result, (bool));
+    }
+
+    /// @notice Closes new request admission for one program.
+    /// @dev Existing E3 records keep their request-time program address.
+    function unregisterE3Program(
+        mapping(IE3Program => bool) storage programs,
+        IE3Program e3Program
+    ) external {
+        if (!programs[e3Program])
+            revert IInterfold.E3ProgramNotAllowed(e3Program);
+        programs[e3Program] = false;
+        emit IInterfold.E3ProgramUnregistered(e3Program);
+    }
 
     /// @notice Checks the fee and circuit values accepted with a quote.
     function validateQuoteLimit(
@@ -249,7 +301,8 @@ library InterfoldLifecycle {
 
     // prettier-ignore
     function validateCommitteePublication(
-        address caller, address registry, uint256 e3Id, uint8 current, uint256 dkgDeadline
+        address caller, address registry, uint256 e3Id, uint8 current, uint256 dkgDeadline,
+        uint256 inputWindowEnd
     ) external view {
         if (caller != registry) revert IInterfold.OnlyCiphernodeRegistry();
         IInterfold.E3Stage stage = IInterfold.E3Stage(current);
@@ -257,9 +310,17 @@ library InterfoldLifecycle {
             revert IInterfold.InvalidStage(e3Id, IInterfold.E3Stage.CommitteeFinalized, stage);
         if (block.timestamp > dkgDeadline)
             revert IInterfold.DKGDeadlinePassed(e3Id, dkgDeadline);
+        // A key published after the input window closed gives a round that can never receive an
+        // input. The round then fails as a requester-paid compute timeout. Attribute the delay to
+        // the committee instead, and refuse the publication.
+        if (block.timestamp > inputWindowEnd)
+            revert IInterfold.InputWindowClosedBeforeKeyPublication(e3Id, inputWindowEnd);
     }
 
-    /// @notice Validates, verifies, and records one ciphertext output.
+    /// @notice Validates, verifies, and records a content-addressed ciphertext output.
+    /// @dev The availability adapter proves that the exact bytes named by
+    ///      `ciphertextOutputHash` were published. The existing compute proof binds that same
+    ///      hash and the ciphertext commitment to this E3.
     function publishCiphertext(
         mapping(uint256 e3Id => E3 e3) storage e3s,
         mapping(uint256 e3Id => IInterfold.E3Stage stage) storage stages,
@@ -268,63 +329,115 @@ library InterfoldLifecycle {
         address registryAddress,
         uint256 e3Id,
         uint256 decryptionWindow,
-        bytes calldata ciphertextOutput,
-        bytes32 ciphertextCommitment,
-        bytes calldata proof
-    ) external returns (bool) {
+        bytes calldata encodedOutputReference
+    ) external {
+        IInterfold.CiphertextOutputReference memory outputReference = abi
+            .decode(
+                encodedOutputReference,
+                (IInterfold.CiphertextOutputReference)
+            );
+        bytes32 contentHash = outputReference.contentHash;
+        bytes32 ciphertextCommitment = outputReference.ciphertextCommitment;
         E3 storage e3 = e3s[e3Id];
-        if (address(e3.e3Program) == address(0))
-            revert IInterfold.E3DoesNotExist(e3Id);
-        IInterfold.E3Stage stage = stages[e3Id];
-        if (stage != IInterfold.E3Stage.KeyPublished)
+        _validateCiphertextReference(
+            e3,
+            stages[e3Id],
+            deadlines[e3Id].computeDeadline,
+            e3Id,
+            contentHash
+        );
+        _requireViableCommittee(registryAddress, e3Id);
+
+        IDataAvailabilityVerifier.DataReference
+            memory availabilityReceipt = _verifyDataAvailability(
+                address(e3.e3Program),
+                contentHash,
+                outputReference.availabilityProof
+            );
+
+        if (
+            !_isValidCiphertextHash(
+                e3,
+                e3Id,
+                contentHash,
+                ciphertextCommitment,
+                outputReference.computeProof
+            )
+        ) revert IInterfold.InvalidOutput(bytes(""));
+
+        // The application verifier can change state. A callback that slashes a member can drop
+        // the committee below the threshold and record a terminal failure through
+        // `onE3Failed`, which is outside the publication reentrancy guard. Read the stage from
+        // storage again and check committee viability again. A revert here rolls back the
+        // nested failure, settlement, and committee-release effects.
+        IInterfold.E3Stage stageAfterVerify = stages[e3Id];
+        if (stageAfterVerify != IInterfold.E3Stage.KeyPublished)
             revert IInterfold.InvalidStage(
                 e3Id,
                 IInterfold.E3Stage.KeyPublished,
-                stage
+                stageAfterVerify
             );
-        uint256 computeDeadline = deadlines[e3Id].computeDeadline;
-        if (computeDeadline < block.timestamp)
-            revert IInterfold.CommitteeDutiesCompleted(e3Id, computeDeadline);
-        if (block.timestamp < e3.inputWindow[1])
-            revert IInterfold.InputDeadlineNotReached(e3Id, e3.inputWindow[1]);
-        if (e3.ciphertextOutput != bytes32(0))
-            revert IInterfold.CiphertextOutputAlreadyPublished(e3Id);
         _requireViableCommittee(registryAddress, e3Id);
 
-        bytes32 ciphertextOutputHash = keccak256(ciphertextOutput);
-        e3.ciphertextOutput = ciphertextOutputHash;
+        e3.ciphertextOutput = contentHash;
         e3.ciphertextCommitment = ciphertextCommitment;
         stages[e3Id] = IInterfold.E3Stage.CiphertextReady;
         deadlines[e3Id].decryptionDeadline = block.timestamp + decryptionWindow;
 
-        _verifyCiphertext(
-            e3,
+        emit IInterfold.CiphertextOutputReferencePublished(
             e3Id,
-            ciphertextOutputHash,
+            contentHash,
             ciphertextCommitment,
-            ciphertextOutput,
-            proof
-        );
-
-        stage = stages[e3Id];
-        if (stage != IInterfold.E3Stage.CiphertextReady)
-            revert IInterfold.InvalidStage(
-                e3Id,
-                IInterfold.E3Stage.CiphertextReady,
-                stage
-            );
-
-        emit IInterfold.CiphertextOutputPublished(
-            e3Id,
-            ciphertextOutput,
-            ciphertextCommitment
+            availabilityReceipt.blockNumber,
+            availabilityReceipt.leafIndex
         );
         emit IInterfold.E3StageChanged(
             e3Id,
             IInterfold.E3Stage.KeyPublished,
             IInterfold.E3Stage.CiphertextReady
         );
-        return true;
+    }
+
+    function _validateCiphertextReference(
+        E3 storage e3,
+        IInterfold.E3Stage stage,
+        uint256 computeDeadline,
+        uint256 e3Id,
+        bytes32 ciphertextOutputHash
+    ) private view {
+        if (address(e3.e3Program) == address(0))
+            revert IInterfold.E3DoesNotExist(e3Id);
+        if (stage != IInterfold.E3Stage.KeyPublished)
+            revert IInterfold.InvalidStage(
+                e3Id,
+                IInterfold.E3Stage.KeyPublished,
+                stage
+            );
+        if (computeDeadline < block.timestamp)
+            revert IInterfold.CommitteeDutiesCompleted(e3Id, computeDeadline);
+        if (block.timestamp < e3.inputWindow[1])
+            revert IInterfold.InputDeadlineNotReached(e3Id, e3.inputWindow[1]);
+        if (e3.ciphertextOutput != bytes32(0))
+            revert IInterfold.CiphertextOutputAlreadyPublished(e3Id);
+        if (ciphertextOutputHash == bytes32(0))
+            revert IInterfold.InvalidOutput(bytes(""));
+    }
+
+    function _verifyDataAvailability(
+        address e3Program,
+        bytes32 ciphertextOutputHash,
+        bytes memory availabilityProof
+    )
+        private
+        view
+        returns (IDataAvailabilityVerifier.DataReference memory receipt)
+    {
+        receipt = IE3ProgramDataAvailability(e3Program).verifyDataAvailability(
+            ciphertextOutputHash,
+            availabilityProof
+        );
+        if (receipt.contentHash != ciphertextOutputHash)
+            revert IInterfold.InvalidOutput(bytes(""));
     }
 
     /// @notice Sets the verifier used by future requests for one scheme.
@@ -347,14 +460,13 @@ library InterfoldLifecycle {
     }
 
     /// @notice Freezes the configured verifier for an E3 request.
-    function _verifyCiphertext(
+    function _isValidCiphertextHash(
         E3 storage e3,
         uint256 e3Id,
         bytes32 ciphertextOutputHash,
         bytes32 ciphertextCommitment,
-        bytes calldata ciphertextOutput,
-        bytes calldata proof
-    ) private {
+        bytes memory proof
+    ) private returns (bool) {
         CiphertextVerifierStorage.RequestConfig
             storage config = _ciphertextVerifierLayout().requests[e3Id];
         if (
@@ -368,15 +480,14 @@ library InterfoldLifecycle {
                 ciphertextCommitment,
                 proof
             )
-        ) revert IInterfold.InvalidOutput(ciphertextOutput);
-        if (
-            !e3.e3Program.verify(
+        ) return false;
+        return
+            e3.e3Program.verify(
                 e3Id,
                 ciphertextOutputHash,
                 ciphertextCommitment,
                 proof
-            )
-        ) revert IInterfold.InvalidOutput(ciphertextOutput);
+            );
     }
 
     function _requireViableCommittee(
@@ -421,7 +532,7 @@ library InterfoldLifecycle {
     // prettier-ignore
     function validateReportedFailure(
         address caller, address registry, address slashManager, uint256 e3Id, uint8 current, uint8 reason
-    ) external pure {
+    ) public pure {
         if (caller != registry && caller != slashManager)
             revert IInterfold.OnlyCiphernodeRegistryOrSlashingManager();
         IInterfold.E3Stage stage = IInterfold.E3Stage(current);
@@ -437,6 +548,104 @@ library InterfoldLifecycle {
             uint8(IInterfold.FailureReason.RequesterCancelled) ||
             reason >= uint8(IInterfold.FailureReason._MAX_FAILURE_REASON)
         ) revert IInterfold.InvalidFailureReason(reason);
+    }
+
+    /// @notice Corrects a requester-paid failure reason after an expulsion.
+    /// @dev ZEN2-04: `markE3Failed` writes the reason once, so an active
+    ///      committee member can call it in the grace period after a real
+    ///      timeout and lock in requester-paid `ComputeTimeout` before a
+    ///      committee-affecting slash executes. The slash then still runs, but
+    ///      `_executeSlash` skips its reclassification because the round is
+    ///      already terminal, and the requester keeps paying for a failure the
+    ///      committee caused. Let the expulsion correct the reason so the
+    ///      recorded payer does not depend on transaction order.
+    ///      Runs through the linked library to keep Interfold's runtime below
+    ///      the EIP-170 budget.
+    /// @param failureReasons The E3 failure-reason ledger.
+    /// @param caller The reporting dependency.
+    /// @param slashManager The E3's request-time slashing manager.
+    /// @param refundManager The E3's request-time refund manager.
+    /// @param e3Id The E3 identifier.
+    /// @param reason The corrected reason.
+    /// @param current The E3's current stage.
+    /// @param registry The E3's request-time registry.
+    /// @return markFailed True when the caller must still record the failure.
+    function reportFailure(
+        mapping(uint256 => IInterfold.FailureReason) storage failureReasons,
+        address caller,
+        address registry,
+        address slashManager,
+        address refundManager,
+        uint256 e3Id,
+        uint8 current,
+        uint8 reason
+    ) external returns (bool markFailed) {
+        if (IInterfold.E3Stage(current) != IInterfold.E3Stage.Failed) {
+            validateReportedFailure(
+                caller,
+                registry,
+                slashManager,
+                e3Id,
+                current,
+                reason
+            );
+            return true;
+        }
+        _reclassifyFailure(
+            failureReasons,
+            caller,
+            slashManager,
+            refundManager,
+            e3Id,
+            reason
+        );
+        return false;
+    }
+
+    function _reclassifyFailure(
+        mapping(uint256 => IInterfold.FailureReason) storage failureReasons,
+        address caller,
+        address slashManager,
+        address refundManager,
+        uint256 e3Id,
+        uint8 reason
+    ) private {
+        // Only the E3's own slashing manager corrects a reason, and only
+        // through an expulsion that broke committee viability.
+        if (caller != slashManager)
+            revert IInterfold.OnlyCiphernodeRegistryOrSlashingManager();
+        if (
+            reason !=
+            uint8(IInterfold.FailureReason.InsufficientCommitteeMembers)
+        ) revert IInterfold.InvalidFailureReason(reason);
+
+        IInterfold.FailureReason recorded = failureReasons[e3Id];
+        // Both refusals below return instead of reverting. The expulsion that
+        // triggers this call must still commit its penalties, ban, and
+        // membership change, so a correction that no longer applies is a no-op
+        // rather than a failure the caller has to catch.
+        //
+        // Settlement snapshots the payer from the reason. After that the
+        // distribution is fixed, so a late correction must not disagree with
+        // the amounts already credited.
+        if (
+            IE3RefundManager(refundManager)
+                .getRefundDistribution(e3Id)
+                .calculated
+        ) return;
+        // Only a requester-paid reason can become supplier-paid. Never move a
+        // cost onto the requester, and never overwrite an equivalent reason.
+        if (
+            FailurePayerLib.getFailurePayer(recorded) !=
+            IE3RefundManager.FailurePayer.Requester
+        ) return;
+
+        failureReasons[e3Id] = IInterfold.FailureReason(reason);
+        emit IInterfold.E3FailureReclassified(
+            e3Id,
+            recorded,
+            IInterfold.FailureReason(reason)
+        );
     }
 
     function validateMarkFailedCaller(
@@ -557,6 +766,7 @@ library InterfoldLifecycle {
         uint256[2] calldata inputWindow,
         uint256 nowTs,
         address registryAddress,
+        uint8 paramSet,
         IInterfold.E3TimeoutConfig calldata timeoutConfig,
         uint256 maxDuration
     ) external view {
@@ -564,6 +774,10 @@ library InterfoldLifecycle {
             revert IInterfold.InvalidInputDeadlineStart(inputWindow[0]);
         if (inputWindow[1] < inputWindow[0])
             revert IInterfold.InvalidInputDeadlineEnd(inputWindow[1]);
+        if (
+            paramSet == ActiveCryptoConfig.SECURE_16384_PARAM_SET &&
+            timeoutConfig.dkgWindow < SECURE_16384_MIN_DKG_WINDOW
+        ) revert IInterfold.InvalidTimeoutWindow();
         uint256 totalDuration = requestLifecycleDuration(
             inputWindow[1],
             nowTs,

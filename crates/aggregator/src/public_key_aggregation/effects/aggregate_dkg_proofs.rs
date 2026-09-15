@@ -3,6 +3,8 @@
 //! Dispatch the final DKG aggregation proof once all prerequisites exist.
 
 use super::super::*;
+use crate::LBFV_ROW_COUNT;
+use e3_events::DkgAggregationV2Request;
 
 impl PublicKeyAggregator {
     /// Dispatch [`ZkRequest::DkgAggregation`] once C5, all honest NodeFold proofs, and the
@@ -11,6 +13,9 @@ impl PublicKeyAggregator {
         &mut self,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
+        if self.is_lbfv() {
+            return self.try_dispatch_dkg_aggregation_v2(ec);
+        }
         let state = self.state.get();
         let Some(PublicKeyAggregatorState::GeneratingC5Proof {
             party_nodes,
@@ -19,8 +24,8 @@ impl PublicKeyAggregator {
             c5_proof_pending,
             dkg_aggregation_correlation,
             dkg_aggregated_proof,
-            circuit_committee_n,
-            circuit_committee_h,
+            circuit_committee_n: _circuit_committee_n,
+            circuit_committee_h: _circuit_committee_h,
             nodes_fold_accumulator,
             nodes_fold_completed_slots,
             ..
@@ -168,12 +173,12 @@ impl PublicKeyAggregator {
         {
             debug_assert_eq!(
                 committee_addresses.len(),
-                *circuit_committee_n,
+                *_circuit_committee_n,
                 "DkgAggregator committee_addresses must have N entries (full topNodes)"
             );
             debug_assert_eq!(
                 party_ids.len(),
-                *circuit_committee_h,
+                *_circuit_committee_h,
                 "DkgAggregator party_ids must have H entries (honest set)"
             );
         }
@@ -240,5 +245,107 @@ impl PublicKeyAggregator {
             })
         })?;
         Ok(())
+    }
+
+    fn try_dispatch_dkg_aggregation_v2(&mut self, ec: &EventContext<Sequenced>) -> Result<()> {
+        let Some(PublicKeyAggregatorState::GeneratingC5Proof {
+            party_nodes,
+            dkg_node_proofs,
+            honest_party_ids,
+            c5_proof_pending,
+            nodes_fold_accumulator,
+            nodes_fold_completed_slots,
+            ..
+        }) = self.state.get()
+        else {
+            return Ok(());
+        };
+        let Some(c5_proof) = c5_proof_pending else {
+            return Ok(());
+        };
+        let Some(nodes_fold_proof) = nodes_fold_accumulator else {
+            return Ok(());
+        };
+        if nodes_fold_completed_slots != honest_party_ids.len() as u32 {
+            return Ok(());
+        }
+        let Some(mut aggregation) = self.lbfv_aggregation_state()? else {
+            return Ok(());
+        };
+        if aggregation.is_failed()
+            || aggregation.operational_rlk.is_none()
+            || aggregation.dkg_aggregation_correlation.is_some()
+            || aggregation.dkg_aggregated_proof.is_some()
+            || aggregation.aggregation_fold_completed_rows != LBFV_ROW_COUNT as u32
+        {
+            return Ok(());
+        }
+        let Some(aggregation_fold_proof) = aggregation.aggregation_fold_proof.clone() else {
+            return Ok(());
+        };
+        let mut pairs = honest_party_ids
+            .iter()
+            .filter_map(|party_id| {
+                dkg_node_proofs
+                    .get(party_id)
+                    .and_then(|proof| proof.clone())
+                    .map(|proof| (*party_id, proof))
+            })
+            .collect::<Vec<_>>();
+        if pairs.len() != honest_party_ids.len() {
+            return Ok(());
+        }
+        pairs.sort_by_key(|(party_id, _)| *party_id);
+        let party_ids = pairs
+            .iter()
+            .map(|(party_id, _)| *party_id)
+            .collect::<Vec<_>>();
+        let mut full_committee_party_ids = party_nodes.keys().copied().collect::<Vec<_>>();
+        full_committee_party_ids.sort_unstable();
+        let committee_addresses =
+            committee_addresses_in_party_order(&full_committee_party_ids, &party_nodes)?;
+        anyhow::ensure!(
+            party_ids.len() == self.committee_size.values().h
+                && committee_addresses.len() == self.committee_size.values().n,
+            "secure l-BFV DKG aggregation roster has invalid dimensions"
+        );
+
+        let correlation = CorrelationId::new();
+        aggregation.set_dkg_correlation(correlation)?;
+        self.set_lbfv_aggregation(aggregation, ec)?;
+        self.bus.publish(
+            ComputeRequest::zk(
+                ZkRequest::DkgAggregationV2(DkgAggregationV2Request {
+                    nodes_fold_proof,
+                    c5_proof,
+                    aggregation_fold_proof,
+                    party_ids,
+                    committee_addresses,
+                    params_preset: self.params_preset,
+                    committee_size: self.committee_size,
+                }),
+                correlation,
+                self.e3_id.clone(),
+            ),
+            ec.clone(),
+        )?;
+        Ok(())
+    }
+
+    pub(in crate::actors::publickey_aggregator) fn handle_dkg_aggregation_v2_response(
+        &mut self,
+        correlation: CorrelationId,
+        proof: Proof,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        let Some(mut aggregation) = self.lbfv_aggregation_state()? else {
+            return Ok(());
+        };
+        if aggregation.is_failed() {
+            return Ok(());
+        }
+        aggregation.complete_dkg(correlation, proof)?;
+        self.set_lbfv_aggregation(aggregation, ec)?;
+        self.try_publish_complete()
     }
 }

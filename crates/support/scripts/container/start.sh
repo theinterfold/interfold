@@ -1,11 +1,7 @@
 #!/usr/bin/env bash
 
-# Clear any existing environment variables
-unset RISC0_DEV_MODE RPC_URL PRIVATE_KEY PINATA_JWT PROGRAM_URL BOUNDLESS_ONCHAIN
-unset BOUNDLESS_MIN_PRICE_ETH BOUNDLESS_MAX_PRICE_ETH
-unset BOUNDLESS_TIMEOUT_SECS BOUNDLESS_LOCK_TIMEOUT_SECS BOUNDLESS_RAMP_UP_SECS BOUNDLESS_LOCK_COLLATERAL_ZKC
-
-# Parse command line arguments
+# Configuration normally arrives through Docker's environment. Flags remain supported for direct,
+# backwards-compatible use and override inherited values.
 POSITIONAL=()
 while [[ $# -gt 0 ]]; do
   case $1 in
@@ -23,6 +19,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --pinata-jwt)
       export PINATA_JWT="$2"
+      shift 2
+      ;;
+    --ipfs-gateway-url)
+      export IPFS_GATEWAY_URL="$2"
       shift 2
       ;;
     --program-url)

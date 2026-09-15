@@ -49,8 +49,6 @@ MARKERS=(
     "${BIN}/recursive_aggregation/dkg_aggregator/target/dkg_aggregator.vk_recursive"
     "${BIN}/recursive_aggregation/decryption_aggregator/target/decryption_aggregator.json"
     "${BIN}/recursive_aggregation/decryption_aggregator/target/decryption_aggregator.vk_recursive"
-    "${BIN}/dkg/target/pk.json"
-    "${BIN}/threshold/target/pk_aggregation.json"
 )
 
 missing=()
@@ -59,6 +57,13 @@ for path in "${MARKERS[@]}"; do
         missing+=("$path")
     fi
 done
+
+if [ ! -f "${BIN}/dkg/pk/target/pk.json" ] && [ ! -f "${BIN}/dkg/target/pk.json" ]; then
+    missing+=("${BIN}/dkg/pk/target/pk.json (or ${BIN}/dkg/target/pk.json)")
+fi
+if [ ! -f "${BIN}/threshold/pk_aggregation/target/pk_aggregation.json" ] && [ ! -f "${BIN}/threshold/target/pk_aggregation.json" ]; then
+    missing+=("${BIN}/threshold/pk_aggregation/target/pk_aggregation.json (or ${BIN}/threshold/target/pk_aggregation.json)")
+fi
 
 ACTIVE="${BIN}/.active-preset.json"
 
@@ -81,7 +86,7 @@ fi
 
 if [ ${#missing[@]} -gt 0 ]; then
     echo "Error: circuit artifacts for preset '${PRESET}/${COMMITTEE}' are missing or stale." >&2
-    echo "  circuits/bin/target reflects the last preset built; dist/circuits/<preset>/<committee>/ must exist for this mode." >&2
+    echo "  circuits/bin targets reflect the last preset built; dist/circuits/<preset>/<committee>/ must exist for this mode." >&2
     echo "  Fix: pnpm build:circuits --preset ${PRESET} --committee ${COMMITTEE}" >&2
     echo "  Or run this script without --skip-build." >&2
     echo "Missing:" >&2

@@ -49,7 +49,7 @@ const sdk = new InterfoldSDK({
     feeToken: '0x...', // Your ERC-20 fee token address
   },
   chain: sepolia,
-  // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+  // Match the parameter set selected by the target E3.
   thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 
@@ -95,7 +95,7 @@ const sdk = InterfoldSDK.create({
   },
   chain: sepolia,
   privateKey: '0x...', // optional — omit for read-only
-  // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+  // Match the parameter set selected by the target E3.
   thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
 })
 ```
@@ -355,7 +355,12 @@ await sdk.requestE3({
 });
 
 // Publish ciphertext output
-await sdk.publishCiphertextOutput(e3Id: bigint, ciphertextOutput: `0x${string}`, ciphertextCommitment: `0x${string}`, proof: `0x${string}`, gasLimit?: bigint);
+await sdk.publishCiphertextOutput(e3Id, {
+  contentHash,
+  ciphertextCommitment,
+  computeProof,
+  availabilityProof,
+}, gasLimit);
 
 // Read operations
 const e3Data = await sdk.getE3(e3Id: bigint);
@@ -394,23 +399,40 @@ await sdk.startEventPolling();
 sdk.stopEventPolling();
 ```
 
-`CommitteePublished.publicKey` is an untrusted transport value. Validate it against the event's
-on-chain commitment before using it for encryption:
+Committee public keys are emitted as `CommitteePublicKeyChunkPublished` events. Reassemble the
+canonical chunk sequence, check its Keccak hash, and validate the decoded key against the event's
+proven `pkCommitment` before using it for encryption:
 
 ```typescript
 import { hexToBytes } from 'viem'
+import { CommitteePublicKeyAssembler, RegistryEventType } from '@interfold/sdk'
 
-await sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLISHED, async (event) => {
-  const publicKey = hexToBytes(event.data.publicKey)
-  const expectedCommitment = hexToBytes(event.data.pkCommitment)
+const assembler = new CommitteePublicKeyAssembler()
 
-  if (!(await sdk.validatePublicKeyCommitment(publicKey, expectedCommitment))) {
-    throw new Error('Committee public-key commitment mismatch')
-  }
+await sdk.onInterfoldEvent(
+  RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED,
+  async (event) => {
+    const assembled = assembler.add(event.data)
+    if (!assembled) return
 
-  // The key is now safe to pass to the encryption methods.
-})
+    if (
+      !(await sdk.validatePublicKeyCommitment(
+        assembled.publicKey,
+        hexToBytes(assembled.pkCommitment),
+      ))
+    ) {
+      throw new Error('Committee public-key commitment mismatch')
+    }
+
+    assembler.clear(assembled.e3Id)
+    // assembled.publicKey is now safe to pass to the encryption methods.
+  },
+)
 ```
+
+The assembler tracks at most 128 E3s by default. Pass a positive limit to the constructor if the
+application needs a different memory bound. Evicted incomplete keys can be rebuilt by replaying
+their chunk events.
 
 #### Encryption
 
@@ -468,21 +490,20 @@ interface SDKConfig {
 `thresholdBfvParamsPresetName` selects the BFV parameter set used for encryption. It must match the
 on-chain `paramSet` index registered in the Interfold contract:
 
-| Preset name                | On-chain `paramSet` index | Use case                                                                                               |
-| -------------------------- | ------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `'INSECURE_THRESHOLD_512'` | `0`                       | Local development and Sepolia — small polynomial degree (N=512), fast but not cryptographically secure |
-| `'SECURE_THRESHOLD_8192'`  | `1`                       | Production — full security parameters (N=8192, L=3 CRT moduli)                                         |
+| Preset name                | On-chain `paramSet` index | Use case                                                                 |
+| -------------------------- | ------------------------- | ------------------------------------------------------------------------ |
+| `'INSECURE_THRESHOLD_512'` | `0`                       | Fast local or testnet work. This preset is not cryptographically secure. |
+| `'SECURE_THRESHOLD_8192'`  | `1`                       | Production-equivalent work with degree 8192 and three ciphertext moduli. |
 
-| Network                | Preset                     | `paramSet` |
-| ---------------------- | -------------------------- | ---------- |
-| Local development      | `'INSECURE_THRESHOLD_512'` | `0`        |
-| Sepolia testnet        | `'INSECURE_THRESHOLD_512'` | `0`        |
-| Mainnet and production | `'SECURE_THRESHOLD_8192'`  | `1`        |
+| Network           | Supported presets                                        |
+| ----------------- | -------------------------------------------------------- |
+| Local development | `'INSECURE_THRESHOLD_512'` and `'SECURE_THRESHOLD_8192'` |
+| Sepolia testnet   | `'INSECURE_THRESHOLD_512'` and `'SECURE_THRESHOLD_8192'` |
+| Ethereum mainnet  | `'SECURE_THRESHOLD_8192'` only                           |
 
-Use `'INSECURE_THRESHOLD_512'` on Sepolia: the Sepolia ciphernodes run the insecure preset, and the
-circuit artifacts bundled in this package are compiled for it. Use `'SECURE_THRESHOLD_8192'` in
-production, together with your own `secure-8192` circuit artifacts (see
-[Proving](#proving-embedded-circuits-or-your-own)).
+Use the preset that the target E3 selects. This package includes proof artifacts only for
+`'INSECURE_THRESHOLD_512'`. For secure proof generation, use matching application artifacts such as
+the `@crisp-e3/sdk/secure-8192` entry point, or compile your own artifacts.
 
 ### Proving: embedded circuits or your own
 

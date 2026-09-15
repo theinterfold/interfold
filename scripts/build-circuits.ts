@@ -5,10 +5,22 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { execSync } from 'child_process'
+import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
-import { basename, join, resolve } from 'path'
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs'
+import { tmpdir } from 'os'
+import { basename, join, relative, resolve } from 'path'
 import { AbiCoder, id, keccak256 } from 'ethers'
 import { BFV_PARAMS } from '../packages/interfold-contracts/scripts/protocol/constants'
 import {
@@ -26,6 +38,106 @@ import {
   type CircuitGroup,
   type CircuitPreset,
 } from './circuit-constants'
+
+const CIRCUIT_VERSION_LABEL = 'interfold-bfv-v2'
+
+const SECURE_16384_ONLY_THRESHOLD_CIRCUITS = new Set([
+  'lbfv_pk_generation',
+  'lbfv_pk_aggregation',
+  'rlk_generation',
+  'rlk_generation_limb',
+  'rlk_aggregation',
+])
+
+const SECURE_16384_ONLY_RECURSIVE_CIRCUITS = new Set([
+  'lbfv_generation_fold',
+  'lbfv_generation_fold_kernel',
+  'node_fold_v2',
+  'nodes_fold_v2',
+  'nodes_fold_v2_kernel',
+  'lbfv_aggregation_fold',
+  'lbfv_aggregation_fold_kernel',
+  'dkg_aggregator_v2',
+])
+
+const SECURE_16384_ONLY_CIRCUITS = new Set([...SECURE_16384_ONLY_THRESHOLD_CIRCUITS, ...SECURE_16384_ONLY_RECURSIVE_CIRCUITS])
+
+const SECURE_16384_ARTIFACT_CIRCUITS = [
+  ...[...SECURE_16384_ONLY_THRESHOLD_CIRCUITS].map((name) => ({
+    name,
+    group: CIRCUIT_GROUPS.THRESHOLD,
+    variants: [CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_VARIANTS.EVM, CIRCUIT_VARIANTS.RECURSIVE],
+    binExtensions: ['json', 'vk', 'vk_hash', 'vk_recursive', 'vk_recursive_hash', 'vk_noir', 'vk_noir_hash'],
+  })),
+  ...[...SECURE_16384_ONLY_RECURSIVE_CIRCUITS].map((name) => ({
+    name,
+    group: CIRCUIT_GROUPS.AGGREGATION,
+    variants: name === 'dkg_aggregator_v2' ? [CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_VARIANTS.EVM] : [CIRCUIT_VARIANTS.DEFAULT],
+    binExtensions:
+      name === 'dkg_aggregator_v2'
+        ? ['json', 'vk', 'vk_hash', 'vk_recursive', 'vk_recursive_hash']
+        : ['json', 'vk_recursive', 'vk_recursive_hash'],
+  })),
+]
+
+function configModuleFiles(dir: string, base = dir): string[] {
+  if (!existsSync(dir)) return []
+  const files: string[] = []
+  for (const entry of readdirSync(dir).sort()) {
+    const path = join(dir, entry)
+    const stat = statSync(path)
+    if (stat.isDirectory()) files.push(...configModuleFiles(path, base))
+    else if (stat.isFile()) files.push(relative(base, path))
+  }
+  return files
+}
+
+function syncGeneratedConfigModules(generatedDir: string, committedDir: string): void {
+  const files = configModuleFiles(generatedDir)
+  if (files.length === 0) throw new Error(`No generated config modules found in ${generatedDir}`)
+
+  rmSync(committedDir, { recursive: true, force: true })
+  for (const file of files) {
+    const destination = join(committedDir, file)
+    mkdirSync(resolve(destination, '..'), { recursive: true })
+    copyFileSync(join(generatedDir, file), destination)
+  }
+}
+
+function generatedConfigDrift(generatedDir: string, committedDir: string): string | null {
+  const generatedFiles = configModuleFiles(generatedDir)
+  const committedFiles = configModuleFiles(committedDir)
+  if (generatedFiles.join('\n') !== committedFiles.join('\n')) return 'file set'
+
+  const normalize = (content: string) => content.replace(/\s+/g, '').replace(/,([}\]])/g, '$1')
+  for (const file of generatedFiles) {
+    if (normalize(readFileSync(join(committedDir, file), 'utf8')) !== normalize(readFileSync(join(generatedDir, file), 'utf8'))) {
+      return file
+    }
+  }
+  return null
+}
+
+function requiredLbfvDistMarkers(dist: string, preset: string): string[] {
+  if (preset !== CIRCUIT_PRESETS.SECURE_16384) return []
+  return SECURE_16384_ARTIFACT_CIRCUITS.flatMap(({ name, group, variants }) =>
+    variants.flatMap((variant) => ['json', 'vk', 'vk_hash'].map((extension) => join(dist, variant, group, name, `${name}.${extension}`))),
+  )
+}
+
+function requiredLbfvBinMarkers(bin: string, preset: string): string[] {
+  if (preset !== CIRCUIT_PRESETS.SECURE_16384) return []
+  return SECURE_16384_ARTIFACT_CIRCUITS.flatMap(({ name, group, binExtensions }) =>
+    binExtensions.map((extension) => join(hydratedCircuitTargetDir(bin, group, name), `${name}.${extension}`)),
+  )
+}
+
+function hydratedCircuitTargetDir(bin: string, group: CircuitGroup, name: string): string {
+  if (group === CIRCUIT_GROUPS.DKG || group === CIRCUIT_GROUPS.THRESHOLD) {
+    return join(bin, group, 'target')
+  }
+  return join(bin, group, name, 'target')
+}
 
 interface CircuitInfo {
   name: string
@@ -144,6 +256,10 @@ class NoirCircuitBuilder {
 
     for (const preset of presets) {
       for (const committee of committees) {
+        if (!isPresetCommitteeSupported(preset, committee)) {
+          console.log(`\n⏭️  Skipping unsupported preset/committee pair: ${preset}/${committee}`)
+          continue
+        }
         const presetResult = await this.buildForPreset(preset, committee, modNrPath)
         result.compiled.push(...presetResult.compiled)
         result.errors.push(...presetResult.errors)
@@ -265,7 +381,7 @@ class NoirCircuitBuilder {
     )
     const paramSetHash = keccak256(encodedParams)
     const configId = keccak256(
-      AbiCoder.defaultAbiCoder().encode(['bytes32', 'bytes32', 'bytes32'], [id('fhe.rs:BFV'), paramSetHash, id('interfold-bfv-v1')]),
+      AbiCoder.defaultAbiCoder().encode(['bytes32', 'bytes32', 'bytes32'], [id('fhe.rs:BFV'), paramSetHash, id(CIRCUIT_VERSION_LABEL)]),
     )
     return { h, t, n, paramSet, committeeSize, paramSetHash, configId }
   }
@@ -274,10 +390,11 @@ class NoirCircuitBuilder {
    * Patch the active BFV and committee constants used by deployment tooling.
    */
   private patchUtilsTs(preset: CircuitPreset, committee: CircuitCommittee): void {
-    if (this.options.skipUtilsPatch || preset === CIRCUIT_PRESETS.SECURE_16384) return
+    if (this.options.skipUtilsPatch) return
     const { h, t, n, paramSet, committeeSize } = this.bfvConfig(preset, committee)
     const insecure = this.bfvConfig(CIRCUIT_PRESETS.INSECURE_512, CIRCUIT_COMMITTEES.MINIMUM)
     const secure = this.bfvConfig(CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_COMMITTEES.SMALL)
+    const secure16384 = this.bfvConfig(CIRCUIT_PRESETS.SECURE_16384, CIRCUIT_COMMITTEES.MINIMUM)
     const path = join(this.rootDir, 'packages', 'interfold-contracts', 'scripts', 'utils.ts')
     if (!existsSync(path)) return // optional in minimal checkouts
     const before = readFileSync(path, 'utf-8')
@@ -301,6 +418,11 @@ class NoirCircuitBuilder {
       .replace(/const INSECURE_CONFIG_ID =\s*\n\s*"0x[0-9a-fA-F]+"/, `const INSECURE_CONFIG_ID =\n  "${insecure.configId}"`)
       .replace(/const SECURE_PARAM_SET_HASH =\s*\n\s*"0x[0-9a-fA-F]+"/, `const SECURE_PARAM_SET_HASH =\n  "${secure.paramSetHash}"`)
       .replace(/const SECURE_CONFIG_ID =\s*\n\s*"0x[0-9a-fA-F]+"/, `const SECURE_CONFIG_ID =\n  "${secure.configId}"`)
+      .replace(
+        /const SECURE_16384_PARAM_SET_HASH =\s*\n\s*"0x[0-9a-fA-F]+"/,
+        `const SECURE_16384_PARAM_SET_HASH =\n  "${secure16384.paramSetHash}"`,
+      )
+      .replace(/const SECURE_16384_CONFIG_ID =\s*\n\s*"0x[0-9a-fA-F]+"/, `const SECURE_16384_CONFIG_ID =\n  "${secure16384.configId}"`)
 
     if (!after.includes(`export const BFV_DKG_H = ${h}`)) {
       throw new Error(`patchUtilsTs: could not update BFV_DKG_H in ${path} (expected export const BFV_DKG_H = <number>)`)
@@ -322,6 +444,8 @@ class NoirCircuitBuilder {
       ['INSECURE_CONFIG_ID', insecure.configId],
       ['SECURE_PARAM_SET_HASH', secure.paramSetHash],
       ['SECURE_CONFIG_ID', secure.configId],
+      ['SECURE_16384_PARAM_SET_HASH', secure16384.paramSetHash],
+      ['SECURE_16384_CONFIG_ID', secure16384.configId],
     ] as const) {
       if (!after.includes(`const ${name} =\n  "${value}"`)) {
         throw new Error(`patchUtilsTs: could not update ${name} in ${path}`)
@@ -348,28 +472,78 @@ class NoirCircuitBuilder {
 
   /** Regenerates the protocol constants without compiling circuit artifacts. */
   syncProtocolConfig(preset: CircuitPreset, committee: CircuitCommittee): void {
+    const modNrPath = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', 'default', 'mod.nr')
     this.regenerateConfigModules(preset)
+    this.setNoirConfigPreset(modNrPath, preset)
+    this.setNoirCommittee(committee)
+    this.regenerateParityMatrices(committee)
     this.patchUtilsTs(preset, committee)
     this.writeActiveCryptoConfig(preset, committee)
   }
 
   private regenerateConfigModules(preset: CircuitPreset): void {
     if (this.generatedConfigPresets.has(preset)) return
+    const generatedRoot = mkdtempSync(join(tmpdir(), 'interfold-config-'))
     try {
-      execSync(
-        `cargo run --quiet --release --bin generate_config_modules -- --preset ${preset === CIRCUIT_PRESETS.INSECURE_512 ? 'INSECURE_THRESHOLD_512' : preset === CIRCUIT_PRESETS.SECURE_8192 ? 'SECURE_THRESHOLD_8192' : 'SECURE_THRESHOLD_16384'}`,
-        {
-          cwd: this.rootDir,
-          stdio: ['ignore', 'pipe', 'inherit'],
-        },
-      )
+      this.runConfigModuleGenerator(preset, generatedRoot)
+      const module = PRESET_NOIR_CONFIG[preset]
+      syncGeneratedConfigModules(join(generatedRoot, module), join(this.rootDir, 'circuits', 'lib', 'src', 'configs', module))
       this.generatedConfigPresets.add(preset)
     } catch (err: any) {
       throw new Error(
         `Failed to regenerate BFV config modules for preset=${preset}: ${err.message}\n` +
-          `   Try: cargo run --release --bin generate_config_modules -- --preset ${preset}`,
+          `   Try: cargo run --release --bin generate_config_modules -- --preset ${this.configModuleName(preset)}`,
       )
+    } finally {
+      rmSync(generatedRoot, { recursive: true, force: true })
     }
+  }
+
+  private verifyConfigModules(preset: CircuitPreset): void {
+    const generatedRoot = mkdtempSync(join(tmpdir(), 'interfold-config-'))
+    try {
+      this.runConfigModuleGenerator(preset, generatedRoot)
+      const module = PRESET_NOIR_CONFIG[preset]
+      const drift = generatedConfigDrift(join(generatedRoot, module), join(this.rootDir, 'circuits', 'lib', 'src', 'configs', module))
+      if (drift) {
+        throw new Error(
+          `Generated config drift detected for ${module}/${drift}. ` +
+            `Run: pnpm build:circuits sync-config --preset ${preset} --committee ${this.options.committee ?? CIRCUIT_COMMITTEES.MINIMUM}`,
+        )
+      }
+    } finally {
+      rmSync(generatedRoot, { recursive: true, force: true })
+    }
+  }
+
+  private configModuleName(preset: CircuitPreset): string {
+    return preset === CIRCUIT_PRESETS.INSECURE_512
+      ? 'INSECURE_THRESHOLD_512'
+      : preset === CIRCUIT_PRESETS.SECURE_8192
+        ? 'SECURE_THRESHOLD_8192'
+        : 'SECURE_THRESHOLD_16384'
+  }
+
+  private runConfigModuleGenerator(preset: CircuitPreset, outputRoot: string): void {
+    execFileSync(
+      'cargo',
+      [
+        'run',
+        '--quiet',
+        '--release',
+        '--bin',
+        'generate_config_modules',
+        '--',
+        '--preset',
+        this.configModuleName(preset),
+        '--output-root',
+        outputRoot,
+      ],
+      {
+        cwd: this.rootDir,
+        stdio: ['ignore', 'pipe', 'inherit'],
+      },
+    )
   }
 
   /** Writes the circuit-bound constants consumed by Interfold. */
@@ -378,6 +552,7 @@ class NoirCircuitBuilder {
     const secureMinimum = this.bfvConfig(CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_COMMITTEES.MINIMUM)
     const secureMicro = this.bfvConfig(CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_COMMITTEES.MICRO)
     const testnet = this.bfvConfig(CIRCUIT_PRESETS.INSECURE_512, CIRCUIT_COMMITTEES.MINIMUM)
+    const secure16384 = this.bfvConfig(CIRCUIT_PRESETS.SECURE_16384, CIRCUIT_COMMITTEES.MINIMUM)
     const path = join(this.rootDir, 'packages', 'interfold-contracts', 'contracts', 'lib', 'ActiveCryptoConfig.sol')
     const source = `// SPDX-License-Identifier: LGPL-3.0-only
 //
@@ -389,11 +564,12 @@ pragma solidity >=0.8.27;
 import { IInterfold } from "../interfaces/IInterfold.sol";
 
 // Auto-generated by scripts/build-circuits.ts. Active local selection: ${preset}/${committee}.
-// Mainnet supports secure BFV with minimum, micro, and small committees. Sepolia and local chains
-// support insecure and secure BFV with every committee size.
+// Mainnet supports secure-8192 BFV with minimum, micro, and small committees. Sepolia and local
+// chains support insecure and secure-8192 BFV with every committee size. Secure-16384 BFV
+// currently supports the minimum committee because its V2 verifier route is available only for it.
 library ActiveCryptoConfig {
     bytes32 internal constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
-    bytes32 internal constant CIRCUIT_VERSION = keccak256("interfold-bfv-v1");
+    bytes32 internal constant CIRCUIT_VERSION = keccak256("${CIRCUIT_VERSION_LABEL}");
 
     bytes32 internal constant INSECURE_CONFIG_ID =
         ${testnet.configId};
@@ -406,6 +582,12 @@ library ActiveCryptoConfig {
     uint8 internal constant SECURE_PARAM_SET = ${production.paramSet};
     bytes32 internal constant SECURE_PARAM_SET_HASH =
         ${production.paramSetHash};
+
+    bytes32 internal constant SECURE_16384_CONFIG_ID =
+        ${secure16384.configId};
+    uint8 internal constant SECURE_16384_PARAM_SET = ${secure16384.paramSet};
+    bytes32 internal constant SECURE_16384_PARAM_SET_HASH =
+        ${secure16384.paramSetHash};
 
     uint8 internal constant MINIMUM_COMMITTEE_SIZE = ${secureMinimum.committeeSize};
     uint32 internal constant MINIMUM_T = ${secureMinimum.t};
@@ -450,6 +632,7 @@ library ActiveCryptoConfig {
     ) internal pure returns (bytes32) {
         if (paramSet == INSECURE_PARAM_SET) return INSECURE_CONFIG_ID;
         if (paramSet == SECURE_PARAM_SET) return SECURE_CONFIG_ID;
+        if (paramSet == SECURE_16384_PARAM_SET) return SECURE_16384_CONFIG_ID;
         revert IInterfold.UnsupportedCryptoConfig();
     }
 
@@ -464,7 +647,9 @@ library ActiveCryptoConfig {
     function isParamSetSupported(uint8 paramSet) internal view returns (bool) {
         if (isTestnetOrLocal()) {
             return
-                paramSet == INSECURE_PARAM_SET || paramSet == SECURE_PARAM_SET;
+                paramSet == INSECURE_PARAM_SET ||
+                paramSet == SECURE_PARAM_SET ||
+                paramSet == SECURE_16384_PARAM_SET;
         }
         return paramSet == SECURE_PARAM_SET;
     }
@@ -476,6 +661,18 @@ library ActiveCryptoConfig {
             committeeSize == MINIMUM_COMMITTEE_SIZE ||
             committeeSize == MICRO_COMMITTEE_SIZE ||
             committeeSize == SMALL_COMMITTEE_SIZE;
+    }
+
+    function validateParamSetCommittee(
+        uint8 paramSet,
+        uint8 committeeSize
+    ) internal pure {
+        if (!isCommitteeSupported(committeeSize))
+            revert IInterfold.UnsupportedCryptoConfig();
+        if (
+            paramSet == SECURE_16384_PARAM_SET &&
+            committeeSize != MINIMUM_COMMITTEE_SIZE
+        ) revert IInterfold.UnsupportedCryptoConfig();
     }
 
     function committeeParams(
@@ -517,7 +714,9 @@ library ActiveCryptoConfig {
             revert IInterfold.UnsupportedCryptoConfig();
         bytes32 expectedHash = paramSet == INSECURE_PARAM_SET
             ? INSECURE_PARAM_SET_HASH
-            : SECURE_PARAM_SET_HASH;
+            : paramSet == SECURE_PARAM_SET
+                ? SECURE_PARAM_SET_HASH
+                : SECURE_16384_PARAM_SET_HASH;
         if (paramSetHash != expectedHash)
             revert IInterfold.UnsupportedCryptoConfig();
     }
@@ -575,12 +774,21 @@ library ActiveCryptoConfig {
    */
   private hydrateBinFromDist(preset: CircuitPreset, committee: CircuitCommittee, sourceHash: string): void {
     const distRoot = join(this.options.outputDir!, preset, committee)
-    const circuits = this.discoverCircuits()
+    const missingDistArtifacts = this.requiredDistMarkers(preset, committee).filter((path) => !existsSync(path))
+    if (missingDistArtifacts.length > 0) {
+      throw new Error(`Cannot hydrate circuits/bin: missing artifact ${missingDistArtifacts[0]}`)
+    }
+    const discovered = this.discoverCircuits()
+    const circuits = this.circuitsForPreset(discovered, preset)
     let copied = 0
+
+    for (const circuit of discovered) {
+      this.removeCircuitTargetArtifacts(circuit)
+    }
 
     for (const circuit of circuits) {
       const packageName = this.getPackageName(circuit.path)
-      const targetDir = join(circuit.path, 'target')
+      const targetDir = hydratedCircuitTargetDir(this.circuitsDir, circuit.group, circuit.name)
       mkdirSync(targetDir, { recursive: true })
 
       const copyPair = (from: string, to: string) => {
@@ -603,6 +811,10 @@ library ActiveCryptoConfig {
       copyPair(join(recursiveDir, `${packageName}.vk_hash`), join(targetDir, `${packageName}.vk_noir_hash`))
     }
 
+    const missingBinArtifacts = this.requiredBinMarkers(preset).filter((path) => !existsSync(path))
+    if (missingBinArtifacts.length > 0) {
+      throw new Error(`Cannot hydrate circuits/bin: missing hydrated artifact ${missingBinArtifacts[0]}`)
+    }
     console.log(`   Copied ${copied} artifact file(s) into circuits/bin targets.`)
     this.writeActiveBinPresetStamp(preset, committee, sourceHash)
   }
@@ -613,20 +825,24 @@ library ActiveCryptoConfig {
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.DKG, 'pk', 'pk.json'),
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation', 'pk_aggregation.json'),
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'dkg_aggregator.json'),
+      join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'dkg_aggregator.vk'),
       join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.json'),
+      join(dist, CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'decryption_aggregator.vk'),
+      ...requiredLbfvDistMarkers(dist, preset),
     ]
   }
 
   /** Marker files required by `test_trbfv_actor` / gas extraction under circuits/bin. */
-  private requiredBinMarkers(): string[] {
+  private requiredBinMarkers(preset: string): string[] {
     const bin = this.circuitsDir
     return [
-      join(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'target', 'dkg_aggregator.json'),
-      join(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator', 'target', 'dkg_aggregator.vk_recursive'),
-      join(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'target', 'decryption_aggregator.json'),
-      join(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator', 'target', 'decryption_aggregator.vk_recursive'),
-      join(bin, CIRCUIT_GROUPS.DKG, 'target', 'pk.json'),
-      join(bin, CIRCUIT_GROUPS.THRESHOLD, 'target', 'pk_aggregation.json'),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator'), 'dkg_aggregator.json'),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.AGGREGATION, 'dkg_aggregator'), 'dkg_aggregator.vk_recursive'),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator'), 'decryption_aggregator.json'),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.AGGREGATION, 'decryption_aggregator'), 'decryption_aggregator.vk_recursive'),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.DKG, 'pk'), 'pk.json'),
+      join(hydratedCircuitTargetDir(bin, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation'), 'pk_aggregation.json'),
+      ...requiredLbfvBinMarkers(bin, preset),
     ]
   }
 
@@ -650,7 +866,7 @@ library ActiveCryptoConfig {
     const active = this.readActiveBinPreset()
     if (!active || active.preset !== preset || active.sourceHash !== sourceHash) return false
     if (active.committee && active.committee !== committee) return false
-    return this.requiredBinMarkers().every((path) => existsSync(path))
+    return this.requiredBinMarkers(preset).every((path) => existsSync(path))
   }
 
   private isPresetUpToDate(preset: string, committee: string, sourceHash: string): boolean {
@@ -670,7 +886,7 @@ library ActiveCryptoConfig {
           `Run without --skip-if-built or \`pnpm build:circuits --preset ${preset}\` once to refresh.`,
       )
     }
-    const missing = [...this.requiredDistMarkers(preset, committee), ...this.requiredBinMarkers()].filter((path) => !existsSync(path))
+    const missing = [...this.requiredDistMarkers(preset, committee), ...this.requiredBinMarkers(preset)].filter((path) => !existsSync(path))
     if (missing.length > 0) {
       console.log(`   ℹ️  --skip-if-built: missing ${missing.length} marker artifact(s), e.g. ${missing[0]}`)
     }
@@ -700,7 +916,8 @@ library ActiveCryptoConfig {
       this.checkTool('nargo --version', 'nargo')
       if (!this.options.skipVk) this.checkTool('bb --version', 'bb')
 
-      const circuits = this.discoverCircuits()
+      const discovered = this.discoverCircuits()
+      const circuits = this.circuitsForPreset(discovered, preset)
       if (circuits.length === 0) {
         console.log('   ⚠️  No circuits found')
         return result
@@ -713,7 +930,7 @@ library ActiveCryptoConfig {
         return result
       }
 
-      this.regenerateConfigModules(preset)
+      this.verifyConfigModules(preset)
       if (modNrPath) {
         this.syncPresetAndCommittee(modNrPath, preset, committee)
       }
@@ -760,7 +977,7 @@ library ActiveCryptoConfig {
       }
 
       if (!this.options.noCleanTargets) {
-        this.cleanTargetDirs(circuits)
+        this.cleanTargetDirs(discovered)
       }
       mkdirSync(presetOutputDir, { recursive: true })
 
@@ -827,6 +1044,17 @@ library ActiveCryptoConfig {
     }
   }
 
+  private removeCircuitTargetArtifacts(circuit: CircuitInfo): void {
+    const packagePrefix = `${this.getPackageName(circuit.path)}.`
+    const groupDir = join(this.circuitsDir, circuit.group)
+    for (const targetDir of new Set(this.getTargetSearchDirs(circuit.path, groupDir))) {
+      if (!existsSync(targetDir)) continue
+      for (const entry of readdirSync(targetDir)) {
+        if (entry.startsWith(packagePrefix)) rmSync(join(targetDir, entry), { recursive: true })
+      }
+    }
+  }
+
   private discoverCircuits(): CircuitInfo[] {
     const circuits: CircuitInfo[] = []
     if (!existsSync(this.circuitsDir)) return circuits
@@ -838,6 +1066,17 @@ library ActiveCryptoConfig {
       this.findCircuitsInDir(groupDir, '', group, circuits)
     }
     return circuits
+  }
+
+  private isCircuitEnabledForPreset(circuit: CircuitInfo, preset: CircuitPreset): boolean {
+    return preset === CIRCUIT_PRESETS.SECURE_16384 || !SECURE_16384_ONLY_CIRCUITS.has(circuit.name)
+  }
+
+  private circuitsForPreset(circuits: CircuitInfo[], preset: CircuitPreset): CircuitInfo[] {
+    if (preset !== CIRCUIT_PRESETS.SECURE_16384 && this.options.circuits?.some((circuit) => SECURE_16384_ONLY_CIRCUITS.has(circuit))) {
+      throw new Error(`l-BFV row circuits require preset ${CIRCUIT_PRESETS.SECURE_16384}`)
+    }
+    return circuits.filter((circuit) => this.isCircuitEnabledForPreset(circuit, preset))
   }
 
   private findCircuitsInDir(dir: string, relativePath: string, group: CircuitGroup, out: CircuitInfo[]): void {
@@ -960,7 +1199,7 @@ library ActiveCryptoConfig {
   private isAggregationWithEvmOnChain(circuit: CircuitInfo): boolean {
     if (circuit.group !== CIRCUIT_GROUPS.AGGREGATION) return false
     const name = basename(circuit.path)
-    return name === 'dkg_aggregator' || name === 'decryption_aggregator'
+    return name === 'dkg_aggregator' || name === 'dkg_aggregator_v2' || name === 'decryption_aggregator'
   }
 
   private generateVk(
@@ -1192,21 +1431,86 @@ library ActiveCryptoConfig {
       // constants (e.g. PK_GENERATION_E_SM_BOUND) live here and must invalidate --skip-if-built
       // when they change. Otherwise a bound update silently reuses a stale compiled circuit.
       const tierConfigDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', tier)
-      if (existsSync(tierConfigDir)) this.hashDir(tierConfigDir, hash)
+      if (existsSync(tierConfigDir)) this.hashDir(tierConfigDir, hash, `configs/${tier}`)
+    } else {
+      for (const tier of [...new Set(Object.values(PRESET_NOIR_CONFIG))].sort()) {
+        const tierConfigDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', tier)
+        if (existsSync(tierConfigDir)) this.hashDir(tierConfigDir, hash, `configs/${tier}`)
+      }
     }
-    const selectedCommittee = committee ?? (this.options.committee === 'all' ? undefined : this.options.committee)
-    if (selectedCommittee) {
-      hash.update(`committee:${selectedCommittee}\n`)
-      const committeeConfigDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', 'committee', selectedCommittee)
-      if (existsSync(committeeConfigDir)) this.hashDir(committeeConfigDir, hash)
+    if (committee !== undefined) {
+      hash.update(`committee:${committee}\n`)
+      const committeeConfigDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', 'committee', committee)
+      if (existsSync(committeeConfigDir)) this.hashDir(committeeConfigDir, hash, `configs/committee/${committee}`)
+    } else {
+      for (const candidate of ALL_COMMITTEES) {
+        const committeeConfigDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', 'committee', candidate)
+        if (existsSync(committeeConfigDir)) this.hashDir(committeeConfigDir, hash, `configs/committee/${candidate}`)
+      }
     }
-    const circuits = this.discoverCircuits().sort((a, b) => `${a.group}/${a.name}`.localeCompare(`${b.group}/${b.name}`))
-    for (const c of circuits) this.hashDir(c.path, hash)
+    this.hashSharedNoirSources(hash)
+    for (const group of this.options.groups ?? ALL_GROUPS) {
+      const manifest = join(this.circuitsDir, group, 'Nargo.toml')
+      if (!existsSync(manifest)) continue
+      hash.update(`workspaces/${group}/Nargo.toml`)
+      hash.update(readFileSync(manifest))
+    }
+    const discovered = this.discoverCircuits()
+    const circuits = (preset === undefined ? discovered : this.circuitsForPreset(discovered, preset)).sort((a, b) =>
+      `${a.group}/${a.name}`.localeCompare(`${b.group}/${b.name}`),
+    )
+    for (const c of circuits) this.hashDir(c.path, hash, `circuits/${c.group}/${c.name}`)
     return hash.digest('hex').substring(0, 16)
   }
 
   /** Generated at bench time; must not invalidate `--skip-if-built` between ensure passes. */
   private static readonly SKIP_SOURCE_HASH_ENTRIES = new Set(['target', 'Prover.toml', 'Witness.toml'])
+
+  private hashSharedNoirSources(hash: ReturnType<typeof createHash>): void {
+    const lib = join(this.rootDir, 'circuits', 'lib')
+    const src = join(lib, 'src')
+    if (!existsSync(src)) return
+
+    const manifest = join(lib, 'Nargo.toml')
+    if (existsSync(manifest)) {
+      hash.update('shared-lib/Nargo.toml')
+      hash.update(readFileSync(manifest))
+    }
+
+    for (const entry of readdirSync(src).sort()) {
+      if (entry.startsWith('.') || entry === 'configs' || NoirCircuitBuilder.SKIP_SOURCE_HASH_ENTRIES.has(entry)) continue
+      const fullPath = join(src, entry)
+      const relativePath = `shared-lib/${entry}`
+      const stat = statSync(fullPath)
+      if (stat.isDirectory()) this.hashDir(fullPath, hash, relativePath)
+      else if (stat.isFile()) {
+        hash.update(relativePath)
+        hash.update(readFileSync(fullPath))
+      }
+    }
+
+    for (const relativePath of ['configs/mod.nr', 'configs/committee/mod.nr']) {
+      const configModule = join(src, relativePath)
+      if (!existsSync(configModule)) continue
+      hash.update(`shared-lib/${relativePath}`)
+      hash.update(readFileSync(configModule))
+    }
+
+    const defaultConfig = join(src, 'configs', 'default', 'mod.nr')
+    if (existsSync(defaultConfig)) {
+      const stableContent = readFileSync(defaultConfig, 'utf8')
+        .split('\n')
+        .filter(
+          (line) =>
+            !line.startsWith('// Auto-generated by build-circuits.ts for preset:') &&
+            line !== 'pub use super::committee::active::{H, N_PARTIES, T};' &&
+            !/^pub use super::[a-z0-9_]+::(?:dkg|threshold);$/.test(line),
+        )
+        .join('\n')
+      hash.update('shared-lib/configs/default/stable-semantics')
+      hash.update(stableContent)
+    }
+  }
 
   private hashDir(dirPath: string, hash: ReturnType<typeof createHash>, relativePath = ''): void {
     for (const entry of readdirSync(dirPath).sort()) {
@@ -1306,8 +1610,8 @@ Commands: build (default), hash, sync-config
 Options:
   --group <groups>    Circuit groups (comma-separated: dkg,threshold)
   --circuit <name>    Build specific circuit(s)
-  --preset <preset>   Parameter preset: insecure (default), secure-8192, secure-16384, or all
-  --committee <name>  Committee size: minimum (default), micro, small, or all
+  --preset <preset>   Parameter preset: insecure (build default), secure-8192, secure-16384, or all
+  --committee <name>  Committee size: minimum (build default), micro, small, or all
   --skip-utils-patch  Don't rewrite BFV_DKG_H/T in packages/interfold-contracts/scripts/utils.ts
   --skip-vk           Skip verification key generation
   --skip-checksums    Skip checksum generation
@@ -1332,5 +1636,12 @@ export {
   CircuitGroup,
   CIRCUIT_GROUPS,
   CIRCUIT_PRESETS,
+  CIRCUIT_VERSION_LABEL,
+  configModuleFiles,
+  generatedConfigDrift,
+  hydratedCircuitTargetDir,
+  requiredLbfvBinMarkers,
+  requiredLbfvDistMarkers,
+  syncGeneratedConfigModules,
   type CircuitPreset,
 }

@@ -11,11 +11,12 @@ import type { CircuitBundle, CircuitPreset } from '@crisp-e3/sdk'
 // through a dynamic import gives the bundler a split point, so the app boots on the ~350KB main
 // entry and only pays for the circuits when someone actually votes.
 //
-// The production SDK carries both presets. The E3 stores the selected param set on chain, so the
-// client selects the matching circuits before proving instead of hardcoding one deployment mode.
+// The production SDK carries all supported presets. The E3 stores the selected param set on chain,
+// so the client selects the matching circuits before proving instead of hardcoding one deployment mode.
 const LOADERS: Record<CircuitPreset, () => Promise<{ loadCircuits: () => Promise<CircuitBundle> }>> = {
   insecure: () => import('@crisp-e3/sdk/insecure'),
   'secure-8192': () => import('@crisp-e3/sdk/secure-8192'),
+  'secure-16384': () => import('@crisp-e3/sdk/secure-16384'),
 }
 
 let pending: Partial<Record<CircuitPreset, Promise<void>>> = {}
@@ -23,6 +24,7 @@ let pending: Partial<Record<CircuitPreset, Promise<void>>> = {}
 const presetForParamSet = (paramSet: number): CircuitPreset | null => {
   if (paramSet === 0) return 'insecure'
   if (paramSet === 1) return 'secure-8192'
+  if (paramSet === 2) return 'secure-16384'
   return null
 }
 

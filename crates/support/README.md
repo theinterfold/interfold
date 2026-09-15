@@ -100,15 +100,17 @@ program:
       rpc_url: 'https://sepolia.base.org' # or your RPC URL
       private_key: '${PRIVATE_KEY}' # use env var for secrets!
       pinata_jwt: '${PINATA_JWT}'
-      program_url: 'https://gateway.pinata.cloud/ipfs/Qm...' # after upload (Step 3)
+      # Use a dedicated public gateway. Boundless provers download the complete input from it.
+      ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
+      program_url: 'https://your-gateway.mypinata.cloud/ipfs/Qm...' # after upload (Step 3)
       onchain: true
       # Optional auction parameters with their built-in defaults:
       # min_price_eth: 0.00005
-      # max_price_eth: 0.002
-      # timeout_secs: 600
-      # lock_timeout_secs: 300
-      # ramp_up_secs: 60
-      # lock_collateral_zkc: 2.0
+      # max_price_eth: 0.004
+      # timeout_secs: 28800
+      # lock_timeout_secs: 14400
+      # ramp_up_secs: 7200
+      # lock_collateral_zkc: 100.0
 ```
 
 ### Step 2: Compile the RISC Zero Guest Program
@@ -152,14 +154,15 @@ The order matters:
 
 3. Update the `crates/support` call sites that track the crate's API — the compiler will point at
    them, since they built against the old revision until now.
-4. Rebuild the guest against the pinned code with the RISC Zero Docker builder, and commit the
-   regenerated `crates/support/contracts/ImageID.sol`.
+4. Rebuild the guest against the pinned code with `RISC0_USE_DOCKER=1`. The pinned Docker builder
+   regenerates `crates/support/contracts/ImageID.sol`; ordinary native builds deliberately do not
+   touch that production trust anchor.
 5. Redeploy `Risc0BfvCiphertextVerifier`, and every E3 program that stores its own image ID.
 
-Skipping step 4 leaves a deployed verifier that accepts a guest no longer matching this tree, and
-nothing in the repository detects it: there is no longer an automated check that the committed image
-ID is the one the current sources produce, so this order is a convention rather than something CI
-enforces. The reviewer-facing procedure is `docs/pages/verifying-the-compute-provider.mdx`.
+Skipping step 4 leaves a deployed verifier that accepts a guest that does not match this tree. The
+provenance manifest records the committed image ID and compares it with a deployed verifier. It does
+not rebuild the guest. Therefore, this build order is mandatory. See
+`docs/pages/verifying-the-compute-provider.mdx` for the complete verification procedure.
 
 ### Step 3: Upload Program to IPFS (Pinata)
 
@@ -217,13 +220,14 @@ This triggers:
 
 1. Payment of the quoted fee in the active fee token
 2. Committee selection via sortition
-3. DKG (C0-C5 proofs) → committee public key published on-chain
+3. DKG (C0-C5 proofs) → committee public key published in bounded Ethereum event chunks
 4. Stage → `KeyPublished`
 
 ### Step 7: Encrypt Inputs & Submit to Compute Provider
 
-The instigator encrypts data under the committee's aggregate public key, then POSTs to the program
-server:
+The instigator encrypts data under the committee's aggregate public key. The application publishes
+large ciphertexts to its configured data-availability layer before it commits their references on
+Ethereum. The compute request still POSTs the retrieved bytes to the program server:
 
 ```bash
 curl -X POST http://localhost:13151/run_compute \
@@ -254,10 +258,11 @@ server runs the same computation and returns a fake proof instead.
 
 ### Step 8: Webhook Handler Publishes On-Chain
 
-The callback server (e.g., CRISP) receives the webhook and calls:
+The callback server publishes the aggregate ciphertext to the configured data-availability layer,
+waits for its Ethereum-verifiable receipt, and calls:
 
 ```solidity
-interfold.publishCiphertextOutput(e3Id, ciphertextOutput, ciphertextCommitment, proof);
+interfold.publishCiphertextOutput(e3Id, encodedOutputReference);
 ```
 
 The proof binds nine values. Five identify the context: the chain, the Interfold contract, the E3,
@@ -278,18 +283,24 @@ rewards distributed.
 
 `build_offer()` reads these environment variables. Defaults:
 
-| Parameter    | Env Var                         | Default   | Description                  |
-| ------------ | ------------------------------- | --------- | ---------------------------- |
-| Min price    | `BOUNDLESS_MIN_PRICE_ETH`       | `0.00005` | Starting price in ETH        |
-| Max price    | `BOUNDLESS_MAX_PRICE_ETH`       | `0.002`   | Maximum price in ETH         |
-| Timeout      | `BOUNDLESS_TIMEOUT_SECS`        | `600`     | Total request lifetime (sec) |
-| Lock timeout | `BOUNDLESS_LOCK_TIMEOUT_SECS`   | `300`     | Prover lock duration (sec)   |
-| Ramp-up      | `BOUNDLESS_RAMP_UP_SECS`        | `60`      | Price ramp-up period (sec)   |
-| Collateral   | `BOUNDLESS_LOCK_COLLATERAL_ZKC` | `2.0`     | ZKC locked per request       |
+| Parameter    | Env Var                         | Default   | Description                   |
+| ------------ | ------------------------------- | --------- | ----------------------------- |
+| Min price    | `BOUNDLESS_MIN_PRICE_ETH`       | `0.00005` | Starting price in ETH         |
+| Max price    | `BOUNDLESS_MAX_PRICE_ETH`       | `0.004`   | Maximum auction price in ETH  |
+| Timeout      | `BOUNDLESS_TIMEOUT_SECS`        | `28800`   | Total request lifetime (sec)  |
+| Lock timeout | `BOUNDLESS_LOCK_TIMEOUT_SECS`   | `14400`   | Primary prover deadline (sec) |
+| Ramp-up      | `BOUNDLESS_RAMP_UP_SECS`        | `7200`    | Price ramp-up period (sec)    |
+| Collateral   | `BOUNDLESS_LOCK_COLLATERAL_ZKC` | `100.0`   | ZKC locked per request        |
 
 Set the matching fields under `program.risc0.boundless` to change these values. The CLI sends each
 configured field through the support launcher to the container. Leave a field unset to use its
-default.
+default. The secure CRISP rehearsal used about 29 billion cycles. On September 3, 2026, a six-month
+sample contained 421 fulfilled Boundless orders between 20 and 40 billion cycles. Their median
+accepted price was about `0.00136 ETH`, and 95% were accepted by about `0.00379 ETH`. `0.002 ETH`
+covered about 82% of the sample, while `0.004 ETH` covered about 96%. All comparable orders in the
+sample used `100 ZKC` collateral. The `0.004 ETH` default is an auction ceiling, not the expected
+charge. The requester pays the accepted lock price. This sample does not guarantee future
+acceptance. Review the ceiling before using a materially larger guest or input set.
 
 ---
 

@@ -20,6 +20,34 @@ export interface CurrentNodeRelease {
   releaseId: string;
 }
 
+/**
+ * Returns whether governance must raise the on-chain release policy.
+ *
+ * A matching policy is already valid and must not be submitted again because
+ * `NodeReleaseRegistry` rejects no-op updates. A release that is older in either dimension is not
+ * safe to activate.
+ */
+export function requiresNodeReleasePolicyUpdate(
+  release: Pick<CurrentNodeRelease, "protocolVersion" | "nodeGeneration">,
+  requiredProtocolVersion: bigint,
+  requiredNodeGeneration: bigint,
+): boolean {
+  const protocolVersion = BigInt(release.protocolVersion);
+  const nodeGeneration = BigInt(release.nodeGeneration);
+  if (
+    protocolVersion < requiredProtocolVersion ||
+    nodeGeneration < requiredNodeGeneration
+  ) {
+    throw new Error(
+      `Node release cannot move backwards from protocol ${requiredProtocolVersion}, generation ${requiredNodeGeneration} to protocol ${protocolVersion}, generation ${nodeGeneration}`,
+    );
+  }
+  return (
+    protocolVersion !== requiredProtocolVersion ||
+    nodeGeneration !== requiredNodeGeneration
+  );
+}
+
 export function requiredCircuitsVersion(): string {
   const root = getRepoRoot();
   const versions = JSON.parse(

@@ -13,6 +13,7 @@ mod coordinate_collectors;
 mod create_decryption_share;
 mod generate_threshold_share;
 mod initialize_dkg;
+mod lbfv_generation;
 mod recovery;
 mod route_events;
 mod track_proofs;

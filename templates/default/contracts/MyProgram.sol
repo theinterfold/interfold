@@ -10,10 +10,12 @@ import { IE3Program } from "@interfold/contracts/contracts/interfaces/IE3Program
 import { IInterfold } from "@interfold/contracts/contracts/interfaces/IInterfold.sol";
 import { E3 } from "@interfold/contracts/contracts/interfaces/IE3.sol";
 import { Risc0ComputeProof } from "@interfold/contracts/contracts/lib/Risc0ComputeProof.sol";
+import { IDataAvailabilityVerifier, IE3ProgramDataAvailability } from "@interfold/contracts/contracts/interfaces/IDataAvailabilityVerifier.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
+import { IERC165 } from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 import { LazyIMTData, InternalLazyIMT } from "@zk-kit/lazy-imt.sol/InternalLazyIMT.sol";
 
-contract MyProgram is IE3Program, Ownable {
+contract MyProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownable {
   using InternalLazyIMT for LazyIMTData;
   // Constants
   bytes32 public constant ENCRYPTION_SCHEME_ID = keccak256("fhe.rs:BFV");
@@ -39,6 +41,7 @@ contract MyProgram is IE3Program, Ownable {
   error EmptyInputData();
   error InputDeadlineReached();
   error InvalidComputeContext();
+  error DataAvailabilityHashMismatch(bytes32 expected, bytes32 actual);
 
   event InputPublished(uint256 indexed e3Id, bytes data, uint256 index);
 
@@ -53,6 +56,16 @@ contract MyProgram is IE3Program, Ownable {
     verifier = _verifier;
     imageId = _imageId;
     authorizedContracts[address(_interfold)] = true;
+  }
+
+  /// @inheritdoc IERC165
+  /// @dev Interfold probes these interfaces before it registers a program. A program that does
+  /// not advertise them cannot be registered.
+  function supportsInterface(bytes4 interfaceId) external pure override returns (bool) {
+    return
+      interfaceId == type(IE3Program).interfaceId ||
+      interfaceId == type(IE3ProgramDataAvailability).interfaceId ||
+      interfaceId == type(IERC165).interfaceId;
   }
 
   /// @inheritdoc IE3Program
@@ -82,7 +95,7 @@ contract MyProgram is IE3Program, Ownable {
     // This minimal template does not prove that the serialized ciphertext matches its SAFE
     // commitment. Production programs must verify that binding before insertion. Otherwise, an
     // invalid input can prevent the E3 from completing.
-    // EXAMPLE: https://github.com/gnosisguild/interfold/blob/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol
+    // EXAMPLE: https://github.com/theinterfold/interfold/blob/main/examples/CRISP/packages/crisp-contracts/contracts/CRISPProgram.sol
 
     uint256 index = inputs[e3Id].numberOfLeaves;
     inputs[e3Id]._insert(uint256(ciphertextCommitment));
@@ -121,5 +134,16 @@ contract MyProgram is IE3Program, Ownable {
 
     verifier.verify(computeProof.seal, imageId, sha256(journal));
     return true;
+  }
+
+  /// @notice Local-only DA verification used by the generated development stack.
+  /// @dev The production program must replace this with its external DA receipt verifier.
+  function verifyDataAvailability(
+    bytes32 expectedContentHash,
+    bytes calldata proof
+  ) external pure override returns (IDataAvailabilityVerifier.DataReference memory receipt) {
+    bytes32 actual = keccak256(proof);
+    if (actual != expectedContentHash) revert DataAvailabilityHashMismatch(expectedContentHash, actual);
+    return IDataAvailabilityVerifier.DataReference(expectedContentHash, 0, 0);
   }
 }

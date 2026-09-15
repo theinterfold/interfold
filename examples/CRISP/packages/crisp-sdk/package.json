@@ -26,6 +26,11 @@
       "import": "./dist/presets/secure-8192.js",
       "default": "./dist/presets/secure-8192.js"
     },
+    "./secure-16384": {
+      "types": "./dist/presets/secure-16384.d.ts",
+      "import": "./dist/presets/secure-16384.js",
+      "default": "./dist/presets/secure-16384.js"
+    },
     "./workers/generateCircuitInputs.worker": "./dist/workers/generateCircuitInputs.worker.js"
   },
   "main": "./dist/index.js",
@@ -52,7 +57,7 @@
     "check:presets": "node ../../scripts/check-presets.mjs",
     "prepublishOnly": "pnpm check:presets",
     "build:testing": "pnpm build:wasm && pnpm build:presets && pnpm check:staged insecure && CRISP_PRESET=insecure tsup",
-    "build:prod": "pnpm build:wasm && pnpm build:presets:all && pnpm check:staged insecure && pnpm check:staged secure-8192 && tsup",
+    "build:prod": "pnpm build:wasm && pnpm build:presets:all && pnpm check:staged insecure && pnpm check:staged secure-8192 && pnpm check:staged secure-16384 && tsup",
     "check:staged": "node ../../scripts/check-staged-preset.mjs"
   },
   "publishConfig": {

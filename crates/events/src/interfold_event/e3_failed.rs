@@ -43,7 +43,14 @@ impl FailureReason {
 
     /// Returns true when the E3 can stop without an accusation or slash flow.
     pub fn ends_without_slashing(&self) -> bool {
-        self.is_timeout() || matches!(self, Self::RequesterCancelled)
+        self.is_timeout()
+            || matches!(
+                self,
+                Self::NoInputsReceived
+                    | Self::ComputeProviderExpired
+                    | Self::ComputeProviderFailed
+                    | Self::RequesterCancelled
+            )
     }
 }
 

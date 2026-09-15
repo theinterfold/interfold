@@ -7,6 +7,10 @@ while [[ $# -gt 0 ]]; do
       export PINATA_JWT="$2"
       shift 2
       ;;
+    --ipfs-gateway-url)
+      export IPFS_GATEWAY_URL="$2"
+      shift 2
+      ;;
     *)
       shift
       ;;
@@ -17,6 +21,8 @@ PROGRAM_PATH="./target/riscv-guest/methods/guests/riscv32im-risc0-zkvm-elf/relea
 
 HASH_FILE="./target/.program_hash"
 URL_FILE="./target/.program_url"
+IPFS_GATEWAY_URL="${IPFS_GATEWAY_URL:-https://gateway.pinata.cloud}"
+IPFS_GATEWAY_URL="${IPFS_GATEWAY_URL%/}"
 
 if [ ! -f "$PROGRAM_PATH" ]; then
     echo "Error: Program not found at $PROGRAM_PATH"
@@ -58,8 +64,14 @@ echo ""
 if [ -f "$HASH_FILE" ] && [ -f "$URL_FILE" ]; then
     STORED_HASH=$(cat "$HASH_FILE")
     if [ "$CURRENT_HASH" = "$STORED_HASH" ]; then
+        STORED_URL=$(cat "$URL_FILE")
+        STORED_CID="${STORED_URL##*/}"
+        PROGRAM_URL="$IPFS_GATEWAY_URL/ipfs/$STORED_CID"
+        if [ "$PROGRAM_URL" != "$STORED_URL" ]; then
+            echo "$PROGRAM_URL" > "$URL_FILE"
+        fi
         echo "Program unchanged (hash matches). Existing URL:"
-        cat "$URL_FILE"
+        echo "$PROGRAM_URL"
         exit 0
     else
         echo "Program changed (hash differs). Uploading new version..."
@@ -83,8 +95,8 @@ if [ -z "$CID" ]; then
     exit 1
 fi
 
-# Save
-PROGRAM_URL="https://gateway.pinata.cloud/ipfs/$CID"
+# Save. Use the same gateway that Boundless will use for uploaded inputs.
+PROGRAM_URL="$IPFS_GATEWAY_URL/ipfs/$CID"
 echo "$CURRENT_HASH" > "$HASH_FILE"
 echo "$PROGRAM_URL" > "$URL_FILE"
 
@@ -112,5 +124,6 @@ echo "    boundless:"
 echo "      rpc_url: \"https://sepolia.infura.io/v3/YOUR_KEY\""
 echo "      private_key: \"\${PRIVATE_KEY}\""
 echo "      pinata_jwt: \"\${PINATA_JWT}\""
+echo "      ipfs_gateway_url: \"$IPFS_GATEWAY_URL\""
 echo "      program_url: \"$PROGRAM_URL\""
 echo "      onchain: true"

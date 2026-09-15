@@ -92,6 +92,7 @@ impl ZKInputsGenerator {
         let preset = match name.trim() {
             "insecure" => BfvPreset::InsecureThreshold512,
             "secure-8192" => BfvPreset::SecureThreshold8192,
+            "secure-16384" => BfvPreset::SecureThreshold16384,
             other => BfvPreset::from_name(other)?,
         };
 

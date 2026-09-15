@@ -1,0 +1,27 @@
+[package]
+name = "e3-data-availability"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Interfold content-addressed data-availability clients"
+repository.workspace = true
+publish = false
+
+[dependencies]
+alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+avail-rust-client = { workspace = true, optional = true }
+hex = { workspace = true }
+reqwest = { workspace = true }
+serde = { workspace = true }
+tokio = { workspace = true }
+
+[features]
+default = []
+avail-submit = ["dep:avail-rust-client"]
+avail-read = ["dep:avail-rust-client"]
+
+[dev-dependencies]
+serde_json = { workspace = true }

@@ -20,7 +20,7 @@ export default defineConfig([
     }),
     esbuildOptions: (options) => {
       options.alias = {
-        '@interfold/wasm/init': '../../crates/wasm/init_node.js',
+        '@interfold/wasm/init': '../../crates/wasm/init_node.mjs',
       }
     },
   },

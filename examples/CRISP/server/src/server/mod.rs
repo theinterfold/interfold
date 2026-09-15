@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 mod app_data;
+mod data_availability;
 mod database;
 mod indexer;
 mod log_repo;
@@ -21,6 +22,7 @@ use std::sync::Arc;
 use actix_cors::Cors;
 use actix_web::{middleware::Logger, web, App, HttpServer};
 use app_data::AppData;
+use data_availability::AvailabilityService;
 use database::SledDB;
 use e3_sdk::indexer::SharedStore;
 use eyre::OptionExt;
@@ -36,7 +38,16 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let pathdb = std::env::current_dir()?.join("database/server");
     let pathdb = pathdb.to_str().ok_or_eyre("Path could not be determined")?;
-    let db = SharedStore::new(Arc::new(RwLock::new(SledDB::new(pathdb)?)));
+    let sled_db = SledDB::new(pathdb)?;
+    let availability = Arc::new(AvailabilityService::new(&sled_db.db, &CONFIG)?);
+    availability.validate_onchain_configuration().await?;
+    let availability_worker = Arc::clone(&availability);
+    tokio::spawn(async move {
+        if let Err(error) = availability_worker.run().await {
+            eprintln!("Data-availability worker stopped: {error}");
+        }
+    });
+    let db = SharedStore::new(Arc::new(RwLock::new(sled_db)));
 
     // New indexer
     // Parsed once here rather than per request: the same list bounds what the indexer watches and
@@ -61,6 +72,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     tokio::spawn({
         let db = db.clone();
+        let availability = availability.clone();
         let index_contracts = index_contracts.clone();
         let index_log_contracts = index_log_contracts.clone();
         async move {
@@ -70,6 +82,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 &CONFIG.ciphernode_registry_address,
                 &CONFIG.e3_program_address,
                 db.clone(),
+                availability,
                 &CONFIG.private_key,
                 CONFIG.index_start_block,
                 CONFIG.index_chunk_size,
@@ -85,6 +98,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     let bind_addr = "0.0.0.0:4000";
     let db_clone = db.clone();
+    let availability_clone = availability.clone();
     // Built once, outside the factory closure: the closure runs per worker, and a per-worker
     // limiter would multiply every window by the worker count.
     let rate_limiter = web::Data::new(rate_limit::RateLimiter::new());
@@ -105,6 +119,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .wrap(cors)
             .wrap(Logger::new(r#"%a "%r" %s %b %T"#))
             .app_data(web::Data::new(AppData::new(db_clone.clone())))
+            .app_data(web::Data::from(availability_clone.clone()))
             .app_data(rate_limiter.clone())
             .app_data(chain_rate_limiter.clone())
             .configure(routes::setup_routes)

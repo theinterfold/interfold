@@ -17,12 +17,14 @@ mod ciphernode_deregistration_requested;
 mod ciphernode_removed;
 mod ciphernode_selected;
 mod ciphertext_output_published;
+mod ciphertext_output_reference_published;
 mod commitment_consistency;
 mod committee_activation_changed;
 mod committee_finalize_requested;
 mod committee_finalized;
 mod committee_formation_failed;
 mod committee_member_excluded;
+mod committee_public_key_chunk_published;
 mod committee_published;
 mod committee_requested;
 mod committee_viability_updated;
@@ -50,6 +52,8 @@ mod evm_log_observed;
 mod input_published;
 mod interfold_error;
 mod keyshare_created;
+mod lbfv_key_share_transport;
+mod lbfv_publickey_aggregated;
 mod net_ready;
 mod operator_activation_changed;
 mod outgoing_sync_requested;
@@ -98,12 +102,14 @@ pub use ciphernode_deregistration_requested::*;
 pub use ciphernode_removed::*;
 pub use ciphernode_selected::*;
 pub use ciphertext_output_published::*;
+pub use ciphertext_output_reference_published::*;
 pub use commitment_consistency::*;
 pub use committee_activation_changed::*;
 pub use committee_finalize_requested::*;
 pub use committee_finalized::*;
 pub use committee_formation_failed::*;
 pub use committee_member_excluded::*;
+pub use committee_public_key_chunk_published::*;
 pub use committee_published::*;
 pub use committee_requested::*;
 pub use committee_viability_updated::*;
@@ -132,6 +138,8 @@ pub use evm_log_observed::*;
 pub use input_published::*;
 pub use interfold_error::*;
 pub use keyshare_created::*;
+pub use lbfv_key_share_transport::*;
+pub use lbfv_publickey_aggregated::*;
 pub use net_ready::*;
 pub use operator_activation_changed::*;
 pub use outgoing_sync_requested::*;
@@ -354,6 +362,14 @@ pub enum InterfoldEventData {
     // Append new durable variants to preserve existing enum discriminants in persisted logs.
     CommitteeMemberExcluded(CommitteeMemberExcluded),
     AggregationInputsReady(AggregationInputsReady),
+    CommitteePublicKeyChunkPublished(CommitteePublicKeyChunkPublished),
+    CiphertextOutputReferencePublished(CiphertextOutputReferencePublished),
+    LbfvKeyShareDocumentCreated(LbfvKeyShareDocumentCreated),
+    LbfvKeyShareDocumentReceived(LbfvKeyShareDocumentReceived),
+    LbfvKeyShareManifestPublished(LbfvKeyShareManifestPublished),
+    LbfvKeyShareDocumentFetchRequested(LbfvKeyShareDocumentFetchRequested),
+    LbfvKeyShareDocumentFetchFailed(LbfvKeyShareDocumentFetchFailed),
+    LbfvPublicKeyAggregated(LbfvPublicKeyAggregated),
 }
 
 impl InterfoldEventData {
@@ -618,6 +634,7 @@ impl InterfoldEventData {
             InterfoldEventData::E3Requested(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::E3RequestComplete(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::PublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::LbfvPublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CiphertextOutputPublished(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionKeyShared(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionshareCreated(ref data) => Some(data.e3_id.clone()),
@@ -638,6 +655,7 @@ impl InterfoldEventData {
             InterfoldEventData::TicketSubmitted(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::EncryptionKeyCreated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::ComputeResponse(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::ComputeRequestError(ref data) => Some(data.request().e3_id.clone()),
             InterfoldEventData::TestEvent(ref data) => data.e3_id.clone(),
             InterfoldEventData::SignedProofFailed(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionShareProofsPending(ref data) => Some(data.e3_id.clone()),
@@ -678,6 +696,25 @@ impl InterfoldEventData {
             InterfoldEventData::EvmLogObserved(ref data) => data.e3_id.clone(),
             InterfoldEventData::DkgFoldAttestationContextEstablished(ref data) => {
                 Some(data.e3_id.clone())
+            }
+            InterfoldEventData::CommitteePublicKeyChunkPublished(ref data) => {
+                Some(data.e3_id.clone())
+            }
+            InterfoldEventData::CiphertextOutputReferencePublished(ref data) => {
+                Some(data.e3_id.clone())
+            }
+            InterfoldEventData::LbfvKeyShareDocumentCreated(ref data) => Some(data.e3_id().clone()),
+            InterfoldEventData::LbfvKeyShareDocumentReceived(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvKeyShareManifestPublished(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvKeyShareDocumentFetchRequested(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvKeyShareDocumentFetchFailed(ref data) => {
+                Some(data.e3_id().clone())
             }
             _ => None,
         }
@@ -791,7 +828,15 @@ impl_event_types!(
     BondOwnerSet,
     DkgFoldAttestationContextEstablished,
     CommitteeMemberExcluded,
-    AggregationInputsReady
+    AggregationInputsReady,
+    CommitteePublicKeyChunkPublished,
+    CiphertextOutputReferencePublished,
+    LbfvKeyShareDocumentCreated,
+    LbfvKeyShareDocumentReceived,
+    LbfvKeyShareManifestPublished,
+    LbfvKeyShareDocumentFetchRequested,
+    LbfvKeyShareDocumentFetchFailed,
+    LbfvPublicKeyAggregated
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

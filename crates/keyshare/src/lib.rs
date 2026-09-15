@@ -17,7 +17,7 @@ pub use actors::{
 };
 pub use domain::{
     AggregatingDecryptionKey, CollectingEncryptionKeysData, Decrypting, GeneratingDecryptionProof,
-    GeneratingThresholdShareData, KeyshareState, ProofRequestData, ReadyForDecryption,
-    ThresholdKeyshareState,
+    GeneratingThresholdShareData, KeyshareState, LbfvGenerationStateV1, ProofRequestData,
+    ReadyForDecryption, ThresholdKeyshareState, LBFV_GENERATION_SCHEMA_VERSION,
 };
 pub use repo::*;

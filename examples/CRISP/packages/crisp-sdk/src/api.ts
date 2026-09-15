@@ -15,6 +15,7 @@ import {
   CRISP_SERVER_STATE_RESULT_ENDPOINT,
   CRISP_SERVER_TOKEN_TREE_ENDPOINT,
   CRISP_SERVER_VOTING_BROADCAST_ENDPOINT,
+  CRISP_SERVER_VOTING_AVAILABILITY_ENDPOINT,
   CRISP_SERVER_VOTING_STATUS_ENDPOINT,
   CRISP_SERVER_CHAIN_HEAD_ENDPOINT,
   CRISP_SERVER_CHAIN_READ_ENDPOINT,
@@ -136,7 +137,11 @@ export const requestNewRound = async (serverUrl: string, request: NewRoundReques
   })
 
 /**
- * Broadcast an encrypted vote through the CRISP server, which relays it on-chain.
+ * Stage an encrypted vote with the CRISP availability service.
+ *
+ * This call returns after the proof commitment is accepted or the server creates a 10-minute
+ * commitment payload for the voter's wallet. The server publishes the ciphertext to Avail and
+ * finalizes the input in the background after the commitment lands.
  * @param serverUrl - The base URL of the CRISP server
  * @param request - The vote request (round id and hex encoded proof)
  * @returns The broadcast result, including the transaction hash on success
@@ -161,6 +166,20 @@ export const broadcastVote = async (serverUrl: string, request: BroadcastVoteReq
   }
 
   return data
+}
+
+/**
+ * Read a durable vote availability job without waiting for VectorX finalization.
+ * @param serverUrl The base URL of the CRISP server.
+ * @param jobId The job id returned by {@link broadcastVote}.
+ * @returns The current commitment or availability state.
+ */
+export const getVoteAvailability = async (serverUrl: string, jobId: string): Promise<BroadcastVoteResponse> => {
+  const response = await fetch(`${serverUrl}/${CRISP_SERVER_VOTING_AVAILABILITY_ENDPOINT}/${encodeURIComponent(jobId)}`)
+  if (!response.ok) {
+    throw new Error(`Failed to read availability job (${response.status}): ${await response.text()}`)
+  }
+  return (await response.json()) as BroadcastVoteResponse
 }
 
 /**

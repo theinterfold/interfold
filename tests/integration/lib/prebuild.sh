@@ -32,7 +32,7 @@ if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
   # freshly-built circuits' recursive VKs. Fails loudly on drift instead of
   # silently rewriting committed contracts mid-test. If this errors, run
   # `pnpm generate:verifiers --write` and commit the diff.
-  (cd "$ROOT_DIR" && pnpm generate:verifiers --check --no-compile --no-clean-targets)
+  (cd "$ROOT_DIR" && pnpm generate:verifiers --preset insecure --committee minimum --check --no-compile --no-clean-targets)
 else
   # C5/C7 final aggregation is skipped, but DKG and decryption leaf proofs
   # still execute. Build only those two source groups for the fast CI profile.

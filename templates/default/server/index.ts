@@ -5,9 +5,12 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import express, { Request, Response } from 'express'
-import { InterfoldSDK } from '@interfold/sdk'
-import { RegistryEventType, type CommitteePublishedData } from '@interfold/sdk/events'
+import { CommitteePublicKeyAssembler, InterfoldSDK } from '@interfold/sdk'
+import { RegistryEventType } from '@interfold/sdk/events'
+import { hexToBytes, keccak256 } from 'viem'
 import { hardhat } from 'viem/chains'
+import { mkdir, readFile, rename, writeFile } from 'node:fs/promises'
+import { join } from 'node:path'
 import { handleTestInteraction } from './testHandler'
 import { getCheckedEnvVars } from './utils'
 import { callFheRunner } from './runner'
@@ -46,11 +49,20 @@ async function createPrivateSDK(): Promise<InterfoldSDK> {
 }
 
 // The only state the server keeps, purely for idempotency: E3s already scheduled
-// (so a repeated CommitteePublished does not double-schedule) and E3s already
+// (so repeated public-key candidates do not double-schedule) and E3s already
 // submitted to the runner (so a run is not sent twice).
 const scheduled = new Set<string>()
 const inFlight = new Set<string>()
 const CHAIN_TIME_POLL_INTERVAL_MS = 500
+const DATA_AVAILABILITY_DIRECTORY = process.env.DATA_AVAILABILITY_DIRECTORY ?? '.interfold/data-availability'
+
+async function storeAvailabilityObject(contentHash: `0x${string}`, bytes: Buffer): Promise<void> {
+  await mkdir(DATA_AVAILABILITY_DIRECTORY, { recursive: true })
+  const path = join(DATA_AVAILABILITY_DIRECTORY, contentHash.slice(2).toLowerCase())
+  const temporaryPath = `${path}.${process.pid}.tmp`
+  await writeFile(temporaryPath, bytes)
+  await rename(temporaryPath, path)
+}
 
 async function waitForChainTimestamp(sdk: InterfoldSDK, target: bigint): Promise<void> {
   const publicClient = sdk.getPublicClient()
@@ -140,8 +152,7 @@ async function runProgram(e3Id: bigint): Promise<void> {
  * When a committee publishes for an E3, schedule the FHE run for the moment the
  * input window closes (or run immediately if it has already passed).
  */
-async function handleCommitteePublishedEvent(event: { data: CommitteePublishedData }) {
-  const e3Id = event.data.e3Id
+async function scheduleE3(e3Id: bigint) {
   const key = e3Id.toString()
 
   if (scheduled.has(key)) return
@@ -176,12 +187,29 @@ async function handleCommitteePublishedEvent(event: { data: CommitteePublishedDa
 
 async function setupEventListeners() {
   const sdk = await createPrivateSDK()
+  const committeeKeyAssembler = new CommitteePublicKeyAssembler()
 
   console.log('📡 Setting up event listeners...')
 
-  // Listen to CommitteePublished to know when an E3 is ready and when its input
-  // window closes; inputs themselves are read on demand at run time.
-  await sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLISHED, handleCommitteePublishedEvent)
+  // Schedule computation only after the transported key matches the commitment
+  // accepted with the DKG proof.
+  await sdk.onInterfoldEvent(RegistryEventType.COMMITTEE_PUBLIC_KEY_CHUNK_PUBLISHED, async (event) => {
+    try {
+      const assembled = committeeKeyAssembler.add(event.data)
+      if (!assembled) return
+
+      const isBoundKey = await sdk.validatePublicKeyCommitment(assembled.publicKey, hexToBytes(assembled.pkCommitment))
+      if (!isBoundKey) {
+        console.warn(`Ignored committee public-key candidate for E3 ${assembled.e3Id}: commitment mismatch`)
+        return
+      }
+
+      committeeKeyAssembler.clear(assembled.e3Id)
+      await scheduleE3(assembled.e3Id)
+    } catch (error) {
+      console.error('Failed to process a committee public-key chunk:', error)
+    }
+  })
 
   console.log('✅ Event listeners set up successfully')
 }
@@ -209,8 +237,18 @@ async function handleWebhookRequest(req: Request, res: Response) {
 
     console.log(`🔄 Publishing output for E3 ${e3_id}...`)
 
+    const ciphertextBytes = Buffer.from(ciphertext.slice(2), 'hex')
+    const contentHash = keccak256(ciphertext)
+    await storeAvailabilityObject(contentHash, ciphertextBytes)
+
     const sdk = await createPrivateSDK()
-    await sdk.publishCiphertextOutput(BigInt(e3_id), ciphertext, ciphertext_commitment, proof)
+    await sdk.publishCiphertextOutput(BigInt(e3_id), {
+      contentHash,
+      ciphertextCommitment: ciphertext_commitment,
+      computeProof: proof,
+      // The local program verifies raw bytes as a deterministic mock receipt.
+      availabilityProof: ciphertext,
+    })
 
     inFlight.delete(e3_id.toString())
     console.log(`✅ Successfully completed E3 ${e3_id}`)
@@ -226,6 +264,19 @@ const app = express()
 app.use(express.json({ limit: '50mb' }))
 
 app.post('/', handleWebhookRequest)
+app.get('/availability/objects/:contentHash', async (req, res) => {
+  const contentHash = req.params.contentHash
+  if (!/^0x[a-fA-F0-9]{64}$/.test(contentHash)) {
+    res.status(400).json({ error: 'contentHash must be a 32-byte hex value' })
+    return
+  }
+  try {
+    const bytes = await readFile(join(DATA_AVAILABILITY_DIRECTORY, contentHash.slice(2).toLowerCase()))
+    res.type('application/octet-stream').send(bytes)
+  } catch {
+    res.status(404).json({ error: 'Object not found' })
+  }
+})
 
 // This allows us to test interaction between server and program
 // TEST_MODE=1 pnpm dev:server

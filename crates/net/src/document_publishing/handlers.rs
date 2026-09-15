@@ -25,6 +25,9 @@ impl Handler<InterfoldEvent> for DocumentPublisher {
             InterfoldEventData::E3RequestComplete(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::LbfvKeyShareDocumentFetchRequested(data) => {
+                ctx.notify(TypedEvent::new(data, ec))
+            }
             _ => (),
         }
     }
@@ -79,6 +82,26 @@ impl Handler<TypedEvent<E3RequestComplete>> for DocumentPublisher {
         trap(EType::DocumentPublishing, &self.bus.with_ec(&ec), || {
             self.handle_e3_request_complete(msg)
         })
+    }
+}
+
+impl Handler<TypedEvent<LbfvKeyShareDocumentFetchRequested>> for DocumentPublisher {
+    type Result = ResponseFuture<()>;
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<LbfvKeyShareDocumentFetchRequested>,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        let tx = self.tx.clone();
+        let rx = self.rx.clone();
+        let bus = self.bus.clone();
+        let (request, ec) = msg.into_components();
+        trap_fut(
+            EType::IO,
+            &bus.with_ec(&ec),
+            handle_lbfv_document_fetch_requested(tx, rx, bus, request, ec),
+        )
     }
 }
 

@@ -19,9 +19,12 @@ on:
 permissions:
   contents: write
 
+# Each RunsOn label embeds run id, attempt, and job ID so jobs never share runners.
 jobs:
   tidy:
-    runs-on: ubuntu-latest
+    runs-on:
+      ${{ github.repository == 'theinterfold/interfold' && (github.ref == 'refs/heads/main' || github.ref == 'refs/heads/dev') &&
+      format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt, 'tidy') || 'ubuntu-latest' }}
     steps:
       - name: Prune merged branches
         uses: actions/github-script@v7

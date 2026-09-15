@@ -167,6 +167,98 @@ describe("ChainlinkVrfRandomnessProvider", function () {
       .withArgs(1, 2);
   });
 
+  it("reserves the balance floor for each unfulfilled draw", async function () {
+    // ZEN2-07(b): a burst of requests in one block must not all pass the same balance check.
+    const { provider, requesterSigner } = await setup({
+      fundedBalance: 10n,
+      minimumBalance: 5n,
+    });
+
+    await provider.connect(requesterSigner).requestRandomness(1);
+    expect(await provider.pendingRequestCount()).to.equal(1n);
+    await provider.connect(requesterSigner).requestRandomness(2);
+    expect(await provider.pendingRequestCount()).to.equal(2n);
+
+    await expect(provider.connect(requesterSigner).requestRandomness(3))
+      .to.be.revertedWithCustomError(
+        provider,
+        "InsufficientSubscriptionBalance",
+      )
+      .withArgs(10, 15);
+  });
+
+  it("frees the reservation when a draw responds", async function () {
+    const { coordinator, provider, requesterSigner } = await setup({
+      fundedBalance: 10n,
+      minimumBalance: 5n,
+    });
+
+    await provider.connect(requesterSigner).requestRandomness(1);
+    await provider.connect(requesterSigner).requestRandomness(2);
+    await coordinator.fulfillRandomWordsWithOverride(
+      1,
+      await provider.getAddress(),
+      [111],
+    );
+    expect(await provider.pendingRequestCount()).to.equal(1n);
+    await expect(
+      provider.connect(requesterSigner).requestRandomness(3),
+    ).to.emit(provider, "RandomnessRequested");
+  });
+
+  it("ignores a response to a released request", async function () {
+    const { coordinator, owner, provider, requesterSigner } = await setup({
+      fundedBalance: 10n,
+      minimumBalance: 5n,
+    });
+
+    await provider.connect(requesterSigner).requestRandomness(1);
+    expect(await provider.pendingRequestCount()).to.equal(1n);
+
+    await provider.connect(owner).releaseAbandonedRequest(1);
+    expect(await provider.pendingRequestCount()).to.equal(0n);
+
+    // The reservation is back, so the released draw must stay unusable. Accepting it would let
+    // the provider hold more usable draws than the reservation covers.
+    await expect(
+      coordinator.fulfillRandomWordsWithOverride(
+        1,
+        await provider.getAddress(),
+        [222],
+      ),
+    ).to.emit(provider, "RandomnessResponseIgnored");
+
+    const [fulfilled, randomWord] = await provider.getRandomness(1);
+    expect(fulfilled).to.equal(false);
+    expect(randomWord).to.equal(0n);
+    expect(await provider.pendingRequestCount()).to.equal(0n);
+  });
+
+  it("lets the owner release the reservation of an abandoned draw", async function () {
+    const { owner, provider, requesterSigner, other } = await setup({
+      fundedBalance: 10n,
+      minimumBalance: 5n,
+    });
+
+    await provider.connect(requesterSigner).requestRandomness(1);
+    await provider.connect(requesterSigner).requestRandomness(2);
+
+    await expect(
+      provider.connect(other).releaseAbandonedRequest(1),
+    ).to.be.revert(ethers);
+    await expect(provider.connect(owner).releaseAbandonedRequest(99))
+      .to.be.revertedWithCustomError(provider, "UnknownRandomnessRequest")
+      .withArgs(99);
+
+    await expect(provider.connect(owner).releaseAbandonedRequest(1))
+      .to.emit(provider, "RandomnessRequestReleased")
+      .withArgs(1);
+    expect(await provider.pendingRequestCount()).to.equal(1n);
+    await expect(provider.connect(owner).releaseAbandonedRequest(1))
+      .to.be.revertedWithCustomError(provider, "RandomnessRequestNotReleasable")
+      .withArgs(1);
+  });
+
   it("does not revert the coordinator callback for an unknown response", async function () {
     const { coordinator, provider } = await setup();
     const coordinatorAddress = await coordinator.getAddress();

@@ -30,8 +30,11 @@ load_crisp_dev_config() {
     secure-8192)
       CRISP_E3_PARAM_SET=1
       ;;
+    secure-16384)
+      CRISP_E3_PARAM_SET=2
+      ;;
     *)
-      echo "Invalid CRISP_BFV_PRESET='${CRISP_BFV_PRESET}' (use insecure or secure-8192)" >&2
+      echo "Invalid CRISP_BFV_PRESET='${CRISP_BFV_PRESET}' (use insecure, secure-8192, or secure-16384)" >&2
       exit 1
       ;;
   esac

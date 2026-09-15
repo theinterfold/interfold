@@ -37,6 +37,7 @@ export default defineConfig({
       '@crisp-e3/sdk',
       '@crisp-e3/sdk/insecure',
       '@crisp-e3/sdk/secure-8192',
+      '@crisp-e3/sdk/secure-16384',
     ],
   },
   resolve: {

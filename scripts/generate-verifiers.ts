@@ -11,7 +11,7 @@
  * The Honk Solidity verifiers are committed to git. To keep the committed
  * files in sync with the recursive VKs, this script has two modes:
  *
- *   - `--check` (default for test/benchmark flows): regenerate in memory and
+ *   - `--check` (used by test/benchmark flows): regenerate in memory and
  *     diff against the committed files. Exits non-zero on drift without
  *     touching the working tree. Used by `prebuild.sh`, `extract_crisp_verify_gas.sh`,
  *     `replay_folded_verify_gas.sh` so accidental drift fails loudly instead
@@ -22,11 +22,11 @@
  *
  * Prerequisites:
  *   - `nargo` and `bb` (Barretenberg CLI) must be installed and in PATH
- *   - Circuits should be compiled first (`pnpm build:circuits`) or this script
- *     will compile them automatically.
+ *   - The default all-pairs mode requires a complete `dist/circuits` matrix.
+ *     Use `pnpm store:circuits pull` or build each supported pair first.
  *
  * Usage:
- *   pnpm generate:verifiers                       # Write all circuits (default)
+ *   pnpm generate:verifiers                       # Write all supported on-chain verifiers
  *   pnpm generate:verifiers --check               # Verify committed verifiers match VKs (no writes)
  *   pnpm generate:verifiers --circuits pk,fold    # Specific circuits
  *   pnpm generate:verifiers --clean               # Remove existing verifiers first (write mode only)
@@ -35,17 +35,23 @@
  */
 
 import { execFileSync, execSync } from 'child_process'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
-import { basename, join, resolve } from 'path'
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { basename, join, relative, resolve } from 'path'
 import {
   ALL_COMMITTEES,
   ALL_GROUPS,
   ALL_PRESETS,
   CIRCUIT_COMMITTEES,
   CIRCUIT_GROUPS,
+  CIRCUIT_PRESETS,
+  isPresetCommitteeSupported,
+  SUPPORTED_PRESET_COMMITTEE_PAIRS,
   type CircuitCommittee,
   type CircuitGroup,
+  type CircuitPreset,
 } from './circuit-constants'
+import { NoirCircuitBuilder } from './build-circuits'
 
 // ---------------------------------------------------------------------------
 // Types & constants
@@ -67,9 +73,9 @@ const LICENSE_HEADER = `// SPDX-License-Identifier: LGPL-3.0-only
  * different `.sol` bytes. The root directory is pinned to `insecure/minimum` because that is
  * the development/CI/benchmark default.
  *
- * Both `--check` and `--write` refuse to run unless
- * `dist/circuits/<preset>/<committee>/.build-stamp.json` exists and its `preset` field matches.
- * This prevents silently producing/checking against the wrong preset's VKs — e.g. after
+ * Both `--check` and `--write` refuse to run unless the pair's build stamp matches the requested
+ * preset, committee, and current source hash. This prevents silently using stale or wrong VKs,
+ * for example after
  * `pnpm build:circuits --preset secure-8192 --committee small`, where `circuits/bin/` holds
  * secure artifacts that would generate different `.sol` bytes.
  *
@@ -88,6 +94,96 @@ const CANONICAL_PRESET = 'insecure'
  * under `honk/<preset>/<committee>/`.
  */
 const CANONICAL_COMMITTEE: CircuitCommittee = CIRCUIT_COMMITTEES.MINIMUM
+
+const BASE_ON_CHAIN_VERIFIER_CIRCUITS = ['dkg_aggregator', 'decryption_aggregator']
+
+function onChainVerifierCircuits(preset: CircuitPreset, committee: CircuitCommittee): string[] {
+  if (!isPresetCommitteeSupported(preset, committee)) {
+    throw new Error(`Unsupported preset/committee pair (${preset}, ${committee})`)
+  }
+  return preset === CIRCUIT_PRESETS.SECURE_16384
+    ? [...BASE_ON_CHAIN_VERIFIER_CIRCUITS, 'dkg_aggregator_v2']
+    : [...BASE_ON_CHAIN_VERIFIER_CIRCUITS]
+}
+
+function verifierContractName(circuit: string): string {
+  const pascal = circuit
+    .split(/[_-]+/)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1).toLowerCase())
+    .join('')
+  return `${pascal}Verifier`
+}
+
+function verifierPairRelativeDir(preset: CircuitPreset, committee: CircuitCommittee): string {
+  return preset === CANONICAL_PRESET && committee === CANONICAL_COMMITTEE ? '' : join(preset, committee)
+}
+
+function expectedVerifierRelativePaths(): string[] {
+  return SUPPORTED_PRESET_COMMITTEE_PAIRS.flatMap(({ preset, committee }) => {
+    const pairDir = verifierPairRelativeDir(preset, committee)
+    return onChainVerifierCircuits(preset, committee).map((circuit) => join(pairDir, `${verifierContractName(circuit)}.sol`))
+  }).sort()
+}
+
+function verifierSolidityFiles(dir: string, base = dir): string[] {
+  if (!existsSync(dir)) return []
+  return readdirSync(dir)
+    .filter((entry) => !entry.startsWith('.'))
+    .flatMap((entry) => {
+      const path = join(dir, entry)
+      return statSync(path).isDirectory() ? verifierSolidityFiles(path, base) : path.endsWith('.sol') ? [relative(base, path)] : []
+    })
+}
+
+function assertExactVerifierInventory(rootDir: string): void {
+  const verifierDir = join(rootDir, 'packages', 'interfold-contracts', 'contracts', 'verifiers', 'bfv', 'honk')
+  const expected = expectedVerifierRelativePaths()
+  const actual = verifierSolidityFiles(verifierDir).sort()
+  if (actual.join('\n') !== expected.join('\n')) {
+    const missing = expected.filter((path) => !actual.includes(path))
+    const unexpected = actual.filter((path) => !expected.includes(path))
+    throw new Error(
+      `Generated verifier inventory does not match the supported circuit matrix.` +
+        `${missing.length > 0 ? `\nMissing: ${missing.join(', ')}` : ''}` +
+        `${unexpected.length > 0 ? `\nUnexpected: ${unexpected.join(', ')}` : ''}`,
+    )
+  }
+}
+
+function unsupportedVerifierDirs(rootDir: string): string[] {
+  const verifierDir = join(rootDir, 'packages', 'interfold-contracts', 'contracts', 'verifiers', 'bfv', 'honk')
+  const unsupported: string[] = []
+  for (const preset of ALL_PRESETS) {
+    for (const committee of ALL_COMMITTEES) {
+      if (isPresetCommitteeSupported(preset, committee)) continue
+      const pairDir = join(verifierDir, preset, committee)
+      if (!existsSync(pairDir)) continue
+      unsupported.push(relative(verifierDir, pairDir))
+    }
+  }
+  return unsupported.sort()
+}
+
+function pruneUnsupportedVerifierDirs(rootDir: string): string[] {
+  const verifierDir = join(rootDir, 'packages', 'interfold-contracts', 'contracts', 'verifiers', 'bfv', 'honk')
+  const removed = unsupportedVerifierDirs(rootDir)
+  for (const pairDir of removed) {
+    rmSync(join(verifierDir, pairDir), { recursive: true })
+  }
+  return removed
+}
+
+function prepareAllSupportedOutput(rootDir: string, options: Pick<GenerateOptions, 'check' | 'clean' | 'dryRun'>): void {
+  if (options.check || options.dryRun) return
+  if (options.clean) {
+    rmSync(join(rootDir, 'packages', 'interfold-contracts', 'contracts', 'verifiers', 'bfv', 'honk'), {
+      recursive: true,
+      force: true,
+    })
+    return
+  }
+  pruneUnsupportedVerifierDirs(rootDir)
+}
 
 interface CircuitInfo {
   name: string
@@ -121,6 +217,8 @@ interface GenerateOptions {
   committee?: CircuitCommittee
   /** Override output directory (write mode only). Defaults to committed honk/ path. */
   outputDir?: string
+  /** Read prebuilt EVM artifacts from one dist pair without hydrating circuits/bin. */
+  artifactDir?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -142,8 +240,12 @@ class VerifierGenerator {
       compile: true,
       ...options,
     }
-    this.verifierDir =
-      options.outputDir !== undefined ? resolve(options.outputDir) : this.defaultVerifierDir(this.targetPreset(), this.targetCommittee())
+    const preset = this.targetPreset()
+    const committee = this.targetCommittee()
+    if (!isPresetCommitteeSupported(preset as CircuitPreset, committee)) {
+      throw new Error(`Unsupported preset/committee pair (${preset}, ${committee})`)
+    }
+    this.verifierDir = options.outputDir !== undefined ? resolve(options.outputDir) : this.defaultVerifierDir(preset, committee)
   }
 
   private defaultVerifierDir(preset: string, committee: CircuitCommittee): string {
@@ -186,8 +288,10 @@ class VerifierGenerator {
 
     if (!this.options.dryRun) {
       this.assertPresetBuilt(targetPreset)
-      this.assertCircuitsBinActivePreset(targetPreset)
-      this.assertCircuitsBinActiveCommittee(targetCommittee)
+      if (!this.options.artifactDir) {
+        this.assertCircuitsBinActivePreset(targetPreset)
+        this.assertCircuitsBinActiveCommittee(targetCommittee)
+      }
     }
 
     const circuits = this.discoverCircuits()
@@ -271,6 +375,12 @@ class VerifierGenerator {
       }
     }
 
+    if (errors.length > 0) {
+      console.error(`\n❌ ${errors.length} error(s):`)
+      for (const e of errors) console.error(`   • ${e}`)
+      throw new Error(`${errors.length} Solidity verifier generation error(s)`)
+    }
+
     if (this.options.check) {
       if (drift.length > 0) {
         console.error(`\n❌ ${drift.length} Solidity verifier(s) drift from current circuit VKs:`)
@@ -288,7 +398,7 @@ class VerifierGenerator {
             `     3. Run 'pnpm generate:verifiers --write' (or omit --check) to refresh the\n` +
             `        committed .sol files, then commit the diff.\n`,
         )
-        process.exit(1)
+        throw new Error(`${drift.length} Solidity verifier(s) drift from current circuit VKs`)
       }
       console.log(`\n✅ Checked ${processed.length} Solidity verifier(s) — all in sync with current VKs.\n`)
       for (const f of processed) console.log(`   • ${basename(f)}`)
@@ -296,12 +406,6 @@ class VerifierGenerator {
       console.log(`\n✅ Generated ${processed.length} Solidity verifier(s) in:`)
       console.log(`   ${this.verifierDir}\n`)
       for (const f of processed) console.log(`   • ${basename(f)}`)
-    }
-
-    if (errors.length > 0) {
-      console.error(`\n❌ ${errors.length} error(s):`)
-      for (const e of errors) console.error(`   • ${e}`)
-      process.exit(1)
     }
   }
 
@@ -359,19 +463,23 @@ class VerifierGenerator {
     const vkPath = this.ensureVk(jsonFile, targetDir, packageName)
 
     // 3. Generate Solidity verifier
-    const rawSolPath = join(targetDir, `${packageName}_verifier.sol`)
-    execFileSync('bb', ['write_solidity_verifier', '-k', vkPath, '-o', rawSolPath], { stdio: 'pipe' })
-
-    if (!existsSync(rawSolPath)) {
-      throw new Error('bb write_solidity_verifier did not produce output')
+    const temporaryDir = mkdtempSync(join(tmpdir(), 'interfold-verifier-'))
+    const rawSolPath = join(temporaryDir, `${packageName}_verifier.sol`)
+    let solidity: string
+    try {
+      execFileSync('bb', ['write_solidity_verifier', '-k', vkPath, '-o', rawSolPath], { stdio: 'pipe' })
+      if (!existsSync(rawSolPath)) {
+        throw new Error('bb write_solidity_verifier did not produce output')
+      }
+      solidity = readFileSync(rawSolPath, 'utf-8')
+    } finally {
+      rmSync(temporaryDir, { recursive: true, force: true })
     }
 
     // 4. Post-process: rename contract, add license header
     const contractName = this.toContractName(name)
     const outputFileName = `${contractName}.sol`
     const outputPath = join(this.verifierDir, outputFileName)
-
-    let solidity = readFileSync(rawSolPath, 'utf-8')
 
     // Replace the default contract name (HonkVerifier) with our descriptive name
     solidity = solidity.replace(/contract\s+HonkVerifier/g, `contract ${contractName}`)
@@ -384,9 +492,6 @@ class VerifierGenerator {
 
     // Bind the verifier's immutable parameters to the VK emitted by bb.
     solidity = this.addVerificationKeyValidation(solidity, contractName)
-
-    // Clean up intermediate file (always — we don't keep the bb temp output around)
-    rmSync(rawSolPath, { force: true })
 
     // Normalize with prettier so the on-disk format matches what the rest of
     // the repo's `pnpm prettier:write` produces. Without this, --check would
@@ -518,8 +623,13 @@ class VerifierGenerator {
     // Also check for a bare 'vk' file
     const defaultVk = join(targetDir, 'vk')
     if (existsSync(defaultVk)) {
+      if (this.options.compile === false) return defaultVk
       copyFileSync(defaultVk, vkFile)
       return vkFile
+    }
+
+    if (this.options.compile === false) {
+      throw new Error(`Verification key ${packageName}.vk not found. Run 'pnpm build:circuits' first.`)
     }
 
     // Generate VK (EVM target for Solidity verifiers)
@@ -543,6 +653,9 @@ class VerifierGenerator {
   // -------------------------------------------------------------------------
 
   private candidateTargetDirs(circuit: CircuitInfo): string[] {
+    if (this.options.artifactDir) {
+      return [join(this.options.artifactDir, 'evm', circuit.group, circuit.name)]
+    }
     const groupDir = join(this.circuitsDir, circuit.group)
     return [join(groupDir, 'target'), join(this.circuitsDir, 'target'), join(circuit.path, 'target')]
   }
@@ -560,12 +673,7 @@ class VerifierGenerator {
    * e.g. dkg_aggregator → DkgAggregatorVerifier, decryption_aggregator → DecryptionAggregatorVerifier
    */
   private toContractName(name: string): string {
-    const pascal = (s: string) =>
-      s
-        .split(/[_-]+/)
-        .map((w) => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase())
-        .join('')
-    return `${pascal(name)}Verifier`
+    return verifierContractName(name)
   }
 
   /**
@@ -609,7 +717,7 @@ class VerifierGenerator {
   }
 
   /**
-   * Refuse to run unless `dist/circuits/<preset>/<committee>/.build-stamp.json` exists.
+   * Require a build stamp for the requested pair and current circuit sources.
    */
   private assertPresetBuilt(preset: string): void {
     const committee = this.targetCommittee()
@@ -623,7 +731,7 @@ class VerifierGenerator {
           `   then retry.`,
       )
     }
-    let stamp: { preset?: string } = {}
+    let stamp: { preset?: string; committee?: string; sourceHash?: string } = {}
     try {
       stamp = JSON.parse(readFileSync(stampPath, 'utf-8'))
     } catch (err: any) {
@@ -632,6 +740,26 @@ class VerifierGenerator {
     if (stamp.preset !== preset) {
       throw new Error(
         `Build stamp at ${stampPath} reports preset '${stamp.preset ?? '(missing)'}', expected '${preset}'.\n` +
+          `   Run:\n` +
+          `     pnpm build:circuits --preset ${preset} --committee ${committee}\n` +
+          `   then retry.`,
+      )
+    }
+    if (stamp.committee !== committee) {
+      throw new Error(
+        `Build stamp at ${stampPath} reports committee '${stamp.committee ?? '(missing)'}', expected '${committee}'.\n` +
+          `   Run:\n` +
+          `     pnpm build:circuits --preset ${preset} --committee ${committee}\n` +
+          `   then retry.`,
+      )
+    }
+    const currentSourceHash = new NoirCircuitBuilder(this.rootDir, {
+      preset: preset as CircuitPreset,
+      committee,
+    }).computeSourceHash(preset as CircuitPreset, committee)
+    if (stamp.sourceHash !== currentSourceHash) {
+      throw new Error(
+        `Build stamp at ${stampPath} has a stale source hash.\n` +
           `   Run:\n` +
           `     pnpm build:circuits --preset ${preset} --committee ${committee}\n` +
           `   then retry.`,
@@ -711,6 +839,9 @@ class VerifierGenerator {
 async function main() {
   const args = process.argv.slice(2)
   const options: GenerateOptions = {}
+  let allSupported = false
+  let onChain = false
+  let pruneUnsupported = false
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i]
@@ -730,6 +861,12 @@ async function main() {
       options.check = true
     } else if (arg === '--write') {
       options.check = false
+    } else if (arg === '--all-supported') {
+      allSupported = true
+    } else if (arg === '--on-chain') {
+      onChain = true
+    } else if (arg === '--prune-unsupported') {
+      pruneUnsupported = true
     } else if (arg === '--preset') {
       const value = args[++i]
       if (!value || value.startsWith('--')) {
@@ -776,7 +913,64 @@ async function main() {
     }
   }
 
-  const generator = new VerifierGenerator(undefined, options)
+  const rootDir = resolve(__dirname, '..')
+  if (!allSupported && !pruneUnsupported && !onChain && !options.preset && !options.committee && !options.circuits && !options.outputDir) {
+    allSupported = true
+  }
+  if (pruneUnsupported) {
+    if (options.check || allSupported || onChain || options.circuits || options.outputDir) {
+      throw new Error('--prune-unsupported cannot be combined with generation options')
+    }
+    const removed = unsupportedVerifierDirs(rootDir)
+    if (!options.dryRun) pruneUnsupportedVerifierDirs(rootDir)
+    console.log(
+      removed.length > 0
+        ? `${options.dryRun ? 'Would remove' : 'Removed'} unsupported verifier directories: ${removed.join(', ')}`
+        : 'No unsupported verifier directories found.',
+    )
+    return
+  }
+  if (allSupported) {
+    if (onChain || options.circuits || options.outputDir || options.preset || options.committee) {
+      throw new Error('--all-supported cannot be combined with pair or circuit selection')
+    }
+    if (options.check && options.clean) {
+      throw new Error('--check and --clean are mutually exclusive (check must not mutate the working tree)')
+    }
+    prepareAllSupportedOutput(rootDir, options)
+    const pairs = SUPPORTED_PRESET_COMMITTEE_PAIRS.filter(
+      ({ preset, committee }) => preset !== CANONICAL_PRESET || committee !== CANONICAL_COMMITTEE,
+    ).concat([{ preset: CIRCUIT_PRESETS.INSECURE_512, committee: CANONICAL_COMMITTEE }])
+    for (const { preset, committee } of pairs) {
+      const generator = new VerifierGenerator(rootDir, {
+        ...options,
+        preset,
+        committee,
+        circuits: onChainVerifierCircuits(preset, committee),
+        compile: false,
+        clean: false,
+        noCleanTargets: true,
+        artifactDir: join(rootDir, 'dist', 'circuits', preset, committee),
+      })
+      await generator.generate()
+    }
+    if (!options.dryRun) assertExactVerifierInventory(rootDir)
+    return
+  }
+  if (onChain) {
+    if (options.circuits) {
+      throw new Error('--on-chain and --circuits are mutually exclusive')
+    }
+    const preset = (options.preset ?? CANONICAL_PRESET) as CircuitPreset
+    const committee = options.committee ?? CANONICAL_COMMITTEE
+    options.circuits = onChainVerifierCircuits(preset, committee)
+  } else if (!options.circuits) {
+    const preset = (options.preset ?? CANONICAL_PRESET) as CircuitPreset
+    const committee = options.committee ?? CANONICAL_COMMITTEE
+    options.circuits = onChainVerifierCircuits(preset, committee)
+  }
+
+  const generator = new VerifierGenerator(rootDir, options)
   await generator.generate()
 }
 
@@ -794,16 +988,21 @@ current circuit VKs is surfaced as a failure rather than a silent rewrite.
 Options:
   --check                Verify committed verifiers match current VKs (no writes).
                          Exits non-zero on drift. Used by test/benchmark/CI flows.
+  --all-supported        Process every supported preset and committee pair, then verify the
+                         exact generated-contract inventory. Reads artifacts directly from dist.
+  --on-chain             Generate the on-chain verifier circuits for one supported pair.
+  --prune-unsupported    Remove generated directories for unsupported pairs, then exit.
   --preset <name>        BFV preset for circuits/bin (insecure | secure-8192 | secure-16384).
-                         Defaults to insecure. Check mode compares the committed verifier
-                         for the selected preset and committee.
-  --committee <name>     Committee size (minimum | micro | small). When omitted, read from
-                         circuits/bin/.active-preset.json. Non-canonical pairs write to
+                         Selecting a preset processes one pair. Check mode compares the committed
+                         verifier for that pair.
+  --committee <name>     Committee size (minimum | micro | small). In one-pair mode, an omitted
+                         committee is read from circuits/bin/.active-preset.json. Non-canonical pairs write to
                          honk/<preset>/<committee>/ so committed canonical files are not clobbered.
   --output-dir <path>    Write generated verifiers here instead of the committed honk/ dir.
   --write                Write/overwrite committed verifiers (this is the default
                          when neither --check nor --write is passed).
-  --circuits <list>      Circuit names (comma-separated). When omitted, generates all circuits.
+  --circuits <list>      Circuit names (comma-separated). This selects one-pair mode. Without a
+                         pair or circuit selection, the command processes all supported pairs.
   --group <groups>       Circuit groups (comma-separated: dkg,threshold,recursive_aggregation)
   --clean                Remove existing verifier directory before generating (write mode only).
   --no-compile           Don't compile circuits automatically (fail if not already compiled);
@@ -813,8 +1012,8 @@ Options:
   -h, --help             Show this help message.
 
 Examples:
-  pnpm generate:verifiers                                # Rewrite committed verifiers (manual)
-  pnpm generate:verifiers --check                        # Verify committed verifiers (CI/tests)
+  pnpm generate:verifiers                                # Rewrite all supported verifier pairs (manual)
+  pnpm generate:verifiers --check                        # Verify all supported pairs (CI/tests)
   pnpm generate:verifiers --circuits dkg_aggregator      # Single circuit
   pnpm generate:verifiers --check --no-compile           # Verify against existing artifacts only
 `)
@@ -828,4 +1027,15 @@ if (require.main === module) {
   })
 }
 
-export { VerifierGenerator, GenerateOptions, CircuitGroup, CIRCUIT_GROUPS }
+export {
+  VerifierGenerator,
+  GenerateOptions,
+  CircuitGroup,
+  CIRCUIT_GROUPS,
+  assertExactVerifierInventory,
+  expectedVerifierRelativePaths,
+  onChainVerifierCircuits,
+  pruneUnsupportedVerifierDirs,
+  unsupportedVerifierDirs,
+  prepareAllSupportedOutput,
+}
