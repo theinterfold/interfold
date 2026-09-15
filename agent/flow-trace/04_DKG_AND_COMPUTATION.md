@@ -485,10 +485,13 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 The roster proposer selects H parties whose signed Ready lists all contain the same selected
 dealer contributions. Each selected party checks the roster against its own saved Ready list.
 The accepted roster is saved before C4 starts. Party 0 proposes first. After the frozen share
-cutoff, backup parties get ordered time slots to propose if no roster arrived. A node accepts only
-one roster. If a proposer reaches only some peers before it stops and a backup proposes a
-different roster, the nodes can split and the E3 can fail. This crash-only path does not provide
-consensus under arbitrary message delay; a canonical roster anchor would be needed for that.
+cutoff, backup parties get ordered time slots to propose if no roster arrived. Every online party
+wakes at each slot boundary and derives the current leader from the frozen DKG deadline. If a
+scheduler delivers a wake-up late, only the leader for the current slot can propose. Each party
+then arms the next boundary until it accepts a roster. A node accepts only one roster. If a
+proposer reaches only some peers before it stops and a backup proposes a different roster, the
+nodes can split and the E3 can fail. This crash-only path does not provide consensus under
+arbitrary message delay; a canonical roster anchor would be needed for that.
 If a selected party stops permanently after the roster is accepted, this path does not select a
 replacement or rebuild C4. The E3 can fail even when other committee members remain online.
 The cutoff omits missing nodes but does not accuse or slash them: a local timeout is not proof
