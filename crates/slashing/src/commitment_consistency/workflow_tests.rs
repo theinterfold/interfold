@@ -59,6 +59,13 @@ fn signals(byte: u8) -> ArcBytes {
     ArcBytes::from_bytes(&[byte; 32])
 }
 
+fn identity(proof_type: ProofType) -> ProofIdentity {
+    ProofIdentity {
+        proof_type,
+        instance: 0,
+    }
+}
+
 fn passed(
     e3_id: E3id,
     party_id: u64,
@@ -224,13 +231,13 @@ fn pre_zk_check_flags_and_evicts_inconsistent_party() {
                 address: honest,
                 proofs: vec![
                     (
-                        ProofType::C1PkGeneration,
+                        identity(ProofType::C1PkGeneration),
                         signals(0x42),
                         [0xa1; 32],
                         ArcBytes::from_bytes(&[0x01]),
                     ),
                     (
-                        ProofType::C2aSkShareComputation,
+                        identity(ProofType::C2aSkShareComputation),
                         signals(0x42),
                         [0xa2; 32],
                         ArcBytes::from_bytes(&[0x02]),
@@ -242,13 +249,13 @@ fn pre_zk_check_flags_and_evicts_inconsistent_party() {
                 address: faulty,
                 proofs: vec![
                     (
-                        ProofType::C1PkGeneration,
+                        identity(ProofType::C1PkGeneration),
                         signals(0x11),
                         [0xb1; 32],
                         ArcBytes::from_bytes(&[0x03]),
                     ),
                     (
-                        ProofType::C2aSkShareComputation,
+                        identity(ProofType::C2aSkShareComputation),
                         signals(0x99),
                         [0xb2; 32],
                         ArcBytes::from_bytes(&[0x04]),

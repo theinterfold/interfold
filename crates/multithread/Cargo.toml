@@ -17,6 +17,8 @@ e3-events = { workspace = true }
 e3-utils = { workspace = true }
 e3-zk-prover = { workspace = true }
 rand = { workspace = true }
+rand_chacha = { workspace = true }
+rayon = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }
 

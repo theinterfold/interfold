@@ -22,11 +22,18 @@ use std::{
     hash::{DefaultHasher, Hash, Hasher},
     sync::Arc,
 };
+use zeroize::Zeroize;
 
 /// Simple serialization wrapper for SecretKey coefficients.
 #[derive(SerdeSerialize, SerdeDeserialize)]
 struct SecretKeyData {
     coeffs: Box<[i64]>,
+}
+
+impl Drop for SecretKeyData {
+    fn drop(&mut self) {
+        self.coeffs.zeroize();
+    }
 }
 
 /// Serialize a BFV SecretKey to bytes.

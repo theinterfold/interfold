@@ -3,7 +3,7 @@ name = "e3-committee-hash"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Canonical EVM domain hashes for DKG / decryption aggregator proofs"
+description = "Canonical EVM domain hashes for protocol proofs"
 repository.workspace = true
 
 [dependencies]

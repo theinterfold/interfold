@@ -39,10 +39,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn current_release_has_nonzero_compatibility_versions() {
+    fn current_release_has_expected_compatibility_versions() {
         let release = current_node_release();
-        assert_ne!(release.protocol_version, 0);
-        assert_ne!(release.node_generation, 0);
+        assert_eq!(release.protocol_version, 4);
+        assert_eq!(release.node_generation, 1);
         assert_ne!(release.release_id(), B256::ZERO);
     }
 }

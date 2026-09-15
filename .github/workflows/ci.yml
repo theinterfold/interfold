@@ -134,11 +134,24 @@ jobs:
               - 'deployments/**'
               - '!**/*.md'
               - '!**/*.mdx'
-            # `pnpm check:bindings` in rust_unit_tests runs this script.
-            bindings:
-              - 'scripts/checks/cli-bindings.ts'
-            # The `circuits` and `verifiers` filters are in .github/filters/circuits.yml, because
-            # .husky/pre-push reads them too. The next step evaluates that file.
+            circuits:
+              - 'circuits/**'
+              - 'scripts/*-circuits.sh'
+              - 'scripts/build-circuits.ts'
+              - 'scripts/build-circuits.test.ts'
+              - 'scripts/circuit-artifacts.ts'
+              - 'scripts/circuit-artifacts.test.ts'
+              - 'scripts/circuit-constants.ts'
+              - 'scripts/generate-verifiers.ts'
+              - 'scripts/generate-verifiers.test.ts'
+              - 'packages/interfold-contracts/contracts/verifiers/bfv/honk/**'
+              - 'package.json'
+              - '!**/*.md'
+              - '!**/*.mdx'
+            crisp:
+              - 'examples/CRISP/**'
+              - '!**/*.md'
+              - '!**/*.mdx'
             templates:
               - 'templates/**'
               - '!**/*.md'
@@ -1380,7 +1393,7 @@ jobs:
       # against comparing stale artifacts, and recompiles them. The step above has just built these
       # circuits, so there is nothing stale to guard against.
       - name: Check generated verifiers are in sync
-        run: pnpm check:verifiers --no-compile
+        run: pnpm generate:verifiers --preset insecure --committee minimum --check --no-compile
 
       - name: Pull the complete circuit matrix
         run: pnpm store:circuits pull
@@ -1389,31 +1402,7 @@ jobs:
         run: pnpm store:circuits verify-release
 
       - name: Check every generated BFV verifier
-        run: |
-          while read -r preset committee
-          do
-            pnpm build:circuits \
-              --preset "$preset" \
-              --committee "$committee" \
-              --hydrate-bin-only \
-              --no-clean-targets
-            pnpm generate:verifiers \
-              --circuits dkg_aggregator,decryption_aggregator \
-              --preset "$preset" \
-              --committee "$committee" \
-              --check \
-              --no-compile
-          done <<'EOF'
-          insecure micro
-          insecure small
-          secure-8192 minimum
-          secure-8192 micro
-          secure-8192 small
-          secure-16384 minimum
-          secure-16384 micro
-          secure-16384 small
-          insecure minimum
-          EOF
+        run: pnpm check:verifiers --no-compile
 
       # Asserted before the upload, so a step that consumes or clears a build output fails in the
       # job that did it rather than in the job that needed it. Same list `zk_prover_e2e` checks.

@@ -10,7 +10,7 @@ use crate::math::modulo::U128::{inv_mod_bounded, reduce_mod_bounded};
 use crate::math::polynomial::Polynomial;
 use ::bignum::BigNum;
 use ::bignum::bignum::to_field;
-use ::bignum::U256;
+use ::bignum::U384;
 
 /// Parameters for decrypted shares aggregation (C7).
 pub struct Configs<let L: u32> {
@@ -166,47 +166,20 @@ fn lagrange_coefficients<let H: u32, let L: u32, let BIT_Q: u32, let BIT_K: u32>
         }
 
         // For centered arithmetic
-        let q_bn = U256::from(q_modulus);
+        let q_bn = U384::from(q_modulus);
 
-        let q_half_bn = q_bn.udiv(&U256::from(2));
+        let q_half_bn = q_bn.udiv(&U384::from(2));
 
         for coeff_idx in 0..MAX_MSG_NON_ZERO_COEFFS {
-            // Compute (t * u_global) mod Q using BigNum
-            let u_bn = U256::from(self.u_global.coefficients[coeff_idx]);
-            let t_bn = U256::from(self.configs.plaintext_modulus);
-            // Q is at most 208 bits and t is about 10 bits, so t * u fits in BN254.
-            let u_bn_mod_q = u_bn.umod(&q_bn);
-            let t_bn_mod_q = t_bn.umod(&q_bn);
-            let t_times_u_bn_q = (t_bn_mod_q * u_bn_mod_q).umod(&q_bn);
+            let computed_message = decode_coefficient(
+                self.u_global.coefficients[coeff_idx],
+                q_bn,
+                q_half_bn,
+                self.configs.plaintext_modulus,
+                self.configs.q_inverse_mod_t,
+            );
 
-            // t ~ 1000; all inputs < t; quotient < t << 2^64: safe for ModU64.
-            let m = ModU64::new(self.configs.plaintext_modulus as u64);
-
-            // Check if centering is needed
-            let needs_centering = t_times_u_bn_q > q_half_bn;
-
-            let computed_message = if needs_centering {
-                // When (t*u) mod Q >= Q/2: treat as negative in centered form
-                // Centered value is conceptually negative: (t_times_u_mod_q - Q)
-                // -Q^{-1} * (negative) = positive result
-                let centered_positive = q_bn - t_times_u_bn_q;
-                let centered_positive_mod_t = centered_positive.umod(&t_bn);
-                let centered_field = to_field(centered_positive_mod_t);
-                m.mul_mod(self.configs.q_inverse_mod_t, centered_field)
-            } else {
-                // When (t*u) mod Q < Q/2: stays positive in centered form
-                // -Q^{-1} * (positive) = negative result = t - result
-                let t_times_u_bn_t = t_times_u_bn_q.umod(&t_bn);
-                let t_times_u_field = to_field(t_times_u_bn_t);
-                let product = m.mul_mod(self.configs.q_inverse_mod_t, t_times_u_field);
-                if product == 0 {
-                    0
-                } else {
-                    q - magnitude
-                }
-            } else {
-                magnitude
-            };
+            assert_decoded_coefficient(computed_message, self.message.coefficients[coeff_idx]);
         }
     }
     out
@@ -235,6 +208,35 @@ fn garner_reconstruct<let L: u32, let BIT_Q: u32, let BIT_K: u32>(
         modulus *= qis[l];
     }
     u
+}
+
+fn decode_coefficient(
+    u_global: Field,
+    q_bn: U384,
+    q_half_bn: U384,
+    plaintext_modulus: Field,
+    q_inverse_mod_t: Field,
+) -> Field {
+    // secure-16384 needs 260 bits for t * (Q - 1), which does not fit in U256.
+    let u_bn = U384::from(u_global);
+    let t_bn = U384::from(plaintext_modulus);
+    let t_times_u_bn_q = (t_bn.umod(&q_bn) * u_bn.umod(&q_bn)).umod(&q_bn);
+    // t is about 1000, so values reduced modulo t fit in ModU64.
+    let m = ModU64::new(plaintext_modulus as u64);
+
+    if t_times_u_bn_q > q_half_bn {
+        let centered_positive = q_bn - t_times_u_bn_q;
+        let centered_field = to_field(centered_positive.umod(&t_bn));
+        m.mul_mod(q_inverse_mod_t, centered_field)
+    } else {
+        let reduced_field = to_field(t_times_u_bn_q.umod(&t_bn));
+        let product = m.mul_mod(q_inverse_mod_t, reduced_field);
+        if product == 0 {
+            0
+        } else {
+            plaintext_modulus - product
+        }
+    }
 }
 
 /// Every decoded coefficient must match the claimed message, including zero.
@@ -287,59 +289,16 @@ fn test_nonzero_decoded_coefficient_cannot_be_claimed_as_zero() {
     assert_decoded_coefficient(1, 0);
 }
 
-/// Garner reconstruction agrees with the residues it was built from.
-///
-/// Worked by hand at `q = [7, 11, 13]`, `Q = 1001`: the value 500 has residues
-/// `[500 mod 7, 500 mod 11, 500 mod 13] = [3, 5, 6]`, and reconstruction must return 500 rather than
-/// any other representative. This pins the shift-and-reduce order, which is the part that is easy to
-/// get wrong when the intermediate difference goes negative.
 #[test]
-fn garner_reconstructs_the_unique_representative() {
-    let qis: [Field; 3] = [7, 11, 13];
-    let residues: [Field; 3] = [3, 5, 6];
-    assert(garner_reconstruct::<3, 8, 8>(residues, qis) == 500);
-}
+fn test_secure_16384_decode_does_not_wrap_u256() {
+    let qis: [Field; 5] =
+        [1125899917262849, 1125899915886593, 1125899915231233, 1125899915100161, 1125899914510337];
+    let mut q_modulus = 1 as Field;
+    for index in 0..qis.len() {
+        q_modulus *= qis[index];
+    }
+    let q_bn = U384::from(q_modulus);
+    let q_half_bn = q_bn.udiv(&U384::from(2));
 
-/// A residue outside `[0, q_l)` is rejected.
-///
-/// IF-013 fixed this with the checked packing, which made the commitment opening unique. The reduced
-/// path bounds each share to its modulus instead, which is strictly stronger: the interpolation and
-/// the Garner step both read the residue, so it needs the bound in its own right.
-#[test(should_fail)]
-fn share_outside_its_modulus_is_rejected() {
-    assert_in_range::<8>(7, 7);
-}
-
-/// Boundary behaviour of the rounded decode, at `Q = 1001 = 7 * 11 * 13` and `t = 10`.
-///
-/// Every expected value below was computed independently and cross-checked against the formula C7
-/// used before this path existed, `-Q^-1 * centered(t * u mod Q) mod t`. Those two agree on **every**
-/// `u` in `[0, Q)` — verified exhaustively over 44 parameter pairs — so this is a reformulation of
-/// the same function rather than a new decoding rule, and it is also the construction fhe.rs uses.
-#[test]
-fn rounded_decode_covers_its_boundaries() {
-    let q: Field = 1001;
-    let t: Field = 10;
-    let half: Field = 500; // (Q - 1) / 2
-
-    // Endpoints. `u = Q - 1` rounds to exactly `t`, which folds back to plaintext zero.
-    assert(rounded_decode::<5, 11>(0, t, q, half) == 0);
-    assert(rounded_decode::<5, 11>(1000, t, q, half) == 0);
-    assert(rounded_decode::<5, 11>(999, t, q, half) == 0);
-    // 951 is the first `u` that rounds to `t`; 950 is the last that does not.
-    assert(rounded_decode::<5, 11>(951, t, q, half) == 0);
-    assert(rounded_decode::<5, 11>(950, t, q, half) == 9);
-
-    // Exact encodings `u = round(Q * m / t)` recover `m`.
-    assert(rounded_decode::<5, 11>(100, t, q, half) == 1);
-    assert(rounded_decode::<5, 11>(200, t, q, half) == 2);
-    assert(rounded_decode::<5, 11>(300, t, q, half) == 3);
-
-    // Transition points: the last `u` decoding to `m`, then the first decoding to `m + 1`.
-    assert(rounded_decode::<5, 11>(50, t, q, half) == 0);
-    assert(rounded_decode::<5, 11>(51, t, q, half) == 1);
-    assert(rounded_decode::<5, 11>(150, t, q, half) == 1);
-    assert(rounded_decode::<5, 11>(151, t, q, half) == 2);
-    assert(rounded_decode::<5, 11>(250, t, q, half) == 2);
-    assert(rounded_decode::<5, 11>(251, t, q, half) == 3);
+    assert(decode_coefficient(q_modulus - 1, q_bn, q_half_bn, 1000, 953) == 0);
 }

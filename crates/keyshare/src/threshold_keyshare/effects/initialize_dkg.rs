@@ -310,13 +310,17 @@ impl ThresholdKeyshare {
         res: TypedEvent<ComputeResponse>,
     ) -> Result<()> {
         let state = self.state.try_get()?;
+        let ec = res.get_ctx().clone();
         match &state.state {
             KeyshareState::GeneratingThresholdShare(data)
                 if data.pk_share.is_none()
                     && data.sk_sss.is_none()
                     && data.e_sm_raw.is_none()
                     && data.proof_request_data.is_none() => {}
-            KeyshareState::GeneratingThresholdShare(_) => {
+            KeyshareState::GeneratingThresholdShare(data) => {
+                if let Some(proof_data) = data.proof_request_data.clone() {
+                    self.start_lbfv_generation(proof_data.sk_raw, ec)?;
+                }
                 info!("Ignoring duplicate GenPkShareAndSkSss response");
                 return Ok(());
             }
@@ -357,6 +361,7 @@ impl ThresholdKeyshare {
             .try_into()
             .context("Error extracting data from compute process")?;
 
+        let lbfv_secret_key = output.sk_raw.clone();
         let (pk_share, sk_sss, e_sm_raw) = (
             output.pk_share.clone(),
             output.sk_sss,
@@ -384,6 +389,8 @@ impl ThresholdKeyshare {
             ))
         })?;
 
+        let lbfv_result = self.start_lbfv_generation(lbfv_secret_key, ec.clone());
+
         if let Some(response) = self.pending.gen_esi_response.take() {
             self.handle_gen_esi_sss_response(response)?;
         } else {
@@ -400,6 +407,11 @@ impl ThresholdKeyshare {
                     ec.clone(),
                 ))?;
             }
+        }
+
+        if let Err(error) = lbfv_result {
+            error!("Failed to start local l-BFV generation: {error}");
+            self.fail_lbfv_generation(ec)?;
         }
 
         Ok(())

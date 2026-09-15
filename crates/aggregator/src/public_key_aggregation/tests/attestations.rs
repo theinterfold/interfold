@@ -161,6 +161,7 @@ async fn replayed_c1_artifacts_are_ignored_after_completion() -> Result<()> {
     let verification = ShareVerificationComplete {
         e3_id: e3_id.clone(),
         kind: VerificationKind::PkGenerationProofs,
+        verification_id: None,
         dishonest_parties: BTreeSet::new(),
     };
 
@@ -250,6 +251,11 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: e3_data::Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
@@ -262,14 +268,21 @@ async fn pk_aggregation_proof_pending_carries_canonical_committee_dims() -> Resu
         ShareVerificationComplete {
             e3_id: e3_id.clone(),
             kind: VerificationKind::PkGenerationProofs,
+            verification_id: None,
             dishonest_parties: dishonest,
         },
         test_ctx(ShareVerificationComplete {
             e3_id: e3_id.clone(),
             kind: VerificationKind::PkGenerationProofs,
+            verification_id: None,
             dishonest_parties: BTreeSet::new(),
         }),
     ))?;
+
+    assert!(matches!(
+        aggregator.state.get(),
+        Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
+    ));
 
     let event = next_event(&history).await?;
     assert!(matches!(
@@ -313,6 +326,11 @@ async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Resul
             committee_size: CiphernodesCommitteeSize::Micro,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: e3_data::Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
             initial_is_aggregator: true,
             initial_stage: E3Stage::None,
             effects_enabled: true,
@@ -323,6 +341,7 @@ async fn early_exclusion_keeps_full_committee_for_final_proof_binding() -> Resul
     let verification = ShareVerificationComplete {
         e3_id,
         kind: VerificationKind::PkGenerationProofs,
+        verification_id: None,
         dishonest_parties: BTreeSet::new(),
     };
     aggregator.handle_c1_verification_complete(TypedEvent::new(

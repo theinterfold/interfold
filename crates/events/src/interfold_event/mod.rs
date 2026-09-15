@@ -57,6 +57,8 @@ mod evm_log_observed;
 mod input_published;
 mod interfold_error;
 mod keyshare_created;
+mod lbfv_key_share_transport;
+mod lbfv_publickey_aggregated;
 mod net_ready;
 mod operator_activation_changed;
 mod outgoing_sync_requested;
@@ -146,6 +148,8 @@ pub use evm_log_observed::*;
 pub use input_published::*;
 pub use interfold_error::*;
 pub use keyshare_created::*;
+pub use lbfv_key_share_transport::*;
+pub use lbfv_publickey_aggregated::*;
 pub use net_ready::*;
 pub use operator_activation_changed::*;
 pub use outgoing_sync_requested::*;
@@ -370,18 +374,12 @@ pub enum InterfoldEventData {
     AggregationInputsReady(AggregationInputsReady),
     CommitteePublicKeyChunkPublished(CommitteePublicKeyChunkPublished),
     CiphertextOutputReferencePublished(CiphertextOutputReferencePublished),
-    DkgCoordination(DkgCoordination),
-    CommitmentRosterSelected(CommitmentRosterSelected),
-    BondOwnerSetAt(BondOwnerSetAt),
-    AdmissionUpdated(AdmissionUpdated),
-    TicketBalanceUpdatedAt(TicketBalanceUpdatedAt),
-    OperatorActivationChangedAt(OperatorActivationChangedAt),
-    ConfigurationUpdatedAt(ConfigurationUpdatedAt),
-    PlaintextVerificationResumed(PlaintextVerificationResumed),
-    EligibilityConfigurationVersionUpdated(EligibilityConfigurationVersionUpdated),
-    EligibilityConfigurationVersionUpdatedAt(EligibilityConfigurationVersionUpdatedAt),
-    BondingAssetConfigUpdated(BondingAssetConfigUpdated),
-    BondingAssetConfigUpdatedAt(BondingAssetConfigUpdatedAt),
+    LbfvKeyShareDocumentCreated(LbfvKeyShareDocumentCreated),
+    LbfvKeyShareDocumentReceived(LbfvKeyShareDocumentReceived),
+    LbfvKeyShareManifestPublished(LbfvKeyShareManifestPublished),
+    LbfvKeyShareDocumentFetchRequested(LbfvKeyShareDocumentFetchRequested),
+    LbfvKeyShareDocumentFetchFailed(LbfvKeyShareDocumentFetchFailed),
+    LbfvPublicKeyAggregated(LbfvPublicKeyAggregated),
 }
 
 impl InterfoldEventData {
@@ -810,6 +808,7 @@ impl InterfoldEventData {
             InterfoldEventData::PublishDocumentRequested(ref data) => Some(data.meta.e3_id.clone()),
             InterfoldEventData::DocumentReceived(ref data) => Some(data.meta.e3_id.clone()),
             InterfoldEventData::PublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::LbfvPublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CiphertextOutputPublished(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionKeyShared(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionshareCreated(ref data) => Some(data.e3_id.clone()),
@@ -830,6 +829,7 @@ impl InterfoldEventData {
             InterfoldEventData::TicketSubmitted(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::EncryptionKeyCreated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::ComputeResponse(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::ComputeRequestError(ref data) => Some(data.request().e3_id.clone()),
             InterfoldEventData::TestEvent(ref data) => data.e3_id.clone(),
             InterfoldEventData::SignedProofFailed(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::DecryptionShareProofsPending(ref data) => Some(data.e3_id.clone()),
@@ -880,9 +880,19 @@ impl InterfoldEventData {
             InterfoldEventData::CiphertextOutputReferencePublished(ref data) => {
                 Some(data.e3_id.clone())
             }
-            // The failed request keeps the E3 that the work belonged to. Without this arm the
-            // error logs for a failed computation have an empty `e3_id` field.
-            InterfoldEventData::ComputeRequestError(ref data) => Some(data.request().e3_id.clone()),
+            InterfoldEventData::LbfvKeyShareDocumentCreated(ref data) => Some(data.e3_id().clone()),
+            InterfoldEventData::LbfvKeyShareDocumentReceived(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvKeyShareManifestPublished(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvKeyShareDocumentFetchRequested(ref data) => {
+                Some(data.e3_id().clone())
+            }
+            InterfoldEventData::LbfvKeyShareDocumentFetchFailed(ref data) => {
+                Some(data.e3_id().clone())
+            }
             _ => None,
         }
     }
@@ -998,18 +1008,12 @@ impl_event_types!(
     AggregationInputsReady,
     CommitteePublicKeyChunkPublished,
     CiphertextOutputReferencePublished,
-    DkgCoordination,
-    CommitmentRosterSelected,
-    BondOwnerSetAt,
-    AdmissionUpdated,
-    TicketBalanceUpdatedAt,
-    OperatorActivationChangedAt,
-    ConfigurationUpdatedAt,
-    PlaintextVerificationResumed,
-    EligibilityConfigurationVersionUpdated,
-    EligibilityConfigurationVersionUpdatedAt,
-    BondingAssetConfigUpdated,
-    BondingAssetConfigUpdatedAt
+    LbfvKeyShareDocumentCreated,
+    LbfvKeyShareDocumentReceived,
+    LbfvKeyShareManifestPublished,
+    LbfvKeyShareDocumentFetchRequested,
+    LbfvKeyShareDocumentFetchFailed,
+    LbfvPublicKeyAggregated
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

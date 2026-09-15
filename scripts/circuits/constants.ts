@@ -96,34 +96,20 @@ export const COMMITTEE_PARAMS: Record<CircuitCommittee, CommitteeParams> = {
 }
 
 /**
- * Every pair can be generated because committee-dependent circuit artifacts are regenerated from
- * the BFV presets and the committee's `(N, T)` by `generate_parity_matrices`.
- *
- * Secure-16384 is enabled on Sepolia and local chains. Mainnet remains on secure-8192.
+ * Secure-16384 currently has a V2 verifier route only for the minimum committee.
+ * Do not advertise a pair until its V2 verifier and artifact set exist.
  */
 export const SUPPORTED_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
   preset: CircuitPreset
   committee: CircuitCommittee
-}> = (() => {
-  if (buildPairs.length === 0) throw new Error('Circuit build policy contains no supported pairs')
-  const seen = new Set<string>()
-  return buildPairs.map((pair) => {
-    const [preset, committee] = pair as [CircuitPreset, CircuitCommittee]
-    if (pair.length !== 2 || !ALL_PRESETS.includes(preset) || !ALL_COMMITTEES.includes(committee)) {
-      throw new Error(`Invalid circuit build pair: ${JSON.stringify(pair)}`)
-    }
-    const key = `${preset}/${committee}`
-    if (seen.has(key)) throw new Error(`Duplicate circuit build pair: ${key}`)
-    seen.add(key)
-    return { preset, committee }
-  })
-})()
+}> = ALL_PRESETS.flatMap((preset) =>
+  ALL_COMMITTEES.filter((committee) => preset !== CIRCUIT_PRESETS.SECURE_16384 || committee === CIRCUIT_COMMITTEES.MINIMUM).map(
+    (committee) => ({ preset, committee }),
+  ),
+)
 
 /** Pairs that a released circuit archive must contain for the current deployment matrix. */
-export const RELEASE_PRESET_COMMITTEE_PAIRS: ReadonlyArray<{
-  preset: CircuitPreset
-  committee: CircuitCommittee
-}> = ALL_PRESETS.flatMap((preset) => ALL_COMMITTEES.map((committee) => ({ preset, committee })))
+export const RELEASE_PRESET_COMMITTEE_PAIRS = SUPPORTED_PRESET_COMMITTEE_PAIRS
 
 export function isPresetCommitteeSupported(preset: CircuitPreset, committee: CircuitCommittee): boolean {
   return SUPPORTED_PRESET_COMMITTEE_PAIRS.some((p) => p.preset === preset && p.committee === committee)

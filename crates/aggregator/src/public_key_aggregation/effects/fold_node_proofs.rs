@@ -3,6 +3,7 @@
 //! Stream the canonical honest-party NodeFold accumulator.
 
 use super::super::*;
+use e3_events::NodesFoldV2StepRequest;
 
 impl PublicKeyAggregator {
     /// Dispatch the next [`ZkRequest::NodesFoldStep`] if the next slot's proof is buffered
@@ -53,20 +54,29 @@ impl PublicKeyAggregator {
         let prior_accumulator = nodes_fold_accumulator.clone();
 
         let corr = CorrelationId::new();
+        let request = if self.is_lbfv() {
+            ZkRequest::NodesFoldV2Step(NodesFoldV2StepRequest {
+                inner_proof: inner_proof.clone(),
+                prior_accumulator: prior_accumulator.clone(),
+                slot_index: next_slot,
+                total_slots,
+                e3_id: self.e3_id.to_string(),
+                params_preset: self.params_preset,
+                committee_size: self.committee_size,
+            })
+        } else {
+            ZkRequest::NodesFoldStep(NodesFoldStepRequest {
+                inner_proof,
+                prior_accumulator,
+                slot_index: next_slot,
+                total_slots,
+                e3_id: self.e3_id.to_string(),
+                params_preset: self.params_preset,
+                committee_size: self.committee_size,
+            })
+        };
         self.bus.publish(
-            ComputeRequest::zk(
-                ZkRequest::NodesFoldStep(NodesFoldStepRequest {
-                    inner_proof,
-                    prior_accumulator,
-                    slot_index: next_slot,
-                    total_slots,
-                    e3_id: self.e3_id.to_string(),
-                    params_preset: self.params_preset,
-                    committee_size: self.committee_size,
-                }),
-                corr,
-                self.e3_id.clone(),
-            ),
+            ComputeRequest::zk(request, corr, self.e3_id.clone()),
             ec.clone(),
         )?;
 

@@ -12,11 +12,13 @@
 pub mod c0_to_c3;
 pub mod c1_to_c2;
 pub mod c1_to_c5;
+pub mod c1_to_lbfv;
 pub mod c2_to_c3;
 pub mod c2_to_c4;
 pub mod c4a_to_c6;
 pub mod c4b_to_c6;
 pub mod c6_to_c7;
+pub mod lbfv_share_transport;
 
 // Re-export the canonical trait and types from e3-events.
 pub use e3_events::{CommitmentLink, FieldValue, LinkScope};
@@ -41,6 +43,7 @@ pub fn default_links(preset: BfvPreset) -> Vec<Box<dyn CommitmentLink>> {
         Box::new(c1_to_c2::C1ToC2aSkCommitmentLink),
         Box::new(c1_to_c2::C1ToC2bESmCommitmentLink),
         Box::new(c1_to_c5::C1ToC5PkCommitmentLink),
+        Box::new(c1_to_lbfv::C1ToLbfvPkGenerationSkCommitmentLink),
         Box::new(c2_to_c3::C3aToC2aShareEncryptionLink),
         Box::new(c2_to_c3::C3bToC2bShareEncryptionLink),
         Box::new(c2_to_c4::C2aToC4aShareCommitmentLink {

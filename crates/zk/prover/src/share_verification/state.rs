@@ -52,9 +52,9 @@ pub(crate) struct EcdsaValidationOutcome<P> {
     pub(crate) failures: Vec<EcdsaFailure>,
     pub(crate) ecdsa_passed_parties: Vec<P>,
     pub(crate) party_addresses: HashMap<u64, Address>,
-    pub(crate) party_proof_hashes: HashMap<u64, Vec<(ProofType, [u8; 32])>>,
-    pub(crate) party_public_signals: HashMap<u64, Vec<(ProofType, ArcBytes)>>,
-    pub(crate) party_proof_data: HashMap<u64, Vec<(ProofType, ArcBytes)>>,
+    pub(crate) party_proof_hashes: HashMap<u64, Vec<(ProofIdentity, [u8; 32])>>,
+    pub(crate) party_public_signals: HashMap<u64, Vec<(ProofIdentity, ArcBytes)>>,
+    pub(crate) party_proof_data: HashMap<u64, Vec<(ProofIdentity, ArcBytes)>>,
     /// Assembled per-party data for the consistency-check request.
     pub(crate) consistency_party_data: Vec<PartyProofData>,
 }
@@ -63,6 +63,7 @@ pub(crate) struct EcdsaValidationOutcome<P> {
 pub(crate) struct PendingVerification {
     pub(crate) e3_id: E3id,
     pub(crate) kind: VerificationKind,
+    pub(crate) verification_id: Option<B256>,
     pub(crate) ec: EventContext<Sequenced>,
     /// Parties that failed ECDSA (dishonest before ZK runs).
     pub(crate) ecdsa_dishonest: HashSet<u64>,
@@ -73,11 +74,11 @@ pub(crate) struct PendingVerification {
     /// Recovered address for each party (from ECDSA step).
     pub(crate) party_addresses: HashMap<u64, Address>,
     /// Cached (proof_type, data_hash) per party — for emitting ProofVerificationPassed.
-    pub(crate) party_proof_hashes: HashMap<u64, Vec<(ProofType, [u8; 32])>>,
+    pub(crate) party_proof_hashes: HashMap<u64, Vec<(ProofIdentity, [u8; 32])>>,
     /// Cached (proof_type, public_signals) per party — for commitment consistency checking.
-    pub(crate) party_public_signals: HashMap<u64, Vec<(ProofType, ArcBytes)>>,
+    pub(crate) party_public_signals: HashMap<u64, Vec<(ProofIdentity, ArcBytes)>>,
     /// Parallel to `party_public_signals` — raw `proof.data` per (party, proof_type).
-    pub(crate) party_proof_data: HashMap<u64, Vec<(ProofType, ArcBytes)>>,
+    pub(crate) party_proof_data: HashMap<u64, Vec<(ProofIdentity, ArcBytes)>>,
     /// BFV preset for circuit artifact resolution.
     #[allow(dead_code)]
     pub(crate) params_preset: e3_fhe_params::BfvPreset,
@@ -90,6 +91,7 @@ pub(crate) struct PendingVerification {
 pub(crate) struct PendingConsistencyCheck {
     pub(crate) e3_id: E3id,
     pub(crate) kind: VerificationKind,
+    pub(crate) verification_id: Option<B256>,
     pub(crate) ec: EventContext<Sequenced>,
     /// Parties that failed ECDSA (dishonest before consistency runs).
     pub(crate) ecdsa_dishonest: HashSet<u64>,
@@ -98,11 +100,11 @@ pub(crate) struct PendingConsistencyCheck {
     /// Recovered address per ECDSA-passed party.
     pub(crate) party_addresses: HashMap<u64, Address>,
     /// (proof_type, data_hash) per party — for ProofVerificationPassed after ZK.
-    pub(crate) party_proof_hashes: HashMap<u64, Vec<(ProofType, [u8; 32])>>,
+    pub(crate) party_proof_hashes: HashMap<u64, Vec<(ProofIdentity, [u8; 32])>>,
     /// (proof_type, public_signals) per party — for consistency & ZK.
-    pub(crate) party_public_signals: HashMap<u64, Vec<(ProofType, ArcBytes)>>,
+    pub(crate) party_public_signals: HashMap<u64, Vec<(ProofIdentity, ArcBytes)>>,
     /// Parallel to `party_public_signals` — raw `proof.data` per (party, proof_type).
-    pub(crate) party_proof_data: HashMap<u64, Vec<(ProofType, ArcBytes)>>,
+    pub(crate) party_proof_data: HashMap<u64, Vec<(ProofIdentity, ArcBytes)>>,
     /// Original ECDSA-passed share proofs for ZK dispatch.
     pub(crate) ecdsa_passed_share_proofs: Vec<PartyProofsToVerify>,
     /// Original ECDSA-passed decryption proofs for ZK dispatch.
@@ -137,6 +139,8 @@ pub(crate) fn label_for(kind: &VerificationKind) -> &'static str {
         VerificationKind::ThresholdDecryptionProofs => "C6",
         VerificationKind::PkGenerationProofs => "C1",
         VerificationKind::DecryptionProofs => "C4",
+        VerificationKind::LbfvGenerationProofs => "l-BFV generation",
+        VerificationKind::LbfvAggregationProofs => "l-BFV aggregation",
     }
 }
 

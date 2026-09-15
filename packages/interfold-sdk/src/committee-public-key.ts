@@ -8,7 +8,7 @@ import { hexToBytes, isHex, keccak256, type Hex } from 'viem'
 
 import type { CommitteePublicKeyChunkPublishedData } from './events/types'
 
-export const MAX_COMMITTEE_PUBLIC_KEY_BYTES = 512 * 1024
+export const MAX_COMMITTEE_PUBLIC_KEY_BYTES = 6 * 1024 * 1024
 export const MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES = 90 * 1024
 export const DEFAULT_MAX_TRACKED_COMMITTEE_KEYS = 128
 

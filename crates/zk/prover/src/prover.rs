@@ -138,7 +138,22 @@ fn next_bb_work_subdir(prefix: &str) -> String {
     format!("{prefix}_{id}")
 }
 
-#[derive(Clone)]
+struct JobDirGuard(PathBuf);
+
+impl Drop for JobDirGuard {
+    fn drop(&mut self) {
+        if let Err(error) = fs::remove_dir_all(&self.0) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                warn!(
+                    "failed to remove Barretenberg work directory {}: {}",
+                    self.0.display(),
+                    error
+                );
+            }
+        }
+    }
+}
+
 pub struct ZkProver {
     bb_binary: PathBuf,
     circuits_dir: PathBuf,
@@ -169,6 +184,10 @@ impl ZkProver {
 
     pub fn circuits_dir(&self, variant: CircuitVariant, artifacts_dir: &str) -> PathBuf {
         self.circuits_dir.join(artifacts_dir).join(variant.as_str())
+    }
+
+    pub(crate) fn circuits_root(&self) -> &std::path::Path {
+        &self.circuits_dir
     }
 
     pub fn resolve_artifacts_dir(&self, preset: BfvPreset, committee: &str) -> String {
@@ -293,7 +312,8 @@ impl ZkProver {
             .join(next_bb_work_subdir(&format!("prove_{}", circuit.as_str())));
         let witness_path = job_dir.join("witness.gz");
         let output_dir = job_dir.join("out");
-        let _job_dir_guard = prepare_job_dir(&job_dir)?;
+        fs::create_dir_all(&job_dir)?;
+        let _job_dir_guard = JobDirGuard(job_dir.clone());
 
         fs::write(&witness_path, witness_data)?;
 
@@ -467,6 +487,7 @@ impl ZkProver {
         let out_dir = job_dir.join("out");
         let _job_dir_guard = prepare_job_dir(&job_dir)?;
         fs::create_dir_all(&out_dir)?;
+        let _job_dir_guard = JobDirGuard(job_dir.clone());
 
         let proof_path = job_dir.join("proof");
         let public_inputs_path = out_dir.join("public_inputs");

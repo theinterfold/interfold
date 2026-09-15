@@ -15,3 +15,4 @@ pub mod c6_accumulator;
 pub mod helpers;
 pub mod node_dkg_fold;
 pub mod nodes_fold_accumulator;
+pub mod v2;

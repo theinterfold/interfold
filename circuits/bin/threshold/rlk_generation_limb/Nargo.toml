@@ -1,0 +1,7 @@
+[package]
+name = "rlk_generation_limb"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+lib = { path = "../../../lib" }

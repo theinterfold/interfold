@@ -8,8 +8,8 @@
 import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
 import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'fs'
-import { join, relative, resolve } from 'path'
-import { RELEASE_PRESET_COMMITTEE_PAIRS } from './circuit-constants'
+import { join, relative, resolve, sep } from 'path'
+import { CIRCUIT_PRESETS, RELEASE_PRESET_COMMITTEE_PAIRS } from './circuit-constants'
 
 const BRANCH = 'circuit-artifacts'
 const ROOT = resolve(__dirname, '../..')
@@ -63,6 +63,31 @@ const REQUIRED_VARIANT_CIRCUITS = [
   ...REQUIRED_BASE_CIRCUITS.map((circuit) => join('recursive', circuit)),
 ] as const
 
+const REQUIRED_LBFV_VARIANT_CIRCUITS = [
+  'lbfv_pk_generation',
+  'lbfv_pk_aggregation',
+  'rlk_generation',
+  'rlk_generation_limb',
+  'rlk_aggregation',
+].flatMap((circuit) => [
+  join('default', 'threshold', circuit, circuit),
+  join('evm', 'threshold', circuit, circuit),
+  join('recursive', 'threshold', circuit, circuit),
+])
+
+const REQUIRED_LBFV_RECURSIVE_CIRCUITS = [
+  'lbfv_generation_fold',
+  'lbfv_generation_fold_kernel',
+  'node_fold_v2',
+  'nodes_fold_v2',
+  'nodes_fold_v2_kernel',
+  'lbfv_aggregation_fold',
+  'lbfv_aggregation_fold_kernel',
+  'dkg_aggregator_v2',
+].map((circuit) => join('default', 'recursive_aggregation', circuit, circuit))
+
+const REQUIRED_LBFV_EVM_CIRCUITS = [join('evm', 'recursive_aggregation', 'dkg_aggregator_v2', 'dkg_aggregator_v2')]
+
 const REQUIRED_ARTIFACT_EXTENSIONS = ['.json', '.vk', '.vk_hash'] as const
 
 const run = (cmd: string, cwd = ROOT) => execSync(cmd, { encoding: 'utf-8', cwd, stdio: 'pipe' }).trim()
@@ -98,7 +123,7 @@ function artifactFiles(dir: string, base = dir): string[] {
   return files.sort()
 }
 
-function refreshChecksums(dir: string): void {
+export function refreshChecksums(dir: string): void {
   const sums: Record<string, string> = {}
   const lines: string[] = []
 
@@ -117,34 +142,62 @@ function refreshChecksums(dir: string): void {
   )
 }
 
-/**
- * Check `checksums.json` as a node's installer does (`crates/zk/prover/src/backend/download.rs`):
- * sha256, at least one file, plain relative paths, every listed file present with its digest, and
- * every artifact listed. Build stamps and the root manifests need no entry.
- */
-export function validateChecksums(dir: string): void {
-  const manifestPath = join(dir, 'checksums.json')
-  if (!existsSync(manifestPath)) throw new Error('checksums.json is missing')
-  const manifest = JSON.parse(readFileSync(manifestPath, 'utf8')) as { algorithm?: string; files?: Record<string, string> }
-  if (manifest.algorithm !== 'sha256') throw new Error('checksums.json must use sha256')
-  const files = Object.entries(manifest.files ?? {})
-  if (files.length === 0) throw new Error('checksums.json lists no files')
-  const listed = new Set<string>()
-  for (const [file, digest] of files) {
-    if (file.startsWith('/') || file.split('/').some((part) => part === '' || part === '.' || part === '..')) {
-      throw new Error(`checksums.json lists an invalid path: ${file}`)
-    }
-    const path = join(dir, file)
-    if (!existsSync(path) || !statSync(path).isFile()) throw new Error(`checksums.json lists a missing file: ${file}`)
-    const actual = createHash('sha256').update(readFileSync(path)).digest('hex')
-    if (actual !== digest) throw new Error(`checksums.json has the wrong digest for ${file}`)
-    listed.add(file)
+function validateChecksumEntries(dir: string, files: string[], entries: Record<string, unknown>, source: string): void {
+  const entryFiles = Object.keys(entries).sort()
+  if (entryFiles.join('\n') !== files.join('\n')) {
+    throw new Error(`${source} does not cover the complete circuit artifact set`)
   }
-  for (const file of artifactFiles(dir)) {
-    if (!file.endsWith('.build-stamp.json') && !listed.has(file)) {
-      throw new Error(`checksums.json does not list ${file}`)
+
+  for (const file of files) {
+    const expected = entries[file]
+    if (typeof expected !== 'string' || !/^[0-9a-f]{64}$/i.test(expected)) {
+      throw new Error(`${source} contains an invalid SHA-256 value for ${file}`)
+    }
+
+    const fullPath = resolve(dir, file)
+    const normalized = relative(dir, fullPath)
+    if (normalized !== file || normalized === '..' || normalized.startsWith(`..${sep}`)) {
+      throw new Error(`${source} contains an invalid artifact path: ${file}`)
+    }
+
+    const actual = createHash('sha256').update(readFileSync(fullPath)).digest('hex')
+    if (actual !== expected.toLowerCase()) {
+      throw new Error(`${source} hash mismatch for ${file}`)
     }
   }
+}
+
+/** Verify both checksum manifests against every non-metadata archive file. */
+export function validateArtifactChecksums(dir: string): void {
+  const files = artifactFiles(dir)
+  const jsonPath = join(dir, 'checksums.json')
+  const sumsPath = join(dir, 'SHA256SUMS')
+  if (!existsSync(jsonPath) || !existsSync(sumsPath)) {
+    throw new Error('Circuit artifact checksums are missing')
+  }
+
+  let manifest: { algorithm?: unknown; files?: unknown }
+  try {
+    manifest = JSON.parse(readFileSync(jsonPath, 'utf8')) as typeof manifest
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(`Invalid checksums.json: ${message}`)
+  }
+  if (manifest.algorithm !== 'sha256' || typeof manifest.files !== 'object' || manifest.files === null || Array.isArray(manifest.files)) {
+    throw new Error('Invalid checksums.json: expected a sha256 files map')
+  }
+  validateChecksumEntries(dir, files, manifest.files as Record<string, unknown>, 'checksums.json')
+
+  const sums: Record<string, unknown> = {}
+  const lines = readFileSync(sumsPath, 'utf8').split(/\r?\n/).filter(Boolean)
+  for (const line of lines) {
+    const match = /^([0-9a-f]{64}) {2}(.+)$/i.exec(line)
+    if (!match || sums[match[2]] !== undefined) {
+      throw new Error(`Invalid SHA256SUMS entry: ${line}`)
+    }
+    sums[match[2]] = match[1]
+  }
+  validateChecksumEntries(dir, files, sums, 'SHA256SUMS')
 }
 
 function stampFiles(dir: string): string[] {
@@ -156,7 +209,16 @@ function stampFiles(dir: string): string[] {
 }
 
 export function requiredArtifactMarkers(preset: string, committee: string): string[] {
-  return requiredArtifacts.map((artifact) => join(preset, committee, artifact))
+  const circuits =
+    preset === CIRCUIT_PRESETS.SECURE_16384
+      ? [
+          ...REQUIRED_VARIANT_CIRCUITS,
+          ...REQUIRED_LBFV_VARIANT_CIRCUITS,
+          ...REQUIRED_LBFV_RECURSIVE_CIRCUITS,
+          ...REQUIRED_LBFV_EVM_CIRCUITS,
+        ]
+      : REQUIRED_VARIANT_CIRCUITS
+  return circuits.flatMap((circuit) => REQUIRED_ARTIFACT_EXTENSIONS.map((extension) => join(preset, committee, `${circuit}${extension}`)))
 }
 
 type BuildStamp = {
@@ -411,7 +473,7 @@ async function verifyRelease() {
   try {
     validateSourceHash(DIST, expectedHash)
     validateArtifactSet(DIST)
-    validateChecksums(DIST)
+    validateArtifactChecksums(DIST)
   } catch (error: any) {
     console.error(`❌ ${error.message}`)
     process.exit(1)

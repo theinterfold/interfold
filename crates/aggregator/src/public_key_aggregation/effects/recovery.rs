@@ -3,6 +3,7 @@
 //! Restart recovery for persisted public-key aggregation phases.
 
 use super::super::*;
+use crate::LBFV_ROW_COUNT;
 use anyhow::ensure;
 
 impl PublicKeyAggregator {
@@ -40,40 +41,25 @@ impl PublicKeyAggregator {
             return Ok(());
         };
 
-        if matches!(state, PublicKeyAggregatorState::Collecting { .. }) {
-            if let Some(selected) = recovery.selected_roster.as_ref() {
-                self.state.try_mutate(&effects_context, |state| {
-                    PublicKeyAggregation::begin_selected_c1(state, Some(selected))
-                })?;
-                state = self
-                    .state
-                    .get()
-                    .ok_or_else(|| anyhow::anyhow!("public-key aggregation state disappeared"))?;
-                self.publish_inputs_ready(effects_context.clone())?;
+        if self.is_lbfv() {
+            if let Some(mut aggregation) = self.lbfv_aggregation_state()? {
+                if aggregation.is_failed() {
+                    aggregation.clear_process_correlations();
+                    self.set_lbfv_aggregation(aggregation, &effects_context)?;
+                    self.bus.publish(
+                        E3Failed {
+                            e3_id: self.e3_id.clone(),
+                            failed_at_stage: E3Stage::CommitteeFinalized,
+                            reason: FailureReason::DKGInvalidShares,
+                        },
+                        effects_context,
+                    )?;
+                    return Ok(());
+                }
+                aggregation.clear_process_correlations();
+                self.set_lbfv_aggregation(aggregation, &effects_context)?;
             }
         }
-
-        // A saved key publication is this node's finished result, whatever its role now: send it
-        // again until the whole key is on chain, so that the registry writer publishes it. The
-        // writer skips a commitment that is already on chain and sends every chunk again.
-        // `CommitteePublished` clears the saved publication.
-        if matches!(state, PublicKeyAggregatorState::Complete { .. }) {
-            if let Some(publication) = recovery.pending_publication {
-                self.bus
-                    .publish(publication, recovery.last_ec.unwrap_or(effects_context))?;
-            }
-            return Ok(());
-        }
-
-        // The active aggregator resumes any phase. A demoted node resumes only the work that it
-        // started: every phase after C1 verification, and a C1 verification that it dispatched.
-        if !(self.can_run_aggregation_effects()
-            || ((aggregation_started(&state) || self.started_as_aggregator)
-                && self.can_continue_aggregation_effects()))
-        {
-            return Ok(());
-        }
-        self.mark_started_as_aggregator(&effects_context)?;
 
         match state {
             PublicKeyAggregatorState::VerifyingC1 { .. } => {
@@ -125,11 +111,31 @@ impl PublicKeyAggregator {
                     )?;
                 }
 
+                if self.is_lbfv() {
+                    self.try_dispatch_lbfv_aggregation_rows(&causal_context)?;
+                    self.try_dispatch_lbfv_aggregation_fold(&causal_context)?;
+                    let fold_complete = self.lbfv_aggregation_state()?.is_some_and(|state| {
+                        state.aggregation_fold_completed_rows == LBFV_ROW_COUNT as u32
+                            && state.aggregation_fold_proof.is_some()
+                    });
+                    if fold_complete {
+                        self.persist_operational_lbfv_rlk(&causal_context)?;
+                    }
+                }
                 self.try_dispatch_nodes_fold_step(&causal_context)?;
                 self.try_publish_complete()
             }
-            PublicKeyAggregatorState::Complete { .. }
-            | PublicKeyAggregatorState::Collecting { .. } => Ok(()),
+            PublicKeyAggregatorState::Complete { .. } => {
+                if self.is_lbfv() {
+                    return self.try_publish_complete();
+                }
+                if let Some(publication) = recovery.pending_publication {
+                    self.bus
+                        .publish(publication, recovery.last_ec.unwrap_or(effects_context))?;
+                }
+                Ok(())
+            }
+            PublicKeyAggregatorState::Collecting { .. } => Ok(()),
         }
     }
 }

@@ -12,8 +12,10 @@
 //!
 //! **Share-computation (C2) configs.nr:** set `INTERFOLD_CIRCUITS_ROOT` to the repo `circuits`
 //! directory (or run from the Interfold repo so it is auto-discovered). After `pnpm build:circuits`,
-//! `circuits/bin/dkg/target/` contains `sk_share_computation.vk_recursive_hash` and
-//! `e_sm_share_computation.vk_recursive_hash` for the inner recursive circuits; the aggregation
+//! `circuits/bin/dkg/sk_share_computation_chunk/target/` contains
+//! `sk_share_computation_chunk.vk_recursive_hash`, and
+//! `circuits/bin/dkg/esm_share_computation_chunk/target/` contains
+//! `esm_share_computation_chunk.vk_recursive_hash` for the inner recursive circuits; the aggregation
 //! wrapper emits `share_computation.vk_recursive_hash` under
 //! `circuits/bin/recursive_aggregation/wrapper/dkg/share_computation/target/` (from
 //! `scripts/build-circuits.ts`). If `INTERFOLD_CIRCUITS_ROOT` is set and those files are missing,
@@ -41,9 +43,19 @@ use e3_zk_helpers::registry::{Circuit, CircuitRegistry};
 use e3_zk_helpers::threshold::decrypted_shares_aggregation::{
     DecryptedSharesAggregationCircuit, DecryptedSharesAggregationCircuitData,
 };
+use e3_zk_helpers::threshold::lbfv_pk_aggregation::{
+    LbfvPkAggregationCircuit, LbfvPkAggregationCircuitData,
+};
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
-use e3_zk_helpers::threshold::pk_generation::{PkGenerationCircuit, PkGenerationCircuitData};
+use e3_zk_helpers::threshold::pk_generation::{
+    LbfvPkGenerationCircuit, LbfvPkGenerationCircuitData, PkGenerationCircuit,
+    PkGenerationCircuitData,
+};
+use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
+use e3_zk_helpers::threshold::rlk_generation::{
+    RlkGenerationCircuit, RlkGenerationLimbCircuit, RlkGenerationLimbCircuitData,
+};
 use e3_zk_helpers::threshold::share_decryption::{
     ShareDecryptionCircuit as ThresholdShareDecryptionCircuit,
     ShareDecryptionCircuitData as ThresholdShareDecryptionCircuitData,
@@ -195,6 +207,12 @@ struct Cli {
     /// layout is pinned to a 512-coefficient chunk size.
     #[arg(long, default_value_t = 512)]
     chunk_size: usize,
+    /// Row in the public l-BFV key-switching vectors.
+    #[arg(long, default_value_t = 0)]
+    row_index: u32,
+    /// CRT limb in an l-BFV RLK row.
+    #[arg(long, default_value_t = 0)]
+    limb_index: u32,
 }
 
 fn main() -> Result<()> {
@@ -206,6 +224,11 @@ fn main() -> Result<()> {
     registry.register(Arc::new(ShareComputationCircuit));
     registry.register(Arc::new(UserDataEncryptionCircuit));
     registry.register(Arc::new(PkGenerationCircuit));
+    registry.register(Arc::new(LbfvPkGenerationCircuit));
+    registry.register(Arc::new(LbfvPkAggregationCircuit));
+    registry.register(Arc::new(RlkGenerationCircuit));
+    registry.register(Arc::new(RlkGenerationLimbCircuit));
+    registry.register(Arc::new(RlkAggregationCircuit));
     registry.register(Arc::new(ShareEncryptionCircuit));
     registry.register(Arc::new(DkgShareDecryptionCircuit));
     registry.register(Arc::new(PkAggregationCircuit));
@@ -369,6 +392,52 @@ fn main() -> Result<()> {
                 let sample = PkGenerationCircuitData::generate_sample(preset, committee)?;
 
                 let circuit = PkGenerationCircuit;
+                circuit.codegen(preset, &sample)?
+            }
+            name if name == <LbfvPkGenerationCircuit as Circuit>::NAME => {
+                let sample = LbfvPkGenerationCircuitData::generate_sample_for_row(
+                    preset,
+                    committee,
+                    args.row_index,
+                )?;
+
+                let circuit = LbfvPkGenerationCircuit;
+                circuit.codegen(preset, &sample)?
+            }
+            name if name == <LbfvPkAggregationCircuit as Circuit>::NAME => {
+                let sample = LbfvPkAggregationCircuitData::generate_sample_for_row(
+                    preset,
+                    committee,
+                    args.row_index,
+                )?;
+
+                let circuit = LbfvPkAggregationCircuit;
+                circuit.codegen(preset, &sample)?
+            }
+            name if name == <RlkGenerationCircuit as Circuit>::NAME => {
+                return Err(anyhow!(
+                    "circuit {name} requires verified limb proofs; zk-cli does not fabricate recursive inputs"
+                ));
+            }
+            name if name == <RlkGenerationLimbCircuit as Circuit>::NAME => {
+                let sample = RlkGenerationLimbCircuitData::generate_sample_for_row_and_limb(
+                    preset,
+                    committee,
+                    args.row_index,
+                    args.limb_index,
+                )?;
+
+                let circuit = RlkGenerationLimbCircuit;
+                circuit.codegen(preset, &sample)?
+            }
+            name if name == <RlkAggregationCircuit as Circuit>::NAME => {
+                let sample = RlkAggregationCircuitData::generate_sample_for_row(
+                    preset,
+                    committee,
+                    args.row_index,
+                )?;
+
+                let circuit = RlkAggregationCircuit;
                 circuit.codegen(preset, &sample)?
             }
             name if name == <DkgShareDecryptionCircuit as Circuit>::NAME => {

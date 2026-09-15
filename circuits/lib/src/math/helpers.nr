@@ -169,10 +169,10 @@ pub fn flatten<let A: u32, let L: u32, let BIT: u32>(
 /// - `A`: number of input values.
 /// - `BIT`: per-value bit bound; rounded up to `nibble_bits` by `packing_layout`.
 ///
-/// ## Preconditions / Notes
-/// - Call with the raw coefficients whose magnitudes already satisfy the BIT bound
-///   (as enforced by the upstream range checks); `pack` performs the signed -> unsigned
-///   shift internally via `v + base`.
+/// ## Range constraint
+/// - `pack` computes `digit = v + base` in the BN254 field, then constrains `digit` to
+///   `[0, radix)`. Values near the field modulus can wrap below `base` and encode negative
+///   coefficients. The constraint applies to the shifted digit, not to the canonical value of `v`.
 /// - `group >= 1` is enforced by `packing_layout::<BIT>()`.
 /// - Padding with `digit = 2^nibble_bits` encodes `zero limb` consistently.
 ///
@@ -200,7 +200,9 @@ pub fn pack<let A: u32, let BIT: u32>(values: [Field; A]) -> [Field] {
         let mut acc = 0;
         for i in 0..take {
             let v = values[chunk * group + i];
-            acc = acc * radix + (v + base);
+            let digit = v + base;
+            digit.assert_max_bit_size::<((BIT + 3) / 4) * 4 + 4>();
+            acc = acc * radix + digit;
         }
 
         // Pad remaining limb slots with the canonical zero-limb `digit = base`.
@@ -421,29 +423,33 @@ fn test_pack_determinism() {
     }
 }
 
-/// `pack_checked` must agree with `pack` for in-slot values. The two carry duplicate layout
-/// arithmetic, so if one is changed without the other, a commitment created by a circuit on `pack`
-/// stops matching one opened by a circuit on `pack_checked`. This pins that.
 #[test]
-fn test_pack_checked_matches_pack() {
-    // Mixed signs, and values at the edge of the centred window for BIT = 35 (slot = 2^40).
-    let vals: [Field; 7] = [0, 1, -1, 34359701504, -34359701504, 12345, -6789];
-    let plain = pack::<7, 35>(vals);
-    let checked = pack_checked::<7, 35>(vals);
-    assert(plain.len() == checked.len());
-    for i in 0..plain.len() {
-        assert(plain[i] == checked[i]);
-    }
+fn test_pack_accepts_valid_signed_and_native_values() {
+    let signed = pack::<3, 4>([-16, 0, 15]);
+    let native = pack::<3, 4>([0, 8, 15]);
+
+    assert(signed.len() == 1);
+    assert(native.len() == 1);
 }
 
-/// Same, at a width whose chunking leaves a partial final carrier (BIT = 57 -> group 3, 7 values).
-#[test]
-fn test_pack_checked_matches_pack_partial_chunk() {
-    let vals: [Field; 7] = [5, -5, 72057594049265664, -72057594049265664, 1, 0, -1];
-    let plain = pack::<7, 57>(vals);
-    let checked = pack_checked::<7, 57>(vals);
-    assert(plain.len() == checked.len());
-    for i in 0..plain.len() {
-        assert(plain[i] == checked[i]);
-    }
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_pack_rejects_lower_digit_carry_collision() {
+    let base = 16;
+    let radix = 256;
+    let valid = (base * radix) + base;
+    let colliding = ((base + 1) * radix) + (base - radix);
+    assert(valid == colliding);
+
+    let _ = pack::<2, 4>([1, -radix]);
+}
+
+#[test(should_fail_with = "assert_max_bit_size")]
+fn test_pack_rejects_upper_digit_carry_collision() {
+    let base = 16;
+    let radix = 256;
+    let valid = (base * radix) + base;
+    let colliding = ((base - 1) * radix) + (base + radix);
+    assert(valid == colliding);
+
+    let _ = pack::<2, 4>([-1, radix]);
 }

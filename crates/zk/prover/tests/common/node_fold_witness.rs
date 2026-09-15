@@ -28,6 +28,7 @@ use fhe::mbfv::PublicKeyShare;
 use fhe::trbfv::{ShareManager, TRBFV};
 use fhe::{bfv::Plaintext, bfv::PublicKey};
 use fhe_traits::FheEncoder;
+use fhe_traits::Serialize;
 use ndarray::Array2;
 use num_bigint::BigInt;
 use num_traits::{Signed, ToPrimitive};
@@ -39,10 +40,28 @@ use std::ops::Deref;
 /// Returns the [`SecretKey`] used for [`PublicKeyShare::new_with_intermediates`] so correlated C2a shares can
 /// be built with the share-computation sample constructor's
 /// `coeffs_to_poly_level0(secret_key.coeffs)` (not a round-trip through `pk.sk` limb 0).
+#[allow(dead_code)]
 pub fn pk_generation_sample_with_esi(
     preset: BfvPreset,
     committee: CiphernodesCommittee,
-) -> Result<(PkGenerationCircuitData, Vec<BigInt>, SecretKey), WitnessError> {
+) -> Result<(PkGenerationCircuitData, Vec<BigInt>, SecretKey), CircuitsErrors> {
+    let (pk, esi, secret_key, _) = pk_generation_sample_with_esi_and_share(preset, committee)?;
+    Ok((pk, esi, secret_key))
+}
+
+/// Build correlated C1 inputs and retain the MBFV share for a matching C5 proof.
+pub fn pk_generation_sample_with_esi_and_share(
+    preset: BfvPreset,
+    committee: CiphernodesCommittee,
+) -> Result<
+    (
+        PkGenerationCircuitData,
+        Vec<BigInt>,
+        SecretKey,
+        PublicKeyShare,
+    ),
+    CircuitsErrors,
+> {
     let (threshold_params, _) = build_pair_for_preset(preset)
         .map_err(|e| WitnessError::Sample(format!("Failed to build pair for preset: {:?}", e)))?;
 
@@ -51,9 +70,13 @@ pub fn pk_generation_sample_with_esi(
     let secret_key = SecretKey::random(&threshold_params, &mut rng);
     let crp = create_deterministic_crp_from_default_seed(&threshold_params);
 
-    let (pk_share, intermediates) =
-        PublicKeyShare::new_with_intermediates(&secret_key, crp.clone(), &mut rng).map_err(
-            |e| WitnessError::Sample(format!("Failed to create public key share: {:?}", e)),
+    let (pk0_share, _, _sk_fhe, e) =
+        PublicKeyShare::new_extended(&secret_key, crp.clone(), &mut rng).map_err(|e| {
+            CircuitsErrors::Sample(format!("Failed to create public key share: {:?}", e))
+        })?;
+    let public_key_share =
+        PublicKeyShare::deserialize(&pk0_share.to_bytes(), &threshold_params, crp).map_err(
+            |e| CircuitsErrors::Sample(format!("Failed to retain public key share: {:?}", e)),
         )?;
 
     let sk_coeffs: Vec<BigInt> = secret_key.coeffs.iter().map(|&c| BigInt::from(c)).collect();
@@ -104,7 +127,7 @@ pub fn pk_generation_sample_with_esi(
         sk: sk_crt,
     };
 
-    Ok((pk, esi_coeffs, secret_key))
+    Ok((pk, esi_coeffs, secret_key, public_key_share))
 }
 
 /// C2a: same `sk` CRT as [`PkGenerationCircuitData::sk`]; Shamir shares from `secret_key.coeffs`

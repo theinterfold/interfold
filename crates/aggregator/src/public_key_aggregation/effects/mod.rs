@@ -10,7 +10,10 @@ use super::*;
 use alloy::primitives::Address;
 
 mod aggregate_dkg_proofs;
+mod aggregate_lbfv;
 mod aggregate_public_key;
+mod collect_lbfv_contributions;
+mod complete_lbfv_verification;
 mod fold_node_proofs;
 mod handle_compute_results;
 mod publish_result;

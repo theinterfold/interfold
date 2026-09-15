@@ -9,7 +9,7 @@
 //! This module contains **all** the consistency-checking business logic that
 //! used to live inside the `CommitmentConsistencyChecker` actix actor:
 //!
-//! - caching verified proof outputs keyed by `(Address, ProofType)`
+//! - caching verified proof outputs keyed by `(Address, ProofIdentity)`
 //! - evaluating registered [`CommitmentLink`]s across the three [`LinkScope`]s
 //! - building the evidence preimage for [`CommitmentConsistencyViolation`]s
 //!
@@ -26,8 +26,8 @@ use alloy::sol_types::SolValue;
 use anyhow::ensure;
 use e3_events::{
     CommitmentConsistencyCheckComplete, CommitmentConsistencyCheckRequested,
-    CommitmentConsistencyViolation, CommitmentLink, CommitmentRosterSelected, E3id, LinkScope,
-    ProofType, ProofVerificationPassed,
+    CommitmentConsistencyViolation, CommitmentLink, E3id, LinkScope, ProofIdentity, ProofType,
+    ProofVerificationPassed,
 };
 use e3_utils::utility_types::ArcBytes;
 use serde::{Deserialize, Serialize};
@@ -39,6 +39,7 @@ const COMMITMENT_CONSISTENCY_SNAPSHOT_VERSION: u32 = 1;
 /// Cached data from a verified proof.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 struct VerifiedProofData {
+    identity: ProofIdentity,
     party_id: u64,
     address: Address,
     public_signals: ArcBytes,
@@ -89,6 +90,7 @@ struct Mismatch {
     party_id: u64,
     address: Address,
     proof_type: ProofType,
+    proof_instance: u32,
     data_hash: [u8; 32],
     /// Same preimage as `VerifiedProofData.proof_data` paired with
     /// `public_signals`. Carried from cache into the emitted violation so
@@ -112,13 +114,9 @@ pub(crate) struct CommitmentConsistency {
     links: Vec<Box<dyn CommitmentLink>>,
     /// Number of selected C4 dealer rows.
     committee_h: usize,
-    /// Full-committee party IDs in the accepted C4 row order.
-    roster: Option<Vec<u64>>,
-    /// Verified proof outputs: `(address, proof_type) → data`.
-    /// Multiple proofs per key are supported (e.g. N-1 C3a proofs per sender).
-    verified: HashMap<(Address, ProofType), Vec<VerifiedProofData>>,
-    /// Whether the durable representation changed since the last snapshot write.
-    dirty: bool,
+    /// Verified proof outputs grouped by signer and complete proof identity.
+    /// Multiple payloads per identity preserve equivocation evidence.
+    verified: HashMap<(Address, ProofIdentity), Vec<VerifiedProofData>>,
 }
 
 impl CommitmentConsistency {
@@ -253,13 +251,8 @@ impl CommitmentConsistency {
     /// Insert a proof into the cache, deduplicating by `data_hash` to avoid
     /// double-counting when the same proof arrives via both the pre-ZK batch
     /// and the post-ZK `ProofVerificationPassed` path.
-    fn insert_verified(
-        &mut self,
-        address: Address,
-        proof_type: ProofType,
-        data: VerifiedProofData,
-    ) {
-        let entries = self.verified.entry((address, proof_type)).or_default();
+    fn insert_verified(&mut self, address: Address, data: VerifiedProofData) {
+        let entries = self.verified.entry((address, data.identity)).or_default();
         if !entries.iter().any(|e| e.data_hash == data.data_hash) {
             entries.push(data);
             self.dirty = true;
@@ -277,19 +270,33 @@ impl CommitmentConsistency {
             // target entry from the same address.
             LinkScope::SameParty => {
                 let mut mismatches = Vec::new();
-                for ((addr, pt), srcs) in &self.verified {
-                    if *pt != src_type {
+                for ((addr, identity), srcs) in &self.verified {
+                    if identity.proof_type != src_type {
                         continue;
                     }
-                    let Some(tgts) = self.verified.get(&(*addr, tgt_type)) else {
+                    let tgts = self
+                        .verified
+                        .iter()
+                        .filter(|((target_addr, target_identity), _)| {
+                            target_addr == addr && target_identity.proof_type == tgt_type
+                        })
+                        .flat_map(|(_, entries)| entries)
+                        .collect::<Vec<_>>();
+                    if tgts.is_empty() {
                         continue;
-                    };
+                    }
                     for src in srcs {
                         let Some(src_row) = self.source_row(link, src.party_id) else {
                             continue;
                         };
                         let vals = link.extract_source_values(&src.public_signals);
-                        for tgt in tgts {
+                        for tgt in &tgts {
+                            if src.identity.proof_type.is_multirow()
+                                && tgt.identity.proof_type.is_multirow()
+                                && src.identity.instance != tgt.identity.instance
+                            {
+                                continue;
+                            }
                             if !link.check_consistency(
                                 &vals,
                                 &tgt.public_signals,
@@ -300,6 +307,7 @@ impl CommitmentConsistency {
                                     party_id: src.party_id,
                                     address: *addr,
                                     proof_type: src_type,
+                                    proof_instance: src.identity.instance,
                                     data_hash: src.data_hash,
                                     proof_data: src.proof_data.clone(),
                                     public_signals: src.public_signals.clone(),
@@ -320,7 +328,7 @@ impl CommitmentConsistency {
                 let all_targets: Vec<&VerifiedProofData> = self
                     .verified
                     .iter()
-                    .filter(|((_, pt), _)| *pt == tgt_type)
+                    .filter(|((_, identity), _)| identity.proof_type == tgt_type)
                     .flat_map(|(_, entries)| entries)
                     .collect();
 
@@ -329,8 +337,8 @@ impl CommitmentConsistency {
                 }
 
                 let mut mismatches = Vec::new();
-                for ((_, pt), srcs) in &self.verified {
-                    if *pt != src_type {
+                for ((_, identity), srcs) in &self.verified {
+                    if identity.proof_type != src_type {
                         continue;
                     }
                     for src in srcs {
@@ -355,6 +363,7 @@ impl CommitmentConsistency {
                                 party_id: src.party_id,
                                 address: src.address,
                                 proof_type: src_type,
+                                proof_instance: src.identity.instance,
                                 data_hash: src.data_hash,
                                 proof_data: src.proof_data.clone(),
                                 public_signals: src.public_signals.clone(),
@@ -382,7 +391,7 @@ impl CommitmentConsistency {
                 let all_targets: Vec<&VerifiedProofData> = self
                     .verified
                     .iter()
-                    .filter(|((_, pt), _)| *pt == tgt_type)
+                    .filter(|((_, identity), _)| identity.proof_type == tgt_type)
                     .flat_map(|(_, entries)| entries)
                     .collect();
 
@@ -413,8 +422,8 @@ impl CommitmentConsistency {
                 }
 
                 let mut mismatches = Vec::new();
-                for ((_, pt), srcs) in &self.verified {
-                    if *pt != src_type {
+                for ((_, identity), srcs) in &self.verified {
+                    if identity.proof_type != src_type {
                         continue;
                     }
                     for src in srcs {
@@ -438,6 +447,7 @@ impl CommitmentConsistency {
                                 party_id: src.party_id,
                                 address: src.address,
                                 proof_type: src_type,
+                                proof_instance: src.identity.instance,
                                 data_hash: src.data_hash,
                                 proof_data: src.proof_data.clone(),
                                 public_signals: src.public_signals.clone(),
@@ -470,6 +480,7 @@ impl CommitmentConsistency {
             accused_party_id: m.party_id,
             accused_address: m.address,
             proof_type: m.proof_type,
+            proof_instance: m.proof_instance,
             data_hash: m.data_hash,
             evidence,
         }
@@ -487,11 +498,18 @@ impl CommitmentConsistency {
 
         let proof_type = data.proof_type;
         let address = data.address;
+        let Ok(instance) = proof_type.instance_from_public_signals(&data.public_signals) else {
+            warn!("Ignoring verified proof with an invalid proof instance");
+            return Vec::new();
+        };
 
         self.insert_verified(
             address,
-            proof_type,
             VerifiedProofData {
+                identity: ProofIdentity {
+                    proof_type,
+                    instance,
+                },
                 party_id: data.party_id,
                 address,
                 public_signals: data.public_signals,
@@ -557,11 +575,11 @@ impl CommitmentConsistency {
 
         // Cache each party's proof data for link evaluation.
         for party in &data.party_proofs {
-            for (proof_type, public_signals, data_hash, proof_data) in &party.proofs {
+            for (identity, public_signals, data_hash, proof_data) in &party.proofs {
                 self.insert_verified(
                     party.address,
-                    *proof_type,
                     VerifiedProofData {
+                        identity: *identity,
                         party_id: party.party_id,
                         address: party.address,
                         public_signals: public_signals.clone(),

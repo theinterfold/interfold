@@ -11,9 +11,16 @@ use crate::circuits::utils::bytes_to_field_strings;
 use crate::error::ZkError;
 use e3_events::{CircuitName, DkgFoldAggCommits, Proof};
 
+const NODE_FOLD_V2_PUBLIC_PREFIX_LEN: usize = 4;
+
 /// Total public field count for `node_fold` at committee size `n`, honest `h`, threshold moduli `l`.
 pub fn node_fold_public_field_count(n: usize, h: usize, l: usize) -> usize {
     14 + n + 2 * (n + h) * l
+}
+
+/// Total public field count for the secure-16384 V2 node fold.
+pub fn node_fold_v2_public_field_count(n: usize, h: usize, l: usize) -> usize {
+    NODE_FOLD_V2_PUBLIC_PREFIX_LEN + node_fold_public_field_count(n, h, l) + 3 + (3 * 5)
 }
 
 fn field_hex_to_bytes32(field: &str) -> Result<[u8; 32], ZkError> {
@@ -44,14 +51,19 @@ pub fn extract_node_fold_agg_commits(
     committee_h: usize,
     n_moduli: usize,
 ) -> Result<(u64, DkgFoldAggCommits), ZkError> {
-    if proof.circuit != CircuitName::NodeFold {
+    let is_v2 = proof.circuit == CircuitName::NodeFoldV2;
+    if proof.circuit != CircuitName::NodeFold && !is_v2 {
         return Err(ZkError::InvalidInput(format!(
             "expected NodeFold proof, got {}",
             proof.circuit
         )));
     }
     let fields = bytes_to_field_strings(proof.public_signals.as_ref())?;
-    let expected = node_fold_public_field_count(committee_n, committee_h, n_moduli);
+    let expected = if is_v2 {
+        node_fold_v2_public_field_count(committee_n, committee_h, n_moduli)
+    } else {
+        node_fold_public_field_count(committee_n, committee_h, n_moduli)
+    };
     if fields.len() != expected {
         return Err(ZkError::InvalidInput(format!(
             "NodeFold public field count {} != expected {} (n={committee_n}, h={committee_h}, l={n_moduli})",
@@ -59,9 +71,25 @@ pub fn extract_node_fold_agg_commits(
             expected
         )));
     }
-    let party_id = field_hex_to_u64(&fields[0])?;
-    let sk_agg_commit = field_hex_to_bytes32(&fields[fields.len() - 3])?;
-    let esm_agg_commit = field_hex_to_bytes32(&fields[fields.len() - 2])?;
+    let v2_prefix_len = if is_v2 {
+        NODE_FOLD_V2_PUBLIC_PREFIX_LEN
+    } else {
+        0
+    };
+    let party_id = field_hex_to_u64(&fields[v2_prefix_len])?;
+    let legacy_field_count = node_fold_public_field_count(committee_n, committee_h, n_moduli);
+    let sk_commitment_idx = if is_v2 {
+        v2_prefix_len + legacy_field_count - 3
+    } else {
+        fields.len() - 3
+    };
+    let esm_commitment_idx = if is_v2 {
+        v2_prefix_len + legacy_field_count - 2
+    } else {
+        fields.len() - 2
+    };
+    let sk_agg_commit = field_hex_to_bytes32(&fields[sk_commitment_idx])?;
+    let esm_agg_commit = field_hex_to_bytes32(&fields[esm_commitment_idx])?;
     Ok((
         party_id,
         DkgFoldAggCommits {
@@ -97,6 +125,39 @@ mod tests {
 
         let proof = Proof::new(
             CircuitName::NodeFold,
+            ArcBytes::from_bytes(&[]),
+            ArcBytes::from_bytes(&public_signals),
+        );
+
+        let (party_id, commits) =
+            extract_node_fold_agg_commits(&proof, n, h, l).expect("extract should succeed");
+        assert_eq!(party_id, 2);
+        assert_eq!(commits.sk_agg_commit, [0x11; 32]);
+        assert_eq!(commits.esm_agg_commit, [0x22; 32]);
+    }
+
+    #[test]
+    fn extracts_legacy_commitments_from_the_v2_prefix() {
+        let n = 3usize;
+        let h = 2usize;
+        let l = 5usize;
+        let legacy_field_count = node_fold_public_field_count(n, h, l);
+        let field_count = node_fold_v2_public_field_count(n, h, l);
+
+        let mut fields = vec![[0u8; 32]; field_count];
+        fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN][31] = 2;
+        fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN + legacy_field_count - 3] = [0x11; 32];
+        fields[NODE_FOLD_V2_PUBLIC_PREFIX_LEN + legacy_field_count - 2] = [0x22; 32];
+        fields[field_count - 3] = [0x33; 32];
+        fields[field_count - 2] = [0x44; 32];
+
+        let mut public_signals = Vec::with_capacity(field_count * 32);
+        for field in fields {
+            public_signals.extend_from_slice(&field);
+        }
+
+        let proof = Proof::new(
+            CircuitName::NodeFoldV2,
             ArcBytes::from_bytes(&[]),
             ArcBytes::from_bytes(&public_signals),
         );

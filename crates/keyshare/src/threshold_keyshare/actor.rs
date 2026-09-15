@@ -5,25 +5,24 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use actix::prelude::*;
-use alloy::primitives::Address;
-use alloy::signers::local::PrivateKeySigner;
+use alloy::{primitives::Address, signers::local::PrivateKeySigner};
 use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_data::{DurableIntent, Persistable};
 use e3_events::{
-    prelude::*, trap, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
-    CiphernodeSelected, CiphertextOutputPublished, CommitmentRosterSelected,
+    prelude::*, trap, BusHandle, CiphernodeSelected, CiphertextOutputPublished,
     CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest, ComputeRequestError,
-    ComputeRequestErrorKind, ComputeResponse, ComputeResponseKind, CorrelationId,
-    DecryptionKeyShared, DecryptionShareProofSigned, DecryptionShareProofsPending, Die,
-    DkgCoordination, DkgCoordinationKind, DkgDealer, DkgProofSigned,
-    DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, E3id, EType,
-    EncryptionKey, EncryptionKeyCollectionFailed, EncryptionKeyCreated, EncryptionKeyPending,
-    EventContext, EventId, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
-    PartyProofsToVerify, PartyShareDecryptionProofsToVerify, PkGenerationProofSigned, ProofType,
+    ComputeRequestKind, ComputeResponse, ComputeResponseKind, CorrelationId, DecryptionKeyShared,
+    DecryptionShareProofSigned, DecryptionShareProofsPending, Die, DkgProofSigned,
+    DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, EType, EncryptionKey,
+    EncryptionKeyCollectionFailed, EncryptionKeyCreated, EncryptionKeyPending, EventContext,
+    FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
+    LbfvKeyShareDocumentCreated, LbfvKeyShareManifestPublished, PartyProofsToVerify,
+    PartyShareDecryptionProofsToVerify, PkGenerationProofSigned, ProofPayload, ProofType,
     Sequenced, ShareDecryptionProofPending, ShareVerificationComplete, ShareVerificationDispatched,
-    SignedProofPayload, ThresholdShare, ThresholdShareCollectionFailed, ThresholdShareCreated,
-    ThresholdShareDecryptionProofRequest, ThresholdSharePending, TypedEvent, VerificationKind,
+    SignedLbfvKeyShareManifest, SignedProofPayload, ThresholdShare, ThresholdShareCollectionFailed,
+    ThresholdShareCreated, ThresholdShareDecryptionProofRequest, ThresholdSharePending, TypedEvent,
+    VerificationKind, ZkRequest, ZkResponse,
 };
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::BfvPreset;
@@ -33,7 +32,9 @@ use e3_trbfv::{
         CalculateDecryptionShareRequest, CalculateDecryptionShareResponse,
     },
     gen_esi_sss::{GenEsiSssRequest, GenEsiSssResponse},
+    gen_lbfv_key_shares::GenLbfvKeySharesRequest,
     gen_pk_share_and_sk_sss::{GenPkShareAndSkSssRequest, GenPkShareAndSkSssResponse},
+    lbfv_operation::LbfvOperationId,
     shares::SharedSecret,
     TrBFVConfig, TrBFVRequest, TrBFVResponse,
 };
@@ -64,11 +65,11 @@ use crate::domain::timeout_policy::{
     resolve_threshold_share_schedule, resolve_timeout, DerivedTimeout, DkgTimeoutPhase,
 };
 use crate::domain::{
-    batch_grows, build_decryption_key_plan, build_shares_generated_plan, dealer_identity,
-    dispatch_verifies_batch, generate_bfv_keypair, select_ready_roster, AggregatingDecryptionKey,
-    BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan,
-    GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState, ProofRequestData,
-    ReadyForDecryption, ReadySummaryGate, ReceivedShareProofs, ThresholdKeyshareState,
+    build_decryption_key_plan, build_shares_generated_plan, generate_bfv_keypair,
+    AggregatingDecryptionKey, BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting,
+    DecryptionKeyPlan, GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState,
+    LbfvGenerationStateV1, ProofRequestData, ReadyForDecryption, ReceivedShareProofs,
+    ThresholdKeyshareState,
 };
 
 #[path = "recovery_state.rs"]
@@ -136,12 +137,8 @@ pub struct ThresholdKeyshareParams {
     pub share_enc_preset: BfvPreset,
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
-    pub recovery_payloads: ThresholdKeyshareRecoveryPayloads,
-    /// Where this node's BFV encryption keypair is recorded.
-    pub bfv_key: DurableIntent<BfvKeyIntent>,
-    pub dkg_timing_reader: DkgTimingReader,
+    pub lbfv_generation: Persistable<LbfvGenerationStateV1>,
     pub signer: PrivateKeySigner,
-    pub effects_enabled: bool,
 }
 
 pub type DkgTimingFuture = Pin<Box<dyn Future<Output = Result<(u64, u64)>> + Send>>;
@@ -216,17 +213,8 @@ pub struct ThresholdKeyshare {
     bfv_key: Option<BfvKeyIntent>,
     share_enc_preset: BfvPreset,
     interfold_address: Address,
-    dkg_timing_reader: DkgTimingReader,
+    lbfv_generation: Persistable<LbfvGenerationStateV1>,
     signer: PrivateKeySigner,
-    active_aggregator_party_id: Option<u64>,
-    is_aggregator: bool,
-    effects_enabled: bool,
-    // Derived from canonical events and the lifecycle projection at hydration.
-    canonical_key_published: bool,
-    roster_inputs_ready: bool,
-    roster_proposal_pending: bool,
-    ready_summary: ReadySummaryGate,
-    selection_timing_pending: bool,
     pending: PendingKeyshareWork,
 }
 
@@ -282,16 +270,8 @@ impl ThresholdKeyshare {
             bfv_key: None,
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
-            dkg_timing_reader: params.dkg_timing_reader,
+            lbfv_generation: params.lbfv_generation,
             signer: params.signer,
-            active_aggregator_party_id: recovered.active_aggregator_party_id,
-            is_aggregator: recovered.is_aggregator,
-            effects_enabled: params.effects_enabled,
-            canonical_key_published: false,
-            roster_inputs_ready: false,
-            roster_proposal_pending: false,
-            ready_summary: ReadySummaryGate::default(),
-            selection_timing_pending: false,
             pending: PendingKeyshareWork {
                 shares: pending_shares,
                 share_decryption_data,
@@ -358,6 +338,19 @@ impl ThresholdKeyshare {
         }
         self.pending.keyshare_publish = false;
         self.publish_keyshare_created(ec)
+    }
+
+    fn discard_pending_lbfv_generation(&mut self) -> Result<()> {
+        if !self.lbfv_generation.has() {
+            return Ok(());
+        }
+        self.lbfv_generation
+            .try_mutate_without_context(|mut state| {
+                if !state.is_ready() {
+                    state.record_failure("E3 ended before l-BFV generation completed");
+                }
+                Ok(state)
+            })
     }
 }
 
