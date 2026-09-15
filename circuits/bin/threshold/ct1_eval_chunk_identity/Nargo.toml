@@ -1,0 +1,8 @@
+[package]
+name = "ct1_eval_chunk_identity"
+type = "bin"
+authors = [""]
+
+[dependencies]
+lib = { path = "../../../lib" }
+bb_proof_verification = { git = "https://github.com/AztecProtocol/aztec-packages/", tag = "v5.1.0", directory = "barretenberg/noir/bb_proof_verification" }

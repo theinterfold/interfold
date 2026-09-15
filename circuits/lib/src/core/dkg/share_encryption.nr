@@ -112,12 +112,11 @@ pub struct ShareEncryption<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: 
     ct1is: [Polynomial<N>; L],
     /// Random ternary polynomial u (secret witness)
     u: Polynomial<N>,
-    /// Error polynomial e0 (secret witness)
+    /// Error polynomial e0 (secret witness). Unlike ct0's e0, this is never CRT-decomposed:
+    /// `e0_bound` is identical to `e1_bound` at every preset (both tiny - 6..20 depending on
+    /// preset), nowhere near the CRT moduli (~2^50+), so e0 already fits in a single residue
+    /// for every modulus with no reduction needed - same treatment as e1 below.
     e0: Polynomial<N>,
-    /// Per-basis error polynomials e0[l] (secret witnesses)
-    e0is: [Polynomial<N>; L],
-    /// CRT quotients for e0 (secret witnesses)
-    e0_quotients: [Polynomial<N>; L],
     /// Error polynomial e1 (secret witness)
     e1: Polynomial<N>,
     /// Raw message polynomial (secret witness)
@@ -145,8 +144,6 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         ct1is: [Polynomial<N>; L],
         u: Polynomial<N>,
         e0: Polynomial<N>,
-        e0is: [Polynomial<N>; L],
-        e0_quotients: [Polynomial<N>; L],
         e1: Polynomial<N>,
         message: Polynomial<N>,
         r1is: [Polynomial<2 * N - 1>; L],
@@ -166,8 +163,6 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             ct1is,
             u,
             e0,
-            e0is,
-            e0_quotients,
             e1,
             message,
             r1is,
@@ -261,25 +256,6 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         inputs
     }
 
-    /// Verifies CRT consistency for the e0 error polynomial.
-    ///
-    /// Confirms that each per-modulus representation e0is[l] is correctly derived
-    /// from the global e0 via:
-    ///   e0[j] == e0is[l][j] + e0_quotients[l][j] * q_l
-    ///
-    /// This ensures the error is consistently decomposed across all CRT moduli.
-    fn check_e0_crt_consistency(self) {
-        for i in 0..L {
-            for j in 0..N {
-                assert(
-                    self.e0.coefficients[j]
-                        == self.e0is[i].coefficients[j]
-                            + self.e0_quotients[i].coefficients[j] * self.configs.qis[i],
-                );
-            }
-        }
-    }
-
     /// Executes the share encryption circuit and returns the ciphertext commitment (C3 public output).
     pub fn execute(self) -> Field {
         // Step 1: Verify public key commitment matches expected
@@ -291,16 +267,13 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         // Step 3: Perform range checks
         self.check_range_bounds();
 
-        // Step 4: Check CRT consistency for e0
-        self.check_e0_crt_consistency();
-
-        // Step 5: Compute scaled message k1 from message
+        // Step 4: Compute scaled message k1 from message
         let k1 = self.compute_scaled_message();
 
-        // Step 6: Generate Fiat-Shamir challenges
+        // Step 5: Generate Fiat-Shamir challenges
         let gammas = self.generate_challenge(k1);
 
-        // Step 7: Verify encryption constraints
+        // Step 6: Verify encryption constraints
         self.verify_evaluations(gammas, k1);
 
         compute_ciphertext_commitment::<N, L, BIT_CT>(self.ct0is, self.ct1is)
@@ -359,7 +332,7 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
     /// Verifies BFV encryption equations using Schwartz-Zippel with batched modulus verification.
     ///
     /// For each CRT modulus l, checks at the primary challenge point gamma:
-    ///   ct0[l](gamma) = pk0[l](gamma)*u(gamma) + e0[l](gamma) + k1(gamma)*k0[l] + r1[l](gamma)*q_l + r2[l](gamma)*(gamma^N + 1)
+    ///   ct0[l](gamma) = pk0[l](gamma)*u(gamma) + e0(gamma) + k1(gamma)*k0[l] + r1[l](gamma)*q_l + r2[l](gamma)*(gamma^N + 1)
     ///   ct1[l](gamma) = pk1[l](gamma)*u(gamma) + e1(gamma) + p2[l](gamma)*(gamma^N + 1) + p1[l](gamma)*q_l
     ///
     /// Rather than asserting each equation independently, both sides are accumulated
@@ -370,6 +343,9 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
         let gamma = gammas[0];
         let cyclo_at_gamma = gamma.pow_32(N as Field) + 1;
         let u_at_gamma = self.u.eval(gamma);
+        // e0, like e1, is never CRT-decomposed (see the field doc on `e0`) - evaluated once and
+        // reused for every modulus, exactly like e1_at_gamma below.
+        let e0_at_gamma = self.e0.eval(gamma);
         let e1_at_gamma = self.e1.eval(gamma);
         let k1_at_gamma = k1.eval(gamma);
 
@@ -378,10 +354,9 @@ impl<let N: u32, let L: u32, let BIT_PK: u32, let BIT_CT: u32, let BIT_U: u32, l
             let pk0is_at_gamma = self.pk0is[i].eval(gamma);
             let r1i_at_gamma = self.r1is[i].eval(gamma);
             let r2i_at_gamma = self.r2is[i].eval(gamma);
-            let e0is_at_gamma = self.e0is[i].eval(gamma);
 
-            // ct0[l] = pk0[l]*u + e0[l] + k1*k0[l] + r1[l]*q_l + r2[l]*(gamma^N + 1)
-            let mut ct0_rhs = (pk0is_at_gamma * u_at_gamma) + e0is_at_gamma;
+            // ct0[l] = pk0[l]*u + e0 + k1*k0[l] + r1[l]*q_l + r2[l]*(gamma^N + 1)
+            let mut ct0_rhs = (pk0is_at_gamma * u_at_gamma) + e0_at_gamma;
             ct0_rhs += k1_at_gamma * self.configs.k0is[i];
             ct0_rhs += r1i_at_gamma * self.configs.qis[i];
             ct0_rhs += r2i_at_gamma * cyclo_at_gamma;

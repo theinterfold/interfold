@@ -695,6 +695,18 @@ design citation alone does not establish current runtime behavior.
   sidecar, validates any `DocumentsDurable` bundle, re-arms the earliest retry, redrives a persisted
   dispatch, or applies an immutable sealed set. Persisted V1 candidate sets of `H..=N` remain valid;
   all new V1 candidate sets contain exactly `H`. — `flow-trace/04`
+- **Complete user-data-encryption recursive VK binding:** each ciphertext leg is a tree of chunk
+  circuits, and every VK in the tree must reach an anchor. The two chunk roots verify both leaves
+  under one `leaf_key_hash` and output it. Each round circuit (`*_chunk_gamma`,
+  `*_eval_chunk_identity`) outputs its root, leaf, and pk/ct key hashes first. Each top-level
+  circuit (`user_data_encryption_ct0/ct1`) folds those six values and its own two child key hashes
+  into `compute_ude_vk_manifest`. The `user_data_encryption` wrapper outputs
+  `compute_ude_vk_chain(top_key_hash, manifest)` per leg, in the positions that held the bare ct0
+  and ct1 key hashes. The verifier must compare both chain values to anchors. Do not drop a key hash
+  at any layer: a key hash that no layer passes up lets a prover replace that circuit with any
+  circuit that has the same public-input shape, for example a leaf without its range checks. The
+  wrapper also asserts that ct0 and ct1 share one `u` root. —
+  `lib::core::threshold::user_data_encryption_chunk`, `examples/CRISP/scripts/compute_vk_hash.sh`
 - Circuit soundness fixes to preserve: `ModU64::div_mod` verifies
   `result*divisor == dividend (mod modulus)` (IF-001); C7 compares **every** decoded coefficient,
   including zeros, to the claimed message (IF-002), and uses `U384` so the secure-16384

@@ -123,6 +123,13 @@ pub global DS_USER_DATA_ENCRYPTION_COMMITMENT: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
+// Domain separator - "USER_DATA_ENCRYPTION_CHUNK"
+pub global DS_USER_DATA_ENCRYPTION_CHUNK: [u8; 64] = [
+    0x55, 0x53, 0x45, 0x52, 0x5f, 0x44, 0x41, 0x54, 0x41, 0x5f, 0x45, 0x4e, 0x43, 0x52, 0x59, 0x50,
+    0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x43, 0x48, 0x55, 0x4e, 0x4b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
 
 // Domain separator - "RLK_GENERATION"
 pub global DS_RLK_GENERATION: [u8; 64] = [
@@ -298,6 +305,69 @@ pub fn compute_sc_secret_chunk_root_commitment(
         payload = payload.push_back(chunk_commitments[i]);
     }
     compute_commitment(payload, DS_SHARE_COMPUTATION_CHUNK)
+}
+
+// Commitment kind tags for user_data_encryption (ct0/ct1). Distinguishes which witness group a
+// chunk commitment belongs to so values from different groups/legs never collide under the
+// shared DS_USER_DATA_ENCRYPTION_CHUNK domain separator (same purpose as DKG's SK=0/ESM=1
+// kind_tag).
+//
+// `u` deliberately has ONE tag shared by both legs, unlike every other group here. ct0 and ct1
+// encrypt under the same randomness `u`, and the `user_data_encryption` wrapper proves that by
+// asserting ct0's and ct1's `u` commitments are equal. A per-leg tag would make those two
+// commitments differ for one and the same `u`, so that assert could never be satisfied - the
+// tag has to be shared for the cross-leg binding to work at all.
+pub global UDE_KIND_U: Field = 0;
+pub global UDE_KIND_CT0_E0: Field = 1;
+pub global UDE_KIND_CT0_K1: Field = 2;
+pub global UDE_KIND_CT0_R2: Field = 3;
+pub global UDE_KIND_CT0_R1: Field = 4;
+pub global UDE_KIND_CT1_E1: Field = 6;
+pub global UDE_KIND_CT1_P2: Field = 7;
+pub global UDE_KIND_CT1_P1: Field = 8;
+
+/// Compute a domain-separated commitment for one user_data_encryption chunk (single polynomial:
+/// u, e0, k1, or e1). `kind_tag` is one of the `UDE_KIND_*` constants above.
+pub fn compute_ude_chunk_commitment<let CHUNK_SIZE: u32, let BIT: u32>(
+    kind_tag: Field,
+    chunk_idx: u32,
+    n: u32,
+    chunk_poly: Polynomial<CHUNK_SIZE>,
+) -> Field {
+    let mut payload =
+        [0, kind_tag, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
+    payload = single_polynomial_payload::<CHUNK_SIZE, BIT>(payload, chunk_poly);
+    compute_commitment(payload, DS_USER_DATA_ENCRYPTION_CHUNK)
+}
+
+/// Compute a domain-separated commitment for one user_data_encryption chunk across all CRT
+/// limbs (r1is, r2is, p1is, or p2is). `kind_tag` is one of the `UDE_KIND_*` constants above.
+pub fn compute_ude_multi_chunk_commitment<let CHUNK_SIZE: u32, let L: u32, let BIT: u32>(
+    kind_tag: Field,
+    chunk_idx: u32,
+    n: u32,
+    polynomials: [Polynomial<CHUNK_SIZE>; L],
+) -> Field {
+    let mut payload =
+        [0, kind_tag, chunk_idx as Field, n as Field, CHUNK_SIZE as Field].as_vector();
+    payload = multiple_polynomial_payload::<CHUNK_SIZE, L, BIT>(payload, polynomials);
+    compute_commitment(payload, DS_USER_DATA_ENCRYPTION_CHUNK)
+}
+
+/// Compute the root commitment for a set of user_data_encryption chunk commitments. Shared by
+/// both `compute_ude_chunk_commitment` and `compute_ude_multi_chunk_commitment` leaves, the same
+/// way `compute_sc_secret_chunk_root_commitment` is shared by SK/ESM in the DKG chunk pipeline.
+pub fn compute_ude_chunk_root_commitment(
+    kind_tag: Field,
+    n: u32,
+    chunk_size: u32,
+    chunk_commitments: [Field],
+) -> Field {
+    let mut payload = [1, kind_tag, n as Field, chunk_size as Field].as_vector();
+    for i in 0..chunk_commitments.len() {
+        payload = payload.push_back(chunk_commitments[i]);
+    }
+    compute_commitment(payload, DS_USER_DATA_ENCRYPTION_CHUNK)
 }
 
 /// Compute the root commitment for one party share and CRT modulus.
@@ -536,4 +606,34 @@ pub fn compute_user_data_encryption_ct0_challenge<let L: u32>(payload: [Field]) 
 
 pub fn compute_user_data_encryption_ct1_challenge<let L: u32>(payload: [Field]) -> [Field] {
     compute_challenge::<L>(payload, DS_CLG_USER_DATA_ENCRYPTION)
+}
+
+// Guards the cross-leg `u` binding: the `user_data_encryption` wrapper proves ct0 and ct1 used
+// the same randomness by asserting their `u` commitments are EQUAL. That only works while both
+// legs commit `u` under the same kind tag - giving `u` a per-leg tag (as every other witness
+// group here correctly has) silently makes the two roots differ for one and the same `u`, and
+// the wrapper assert becomes unsatisfiable by any honest prover.
+#[test]
+fn test_u_commitment_matches_across_ct0_and_ct1_legs() {
+    let u_chunk0: Polynomial<2> = Polynomial::new([7, 11]);
+    let u_chunk1: Polynomial<2> = Polynomial::new([13, 17]);
+    let n: u32 = 4;
+
+    // Exactly what ct0_chunk_main / ct0_chunk_main_root compute for `u`...
+    let ct0_c0 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 0, n, u_chunk0);
+    let ct0_c1 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 1, n, u_chunk1);
+    let ct0_u_root = compute_ude_chunk_root_commitment(UDE_KIND_U, n, 2, [ct0_c0, ct0_c1]);
+
+    // ...and what ct1_chunk_main / ct1_chunk_main_root compute for the same `u`.
+    let ct1_c0 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 0, n, u_chunk0);
+    let ct1_c1 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 1, n, u_chunk1);
+    let ct1_u_root = compute_ude_chunk_root_commitment(UDE_KIND_U, n, 2, [ct1_c0, ct1_c1]);
+
+    assert(ct0_u_root == ct1_u_root, "ct0 and ct1 must agree on u for the wrapper's binding");
+
+    // A different `u` must still give a different root - the binding has to have teeth.
+    let other: Polynomial<2> = Polynomial::new([7, 12]);
+    let other_c1 = compute_ude_chunk_commitment::<2, 8>(UDE_KIND_U, 1, n, other);
+    let other_root = compute_ude_chunk_root_commitment(UDE_KIND_U, n, 2, [ct0_c0, other_c1]);
+    assert(ct0_u_root != other_root);
 }
