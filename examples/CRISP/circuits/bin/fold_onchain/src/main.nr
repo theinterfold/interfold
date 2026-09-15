@@ -7,7 +7,7 @@
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use interfold_lib::math::commitments::compute_vk_hash;
 
-/// Binds the four inner `vk_hash` witnesses. Regenerate with `pnpm compute:vk-hash` in
+/// Binds the user_data_encryption and crisp key hashes and the ct0 and ct1 VK chains. Regenerate with `pnpm compute:vk-hash` in
 /// `examples/CRISP` after changing ct0 / ct1 / user_data_encryption / crisp_onchain (or the lib
 /// preset). Insecure: `lib::configs::default` uses `insecure::*`; secure: uses `secure::*`.
 pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_INSECURE: Field =
@@ -19,7 +19,7 @@ fn main(
     // User Data Encryption Section.
     user_data_encryption_verification_key: UltraHonkVerificationKey,
     user_data_encryption_proof: UltraHonkProof,
-    user_data_encryption_public_inputs: [Field; 5], // ct0_key_hash, ct1_key_hash, pk_commitment, ct_commitment, k1_commitment
+    user_data_encryption_public_inputs: [Field; 5], // ct0_vk_chain, ct1_vk_chain, pk_commitment, ct_commitment, k1_commitment
     user_data_encryption_key_hash: Field,
     // Crisp Section.
     crisp_verification_key: UltraHonkVerificationKey,
@@ -69,8 +69,10 @@ fn main(
     let vk_hashes = [
         user_data_encryption_key_hash,
         crisp_key_hash,
-        user_data_encryption_public_inputs[0], // ct0_key_hash
-        user_data_encryption_public_inputs[1], // ct1_key_hash
+        // Each chain binds the VK of every circuit in that leg's chunk tree, not only the
+        // top-level circuit - see `compute_ude_vk_chain`.
+        user_data_encryption_public_inputs[0], // ct0_vk_chain
+        user_data_encryption_public_inputs[1], // ct1_vk_chain
     ]
         .as_vector();
 

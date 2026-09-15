@@ -10,6 +10,10 @@
 //! A's `ct0_chunk_main_root`), and sums the two chunks' partial evaluations into the full
 //! `u_at_gamma`/`k1_at_gamma`/`e0is_at_gamma`/`r2i_at_gamma`/`r1i_at_gamma`. This output feeds
 //! directly into `ct0_eval_chunk_identity`.
+//!
+//! Both leaf proofs verify against one `leaf_vk` and one `leaf_key_hash`, so both chunks must come
+//! from the same circuit. The key hash is the first output - see `ct0_chunk_main_root` for how it
+//! reaches the deployment anchor.
 
 use bb_proof_verification::{UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof};
 use lib::configs::default::threshold::{L, N, USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS};
@@ -20,7 +24,8 @@ global R1_CHUNK_SIZE: u32 = 2 * CHUNK_SIZE;
 global LEAF_LEN: u32 = 9 + (3 * L);
 
 fn main(
-    leaf0_vk: UltraHonkVerificationKey,
+    leaf_vk: UltraHonkVerificationKey,
+    leaf_key_hash: Field,
     leaf0_proof: UltraHonkZKProof,
     leaf0_gamma: Field,
     leaf0_u: Field,
@@ -33,8 +38,6 @@ fn main(
     leaf0_e0is_partial: [Field; L],
     leaf0_r2i_partial: [Field; L],
     leaf0_r1i_partial: [Field; L],
-    leaf0_key_hash: pub Field,
-    leaf1_vk: UltraHonkVerificationKey,
     leaf1_proof: UltraHonkZKProof,
     leaf1_gamma: Field,
     leaf1_u: Field,
@@ -47,8 +50,7 @@ fn main(
     leaf1_e0is_partial: [Field; L],
     leaf1_r2i_partial: [Field; L],
     leaf1_r1i_partial: [Field; L],
-    leaf1_key_hash: pub Field,
-    ) -> pub (Field, Field, Field, Field, Field, Field, Field, Field, [Field; L], [Field; L], [Field; L]) {
+    ) -> pub (Field, Field, Field, Field, Field, Field, Field, Field, Field, [Field; L], [Field; L], [Field; L]) {
     let mut leaf0_inputs: [Field; LEAF_LEN] = [0; LEAF_LEN];
     leaf0_inputs[0] = 0;
     leaf0_inputs[1] = leaf0_gamma;
@@ -64,7 +66,7 @@ fn main(
         leaf0_inputs[9 + L + i] = leaf0_r2i_partial[i];
         leaf0_inputs[9 + (2 * L) + i] = leaf0_r1i_partial[i];
     }
-    verify_honk_proof(leaf0_vk, leaf0_proof, leaf0_inputs, leaf0_key_hash);
+    verify_honk_proof(leaf_vk, leaf0_proof, leaf0_inputs, leaf_key_hash);
 
     let mut leaf1_inputs: [Field; LEAF_LEN] = [0; LEAF_LEN];
     leaf1_inputs[0] = 1;
@@ -81,7 +83,7 @@ fn main(
         leaf1_inputs[9 + L + i] = leaf1_r2i_partial[i];
         leaf1_inputs[9 + (2 * L) + i] = leaf1_r1i_partial[i];
     }
-    verify_honk_proof(leaf1_vk, leaf1_proof, leaf1_inputs, leaf1_key_hash);
+    verify_honk_proof(leaf_vk, leaf1_proof, leaf1_inputs, leaf_key_hash);
 
     assert(leaf0_gamma == leaf1_gamma, "gamma mismatch");
 
@@ -108,7 +110,7 @@ fn main(
     }
 
     (
-        leaf0_gamma, u_root, e0_root, k1_root, r2_root, r1_root, u_at_gamma, k1_at_gamma,
-        e0is_at_gamma, r2i_at_gamma, r1i_at_gamma,
+        leaf_key_hash, leaf0_gamma, u_root, e0_root, k1_root, r2_root, r1_root, u_at_gamma,
+        k1_at_gamma, e0is_at_gamma, r2i_at_gamma, r1i_at_gamma,
     )
 }

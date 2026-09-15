@@ -4,82 +4,84 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Top-level ct0 (P3), chunking-comparison branch: the monolithic `UserDataEncryptionCt0`
-//! circuit no longer fits a single browser-side proof at N=16384, L=5, so its work is split by
-//! coefficient-level chunking into one merged grid - `u`/`e0`/`k1`/`r2is`/`r1is` together, 2
-//! chunks - each chunk range-checked independently and combined through a two-level tree (max 2
-//! recursive verifications per circuit): `ct0_chunk_main` (leaves, 2 instances) ->
-//! `ct0_chunk_main_root` (verifies both leaves directly, no intermediate pair level) + separate
-//! `ct0_pk_ct_commit` (commits `pk0is` and `ct0is` together - never recursive, so no combine
-//! step is needed) -> `ct0_chunk_gamma` (verifies `ct0_chunk_main_root` and `ct0_pk_ct_commit`,
-//! derives gamma). Round B (`ct0_eval_chunk_*`) mirrors this shape to evaluate every chunk at
-//! gamma and sum the partial evaluations, converging on `ct0_eval_chunk_identity` (the actual
-//! Schwartz-Zippel identity check).
+//! Top-level ct0 (P3). Proving ct0 in a single circuit does not fit the browser's ~2M gate
+//! ceiling at N=16384, L=5, so its work is split by coefficient-level chunking into one merged
+//! grid - `u`/`e0`/`k1`/`r2is`/`r1is` together, 2 chunks - each chunk range-checked independently
+//! and combined through a two-level tree (max 2 recursive verifications per circuit):
+//! `ct0_chunk_main` (leaves, 2 instances) -> `ct0_chunk_main_root` (verifies both leaves
+//! directly, no intermediate pair level) + separate `ct0_pk_ct_commit` (commits `pk0is` and
+//! `ct0is` together) -> `ct0_chunk_gamma` (verifies `ct0_chunk_main_root` and
+//! `ct0_pk_ct_commit`, derives gamma). Round B (`ct0_eval_chunk_*`) mirrors this shape to
+//! evaluate every chunk at gamma and sum the partial evaluations, converging on
+//! `ct0_eval_chunk_identity` (the actual Schwartz-Zippel identity check).
 //!
 //! This circuit verifies both final proofs and checks every commitment and batching coefficient
 //! they produced agree - closing the binding that stops a prover from range-checking one witness
-//! in Round A and evaluating a different, unconstrained one in Round B. Output shape matches the
-//! witness-group-split branch's top-level circuit exactly, so the `user_data_encryption` wrapper
-//! needs no changes either way.
+//! in Round A and evaluating a different, unconstrained one in Round B.
+//!
+//! It also closes VK binding for the tree. Each round outputs the key hashes of its root, leaf,
+//! and pk/ct circuits. This circuit folds those six values and its own two child key hashes into
+//! one VK manifest, and outputs the manifest first. The wrapper folds the manifest into the value
+//! that the verifier checks against a deployment anchor. Without the manifest, a prover could
+//! replace any circuit below this one - for example a leaf without its range checks - with a
+//! different circuit that has the same public-input shape.
+//!
+//! Outputs: `vk_manifest`, `pk0_commitment`, `ct0_commitment`, `k1_root`, `u_root`.
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::threshold::L;
+use lib::core::threshold::user_data_encryption_chunk::{
+    compute_ude_vk_manifest, UDE_ROUND_CHILD_KEY_HASHES,
+};
 
-global ROUND_A_LEN: u32 = 9 + L;
-global ROUND_B_LEN: u32 = 10 + L;
+// Both rounds share one output layout: 3 key hashes (root, leaf, pk/ct), `pk0`, `ct0`, `k1`, `u`,
+// `e0`, `r2`, `r1`, then the L batching coefficients (Round A: `ct0_gammas`).
+global ROUND_LEN: u32 = 10 + L;
+global PK0: u32 = 3;
+global CT0: u32 = 4;
+global K1: u32 = 5;
+global U: u32 = 6;
+global E0: u32 = 7;
+global R2: u32 = 8;
+global R1: u32 = 9;
+global BATCHING: u32 = 10;
 
 fn main(
     a_vk: UltraHonkVerificationKey,
+    a_key_hash: Field,
     a_proof: UltraHonkProof,
-    a_public_inputs: [Field; ROUND_A_LEN],
-    a_key_hash: pub Field,
+    a_public_inputs: [Field; ROUND_LEN],
     b_vk: UltraHonkVerificationKey,
+    b_key_hash: Field,
     b_proof: UltraHonkProof,
-    b_public_inputs: [Field; ROUND_B_LEN],
-    b_key_hash: pub Field,
-) -> pub (Field, Field, Field, Field) {
+    b_public_inputs: [Field; ROUND_LEN],
+) -> pub (Field, Field, Field, Field, Field) {
     verify_honk_proof_non_zk(a_vk, a_proof, a_public_inputs, a_key_hash);
     verify_honk_proof_non_zk(b_vk, b_proof, b_public_inputs, b_key_hash);
 
-    // Round A (`ct0_chunk_gamma`): 2 key-hash params, then 7 commitments/roots + ct0_gammas[L].
-    let a_pk0_commitment = a_public_inputs[2];
-    let a_ct0_commitment = a_public_inputs[3];
-    let a_k1_root = a_public_inputs[4];
-    let a_u_root = a_public_inputs[5];
-    let a_e0_root = a_public_inputs[6];
-    let a_r2_root = a_public_inputs[7];
-    let a_r1_root = a_public_inputs[8];
-    let mut a_gammas: [Field; L] = [0; L];
+    let a = a_public_inputs;
+    let b = b_public_inputs;
+
+    assert(a[PK0] == b[PK0], "pk0_commitment mismatch between rounds");
+    assert(a[CT0] == b[CT0], "ct0_commitment mismatch between rounds");
+    assert(a[K1] == b[K1], "k1 root mismatch between rounds");
+    assert(a[U] == b[U], "u root mismatch between rounds");
+    assert(a[E0] == b[E0], "e0 root mismatch between rounds");
+    assert(a[R2] == b[R2], "r2 root mismatch between rounds");
+    assert(a[R1] == b[R1], "r1 root mismatch between rounds");
+    // Index 0 is gamma itself: Round A's `ct0_gammas[0]` is gamma, and Round B asserts its
+    // `ct0_batching_coeffs[0] == gamma`.
     for i in 0..L {
-        a_gammas[i] = a_public_inputs[9 + i];
+        assert(a[BATCHING + i] == b[BATCHING + i], "batching-coefficient mismatch between rounds");
     }
 
-    // Round B (`ct0_eval_chunk_identity`): 2 key-hash params + batching[L] param, then 8 outputs.
-    let mut b_gammas: [Field; L] = [0; L];
-    for i in 0..L {
-        b_gammas[i] = b_public_inputs[2 + i];
+    let mut a_children: [Field; UDE_ROUND_CHILD_KEY_HASHES] = [0; UDE_ROUND_CHILD_KEY_HASHES];
+    let mut b_children: [Field; UDE_ROUND_CHILD_KEY_HASHES] = [0; UDE_ROUND_CHILD_KEY_HASHES];
+    for i in 0..UDE_ROUND_CHILD_KEY_HASHES {
+        a_children[i] = a[i];
+        b_children[i] = b[i];
     }
-    let b_ret_start = 2 + L;
-    let b_pk0_commitment = b_public_inputs[b_ret_start];
-    let b_ct0_commitment = b_public_inputs[b_ret_start + 1];
-    let b_k1_root = b_public_inputs[b_ret_start + 2];
-    let b_u_root = b_public_inputs[b_ret_start + 3];
-    let b_e0_root = b_public_inputs[b_ret_start + 4];
-    let b_r2_root = b_public_inputs[b_ret_start + 5];
-    let b_r1_root = b_public_inputs[b_ret_start + 6];
-    let b_gamma = b_public_inputs[b_ret_start + 7];
+    let vk_manifest = compute_ude_vk_manifest(a_key_hash, a_children, b_key_hash, b_children);
 
-    assert(a_pk0_commitment == b_pk0_commitment, "pk0_commitment mismatch between rounds");
-    assert(a_ct0_commitment == b_ct0_commitment, "ct0_commitment mismatch between rounds");
-    assert(a_k1_root == b_k1_root, "k1 root mismatch between rounds");
-    assert(a_u_root == b_u_root, "u root mismatch between rounds");
-    assert(a_e0_root == b_e0_root, "e0 root mismatch between rounds");
-    assert(a_r2_root == b_r2_root, "r2 root mismatch between rounds");
-    assert(a_r1_root == b_r1_root, "r1 root mismatch between rounds");
-    assert(a_gammas[0] == b_gamma, "gamma mismatch between rounds");
-    for i in 0..L {
-        assert(a_gammas[i] == b_gammas[i], "batching-coefficient mismatch between rounds");
-    }
-
-    (a_pk0_commitment, a_ct0_commitment, a_k1_root, a_u_root)
+    (vk_manifest, a[PK0], a[CT0], a[K1], a[U])
 }

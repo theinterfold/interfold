@@ -4,21 +4,21 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Chunking-comparison branch: verifies `ct1_chunk_main_root` (non-ZK - covers all four witness
-//! groups, u/e1/p2/p1 merged into one grid) and `ct1_pk_ct_commit` (ZK - holds raw
-//! `pk1is`/`ct1is` witness directly, no combine step needed since it was never recursive to
-//! begin with), gathering every commitment the ct1 challenge depends on, then derives `gamma`.
-//! Same replacement the witness-group-split branch's `ct1_abcd_combine` makes: the transcript
-//! hashes commitments/roots instead of raw coefficients.
+//! Verifies `ct1_chunk_main_root` (non-ZK - it covers all four witness groups, u/e1/p2/p1 merged
+//! into one grid) and `ct1_pk_ct_commit` (ZK - it holds raw `pk1is`/`ct1is` witness directly),
+//! gathering every commitment the ct1 challenge depends on, then derives `gamma`. The transcript
+//! hashes commitments and roots rather than raw coefficients, which is what keeps this circuit
+//! inside the gate budget.
 //!
-//! Unlike ct0, ct1's batching coefficients are `gammas[L..2L]` for every limb (no `i == 0`
-//! special-case) - see `verify_evaluations` in the original `UserDataEncryptionCt1`.
+//! Unlike ct0, ct1's batching coefficients are `gammas[L..2L]` for every limb, with no `i == 0`
+//! special-case - see `ct1_eval_chunk_identity`, where they are applied.
 //!
-//! `ct1_chunk_main_root` itself recursively verifies two inner proofs, so it declares its own
-//! `pub leaf0_key_hash`/`leaf1_key_hash` parameters ahead of its return tuple in its public
-//! inputs - `roots_leaf0_key_hash`/`roots_leaf1_key_hash` below account for those 2 leading
-//! fields. `ct1_pk_ct_commit` has no such params (it doesn't itself verify anything), so its
-//! public inputs are exactly its two-commitment return tuple.
+//! The root's public inputs start with its leaf key hash. This circuit outputs it with the root
+//! and pk/ct key hashes, in the order root, leaf, pk/ct - see `ct0_chunk_gamma` for how they reach
+//! the deployment anchor.
+//!
+//! Outputs: 3 key hashes, then `pk1`, `ct1`, `u`, `e1`, `p2`, `p1`, `gamma`, then
+//! `ct1_batching_coeffs[L]`.
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
@@ -29,24 +29,23 @@ use lib::math::commitments::compute_user_data_encryption_ct1_challenge;
 
 fn main(
     roots_vk: UltraHonkVerificationKey,
+    roots_key_hash: Field,
     roots_proof: UltraHonkProof,
-    roots_leaf0_key_hash: Field,
-    roots_leaf1_key_hash: Field,
+    leaf_key_hash: Field,
     u_root: Field,
     e1_root: Field,
     p2_root: Field,
     p1_root: Field,
-    roots_key_hash: pub Field,
     pk_ct_vk: UltraHonkVerificationKey,
+    pk_ct_key_hash: Field,
     pk_ct_proof: UltraHonkZKProof,
     pk1_commitment: Field,
     ct1_commitment: Field,
-    pk_ct_key_hash: pub Field,
-) -> pub (Field, Field, Field, Field, Field, Field, Field, [Field; L]) {
+) -> pub (Field, Field, Field, Field, Field, Field, Field, Field, Field, Field, [Field; L]) {
     verify_honk_proof_non_zk(
         roots_vk,
         roots_proof,
-        [roots_leaf0_key_hash, roots_leaf1_key_hash, u_root, e1_root, p2_root, p1_root],
+        [leaf_key_hash, u_root, e1_root, p2_root, p1_root],
         roots_key_hash,
     );
     verify_honk_proof(
@@ -65,5 +64,8 @@ fn main(
         ct1_batching_coeffs[i] = gammas[L + i];
     }
 
-    (pk1_commitment, ct1_commitment, u_root, e1_root, p2_root, p1_root, gamma, ct1_batching_coeffs)
+    (
+        roots_key_hash, leaf_key_hash, pk_ct_key_hash, pk1_commitment, ct1_commitment, u_root,
+        e1_root, p2_root, p1_root, gamma, ct1_batching_coeffs,
+    )
 }
