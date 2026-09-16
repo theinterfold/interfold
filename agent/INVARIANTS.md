@@ -716,6 +716,10 @@ design citation alone does not establish current runtime behavior.
   It persists a completed fold before publication. Restart must restore inputs or the completed
   output and resume only after `EffectsEnabled`. `KeyPublished` and terminal E3 events release the
   saved node-fold data. — `flow-trace/04`; `flow-trace/06`
+- Replayed randomized DKG outputs must be reused exactly. If a TrBFV response arrives before a
+  rebuilt collector restores its prerequisite state, hold the response until that state is ready;
+  do not dispatch a replacement computation that would produce different shares and proofs. —
+  `flow-trace/04`; INDEX concern #57
 - On restart in `ReadyForDecryption`, rebuild the C4 collector from the saved roster and replay
   saved peer C4 shares. A restored C4 proof job cannot advance DKG if its peer-share collector is
   absent. After collection is complete, a duplicate C4 share must not start another collector.

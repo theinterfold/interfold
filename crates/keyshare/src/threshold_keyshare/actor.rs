@@ -144,6 +144,10 @@ pub type DkgTimingReader = Arc<dyn Fn(E3id) -> DkgTimingFuture + Send + Sync>;
 /// Process-local bridge data rebuilt from the versioned keyshare recovery record.
 #[derive(Default)]
 struct PendingKeyshareWork {
+    /// Replayed key-generation output waiting for encryption-key recovery.
+    gen_pk_response: Option<TypedEvent<ComputeResponse>>,
+    /// Replayed ESI output waiting for key-generation recovery.
+    gen_esi_response: Option<TypedEvent<ComputeResponse>>,
     /// Shares awaiting the C2/C3 verification result.
     shares: Vec<Arc<ThresholdShare>>,
     /// C4 requests awaiting the threshold-decryption-key result.
@@ -182,6 +186,22 @@ pub struct ThresholdKeyshare {
 }
 
 impl ThresholdKeyshare {
+    fn buffer_replayed_compute_response(
+        slot: &mut Option<TypedEvent<ComputeResponse>>,
+        response: TypedEvent<ComputeResponse>,
+        operation: &str,
+    ) -> Result<()> {
+        if let Some(existing) = slot.as_ref() {
+            anyhow::ensure!(
+                existing.response == response.response && existing.e3_id == response.e3_id,
+                "conflicting replayed {operation} responses"
+            );
+        } else {
+            *slot = Some(response);
+        }
+        Ok(())
+    }
+
     pub fn new(params: ThresholdKeyshareParams) -> Self {
         let recovered = params.recovery.get().unwrap_or_default();
         let own_party_id = params.state.get().map(|state| state.party_id);

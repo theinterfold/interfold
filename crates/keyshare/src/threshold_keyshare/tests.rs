@@ -168,6 +168,136 @@ fn test_ec(seq: u64) -> EventContext<Sequenced> {
     .clone()
 }
 
+fn collecting_encryption_keys_state(e3_id: &E3id) -> KeyshareState {
+    KeyshareState::CollectingEncryptionKeys(CollectingEncryptionKeysData {
+        sk_bfv: SensitiveBytes::from_encrypted(&[1]),
+        pk_bfv: ArcBytes::from_bytes(&[2]),
+        ciphernode_selected: CiphernodeSelected {
+            e3_id: e3_id.clone(),
+            party_id: 0,
+            threshold_m: 1,
+            threshold_n: 3,
+            ..Default::default()
+        },
+    })
+}
+
+fn gen_pk_response(cipher: &Cipher, e3_id: &E3id, seq: u64) -> Result<TypedEvent<ComputeResponse>> {
+    Ok(TypedEvent::new(
+        ComputeResponse::trbfv(
+            TrBFVResponse::GenPkShareAndSkSss(GenPkShareAndSkSssResponse {
+                pk_share: ArcBytes::from_bytes(&[3]),
+                sk_sss: e3_trbfv::shares::Encrypted::new(SharedSecret::new(Vec::new()), cipher)?,
+                pk0_share_raw: ArcBytes::from_bytes(&[4]),
+                sk_raw: SensitiveBytes::new([5], cipher)?,
+                eek_raw: SensitiveBytes::new([6], cipher)?,
+                e_sm_raw: SensitiveBytes::new([7], cipher)?,
+            }),
+            CorrelationId::new(),
+            e3_id.clone(),
+        ),
+        test_ec(seq),
+    ))
+}
+
+fn gen_esi_response(e3_id: &E3id, seq: u64) -> TypedEvent<ComputeResponse> {
+    TypedEvent::new(
+        ComputeResponse::trbfv(
+            TrBFVResponse::GenEsiSss(GenEsiSssResponse {
+                esi_sss: Vec::new(),
+            }),
+            CorrelationId::new(),
+            e3_id.clone(),
+        ),
+        test_ec(seq),
+    )
+}
+
+#[actix::test]
+async fn replayed_dkg_outputs_wait_for_their_prerequisites() -> Result<()> {
+    let (bus, _) = test_bus();
+    let e3_id = E3id::new("replay-order", 1);
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let (state, _) = test_state(&e3_id, collecting_encryption_keys_state(&e3_id));
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: cipher.clone(),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: false,
+        recovery: test_recovery(),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+
+    let pk_response = gen_pk_response(&cipher, &e3_id, 2)?;
+    let esi_response = gen_esi_response(&e3_id, 3);
+    actor.handle_gen_pk_share_and_sk_sss_response(pk_response.clone())?;
+    actor.handle_gen_esi_sss_response(esi_response.clone())?;
+    let (mut repeated_pk, repeated_pk_ec) = pk_response.clone().into_components();
+    repeated_pk.correlation_id = CorrelationId::new();
+    actor.handle_gen_pk_share_and_sk_sss_response(TypedEvent::new(
+        repeated_pk,
+        repeated_pk_ec,
+    ))?;
+    let (mut repeated_esi, repeated_esi_ec) = esi_response.clone().into_components();
+    repeated_esi.correlation_id = CorrelationId::new();
+    actor.handle_gen_esi_sss_response(TypedEvent::new(repeated_esi, repeated_esi_ec))?;
+
+    assert_eq!(actor.pending.gen_pk_response, Some(pk_response));
+    assert_eq!(actor.pending.gen_esi_response, Some(esi_response));
+    assert!(matches!(
+        actor.state.try_get()?.state,
+        KeyshareState::CollectingEncryptionKeys(_)
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn recovered_encryption_keys_reuse_the_replayed_key_output() -> Result<()> {
+    let (bus, history) = test_bus();
+    let e3_id = E3id::new("replay-output", 1);
+    let cipher = Arc::new(Cipher::from_password("test-password").await?);
+    let (state, _) = test_state(&e3_id, collecting_encryption_keys_state(&e3_id));
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: cipher.clone(),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        signer: alloy::signers::local::PrivateKeySigner::random(),
+        effects_enabled: false,
+        recovery: test_recovery(),
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+
+    actor.handle_gen_pk_share_and_sk_sss_response(gen_pk_response(&cipher, &e3_id, 2)?)?;
+    actor.handle_all_encryption_keys_collected(TypedEvent::new(
+        AllEncryptionKeysCollected { keys: Vec::new() },
+        test_ec(1),
+    ))?;
+
+    let state = actor.state.try_get()?;
+    let KeyshareState::GeneratingThresholdShare(data) = state.state else {
+        panic!("expected threshold-share generation state");
+    };
+    assert_eq!(data.pk_share, Some(ArcBytes::from_bytes(&[3])));
+    assert!(actor.pending.gen_pk_response.is_none());
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::ComputeRequest(ComputeRequest {
+            request: ComputeRequestKind::TrBFV(TrBFVRequest::GenEsiSss(_)),
+            ..
+        })
+    ));
+    Ok(())
+}
+
 fn aggregating_decryption_key_for_roster_test() -> AggregatingDecryptionKey {
     AggregatingDecryptionKey {
         pk_share: ArcBytes::from_bytes(&[1]),

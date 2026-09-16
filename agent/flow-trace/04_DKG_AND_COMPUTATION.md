@@ -199,6 +199,12 @@ ThresholdKeyshare receives AllEncryptionKeysCollected
     │  └─────────────────────────────────────────────────────────┘
 ```
 
+During restart replay, the durable `GenPkShareAndSkSss` and `GenEsiSss` responses can reach
+`ThresholdKeyshare` before the rebuilt encryption-key collector reports completion. While effects
+are disabled, the actor holds those exact responses. It applies them when their prerequisites are
+restored instead of dispatching new randomized computations. An identical replay is idempotent; a
+different response for the same stage fails closed.
+
     │
     ├─ ThresholdKeyshare tracks the correlation id for both TrBFV requests:
     │   ├─ `GenPkShareAndSkSss`

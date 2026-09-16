@@ -35,6 +35,49 @@ impl ThresholdKeyshare {
 
     /// 3a. GenEsiSss result
     pub fn handle_gen_esi_sss_response(&mut self, res: TypedEvent<ComputeResponse>) -> Result<()> {
+        let state = self.state.try_get()?;
+        match &state.state {
+            KeyshareState::GeneratingThresholdShare(data)
+                if data.esi_sss.is_none()
+                    && data.pk_share.is_some()
+                    && data.sk_sss.is_some()
+                    && data.e_sm_raw.is_some()
+                    && data.proof_request_data.is_some() => {}
+            KeyshareState::GeneratingThresholdShare(data) if data.esi_sss.is_some() => {
+                info!("Ignoring duplicate GenEsiSss response");
+                return Ok(());
+            }
+            KeyshareState::AggregatingDecryptionKey(_)
+            | KeyshareState::ReadyForDecryption(_)
+            | KeyshareState::Decrypting(_)
+            | KeyshareState::GeneratingDecryptionProof(_)
+            | KeyshareState::Completed
+            | KeyshareState::Failed { .. } => {
+                info!(
+                    state = state.variant_name(),
+                    "Ignoring replayed GenEsiSss response after DKG advanced"
+                );
+                return Ok(());
+            }
+            KeyshareState::Init
+            | KeyshareState::CollectingEncryptionKeys(_)
+            | KeyshareState::GeneratingThresholdShare(_) => {
+                if self.effects_enabled {
+                    bail!("GenEsiSss response received before its DKG prerequisites");
+                }
+                Self::buffer_replayed_compute_response(
+                    &mut self.pending.gen_esi_response,
+                    res,
+                    "GenEsiSss",
+                )?;
+                info!(
+                    e3_id = %state.e3_id,
+                    "Holding replayed GenEsiSss response until key generation recovers"
+                );
+                return Ok(());
+            }
+        }
+
         let (res, ec) = res.into_components();
         let output: GenEsiSssResponse = res.try_into()?;
 
