@@ -65,6 +65,39 @@ const postJson = async <TResponse>(serverUrl: string, endpoint: string, body: un
   return (await response.json()) as TResponse
 }
 
+const isLoopbackHost = (host: string): boolean => {
+  const normalized = host.toLowerCase().replace(/^\[|\]$/g, '')
+  if (normalized === 'localhost' || normalized === '::1') return true
+
+  const octets = normalized.split('.')
+  return octets.length === 4 && octets[0] === '127' && octets.every((octet) => /^\d+$/.test(octet) && Number(octet) <= 255)
+}
+
+const authenticatedEndpointUrl = (serverUrl: string, endpoint: string): string => {
+  let url: URL
+  try {
+    url = new URL(serverUrl)
+  } catch {
+    throw new Error('CRISP server URL must be an absolute HTTP or HTTPS URL')
+  }
+
+  if (url.username || url.password) {
+    throw new Error('CRISP server URL must not contain user information')
+  }
+  if (url.href.includes('?') || url.href.includes('#')) {
+    throw new Error('CRISP server URL must not contain a query or fragment')
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('CRISP server URL must use HTTP or HTTPS')
+  }
+  if (url.protocol === 'http:' && !isLoopbackHost(url.hostname)) {
+    throw new Error('CRISP server URL must use HTTPS unless its host is loopback')
+  }
+
+  url.pathname = `${url.pathname.replace(/\/+$/, '')}/${endpoint.replace(/^\/+/, '')}`
+  return url.toString()
+}
+
 /**
  * Get the current (most recent) round, optionally filtered by requester addresses.
  * Returns undefined when no current round exists (404).
@@ -128,13 +161,30 @@ export const getRoundCiphertext = async (serverUrl: string, e3Id: bigint): Promi
  * @param request - The new round request (cron API key, token address and balance threshold)
  * @returns The server confirmation message
  */
-export const requestNewRound = async (serverUrl: string, request: NewRoundRequest): Promise<JsonResponse> =>
-  postJson<JsonResponse>(serverUrl, CRISP_SERVER_ROUNDS_REQUEST_ENDPOINT, {
-    cron_api_key: request.cronApiKey,
-    token_address: request.tokenAddress,
-    balance_threshold: request.balanceThreshold,
-    census_mode: request.censusMode,
+export const requestNewRound = async (serverUrl: string, request: NewRoundRequest): Promise<JsonResponse> => {
+  const endpointUrl = authenticatedEndpointUrl(serverUrl, CRISP_SERVER_ROUNDS_REQUEST_ENDPOINT)
+  const response = await fetch(endpointUrl, {
+    method: 'POST',
+    redirect: 'error',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      cron_api_key: request.cronApiKey,
+      token_address: request.tokenAddress,
+      balance_threshold: request.balanceThreshold,
+      census_mode: request.censusMode,
+    }),
   })
+
+  if (!response.ok) {
+    throw new Error(
+      `CRISP server request to /${CRISP_SERVER_ROUNDS_REQUEST_ENDPOINT} failed (${response.status}): ${await response.text()}`,
+    )
+  }
+
+  return (await response.json()) as JsonResponse
+}
 
 /**
  * Stage an encrypted vote with the CRISP availability service.

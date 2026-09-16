@@ -37,11 +37,15 @@ Protocol, which handles E3 (Encrypted Execution Environment) rounds and voting p
    CIPHERNODE_REGISTRY_ADDRESS=your_ciphernode_registry_address
    FEE_TOKEN_ADDRESS=free_token_address
    CHAIN_ID=your_chain_id
+   INTERFOLD_SERVER_URL=https://your_crisp_server_url
    CRON_API_KEY=your_cron_api_key
    ```
 
    `CRON_API_KEY` must be nonempty when you run the cron client or expose `POST /rounds/request`.
-   Both paths fail closed when the secret is absent or blank.
+   Both paths fail closed when the secret is absent or blank. Do not embed this key in a browser
+   bundle. The cron client and SDK round-request method require HTTPS for remote servers and reject
+   redirects. Plain HTTP is accepted only for `localhost`, `127.0.0.0/8`, and `[::1]` development
+   endpoints.
 
    In Avail mode, the server schedules the input window after `CRISPProgram.earliestVotingStart()`.
    `VOTING_START_BUFFER_SECONDS` adds mining time before that fixed start. `E3_DURATION` then covers

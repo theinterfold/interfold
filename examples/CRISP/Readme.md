@@ -242,10 +242,18 @@ VOTING_START_BUFFER_SECONDS=120
 # Use a nonempty secret whenever the endpoint is exposed.
 CRON_API_KEY=<random-secret>
 
+# Remote cron targets must use HTTPS. Plain HTTP is accepted only for loopback development.
+INTERFOLD_SERVER_URL=https://crisp.example
+
 # Ethereum mainnet uses these two endpoints instead:
 # AVAIL_RPC_URL=https://avail-rpc.publicnode.com/
 # AVAIL_BRIDGE_API_URL=https://bridge-api.avail.so
 ```
+
+Do not embed `CRON_API_KEY` in a browser bundle. Use it only from protected automation. The cron
+client and SDK round-request method reject remote plain HTTP and redirects before they send the
+secret. Plain HTTP is accepted only for `localhost`, `127.0.0.0/8`, and `[::1]` development
+endpoints.
 
 DAO deployments can set `DEFER_PROTOCOL_WIRING=true` to deploy CRISP before the governance wiring
 transaction. On Ethereum mainnet, the deployment also requires `ALLOW_MAINNET_DEFERRED_WIRING=true`

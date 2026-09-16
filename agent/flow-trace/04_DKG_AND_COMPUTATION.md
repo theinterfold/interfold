@@ -697,7 +697,7 @@ phase.
 │   │     → Uses PublicKeyShare::aggregate()
 │   │     → Produces the COLLECTIVE public key
 │   │     → Anyone can encrypt with this key
-│   │     → Only T+1 committee members can decrypt together
+│   │     → Only T+1 members of the accepted DKG roster can decrypt together
 │   │
 │   ├─ 2. Build C5 proof request (H canonical honest keyshares):
 │   │     proof_request.keyshare_bytes = [pk_share for each H party]
@@ -1439,7 +1439,7 @@ Reconstruct:               Reconstruct:               Reconstruct:
 ═══════════════════════════════════════════════════════════════
 Each party now has dk_i (decryption key portion)
 No party knows the full secret key
-Any T+1 parties can collaboratively decrypt
+Any T+1 members of the accepted DKG roster can collaboratively decrypt
 
 ACTIVE AGGREGATOR collects PK_share₁ + PK_share₂ + PK_share₃
   → Produces aggregate_PK (public, published on-chain)

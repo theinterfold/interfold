@@ -155,7 +155,8 @@ export function adaptInspectorDetail(detail: E3FullDetails | null): InspectorDet
   const isCrisp = isCrispProgram(detail.e3Program)
   const meta = pollMetaFor(detail.id)
   const inputsReceived = detail.inputsTracked ? detail.ballotCount.toLocaleString() : '—'
-  const sharesRequired = detail.committeeThreshold[0] || 0
+  const rosterThreshold = detail.committeeThreshold[0] || 0
+  const sharesRequired = detail.committeeDecryptionThreshold != null ? detail.committeeDecryptionThreshold + 1 : 0
   const committeeSize = detail.committeeThreshold[1] || detail.committeeMembers.length
   // Past the input window with zero ballots — see `noBallots` on InspectorDetail.
   const noBallots = detail.inputsTracked && detail.ballotCount === 0 && detail.uiStageIdx >= 4
@@ -174,7 +175,7 @@ export function adaptInspectorDetail(detail: E3FullDetails | null): InspectorDet
 
     committee: {
       size: committeeSize,
-      threshold: sharesRequired,
+      threshold: rosterThreshold,
       selectionSeed: detail.seed > 0n ? shortHash(numberToHex(detail.seed, { size: 32 })) : '—',
       drawnAt: detail.committeeFinalizedAt ? fmtUtcFromUnix(detail.committeeFinalizedAt) : '—',
     },

@@ -64,6 +64,17 @@ const CRISP_GET_ROUND_DATA = {
 // Public RPCs cap getLogs range. 9_500 keeps us safely under common 10k limits.
 const LOG_CHUNK = 9_500n
 
+const COMMITTEE_DECRYPTION_THRESHOLDS: Readonly<Record<string, number>> = {
+  '2:3': 1,
+  '5:9': 4,
+  '14:19': 9,
+}
+
+/** Resolve the Shamir threshold T from the registry's canonical [H, N] pair. */
+function committeeDecryptionThreshold([h, n]: [number, number]): number | undefined {
+  return COMMITTEE_DECRYPTION_THRESHOLDS[`${h}:${n}`]
+}
+
 // An E3 is a CRISP poll only if its program contract is the CRISPProgram.
 // Other E3s on the same Interfold deployment run different programs and must not
 // be presented as polls.
@@ -153,6 +164,7 @@ export type E3FullDetails = E3Summary & {
   requestEventBlock?: bigint
   // From CiphernodeRegistry:
   committeeThreshold: [number, number] // [H, N]
+  committeeDecryptionThreshold?: number // T
   committeeMembers: `0x${string}`[]
   committeeFinalizedTx?: `0x${string}`
   committeeFinalizedAt?: number
@@ -477,6 +489,7 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
     plaintextOutput: e3.plaintextOutput,
     numOptions,
     committeeThreshold: threshold,
+    committeeDecryptionThreshold: committeeDecryptionThreshold(threshold),
     committeeMembers: members,
     committeeFinalizedTx: finLog?.transactionHash,
     committeeFinalizedAt: at(finLog?.blockNumber),
