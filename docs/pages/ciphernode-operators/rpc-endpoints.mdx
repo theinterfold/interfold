@@ -13,23 +13,31 @@ checking an endpoint before the first run.
 
 ## What the node asks for
 
-| Requirement          | Value                       | Why                                                        |
-| -------------------- | --------------------------- | ---------------------------------------------------------- |
-| **Archive history**  | Required                    | The first sync reads from the contract deploy block         |
-| **`eth_getLogs`**    | 10,000 block range, or less | The node narrows its range by itself when a provider refuses |
-| **Rate limit**       | ~25 requests/second         | The whole first sync is a few hundred calls                 |
-| **WebSocket**        | `wss://` recommended        | Live events arrive by subscription after the sync           |
+| Requirement          | Value                          | Why                                                          |
+| -------------------- | ------------------------------ | ------------------------------------------------------------ |
+| **Log history**      | From the contract deploy block | The first sync replays every event from the deploy block      |
+| **`eth_getLogs`**    | 10,000 block range, or less    | The node narrows its range by itself when a provider refuses  |
+| **Rate limit**       | ~25 requests/second            | The whole first sync is a few hundred calls                   |
+| **WebSocket**        | `wss://` recommended           | Live events arrive by subscription after the sync             |
+
+Historical **contract state** — `eth_getCode` or `eth_call` at an old block — is not required. The
+node replays events by log, and its own contract calls go to the head. An endpoint can serve one
+capability and not the other, in either direction, so a state check says nothing about the logs.
 
 The node starts at a 10,000 block range and halves it when a provider rejects the range, so an
 endpoint with a smaller cap still works. It costs more calls: a 5,000,000 block history takes
 500 calls at 10,000 blocks and 500,000 calls at 10 blocks.
 
-## Archive history is the one that cannot be worked around
+## Missing log history is the one that cannot be worked around
 
-An endpoint that has discarded old state answers a historical `eth_getLogs` with an **empty
-result and no error**. A node cannot tell that apart from "no events happened here", so it
-finishes its first sync, reports success, and is missing the events that registered it. It then
-stays inactive with nothing in the log to explain why.
+An endpoint that has discarded old logs answers a historical `eth_getLogs` with an **empty result
+and no error**. A node cannot tell that apart from "no events happened here", so it finishes its
+first sync, reports success, and is missing the events that registered it. It then stays inactive
+with nothing in the log to explain why. `publicnode` below does exactly this.
+
+The only check that catches it is the log query itself: ask for a range known to contain events and
+require them back. Do not substitute a historical-state check — the two capabilities are
+independent, and the endpoint that serves logs best may be the one that cannot answer for old state.
 
 Measure first, and do not rely on a provider's marketing copy. Free tiers of several well known
 providers are not archive.
@@ -41,45 +49,52 @@ registry address and deploy block.
 
 ```bash
 RPC=https://your-endpoint.example
-REGISTRY=0x118B7DFE26007ca2f618593A045EE474dF9DFBDf   # Sepolia
-DEPLOY=0xB22DB5                                        # 11677109
-UNTIL=0xB254D4                                         # 11687124, ~10k blocks later
+# Sepolia CiphernodeRegistryOwnable, from packages/interfold-contracts/deployed_contracts.json.
+REGISTRY=0x374F4542eC634d5437Dd65020781A9D9Df9c2AB8
+DEPLOY=11534965   # 0xb00275
+UNTIL=11544964    # 0xb02984, deploy + 9999: a 10,000 block range
 
-# 1. Archive check: this must return contract code, not an error.
+# This must return logs, not an error and not an empty list.
 curl -s -X POST $RPC -H 'Content-Type: application/json' \
-  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getCode\",\"params\":[\"$REGISTRY\",\"$DEPLOY\"]}"
-
-# 2. Range check: this must return logs, not an error and not an empty list.
-curl -s -X POST $RPC -H 'Content-Type: application/json' \
-  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getLogs\",\"params\":[{\"fromBlock\":\"$DEPLOY\",\"toBlock\":\"$UNTIL\",\"address\":\"$REGISTRY\"}]}"
+  -d "{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"eth_getLogs\",\"params\":[{\"fromBlock\":\"$DEPLOY\",\"toBlock\":\"$UNTIL\",\"address\":\"$REGISTRY\"}]}" \
+  | jq 'if .error then {error: .error} else {logs: (.result | length)} end'
 ```
 
-Read the results this way:
+Read the result this way:
 
-- `eth_getCode` returns a long `0x60806040...` string: the endpoint keeps the history.
-- `eth_getCode` returns an error such as `state at block #... is pruned`, or returns `0x`: the
-  endpoint is **not** usable, whatever its `eth_getLogs` does.
-- `eth_getLogs` returns an error naming a block range: the range cap is below 10,000. The node
-  handles this, and the sync takes more calls.
-- `eth_getLogs` returns `[]` on a range where the archive check passed: treat the endpoint as
-  unusable and report it.
+- A `logs` count at or above the expected one: the endpoint keeps this history. On Sepolia that
+  range holds **67** logs. The range is in the past, so the count is fixed and safe to assert.
+- `logs: 0`: the endpoint has dropped the history and said nothing. **Not usable**, and a node
+  pointed at it syncs "successfully" while missing the events that register it.
+- An `error` naming a block range: the range cap is below 10,000. The node narrows its own range,
+  so the endpoint still works and the sync simply takes more calls.
+
+Do **not** test this with `eth_getCode` at an old block. That measures historical state, which the
+node does not need, and it disagrees with log retention in both directions: `publicnode` serves
+neither, while `tenderly` serves all 67 logs above and still answers `0x` for the registry's code
+at `$DEPLOY`. Rejecting an endpoint on a state check can reject the one that would have worked.
 
 ## Measured endpoints
 
-Measured against Sepolia on 15 September 2026, over a 10,000 block range from the
-`CiphernodeRegistry` deploy block, which contains 125 logs. Provider behaviour changes, so re-run
-the commands above rather than trusting this table.
+Measured against Sepolia on 16 September 2026, over the 10,000 block range 11534965–11544964 from
+the canonical `CiphernodeRegistryOwnable` deploy block. That range holds 67 logs. Provider behaviour
+changes, so re-run the command above rather than trusting this table.
 
-| Endpoint                            | Max `eth_getLogs` range | Archive | Logs returned | Usable                 |
-| ----------------------------------- | ----------------------- | ------- | ------------- | ---------------------- |
-| `sepolia.gateway.tenderly.co`       | 10,000+                 | Yes     | 125           | Yes                    |
-| `ethereum-sepolia-rpc.publicnode.com` | 10,000                | No      | **0**         | No, silent history loss |
-| `sepolia.drpc.org`                  | rejected                | No      | —             | No                     |
-| `1rpc.io/sepolia`                   | 1                       | No      | —             | No                     |
+| Endpoint                              | Max `eth_getLogs` range | Logs over that range | `eth_getCode` at the deploy block  | Usable                    |
+| ------------------------------------- | ----------------------- | -------------------- | ---------------------------------- | ------------------------- |
+| `sepolia.gateway.tenderly.co`         | 10,000+                 | 67                   | `0x` — state not served            | Yes                       |
+| `ethereum-sepolia-rpc.publicnode.com` | 10,000                  | **0**                | pruned                             | No — silent history loss  |
+| `sepolia.drpc.org`                    | under 10,000            | range rejected       | free plan does not serve the chain | No                        |
+| `1rpc.io/sepolia`                     | 50                      | range rejected       | historical state not available     | Yes, with a long sync     |
 
-`publicnode` is the case to understand: it accepts the full 10,000 block range and answers
-without an error, yet returns none of the 125 logs. An endpoint can look healthy and still be
-unusable.
+`publicnode` is the case to understand: it accepts the full 10,000 block range and answers without
+an error, yet returns none of the logs that are there. An endpoint can look healthy and still be
+unusable, and only a log query with a known expected count shows it.
+
+The last two columns are not a pair. `tenderly` serves every log and still cannot answer for the
+registry's code at the deploy block, which is why a state check must not stand in for a log check.
+`1rpc` caps the range at 50 blocks; the node narrows to that cap by itself, but a long history then
+takes far more calls, so treat it as a fallback rather than a first choice.
 
 ## Paid providers
 
@@ -119,9 +134,13 @@ including any API key in it, to both the terminal and the log file, so redact be
 ## If the node exits during the first sync
 
 - **`429` or "rate limit"**: the node retries these by itself. If it still exits, the endpoint's
-  limit is below what a sync needs; use another endpoint. Under systemd, set `Restart=always`
-  and `StartLimitIntervalSec=0`, because sync progress is saved and a restart resumes.
+  limit is below what a sync needs; use another endpoint. A restart does **not** resume where it
+  stopped: the learned log window and the historical cursor live in the running process, so every
+  boot replays the history from its configured start block. Under systemd, set `Restart=always`
+  with `StartLimitIntervalSec=0`, and if the provider is slow enough that the first sync cannot
+  finish inside the startup timeout, raise that timeout or move to a wider-range endpoint. A
+  restart loop against a narrow endpoint never makes progress and spends quota the whole time.
 - **An error naming a block range**: the node narrows its range by itself, so an exit here means
   the message was not recognised. Report it with the exact provider wording.
-- **A sync that completes but the node is never selected**: check the archive command above. This
-  is the symptom of a pruned endpoint.
+- **A sync that completes but the node is never selected**: check the log-retention command above.
+  This is the symptom of an endpoint that dropped its history.

@@ -425,3 +425,59 @@ async fn a_timestamp_from_a_log_is_reused_by_a_later_log_that_omits_it() {
         "the cached log timestamp must serve the second log"
     );
 }
+
+/// A provider that caps `eth_getLogs` below the old fixed window must not defeat the shared read.
+///
+/// This is the reported failure. `fetch_randomness_providers` asked for 10,000 blocks at a time and
+/// propagated the resulting error, so a ciphernode would not start against any endpoint whose cap
+/// was lower — even though the event pager beside it, which narrows the window until the provider
+/// accepts it, would have coped. 1RPC caps at 50 blocks and words the refusal without the article
+/// the classifier used to require, so the narrowing never happened either.
+#[actix::test]
+async fn a_capped_provider_does_not_defeat_the_shared_read() {
+    // 1RPC's wording, captured verbatim.
+    let provider = CappedLogProvider::new(500, 50, "eth_getLogs is limited to 0 - 50 blocks range")
+        .with_log(120)
+        .with_log(300)
+        .with_log(499);
+
+    let logs = fetch_logs_adapting(&provider, &Filter::new(), 100, 500, 1)
+        .await
+        .expect("a provider that caps the range must not fail the read");
+
+    let mut blocks: Vec<u64> = logs.iter().filter_map(|log| log.block_number).collect();
+    blocks.sort_unstable();
+    assert_eq!(
+        blocks,
+        vec![120, 300, 499],
+        "every event in the range must be read"
+    );
+
+    assert!(
+        provider.refused() > 0,
+        "the window must have narrowed against the cap"
+    );
+
+    let served = provider.served();
+    assert_eq!(served[0].0, 100, "the scan starts at from_block");
+    assert_eq!(served.last().unwrap().1, 500, "the scan reaches to_block");
+
+    // Contiguous and non-overlapping across the whole range: a gap drops an event and an overlap
+    // re-reads one, and neither is visible from the returned logs alone.
+    for pair in served.windows(2) {
+        assert_eq!(
+            pair[1].0,
+            pair[0].1 + 1,
+            "served ranges must tile the scan: {served:?}"
+        );
+    }
+
+    // Every served request is within the cap, so none of them was one the provider had to refuse.
+    for (from, to) in &served {
+        let width = to - from + 1;
+        assert!(
+            width <= 50,
+            "served range {from}..={to} is {width} blocks, over the provider's cap"
+        );
+    }
+}
