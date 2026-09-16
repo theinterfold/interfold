@@ -471,7 +471,15 @@ describe("Interfold", function () {
       const e3ProgramAddress = await e3Program.getAddress();
 
       await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
-      await interfold.request(request);
+      const firstRequestTime = await time.latest();
+      const requestBeforeUnregister = {
+        ...request,
+        inputWindow: [
+          firstRequestTime + inputWindowDuration,
+          firstRequestTime + 2 * inputWindowDuration,
+        ] as [number, number],
+      };
+      await interfold.request(requestBeforeUnregister);
       expect((await interfold.getE3(firstE3Id)).e3Program).to.equal(
         e3ProgramAddress,
       );
@@ -493,12 +501,12 @@ describe("Interfold", function () {
       await expect(interfold.unregisterE3Program(e3ProgramAddress))
         .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
         .withArgs(e3ProgramAddress);
-      const requestTime = await time.latest();
+      const secondRequestTime = await time.latest();
       const requestAfterUnregister = {
         ...request,
         inputWindow: [
-          requestTime + 60,
-          requestTime + 60 + inputWindowDuration,
+          secondRequestTime + inputWindowDuration,
+          secondRequestTime + 2 * inputWindowDuration,
         ] as [number, number],
       };
       await expect(interfold.request(requestAfterUnregister))
