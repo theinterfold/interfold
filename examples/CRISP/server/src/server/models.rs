@@ -151,6 +151,29 @@ pub struct PreviousCiphertextResponse {
 }
 
 #[derive(Debug, Deserialize, Serialize)]
+pub struct SlotEntriesRequest {
+    pub round_id: String,
+    pub address: String,
+}
+
+/// One entry published to a slot, as this server indexed it.
+#[derive(Serialize)]
+pub struct SlotEntry {
+    pub ciphertext: Vec<u8>,
+    /// The on-chain index of this entry, which is also its position in the input tree.
+    pub index: u64,
+}
+
+/// Every entry of one slot, for a client that resolves the slot's head for itself.
+///
+/// Reports no head and no usability flag. Those are decisions, and the point of this endpoint is
+/// that the caller makes them against the chain instead of accepting this server's answer.
+#[derive(Serialize)]
+pub struct SlotEntriesResponse {
+    pub entries: Vec<SlotEntry>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
 pub struct ComputeProviderParams {
     pub name: String,
     pub parallel: bool,

@@ -35,6 +35,7 @@ export {
   destroyBBApi,
 } from './vote'
 export { CrispSDK, SERVER_RPC } from './sdk'
+export { resolveSlotHead, resolveSlotHeadOnChain, getOnChainInputRecords } from './slotHead'
 
 export type {
   ChainHead,
@@ -52,6 +53,10 @@ export type {
   PreparedBallot,
   ProofData,
   SlotHead,
+  SlotEntry,
+  OnChainInputRecord,
+  ResolvedSlotHead,
+  SlotEntryRejection,
   TallyResult,
   CurrentRoundResponse,
   E3StateLiteResponse,

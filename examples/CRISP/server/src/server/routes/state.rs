@@ -11,7 +11,8 @@ use crate::server::{
     data_availability::AvailabilityService,
     models::{
         canonical_e3_id, e3_id_to_u256, GetRoundRequest, JsonResponse, PreviousCiphertextRequest,
-        PreviousCiphertextResponse, RoundRequestWithRequester, WebhookPayload,
+        PreviousCiphertextResponse, RoundRequestWithRequester, SlotEntriesRequest,
+        SlotEntriesResponse, SlotEntry, WebhookPayload,
     },
     rate_limit::ChainRateLimiter,
 };
@@ -42,7 +43,8 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
             .route(
                 "/previous-ciphertext",
                 web::post().to(handle_get_previous_ciphertext),
-            ),
+            )
+            .route("/slot-entries", web::post().to(handle_get_slot_entries)),
     );
 }
 
@@ -130,6 +132,56 @@ async fn handle_get_previous_ciphertext(
         Err(e) => {
             error!("Error getting previous ciphertext: {:?}", e);
             HttpResponse::InternalServerError().body("Failed to get previous ciphertext")
+        }
+    }
+}
+
+/// Endpoint to get every entry published to a slot, so a client can resolve the head itself.
+///
+/// Answers with all entries for the slot in on-chain index order, and applies no selection. The
+/// caller decides which one is the head, by checking each entry's bytes against the commitment and
+/// content hash `CRISPProgram` published for it.
+///
+/// This exists beside `previous-ciphertext` rather than replacing it. That endpoint reports this
+/// server's own answer, which is cheaper and right in the normal case; this one reports the
+/// evidence, for a caller that does not want to take this server's word. The bytes are the only
+/// part of an input that is not on chain, so they must come from here either way.
+///
+/// # Arguments
+/// * `data` - The round id and the slot address
+///
+/// # Returns
+/// * A JSON response with every entry of the slot, which is empty when the slot has none.
+async fn handle_get_slot_entries(
+    data: web::Json<SlotEntriesRequest>,
+    store: web::Data<AppData>,
+) -> impl Responder {
+    let incoming = data.into_inner();
+
+    let e3_id = match e3_id_to_u256(&incoming.round_id) {
+        Ok(e3_id) => e3_id,
+        Err(e) => return HttpResponse::BadRequest().body(e.to_string()),
+    };
+    let e3_key = e3_id.to_string();
+
+    let address = match Address::from_str(incoming.address.as_str()) {
+        Ok(addr) => addr,
+        Err(e) => {
+            error!("Invalid address format: {:?}", e);
+            return HttpResponse::BadRequest().body("Invalid address format");
+        }
+    };
+
+    match store.e3(e3_key).get_slot_entries(address.into()).await {
+        Ok(entries) => HttpResponse::Ok().json(SlotEntriesResponse {
+            entries: entries
+                .into_iter()
+                .map(|(ciphertext, index)| SlotEntry { ciphertext, index })
+                .collect(),
+        }),
+        Err(e) => {
+            error!("Error getting slot entries: {:?}", e);
+            HttpResponse::InternalServerError().body("Failed to get slot entries")
         }
     }
 }

@@ -646,6 +646,33 @@ impl<S: DataStore> CrispE3Repository<S> {
         Ok(())
     }
 
+    /// Every entry published to one slot, in on-chain index order, with no selection applied.
+    ///
+    /// Serves a client that checks the chain of a slot for itself. {@link get_slot_head} answers
+    /// the same question and is cheaper, but its answer is this server's word: it reads the
+    /// usability flag this server computed, from the bytes this server holds. A client that
+    /// rebuilds the walk needs the same entries this server saw, and decides for itself which one
+    /// is the head.
+    ///
+    /// Carries no usability flag and no commitment for that reason. `CRISPProgram` published a
+    /// commitment and a content hash for every entry, so a caller compares these bytes against the
+    /// chain and needs nothing from here except the bytes themselves.
+    ///
+    /// The bytes are the only part of an input that is not on chain. `InputPublished` carries the
+    /// Avail coordinates rather than the ciphertext, and the availability object is released once
+    /// its job completes, so this repository is the durable copy.
+    pub async fn get_slot_entries(&self, slot: [u8; 20]) -> Result<Vec<(Vec<u8>, u64)>> {
+        let snapshot = self.get_input_snapshot().await?;
+
+        Ok(snapshot
+            .ciphertexts
+            .into_iter()
+            .zip(snapshot.slots)
+            .filter(|(_, entry_slot)| *entry_slot == slot)
+            .map(|(ciphertext, _)| ciphertext)
+            .collect())
+    }
+
     /// The end of a slot's chain of usable entries: the entry a new input must name as its parent.
     ///
     /// Resolved the same way the Secure Process resolves it, so a client that builds on this answer
@@ -860,6 +887,56 @@ mod tests {
 
         assert_eq!(count_active_slots(&inputs), 2);
         assert_eq!(count_active_slots(&[]), 0);
+    }
+
+    /// Every entry of a slot, including the ones no client should build on.
+    ///
+    /// The point of the endpoint this serves is that the caller judges the entries, so filtering
+    /// here would defeat it: an unusable entry that never appears cannot be recognized as
+    /// unusable, and a caller would see a chain with a hole in it rather than one with a poisoned
+    /// link. Entries for other slots are excluded because they belong to another chain.
+    #[tokio::test]
+    async fn returns_every_entry_of_one_slot_without_judging_them() {
+        let store = test_store();
+        let slot = [0x11u8; 20];
+        let other = [0x22u8; 20];
+
+        let mut round = crisp_round("0x1111111111111111111111111111111111111111", "Active");
+        round.ciphertext_inputs = vec![
+            (vec![1, 1, 1], 0),
+            (vec![2, 2, 2], 1),
+            (vec![3, 3, 3], 2),
+            (vec![4, 4, 4], 3),
+        ];
+        round.input_slots = vec![(0, slot), (1, other), (2, slot), (3, slot)];
+        round.input_commitments = vec![
+            (0, [0u8; 32]),
+            (1, [1u8; 32]),
+            (2, [2u8; 32]),
+            (3, [3u8; 32]),
+        ];
+        round.input_parents = vec![(0, 0), (1, 0), (2, 1), (3, 3)];
+        // Entry 2 is one the Secure Process will drop. It must still be reported.
+        round.input_usable = vec![(0, true), (1, true), (2, false), (3, true)];
+
+        let mut repo = CrispE3Repository::new(store, "9");
+        repo.set_crisp(round).await.unwrap();
+
+        let entries = repo.get_slot_entries(slot).await.unwrap();
+
+        assert_eq!(
+            entries,
+            vec![(vec![1, 1, 1], 0), (vec![3, 3, 3], 2), (vec![4, 4, 4], 3)],
+            "every entry of the slot, in index order, whatever this server thinks of it"
+        );
+
+        assert!(
+            repo.get_slot_entries([0x99u8; 20])
+                .await
+                .unwrap()
+                .is_empty(),
+            "a slot with no entries has none to report"
+        );
     }
 
     #[test]

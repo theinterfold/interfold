@@ -24,6 +24,7 @@ import {
   requestNewRound,
 } from './api'
 import { getOnChainRoundData, getOnchainVotingPower, getPreviousCiphertext, getRoundDetails, getRoundTokenDetails } from './state'
+import { resolveSlotHeadOnChain } from './slotHead'
 import { finishBallotProof, finishMaskProof, prepareBallot } from './vote'
 
 import type {
@@ -42,6 +43,7 @@ import type {
   PrepareBallotRequest,
   PreparedBallot,
   ProofData,
+  ResolvedSlotHead,
   RoundDetails,
   SlotHead,
   TokenDetails,
@@ -100,20 +102,63 @@ export class CrispSDK {
    * `CRISPProgram.ballotDigest(e3Id, slot, ctCommitment)`, have the voter sign it, then call
    * {@link finishBallot}.
    *
-   * Masks and real votes take the same path. This method calls the same server API
-   * (previous-ciphertext) for both, so the server cannot infer the ballot type from the request
-   * pattern, and the encryption is identical either way.
+   * Masks and real votes take the same path. This method makes the same requests for both, so the
+   * server cannot infer the ballot type from the request pattern, and the encryption is identical
+   * either way. `verifyAgainstChain` must therefore be decided per deployment and not per ballot:
+   * varying it by ballot type would make the two distinguishable by request shape, which is what
+   * masks exist to prevent.
    *
    * @param request - The ballot to encrypt.
+   * @param verifyAgainstChain - Resolve the slot head from the chain rather than accepting the
+   *                             server's answer. Pass the `CRISPProgram` address, and the block to
+   *                             scan logs from. Throws instead of building a ballot when the head
+   *                             cannot be settled.
    * @returns A promise that resolves to the prepared ballot.
    */
-  async prepareBallot(request: PrepareBallotRequest): Promise<PreparedBallot> {
-    const head = await getPreviousCiphertext(this.serverUrl, request.e3Id, request.slotAddress)
+  async prepareBallot(
+    request: PrepareBallotRequest,
+    verifyAgainstChain?: { programAddress: string; fromBlock?: bigint },
+  ): Promise<PreparedBallot> {
+    const head = verifyAgainstChain
+      ? await this.resolvedHeadOrThrow(verifyAgainstChain, request.e3Id, request.slotAddress)
+      : await getPreviousCiphertext(this.serverUrl, request.e3Id, request.slotAddress)
 
     // Branched rather than spread conditionally. The two halves of a slot head only mean anything
     // together and the type models them as a pair, which a conditional spread widens back into two
     // independent optional fields — the exact shape the pair exists to rule out.
     return head ? prepareBallot({ ...request, previousCiphertext: head.ciphertext, previousIndex: head.index }) : prepareBallot(request)
+  }
+
+  /**
+   * The slot head, resolved from the chain, or an error when it cannot be settled.
+   *
+   * Refuses rather than returning the best head available. An incomplete walk means an entry that
+   * could hold the slot was not judged, so the Secure Process may select it and drop whatever is
+   * built here — after the proof verified, the input was published, and the gas was spent. A
+   * caller that retries once the missing data lands loses nothing; one that proceeds loses a vote
+   * with no error to show for it.
+   */
+  private async resolvedHeadOrThrow(
+    verifyAgainstChain: { programAddress: string; fromBlock?: bigint },
+    e3Id: bigint,
+    slotAddress: string,
+  ): Promise<SlotHead | undefined> {
+    const resolved = await this.resolveSlotHead(verifyAgainstChain.programAddress, e3Id, slotAddress, verifyAgainstChain.fromBlock)
+
+    if (!resolved.complete) {
+      const unsettled = resolved.rejected
+        .filter((entry) => entry.reason === 'missing-bytes' || entry.reason === 'bytes-mismatch')
+        .map((entry) => `${entry.index} (${entry.reason})`)
+        .join(', ')
+
+      throw new Error(
+        `Cannot settle the head of slot ${slotAddress} in round ${e3Id}: entries ${unsettled} could not be checked ` +
+          `against the chain. A ballot built now can be excluded from the tally. Retry once the data-availability ` +
+          `retrieval lands, or use a server that holds the published bytes.`,
+      )
+    }
+
+    return resolved.head
   }
 
   /**
@@ -343,5 +388,30 @@ export class CrispSDK {
    */
   async getPreviousCiphertext(e3Id: bigint, address: string): Promise<SlotHead | undefined> {
     return getPreviousCiphertext(this.serverUrl, e3Id, address)
+  }
+
+  /**
+   * Resolve a slot's head from the chain instead of taking the server's answer for it.
+   *
+   * `getPreviousCiphertext` reports what this server decided, from the bytes this server holds.
+   * This checks every entry of the slot against the commitment and content hash `CRISPProgram`
+   * published for it, and applies the Secure Process's own selection rule. The server still
+   * supplies the bytes, because they are not on chain, but it is no longer trusted to judge them.
+   *
+   * Costs one extra request: the entries and the logs are fetched together. Only entries that
+   * extend the head are checked, so a slot flooded with masks costs the same as a short chain.
+   *
+   * Check `complete` before using the head. When it is `false` an entry that could hold the slot
+   * could not be judged, and a ballot built on the head returned would prove, publish, cost gas,
+   * and then be excluded from the tally.
+   *
+   * @param programAddress - The `CRISPProgram` contract
+   * @param e3Id - The e3Id of the round
+   * @param address - The address of the slot
+   * @param fromBlock - Where to start scanning logs. Pass the contract's deployment block.
+   * @returns The resolved head, whether the walk was complete, and every entry it did not take
+   */
+  async resolveSlotHead(programAddress: string, e3Id: bigint, address: string, fromBlock?: bigint): Promise<ResolvedSlotHead> {
+    return resolveSlotHeadOnChain(this.serverUrl, programAddress, e3Id, address, fromBlock)
   }
 }

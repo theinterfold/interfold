@@ -8,7 +8,7 @@ import { useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSignTypedData, usePublicClient, useChainId, useWalletClient } from 'wagmi'
 import type { Address } from 'viem'
-import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot } from '@crisp-e3/sdk'
+import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot, resolveSlotHeadOnChain } from '@crisp-e3/sdk'
 import type { PrepareBallotInputs } from '@crisp-e3/sdk'
 import { ensureCircuits } from '@/utils/circuits'
 
@@ -77,35 +77,40 @@ const clearAvailabilityJob = (key: string): void => {
 }
 
 /// The end of the slot's chain of usable entries, with the tree index the new input will name as
-/// its parent. Not simply the newest entry published: one whose bytes do not reproduce its
-/// commitment is never selected by the Secure Process and is never a valid parent, so the server
-/// resolves the chain and answers with the entry that actually holds the slot.
-const getSlotHead = async (e3Id: string, address: string): Promise<{ ciphertext: Uint8Array; index: number } | undefined> => {
-  const response = await fetch(`${INTERFOLD_API}/state/previous-ciphertext`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ round_id: e3Id, address }),
-  })
+/// its parent, resolved against the chain rather than taken from the server.
+///
+/// Not simply the newest entry published: one whose bytes do not reproduce its commitment is never
+/// selected by the Secure Process and is never a valid parent. `CRISPProgram` cannot make that
+/// check — the commitment is a Poseidon sponge over CRT limbs and the circuit never sees the
+/// serialization — so the entry that holds a slot can only be decided off chain.
+///
+/// The server supplies the bytes, because they are not on chain: `InputPublished` carries the
+/// Avail coordinates, and the availability object is released once its job completes. Every one of
+/// those bytes is then checked against the commitment and content hash `CRISPProgram` recorded,
+/// and the walk that picks the head is this client's. A server that answers with a stale head, or
+/// with bytes it never received, can no longer send a voter to the wrong parent.
+///
+/// Naming the wrong parent is not a rejected transaction. The proof verifies, the input is
+/// published, the gas is spent, and the Secure Process drops the entry when it walks the slot —
+/// so an unsettled head is refused here instead of being voted on.
+const getSlotHead = async (
+  e3Id: bigint,
+  address: string,
+  crispProgram: Address,
+  fromBlock: bigint,
+): Promise<{ ciphertext: Uint8Array; index: number } | undefined> => {
+  const resolved = await resolveSlotHeadOnChain(INTERFOLD_API, crispProgram, e3Id, address, fromBlock)
 
-  if (response.status === 404) return undefined
-  if (!response.ok) throw new Error(`Failed to fetch previous ciphertext: ${response.statusText}`)
+  if (!resolved.complete) {
+    const unsettled = resolved.rejected.filter((entry) => entry.reason === 'missing-bytes' || entry.reason === 'bytes-mismatch')
 
-  const body: unknown = await response.json()
-  if (
-    typeof body !== 'object' ||
-    body === null ||
-    !('ciphertext' in body) ||
-    !Array.isArray(body.ciphertext) ||
-    !body.ciphertext.every((value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 255)
-  ) {
-    throw new Error('Previous ciphertext response contains invalid bytes')
+    throw new Error(
+      `This slot cannot be read yet: ${unsettled.length} recent ${unsettled.length === 1 ? 'ballot' : 'ballots'} could not be ` +
+        `checked against the chain. Voting now could leave your ballot out of the tally. Please try again in a moment.`,
+    )
   }
 
-  if (!('index' in body) || typeof body.index !== 'number' || !Number.isInteger(body.index) || body.index < 0) {
-    throw new Error('Previous ciphertext response has no usable index')
-  }
-
-  return { ciphertext: new Uint8Array(body.ciphertext), index: body.index }
+  return resolved.head
 }
 
 export type VotingStep = 'idle' | 'signing' | 'encrypting' | 'generating_proof' | 'broadcasting' | 'confirming' | 'complete' | 'error'
@@ -207,12 +212,16 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
       try {
         const publicKey = new Uint8Array(votingRound.pk_bytes)
-        const head = await getSlotHead(votingRound.round_id, address)
         const e3Id = BigInt(votingRound.round_id)
         const slot = address as `0x${string}`
         const isOnchain = roundState.census_mode === CensusMode.Onchain
 
         const { crispProgram, paramSet } = await getCrispRoundConfig(publicClient, roundState.interfold_address as `0x${string}`, e3Id)
+
+        // Read after the program address, because resolving the head needs it: the check is against
+        // what `CRISPProgram` published for each entry of the slot. Scanned from the round's start
+        // block, which is the earliest an input for this round can have been committed.
+        const head = await getSlotHead(e3Id, address, crispProgram, BigInt(roundState.start_block))
 
         const ballotBase = {
           vote,

@@ -240,6 +240,84 @@ export type SlotHead = {
 }
 
 /**
+ * One entry of a slot, as the CRISP server indexed it (`state/slot-entries`).
+ *
+ * Carries no verdict on whether the entry is usable. That is the caller's to decide, against the
+ * chain.
+ */
+export type SlotEntry = {
+  ciphertext: Uint8Array
+  /** The on-chain index of the entry, which is also its position in the input tree. */
+  index: number
+}
+
+/**
+ * What `CRISPProgram` published for one input, read from an `InputCommitted` log.
+ *
+ * These are the values a slot entry is judged against. The contract emits them when it accepts the
+ * ballot proof, so they are available for every committed input and cannot be changed afterwards.
+ */
+export type OnChainInputRecord = {
+  /** The tree index the contract reserved for this input. */
+  index: number
+  /** `keccak256` of the serialized ciphertext, as `CRISPProgram` recorded it. */
+  encryptedVoteHash: `0x${string}`
+  /** The commitment the Noir proof constrained. */
+  encryptedVoteCommitment: `0x${string}`
+  /** The entry this input names as the one it extends, plus one. Zero means it extends nothing. */
+  parentIndexPlusOne: number
+}
+
+/**
+ * Why an entry was not taken as the head of its slot.
+ *
+ * Two of these are verdicts and two are gaps, and the difference decides whether the result can be
+ * used at all:
+ *
+ * - `commitment-mismatch` is a verdict. The bytes are the published ones — they reproduce the
+ *   content hash the contract recorded — and they still do not reproduce the commitment the proof
+ *   constrained. The Secure Process will drop this entry, so skipping it is correct.
+ * - `not-extending-head` is a verdict. The entry names a parent that is not the head, so the
+ *   Secure Process skips it, exactly as this walk does.
+ * - `missing-bytes` is a gap. The chain has this entry and the server did not return its bytes,
+ *   which is normal for an input whose data-availability retrieval has not landed yet.
+ * - `bytes-mismatch` is a gap. The server returned bytes that are not the ones the contract
+ *   recorded, so the real entry could not be judged.
+ *
+ * A gap on an entry that extends the head leaves the head unknown. The Secure Process reads the
+ * finished round and will have those bytes, so it can take an entry this walk could not see.
+ */
+export type SlotEntryRejection = 'bytes-mismatch' | 'commitment-mismatch' | 'not-extending-head' | 'missing-bytes'
+
+/**
+ * The outcome of resolving a slot's head from the chain.
+ */
+export type ResolvedSlotHead = {
+  /** The entry that holds the slot, or `undefined` when the slot holds nothing usable. */
+  head?: SlotHead
+  /**
+   * Whether every entry that could have held the slot was judged.
+   *
+   * `false` when an entry that extends the head could not be checked, because its bytes were
+   * missing or were not the published ones. The head is then a lower bound rather than an answer:
+   * the unjudged entry may be usable, in which case the Secure Process takes it and drops any
+   * input built on this head instead.
+   *
+   * Building a ballot on an incomplete result is what silently loses a vote — the proof verifies,
+   * the input is published and paid for, and the tally excludes it. Callers must not treat this as
+   * a warning.
+   */
+  complete: boolean
+  /**
+   * Every entry that was not taken, with the reason.
+   *
+   * Reported rather than discarded so a caller can tell a normal slot from one under attack: a
+   * `bytes-mismatch` means the server answered with bytes the contract never recorded.
+   */
+  rejected: { index: number; reason: SlotEntryRejection }[]
+}
+
+/**
  * Type representing the current round returned by the CRISP server (`rounds/current`)
  */
 export type CurrentRoundResponse = {
