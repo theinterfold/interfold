@@ -1453,6 +1453,11 @@ or audit state. If restart gives the same compute operation a new correlation ID
 the work once and sends its response or error to each waiting ID. A later duplicate receives the
 saved outcome.
 
+A terminal E3 event also cancels that E3's compute jobs that have already reached the shared task
+pool but have not started. A proof that is already executing runs to completion because the Rayon
+worker cannot be preempted safely; its late result cannot revive the terminal E3. This prevents a
+failed round's queued proof plan from delaying proof work for a later active round.
+
 If a decryption-share response arrives after `ThresholdKeyshare` has left `Decrypting`, the actor
 ignores that late response. The share and C6 proof request from the first response remain in the
 saved state; a replay does not report a false state error or start the work again.

@@ -14,8 +14,8 @@ use std::time::Instant;
 
 use crate::report::MultithreadReport;
 use crate::report::TrackDuration;
-use crate::TaskPool;
 use crate::TaskTimeouts;
+use crate::{TaskPool, TaskPoolError};
 use actix::prelude::*;
 use actix::{Actor, Handler};
 use alloy::primitives::keccak256;
@@ -142,6 +142,7 @@ impl Multithread {
     ) -> Addr<Self> {
         let addr = Self::new(bus.clone(), rng.clone(), cipher.clone(), task_pool, report).start();
 
+        Self::subscribe_to_lifecycle(bus, &addr);
         ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
         info!("Multithread actor waiting behind the replay-safe effect gate.");
 
@@ -161,6 +162,15 @@ impl Multithread {
         let actor = Self::new(bus.clone(), rng.clone(), cipher.clone(), task_pool, report)
             .with_zk_prover(zk_prover);
         let addr = actor.start();
+        Self::subscribe_to_lifecycle(bus, &addr);
+
+        ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
+        info!("Multithread actor with ZK waiting behind the replay-safe effect gate.");
+
+        addr
+    }
+
+    fn subscribe_to_lifecycle(bus: &BusHandle, addr: &Addr<Self>) {
         bus.subscribe_all(
             &[
                 EventType::E3Failed,
@@ -169,11 +179,6 @@ impl Multithread {
             ],
             addr.clone().into(),
         );
-
-        ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
-        info!("Multithread actor with ZK waiting behind the replay-safe effect gate.");
-
-        addr
     }
 
     pub fn create_taskpool(threads: usize, max_tasks: usize) -> TaskPool {
@@ -192,8 +197,20 @@ impl Handler<InterfoldEvent> for Multithread {
     type Result = ();
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (data, ec) = msg.into_components();
-        if let InterfoldEventData::ComputeRequest(data) = data {
-            ctx.notify(TypedEvent::new(data, ec))
+        match data {
+            InterfoldEventData::ComputeRequest(data) => ctx.notify(TypedEvent::new(data, ec)),
+            InterfoldEventData::E3Failed(data) => {
+                self.task_pool.cancel_group(&data.e3_id.to_string())
+            }
+            InterfoldEventData::E3RequestComplete(data) => {
+                self.task_pool.cancel_group(&data.e3_id.to_string())
+            }
+            InterfoldEventData::E3StageChanged(data)
+                if matches!(data.new_stage, E3Stage::Complete | E3Stage::Failed) =>
+            {
+                self.task_pool.cancel_group(&data.e3_id.to_string())
+            }
+            _ => {}
         }
     }
 }
@@ -230,14 +247,22 @@ async fn handle_compute_request_event(
     let request_snapshot = msg.clone();
 
     let report_for_worker = report.clone();
+    let task_group = msg.e3_id.to_string();
     let pool_result = pool
-        .spawn(job_name, TaskTimeouts::default(), move || {
+        .spawn_in_group(task_group, job_name, TaskTimeouts::default(), move || {
             handle_compute_request(rng, cipher, zk_prover, msg, report_for_worker)
         })
         .await;
 
     let (result, duration) = match pool_result {
         Ok(v) => v,
+        Err(TaskPoolError::Cancelled(group)) => {
+            info!(
+                task_group = group,
+                "Dropped compute request for a terminal E3"
+            );
+            return Ok(());
+        }
         Err(pool_err) => {
             error!(
                 "Task pool error for compute request '{}': {pool_err}",

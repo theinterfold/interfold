@@ -747,6 +747,9 @@ design citation alone does not establish current runtime behavior.
   order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. It mirrors the same
   response or error to each regenerated correlation ID for one semantic request. —
   `CRATES_ARCHITECTURE.md`
+- A terminal E3 cancels its queued compute-task group. Work already executing may finish, but queued
+  proof jobs from that E3 must not consume task-pool capacity ahead of a later active E3. —
+  `flow-trace/04`
 - Sortition delays, committee-finalization timers, and slash submissions persist their semantic
   inputs before effects run. Restart re-arms them only after `EffectsEnabled`; an additive migration
   may backfill a missing versioned record but must not replace an existing one. — INDEX concern #46
