@@ -398,8 +398,8 @@ interfoldup install --version v1.0.0    # Specific stable version
 
 #### For Testing (Testnet)
 
-You can use pre-release versions. Name the tag, because `install` without `--version` always
-selects the latest release:
+You can use pre-release versions. Name the tag, because `install` without `--version` always selects
+the latest release:
 
 ```bash
 interfoldup install --version v1.0.0-beta.1 # Specific pre-release
