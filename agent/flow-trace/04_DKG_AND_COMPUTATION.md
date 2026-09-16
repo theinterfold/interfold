@@ -761,8 +761,10 @@ proofs from the accepted documents. It folds each ordered proof pair into one fi
 After the fold completes, it derives the operational RLK from the same accepted PK and RLK shares.
 It persists that key in `//publickey_lbfv_aggregation/v1/{e3_id}` before final V2 proof dispatch. If
 C5 completes before the RLK is available, the aggregator waits and retries publication after the RLK
-is persisted. Restart clears process-local correlations and resumes missing row or fold work. If the
-fold is complete but the operational RLK is absent, restart derives and persists the same key again.
+is persisted. Restart clears process-local correlations and resumes missing row or fold work only
+from a non-terminal aggregation state. Persisted aggregation failures and other terminal aggregation
+snapshots do not resume this work. If the fold is complete but the operational RLK is absent,
+restart derives and persists the same key again.
 
 An l-BFV aggregation worker error persists one immutable terminal failure before it publishes
 `E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGInvalidShares }`. Restart republishes

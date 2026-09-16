@@ -59,12 +59,16 @@ leg_chain() {
     top_hash="$T/user_data_encryption_${ct}.vk_noir_hash"
   fi
   need "${manifest_files[@]}" "$top_hash"
-  to_file "$(vk_hash "${manifest_files[@]}")" "$TMP/${ct}_manifest"
+  local manifest_hash
+  manifest_hash="$(vk_hash "${manifest_files[@]}")" || return 1
+  to_file "$manifest_hash" "$TMP/${ct}_manifest"
   vk_hash "$top_hash" "$TMP/${ct}_manifest"
 }
 
-to_file "$(leg_chain ct0)" "$TMP/ct0_vk_chain"
-to_file "$(leg_chain ct1)" "$TMP/ct1_vk_chain"
+ct0_chain="$(leg_chain ct0)" || exit 1
+ct1_chain="$(leg_chain ct1)" || exit 1
+to_file "$ct0_chain" "$TMP/ct0_vk_chain"
+to_file "$ct1_chain" "$TMP/ct1_vk_chain"
 
 for name in crisp crisp_onchain; do
   VK=(
