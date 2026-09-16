@@ -270,6 +270,18 @@ mod tests {
 
         assert!(err.contains("Unsupported census mode 1"));
     }
+
+    #[test]
+    fn cron_authentication_fails_closed() {
+        assert!(!valid_cron_api_key(None, "provided"));
+        assert!(!valid_cron_api_key(Some(""), ""));
+        assert!(!valid_cron_api_key(Some("configured"), "wrong"));
+        assert!(valid_cron_api_key(Some("configured"), "configured"));
+    }
+}
+
+fn valid_cron_api_key(configured: Option<&str>, provided: &str) -> bool {
+    matches!(configured, Some(expected) if !expected.trim().is_empty() && expected == provided)
 }
 
 /// Request a new E3 round
@@ -282,7 +294,7 @@ mod tests {
 ///
 /// * A JSON response indicating the success of the operation
 async fn request_new_round(data: web::Json<RoundRequest>) -> impl Responder {
-    if data.cron_api_key != CONFIG.cron_api_key {
+    if !valid_cron_api_key(CONFIG.cron_api_key.as_deref(), &data.cron_api_key) {
         return HttpResponse::Unauthorized().json(JsonResponse {
             response: "Invalid API key".to_string(),
         });

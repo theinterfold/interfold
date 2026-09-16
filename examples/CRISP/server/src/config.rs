@@ -51,7 +51,10 @@ pub struct Config {
     /// Maximum bytes the service accepts for unfinished availability jobs.
     #[serde(default = "default_da_pending_bytes")]
     pub data_availability_max_pending_bytes: u64,
-    pub cron_api_key: String,
+    /// Shared secret for the optional round-scheduler endpoint. If absent, the endpoint is
+    /// disabled. The rest of the server remains available.
+    #[serde(default)]
+    pub cron_api_key: Option<String>,
     // E3 parameters
     pub e3_param_set: u8,      // 0=InsecureThreshold512, 1=SecureThreshold8192
     pub e3_committee_size: u8, // 0=Minimum, 1=Micro, 2=Small
@@ -300,5 +303,31 @@ mod tests {
         .unwrap();
 
         assert!(config.etherscan_api_key.is_empty());
+        assert_eq!(config.cron_api_key.as_deref(), Some("test-cron-key"));
+    }
+
+    #[test]
+    fn cron_key_is_optional() {
+        let config: Config = serde_json::from_value(json!({
+            "program_server_url": "http://127.0.0.1:3000",
+            "interfold_server_url": "http://127.0.0.1:4000",
+            "private_key": "test-key",
+            "http_rpc_url": "http://127.0.0.1:8545",
+            "ws_rpc_url": "ws://127.0.0.1:8545",
+            "interfold_address": "0x1",
+            "e3_program_address": "0x2",
+            "ciphernode_registry_address": "0x3",
+            "fee_token_address": "0x4",
+            "chain_id": 31_337,
+            "e3_param_set": 0,
+            "e3_committee_size": 0,
+            "e3_duration": 3_600,
+            "e3_compute_provider_name": "test",
+            "e3_compute_provider_parallel": false,
+            "e3_compute_provider_batch_size": 1
+        }))
+        .unwrap();
+
+        assert_eq!(config.cron_api_key, None);
     }
 }
