@@ -1,0 +1,12 @@
+{
+  "name": "@interfold/user-data-encryption-prover",
+  "version": "0.14.0",
+  "private": true,
+  "license": "LGPL-3.0-only",
+  "type": "module",
+  "exports": "./src/index.ts",
+  "dependencies": {
+    "@aztec/bb.js": "5.1.0",
+    "@noir-lang/noir_js": "1.0.0-beta.26"
+  }
+}

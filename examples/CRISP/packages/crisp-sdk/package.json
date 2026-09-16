@@ -38,7 +38,7 @@
   "types": "./dist/index.d.ts",
   "homepage": "https://github.com/theinterfold/interfold",
   "scripts": {
-    "compile:circuits": "pnpm compile:crisp && pnpm compile:crisp_onchain && pnpm compile:user_data_encryption_ct0 && pnpm compile:user_data_encryption_ct1 && pnpm compile:user_data_encryption && pnpm compile:fold && pnpm compile:fold_onchain",
+    "compile:circuits": "bash ../../scripts/compile_circuits.sh",
     "compile:user_data_encryption_ct0": "cd ../../../../circuits/bin/threshold/user_data_encryption_ct0 && nargo compile",
     "compile:user_data_encryption_ct1": "cd ../../../../circuits/bin/threshold/user_data_encryption_ct1 && nargo compile",
     "compile:user_data_encryption": "cd ../../../../circuits/bin/threshold/user_data_encryption && nargo compile",
@@ -64,6 +64,7 @@
     "access": "public"
   },
   "devDependencies": {
+    "@interfold/user-data-encryption-prover": "workspace:*",
     "@types/chai": "^5.2.2",
     "@types/node": "22.7.5",
     "chai": "^6.2.0",

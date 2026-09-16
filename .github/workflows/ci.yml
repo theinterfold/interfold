@@ -104,6 +104,7 @@ jobs:
               - 'scripts/circuit-constants.ts'
               - 'scripts/generate-verifiers.ts'
               - 'scripts/generate-verifiers.test.ts'
+              - 'packages/user-data-encryption-prover/**'
               - 'packages/interfold-contracts/contracts/verifiers/bfv/honk/**'
               - 'package.json'
               - '!**/*.md'
@@ -155,11 +156,8 @@ jobs:
           echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
           echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $INTEGRATION $CIRCUITS $CI $TEMPLATES)" >> $GITHUB_OUTPUT
-          # CRISP jobs (unit legs and e2e alike) only guard CRISP's own layers.
-          # Cross-cutting ciphernode coverage comes from template_integration,
-          # which drives the same full E3 lifecycle with the same interfold
-          # binary and circuit preset, minus the CRISP-specific app layers.
-          echo "crisp=$(any $FORCE $CRISP $CI)" >> $GITHUB_OUTPUT
+          # CRISP ballot proofs depend on the root circuit tree and its public-input layouts.
+          echo "crisp=$(any $FORCE $CRISP $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           # template_integration is the repo's cross-cutting end-to-end test: it
           # runs a full E3 round against real ciphernodes, so it must run on any
           # change to the stack it drives, not just template changes.
@@ -1377,6 +1375,12 @@ jobs:
       - name: Build the sdk
         working-directory: ./examples/CRISP
         run: pnpm build:sdk
+
+      - name: Check generated CRISP verifiers
+        run: |
+          git diff --exit-code -- \
+            examples/CRISP/packages/crisp-contracts/contracts/verifiers/CRISPVerifier.sol \
+            examples/CRISP/packages/crisp-contracts/contracts/verifiers/CRISPOnchainVerifier.sol
 
       - name: Install Chrome for WASM browser smoke tests
         uses: browser-actions/setup-chrome@19ae4b339ee18925ab85cf12c1041150ea4a44c8 # v1

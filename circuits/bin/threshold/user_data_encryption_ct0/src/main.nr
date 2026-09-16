@@ -26,13 +26,23 @@
 //! replace any circuit below this one - for example a leaf without its range checks - with a
 //! different circuit that has the same public-input shape.
 //!
-//! Outputs: `vk_manifest`, `pk0_commitment`, `ct0_commitment`, `k1_root`, `u_root`.
+//! Outputs: `vk_manifest`, `pk0_commitment`, `ct0_commitment`, `k1_commitment`, `u_root`.
+//! Prove this circuit with the ZK recursive target because its witness contains the private `k1`
+//! polynomial.
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
-use lib::configs::default::threshold::L;
-use lib::core::threshold::user_data_encryption_chunk::{
-    compute_ude_vk_manifest, UDE_ROUND_CHILD_KEY_HASHES,
+use lib::configs::default::threshold::{
+    L, N, USER_DATA_ENCRYPTION_BIT_K, USER_DATA_ENCRYPTION_N_CHUNKS as N_CHUNKS,
 };
+use lib::core::threshold::user_data_encryption_chunk::{
+    compute_ude_vk_manifest, UDE_ROUND_CHILD_KEY_HASHES, ude_single_root_from_polynomial,
+};
+use lib::math::commitments::{
+    compute_single_polynomial_commitment, DS_USER_DATA_ENCRYPTION_COMMITMENT, UDE_KIND_CT0_K1,
+};
+use lib::math::polynomial::Polynomial;
+
+global CHUNK_SIZE: u32 = N / N_CHUNKS;
 
 // Both rounds share one output layout: 3 key hashes (root, leaf, pk/ct), `pk0`, `ct0`, `k1`, `u`,
 // `e0`, `r2`, `r1`, then the L batching coefficients (Round A: `ct0_gammas`).
@@ -55,6 +65,7 @@ fn main(
     b_key_hash: Field,
     b_proof: UltraHonkProof,
     b_public_inputs: [Field; ROUND_LEN],
+    k1: Polynomial<N>,
 ) -> pub (Field, Field, Field, Field, Field) {
     verify_honk_proof_non_zk(a_vk, a_proof, a_public_inputs, a_key_hash);
     verify_honk_proof_non_zk(b_vk, b_proof, b_public_inputs, b_key_hash);
@@ -83,5 +94,17 @@ fn main(
     }
     let vk_manifest = compute_ude_vk_manifest(a_key_hash, a_children, b_key_hash, b_children);
 
-    (vk_manifest, a[PK0], a[CT0], a[K1], a[U])
+    // Bind the complete polynomial to both recursive rounds before restoring the commitment that
+    // CRISP publishes. A chunk root and a whole-polynomial commitment use different transcripts.
+    let k1_root = ude_single_root_from_polynomial::<N, N_CHUNKS, CHUNK_SIZE, USER_DATA_ENCRYPTION_BIT_K>(
+        UDE_KIND_CT0_K1,
+        k1,
+    );
+    assert(k1_root == a[K1], "k1 polynomial does not match chunk root");
+    let k1_commitment = compute_single_polynomial_commitment::<N, USER_DATA_ENCRYPTION_BIT_K>(
+        k1,
+        DS_USER_DATA_ENCRYPTION_COMMITMENT,
+    );
+
+    (vk_manifest, a[PK0], a[CT0], k1_commitment, a[U])
 }

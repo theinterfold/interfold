@@ -759,11 +759,10 @@ work.
 The active secure-16384 aggregator dispatches five PK aggregation proofs and five RLK aggregation
 proofs from the accepted documents. It folds each ordered proof pair into one five-row accumulator.
 After the fold completes, it derives the operational RLK from the same accepted PK and RLK shares.
-It persists that key in `//publickey_lbfv_aggregation/v1/{e3_id}` before final V2 proof dispatch.
-If C5 completes before the RLK is available, the aggregator waits and retries publication after the
-RLK is persisted.
-Restart clears process-local correlations and resumes missing row or fold work. If the fold is
-complete but the operational RLK is absent, restart derives and persists the same key again.
+It persists that key in `//publickey_lbfv_aggregation/v1/{e3_id}` before final V2 proof dispatch. If
+C5 completes before the RLK is available, the aggregator waits and retries publication after the RLK
+is persisted. Restart clears process-local correlations and resumes missing row or fold work. If the
+fold is complete but the operational RLK is absent, restart derives and persists the same key again.
 
 An l-BFV aggregation worker error persists one immutable terminal failure before it publishes
 `E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGInvalidShares }`. Restart republishes
@@ -1031,6 +1030,53 @@ input leaf is reserved in the first transaction so later masks and revotes can e
 VectorX is pending. Computation waits for the original input-window end and for
 `pendingInputCount == 0`. See [08_DATA_AVAILABILITY.md](08_DATA_AVAILABILITY.md) for the exact
 deadlines, recovery flow, and remaining trust.
+
+### User-data encryption proof tree (P3)
+
+The client gets one raw BFV witness from Rust or WASM. The shared proof-tree builder at
+`packages/user-data-encryption-prover/src/index.ts` divides that witness into two coefficient
+chunks. It adds the required leading zero to the degree-`N-2` and degree-`2N-2` polynomials before
+it divides them. Both the Interfold SDK and the CRISP SDK use this builder.
+`zk_cli --circuit user-data-encryption` generates this raw witness. The shared builder, not one Noir
+circuit, uses the witness to produce the recursive tree.
+
+Each ciphertext leg uses these stages:
+
+1. Round A proves two ZK chunk leaves. The leaves range-check all private coefficients and output
+   one commitment for each polynomial group.
+2. A non-ZK root verifies both leaves under one leaf VK and computes the polynomial roots.
+3. A separate ZK circuit commits the public-key and ciphertext limbs.
+4. The `*_chunk_gamma` circuit verifies the root and commitment proofs. It derives the Fiat-Shamir
+   challenge from their commitments.
+5. Round B proves two ZK evaluation leaves at that challenge. A non-ZK root verifies the leaves,
+   rebuilds the Round A roots, and combines the partial polynomial evaluations.
+6. A separate ZK circuit evaluates the public-key and ciphertext limbs. The `*_eval_chunk_identity`
+   circuit verifies both Round B branches and checks the encryption identity.
+7. `user_data_encryption_ct0` or `user_data_encryption_ct1` verifies the Round A and Round B final
+   proofs. It requires equal commitments, roots, and batching coefficients. It also commits every
+   child VK to the leg manifest.
+
+The ct0 top-level circuit also receives the complete `k1` polynomial. It rebuilds the `k1` chunk
+root and compares it with both rounds. It then outputs the whole-polynomial commitment under
+`DS_USER_DATA_ENCRYPTION_COMMITMENT`. This output matches the commitment that the CRISP ballot
+circuit computes. The ct0 top-level proof uses the ZK recursive target because its witness contains
+the private `k1` polynomial. The ct1 top-level proof remains non-ZK because it receives only proofs
+and public inputs.
+
+The `user_data_encryption` wrapper verifies both top-level proofs. It requires the same `u` root in
+both legs and outputs one complete VK chain for each leg. The CRISP fold circuit compares these
+chains with separate anchors for `insecure`, `secure-8192`, and `secure-16384`. The anchor order is
+defined by `compute_ude_vk_manifest`; `examples/CRISP/scripts/compute_vk_hash.sh` computes the same
+order from the generated VK hashes.
+
+The Interfold SDK stages a complete proof bundle for each BFV preset. It selects the bundle from the
+requested preset and verifies that the raw witness has the matching polynomial degree. The preset
+modules are separate build entries, so an ESM client loads only the selected circuit bundle.
+
+The complete tree has 22 leg proofs plus the wrapper proof. Release validation and CRISP preset
+staging require all 16 child circuit artifacts, the two top-level circuit artifacts, and the wrapper
+artifact. A child-circuit source change also invalidates the CRISP preset digest and starts the
+CRISP CI jobs.
 
 ### Ciphertext Output Publication
 

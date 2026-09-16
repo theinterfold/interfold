@@ -9,10 +9,8 @@
 //! (`keccak256` over ordered raw 20-byte addresses). Decryption-domain hashing
 //! must match `InterfoldPricing.decryptionDomain`.
 
-use alloy::{
-    primitives::{keccak256, Address, B256, U256},
-    sol_types::SolValue,
-};
+use alloy_primitives::{keccak256, Address, B256, U256};
+use alloy_sol_types::SolValue;
 use serde::{Deserialize, Serialize};
 
 /// Version of the l-BFV proof-session domain encoding.
@@ -251,7 +249,7 @@ fn field_hex_from_b256(value: B256) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy::primitives::address;
+    use alloy_primitives::address;
 
     #[test]
     fn encode_packed_matches_solidity_layout() {

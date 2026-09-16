@@ -7,7 +7,7 @@
 //! Shared public-domain inputs for secure l-BFV row proofs.
 
 use crate::{CiphernodesCommittee, CircuitsErrors};
-use alloy::primitives::{Address, B256, U256};
+use alloy_primitives::{Address, B256, U256};
 use e3_committee_hash::{
     hash_lbfv_accepted_party_set, lbfv_proof_session_limbs, LbfvProofDomainContext,
 };

@@ -9,16 +9,17 @@
 //
 // `nargo compile` always writes to <circuit>/target/, and the preset is chosen globally in
 // circuits/lib/src/configs/default/mod.nr, so the working tree only ever holds one preset at a
-// time. The SDK needs both side by side to publish both, so each compile pass is archived here.
+// time. The SDK needs all presets side by side, so each compile pass is archived here.
 //
-// Only the four circuits whose ABI is shaped by the BFV degree are staged. The aggregation
-// circuits are proof-shaped and preset-independent — see src/circuits.ts.
+// Stage each BFV-shaped ballot circuit and each circuit in the recursive encryption tree. The
+// wrapper and fold circuits are proof-shaped and preset-independent. See src/circuits.ts.
 
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { circuitSourcesDigest } from './circuit-sources.mjs'
+import { PRESET_ARTIFACTS } from './preset-artifacts.mjs'
 
 const CRISP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const REPO = resolve(CRISP, '..', '..')
@@ -26,15 +27,18 @@ const REPO = resolve(CRISP, '..', '..')
 /** Degree the preset's polynomials carry, used to prove the artifact matches its directory. */
 const EXPECTED_DEGREE = { insecure: 512, 'secure-8192': 8192, 'secure-16384': 16384 }
 
-const ARTIFACTS = [
-  { name: 'crisp', from: join(CRISP, 'circuits/bin/crisp/target/crisp.json') },
-  { name: 'crisp_onchain', from: join(CRISP, 'circuits/bin/crisp_onchain/target/crisp_onchain.json') },
-  { name: 'user_data_encryption_ct0', from: join(REPO, 'circuits/bin/threshold/target/user_data_encryption_ct0.json') },
-  { name: 'user_data_encryption_ct1', from: join(REPO, 'circuits/bin/threshold/target/user_data_encryption_ct1.json') },
-]
+const ARTIFACTS = PRESET_ARTIFACTS.map((name) => ({
+  name,
+  from:
+    name === 'crisp' || name === 'crisp_onchain'
+      ? join(CRISP, 'circuits/bin', name, 'target', `${name}.json`)
+      : join(REPO, 'circuits/bin/threshold/target', `${name}.json`),
+}))
+
+const DEGREE_SENTINELS = new Set(['crisp', 'crisp_onchain', 'ct0_pk_ct_commit', 'ct1_pk_ct_commit'])
 
 /**
- * The largest array length in the ABI is the polynomial degree for every circuit staged here.
+ * The sentinel circuits contain a complete degree-N polynomial in their ABI.
  *
  * Checking it is what stops a mislabelled archive. Staging an insecure artifact into secure-8192/
  * would otherwise publish a bundle that proves against the wrong parameters, and that failure only
@@ -63,11 +67,11 @@ for (const { name, from } of ARTIFACTS) {
     process.exit(1)
   }
 
-  // A circuit compiled at 512 carries 1023-length arrays too (the ct0/ct1 witnesses), so compare
-  // against the maximum rather than looking the degree up by name.
+  // Some recursive circuits contain only proof-shaped arrays. Check the circuits that contain a
+  // complete polynomial, because they identify the preset for the complete staged set.
   const degree = degreeOf(from)
   const expected = EXPECTED_DEGREE[preset]
-  if (degree !== expected && degree !== 2 * expected - 1) {
+  if (DEGREE_SENTINELS.has(name) && degree !== expected && degree !== 2 * expected - 1) {
     console.error(`✗ ${name}: ABI reports degree ${degree}, which is not ${preset}. Wrong preset compiled?`)
     process.exit(1)
   }

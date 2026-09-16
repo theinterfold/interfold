@@ -7,13 +7,15 @@
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use interfold_lib::math::commitments::compute_vk_hash;
 
-/// Binds the user_data_encryption and crisp key hashes and the ct0 and ct1 VK chains. Regenerate with `pnpm compute:vk-hash` in
-/// `examples/CRISP` after changing ct0 / ct1 / user_data_encryption / crisp_onchain (or the lib
-/// preset). Insecure: `lib::configs::default` uses `insecure::*`; secure: uses `secure::*`.
+/// Binds the `user_data_encryption` and `crisp_onchain` key hashes and both complete VK chains.
+/// Run `pnpm compute:vk-hash` in `examples/CRISP` after a circuit or preset change.
+/// Each preset has a different circuit tree and must have a different anchor.
 pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_INSECURE: Field =
-    0x1104946a4a10c8ce3056ee846976bc01ba445ed8f4dabd4836195b407b0a23ab;
-pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_SECURE: Field =
-    0x01a66be40a3006e1d7e782d7a432ac5fdc64ce1394d2e0304f072b4a9d594987;
+    0x21159078343ee16ef426fd872bb932707bf0d38fb535eb08536a6b3eb8bb20cc;
+pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_SECURE_8192: Field =
+    0x04bbfc5d61e22e8034eef60274df17048375c80b54bce71570a8835c65d8f447;
+pub global CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_SECURE_16384: Field =
+    0x29ef5fc0b104605ead5b7d55cbb4144f11206771213ee248ea8b9f9618c4674b;
 
 fn main(
     // User Data Encryption Section.
@@ -79,7 +81,8 @@ fn main(
     let chain_key_hash = compute_vk_hash(vk_hashes);
     assert(
         (chain_key_hash == CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_INSECURE)
-            | (chain_key_hash == CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_SECURE),
+            | (chain_key_hash == CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_SECURE_8192)
+            | (chain_key_hash == CRISP_ONCHAIN_FOLD_EXPECTED_KEY_HASH_SECURE_16384),
     );
 
     user_data_encryption_public_inputs[2]

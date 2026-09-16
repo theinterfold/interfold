@@ -351,6 +351,34 @@ pub fn chunk_gamma_pow(total_len: u32, chunk_size: u32, chunk_idx: u32, gamma: F
     gamma.pow_32(offset as Field)
 }
 
+/// Compute a single-polynomial chunk root from the complete polynomial.
+///
+/// The top-level ct0 circuit uses this function to bind the complete `k1` witness to the `k1`
+/// root from both recursive rounds. The coefficients use the same descending-degree chunk order
+/// as the leaf circuits.
+pub fn ude_single_root_from_polynomial<let N: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BIT: u32>(
+    kind_tag: Field,
+    polynomial: Polynomial<N>,
+) -> Field {
+    assert(N == N_CHUNKS * CHUNK_SIZE);
+
+    let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
+    for chunk_idx in 0..N_CHUNKS {
+        let mut coefficients: [Field; CHUNK_SIZE] = [0; CHUNK_SIZE];
+        for offset in 0..CHUNK_SIZE {
+            coefficients[offset] = polynomial.coefficients[(chunk_idx * CHUNK_SIZE) + offset];
+        }
+        chunks[chunk_idx] = compute_ude_chunk_commitment::<CHUNK_SIZE, BIT>(
+            kind_tag,
+            chunk_idx,
+            N,
+            Polynomial::new(coefficients),
+        );
+    }
+
+    compute_ude_chunk_root_commitment(kind_tag, N, CHUNK_SIZE, chunks)
+}
+
 /// Fold every chunk's ct0 commitments into the five per-polynomial roots, in the order
 /// `(u, e0, k1, r2, r1)`.
 ///
@@ -582,6 +610,18 @@ fn test_chunk_gamma_pow_reconstructs_full_evaluation() {
     let partial1 = chunk1.eval(gamma) * chunk_gamma_pow(4, 2, 1, gamma);
 
     assert(partial0 + partial1 == expected);
+}
+
+#[test]
+fn test_ude_single_root_from_polynomial_matches_leaf_order() {
+    let polynomial = Polynomial::new([3, 5, 11, 2]);
+    let chunk0 =
+        compute_ude_chunk_commitment::<2, 8>(UDE_KIND_CT0_K1, 0, 4, Polynomial::new([3, 5]));
+    let chunk1 =
+        compute_ude_chunk_commitment::<2, 8>(UDE_KIND_CT0_K1, 1, 4, Polynomial::new([11, 2]));
+    let expected = compute_ude_chunk_root_commitment(UDE_KIND_CT0_K1, 4, 2, [chunk0, chunk1]);
+
+    assert(ude_single_root_from_polynomial::<4, 2, 2, 8>(UDE_KIND_CT0_K1, polynomial) == expected);
 }
 
 /// `r1is`/`p1is` are padded to `2N`, so their offsets are computed against the doubled length -

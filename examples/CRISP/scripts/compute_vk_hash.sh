@@ -15,8 +15,8 @@
 #   chain    = compute_vk_hash(top_level, manifest)
 # The order must match `compute_ude_vk_manifest` in
 # circuits/lib/src/core/threshold/user_data_encryption_chunk.nr. Circuits that their parent verifies
-# with ZK (leaves and pk/ct) use the `noir-recursive` hash; every other circuit uses the
-# `noir-recursive-no-zk` hash.
+# with ZK (leaves, pk/ct, and the ct0 top level that contains `k1`) use the `noir-recursive` hash.
+# Every other circuit uses the `noir-recursive-no-zk` hash.
 set -euo pipefail
 
 CRISP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -54,9 +54,13 @@ leg_chain() {
     "$T/${ct}_eval_chunk_main.vk_noir_hash"
     "$T/${ct}_eval_pk_ct.vk_noir_hash"
   )
-  need "${manifest_files[@]}" "$T/user_data_encryption_${ct}.vk_recursive_hash"
+  local top_hash="$T/user_data_encryption_${ct}.vk_recursive_hash"
+  if [[ "$ct" == "ct0" ]]; then
+    top_hash="$T/user_data_encryption_${ct}.vk_noir_hash"
+  fi
+  need "${manifest_files[@]}" "$top_hash"
   to_file "$(vk_hash "${manifest_files[@]}")" "$TMP/${ct}_manifest"
-  vk_hash "$T/user_data_encryption_${ct}.vk_recursive_hash" "$TMP/${ct}_manifest"
+  vk_hash "$top_hash" "$TMP/${ct}_manifest"
 }
 
 to_file "$(leg_chain ct0)" "$TMP/ct0_vk_chain"

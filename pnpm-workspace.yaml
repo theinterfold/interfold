@@ -9,6 +9,7 @@ packages:
   - packages/interfold-config
   - packages/interfold-react
   - packages/interfold-sdk
+  - packages/user-data-encryption-prover
   - packages/interfold-contracts
   - packages/interfold-mcp
   - packages/interfold-dashboard

@@ -705,7 +705,11 @@ design citation alone does not establish current runtime behavior.
   and ct1 key hashes. The verifier must compare both chain values to anchors. Do not drop a key hash
   at any layer: a key hash that no layer passes up lets a prover replace that circuit with any
   circuit that has the same public-input shape, for example a leaf without its range checks. The
-  wrapper also asserts that ct0 and ct1 share one `u` root. —
+  wrapper also asserts that ct0 and ct1 share one `u` root. The ct0 top-level circuit rebuilds the
+  `k1` chunk root from the complete polynomial before it outputs the whole-polynomial commitment
+  that CRISP checks. Its proof must use the ZK recursive target because that circuit receives the
+  private `k1` polynomial directly. Each SDK proof request must use the circuit bundle compiled for
+  the witness's BFV preset and polynomial degree. —
   `lib::core::threshold::user_data_encryption_chunk`, `examples/CRISP/scripts/compute_vk_hash.sh`
 - Circuit soundness fixes to preserve: `ModU64::div_mod` verifies
   `result*divisor == dividend (mod modulus)` (IF-001); C7 compares **every** decoded coefficient,
@@ -810,11 +814,12 @@ design citation alone does not establish current runtime behavior.
   binds the proof domain, the immutable ascending accepted-party set, both accepted document
   families, five PK proofs, five RLK proofs, the fold cursor, the operational RLK, and the final V2
   proof. The active aggregator derives the operational RLK only from those accepted documents after
-  the five-row fold completes. If C5 completes first, publication waits for the persisted operational
-  RLK. Restart must derive a missing operational RLK from the same durable documents before it
-  dispatches the final V2 proof. A persisted aggregation failure is terminal and immutable. Restart
-  must clear process-local correlations, publish `E3Failed(DKGInvalidShares)`, and suppress all proof
-  and publication work. — `LbfvAggregationStateV1`; `aggregate_lbfv.rs`; `flow-trace/04`
+  the five-row fold completes. If C5 completes first, publication waits for the persisted
+  operational RLK. Restart must derive a missing operational RLK from the same durable documents
+  before it dispatches the final V2 proof. A persisted aggregation failure is terminal and
+  immutable. Restart must clear process-local correlations, publish `E3Failed(DKGInvalidShares)`,
+  and suppress all proof and publication work. — `LbfvAggregationStateV1`; `aggregate_lbfv.rs`;
+  `flow-trace/04`
 
 ### Ordering, backpressure, effects
 
