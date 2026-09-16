@@ -346,7 +346,7 @@ export default function Inspector({
               [
                 'Decryption threshold',
                 <Mono>
-                  {e3.committee.threshold} of {e3.committee.size}
+                  {e3.decryption.threshold} of {e3.decryption.committeeSize}
                 </Mono>,
               ],
               ['Selection seed', <Mono>{e3.committee.selectionSeed}</Mono>],
