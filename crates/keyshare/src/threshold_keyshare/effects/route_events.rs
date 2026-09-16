@@ -34,6 +34,17 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                 let _ =
                     self.handle_threshold_share_created(TypedEvent::new(data, ec), ctx.address());
             }
+            InterfoldEventData::DKGRecursiveAggregationComplete(data) => {
+                if self
+                    .state
+                    .get()
+                    .is_some_and(|state| state.party_id == data.party_id)
+                {
+                    if let Err(error) = self.clear_pending_recovery_payload(&ec) {
+                        error!(%error, "Could not clear completed DKG proof work");
+                    }
+                }
+            }
             InterfoldEventData::DkgCoordination(data) => {
                 let is_ready = matches!(data.kind, DkgCoordinationKind::Ready);
                 let result = self
@@ -75,20 +86,28 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             InterfoldEventData::DkgProofSigned(data) => {
                 let _ = self.handle_share_computation_proof_signed(TypedEvent::new(data, ec));
             }
-            InterfoldEventData::E3RequestComplete(data) => self.notify_sync(ctx, data),
+            InterfoldEventData::E3RequestComplete(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::E3Failed(data) => {
                 warn!(
                     "E3 failed: {:?}. Shutting down ThresholdKeyshare for e3_id={}",
                     data.reason, data.e3_id
                 );
-                self.notify_sync(ctx, E3RequestComplete { e3_id: data.e3_id });
+                self.notify_sync(
+                    ctx,
+                    TypedEvent::new(E3RequestComplete { e3_id: data.e3_id }, ec),
+                );
             }
             InterfoldEventData::E3StageChanged(data) => {
                 use e3_events::E3Stage;
                 match &data.new_stage {
                     E3Stage::Complete | E3Stage::Failed => {
                         info!("E3 reached terminal stage {:?}. Shutting down ThresholdKeyshare for e3_id={}", data.new_stage, data.e3_id);
-                        self.notify_sync(ctx, E3RequestComplete { e3_id: data.e3_id });
+                        self.notify_sync(
+                            ctx,
+                            TypedEvent::new(E3RequestComplete { e3_id: data.e3_id }, ec),
+                        );
                     }
                     _ => {
                         trace!(

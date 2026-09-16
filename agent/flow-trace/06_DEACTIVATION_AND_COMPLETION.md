@@ -354,7 +354,7 @@ length and hash before decoding it. The 32 MiB inline and network event limits s
 An EventStore append or flush failure stops the actor and signals the node supervisor. Startup and
 the CLI then exit with a nonzero status instead of leaving a dead storage actor inside an online
 process. The EventStore syncs each appended log record before it indexes or broadcasts the event.
-The current storage schema marker is version 5; older node databases must be reset for
+The current storage schema marker is version 6; older node databases must be reset for
 this release, not silently decoded.
 
 For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state. It
@@ -494,6 +494,13 @@ plaintext standbys persist the same validated inputs as the active aggregator. A
 on the active party, with new process-local correlation IDs. It re-publishes determined outputs
 idempotently. Startup fails closed if an active phase requires a recovery record that is missing or
 has an unsupported schema version.
+
+The threshold-keyshare recovery root stores only the length and SHA-256 digest of each large DKG
+work plan or dealer payload. The immutable payloads use separate per-E3 keys. Hydration verifies
+each length and digest before it resumes DKG. A node removes the work plan after its node-fold proof
+completes, removes dealer payloads after it stores the C4 proof intent and decryption key, and
+removes all remaining payloads when the E3 becomes terminal. The small root is updated before a
+payload is retired, so an interrupted cleanup cannot leave a durable reference to missing data.
 
 Sortition and committee finalization have separate versioned recovery records. Sortition stores the
 seed, typed request, and any expulsion or exclusion that arrived before its prerequisites. The

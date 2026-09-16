@@ -37,9 +37,8 @@ impl ThresholdKeyshare {
                 verified.contains(&party_id) && selected_party_ids.contains(&party_id)
             })
             .map(|party_id| {
-                recovery
-                    .threshold_shares
-                    .get(party_id)
+                self.recovery_payloads
+                    .share(*party_id)
                     .map(|event| event.share.clone())
                     .ok_or_else(|| anyhow!("verified DKG dealer has no stored share"))
             })
@@ -173,6 +172,21 @@ impl ThresholdKeyshare {
 
             s.new_state(next)
         })?;
+
+        let party_count = self.state.try_get()?.threshold_n;
+        self.recovery.try_mutate(&ec, |mut recovery| {
+            recovery.threshold_share_refs.clear();
+            recovery.collected_threshold_share_ids = None;
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+        if let Err(error) = self
+            .recovery_payloads
+            .write_all_share_tombstones(party_count, &ec)
+        {
+            warn!(%error, "Could not retire completed DKG dealer payloads");
+        }
+        self.recovery_payloads.forget_shares();
 
         // Publish DecryptionShareProofsPending to ProofRequestActor.
         self.bus.publish(event, ec.clone())?;

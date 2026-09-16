@@ -44,6 +44,7 @@ async fn selection_waits_for_frozen_timing_and_rejects_expired_dkg() -> Result<(
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery: test_recovery(),
+        recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(move |_| {
             read_calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             Box::pin(async {
@@ -146,6 +147,11 @@ fn test_recovery() -> Persistable<ThresholdKeyshareRecoveryState> {
     repo.send(Some(ThresholdKeyshareRecoveryState::default()))
 }
 
+fn test_recovery_payloads() -> ThresholdKeyshareRecoveryPayloads {
+    let store = InMemStore::new(false).start();
+    ThresholdKeyshareRecoveryPayloads::new(DataStore::from_in_mem(&store))
+}
+
 fn test_ec(seq: u64) -> EventContext<Sequenced> {
     InterfoldEvent::<Unsequenced>::new_with_timestamp(
         EffectsEnabled::new().into(),
@@ -224,6 +230,7 @@ async fn only_the_active_aggregator_proposes_a_ready_roster() -> Result<()> {
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery,
+        recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
 
@@ -366,6 +373,7 @@ async fn roster_from_future_aggregator_is_held_until_promotion() -> Result<()> {
         signer: signers[0].clone(),
         effects_enabled: false,
         recovery,
+        recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
 
@@ -480,6 +488,7 @@ async fn conflicting_roster_after_acceptance_is_ignored() -> Result<()> {
         signer: signers[0].clone(),
         effects_enabled: false,
         recovery,
+        recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
 
@@ -530,6 +539,7 @@ async fn start_actor_with_state(
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery: test_recovery(),
+        recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
     .start();
@@ -831,6 +841,7 @@ async fn restart_skips_dkg_work_after_public_key_context_is_persisted() -> Resul
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery,
+        recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
     .start();
@@ -872,6 +883,7 @@ async fn restart_rebuilds_c4_collector_before_peer_share_arrives() -> Result<()>
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery: test_recovery(),
+        recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
     .start();
@@ -932,6 +944,7 @@ async fn duplicate_c4_after_collection_does_not_start_another_collector() -> Res
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery,
+        recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     })
     .start();
@@ -956,6 +969,7 @@ async fn recovery_keeps_the_first_c0_and_c4_from_each_party() -> Result<()> {
         signer: alloy::signers::local::PrivateKeySigner::random(),
         effects_enabled: true,
         recovery: test_recovery(),
+        recovery_payloads: test_recovery_payloads(),
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
     let first_c4_event = peer_c4_event(&e3_id, 1);

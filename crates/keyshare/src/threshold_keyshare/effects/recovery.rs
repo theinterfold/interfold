@@ -6,6 +6,42 @@ use super::*;
 use anyhow::ensure;
 
 impl ThresholdKeyshare {
+    pub(in crate::actors::threshold_keyshare) fn clear_pending_recovery_payload(
+        &mut self,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        self.recovery.try_mutate(ec, |mut recovery| {
+            recovery.threshold_share_pending_ref = None;
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+        if let Err(error) = self.recovery_payloads.write_pending_tombstone(ec) {
+            warn!(%error, "Could not retire completed DKG proof work");
+        }
+        self.recovery_payloads.forget_pending();
+        Ok(())
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn clear_large_recovery_payloads(
+        &mut self,
+        ec: &EventContext<Sequenced>,
+    ) -> Result<()> {
+        let party_count = self.state.try_get()?.threshold_n;
+        self.recovery.try_mutate(ec, |mut recovery| {
+            recovery.threshold_share_pending_ref = None;
+            recovery.threshold_share_refs.clear();
+            recovery.collected_threshold_share_ids = None;
+            recovery.last_ec = Some(ec.clone());
+            Ok(recovery)
+        })?;
+        self.recovery_payloads.write_pending_tombstone(ec)?;
+        self.recovery_payloads
+            .write_all_share_tombstones(party_count, ec)?;
+        self.recovery_payloads.forget_pending();
+        self.recovery_payloads.forget_shares();
+        Ok(())
+    }
+
     pub(in crate::actors::threshold_keyshare) fn public_key_context_is_recovered(
         state: &ThresholdKeyshareState,
     ) -> bool {
@@ -38,14 +74,27 @@ impl ThresholdKeyshare {
         &mut self,
         event: &TypedEvent<ThresholdShareCreated>,
     ) -> Result<()> {
+        if let Some(existing) = self.recovery_payloads.share(event.share.party_id) {
+            ensure!(
+                existing == event,
+                "conflicting DKG share from the same party"
+            );
+            return Ok(());
+        }
         let event = event.clone();
         let party_id = event.share.party_id;
         let ec = event.get_ctx().clone();
+        let payload_ref = self.recovery_payloads.write_share(&event, &ec)?;
         self.recovery.try_mutate(&ec, |mut recovery| {
-            recovery.threshold_shares.entry(party_id).or_insert(event);
+            recovery
+                .threshold_share_refs
+                .entry(party_id)
+                .or_insert(payload_ref);
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
-        })
+        })?;
+        self.recovery_payloads.remember_share(event);
+        Ok(())
     }
 
     pub(in crate::actors::threshold_keyshare) fn record_collected_threshold_shares(
@@ -65,6 +114,7 @@ impl ThresholdKeyshare {
 
     fn rebuild_collected_threshold_shares(
         recovery: &ThresholdKeyshareRecoveryState,
+        payloads: &ThresholdKeyshareRecoveryPayloads,
     ) -> Result<AllThresholdSharesCollected> {
         let ids = recovery
             .collected_threshold_share_ids
@@ -73,10 +123,13 @@ impl ThresholdKeyshare {
         let mut shares = HashMap::new();
         let mut proofs = HashMap::new();
         for &party_id in ids {
-            let event = recovery
-                .threshold_shares
+            recovery
+                .threshold_share_refs
                 .get(&party_id)
                 .ok_or_else(|| anyhow!("DKG dealer snapshot has no stored share"))?;
+            let event = payloads
+                .share(party_id)
+                .ok_or_else(|| anyhow!("DKG dealer recovery payload is not loaded"))?;
             shares.insert(party_id, event.share.clone());
             proofs.insert(
                 party_id,
@@ -148,16 +201,12 @@ impl ThresholdKeyshare {
         })
     }
 
-    fn replay_threshold_shares(
-        &mut self,
-        recovery: &ThresholdKeyshareRecoveryState,
-        self_addr: Addr<Self>,
-    ) -> Result<()> {
-        if recovery.threshold_shares.is_empty() {
+    fn replay_threshold_shares(&mut self, self_addr: Addr<Self>) -> Result<()> {
+        if self.recovery_payloads.shares().is_empty() {
             return Ok(());
         }
         let collector = self.ensure_collector(self_addr)?;
-        for event in recovery.threshold_shares.values() {
+        for event in self.recovery_payloads.shares().values() {
             collector.try_send(event.clone())?;
         }
         Ok(())
@@ -285,11 +334,11 @@ impl ThresholdKeyshare {
                 )
             }
             KeyshareState::GeneratingThresholdShare(data) => {
-                self.replay_threshold_shares(&recovery, self_addr)?;
+                self.replay_threshold_shares(self_addr)?;
                 self.resume_generating_threshold_share(data, ec)
             }
             KeyshareState::AggregatingDecryptionKey(_) => {
-                if let Some(pending) = recovery.threshold_share_pending.clone() {
+                if let Some(pending) = self.recovery_payloads.pending().cloned() {
                     let (pending, pending_ec) = pending.into_components();
                     self.bus.publish(pending, pending_ec)?;
                 }
@@ -302,11 +351,14 @@ impl ThresholdKeyshare {
                         return self.handle_share_verification_complete(verification);
                     }
                     if recovery.collected_threshold_share_ids.is_some() {
-                        let batch = Self::rebuild_collected_threshold_shares(&recovery)?;
+                        let batch = Self::rebuild_collected_threshold_shares(
+                            &recovery,
+                            &self.recovery_payloads,
+                        )?;
                         return self
                             .handle_all_threshold_shares_collected(TypedEvent::new(batch, ec));
                     }
-                    return self.replay_threshold_shares(&recovery, self_addr);
+                    return self.replay_threshold_shares(self_addr);
                 }
                 if let Some(verification) = recovery.share_verification_complete.clone() {
                     self.handle_share_verification_complete(verification)?;
@@ -316,10 +368,13 @@ impl ThresholdKeyshare {
                     return self.propose_dkg_roster(ec);
                 }
                 if recovery.collected_threshold_share_ids.is_some() {
-                    let batch = Self::rebuild_collected_threshold_shares(&recovery)?;
+                    let batch = Self::rebuild_collected_threshold_shares(
+                        &recovery,
+                        &self.recovery_payloads,
+                    )?;
                     return self.handle_all_threshold_shares_collected(TypedEvent::new(batch, ec));
                 }
-                self.replay_threshold_shares(&recovery, self_addr)
+                self.replay_threshold_shares(self_addr)
             }
             KeyshareState::ReadyForDecryption(_) => {
                 // PublicKeyAggregated is a newer durable fact than the retained C2/C3/C4
@@ -333,7 +388,7 @@ impl ThresholdKeyshare {
                 {
                     self.replay_decryption_key_shares(&recovery, self_addr)?;
                 }
-                if let Some(pending) = recovery.threshold_share_pending.clone() {
+                if let Some(pending) = self.recovery_payloads.pending().cloned() {
                     let (pending, pending_ec) = pending.into_components();
                     self.bus.publish(pending, pending_ec)?;
                 }
@@ -383,11 +438,16 @@ impl ThresholdKeyshare {
 #[cfg(test)]
 mod dealer_snapshot_tests {
     use super::*;
+    use e3_data::{DataStore, InMemStore};
 
-    #[test]
-    fn a_dealer_snapshot_cannot_replay_without_its_stored_share() {
+    #[actix::test]
+    async fn a_dealer_snapshot_cannot_replay_without_its_stored_share() {
         let mut recovery = ThresholdKeyshareRecoveryState::default();
         recovery.collected_threshold_share_ids = Some(BTreeSet::from([2]));
-        assert!(ThresholdKeyshare::rebuild_collected_threshold_shares(&recovery).is_err());
+        let store = InMemStore::new(false).start();
+        let payloads = ThresholdKeyshareRecoveryPayloads::new(DataStore::from_in_mem(&store));
+        assert!(
+            ThresholdKeyshare::rebuild_collected_threshold_shares(&recovery, &payloads).is_err()
+        );
     }
 }

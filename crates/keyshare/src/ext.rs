@@ -5,14 +5,14 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
-    DkgTimingReader, ThresholdKeyshare, ThresholdKeyshareParams, ThresholdKeyshareRecoveryState,
-    ThresholdKeyshareRepositoryFactory, ThresholdKeyshareState,
+    DkgTimingReader, ThresholdKeyshare, ThresholdKeyshareParams, ThresholdKeyshareRecoveryPayloads,
+    ThresholdKeyshareRecoveryState, ThresholdKeyshareRepositoryFactory, ThresholdKeyshareState,
     THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
 };
 use actix::Actor;
 use alloy::primitives::Address;
 use alloy::signers::local::PrivateKeySigner;
-use anyhow::{anyhow, ensure, Result};
+use anyhow::{anyhow, ensure, Context, Result};
 use async_trait::async_trait;
 use e3_crypto::Cipher;
 use e3_data::{AutoPersist, RepositoriesFactory};
@@ -102,6 +102,10 @@ impl E3Extension for ThresholdKeyshareExtension {
                 last_ec: Some(evt.get_ctx().clone()),
                 ..Default::default()
             }));
+        let recovery_payloads = ThresholdKeyshareRecoveryPayloads::new(
+            ctx.repositories()
+                .threshold_keyshare_recovery_payloads(&e3_id),
+        );
 
         // New container with None
         ctx.set_event_recipient(
@@ -117,6 +121,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                         .unwrap_or(meta.params_preset),
                     interfold_address,
                     recovery,
+                    recovery_payloads,
                     dkg_timing_reader: self.dkg_timing_reader.clone(),
                     signer: self.signer.clone(),
                     effects_enabled: true,
@@ -160,6 +165,15 @@ impl E3Extension for ThresholdKeyshareExtension {
             "unsupported threshold-keyshare recovery schema for E3 {}",
             snapshot.e3_id
         );
+        let recovery_value = recovery
+            .get()
+            .context("threshold-keyshare recovery record disappeared during hydration")?;
+        let recovery_payloads = ThresholdKeyshareRecoveryPayloads::load(
+            ctx.repositories()
+                .threshold_keyshare_recovery_payloads(&snapshot.e3_id),
+            &recovery_value,
+        )
+        .await?;
 
         // Derive DKG preset from persisted E3Meta
         let Some(meta) = ctx.get_dependency(META_KEY) else {
@@ -188,6 +202,7 @@ impl E3Extension for ThresholdKeyshareExtension {
             share_enc_preset,
             interfold_address,
             recovery,
+            recovery_payloads,
             dkg_timing_reader: self.dkg_timing_reader.clone(),
             signer: self.signer.clone(),
             effects_enabled: false,

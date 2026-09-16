@@ -181,7 +181,7 @@ impl Handler<EncryptionKeyCollectionFailed> for ThresholdKeyshare {
     fn handle(
         &mut self,
         msg: EncryptionKeyCollectionFailed,
-        ctx: &mut Self::Context,
+        _ctx: &mut Self::Context,
     ) -> Self::Result {
         trap(EType::KeyGeneration, &self.bus.clone(), || {
             warn!(
@@ -205,8 +205,6 @@ impl Handler<EncryptionKeyCollectionFailed> for ThresholdKeyshare {
                 reason: FailureReason::DKGTimeout,
             })?;
 
-            // Stop this actor since we can't proceed without all encryption keys
-            ctx.stop();
             Ok(())
         })
     }
@@ -217,7 +215,7 @@ impl Handler<ThresholdShareCollectionFailed> for ThresholdKeyshare {
     fn handle(
         &mut self,
         msg: ThresholdShareCollectionFailed,
-        ctx: &mut Self::Context,
+        _ctx: &mut Self::Context,
     ) -> Self::Result {
         trap(EType::KeyGeneration, &self.bus.clone(), || {
             warn!(
@@ -241,7 +239,6 @@ impl Handler<ThresholdShareCollectionFailed> for ThresholdKeyshare {
                 reason: FailureReason::DKGTimeout,
             })?;
 
-            ctx.stop();
             Ok(())
         })
     }
@@ -271,7 +268,7 @@ impl Handler<DecryptionKeySharedCollectionFailed> for ThresholdKeyshare {
     fn handle(
         &mut self,
         msg: DecryptionKeySharedCollectionFailed,
-        ctx: &mut Self::Context,
+        _ctx: &mut Self::Context,
     ) -> Self::Result {
         trap(EType::KeyGeneration, &self.bus.clone(), || {
             warn!(
@@ -294,15 +291,23 @@ impl Handler<DecryptionKeySharedCollectionFailed> for ThresholdKeyshare {
                 reason: FailureReason::DecryptionTimeout,
             })?;
 
-            ctx.stop();
             Ok(())
         })
     }
 }
 
-impl Handler<E3RequestComplete> for ThresholdKeyshare {
+impl Handler<TypedEvent<E3RequestComplete>> for ThresholdKeyshare {
     type Result = ();
-    fn handle(&mut self, _: E3RequestComplete, ctx: &mut Self::Context) -> Self::Result {
+    fn handle(
+        &mut self,
+        event: TypedEvent<E3RequestComplete>,
+        ctx: &mut Self::Context,
+    ) -> Self::Result {
+        if let Err(error) = self.clear_large_recovery_payloads(event.get_ctx()) {
+            error!(%error, "Could not clear terminal DKG recovery payloads");
+            ctx.notify_later(event, std::time::Duration::from_secs(1));
+            return;
+        }
         self.encryption_key_collector = None;
         self.decryption_key_collector = None;
         self.decryption_key_shared_collector = None;

@@ -21,6 +21,10 @@ impl StoreKeys {
         format!("//threshold_keyshare_recovery/v1/{e3_id}")
     }
 
+    pub fn threshold_keyshare_recovery_payloads(e3_id: &E3id) -> String {
+        format!("//threshold_keyshare_recovery_payloads/v1/{e3_id}")
+    }
+
     pub fn plaintext(e3_id: &E3id) -> String {
         format!("//plaintext/{e3_id}")
     }

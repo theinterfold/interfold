@@ -73,8 +73,11 @@ use crate::domain::{
 #[path = "recovery_state.rs"]
 mod recovery_state;
 pub use recovery_state::{
-    ThresholdKeyshareRecoveryState, THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
+    RecoveryPayloadRef, ThresholdKeyshareRecoveryState, THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
 };
+#[path = "recovery_payloads.rs"]
+mod recovery_payloads;
+pub use recovery_payloads::ThresholdKeyshareRecoveryPayloads;
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[rtype(result = "()")]
@@ -129,6 +132,7 @@ pub struct ThresholdKeyshareParams {
     pub share_enc_preset: BfvPreset,
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
+    pub recovery_payloads: ThresholdKeyshareRecoveryPayloads,
     pub dkg_timing_reader: DkgTimingReader,
     pub signer: PrivateKeySigner,
     pub effects_enabled: bool,
@@ -163,6 +167,7 @@ pub struct ThresholdKeyshare {
     decryption_key_shared_collector: Option<Addr<DecryptionKeySharedCollector>>,
     state: Persistable<ThresholdKeyshareState>,
     recovery: Persistable<ThresholdKeyshareRecoveryState>,
+    recovery_payloads: ThresholdKeyshareRecoveryPayloads,
     share_enc_preset: BfvPreset,
     interfold_address: Address,
     dkg_timing_reader: DkgTimingReader,
@@ -180,8 +185,9 @@ impl ThresholdKeyshare {
     pub fn new(params: ThresholdKeyshareParams) -> Self {
         let recovered = params.recovery.get().unwrap_or_default();
         let own_party_id = params.state.get().map(|state| state.party_id);
-        let pending_shares = recovered
-            .threshold_shares
+        let pending_shares = params
+            .recovery_payloads
+            .shares()
             .values()
             .filter(|event| Some(event.share.party_id) != own_party_id)
             .map(|event| event.share.clone())
@@ -205,6 +211,7 @@ impl ThresholdKeyshare {
             decryption_key_shared_collector: None,
             state: params.state,
             recovery: params.recovery,
+            recovery_payloads: params.recovery_payloads,
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
             dkg_timing_reader: params.dkg_timing_reader,

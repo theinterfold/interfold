@@ -9,14 +9,15 @@ use alloy::signers::local::PrivateKeySigner;
 use anyhow::{ensure, Result};
 use e3_ciphernode_builder::EventSystem;
 use e3_crypto::SensitiveBytes;
-use e3_data::CommitLogEventLog;
+use e3_data::{CommitLogEventLog, DataStore, InMemStore};
 use e3_events::{
     AggregateConfig, AggregateId, ComputeRequestKind, E3id, Event, EventConstructorWithTimestamp,
     EventLog, EventSource, EventSubscriber, EventType, GetEvents, HistoryCollector, InterfoldEvent,
     InterfoldEventData, PkGenerationProofRequest, ShareComputationProofRequest,
-    ShareEncryptionProofRequest, ThresholdShare, ThresholdSharePending, Unsequenced,
+    ShareEncryptionProofRequest, ThresholdShare, ThresholdSharePending, TypedEvent, Unsequenced,
 };
 use e3_fhe_params::BfvPreset;
+use e3_keyshare::{ThresholdKeyshareRecoveryPayloads, ThresholdKeyshareRecoveryState};
 use e3_trbfv::shares::BfvEncryptedShares;
 use e3_utils::ArcBytes;
 use e3_zk_helpers::{computation::DkgInputType, CiphernodesCommitteeSize};
@@ -145,6 +146,27 @@ async fn large_small_work_plan_survives_reopen_and_fresh_proof_dispatch() -> Res
     );
     let encoded_len = bincode::serialized_size(&event)?;
     ensure!(encoded_len > 122_000_000, "work plan fixture is too small");
+
+    let sequenced = event.clone().into_sequenced(1);
+    let ec = sequenced.get_ctx().clone();
+    let InterfoldEventData::ThresholdSharePending(pending) = sequenced.into_data() else {
+        unreachable!("fixture is a threshold-share work plan")
+    };
+    let typed = TypedEvent::new(pending, ec.clone());
+    let payload_store = InMemStore::new(false).start();
+    let data = DataStore::from_in_mem(&payload_store);
+    let payloads = ThresholdKeyshareRecoveryPayloads::new(data.clone());
+    let reference = payloads.write_pending(&typed, &ec)?;
+    let root = ThresholdKeyshareRecoveryState {
+        threshold_share_pending_ref: Some(reference),
+        ..Default::default()
+    };
+    ensure!(
+        bincode::serialized_size(&root)? < 4_096,
+        "large work plan leaked into the mutable recovery root"
+    );
+    let loaded = ThresholdKeyshareRecoveryPayloads::load(data, &root).await?;
+    ensure!(loaded.pending() == Some(&typed), "split work plan changed");
 
     let mut log = CommitLogEventLog::new(directory.path())?;
     ensure!(log.append(&event)? == 1, "unexpected event sequence");

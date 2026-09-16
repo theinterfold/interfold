@@ -51,7 +51,7 @@ impl ThresholdKeyshare {
             .iter()
             .filter(|party_id| !state.expelled_parties.contains(*party_id))
         {
-            let Some(event) = recovery.threshold_shares.get(party_id) else {
+            let Some(event) = self.recovery_payloads.share(*party_id) else {
                 return Err(anyhow!("verified DKG share is missing from recovery state"));
             };
             let (Some(c2a), Some(c2b)) = (

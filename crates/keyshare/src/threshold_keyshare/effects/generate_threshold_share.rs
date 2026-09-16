@@ -153,11 +153,20 @@ impl ThresholdKeyshare {
             e_sm_share_encryption_requests: plan.e_sm_share_encryption_requests,
             recipient_party_ids: plan.recipient_party_ids,
         };
+        let pending = TypedEvent::new(event.clone(), ec.clone());
+        let payload_ref = self.recovery_payloads.write_pending(&pending, &ec)?;
         self.recovery.try_mutate(&ec, |mut recovery| {
-            recovery.threshold_share_pending = Some(TypedEvent::new(event.clone(), ec.clone()));
+            if let Some(existing) = recovery.threshold_share_pending_ref.as_ref() {
+                anyhow::ensure!(
+                    existing == &payload_ref,
+                    "generated DKG work plan conflicts with its recovery payload"
+                );
+            }
+            recovery.threshold_share_pending_ref = Some(payload_ref.clone());
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
+        self.recovery_payloads.remember_pending(pending);
         self.bus.publish(event, ec)?;
 
         Ok(())
