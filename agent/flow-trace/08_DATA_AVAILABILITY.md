@@ -154,20 +154,31 @@ inclusive compute deadline. No new input is admitted during that recovery period
 - [Avail block and finalization timing](https://docs.availproject.org/docs/da/build/turbo-da)
 - [VectorX 360-block range](https://docs.availproject.org/docs/da/build/vectorx)
 
-The CRISP request paths currently start the input window 20 or 60 seconds after they read the chain
-time. The exact timestamps therefore shift by that small start buffer. The table below uses `T0` as
-the input-window start. The contract calculates from the actual request timestamp and actual input
-window, so it does not rely on this approximation.
+The fixed CRISP schedule names three dates: voting starts at `S`, new ballots close at `V`, and
+Avail finalization ends at `A`. The plugin stores `S` and `V` on the proposal. It requests
+Interfold's input window as `[S, A]`, where `A = V + availabilityFinalizationWindow`.
+`CRISPProgram.inputCommitmentDeadline` therefore returns `V`. A key published early does not
+open voting before `S`; a key that misses its deadline does not move the vote to a later date.
 
-For a 12-hour input window starting at `T0`:
+For a request mined at `R`, the earliest allowed `S` is `R + randomnessRequestTimeout +
+sortitionSubmissionWindow + dkgWindow`. The program validates that bound against the E3's
+request-time timeout snapshot. The app shows the current bound and suggests a ten-minute buffer
+for the create transaction to be mined. For the current mainnet timing example, the setup budget
+is 25,800 seconds (1 hour VRF, 10 minutes sortition, 6 hours DKG).
+Direct CRISP server and CLI requests also read the program's earliest start in Avail mode. Their
+`E3_DURATION` remains the full input-window duration from `S` through `A`; startup requires it
+to cover the on-chain minimum voting window plus the Avail finalization window. Local mock
+requests retain their shorter start buffer.
 
-| Boundary                                                      |        Timestamp |
-| ------------------------------------------------------------- | ---------------: |
-| Worst-case key publication                                    |   `T0 + 25,800s` |
-| Last instant before commitment cutoff                         | `< T0 + 32,400s` |
-| Input window ends                                             |   `T0 + 43,200s` |
-| Compute deadline                                              |  `T0 + 648,000s` |
-| Latest decryption deadline after a last-second compute output |  `T0 + 669,600s` |
+For a one-hour vote beginning at that earliest `S` and a three-hour Avail window:
+
+| Boundary                                                      | Timestamp |
+| ------------------------------------------------------------- | --------: |
+| Worst-case key publication and earliest voting start         | `R + 25,800s` |
+| Last instant before the ballot commitment cutoff              | `< S + 3,600s` |
+| Avail finalization and Interfold input window end             | `S + 14,400s` |
+| Compute deadline                                              | `S + 14,400s + computeWindow` |
+| Latest decryption deadline after a last-second compute output | `S + 14,400s + computeWindow + decryptionWindow` |
 
 This is below Interfold's 30-day maximum lifecycle reservation.
 
@@ -249,10 +260,10 @@ when the service observes it later. If the finalized state contains no commitmen
 releases the ciphertext and lets the voter stage the original proof again for a fresh promise.
 
 The old four-hour CRISP duration was unsafe. In the worst case, the input commitment cutoff arrived
-before the committee key existed. Both the server and `CRISPProgram.validate` now refuse an unsafe
-window. The contract derives the latest key time from the request's frozen DKG timeout and the
-request-time Registry VRF and sortition windows. It also accounts for a deliberately delayed input
-start, so calling the contract without the CRISP server cannot bypass the rule.
+before the committee key existed. With a nonzero Avail window, `CRISPProgram.validate` now rejects
+a scheduled voting start before the worst-case key deadline and requires at least one hour before
+the ballot cutoff. It also requires a compute window long enough for a late Avail receipt. These
+checks run in the request transaction, before the requester pays the fee.
 
 ## Restart and failure behavior
 

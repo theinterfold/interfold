@@ -141,13 +141,19 @@ impl ScoreBackend {
     /// Return whether the local node chooses to accept one more committee duty.
     fn has_local_capacity(
         node_state: &NodeStateStore,
+        e3_id: &E3id,
         local_address: Address,
         snapshot: SortitionSnapshot,
     ) -> bool {
+        let local_address = local_address.to_string();
+        if node_state.has_job_for_e3(e3_id, &local_address) {
+            return true;
+        }
+
         let Some(timepoint) = snapshot.request_block.checked_sub(1) else {
             return false;
         };
-        let Some(state) = node_state.nodes.get(&local_address.to_string()) else {
+        let Some(state) = node_state.nodes.get(&local_address) else {
             return false;
         };
         if snapshot.ticket_price.is_zero() {
@@ -247,7 +253,7 @@ impl SortitionList<String> for ScoreBackend {
             .iter()
             .enumerate()
             .find_map(|(i, w)| (w.address == want).then_some((i as u64, Some(w.ticket_id))));
-        if maybe.is_some() && !Self::has_local_capacity(node_state, want, snapshot) {
+        if maybe.is_some() && !Self::has_local_capacity(node_state, &e3_id, want, snapshot) {
             return Ok(None);
         }
         Ok(maybe)
@@ -294,7 +300,7 @@ impl SortitionList<String> for ScoreBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::node_registry::{NodeState, StateCheckpoint};
+    use crate::domain::node_registry::{committee_key, NodeState, StateCheckpoint};
     use alloy::primitives::U256;
 
     fn ticket_count(nodes: &[RegisteredNode], address: Address) -> Option<usize> {
@@ -416,6 +422,23 @@ mod tests {
         );
 
         state.nodes.get_mut(&local.to_string()).unwrap().active_jobs = 2;
+        assert!(backend
+            .get_index(
+                e3_id.clone(),
+                seed,
+                1,
+                local.to_string(),
+                1,
+                &state,
+                snapshot,
+            )
+            .unwrap()
+            .is_some());
+
+        state.nodes.get_mut(&local.to_string()).unwrap().active_jobs = 3;
+        state
+            .e3_committees
+            .insert(committee_key(&e3_id), vec![local.to_string()]);
         assert!(backend
             .get_index(e3_id, seed, 1, local.to_string(), 1, &state, snapshot,)
             .unwrap()

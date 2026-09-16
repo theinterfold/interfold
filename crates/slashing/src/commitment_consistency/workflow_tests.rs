@@ -283,34 +283,338 @@ fn pre_zk_check_flags_and_evicts_inconsistent_party() {
     assert!(v.is_empty(), "evicted faulty party must not resurface");
 }
 
-#[test]
-fn c2_sender_at_or_above_h_skips_c4_cross_check() {
-    let link = Box::new(TestLink {
-        scope: LinkScope::SourceMustExistInTargets,
-        source: ProofType::C2aSkShareComputation,
-        target: ProofType::C4aSkShareDecryption,
-    });
-    let mut svc = CommitmentConsistency::new(e3(), vec![link], 2);
+struct SelectedRowLink;
 
-    // Party 2 (>= H) C2 cannot appear in C4 rows; must not be faulted.
-    svc.on_proof_verified(passed(
+impl CommitmentLink for SelectedRowLink {
+    fn name(&self) -> &'static str {
+        "selected_row"
+    }
+    fn source_proof_type(&self) -> ProofType {
+        ProofType::C2aSkShareComputation
+    }
+    fn target_proof_type(&self) -> ProofType {
+        ProofType::C4aSkShareDecryption
+    }
+    fn scope(&self) -> LinkScope {
+        LinkScope::SourceMustExistInTargets
+    }
+    fn extract_source_values(&self, _: &[u8]) -> Vec<FieldValue> {
+        vec![[1; 32]]
+    }
+    fn check_consistency(
+        &self,
+        _: &[FieldValue],
+        target_public_signals: &[u8],
+        source_row: u64,
+        _: u64,
+    ) -> bool {
+        target_public_signals.first().copied() == Some(source_row as u8)
+    }
+}
+
+#[test]
+fn c2_c4_uses_selected_row_not_full_committee_id() {
+    let mut svc = CommitmentConsistency::new(e3(), vec![Box::new(SelectedRowLink)], 2);
+    let c2_party_two = passed(
         e3(),
         2,
         addr(0x22),
         ProofType::C2aSkShareComputation,
         [0xc2; 32],
         signals(0x22),
+    );
+    assert!(svc.on_proof_verified(c2_party_two).is_empty());
+    assert!(svc
+        .on_proof_verified(passed(
+            e3(),
+            1,
+            addr(0x11),
+            ProofType::C4aSkShareDecryption,
+            [0xc4; 32],
+            signals(1),
+        ))
+        .is_empty());
+    assert!(svc
+        .on_roster_selected(CommitmentRosterSelected {
+            e3_id: e3(),
+            party_ids: vec![1, 2],
+        })
+        .is_empty());
+    assert!(svc
+        .on_proof_verified(passed(
+            e3(),
+            2,
+            addr(0x22),
+            ProofType::C4aSkShareDecryption,
+            [0xd4; 32],
+            signals(1),
+        ))
+        .is_empty());
+    assert!(svc
+        .on_proof_verified(passed(
+            e3(),
+            0,
+            addr(0x00),
+            ProofType::C2aSkShareComputation,
+            [0xd2; 32],
+            signals(0),
+        ))
+        .is_empty());
+}
+
+#[test]
+fn c2_c4_reports_a_selected_row_mismatch() {
+    let mut svc = CommitmentConsistency::new(e3(), vec![Box::new(SelectedRowLink)], 2);
+    svc.on_proof_verified(passed(
+        e3(),
+        2,
+        addr(0x22),
+        ProofType::C4aSkShareDecryption,
+        [0xc4; 32],
+        signals(1),
     ));
+    svc.on_proof_verified(passed(
+        e3(),
+        1,
+        addr(0x11),
+        ProofType::C2aSkShareComputation,
+        [0xc2; 32],
+        signals(0),
+    ));
+    assert!(svc
+        .on_roster_selected(CommitmentRosterSelected {
+            e3_id: e3(),
+            party_ids: vec![1, 2],
+        })
+        .is_empty());
     let violations = svc.on_proof_verified(passed(
         e3(),
         1,
         addr(0x11),
         ProofType::C4aSkShareDecryption,
-        [0xc4; 32],
+        [0xd4; 32],
+        signals(1),
+    ));
+    assert_eq!(violations.len(), 1);
+    assert_eq!(violations[0].accused_party_id, 1);
+}
+
+#[test]
+fn missing_c0_cannot_accuse_a_c3_sender() {
+    let link = Box::new(TestLink {
+        scope: LinkScope::SourceMustExistInTargets,
+        source: ProofType::C3aSkShareEncryption,
+        target: ProofType::C0PkBfv,
+    });
+    let mut svc = CommitmentConsistency::new(e3(), vec![link], 2);
+    svc.on_proof_verified(passed(
+        e3(),
+        0,
+        addr(0x00),
+        ProofType::C0PkBfv,
+        [0xc0; 32],
         signals(0x11),
     ));
-    assert!(
-        violations.is_empty(),
-        "party_id >= H must be outside C4 expected_commitments roster"
+    let violations = svc.on_proof_verified(passed(
+        e3(),
+        1,
+        addr(0x11),
+        ProofType::C3aSkShareEncryption,
+        [0xc3; 32],
+        signals(0x22),
+    ));
+    assert!(violations.is_empty());
+}
+
+#[test]
+fn snapshot_roundtrip_preserves_proofs_and_selected_roster() {
+    let mut before = CommitmentConsistency::new(e3(), vec![same_party_link()], 2);
+    assert!(before
+        .on_roster_selected(CommitmentRosterSelected {
+            e3_id: e3(),
+            party_ids: vec![1, 2],
+        })
+        .is_empty());
+    assert!(before
+        .on_proof_verified(passed(
+            e3(),
+            1,
+            addr(1),
+            ProofType::C1PkGeneration,
+            [0x10; 32],
+            signals(0x42),
+        ))
+        .is_empty());
+
+    let encoded = bincode::serialize(&before.snapshot()).expect("serialize snapshot");
+    let snapshot: CommitmentConsistencySnapshot =
+        bincode::deserialize(&encoded).expect("deserialize snapshot");
+    let mut after = CommitmentConsistency::new(e3(), vec![same_party_link()], 2);
+    after.restore(snapshot).expect("restore snapshot");
+
+    assert_eq!(after.cached_proof_count(), 1);
+    assert_eq!(after.accepted_roster(), Some(&[1, 2][..]));
+    assert!(after
+        .on_proof_verified(passed(
+            e3(),
+            1,
+            addr(1),
+            ProofType::C2aSkShareComputation,
+            [0x20; 32],
+            signals(0x42),
+        ))
+        .is_empty());
+}
+
+#[test]
+fn snapshot_rejects_an_unsupported_version() {
+    let before = CommitmentConsistency::new(e3(), vec![same_party_link()], 2);
+    let mut snapshot = before.snapshot();
+    snapshot.version = COMMITMENT_CONSISTENCY_SNAPSHOT_VERSION + 1;
+    let mut after = CommitmentConsistency::new(e3(), vec![same_party_link()], 2);
+    let error = after
+        .restore(snapshot)
+        .expect_err("unknown snapshot version must fail closed");
+    assert!(error
+        .to_string()
+        .contains("unsupported commitment-consistency snapshot version"));
+}
+
+#[test]
+fn snapshot_is_emitted_only_after_state_changes() {
+    let mut svc = CommitmentConsistency::new(e3(), vec![same_party_link()], 2);
+    assert!(svc.take_snapshot_if_changed().is_none());
+
+    let proof = passed(
+        e3(),
+        1,
+        addr(1),
+        ProofType::C1PkGeneration,
+        [0x10; 32],
+        signals(0x42),
     );
+    assert!(svc.on_proof_verified(proof.clone()).is_empty());
+    assert!(svc.take_snapshot_if_changed().is_some());
+    assert!(svc.take_snapshot_if_changed().is_none());
+
+    assert!(svc.on_proof_verified(proof).is_empty());
+    assert!(
+        svc.take_snapshot_if_changed().is_none(),
+        "a replayed proof must not rewrite the complete cache"
+    );
+}
+
+#[actix::test]
+async fn actor_persists_state_and_restores_it_after_restart() -> anyhow::Result<()> {
+    use crate::actors::commitment_consistency_checker::CommitmentConsistencyChecker;
+    use crate::repo::CommitmentConsistencyRepositoryFactory;
+    use actix::{Actor, Context, Handler};
+    use e3_data::{DataStore, InMemStore, RepositoriesFactory};
+    use e3_events::{
+        hlc_factory::HlcFactory, EventBus, EventBusConfig, EventConstructorWithTimestamp,
+        EventSource, InterfoldEvent, Sequencer, StoreEventRequested, TypedEvent, Unsequenced,
+    };
+
+    struct StoreSink;
+
+    impl Actor for StoreSink {
+        type Context = Context<Self>;
+    }
+
+    impl Handler<StoreEventRequested> for StoreSink {
+        type Result = ();
+
+        fn handle(&mut self, _: StoreEventRequested, _: &mut Self::Context) {}
+    }
+
+    let event_bus = EventBus::new(EventBusConfig { deduplicate: true }).start();
+    let sequencer = Sequencer::new(&event_bus, StoreSink.start().recipient()).start();
+    let bus = e3_events::BusHandle::new(event_bus, sequencer, HlcFactory::new())
+        .enable("commitment-consistency-persistence-test");
+    let store = DataStore::from_in_mem(&InMemStore::new(false).start());
+    let repo = store.repositories().commitment_consistency(&e3());
+    let checker = CommitmentConsistencyChecker::new(&bus, e3(), vec![same_party_link()], 2)
+        .with_snapshot(repo.clone(), None)?
+        .start();
+
+    let proof = passed(
+        e3(),
+        1,
+        addr(1),
+        ProofType::C1PkGeneration,
+        [0x10; 32],
+        signals(0x42),
+    );
+    let proof_context = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        proof.clone().into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(1)
+    .get_ctx()
+    .clone();
+    checker.send(TypedEvent::new(proof, proof_context)).await?;
+
+    let roster = CommitmentRosterSelected {
+        e3_id: e3(),
+        party_ids: vec![1, 2],
+    };
+    let roster_context = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        roster.clone().into(),
+        None,
+        2,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(2)
+    .get_ctx()
+    .clone();
+    checker
+        .send(TypedEvent::new(roster, roster_context))
+        .await?;
+
+    let restored = actix::clock::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if let Some(snapshot) = repo.read().await? {
+                if snapshot.entries.len() == 1 && snapshot.roster.as_deref() == Some(&[1, 2]) {
+                    break Ok::<_, anyhow::Error>(snapshot);
+                }
+            }
+            actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+
+    let restarted = CommitmentConsistencyChecker::new(&bus, e3(), vec![same_party_link()], 2)
+        .with_snapshot(repo.clone(), Some(restored))?;
+    assert_eq!(restarted.cached_proof_count(), 1);
+    assert_eq!(restarted.accepted_roster(), Some(&[1, 2][..]));
+
+    let restarted = restarted.start();
+    let complete = e3_events::E3RequestComplete { e3_id: e3() };
+    let complete_context = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        complete.clone().into(),
+        None,
+        3,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(3)
+    .get_ctx()
+    .clone();
+    restarted
+        .send(TypedEvent::new(complete, complete_context))
+        .await?;
+    actix::clock::timeout(std::time::Duration::from_secs(1), async {
+        loop {
+            if repo.read().await?.is_none() {
+                break Ok::<_, anyhow::Error>(());
+            }
+            actix::clock::sleep(std::time::Duration::from_millis(10)).await;
+        }
+    })
+    .await??;
+    Ok(())
 }

@@ -8,10 +8,13 @@
 
 use actix::{Actor, Addr};
 use alloy::signers::local::PrivateKeySigner;
-use e3_events::{BusHandle, Committee, DkgFoldAttestationContext, E3id};
+use anyhow::Result;
+use e3_data::Repositories;
+use e3_events::{BusHandle, Committee, DkgFoldAttestationContext, E3Stage, E3id};
 use e3_request::E3Meta;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
+use crate::actors::node_proof_aggregator::recovery::NodeProofRecovery;
 use crate::actors::{
     NodeProofAggregator, ProofRequestActor, ProofVerificationActor, ShareVerificationActor, ZkActor,
 };
@@ -26,6 +29,7 @@ pub struct ZkActorRecovery {
     finalized_committees: HashMap<E3id, Committee>,
     e3_metadata: HashMap<E3id, E3Meta>,
     dkg_fold_attestation_contexts: HashMap<E3id, DkgFoldAttestationContext>,
+    node_proofs: NodeProofRecovery,
 }
 
 impl ZkActorRecovery {
@@ -38,7 +42,33 @@ impl ZkActorRecovery {
             finalized_committees,
             e3_metadata,
             dkg_fold_attestation_contexts,
+            node_proofs: NodeProofRecovery::default(),
         }
+    }
+
+    pub async fn hydrate_node_proofs(
+        &mut self,
+        repositories: &Repositories,
+        lifecycle_stages: &HashMap<E3id, E3Stage>,
+    ) -> Result<()> {
+        let active_e3_ids: HashSet<E3id> = self
+            .finalized_committees
+            .keys()
+            .filter(|e3_id| {
+                !matches!(
+                    lifecycle_stages.get(*e3_id),
+                    Some(
+                        E3Stage::KeyPublished
+                            | E3Stage::CiphertextReady
+                            | E3Stage::Complete
+                            | E3Stage::Failed
+                    )
+                )
+            })
+            .cloned()
+            .collect();
+        self.node_proofs = NodeProofRecovery::load(repositories, &active_e3_ids).await?;
+        Ok(())
     }
 }
 
@@ -54,11 +84,13 @@ pub fn setup_zk_actors(
     dkg_fold_attestation_contexts_by_chain: HashMap<u64, Option<DkgFoldAttestationContext>>,
     recovery: ZkActorRecovery,
     proof_aggregation_enabled: bool,
+    repositories: Repositories,
 ) -> ZkActors {
     let ZkActorRecovery {
         finalized_committees,
         e3_metadata,
         dkg_fold_attestation_contexts,
+        node_proofs,
     } = recovery;
     let zk_actor = ZkActor::new(backend).start();
     let verifier = zk_actor.clone().recipient();
@@ -73,6 +105,8 @@ pub fn setup_zk_actors(
         dkg_fold_attestation_contexts,
         dkg_fold_attestation_contexts_by_chain,
         proof_aggregation_enabled,
+        repositories,
+        node_proofs,
     );
 
     ZkActors {

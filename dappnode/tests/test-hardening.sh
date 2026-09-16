@@ -12,7 +12,11 @@ fail() {
     exit 1
 }
 
-grep -Fq 'stop_grace_period: 45s' "$ROOT_DIR/docker-compose.yml" \
+NODE_SHUTDOWN_DEADLINE_SECS=60
+grace_line="$(grep -oE 'stop_grace_period: [0-9]+s' "$ROOT_DIR/docker-compose.yml" | head -1)"
+[ -n "$grace_line" ] || fail "docker-compose.yml must declare stop_grace_period"
+grace_secs="$(printf '%s' "$grace_line" | grep -oE '[0-9]+')"
+[ "$grace_secs" -gt "$NODE_SHUTDOWN_DEADLINE_SECS" ] \
     || fail "Docker stop grace period must exceed the node shutdown deadline"
 
 assert_contains() {

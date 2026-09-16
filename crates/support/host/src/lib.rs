@@ -92,6 +92,27 @@ fn encode_guest_input(input: &ComputeGuestInput) -> Result<Vec<u8>, Error> {
     serialize(input).context("Failed to serialize guest input")
 }
 
+fn encode_boundless_input(
+    input: &[u8],
+    encoding: Option<&str>,
+    program_url: Option<&str>,
+) -> Result<Vec<u8>> {
+    match encoding {
+        None | Some("bincode") => Ok(input.to_vec()),
+        Some("risc0-serde") => {
+            anyhow::ensure!(
+                program_url.is_some_and(|url| !url.is_empty()),
+                "BOUNDLESS_INPUT_ENCODING=risc0-serde requires PROGRAM_URL for a compatible guest"
+            );
+            // Older deployed guests decode a RISC Zero byte vector before decoding bincode.
+            Ok(bytemuck::pod_collect_to_vec(&risc0_zkvm::serde::to_vec(
+                input,
+            )?))
+        }
+        Some(_) => anyhow::bail!("BOUNDLESS_INPUT_ENCODING must be bincode or risc0-serde"),
+    }
+}
+
 /// Dev mode: return fake proof without executing
 fn fake_prove(
     input: &ComputeInput,
@@ -306,9 +327,17 @@ async fn boundless_prove_inner(
         domain: domain.clone(),
         input: input.clone(),
     };
-    let input_bytes = encode_guest_input(&guest_input)?;
-
     let program_url = std::env::var("PROGRAM_URL").ok();
+    let input_encoding = match std::env::var("BOUNDLESS_INPUT_ENCODING") {
+        Ok(value) => Some(value),
+        Err(std::env::VarError::NotPresent) => None,
+        Err(error) => return Err(error).context("Failed to read BOUNDLESS_INPUT_ENCODING"),
+    };
+    let input_bytes = encode_boundless_input(
+        &encode_guest_input(&guest_input)?,
+        input_encoding.as_deref(),
+        program_url.as_deref(),
+    )?;
     let stdin_size = input_bytes.len();
 
     let request = if let Some(ref url) = program_url {
@@ -656,6 +685,76 @@ mod tests {
             input.input.fhe_inputs.ciphertexts
         );
         assert_eq!(legacy.len(), encoded.len() * 4 + 4);
+    }
+
+    #[test]
+    fn boundless_input_encoding_preserves_default() {
+        let input = [0, 127, 255];
+        for program_url in [None, Some("https://example.org/program.bin")] {
+            for encoding in [None, Some("bincode")] {
+                assert_eq!(
+                    encode_boundless_input(&input, encoding, program_url).unwrap(),
+                    input
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn boundless_input_encoding_matches_legacy_guest() {
+        let input = [0, 127, 255];
+        let encoded = encode_boundless_input(
+            &input,
+            Some("risc0-serde"),
+            Some("https://example.org/program.bin"),
+        )
+        .unwrap();
+        assert_eq!(
+            encoded,
+            [3, 0, 0, 0, 0, 0, 0, 0, 127, 0, 0, 0, 255, 0, 0, 0]
+        );
+        let decoded: Vec<u8> = risc0_zkvm::serde::from_slice(&encoded).unwrap();
+        assert_eq!(decoded, input);
+    }
+
+    #[test]
+    fn boundless_input_encoding_rejects_invalid_configuration() {
+        for program_url in [None, Some("")] {
+            assert!(encode_boundless_input(&[], Some("risc0-serde"), program_url).is_err());
+        }
+        for encoding in ["", "unknown"] {
+            assert!(
+                encode_boundless_input(&[], Some(encoding), Some("https://example.org")).is_err()
+            );
+        }
+    }
+
+    #[test]
+    #[ignore = "requires an external guest and its raw bincode input"]
+    fn configured_guest_matches_host_journal() {
+        let guest = std::fs::read(std::env::var("RISC0_TEST_GUEST").unwrap()).unwrap();
+        let input = std::fs::read(std::env::var("RISC0_TEST_INPUT").unwrap()).unwrap();
+        let expected_image_id = std::env::var("RISC0_TEST_IMAGE_ID").unwrap();
+        assert_eq!(
+            risc0_zkvm::compute_image_id(&guest).unwrap().to_string(),
+            expected_image_id
+        );
+        let decoded: ComputeGuestInput = deserialize(&input).unwrap();
+        let expected = ComputeJournal::new(
+            decoded.domain,
+            decoded.input.process(fhe_processor, policy()).unwrap(),
+        )
+        .unwrap();
+        let encoding = std::env::var("BOUNDLESS_INPUT_ENCODING").ok();
+        let stdin =
+            encode_boundless_input(&input, encoding.as_deref(), Some("external-guest")).unwrap();
+        let env = ExecutorEnv::builder().write_slice(&stdin).build().unwrap();
+        let session = risc0_zkvm::default_executor().execute(env, &guest).unwrap();
+        assert_eq!(session.journal.bytes, encode_journal(&expected).unwrap());
+        println!(
+            "Guest execution matches all host journal fields; input root: {}",
+            hex::encode(expected.merkle_root)
+        );
     }
 
     #[test]

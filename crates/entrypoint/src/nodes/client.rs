@@ -4,14 +4,17 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use reqwest::Client;
 use std::env;
+use std::time::Duration;
 use tracing::{error, trace};
 
 use crate::helpers::termtable::print_table;
 
-use super::nodes::{spawn_process, Action, ProcessStatus, Query, SERVER_ADDRESS};
+use super::nodes::{spawn_detached_process, Action, ProcessStatus, Query, SERVER_ADDRESS};
+
+const DAEMON_START_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub async fn get_status() -> Result<Query> {
     let client = Client::new();
@@ -124,10 +127,29 @@ pub async fn start_daemon(
         args.push(exclude.join(","));
     }
 
-    // Start and forget
-    spawn_process(&interfold_bin, args).await?;
+    let mut child = spawn_detached_process(&interfold_bin, args).await?;
+
+    if tokio::time::timeout(DAEMON_START_TIMEOUT, wait_until_ready())
+        .await
+        .is_err()
+    {
+        if let Ok(Some(status)) = child.try_wait() {
+            bail!("Daemon exited during startup with {status}");
+        }
+        let _ = child.kill().await;
+        bail!(
+            "Daemon did not become ready on {SERVER_ADDRESS} within {} seconds",
+            DAEMON_START_TIMEOUT.as_secs()
+        );
+    }
 
     tracing::info!("Daemon started successfully");
 
     Ok(())
+}
+
+async fn wait_until_ready() {
+    while !is_ready().await.unwrap_or(false) {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }

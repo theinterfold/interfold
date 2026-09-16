@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::time::Duration;
 
-pub const AGGREGATOR_FAILOVER_SCHEMA_VERSION: u16 = 2;
+pub const AGGREGATOR_FAILOVER_SCHEMA_VERSION: u16 = 3;
 const LEGACY_EARLY_TIMER_SCHEMA_VERSION: u16 = 1;
 
 /// A durable timer. Its phase and active party identify the pending work. The
@@ -108,7 +108,7 @@ pub struct ExpectedFailoverDeadline {
 /// Return the pending aggregator phase represented by a canonical E3 stage.
 pub fn phase_for_stage(stage: &E3Stage) -> Option<AggregatorPhase> {
     match stage {
-        E3Stage::CommitteeFinalized => Some(AggregatorPhase::PublicKey),
+        E3Stage::CommitteeFinalized => Some(AggregatorPhase::DkgRoster),
         E3Stage::CiphertextReady => Some(AggregatorPhase::Plaintext),
         _ => None,
     }

@@ -10,9 +10,6 @@ impl PublicKeyAggregator {
         &mut self,
         effects_context: EventContext<Sequenced>,
     ) -> Result<()> {
-        if !self.can_run_aggregation_effects() {
-            return Ok(());
-        }
         let recovery = self.recovery.try_get()?;
         ensure!(
             recovery.schema_version == PUBLIC_KEY_AGGREGATOR_RECOVERY_SCHEMA_VERSION,
@@ -20,16 +17,31 @@ impl PublicKeyAggregator {
             recovery.schema_version,
             self.e3_id
         );
-        let Some(state) = self.state.get() else {
+        let Some(mut state) = self.state.get() else {
             return Ok(());
         };
 
+        if matches!(state, PublicKeyAggregatorState::Collecting { .. }) {
+            if let Some(selected) = recovery.selected_roster.as_ref() {
+                self.state.try_mutate(&effects_context, |state| {
+                    PublicKeyAggregation::begin_selected_c1(state, Some(selected))
+                })?;
+                state = self
+                    .state
+                    .get()
+                    .ok_or_else(|| anyhow::anyhow!("public-key aggregation state disappeared"))?;
+                self.publish_inputs_ready(effects_context.clone())?;
+            }
+        }
+
+        if !self.can_run_aggregation_effects() {
+            return Ok(());
+        }
+
         match state {
-            PublicKeyAggregatorState::VerifyingC1 {
-                submission_order,
-                c1_proofs,
-                ..
-            } => self.dispatch_c1_verification(&submission_order, &c1_proofs, effects_context),
+            PublicKeyAggregatorState::VerifyingC1 { .. } => {
+                self.continue_c1_verification(effects_context)
+            }
             PublicKeyAggregatorState::GeneratingC5Proof {
                 public_key,
                 keyshare_bytes,

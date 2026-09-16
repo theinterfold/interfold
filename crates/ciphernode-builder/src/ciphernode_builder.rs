@@ -31,18 +31,21 @@ use e3_events::{
 };
 use e3_evm::{
     ensure_node_release, fetch_accusation_vote_validity, fetch_randomness_providers,
-    BondingRegistrySolReader, CiphernodeRegistrySol, CiphernodeRegistrySolReader,
-    DataAvailabilityCoordinator, DataAvailabilityRepositoryFactory, EvmChainGatewayHandle,
-    InterfoldSolReader, InterfoldSolWriter, ProviderConfig, RandomnessProviderSolReader,
-    SlashingManagerSolReader, SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
+    read_canonical_dkg_timing, BondingRegistrySolReader, CiphernodeRegistrySol,
+    CiphernodeRegistrySolReader, DataAvailabilityCoordinator, DataAvailabilityRepositoryFactory,
+    EvmChainGatewayHandle, GatewayFailureReceiver, InterfoldSolReader, InterfoldSolWriter,
+    ProviderConfig, RandomnessProviderSolReader, SlashingManagerSolReader,
+    SlashingManagerSolWriter, SlashingWriterRepositoryFactory,
 };
 use e3_fhe::ext::FheExtension;
 use e3_keyshare::ext::ThresholdKeyshareExtension;
+use e3_keyshare::DkgTimingReader;
 use e3_logger::attach_protocol_logger;
 use e3_multithread::{Multithread, MultithreadReport, TaskPool};
 use e3_net::{
-    create_channel_bridge_with_application_event_capacity, setup_libp2p_keypair,
-    setup_net_interface, setup_net_with_limits_and_interests, NetRepositoryFactory, NetworkPolicy,
+    create_channel_bridge_with_application_event_capacity, recover_document_state,
+    setup_libp2p_keypair, setup_net_interface, setup_net_with_limits_and_interests,
+    NetRepositoryFactory, NetworkPolicy,
 };
 use e3_request::{
     ensure_request_router_checkpoint, load_dkg_fold_attestation_contexts, E3LifecycleCoordinator,
@@ -60,7 +63,11 @@ use e3_utils::SharedRng;
 use e3_zk_prover::{setup_zk_actors, ZkActorRecovery, ZkBackend};
 use libp2p::PeerId;
 use std::time::Duration;
-use std::{collections::HashMap, path::PathBuf, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    path::PathBuf,
+    sync::Arc,
+};
 use tracing::{error, info, warn};
 
 #[derive(Clone, Debug)]
@@ -88,6 +95,9 @@ pub struct CiphernodeBuilder {
     address: Option<String>,
     #[cfg(feature = "test-helpers")]
     eventstore_aggregate_config_override: Option<AggregateConfig>,
+    #[cfg(feature = "test-helpers")]
+    #[derivative(Debug = "ignore")]
+    dkg_timing_reader_override: Option<DkgTimingReader>,
     chains: Vec<ChainConfig>,
     #[derivative(Debug = "ignore")]
     cipher: Arc<Cipher>,
@@ -165,6 +175,8 @@ impl CiphernodeBuilder {
             address: None,
             #[cfg(feature = "test-helpers")]
             eventstore_aggregate_config_override: None,
+            #[cfg(feature = "test-helpers")]
+            dkg_timing_reader_override: None,
             chains: vec![],
             cipher,
             contract_components: ContractComponents::default(),
@@ -265,6 +277,13 @@ impl CiphernodeBuilder {
     #[cfg(feature = "test-helpers")]
     pub fn with_eventstore_aggregate_config_for_testing(mut self, config: AggregateConfig) -> Self {
         self.eventstore_aggregate_config_override = Some(config);
+        self
+    }
+
+    /// Supply frozen timing for a synthetic E3 with no enabled chain provider.
+    #[cfg(feature = "test-helpers")]
+    pub fn with_dkg_timing_reader_for_testing(mut self, reader: DkgTimingReader) -> Self {
+        self.dkg_timing_reader_override = Some(reader);
         self
     }
 
@@ -628,8 +647,8 @@ impl CiphernodeBuilder {
         // Resolve node address and enable the bus
         let addr = provider_cache.ensure_signer().await?.address().to_string();
         let bus = event_system
-            .handle()?
-            .enable_with_hlc(event_clock(&addr, &resolved_chain_ids));
+            .enable_handle_with_hlc(event_clock(&addr, &resolved_chain_ids))
+            .await?;
 
         if self.logging {
             let logger_name = self.name.as_deref().unwrap_or("ciphernode");
@@ -712,6 +731,16 @@ impl CiphernodeBuilder {
 
         // Setup networking
         let network = self.network_policy(&resolved_chain_ids)?;
+        let recovered_documents = recover_document_state(
+            &seq_eventstore,
+            &eventstore_aggregate_config
+                .indexed_ids()
+                .into_iter()
+                .map(AggregateId::new)
+                .collect::<Vec<_>>(),
+            &selected_party_ids.keys().cloned().collect::<HashSet<_>>(),
+        )
+        .await?;
         let (peer_id, interface, net_kind) = self.setup_networking(&store, &network).await?;
         let network_status = interface.status();
         let net_buffer = setup_net_with_limits_and_interests(
@@ -722,6 +751,7 @@ impl CiphernodeBuilder {
             self.max_buffered_net_events,
             self.max_buffered_net_bytes,
             selected_party_ids,
+            recovered_documents,
         )?;
 
         // Attach the request router after network startup is registered. Recovered local
@@ -729,18 +759,35 @@ impl CiphernodeBuilder {
         e3_builder.build().await?;
 
         // Run the sync routine
-        tokio::try_join!(
-            sync_with_net_ready(
-                &bus,
-                &evm_config,
-                &repositories,
-                &aggregate_config,
-                &seq_eventstore,
-                net_ready,
-            ),
-            wait_for_evm_gateways(evm_gateways),
-            net_buffer.wait_until_running(),
-        )?;
+        let gateway_failures: Vec<GatewayFailureReceiver> = evm_gateways
+            .iter()
+            .map(EvmChainGatewayHandle::failure_receiver)
+            .collect();
+        let mut persistence_health = event_system.failure_receiver();
+        tokio::select! {
+            result = async { tokio::try_join!(
+                sync_with_net_ready(
+                    &bus,
+                    &evm_config,
+                    &repositories,
+                    &aggregate_config,
+                    &seq_eventstore,
+                    net_ready,
+                ),
+                wait_for_evm_gateways(evm_gateways),
+                net_buffer.wait_until_running(),
+            ) } => { result?; }
+            failure = async {
+                loop {
+                    if let Some(reason) = persistence_health.borrow_and_update().clone() {
+                        break reason;
+                    }
+                    if persistence_health.changed().await.is_err() {
+                        break "event storage health monitor stopped".to_string();
+                    }
+                }
+            } => anyhow::bail!("fatal event storage failure during startup: {failure}"),
+        }
 
         Ok(CiphernodeHandle {
             address: addr.to_owned(),
@@ -753,6 +800,8 @@ impl CiphernodeBuilder {
             network_status,
             eventstore,
             aggregate_ids: eventstore_aggregate_config.indexed_ids(),
+            persistence_health: event_system.failure_receiver(),
+            gateway_failures,
         })
     }
 
@@ -948,15 +997,18 @@ impl CiphernodeBuilder {
             .await?
             .map(|state| state.e3_cache)
             .unwrap_or_default();
-        let zk_recovery = ZkActorRecovery::new(
+        let mut zk_recovery = ZkActorRecovery::new(
             persisted_committees.clone(),
             persisted_e3_metadata,
             dkg_fold_contexts_by_e3.clone(),
         );
+        zk_recovery
+            .hydrate_node_proofs(&repositories, lifecycle_stages)
+            .await?;
 
         // ── Threshold keyshare + ZK actors ──
         if let Some(KeyshareKind::Threshold) = self.keyshare {
-            let _ = self.ensure_multithread(bus, lifecycle_stages);
+            let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
             let backend = self
                 .zk_backend
                 .as_ref()
@@ -965,11 +1017,14 @@ impl CiphernodeBuilder {
             let _signer = provider_cache.ensure_signer().await?;
 
             let mut interfold_addresses = HashMap::new();
+            let mut dkg_chain_readers = HashMap::new();
             for chain in self.chains.iter().filter(|c| c.enabled.unwrap_or(true)) {
                 let provider = provider_cache.ensure_read_provider(chain).await?;
                 let chain_id = provider.chain_id();
                 validate_chain_id(chain, chain_id)?;
-                interfold_addresses.insert(chain_id, chain.contracts.interfold.address()?);
+                let contract_address = chain.contracts.interfold.address()?;
+                interfold_addresses.insert(chain_id, contract_address);
+                dkg_chain_readers.insert(chain_id, (provider, contract_address));
             }
             for chain in self.chains.iter().filter(|c| !c.enabled.unwrap_or(true)) {
                 if let Some(chain_id) = chain.chain_id {
@@ -977,12 +1032,39 @@ impl CiphernodeBuilder {
                 }
             }
 
+            let dkg_timing_reader: DkgTimingReader = Arc::new(move |e3_id| {
+                let chain = dkg_chain_readers.get(&e3_id.chain_id()).cloned();
+                Box::pin(async move {
+                    let (provider, contract_address) = chain.ok_or_else(|| {
+                        anyhow::anyhow!("no DKG timing reader for chain {}", e3_id.chain_id())
+                    })?;
+                    let timing =
+                        read_canonical_dkg_timing(&provider, contract_address, &e3_id).await?;
+                    Ok((timing.deadline_unix_secs, timing.window_secs))
+                })
+            });
+            #[cfg(feature = "test-helpers")]
+            let dkg_timing_reader = match &self.dkg_timing_reader_override {
+                Some(reader) => {
+                    ensure!(
+                        self.chains
+                            .iter()
+                            .all(|chain| !chain.enabled.unwrap_or(true)),
+                        "test DKG timing reader requires all chain providers to be disabled"
+                    );
+                    reader.clone()
+                }
+                None => dkg_timing_reader,
+            };
+
             info!("Setting up ThresholdKeyshareExtension");
             e3_builder = e3_builder.with(ThresholdKeyshareExtension::create(
                 bus,
                 &self.cipher,
                 addr,
                 interfold_addresses,
+                dkg_timing_reader,
+                _signer.clone(),
             ));
 
             info!("Setting up ZK actors");
@@ -993,6 +1075,7 @@ impl CiphernodeBuilder {
                 dkg_fold_context_by_chain.clone(),
                 zk_recovery.clone(),
                 self.proof_aggregation_enabled,
+                repositories.clone(),
             );
         }
 
@@ -1002,7 +1085,7 @@ impl CiphernodeBuilder {
             e3_builder = e3_builder.with(FheExtension::create(bus, &self.rng));
 
             info!("Setting up PublicKeyAggregationExtension");
-            let _ = self.ensure_multithread(bus, lifecycle_stages);
+            let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
             e3_builder = e3_builder.with(PublicKeyAggregatorExtension::create(bus));
 
             if self.keyshare.is_none() {
@@ -1019,6 +1102,7 @@ impl CiphernodeBuilder {
                     dkg_fold_context_by_chain.clone(),
                     zk_recovery,
                     self.proof_aggregation_enabled,
+                    repositories.clone(),
                 );
             }
         }
@@ -1026,7 +1110,7 @@ impl CiphernodeBuilder {
         // ── Threshold plaintext aggregation ──
         if self.threshold_plaintext_agg {
             info!("Setting up ThresholdPlaintextAggregatorExtension");
-            let _ = self.ensure_multithread(bus, lifecycle_stages);
+            let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
             e3_builder = e3_builder.with(ThresholdPlaintextAggregatorExtension::create(
                 bus,
                 sortition,
@@ -1058,6 +1142,7 @@ impl CiphernodeBuilder {
             info!("Setting up CommitmentConsistencyCheckerExtension");
             e3_builder = e3_builder.with(CommitmentConsistencyCheckerExtension::create(
                 bus,
+                &repositories.store,
                 e3_zk_prover::default_links,
             ));
         }
@@ -1122,6 +1207,7 @@ impl CiphernodeBuilder {
     fn ensure_multithread(
         &mut self,
         bus: &BusHandle,
+        task_scope: &str,
         lifecycle_stages: &HashMap<E3id, E3Stage>,
     ) -> Addr<Multithread> {
         if let Some(cached) = self.multithread_cache.clone() {
@@ -1144,6 +1230,7 @@ impl CiphernodeBuilder {
                 self.rng.clone(),
                 self.cipher.clone(),
                 task_pool,
+                task_scope.to_owned(),
                 self.multithread_report.clone(),
                 backend,
                 lifecycle_stages.clone(),
@@ -1154,6 +1241,7 @@ impl CiphernodeBuilder {
                 self.rng.clone(),
                 self.cipher.clone(),
                 task_pool,
+                task_scope.to_owned(),
                 self.multithread_report.clone(),
                 lifecycle_stages.clone(),
             )
@@ -1389,10 +1477,12 @@ async fn setup_evm_system(
             }
             for randomness_address in randomness_addresses {
                 let randomness_read_provider = provider.clone();
+                let randomness_provider_factory = provider_factory.clone();
                 system.with_contract(randomness_address, move |next| {
-                    RandomnessProviderSolReader::setup(
+                    RandomnessProviderSolReader::setup_with_factory(
                         &next,
                         randomness_read_provider,
+                        Some(randomness_provider_factory),
                         contract_address,
                     )
                     .recipient()

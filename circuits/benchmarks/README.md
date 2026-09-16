@@ -36,7 +36,7 @@ test, gas-extraction script, and report will all pick it up automatically.
 | ------------------- | --- | --- | --- |
 | `minimum` (default) | 3   | 1   | 2   |
 | `micro`             | 9   | 4   | 5   |
-| `small`             | 19  | 9   | 10  |
+| `small`             | 19  | 9   | 14  |
 
 **Step-by-step** (from repository root):
 

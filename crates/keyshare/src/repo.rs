@@ -15,6 +15,7 @@ pub trait ThresholdKeyshareRepositoryFactory {
         &self,
         e3_id: &E3id,
     ) -> Repository<ThresholdKeyshareRecoveryState>;
+    fn threshold_keyshare_recovery_payloads(&self, e3_id: &E3id) -> e3_data::DataStore;
 }
 
 impl ThresholdKeyshareRepositoryFactory for Repositories {
@@ -30,5 +31,10 @@ impl ThresholdKeyshareRepositoryFactory for Repositories {
             self.store
                 .scope(StoreKeys::threshold_keyshare_recovery(e3_id)),
         )
+    }
+
+    fn threshold_keyshare_recovery_payloads(&self, e3_id: &E3id) -> e3_data::DataStore {
+        self.store
+            .base(StoreKeys::threshold_keyshare_recovery_payloads(e3_id))
     }
 }

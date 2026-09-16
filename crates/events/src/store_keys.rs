@@ -21,6 +21,10 @@ impl StoreKeys {
         format!("//threshold_keyshare_recovery/v1/{e3_id}")
     }
 
+    pub fn threshold_keyshare_recovery_payloads(e3_id: &E3id) -> String {
+        format!("//threshold_keyshare_recovery_payloads/v1/{e3_id}")
+    }
+
     pub fn plaintext(e3_id: &E3id) -> String {
         format!("//plaintext/{e3_id}")
     }
@@ -49,8 +53,25 @@ impl StoreKeys {
         format!("//dkg_fold_attestation_context/{e3_id}")
     }
 
+    pub fn node_dkg_fold_recovery() -> String {
+        String::from("//node_dkg_fold/recovery/v1")
+    }
+
+    pub fn node_dkg_inner_proof(e3_id: &E3id, seq: usize) -> String {
+        format!("//node_dkg_fold/proofs/{e3_id}/{seq}")
+    }
+
+    pub fn node_dkg_fold_meta(e3_id: &E3id) -> String {
+        format!("//node_dkg_fold/meta/{e3_id}")
+    }
+
     pub fn context(e3_id: &E3id) -> String {
         format!("//context/{e3_id}")
+    }
+
+    /// Durable state for the per-E3 commitment-consistency checker.
+    pub fn commitment_consistency(e3_id: &E3id) -> String {
+        format!("//commitment_consistency/v1/{e3_id}")
     }
 
     pub fn router() -> String {

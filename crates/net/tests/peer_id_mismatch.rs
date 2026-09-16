@@ -6,12 +6,8 @@
 
 //! Integration test for stale peer ID handling.
 //!
-//! Reproduces the scenario where a node restarts with new keys: other nodes
-//! still hold a multiaddr pinning the old `/p2p/<peer-id>`, so dialing it
-//! fails with `DialError::WrongPeerId`. The expected behaviour is that the
-//! stale routing entry is replaced exactly once (no retry storm, no
-//! bootstrap-fueled redial loop) and the dialer then connects to the node
-//! under its new identity via the re-keyed routing entry.
+//! Verify that an explicit `/p2p/<peer-id>` bootstrap address pins the remote
+//! identity. A node at that endpoint cannot replace the configured identity.
 
 use std::time::Duration;
 
@@ -36,7 +32,7 @@ fn is_wrong_peer_id(event: &NetEvent) -> bool {
 }
 
 #[tokio::test]
-async fn stale_peer_id_is_replaced_once_and_connection_recovers() -> Result<()> {
+async fn configured_peer_id_mismatch_is_rejected() -> Result<()> {
     let _ = tracing_subscriber::fmt()
         .with_env_filter(
             tracing_subscriber::EnvFilter::try_from_default_env()
@@ -71,11 +67,11 @@ async fn stale_peer_id_is_replaced_once_and_connection_recovers() -> Result<()> 
     let mut rx_a = handle_a.rx();
     tokio::spawn(async move { node_a.start().await });
 
-    // Phase 1: the dial must fail with WrongPeerId, then A must recover and
-    // connect to B under its real identity through the corrected direct dial.
+    // The dial must fail with WrongPeerId. A must not connect to B under the
+    // unexpected identity.
     let mut mismatches = 0usize;
     let mut connected = false;
-    timeout(Duration::from_secs(30), async {
+    let _ = timeout(Duration::from_secs(10), async {
         loop {
             let event = rx_a.recv().await?;
             if is_wrong_peer_id(&event) {
@@ -83,41 +79,17 @@ async fn stale_peer_id_is_replaced_once_and_connection_recovers() -> Result<()> 
             }
             if matches!(event, NetEvent::ConnectionEstablished { .. }) {
                 connected = true;
-                break;
             }
         }
+        #[allow(unreachable_code)]
         anyhow::Ok(())
     })
-    .await
-    .expect("timed out waiting for A to recover and connect to B")?;
+    .await;
 
-    assert!(connected, "A should connect to B under its new identity");
+    assert!(!connected, "A must reject B's unexpected identity");
     assert_eq!(
         mismatches, 1,
-        "stale routing entry should be replaced after a single WrongPeerId"
-    );
-
-    // Phase 2: quiet window. The old behaviour redialed the stale address
-    // (dialer retries every ~3s + bootstrap loop), flooding WrongPeerId
-    // errors. After the fix there must be no further mismatches.
-    let extra_mismatches = {
-        let mut count = 0usize;
-        let _ = timeout(Duration::from_secs(10), async {
-            loop {
-                let event = rx_a.recv().await?;
-                if is_wrong_peer_id(&event) {
-                    count += 1;
-                }
-            }
-            #[allow(unreachable_code)]
-            anyhow::Ok(())
-        })
-        .await; // timeout here is the success path
-        count
-    };
-    assert_eq!(
-        extra_mismatches, 0,
-        "no further WrongPeerId errors should occur after the entry is replaced"
+        "the pinned address should produce one terminal identity mismatch"
     );
 
     handle_a.tx().send(NetCommand::Shutdown).await?;

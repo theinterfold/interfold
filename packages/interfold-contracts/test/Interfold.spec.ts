@@ -39,6 +39,11 @@ describe("Interfold", function () {
 
   const inputWindowDuration = 300;
 
+  const freshInputWindow = async (): Promise<[number, number]> => {
+    const now = await time.latest();
+    return [now + inputWindowDuration, now + 2 * inputWindowDuration];
+  };
+
   const setup = async () => {
     const sys = await deployInterfoldSystem({ wireSlashingManager: true });
     firstE3Id = await sys.interfold.nexte3Id();
@@ -257,10 +262,11 @@ describe("Interfold", function () {
 
     it("returns correct E3 details", async function () {
       const { interfold, request, usdcToken } = await loadFixture(setup);
+      const inputWindow = await freshInputWindow();
 
       await makeRequest(interfold, usdcToken, {
         committeeSize: request.committeeSize,
-        inputWindow: request.inputWindow,
+        inputWindow,
         e3Program: request.e3Program,
         paramSet: request.paramSet,
         computeProviderParams: request.computeProviderParams,
@@ -270,8 +276,8 @@ describe("Interfold", function () {
       const e3 = await interfold.getE3(firstE3Id);
 
       expect(e3.committeeSize).to.equal(request.committeeSize);
-      expect(e3.inputWindow[0]).to.equal(request.inputWindow[0]);
-      expect(e3.inputWindow[1]).to.equal(request.inputWindow[1]);
+      expect(e3.inputWindow[0]).to.equal(inputWindow[0]);
+      expect(e3.inputWindow[1]).to.equal(inputWindow[1]);
       expect(e3.e3Program).to.equal(request.e3Program);
       expect(e3.paramSet).to.equal(request.paramSet);
       expect(await interfold.e3CryptoConfigIds(firstE3Id)).to.equal(
@@ -471,7 +477,15 @@ describe("Interfold", function () {
       const e3ProgramAddress = await e3Program.getAddress();
 
       await usdcToken.approve(await interfold.getAddress(), ethers.MaxUint256);
-      await interfold.request(request);
+      const firstRequestTime = await time.latest();
+      const requestBeforeUnregister = {
+        ...request,
+        inputWindow: [
+          firstRequestTime + inputWindowDuration,
+          firstRequestTime + 2 * inputWindowDuration,
+        ] as [number, number],
+      };
+      await interfold.request(requestBeforeUnregister);
       expect((await interfold.getE3(firstE3Id)).e3Program).to.equal(
         e3ProgramAddress,
       );
@@ -493,12 +507,12 @@ describe("Interfold", function () {
       await expect(interfold.unregisterE3Program(e3ProgramAddress))
         .to.be.revertedWithCustomError(interfold, "E3ProgramNotAllowed")
         .withArgs(e3ProgramAddress);
-      const requestTime = await time.latest();
+      const secondRequestTime = await time.latest();
       const requestAfterUnregister = {
         ...request,
         inputWindow: [
-          requestTime + 60,
-          requestTime + 60 + inputWindowDuration,
+          secondRequestTime + inputWindowDuration,
+          secondRequestTime + 2 * inputWindowDuration,
         ] as [number, number],
       };
       await expect(interfold.request(requestAfterUnregister))
@@ -511,14 +525,22 @@ describe("Interfold", function () {
     it("rejects a fee token that differs from the accepted quote", async function () {
       const { interfold, request } = await loadFixture(setup);
       await expect(
-        interfold.request({ ...request, expectedFeeToken: AddressTwo }),
+        interfold.request({
+          ...request,
+          inputWindow: await freshInputWindow(),
+          expectedFeeToken: AddressTwo,
+        }),
       ).to.be.revertedWithCustomError(interfold, "FeeTokenChanged");
     });
 
     it("rejects a quote above the requester's fee limit", async function () {
       const { interfold, request } = await loadFixture(setup);
       await expect(
-        interfold.request({ ...request, maxFee: 0 }),
+        interfold.request({
+          ...request,
+          inputWindow: await freshInputWindow(),
+          maxFee: 0,
+        }),
       ).to.be.revertedWithCustomError(interfold, "FeeExceedsMaximum");
     });
 
@@ -527,6 +549,7 @@ describe("Interfold", function () {
       await expect(
         interfold.request({
           ...request,
+          inputWindow: await freshInputWindow(),
           expectedCryptoConfigId: ethers.ZeroHash,
         }),
       ).to.be.revertedWithCustomError(interfold, "CryptoConfigChanged");
@@ -537,7 +560,7 @@ describe("Interfold", function () {
       await expect(
         interfold.request({
           committeeSize: request.committeeSize,
-          inputWindow: request.inputWindow,
+          inputWindow: await freshInputWindow(),
           e3Program: request.e3Program,
           paramSet: request.paramSet,
           computeProviderParams: request.computeProviderParams,

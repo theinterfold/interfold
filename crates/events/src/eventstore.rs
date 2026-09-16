@@ -5,19 +5,25 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
-    events::{FlushEventStores, StoreEventRequested, StoreEventResponse},
+    events::{EventStoreClockFloor, FlushEventStores, StoreEventRequested, StoreEventResponse},
     Event, EventContextAccessors, EventLog, EventStoreFilter, EventStoreQueryBy,
     EventStoreQueryResponse, InterfoldEvent, Seq, SequenceIndex, Sequenced, Ts, Unsequenced,
 };
-use actix::{Actor, AsyncContext, Handler, Recipient, WrapFuture};
+use actix::{Actor, ActorContext, AsyncContext, Handler, Recipient, WrapFuture};
 use anyhow::{bail, Context as _, Result};
+use tokio::sync::watch;
 use tracing::{error, warn};
 
 const INDEX_RECONCILE_PAGE_SIZE: usize = 1_024;
+const INDEX_RECONCILE_PAGE_BYTES: usize = 256 * 1024 * 1024;
+const FILTER_SCAN_PAGE_SIZE: usize = 1_024;
+const FILTER_SCAN_PAGE_BYTES: usize = 256 * 1024 * 1024;
 
 pub struct EventStore<I: SequenceIndex, L: EventLog> {
     index: I,
     log: L,
+    max_timestamp: Option<u128>,
+    failure_signal: Option<watch::Sender<Option<String>>>,
 }
 
 impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
@@ -66,7 +72,14 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
             );
         }
         let seq = self.log.append(&event)?;
+        // The sequencer broadcasts only after this method returns. Sync the
+        // source-of-truth log first; the derived timestamp index is rebuilt on
+        // startup if a crash happens before its insert reaches disk.
+        self.log
+            .flush()
+            .context("failed to sync event before dispatch")?;
         self.index.insert(ts, seq)?;
+        self.max_timestamp = Some(self.max_timestamp.map_or(ts, |current| current.max(ts)));
         Ok(Some(event.into_sequenced(seq)))
     }
 
@@ -93,6 +106,60 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         }
     }
 
+    /// Apply a source filter without materializing the remaining log. The output limit applies
+    /// after filtering, while each underlying scan page remains bounded by count and bytes.
+    fn collect_filtered_bounded(
+        &self,
+        from: u64,
+        filter: &EventStoreFilter,
+        limit: usize,
+        max_bytes: Option<usize>,
+    ) -> Result<Vec<InterfoldEvent<Sequenced>>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut cursor = from;
+        let mut output = Vec::with_capacity(limit.min(FILTER_SCAN_PAGE_SIZE));
+        let mut output_bytes = 0usize;
+        loop {
+            let page = self.log.read_from_bounded_by_bytes(
+                cursor,
+                FILTER_SCAN_PAGE_SIZE,
+                max_bytes.unwrap_or(FILTER_SCAN_PAGE_BYTES),
+            )?;
+            let mut scanned = 0usize;
+            for (sequence, event) in page {
+                scanned += 1;
+                cursor = sequence
+                    .checked_add(1)
+                    .context("event-log sequence overflow during filtered query")?;
+                let matches = match filter {
+                    EventStoreFilter::Source(source) => event.get_ctx().source() == *source,
+                };
+                if !matches {
+                    continue;
+                }
+
+                let event_bytes = usize::try_from(bincode::serialized_size(&event)?)?;
+                if !output.is_empty()
+                    && max_bytes
+                        .is_some_and(|budget| output_bytes.saturating_add(event_bytes) > budget)
+                {
+                    return Ok(output);
+                }
+                output_bytes = output_bytes.saturating_add(event_bytes);
+                output.push(event.into_sequenced(sequence));
+                if output.len() >= limit {
+                    return Ok(output);
+                }
+            }
+            if scanned == 0 {
+                return Ok(output);
+            }
+        }
+    }
+
     /// Query events by timestamp. Returns events at or after the given timestamp.
     pub fn query_by_ts(
         &self,
@@ -100,17 +167,38 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         filter: Option<EventStoreFilter>,
         limit: Option<u64>,
     ) -> Result<Vec<InterfoldEvent<Sequenced>>> {
+        self.query_by_ts_with_bounds(query, filter, limit, None)
+    }
+
+    fn query_by_ts_with_bounds(
+        &self,
+        query: u128,
+        filter: Option<EventStoreFilter>,
+        limit: Option<u64>,
+        max_bytes: Option<u64>,
+    ) -> Result<Vec<InterfoldEvent<Sequenced>>> {
         let Some(seq) = self.index.seek(query)? else {
             return Ok(vec![]);
         };
-        // For unfiltered queries, push the limit down to the log implementation. Historical net
-        // sync uses this path and must not read/materialize the complete remaining history for a
-        // single remote request. A source-filtered query cannot safely apply the limit before the
-        // filter without changing its semantics, so it retains the unbounded iterator path.
-        let events = match (filter.as_ref(), limit) {
-            (None, Some(limit)) => self
+        // Push bounds down to the log implementation. For source-filtered queries, scan bounded
+        // pages until the post-filter output reaches the requested limits.
+        let events = match (filter.as_ref(), limit, max_bytes) {
+            (None, Some(limit), Some(max_bytes)) => self.log.read_from_bounded_by_bytes(
+                seq,
+                usize::try_from(limit).unwrap_or(usize::MAX),
+                usize::try_from(max_bytes).unwrap_or(usize::MAX),
+            )?,
+            (None, Some(limit), None) => self
                 .log
                 .read_from_bounded(seq, usize::try_from(limit).unwrap_or(usize::MAX))?,
+            (Some(filter), Some(limit), max_bytes) => {
+                return self.collect_filtered_bounded(
+                    seq,
+                    filter,
+                    usize::try_from(limit).unwrap_or(usize::MAX),
+                    max_bytes.map(|value| usize::try_from(value).unwrap_or(usize::MAX)),
+                )
+            }
             _ => self.log.read_from(seq)?,
         };
         let result = self.collect_events(events, filter, limit);
@@ -123,6 +211,16 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         query: u64,
         filter: Option<EventStoreFilter>,
         limit: Option<u64>,
+    ) -> Result<Vec<InterfoldEvent<Sequenced>>> {
+        self.query_by_seq_with_bounds(query, filter, limit, None)
+    }
+
+    fn query_by_seq_with_bounds(
+        &self,
+        query: u64,
+        filter: Option<EventStoreFilter>,
+        limit: Option<u64>,
+        max_bytes: Option<u64>,
     ) -> Result<Vec<InterfoldEvent<Sequenced>>> {
         // H7: the replay cursor must never point past the log head. The snapshot
         // cursor is committed atomically with its snapshot data, so a cursor ahead
@@ -141,15 +239,52 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
                  Halting; operator recovery required."
             );
         }
-        Ok(self.collect_events(self.log.read_from(query)?, filter, limit))
+        let events = match (filter.as_ref(), limit, max_bytes) {
+            (None, Some(limit), Some(max_bytes)) => self.log.read_from_bounded_by_bytes(
+                query,
+                usize::try_from(limit).unwrap_or(usize::MAX),
+                usize::try_from(max_bytes).unwrap_or(usize::MAX),
+            )?,
+            (None, Some(limit), None) => self
+                .log
+                .read_from_bounded(query, usize::try_from(limit).unwrap_or(usize::MAX))?,
+            (Some(filter), Some(limit), max_bytes) => {
+                return self.collect_filtered_bounded(
+                    query,
+                    filter,
+                    usize::try_from(limit).unwrap_or(usize::MAX),
+                    max_bytes.map(|value| usize::try_from(value).unwrap_or(usize::MAX)),
+                )
+            }
+            _ => self.log.read_from(query)?,
+        };
+        Ok(self.collect_events(events, filter, limit))
     }
 }
 
 impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
     pub fn new(index: I, log: L) -> Result<Self> {
-        let mut store = Self { index, log };
+        let mut store = Self {
+            index,
+            log,
+            max_timestamp: None,
+            failure_signal: None,
+        };
         store.reconcile_index()?;
         Ok(store)
+    }
+
+    pub fn with_failure_signal(mut self, signal: watch::Sender<Option<String>>) -> Self {
+        self.failure_signal = Some(signal);
+        self
+    }
+
+    fn report_fatal_failure(&self, error: &anyhow::Error) {
+        let detail = format!("{error:#}");
+        error!(%detail, "Unrecoverable event storage failure");
+        if let Some(signal) = &self.failure_signal {
+            signal.send_replace(Some(detail));
+        }
     }
 
     /// H5: the commitlog append and the ts→seq index insert are two non-atomic
@@ -169,7 +304,11 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
             let mut page_len = 0usize;
             for (seq, event) in self
                 .log
-                .read_from_bounded(next_sequence, INDEX_RECONCILE_PAGE_SIZE)
+                .read_from_bounded_by_bytes(
+                    next_sequence,
+                    INDEX_RECONCILE_PAGE_SIZE,
+                    INDEX_RECONCILE_PAGE_BYTES,
+                )
                 .with_context(|| {
                     format!(
                         "event log integrity failure during index reconciliation at sequence \
@@ -193,6 +332,7 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
                 }
 
                 let ts = event.ts();
+                self.max_timestamp = Some(self.max_timestamp.map_or(ts, |current| current.max(ts)));
                 match self.index.get(ts) {
                     Ok(Some(_)) => {}
                     Ok(None) => {
@@ -249,26 +389,15 @@ impl<I: SequenceIndex, L: EventLog> Actor for EventStore<I, L> {
 
 impl<I: SequenceIndex, L: EventLog> Handler<StoreEventRequested> for EventStore<I, L> {
     type Result = ();
-    fn handle(&mut self, msg: StoreEventRequested, _: &mut Self::Context) -> Self::Result {
+    fn handle(&mut self, msg: StoreEventRequested, ctx: &mut Self::Context) -> Self::Result {
         match self.store_event(msg.event) {
             Ok(Some(sequenced)) => {
                 msg.sender.do_send(StoreEventResponse(sequenced));
             }
             Ok(None) => {} // duplicate — already warned inside store_event
-            Err(e) => {
-                // The event log is the source of truth for crash recovery. If an event cannot be
-                // durably persisted (most commonly a full or read-only disk), continuing would let
-                // in-memory actors act on an event the durable log does not contain, causing silent
-                // divergence after a restart. We therefore fail-stop loudly rather than proceed.
-                error!(
-                    "Unrecoverable event storage failure: {e}. The most likely cause is a full or \
-                     read-only data disk. Free disk space / fix permissions, then restart the node \
-                     to resume from the durable event log."
-                );
-                panic!(
-                    "Unrecoverable event storage failure: {e} (likely disk full or read-only). \
-                     Halting to avoid silent state divergence; operator recovery required."
-                );
+            Err(error) => {
+                self.report_fatal_failure(&error);
+                ctx.stop();
             }
         }
     }
@@ -277,8 +406,21 @@ impl<I: SequenceIndex, L: EventLog> Handler<StoreEventRequested> for EventStore<
 impl<I: SequenceIndex, L: EventLog> Handler<FlushEventStores> for EventStore<I, L> {
     type Result = Result<()>;
 
-    fn handle(&mut self, _: FlushEventStores, _: &mut Self::Context) -> Self::Result {
-        self.log.flush()
+    fn handle(&mut self, _: FlushEventStores, ctx: &mut Self::Context) -> Self::Result {
+        let result = self.log.flush();
+        if let Err(error) = &result {
+            self.report_fatal_failure(error);
+            ctx.stop();
+        }
+        result
+    }
+}
+
+impl<I: SequenceIndex, L: EventLog> Handler<EventStoreClockFloor> for EventStore<I, L> {
+    type Result = Option<u128>;
+
+    fn handle(&mut self, _: EventStoreClockFloor, _: &mut Self::Context) -> Self::Result {
+        self.max_timestamp
     }
 }
 
@@ -288,10 +430,13 @@ impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Ts>> for EventStor
         let query = msg.query();
         let id = msg.id();
         let limit = msg.limit();
+        let max_bytes = msg.max_bytes();
         let filter = msg.filter().cloned();
         let sender = msg.sender();
-        let response =
-            EventStoreQueryResponse::from_result(id, self.query_by_ts(query, filter, limit));
+        let response = EventStoreQueryResponse::from_result(
+            id,
+            self.query_by_ts_with_bounds(query, filter, limit, max_bytes),
+        );
         ctx.wait(
             async move {
                 if let Err(error) = deliver_query_response(sender, response).await {
@@ -309,10 +454,13 @@ impl<I: SequenceIndex, L: EventLog> Handler<EventStoreQueryBy<Seq>> for EventSto
         let id = msg.id();
         let query = msg.query();
         let limit = msg.limit();
+        let max_bytes = msg.max_bytes();
         let filter = msg.filter().cloned();
         let sender = msg.sender();
-        let response =
-            EventStoreQueryResponse::from_result(id, self.query_by_seq(query, filter, limit));
+        let response = EventStoreQueryResponse::from_result(
+            id,
+            self.query_by_seq_with_bounds(query, filter, limit, max_bytes),
+        );
         ctx.wait(
             async move {
                 if let Err(error) = deliver_query_response(sender, response).await {
@@ -383,6 +531,8 @@ mod tests {
         flushes: Option<Arc<AtomicUsize>>,
         unbounded_read_calls: Option<Arc<AtomicUsize>>,
         fail_reads: bool,
+        fail_appends: bool,
+        fail_flushes: bool,
     }
 
     impl MockLog {
@@ -394,6 +544,8 @@ mod tests {
                 flushes: None,
                 unbounded_read_calls: None,
                 fail_reads: false,
+                fail_appends: false,
+                fail_flushes: false,
             }
         }
 
@@ -405,6 +557,8 @@ mod tests {
                 flushes: None,
                 unbounded_read_calls: None,
                 fail_reads: false,
+                fail_appends: false,
+                fail_flushes: false,
             }
         }
 
@@ -416,6 +570,8 @@ mod tests {
                 flushes: Some(tracker),
                 unbounded_read_calls: None,
                 fail_reads: false,
+                fail_appends: false,
+                fail_flushes: false,
             }
         }
 
@@ -432,6 +588,8 @@ mod tests {
                 flushes: None,
                 unbounded_read_calls: Some(unbounded_read_calls),
                 fail_reads: false,
+                fail_appends: false,
+                fail_flushes: false,
             }
         }
 
@@ -441,15 +599,35 @@ mod tests {
                 ..Self::new()
             }
         }
+
+        fn failing_append() -> Self {
+            Self {
+                fail_appends: true,
+                ..Self::new()
+            }
+        }
+
+        fn failing_flush() -> Self {
+            Self {
+                fail_flushes: true,
+                ..Self::new()
+            }
+        }
     }
 
     impl EventLog for MockLog {
         fn append(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<u64> {
+            if self.fail_appends {
+                bail!("simulated commit-log append failure");
+            }
             self.events.push(event.clone());
             Ok(self.events.len() as u64)
         }
 
         fn flush(&mut self) -> Result<()> {
+            if self.fail_flushes {
+                bail!("simulated commit-log flush failure");
+            }
             if let Some(flushes) = &self.flushes {
                 flushes.fetch_add(1, Ordering::SeqCst);
             }
@@ -577,6 +755,28 @@ mod tests {
     }
 
     #[test]
+    fn store_event_tracks_the_greatest_timestamp() {
+        let mut store = new_store();
+
+        store.store_event(make_local_event(300)).unwrap();
+        store.store_event(make_local_event(100)).unwrap();
+
+        assert_eq!(store.max_timestamp, Some(300));
+    }
+
+    #[test]
+    fn startup_reconciliation_restores_the_greatest_timestamp() {
+        let log = MockLog {
+            events: vec![make_local_event(300), make_local_event(100)],
+            ..MockLog::new()
+        };
+
+        let store = EventStore::new(MockIndex::new(), log).unwrap();
+
+        assert_eq!(store.max_timestamp, Some(300));
+    }
+
+    #[test]
     fn store_event_appends_to_log() {
         let mut store = new_store();
         store.store_event(make_local_event(100)).unwrap();
@@ -584,6 +784,31 @@ mod tests {
 
         let logged: Vec<_> = store.log.read_from(1).unwrap().collect();
         assert_eq!(logged.len(), 2);
+    }
+
+    #[test]
+    fn store_event_syncs_log_before_indexing() {
+        let flushes = Arc::new(AtomicUsize::new(0));
+        let mut store = EventStore::new(
+            MockIndex::new(),
+            MockLog::with_flush_tracker(Arc::clone(&flushes)),
+        )
+        .unwrap();
+
+        store.store_event(make_local_event(100)).unwrap();
+
+        assert_eq!(flushes.load(Ordering::SeqCst), 1);
+        assert_eq!(store.index.get(100).unwrap(), Some(1));
+    }
+
+    #[test]
+    fn failed_log_sync_does_not_publish_or_index_event() {
+        let mut store = EventStore::new(MockIndex::new(), MockLog::failing_flush()).unwrap();
+
+        let error = store.store_event(make_local_event(100)).unwrap_err();
+
+        assert!(error.to_string().contains("failed to sync event"));
+        assert_eq!(store.index.get(100).unwrap(), None);
     }
 
     #[actix::test]
@@ -599,6 +824,81 @@ mod tests {
         store.send(FlushEventStores).await??;
 
         assert_eq!(flushes.load(Ordering::SeqCst), 1);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn append_failure_sets_fatal_health_and_stops_actor() -> Result<()> {
+        let (signal, mut health) = tokio::sync::watch::channel(None);
+        let store = EventStore::new(MockIndex::new(), MockLog::failing_append())?
+            .with_failure_signal(signal)
+            .start();
+        let (recipient, _response) = e3_utils::actix::channel::oneshot::<StoreEventResponse>();
+
+        let _ = store
+            .send(StoreEventRequested::new(make_local_event(100), recipient))
+            .await;
+        health.changed().await?;
+        assert!(health
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .contains("simulated commit-log append failure"));
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while store.connected() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await?;
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn event_sync_failure_stops_before_dispatch() -> Result<()> {
+        let (signal, mut health) = tokio::sync::watch::channel(None);
+        let store = EventStore::new(MockIndex::new(), MockLog::failing_flush())?
+            .with_failure_signal(signal)
+            .start();
+        let (recipient, response) = e3_utils::actix::channel::oneshot::<StoreEventResponse>();
+
+        let _ = store
+            .send(StoreEventRequested::new(make_local_event(100), recipient))
+            .await;
+        health.changed().await?;
+
+        assert!(health
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .contains("failed to sync event before dispatch"));
+        assert!(
+            tokio::time::timeout(std::time::Duration::from_secs(1), response)
+                .await?
+                .is_err()
+        );
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn flush_failure_sets_fatal_health_and_stops_actor() -> Result<()> {
+        let (signal, mut health) = tokio::sync::watch::channel(None);
+        let store = EventStore::new(MockIndex::new(), MockLog::failing_flush())?
+            .with_failure_signal(signal)
+            .start();
+
+        let _ = store.send(FlushEventStores).await;
+        health.changed().await?;
+        assert!(health
+            .borrow()
+            .as_ref()
+            .unwrap()
+            .contains("simulated commit-log flush failure"));
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            while store.connected() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await?;
         Ok(())
     }
 
@@ -847,6 +1147,21 @@ mod tests {
     }
 
     #[test]
+    fn seq_query_pushes_unfiltered_limit_into_event_log() {
+        let observed_limit = Arc::new(AtomicUsize::new(0));
+        let log = MockLog::with_bounded_read_tracker(observed_limit.clone());
+        let mut store = EventStore::new(MockIndex::new(), log).unwrap();
+        for timestamp in [100, 200, 300, 400] {
+            store.store_event(make_local_event(timestamp)).unwrap();
+        }
+
+        let events = store.query_by_seq(1, None, Some(2)).unwrap();
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(observed_limit.load(Ordering::SeqCst), 2);
+    }
+
+    #[test]
     fn seq_query_with_filter_and_limit() {
         let store = populated_store(&[
             make_local_event(100),
@@ -868,6 +1183,40 @@ mod tests {
         for e in &events {
             assert_eq!(e.get_ctx().source(), EventSource::Local);
         }
+    }
+
+    #[test]
+    fn filtered_bounded_query_pages_past_non_matching_events() {
+        let mut stored = (0..FILTER_SCAN_PAGE_SIZE)
+            .map(|index| make_network_event(index as u128 + 1))
+            .collect::<Vec<_>>();
+        stored.push(make_local_event(FILTER_SCAN_PAGE_SIZE as u128 + 1));
+        let bounded_calls = Arc::new(AtomicUsize::new(0));
+        let bounded_limit = Arc::new(AtomicUsize::new(0));
+        let unbounded_calls = Arc::new(AtomicUsize::new(0));
+        let log = MockLog::with_reconcile_trackers(
+            stored,
+            bounded_calls.clone(),
+            bounded_limit,
+            unbounded_calls.clone(),
+        );
+        let store = EventStore::new(MockIndex::new(), log).unwrap();
+        bounded_calls.store(0, Ordering::SeqCst);
+        unbounded_calls.store(0, Ordering::SeqCst);
+
+        let events = store
+            .query_by_seq_with_bounds(
+                1,
+                Some(EventStoreFilter::Source(EventSource::Local)),
+                Some(1),
+                Some(1024 * 1024),
+            )
+            .unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].get_ctx().source(), EventSource::Local);
+        assert!(bounded_calls.load(Ordering::SeqCst) >= 2);
+        assert_eq!(unbounded_calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]

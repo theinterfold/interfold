@@ -96,39 +96,24 @@ async fn test_full_flow_download_circuits_prove_and_verify() {
     let result = backend.download_circuits().await;
     assert!(result.is_ok(), "download_circuits failed: {:?}", result);
 
-    // Circuit artifacts live under `{preset}/{committee}/{variant}/...` in v0.2.0+ releases.
-    let preset = BfvPreset::InsecureThreshold512;
-    let preset_dir = preset_committee_dir(&backend.circuits_dir, &preset);
-    assert!(
-        preset_dir
-            .join("default")
-            .join("dkg")
-            .join("pk")
-            .join("pk.json")
-            .exists(),
-        "expected circuit at {}/default/dkg/pk/pk.json",
-        preset_dir.display()
-    );
-    assert!(
-        preset_dir
-            .join("default")
-            .join("dkg")
-            .join("pk")
-            .join("pk.vk")
-            .exists(),
-        "expected VK at {}/default/dkg/pk/pk.vk",
-        preset_dir.display()
-    );
-    assert!(
-        preset_dir
-            .join("evm")
-            .join("dkg")
-            .join("pk")
-            .join("pk.vk")
-            .exists(),
-        "expected evm VK at {}/evm/dkg/pk/pk.vk",
-        preset_dir.display()
-    );
+    let presets = [
+        BfvPreset::InsecureThreshold512,
+        BfvPreset::SecureThreshold8192,
+    ];
+    for preset in &presets {
+        let preset_dir = preset_committee_dir(&backend.circuits_dir, preset);
+        for artifact in [
+            "default/dkg/pk/pk.json",
+            "default/dkg/pk/pk.vk",
+            "evm/dkg/pk/pk.vk",
+        ] {
+            assert!(
+                preset_dir.join(artifact).exists(),
+                "expected circuit artifact {}/{artifact}",
+                preset_dir.display()
+            );
+        }
+    }
 
     let result = backend.ensure_installed().await;
     assert!(result.is_ok(), "ensure_installed failed: {:?}", result);
@@ -140,30 +125,27 @@ async fn test_full_flow_download_circuits_prove_and_verify() {
     assert!(backend.base_dir.join("version.json").exists());
 
     let prover = ZkProver::new(&backend);
-    let artifacts_dir = preset.artifacts_dir_for_committee(RELEASE_COMMITTEE.as_str());
+    for preset in presets {
+        let artifacts_dir = preset.artifacts_dir_for_committee(RELEASE_COMMITTEE.as_str());
+        let sample =
+            PkCircuitData::generate_sample(preset).expect("sample data generation should succeed");
+        let e3_id = format!("integration-test-full-flow-{}", preset.artifacts_dir());
+        let proof = PkCircuit
+            .prove(&prover, &preset, &sample, &e3_id, &artifacts_dir)
+            .expect("proof generation should succeed");
 
-    let sample =
-        PkCircuitData::generate_sample(preset).expect("sample data generation should succeed");
+        assert!(!proof.data.is_empty(), "proof data should not be empty");
+        assert!(
+            !proof.public_signals.is_empty(),
+            "public signals should not be empty"
+        );
 
-    let e3_id = "integration-test-full-flow";
-    let proof = PkCircuit
-        .prove(&prover, &preset, &sample, e3_id, &artifacts_dir)
-        .expect("proof generation should succeed");
-
-    assert!(!proof.data.is_empty(), "proof data should not be empty");
-    assert!(
-        !proof.public_signals.is_empty(),
-        "public signals should not be empty"
-    );
-
-    let party_id = 0;
-    let verified = PkCircuit
-        .verify(&prover, &proof, e3_id, party_id, &artifacts_dir)
-        .expect("verification call should not error");
-
-    assert!(verified, "proof should verify successfully");
-
-    prover.cleanup(e3_id).unwrap();
+        let verified = PkCircuit
+            .verify(&prover, &proof, &e3_id, 0, &artifacts_dir)
+            .expect("verification call should not error");
+        assert!(verified, "proof should verify successfully");
+        prover.cleanup(&e3_id).unwrap();
+    }
 
     let temp_path = temp.path().to_path_buf();
     drop(temp);

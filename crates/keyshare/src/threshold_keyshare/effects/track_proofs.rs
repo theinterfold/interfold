@@ -80,6 +80,8 @@ impl ThresholdKeyshare {
             s.new_state(KeyshareState::AggregatingDecryptionKey(updated))
         })?;
 
+        self.maybe_publish_dkg_ready(ec)?;
+
         Ok(())
     }
 

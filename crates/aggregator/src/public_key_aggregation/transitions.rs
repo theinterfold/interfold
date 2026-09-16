@@ -26,70 +26,85 @@ pub(crate) enum HonestSelection {
 pub(crate) struct PublicKeyAggregation;
 
 impl PublicKeyAggregation {
-    /// Add a keyshare to a `Collecting` state. When every currently expected party has submitted,
-    /// this transitions to `VerifyingC1`. The expected count starts at N and decreases after an
-    /// E3-scoped exclusion. Reusing a `party_id` is idempotent.
+    /// Buffer a keyshare until the accepted C4 roster has supplied all H keyshares.
+    /// Reusing a `party_id` or receiving a keyshare after collection is idempotent.
     pub(crate) fn add_keyshare(
         mut state: PublicKeyAggregatorState,
         keyshare: ArcBytes,
         node: String,
         party_id: u64,
         c1_proof: Option<SignedProofPayload>,
+        selected_roster: Option<&BTreeSet<u64>>,
     ) -> Result<PublicKeyAggregatorState> {
         let PublicKeyAggregatorState::Collecting {
-            threshold_n,
-            threshold_m,
-            circuit_committee_n,
-            circuit_committee_h,
             keyshares,
             c1_proofs,
             nodes,
             submission_order,
+            ..
+        } = &mut state
+        else {
+            return Ok(state);
+        };
+
+        if !submission_order.iter().any(|(pid, _, _)| *pid == party_id) {
+            keyshares.insert(keyshare.clone());
+            c1_proofs.push(c1_proof);
+            nodes.insert(node.clone());
+            info!(
+                "add_keyshare: node={node} party_id={party_id} (arrival slot={})",
+                submission_order.len()
+            );
+            submission_order.push((party_id, node, keyshare));
+        }
+        Self::begin_selected_c1(state, selected_roster)
+    }
+
+    /// Start C1 only after every member of the accepted dealer roster submitted.
+    pub(crate) fn begin_selected_c1(
+        mut state: PublicKeyAggregatorState,
+        selected_roster: Option<&BTreeSet<u64>>,
+    ) -> Result<PublicKeyAggregatorState> {
+        let Some(selected) = selected_roster else {
+            return Ok(state);
+        };
+        let PublicKeyAggregatorState::Collecting {
+            threshold_m,
+            circuit_committee_n,
+            circuit_committee_h,
+            submission_order,
+            c1_proofs,
             canonical_party_nodes,
             ..
         } = &mut state
         else {
-            return Err(anyhow::anyhow!("Can only add keyshare in Collecting state"));
+            return Ok(state);
         };
-
-        if submission_order.iter().any(|(pid, _, _)| *pid == party_id) {
+        anyhow::ensure!(
+            selected.len() == *circuit_committee_h
+                && selected.iter().all(|&id| id < *circuit_committee_n as u64),
+            "invalid selected DKG roster for C1 aggregation"
+        );
+        let mut selected_submissions = Vec::with_capacity(selected.len());
+        let mut selected_proofs = Vec::with_capacity(selected.len());
+        for (entry, proof) in submission_order.iter().zip(c1_proofs.iter()) {
+            if selected.contains(&entry.0) {
+                selected_submissions.push(entry.clone());
+                selected_proofs.push(proof.clone());
+            }
+        }
+        if selected_submissions.len() < selected.len() {
             return Ok(state);
         }
-
-        keyshares.insert(keyshare.clone());
-        c1_proofs.push(c1_proof);
-        nodes.insert(node.clone());
-        info!(
-            "add_keyshare: node={node} party_id={party_id} (arrival slot={})",
-            submission_order.len()
-        );
-        submission_order.push((party_id, node, keyshare));
-        let n = *threshold_n;
-        let m = *threshold_m;
-        let committee_n = *circuit_committee_n;
-        let committee_h = *circuit_committee_h;
-        let unique_parties = submission_order.len();
-        info!(
-            "PublicKeyAggregator got keyshares {unique_parties}/{n} distinct parties (circuit_n={committee_n}, committee_h={committee_h})"
-        );
-        // Collect all N committee keyshares before C1. C5 then requires exactly H honest
-        // proofs afterward (micro had N=H so waiting for H was equivalent).
-        if unique_parties >= n {
-            info!(
-                "Collected keyshares from {unique_parties} distinct parties (>= live_n={n}, circuit_n={committee_n}), transitioning to VerifyingC1..."
-            );
-            return Ok(PublicKeyAggregatorState::VerifyingC1 {
-                submission_order: std::mem::take(submission_order),
-                threshold_m: m,
-                circuit_committee_n: committee_n,
-                circuit_committee_h: committee_h,
-                c1_proofs: std::mem::take(c1_proofs),
-                no_proof_parties: Vec::new(),
-                canonical_party_nodes: std::mem::take(canonical_party_nodes),
-            });
-        }
-
-        Ok(state)
+        Ok(PublicKeyAggregatorState::VerifyingC1 {
+            submission_order: selected_submissions,
+            threshold_m: *threshold_m,
+            circuit_committee_n: *circuit_committee_n,
+            circuit_committee_h: *circuit_committee_h,
+            c1_proofs: selected_proofs,
+            no_proof_parties: Vec::new(),
+            canonical_party_nodes: std::mem::take(canonical_party_nodes),
+        })
     }
 
     /// Split the collected keyshare submissions into parties with a C1 proof to verify and
@@ -190,7 +205,7 @@ impl PublicKeyAggregation {
     }
 
     /// Apply a committee-member expulsion to a `Collecting` state, keeping the parallel
-    /// collections aligned and transitioning to `VerifyingC1` when enough keyshares remain.
+    /// collections aligned. C1 still waits for the accepted dealer roster.
     pub(crate) fn handle_member_expelled(
         mut state: PublicKeyAggregatorState,
         node: Address,
@@ -198,13 +213,10 @@ impl PublicKeyAggregation {
         let PublicKeyAggregatorState::Collecting {
             threshold_n,
             threshold_m,
-            circuit_committee_n,
-            circuit_committee_h,
             keyshares,
             c1_proofs,
             nodes,
             submission_order,
-            canonical_party_nodes,
             ..
         } = &mut state
         else {
@@ -249,22 +261,6 @@ impl PublicKeyAggregation {
                 threshold_n, threshold_m
             );
             return Ok(state);
-        }
-
-        if keyshares.len() == *threshold_n && *threshold_n > 0 {
-            let m = *threshold_m;
-            let committee_n = *circuit_committee_n;
-            let committee_h = *circuit_committee_h;
-            info!("PublicKeyAggregator: enough keyshares after expulsion, transitioning to VerifyingC1");
-            return Ok(PublicKeyAggregatorState::VerifyingC1 {
-                submission_order: std::mem::take(submission_order),
-                threshold_m: m,
-                circuit_committee_n: committee_n,
-                circuit_committee_h: committee_h,
-                c1_proofs: std::mem::take(c1_proofs),
-                no_proof_parties: Vec::new(),
-                canonical_party_nodes: std::mem::take(canonical_party_nodes),
-            });
         }
 
         Ok(state)

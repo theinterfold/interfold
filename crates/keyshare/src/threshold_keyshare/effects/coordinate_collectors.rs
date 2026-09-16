@@ -20,23 +20,31 @@ impl ThresholdKeyshare {
         let e3_id = state.e3_id.clone();
         let threshold_n = state.threshold_n;
         let own_party_id = state.party_id;
-        let timeout = resolve_timeout(
-            DkgTimeoutPhase::ThresholdShareCollection,
-            state.dkg_started_at_unix_secs,
-        );
+        let minimum_external = CiphernodesCommitteeSize::from_threshold(
+            state.threshold_m as usize,
+            state.threshold_n as usize,
+        )?
+        .values()
+        .h
+        .saturating_sub(1);
+        let schedule =
+            resolve_threshold_share_schedule(state.dkg_deadline_unix_secs, state.dkg_window_secs)?;
         info!(
             e3_id = %e3_id,
-            timeout = ?timeout.duration,
+            cutoff_delay = ?schedule.cutoff_delay,
+            deadline_delay = ?schedule.deadline_delay,
+            cutoff_reached = schedule.cutoff_reached,
             "{}",
-            timeout.description
+            schedule.description
         );
         let addr = self.decryption_key_collector.get_or_insert_with(|| {
             ThresholdShareCollector::setup(
                 self_addr,
                 threshold_n,
                 own_party_id,
+                minimum_external,
                 e3_id,
-                timeout.duration,
+                schedule,
             )
         });
         Ok(addr.clone())
@@ -56,10 +64,18 @@ impl ThresholdKeyshare {
         );
         let e3_id = state.e3_id.clone();
         let threshold_n = state.threshold_n;
+        let minimum_keys = CiphernodesCommitteeSize::from_threshold(
+            state.threshold_m as usize,
+            state.threshold_n as usize,
+        )?
+        .values()
+        .h;
+        let own_party_id = state.party_id;
         let timeout = resolve_timeout(
             DkgTimeoutPhase::EncryptionKeyCollection,
-            state.dkg_started_at_unix_secs,
-        );
+            state.dkg_deadline_unix_secs,
+            state.dkg_window_secs,
+        )?;
         info!(
             e3_id = %e3_id,
             timeout = ?timeout.duration,
@@ -67,7 +83,14 @@ impl ThresholdKeyshare {
             timeout.description
         );
         let addr = self.encryption_key_collector.get_or_insert_with(|| {
-            EncryptionKeyCollector::setup(self_addr, threshold_n, e3_id, timeout.duration)
+            EncryptionKeyCollector::setup(
+                self_addr,
+                threshold_n,
+                minimum_keys,
+                own_party_id,
+                e3_id,
+                timeout.duration,
+            )
         });
         Ok(addr.clone())
     }
@@ -95,8 +118,9 @@ impl ThresholdKeyshare {
         let e3_id = state.e3_id.clone();
         let timeout = resolve_timeout(
             DkgTimeoutPhase::DecryptionKeySharedCollection,
-            state.dkg_started_at_unix_secs,
-        );
+            state.dkg_deadline_unix_secs,
+            state.dkg_window_secs,
+        )?;
         info!(
             e3_id = %e3_id,
             timeout = ?timeout.duration,

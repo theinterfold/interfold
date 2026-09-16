@@ -33,15 +33,16 @@
 //! [`CommitmentConsistencyViolation`]: e3_events::CommitmentConsistencyViolation
 
 use actix::{Actor, Addr, Context, Handler};
+use e3_data::Repository;
 use e3_events::{
-    BusHandle, CommitmentConsistencyCheckRequested, CommitmentLink, E3id, EventPublisher,
-    EventSubscriber, EventType, InterfoldEvent, InterfoldEventData, ProofVerificationPassed,
-    TypedEvent,
+    BusHandle, CommitmentConsistencyCheckRequested, CommitmentLink, CommitmentRosterSelected,
+    E3RequestComplete, E3id, EventContext, EventPublisher, EventSubscriber, EventType,
+    InterfoldEvent, InterfoldEventData, ProofVerificationPassed, Sequenced, TypedEvent,
 };
 use e3_utils::NotifySync;
 use tracing::{error, info};
 
-use crate::domain::commitment_consistency::CommitmentConsistency;
+use crate::domain::commitment_consistency::{CommitmentConsistency, CommitmentConsistencySnapshot};
 
 /// Per-E3 actor that enforces cross-circuit commitment consistency.
 ///
@@ -52,6 +53,8 @@ pub struct CommitmentConsistencyChecker {
     e3_id: E3id,
     /// Plain, synchronous consistency core. Owns the proof cache and links.
     consistency: CommitmentConsistency,
+    /// Durable state written atomically with each event that changes the checker.
+    snapshot_repo: Option<Repository<CommitmentConsistencySnapshot>>,
 }
 
 impl CommitmentConsistencyChecker {
@@ -65,7 +68,68 @@ impl CommitmentConsistencyChecker {
             bus: bus.clone(),
             e3_id: e3_id.clone(),
             consistency: CommitmentConsistency::new(e3_id, links, committee_h),
+            snapshot_repo: None,
         }
+    }
+
+    pub(crate) fn with_snapshot(
+        mut self,
+        repo: Repository<CommitmentConsistencySnapshot>,
+        restored: Option<CommitmentConsistencySnapshot>,
+    ) -> anyhow::Result<Self> {
+        if let Some(snapshot) = restored {
+            self.consistency.restore(snapshot)?;
+            info!(
+                e3_id = %self.e3_id,
+                proofs = self.consistency.cached_proof_count(),
+                "Restored commitment-consistency state"
+            );
+        }
+        self.snapshot_repo = Some(repo);
+        Ok(self)
+    }
+
+    fn persist(&mut self, context: &EventContext<Sequenced>) {
+        let Some(repo) = &self.snapshot_repo else {
+            return;
+        };
+        let Some(snapshot) = self.consistency.take_snapshot_if_changed() else {
+            return;
+        };
+        if let Err(err) = repo.write_with_context(&snapshot, context) {
+            self.consistency.retry_snapshot();
+            error!(
+                e3_id = %self.e3_id,
+                error = %err,
+                "Failed to persist commitment-consistency state"
+            );
+        }
+    }
+
+    fn clear_persisted(&self, context: &EventContext<Sequenced>) {
+        let Some(repo) = &self.snapshot_repo else {
+            return;
+        };
+        let store = e3_data::DataStore::from(repo);
+        if let Err(err) =
+            store.write_with_context(Option::<CommitmentConsistencySnapshot>::None, context)
+        {
+            error!(
+                e3_id = %self.e3_id,
+                error = %err,
+                "Failed to clear completed commitment-consistency state"
+            );
+        }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn cached_proof_count(&self) -> usize {
+        self.consistency.cached_proof_count()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn accepted_roster(&self) -> Option<&[u64]> {
+        self.consistency.accepted_roster()
     }
 
     pub fn setup(
@@ -81,6 +145,7 @@ impl CommitmentConsistencyChecker {
             addr.clone().into(),
         );
         bus.subscribe(EventType::ProofVerificationPassed, addr.clone().into());
+        bus.subscribe(EventType::CommitmentRosterSelected, addr.clone().into());
         addr
     }
 }
@@ -109,7 +174,47 @@ impl Handler<InterfoldEvent> for CommitmentConsistencyChecker {
             InterfoldEventData::ProofVerificationPassed(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::CommitmentRosterSelected(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
+            InterfoldEventData::E3RequestComplete(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             _ => (),
+        }
+    }
+}
+
+impl Handler<TypedEvent<E3RequestComplete>> for CommitmentConsistencyChecker {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<E3RequestComplete>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        let (data, ec) = msg.into_components();
+        if data.e3_id == self.e3_id {
+            self.clear_persisted(&ec);
+        }
+    }
+}
+
+impl Handler<TypedEvent<CommitmentRosterSelected>> for CommitmentConsistencyChecker {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<CommitmentRosterSelected>,
+        _ctx: &mut Self::Context,
+    ) -> Self::Result {
+        let (data, ec) = msg.into_components();
+        let violations = self.consistency.on_roster_selected(data);
+        self.persist(&ec);
+        for violation in violations {
+            if let Err(err) = self.bus.publish(violation, ec.clone()) {
+                error!("Failed to publish CommitmentConsistencyViolation: {err}");
+            }
         }
     }
 }
@@ -123,7 +228,9 @@ impl Handler<TypedEvent<ProofVerificationPassed>> for CommitmentConsistencyCheck
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         let (data, ec) = msg.into_components();
-        for violation in self.consistency.on_proof_verified(data) {
+        let violations = self.consistency.on_proof_verified(data);
+        self.persist(&ec);
+        for violation in violations {
             if let Err(err) = self.bus.publish(violation, ec.clone()) {
                 error!("Failed to publish CommitmentConsistencyViolation: {err}");
             }
@@ -143,6 +250,7 @@ impl Handler<TypedEvent<CommitmentConsistencyCheckRequested>> for CommitmentCons
         let Some(outcome) = self.consistency.on_check_requested(data) else {
             return;
         };
+        self.persist(&ec);
 
         for violation in outcome.violations {
             if let Err(err) = self.bus.publish(violation, ec.clone()) {
