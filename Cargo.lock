@@ -4232,7 +4232,6 @@ dependencies = [
  "rand_chacha 0.9.0",
  "rand_core 0.9.5",
  "serde",
- "sha2 0.10.9",
  "tracing",
  "zeroize",
 ]

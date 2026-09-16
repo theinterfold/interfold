@@ -3,13 +3,13 @@
 //! Large, immutable DKG recovery inputs stored outside the mutable root snapshot.
 
 use super::{RecoveryPayloadRef, ThresholdKeyshareRecoveryState};
+use alloy::primitives::keccak256;
 use anyhow::{ensure, Context, Result};
 use e3_data::DataStore;
 use e3_events::{
     EventContext, Sequenced, ThresholdShareCreated, ThresholdSharePending, TypedEvent,
 };
 use serde::{de::DeserializeOwned, Serialize};
-use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 
 const PENDING_KEY: &str = "threshold-share-pending";
@@ -137,7 +137,7 @@ impl ThresholdKeyshareRecoveryPayloads {
         let bytes = bincode::serialize(value).context("could not encode DKG recovery payload")?;
         let reference = RecoveryPayloadRef {
             encoded_len: u64::try_from(bytes.len())?,
-            digest: Sha256::digest(&bytes).into(),
+            digest: keccak256(&bytes).into(),
         };
         store.write_with_context(bytes, ec)?;
         Ok(reference)
@@ -155,7 +155,7 @@ impl ThresholdKeyshareRecoveryPayloads {
             bytes.len() as u64 == reference.encoded_len,
             "DKG recovery payload length does not match its reference"
         );
-        let digest: [u8; 32] = Sha256::digest(&bytes).into();
+        let digest: [u8; 32] = keccak256(&bytes).into();
         ensure!(
             digest == reference.digest,
             "DKG recovery payload digest does not match its reference"

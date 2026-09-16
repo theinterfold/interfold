@@ -495,7 +495,7 @@ on the active party, with new process-local correlation IDs. It re-publishes det
 idempotently. Startup fails closed if an active phase requires a recovery record that is missing or
 has an unsupported schema version.
 
-The threshold-keyshare recovery root stores only the length and SHA-256 digest of each large DKG
+The threshold-keyshare recovery root stores only the length and Keccak-256 digest of each large DKG
 work plan or dealer payload. The immutable payloads use separate per-E3 keys. Hydration verifies
 each length and digest before it resumes DKG. A node removes the work plan after its node-fold proof
 completes, removes dealer payloads after it stores the C4 proof intent and decryption key, and
