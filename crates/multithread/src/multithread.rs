@@ -95,6 +95,7 @@ pub struct Multithread {
     rng: SharedRng,
     cipher: Arc<Cipher>,
     task_pool: TaskPool,
+    task_scope: String,
     report: Option<Addr<MultithreadReport>>,
     zk_prover: Option<Arc<ZkProver>>,
 }
@@ -105,6 +106,7 @@ impl Multithread {
         rng: SharedRng,
         cipher: Arc<Cipher>,
         task_pool: TaskPool,
+        task_scope: String,
         report: Option<Addr<MultithreadReport>>,
     ) -> Self {
         Self {
@@ -112,6 +114,7 @@ impl Multithread {
             rng,
             cipher,
             task_pool,
+            task_scope,
             report,
             zk_prover: None,
         }
@@ -137,10 +140,19 @@ impl Multithread {
         rng: SharedRng,
         cipher: Arc<Cipher>,
         task_pool: TaskPool,
+        task_scope: String,
         report: Option<Addr<MultithreadReport>>,
         lifecycle_stages: HashMap<E3id, E3Stage>,
     ) -> Addr<Self> {
-        let addr = Self::new(bus.clone(), rng.clone(), cipher.clone(), task_pool, report).start();
+        let addr = Self::new(
+            bus.clone(),
+            rng.clone(),
+            cipher.clone(),
+            task_pool,
+            task_scope,
+            report,
+        )
+        .start();
 
         Self::subscribe_to_lifecycle(bus, &addr);
         ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
@@ -154,13 +166,21 @@ impl Multithread {
         rng: SharedRng,
         cipher: Arc<Cipher>,
         task_pool: TaskPool,
+        task_scope: String,
         report: Option<Addr<MultithreadReport>>,
         zk_backend: &ZkBackend,
         lifecycle_stages: HashMap<E3id, E3Stage>,
     ) -> Addr<Self> {
         let zk_prover = Arc::new(ZkProver::new(zk_backend));
-        let actor = Self::new(bus.clone(), rng.clone(), cipher.clone(), task_pool, report)
-            .with_zk_prover(zk_prover);
+        let actor = Self::new(
+            bus.clone(),
+            rng.clone(),
+            cipher.clone(),
+            task_pool,
+            task_scope,
+            report,
+        )
+        .with_zk_prover(zk_prover);
         let addr = actor.start();
         Self::subscribe_to_lifecycle(bus, &addr);
 
@@ -184,6 +204,27 @@ impl Multithread {
     pub fn create_taskpool(threads: usize, max_tasks: usize) -> TaskPool {
         TaskPool::new(threads, max_tasks)
     }
+
+    fn task_group(&self, e3_id: &E3id) -> String {
+        task_group(&self.task_scope, e3_id)
+    }
+}
+
+fn task_group(scope: &str, e3_id: &E3id) -> String {
+    format!("{scope}:{e3_id}")
+}
+
+#[cfg(test)]
+mod task_group_tests {
+    use super::*;
+
+    #[test]
+    fn shared_pool_groups_are_isolated_by_node() {
+        let e3_id = E3id::new("round", 1);
+
+        assert_ne!(task_group("node-a", &e3_id), task_group("node-b", &e3_id));
+        assert_eq!(task_group("node-a", &e3_id), task_group("node-a", &e3_id));
+    }
 }
 
 impl Actor for Multithread {
@@ -200,15 +241,15 @@ impl Handler<InterfoldEvent> for Multithread {
         match data {
             InterfoldEventData::ComputeRequest(data) => ctx.notify(TypedEvent::new(data, ec)),
             InterfoldEventData::E3Failed(data) => {
-                self.task_pool.cancel_group(&data.e3_id.to_string())
+                self.task_pool.cancel_group(&self.task_group(&data.e3_id))
             }
             InterfoldEventData::E3RequestComplete(data) => {
-                self.task_pool.cancel_group(&data.e3_id.to_string())
+                self.task_pool.cancel_group(&self.task_group(&data.e3_id))
             }
             InterfoldEventData::E3StageChanged(data)
                 if matches!(data.new_stage, E3Stage::Complete | E3Stage::Failed) =>
             {
-                self.task_pool.cancel_group(&data.e3_id.to_string())
+                self.task_pool.cancel_group(&self.task_group(&data.e3_id))
             }
             _ => {}
         }
@@ -224,10 +265,13 @@ impl Handler<TypedEvent<ComputeRequest>> for Multithread {
         let pool = self.task_pool.clone();
         let report = self.report.clone();
         let zk_prover = self.zk_prover.clone();
+        let task_scope = self.task_scope.clone();
         trap_fut(
             EType::Computation,
             &self.bus.clone(),
-            handle_compute_request_event(msg, bus, cipher, rng, pool, report, zk_prover),
+            handle_compute_request_event(
+                msg, bus, cipher, rng, pool, task_scope, report, zk_prover,
+            ),
         )
     }
 }
@@ -238,6 +282,7 @@ async fn handle_compute_request_event(
     cipher: Arc<Cipher>,
     rng: SharedRng,
     pool: TaskPool,
+    task_scope: String,
     report: Option<Addr<MultithreadReport>>,
     zk_prover: Option<Arc<ZkProver>>,
 ) -> anyhow::Result<()> {
@@ -247,7 +292,7 @@ async fn handle_compute_request_event(
     let request_snapshot = msg.clone();
 
     let report_for_worker = report.clone();
-    let task_group = msg.e3_id.to_string();
+    let task_group = task_group(&task_scope, &msg.e3_id);
     let pool_result = pool
         .spawn_in_group(task_group, job_name, TaskTimeouts::default(), move || {
             handle_compute_request(rng, cipher, zk_prover, msg, report_for_worker)

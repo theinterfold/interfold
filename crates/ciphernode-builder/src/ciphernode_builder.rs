@@ -1008,7 +1008,7 @@ impl CiphernodeBuilder {
 
         // ── Threshold keyshare + ZK actors ──
         if let Some(KeyshareKind::Threshold) = self.keyshare {
-            let _ = self.ensure_multithread(bus, lifecycle_stages);
+            let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
             let backend = self
                 .zk_backend
                 .as_ref()
@@ -1085,7 +1085,7 @@ impl CiphernodeBuilder {
             e3_builder = e3_builder.with(FheExtension::create(bus, &self.rng));
 
             info!("Setting up PublicKeyAggregationExtension");
-            let _ = self.ensure_multithread(bus, lifecycle_stages);
+            let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
             e3_builder = e3_builder.with(PublicKeyAggregatorExtension::create(bus));
 
             if self.keyshare.is_none() {
@@ -1110,7 +1110,7 @@ impl CiphernodeBuilder {
         // ── Threshold plaintext aggregation ──
         if self.threshold_plaintext_agg {
             info!("Setting up ThresholdPlaintextAggregatorExtension");
-            let _ = self.ensure_multithread(bus, lifecycle_stages);
+            let _ = self.ensure_multithread(bus, addr, lifecycle_stages);
             e3_builder = e3_builder.with(ThresholdPlaintextAggregatorExtension::create(
                 bus,
                 sortition,
@@ -1207,6 +1207,7 @@ impl CiphernodeBuilder {
     fn ensure_multithread(
         &mut self,
         bus: &BusHandle,
+        task_scope: &str,
         lifecycle_stages: &HashMap<E3id, E3Stage>,
     ) -> Addr<Multithread> {
         if let Some(cached) = self.multithread_cache.clone() {
@@ -1229,6 +1230,7 @@ impl CiphernodeBuilder {
                 self.rng.clone(),
                 self.cipher.clone(),
                 task_pool,
+                task_scope.to_owned(),
                 self.multithread_report.clone(),
                 backend,
                 lifecycle_stages.clone(),
@@ -1239,6 +1241,7 @@ impl CiphernodeBuilder {
                 self.rng.clone(),
                 self.cipher.clone(),
                 task_pool,
+                task_scope.to_owned(),
                 self.multithread_report.clone(),
                 lifecycle_stages.clone(),
             )

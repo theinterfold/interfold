@@ -1454,9 +1454,11 @@ the work once and sends its response or error to each waiting ID. A later duplic
 saved outcome.
 
 A terminal E3 event also cancels that E3's compute jobs that have already reached the shared task
-pool but have not started. A proof that is already executing runs to completion because the Rayon
-worker cannot be preempted safely; its late result cannot revive the terminal E3. This prevents a
-failed round's queued proof plan from delaying proof work for a later active round.
+pool but have not started. The cancellation key includes the local ciphernode address, so one
+node's local failure cannot cancel another node's work when an integration test or embedding shares
+one pool across nodes. A proof that is already executing runs to completion because the Rayon worker
+cannot be preempted safely; its late result cannot revive the terminal E3. This prevents a failed
+round's queued proof plan from delaying proof work for a later active round.
 
 If a decryption-share response arrives after `ThresholdKeyshare` has left `Decrypting`, the actor
 ignores that late response. The share and C6 proof request from the first response remain in the
