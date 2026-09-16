@@ -465,8 +465,8 @@ fn find_orphaned_committees(
 /// Collect the committee key of every terminal lifecycle event in `events`.
 ///
 /// Mirrors the terminal-release dispatch in the `Sortition` actor: an E3 is
-/// terminal on `PlaintextOutputPublished`, `E3Failed`, or `E3StageChanged` to
-/// `Complete`/`Failed`.
+/// terminal on `PlaintextOutputPublished`, `E3Failed`, `E3RequestComplete`, or
+/// `E3StageChanged` to `Complete`/`Failed`.
 fn collect_terminal_keys(events: &[InterfoldEvent], out: &mut HashSet<String>) {
     for event in events {
         match event.get_data() {
@@ -474,6 +474,9 @@ fn collect_terminal_keys(events: &[InterfoldEvent], out: &mut HashSet<String>) {
                 out.insert(committee_key(&d.e3_id));
             }
             InterfoldEventData::E3Failed(d) => {
+                out.insert(committee_key(&d.e3_id));
+            }
+            InterfoldEventData::E3RequestComplete(d) => {
                 out.insert(committee_key(&d.e3_id));
             }
             InterfoldEventData::E3StageChanged(d)

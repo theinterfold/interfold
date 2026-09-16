@@ -1205,34 +1205,40 @@ fn handle_dkg_share_decryption_proof(
     let secret_key = deserialize_secret_key(&sk_bytes, &dkg_params)
         .map_err(|e| make_zk_error(&request, format!("sk_bfv deserialize: {}", e)))?;
 
-    // External slots = (H - 1), each carrying L ciphertexts.
+    // Selected parties omit a ciphertext only for their own share.
     let h = req.num_honest_parties;
     let l = req.num_moduli;
-    if req.own_plaintext_idx >= h {
+    if req.own_plaintext_idx.is_some() != req.own_share_raw.is_some() {
+        return Err(make_zk_error(
+            &request,
+            "own_plaintext_idx and own_share_raw must both be present or absent".to_string(),
+        ));
+    }
+    if req.own_plaintext_idx.is_some_and(|idx| idx >= h) {
         return Err(make_zk_error(
             &request,
             format!(
-                "own_plaintext_idx {} out of range (num_honest_parties={})",
+                "own_plaintext_idx {:?} out of range (num_honest_parties={})",
                 req.own_plaintext_idx, h
             ),
         ));
     }
-    let expected_external_cts = h.saturating_sub(1) * l;
+    let num_external = h - usize::from(req.own_plaintext_idx.is_some());
+    let expected_external_cts = num_external * l;
     if req.honest_ciphertexts_raw.len() != expected_external_cts {
         return Err(make_zk_error(
             &request,
             format!(
-                "Expected {} external ciphertexts ((H-1)={} * L={}), got {}",
+                "Expected {} external ciphertexts ({} parties * L={}), got {}",
                 expected_external_cts,
-                h.saturating_sub(1),
+                num_external,
                 l,
                 req.honest_ciphertexts_raw.len()
             ),
         ));
     }
 
-    // Deserialize external ciphertexts → [(H-1)][L]
-    let num_external = h.saturating_sub(1);
+    // Deserialize external ciphertexts in selected-party order.
     let mut external_ciphertexts: Vec<Vec<Ciphertext>> = Vec::with_capacity(num_external);
     for ext_idx in 0..num_external {
         let mut party_cts = Vec::with_capacity(l);
@@ -1249,11 +1255,11 @@ fn handle_dkg_share_decryption_proof(
         external_ciphertexts.push(party_cts);
     }
 
-    // Splice None at `own_plaintext_idx` so the H-sized vector matches ascending honest party_id order.
+    // Use a plaintext slot only when the prover is one of the selected dealers.
     let mut honest_ciphertexts: Vec<Option<Vec<Ciphertext>>> = Vec::with_capacity(h);
     let mut external_iter = external_ciphertexts.into_iter();
     for slot in 0..h {
-        if slot == req.own_plaintext_idx {
+        if Some(slot) == req.own_plaintext_idx {
             honest_ciphertexts.push(None);
         } else {
             honest_ciphertexts.push(Some(
@@ -1264,23 +1270,26 @@ fn handle_dkg_share_decryption_proof(
         }
     }
 
-    // Own-plaintext share rows: bincode `Vec<Vec<u64>>` shape [L][N].
-    let own_share_bytes = req
-        .own_share_raw
-        .access_raw(cipher)
-        .map_err(|e| make_zk_error(&request, format!("own_share decrypt: {}", e)))?;
-    let own_plaintext_share: Vec<Vec<u64>> = bincode::deserialize(&own_share_bytes)
-        .map_err(|e| make_zk_error(&request, format!("own_share deserialize: {}", e)))?;
-    if own_plaintext_share.len() != l {
-        return Err(make_zk_error(
-            &request,
-            format!(
-                "own_plaintext_share has {} moduli, expected {}",
-                own_plaintext_share.len(),
-                l
-            ),
-        ));
-    }
+    let own_plaintext_share: Vec<Vec<u64>> = if let Some(raw) = req.own_share_raw.as_ref() {
+        let own_share_bytes = raw
+            .access_raw(cipher)
+            .map_err(|e| make_zk_error(&request, format!("own_share decrypt: {}", e)))?;
+        let share: Vec<Vec<u64>> = bincode::deserialize(&own_share_bytes)
+            .map_err(|e| make_zk_error(&request, format!("own_share deserialize: {}", e)))?;
+        if share.len() != l {
+            return Err(make_zk_error(
+                &request,
+                format!(
+                    "own_plaintext_share has {} moduli, expected {}",
+                    share.len(),
+                    l
+                ),
+            ));
+        }
+        share
+    } else {
+        Vec::new()
+    };
     let n = dkg_params.degree();
     for (row_idx, row) in own_plaintext_share.iter().enumerate() {
         if row.len() != n {

@@ -38,6 +38,8 @@ pub struct ThresholdShareCollector {
     parent: Addr<ThresholdKeyshare>,
     collection: ThresholdShareCollection,
     timeout: Duration,
+    minimum_external: usize,
+    last_ec: Option<EventContext<Sequenced>>,
     timeout_handle: Option<SpawnHandle>,
 }
 
@@ -47,6 +49,7 @@ impl ThresholdShareCollector {
         parent: Addr<ThresholdKeyshare>,
         total: u64,
         own_party_id: u64,
+        minimum_external: usize,
         e3_id: E3id,
         timeout: Duration,
     ) -> Addr<Self> {
@@ -57,6 +60,8 @@ impl ThresholdShareCollector {
                 e3_id,
                 parent,
                 timeout,
+                minimum_external,
+                last_ec: None,
                 timeout_handle: None,
             }
         })
@@ -111,6 +116,9 @@ impl Handler<TypedEvent<ThresholdShareCreated>> for ThresholdShareCollector {
             signed_c3b_proofs: msg.signed_c3b_proofs,
         };
         let outcome = self.collection.receive(msg.share, proofs);
+        if !matches!(outcome, ShareCollectOutcome::Ignored) {
+            self.last_ec = Some(ec.clone());
+        }
         self.complete(ctx, ec, outcome);
     }
 }
@@ -122,6 +130,19 @@ impl Handler<ThresholdShareCollectionTimeout> for ThresholdShareCollector {
         _: ThresholdShareCollectionTimeout,
         ctx: &mut Self::Context,
     ) -> Self::Result {
+        if let Some(ec) = self.last_ec.clone() {
+            if let Some(outcome) = self.collection.complete_at_cutoff(self.minimum_external) {
+                info!(
+                    e3_id = %self.e3_id,
+                    minimum_external = self.minimum_external,
+                    "Continuing DKG with available threshold shares"
+                );
+                self.complete(ctx, ec, outcome);
+                ctx.stop();
+                return;
+            }
+        }
+
         let Some(missing_parties) = self.collection.timeout() else {
             return;
         };

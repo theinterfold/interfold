@@ -25,6 +25,7 @@ use alloy::sol_types::{SolEvent, SolValue};
 use e3_sdk::evm_helpers::contracts::{
     CommitteeSize, InterfoldContract, InterfoldRead, InterfoldWrite,
 };
+use evm_helpers::CRISPContract;
 use log::{error, info};
 use serde::{Deserialize, Serialize};
 
@@ -269,6 +270,18 @@ mod tests {
 
         assert!(err.contains("Unsupported census mode 1"));
     }
+
+    #[test]
+    fn cron_authentication_fails_closed() {
+        assert!(!valid_cron_api_key(None, "provided"));
+        assert!(!valid_cron_api_key(Some(""), ""));
+        assert!(!valid_cron_api_key(Some("configured"), "wrong"));
+        assert!(valid_cron_api_key(Some("configured"), "configured"));
+    }
+}
+
+fn valid_cron_api_key(configured: Option<&str>, provided: &str) -> bool {
+    matches!(configured, Some(expected) if !expected.trim().is_empty() && expected == provided)
 }
 
 /// Request a new E3 round
@@ -281,7 +294,7 @@ mod tests {
 ///
 /// * A JSON response indicating the success of the operation
 async fn request_new_round(data: web::Json<RoundRequest>) -> impl Responder {
-    if data.cron_api_key != CONFIG.cron_api_key {
+    if !valid_cron_api_key(CONFIG.cron_api_key.as_deref(), &data.cron_api_key) {
         return HttpResponse::Unauthorized().json(JsonResponse {
             response: "Invalid API key".to_string(),
         });
@@ -549,9 +562,21 @@ pub async fn initialize_crisp_round(
         _ => return Err(format!("Invalid committee size: {}", CONFIG.e3_committee_size).into()),
     };
 
-    let current_timestamp = get_current_timestamp_rpc().await?;
-    // Buffer so tx can mine before window opens; end = start + duration so voting window equals e3_duration
-    let window_start = current_timestamp + 20;
+    let crisp_program = CRISPContract::new(
+        &CONFIG.http_rpc_url,
+        &CONFIG.private_key,
+        &CONFIG.e3_program_address,
+    )
+    .await?;
+    let avail_window = crisp_program.availability_finalization_window().await?;
+    let base = if avail_window == U256::ZERO {
+        get_current_timestamp_rpc().await?
+    } else {
+        crisp_program.earliest_voting_start().await?.try_into()?
+    };
+    let window_start = base
+        .checked_add(CONFIG.voting_start_buffer_seconds)
+        .ok_or_else(|| anyhow::anyhow!("voting start overflow"))?;
     let input_window: [U256; 2] = [
         U256::from(window_start),
         U256::from(window_start + CONFIG.e3_duration),

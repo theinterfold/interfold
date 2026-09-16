@@ -148,6 +148,19 @@ impl ThresholdShareCollection {
         Some(self.todo.iter().copied().collect())
     }
 
+    /// Close the collection at the cutoff when enough external dealers have
+    /// delivered for an H-row circuit witness that also includes this node.
+    pub fn complete_at_cutoff(&mut self, minimum_external: usize) -> Option<ShareCollectOutcome> {
+        if !self.is_collecting() || self.shares.len() < minimum_external {
+            return None;
+        }
+        self.phase = CollectionPhase::Finished;
+        Some(ShareCollectOutcome::Completed {
+            shares: self.shares.clone(),
+            proofs: std::mem::take(&mut self.share_proofs),
+        })
+    }
+
     fn finish_if_done(&mut self) -> ShareCollectOutcome {
         if self.todo.is_empty() {
             info!(e3_id = %self.e3_id, "We have received all threshold shares");
@@ -251,5 +264,21 @@ mod tests {
         missing.sort();
         assert_eq!(missing, vec![0, 2]);
         assert!(c.timeout().is_none());
+    }
+
+    #[test]
+    fn cutoff_accepts_h_minus_one_external_shares() {
+        let mut c = collection();
+        c.receive(share(2), proofs());
+        assert!(c.complete_at_cutoff(2).is_none());
+        match c.complete_at_cutoff(1).expect("one external share") {
+            ShareCollectOutcome::Completed { shares, proofs } => {
+                assert_eq!(shares.len(), 1);
+                assert_eq!(proofs.len(), 1);
+                assert!(shares.contains_key(&2));
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+        assert!(!c.is_collecting());
     }
 }

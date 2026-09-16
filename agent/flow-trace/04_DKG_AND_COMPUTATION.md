@@ -25,6 +25,11 @@ The bond owner never signs DKG, key-publication, computation, or decryption mess
 ```
 CiphernodeSelected event arrives at ThresholdKeyshare
 │
+├─ Read `getDeadlines(e3Id)` and `getE3TimeoutConfig(e3Id)` from Interfold.
+│  Require the E3 to be at `CommitteeFinalized`. Persist the frozen DKG
+│  deadline and window before creating keys or collectors. Retry the read
+│  if the RPC is unavailable; do not use a local window as a fallback.
+│
 ├─ handle_ciphernode_selected():
 │   │
 │   ├─ 1. Generate fresh BFV keypair:
@@ -44,17 +49,18 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │   → ZK proof actor picks this up
 │   │
 │   ├─ 5. Create child actors:
-│   │     ├─ EncryptionKeyCollector (waits for all N parties' keys)
-│   │     └─ ThresholdShareCollector (waits for all N parties' shares)
+│   │     ├─ EncryptionKeyCollector (accepts all N keys or at least H at cutoff)
+│   │     └─ ThresholdShareCollector (accepts all N−1 external shares or at least H−1 at cutoff)
 │   │     → These collectors start immediately so early peer keys/shares can
 │   │       be buffered while this node is still finishing earlier DKG phases
 │   │
-│   └─ Collector timeouts are derived from the DKG stage budget:
-│         ├─ shared base window from `E3_DKG_WINDOW_SECS` (default 7200s,
-│         │  matching current production `Interfold` deployment config)
-│         ├─ EncryptionKeyCollector cutoff at 10% of the DKG window
-│         ├─ ThresholdShareCollector cutoff at 60% of the DKG window
-│         └─ per-collector env vars still override these derived defaults
+│   └─ Collector cutoffs use the frozen per-E3 window and absolute deadline:
+│         ├─ EncryptionKeyCollector: 10% of the window
+│         ├─ ThresholdShareCollector: 60% of the window
+│         └─ DecryptionKeySharedCollector: the on-chain DKG deadline
+│      Restart uses the remaining time, not a new full window. Optional
+│      per-collector env values can shorten a timeout but cannot extend it.
+│      A cutoff below the minimum still fails the E3.
 ```
 
 ### Step 2: C0 Proof Generation → EncryptionKeyCreated
@@ -115,15 +121,18 @@ ProofRequestActor receives EncryptionKeyPending
             → Triggers accusation pipeline (see Part 5)
 ```
 
-### Step 3: Collect All Encryption Keys
+### Step 3: Collect Encryption Keys
 
 ```
-EncryptionKeyCollector waits for EncryptionKeyCreated from ALL N parties
+EncryptionKeyCollector collects verified EncryptionKeyCreated events
 │
-├─ On each arrival: store (party_id → bfv_public_key)
+├─ On each arrival: store the first (party_id → bfv_public_key) message;
+│  replay keeps that same first message if a later duplicate arrives
 │
 ├─ On TIMEOUT (derived DKG-phase cutoff):
-│   └─ Send EncryptionKeyCollectionFailed to parent ThresholdKeyshare
+│   ├─ With at least H keys, including this party's key:
+│   │    send AllEncryptionKeysCollected with the available keys
+│   └─ Otherwise send EncryptionKeyCollectionFailed to parent ThresholdKeyshare
 │      ├─ ThresholdKeyshare persists KeyshareState::Failed {
 │      │    failed_at_stage: CommitteeFinalized,
 │      │    reason: DKGTimeout
@@ -135,7 +144,7 @@ EncryptionKeyCollector waits for EncryptionKeyCreated from ALL N parties
 │      │  }
 │      └─ ThresholdKeyshare actor stops
 │
-└─ When ALL N collected:
+└─ When ALL N collected before cutoff:
     └─ Send AllEncryptionKeysCollected to parent ThresholdKeyshare
 ```
 
@@ -145,7 +154,7 @@ EncryptionKeyCollector waits for EncryptionKeyCreated from ALL N parties
 ThresholdKeyshare receives AllEncryptionKeysCollected
 │
 ├─ State: CollectingEncryptionKeys → GeneratingThresholdShare
-├─ Stores all parties' BFV public keys
+├─ Stores the verified BFV public keys available at the cutoff
 │
 ├─ COMPUTE REQUEST 1: GenPkShareAndSkSss
 │   │
@@ -211,13 +220,13 @@ Both GenPkShareAndSkSss and GenEsiSss complete
 │
 ├─ handle_shares_generated():
 │   │
-│   ├─ 1. For EACH collected recipient slot in sorted real-party order:
-│   │     Map compact recipient slot → real party_id (expelled parties may be absent)
-│   │     Encrypt sk_sss[real_party_id] under that party's BFV public key
-│   │     Encrypt esi_sss[*][real_party_id] under that party's BFV public key
-│   │     Leave the sender's own slot empty (own plaintext rides locally into C4)
+│   ├─ 1. Build an N-slot C3 fan-out in finalized committee order:
+│   │     For each party with a collected C0 key, encrypt that party's share under its key.
+│   │     For a party without a collected C0 key, encrypt its share under the sender's
+│   │     C0 key to fill the C3 proof slot. Do not deliver that placeholder share.
+│   │     Leave the sender's own slot empty (own plaintext rides locally into C4).
 │   │     → BfvEncryptedShares::encrypt_all_extended_for_share_indices()
-│   │     → Only the mapped real party can decrypt their share
+│   │     → C3 still proves all N-1 non-own slots; only parties with C0 keys get shares.
 │   │
 │   ├─ 2. Build ThresholdShare struct:
 │   │     {
@@ -245,7 +254,7 @@ Both GenPkShareAndSkSss and GenEsiSss complete
 │   │       e_sm_share_computation_request(C2b),
 │   │       sk_share_encryption_requests(C3a[]),
 │   │       e_sm_share_encryption_requests(C3b[]),
-│   │       recipient_party_ids
+│   │       recipient_party_ids // parties with collected C0 keys, not placeholder slots
 │   │     }
 │   │     → ProofRequestActor picks this up
 │   │
@@ -291,16 +300,15 @@ ProofRequestActor receives ThresholdSharePending
 ├─ 6. Publish events:
 │     ├─ PkGenerationProofSigned { e3_id, party_id, signed_proof(C1) }
 │     ├─ DkgProofSigned { signed_proof } × (C2a, C2b, each C3a, each C3b)
-│     └─ ThresholdShareCreated {
-│          e3_id, party_id,
-│          threshold_share,               // pk_share + encrypted shares
-│          signed_pk_generation_proof,     // C1
+│     └─ ThresholdShareCreated for each recipient with a collected C0 key {
+│          e3_id, party_id, target_party_id,
+│          threshold_share,               // pk_share + this recipient's encrypted shares
 │          signed_sk_computation_proof,    // C2a
 │          signed_esm_computation_proof,   // C2b
-│          signed_sk_encryption_proofs,    // C3a[] indexed by (recipient, row)
-│          signed_esm_encryption_proofs    // C3b[] indexed by (esi, recipient, row)
+│          signed_sk_encryption_proofs,    // C3a[] for this recipient
+│          signed_esm_encryption_proofs    // C3b[] for this recipient
 │        }
-│        → Broadcast to all nodes via libp2p gossip
+│        → Broadcast to nodes via libp2p gossip; the recipient filters by target_party_id
 │
 └─ IMPORTANT: ThresholdShareCreated is NOT published until ALL proofs complete
    → Ensures no incomplete data is gossiped
@@ -324,9 +332,11 @@ implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proo
 `NodeProofAggregator` prebuffers `DKGInnerProofReady` proofs that arrive before
 `ThresholdSharePending`, drains those buffered proofs into collection state once
 `ThresholdSharePending` arrives, and issues one `NodeDkgFold` request when the full ordered proof
-set is available. If that `NodeDkgFold` compute request fails, it publishes
-`DKGRecursiveAggregationComplete { aggregated_proof: None }` so the downstream DKG/public-key
-aggregation path can terminate deterministically instead of stalling on missing node-fold output.
+set is available. It persists each proof, the fold metadata, and a completed output before
+publication. Restart restores the ordered proofs and reissues an incomplete fold after
+`EffectsEnabled`. If the compute request fails, it publishes `E3Failed` with
+`DKGInvalidShares` instead of waiting for a missing node-fold output. A canonical
+`KeyPublished` stage or a terminal E3 event removes the saved node-fold data.
 `PublicKeyAggregator` and `ThresholdPlaintextAggregator` dispatch the aggregator requests instead of
 pairwise folding.
 
@@ -337,21 +347,22 @@ artifact will not be published. DKG-path proofs (`C0` through `C5`) emit
 (`C6` and `C7`) emit
 `E3Failed { failed_at_stage: CiphertextReady, reason: DecryptionInvalidShares }`.
 
-### Step 6: Collect All Threshold Shares (with C2/C3 Verification)
+### Step 6: Collect Threshold Shares (with C2/C3 Verification)
 
 ```
-ThresholdShareCollector waits for ThresholdShareCreated from ALL N parties
+ThresholdShareCollector collects this recipient's shares from the other N−1 parties
 │
 ├─ Each ThresholdShareCreated arrives via libp2p P2P network
 │
 ├─ ThresholdKeyshare.handle_threshold_share_created():
 │   ├─ Filters: only process shares where target_party_id == MY party_id
-│   │   → Each share blob contains material for ALL parties
-│   │   → This node only extracts what's encrypted for it
+│   │   → Each published share contains this recipient's encrypted material
 │   └─ Forwards filtered share to ThresholdShareCollector
 │
 ├─ On TIMEOUT (derived DKG-phase cutoff):
-│   └─ Send ThresholdShareCollectionFailed to parent ThresholdKeyshare
+│   ├─ With at least H−1 external shares:
+│   │    send AllThresholdSharesCollected with the available shares
+│   └─ Otherwise send ThresholdShareCollectionFailed to parent ThresholdKeyshare
 │      ├─ ThresholdKeyshare persists KeyshareState::Failed {
 │      │    failed_at_stage: CommitteeFinalized,
 │      │    reason: DKGTimeout
@@ -363,7 +374,7 @@ ThresholdShareCollector waits for ThresholdShareCreated from ALL N parties
 │      │  }
 │      └─ ThresholdKeyshare actor stops
 │
-└─ When ALL N shares collected:
+└─ When all N−1 external shares arrive before cutoff:
     ├─ Send AllThresholdSharesCollected to ThresholdKeyshare
     │
     └─ DISPATCH C2/C3 VERIFICATION:
@@ -416,14 +427,19 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │
 │   ├─ CommitmentConsistencyChecker (per-E3 actor) receives this:
 │   │   ├─ Caches each party's (address, proof_type) → {public_signals, data_hash}
+│   │   ├─ Persists the complete proof cache and accepted H-roster in the same
+│   │   │  snapshot batch as the event that changed them
+│   │   │  → Hydration restores both before recovered proof checks resume
 │   │   ├─ Evaluates all registered CommitmentLinks:
-│   │   │     C0→C3   (SourceMustExistInTargets): C3's expected_pk_commitment ∈ any C0 pk_commitment
+│   │   │     C0→C3   (SourceMustExistInTargets): local-cache absence accusations are disabled;
+│   │   │                                          each recipient checks its own C0 against C3
 │   │   │     C1→C2a  (SameParty):                C1's sk_commitment == C2a's expected_secret_commitment
 │   │   │     C1→C2b  (SameParty):                C1's e_sm_commitment == C2b's expected_secret_commitment
 │   │   │     C1→C5   (CrossParty):               C1's pk_commitment ∈ C5 expected pk inputs
 │   │   │     C2→C3   (SameParty):                C3's expected_message_commitment ∈ C2's share commitments
-│   │   │     C2→C4   (SourceMustExistInTargets): C2's L share commitments for recipient R exactly
-│   │   │                                          match C4_R's expected_commitments row for sender X
+│   │   │     C2→C4   (SourceMustExistInTargets): after all selected C4 targets arrive,
+│   │   │                                          C2's L share commitments for recipient R match
+│   │   │                                          C4_R's row for sender X in the H-roster order
 │   │   │     C4a→C6  (SameParty):                C4a's commitment == C6's expected_sk_commitment
 │   │   │     C4b→C6  (SameParty):                C4b's commitment == C6's expected_e_sm_commitment
 │   │   │     C6→C7   (CrossParty):               C6's d_commitment matches C7's expected_d_commitment
@@ -461,19 +477,52 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │          }
 │
 └─ ThresholdKeyshare receives ShareVerificationComplete:
-    ├─ If dishonest_parties is empty: proceed to Step 7
-    └─ If dishonest_parties is non-empty:
-        → Accusation pipeline handles slashing (see Part 5)
-        → DKG may still proceed if enough honest parties remain
+    ├─ Excludes failed C2/C3 proofs and C3 proofs that target a different
+    │  recipient key
+    ├─ Saves the verified dealer IDs and their exact contribution hashes
+    ├─ Publishes a signed DkgCoordination::Ready list when at least H dealers,
+    │  including this party, remain
+    ├─ If fewer than H pass locally, stays outside C4 without failing the E3
+    └─ Waits for one H-dealer roster before Step 7
+
+The active aggregator selects H parties whose signed Ready lists all contain the same selected
+dealer contributions. `AggregatorChanged` carries the active party ID, and threshold-keyshare
+persists that ID. A receiver accepts a roster only when the signer owns that active party slot.
+Because failover timers can expire at slightly different times on different nodes, a receiver
+durably holds the first authenticated roster from each standby. It considers that roster only after
+its own `AggregatorChanged` event promotes the signer. Each selected party also checks the roster
+against its own saved Ready list. The accepted roster is saved before C4 starts. A later conflicting
+roster is ignored; it cannot replace the accepted roster or fail the E3.
+
+Once a node can derive a valid roster from its durable Ready map, it starts the existing 10-minute
+active-aggregator budget for the DKG-roster phase. If the active aggregator does not publish a
+roster, the selector promotes the next eligible committee member and publishes its new party ID.
+The promoted member uses its saved Ready map and proposes without a separate leader clock or
+election. Roster acceptance ends that phase and clears its local failover skips. The later C5
+public-key aggregation starts a new failover budget only after its own inputs are durable.
+
+Dealer identity binds the E3, proof type, circuit, and public signals. It excludes randomized proof
+bytes, so replaying the same valid statement cannot create a second dealer identity. Replacing a
+same-E3 proof plan invalidates the old correlation IDs before the new plan starts. A late response
+from the old plan therefore cannot enter the replacement bundle.
+
+This coordination is not Byzantine agreement. The active aggregator can choose any roster that
+satisfies the mutually ready H-set rule. The proof and on-chain single-publish checks prevent
+different rosters from producing two accepted keys, but a malicious active aggregator can still
+withhold progress until failover.
+If a selected party stops permanently after the roster is accepted, this path does not select a
+replacement or rebuild C4. The E3 can fail even when other committee members remain online.
+The cutoff omits missing nodes but does not accuse or slash them: a local timeout is not proof
+that a peer failed to publish.
 ```
 
 ### Step 7: Calculate Decryption Key (with C4 Proofs & Verification)
 
 ```
-ThresholdKeyshare receives AllThresholdSharesCollected
+ThresholdKeyshare accepts an H-dealer roster after C2/C3 verification
 │
-├─ 1. Decrypt each received share using THIS node's BFV secret key:
-│     For each party j's share:
+├─ 1. Each selected party decrypts its shares from the selected dealers:
+│     For each other selected party j:
 │       sk_sss_j = BFV::decrypt(encrypted_sk_sss_j, my_bfv_sk)
 │       esi_sss_j = BFV::decrypt(encrypted_esi_sss_j, my_bfv_sk)
 │
@@ -481,30 +530,29 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │
 │     │  ┌─── TrBFV Computation ──────────────────────────────┐
 │     │  │                                                     │
-│     │  │  Inputs: all sk_sss shares, all esi_sss shares     │
+│     │  │  Inputs: selected sk_sss and esi_sss shares       │
 │     │  │                                                     │
 │     │  │  1. Reconstruct summed secret key polynomial:       │
 │     │  │     sk_poly_sum = Shamir::reconstruct(              │
-│     │  │       [sk_sss_1, sk_sss_2, ..., sk_sss_N]          │
+│     │  │       [sk_sss_j for j in the accepted H roster]   │
 │     │  │     )                                               │
 │     │  │     → This is NOT the full secret key               │
 │     │  │     → It's this node's PORTION of the summed key    │
 │     │  │                                                     │
 │     │  │  2. Reconstruct summed ESI polynomials:             │
 │     │  │     es_poly_sum = Shamir::reconstruct(              │
-│     │  │       [esi_sss_1, esi_sss_2, ..., esi_sss_N]       │
+│     │  │       [esi_sss_j for j in the accepted H roster]  │
 │     │  │     )                                               │
 │     │  │                                                     │
 │     │  │  Output: (sk_poly_sum, es_poly_sum)                 │
 │     │  │  → Stored encrypted locally for later decryption    │
 │     │  └─────────────────────────────────────────────────────┘
 │
-├─ 2b. CANONICAL H ROSTER (when H < N):
-│     Before C4 witness layout, merge external honest party_ids with own_party_id,
-│     sort ascending, and keep the lowest H — same rule as PublicKeyAggregator C5 cap
-│     (`e3_zk_helpers::canonical_honest_party_ids_with_own`). Persisted as `honest_parties`.
-│     Parties outside the lowest H still complete KeyshareCreated but are not in the
-│     aggregator's NodeFold / `honest_committee_addresses` roster.
+├─ 2b. ACCEPTED H ROSTER:
+│     Use the saved, sorted H-dealer roster for the C4 witness. Do not choose
+│     the lowest H entries in a node's local share cache. A party outside the
+│     accepted roster can create C4 only when it holds all H selected shares.
+│     Its C4 does not add a dealer row to the C5 key.
 │
 ├─ 3. PUBLISH C4 PROOF REQUESTS:
 │     DecryptionShareProofsPending {
@@ -538,8 +586,16 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │         → Broadcast to all committee nodes via P2P gossip
 │     │         → This is Protocol Exchange #3 (decryption key sharing)
 │
-├─ 5. COLLECT C4 SHARES FROM ALL PARTIES:
-│     ThresholdKeyshare waits for DecryptionKeyShared from ALL N parties
+├─ 5. COLLECT C4 SHARES FROM THE ACCEPTED ROSTER:
+│     Each selected party waits for DecryptionKeyShared from the other H−1
+│     selected parties
+│     On restart, rebuild the collector from the saved roster and feed it saved
+│     peer shares before new shares arrive. A valid new share also creates the
+│     collector if it is still absent.
+│     After all selected peer shares arrive, ignore late duplicates so they do
+│     not start another collector and cause a false timeout.
+│     The saved replay map also keeps the first C4 message from each party,
+│     matching the live collector.
 │     │
 │     ├─ On timeout:
 │     │  ├─ Persist KeyshareState::Failed {
@@ -549,7 +605,7 @@ ThresholdKeyshare receives AllThresholdSharesCollected
 │     │  ├─ Emit the matching E3Failed event
 │     │  └─ Stop the ThresholdKeyshare actor
 │     │
-│     └─ When all collected → AllDecryptionKeySharesCollected
+│     └─ When all selected shares are collected → AllDecryptionKeySharesCollected
 │
 ├─ 6. C4 VERIFICATION:
 │     ThresholdKeyshare.dispatch_c4_verification()
@@ -595,23 +651,20 @@ phase.
   │   └─ Buffers only until CommitteeFinalized provides the canonical party-slot map
   │   └─ Then forwards every valid keyshare into each committee member's persisted actor state
 │
-  ├─ Every committee member persists the same collected keyshares
+  ├─ Committee members buffer received keyshares and the accepted H roster
   │
-  ├─ When every non-excluded member has submitted a keyshare:
-│   │   → The live count can fall below N after a confirmed fault, but it must still be at least H
+  ├─ When every member of the accepted H roster has submitted a keyshare:
 │   │   → Persist VerifyingC1 before publishing AggregationInputsReady(PublicKey)
 │   │   → CiphernodeSelector starts the 10-minute failover budget only now
 │   │
 │   ├─ Only the active aggregator starts C1 verification and later proof/compute effects
 │   │   → A promoted standby resumes from its persisted phase; it does not need a RAM buffer
 │   │   → A demoted node ignores late worker results and cannot publish a stale aggregate
-│   ├─ C1 verification runs over all collected non-excluded submitters; failures are dishonest
+│   ├─ C1 verification runs over the exact H selected submitters; failures stop DKG
 │   │
 │   ├─ Honest-set selection (compile-time H from `committee::active`, may be < N):
-│   │     • Require at least H parties with valid C1 proofs; otherwise E3Failed
-│   │     • If more than H parties pass C1, keep the H lowest `party_id`s as the canonical
-│   │       honest set (extras remain in the full committee roster for `committee_hash`
-│   │       binding but do not receive NodeFold / C5 inputs)
+│   │     • Require valid C1 proofs from all H roster members; otherwise E3Failed
+│   │     • Preserve the accepted roster order for NodeFold and C5 inputs
 │   │
 │   ├─ 1. Aggregate public key shares (H honest keyshares):
 │   │     aggregate_pk = Fhe::get_aggregate_public_key(
@@ -658,6 +711,9 @@ phase.
 │   │     │   → exactly N ordered committee addresses from `CommitteeFinalized` (`topNodes`),
 │   │     │     including a member excluded before it submitted a keyshare
 │   │     │   → Rust validates both dimensions before invoking the compiled circuit
+│   │     │   → `dkg_aggregator` uses each selected party ID for N-wide C3 and C2 recipient slots;
+│   │     │     H-wide C4 sender slots use the selected party's fold-row position
+│   │     │   → The circuit requires H distinct, ascending, in-range party IDs
 │   │     ├─ Tracks the in-flight correlation id
 │   │     ├─ ComputeRequestError now emits
 │   │     │   E3Failed { failed_at_stage: CommitteeFinalized, reason: DKGInvalidShares }
@@ -834,6 +890,12 @@ VectorX is pending. Computation waits for the original input-window end and for
 deadlines, recovery flow, and remaining trust.
 
 ### Ciphertext Output Publication
+
+The support host sends raw bincode input by default. `BOUNDLESS_INPUT_ENCODING=risc0-serde` selects
+the older byte-vector wrapper for an external Boundless guest and requires `PROGRAM_URL`.
+The embedded guest always receives raw bincode. This compatibility setting does not change the
+guest or its image ID. The selected external guest must match the deployed verifiers and produce
+the same journal as the host for the round inputs.
 
 The RISC Zero guest commits nine 32-byte fields in this order: chain ID, Interfold address, E3 ID,
 encryption scheme ID, committee public key, output hash, SAFE commitment, parameter hash, and input
@@ -1380,17 +1442,25 @@ lifecycle snapshot. If an E3 has already reached `KeyPublished`, it discards rep
 proof jobs because the chain has made that work obsolete; decryption jobs remain eligible. C1-C3 and
 C6 verification share one compute-request variant, so the gate uses the signed proof type to keep C6
 threshold-decryption verification eligible. The gate changes effect timing, not durable event order
-or audit state.
+or audit state. If restart gives the same compute operation a new correlation ID, the gate forwards
+the work once and sends its response or error to each waiting ID. A later duplicate receives the
+saved outcome.
+
+If a decryption-share response arrives after `ThresholdKeyshare` has left `Decrypting`, the actor
+ignores that late response. The share and C6 proof request from the first response remain in the
+saved state; a replay does not report a false state error or start the work again.
 
 `CiphernodeSelector` also observes replay before it enables failover effects. Its versioned
 repository stores a readiness-gated phase, assigned party, absolute deadline, and locally
-unresponsive party IDs. `CommitteeFinalized` and `CiphertextOutputPublished` identify the canonical
-phase but do not start a progress budget. A persisted aggregation actor publishes
-`AggregationInputsReady` only after all inputs are durable. An unchanged ready phase and assignment
-preserve the original deadline. A new assignment gets the full budget. `EffectsEnabled` re-arms the
-remaining duration or processes an overdue deadline immediately. Canonical phase progress cancels
-the old timer and clears the phase-local skip set. Startup migrates the v0.12 failover snapshot by
-discarding its pre-readiness timers and skip set.
+unresponsive party IDs. DKG roster selection, public-key aggregation, and plaintext aggregation use
+separate failover phases. `CommitteeFinalized` and `CiphertextOutputPublished` identify the current
+protocol stage but do not start a progress budget. A persisted actor publishes
+`AggregationInputsReady` only after all inputs for its phase are durable. Accepting a DKG roster
+moves the selector to the public-key phase without starting that phase's timer. An unchanged ready
+phase and assignment preserve the original deadline. A new assignment gets the full budget.
+`EffectsEnabled` re-arms the remaining duration or processes an overdue deadline immediately.
+Protocol progress cancels the old timer and clears the phase-local skip set. Startup rejects an
+unsupported failover schema; operators must clear pre-release protocol-v4 state before rollout.
 
 The Interfold and registry writers also subscribe before EventStore replay. A locally sourced
 `PlaintextAggregated` or `PublicKeyAggregated` event is the durable publication intent. Each writer
@@ -1399,6 +1469,17 @@ keeps retryable failures for a later attempt. `E3RequestComplete` does not erase
 publication, and only an active aggregator can start a retained submission. `PlaintextAggregated` is
 not gossiped or returned by historical peer sync; only the producing node can create this EVM write
 intent.
+
+The document publisher rebuilds its active outbox and received-document set from the durable
+event log before network effects start. Document publication and receipt events use their E3's
+chain aggregate. Recovery scans one event at a time to bound memory. During DKG,
+it repeats DHT publication and gossip announcements after transient failures, including when no
+peer subscribed to the topic at the first attempt. A receiver holds early notifications until its
+committee slot is known, retries failed DHT reads, and suppresses duplicate documents. A canonical
+`KeyPublished` stage stops DKG-document announcements and prunes local DHT records. C4
+`DecryptionKeyShared` is a DKG document; later `DecryptionshareCreated` events use event gossip,
+not the DHT document path. Recovery retains the DKG closure across restart. A local
+`E3RequestComplete` does not mean that the contract has reached a terminal stage.
 
 The CRISP server writes its request record at `E3Requested` and writes the generic E3 record only
 after the indexer verifies the committee public key against the on-chain commitment. Current-round

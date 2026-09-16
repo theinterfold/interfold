@@ -132,7 +132,7 @@ impl PeerAdmission {
         expired
     }
 
-    fn is_rejected(&self, peer: &PeerId) -> bool {
+    pub(crate) fn is_rejected(&self, peer: &PeerId) -> bool {
         self.rejected_until
             .get(peer)
             .is_some_and(|(_, until)| *until > Instant::now())

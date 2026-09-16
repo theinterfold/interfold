@@ -88,6 +88,10 @@ run_case() {
     unset BOUNDLESS_ONCHAIN BOUNDLESS_MIN_PRICE_ETH BOUNDLESS_MAX_PRICE_ETH
     unset BOUNDLESS_TIMEOUT_SECS BOUNDLESS_LOCK_TIMEOUT_SECS BOUNDLESS_RAMP_UP_SECS
     unset BOUNDLESS_LOCK_COLLATERAL_ZKC
+    unset BOUNDLESS_INPUT_ENCODING
+    if [[ -n "${TEST_INPUT_ENCODING:-}" ]]; then
+      export BOUNDLESS_INPUT_ENCODING="$TEST_INPUT_ENCODING"
+    fi
     export LOCAL_IMAGE_STATUS="$local_image_status"
     export PULL_STATUS="$pull_status"
     if [[ -n "$image_repository" ]]; then
@@ -159,6 +163,12 @@ assert_contains "--env BOUNDLESS_TIMEOUT_SECS"
 assert_contains "--env BOUNDLESS_LOCK_TIMEOUT_SECS"
 assert_contains "--env BOUNDLESS_RAMP_UP_SECS"
 assert_contains "--env BOUNDLESS_LOCK_COLLATERAL_ZKC"
+assert_not_contains "--env BOUNDLESS_INPUT_ENCODING"
+
+TEST_INPUT_ENCODING=risc0-serde run_case 0 0
+[[ "$CASE_STATUS" -eq 0 ]]
+assert_contains "--env BOUNDLESS_INPUT_ENCODING"
+assert_not_contains "--env BOUNDLESS_INPUT_ENCODING=risc0-serde"
 
 run_case 0 0 "" \
   --rpc-url https://rpc.example \

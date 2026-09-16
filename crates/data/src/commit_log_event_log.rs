@@ -7,18 +7,21 @@
 use anyhow::{anyhow, Context, Result};
 use commitlog::message::{MessageBuf, MessageSet};
 use commitlog::{CommitLog, LogOptions, ReadLimit};
-use e3_events::{EventLog, InterfoldEvent, Unsequenced};
+use e3_events::{EventContextAccessors, EventLog, EventSource, InterfoldEvent, Unsequenced};
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashSet},
     fs::{self, File, OpenOptions},
     io::{Read, Seek, SeekFrom, Write},
     path::{Path, PathBuf},
 };
-use tracing::warn;
+use tracing::{info, warn};
 
-/// Maximum message size for both reads and writes (32 MB).
+use crate::event_blob::{EventBlobs, MAX_BLOB_BYTES};
+
+/// Maximum framed commit-log message size for both reads and writes (32 MiB).
 const MAX_MESSAGE_BYTES: usize = 32 * 1024 * 1024;
 const COMMITLOG_HEADER_BYTES: usize = 20;
+const MAX_INLINE_EVENT_BYTES: usize = MAX_MESSAGE_BYTES - COMMITLOG_HEADER_BYTES;
 const COMMITLOG_INDEX_ENTRY_BYTES: usize = 8;
 const COMMITLOG_SEGMENT_MAGIC: [u8; 2] = [0xff, 0xff];
 
@@ -51,6 +54,8 @@ enum PhysicalFrame {
 
 pub struct CommitLogEventLog {
     log: CommitLog,
+    blobs: EventBlobs,
+    path: PathBuf,
 }
 
 impl CommitLogEventLog {
@@ -59,7 +64,9 @@ impl CommitLogEventLog {
     }
 
     pub fn open(path: &Path, mode: EventLogOpenMode) -> Result<Self> {
-        let recovery = inspect_active_tail(path)?;
+        let blobs = EventBlobs::new(path);
+        let recovery = inspect_active_tail(path, &blobs)?;
+        let recovered_tail = recovery.is_some();
         if let Some(plan) = recovery.as_ref() {
             match mode {
                 EventLogOpenMode::RecoverTail => apply_tail_recovery(plan)?,
@@ -98,11 +105,61 @@ impl CommitLogEventLog {
                 .context("failed to flush repaired event-log tail")?;
         }
 
-        let opened = Self { log };
-        opened
-            .read_from_checked(1)
+        let opened = Self {
+            log,
+            blobs,
+            path: path.to_owned(),
+        };
+        if recovered_tail {
+            sync_active_commit_log_files(path).context("failed to sync repaired event-log tail")?;
+        }
+        let live_blobs = opened
+            .verify_all_checked()
             .context("event log integrity check failed during open")?;
+        let reclaimed = opened
+            .blobs
+            .reclaim_orphans(&live_blobs)
+            .context("failed to reclaim orphan event blobs")?;
+        if reclaimed > 0 {
+            info!(reclaimed, "Reclaimed orphan event blobs");
+        }
         Ok(opened)
+    }
+
+    fn verify_all_checked(&self) -> Result<HashSet<[u8; 32]>> {
+        let mut live_blobs = HashSet::new();
+        let mut current_offset = 0;
+        loop {
+            let messages = self
+                .log
+                .read(current_offset, ReadLimit::max_bytes(MAX_MESSAGE_BYTES))
+                .map_err(|error| {
+                    anyhow!(
+                        "commit log read failed at sequence {}: {error:?}",
+                        current_offset + 1
+                    )
+                })?;
+            let mut count = 0;
+            for message in messages.iter() {
+                let sequence = message.offset() + 1;
+                anyhow::ensure!(
+                    usize::from(message.metadata_size()) <= message.size() as usize,
+                    "commit log event at sequence {sequence} has invalid frame metadata length"
+                );
+                if let Some(digest) = EventBlobs::reference_digest(message.payload())? {
+                    live_blobs.insert(digest);
+                }
+                decode_record(&self.blobs, message.payload()).with_context(|| {
+                    format!("commit log event at sequence {sequence} failed to decode")
+                })?;
+                current_offset = sequence;
+                count += 1;
+            }
+            if count == 0 {
+                break;
+            }
+        }
+        Ok(live_blobs)
     }
 
     fn append_bytes(&mut self, bytes: &[u8]) -> Result<u64> {
@@ -124,23 +181,25 @@ impl CommitLogEventLog {
     /// the same record into mid-log corruption. The [`EventLog`] adapter carries
     /// this error to startup and query callers instead of panicking an actor.
     pub fn read_from_checked(&self, from: u64) -> Result<Vec<(u64, InterfoldEvent<Unsequenced>)>> {
-        self.read_from_checked_with_limit(from, None)
+        self.read_from_checked_with_limits(from, None, None)
     }
 
-    fn read_from_checked_with_limit(
+    fn read_from_checked_with_limits(
         &self,
         from: u64,
         limit: Option<usize>,
+        max_bytes: Option<usize>,
     ) -> Result<Vec<(u64, InterfoldEvent<Unsequenced>)>> {
         // Convert 1-indexed sequence to 0-indexed offset.
         let mut current_offset = from.saturating_sub(1);
         let mut events = Vec::with_capacity(limit.unwrap_or_default().min(1024));
+        let mut decoded_bytes = 0usize;
 
         if limit == Some(0) {
             return Ok(events);
         }
 
-        loop {
+        'pages: loop {
             let message_buf = self
                 .log
                 .read(current_offset, ReadLimit::max_bytes(MAX_MESSAGE_BYTES))
@@ -157,17 +216,24 @@ impl CommitLogEventLog {
                 if usize::from(msg.metadata_size()) > msg.size() as usize {
                     anyhow::bail!(
                         "commit log event at sequence {seq} has invalid frame metadata length; \
-                         log is corrupt"
+                        log is corrupt"
                     );
                 }
-                let event = InterfoldEvent::<Unsequenced>::from_bytes(msg.payload()).with_context(
-                    || {
-                        format!(
-                            "commit log event at sequence {seq} failed to decode; log is corrupt"
-                        )
-                    },
-                )?;
+                let event_bytes = EventBlobs::record_len(msg.payload()).with_context(|| {
+                    format!("commit log event at sequence {seq} has an invalid blob reference")
+                })?;
+                if !events.is_empty()
+                    && max_bytes.is_some_and(|max_bytes| {
+                        decoded_bytes.saturating_add(event_bytes) > max_bytes
+                    })
+                {
+                    break 'pages;
+                }
+                let event = decode_record(&self.blobs, msg.payload()).with_context(|| {
+                    format!("commit log event at sequence {seq} failed to decode; log is corrupt")
+                })?;
                 events.push((seq, event));
+                decoded_bytes = decoded_bytes.saturating_add(event_bytes);
                 current_offset = msg.offset() + 1;
                 count += 1;
 
@@ -185,7 +251,62 @@ impl CommitLogEventLog {
     }
 }
 
-fn inspect_active_tail(path: &Path) -> Result<Option<TailRecoveryPlan>> {
+fn sync_active_commit_log_files(path: &Path) -> Result<()> {
+    let mut active_base = None;
+    for entry in fs::read_dir(path)
+        .with_context(|| format!("failed to list event-log directory {}", path.display()))?
+    {
+        let entry = entry?;
+        if !entry.file_type()?.is_file()
+            || entry
+                .path()
+                .extension()
+                .and_then(|extension| extension.to_str())
+                != Some("log")
+        {
+            continue;
+        }
+        let entry_path = entry.path();
+        let Some(stem) = entry_path.file_stem().and_then(|stem| stem.to_str()) else {
+            continue;
+        };
+        if stem.len() == 20 && stem.bytes().all(|byte| byte.is_ascii_digit()) {
+            active_base = Some(active_base.map_or(stem.to_owned(), |current: String| {
+                current.max(stem.to_owned())
+            }));
+        }
+    }
+
+    if let Some(base) = active_base {
+        for extension in ["log", "index"] {
+            let file_path = path.join(format!("{base}.{extension}"));
+            File::open(&file_path)
+                .with_context(|| format!("failed to open {} for sync", file_path.display()))?
+                .sync_all()
+                .with_context(|| format!("failed to sync {}", file_path.display()))?;
+        }
+    }
+    File::open(path)
+        .and_then(|directory| directory.sync_all())
+        .with_context(|| format!("failed to sync event-log directory {}", path.display()))
+}
+
+fn decode_record(blobs: &EventBlobs, record: &[u8]) -> Result<InterfoldEvent<Unsequenced>> {
+    match blobs.resolve(record)? {
+        Some(bytes) => {
+            let event: InterfoldEvent<Unsequenced> =
+                e3_utils::deserialize_bounded(&bytes, MAX_BLOB_BYTES as u64)?;
+            anyhow::ensure!(
+                event.source() == EventSource::Local,
+                "event blob contains a non-local event"
+            );
+            Ok(event)
+        }
+        None => Ok(InterfoldEvent::<Unsequenced>::from_bytes(record)?),
+    }
+}
+
+fn inspect_active_tail(path: &Path, blobs: &EventBlobs) -> Result<Option<TailRecoveryPlan>> {
     if !path.exists() {
         return Ok(None);
     }
@@ -314,10 +435,9 @@ fn inspect_active_tail(path: &Path) -> Result<Option<TailRecoveryPlan>> {
             );
         }
         let expected_offset = base_offset + index as u64;
-        let expected_sequence = expected_offset + 1;
         let PhysicalFrame::Complete {
             offset,
-            payload,
+            payload: _,
             end,
         } = read_physical_frame(&mut segment, position, physical_end)?
         else {
@@ -332,9 +452,6 @@ fn inspect_active_tail(path: &Path) -> Result<Option<TailRecoveryPlan>> {
                  {offset}"
             );
         }
-        InterfoldEvent::<Unsequenced>::from_bytes(&payload).with_context(|| {
-            format!("committed event-log record at sequence {expected_sequence} failed to decode")
-        })?;
         indexed_end = end;
     }
 
@@ -355,7 +472,7 @@ fn inspect_active_tail(path: &Path) -> Result<Option<TailRecoveryPlan>> {
                          {expected_offset}, got {offset}"
                     );
                 }
-                InterfoldEvent::<Unsequenced>::from_bytes(&payload).with_context(|| {
+                decode_record(blobs, &payload).with_context(|| {
                     format!(
                         "CRC-valid unindexed event-log record at offset {offset} failed to decode; \
                          refusing to discard a potentially committed event"
@@ -474,12 +591,30 @@ fn apply_tail_recovery(plan: &TailRecoveryPlan) -> Result<()> {
 impl EventLog for CommitLogEventLog {
     fn append(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<u64> {
         let bytes = bincode::serialize(event)?;
-        self.append_bytes(&bytes)
+        if bytes.len() <= MAX_INLINE_EVENT_BYTES {
+            return self.append_bytes(&bytes);
+        }
+        if event.source() != EventSource::Local {
+            anyhow::bail!(
+                "non-local event is too large: {} bytes exceed the {}-byte inline limit",
+                bytes.len(),
+                MAX_INLINE_EVENT_BYTES
+            );
+        }
+        if bytes.len() > MAX_BLOB_BYTES {
+            anyhow::bail!(
+                "local event is too large: {} bytes exceed the {}-byte blob limit",
+                bytes.len(),
+                MAX_BLOB_BYTES
+            );
+        }
+        let reference = self.blobs.store(&bytes)?;
+        self.append_bytes(&reference)
     }
 
     fn flush(&mut self) -> Result<()> {
         self.log.flush().context("Failed to flush event log")?;
-        Ok(())
+        sync_active_commit_log_files(&self.path).context("Failed to sync event log")
     }
 
     fn read_from(
@@ -495,7 +630,19 @@ impl EventLog for CommitLogEventLog {
         limit: usize,
     ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
         Ok(Box::new(
-            self.read_from_checked_with_limit(from, Some(limit))?
+            self.read_from_checked_with_limits(from, Some(limit), None)?
+                .into_iter(),
+        ))
+    }
+
+    fn read_from_bounded_by_bytes(
+        &self,
+        from: u64,
+        limit: usize,
+        max_bytes: usize,
+    ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
+        Ok(Box::new(
+            self.read_from_checked_with_limits(from, Some(limit), Some(max_bytes))?
                 .into_iter(),
         ))
     }
@@ -730,6 +877,7 @@ mod tests {
                 "AggregatorChanged",
                 AggregatorChanged {
                     e3_id: e3_id.clone(),
+                    active_party_id: Some(0),
                     is_aggregator: true,
                 }
                 .into(),
@@ -862,6 +1010,143 @@ mod tests {
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].0, 2);
         assert_eq!(events[1].0, 3);
+    }
+
+    #[test]
+    fn byte_bounded_read_returns_one_event_then_stops() {
+        let dir = tempdir().unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
+        let first_message = "x".repeat(8_192);
+        let second_message = "y".repeat(8_192);
+        let first = event_from(TestEvent::new(&first_message, 1));
+        let second = event_from(TestEvent::new(&second_message, 2));
+        let first_bytes = bincode::serialized_size(&first).unwrap() as usize;
+        log.append(&first).unwrap();
+        log.append(&second).unwrap();
+
+        let events: Vec<_> = log
+            .read_from_bounded_by_bytes(1, 2, first_bytes)
+            .unwrap()
+            .collect();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].1, first);
+    }
+
+    #[test]
+    fn reopen_reclaims_only_unreferenced_blobs() {
+        let dir = tempdir().unwrap();
+        let event = event_from(TestEvent::new("referenced blob", 1));
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
+        let reference = log
+            .blobs
+            .store(&bincode::serialize(&event).unwrap())
+            .unwrap();
+        let blob_dir = dir.path().join("event-blobs-v1");
+        let live_path = fs::read_dir(&blob_dir)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        log.append_bytes(&reference).unwrap();
+        log.flush().unwrap();
+
+        let orphan_path = blob_dir.join("f".repeat(64));
+        fs::write(&orphan_path, b"orphan").unwrap();
+        drop(log);
+
+        let reopened = CommitLogEventLog::new(dir.path()).unwrap();
+        assert!(live_path.exists());
+        assert!(!orphan_path.exists());
+        assert_eq!(reopened.read_from_checked(1).unwrap()[0].1, event);
+    }
+
+    fn oversized_event_with_size(source: EventSource, size: usize) -> InterfoldEvent<Unsequenced> {
+        InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TestEvent {
+                msg: "x".repeat(size),
+                entropy: 42,
+                e3_id: None,
+            }
+            .into(),
+            None,
+            123,
+            None,
+            source,
+        )
+    }
+
+    fn oversized_event(source: EventSource) -> InterfoldEvent<Unsequenced> {
+        oversized_event_with_size(source, MAX_MESSAGE_BYTES)
+    }
+
+    #[test]
+    fn large_local_event_survives_flush_reopen_and_checked_read() {
+        let dir = tempdir().unwrap();
+        let original = oversized_event_with_size(EventSource::Local, 123_000_000);
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
+        assert_eq!(log.append(&original).unwrap(), 1);
+        log.flush().unwrap();
+        drop(log);
+
+        let reopened = CommitLogEventLog::new(dir.path()).unwrap();
+        let events = reopened.read_from_checked(1).unwrap();
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].0, 1);
+        assert!(events[0].1 == original);
+    }
+
+    #[test]
+    fn large_network_event_is_rejected_before_append() {
+        let dir = tempdir().unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
+        let error = log.append(&oversized_event(EventSource::Net)).unwrap_err();
+        assert!(format!("{error:#}").contains("non-local event is too large"));
+        assert_eq!(log.head(), 0);
+    }
+
+    #[test]
+    fn missing_large_event_blob_fails_closed_on_reopen() {
+        let dir = tempdir().unwrap();
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
+        log.append(&oversized_event(EventSource::Local)).unwrap();
+        log.flush().unwrap();
+        drop(log);
+
+        let blob_dir = dir.path().join("event-blobs-v1");
+        let blob = fs::read_dir(blob_dir)
+            .unwrap()
+            .next()
+            .unwrap()
+            .unwrap()
+            .path();
+        fs::remove_file(blob).unwrap();
+        let error = CommitLogEventLog::new(dir.path()).err().unwrap();
+        assert!(format!("{error:#}").contains("missing event blob"));
+    }
+
+    #[test]
+    fn complete_unindexed_blob_reference_is_reindexed() {
+        let dir = tempdir().unwrap();
+        let index_path = dir.path().join("00000000000000000000.index");
+        let mut log = CommitLogEventLog::new(dir.path()).unwrap();
+        let event = event_from(TestEvent::new("blob tail", 1));
+        let reference = log
+            .blobs
+            .store(&bincode::serialize(&event).unwrap())
+            .unwrap();
+        log.append_bytes(&reference).unwrap();
+        log.flush().unwrap();
+        drop(log);
+
+        let mut index = OpenOptions::new().write(true).open(index_path).unwrap();
+        index.write_all(&[0u8; 8]).unwrap();
+        index.sync_all().unwrap();
+        drop(index);
+
+        let reopened = CommitLogEventLog::new(dir.path()).unwrap();
+        assert_eq!(reopened.head(), 1);
+        assert_eq!(reopened.read_from_checked(1).unwrap()[0].1, event);
     }
 
     #[test]

@@ -15,7 +15,19 @@ const MAX_RETRIES: u8 = 5;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
     let client = Client::new();
-    let cron_api_key = std::env::var("CRON_API_KEY").unwrap_or_else(|_| "1234567890".to_string());
+    let cron_api_key = std::env::var("CRON_API_KEY").map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "CRON_API_KEY must be set",
+        )
+    })?;
+    if cron_api_key.trim().is_empty() {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "CRON_API_KEY must not be empty",
+        )
+        .into());
+    }
     let interfold_server_url = std::env::var("INTERFOLD_SERVER_URL")
         .unwrap_or_else(|_| "http://localhost:4000".to_string());
 

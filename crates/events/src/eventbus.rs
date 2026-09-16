@@ -40,7 +40,18 @@ const DEFAULT_DEDUP_CAPACITY: usize = 250_000;
 /// Actor handlers are expected to hand long-running work to child futures. A
 /// full mailbox that cannot accept one event within this window is unhealthy;
 /// replay fails closed instead of hanging startup forever.
-const FANOUT_ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
+pub const FANOUT_ACCEPT_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Maximum time for actor shutdown, event flushing, and store flushing.
+///
+/// A blocked subscriber can consume the complete fanout timeout. The remaining time lets the
+/// persistence barriers finish before the process exits.
+pub const NODE_SHUTDOWN_DEADLINE: Duration =
+    Duration::from_secs(FANOUT_ACCEPT_TIMEOUT.as_secs() + 30);
+const _: () = assert!(
+    NODE_SHUTDOWN_DEADLINE.as_secs() > FANOUT_ACCEPT_TIMEOUT.as_secs(),
+    "shutdown must leave time to flush after a fanout timeout"
+);
 
 /// A bounded, exact FIFO set.
 ///

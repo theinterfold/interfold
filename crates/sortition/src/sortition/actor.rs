@@ -19,10 +19,10 @@ use e3_data::{AutoPersist, Persistable, Repository};
 use e3_events::hlc::HlcTimestamp;
 use e3_events::{
     prelude::*, trap, CiphernodeAdded, CiphernodeRemoved, Committee, CommitteeFinalized,
-    CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteePublished, CommitteeRequested,
-    ConfigurationUpdated, E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType,
-    EffectsEnabled, EventContext, EventType, InterfoldEvent, OperatorActivationChanged,
-    PlaintextOutputPublished, Seed, Sequenced, TicketBalanceUpdated, TypedEvent,
+    CommitteeMemberExcluded, CommitteeMemberExpelled, CommitteeRequested, ConfigurationUpdated,
+    E3Failed, E3RequestComplete, E3Requested, E3Stage, E3StageChanged, EType, EffectsEnabled,
+    EventContext, EventType, InterfoldEvent, OperatorActivationChanged, PlaintextOutputPublished,
+    Seed, Sequenced, TicketBalanceUpdated, TypedEvent,
 };
 use e3_events::{BusHandle, E3id, InterfoldEventData};
 use e3_utils::{NotifySync, MAILBOX_LIMIT};
@@ -235,7 +235,6 @@ impl Sortition {
                 EventType::OperatorActivationChanged,
                 EventType::ConfigurationUpdated,
                 EventType::CommitteeRequested,
-                EventType::CommitteePublished,
                 EventType::PlaintextOutputPublished,
                 EventType::CommitteeFinalized,
                 EventType::CommitteeMemberExpelled,

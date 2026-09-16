@@ -33,7 +33,11 @@ fn available_tickets_accounts_for_price_and_jobs() {
     // floor(55 / 10) = 5 tickets, no active jobs yet.
     assert_eq!(store[&1].available_tickets("0xabc"), 5);
 
-    NodeRegistry::record_committee_published(&mut store, &e3(1, "7"), &["0xabc".into()]);
+    assert!(NodeRegistry::reserve_committee_job(
+        &mut store,
+        &e3(1, "7"),
+        "0xabc"
+    ));
     // One active job now -> 4 available.
     assert_eq!(store[&1].available_tickets("0xabc"), 4);
     assert_eq!(store[&1].nodes["0xabc"].active_jobs, 1);
@@ -106,7 +110,12 @@ fn release_committee_jobs_is_idempotent() {
     let mut store = HashMap::new();
     let id = e3(1, "7");
     NodeRegistry::record_sortition_snapshot(&mut store, &id, 100, U256::from(25));
-    NodeRegistry::record_committee_published(&mut store, &id, &["0xabc".into(), "0xdef".into()]);
+    NodeRegistry::reconcile_committee_jobs(
+        &mut store,
+        &id,
+        &["0xabc".into(), "0xdef".into()],
+        "test",
+    );
     assert_eq!(store[&1].nodes["0xabc"].active_jobs, 1);
     assert_eq!(store[&1].nodes["0xdef"].active_jobs, 1);
 
@@ -122,13 +131,13 @@ fn release_committee_jobs_is_idempotent() {
 }
 
 #[test]
-fn duplicate_committee_publication_increments_jobs_once() {
+fn duplicate_committee_reconciliation_increments_jobs_once() {
     let mut store = HashMap::new();
     let id = e3(1, "17");
     let nodes = ["0xabc".into(), "0xdef".into()];
 
-    NodeRegistry::record_committee_published(&mut store, &id, &nodes);
-    NodeRegistry::record_committee_published(&mut store, &id, &nodes);
+    NodeRegistry::reconcile_committee_jobs(&mut store, &id, &nodes, "test");
+    NodeRegistry::reconcile_committee_jobs(&mut store, &id, &nodes, "test replay");
 
     assert_eq!(store[&1].nodes["0xabc"].active_jobs, 1);
     assert_eq!(store[&1].nodes["0xdef"].active_jobs, 1);
@@ -136,16 +145,71 @@ fn duplicate_committee_publication_increments_jobs_once() {
 }
 
 #[test]
-fn conflicting_committee_replay_preserves_the_first_committee() {
+fn committee_reconciliation_applies_the_set_difference() {
     let mut store = HashMap::new();
     let id = e3(1, "18");
 
-    NodeRegistry::record_committee_published(&mut store, &id, &["0xabc".into()]);
-    NodeRegistry::record_committee_published(&mut store, &id, &["0xdef".into()]);
+    NodeRegistry::reconcile_committee_jobs(&mut store, &id, &["0xabc".into()], "first");
+    NodeRegistry::reconcile_committee_jobs(&mut store, &id, &["0xdef".into()], "second");
+
+    assert_eq!(store[&1].nodes["0xabc"].active_jobs, 0);
+    assert_eq!(store[&1].nodes["0xdef"].active_jobs, 1);
+    assert_eq!(store[&1].e3_committees[&committee_key(&id)], vec!["0xdef"]);
+}
+
+#[test]
+fn ticket_reservation_is_idempotent() {
+    let mut store = HashMap::new();
+    let id = e3(1, "19");
+
+    assert!(NodeRegistry::reserve_committee_job(
+        &mut store, &id, "0xabc"
+    ));
+    assert!(NodeRegistry::reserve_committee_job(
+        &mut store, &id, "0xabc"
+    ));
 
     assert_eq!(store[&1].nodes["0xabc"].active_jobs, 1);
-    assert!(!store[&1].nodes.contains_key("0xdef"));
     assert_eq!(store[&1].e3_committees[&committee_key(&id)], vec!["0xabc"]);
+}
+
+#[test]
+fn finalization_confirms_a_selected_reservation_without_double_counting() {
+    let mut store = HashMap::new();
+    let id = e3(1, "20");
+
+    assert!(NodeRegistry::reserve_committee_job(
+        &mut store, &id, "0xabc"
+    ));
+    NodeRegistry::reconcile_committee_jobs(
+        &mut store,
+        &id,
+        &["0xabc".into(), "0xdef".into()],
+        "CommitteeFinalized",
+    );
+
+    assert_eq!(store[&1].nodes["0xabc"].active_jobs, 1);
+    assert_eq!(store[&1].nodes["0xdef"].active_jobs, 1);
+}
+
+#[test]
+fn finalization_releases_an_unselected_ticket_reservation() {
+    let mut store = HashMap::new();
+    let id = e3(1, "21");
+
+    assert!(NodeRegistry::reserve_committee_job(
+        &mut store, &id, "0xlocal"
+    ));
+    NodeRegistry::reconcile_committee_jobs(
+        &mut store,
+        &id,
+        &["0xabc".into(), "0xdef".into()],
+        "CommitteeFinalized",
+    );
+
+    assert_eq!(store[&1].nodes["0xlocal"].active_jobs, 0);
+    assert_eq!(store[&1].nodes["0xabc"].active_jobs, 1);
+    assert_eq!(store[&1].nodes["0xdef"].active_jobs, 1);
 }
 
 #[test]
@@ -168,8 +232,13 @@ fn open_committees_lists_only_unreleased() {
     let mut store = HashMap::new();
     let a = e3(1, "1");
     let b = e3(1, "2");
-    NodeRegistry::record_committee_published(&mut store, &a, &["0xabc".into()]);
-    NodeRegistry::record_committee_published(&mut store, &b, &["0xabc".into(), "0xdef".into()]);
+    NodeRegistry::reconcile_committee_jobs(&mut store, &a, &["0xabc".into()], "test");
+    NodeRegistry::reconcile_committee_jobs(
+        &mut store,
+        &b,
+        &["0xabc".into(), "0xdef".into()],
+        "test",
+    );
 
     let open = NodeRegistry::open_committees(&store);
     assert_eq!(open.len(), 2);

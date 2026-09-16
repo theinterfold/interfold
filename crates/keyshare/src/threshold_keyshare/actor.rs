@@ -6,17 +6,20 @@
 
 use actix::prelude::*;
 use alloy::primitives::Address;
+use alloy::signers::local::PrivateKeySigner;
 use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_data::Persistable;
 use e3_events::{
-    prelude::*, trap, BusHandle, CiphernodeSelected, CiphertextOutputPublished,
+    prelude::*, trap, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
+    CiphernodeSelected, CiphertextOutputPublished, CommitmentRosterSelected,
     CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest, ComputeResponse,
     ComputeResponseKind, CorrelationId, DecryptionKeyShared, DecryptionShareProofSigned,
-    DecryptionShareProofsPending, Die, DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed,
-    E3RequestComplete, E3Stage, EType, EncryptionKey, EncryptionKeyCollectionFailed,
-    EncryptionKeyCreated, EncryptionKeyPending, EventContext, FailureReason, InterfoldEvent,
-    InterfoldEventData, KeyshareCreated, PartyProofsToVerify, PartyShareDecryptionProofsToVerify,
+    DecryptionShareProofsPending, Die, DkgCoordination, DkgCoordinationKind, DkgDealer,
+    DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, E3id,
+    EType, EncryptionKey, EncryptionKeyCollectionFailed, EncryptionKeyCreated,
+    EncryptionKeyPending, EventContext, FailureReason, InterfoldEvent, InterfoldEventData,
+    KeyshareCreated, PartyProofsToVerify, PartyShareDecryptionProofsToVerify,
     PkGenerationProofSigned, ProofType, Sequenced, ShareDecryptionProofPending,
     ShareVerificationComplete, ShareVerificationDispatched, SignedProofPayload, ThresholdShare,
     ThresholdShareCollectionFailed, ThresholdShareCreated, ThresholdShareDecryptionProofRequest,
@@ -40,6 +43,8 @@ use e3_zk_helpers::CiphernodesCommitteeSize;
 use fhe_traits::Serialize;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
+    future::Future,
+    pin::Pin,
     sync::Arc,
 };
 use tracing::{error, info, trace, warn};
@@ -56,10 +61,11 @@ use crate::actors::threshold_share_collector::{
 };
 use crate::domain::timeout_policy::{resolve_timeout, DkgTimeoutPhase};
 use crate::domain::{
-    build_decryption_key_plan, build_shares_generated_plan, generate_bfv_keypair,
-    AggregatingDecryptionKey, BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting,
-    DecryptionKeyPlan, GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState,
-    ProofRequestData, ReadyForDecryption, ReceivedShareProofs, ThresholdKeyshareState,
+    build_decryption_key_plan, build_shares_generated_plan, dealer_identity, generate_bfv_keypair,
+    select_ready_roster, AggregatingDecryptionKey, BfvKeypairMaterial,
+    CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan, GeneratingDecryptionProof,
+    GeneratingThresholdShareData, KeyshareState, ProofRequestData, ReadyForDecryption,
+    ReceivedShareProofs, ThresholdKeyshareState,
 };
 
 #[path = "recovery_state.rs"]
@@ -121,7 +127,13 @@ pub struct ThresholdKeyshareParams {
     pub share_enc_preset: BfvPreset,
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
+    pub dkg_timing_reader: DkgTimingReader,
+    pub signer: PrivateKeySigner,
+    pub effects_enabled: bool,
 }
+
+pub type DkgTimingFuture = Pin<Box<dyn Future<Output = Result<(u64, u64)>> + Send>>;
+pub type DkgTimingReader = Arc<dyn Fn(E3id) -> DkgTimingFuture + Send + Sync>;
 
 /// Process-local bridge data rebuilt from the versioned keyshare recovery record.
 #[derive(Default)]
@@ -151,6 +163,14 @@ pub struct ThresholdKeyshare {
     recovery: Persistable<ThresholdKeyshareRecoveryState>,
     share_enc_preset: BfvPreset,
     interfold_address: Address,
+    dkg_timing_reader: DkgTimingReader,
+    signer: PrivateKeySigner,
+    active_aggregator_party_id: Option<u64>,
+    is_aggregator: bool,
+    effects_enabled: bool,
+    roster_inputs_ready: bool,
+    roster_proposal_pending: bool,
+    selection_timing_pending: bool,
     pending: PendingKeyshareWork,
 }
 
@@ -185,6 +205,14 @@ impl ThresholdKeyshare {
             recovery: params.recovery,
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
+            dkg_timing_reader: params.dkg_timing_reader,
+            signer: params.signer,
+            active_aggregator_party_id: recovered.active_aggregator_party_id,
+            is_aggregator: recovered.is_aggregator,
+            effects_enabled: params.effects_enabled,
+            roster_inputs_ready: false,
+            roster_proposal_pending: false,
+            selection_timing_pending: false,
             pending: PendingKeyshareWork {
                 shares: pending_shares,
                 share_decryption_data,

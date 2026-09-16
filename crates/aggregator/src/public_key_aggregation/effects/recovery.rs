@@ -86,7 +86,24 @@ impl PublicKeyAggregator {
                 }
                 Ok(())
             }
-            PublicKeyAggregatorState::Collecting { .. } => Ok(()),
+            PublicKeyAggregatorState::Collecting { .. } => {
+                let Some(selected) = recovery.selected_roster else {
+                    return Ok(());
+                };
+                self.state.try_mutate(&effects_context, |state| {
+                    PublicKeyAggregation::begin_selected_c1(state, Some(&selected))
+                })?;
+                if let Some(PublicKeyAggregatorState::VerifyingC1 {
+                    submission_order,
+                    c1_proofs,
+                    ..
+                }) = self.state.get()
+                {
+                    self.publish_inputs_ready(effects_context.clone())?;
+                    self.dispatch_c1_verification(&submission_order, &c1_proofs, effects_context)?;
+                }
+                Ok(())
+            }
         }
     }
 }

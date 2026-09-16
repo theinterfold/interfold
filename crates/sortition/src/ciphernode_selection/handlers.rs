@@ -37,6 +37,9 @@ impl Handler<InterfoldEvent> for CiphernodeSelector {
             InterfoldEventData::AggregationInputsReady(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::CommitmentRosterSelected(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::EffectsEnabled(data) => self.notify_sync(ctx, data),
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
             _ => (),
@@ -58,6 +61,9 @@ impl Handler<TypedEvent<E3Requested>> for CiphernodeSelector {
     type Result = ();
 
     fn handle(&mut self, msg: TypedEvent<E3Requested>, _: &mut Self::Context) -> Self::Result {
+        if self.terminal_e3s.contains(&msg.e3_id) {
+            return;
+        }
         trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
             self.state.try_mutate(msg.get_ctx(), |mut state| {
                 state
@@ -78,6 +84,9 @@ impl Handler<WithSortitionTicket<TypedEvent<E3Requested>>> for CiphernodeSelecto
         data: WithSortitionTicket<TypedEvent<E3Requested>>,
         _: &mut Self::Context,
     ) -> Self::Result {
+        if self.terminal_e3s.contains(&data.e3_id) {
+            return;
+        }
         trap(EType::Sortition, &self.bus.with_ec(data.get_ctx()), || {
             self.state.try_mutate(data.get_ctx(), |mut state| {
                 info!(
@@ -132,10 +141,13 @@ impl Handler<TypedEvent<E3RequestComplete>> for CiphernodeSelector {
                     state.committees.remove(&msg.e3_id);
                     state.expelled.remove(&msg.e3_id);
                     state.is_aggregator.remove(&msg.e3_id);
+                    state.dkg_roster_selected.remove(&msg.e3_id);
                     Ok(state)
                 })?;
+                self.terminal_e3s.insert(msg.e3_id.clone());
                 self.observed_phases.remove(&msg.e3_id);
                 self.ready_phases.remove(&msg.e3_id);
+                self.announced_active_parties.remove(&msg.e3_id);
                 self.failover.try_mutate(msg.get_ctx(), |mut state| {
                     state.rounds.remove(&msg.e3_id);
                     state.unresponsive.remove(&msg.e3_id);
@@ -156,6 +168,9 @@ impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {
         msg: TypedEvent<CommitteeFinalized>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
+        if self.terminal_e3s.contains(&msg.e3_id) {
+            return;
+        }
         trap(
             EType::Sortition,
             &self.bus.with_ec(msg.get_ctx()),
@@ -218,7 +233,12 @@ impl Handler<TypedEvent<CommitteeFinalized>> for CiphernodeSelector {
 
                 self.observe_phase(
                     msg.e3_id.clone(),
-                    Some(AggregatorPhase::PublicKey),
+                    selector_phase_for_stage(
+                        &E3Stage::CommitteeFinalized,
+                        self.state
+                            .get()
+                            .is_some_and(|state| state.dkg_roster_selected.contains(&msg.e3_id)),
+                    ),
                     true,
                     &ec,
                     _ctx,
@@ -335,16 +355,19 @@ impl Handler<TypedEvent<E3StageChanged>> for CiphernodeSelector {
 
     fn handle(&mut self, msg: TypedEvent<E3StageChanged>, ctx: &mut Self::Context) -> Self::Result {
         trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
+            if matches!(msg.new_stage, E3Stage::Complete | E3Stage::Failed) {
+                self.terminal_e3s.insert(msg.e3_id.clone());
+            }
             if matches!(&msg.new_stage, E3Stage::None | E3Stage::Requested) {
                 return Ok(());
             }
-            self.observe_phase(
-                msg.e3_id.clone(),
-                phase_for_stage(&msg.new_stage),
-                false,
-                msg.get_ctx(),
-                ctx,
-            )
+            let phase = selector_phase_for_stage(
+                &msg.new_stage,
+                self.state
+                    .get()
+                    .is_some_and(|state| state.dkg_roster_selected.contains(&msg.e3_id)),
+            );
+            self.observe_phase(msg.e3_id.clone(), phase, false, msg.get_ctx(), ctx)
         })
     }
 }
@@ -370,6 +393,21 @@ impl Handler<TypedEvent<AggregationInputsReady>> for CiphernodeSelector {
         trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
             let (msg, ec) = msg.into_components();
             self.observe_aggregation_inputs_ready(msg, &ec, ctx)
+        })
+    }
+}
+
+impl Handler<TypedEvent<CommitmentRosterSelected>> for CiphernodeSelector {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<CommitmentRosterSelected>,
+        ctx: &mut Self::Context,
+    ) -> Self::Result {
+        trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
+            let (msg, ec) = msg.into_components();
+            self.observe_dkg_roster_selected(msg, &ec, ctx)
         })
     }
 }

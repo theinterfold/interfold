@@ -12,6 +12,16 @@ impl ThresholdPlaintextAggregator {
         signed_decryption_proofs: Vec<SignedProofPayload>,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
+        if !matches!(
+            self.state.get().as_ref(),
+            Some(ThresholdPlaintextAggregatorState::Collecting(_))
+        ) {
+            debug!(
+                party_id,
+                "Ignoring a decryption share after collection closed"
+            );
+            return Ok(());
+        }
         let required_shares = self.aggregated_committee_n();
         ensure!(
             required_shares > 0,

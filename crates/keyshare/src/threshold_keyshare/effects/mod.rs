@@ -10,6 +10,7 @@ use super::*;
 
 mod calculate_decryption_key;
 mod coordinate_collectors;
+mod coordinate_roster;
 mod create_decryption_share;
 mod generate_threshold_share;
 mod initialize_dkg;

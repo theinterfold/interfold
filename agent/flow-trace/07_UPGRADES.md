@@ -105,5 +105,7 @@ prevents accidental mixed deployments. Threshold cryptography and on-chain verif
 controls against a malicious operator.
 
 The on-chain active count is also not a heartbeat. Before resuming, operations must confirm that the
-release-ready processes are online and can reach the upgraded bootstrap and one another. A stuck E3
-or unreleased committee delays a mandatory cutover until normal failure finalization drains it.
+release-ready processes are online and can reach the upgraded bootstrap and one another. Check both
+the admitted connection count and the protocol-topic subscriber count on every node. A transport
+connection without the matching gossip subscription is not ready for committee work. A stuck E3 or
+unreleased committee delays a mandatory cutover until normal failure finalization drains it.

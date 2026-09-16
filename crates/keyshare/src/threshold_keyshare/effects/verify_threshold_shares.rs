@@ -3,6 +3,7 @@
 //! C2/C3 collection, verification dispatch, and result application.
 
 use super::*;
+use e3_events::CircuitName;
 
 impl ThresholdKeyshare {
     /// Verify the collected C2/C3 proofs before decryption-key aggregation.
@@ -15,6 +16,17 @@ impl ThresholdKeyshare {
         let state = self.state.try_get()?;
         let e3_id = state.get_e3_id();
         let own_party_id = state.party_id;
+        let recovery = self.recovery.try_get()?;
+        let own_c0 = recovery
+            .encryption_keys
+            .get(&own_party_id)
+            .and_then(|event| event.key.signed_payload.as_ref())
+            .ok_or_else(|| anyhow!("missing own verified C0 proof for DKG share validation"))?;
+        let own_pk_field = CircuitName::PkBfv
+            .output_layout()
+            .extract_field(&own_c0.payload.proof.public_signals, "pk_commitment")
+            .ok_or_else(|| anyhow!("own C0 proof has no public-key commitment"))?;
+        let own_pk_commitment: [u8; 32] = own_pk_field.try_into()?;
 
         // Filter out expelled parties before any processing. The collector may
         // have accepted shares before the expulsion arrived, so we scrub here.
@@ -54,6 +66,7 @@ impl ThresholdKeyshare {
         let mut party_proofs_to_verify: Vec<PartyProofsToVerify> = Vec::new();
         let mut no_proof_parties: HashSet<u64> = HashSet::new();
         let mut incomplete_proof_parties: HashSet<u64> = HashSet::new();
+        let mut wrong_recipient_key_parties: HashSet<u64> = HashSet::new();
         for (share, proofs) in shares.iter().zip(share_proofs.iter()) {
             if share.party_id == own_party_id {
                 continue;
@@ -92,6 +105,22 @@ impl ThresholdKeyshare {
                 continue;
             }
 
+            let recipient_key_matches = proofs
+                .signed_c3a_proofs
+                .iter()
+                .chain(&proofs.signed_c3b_proofs)
+                .all(|signed| {
+                    c3_targets_public_key(&signed.payload.proof.public_signals, &own_pk_commitment)
+                });
+            if !recipient_key_matches {
+                warn!(
+                    "Party {} encrypted its DKG share for a different recipient key; excluding it from this node's readiness set",
+                    share.party_id
+                );
+                wrong_recipient_key_parties.insert(share.party_id);
+                continue;
+            }
+
             // Complete proof set — collect for verification
             let mut signed_proofs = Vec::new();
             // SAFETY: is_complete guarantees c2a and c2b are Some
@@ -113,6 +142,7 @@ impl ThresholdKeyshare {
         let mut pre_dishonest: BTreeSet<u64> = BTreeSet::new();
         pre_dishonest.extend(incomplete_proof_parties);
         pre_dishonest.extend(no_proof_parties);
+        pre_dishonest.extend(wrong_recipient_key_parties);
         if !pre_dishonest.is_empty() {
             warn!(
                 "{} parties have missing/incomplete C2/C3 proofs for E3 {} — marking as pre-dishonest: {:?}",
@@ -123,31 +153,12 @@ impl ThresholdKeyshare {
         }
 
         if party_proofs_to_verify.is_empty() {
-            // All non-self parties are dishonest (missing or incomplete proofs), none to verify
-            let threshold = state.threshold_m;
-            let total = state.threshold_n;
-            let dishonest_count = (pre_dishonest.len() as u64).min(total);
-            let honest_count = total - dishonest_count;
-
-            if honest_count <= threshold {
-                warn!(
-                    "Too few honest parties for E3 {} ({} honest, need at least {}) after C2/C3 pre-dishonest filtering — cannot proceed",
-                    e3_id, honest_count, threshold + 1
-                );
-                self.pending.shares.clear();
-                self.bus.publish(
-                    E3Failed {
-                        e3_id: e3_id.clone(),
-                        failed_at_stage: E3Stage::CommitteeFinalized,
-                        reason: FailureReason::InsufficientCommitteeMembers,
-                    },
-                    ec,
-                )?;
-                return Ok(());
-            }
-
-            let dishonest_set: HashSet<u64> = pre_dishonest.into_iter().collect();
-            return self.proceed_with_decryption_key_calculation(Some(dishonest_set), ec);
+            self.pending.shares.clear();
+            warn!(
+                e3_id = %e3_id,
+                "No external DKG share proof passed local prechecks; this node cannot join the C4 roster"
+            );
+            return Ok(());
         }
 
         info!(
@@ -194,39 +205,37 @@ impl ThresholdKeyshare {
                         "All parties passed C2/C3 verification for E3 {} — proceeding",
                         e3_id
                     );
-                    self.proceed_with_decryption_key_calculation(None, ec)
+                    self.maybe_publish_dkg_ready(ec)
                 } else {
-                    let threshold = state.threshold_m;
-                    let total = state.threshold_n;
-                    let dishonest_count = (msg.dishonest_parties.len() as u64).min(total);
-                    let honest_count = total - dishonest_count;
+                    let committee_h = CiphernodesCommitteeSize::from_threshold(
+                        state.threshold_m as usize,
+                        state.threshold_n as usize,
+                    )?
+                    .values()
+                    .h;
+                    let honest_count = self
+                        .recovery
+                        .try_get()?
+                        .verified_dealer_ids
+                        .as_ref()
+                        .map_or(1, |ids| ids.len() + 1);
 
-                    if honest_count <= threshold {
+                    if honest_count < committee_h {
                         warn!(
-                            "Too few honest parties for E3 {} ({} honest, need at least {}) — cannot proceed",
-                            e3_id, honest_count, threshold + 1
+                            "Too few locally verified DKG dealers for E3 {} ({} available, need at least {}) — this node cannot join the C4 roster",
+                            e3_id, honest_count, committee_h
                         );
-                        // Clear pending shares
                         self.pending.shares.clear();
-                        self.bus.publish(
-                            E3Failed {
-                                e3_id: e3_id.clone(),
-                                failed_at_stage: E3Stage::CommitteeFinalized,
-                                reason: FailureReason::InsufficientCommitteeMembers,
-                            },
-                            ec,
-                        )?;
                         return Ok(());
                     }
 
-                    let dishonest_set: HashSet<u64> = msg.dishonest_parties.into_iter().collect();
                     info!(
                         "Proceeding with {} honest parties for E3 {} ({} dishonest excluded)",
                         honest_count,
                         e3_id,
-                        dishonest_set.len()
+                        msg.dishonest_parties.len()
                     );
-                    self.proceed_with_decryption_key_calculation(Some(dishonest_set), ec)
+                    self.maybe_publish_dkg_ready(ec)
                 }
             }
             VerificationKind::DecryptionProofs => {
@@ -280,5 +289,27 @@ impl ThresholdKeyshare {
             }
             _ => Ok(()),
         }
+    }
+}
+
+fn c3_targets_public_key(public_signals: &[u8], expected: &[u8; 32]) -> bool {
+    CircuitName::ShareEncryption
+        .input_layout()
+        .extract_field(public_signals, "expected_pk_commitment")
+        == Some(expected.as_slice())
+}
+
+#[cfg(test)]
+mod recipient_key_tests {
+    use super::c3_targets_public_key;
+
+    #[test]
+    fn rejects_a_c3_placeholder_encrypted_for_another_node() {
+        let own_pk = [0x11; 32];
+        let mut signals = vec![0x22; 64];
+        assert!(!c3_targets_public_key(&signals, &own_pk));
+        signals[..32].copy_from_slice(&own_pk);
+        assert!(c3_targets_public_key(&signals, &own_pk));
+        assert!(!c3_targets_public_key(&signals[..31], &own_pk));
     }
 }

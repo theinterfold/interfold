@@ -152,6 +152,10 @@ contract MockInterfold {
     return IInterfold.E3TimeoutConfig({ dkgWindow: mockDkgWindow, computeWindow: mockComputeWindow, decryptionWindow: 100 });
   }
 
+  function getTimeoutConfig() external view returns (IInterfold.E3TimeoutConfig memory) {
+    return IInterfold.E3TimeoutConfig({ dkgWindow: mockDkgWindow, computeWindow: mockComputeWindow, decryptionWindow: 100 });
+  }
+
   function setComputeWindow(uint256 computeWindow) external {
     mockComputeWindow = computeWindow;
   }

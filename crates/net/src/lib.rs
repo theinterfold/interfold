@@ -121,6 +121,7 @@ pub fn setup_net_with_limits(
         max_buffered_events,
         max_buffered_bytes,
         HashMap::new(),
+        RecoveredDocumentState::default(),
     )
 }
 
@@ -134,6 +135,7 @@ pub fn setup_net_with_limits_and_interests(
     max_buffered_events: usize,
     max_buffered_bytes: usize,
     initial_interests: HashMap<E3id, PartyId>,
+    recovered_documents: RecoveredDocumentState,
 ) -> Result<NetEventBufferHandle> {
     if max_buffered_events == 0 || max_buffered_bytes == 0 {
         bail!("network startup buffer limits must both be greater than zero");
@@ -161,21 +163,23 @@ pub fn setup_net_with_limits_and_interests(
     let tx = interface.tx();
     let network = network.clone();
 
+    DocumentPublisher::setup_before_effects(
+        &bus,
+        &tx,
+        &rx,
+        topic,
+        initial_interests,
+        recovered_documents,
+    );
+
     let runner = run_once::<EffectsEnabled>({
         let bus = bus.clone();
         let rx = rx.clone();
         let topic = topic.to_owned();
         let tx = tx.clone();
-        let initial_interests = initial_interests.clone();
         move |_| {
             NetEventTranslator::setup(&bus, &tx, &rx, &topic, network.clone());
-            DocumentPublisher::setup_with_interests(
-                &bus,
-                &tx,
-                &rx,
-                &topic,
-                initial_interests.clone(),
-            );
+            EventConverter::setup(&bus);
             Ok(())
         }
     });

@@ -241,7 +241,7 @@ interfold start → running node
     ├─ Persists Shutdown and waits for acknowledged EventBus fanout
     ├─ Flushes the sequencer and event-store pipeline
     ├─ Drains open snapshot batches in event order, flushes the backing store, and closes it
-    ├─ Enforces a 30-second deadline and exits unsuccessfully on failure
+    ├─ Enforces a 60-second deadline and exits unsuccessfully on failure
     └─ Flushes the optional operational JSON log collector
 
 On restart:
@@ -300,6 +300,8 @@ On restart:
 │   8. Enable effects (writers may submit only after this point)
 │      → Gate cancels work for terminal E3s and releases only the newest
 │        pending request for each in-flight semantic compute operation
+│      → Gate mirrors a completed response or error to regenerated correlation IDs
+│      → NodeProofAggregator restores persisted inner proofs and resumes incomplete folds
 │      → Durable sortition, committee-finalizer, and slash-writer work is re-armed
 │   9. SyncEffect restores each derived local selection inside its hydrated E3 context
 │      → No new CiphernodeSelected event is persisted
@@ -313,6 +315,12 @@ The shutdown barrier proves that the persisted `Shutdown` event reached its curr
 event pipeline flushed, open snapshot batches drained, and the backing store flushed within the
 deadline. Detached work that is not owned by those barriers can still be cancelled by process exit;
 operators must continue to follow the production shutdown precautions.
+
+`NODE_SHUTDOWN_DEADLINE` is 60 seconds: the 30-second EventBus fanout limit plus 30 seconds for the
+event and store flushes. The swarm daemon waits 65 seconds before it sends `SIGKILL`, and the Docker
+configurations use the same 65-second grace. The `nodes up` launcher uses a detached child process
+and confirms that its control socket becomes ready; dropping the launcher process must not stop the
+daemon it just started.
 
 The three long-lived libp2p `NetEvent` broadcast consumers (`NetEventTranslator`,
 `DocumentPublisher`, and `NetSyncManager`) treat Tokio's `Lagged(n)` receive result as a recoverable
@@ -339,6 +347,15 @@ the node stopped, `interfold node validate --repair` applies the same boundary-c
 as startup and refuses to remove indexed records. Runtime EventStore query failures are returned to
 the correlated caller rather than panicking the actor; committed corruption remains a
 startup/integrity failure.
+
+Large local events use content-addressed blob files beside the commit log. The log stores a small
+versioned reference only after the blob is synced. Open, replay, and tail recovery verify the blob
+length and hash before decoding it. The 32 MiB inline and network event limits stay in place.
+An EventStore append or flush failure stops the actor and signals the node supervisor. Startup and
+the CLI then exit with a nonzero status instead of leaving a dead storage actor inside an online
+process. The EventStore syncs each appended log record before it indexes or broadcasts the event.
+The current storage schema marker is version 5; older node databases must be reset for
+this release, not silently decoded.
 
 For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state. It
 atomically moves the legacy `.enclave` custom-config root to `.interfold`, preserves the encrypted
@@ -448,11 +465,13 @@ path.
 
 `ShareVerificationActor` gates C1/C6 proof verification behind `CommitmentConsistencyCheckRequested`
 / `CommitmentConsistencyCheckComplete`. The per-E3 `CommitmentConsistencyChecker` is therefore
-restart-critical even though it has no durable state of its own: after context hydration,
-`CommitmentConsistencyCheckerExtension` recreates it from the recovered `E3Meta` so restarted active
-aggregators can complete C6 verification. Without this recipient, the restarted node can collect
-honest decryption shares and then wait forever for a consistency-check response that no actor is
-subscribed to publish.
+restart-critical. It stores its verified-proof cache and accepted DKG roster in a per-E3 repository,
+using the causal event's snapshot batch for each mutation. After context hydration,
+`CommitmentConsistencyCheckerExtension` restores that state and recreates the actor from the
+recovered `E3Meta`. Without the recipient, a restarted node can collect honest decryption shares and
+then wait forever for a consistency-check response. Without the restored cache, it can also compare
+recovered proofs with an empty or partial pre-crash history. `E3RequestComplete` clears the checker
+snapshot in the same event batch before the request context is discarded.
 
 The global `ShareVerificationActor` also requires the finalized committee's ordered party-slot map
 for signer ownership checks. It is seeded from `Repositories::finalized_committees` during builder

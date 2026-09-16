@@ -36,7 +36,7 @@ pub struct SortitionSnapshot {
 pub struct NodeState {
     /// Current ticket balance for this node.
     pub ticket_balance: U256,
-    /// Local count of active E3 jobs used for voluntary load balancing.
+    /// Local count of reserved or active E3 jobs used for voluntary load balancing.
     ///
     /// This count does not reserve collateral or change on-chain eligibility.
     pub active_jobs: u64,
@@ -93,10 +93,11 @@ pub struct NodeStateStore {
     pub nodes: HashMap<String, NodeState>,
     /// Current ticket price.
     pub ticket_price: U256,
-    /// Map of `E3 ID -> committee nodes` for that E3.
+    /// Map of `E3 ID -> nodes whose capacity is reserved` for that E3.
     ///
-    /// Tracks which nodes are participating in which E3 jobs so that active-job
-    /// counters can be released when the E3 completes or fails.
+    /// Before committee finalization, a node stores its own ticket reservation.
+    /// Finalization replaces that provisional set with the N-node committee.
+    /// Terminal events release the set.
     pub e3_committees: HashMap<String, Vec<String>>,
     /// Request-boundary price and timepoint for each E3.
     pub sortition_snapshots: HashMap<String, SortitionSnapshot>,
@@ -138,6 +139,13 @@ impl NodeStateStore {
 
     pub fn sortition_snapshot(&self, e3_id: &E3id) -> Option<SortitionSnapshot> {
         self.sortition_snapshots.get(&committee_key(e3_id)).copied()
+    }
+
+    /// Return whether `operator` already holds a capacity slot for this E3.
+    pub fn has_job_for_e3(&self, e3_id: &E3id, operator: &str) -> bool {
+        self.e3_committees
+            .get(&committee_key(e3_id))
+            .is_some_and(|members| members.iter().any(|member| member == operator))
     }
 }
 
@@ -263,53 +271,96 @@ impl NodeRegistry {
         );
     }
 
-    /// Record a published committee and increment active-job counters for each
-    /// of its members.
+    /// Reserve one node's local capacity before its ticket leaves the sortition actor.
     ///
-    /// Event replay and duplicate publication candidates can report the same
-    /// committee more than once. Only the first report changes the counters.
-    pub fn record_committee_published(
+    /// Returns `false` only when the E3 already tracks a different duty set. Replaying
+    /// the same reservation is idempotent.
+    pub fn reserve_committee_job(
         store: &mut HashMap<u64, NodeStateStore>,
         e3_id: &E3id,
-        nodes: &[String],
-    ) {
+        operator: &str,
+    ) -> bool {
         let chain_id = e3_id.chain_id();
         let key = committee_key(e3_id);
         let chain_state = store.entry(chain_id).or_default();
 
         match chain_state.e3_committees.entry(key) {
             Entry::Vacant(entry) => {
-                entry.insert(nodes.to_vec());
+                entry.insert(vec![operator.to_owned()]);
+                let node = chain_state.nodes.entry(operator.to_owned()).or_default();
+                node.active_jobs += 1;
+                info!(
+                    node = %operator,
+                    chain_id,
+                    e3_id = ?e3_id,
+                    active_jobs = node.active_jobs,
+                    "Reserved capacity before ticket submission"
+                );
+                true
             }
+            Entry::Occupied(entry) if entry.get().iter().any(|member| member == operator) => true,
             Entry::Occupied(entry) => {
-                if entry.get().as_slice() != nodes {
-                    warn!(
-                        chain_id,
-                        e3_id = ?e3_id,
-                        recorded_nodes = ?entry.get(),
-                        replayed_nodes = ?nodes,
-                        "Ignored a conflicting committee publication replay"
-                    );
-                } else {
-                    info!(
-                        chain_id,
-                        e3_id = ?e3_id,
-                        "Ignored a duplicate committee publication replay"
-                    );
-                }
-                return;
+                warn!(
+                    node = %operator,
+                    chain_id,
+                    e3_id = ?e3_id,
+                    recorded_nodes = ?entry.get(),
+                    "Refused a capacity reservation for an E3 that already tracks another duty set"
+                );
+                false
             }
         }
+    }
 
-        for node_addr in nodes {
+    /// Replace an E3's provisional or previous duty set with a canonical stage roster.
+    ///
+    /// Committee finalization changes the set to N. Replays are idempotent because counters
+    /// change only for the set difference.
+    pub fn reconcile_committee_jobs(
+        store: &mut HashMap<u64, NodeStateStore>,
+        e3_id: &E3id,
+        nodes: &[String],
+        reason: &str,
+    ) {
+        let chain_id = e3_id.chain_id();
+        let key = committee_key(e3_id);
+        let chain_state = store.entry(chain_id).or_default();
+
+        let previous = chain_state
+            .e3_committees
+            .insert(key, nodes.to_vec())
+            .unwrap_or_default();
+        let previous_set = previous
+            .into_iter()
+            .collect::<std::collections::HashSet<_>>();
+        let next_set = nodes
+            .iter()
+            .cloned()
+            .collect::<std::collections::HashSet<_>>();
+
+        for node_addr in previous_set.difference(&next_set) {
+            if let Some(node) = chain_state.nodes.get_mut(node_addr) {
+                node.active_jobs = node.active_jobs.saturating_sub(1);
+                info!(
+                    node = %node_addr,
+                    chain_id,
+                    e3_id = ?e3_id,
+                    active_jobs = node.active_jobs,
+                    reason,
+                    "Released capacity after an E3 duty-set transition"
+                );
+            }
+        }
+        for node_addr in next_set.difference(&previous_set) {
             let node = chain_state.nodes.entry(node_addr.clone()).or_default();
             node.active_jobs += 1;
             info!(
                 node = %node_addr,
-                chain_id = chain_id,
+                chain_id,
                 e3_id = ?e3_id,
                 active_jobs = node.active_jobs,
-                "Incremented active jobs for node in committee"
+                reason,
+                "Reserved capacity after an E3 duty-set transition"
             );
         }
     }

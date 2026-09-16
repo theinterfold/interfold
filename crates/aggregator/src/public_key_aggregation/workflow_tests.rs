@@ -26,8 +26,8 @@ fn collecting(threshold_n: usize, threshold_m: usize) -> PublicKeyAggregatorStat
 fn add_keyshare_below_threshold_stays_collecting() {
     // minimum committee maps (m=1, n=3) -> needs 3 parties.
     let state = collecting(3, 1);
-    let next =
-        PublicKeyAggregation::add_keyshare(state, ks(1), "node-0".into(), 0, None).expect("add ok");
+    let next = PublicKeyAggregation::add_keyshare(state, ks(1), "node-0".into(), 0, None, None)
+        .expect("add ok");
     match next {
         PublicKeyAggregatorState::Collecting {
             submission_order, ..
@@ -39,8 +39,10 @@ fn add_keyshare_below_threshold_stays_collecting() {
 #[test]
 fn add_keyshare_duplicate_party_is_idempotent() {
     let state = collecting(3, 1);
-    let state = PublicKeyAggregation::add_keyshare(state, ks(1), "node-0".into(), 0, None).unwrap();
-    let state = PublicKeyAggregation::add_keyshare(state, ks(9), "node-0".into(), 0, None).unwrap();
+    let state =
+        PublicKeyAggregation::add_keyshare(state, ks(1), "node-0".into(), 0, None, None).unwrap();
+    let state =
+        PublicKeyAggregation::add_keyshare(state, ks(9), "node-0".into(), 0, None, None).unwrap();
     match state {
         PublicKeyAggregatorState::Collecting {
             submission_order,
@@ -55,7 +57,7 @@ fn add_keyshare_duplicate_party_is_idempotent() {
 }
 
 #[test]
-fn add_keyshare_reaching_threshold_transitions_to_verifying_c1() {
+fn add_keyshare_waits_for_the_accepted_roster() {
     let mut state = collecting(3, 1);
     for pid in 0..3u64 {
         state = PublicKeyAggregation::add_keyshare(
@@ -64,9 +66,13 @@ fn add_keyshare_reaching_threshold_transitions_to_verifying_c1() {
             format!("node-{pid}"),
             pid,
             None,
+            None,
         )
         .unwrap();
     }
+    assert!(matches!(state, PublicKeyAggregatorState::Collecting { .. }));
+    let state =
+        PublicKeyAggregation::begin_selected_c1(state, Some(&BTreeSet::from([0, 2]))).unwrap();
     match state {
         PublicKeyAggregatorState::VerifyingC1 {
             submission_order,
@@ -76,7 +82,13 @@ fn add_keyshare_reaching_threshold_transitions_to_verifying_c1() {
             canonical_party_nodes,
             ..
         } => {
-            assert_eq!(submission_order.len(), 3);
+            assert_eq!(
+                submission_order
+                    .iter()
+                    .map(|entry| entry.0)
+                    .collect::<Vec<_>>(),
+                vec![0, 2]
+            );
             assert_eq!(circuit_committee_n, 3);
             assert_eq!(circuit_committee_h, 2);
             assert_eq!(threshold_m, 1);
@@ -87,18 +99,65 @@ fn add_keyshare_reaching_threshold_transitions_to_verifying_c1() {
 }
 
 #[test]
-fn add_keyshare_wrong_state_errors() {
+fn an_unselected_keyshare_does_not_complete_c1_collection() {
+    let roster = BTreeSet::from([1, 2]);
+    let mut state = collecting(3, 1);
+    for pid in [0, 1] {
+        state = PublicKeyAggregation::add_keyshare(
+            state,
+            ks(pid as u8),
+            format!("node-{pid}"),
+            pid,
+            None,
+            Some(&roster),
+        )
+        .unwrap();
+    }
+    assert!(matches!(state, PublicKeyAggregatorState::Collecting { .. }));
+    let state =
+        PublicKeyAggregation::add_keyshare(state, ks(2), "node-2".into(), 2, None, Some(&roster))
+            .unwrap();
+    match state {
+        PublicKeyAggregatorState::VerifyingC1 {
+            submission_order, ..
+        } => {
+            assert_eq!(
+                submission_order
+                    .iter()
+                    .map(|entry| entry.0)
+                    .collect::<Vec<_>>(),
+                vec![1, 2]
+            );
+        }
+        _ => panic!("expected selected C1 proofs"),
+    }
+}
+
+#[test]
+fn late_keyshare_does_not_change_selected_c1_collection() {
     let state = PublicKeyAggregatorState::VerifyingC1 {
-        submission_order: vec![],
+        submission_order: vec![(0, "node-0".into(), ks(1)), (2, "node-2".into(), ks(2))],
         threshold_m: 1,
         circuit_committee_n: 3,
         circuit_committee_h: 2,
-        c1_proofs: vec![],
+        c1_proofs: vec![None, None],
         no_proof_parties: vec![],
         canonical_party_nodes: HashMap::new(),
     };
-    let err = PublicKeyAggregation::add_keyshare(state, ks(1), "n".into(), 0, None);
-    assert!(err.is_err());
+    let next = PublicKeyAggregation::add_keyshare(state, ks(3), "node-1".into(), 1, None, None)
+        .expect("late keyshare is harmless");
+    match next {
+        PublicKeyAggregatorState::VerifyingC1 {
+            submission_order, ..
+        } => assert_eq!(
+            submission_order
+                .iter()
+                .map(|entry| entry.0)
+                .collect::<Vec<_>>(),
+            vec![0, 2]
+        ),
+        _ => panic!("late keyshare changed the aggregation phase"),
+    }
 }
 
 #[test]
@@ -174,6 +233,7 @@ fn handle_member_expelled_removes_and_reduces_threshold() {
             node.to_owned(),
             pid as u64,
             None,
+            None,
         )
         .unwrap();
     }
@@ -201,9 +261,7 @@ fn handle_member_expelled_removes_and_reduces_threshold() {
 }
 
 #[test]
-fn handle_member_expelled_transitions_when_enough_remain() {
-    // Collecting with n=2, m=1, two keyshares present; expel one ->
-    // threshold_n 1, keyshares 1 == n -> VerifyingC1.
+fn handle_member_expelled_does_not_start_c1_without_a_roster() {
     let state = PublicKeyAggregatorState::Collecting {
         threshold_n: 2,
         threshold_m: 1,
@@ -242,7 +300,7 @@ fn handle_member_expelled_transitions_when_enough_remain() {
     )
     .unwrap();
     match next {
-        PublicKeyAggregatorState::VerifyingC1 {
+        PublicKeyAggregatorState::Collecting {
             circuit_committee_n,
             circuit_committee_h,
             submission_order,

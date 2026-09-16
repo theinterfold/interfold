@@ -6,9 +6,10 @@
 import hre from "hardhat";
 
 import {
+  BondingRegistry__factory as BondingRegistryFactory,
   Faucet__factory as FaucetFactory,
+  Interfold__factory as InterfoldFactory,
   InterfoldToken__factory as InterfoldTokenFactory,
-  MockUSDC__factory as MockUSDCFactory,
 } from "../types";
 import {
   getDeploymentChain,
@@ -22,11 +23,11 @@ import {
  * Force-deploys a fresh Faucet (the deployAndSave guard is idempotent on the
  * constructor args, so it would otherwise return the existing address),
  * overwrites the `Faucet` entry in deployed_contracts.json, whitelists it in
- * FOLD and funds it with FOLD + mock USDC.
+ * FOLD and funds it with FOLD and the live fee token.
  *
- * FOLD funding uses `mint()`, which is only valid while FOLD is in the Virtual
- * phase (before CCA_START). The deployer holds no FOLD of its own, so there is
- * no alternative funding path — the script aborts if the window has passed.
+ * The token addresses come from the live Interfold and BondingRegistry
+ * contracts. Deployment records can still contain tokens from an older stack.
+ * FOLD funding uses admin minting, which closes when FOLD enters the Live phase.
  *
  * Usage: hardhat run scripts/deployFaucet.ts --network sepolia
  */
@@ -45,26 +46,49 @@ const main = async () => {
     );
   }
 
-  const foldAddress = readDeploymentArgs("InterfoldToken", chain)?.address;
-  const feeTokenAddress = readDeploymentArgs("MockUSDC", chain)?.address;
-  if (!foldAddress || !feeTokenAddress) {
+  const interfoldAddress = readDeploymentArgs("Interfold", chain)?.address;
+  if (!interfoldAddress) {
     throw new Error(
-      "InterfoldToken (FOLD) and/or MockUSDC not found in deployed_contracts.json. " +
-        "Run the full deploy first.",
+      "Interfold not found in deployed_contracts.json. Run the full deploy first.",
     );
+  }
+
+  const interfold = InterfoldFactory.connect(interfoldAddress, signer);
+  const feeTokenAddress = await interfold.feeToken();
+  const bondingRegistryAddress = await interfold.bondingRegistry();
+  const bondingRegistry = BondingRegistryFactory.connect(
+    bondingRegistryAddress,
+    signer,
+  );
+  const foldAddress = await bondingRegistry.getCiphernodeBondToken();
+  if (
+    (await ethers.provider.getCode(foldAddress)) === "0x" ||
+    (await ethers.provider.getCode(feeTokenAddress)) === "0x"
+  ) {
+    throw new Error("The live protocol references a token without code.");
   }
 
   const fold = InterfoldTokenFactory.connect(foldAddress, signer);
-  const feeToken = MockUSDCFactory.connect(feeTokenAddress, signer);
+  const feeToken = new ethers.Contract(
+    feeTokenAddress,
+    [
+      "function decimals() view returns (uint8)",
+      "function balanceOf(address) view returns (uint256)",
+      "function mint(address,uint256)",
+    ],
+    signer,
+  );
 
-  // Phase 0 == Virtual. mint() reverts (MintingClosed) once CCA_START passes.
+  // Phase 3 == Live. Admin minting is available before TGE.
   const phase = await fold.phase();
-  if (phase !== 0n) {
+  if (phase === 3n) {
     throw new Error(
-      `FOLD is no longer in the Virtual phase (phase=${phase}); mint() is closed, ` +
-        "so the faucet cannot be funded with FOLD. Re-run the full deploy to reset the CCA window.",
+      "FOLD is Live and admin minting is closed; fund the faucet with a transfer instead.",
     );
   }
+
+  console.log("Live FOLD:", foldAddress);
+  console.log("Live fee token:", feeTokenAddress);
 
   console.log("Deploying Faucet...");
   const faucet = await new FaucetFactory(signer).deploy(
@@ -79,17 +103,7 @@ const main = async () => {
   // Derive supply from the contract's per-claim amounts so it covers the
   // target number of mints regardless of how the amounts are configured.
   const foldSupply = (await faucet.AMOUNT_FOLD()) * FAUCET_TARGET_MINTS;
-  const usdcSupply = (await faucet.AMOUNT_FEE_TOKEN()) * FAUCET_TARGET_MINTS;
-
-  storeDeploymentArgs(
-    {
-      constructorArgs: { fold: foldAddress, feeToken: feeTokenAddress },
-      blockNumber,
-      address: faucetAddress,
-    },
-    "Faucet",
-    chain,
-  );
+  const feeSupply = (await faucet.AMOUNT_FEE_TOKEN()) * FAUCET_TARGET_MINTS;
 
   console.log("Whitelisting Faucet in FOLD...");
   await (await fold.setTransferWhitelisted(faucetAddress, true)).wait();
@@ -103,8 +117,25 @@ const main = async () => {
     )
   ).wait();
 
-  console.log("Minting mock USDC to Faucet...");
-  await (await feeToken.mint(faucetAddress, usdcSupply)).wait();
+  console.log("Minting fee tokens to Faucet...");
+  await (await feeToken.mint(faucetAddress, feeSupply)).wait();
+
+  if (
+    (await fold.balanceOf(faucetAddress)) < foldSupply ||
+    (await feeToken.balanceOf(faucetAddress)) < feeSupply
+  ) {
+    throw new Error("Faucet funding did not reach the expected balances.");
+  }
+
+  storeDeploymentArgs(
+    {
+      constructorArgs: { fold: foldAddress, feeToken: feeTokenAddress },
+      blockNumber,
+      address: faucetAddress,
+    },
+    "Faucet",
+    chain,
+  );
 
   console.log(`
     ============================================
@@ -113,7 +144,7 @@ const main = async () => {
     Faucet:  ${faucetAddress}
     Block:   ${blockNumber}
     FOLD:    ${ethers.formatEther(foldSupply)}
-    USDC:    ${ethers.formatUnits(usdcSupply, 6)}
+    Fee token: ${ethers.formatUnits(feeSupply, await feeToken.decimals())}
     ============================================
   `);
 };

@@ -19,6 +19,11 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
             InterfoldEventData::KeyshareCreated(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::CommitmentRosterSelected(data) => {
+                trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
+                    self.accept_dkg_roster(data, ec)
+                });
+            }
             InterfoldEventData::ShareVerificationComplete(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
@@ -261,9 +266,9 @@ impl Handler<TypedEvent<DKGRecursiveAggregationComplete>> for PublicKeyAggregato
         msg: TypedEvent<DKGRecursiveAggregationComplete>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
-            return;
-        }
+        // Standbys need the same durable fold inputs as the active aggregator. If the active
+        // node disappears, the promoted node must not wait for proofs that were published once
+        // and will not be emitted again.
         trap(
             EType::PublickeyAggregation,
             &self.bus.with_ec(msg.get_ctx()),

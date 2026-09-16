@@ -15,13 +15,14 @@ use e3_data::Persistable;
 use e3_events::DkgFoldAttestationContext;
 use e3_events::{
     prelude::*, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
-    ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId,
-    DKGRecursiveAggregationComplete, Die, DkgAggregationRequest, E3Failed, E3Stage, E3id,
-    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
-    NodesFoldStepRequest, OrderedSet, PkAggregationProofPending, PkAggregationProofRequest,
-    PkAggregationProofSigned, Proof, ProofType, PublicKeyAggregated, Sequenced,
-    ShareVerificationComplete, ShareVerificationDispatched, SignedProofFailed, SignedProofPayload,
-    TypedEvent, VerificationKind, ZkRequest, ZkResponse,
+    CommitmentRosterSelected, ComputeRequest, ComputeRequestError, ComputeResponse,
+    ComputeResponseKind, CorrelationId, DKGRecursiveAggregationComplete, Die,
+    DkgAggregationRequest, E3Failed, E3Stage, E3id, EventContext, FailureReason, InterfoldEvent,
+    InterfoldEventData, KeyshareCreated, NodesFoldStepRequest, OrderedSet,
+    PkAggregationProofPending, PkAggregationProofRequest, PkAggregationProofSigned, Proof,
+    ProofType, PublicKeyAggregated, Sequenced, ShareVerificationComplete,
+    ShareVerificationDispatched, SignedProofFailed, SignedProofPayload, TypedEvent,
+    VerificationKind, ZkRequest, ZkResponse,
 };
 use e3_events::{trap, EType};
 use e3_fhe::{Fhe, GetAggregatePublicKey};

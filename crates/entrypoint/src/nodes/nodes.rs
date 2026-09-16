@@ -24,7 +24,10 @@ pub type ProcessRecord = (Child, Vec<JoinHandle<()>>);
 /// The map that holds processes
 pub type ProcessMap = Arc<Mutex<HashMap<String, ProcessRecord>>>;
 
-/// Spawn a child process and return the Child handle
+/// Spawn a child process and return the owning handle.
+///
+/// Dropping this handle terminates the child. Use [`spawn_detached_process`] when the child must
+/// continue after its caller exits.
 pub async fn spawn_process(program: &str, args: Vec<String>) -> Result<Child> {
     let child = Command::new(program)
         .args(args)
@@ -34,6 +37,19 @@ pub async fn spawn_process(program: &str, args: Vec<String>) -> Result<Child> {
         // A termination-path error must not turn dropping our last handle into an orphaned
         // ciphernode. Normal stops still use SIGTERM and the graceful drain in ProcessManager.
         .kill_on_drop(true)
+        .spawn()?;
+
+    Ok(child)
+}
+
+/// Spawn a child process that continues after its caller exits.
+pub async fn spawn_detached_process(program: &str, args: Vec<String>) -> Result<Child> {
+    let child = Command::new(program)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(false)
         .spawn()?;
 
     Ok(child)
@@ -100,5 +116,27 @@ mod tests {
         })
         .await
         .expect("kill-on-drop child should exit promptly");
+    }
+
+    #[tokio::test]
+    async fn detached_process_survives_dropping_the_handle() {
+        let child = spawn_detached_process("sh", vec!["-c".into(), "exec sleep 30".into()])
+            .await
+            .unwrap();
+        let pid = child.id().unwrap();
+
+        drop(child);
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        assert!(process_exists(pid));
+
+        // SAFETY: the test owns this short-lived child process and reaps it immediately.
+        unsafe {
+            assert_eq!(libc::kill(pid as libc::pid_t, libc::SIGKILL), 0);
+            let mut status = 0;
+            assert_eq!(
+                libc::waitpid(pid as libc::pid_t, &mut status, 0),
+                pid as i32
+            );
+        }
     }
 }

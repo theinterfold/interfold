@@ -172,6 +172,29 @@ impl ProofPayload {
 
         Ok(keccak256(&encoded).into())
     }
+
+    /// Identify the statement that this proof verifies.
+    ///
+    /// This digest excludes the proof bytes because a ZK prover can produce
+    /// different valid proof encodings for the same public statement. Use
+    /// [`Self::digest`] when authenticating the complete proof payload.
+    pub fn statement_digest(&self) -> Result<[u8; 32]> {
+        let e3_id: U256 = self
+            .e3_id
+            .clone()
+            .try_into()
+            .map_err(|_| anyhow!("E3id cannot be converted to U256"))?;
+        let encoded = (
+            keccak256("InterfoldProofStatement(uint256 chainId,uint256 e3Id,uint256 proofType,bytes32 circuitHash,bytes32 publicSignalsHash)"),
+            U256::from(self.e3_id.chain_id()),
+            e3_id,
+            U256::from(self.proof_type as u8),
+            keccak256(self.proof.circuit.dir_path()),
+            keccak256(&*self.proof.public_signals),
+        )
+            .abi_encode();
+        Ok(keccak256(encoded).into())
+    }
 }
 
 /// Signed wrapper around a [`ProofPayload`].
@@ -367,6 +390,32 @@ mod tests {
         assert_ne!(
             p1.digest().expect("digest should succeed"),
             p2.digest().expect("digest should succeed")
+        );
+    }
+
+    #[test]
+    fn statement_digest_ignores_proof_randomness() {
+        let first = test_payload();
+        let mut second = first.clone();
+        second.proof.data = ArcBytes::from_bytes(&[99, 88, 77]);
+
+        assert_ne!(first.digest().unwrap(), second.digest().unwrap());
+        assert_eq!(
+            first.statement_digest().unwrap(),
+            second.statement_digest().unwrap()
+        );
+
+        second.proof.public_signals = ArcBytes::from_bytes(&[7, 8, 9]);
+        assert_ne!(
+            first.statement_digest().unwrap(),
+            second.statement_digest().unwrap()
+        );
+
+        second.proof.public_signals = first.proof.public_signals.clone();
+        second.proof.circuit = CircuitName::ESmShareComputation;
+        assert_ne!(
+            first.statement_digest().unwrap(),
+            second.statement_digest().unwrap()
         );
     }
 

@@ -22,6 +22,7 @@ use libp2p::{
     kad::{store, GetRecordError, PutRecordError},
     request_response::ResponseChannel,
     swarm::{dial_opts::DialOpts, ConnectionId, DialError},
+    Multiaddr,
 };
 use serde::{Deserialize, Serialize};
 use std::{
@@ -209,6 +210,11 @@ pub enum NetCommand {
     },
     /// Dial peer
     Dial(OnceTake<DialOpts>),
+    /// Bind a configured address to the identity admitted after its initial dial.
+    ConfiguredPeerAdmitted {
+        address: Multiaddr,
+        peer_id: PeerId,
+    },
     /// Command to PublishDocument to Kademlia
     DhtPutRecord {
         correlation_id: CorrelationId,
@@ -268,6 +274,11 @@ pub enum NetEvent {
     /// A connection was established to a peer
     ConnectionEstablished {
         connection_id: ConnectionId,
+    },
+    /// The authenticated peer behind a completed configured dial.
+    ConfiguredDialAdmitted {
+        connection_id: ConnectionId,
+        peer_id: PeerId,
     },
     /// A transport connection failed the Interfold Identify admission policy.
     PeerRejected {
@@ -343,6 +354,7 @@ impl NetEvent {
             | Self::DhtPutRecordError { .. } => true,
             Self::DialError { .. }
             | Self::ConnectionEstablished { .. }
+            | Self::ConfiguredDialAdmitted { .. }
             | Self::PeerRejected { .. }
             | Self::OutgoingConnectionError { .. }
             | Self::GossipSubscribed { .. }
@@ -390,6 +402,7 @@ impl NetEvent {
             Self::PeerRejected { reason, .. } => reason.len(),
             Self::DialError { .. }
             | Self::ConnectionEstablished { .. }
+            | Self::ConfiguredDialAdmitted { .. }
             | Self::OutgoingConnectionError { .. }
             | Self::DhtPutRecordSucceeded { .. }
             | Self::DhtPutRecordError { .. }

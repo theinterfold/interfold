@@ -6,7 +6,7 @@ use super::super::*;
 
 impl PublicKeyAggregator {
     /// Publish `PublicKeyAggregated` when C5 and the final DkgAggregator proof are ready, or when
-    /// a test/CI node deliberately skips recursive aggregation.
+    /// a test-only node deliberately skips recursive aggregation.
     pub(in crate::actors::publickey_aggregator) fn try_publish_complete(&mut self) -> Result<()> {
         if let Some(ec) = self.state.get().and_then(|s| {
             if let PublicKeyAggregatorState::GeneratingC5Proof { last_ec, .. } = &s {
@@ -70,7 +70,7 @@ impl PublicKeyAggregator {
             .ok_or_else(|| anyhow::anyhow!("No EventContext for publish"))?;
 
         let pk_commitment = extract_pk_commitment(c5_proof)?;
-        // Test/CI nodes reuse the already-generated C5 proof as a non-empty placeholder. Mock
+        // Test-only nodes reuse the already-generated C5 proof as a non-empty placeholder. Mock
         // verifiers accept it; production DKG verifiers reject it because it is not a
         // DkgAggregator proof. This keeps the testing escape hatch entirely in the ciphernode.
         let published_dkg_proof = dkg_aggregated_proof
@@ -82,7 +82,7 @@ impl PublicKeyAggregator {
             if dkg_aggregated_proof.is_some() {
                 "aggregated"
             } else {
-                "test-placeholder"
+                "disabled-for-test"
             }
         );
 

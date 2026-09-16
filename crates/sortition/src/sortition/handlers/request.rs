@@ -35,12 +35,13 @@ impl Handler<EffectsEnabled> for Sortition {
     fn handle(&mut self, _: EffectsEnabled, _: &mut Self::Context) -> Self::Result {
         self.effects_enabled = true;
         let recovery = self.recovery.get().unwrap_or_default();
-        let requests = recovery
+        let mut requests = recovery
             .pending_requests
             .iter()
             .filter(|(e3_id, _)| recovery.seeds.contains_key(e3_id))
             .map(|(_, request)| request.clone())
             .collect::<Vec<_>>();
+        requests.sort_by_key(EventContextAccessors::ts);
         let membership_e3s = recovery
             .pending_expulsions
             .keys()
@@ -151,6 +152,20 @@ impl Sortition {
                     node = %self.address,
                     "This node was NOT selected for sortition"
                 );
+            }
+        }
+
+        if node_index.is_some() {
+            let reservation = self.node_state.try_mutate(msg.get_ctx(), |mut state_map| {
+                ensure!(
+                    NodeRegistry::reserve_committee_job(&mut state_map, &e3_id, &self.address,),
+                    "E3 {e3_id} already has a different capacity reservation"
+                );
+                Ok(state_map)
+            });
+            if let Err(error) = reservation {
+                self.bus.with_ec(msg.get_ctx()).err(EType::Sortition, error);
+                return;
             }
         }
 

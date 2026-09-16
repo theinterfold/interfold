@@ -81,19 +81,19 @@ const readFoldedArtifactsFromFile = (
   return isValidFoldedArtifacts(parsed) ? parsed : null;
 };
 
-/** Prefer env override, then fresh insecure benchmark output, then committed fixture. */
+/** Prefer the committed fixture; use benchmark output only when the fixture is absent. */
 const resolveFoldedArtifacts = (): FoldedArtifacts | null => {
   const envPath = process.env.BFV_VK_BINDING_FOLDED_ARTIFACTS;
   if (envPath) {
     return readFoldedArtifactsFromFile(envPath);
   }
-  const fromBenchmark = readFoldedArtifactsFromFile(
-    INSECURE_INTEGRATION_SUMMARY,
+  const committed = readFoldedArtifactsFromFile(
+    COMMITTED_FOLDED_ARTIFACTS_FIXTURE,
   );
-  if (fromBenchmark !== null) {
-    return fromBenchmark;
+  if (committed !== null) {
+    return committed;
   }
-  return readFoldedArtifactsFromFile(COMMITTED_FOLDED_ARTIFACTS_FIXTURE);
+  return readFoldedArtifactsFromFile(INSECURE_INTEGRATION_SUMMARY);
 };
 
 const loadFoldedArtifacts = (): FoldedArtifacts | null =>
