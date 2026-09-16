@@ -13,7 +13,10 @@ use crate::{
 use actix::{Actor, Context as ActixContext, Handler};
 use e3_ciphernode_builder::EventSystem;
 use e3_config::NetworkProfile;
-use e3_events::{E3id, EventSource, InterfoldEvent, KeyshareCreated, TestEvent, Unsequenced};
+use e3_events::{
+    DkgCoordination, DkgCoordinationKind, DkgDealer, E3id, EventSource, InterfoldEvent,
+    KeyshareCreated, TestEvent, Unsequenced,
+};
 use e3_utils::ArcBytes;
 use tokio::sync::{broadcast, mpsc, mpsc::UnboundedSender};
 
@@ -29,7 +32,7 @@ impl Handler<EventStoreQueryBy<TsAgg>> for NoopEventStore {
 }
 
 struct RecordingEventStore {
-    queries: UnboundedSender<Option<u64>>,
+    queries: UnboundedSender<(Option<u64>, Option<u64>)>,
 }
 
 impl Actor for RecordingEventStore {
@@ -39,13 +42,13 @@ impl Actor for RecordingEventStore {
 impl Handler<EventStoreQueryBy<TsAgg>> for RecordingEventStore {
     type Result = ();
     fn handle(&mut self, msg: EventStoreQueryBy<TsAgg>, _: &mut Self::Context) {
-        let _ = self.queries.send(msg.limit());
+        let _ = self.queries.send((msg.limit(), msg.max_bytes()));
         // Intentionally retain no response. Tests exercise the manager's in-flight bounds.
     }
 }
 
 fn manager_with_recording_store(
-    query_tx: UnboundedSender<Option<u64>>,
+    query_tx: UnboundedSender<(Option<u64>, Option<u64>)>,
 ) -> (NetSyncManager, mpsc::Receiver<NetCommand>) {
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle().unwrap().enable("test");
@@ -243,6 +246,67 @@ async fn rebroadcast_only_gossips_forwardable_own_artifacts() {
 }
 
 #[actix::test]
+async fn periodic_dkg_reannouncement_uses_the_latest_ready_superset() {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle().unwrap().enable("test");
+    let (tx, mut rx) = mpsc::channel::<NetCommand>(100);
+    let (evt_tx, _evt_rx) = broadcast::channel::<NetEvent>(100);
+    let evt_rx = NetEventSubscriber::from(&evt_tx);
+    let eventstore = NoopEventStore.start().recipient();
+    let mut manager = NetSyncManager::new(
+        &bus,
+        &tx,
+        &evt_rx,
+        eventstore,
+        "my-topic",
+        NetworkPolicy::local_unrestricted(),
+    );
+    manager.net_ready = true;
+
+    let e3_id = E3id::new("ready-reannounce", 1);
+    for (timestamp, dealer_ids) in [(10, vec![0, 1]), (11, vec![0, 1, 2])] {
+        let message = DkgCoordination {
+            e3_id: e3_id.clone(),
+            interfold_address: Default::default(),
+            party_id: 0,
+            kind: DkgCoordinationKind::Ready,
+            dealers: dealer_ids
+                .into_iter()
+                .map(|party_id| DkgDealer {
+                    party_id,
+                    contribution_hash: [party_id as u8; 32],
+                })
+                .collect(),
+            signature: ArcBytes::from_bytes(&[]),
+        };
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            message.clone().into(),
+            None,
+            timestamp,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(timestamp as u64);
+        manager.remember_dkg_coordination(event, &message);
+    }
+
+    manager.reannounce_dkg_coordination();
+    let command = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("timed out waiting for DKG re-announcement")
+        .expect("network command channel closed");
+    let NetCommand::GossipPublish { data, .. } = command else {
+        panic!("expected GossipPublish, got {command:?}");
+    };
+    let event: InterfoldEvent<Unsequenced> = data.try_into().unwrap();
+    let InterfoldEventData::DkgCoordination(message) = event.into_data() else {
+        panic!("expected DkgCoordination");
+    };
+    assert_eq!(message.dealers.len(), 3);
+    assert!(rx.try_recv().is_err());
+}
+
+#[actix::test]
 async fn malicious_huge_limit_is_capped_before_storage_query() {
     let (query_tx, mut query_rx) = mpsc::unbounded_channel();
     let (manager, _net_rx) = manager_with_recording_store(query_tx);
@@ -259,11 +323,17 @@ async fn malicious_huge_limit_is_capped_before_storage_query() {
         .await
         .unwrap();
 
-    let queried_limit = tokio::time::timeout(Duration::from_secs(1), query_rx.recv())
+    let queried_bounds = tokio::time::timeout(Duration::from_secs(1), query_rx.recv())
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(queried_limit, Some(sync_scan_limit(usize::MAX) as u64));
+    assert_eq!(
+        queried_bounds,
+        (
+            Some(sync_scan_limit(usize::MAX) as u64),
+            Some(MAX_SYNC_SCAN_BYTES),
+        )
+    );
 }
 
 #[actix::test]

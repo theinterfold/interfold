@@ -137,7 +137,9 @@ impl Handler<TypedEvent<ShareVerificationComplete>> for ThresholdKeyshare {
             &self.bus.with_ec(msg.get_ctx()),
             || {
                 self.record_share_verification(&msg)?;
-                self.handle_share_verification_complete(msg)
+                let ec = msg.get_ctx().clone();
+                self.handle_share_verification_complete(msg)?;
+                self.dispatch_expanded_threshold_share_batch(ec)
             },
         )
     }
@@ -154,8 +156,10 @@ impl Handler<TypedEvent<AllThresholdSharesCollected>> for ThresholdKeyshare {
             EType::KeyGeneration,
             &self.bus.with_ec(msg.get_ctx()),
             || {
-                self.record_collected_threshold_shares(&msg)?;
-                self.handle_all_threshold_shares_collected(msg)
+                if self.record_collected_threshold_shares(&msg)? {
+                    self.handle_all_threshold_shares_collected(msg)?;
+                }
+                Ok(())
             },
         )
     }
@@ -280,15 +284,12 @@ impl Handler<DecryptionKeySharedCollectionFailed> for ThresholdKeyshare {
 
             self.decryption_key_shared_collector = None;
 
-            self.persist_terminal_failure(
-                E3Stage::CommitteeFinalized,
-                FailureReason::DecryptionTimeout,
-            )?;
+            self.persist_terminal_failure(E3Stage::CommitteeFinalized, FailureReason::DKGTimeout)?;
 
             self.bus.publish_without_context(E3Failed {
                 e3_id: msg.e3_id.clone(),
                 failed_at_stage: E3Stage::CommitteeFinalized,
-                reason: FailureReason::DecryptionTimeout,
+                reason: FailureReason::DKGTimeout,
             })?;
 
             Ok(())

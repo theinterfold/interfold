@@ -8,10 +8,10 @@ use crate::net_interface_handle::NetEventSubscriber;
 use actix::{Actor, Addr, AsyncContext, Handler, Message, Recipient, ResponseFuture};
 use anyhow::{bail, Context, Result};
 use e3_events::{
-    prelude::*, trap, trap_fut, AggregateId, BusHandle, CorrelationId, EType, EventSource,
-    EventStoreFilter, EventStoreQueryBy, EventStoreQueryResponse, EventType,
+    prelude::*, trap, trap_fut, AggregateId, BusHandle, CorrelationId, DkgCoordinationKind, E3id,
+    EType, EventSource, EventStoreFilter, EventStoreQueryBy, EventStoreQueryResponse, EventType,
     HistoricalNetSyncEventsReceived, HistoricalNetSyncStart, InterfoldEvent, InterfoldEventData,
-    NetReady, TsAgg, TypedEvent, Unsequenced,
+    NetReady, Sequenced, TsAgg, TypedEvent, Unsequenced,
 };
 use e3_utils::MAILBOX_LIMIT;
 use libp2p::PeerId;
@@ -66,6 +66,10 @@ const MAX_IN_FLIGHT_SYNC_REQUESTS_PER_PEER: usize = 2;
 /// Expire storage requests before libp2p's 30-second request timeout so a failed local query cannot
 /// retain a responder and permanently consume one of the bounded in-flight slots.
 const INCOMING_SYNC_REQUEST_TIMEOUT: Duration = Duration::from_secs(25);
+const MAX_SYNC_SCAN_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_REBROADCAST_SCAN_EVENTS: u64 = 2_048;
+const MAX_REBROADCAST_SCAN_BYTES: u64 = 256 * 1024 * 1024;
+const DKG_COORDINATION_REANNOUNCE_INTERVAL: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SyncResponseValue {
@@ -126,6 +130,10 @@ pub struct NetSyncManager {
     net_ready: bool,
     /// Guard so the post-restart re-broadcast fires at most once per process.
     rebroadcast_started: bool,
+    /// Latest locally signed Ready and Roster messages. These small control messages are sent
+    /// directly to libp2p on a timer because EventBus stable-ID dedup intentionally suppresses
+    /// identical re-publications.
+    dkg_announcements: HashMap<(E3id, u64, DkgCoordinationKind), InterfoldEvent<Sequenced>>,
 }
 
 impl NetSyncManager {
@@ -150,6 +158,7 @@ impl NetSyncManager {
             rebroadcast_query_ids: HashSet::new(),
             net_ready: false,
             rebroadcast_started: false,
+            dkg_announcements: HashMap::new(),
         }
     }
 }

@@ -26,20 +26,10 @@ impl ThresholdKeyshare {
             .dkg_deadline_unix_secs
             .ok_or_else(|| anyhow!("canonical DKG deadline is unavailable"))?;
         if deadline <= crate::domain::timeout_policy::now_unix_secs() {
-            self.state.try_mutate_without_context(|state| {
-                state.new_state(KeyshareState::Failed {
-                    failed_at_stage: E3Stage::CommitteeFinalized,
-                    reason: FailureReason::DKGTimeout,
-                })
-            })?;
-            self.bus.publish(
-                E3Failed {
-                    e3_id: state.e3_id,
-                    failed_at_stage: E3Stage::CommitteeFinalized,
-                    reason: FailureReason::DKGTimeout,
-                },
-                ec,
-            )?;
+            warn!(
+                e3_id = %state.e3_id,
+                "Ignoring late DKG startup after the canonical deadline"
+            );
             return Ok(());
         }
 
@@ -54,20 +44,6 @@ impl ThresholdKeyshare {
                 %error,
                 "Cannot start DKG after the encryption-key collection cutoff"
             );
-            self.state.try_mutate(&ec, |state| {
-                state.new_state(KeyshareState::Failed {
-                    failed_at_stage: E3Stage::CommitteeFinalized,
-                    reason: FailureReason::DKGTimeout,
-                })
-            })?;
-            self.bus.publish(
-                E3Failed {
-                    e3_id: state.e3_id,
-                    failed_at_stage: E3Stage::CommitteeFinalized,
-                    reason: FailureReason::DKGTimeout,
-                },
-                ec,
-            )?;
             return Ok(());
         }
 

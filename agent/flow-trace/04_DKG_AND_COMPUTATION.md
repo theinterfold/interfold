@@ -60,9 +60,10 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │         └─ DecryptionKeySharedCollector: hard cutoff at the on-chain DKG deadline
 │      Restart uses the remaining time, not a new full window. Optional
 │      per-collector env values can advance a cutoff but cannot extend it.
-│      The threshold-share cutoff closes collection when at least H−1 external shares
-│      are ready. Below H−1, collection remains active until enough shares arrive or
-│      the on-chain DKG deadline expires.
+│      At the threshold-share cutoff, a node that has at least H−1 external shares
+│      starts verification from that snapshot and keeps the collector open. Later
+│      shares extend the verified dealer set until all N−1 arrive or the on-chain
+│      DKG deadline expires.
 ```
 
 ### Step 2: C0 Proof Generation → EncryptionKeyCreated
@@ -336,11 +337,10 @@ implements `ZkRequest::NodeDkgFold` (full per-node pipeline to a `NodeFold` proo
 `ThresholdSharePending` arrives, and issues one `NodeDkgFold` request when the full ordered proof
 set is available. It persists each proof, the fold metadata, and a completed output before
 publication. Restart restores the ordered proofs and reissues an incomplete fold after
-`EffectsEnabled`. If the compute request fails, it publishes `E3Failed` with
-`DKGInvalidShares` instead of waiting for a missing node-fold output. A canonical
-`KeyPublished` stage or a terminal E3 event removes the saved node-fold data.
-`PublicKeyAggregator` and `ThresholdPlaintextAggregator` dispatch the aggregator requests instead of
-pairwise folding.
+`EffectsEnabled`. If the compute request fails, it publishes `E3Failed` with `DKGInvalidShares`
+instead of waiting for a missing node-fold output. A canonical `KeyPublished` stage or a terminal E3
+event removes the saved node-fold data. `PublicKeyAggregator` and `ThresholdPlaintextAggregator`
+dispatch the aggregator requests instead of pairwise folding.
 
 **Failure bridge:** `ProofRequestActor` now converts proof-generation worker failures and local
 proof-signing failures into terminal round failures instead of only logging that the proof-bearing
@@ -363,8 +363,9 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 │
 ├─ At the 75% soft cutoff:
 │   ├─ With at least H−1 external shares:
-│   │    send AllThresholdSharesCollected with the available shares
-│   └─ Below H−1: keep collecting; the next share that reaches H−1 closes collection
+│   │    send AllThresholdSharesCollected with the available snapshot
+│   │    and keep collecting later shares
+│   └─ Below H−1: keep collecting; the next share that reaches H−1 starts verification
 │
 ├─ At the canonical on-chain DKG deadline:
 │   ├─ With at least H−1 external shares:
@@ -381,7 +382,7 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 │      │  }
 │      └─ ThresholdKeyshare actor stops
 │
-└─ When all N−1 external shares arrive before the soft cutoff:
+└─ When all N−1 external shares arrive:
     ├─ Send AllThresholdSharesCollected to ThresholdKeyshare
     │
     └─ DISPATCH C2/C3 VERIFICATION:
@@ -489,24 +490,31 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
     ├─ Saves the verified dealer IDs and their exact contribution hashes
     ├─ Publishes a signed DkgCoordination::Ready list when at least H dealers,
     │  including this party, remain
+    ├─ Re-verifies each strict late-share superset and publishes a new signed Ready list
     ├─ If fewer than H pass locally, stays outside C4 without failing the E3
     └─ Waits for one H-dealer roster before Step 7
 
 The active aggregator selects H parties whose signed Ready lists all contain the same selected
 dealer contributions. `AggregatorChanged` carries the active party ID, and threshold-keyshare
-persists that ID. A receiver accepts a roster only when the signer owns that active party slot.
-Because failover timers can expire at slightly different times on different nodes, a receiver
-durably holds the first authenticated roster from each standby. It considers that roster only after
-its own `AggregatorChanged` event promotes the signer. Each selected party also checks the roster
-against its own saved Ready list. The accepted roster is saved before C4 starts. A later conflicting
-roster is ignored; it cannot replace the accepted roster or fail the E3.
+persists that ID. A receiver keeps one authenticated roster per proposer. It can accept a roster
+from the active proposer or an earlier proposer whose failover budget has already elapsed locally.
+The proposer must have published a matching Ready list, the receiver's own Ready list must contain
+the roster, and every Ready list already held for a selected dealer must support it. Before C4
+starts, a roster from a lower party ID replaces a roster from a higher party ID. After C4 starts,
+the roster is fixed. A promoted aggregator re-proposes the accepted dealer list instead of deriving
+a different list from its local delivery order.
 
-Once a node can derive a valid roster from its durable Ready map, it starts the existing 10-minute
-active-aggregator budget for the DKG-roster phase. If the active aggregator does not publish a
-roster, the selector promotes the next eligible committee member and publishes its new party ID.
-The promoted member uses its saved Ready map and proposes without a separate leader clock or
-election. Roster acceptance ends that phase and clears its local failover skips. The later C5
-public-key aggregation starts a new failover budget only after its own inputs are durable.
+Once a node can derive a valid roster, or receives a supported roster that it cannot yet derive
+from every peer Ready report, it starts the existing 10-minute active-aggregator budget for the
+DKG-roster phase. If the active aggregator does not publish a roster, the selector promotes the
+next eligible committee member and publishes its new party ID. The promoted member uses the
+accepted dealer list or its saved Ready map; there is no second leader election. Roster acceptance
+ends that phase and clears its local failover skips. The later C5 public-key aggregation starts a
+new failover budget only after its own inputs are durable.
+
+The network actor keeps the latest local Ready and Roster message for each open E3 and sends the
+same signed bytes again every 30 seconds. This path bypasses EventBus duplicate suppression without
+creating another durable event. Key publication or a terminal E3 removes the cached messages.
 
 Dealer identity binds the E3, proof type, circuit, and public signals. It excludes randomized proof
 bytes, so replaying the same valid statement cannot create a second dealer identity. Replacing a
@@ -519,6 +527,8 @@ different rosters from producing two accepted keys, but a malicious active aggre
 withhold progress until failover.
 If a selected party stops permanently after the roster is accepted, this path does not select a
 replacement or rebuild C4. The E3 can fail even when other committee members remain online.
+If a selected party is expelled or excluded, the public-key aggregator fails the DKG immediately;
+the fixed H-row proof cannot remove that party after roster selection.
 The cutoff omits missing nodes but does not accuse or slash them: a local timeout is not proof
 that a peer failed to publish.
 ```
@@ -899,10 +909,10 @@ deadlines, recovery flow, and remaining trust.
 ### Ciphertext Output Publication
 
 The support host sends raw bincode input by default. `BOUNDLESS_INPUT_ENCODING=risc0-serde` selects
-the older byte-vector wrapper for an external Boundless guest and requires `PROGRAM_URL`.
-The embedded guest always receives raw bincode. This compatibility setting does not change the
-guest or its image ID. The selected external guest must match the deployed verifiers and produce
-the same journal as the host for the round inputs.
+the older byte-vector wrapper for an external Boundless guest and requires `PROGRAM_URL`. The
+embedded guest always receives raw bincode. This compatibility setting does not change the guest or
+its image ID. The selected external guest must match the deployed verifiers and produce the same
+journal as the host for the round inputs.
 
 The RISC Zero guest commits nine 32-byte fields in this order: chain ID, Interfold address, E3 ID,
 encryption scheme ID, committee public key, output hash, SAFE commitment, parameter hash, and input
@@ -1454,9 +1464,9 @@ the work once and sends its response or error to each waiting ID. A later duplic
 saved outcome.
 
 A terminal E3 event also cancels that E3's compute jobs that have already reached the shared task
-pool but have not started. The cancellation key includes the local ciphernode address, so one
-node's local failure cannot cancel another node's work when an integration test or embedding shares
-one pool across nodes. A proof that is already executing runs to completion because the Rayon worker
+pool but have not started. The cancellation key includes the local ciphernode address, so one node's
+local failure cannot cancel another node's work when an integration test or embedding shares one
+pool across nodes. A proof that is already executing runs to completion because the Rayon worker
 cannot be preempted safely; its late result cannot revive the terminal E3. This prevents a failed
 round's queued proof plan from delaying proof work for a later active round.
 
@@ -1484,16 +1494,16 @@ publication, and only an active aggregator can start a retained submission. `Pla
 not gossiped or returned by historical peer sync; only the producing node can create this EVM write
 intent.
 
-The document publisher rebuilds its active outbox and received-document set from the durable
-event log before network effects start. Document publication and receipt events use their E3's
-chain aggregate. Recovery scans one event at a time to bound memory. During DKG,
-it repeats DHT publication and gossip announcements after transient failures, including when no
-peer subscribed to the topic at the first attempt. A receiver holds early notifications until its
-committee slot is known, retries failed DHT reads, and suppresses duplicate documents. A canonical
-`KeyPublished` stage stops DKG-document announcements and prunes local DHT records. C4
-`DecryptionKeyShared` is a DKG document; later `DecryptionshareCreated` events use event gossip,
-not the DHT document path. Recovery retains the DKG closure across restart. A local
-`E3RequestComplete` does not mean that the contract has reached a terminal stage.
+The document publisher rebuilds its active outbox and received-document set from the durable event
+log before network effects start. Document publication and receipt events use their E3's chain
+aggregate. Recovery scans one event at a time to bound memory. During DKG, it repeats DHT
+publication and gossip announcements after transient failures, including when no peer subscribed to
+the topic at the first attempt. A receiver holds early notifications until its committee slot is
+known, retries failed DHT reads, and suppresses duplicate documents. A canonical `KeyPublished`
+stage stops DKG-document announcements and prunes local DHT records. C4 `DecryptionKeyShared` is a
+DKG document; later `DecryptionshareCreated` events use event gossip, not the DHT document path.
+Recovery retains the DKG closure across restart. A local `E3RequestComplete` does not mean that the
+contract has reached a terminal stage.
 
 The CRISP server writes its request record at `E3Requested` and writes the generic E3 record only
 after the indexer verifies the committee public key against the on-chain commitment. Current-round

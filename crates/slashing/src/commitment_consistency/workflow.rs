@@ -200,10 +200,20 @@ impl CommitmentConsistency {
         &mut self,
         event: CommitmentRosterSelected,
     ) -> Vec<CommitmentConsistencyViolation> {
-        if event.e3_id != self.e3_id
-            || event.party_ids.len() != self.committee_h
-            || !event.party_ids.windows(2).all(|pair| pair[0] < pair[1])
-        {
+        if event.e3_id != self.e3_id {
+            return Vec::new();
+        }
+        if event.party_ids.len() != self.committee_h {
+            warn!(
+                e3_id = %self.e3_id,
+                expected = self.committee_h,
+                actual = event.party_ids.len(),
+                "Ignoring a DKG commitment roster with the wrong size"
+            );
+            return Vec::new();
+        }
+        if !event.party_ids.windows(2).all(|pair| pair[0] < pair[1]) {
+            warn!(e3_id = %self.e3_id, "Ignoring a non-canonical DKG commitment roster");
             return Vec::new();
         }
         if let Some(existing) = &self.roster {

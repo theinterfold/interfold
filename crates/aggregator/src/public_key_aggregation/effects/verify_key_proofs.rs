@@ -59,7 +59,25 @@ impl PublicKeyAggregator {
         );
         let recovery = self.recovery.try_get()?;
         if let Some(existing) = recovery.selected_roster {
-            anyhow::ensure!(existing == selected, "conflicting accepted DKG roster");
+            if existing != selected
+                && !matches!(
+                    self.state.get(),
+                    Some(PublicKeyAggregatorState::Collecting { .. })
+                )
+            {
+                warn!(
+                    e3_id = %self.e3_id,
+                    "Ignoring a replacement DKG roster after C1 aggregation started"
+                );
+                return Ok(());
+            }
+            if existing != selected {
+                self.recovery.try_mutate(&ec, |mut recovery| {
+                    recovery.selected_roster = Some(selected.clone());
+                    recovery.last_ec = Some(ec.clone());
+                    Ok(recovery)
+                })?;
+            }
         } else {
             self.recovery.try_mutate(&ec, |mut recovery| {
                 recovery.selected_roster = Some(selected.clone());

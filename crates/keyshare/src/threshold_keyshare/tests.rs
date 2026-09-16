@@ -24,7 +24,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 #[actix::test]
-async fn selection_waits_for_frozen_timing_and_rejects_expired_dkg() -> Result<()> {
+async fn late_selection_does_not_fail_the_shared_e3() -> Result<()> {
     let (bus, history) = test_bus();
     let e3_id = E3id::new("43", 1);
     let (mut state, repo) = test_state(&e3_id, KeyshareState::Init);
@@ -71,20 +71,23 @@ async fn selection_waits_for_frozen_timing_and_rejects_expired_dkg() -> Result<(
     actor.send(event).await?;
 
     actix::clock::timeout(std::time::Duration::from_secs(2), async {
-        loop {
-            if matches!(
-                repo.read().await?.expect("persisted keyshare state").state,
-                KeyshareState::Failed { .. }
-            ) {
-                break Ok::<(), anyhow::Error>(());
-            }
+        while calls.load(std::sync::atomic::Ordering::SeqCst) == 0 {
             actix::clock::sleep(std::time::Duration::from_millis(10)).await;
         }
     })
-    .await??;
+    .await?;
     assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
-    let event = next_event(&history).await?;
-    assert!(matches!(event.get_data(), InterfoldEventData::E3Failed(_)));
+    assert!(matches!(
+        repo.read().await?.expect("persisted keyshare state").state,
+        KeyshareState::Init
+    ));
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(
+        events
+            .iter()
+            .all(|event| !matches!(event.get_data(), InterfoldEventData::E3Failed(_))),
+        "one late node must not fail the shared E3"
+    );
     Ok(())
 }
 
@@ -317,6 +320,27 @@ async fn roster_from_future_aggregator_is_held_until_promotion() -> Result<()> {
         ],
         &signers[2],
     )?;
+    let proposer_ready = DkgCoordination::sign(
+        e3_id.clone(),
+        Address::ZERO,
+        2,
+        DkgCoordinationKind::Ready,
+        vec![
+            DkgDealer {
+                party_id: 0,
+                contribution_hash: [0; 32],
+            },
+            DkgDealer {
+                party_id: 1,
+                contribution_hash: [1; 32],
+            },
+            DkgDealer {
+                party_id: 2,
+                contribution_hash: [2; 32],
+            },
+        ],
+        &signers[2],
+    )?;
     let conflicting_roster = DkgCoordination::sign(
         e3_id.clone(),
         Address::ZERO,
@@ -360,6 +384,7 @@ async fn roster_from_future_aggregator_is_held_until_promotion() -> Result<()> {
             test_ec(1),
         ));
         recovery.dkg_ready = Some(own_ready);
+        recovery.ready_by_party.insert(2, proposer_ready);
         recovery.active_aggregator_party_id = Some(0);
         recovery.is_aggregator = true;
         Ok(recovery)
@@ -404,6 +429,224 @@ async fn roster_from_future_aggregator_is_held_until_promotion() -> Result<()> {
     assert_eq!(
         actor.state.try_get()?.honest_parties,
         Some(BTreeSet::from([0, 1]))
+    );
+    Ok(())
+}
+
+#[actix::test]
+async fn held_roster_starts_failover_without_every_peer_ready_report() -> Result<()> {
+    let (bus, history) = test_bus();
+    let e3_id = E3id::new("44", 1);
+    let signers = [
+        alloy::signers::local::PrivateKeySigner::random(),
+        alloy::signers::local::PrivateKeySigner::random(),
+        alloy::signers::local::PrivateKeySigner::random(),
+    ];
+    let committee = signers
+        .iter()
+        .map(|signer| signer.address().to_string())
+        .collect();
+    let dealer = |party_id| DkgDealer {
+        party_id,
+        contribution_hash: [party_id as u8; 32],
+    };
+    let own_ready = DkgCoordination::sign(
+        e3_id.clone(),
+        Address::ZERO,
+        0,
+        DkgCoordinationKind::Ready,
+        vec![dealer(0), dealer(1)],
+        &signers[0],
+    )?;
+    let proposer_ready = DkgCoordination::sign(
+        e3_id.clone(),
+        Address::ZERO,
+        2,
+        DkgCoordinationKind::Ready,
+        vec![dealer(0), dealer(1), dealer(2)],
+        &signers[2],
+    )?;
+    let held_roster = DkgCoordination::sign(
+        e3_id.clone(),
+        Address::ZERO,
+        2,
+        DkgCoordinationKind::Roster,
+        vec![dealer(0), dealer(1)],
+        &signers[2],
+    )?;
+
+    let store = InMemStore::new(false).start();
+    let state_repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
+    let state = state_repo.send(Some(ThresholdKeyshareState::new(
+        e3_id.clone(),
+        0,
+        KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
+        1,
+        3,
+        ArcBytes::from_bytes(b"params"),
+        Address::ZERO.to_string(),
+    )));
+    let mut recovery = test_recovery();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(
+            CiphernodeSelected {
+                e3_id: e3_id.clone(),
+                threshold_m: 1,
+                threshold_n: 3,
+                party_id: 0,
+                committee,
+                ..Default::default()
+            },
+            test_ec(1),
+        ));
+        recovery.dkg_ready = Some(own_ready.clone());
+        recovery.ready_by_party.insert(0, own_ready);
+        recovery.ready_by_party.insert(2, proposer_ready);
+        recovery.active_aggregator_party_id = Some(0);
+        recovery.is_aggregator = true;
+        Ok(recovery)
+    })?;
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        signer: signers[0].clone(),
+        effects_enabled: true,
+        recovery,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+
+    actor.record_dkg_coordination(held_roster.clone(), test_ec(2))?;
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::AggregationInputsReady(AggregationInputsReady {
+            phase: AggregationPhase::DkgRoster,
+            ..
+        })
+    ));
+    let recovery = actor.recovery.try_get()?;
+    assert!(recovery.dkg_roster.is_none());
+    assert_eq!(recovery.pending_rosters.get(&2), Some(&held_roster));
+    Ok(())
+}
+
+#[actix::test]
+async fn lower_ranked_roster_replaces_an_accepted_roster_before_c4() -> Result<()> {
+    let (bus, _history) = test_bus();
+    let e3_id = E3id::new("45", 1);
+    let signers = [
+        alloy::signers::local::PrivateKeySigner::random(),
+        alloy::signers::local::PrivateKeySigner::random(),
+        alloy::signers::local::PrivateKeySigner::random(),
+    ];
+    let committee = signers
+        .iter()
+        .map(|signer| signer.address().to_string())
+        .collect();
+    let dealer = |party_id| DkgDealer {
+        party_id,
+        contribution_hash: [party_id as u8; 32],
+    };
+    let all_dealers = vec![dealer(0), dealer(1), dealer(2)];
+    let ready = |party_id: usize| {
+        DkgCoordination::sign(
+            e3_id.clone(),
+            Address::ZERO,
+            party_id as u64,
+            DkgCoordinationKind::Ready,
+            all_dealers.clone(),
+            &signers[party_id],
+        )
+    };
+    let higher = DkgCoordination::sign(
+        e3_id.clone(),
+        Address::ZERO,
+        1,
+        DkgCoordinationKind::Roster,
+        vec![dealer(0), dealer(2)],
+        &signers[1],
+    )?;
+    let lower = DkgCoordination::sign(
+        e3_id.clone(),
+        Address::ZERO,
+        0,
+        DkgCoordinationKind::Roster,
+        vec![dealer(1), dealer(2)],
+        &signers[0],
+    )?;
+
+    let store = InMemStore::new(false).start();
+    let state_repo = Repository::<ThresholdKeyshareState>::new(DataStore::from_in_mem(&store));
+    let state = state_repo.send(Some(ThresholdKeyshareState::new(
+        e3_id.clone(),
+        2,
+        KeyshareState::AggregatingDecryptionKey(aggregating_decryption_key_for_roster_test()),
+        1,
+        3,
+        ArcBytes::from_bytes(b"params"),
+        Address::ZERO.to_string(),
+    )));
+    let own_ready = ready(2)?;
+    let mut recovery = test_recovery();
+    recovery.try_mutate_without_context(|mut recovery| {
+        recovery.ciphernode_selected = Some(TypedEvent::new(
+            CiphernodeSelected {
+                e3_id: e3_id.clone(),
+                threshold_m: 1,
+                threshold_n: 3,
+                party_id: 2,
+                committee,
+                ..Default::default()
+            },
+            test_ec(1),
+        ));
+        recovery.dkg_ready = Some(own_ready.clone());
+        recovery.ready_by_party.insert(1, ready(1)?);
+        recovery.ready_by_party.insert(2, own_ready);
+        recovery.active_aggregator_party_id = Some(1);
+        Ok(recovery)
+    })?;
+    let mut actor = ThresholdKeyshare::new(ThresholdKeyshareParams {
+        bus,
+        cipher: Arc::new(Cipher::from_password("test-password").await?),
+        state,
+        share_enc_preset: DEFAULT_BFV_PRESET,
+        interfold_address: Address::ZERO,
+        signer: signers[2].clone(),
+        effects_enabled: false,
+        recovery,
+        recovery_payloads: test_recovery_payloads(),
+        dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
+    });
+
+    actor.record_dkg_coordination(lower.clone(), test_ec(2))?;
+    assert!(actor.recovery.try_get()?.dkg_roster.is_none());
+    assert_eq!(
+        actor.recovery.try_get()?.pending_rosters.get(&0).cloned(),
+        Some(lower.clone())
+    );
+
+    actor.record_dkg_coordination(higher, test_ec(3))?;
+    assert_eq!(
+        actor
+            .recovery
+            .try_get()?
+            .dkg_roster
+            .as_ref()
+            .map(|r| r.party_id),
+        Some(1)
+    );
+
+    actor.record_dkg_coordination(ready(0)?, test_ec(4))?;
+    assert_eq!(actor.recovery.try_get()?.dkg_roster, Some(lower));
+    assert_eq!(
+        actor.state.try_get()?.honest_parties,
+        Some(BTreeSet::from([1, 2]))
     );
     Ok(())
 }
@@ -474,7 +717,8 @@ async fn conflicting_roster_after_acceptance_is_ignored() -> Result<()> {
             },
             test_ec(1),
         ));
-        recovery.dkg_ready = Some(own_ready);
+        recovery.dkg_ready = Some(own_ready.clone());
+        recovery.ready_by_party.insert(0, own_ready);
         recovery.active_aggregator_party_id = Some(0);
         recovery.is_aggregator = true;
         Ok(recovery)
@@ -666,13 +910,13 @@ async fn decryption_key_shared_collection_failure_emits_e3_failed() -> Result<()
         InterfoldEventData::E3Failed(data)
             if data.e3_id == failure.e3_id
                 && data.failed_at_stage == E3Stage::CommitteeFinalized
-                && data.reason == FailureReason::DecryptionTimeout
+                && data.reason == FailureReason::DKGTimeout
     ));
     assert!(matches!(
         repo.read().await?.expect("persisted keyshare state").state,
         KeyshareState::Failed {
             failed_at_stage: E3Stage::CommitteeFinalized,
-            reason: FailureReason::DecryptionTimeout,
+            reason: FailureReason::DKGTimeout,
         }
     ));
 

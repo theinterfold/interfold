@@ -44,6 +44,11 @@ pub(crate) enum ShareCollectOutcome {
     Ignored,
     /// Input accepted, still waiting on more parties.
     Pending,
+    /// A cutoff snapshot is ready for verification while collection remains open.
+    Snapshot {
+        shares: HashMap<PartyId, Arc<ThresholdShare>>,
+        proofs: HashMap<PartyId, ReceivedShareProofs>,
+    },
     /// All expected shares are present.
     Completed {
         shares: HashMap<PartyId, Arc<ThresholdShare>>,
@@ -148,9 +153,20 @@ impl ThresholdShareCollection {
         Some(self.todo.iter().copied().collect())
     }
 
-    /// Close the collection at the cutoff when enough external dealers have
-    /// delivered for an H-row circuit witness that also includes this node.
-    pub fn complete_at_cutoff(&mut self, minimum_external: usize) -> Option<ShareCollectOutcome> {
+    /// Return the current cutoff snapshot when enough external dealers have delivered for an
+    /// H-row witness. Collection remains open so later shares can expand the node's Ready set.
+    pub fn snapshot_at_cutoff(&self, minimum_external: usize) -> Option<ShareCollectOutcome> {
+        if !self.is_collecting() || self.shares.len() < minimum_external {
+            return None;
+        }
+        Some(ShareCollectOutcome::Snapshot {
+            shares: self.shares.clone(),
+            proofs: self.share_proofs.clone(),
+        })
+    }
+
+    /// Finish with the available threshold set at the canonical DKG deadline.
+    pub fn finish_available(&mut self, minimum_external: usize) -> Option<ShareCollectOutcome> {
         if !self.is_collecting() || self.shares.len() < minimum_external {
             return None;
         }
@@ -267,34 +283,49 @@ mod tests {
     }
 
     #[test]
-    fn cutoff_accepts_h_minus_one_external_shares() {
+    fn cutoff_snapshots_h_minus_one_and_keeps_collecting() {
         let mut c = collection();
         c.receive(share(2), proofs());
-        assert!(c.complete_at_cutoff(2).is_none());
-        match c.complete_at_cutoff(1).expect("one external share") {
-            ShareCollectOutcome::Completed { shares, proofs } => {
+        assert!(c.snapshot_at_cutoff(2).is_none());
+        match c.snapshot_at_cutoff(1).expect("one external share") {
+            ShareCollectOutcome::Snapshot { shares, proofs } => {
                 assert_eq!(shares.len(), 1);
                 assert_eq!(proofs.len(), 1);
                 assert!(shares.contains_key(&2));
             }
-            other => panic!("expected Completed, got {other:?}"),
+            other => panic!("expected Snapshot, got {other:?}"),
         }
-        assert!(!c.is_collecting());
+        assert!(c.is_collecting());
     }
 
     #[test]
     fn cutoff_below_h_keeps_collecting_until_another_share_arrives() {
         let mut c = collection();
-        assert!(c.complete_at_cutoff(1).is_none());
+        assert!(c.snapshot_at_cutoff(1).is_none());
         assert!(c.is_collecting());
 
         c.receive(share(2), proofs());
-        match c.complete_at_cutoff(1).expect("one external share") {
-            ShareCollectOutcome::Completed { shares, .. } => {
+        match c.snapshot_at_cutoff(1).expect("one external share") {
+            ShareCollectOutcome::Snapshot { shares, .. } => {
                 assert_eq!(shares.len(), 1);
                 assert!(shares.contains_key(&2));
             }
-            other => panic!("expected Completed, got {other:?}"),
+            other => panic!("expected Snapshot, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn late_share_after_cutoff_expands_the_snapshot() {
+        let mut c = collection();
+        c.receive(share(0), proofs());
+        assert!(matches!(
+            c.snapshot_at_cutoff(1),
+            Some(ShareCollectOutcome::Snapshot { .. })
+        ));
+
+        assert!(matches!(
+            c.receive(share(2), proofs()),
+            ShareCollectOutcome::Completed { .. }
+        ));
     }
 }

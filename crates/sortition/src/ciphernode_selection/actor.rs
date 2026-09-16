@@ -322,6 +322,7 @@ impl CiphernodeSelector {
             EventType::CommitmentRosterSelected,
             addr.clone().recipient(),
         );
+        bus.subscribe(EventType::AggregatorChanged, addr.clone().recipient());
         bus.subscribe(EventType::EffectsEnabled, addr.clone().recipient());
         bus.subscribe(EventType::Shutdown, addr.clone().recipient());
 
@@ -702,8 +703,8 @@ mod recovery_tests {
     use actix::{Actor, Handler};
     use e3_data::{DataStore, InMemStore};
     use e3_events::{
-        hlc_factory::HlcFactory, EventBus, EventBusConfig, EventSource, Sequencer,
-        StoreEventRequested, StoreEventResponse, Unsequenced,
+        hlc_factory::HlcFactory, EventBus, EventBusConfig, EventSource, GetEvents,
+        HistoryCollector, Sequencer, StoreEventRequested, StoreEventResponse, Unsequenced,
     };
 
     #[derive(Default)]
@@ -895,6 +896,54 @@ mod recovery_tests {
             Some(&Some(1))
         );
         assert_eq!(selector.state.try_get()?.is_aggregator[&e3_id], false);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn replayed_aggregator_change_prevents_a_synthetic_restart_event() -> Result<()> {
+        let e3_id = E3id::new("46", 1);
+        let selector_state = CiphernodeSelectorState {
+            committees: HashMap::from([(
+                e3_id.clone(),
+                Committee::new(vec!["0xa".into(), "0xb".into()]),
+            )]),
+            expelled: HashMap::from([(e3_id.clone(), Vec::new())]),
+            is_aggregator: HashMap::from([(e3_id.clone(), false)]),
+            ..Default::default()
+        };
+        let (state, _) = test_persistable(selector_state);
+        let (failover, _) = test_persistable(AggregatorFailoverState::default());
+        let bus = test_bus();
+        let history = HistoryCollector::<InterfoldEvent>::new().start();
+        bus.subscribe(EventType::AggregatorChanged, history.clone().recipient());
+        let selector = CiphernodeSelector::new_with_clock(
+            &bus,
+            state,
+            failover,
+            "0xb",
+            HashMap::from([(e3_id.clone(), E3Stage::CommitteeFinalized)]),
+            Arc::new(SystemClock),
+        )
+        .start();
+
+        selector
+            .send(TypedEvent::new(
+                AggregatorChanged {
+                    e3_id: e3_id.clone(),
+                    active_party_id: Some(0),
+                    is_aggregator: false,
+                },
+                test_ec(1),
+            ))
+            .await?;
+        selector.send(EffectsEnabled::new()).await?;
+        actix::clock::sleep(Duration::from_millis(50)).await;
+
+        let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+        assert!(
+            events.is_empty(),
+            "replay must restore the announced role without minting another event"
+        );
         Ok(())
     }
 

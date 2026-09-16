@@ -3,8 +3,67 @@
 //! Re-gossip this node's forwardable in-flight artifacts after restart.
 
 use super::*;
+use e3_events::{DkgCoordination, E3id};
 
 impl NetSyncManager {
+    pub(in crate::actors::net_sync_manager) fn remember_dkg_coordination(
+        &mut self,
+        event: InterfoldEvent,
+        message: &DkgCoordination,
+    ) {
+        if event.source() != EventSource::Local {
+            return;
+        }
+        if let Err(error) = self.network.validate_event(&event) {
+            warn!(%error, "Ignoring a local DKG coordination event for another network");
+            return;
+        }
+        self.dkg_announcements.insert(
+            (message.e3_id.clone(), message.party_id, message.kind),
+            event,
+        );
+    }
+
+    pub(in crate::actors::net_sync_manager) fn forget_dkg_coordination(&mut self, e3_id: &E3id) {
+        self.dkg_announcements
+            .retain(|(candidate, _, _), _| candidate != e3_id);
+    }
+
+    /// Re-send the latest locally signed DKG control messages without creating new durable
+    /// events. Receivers deduplicate the byte-identical events by stable event ID.
+    pub(in crate::actors::net_sync_manager) fn reannounce_dkg_coordination(&self) {
+        if !self.net_ready || self.dkg_announcements.is_empty() {
+            return;
+        }
+        let topic = self.topic.clone();
+        let commands = self
+            .dkg_announcements
+            .values()
+            .filter_map(|event| match event.clone().try_into() {
+                Ok(data) => Some(NetCommand::GossipPublish {
+                    topic: topic.clone(),
+                    data,
+                    correlation_id: CorrelationId::new(),
+                }),
+                Err(error) => {
+                    warn!(%error, "Could not encode a DKG coordination re-announcement");
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        let count = commands.len();
+        let tx = self.tx.clone();
+        actix::spawn(async move {
+            for command in commands {
+                if let Err(error) = tx.send(command).await {
+                    warn!(%error, "Failed to queue a DKG coordination re-announcement");
+                    break;
+                }
+            }
+        });
+        debug!(count, "Queued DKG coordination re-announcements");
+    }
+
     /// After a restart, proactively re-gossip this node's own already-produced forwardable DKG
     /// artifacts (H3/H11). Resume from a persisted phase is otherwise passive: the restored
     /// keyshare/aggregator actors wait for peer documents and never re-emit their own outputs, so
@@ -33,7 +92,9 @@ impl NetSyncManager {
         info!("NetSyncManager: querying own forwardable artifacts for post-restart re-broadcast");
         if let Err(e) = self.eventstore.try_send(
             EventStoreQueryBy::<TsAgg>::new(id, since, ctx.address().recipient())
-                .with_filter(EventStoreFilter::Source(EventSource::Local)),
+                .with_filter(EventStoreFilter::Source(EventSource::Local))
+                .with_limit(MAX_REBROADCAST_SCAN_EVENTS)
+                .with_max_bytes(MAX_REBROADCAST_SCAN_BYTES),
         ) {
             error!("Failed to query EventStore for re-broadcast: {e}");
             self.rebroadcast_query_ids.remove(&id);
@@ -48,6 +109,9 @@ impl NetSyncManager {
     ) {
         let mut commands = Vec::new();
         for event in events {
+            if event.source() != EventSource::Local {
+                continue;
+            }
             if !EventTranslationService::is_forwardable_event(&event) {
                 continue;
             }

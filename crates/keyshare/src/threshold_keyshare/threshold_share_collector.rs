@@ -83,7 +83,7 @@ impl ThresholdShareCollector {
         let Some(ec) = self.last_ec.clone() else {
             return false;
         };
-        let Some(outcome) = self.collection.complete_at_cutoff(self.minimum_external) else {
+        let Some(outcome) = self.collection.snapshot_at_cutoff(self.minimum_external) else {
             return false;
         };
 
@@ -92,17 +92,22 @@ impl ThresholdShareCollector {
             minimum_external = self.minimum_external,
             "Continuing DKG with available threshold shares"
         );
-        self.complete(ctx, ec, outcome);
+        self.publish_outcome(ctx, ec, outcome);
         true
     }
 
-    fn complete(
+    fn publish_outcome(
         &mut self,
         ctx: &mut actix::Context<Self>,
         ec: EventContext<Sequenced>,
         outcome: ShareCollectOutcome,
     ) {
-        if let ShareCollectOutcome::Completed { shares, proofs } = outcome {
+        let (shares, proofs, finished) = match outcome {
+            ShareCollectOutcome::Snapshot { shares, proofs } => (shares, proofs, false),
+            ShareCollectOutcome::Completed { shares, proofs } => (shares, proofs, true),
+            ShareCollectOutcome::Ignored | ShareCollectOutcome::Pending => return,
+        };
+        if finished {
             info!(e3_id = %self.e3_id, shares = shares.len(), "Threshold share collection completed");
             if let Some(handle) = self.cutoff_handle.take() {
                 ctx.cancel_future(handle);
@@ -110,11 +115,11 @@ impl ThresholdShareCollector {
             if let Some(handle) = self.deadline_handle.take() {
                 ctx.cancel_future(handle);
             }
-            let event: TypedEvent<AllThresholdSharesCollected> =
-                TypedEvent::new(AllThresholdSharesCollected::new(shares, proofs), ec);
-            self.parent.do_send(event);
             ctx.stop();
         }
+        let event: TypedEvent<AllThresholdSharesCollected> =
+            TypedEvent::new(AllThresholdSharesCollected::new(shares, proofs), ec);
+        self.parent.do_send(event);
     }
 }
 
@@ -168,7 +173,7 @@ impl Handler<TypedEvent<ThresholdShareCreated>> for ThresholdShareCollector {
         if matches!(&outcome, ShareCollectOutcome::Pending) && self.cutoff_reached {
             self.complete_at_cutoff(ctx);
         } else {
-            self.complete(ctx, ec, outcome);
+            self.publish_outcome(ctx, ec, outcome);
         }
     }
 }
@@ -202,8 +207,11 @@ impl Handler<ThresholdShareCollectionTimeout> for ThresholdShareCollector {
         ctx: &mut Self::Context,
     ) -> Self::Result {
         self.deadline_handle = None;
-        if self.complete_at_cutoff(ctx) {
-            return;
+        if let Some(ec) = self.last_ec.clone() {
+            if let Some(outcome) = self.collection.finish_available(self.minimum_external) {
+                self.publish_outcome(ctx, ec, outcome);
+                return;
+            }
         }
 
         let Some(missing_parties) = self.collection.timeout() else {
@@ -248,7 +256,7 @@ impl Handler<ExpelPartyFromShareCollection> for ThresholdShareCollector {
             self.last_ec = Some(msg.ec);
             self.complete_at_cutoff(ctx);
         } else {
-            self.complete(ctx, msg.ec, outcome);
+            self.publish_outcome(ctx, msg.ec, outcome);
         }
     }
 }

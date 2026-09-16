@@ -15,7 +15,7 @@ impl ThresholdKeyshare {
             return Ok(());
         };
         let recovery = self.recovery.try_get()?;
-        if recovery.dkg_ready.is_some() || recovery.share_verification_complete.is_none() {
+        if recovery.share_verification_complete.is_none() {
             return Ok(());
         }
         let (Some(own_c2a), Some(own_c2b), Some(verified)) = (
@@ -85,6 +85,20 @@ impl ThresholdKeyshare {
             "duplicate dealer in DKG readiness"
         );
 
+        if let Some(existing) = recovery.dkg_ready.as_ref() {
+            if existing.dealers == dealers {
+                return self.maybe_start_c4_for_accepted_roster(ec);
+            }
+            if !dealers_extend(&existing.dealers, &dealers) {
+                warn!(
+                    e3_id = %state.e3_id,
+                    party_id = state.party_id,
+                    "Ignoring a non-monotonic DKG Ready update"
+                );
+                return Ok(());
+            }
+        }
+
         let ready = DkgCoordination::sign(
             state.e3_id.clone(),
             self.interfold_address,
@@ -133,17 +147,7 @@ impl ThresholdKeyshare {
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
-        if let Some(active_party_id) = change.active_party_id {
-            let pending = self
-                .recovery
-                .try_get()?
-                .pending_rosters
-                .get(&active_party_id)
-                .cloned();
-            if let Some(roster) = pending {
-                self.accept_dkg_roster(roster, ec.clone())?;
-            }
-        }
+        self.maybe_accept_pending_roster(ec.clone())?;
         if self.effects_enabled && self.is_aggregator {
             self.maybe_publish_roster_inputs_ready(ec.clone())?;
             self.propose_dkg_roster(ec)?;
@@ -194,13 +198,17 @@ impl ThresholdKeyshare {
                     return Ok(());
                 }
                 self.recovery.try_mutate(&ec, |mut recovery| {
-                    recovery
+                    let replace = recovery
                         .ready_by_party
-                        .entry(message.party_id)
-                        .or_insert(message);
+                        .get(&message.party_id)
+                        .is_none_or(|existing| dealers_extend(&existing.dealers, &message.dealers));
+                    if replace {
+                        recovery.ready_by_party.insert(message.party_id, message);
+                    }
                     recovery.last_ec = Some(ec.clone());
                     Ok(recovery)
                 })?;
+                self.maybe_accept_pending_roster(ec.clone())?;
             }
             DkgCoordinationKind::Roster => {
                 if state.expelled_parties.contains(&message.party_id)
@@ -212,20 +220,41 @@ impl ThresholdKeyshare {
                 {
                     return Ok(());
                 }
+                if recovery
+                    .ready_by_party
+                    .get(&message.party_id)
+                    .is_some_and(|ready| !ready_contains_roster(ready, &message))
+                    || message.dealers.iter().any(|dealer| {
+                        recovery
+                            .ready_by_party
+                            .get(&dealer.party_id)
+                            .is_some_and(|ready| !ready_contains_roster(ready, &message))
+                    })
+                {
+                    warn!(
+                        e3_id = %message.e3_id,
+                        proposer = message.party_id,
+                        "Ignoring a DKG roster contradicted by authenticated Ready reports"
+                    );
+                    return Ok(());
+                }
                 if recovery.dkg_roster.is_some() {
-                    if recovery
-                        .dkg_roster
-                        .as_ref()
-                        .is_some_and(|existing| existing.dealers != message.dealers)
-                    {
+                    let existing = recovery.dkg_roster.as_ref().expect("checked above");
+                    if existing.dealers == message.dealers {
+                        return Ok(());
+                    }
+                    let c4_started = self.pending.share_decryption_data.is_some()
+                        || !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_));
+                    if c4_started || message.party_id >= existing.party_id {
                         warn!(
                             e3_id = %message.e3_id,
-                            accepted_proposer = recovery.dkg_roster.as_ref().map(|value| value.party_id),
+                            accepted_proposer = existing.party_id,
                             ignored_proposer = message.party_id,
-                            "Ignoring a DKG roster after this node accepted a roster"
+                            c4_started,
+                            "Ignoring a conflicting DKG roster that cannot outrank the accepted roster"
                         );
+                        return Ok(());
                     }
-                    return Ok(());
                 }
                 self.recovery.try_mutate(&ec, |mut recovery| {
                     recovery
@@ -235,26 +264,49 @@ impl ThresholdKeyshare {
                     recovery.last_ec = Some(ec.clone());
                     Ok(recovery)
                 })?;
-                if Some(message.party_id) != self.active_aggregator_party_id {
+                if !self.maybe_accept_pending_roster(ec.clone())? {
+                    self.maybe_publish_roster_inputs_ready(ec.clone())?;
                     warn!(
                         e3_id = %message.e3_id,
                         proposer = message.party_id,
                         active_party_id = ?self.active_aggregator_party_id,
-                        "Holding a DKG roster until its proposer owns aggregation"
+                        "Holding a DKG roster until its proposer is eligible and has published a matching Ready report"
                     );
-                    return Ok(());
                 }
-                let pending = self
-                    .recovery
-                    .try_get()?
-                    .pending_rosters
-                    .get(&message.party_id)
-                    .cloned()
-                    .ok_or_else(|| anyhow!("authenticated DKG roster was not persisted"))?;
-                self.accept_dkg_roster(pending, ec)?;
             }
         }
         Ok(())
+    }
+
+    fn maybe_accept_pending_roster(&mut self, ec: EventContext<Sequenced>) -> Result<bool> {
+        let Some(active_party_id) = self.active_aggregator_party_id else {
+            return Ok(false);
+        };
+        let recovery = self.recovery.try_get()?;
+        let accepted_proposer = recovery.dkg_roster.as_ref().map(|roster| roster.party_id);
+        let c4_started = self.pending.share_decryption_data.is_some()
+            || !matches!(
+                self.state.try_get()?.state,
+                KeyshareState::AggregatingDecryptionKey(_)
+            );
+        if accepted_proposer.is_some() && c4_started {
+            return Ok(false);
+        }
+        let candidate = recovery
+            .pending_rosters
+            .iter()
+            .filter(|(proposer, roster)| {
+                **proposer <= active_party_id
+                    && accepted_proposer.is_none_or(|accepted| **proposer < accepted)
+                    && roster_is_supported_by_local_state(&recovery, roster)
+            })
+            .min_by_key(|(proposer, _)| **proposer)
+            .map(|(_, roster)| roster.clone());
+        let Some(roster) = candidate else {
+            return Ok(false);
+        };
+        self.accept_dkg_roster(roster, ec)?;
+        Ok(true)
     }
 
     pub(in crate::actors::threshold_keyshare) fn maybe_publish_roster_inputs_ready(
@@ -284,7 +336,11 @@ impl ThresholdKeyshare {
             .filter(|(party_id, _)| !state.expelled_parties.contains(*party_id))
             .map(|(&party_id, message)| (party_id, message.dealers.clone()))
             .collect();
-        if select_ready_roster(&ready, committee_h).is_none() {
+        let held_roster_is_usable = recovery.pending_rosters.values().any(|roster| {
+            roster_is_supported_by_local_state(&recovery, roster)
+                && roster.dealers.len() == committee_h
+        });
+        if select_ready_roster(&ready, committee_h).is_none() && !held_roster_is_usable {
             return Ok(());
         }
 
@@ -315,23 +371,28 @@ impl ThresholdKeyshare {
             return Ok(());
         }
         let recovery = self.recovery.try_get()?;
-        if recovery.dkg_roster.is_some() {
-            return Ok(());
-        }
         let committee_h = CiphernodesCommitteeSize::from_threshold(
             state.threshold_m as usize,
             state.threshold_n as usize,
         )?
         .values()
         .h;
-        let ready: std::collections::BTreeMap<u64, Vec<DkgDealer>> = recovery
-            .ready_by_party
-            .iter()
-            .filter(|(party_id, _)| !state.expelled_parties.contains(*party_id))
-            .map(|(&party_id, message)| (party_id, message.dealers.clone()))
-            .collect();
-        let Some(dealers) = select_ready_roster(&ready, committee_h) else {
-            return Ok(());
+        let dealers = if let Some(accepted) = recovery.dkg_roster.as_ref() {
+            if accepted.party_id == state.party_id {
+                return Ok(());
+            }
+            accepted.dealers.clone()
+        } else {
+            let ready: std::collections::BTreeMap<u64, Vec<DkgDealer>> = recovery
+                .ready_by_party
+                .iter()
+                .filter(|(party_id, _)| !state.expelled_parties.contains(*party_id))
+                .map(|(&party_id, message)| (party_id, message.dealers.clone()))
+                .collect();
+            let Some(dealers) = select_ready_roster(&ready, committee_h) else {
+                return Ok(());
+            };
+            dealers
         };
         let roster = DkgCoordination::sign(
             state.e3_id,
@@ -391,7 +452,11 @@ impl ThresholdKeyshare {
         }
         self.recovery.try_mutate(&ec, |mut recovery| {
             recovery.dkg_roster = Some(roster.clone());
-            recovery.pending_rosters.clear();
+            // Keep only proposals that could still outrank this one before C4 starts. A Ready
+            // report may arrive after its roster, making that lower-ranked proposal usable.
+            recovery
+                .pending_rosters
+                .retain(|proposer, _| *proposer < roster.party_id);
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
@@ -449,6 +514,32 @@ fn ready_contains_roster(ready: &DkgCoordination, roster: &DkgCoordination) -> b
         .dealers
         .iter()
         .all(|dealer| ready.dealers.contains(dealer))
+}
+
+fn dealers_extend(existing: &[DkgDealer], candidate: &[DkgDealer]) -> bool {
+    candidate.len() > existing.len() && existing.iter().all(|dealer| candidate.contains(dealer))
+}
+
+fn roster_is_supported_by_local_state(
+    recovery: &ThresholdKeyshareRecoveryState,
+    roster: &DkgCoordination,
+) -> bool {
+    let local_supports = recovery
+        .dkg_ready
+        .as_ref()
+        .is_some_and(|ready| ready_contains_roster(ready, roster));
+    let proposer_supports = recovery
+        .ready_by_party
+        .get(&roster.party_id)
+        .is_some_and(|ready| ready_contains_roster(ready, roster));
+    local_supports
+        && proposer_supports
+        && roster.dealers.iter().all(|dealer| {
+            recovery
+                .ready_by_party
+                .get(&dealer.party_id)
+                .is_none_or(|ready| ready_contains_roster(ready, roster))
+        })
 }
 
 #[cfg(test)]

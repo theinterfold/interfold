@@ -40,10 +40,26 @@ impl Handler<InterfoldEvent> for CiphernodeSelector {
             InterfoldEventData::CommitmentRosterSelected(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::AggregatorChanged(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::EffectsEnabled(data) => self.notify_sync(ctx, data),
             InterfoldEventData::Shutdown(data) => self.notify_sync(ctx, data),
             _ => (),
         }
+    }
+}
+
+impl Handler<TypedEvent<AggregatorChanged>> for CiphernodeSelector {
+    type Result = ();
+
+    fn handle(
+        &mut self,
+        msg: TypedEvent<AggregatorChanged>,
+        _: &mut Self::Context,
+    ) -> Self::Result {
+        self.announced_active_parties
+            .insert(msg.e3_id.clone(), msg.active_party_id);
     }
 }
 

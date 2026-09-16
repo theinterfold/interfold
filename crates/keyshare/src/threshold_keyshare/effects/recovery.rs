@@ -76,7 +76,7 @@ impl ThresholdKeyshare {
     ) -> Result<()> {
         if let Some(existing) = self.recovery_payloads.share(event.share.party_id) {
             ensure!(
-                existing == event,
+                **existing == **event,
                 "conflicting DKG share from the same party"
             );
             return Ok(());
@@ -100,16 +100,26 @@ impl ThresholdKeyshare {
     pub(in crate::actors::threshold_keyshare) fn record_collected_threshold_shares(
         &mut self,
         event: &TypedEvent<AllThresholdSharesCollected>,
-    ) -> Result<()> {
+    ) -> Result<bool> {
         let ec = event.get_ctx().clone();
-        let ids = event.shares.iter().map(|share| share.party_id).collect();
+        let ids: BTreeSet<u64> = event.shares.iter().map(|share| share.party_id).collect();
+        let mut accepted = false;
         self.recovery.try_mutate(&ec, |mut recovery| {
-            if recovery.collected_threshold_share_ids.is_none() {
+            let verification_in_flight = recovery.collected_threshold_share_ids.is_some()
+                && recovery.share_verification_complete.is_none();
+            let extends_previous = recovery
+                .collected_threshold_share_ids
+                .as_ref()
+                .is_none_or(|existing| existing.len() < ids.len() && existing.is_subset(&ids));
+            if !verification_in_flight && extends_previous {
                 recovery.collected_threshold_share_ids = Some(ids);
+                recovery.share_verification_complete = None;
+                accepted = true;
             }
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
-        })
+        })?;
+        Ok(accepted)
     }
 
     fn rebuild_collected_threshold_shares(
@@ -142,6 +152,42 @@ impl ThresholdKeyshare {
             );
         }
         Ok(AllThresholdSharesCollected::new(shares, proofs))
+    }
+
+    pub(in crate::actors::threshold_keyshare) fn dispatch_expanded_threshold_share_batch(
+        &mut self,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        let state = self.state.try_get()?;
+        if !matches!(state.state, KeyshareState::AggregatingDecryptionKey(_)) {
+            return Ok(());
+        }
+        let recovery = self.recovery.try_get()?;
+        if recovery.dkg_roster.is_some() || recovery.share_verification_complete.is_none() {
+            return Ok(());
+        }
+        let current = recovery
+            .collected_threshold_share_ids
+            .clone()
+            .unwrap_or_default();
+        let available = recovery
+            .threshold_share_refs
+            .keys()
+            .filter(|party_id| !state.expelled_parties.contains(*party_id))
+            .copied()
+            .collect::<BTreeSet<_>>();
+        if available.len() <= current.len() || !current.is_subset(&available) {
+            return Ok(());
+        }
+
+        let mut expanded = recovery;
+        expanded.collected_threshold_share_ids = Some(available);
+        let batch = Self::rebuild_collected_threshold_shares(&expanded, &self.recovery_payloads)?;
+        let event = TypedEvent::new(batch, ec);
+        if self.record_collected_threshold_shares(&event)? {
+            self.handle_all_threshold_shares_collected(event)?;
+        }
+        Ok(())
     }
 
     pub(in crate::actors::threshold_keyshare) fn record_decryption_key_share(
@@ -348,7 +394,8 @@ impl ThresholdKeyshare {
                         return Ok(());
                     }
                     if let Some(verification) = recovery.share_verification_complete.clone() {
-                        return self.handle_share_verification_complete(verification);
+                        self.handle_share_verification_complete(verification)?;
+                        return self.dispatch_expanded_threshold_share_batch(ec);
                     }
                     if recovery.collected_threshold_share_ids.is_some() {
                         let batch = Self::rebuild_collected_threshold_shares(
@@ -362,6 +409,7 @@ impl ThresholdKeyshare {
                 }
                 if let Some(verification) = recovery.share_verification_complete.clone() {
                     self.handle_share_verification_complete(verification)?;
+                    self.dispatch_expanded_threshold_share_batch(ec.clone())?;
                     if let Some(ready) = self.recovery.try_get()?.dkg_ready {
                         self.bus.publish(ready, ec.clone())?;
                     }

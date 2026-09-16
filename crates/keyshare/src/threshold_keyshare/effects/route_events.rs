@@ -59,16 +59,7 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
                     });
                 if let Err(err) = result {
                     error!("DKG roster coordination failed: {err}");
-                    if let Some(state) = self.state.get() {
-                        let _ = self.bus.publish(
-                            E3Failed {
-                                e3_id: state.e3_id,
-                                failed_at_stage: E3Stage::CommitteeFinalized,
-                                reason: FailureReason::DKGInvalidShares,
-                            },
-                            ec,
-                        );
-                    }
+                    self.bus.with_ec(&ec).err(EType::KeyGeneration, err);
                 }
             }
             InterfoldEventData::AggregatorChanged(data) => {
