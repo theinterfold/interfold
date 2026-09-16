@@ -207,6 +207,7 @@ pub enum NetCommand {
         topic: String,
         data: GossipData,
         correlation_id: CorrelationId,
+        delivery_id: Option<[u8; 16]>,
     },
     /// Dial peer
     Dial(OnceTake<DialOpts>),
@@ -239,6 +240,29 @@ pub enum NetCommand {
 }
 
 impl NetCommand {
+    pub fn gossip_publish(topic: String, data: GossipData, correlation_id: CorrelationId) -> Self {
+        Self::GossipPublish {
+            topic,
+            data,
+            correlation_id,
+            delivery_id: None,
+        }
+    }
+
+    /// Create a new transport delivery for protocol data that was published before.
+    pub fn gossip_republish(
+        topic: String,
+        data: GossipData,
+        correlation_id: CorrelationId,
+    ) -> Self {
+        Self::GossipPublish {
+            topic,
+            data,
+            correlation_id,
+            delivery_id: Some(rand::random()),
+        }
+    }
+
     pub fn correlation_id(&self) -> Option<CorrelationId> {
         use NetCommand as N;
         match self {

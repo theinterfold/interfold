@@ -533,6 +533,9 @@ identifier, `TrBFV` kind, and party-filter shape to that payload before a `Docum
 is persisted. Transport and gossipsub identities authenticate the sending peer; they do not by
 themselves prove that a peer is an authorized member of a particular E3 committee. Committee
 authorization and durable peer reputation remain separate protocol-hardening work.
+Repeated DKG coordination and document notifications use a fresh transport delivery ID. The
+embedded event or document identity stays stable, so transport redelivery does not create a new
+protocol fact.
 Document publication recovery derives a missing publication request from the durable local key or
 share artifact. A crash after the artifact commit but before the derived request commit therefore
 does not lose the DHT publication on restart.

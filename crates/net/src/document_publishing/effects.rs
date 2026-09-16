@@ -137,11 +137,11 @@ async fn broadcast_document_published_notification(
     call_and_await_response(
         net_cmds,
         net_events,
-        NetCommand::GossipPublish {
-            topic: topic.into(),
-            correlation_id: id,
-            data: GossipData::DocumentPublishedNotification(payload),
-        },
+        NetCommand::gossip_republish(
+            topic.into(),
+            GossipData::DocumentPublishedNotification(payload),
+            id,
+        ),
         |event| match event {
             NetEvent::GossipPublished { .. } => Some(Ok(())),
             NetEvent::GossipPublishError { error, .. } => {

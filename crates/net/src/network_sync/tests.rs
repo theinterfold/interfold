@@ -295,14 +295,35 @@ async fn periodic_dkg_reannouncement_uses_the_latest_ready_superset() {
         .await
         .expect("timed out waiting for DKG re-announcement")
         .expect("network command channel closed");
-    let NetCommand::GossipPublish { data, .. } = command else {
+    let NetCommand::GossipPublish {
+        data,
+        delivery_id: first_delivery_id,
+        ..
+    } = command
+    else {
         panic!("expected GossipPublish, got {command:?}");
     };
+    assert!(first_delivery_id.is_some());
     let event: InterfoldEvent<Unsequenced> = data.try_into().unwrap();
     let InterfoldEventData::DkgCoordination(message) = event.into_data() else {
         panic!("expected DkgCoordination");
     };
     assert_eq!(message.dealers.len(), 3);
+
+    manager.reannounce_dkg_coordination();
+    let second = tokio::time::timeout(Duration::from_secs(1), rx.recv())
+        .await
+        .expect("timed out waiting for the second DKG re-announcement")
+        .expect("network command channel closed");
+    let NetCommand::GossipPublish {
+        delivery_id: second_delivery_id,
+        ..
+    } = second
+    else {
+        panic!("expected GossipPublish, got {second:?}");
+    };
+    assert!(second_delivery_id.is_some());
+    assert_ne!(first_delivery_id, second_delivery_id);
     assert!(rx.try_recv().is_err());
 }
 

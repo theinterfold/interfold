@@ -512,9 +512,10 @@ accepted dealer list or its saved Ready map; there is no second leader election.
 ends that phase and clears its local failover skips. The later C5 public-key aggregation starts a
 new failover budget only after its own inputs are durable.
 
-The network actor keeps the latest local Ready and Roster message for each open E3 and sends the
-same signed bytes again every 30 seconds. This path bypasses EventBus duplicate suppression without
-creating another durable event. Key publication or a terminal E3 removes the cached messages.
+The network actor keeps the latest local Ready and Roster message for each open E3. It sends the
+same signed protocol event in a fresh transport envelope every 30 seconds. The fresh delivery ID
+bypasses the libp2p duplicate cache. The stable embedded event ID preserves EventBus deduplication.
+Key publication or a terminal E3 removes the cached messages.
 
 Dealer identity binds the E3, proof type, circuit, and public signals. It excludes randomized proof
 bytes, so replaying the same valid statement cannot create a second dealer identity. Replacing a

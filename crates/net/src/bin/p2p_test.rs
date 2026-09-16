@@ -171,11 +171,11 @@ impl TestPeer {
         let data = network_signal(&self.name, marker, id)?;
         Ok(self
             .tx
-            .send(NetCommand::GossipPublish {
-                correlation_id: CorrelationId::new(),
-                topic: self.topic.to_string(),
+            .send(NetCommand::gossip_publish(
+                self.topic.to_string(),
                 data,
-            })
+                CorrelationId::new(),
+            ))
             .await?)
     }
 

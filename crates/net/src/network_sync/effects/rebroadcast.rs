@@ -30,7 +30,7 @@ impl NetSyncManager {
     }
 
     /// Re-send the latest locally signed DKG control messages without creating new durable
-    /// events. Receivers deduplicate the byte-identical events by stable event ID.
+    /// events. Each transport delivery is distinct, but receivers deduplicate the embedded event.
     pub(in crate::actors::net_sync_manager) fn reannounce_dkg_coordination(&self) {
         if !self.net_ready || self.dkg_announcements.is_empty() {
             return;
@@ -40,11 +40,11 @@ impl NetSyncManager {
             .dkg_announcements
             .values()
             .filter_map(|event| match event.clone().try_into() {
-                Ok(data) => Some(NetCommand::GossipPublish {
-                    topic: topic.clone(),
+                Ok(data) => Some(NetCommand::gossip_republish(
+                    topic.clone(),
                     data,
-                    correlation_id: CorrelationId::new(),
-                }),
+                    CorrelationId::new(),
+                )),
                 Err(error) => {
                     warn!(%error, "Could not encode a DKG coordination re-announcement");
                     None
@@ -72,9 +72,9 @@ impl NetSyncManager {
     ///
     /// The artifacts are sent straight to libp2p as `GossipPublish`, bypassing both the EventBus
     /// dedup window (which already tracked them during replay) and the translator (which is only
-    /// created on `EffectsEnabled`). Re-broadcasting the byte-identical original payload is
-    /// equivocation-safe (peers dedup by event id) and idempotent. The query is bounded to the
-    /// snapshot-cursor window so only the in-flight (un-delivered) artifacts are re-sent.
+    /// created on `EffectsEnabled`). Re-broadcasting the original event in a fresh transport
+    /// delivery is equivocation-safe because peers deduplicate the embedded event ID. The query is
+    /// bounded to the snapshot-cursor window so only in-flight artifacts are re-sent.
     pub(in crate::actors::net_sync_manager) fn maybe_rebroadcast_own_artifacts(
         &mut self,
         ctx: &mut actix::Context<Self>,
@@ -126,11 +126,11 @@ impl NetSyncManager {
                     continue;
                 }
             };
-            commands.push(NetCommand::GossipPublish {
-                topic: self.topic.clone(),
+            commands.push(NetCommand::gossip_republish(
+                self.topic.clone(),
                 data,
-                correlation_id: CorrelationId::new(),
-            });
+                CorrelationId::new(),
+            ));
         }
         let count = commands.len();
         let tx = self.tx.clone();

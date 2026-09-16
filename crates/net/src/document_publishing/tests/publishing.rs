@@ -229,7 +229,7 @@ async fn test_publishes_document() -> Result<()> {
         topic,
         correlation_id,
         data: GossipData::DocumentPublishedNotification(notification),
-        ..
+        delivery_id: Some(_),
     }) = timeout(Duration::from_secs(1), net_cmd_rx.recv())
         .await
         .expect("did not receive GossipPublish")

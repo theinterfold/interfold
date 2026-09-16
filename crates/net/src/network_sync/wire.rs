@@ -42,6 +42,7 @@ struct GossipWireEnvelope {
     deployment: [u8; 20],
     aggregate_id: u64,
     message_id: [u8; 32],
+    delivery_id: Option<[u8; 16]>,
     payload_hash: [u8; 32],
     payload: Vec<u8>,
 }
@@ -68,7 +69,11 @@ pub(crate) fn decode<T: DeserializeOwned>(bytes: &[u8], max_bytes: usize) -> Res
     e3_utils::deserialize_bounded(bytes, max_bytes)
 }
 
-pub(crate) fn encode_gossip(data: &GossipData, policy: &NetworkPolicy) -> Result<Vec<u8>> {
+pub(crate) fn encode_gossip(
+    data: &GossipData,
+    policy: &NetworkPolicy,
+    delivery_id: Option<[u8; 16]>,
+) -> Result<Vec<u8>> {
     let payload = data.to_bytes()?;
     let (kind, chain_id, deployment, aggregate_id, message_id) = gossip_metadata(data, policy)?;
     let envelope = GossipWireEnvelope {
@@ -80,6 +85,7 @@ pub(crate) fn encode_gossip(data: &GossipData, policy: &NetworkPolicy) -> Result
         deployment,
         aggregate_id,
         message_id,
+        delivery_id,
         payload_hash: sha256(&payload),
         payload,
     };
@@ -246,15 +252,27 @@ mod tests {
     fn gossip_envelope_round_trips_on_the_same_network() {
         let policy = NetworkPolicy::local_unrestricted();
         let expected = forwardable_gossip();
-        let bytes = encode_gossip(&expected, &policy).unwrap();
+        let bytes = encode_gossip(&expected, &policy, None).unwrap();
         assert_eq!(decode_gossip(&bytes, &policy).unwrap(), expected);
+    }
+
+    #[test]
+    fn gossip_redelivery_changes_transport_bytes_but_not_protocol_data() {
+        let policy = NetworkPolicy::local_unrestricted();
+        let expected = forwardable_gossip();
+        let first = encode_gossip(&expected, &policy, Some([1; 16])).unwrap();
+        let second = encode_gossip(&expected, &policy, Some([2; 16])).unwrap();
+
+        assert_ne!(first, second);
+        assert_eq!(decode_gossip(&first, &policy).unwrap(), expected);
+        assert_eq!(decode_gossip(&second, &policy).unwrap(), expected);
     }
 
     #[test]
     fn gossip_envelope_rejects_a_different_network() {
         let local = NetworkPolicy::local_unrestricted();
         let mainnet = NetworkPolicy::new(NetworkProfile::mainnet(), [(1, [1; 20])]).unwrap();
-        let bytes = encode_gossip(&forwardable_gossip(), &local).unwrap();
+        let bytes = encode_gossip(&forwardable_gossip(), &local, None).unwrap();
         let error = decode_gossip(&bytes, &mainnet).unwrap_err();
         assert!(error.to_string().contains("different network"));
     }
@@ -263,7 +281,7 @@ mod tests {
     fn gossip_envelope_rejects_a_different_contract_deployment() {
         let first = NetworkPolicy::new(NetworkProfile::mainnet(), [(1, [1; 20])]).unwrap();
         let second = NetworkPolicy::new(NetworkProfile::mainnet(), [(1, [2; 20])]).unwrap();
-        let bytes = encode_gossip(&forwardable_gossip(), &first).unwrap();
+        let bytes = encode_gossip(&forwardable_gossip(), &first, None).unwrap();
         let error = decode_gossip(&bytes, &second).unwrap_err();
         assert!(error.to_string().contains("metadata"));
     }

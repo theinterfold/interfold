@@ -1374,8 +1374,17 @@ async fn process_swarm_command(
             data,
             topic,
             correlation_id,
+            delivery_id,
         } => {
-            handle_gossip_publish(swarm, event_tx, network, data, topic, correlation_id)?;
+            handle_gossip_publish(
+                swarm,
+                event_tx,
+                network,
+                data,
+                topic,
+                correlation_id,
+                delivery_id,
+            )?;
             Ok(())
         }
         NetCommand::Dial(env) => {
@@ -1448,13 +1457,14 @@ fn handle_gossip_publish(
     data: GossipData,
     topic: String,
     correlation_id: CorrelationId,
+    delivery_id: Option<[u8; 16]>,
 ) -> Result<()> {
     let bytes = match (|| -> Result<Vec<u8>> {
         anyhow::ensure!(
             topic == network.protocols().gossip_topic(),
             "refusing to publish on an unconfigured gossip topic"
         );
-        encode_gossip(&data, network)
+        encode_gossip(&data, network, delivery_id)
     })() {
         Ok(bytes) => bytes,
         Err(error) => {
