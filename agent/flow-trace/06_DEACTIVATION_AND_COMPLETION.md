@@ -275,6 +275,8 @@ On restart:
 │        CiphernodeSelected events are likewise not guaranteed to replay.
 │      → Recovered aggregator roles, selected party IDs, and DHT document interests are injected
 │        directly from snapshots. Startup does not append synthetic recovery events.
+│      → Replayed `AggregatorChanged` events restore the selector's last announced party. The
+│        post-replay reconciliation emits a change only when the durable failover state differs.
 ├─ Sync module replays:
 │   → Arm the current NetReady listener before the network transport can publish readiness
 │   4. Replay EventStore events since the snapshot cut (effects still disabled)
@@ -340,22 +342,27 @@ temporary runs, then compacted and merged with bounded file-descriptor fan-in. R
 concurrent EventBus listener acceptance for each event. A listener that is unavailable or cannot
 accept within the timeout fails recovery instead of being silently skipped. Snapshot routing still
 contains asynchronous edges, so this does not claim that every downstream actor is synchronously
-durable at each replay step.
+durable at each replay step. A page can stop at its byte limit before it reaches its event-count
+limit. Replay therefore continues until the EventStore returns an empty page, not until it returns a
+short page.
 
 `interfold node validate` detects a recoverable uncommitted event-log tail without changing it. With
 the node stopped, `interfold node validate --repair` applies the same boundary-checked tail recovery
-as startup and refuses to remove indexed records. Runtime EventStore query failures are returned to
-the correlated caller rather than panicking the actor; committed corruption remains a
-startup/integrity failure.
+as startup and refuses to remove indexed records. Recovery adds missing index entries for complete,
+CRC-valid records and truncates only an incomplete physical suffix. It also removes the exact
+two-byte, index-free segment shape left when a process stops during rollover. Runtime EventStore
+query failures are returned to the correlated caller rather than panicking the actor; committed
+corruption remains a startup/integrity failure.
 
 Large local events use content-addressed blob files beside the commit log. The log stores a small
 versioned reference only after the blob is synced. Open, replay, and tail recovery verify the blob
-length and hash before decoding it. The 32 MiB inline and network event limits stay in place.
-An EventStore append or flush failure stops the actor and signals the node supervisor. Startup and
-the CLI then exit with a nonzero status instead of leaving a dead storage actor inside an online
-process. The EventStore syncs each appended log record before it indexes or broadcasts the event.
-The current storage schema marker is version 6; older node databases must be reset for
-this release, not silently decoded.
+length and hash before decoding it. The 32 MiB inline and network event limits stay in place. An
+EventStore append or flush failure stops the actor and signals the node supervisor. Startup and the
+CLI then exit with a nonzero status instead of leaving a dead storage actor inside an online
+process. The EventStore syncs each appended log record before it indexes or broadcasts the event. It
+caches the active segment and index handles. Each append still syncs both files, while the directory
+is synced only for the first append and after segment rollover. The current storage schema marker is
+version 6; older node databases must be reset for this release, not silently decoded.
 
 For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state. It
 atomically moves the legacy `.enclave` custom-config root to `.interfold`, preserves the encrypted
@@ -501,6 +508,10 @@ each length and digest before it resumes DKG. A node removes the work plan after
 completes, removes dealer payloads after it stores the C4 proof intent and decryption key, and
 removes all remaining payloads when the E3 becomes terminal. The small root is updated before a
 payload is retired, so an interrupted cleanup cannot leave a durable reference to missing data.
+
+The node-fold recovery index owns its per-E3 proof and metadata records. At startup, entries for E3s
+that are no longer active are tombstoned before the index entry is removed. A node that was offline
+when an E3 became terminal therefore does not retain unreachable inner proofs.
 
 Sortition and committee finalization have separate versioned recovery records. Sortition stores the
 seed, typed request, and any expulsion or exclusion that arrived before its prerequisites. The

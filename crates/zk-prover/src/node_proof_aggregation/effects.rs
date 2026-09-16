@@ -135,10 +135,19 @@ impl NodeProofAggregator {
             });
         if let Some(existing) = existing {
             if existing != &msg.proof {
-                error!(
-                    "NodeProofAggregator: conflicting proof seq={} for E3 {e3_id}",
-                    msg.seq
-                );
+                if existing.circuit == msg.proof.circuit
+                    && existing.public_signals == msg.proof.public_signals
+                {
+                    debug!(
+                        "NodeProofAggregator: ignoring a re-proved statement at seq={} for E3 {e3_id}",
+                        msg.seq
+                    );
+                } else {
+                    error!(
+                        "NodeProofAggregator: conflicting proof statement at seq={} for E3 {e3_id}",
+                        msg.seq
+                    );
+                }
             }
             return;
         }

@@ -26,6 +26,8 @@ use tracing::{debug, error, info, warn};
 
 use crate::domain::node_dkg_fold::{DkgProofCollectionState, NodeDkgFoldMeta};
 use crate::node_fold_public::extract_node_fold_agg_commits;
+#[cfg(test)]
+use recovery::{meta_repository, proof_repository};
 use recovery::{NodeProofRecovery, NodeProofRecoveryIndex};
 /// Actor that collects DKG inner proofs and dispatches a single [`ZkRequest::NodeDkgFold`].
 pub struct NodeProofAggregator {
@@ -533,6 +535,51 @@ mod tests {
                 .with_recovery(repositories, recovered);
         restarted.resume_recovered();
         assert_eq!(next_event(&history).await?.into_data(), output.into());
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn startup_removes_recovery_payloads_for_terminal_e3s() -> Result<()> {
+        let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+        let repositories = Repositories::in_mem();
+        let e3_id = E3id::new("48", 1);
+        let proof = dummy_proof(10);
+        let ec = test_ctx(DKGInnerProofReady {
+            e3_id: e3_id.clone(),
+            party_id: 7,
+            proof: proof.clone(),
+            seq: 0,
+        });
+        let meta = NodeDkgFoldMeta {
+            party_id: 7,
+            total_expected: 1,
+            sk_enc_count: 0,
+            e_sm_enc_count: 0,
+            sk_share_encryption_requests: Vec::new(),
+            e_sm_share_encryption_requests: Vec::new(),
+            committee_n: 3,
+            committee_h: 2,
+            n_moduli: 1,
+            params_preset: e3_fhe_params::BfvPreset::InsecureThreshold512,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        };
+        let mut actor =
+            NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true)
+                .with_recovery(repositories.clone(), NodeProofRecovery::default());
+        actor.persist_meta(&e3_id, &meta, &ec)?;
+        actor.persist_proof(&e3_id, 0, &proof, &ec)?;
+
+        let recovered = NodeProofRecovery::load(&repositories, &HashSet::new()).await?;
+
+        assert!(recovered.index.entries.is_empty());
+        assert!(proof_repository(&repositories, &e3_id, 0)
+            .read()
+            .await?
+            .is_none());
+        assert!(meta_repository(&repositories, &e3_id)
+            .read()
+            .await?
+            .is_none());
         Ok(())
     }
 }

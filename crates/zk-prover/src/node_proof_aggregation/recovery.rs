@@ -60,7 +60,11 @@ fn index_repository(repositories: &Repositories) -> Repository<NodeProofRecovery
     )
 }
 
-fn proof_repository(repositories: &Repositories, e3_id: &E3id, seq: usize) -> Repository<Proof> {
+pub(super) fn proof_repository(
+    repositories: &Repositories,
+    e3_id: &E3id,
+    seq: usize,
+) -> Repository<Proof> {
     Repository::new(
         repositories
             .store
@@ -68,7 +72,10 @@ fn proof_repository(repositories: &Repositories, e3_id: &E3id, seq: usize) -> Re
     )
 }
 
-fn meta_repository(repositories: &Repositories, e3_id: &E3id) -> Repository<NodeDkgFoldMeta> {
+pub(super) fn meta_repository(
+    repositories: &Repositories,
+    e3_id: &E3id,
+) -> Repository<NodeDkgFoldMeta> {
     Repository::new(
         repositories
             .store
@@ -90,9 +97,31 @@ impl NodeProofRecovery {
             "unsupported node DKG fold recovery version {}",
             index.version
         );
-        index
+        let stale: Vec<_> = index
             .entries
-            .retain(|e3_id, _| active_e3_ids.contains(e3_id));
+            .iter()
+            .filter(|(e3_id, _)| !active_e3_ids.contains(*e3_id))
+            .map(|(e3_id, entry)| (e3_id.clone(), entry.clone()))
+            .collect();
+        for (e3_id, entry) in stale {
+            let ec = entry.last_ec.as_ref().with_context(|| {
+                format!("stale persisted DKG fold has no event context for E3 {e3_id}")
+            })?;
+            for seq in entry.seqs {
+                repositories
+                    .store
+                    .scope(StoreKeys::node_dkg_inner_proof(&e3_id, seq))
+                    .write_with_context(&Option::<Proof>::None, ec)?;
+            }
+            if entry.meta_present {
+                repositories
+                    .store
+                    .scope(StoreKeys::node_dkg_fold_meta(&e3_id))
+                    .write_with_context(&Option::<NodeDkgFoldMeta>::None, ec)?;
+            }
+            index.entries.remove(&e3_id);
+            index_repository(repositories).write_with_context(&index, ec)?;
+        }
         let mut meta = HashMap::new();
         let mut proofs = HashMap::new();
         for (e3_id, entry) in &index.entries {

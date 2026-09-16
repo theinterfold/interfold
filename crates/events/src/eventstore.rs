@@ -16,6 +16,8 @@ use tracing::{error, warn};
 
 const INDEX_RECONCILE_PAGE_SIZE: usize = 1_024;
 const INDEX_RECONCILE_PAGE_BYTES: usize = 256 * 1024 * 1024;
+const FILTER_SCAN_PAGE_SIZE: usize = 1_024;
+const FILTER_SCAN_PAGE_BYTES: usize = 256 * 1024 * 1024;
 
 pub struct EventStore<I: SequenceIndex, L: EventLog> {
     index: I,
@@ -102,6 +104,60 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         }
     }
 
+    /// Apply a source filter without materializing the remaining log. The output limit applies
+    /// after filtering, while each underlying scan page remains bounded by count and bytes.
+    fn collect_filtered_bounded(
+        &self,
+        from: u64,
+        filter: &EventStoreFilter,
+        limit: usize,
+        max_bytes: Option<usize>,
+    ) -> Result<Vec<InterfoldEvent<Sequenced>>> {
+        if limit == 0 {
+            return Ok(Vec::new());
+        }
+
+        let mut cursor = from;
+        let mut output = Vec::with_capacity(limit.min(FILTER_SCAN_PAGE_SIZE));
+        let mut output_bytes = 0usize;
+        loop {
+            let page = self.log.read_from_bounded_by_bytes(
+                cursor,
+                FILTER_SCAN_PAGE_SIZE,
+                max_bytes.unwrap_or(FILTER_SCAN_PAGE_BYTES),
+            )?;
+            let mut scanned = 0usize;
+            for (sequence, event) in page {
+                scanned += 1;
+                cursor = sequence
+                    .checked_add(1)
+                    .context("event-log sequence overflow during filtered query")?;
+                let matches = match filter {
+                    EventStoreFilter::Source(source) => event.get_ctx().source() == *source,
+                };
+                if !matches {
+                    continue;
+                }
+
+                let event_bytes = usize::try_from(bincode::serialized_size(&event)?)?;
+                if !output.is_empty()
+                    && max_bytes
+                        .is_some_and(|budget| output_bytes.saturating_add(event_bytes) > budget)
+                {
+                    return Ok(output);
+                }
+                output_bytes = output_bytes.saturating_add(event_bytes);
+                output.push(event.into_sequenced(sequence));
+                if output.len() >= limit {
+                    return Ok(output);
+                }
+            }
+            if scanned == 0 {
+                return Ok(output);
+            }
+        }
+    }
+
     /// Query events by timestamp. Returns events at or after the given timestamp.
     pub fn query_by_ts(
         &self,
@@ -122,10 +178,8 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         let Some(seq) = self.index.seek(query)? else {
             return Ok(vec![]);
         };
-        // For unfiltered queries, push the limit down to the log implementation. Historical net
-        // sync uses this path and must not read/materialize the complete remaining history for a
-        // single remote request. A source-filtered query cannot safely apply the limit before the
-        // filter without changing its semantics, so it retains the unbounded iterator path.
+        // Push bounds down to the log implementation. For source-filtered queries, scan bounded
+        // pages until the post-filter output reaches the requested limits.
         let events = match (filter.as_ref(), limit, max_bytes) {
             (None, Some(limit), Some(max_bytes)) => self.log.read_from_bounded_by_bytes(
                 seq,
@@ -135,6 +189,14 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
             (None, Some(limit), None) => self
                 .log
                 .read_from_bounded(seq, usize::try_from(limit).unwrap_or(usize::MAX))?,
+            (Some(filter), Some(limit), max_bytes) => {
+                return self.collect_filtered_bounded(
+                    seq,
+                    filter,
+                    usize::try_from(limit).unwrap_or(usize::MAX),
+                    max_bytes.map(|value| usize::try_from(value).unwrap_or(usize::MAX)),
+                )
+            }
             _ => self.log.read_from(seq)?,
         };
         let result = self.collect_events(events, filter, limit);
@@ -184,6 +246,14 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
             (None, Some(limit), None) => self
                 .log
                 .read_from_bounded(query, usize::try_from(limit).unwrap_or(usize::MAX))?,
+            (Some(filter), Some(limit), max_bytes) => {
+                return self.collect_filtered_bounded(
+                    query,
+                    filter,
+                    usize::try_from(limit).unwrap_or(usize::MAX),
+                    max_bytes.map(|value| usize::try_from(value).unwrap_or(usize::MAX)),
+                )
+            }
             _ => self.log.read_from(query)?,
         };
         Ok(self.collect_events(events, filter, limit))
@@ -1079,6 +1149,40 @@ mod tests {
         for e in &events {
             assert_eq!(e.get_ctx().source(), EventSource::Local);
         }
+    }
+
+    #[test]
+    fn filtered_bounded_query_pages_past_non_matching_events() {
+        let mut stored = (0..FILTER_SCAN_PAGE_SIZE)
+            .map(|index| make_network_event(index as u128 + 1))
+            .collect::<Vec<_>>();
+        stored.push(make_local_event(FILTER_SCAN_PAGE_SIZE as u128 + 1));
+        let bounded_calls = Arc::new(AtomicUsize::new(0));
+        let bounded_limit = Arc::new(AtomicUsize::new(0));
+        let unbounded_calls = Arc::new(AtomicUsize::new(0));
+        let log = MockLog::with_reconcile_trackers(
+            stored,
+            bounded_calls.clone(),
+            bounded_limit,
+            unbounded_calls.clone(),
+        );
+        let store = EventStore::new(MockIndex::new(), log).unwrap();
+        bounded_calls.store(0, Ordering::SeqCst);
+        unbounded_calls.store(0, Ordering::SeqCst);
+
+        let events = store
+            .query_by_seq_with_bounds(
+                1,
+                Some(EventStoreFilter::Source(EventSource::Local)),
+                Some(1),
+                Some(1024 * 1024),
+            )
+            .unwrap();
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].get_ctx().source(), EventSource::Local);
+        assert!(bounded_calls.load(Ordering::SeqCst) >= 2);
+        assert_eq!(unbounded_calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]

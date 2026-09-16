@@ -36,9 +36,13 @@ pub enum EventLogOpenMode {
 #[derive(Debug)]
 struct TailRecoveryPlan {
     segment_path: PathBuf,
+    index_path: PathBuf,
+    base_offset: u64,
     indexed_end: u64,
+    valid_end: u64,
     physical_end: u64,
-    next_offset: u64,
+    indexed_records: usize,
+    recovered_positions: Vec<u64>,
     recovered_payloads: Vec<Vec<u8>>,
 }
 
@@ -56,6 +60,10 @@ pub struct CommitLogEventLog {
     log: CommitLog,
     blobs: EventBlobs,
     path: PathBuf,
+    active_base: Option<u64>,
+    synced_directory_base: Option<u64>,
+    active_segment_file: Option<File>,
+    active_index_file: Option<File>,
 }
 
 impl CommitLogEventLog {
@@ -65,8 +73,8 @@ impl CommitLogEventLog {
 
     pub fn open(path: &Path, mode: EventLogOpenMode) -> Result<Self> {
         let blobs = EventBlobs::new(path);
+        repair_empty_rollover_segment(path, mode)?;
         let recovery = inspect_active_tail(path, &blobs)?;
-        let recovered_tail = recovery.is_some();
         if let Some(plan) = recovery.as_ref() {
             match mode {
                 EventLogOpenMode::RecoverTail => apply_tail_recovery(plan)?,
@@ -86,42 +94,31 @@ impl CommitLogEventLog {
         let mut opts = LogOptions::new(path);
         // TODO: derive this from config - currently set high to be permissive
         opts.message_max_bytes(MAX_MESSAGE_BYTES);
-        let mut log = CommitLog::new(opts)?;
+        let log = CommitLog::new(opts)?;
 
-        if let Some(plan) = recovery {
-            for (index, payload) in plan.recovered_payloads.iter().enumerate() {
-                let expected_offset = plan.next_offset + index as u64;
-                let actual_offset = log
-                    .append_msg(payload)
-                    .context("failed to restore a complete unindexed event-log tail record")?;
-                if actual_offset != expected_offset {
-                    anyhow::bail!(
-                        "event-log tail recovery offset mismatch: expected {expected_offset}, got \
-                         {actual_offset}"
-                    );
-                }
-            }
-            log.flush()
-                .context("failed to flush repaired event-log tail")?;
-        }
-
+        let active_base = active_segment_base(path)?;
         let opened = Self {
             log,
             blobs,
             path: path.to_owned(),
+            active_base,
+            // The first durable append also syncs the directory. Later appends repeat that
+            // directory sync only when commitlog rolls to a new segment pair.
+            synced_directory_base: None,
+            active_segment_file: None,
+            active_index_file: None,
         };
-        if recovered_tail {
-            sync_active_commit_log_files(path).context("failed to sync repaired event-log tail")?;
-        }
         let live_blobs = opened
             .verify_all_checked()
             .context("event log integrity check failed during open")?;
-        let reclaimed = opened
-            .blobs
-            .reclaim_orphans(&live_blobs)
-            .context("failed to reclaim orphan event blobs")?;
-        if reclaimed > 0 {
-            info!(reclaimed, "Reclaimed orphan event blobs");
+        if mode == EventLogOpenMode::RecoverTail {
+            let reclaimed = opened
+                .blobs
+                .reclaim_orphans(&live_blobs)
+                .context("failed to reclaim orphan event blobs")?;
+            if reclaimed > 0 {
+                info!(reclaimed, "Reclaimed orphan event blobs");
+            }
         }
         Ok(opened)
     }
@@ -167,6 +164,17 @@ impl CommitLogEventLog {
             .log
             .append_msg(bytes)
             .context("Failed to append to event log")?;
+        // A segment's file stem is its first zero-indexed record offset. Testing only the newly
+        // appended offset avoids a directory scan for every event while still detecting rollover.
+        if self.active_base != Some(offset)
+            && self.path.join(format!("{offset:020}.log")).exists()
+            && self.path.join(format!("{offset:020}.index")).exists()
+        {
+            self.active_base = Some(offset);
+            self.synced_directory_base = None;
+            self.active_segment_file = None;
+            self.active_index_file = None;
+        }
         // Return 1-indexed sequence number
         Ok(offset + 1)
     }
@@ -251,7 +259,7 @@ impl CommitLogEventLog {
     }
 }
 
-fn sync_active_commit_log_files(path: &Path) -> Result<()> {
+fn active_segment_base(path: &Path) -> Result<Option<u64>> {
     let mut active_base = None;
     for entry in fs::read_dir(path)
         .with_context(|| format!("failed to list event-log directory {}", path.display()))?
@@ -271,48 +279,27 @@ fn sync_active_commit_log_files(path: &Path) -> Result<()> {
             continue;
         };
         if stem.len() == 20 && stem.bytes().all(|byte| byte.is_ascii_digit()) {
-            active_base = Some(active_base.map_or(stem.to_owned(), |current: String| {
-                current.max(stem.to_owned())
-            }));
+            let base = stem.parse::<u64>().with_context(|| {
+                format!("invalid event-log segment name {}", entry_path.display())
+            })?;
+            active_base = Some(active_base.map_or(base, |current: u64| current.max(base)));
         }
     }
+    Ok(active_base)
+}
 
-    if let Some(base) = active_base {
-        for extension in ["log", "index"] {
-            let file_path = path.join(format!("{base}.{extension}"));
-            File::open(&file_path)
-                .with_context(|| format!("failed to open {} for sync", file_path.display()))?
-                .sync_all()
-                .with_context(|| format!("failed to sync {}", file_path.display()))?;
-        }
-    }
+fn sync_event_log_directory(path: &Path) -> Result<()> {
     File::open(path)
         .and_then(|directory| directory.sync_all())
         .with_context(|| format!("failed to sync event-log directory {}", path.display()))
 }
 
-fn decode_record(blobs: &EventBlobs, record: &[u8]) -> Result<InterfoldEvent<Unsequenced>> {
-    match blobs.resolve(record)? {
-        Some(bytes) => {
-            let event: InterfoldEvent<Unsequenced> =
-                e3_utils::deserialize_bounded(&bytes, MAX_BLOB_BYTES as u64)?;
-            anyhow::ensure!(
-                event.source() == EventSource::Local,
-                "event blob contains a non-local event"
-            );
-            Ok(event)
-        }
-        None => Ok(InterfoldEvent::<Unsequenced>::from_bytes(record)?),
-    }
-}
-
-fn inspect_active_tail(path: &Path, blobs: &EventBlobs) -> Result<Option<TailRecoveryPlan>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-
+fn segment_and_index_bases(path: &Path) -> Result<(BTreeSet<u64>, BTreeSet<u64>)> {
     let mut segments = BTreeSet::new();
     let mut indexes = BTreeSet::new();
+    if !path.exists() {
+        return Ok((segments, indexes));
+    }
     for entry in fs::read_dir(path)
         .with_context(|| format!("failed to list event-log directory {}", path.display()))?
     {
@@ -346,6 +333,87 @@ fn inspect_active_tail(path: &Path, blobs: &EventBlobs) -> Result<Option<TailRec
             _ => {}
         }
     }
+    Ok((segments, indexes))
+}
+
+/// A rollover creates the segment before its index. If the process stops between those two file
+/// creations, the extra segment contains only commitlog's two-byte magic and no event. Removing
+/// that exact trailing shape is safe; every other segment/index mismatch remains fatal.
+fn repair_empty_rollover_segment(path: &Path, mode: EventLogOpenMode) -> Result<()> {
+    let (segments, indexes) = segment_and_index_bases(path)?;
+    if segments == indexes {
+        return Ok(());
+    }
+    let extra_segments = segments.difference(&indexes).copied().collect::<Vec<_>>();
+    let repairable = indexes.is_subset(&segments)
+        && extra_segments.len() == 1
+        && segments.last().copied() == extra_segments.first().copied();
+    if !repairable {
+        anyhow::bail!(
+            "commit-log segment/index set mismatch in {} (segments: {segments:?}, indexes: \
+             {indexes:?})",
+            path.display()
+        );
+    }
+
+    let base = extra_segments[0];
+    let segment_path = path.join(format!("{base:020}.log"));
+    let bytes = fs::read(&segment_path).with_context(|| {
+        format!(
+            "failed to inspect unmatched commit-log segment {}",
+            segment_path.display()
+        )
+    })?;
+    if bytes != COMMITLOG_SEGMENT_MAGIC {
+        anyhow::bail!(
+            "commit-log segment/index set mismatch in {}: unmatched segment {} is not empty",
+            path.display(),
+            segment_path.display()
+        );
+    }
+
+    if mode == EventLogOpenMode::ValidateOnly {
+        anyhow::bail!(
+            "recoverable empty rollover segment detected at {}; rerun with `interfold node \
+             validate --repair` while the node is stopped",
+            segment_path.display()
+        );
+    }
+    fs::remove_file(&segment_path).with_context(|| {
+        format!(
+            "failed to remove empty rollover segment {}",
+            segment_path.display()
+        )
+    })?;
+    sync_event_log_directory(path)?;
+    warn!(
+        segment = %segment_path.display(),
+        "Removed an empty commit-log rollover segment that had no index"
+    );
+    Ok(())
+}
+
+fn decode_record(blobs: &EventBlobs, record: &[u8]) -> Result<InterfoldEvent<Unsequenced>> {
+    match blobs.resolve(record)? {
+        Some(bytes) => {
+            let event: InterfoldEvent<Unsequenced> =
+                e3_utils::deserialize_bounded(&bytes, MAX_BLOB_BYTES as u64)?;
+            anyhow::ensure!(
+                event.source() == EventSource::Local,
+                "event blob contains a non-local event"
+            );
+            Ok(event)
+        }
+        None => Ok(InterfoldEvent::<Unsequenced>::from_bytes(record)?),
+    }
+}
+
+fn inspect_active_tail(path: &Path, blobs: &EventBlobs) -> Result<Option<TailRecoveryPlan>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let (segments, indexes) = segment_and_index_bases(path)?;
 
     if segments != indexes {
         anyhow::bail!(
@@ -457,6 +525,7 @@ fn inspect_active_tail(path: &Path, blobs: &EventBlobs) -> Result<Option<TailRec
 
     let next_offset = base_offset + index_entries.len() as u64;
     let mut position = indexed_end;
+    let mut recovered_positions = Vec::new();
     let mut recovered_payloads = Vec::new();
     while position < physical_end {
         match read_physical_frame(&mut segment, position, physical_end)? {
@@ -478,6 +547,7 @@ fn inspect_active_tail(path: &Path, blobs: &EventBlobs) -> Result<Option<TailRec
                          refusing to discard a potentially committed event"
                     )
                 })?;
+                recovered_positions.push(position);
                 recovered_payloads.push(payload);
                 position = end;
             }
@@ -499,9 +569,13 @@ fn inspect_active_tail(path: &Path, blobs: &EventBlobs) -> Result<Option<TailRec
 
     Ok(Some(TailRecoveryPlan {
         segment_path,
+        index_path,
+        base_offset,
         indexed_end,
+        valid_end: position,
         physical_end,
-        next_offset,
+        indexed_records: index_entries.len(),
+        recovered_positions,
         recovered_payloads,
     }))
 }
@@ -562,7 +636,7 @@ fn read_physical_frame(file: &mut File, position: u64, physical_end: u64) -> Res
 }
 
 fn apply_tail_recovery(plan: &TailRecoveryPlan) -> Result<()> {
-    let mut segment = OpenOptions::new()
+    let segment = OpenOptions::new()
         .write(true)
         .open(&plan.segment_path)
         .with_context(|| {
@@ -571,17 +645,48 @@ fn apply_tail_recovery(plan: &TailRecoveryPlan) -> Result<()> {
                 plan.segment_path.display()
             )
         })?;
-    segment.set_len(plan.indexed_end).with_context(|| {
-        format!(
-            "failed to truncate uncommitted event-log tail in {}",
-            plan.segment_path.display()
-        )
-    })?;
-    segment.flush()?;
-    segment.sync_all()?;
+    if plan.valid_end < plan.physical_end {
+        segment.set_len(plan.valid_end).with_context(|| {
+            format!(
+                "failed to truncate torn event-log suffix in {}",
+                plan.segment_path.display()
+            )
+        })?;
+        segment.sync_all()?;
+    }
+
+    if !plan.recovered_positions.is_empty() {
+        let mut entries =
+            Vec::with_capacity(plan.recovered_positions.len() * COMMITLOG_INDEX_ENTRY_BYTES);
+        for (index, position) in plan.recovered_positions.iter().copied().enumerate() {
+            let relative_offset = u32::try_from(plan.indexed_records + index)
+                .context("recovered event-log index offset exceeds u32")?;
+            let file_position =
+                u32::try_from(position).context("recovered event-log position exceeds u32")?;
+            entries.extend_from_slice(&relative_offset.to_le_bytes());
+            entries.extend_from_slice(&file_position.to_le_bytes());
+        }
+        let mut index = OpenOptions::new()
+            .write(true)
+            .open(&plan.index_path)
+            .with_context(|| {
+                format!(
+                    "failed to open recoverable event-log index {}",
+                    plan.index_path.display()
+                )
+            })?;
+        index.seek(SeekFrom::Start(
+            (plan.indexed_records * COMMITLOG_INDEX_ENTRY_BYTES) as u64,
+        ))?;
+        index.write_all(&entries)?;
+        index.flush()?;
+        index.sync_all()?;
+    }
     warn!(
         segment = %plan.segment_path.display(),
-        removed_bytes = plan.physical_end.saturating_sub(plan.indexed_end),
+        base_offset = plan.base_offset,
+        indexed_end = plan.indexed_end,
+        removed_bytes = plan.physical_end.saturating_sub(plan.valid_end),
         recovered_records = plan.recovered_payloads.len(),
         "Recovered uncommitted event-log tail"
     );
@@ -614,7 +719,40 @@ impl EventLog for CommitLogEventLog {
 
     fn flush(&mut self) -> Result<()> {
         self.log.flush().context("Failed to flush event log")?;
-        sync_active_commit_log_files(&self.path).context("Failed to sync event log")
+        let active_base = match self.active_base {
+            Some(base) => base,
+            None => active_segment_base(&self.path)?
+                .context("event log has no active segment after append")?,
+        };
+        if self.active_segment_file.is_none() {
+            let path = self.path.join(format!("{active_base:020}.log"));
+            self.active_segment_file = Some(
+                File::open(&path)
+                    .with_context(|| format!("failed to open {} for sync", path.display()))?,
+            );
+        }
+        if self.active_index_file.is_none() {
+            let path = self.path.join(format!("{active_base:020}.index"));
+            self.active_index_file = Some(
+                File::open(&path)
+                    .with_context(|| format!("failed to open {} for sync", path.display()))?,
+            );
+        }
+        self.active_segment_file
+            .as_ref()
+            .expect("opened above")
+            .sync_all()
+            .context("failed to sync active event-log segment")?;
+        self.active_index_file
+            .as_ref()
+            .expect("opened above")
+            .sync_all()
+            .context("failed to sync active event-log index")?;
+        if self.synced_directory_base != Some(active_base) {
+            sync_event_log_directory(&self.path)?;
+            self.synced_directory_base = Some(active_base);
+        }
+        Ok(())
     }
 
     fn read_from(
@@ -1061,6 +1199,25 @@ mod tests {
         assert_eq!(reopened.read_from_checked(1).unwrap()[0].1, event);
     }
 
+    #[test]
+    fn validation_does_not_reclaim_unreferenced_blobs() {
+        let dir = tempdir().unwrap();
+        let log = CommitLogEventLog::new(dir.path()).unwrap();
+        let blob_dir = dir.path().join("event-blobs-v1");
+        fs::create_dir_all(&blob_dir).unwrap();
+        let orphan_path = blob_dir.join("f".repeat(64));
+        fs::write(&orphan_path, b"orphan").unwrap();
+        drop(log);
+
+        let _validated = CommitLogEventLog::open(dir.path(), EventLogOpenMode::ValidateOnly)
+            .expect("read-only validation must accept an unreferenced blob");
+
+        assert!(
+            orphan_path.exists(),
+            "read-only validation must not remove files"
+        );
+    }
+
     fn oversized_event_with_size(source: EventSource, size: usize) -> InterfoldEvent<Unsequenced> {
         InterfoldEvent::<Unsequenced>::new_with_timestamp(
             TestEvent {
@@ -1210,6 +1367,41 @@ mod tests {
     }
 
     #[test]
+    fn startup_repairs_only_an_empty_unindexed_rollover_segment() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let mut log = CommitLogEventLog::new(&path).unwrap();
+        log.append(&event_from(TestEvent::new("before-rollover", 1)))
+            .unwrap();
+        log.flush().unwrap();
+        drop(log);
+
+        let empty_segment = path.join("00000000000000000001.log");
+        fs::write(&empty_segment, COMMITLOG_SEGMENT_MAGIC).unwrap();
+
+        let error = CommitLogEventLog::open(&path, EventLogOpenMode::ValidateOnly)
+            .err()
+            .expect("validation must report the recoverable rollover file");
+        assert!(
+            format!("{error:#}").contains("recoverable empty rollover segment"),
+            "{error:#}"
+        );
+        assert!(
+            empty_segment.exists(),
+            "validation must not remove the file"
+        );
+
+        let mut recovered = CommitLogEventLog::new(&path).unwrap();
+        assert!(!empty_segment.exists());
+        assert_eq!(recovered.read_from_checked(1).unwrap().len(), 1);
+        recovered
+            .append(&event_from(TestEvent::new("after-rollover-repair", 2)))
+            .unwrap();
+        recovered.flush().unwrap();
+        assert_eq!(recovered.head(), 2);
+    }
+
+    #[test]
     fn startup_reindexes_complete_crc_valid_tail_records() {
         let dir = tempdir().unwrap();
         let path = dir.path().to_path_buf();
@@ -1239,6 +1431,47 @@ mod tests {
         assert_eq!(events[0].0, 1);
         assert_eq!(events[1].0, 2);
         assert_eq!(recovered.head(), 2);
+    }
+
+    #[test]
+    fn tail_repair_never_removes_a_complete_unindexed_record() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().to_path_buf();
+        let index_path = path.join("00000000000000000000.index");
+        let segment_path = path.join("00000000000000000000.log");
+        let mut log = CommitLogEventLog::new(&path).unwrap();
+        log.append(&event_from(TestEvent::new("indexed", 1)))
+            .unwrap();
+        log.append(&event_from(TestEvent::new("index-lost", 2)))
+            .unwrap();
+        log.flush().unwrap();
+        drop(log);
+
+        let complete_segment_len = fs::metadata(&segment_path).unwrap().len();
+        let mut index = OpenOptions::new().write(true).open(&index_path).unwrap();
+        index.seek(SeekFrom::Start(8)).unwrap();
+        index.write_all(&[0u8; 8]).unwrap();
+        index.sync_all().unwrap();
+        drop(index);
+
+        let plan = inspect_active_tail(&path, &EventBlobs::new(&path))
+            .unwrap()
+            .expect("recoverable tail");
+        apply_tail_recovery(&plan).unwrap();
+
+        assert_eq!(
+            fs::metadata(&segment_path).unwrap().len(),
+            complete_segment_len,
+            "repair must preserve CRC-valid records before any later restart"
+        );
+        assert!(inspect_active_tail(&path, &EventBlobs::new(&path))
+            .unwrap()
+            .is_none());
+
+        let recovered = CommitLogEventLog::new(&path).unwrap();
+        let events: Vec<_> = recovered.read_from(1).unwrap().collect();
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[1].1, event_from(TestEvent::new("index-lost", 2)));
     }
 
     #[test]
