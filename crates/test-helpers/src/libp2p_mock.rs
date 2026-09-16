@@ -303,11 +303,11 @@ mod tests {
         mock.disconnect_node(sender_id).await;
         sender
             .cmd_tx()
-            .send(NetCommand::GossipPublish {
-                topic: "test".into(),
-                data: GossipData::GossipBytes(vec![1]),
-                correlation_id: CorrelationId::new(),
-            })
+            .send(NetCommand::gossip_publish(
+                "test".into(),
+                GossipData::GossipBytes(vec![1]),
+                CorrelationId::new(),
+            ))
             .unwrap();
         assert!(tokio::time::timeout(Duration::from_millis(50), async {
             loop {
@@ -322,11 +322,11 @@ mod tests {
         mock.reconnect_node(sender_id, sender.clone()).await;
         sender
             .cmd_tx()
-            .send(NetCommand::GossipPublish {
-                topic: "test".into(),
-                data: GossipData::GossipBytes(vec![2]),
-                correlation_id: CorrelationId::new(),
-            })
+            .send(NetCommand::gossip_publish(
+                "test".into(),
+                GossipData::GossipBytes(vec![2]),
+                CorrelationId::new(),
+            ))
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
@@ -359,11 +359,11 @@ mod tests {
         mock.disconnect_node_for_restart(receiver_id).await;
         sender
             .cmd_tx()
-            .send(NetCommand::GossipPublish {
-                topic: "test".into(),
-                data: GossipData::GossipBytes(vec![7]),
-                correlation_id: CorrelationId::new(),
-            })
+            .send(NetCommand::gossip_publish(
+                "test".into(),
+                GossipData::GossipBytes(vec![7]),
+                CorrelationId::new(),
+            ))
             .unwrap();
         tokio::time::timeout(Duration::from_secs(1), async {
             loop {
