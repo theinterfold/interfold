@@ -68,18 +68,22 @@ const RANGE_LIMIT_MARKERS: &[&str] = &[
 
 /// Phrases that report a rejected range only when the message also names a range.
 ///
-/// `limited to a` alone is not sufficient, because providers use the same words for a request
-/// quota, as in "limited to a maximum of 25 requests per second". A quota must keep the backoff
-/// path: fewer blocks for each call does not raise it, and narrowing the window would send more
-/// calls. The qualifier keeps the block-range wording, as in "eth_getLogs is limited to a 10,000
-/// range".
+/// The qualifier is the range context word, not the shape of the phrase. Requiring the article "a"
+/// as well excluded a provider that needed it: 1RPC answers a request over its cap with
+/// "eth_getLogs is limited to 0 - 50 blocks range", which carries no article, so it took the retry
+/// path instead and startup failed against a provider the window could have used.
+///
+/// The context word is what keeps a request quota on the backoff path. Providers use the same
+/// phrase for quotas — "limited to a maximum of 25 requests per second" — and such a message never
+/// names a range. Fewer blocks for each call does not raise a quota, and narrowing the window would
+/// send more calls, not fewer.
 ///
 /// `query timeout exceeded` needs the same qualifier. A provider sends it for a range it will not
 /// serve, as in Alchemy's "Query timeout exceeded. Consider reducing your block range", and also
 /// for a server-side timeout that a narrower range would not fix. Without the qualifier a run of
 /// plain timeouts narrows the window to one block and then fails the sync, instead of retrying
 /// with backoff.
-const RANGE_QUALIFIED_MARKERS: &[&str] = &["limited to a", "query timeout exceeded"];
+const RANGE_QUALIFIED_MARKERS: &[&str] = &["limited to", "query timeout exceeded"];
 
 /// Word that must accompany a [`RANGE_QUALIFIED_MARKERS`] phrase before it reports a block range.
 const RANGE_CONTEXT_MARKER: &str = "range";
@@ -364,8 +368,12 @@ mod tests {
     fn live_provider_range_errors_are_recognized() {
         // Captured verbatim from live endpoints, not composed by hand. `-32701` with this wording
         // is what publicnode returns above its 50,000-block cap.
+        //
+        // The 1RPC message is the one that reaches the classifier with no article, and it is why
+        // the qualifier is the range context word rather than the phrase "limited to a".
         for message in [
             "server returned an error response: error code -32701: exceed maximum block range: 50000",
+            "eth_getLogs is limited to 0 - 50 blocks range",
         ] {
             assert!(is_range_limit_error(message), "not detected: {message}");
         }
