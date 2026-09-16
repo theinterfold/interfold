@@ -74,6 +74,13 @@ export type VerifyAgainstChain = {
 } & SlotHeadResolution
 
 /**
+ * Compare endpoint URLs the way one endpoint gets written two ways: with and without a trailing
+ * slash. Without it, `https://host/chain/rpc/` and `https://host/chain/rpc` read as two different
+ * sources, and the second one would be accepted as independent.
+ */
+const stripTrailingSlash = (url: string): string => url.replace(/\/+$/, '')
+
+/**
  * A class representing the CRISP SDK.
  */
 export class CrispSDK {
@@ -87,15 +94,6 @@ export class CrispSDK {
    * Endpoint used for direct chain reads, or `undefined` to use viem's default public RPC.
    */
   private rpcUrl: string | undefined
-
-  /**
-   * Whether this instance reads the chain through the CRISP server's own `/chain/rpc` route.
-   *
-   * Chain-backed head resolution is refused in this mode. It reads both the slot entries and the
-   * `InputCommitted` logs, and in this mode both come from one origin — so it cannot detect that
-   * server omitting an entry and its log together, which is the one failure it exists to catch.
-   */
-  private readonly chainReadsThroughServer: boolean
 
   /**
    * Create a new instance.
@@ -113,8 +111,26 @@ export class CrispSDK {
    */
   constructor(serverUrl: string, rpcUrl?: string | null) {
     this.serverUrl = serverUrl
-    this.chainReadsThroughServer = rpcUrl === SERVER_RPC
     this.rpcUrl = rpcUrl === SERVER_RPC ? chainRpcUrl(serverUrl) : (rpcUrl ?? undefined)
+  }
+
+  /**
+   * Whether this instance's chain reads come from the CRISP server itself, however that was asked
+   * for.
+   *
+   * `SERVER_RPC` is only a sentinel, so recognising the sentinel alone is not enough: a caller that
+   * passes `chainRpcUrl(serverUrl)` names the same endpoint as a plain string, and would have been
+   * treated as an independent source. The test is therefore on the resolved URL, compared with
+   * trailing slashes removed so the same endpoint written two ways is still one endpoint.
+   *
+   * What this cannot see: a server that exposes the same upstream chain under some other path. That
+   * is indistinguishable from a genuine third-party endpoint from here, which is why the caller is
+   * asked for a separately trusted one rather than told which URLs are safe.
+   */
+  private readsChainThroughServer(): boolean {
+    if (this.rpcUrl === undefined) return false
+
+    return stripTrailingSlash(this.rpcUrl) === stripTrailingSlash(chainRpcUrl(this.serverUrl))
   }
 
   /**
@@ -135,10 +151,10 @@ export class CrispSDK {
    * @param verifyAgainstChain - Resolve the slot head from the chain rather than accepting the
    *                             server's answer. Pass the `CRISPProgram` address, the chain, the
    *                             round's BFV preset, and the contract's deployment block. The preset
-   *                             must already be registered as circuits, and resolution is refused in
-   *                             `SERVER_RPC` mode, where both the entries and the logs would come
-   *                             from the server being checked. Throws instead of building a ballot
-   *                             when the head cannot be settled.
+   *                             must already be registered as circuits, and resolution is refused
+   *                             when the chain reads would come from the server being checked — the
+   *                             `SERVER_RPC` sentinel or that same route named directly. Throws
+   *                             instead of building a ballot when the head cannot be settled.
    * @returns A promise that resolves to the prepared ballot.
    */
   async prepareBallot(request: PrepareBallotRequest, verifyAgainstChain?: VerifyAgainstChain): Promise<PreparedBallot> {
@@ -433,9 +449,10 @@ export class CrispSDK {
    * Costs one request to the server plus a windowed scan of the contract's logs. Only entries that
    * extend the head are checked, so a slot flooded with masks costs the same as a short chain.
    *
-   * Refused when this instance reads the chain through the CRISP server (`SERVER_RPC`): the entries
-   * and the logs would then come from the same origin, and a server omitting an entry and its log
-   * together is exactly what this cannot see.
+   * Refused when this instance's chain reads go through the CRISP server — whether by the
+   * `SERVER_RPC` sentinel or by naming that route directly. The entries and the logs would then come
+   * from the same origin, and a server that omits an entry and its log together is exactly what this
+   * cannot see.
    *
    * Check `complete` before using the head. When it is `false` an entry that could hold the slot
    * could not be judged, and a ballot built on the head returned would prove, publish, cost gas,
@@ -459,11 +476,11 @@ export class CrispSDK {
     address: string,
     input: SlotHeadResolution,
   ): Promise<ResolvedSlotHead> {
-    if (this.chainReadsThroughServer) {
+    if (this.readsChainThroughServer()) {
       throw new Error(
-        'resolveSlotHead cannot verify a slot head in SERVER_RPC mode: the slot entries and the ' +
-          'InputCommitted logs would both come from the CRISP server, so a server that omitted an ' +
-          'entry and its log together would go unnoticed. Pass a separately trusted rpcUrl.',
+        'resolveSlotHead cannot verify a slot head when chain reads go through the CRISP server: ' +
+          'the slot entries and the InputCommitted logs would both come from it, so a server that ' +
+          'omitted an entry and its log together would go unnoticed. Pass a separately trusted rpcUrl.',
       )
     }
 

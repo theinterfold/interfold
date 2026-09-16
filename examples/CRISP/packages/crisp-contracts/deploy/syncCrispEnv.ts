@@ -47,9 +47,15 @@ function deploymentAddress(contractName: string, chain: string): string | undefi
   return readDeploymentArgs(contractName, chain)?.address
 }
 
-/** The block a contract was deployed at, or `undefined` when the deployment is not recorded. */
+/**
+ * The block a contract was deployed at, or `undefined` when the deployment does not record one.
+ *
+ * `blockNumber` is `number | null`, and a `null` written by an older deploy means the same as an
+ * absent one. Collapsing the two here is what keeps `String(null)` from reaching the client as the
+ * literal `null` — a value that looks configured and fails later, inside `BigInt`.
+ */
 function deploymentBlock(contractName: string, chain: string): number | undefined {
-  return readDeploymentArgs(contractName, chain)?.blockNumber
+  return readDeploymentArgs(contractName, chain)?.blockNumber ?? undefined
 }
 
 /** Writes localhost deployment addresses into server/.env and client/.env. */
@@ -70,6 +76,14 @@ export function syncCrispEnvFromDeployments(chain: string): void {
 
   if (missing.length > 0) {
     throw new Error(`Cannot sync CRISP .env files: missing deployments for ${missing.join(', ')} on chain "${chain}"`)
+  }
+
+  // Refused, not skipped. The client scans `CRISPProgram`'s logs from this block, and every way of
+  // leaving it out is wrong in a way nothing reports: omitting the key keeps a new client file on
+  // the template's `0` — a genesis scan, which hosted providers reject outright — and keeps an
+  // existing file on whatever it held before, starting the scan silently in the wrong place.
+  if (programDeployBlock === undefined) {
+    throw new Error(`Cannot sync CRISP .env files: the "${chain}" deployment record has no block number for CRISPProgram`)
   }
 
   const serverEnv = path.join(CRISP_ROOT, 'server', '.env')
@@ -101,18 +115,15 @@ export function syncCrispEnvFromDeployments(chain: string): void {
 
   applyEnvUpdates(serverEnv, serverUpdates)
   // The client scans `CRISPProgram`'s logs to resolve a slot head, and that scan cannot start at
-  // genesis — hosted providers refuse a range that wide, and nothing in a round's public state is a
-  // block height. The deployment record already knows the block, so it is written here rather than
-  // left for an operator to fill in by hand.
+  // genesis: hosted providers refuse a range that wide, and nothing in a round's public state is a
+  // block height. The deployment record knows the block, so it is written here for every deployment
+  // rather than left for an operator to fill in.
   applyEnvUpdates(clientEnv, {
     VITE_CRISP_TOKEN: votingTokenAddress!,
-    ...(programDeployBlock === undefined ? {} : { VITE_CRISP_PROGRAM_DEPLOY_BLOCK: String(programDeployBlock) }),
+    VITE_CRISP_PROGRAM_DEPLOY_BLOCK: String(programDeployBlock),
   })
 
   console.log(`Synced deployment addresses → ${path.relative(CRISP_ROOT, serverEnv)}`)
   console.log(`Synced VITE_CRISP_TOKEN → ${path.relative(CRISP_ROOT, clientEnv)}`)
-
-  if (programDeployBlock !== undefined) {
-    console.log(`Synced VITE_CRISP_PROGRAM_DEPLOY_BLOCK=${programDeployBlock} → ${path.relative(CRISP_ROOT, clientEnv)}`)
-  }
+  console.log(`Synced VITE_CRISP_PROGRAM_DEPLOY_BLOCK=${programDeployBlock} → ${path.relative(CRISP_ROOT, clientEnv)}`)
 }
