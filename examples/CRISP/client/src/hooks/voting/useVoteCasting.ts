@@ -7,10 +7,10 @@
 import { useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSignTypedData, usePublicClient, useChainId, useWalletClient } from 'wagmi'
-import type { Address } from 'viem'
-import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot } from '@crisp-e3/sdk'
-import type { PrepareBallotInputs } from '@crisp-e3/sdk'
-import { ensureCircuits } from '@/utils/circuits'
+import type { Address, PublicClient } from 'viem'
+import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot, resolveSlotHeadOnChain } from '@crisp-e3/sdk'
+import type { CircuitPreset, PrepareBallotInputs } from '@crisp-e3/sdk'
+import { ensureCircuits, presetForParamSet } from '@/utils/circuits'
 
 import { useVoteManagementContext } from '@/context/voteManagement'
 import { useNotificationAlertContext } from '@/context/NotificationAlert/NotificationAlert.context.tsx'
@@ -26,6 +26,29 @@ import { submitInputCommitmentDirectly } from '@/utils/directVote'
 import { txExplorerUrl } from '@/utils/methods'
 
 const INTERFOLD_API = import.meta.env.VITE_INTERFOLD_API
+
+/**
+ * The block `CRISPProgram` was deployed at on the configured chain, where its logs begin.
+ *
+ * Required rather than defaulted, because there is no safe fallback. Genesis is refused by hosted
+ * providers — Publicnode caps `eth_getLogs` at 50,000 blocks, so a `0`-to-head scan fails outright
+ * on a deployed chain — and everything the round's public state reports is a timestamp rather than
+ * a height, which the node rejects as an invalid block range.
+ *
+ * Resolved lazily, so a deployment that never votes does not fail at import time.
+ */
+const crispProgramDeploymentBlock = (): bigint => {
+  const configured = import.meta.env.VITE_CRISP_PROGRAM_DEPLOY_BLOCK
+
+  if (!configured) {
+    throw new Error(
+      'VITE_CRISP_PROGRAM_DEPLOY_BLOCK is not set. The slot-head check scans CRISPProgram logs and ' +
+        'cannot start at genesis, so the deployment block is required.',
+    )
+  }
+
+  return BigInt(configured)
+}
 
 interface PendingAvailabilityJob {
   jobId: string
@@ -77,35 +100,57 @@ const clearAvailabilityJob = (key: string): void => {
 }
 
 /// The end of the slot's chain of usable entries, with the tree index the new input will name as
-/// its parent. Not simply the newest entry published: one whose bytes do not reproduce its
-/// commitment is never selected by the Secure Process and is never a valid parent, so the server
-/// resolves the chain and answers with the entry that actually holds the slot.
-const getSlotHead = async (e3Id: string, address: string): Promise<{ ciphertext: Uint8Array; index: number } | undefined> => {
-  const response = await fetch(`${INTERFOLD_API}/state/previous-ciphertext`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ round_id: e3Id, address }),
+/// its parent, resolved against the chain rather than taken from the server.
+///
+/// Not simply the newest entry published: one whose bytes do not reproduce its commitment is never
+/// selected by the Secure Process and is never a valid parent. `CRISPProgram` cannot make that
+/// check — the commitment is a Poseidon sponge over CRT limbs and the circuit never sees the
+/// serialization — so the entry that holds a slot can only be decided off chain.
+///
+/// The two sources differ on purpose. The server supplies the bytes, because they are not on
+/// chain: `InputPublished` carries the Avail coordinates, and the availability object is released
+/// once its job completes. The `InputCommitted` logs are read through `client`, so a server cannot
+/// hide an entry by omitting both it and its log. Every byte that comes back is checked against the
+/// commitment and content hash `CRISPProgram` recorded, and the walk that picks the head is this
+/// client's.
+///
+/// Naming the wrong parent is not a rejected transaction. The proof verifies, the input is
+/// published, the gas is spent, and the Secure Process drops the entry when it walks the slot —
+/// so an unsettled head is refused here instead of being voted on.
+///
+/// The log scan starts at `CRISPProgram`'s deployment block. Genesis is not an option — hosted
+/// providers refuse a range that wide — and the round's public state cannot supply the block
+/// either: `state/lite`'s `start_block` is `E3.request_block`, which holds a unix timestamp, and
+/// its `snapshot_block` falls back to `request_block - 1`, so both are rejected by the node as an
+/// invalid block range and return no logs at all.
+///
+/// The preset is passed rather than inferred. Resolving a head recomputes every entry's commitment,
+/// and a commitment is only comparable within one preset — the SDK's generator silently falls back
+/// to insecure-512 parameters when nothing is registered, which would mark every entry of a secure
+/// round unusable and report an occupied slot as empty. The caller therefore loads the round's
+/// circuits first.
+const getSlotHead = async (
+  client: PublicClient,
+  e3Id: bigint,
+  address: string,
+  crispProgram: Address,
+  preset: CircuitPreset,
+): Promise<{ ciphertext: Uint8Array; index: number } | undefined> => {
+  const resolved = await resolveSlotHeadOnChain(client, INTERFOLD_API, crispProgram, e3Id, address, {
+    preset,
+    deploymentBlock: crispProgramDeploymentBlock(),
   })
 
-  if (response.status === 404) return undefined
-  if (!response.ok) throw new Error(`Failed to fetch previous ciphertext: ${response.statusText}`)
+  if (!resolved.complete) {
+    const unsettled = resolved.rejected.filter((entry) => entry.reason === 'missing-bytes' || entry.reason === 'bytes-mismatch')
 
-  const body: unknown = await response.json()
-  if (
-    typeof body !== 'object' ||
-    body === null ||
-    !('ciphertext' in body) ||
-    !Array.isArray(body.ciphertext) ||
-    !body.ciphertext.every((value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 0 && value <= 255)
-  ) {
-    throw new Error('Previous ciphertext response contains invalid bytes')
+    throw new Error(
+      `This slot cannot be read yet: ${unsettled.length} recent ${unsettled.length === 1 ? 'ballot' : 'ballots'} could not be ` +
+        `checked against the chain. Voting now could leave your ballot out of the tally. Please try again in a moment.`,
+    )
   }
 
-  if (!('index' in body) || typeof body.index !== 'number' || !Number.isInteger(body.index) || body.index < 0) {
-    throw new Error('Previous ciphertext response has no usable index')
-  }
-
-  return { ciphertext: new Uint8Array(body.ciphertext), index: body.index }
+  return resolved.head
 }
 
 export type VotingStep = 'idle' | 'signing' | 'encrypting' | 'generating_proof' | 'broadcasting' | 'confirming' | 'complete' | 'error'
@@ -207,12 +252,28 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
 
       try {
         const publicKey = new Uint8Array(votingRound.pk_bytes)
-        const head = await getSlotHead(votingRound.round_id, address)
         const e3Id = BigInt(votingRound.round_id)
         const slot = address as `0x${string}`
         const isOnchain = roundState.census_mode === CensusMode.Onchain
 
         const { crispProgram, paramSet } = await getCrispRoundConfig(publicClient, roundState.interfold_address as `0x${string}`, e3Id)
+
+        // The circuits load before the head is resolved, not merely before the proof. Resolving a
+        // head recomputes each entry's commitment, and those are only comparable within a single
+        // preset: under the wrong parameters every entry reads as a commitment mismatch, an occupied
+        // slot resolves to no head, and the ballot is published with no parent and then dropped from
+        // the tally — with nothing shown to the voter.
+        await ensureCircuits(paramSet)
+
+        const preset = presetForParamSet(paramSet)
+        if (!preset) {
+          throw new Error(`Unsupported E3 param set ${paramSet}.`)
+        }
+
+        // Read after the program address, because resolving the head needs it: the check is against
+        // what `CRISPProgram` published for each entry of the slot. The logs come from this client's
+        // own RPC, so the server cannot hide an entry by dropping it from its own index too.
+        const head = await getSlotHead(publicClient, e3Id, address, crispProgram, preset)
 
         const ballotBase = {
           vote,
@@ -237,7 +298,6 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
           ballot = { ...ballotBase, censusMode: 'merkle', balance, merkleLeaves }
         }
 
-        await ensureCircuits(paramSet)
         // The slot head is passed as a pair or not at all. A ciphertext without its index would be
         // proven against one entry and published against another, so the SDK types the two together
         // and this branches rather than spreading them as separate optional fields.

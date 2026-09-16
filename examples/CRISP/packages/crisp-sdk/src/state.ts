@@ -6,11 +6,11 @@
 
 import { parseAbi } from 'viem'
 
-import { CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT } from './constants'
+import { CRISP_SERVER_PREVIOUS_CIPHERTEXT_ENDPOINT, CRISP_SERVER_SLOT_ENTRIES_ENDPOINT } from './constants'
 import { getRoundStateLite } from './api'
 import { getPublicClient } from './chain'
 
-import type { CreditMode, OnChainRoundData, RoundDetails, SlotHead, TokenDetails } from './types'
+import type { CreditMode, OnChainRoundData, RoundDetails, SlotEntry, SlotHead, TokenDetails } from './types'
 
 /**
  * Get the details of a specific round in a camelCase convenience format
@@ -161,4 +161,38 @@ export const getPreviousCiphertext = async (serverUrl: string, e3Id: bigint, add
   const data = await response.json()
 
   return { ciphertext: new Uint8Array(data.ciphertext), index: Number(data.index) }
+}
+
+/**
+ * Get every entry published to a slot, without the server's own view of which one holds it.
+ *
+ * The companion to {@link getPreviousCiphertext}: that endpoint reports the server's answer, this
+ * one reports the entries the answer was derived from. A caller that resolves the head itself
+ * needs these, because an entry's bytes are the only part of an input that is not on chain —
+ * `InputPublished` carries the Avail coordinates rather than the ciphertext.
+ *
+ * @param serverUrl - The base URL of the CRISP server
+ * @param e3Id - The e3Id of the round
+ * @param address - The address of the slot
+ * @returns Every entry of the slot in on-chain index order, which is empty when the slot has none.
+ */
+export const getSlotEntries = async (serverUrl: string, e3Id: bigint, address: string): Promise<SlotEntry[]> => {
+  const response = await fetch(`${serverUrl}/${CRISP_SERVER_SLOT_ENTRIES_ENDPOINT}`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ round_id: e3Id.toString(), address }),
+  })
+
+  if (!response.ok) {
+    throw new Error(`Failed to fetch slot entries: ${response.statusText}`)
+  }
+
+  const data = await response.json()
+
+  return (data.entries ?? []).map((entry: { ciphertext: number[]; index: number | string }) => ({
+    ciphertext: new Uint8Array(entry.ciphertext),
+    index: Number(entry.index),
+  }))
 }

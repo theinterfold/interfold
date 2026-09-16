@@ -24,6 +24,8 @@ import {
   requestNewRound,
 } from './api'
 import { getOnChainRoundData, getOnchainVotingPower, getPreviousCiphertext, getRoundDetails, getRoundTokenDetails } from './state'
+import { resolveSlotHeadOnChain, type SlotHeadResolution } from './slotHead'
+import { getPublicClient } from './chain'
 import { finishBallotProof, finishMaskProof, prepareBallot } from './vote'
 
 import type {
@@ -42,6 +44,7 @@ import type {
   PrepareBallotRequest,
   PreparedBallot,
   ProofData,
+  ResolvedSlotHead,
   RoundDetails,
   SlotHead,
   TokenDetails,
@@ -57,6 +60,25 @@ import type {
  * go" — whether that is a URL you supply or the server you are already talking to.
  */
 export const SERVER_RPC = 'server' as const
+
+/**
+ * What a chain-backed slot-head resolution needs, beyond the round and the slot.
+ *
+ * `preset` and `deploymentBlock` are required here for the same reason they are required by the
+ * resolver: neither has a default that is safe. Resolving under the wrong preset marks every entry
+ * unusable, and starting the log scan at genesis is refused by hosted providers.
+ */
+export type VerifyAgainstChain = {
+  chainId: number
+  programAddress: string
+} & SlotHeadResolution
+
+/**
+ * Compare endpoint URLs the way one endpoint gets written two ways: with and without a trailing
+ * slash. Without it, `https://host/chain/rpc/` and `https://host/chain/rpc` read as two different
+ * sources, and the second one would be accepted as independent.
+ */
+const stripTrailingSlash = (url: string): string => url.replace(/\/+$/, '')
 
 /**
  * A class representing the CRISP SDK.
@@ -93,6 +115,25 @@ export class CrispSDK {
   }
 
   /**
+   * Whether this instance's chain reads come from the CRISP server itself, however that was asked
+   * for.
+   *
+   * `SERVER_RPC` is only a sentinel, so recognising the sentinel alone is not enough: a caller that
+   * passes `chainRpcUrl(serverUrl)` names the same endpoint as a plain string, and would have been
+   * treated as an independent source. The test is therefore on the resolved URL, compared with
+   * trailing slashes removed so the same endpoint written two ways is still one endpoint.
+   *
+   * What this cannot see: a server that exposes the same upstream chain under some other path. That
+   * is indistinguishable from a genuine third-party endpoint from here, which is why the caller is
+   * asked for a separately trusted one rather than told which URLs are safe.
+   */
+  private readsChainThroughServer(): boolean {
+    if (this.rpcUrl === undefined) return false
+
+    return stripTrailingSlash(this.rpcUrl) === stripTrailingSlash(chainRpcUrl(this.serverUrl))
+  }
+
+  /**
    * Phase one: encrypt a ballot, before the voter signs anything.
    *
    * A ballot has to be encrypted before it can be signed, because the digest binds the ciphertext.
@@ -100,20 +141,69 @@ export class CrispSDK {
    * `CRISPProgram.ballotDigest(e3Id, slot, ctCommitment)`, have the voter sign it, then call
    * {@link finishBallot}.
    *
-   * Masks and real votes take the same path. This method calls the same server API
-   * (previous-ciphertext) for both, so the server cannot infer the ballot type from the request
-   * pattern, and the encryption is identical either way.
+   * Masks and real votes take the same path. This method makes the same requests for both, so the
+   * server cannot infer the ballot type from the request pattern, and the encryption is identical
+   * either way. `verifyAgainstChain` must therefore be decided per deployment and not per ballot:
+   * varying it by ballot type would make the two distinguishable by request shape, which is what
+   * masks exist to prevent.
    *
    * @param request - The ballot to encrypt.
+   * @param verifyAgainstChain - Resolve the slot head from the chain rather than accepting the
+   *                             server's answer. Pass the `CRISPProgram` address, the chain, the
+   *                             round's BFV preset, and the contract's deployment block. The preset
+   *                             must already be registered as circuits, and resolution is refused
+   *                             when the chain reads would come from the server being checked — the
+   *                             `SERVER_RPC` sentinel or that same route named directly. Throws
+   *                             instead of building a ballot when the head cannot be settled.
    * @returns A promise that resolves to the prepared ballot.
    */
-  async prepareBallot(request: PrepareBallotRequest): Promise<PreparedBallot> {
-    const head = await getPreviousCiphertext(this.serverUrl, request.e3Id, request.slotAddress)
+  async prepareBallot(request: PrepareBallotRequest, verifyAgainstChain?: VerifyAgainstChain): Promise<PreparedBallot> {
+    const head = verifyAgainstChain
+      ? await this.resolvedHeadOrThrow(verifyAgainstChain, request.e3Id, request.slotAddress)
+      : await getPreviousCiphertext(this.serverUrl, request.e3Id, request.slotAddress)
 
     // Branched rather than spread conditionally. The two halves of a slot head only mean anything
     // together and the type models them as a pair, which a conditional spread widens back into two
     // independent optional fields — the exact shape the pair exists to rule out.
     return head ? prepareBallot({ ...request, previousCiphertext: head.ciphertext, previousIndex: head.index }) : prepareBallot(request)
+  }
+
+  /**
+   * The slot head, resolved from the chain, or an error when it cannot be settled.
+   *
+   * Refuses rather than returning the best head available. An incomplete walk means an entry that
+   * could hold the slot was not judged, so the Secure Process may select it and drop whatever is
+   * built here — after the proof verified, the input was published, and the gas was spent. A
+   * caller that retries once the missing data lands loses nothing; one that proceeds loses a vote
+   * with no error to show for it.
+   */
+  private async resolvedHeadOrThrow(
+    verifyAgainstChain: VerifyAgainstChain,
+    e3Id: bigint,
+    slotAddress: string,
+  ): Promise<SlotHead | undefined> {
+    const resolved = await this.resolveSlotHead(
+      verifyAgainstChain.chainId,
+      verifyAgainstChain.programAddress,
+      e3Id,
+      slotAddress,
+      verifyAgainstChain,
+    )
+
+    if (!resolved.complete) {
+      const unsettled = resolved.rejected
+        .filter((entry) => entry.reason === 'missing-bytes' || entry.reason === 'bytes-mismatch')
+        .map((entry) => `${entry.index} (${entry.reason})`)
+        .join(', ')
+
+      throw new Error(
+        `Cannot settle the head of slot ${slotAddress} in round ${e3Id}: entries ${unsettled} could not be checked ` +
+          `against the chain. A ballot built now can be excluded from the tally. Retry once the data-availability ` +
+          `retrieval lands, or use a server that holds the published bytes.`,
+      )
+    }
+
+    return resolved.head
   }
 
   /**
@@ -343,5 +433,57 @@ export class CrispSDK {
    */
   async getPreviousCiphertext(e3Id: bigint, address: string): Promise<SlotHead | undefined> {
     return getPreviousCiphertext(this.serverUrl, e3Id, address)
+  }
+
+  /**
+   * Resolve a slot's head from the chain instead of taking the server's answer for it.
+   *
+   * `getPreviousCiphertext` reports what this server decided, from the bytes this server holds.
+   * This checks every entry of the slot against the commitment and content hash `CRISPProgram`
+   * published for it, and applies the Secure Process's own selection rule.
+   *
+   * The two sources differ on purpose. The server supplies the bytes, because they are not on
+   * chain. The `InputCommitted` logs — the contract's record of which entries exist — are read
+   * through {@link rpcUrl}, so a server cannot hide an entry by omitting both it and its log.
+   *
+   * Costs one request to the server plus a windowed scan of the contract's logs. Only entries that
+   * extend the head are checked, so a slot flooded with masks costs the same as a short chain.
+   *
+   * Refused when this instance's chain reads go through the CRISP server — whether by the
+   * `SERVER_RPC` sentinel or by naming that route directly. The entries and the logs would then come
+   * from the same origin, and a server that omits an entry and its log together is exactly what this
+   * cannot see.
+   *
+   * Check `complete` before using the head. When it is `false` an entry that could hold the slot
+   * could not be judged, and a ballot built on the head returned would prove, publish, cost gas,
+   * and then be excluded from the tally.
+   *
+   * @param chainId - The chain the round lives on, used to build the log-reading client.
+   * @param programAddress - The `CRISPProgram` contract
+   * @param e3Id - The e3Id of the round
+   * @param address - The address of the slot
+   * @param input - The round's BFV preset and the `CRISPProgram` deployment block. Both are
+   *                required: a commitment is only comparable within a single preset, and the log
+   *                scan has to start at the contract rather than at genesis.
+   * @returns The resolved head, whether the walk was complete, and every entry it did not take
+   * @throws When this instance reads the chain through the CRISP server, or when the round's
+   *         circuits are not loaded for the preset being resolved.
+   */
+  async resolveSlotHead(
+    chainId: number,
+    programAddress: string,
+    e3Id: bigint,
+    address: string,
+    input: SlotHeadResolution,
+  ): Promise<ResolvedSlotHead> {
+    if (this.readsChainThroughServer()) {
+      throw new Error(
+        'resolveSlotHead cannot verify a slot head when chain reads go through the CRISP server: ' +
+          'the slot entries and the InputCommitted logs would both come from it, so a server that ' +
+          'omitted an entry and its log together would go unnoticed. Pass a separately trusted rpcUrl.',
+      )
+    }
+
+    return resolveSlotHeadOnChain(getPublicClient(chainId, this.rpcUrl), this.serverUrl, programAddress, e3Id, address, input)
   }
 }
