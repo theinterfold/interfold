@@ -250,6 +250,10 @@ On restart:
 │   → truncates only a CRC/length-invalid suffix after the final indexed record
 │   → restores complete CRC-valid, decodable frames whose tail index write was lost
 │   → rejects indexed corruption, decode failure, gaps, and offset mismatches
+├─ Event-clock restore before actors start:
+│   → each EventStore records its greatest durable HLC timestamp during index reconciliation
+│   → the builder seeds the HLC from the maximum across every event store
+│   → the first event from this boot is strictly later than the complete durable log
 ├─ Builder recovery before actors start:
 │   1. Check the storage schema and reconcile the request-router admission checkpoint
 │      → The checkpoint is stored at the canonical root key, not below a router-local namespace

@@ -13,11 +13,11 @@ use e3_data::{
     CommitLogEventLog, DataStore, InMemEventLog, InMemSequenceIndex, InMemStore, SledSequenceIndex,
     SledStore,
 };
-use e3_events::hlc_factory::HlcFactory;
+use e3_events::{hlc::Hlc, hlc_factory::HlcFactory};
 use e3_events::{
-    AggregateConfig, BusHandle, Disabled, EventBus, EventBusConfig, EventStore, EventStoreRouter,
-    EventSubscriber, EventType, InsertBatch, InterfoldEvent, Sequencer, SnapshotBuffer,
-    StoreEventRequested, UpdateDestination,
+    AggregateConfig, BusHandle, Disabled, Enabled, EventBus, EventBusConfig, EventStore,
+    EventStoreClockFloor, EventStoreRouter, EventSubscriber, EventType, InsertBatch,
+    InterfoldEvent, Sequencer, SnapshotBuffer, StoreEventRequested, UpdateDestination,
 };
 use e3_utils::enumerate_path;
 use once_cell::sync::OnceCell;
@@ -323,6 +323,45 @@ impl EventSystem {
             .cloned()
     }
 
+    /// Enable the event bus after its HLC is greater than all durable event timestamps.
+    pub async fn enable_handle_with_hlc(&self, hlc: Hlc) -> Result<BusHandle<Enabled>> {
+        let mut durable_floor: Option<u128> = None;
+        match self.eventstore_addrs()? {
+            EventStoreAddrs::InMem(addrs) => {
+                for (aggregate_id, store) in addrs {
+                    let timestamp = store.send(EventStoreClockFloor).await.with_context(|| {
+                        format!(
+                            "EventStore aggregate {aggregate_id} stopped while reading its clock floor"
+                        )
+                    })?;
+                    if let Some(timestamp) = timestamp {
+                        durable_floor =
+                            Some(durable_floor.map_or(timestamp, |floor| floor.max(timestamp)));
+                    }
+                }
+            }
+            EventStoreAddrs::Persisted(addrs) => {
+                for (aggregate_id, store) in addrs {
+                    let timestamp = store.send(EventStoreClockFloor).await.with_context(|| {
+                        format!(
+                            "EventStore aggregate {aggregate_id} stopped while reading its clock floor"
+                        )
+                    })?;
+                    if let Some(timestamp) = timestamp {
+                        durable_floor =
+                            Some(durable_floor.map_or(timestamp, |floor| floor.max(timestamp)));
+                    }
+                }
+            }
+        }
+
+        let bus = self.handle()?.enable_with_hlc(hlc);
+        if let Some(timestamp) = durable_floor {
+            bus.seed_clock(timestamp)?;
+        }
+        Ok(bus)
+    }
+
     /// Get an EventStoreRouter for InMem backend
     pub fn in_mem_eventstore_router(
         &self,
@@ -443,6 +482,7 @@ mod tests {
     use e3_data::AutoPersist;
     use e3_data::Persistable;
     use e3_data::Repository;
+    use e3_events::hlc::HlcTimestamp;
     use e3_events::EventContext;
     use e3_events::EventId;
     use e3_events::EventSource;
@@ -450,6 +490,7 @@ mod tests {
     use e3_events::StoreKeys;
     use e3_events::SyncEnded;
     use e3_events::TsAgg;
+    use e3_events::{StoreEventResponse, Unsequenced};
     use e3_test_helpers::with_tracing;
     use std::time::Duration;
     use tracing::info;
@@ -597,6 +638,38 @@ mod tests {
 
         let _handle = system.handle().expect("Failed to get handle");
         system.store().expect("Failed to get store");
+    }
+
+    #[actix::test]
+    async fn enabled_handle_starts_after_the_durable_event_clock() -> Result<()> {
+        let system = EventSystem::in_mem().with_fresh_bus();
+        let store = match system.eventstore_addrs()? {
+            EventStoreAddrs::InMem(addrs) => addrs
+                .get(&0)
+                .cloned()
+                .context("aggregate 0 EventStore is missing")?,
+            EventStoreAddrs::Persisted(_) => unreachable!("expected an in-memory EventStore"),
+        };
+        let durable_timestamp: u128 = HlcTimestamp::new(5_000, 17, 99).into();
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TestEvent::new("durable", 1).into(),
+            None,
+            durable_timestamp,
+            None,
+            EventSource::Local,
+        );
+        let (recipient, response) = e3_utils::actix::channel::oneshot::<StoreEventResponse>();
+        store
+            .send(StoreEventRequested::new(event, recipient))
+            .await?;
+        response.await?;
+
+        let clock = Hlc::with_state(1_000, 0, 7).with_clock(|| 1_000);
+        let bus = system.enable_handle_with_hlc(clock).await?;
+        let next = HlcTimestamp::from(bus.ts()?);
+
+        assert_eq!(next, HlcTimestamp::new(5_000, 18, 7));
+        Ok(())
     }
 
     #[actix::test]

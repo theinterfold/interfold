@@ -647,8 +647,8 @@ impl CiphernodeBuilder {
         // Resolve node address and enable the bus
         let addr = provider_cache.ensure_signer().await?.address().to_string();
         let bus = event_system
-            .handle()?
-            .enable_with_hlc(event_clock(&addr, &resolved_chain_ids));
+            .enable_handle_with_hlc(event_clock(&addr, &resolved_chain_ids))
+            .await?;
 
         if self.logging {
             let logger_name = self.name.as_deref().unwrap_or("ciphernode");

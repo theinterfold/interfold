@@ -672,6 +672,9 @@ design citation alone does not establish current runtime behavior.
 - The append-only event log is the durable source of truth; snapshots and the timestamp index are
   derived optimizations. Replay-from-checkpoint and snapshot-hydration at the same logical point
   must produce equivalent state and pending intents. — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
+- Before startup enables the event bus, its HLC must be greater than the greatest timestamp in all
+  durable event logs. A snapshot timestamp alone is not a sufficient clock floor because the log
+  can contain a newer post-snapshot suffix. — INDEX concern #56
 - Event-log flush synchronizes the active segment, index, and log directory before live dispatch.
   Startup verifies every committed blob reference before it removes unreferenced blob files.
   Replay and index reconciliation are bounded by both event count and decoded bytes; one valid

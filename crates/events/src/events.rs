@@ -85,6 +85,11 @@ impl StoreEventResponse {
 #[rtype(result = "Result<()>")]
 pub struct FlushEventStores;
 
+/// Read the greatest durable HLC timestamp from one event store.
+#[derive(Message, Debug)]
+#[rtype(result = "Option<u128>")]
+pub struct EventStoreClockFloor;
+
 /// A no-op sequencer mailbox fence. Once its response arrives, every earlier
 /// store response has been forwarded to the EventBus.
 #[derive(Message, Debug)]

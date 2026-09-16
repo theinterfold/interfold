@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{
-    events::{FlushEventStores, StoreEventRequested, StoreEventResponse},
+    events::{EventStoreClockFloor, FlushEventStores, StoreEventRequested, StoreEventResponse},
     Event, EventContextAccessors, EventLog, EventStoreFilter, EventStoreQueryBy,
     EventStoreQueryResponse, InterfoldEvent, Seq, SequenceIndex, Sequenced, Ts, Unsequenced,
 };
@@ -22,6 +22,7 @@ const FILTER_SCAN_PAGE_BYTES: usize = 256 * 1024 * 1024;
 pub struct EventStore<I: SequenceIndex, L: EventLog> {
     index: I,
     log: L,
+    max_timestamp: Option<u128>,
     failure_signal: Option<watch::Sender<Option<String>>>,
 }
 
@@ -78,6 +79,7 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
             .flush()
             .context("failed to sync event before dispatch")?;
         self.index.insert(ts, seq)?;
+        self.max_timestamp = Some(self.max_timestamp.map_or(ts, |current| current.max(ts)));
         Ok(Some(event.into_sequenced(seq)))
     }
 
@@ -265,6 +267,7 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
         let mut store = Self {
             index,
             log,
+            max_timestamp: None,
             failure_signal: None,
         };
         store.reconcile_index()?;
@@ -329,6 +332,7 @@ impl<I: SequenceIndex, L: EventLog> EventStore<I, L> {
                 }
 
                 let ts = event.ts();
+                self.max_timestamp = Some(self.max_timestamp.map_or(ts, |current| current.max(ts)));
                 match self.index.get(ts) {
                     Ok(Some(_)) => {}
                     Ok(None) => {
@@ -409,6 +413,14 @@ impl<I: SequenceIndex, L: EventLog> Handler<FlushEventStores> for EventStore<I, 
             ctx.stop();
         }
         result
+    }
+}
+
+impl<I: SequenceIndex, L: EventLog> Handler<EventStoreClockFloor> for EventStore<I, L> {
+    type Result = Option<u128>;
+
+    fn handle(&mut self, _: EventStoreClockFloor, _: &mut Self::Context) -> Self::Result {
+        self.max_timestamp
     }
 }
 
@@ -740,6 +752,28 @@ mod tests {
         assert_eq!(store.index.get(100).unwrap(), Some(1));
         assert_eq!(store.index.get(200).unwrap(), Some(2));
         assert_eq!(store.index.get(300).unwrap(), Some(3));
+    }
+
+    #[test]
+    fn store_event_tracks_the_greatest_timestamp() {
+        let mut store = new_store();
+
+        store.store_event(make_local_event(300)).unwrap();
+        store.store_event(make_local_event(100)).unwrap();
+
+        assert_eq!(store.max_timestamp, Some(300));
+    }
+
+    #[test]
+    fn startup_reconciliation_restores_the_greatest_timestamp() {
+        let log = MockLog {
+            events: vec![make_local_event(300), make_local_event(100)],
+            ..MockLog::new()
+        };
+
+        let store = EventStore::new(MockIndex::new(), log).unwrap();
+
+        assert_eq!(store.max_timestamp, Some(300));
     }
 
     #[test]

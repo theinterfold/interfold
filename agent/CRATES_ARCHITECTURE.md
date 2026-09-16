@@ -340,7 +340,8 @@ flowchart TD
 
     subgraph Recovery[Restart and historical reconciliation]
         Restart[restart] --> Index[reconcile timestamp index in 1024-record pages]
-        Index --> Schema[schema-version preflight before runtime actor writes]
+        Index --> ClockFloor[seed HLC from greatest durable event timestamp]
+        ClockFloor --> Schema[schema-version preflight before runtime actor writes]
         Schema --> RouterCursor[verify or rebuild the canonical request-router checkpoint]
         RouterCursor --> Backfill[backfill missing recovery records from EventStore history]
         Backfill --> SnapshotMeta[reconcile snapshots and inject recovered roles, slots, and interests]
