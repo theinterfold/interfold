@@ -30,7 +30,7 @@ use e3_fhe_params::BfvPreset;
 use e3_utils::NotifySync;
 use e3_utils::{ArcBytes, MAILBOX_LIMIT};
 use e3_zk_helpers::CiphernodesCommitteeSize;
-use std::sync::Arc;
+use std::{collections::BTreeSet, sync::Arc};
 use tracing::{error, info, warn};
 
 // Public-key aggregation state machine + pure transition logic now live in
@@ -52,6 +52,8 @@ pub struct PublicKeyAggregator {
     dkg_fold_attestation_context: Option<DkgFoldAttestationContext>,
     is_aggregator: bool,
     effects_enabled: bool,
+    /// C1 verification can finish during restart before replayed keyshares restore VerifyingC1.
+    early_c1_verification: Option<(BTreeSet<u64>, TypedEvent<ShareVerificationComplete>)>,
     /// DKG recursive aggregation events received before entering GeneratingC5Proof.
     early_dkg_proofs: Vec<TypedEvent<DKGRecursiveAggregationComplete>>,
 }
@@ -87,6 +89,7 @@ impl PublicKeyAggregator {
             dkg_fold_attestation_context: params.dkg_fold_attestation_context,
             is_aggregator: params.initial_is_aggregator,
             effects_enabled: params.effects_enabled,
+            early_c1_verification: None,
             early_dkg_proofs: Vec::new(),
         }
     }

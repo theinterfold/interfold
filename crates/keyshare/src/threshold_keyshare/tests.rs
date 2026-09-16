@@ -238,10 +238,7 @@ async fn replayed_dkg_outputs_wait_for_their_prerequisites() -> Result<()> {
     actor.handle_gen_esi_sss_response(esi_response.clone())?;
     let (mut repeated_pk, repeated_pk_ec) = pk_response.clone().into_components();
     repeated_pk.correlation_id = CorrelationId::new();
-    actor.handle_gen_pk_share_and_sk_sss_response(TypedEvent::new(
-        repeated_pk,
-        repeated_pk_ec,
-    ))?;
+    actor.handle_gen_pk_share_and_sk_sss_response(TypedEvent::new(repeated_pk, repeated_pk_ec))?;
     let (mut repeated_esi, repeated_esi_ec) = esi_response.clone().into_components();
     repeated_esi.correlation_id = CorrelationId::new();
     actor.handle_gen_esi_sss_response(TypedEvent::new(repeated_esi, repeated_esi_ec))?;

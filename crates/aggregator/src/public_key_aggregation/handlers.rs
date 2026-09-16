@@ -87,18 +87,7 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                         self.publish_inputs_ready(ec.clone())?;
                     }
                     if was_collecting && self.can_run_aggregation_effects() {
-                        if let Some(PublicKeyAggregatorState::VerifyingC1 {
-                            submission_order,
-                            c1_proofs,
-                            ..
-                        }) = self.state.get()
-                        {
-                            self.dispatch_c1_verification(
-                                &submission_order,
-                                &c1_proofs,
-                                ec.clone(),
-                            )?;
-                        }
+                        self.continue_c1_verification(ec.clone())?;
                     }
                     Ok(())
                 });
@@ -132,18 +121,7 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                         self.publish_inputs_ready(ec.clone())?;
                     }
                     if was_collecting && self.can_run_aggregation_effects() {
-                        if let Some(PublicKeyAggregatorState::VerifyingC1 {
-                            submission_order,
-                            c1_proofs,
-                            ..
-                        }) = self.state.get()
-                        {
-                            self.dispatch_c1_verification(
-                                &submission_order,
-                                &c1_proofs,
-                                ec.clone(),
-                            )?;
-                        }
+                        self.continue_c1_verification(ec.clone())?;
                     }
                     Ok(())
                 });
@@ -205,14 +183,7 @@ impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {
             // If we just transitioned to VerifyingC1, dispatch verification
             // using c1_proofs stored in the new state.
             if became_ready && self.can_run_aggregation_effects() {
-                if let Some(PublicKeyAggregatorState::VerifyingC1 {
-                    submission_order,
-                    c1_proofs,
-                    ..
-                }) = self.state.get()
-                {
-                    self.dispatch_c1_verification(&submission_order, &c1_proofs, ec)?;
-                }
+                self.continue_c1_verification(ec)?;
             }
 
             Ok(())

@@ -39,11 +39,9 @@ impl PublicKeyAggregator {
         }
 
         match state {
-            PublicKeyAggregatorState::VerifyingC1 {
-                submission_order,
-                c1_proofs,
-                ..
-            } => self.dispatch_c1_verification(&submission_order, &c1_proofs, effects_context),
+            PublicKeyAggregatorState::VerifyingC1 { .. } => {
+                self.continue_c1_verification(effects_context)
+            }
             PublicKeyAggregatorState::GeneratingC5Proof {
                 public_key,
                 keyshare_bytes,

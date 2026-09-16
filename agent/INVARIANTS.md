@@ -720,6 +720,10 @@ design citation alone does not establish current runtime behavior.
   rebuilt collector restores its prerequisite state, hold the response until that state is ready;
   do not dispatch a replacement computation that would produce different shares and proofs. —
   `flow-trace/04`; INDEX concern #57
+- A replayed C1 verification result can arrive before replayed keyshares restore `VerifyingC1`.
+  Hold at most one result, bind it to the saved selected roster, and apply it when those inputs are
+  ready. Never apply it to a replacement roster. A result received after C1 is complete is an
+  idempotent duplicate. — `flow-trace/04`; INDEX concern #58
 - On restart in `ReadyForDecryption`, rebuild the C4 collector from the saved roster and replay
   saved peer C4 shares. A restored C4 proof job cannot advance DKG if its peer-share collector is
   absent. After collection is complete, a duplicate C4 share must not start another collector.

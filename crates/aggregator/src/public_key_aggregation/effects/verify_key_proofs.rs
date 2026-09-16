@@ -92,14 +92,7 @@ impl PublicKeyAggregator {
         if !was_ready && self.aggregation_inputs_ready() {
             self.publish_inputs_ready(ec.clone())?;
             if self.can_run_aggregation_effects() {
-                if let Some(PublicKeyAggregatorState::VerifyingC1 {
-                    submission_order,
-                    c1_proofs,
-                    ..
-                }) = self.state.get()
-                {
-                    self.dispatch_c1_verification(&submission_order, &c1_proofs, ec)?;
-                }
+                self.continue_c1_verification(ec)?;
             }
         }
         Ok(())
@@ -157,6 +150,37 @@ impl PublicKeyAggregator {
         Ok(())
     }
 
+    pub(in crate::actors::publickey_aggregator) fn continue_c1_verification(
+        &mut self,
+        ec: EventContext<Sequenced>,
+    ) -> Result<()> {
+        let Some(PublicKeyAggregatorState::VerifyingC1 {
+            submission_order,
+            c1_proofs,
+            ..
+        }) = self.state.get()
+        else {
+            return Ok(());
+        };
+
+        if let Some((buffered_roster, verification)) = self.early_c1_verification.take() {
+            let selected_roster = self.recovery.try_get()?.selected_roster;
+            if selected_roster.as_ref() == Some(&buffered_roster) {
+                info!(
+                    e3_id = %self.e3_id,
+                    "Applying C1 verification buffered during restart recovery"
+                );
+                return self.handle_c1_verification_complete(verification);
+            }
+            warn!(
+                e3_id = %self.e3_id,
+                "Discarding C1 verification because the selected roster changed"
+            );
+        }
+
+        self.dispatch_c1_verification(&submission_order, &c1_proofs, ec)
+    }
+
     pub(in crate::actors::publickey_aggregator) fn handle_c1_verification_complete(
         &mut self,
         msg: TypedEvent<ShareVerificationComplete>,
@@ -171,12 +195,38 @@ impl PublicKeyAggregator {
             return Ok(());
         }
 
-        if matches!(
-            self.state.get().as_ref(),
-            Some(PublicKeyAggregatorState::Complete { .. })
-        ) {
-            info!("Ignoring late C1 verification after public-key aggregation completed");
-            return Ok(());
+        match self.state.get().as_ref() {
+            Some(PublicKeyAggregatorState::Collecting { .. }) => {
+                let selected_roster =
+                    self.recovery.try_get()?.selected_roster.ok_or_else(|| {
+                        anyhow::anyhow!(
+                            "C1 verification arrived before its selected roster was recovered"
+                        )
+                    })?;
+                if let Some((existing_roster, existing)) = &self.early_c1_verification {
+                    anyhow::ensure!(
+                        *existing_roster == selected_roster
+                            && existing.dishonest_parties == msg.dishonest_parties,
+                        "conflicting C1 verification results arrived during restart recovery"
+                    );
+                } else {
+                    info!(
+                        e3_id = %self.e3_id,
+                        "Buffering C1 verification until replay restores its keyshare inputs"
+                    );
+                    self.early_c1_verification = Some((selected_roster, TypedEvent::new(msg, ec)));
+                }
+                return Ok(());
+            }
+            Some(
+                PublicKeyAggregatorState::GeneratingC5Proof { .. }
+                | PublicKeyAggregatorState::Complete { .. },
+            ) => {
+                info!("Ignoring late C1 verification after C1 aggregation completed");
+                return Ok(());
+            }
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. }) => {}
+            None => return Err(anyhow::anyhow!("Expected public-key aggregation state")),
         }
 
         let PublicKeyAggregatorState::VerifyingC1 {

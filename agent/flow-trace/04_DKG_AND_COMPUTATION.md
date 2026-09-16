@@ -1470,6 +1470,12 @@ or audit state. If restart gives the same compute operation a new correlation ID
 the work once and sends its response or error to each waiting ID. A later duplicate receives the
 saved outcome.
 
+A crash can leave the public-key snapshot in `Collecting` while the durable C1 verification request
+has already entered the event log. Its replayed result can then arrive before historical keyshares
+restore `VerifyingC1`. The active aggregator holds one such result with the saved selected roster and
+applies it when the same roster's keyshares are ready. It discards the result if the roster changed,
+and it ignores duplicate C1 results after C1 completed.
+
 A terminal E3 event also cancels that E3's compute jobs that have already reached the shared task
 pool but have not started. The cancellation key includes the local ciphernode address, so one node's
 local failure cannot cancel another node's work when an integration test or embedding shares one
