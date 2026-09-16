@@ -695,6 +695,22 @@ design citation alone does not establish current runtime behavior.
   sidecar, validates any `DocumentsDurable` bundle, re-arms the earliest retry, redrives a persisted
   dispatch, or applies an immutable sealed set. Persisted V1 candidate sets of `H..=N` remain valid;
   all new V1 candidate sets contain exactly `H`. — `flow-trace/04`
+- **Complete user-data-encryption recursive VK binding:** each ciphertext leg is a tree of chunk
+  circuits, and every VK in the tree must reach an anchor. The two chunk roots verify both leaves
+  under one `leaf_key_hash` and output it. Each round circuit (`*_chunk_gamma`,
+  `*_eval_chunk_identity`) outputs its root, leaf, and pk/ct key hashes first. Each top-level
+  circuit (`user_data_encryption_ct0/ct1`) folds those six values and its own two child key hashes
+  into `compute_ude_vk_manifest`. The `user_data_encryption` wrapper outputs
+  `compute_ude_vk_chain(top_key_hash, manifest)` per leg, in the positions that held the bare ct0
+  and ct1 key hashes. The verifier must compare both chain values to anchors. Do not drop a key hash
+  at any layer: a key hash that no layer passes up lets a prover replace that circuit with any
+  circuit that has the same public-input shape, for example a leaf without its range checks. The
+  wrapper also asserts that ct0 and ct1 share one `u` root. The ct0 top-level circuit rebuilds the
+  `k1` chunk root from the complete polynomial before it outputs the whole-polynomial commitment
+  that CRISP checks. Its proof must use the ZK recursive target because that circuit receives the
+  private `k1` polynomial directly. Each SDK proof request must use the circuit bundle compiled for
+  the witness's BFV preset and polynomial degree. —
+  `lib::core::threshold::user_data_encryption_chunk`, `examples/CRISP/scripts/compute_vk_hash.sh`
 - Circuit soundness fixes to preserve: `ModU64::div_mod` verifies
   `result*divisor == dividend (mod modulus)` (IF-001); C7 compares **every** decoded coefficient,
   including zeros, to the claimed message (IF-002), and uses `U384` so the secure-16384
@@ -798,11 +814,12 @@ design citation alone does not establish current runtime behavior.
   binds the proof domain, the immutable ascending accepted-party set, both accepted document
   families, five PK proofs, five RLK proofs, the fold cursor, the operational RLK, and the final V2
   proof. The active aggregator derives the operational RLK only from those accepted documents after
-  the five-row fold completes. If C5 completes first, publication waits for the persisted operational
-  RLK. Restart must derive a missing operational RLK from the same durable documents before it
-  dispatches the final V2 proof. A persisted aggregation failure is terminal and immutable. Restart
-  must clear process-local correlations, publish `E3Failed(DKGInvalidShares)`, and suppress all proof
-  and publication work. — `LbfvAggregationStateV1`; `aggregate_lbfv.rs`; `flow-trace/04`
+  the five-row fold completes. If C5 completes first, publication waits for the persisted
+  operational RLK. Restart must derive a missing operational RLK from the same durable documents
+  before it dispatches the final V2 proof. A persisted aggregation failure is terminal and
+  immutable. Restart must clear process-local correlations, publish `E3Failed(DKGInvalidShares)`,
+  and suppress all proof and publication work. — `LbfvAggregationStateV1`; `aggregate_lbfv.rs`;
+  `flow-trace/04`
 
 ### Ordering, backpressure, effects
 

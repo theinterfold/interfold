@@ -20,6 +20,7 @@ import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
 import { circuitSourcesDigest } from './circuit-sources.mjs'
+import { PRESET_ARTIFACTS } from './preset-artifacts.mjs'
 
 const CRISP = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const PRESETS = ['insecure', 'secure-8192', 'secure-16384']
@@ -47,6 +48,12 @@ const manifest = JSON.parse(readFileSync(manifestPath, 'utf8'))
 
 if (manifest.preset !== preset) {
   fail(`✗ circuits/dist/${preset}/preset.json says it holds "${manifest.preset}".`, `  ${RESTAGE}`)
+}
+
+const manifestCircuits = [...(manifest.circuits ?? [])].sort()
+const requiredCircuits = [...PRESET_ARTIFACTS].sort()
+if (JSON.stringify(manifestCircuits) !== JSON.stringify(requiredCircuits)) {
+  fail(`✗ ${preset}: preset.json does not contain the complete circuit tree.`, `  ${RESTAGE}`)
 }
 
 for (const name of manifest.circuits) {

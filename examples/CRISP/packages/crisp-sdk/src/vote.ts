@@ -12,6 +12,7 @@ export { encodeVote, encryptVote, decodeTally, decryptVote, generateBFVKeys } fr
 export { splitDigest } from './circuitInputs'
 import { Noir, type CompiledCircuit } from '@noir-lang/noir_js'
 import { Barretenberg, BackendType, UltraHonkBackend } from '@aztec/bb.js'
+import { proveUserDataEncryptionTree } from '@interfold/user-data-encryption-prover'
 // Only the aggregation circuits are imported here. Their ABI is proof and verification-key shaped
 // rather than polynomial shaped, so one artifact serves every preset and inlining them costs ~0.3MB.
 // The BFV-shaped circuits arrive through `setCircuits()` — see ./circuits.
@@ -114,25 +115,7 @@ export const generateProof = async (circuitInputs: any, censusMode: CensusVarian
   const ballotCircuit = censusMode === 'onchain' ? circuits.crispOnchain : circuits.crisp
   const foldCircuitForMode = censusMode === 'onchain' ? foldOnchainCircuit : foldCircuit
 
-  const { witness: userDataEncryptionCt0Witness } = await executeCircuit(circuits.userDataEncryptionCt0 as CompiledCircuit, {
-    pk0is: circuitInputs.pk0is,
-    ct0is: circuitInputs.ct0is,
-    u: circuitInputs.u,
-    e0: circuitInputs.e0,
-    e0is: circuitInputs.e0is,
-    e0_quotients: circuitInputs.e0_quotients,
-    k1: circuitInputs.k1,
-    r1is: circuitInputs.r1is,
-    r2is: circuitInputs.r2is,
-  })
-  const { witness: userDataEncryptionCt1Witness } = await executeCircuit(circuits.userDataEncryptionCt1 as CompiledCircuit, {
-    pk1is: circuitInputs.pk1is,
-    ct1is: circuitInputs.ct1is,
-    u: circuitInputs.u,
-    e1: circuitInputs.e1,
-    p1is: circuitInputs.p1is,
-    p2is: circuitInputs.p2is,
-  })
+  const { ct0, ct1 } = await proveUserDataEncryptionTree(api, circuits, circuitInputs)
   // The two stacks share every input except how eligibility reaches the circuit: a census round
   // proves a Merkle path, an on-chain round takes the voting power the contract read.
   const eligibilityInputs =
@@ -169,51 +152,27 @@ export const generateProof = async (circuitInputs: any, censusMode: CensusVarian
     num_options: circuitInputs.num_options,
   })
 
-  const userDataEncryptionCt0Backend = new UltraHonkBackend((circuits.userDataEncryptionCt0 as CompiledCircuit).bytecode, api)
-  const userDataEncryptionCt1Backend = new UltraHonkBackend((circuits.userDataEncryptionCt1 as CompiledCircuit).bytecode, api)
   const userDataEncryptionBackend = new UltraHonkBackend((userDataEncryptionCircuit as CompiledCircuit).bytecode, api)
   const crispBackend = new UltraHonkBackend((ballotCircuit as CompiledCircuit).bytecode, api)
   const foldBackend = new UltraHonkBackend((foldCircuitForMode as CompiledCircuit).bytecode, api)
 
-  const { proof: userDataEncryptionCt0Proof, publicInputs: userDataEncryptionCt0PublicInputs } =
-    await userDataEncryptionCt0Backend.generateProof(userDataEncryptionCt0Witness, {
-      verifierTarget: 'noir-recursive-no-zk',
-    })
-  const { proof: userDataEncryptionCt1Proof, publicInputs: userDataEncryptionCt1PublicInputs } =
-    await userDataEncryptionCt1Backend.generateProof(userDataEncryptionCt1Witness, {
-      verifierTarget: 'noir-recursive-no-zk',
-    })
   const { proof: crispProof, publicInputs: crispPublicInputs } = await crispBackend.generateProof(crispWitness, {
     verifierTarget: 'noir-recursive-no-zk',
   })
 
-  const userDataEncryptionCt0Artifacts = await userDataEncryptionCt0Backend.generateRecursiveProofArtifacts(
-    userDataEncryptionCt0Proof,
-    userDataEncryptionCt0PublicInputs.length,
-    {
-      verifierTarget: 'noir-recursive-no-zk',
-    },
-  )
-  const userDataEncryptionCt1Artifacts = await userDataEncryptionCt1Backend.generateRecursiveProofArtifacts(
-    userDataEncryptionCt1Proof,
-    userDataEncryptionCt1PublicInputs.length,
-    {
-      verifierTarget: 'noir-recursive-no-zk',
-    },
-  )
   const crispArtifacts = await crispBackend.generateRecursiveProofArtifacts(crispProof, crispPublicInputs.length, {
     verifierTarget: 'noir-recursive-no-zk',
   })
 
   const { witness: userDataEncryptionWitness } = await executeCircuit(userDataEncryptionCircuit as CompiledCircuit, {
-    ct0_verification_key: userDataEncryptionCt0Artifacts.vkAsFields,
-    ct0_proof: proofToFields(userDataEncryptionCt0Proof),
-    ct0_public_inputs: userDataEncryptionCt0PublicInputs,
-    ct0_key_hash: userDataEncryptionCt0Artifacts.vkHash,
-    ct1_verification_key: userDataEncryptionCt1Artifacts.vkAsFields,
-    ct1_proof: proofToFields(userDataEncryptionCt1Proof),
-    ct1_public_inputs: userDataEncryptionCt1PublicInputs,
-    ct1_key_hash: userDataEncryptionCt1Artifacts.vkHash,
+    ct0_verification_key: ct0.vkAsFields,
+    ct0_proof: proofToFields(ct0.proof),
+    ct0_public_inputs: ct0.publicInputs,
+    ct0_key_hash: ct0.vkHash,
+    ct1_verification_key: ct1.vkAsFields,
+    ct1_proof: proofToFields(ct1.proof),
+    ct1_public_inputs: ct1.publicInputs,
+    ct1_key_hash: ct1.vkHash,
   })
 
   const { proof: userDataEncryptionProof, publicInputs: userDataEncryptionPublicInputs } = await userDataEncryptionBackend.generateProof(

@@ -8,10 +8,9 @@
 //
 // There is one verifier per census mode, and they are NOT preset-specific. `compile_circuits.sh`
 // generates them from the fold circuit's verification key, and the fold circuit takes the inner
-// key as an input and checks its hash against either preset's constant — so its own structure
-// carries no BFV degree and a single verifier accepts proofs from either preset. Building both
-// presets produces byte-identical verifier sources, which is the design working rather than a
-// coincidence to rely on.
+// key as an input and checks its hash against a supported preset constant. Thus, its own structure
+// carries no BFV degree and one verifier accepts proofs from all presets. All preset builds produce
+// byte-identical verifier sources by design.
 //
 // Both files still declare a contract named `HonkVerifier`, so every lookup has to be qualified by
 // file. That convention lives here so the deploy script and the tests cannot drift apart.

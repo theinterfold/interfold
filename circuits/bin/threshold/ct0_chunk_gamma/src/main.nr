@@ -4,18 +4,18 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Chunking-comparison branch: verifies `ct0_chunk_main_root` (non-ZK - covers all five witness
-//! groups, u/e0/k1/r2/r1 merged into one grid) and `ct0_pk_ct_commit` (ZK - holds raw
-//! `pk0is`/`ct0is` witness directly, no combine step needed since it was never recursive to
-//! begin with), gathering every commitment the ct0 challenge depends on, then derives `gamma`.
-//! Same replacement the witness-group-split branch's `ct0_abcde_combine` makes: the transcript
-//! hashes commitments/roots instead of raw coefficients.
+//! Verifies `ct0_chunk_main_root` (non-ZK - it covers all five witness groups, u/e0/k1/r2/r1
+//! merged into one grid) and `ct0_pk_ct_commit` (ZK - it holds raw `pk0is`/`ct0is` witness
+//! directly), gathering every commitment the ct0 challenge depends on, then derives `gamma`. The
+//! transcript hashes commitments and roots rather than raw coefficients, which is what keeps this
+//! circuit inside the gate budget.
 //!
-//! `ct0_chunk_main_root` itself recursively verifies two inner proofs, so it declares its own
-//! `pub leaf0_key_hash`/`leaf1_key_hash` parameters ahead of its return tuple in its public
-//! inputs - `roots_leaf0_key_hash`/`roots_leaf1_key_hash` below account for those 2 leading
-//! fields. `ct0_pk_ct_commit` has no such params (it doesn't itself verify anything), so its
-//! public inputs are exactly its two-commitment return tuple.
+//! The root's public inputs start with its leaf key hash. This circuit reads that value and
+//! outputs it with the root and pk/ct key hashes, in the order root, leaf, pk/ct. It does not
+//! compare them to expected values: `user_data_encryption_ct0` folds them into the VK manifest,
+//! and the verifier checks the manifest against a deployment anchor.
+//!
+//! Outputs: 3 key hashes, then `pk0`, `ct0`, `k1`, `u`, `e0`, `r2`, `r1`, then `ct0_gammas[L]`.
 
 use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
@@ -26,25 +26,24 @@ use lib::math::commitments::compute_user_data_encryption_ct0_challenge;
 
 fn main(
     roots_vk: UltraHonkVerificationKey,
+    roots_key_hash: Field,
     roots_proof: UltraHonkProof,
-    roots_leaf0_key_hash: Field,
-    roots_leaf1_key_hash: Field,
+    leaf_key_hash: Field,
     u_root: Field,
     e0_root: Field,
     k1_root: Field,
     r2_root: Field,
     r1_root: Field,
-    roots_key_hash: pub Field,
     pk_ct_vk: UltraHonkVerificationKey,
+    pk_ct_key_hash: Field,
     pk_ct_proof: UltraHonkZKProof,
     pk0_commitment: Field,
     ct0_commitment: Field,
-    pk_ct_key_hash: pub Field,
-) -> pub (Field, Field, Field, Field, Field, Field, Field, [Field; L]) {
+) -> pub (Field, Field, Field, Field, Field, Field, Field, Field, Field, Field, [Field; L]) {
     verify_honk_proof_non_zk(
         roots_vk,
         roots_proof,
-        [roots_leaf0_key_hash, roots_leaf1_key_hash, u_root, e0_root, k1_root, r2_root, r1_root],
+        [leaf_key_hash, u_root, e0_root, k1_root, r2_root, r1_root],
         roots_key_hash,
     );
     verify_honk_proof(
@@ -63,5 +62,8 @@ fn main(
         ct0_gammas[i] = gammas[i];
     }
 
-    (pk0_commitment, ct0_commitment, k1_root, u_root, e0_root, r2_root, r1_root, ct0_gammas)
+    (
+        roots_key_hash, leaf_key_hash, pk_ct_key_hash, pk0_commitment, ct0_commitment, k1_root,
+        u_root, e0_root, r2_root, r1_root, ct0_gammas,
+    )
 }

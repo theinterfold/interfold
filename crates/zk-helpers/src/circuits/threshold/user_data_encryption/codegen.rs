@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Code generation for the public-key BFV circuit: Prover.toml and configs.nr.
+//! Raw witness and configuration generation for the user-data encryption proof tree.
 
 use crate::circuits::computation::Computation;
 use crate::threshold::user_data_encryption::circuit::UserDataEncryptionCircuit;
@@ -44,23 +44,16 @@ pub fn generate_toml(inputs: Inputs) -> Result<CodegenToml, CircuitsErrors> {
 pub fn generate_configs(_: BfvPreset, configs: &Configs) -> CodegenConfigs {
     let prefix = <UserDataEncryptionCircuit as Circuit>::PREFIX;
 
-    let qis_str = join_display(&configs.moduli, ", ");
-    let k0is_str = join_display(&configs.k0is, ", ");
-    let pk_bounds_str = join_display(&configs.bounds.pk_bounds, ", ");
-    let r1_low_bounds_str = join_display(&configs.bounds.r1_low_bounds, ", ");
-    let r1_up_bounds_str = join_display(&configs.bounds.r1_up_bounds, ", ");
-    let r2_bounds_str = join_display(&configs.bounds.r2_bounds, ", ");
-    let p1_bounds_str = join_display(&configs.bounds.p1_bounds, ", ");
-    let p2_bounds_str = join_display(&configs.bounds.p2_bounds, ", ");
-
     format!(
         r#"use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncryptionCt0Configs;
 use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
+use crate::core::threshold::user_data_encryption_chunk::Ct0ChunkConfigs as UserDataEncryptionCt0ChunkConfigs;
+use crate::core::threshold::user_data_encryption_chunk::Ct1ChunkConfigs as UserDataEncryptionCt1ChunkConfigs;
 
 // Global configs for User Data Encryption circuit
-pub global N: u32 = {};
-pub global L: u32 = {};
-pub global QIS: [Field; L] = [{}];
+pub global N: u32 = {n};
+pub global L: u32 = {l};
+pub global QIS: [Field; L] = [{qis}];
 
 /************************************
 -------------------------------------
@@ -68,29 +61,31 @@ user_data_encryption (USED FOR DATA ENCRYPTION)
 -------------------------------------
 ************************************/
 
-pub global {}_BIT_PK: u32 = {};
-pub global {}_BIT_CT: u32 = {};
-pub global {}_BIT_U: u32 = {};
-pub global {}_BIT_E0: u32 = {};
-pub global {}_BIT_E1: u32 = {};
-pub global {}_BIT_K: u32 = {};
-pub global {}_BIT_R1: u32 = {};
-pub global {}_BIT_R2: u32 = {};
-pub global {}_BIT_P1: u32 = {};
-pub global {}_BIT_P2: u32 = {};
+pub global {prefix}_BIT_PK: u32 = {bit_pk};
+pub global {prefix}_BIT_CT: u32 = {bit_ct};
+pub global {prefix}_BIT_U: u32 = {bit_u};
+pub global {prefix}_BIT_E0: u32 = {bit_e0};
+pub global {prefix}_BIT_E1: u32 = {bit_e1};
+pub global {prefix}_BIT_K: u32 = {bit_k};
+pub global {prefix}_BIT_R1: u32 = {bit_r1};
+pub global {prefix}_BIT_R2: u32 = {bit_r2};
+pub global {prefix}_BIT_P1: u32 = {bit_p1};
+pub global {prefix}_BIT_P2: u32 = {bit_p2};
+pub global {prefix}_BIT_E0_QUOTIENT: u32 = {bit_e0_quotient};
 
-pub global {}_K0IS: [Field; L] = [{}];
-pub global {}_PK_BOUNDS: [Field; L] = [{}];
-pub global {}_E0_BOUND: Field = {};
-pub global {}_E1_BOUND: Field = {};
-pub global {}_U_BOUND: Field = {};
-pub global {}_K1_LOW_BOUND: Field = {};
-pub global {}_K1_UP_BOUND: Field = {};
-pub global {}_R1_LOW_BOUNDS: [Field; L] = [{}];
-pub global {}_R1_UP_BOUNDS: [Field; L] = [{}];
-pub global {}_R2_BOUNDS: [Field; L] = [{}];
-pub global {}_P1_BOUNDS: [Field; L] = [{}];
-pub global {}_P2_BOUNDS: [Field; L] = [{}];
+pub global {prefix}_K0IS: [Field; L] = [{k0is}];
+pub global {prefix}_PK_BOUNDS: [Field; L] = [{pk_bounds}];
+pub global {prefix}_E0_BOUND: Field = {e0_bound};
+pub global {prefix}_E1_BOUND: Field = {e1_bound};
+pub global {prefix}_U_BOUND: Field = {u_bound};
+pub global {prefix}_K1_LOW_BOUND: Field = {k1_low_bound};
+pub global {prefix}_K1_UP_BOUND: Field = {k1_up_bound};
+pub global {prefix}_R1_LOW_BOUNDS: [Field; L] = [{r1_low_bounds}];
+pub global {prefix}_R1_UP_BOUNDS: [Field; L] = [{r1_up_bounds}];
+pub global {prefix}_R2_BOUNDS: [Field; L] = [{r2_bounds}];
+pub global {prefix}_P1_BOUNDS: [Field; L] = [{p1_bounds}];
+pub global {prefix}_P2_BOUNDS: [Field; L] = [{p2_bounds}];
+pub global {prefix}_E0_QUOTIENT_BOUNDS: [Field; L] = [{e0_quotient_bounds}];
 
 /************************************
 -------------------------------------
@@ -98,16 +93,17 @@ user_data_encryption_ct0 (CIRCUIT A - CT0 ENCRYPTION)
 -------------------------------------
 ************************************/
 
-pub global {}_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> = UserDataEncryptionCt0Configs::new(
+pub global {prefix}_CT0_CONFIGS: UserDataEncryptionCt0Configs<N, L> = UserDataEncryptionCt0Configs::new(
     QIS,
-    {}_K0IS,
-    {}_E0_BOUND,
-    {}_U_BOUND,
-    {}_R1_LOW_BOUNDS,
-    {}_R1_UP_BOUNDS,
-    {}_R2_BOUNDS,
-    {}_K1_LOW_BOUND,
-    {}_K1_UP_BOUND,
+    {prefix}_K0IS,
+    {prefix}_E0_BOUND,
+    {prefix}_U_BOUND,
+    {prefix}_R1_LOW_BOUNDS,
+    {prefix}_R1_UP_BOUNDS,
+    {prefix}_R2_BOUNDS,
+    {prefix}_K1_LOW_BOUND,
+    {prefix}_K1_UP_BOUND,
+    {prefix}_E0_QUOTIENT_BOUNDS,
 );
 
 /************************************
@@ -116,75 +112,61 @@ user_data_encryption_ct1 (CIRCUIT B - CT1 ENCRYPTION)
 -------------------------------------
 ************************************/
 
-pub global {}_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncryptionCt1Configs::new(
+pub global {prefix}_CT1_CONFIGS: UserDataEncryptionCt1Configs<N, L> = UserDataEncryptionCt1Configs::new(
     QIS,
-    {}_E1_BOUND,
-    {}_U_BOUND,
-    {}_P1_BOUNDS,
-    {}_P2_BOUNDS,
+    {prefix}_E1_BOUND,
+    {prefix}_U_BOUND,
+    {prefix}_P1_BOUNDS,
+    {prefix}_P2_BOUNDS,
+);
+
+pub global {prefix}_N_CHUNKS: u32 = 2;
+pub global {prefix}_CT0_CHUNK_CONFIGS: UserDataEncryptionCt0ChunkConfigs<L> = UserDataEncryptionCt0ChunkConfigs::new(
+    QIS,
+    {prefix}_U_BOUND,
+    {prefix}_E0_BOUND,
+    {prefix}_K1_LOW_BOUND,
+    {prefix}_K1_UP_BOUND,
+    {prefix}_R1_LOW_BOUNDS,
+    {prefix}_R1_UP_BOUNDS,
+    {prefix}_R2_BOUNDS,
+    {prefix}_E0_QUOTIENT_BOUNDS,
+);
+pub global {prefix}_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = UserDataEncryptionCt1ChunkConfigs::new(
+    {prefix}_U_BOUND,
+    {prefix}_E1_BOUND,
+    {prefix}_P1_BOUNDS,
+    {prefix}_P2_BOUNDS,
 );
 "#,
-        configs.n, // N
-        configs.l, // L
-        qis_str,   // QIS array
-        prefix,
-        configs.bits.pk_bit, // BIT_PK
-        prefix,
-        configs.bits.ct_bit, // BIT_CT
-        prefix,
-        configs.bits.u_bit, // BIT_U
-        prefix,
-        configs.bits.e0_bit, // BIT_E0
-        prefix,
-        configs.bits.e1_bit, // BIT_E1
-        prefix,
-        configs.bits.k_bit, // BIT_K
-        prefix,
-        configs.bits.r1_bit, // BIT_R1
-        prefix,
-        configs.bits.r2_bit, // BIT_R2
-        prefix,
-        configs.bits.p1_bit, // BIT_P1
-        prefix,
-        configs.bits.p2_bit, // BIT_P2
-        prefix,
-        k0is_str, // K0IS array
-        prefix,
-        pk_bounds_str, // PK_BOUNDS array
-        prefix,
-        configs.bounds.e0_bound, // E0_BOUND
-        prefix,
-        configs.bounds.e1_bound, // E1_BOUND
-        prefix,
-        configs.bounds.u_bound, // U_BOUND
-        prefix,
-        configs.bounds.k1_low_bound, // K1_LOW_BOUND
-        prefix,
-        configs.bounds.k1_up_bound, // K1_UP_BOUND
-        prefix,
-        r1_low_bounds_str, // R1_LOW_BOUNDS array
-        prefix,
-        r1_up_bounds_str, // R1_UP_BOUNDS array
-        prefix,
-        r2_bounds_str, // R2_BOUNDS array
-        prefix,
-        p1_bounds_str, // P1_BOUNDS array
-        prefix,
-        p2_bounds_str, // P2_BOUNDS array
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
-        prefix,
+        n = configs.n,
+        l = configs.l,
+        qis = join_display(&configs.moduli, ", "),
+        prefix = prefix,
+        bit_pk = configs.bits.pk_bit,
+        bit_ct = configs.bits.ct_bit,
+        bit_u = configs.bits.u_bit,
+        bit_e0 = configs.bits.e0_bit,
+        bit_e1 = configs.bits.e1_bit,
+        bit_k = configs.bits.k_bit,
+        bit_r1 = configs.bits.r1_bit,
+        bit_r2 = configs.bits.r2_bit,
+        bit_p1 = configs.bits.p1_bit,
+        bit_p2 = configs.bits.p2_bit,
+        bit_e0_quotient = configs.bits.e0_quotient_bit,
+        k0is = join_display(&configs.k0is, ", "),
+        pk_bounds = join_display(&configs.bounds.pk_bounds, ", "),
+        e0_bound = configs.bounds.e0_bound,
+        e1_bound = configs.bounds.e1_bound,
+        u_bound = configs.bounds.u_bound,
+        k1_low_bound = configs.bounds.k1_low_bound,
+        k1_up_bound = configs.bounds.k1_up_bound,
+        r1_low_bounds = join_display(&configs.bounds.r1_low_bounds, ", "),
+        r1_up_bounds = join_display(&configs.bounds.r1_up_bounds, ", "),
+        r2_bounds = join_display(&configs.bounds.r2_bounds, ", "),
+        p1_bounds = join_display(&configs.bounds.p1_bounds, ", "),
+        p2_bounds = join_display(&configs.bounds.p2_bounds, ", "),
+        e0_quotient_bounds = join_display(&configs.bounds.e0_quotient_bounds, ", "),
     )
 }
 

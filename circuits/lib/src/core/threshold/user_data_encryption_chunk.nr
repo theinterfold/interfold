@@ -25,8 +25,8 @@
 
 use crate::math::commitments::{
     compute_ude_chunk_commitment, compute_ude_chunk_root_commitment,
-    compute_ude_multi_chunk_commitment, UDE_KIND_CT0_E0, UDE_KIND_CT0_K1, UDE_KIND_CT0_R1,
-    UDE_KIND_CT0_R2, UDE_KIND_CT1_E1, UDE_KIND_CT1_P1, UDE_KIND_CT1_P2, UDE_KIND_U,
+    compute_ude_multi_chunk_commitment, compute_vk_hash, UDE_KIND_CT0_E0, UDE_KIND_CT0_K1,
+    UDE_KIND_CT0_R1, UDE_KIND_CT0_R2, UDE_KIND_CT1_E1, UDE_KIND_CT1_P1, UDE_KIND_CT1_P2, UDE_KIND_U,
 };
 use crate::math::polynomial::Polynomial;
 
@@ -351,6 +351,34 @@ pub fn chunk_gamma_pow(total_len: u32, chunk_size: u32, chunk_idx: u32, gamma: F
     gamma.pow_32(offset as Field)
 }
 
+/// Compute a single-polynomial chunk root from the complete polynomial.
+///
+/// The top-level ct0 circuit uses this function to bind the complete `k1` witness to the `k1`
+/// root from both recursive rounds. The coefficients use the same descending-degree chunk order
+/// as the leaf circuits.
+pub fn ude_single_root_from_polynomial<let N: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32, let BIT: u32>(
+    kind_tag: Field,
+    polynomial: Polynomial<N>,
+) -> Field {
+    assert(N == N_CHUNKS * CHUNK_SIZE);
+
+    let mut chunks: [Field; N_CHUNKS] = [0; N_CHUNKS];
+    for chunk_idx in 0..N_CHUNKS {
+        let mut coefficients: [Field; CHUNK_SIZE] = [0; CHUNK_SIZE];
+        for offset in 0..CHUNK_SIZE {
+            coefficients[offset] = polynomial.coefficients[(chunk_idx * CHUNK_SIZE) + offset];
+        }
+        chunks[chunk_idx] = compute_ude_chunk_commitment::<CHUNK_SIZE, BIT>(
+            kind_tag,
+            chunk_idx,
+            N,
+            Polynomial::new(coefficients),
+        );
+    }
+
+    compute_ude_chunk_root_commitment(kind_tag, N, CHUNK_SIZE, chunks)
+}
+
 /// Fold every chunk's ct0 commitments into the five per-polynomial roots, in the order
 /// `(u, e0, k1, r2, r1)`.
 ///
@@ -394,6 +422,50 @@ pub fn ct1_chunk_roots(
         compute_ude_chunk_root_commitment(UDE_KIND_CT1_P1, n, p1_chunk_size, p1_commitments);
 
     (u_root, e1_root, p2_root, p1_root)
+}
+
+/// Number of child key hashes each round circuit (`*_chunk_gamma` and `*_eval_chunk_identity`)
+/// puts first in its outputs, in the order root, leaf, pk/ct.
+pub global UDE_ROUND_CHILD_KEY_HASHES: u32 = 3;
+
+/// The VK manifest for one ciphertext leg: the key hash of every circuit below the top-level
+/// circuit, as one value.
+///
+/// `verify_honk_proof` only proves that a proof verifies under a VK with the given key hash. A key
+/// hash that no layer compares to an expected value lets a prover use any circuit with the same
+/// public-input shape - for example a leaf without its range checks. Each round circuit therefore
+/// outputs its children's key hashes, and the top-level circuit calls this function with them. The
+/// wrapper then folds the result into `compute_ude_vk_chain`, and the verifier compares that value
+/// to a deployment anchor.
+///
+/// The order is part of the anchor. Keep it identical in any off-chain code that computes the
+/// expected value: round A key hash, then its root, leaf, and pk/ct key hashes, then the same four
+/// values for round B.
+pub fn compute_ude_vk_manifest(
+    round_a_key_hash: Field,
+    round_a_children: [Field; UDE_ROUND_CHILD_KEY_HASHES],
+    round_b_key_hash: Field,
+    round_b_children: [Field; UDE_ROUND_CHILD_KEY_HASHES],
+) -> Field {
+    compute_vk_hash([
+        round_a_key_hash,
+        round_a_children[0],
+        round_a_children[1],
+        round_a_children[2],
+        round_b_key_hash,
+        round_b_children[0],
+        round_b_children[1],
+        round_b_children[2],
+    ]
+        .as_vector())
+}
+
+/// The complete VK chain for one ciphertext leg: the top-level circuit's key hash, then the
+/// manifest of every circuit below it (see `compute_ude_vk_manifest`). The `user_data_encryption`
+/// wrapper outputs one of these per leg in the positions that used to hold the bare ct0 and ct1 key
+/// hashes.
+pub fn compute_ude_vk_chain(top_level_key_hash: Field, vk_manifest: Field) -> Field {
+    compute_vk_hash([top_level_key_hash, vk_manifest].as_vector())
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -540,6 +612,18 @@ fn test_chunk_gamma_pow_reconstructs_full_evaluation() {
     assert(partial0 + partial1 == expected);
 }
 
+#[test]
+fn test_ude_single_root_from_polynomial_matches_leaf_order() {
+    let polynomial = Polynomial::new([3, 5, 11, 2]);
+    let chunk0 =
+        compute_ude_chunk_commitment::<2, 8>(UDE_KIND_CT0_K1, 0, 4, Polynomial::new([3, 5]));
+    let chunk1 =
+        compute_ude_chunk_commitment::<2, 8>(UDE_KIND_CT0_K1, 1, 4, Polynomial::new([11, 2]));
+    let expected = compute_ude_chunk_root_commitment(UDE_KIND_CT0_K1, 4, 2, [chunk0, chunk1]);
+
+    assert(ude_single_root_from_polynomial::<4, 2, 2, 8>(UDE_KIND_CT0_K1, polynomial) == expected);
+}
+
 /// `r1is`/`p1is` are padded to `2N`, so their offsets are computed against the doubled length -
 /// passing `N` there would silently prove the wrong polynomial.
 #[test]
@@ -612,4 +696,41 @@ fn test_chunk_roots_agree_on_u_across_legs() {
     assert(ct0_u_root == ct1_u_root);
     // Everything else stays separated.
     assert(ct1_u_root != ct1_e1_root);
+}
+
+/// Every slot in the manifest must change the result. A slot that does not change it would be a VK
+/// that no anchor could detect a swap of.
+#[test]
+fn test_ude_vk_manifest_depends_on_every_key_hash() {
+    let base = compute_ude_vk_manifest(1, [2, 3, 4], 5, [6, 7, 8]);
+
+    assert(compute_ude_vk_manifest(9, [2, 3, 4], 5, [6, 7, 8]) != base);
+    assert(compute_ude_vk_manifest(1, [9, 3, 4], 5, [6, 7, 8]) != base);
+    assert(compute_ude_vk_manifest(1, [2, 9, 4], 5, [6, 7, 8]) != base);
+    assert(compute_ude_vk_manifest(1, [2, 3, 9], 5, [6, 7, 8]) != base);
+    assert(compute_ude_vk_manifest(1, [2, 3, 4], 9, [6, 7, 8]) != base);
+    assert(compute_ude_vk_manifest(1, [2, 3, 4], 5, [9, 7, 8]) != base);
+    assert(compute_ude_vk_manifest(1, [2, 3, 4], 5, [6, 9, 8]) != base);
+    assert(compute_ude_vk_manifest(1, [2, 3, 4], 5, [6, 7, 9]) != base);
+}
+
+/// Swapping round A and round B must change the manifest, so a prover cannot exchange the two
+/// rounds' circuits.
+#[test]
+fn test_ude_vk_manifest_is_ordered() {
+    assert(
+        compute_ude_vk_manifest(1, [2, 3, 4], 5, [6, 7, 8])
+            != compute_ude_vk_manifest(5, [6, 7, 8], 1, [2, 3, 4]),
+    );
+}
+
+/// The manifest is the flat `compute_vk_hash` of its eight slots in the documented order. Off-chain
+/// code reproduces the anchor with this exact layout.
+#[test]
+fn test_ude_vk_manifest_matches_flat_vk_hash() {
+    assert(
+        compute_ude_vk_manifest(1, [2, 3, 4], 5, [6, 7, 8])
+            == compute_vk_hash([1, 2, 3, 4, 5, 6, 7, 8].as_vector()),
+    );
+    assert(compute_ude_vk_chain(10, 11) == compute_vk_hash([10, 11].as_vector()));
 }

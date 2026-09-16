@@ -63,7 +63,7 @@ for (const preset of PRESETS) {
   run('pnpm', ['tsx', 'scripts/build-circuits.ts', '--preset', preset, '--group', 'threshold'], REPO)
 
   // Compiles the CRISP circuits and writes the generated Solidity verifiers into
-  // packages/crisp-contracts/contracts/verifiers/<preset>/. It recompiles the threshold circuits on
+  // packages/crisp-contracts/contracts/verifiers/. It recompiles the threshold circuits on
   // the way through, which duplicates part of the step above; that is worth the few minutes rather
   // than splitting the verifier generation away from the compile it has to agree with.
   run('bash', ['scripts/compile_circuits.sh'], CRISP)
@@ -73,6 +73,7 @@ for (const preset of PRESETS) {
 
 console.log(`\n✓ staged ${PRESETS.length} preset(s); tree left on ${PRESETS.at(-1)}`)
 console.log('  If the ballot circuits changed, regenerate the fold key hashes: scripts/compute_vk_hash.sh')
+console.log('  After you update an anchor, run scripts/compile_circuits.sh again to regenerate the Solidity verifiers.')
 if (requested === 'all') {
   console.log('  Then rebuild the production SDK: pnpm -C packages/crisp-sdk build:prod')
   console.log('  Then check it: CRISP_CHANNEL=latest pnpm -C packages/crisp-sdk check:presets')

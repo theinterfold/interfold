@@ -4,10 +4,10 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Round B, groups C+D merged (P3, ct1 leg): re-supplies `pk1is` and `ct1is`, re-derives both
-//! commitments (same protocol-invariant formulas as `ct1_pk_ct_commit`, for binding against
-//! Round A) and evaluates both at the shared `gamma`. Replaces the separate `ct1_eval_pk` /
-//! `ct1_eval_ct` / `ct1_eval_chunk_pk_ct_combine` chain.
+//! Round B, ct1 leg: re-supplies `pk1is` and `ct1is`, re-derives both commitments (the same
+//! protocol-invariant formulas as `ct1_pk_ct_commit`, for binding against Round A) and evaluates
+//! both at the shared `gamma`. Handling both groups in one circuit lets
+//! `ct1_eval_chunk_identity` reach them with a single verification.
 
 use lib::configs::default::threshold::{
     L, N, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_PK,

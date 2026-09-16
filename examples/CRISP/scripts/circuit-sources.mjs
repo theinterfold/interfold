@@ -33,8 +33,7 @@ const SOURCE_DIRS = [
   join(CRISP, 'circuits/bin/crisp'),
   join(CRISP, 'circuits/bin/crisp_onchain'),
   join(CRISP, 'circuits/lib'),
-  join(REPO, 'circuits/bin/threshold/user_data_encryption_ct0'),
-  join(REPO, 'circuits/bin/threshold/user_data_encryption_ct1'),
+  join(REPO, 'circuits/bin/threshold'),
   join(REPO, 'circuits/lib'),
 ]
 
@@ -48,9 +47,9 @@ const SKIP_DIRS = new Set(['target', 'node_modules'])
  * The generated preset selector, which the digest must ignore.
  *
  * `build-circuits.ts` rewrites this file on every preset switch, and `build-presets.mjs` builds
- * insecure last so the working tree is left on the default preset. The tree therefore never
- * holds the selector the secure-8192 archive was staged under, and a digest that included it would
- * report a fresh secure archive as stale every time — which is exactly what it did.
+ * insecure last so the working tree is left on the default preset. The tree therefore does not
+ * hold the selector for either secure archive. A digest that included it would report each secure
+ * archive as stale.
  *
  * Leaving it out costs nothing. The digest answers "have the circuit sources changed", and the
  * preset an archive holds is established three other ways: the directory it sits in, `preset` in
