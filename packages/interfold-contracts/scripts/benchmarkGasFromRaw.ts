@@ -78,8 +78,8 @@ function readBenchmarkPreset(foldedArtifact?: unknown): string {
 }
 
 /**
- * Committed Honk `.sol` files embed the insecure-512 aggregator VK. Secure benchmark
- * proofs need verifiers generated from the active circuits/bin preset.
+ * The root Honk `.sol` files contain the canonical insecure-512/minimum verifier pair.
+ * A benchmark for another preset generates isolated verifier files from the active artifacts.
  */
 function ensureHonkVerifierContractDir(preset: string): string {
   if (preset === CANONICAL_BFV_PRESET) {
@@ -340,7 +340,7 @@ async function main() {
   const honkDir = ensureHonkVerifierContractDir(benchmarkPreset);
   if (benchmarkPreset !== CANONICAL_BFV_PRESET) {
     console.log(
-      `[benchmarkGasFromRaw] Using preset ${benchmarkPreset} Honk verifiers (not committed insecure-512 .sol).`,
+      `[benchmarkGasFromRaw] Using generated ${benchmarkPreset} Honk verifiers for this benchmark.`,
     );
   }
 

@@ -89,8 +89,8 @@ export interface TimeoutConfig {
 }
 
 /**
- * `[CommitteeSize enum value, [M, N]]` passed to `Interfold.setCommitteeThresholds`.
- * On-chain: `threshold[0]` = required honest roster H and `threshold[1]` =
+ * `[CommitteeSize enum value, [H, N]]` passed to `Interfold.setCommitteeThresholds`.
+ * On-chain: `threshold[0]` = required DKG roster size H and `threshold[1]` =
  * committee size N. Pricing resolves the circuit threshold T separately.
  */
 export type CommitteeThreshold = [number, [number, number]];
@@ -577,7 +577,7 @@ export async function deployInterfoldSystem(
     );
   }
 
-  // ── Committee thresholds ([M, N] per CommitteeSize) ─────────────────────
+  // ── Committee thresholds ([H, N] per CommitteeSize) ─────────────────────
   for (const [size, [m, n]] of committeeThresholds) {
     await interfold.setCommitteeThresholds(size, [m, n]);
   }

@@ -152,7 +152,7 @@ export type E3FullDetails = E3Summary & {
   // this contract version is actually a Unix timestamp, not a block number).
   requestEventBlock?: bigint
   // From CiphernodeRegistry:
-  committeeThreshold: [number, number] // [M, N]
+  committeeThreshold: [number, number] // [H, N]
   committeeMembers: `0x${string}`[]
   committeeFinalizedTx?: `0x${string}`
   committeeFinalizedAt?: number

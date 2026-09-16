@@ -78,7 +78,7 @@ export QUIC_PORT="${QUIC_PORT:-37173}"
 export NODE_ADDRESS="${NODE_ADDRESS:-}"
 export LOG_LEVEL="${LOG_LEVEL:-info}"
 
-# Protocol v3 stores large ciphertexts on Avail. Operators may override the public endpoint, but
+# The protocol stores large ciphertexts on Avail. Operators may override the public endpoint, but
 # an enabled Ethereum chain must always render a reader into the ciphernode configuration.
 if [ -z "${AVAIL_RPC_URL:-}" ]; then
     case "${CHAIN_ID:-}" in

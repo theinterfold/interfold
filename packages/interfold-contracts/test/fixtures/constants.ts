@@ -120,7 +120,7 @@ export const COMMITTEE_THRESHOLDS_DEFAULT: ReadonlyArray<
 /**
  * Production `setCommitteeThresholds` values from `scripts/deployInterfold.ts`:
  * `[H, N]` (minimum honest roster, committee size). On-chain `threshold[0]`
- * is registry viability **M** (`activeCount >= M`); production sets M = H.
+ * is the registry viability threshold H (`activeCount >= H`).
  *
  * Pass via `deployInterfoldSystem({ committeeThresholds: [...] })` when a
  * spec exercises post-expulsion viability with production semantics.

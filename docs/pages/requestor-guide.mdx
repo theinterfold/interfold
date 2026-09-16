@@ -54,7 +54,7 @@ From the moment you submit until the result is published, every E3 walks through
 | #   | Phase                 | What happens                                                                                   | What you see                              |
 | --- | --------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------- |
 | 1   | **Request**           | The service fee is locked; VRF supplies the seed for committee sortition.                      | A "request submitted" confirmation.       |
-| 2   | **Key generation**    | The committee runs a distributed key-generation ceremony and publishes a public key.           | Usually 5–20 minutes, depending on size.  |
+| 2   | **Key generation**    | The committee runs a distributed key-generation ceremony and publishes a public key.           | Until the configured DKG deadline.        |
 | 3   | **Input window**      | You (and possibly other participants) encrypt your inputs to that key and submit them.         | Whatever input form the dApp shows.       |
 | 4   | **Compute**           | The compute provider runs the program over the encrypted inputs and posts an encrypted result. | A waiting state — nothing for you to do.  |
 | 5   | **Decrypt & publish** | The committee jointly decrypts the result and publishes it on-chain.                           | The plaintext result appears in the dApp. |
@@ -133,63 +133,38 @@ A few practical points that catch people out:
 - **You can't top up later.** If the protocol's pricing changes after you submit, your locked fee is
   what runs your round. Don't try to amend an in-flight request — submit a new one if needed.
 - **Set realistic windows.** If you're configuring the round yourself rather than using a preset,
-  give the input window enough time for participants to actually submit, and the compute window
-  enough time for your worst observed program runtime.
+  schedule the input start after the worst-case committee-key deadline. Give participants enough
+  time to submit, and give the compute window enough time for your worst observed program runtime.
 - **Refunds don't expire**, but they also don't auto-claim. Set a reminder to come back, or use a
   dApp that claims for you.
 
 ## 5. Choosing a secure committee
 
-If you're configuring an E3 yourself (most users won't be — applications usually pick sensible
-defaults), the two parameters that matter are the **committee size `n`** and the **decryption
-threshold `m`**.
+If you're configuring an E3 yourself, you choose a supported committee enum. You do not choose
+arbitrary threshold numbers. Each deployed circuit and verifier fixes three values:
 
-The high-level intuition:
+- `N`: the number of operators finalized for the E3
+- `H`: the number of mutually ready dealer contributions that form the DKG key
+- `T+1`: the number of partial decryptions needed for the result
 
-- `n` is **how many operators** are randomly selected to safeguard your round.
-- `m` is **how many of those `n` operators** must cooperate to decrypt the result.
+| Committee | N   | H   | Required decryptions (`T+1`) | DKG omissions | Decryption omissions |
+| --------- | --- | --- | ---------------------------- | ------------- | -------------------- |
+| Minimum   | 3   | 2   | 2                            | 1             | 0                    |
+| Micro     | 9   | 5   | 5                            | 4             | 0                    |
+| Small     | 19  | 14  | 10                           | 5             | 4                    |
 
-### Picking `n` (committee size)
-
-`n` controls both **availability** and **collusion resistance**. A larger committee survives more
-simultaneous outages and is harder to bribe, but every additional operator adds coordination work to
-every other operator, so fees grow roughly quadratically in `n`. The right choice is a function of
-how much value is at stake in the round and how deep the live operator set is at the time.
-
-General guidelines:
-
-- Keep `n` comfortably below the number of currently registered operators, so sortition has
-  meaningful entropy.
-- Use a small `n` for development and rehearsal rounds where cost matters more than security.
-- Use a larger `n` for production rounds where the value being protected justifies the extra fee and
-  longer key-generation time.
-- Going beyond a few dozen operators rarely buys meaningful additional security and primarily
-  inflates the fee.
-
-### Picking `m` (decryption threshold)
-
-`m` is the dial between **safety** (no-one can decrypt your data without `m` cooperating operators)
-and **liveness** (the round can only finish if at least `m` are online).
-
-General guidelines:
-
-- A bare majority is the absolute floor: anything less than `m ≥ ⌈n / 2⌉ + 1` means a minority could
-  collude to decrypt your round on its own.
-- A two-thirds threshold (`m ≈ ⌈2n / 3⌉`) tracks the standard byzantine-fault-tolerant trust
-  assumption and is a sensible middle ground.
-- Tighter thresholds (closer to `n`) increase safety against collusion but make the round more
-  fragile — if too few operators are online when decryption time arrives, the round will time out.
-- Never set `m == n`. A single offline operator will then end the round with no decryption.
-
-To make the random committee draw less variable, **increase `n`** rather than push the `m / n` ratio
-higher — doubling `n` roughly halves the chance the random sample is unusually unlucky.
+A larger committee gives the random draw more operators and can provide more liveness margin, but it
+also increases coordination and proof work sharply. C3 share encryption grows approximately with
+`N × (N-1)`. Choose a configuration supported by the target deployment and appropriate for the
+round's value. The application should obtain the live configuration ID and fee quote instead of
+reconstructing these values locally.
 
 ## 6. At-a-glance checklist
 
 Before you click "submit":
 
 - [ ] You've read the dApp's fee estimate and approved exactly that amount.
-- [ ] The committee size and threshold are appropriate for the value of the round.
+- [ ] The committee configuration is appropriate for the value of the round.
 - [ ] The input window leaves enough time for everyone (including you) to submit.
 - [ ] You have a way to receive a notification when the round completes or fails.
 - [ ] You know which address to claim a refund from if the round fails.

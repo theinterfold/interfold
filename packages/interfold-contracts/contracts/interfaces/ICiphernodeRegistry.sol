@@ -205,8 +205,8 @@ interface ICiphernodeRegistry {
     /// @notice This event MUST be emitted when committee viability changes after an expulsion.
     /// @param e3Id ID of the E3.
     /// @param activeCount Current number of active committee members.
-    /// @param thresholdM The minimum threshold (M) required.
-    /// @param viable Whether the committee is still viable (activeCount >= M).
+    /// @param thresholdM The committee viability threshold H. The ABI name is retained for compatibility.
+    /// @param viable Whether the committee is still viable (activeCount >= H).
     event CommitteeViabilityUpdated(
         uint256 indexed e3Id,
         uint256 activeCount,
@@ -757,7 +757,7 @@ interface ICiphernodeRegistry {
     /// @param node Address of the committee member to expel
     /// @param reason Hash of the slash reason
     /// @return activeCount Number of active committee members after expulsion
-    /// @return thresholdM The minimum threshold (M) required for viability
+    /// @return thresholdM The committee viability threshold H. The ABI name is retained for compatibility.
     function expelCommitteeMember(
         uint256 e3Id,
         address node,
@@ -810,8 +810,8 @@ interface ICiphernodeRegistry {
     /// @notice Consolidated committee viability check — avoids two separate view calls.
     /// @param e3Id ID of the E3 computation
     /// @return activeCount Current number of active (non-expelled) committee members
-    /// @return thresholdM Minimum required members (M in M-of-N)
-    /// @return thresholdN Total desired committee size (N in M-of-N)
+    /// @return thresholdM Committee viability threshold H; the ABI name is retained for compatibility
+    /// @return thresholdN Finalized committee size N
     /// @return viable True when activeCount >= thresholdM
     function getCommitteeViability(
         uint256 e3Id

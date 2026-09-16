@@ -1353,7 +1353,7 @@ async fn setup_evm_system(
         let chain_id = provider.chain_id();
         if contract_components.interfold && chain.data_availability.is_none() {
             anyhow::bail!(
-                "chain '{}' has Interfold enabled but no data_availability reader; protocol v3 nodes must be able to retrieve proof-backed ciphertext outputs",
+                "chain '{}' has Interfold enabled but no data_availability reader; this protocol release must retrieve proof-backed ciphertext outputs",
                 chain.name
             );
         }

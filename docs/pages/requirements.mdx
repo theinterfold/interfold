@@ -61,15 +61,20 @@ proofs. The workload is CPU and memory intensive, especially during DKG and proo
 
 ### Disk Usage
 
-| Data                 | Typical Size      |
-| -------------------- | ----------------- |
-| Node state           | 10–50 GB          |
-| Circuit artifacts    | 5–15 GB           |
-| Logs                 | 1–10 GB (rotated) |
-| **Total (baseline)** | 30–100 GB         |
+| Data                      | Sizing behavior                                                          |
+| ------------------------- | ------------------------------------------------------------------------ |
+| Event log and proof blobs | Grows with retained E3 history; completed E3 records are not auto-pruned |
+| Circuit artifacts         | Several gigabytes per built preset and committee combination             |
+| Logs                      | Depends on log level and rotation policy                                 |
 
-Provision at least 500 GB to accommodate growth, log retention, and multiple networks. Use SSD
-storage — spinning disks may cause missed submission windows under I/O load.
+Large local events are stored in content-addressed `event-blobs-v1` files beside the event log.
+Referenced blobs remain part of durable history after an E3 completes. Startup removes only files
+that were synced but never referenced by a committed log record.
+
+Use the 100 GB testnet and 500 GB production values above as initial allocations, not retention
+estimates. Monitor free space and growth per E3, configure log rotation, and expand the volume
+before it reaches capacity. Back up the event log and blob directory together. Use SSD storage
+because slow I/O can cause missed protocol windows.
 
 ## Compute Provider Requirements
 
@@ -106,13 +111,18 @@ For local development with CRISP or a project template:
 
 ## Resource Scaling Guide
 
-| Workload          | CPU       | RAM      | Notes                             |
-| ----------------- | --------- | -------- | --------------------------------- |
-| Idle ciphernode   | 1–2       | 2–4 GB   | Just listening for events         |
-| DKG (N=3, L=2)    | 4–8       | 8–16 GB  | Insecure preset, local dev        |
-| DKG (N=5, L=3)    | 8–16      | 24–32 GB | Secure preset, production         |
-| ZK proof gen peak | All cores | 28–32 GB | Memory spikes during C3 proofs    |
-| Compute provider  | 8–32      | 32–64 GB | Depends on FHE program complexity |
+| Workload         | Committee `(N,T,H)` | Relative load | Notes                                    |
+| ---------------- | ------------------- | ------------- | ---------------------------------------- |
+| Idle ciphernode  | —                   | Low           | Event sync, P2P, and health checks       |
+| Minimum DKG      | `(3,1,2)`           | Lowest        | Default local and integration-test shape |
+| Micro DKG        | `(9,4,5)`           | Intermediate  | More C3 fan-out and recursive proof work |
+| Small DKG        | `(19,9,14)`         | Highest       | Largest supported committee shape        |
+| Compute provider | Program-specific    | Variable      | Depends on FHE and proving backend       |
+
+Committee size and BFV preset are separate build choices. `secure-8192` uses much larger polynomials
+than `insecure-512`, and C3 fan-out grows quadratically with N. Do not infer production sizing from
+a Minimum insecure test. Benchmark the exact preset, committee, proof concurrency, and hardware with
+`circuits/benchmarks/run_benchmarks.sh` before deployment.
 
 > **Memory tip:** If your node starts OOM-killing during DKG, this is a resource constraint, not a
 > software bug. Add more RAM or reduce parallelism settings.

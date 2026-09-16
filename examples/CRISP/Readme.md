@@ -211,9 +211,10 @@ Sepolia and Ethereum mainnet use Avail. Before starting the CRISP server:
    available and resumes the job after a restart.
 4. Deploy CRISP with `INPUT_AVAILABILITY_SIGNER` set to the Ethereum address derived from the
    server's `PRIVATE_KEY`.
-5. Configure an input window that covers the current on-chain committee setup, voting minimum, and
-   VectorX finalization tail. The server reads those values at startup. Twelve hours covers the
-   current production defaults with margin.
+5. Schedule voting after the current on-chain committee setup budget. The server reads that bound
+   from `CRISPProgram.earliestVotingStart()` and adds `VOTING_START_BUFFER_SECONDS` for transaction
+   mining. `E3_DURATION` starts at that fixed voting time; it covers voting plus the VectorX
+   finalization tail, not committee setup.
 
 The server signs a 10-minute commitment payload only after it stores and validates the complete
 ciphertext. If the commitment does not reach Ethereum before that payload expires, the server waits
@@ -230,9 +231,16 @@ AVAIL_PROOF_LEAD_SECONDS=10800
 # Unfinished objects are refused once they reach this capacity. Size it for the largest supported
 # round and monitor the server volume. Default: 1 GiB.
 DATA_AVAILABILITY_MAX_PENDING_BYTES=1073741824
-# 12 hours. Covers the current 1h VRF + 10m sortition + 6h DKG upper bound,
-# at least 1h of voting, and the 3h VectorX finalization target.
+# Input-window duration after voting starts. The minimum production example is 4 hours:
+# 1 hour voting + 3 hours VectorX finalization. Twelve hours provides 9 hours of voting.
 E3_DURATION=43200
+# Extra time for the E3 request transaction to be mined before the fixed voting start.
+# Default: 120 seconds.
+VOTING_START_BUFFER_SECONDS=120
+
+# Required by the cron client and the protected POST /rounds/request endpoint.
+# Use a nonempty secret whenever the endpoint is exposed.
+CRON_API_KEY=<random-secret>
 
 # Ethereum mainnet uses these two endpoints instead:
 # AVAIL_RPC_URL=https://avail-rpc.publicnode.com/

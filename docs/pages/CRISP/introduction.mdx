@@ -119,23 +119,28 @@ start while a committed vote is waiting for finalization.
 ### Proposal timing
 
 A CRISP proposal does not accept encrypted votes immediately. Chainlink VRF selects the committee,
-the ticket window closes, and the committee completes DKG first. Voting opens when the committee
-public key is ready.
+the ticket window closes, and the committee completes DKG first. Every round has three explicit
+boundaries:
 
-The mainnet launch permits one hour for VRF, 10 minutes for tickets, and six hours for DKG. CRISP
-reserves the final three hours of the input window for Avail finalization. It also requires at least
-one hour for new vote commitments after the worst-case key setup. The protocol minimum input window
-is therefore 11 hours 10 minutes.
+- `S`: encrypted voting starts
+- `V`: new ballot commitments close
+- `A`: Avail finalization ends
 
-The Interfold DAO launch configuration uses a five-day proposal input window. Even if every
-committee phase uses its complete timeout, this leaves 4 days, 13 hours, and 50 minutes for new vote
-commitments. Voting can open earlier when the committee key is ready sooner.
+The proposal stores `S` and `V`. It requests the Interfold input window as `[S, A]`, where
+`A = V + availabilityFinalizationWindow`. An early committee key does not open voting before `S`,
+and a late key does not silently move the scheduled vote.
 
-The proposal form reads the plugin minimum, protocol maximum, committee timeouts, and CRISP timing
-rules from the live contracts. It shows the guaranteed voting time and rejects a duration outside
-the allowed range. The plugin starts the selected duration in the block that creates the proposal,
-so time spent waiting for the wallet transaction does not shorten the window. Governance can change
-these settings, so an application must not keep a separate hard-coded minimum.
+The mainnet launch permits one hour for VRF, 10 minutes for tickets, and six hours for DKG. A
+request mined at `R` can therefore schedule voting no earlier than `R + 25,800 seconds`, plus a
+transaction mining buffer. `CRISPProgram.earliestVotingStart()` returns the current lower bound.
+CRISP then requires at least one hour between `S` and `V` and reserves three hours between `V` and
+`A` for Avail finalization. A one-hour vote therefore has a 14,400-second Interfold input window,
+separate from the 25,800-second setup period before it.
+
+The Interfold DAO launch configuration uses a five-day ballot interval from `S` to `V`. The input
+window ends three hours later. The proposal form reads the live committee timeouts and CRISP timing
+rules, shows the earliest valid start, and rejects an invalid schedule. Governance can change these
+settings, so an application must not keep a separate hard-coded minimum.
 
 The round's census decides which Noir verifier `publishInput()` uses: `CRISPVerifier.sol` for a
 census posted as a Merkle root, and `CRISPOnchainVerifier.sol` for one read from token balances on

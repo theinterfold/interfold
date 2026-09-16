@@ -53,14 +53,14 @@ while [[ $# -gt 0 ]]; do
             ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 --summary <integration_summary.json> --gas-json <crisp_verify_gas.json> [--build <nargo-preset>]"
+            echo "Usage: $0 --summary <integration_summary.json> --gas-json <crisp_verify_gas.json> [--build <nargo-preset>] [--committee minimum|micro|small]"
             exit 1
             ;;
     esac
 done
 
 if [ -z "$SUMMARY_JSON" ] || [ -z "$GAS_JSON" ]; then
-    echo "Usage: $0 --summary <integration_summary.json> --gas-json <crisp_verify_gas.json> [--build <nargo-preset>]"
+    echo "Usage: $0 --summary <integration_summary.json> --gas-json <crisp_verify_gas.json> [--build <nargo-preset>] [--committee minimum|micro|small]"
     exit 1
 fi
 if [ ! -f "$SUMMARY_JSON" ]; then

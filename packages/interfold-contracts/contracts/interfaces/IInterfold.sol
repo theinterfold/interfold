@@ -373,7 +373,7 @@ interface IInterfold {
 
     /// @notice Emitted when committee thresholds are updated
     /// @param size The committee size enum value.
-    /// @param threshold The M/N threshold values.
+    /// @param threshold The viability threshold and total member count [H, N].
     event CommitteeThresholdsUpdated(
         CommitteeSize indexed size,
         uint32[2] threshold
