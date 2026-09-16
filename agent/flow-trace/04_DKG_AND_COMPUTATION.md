@@ -488,9 +488,11 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 The active aggregator selects H parties whose signed Ready lists all contain the same selected
 dealer contributions. `AggregatorChanged` carries the active party ID, and threshold-keyshare
 persists that ID. A receiver accepts a roster only when the signer owns that active party slot.
-Each selected party also checks the roster against its own saved Ready list. The accepted roster is
-saved before C4 starts. A later conflicting roster is ignored; it cannot replace the accepted
-roster or fail the E3.
+Because failover timers can expire at slightly different times on different nodes, a receiver
+durably holds the first authenticated roster from each standby. It considers that roster only after
+its own `AggregatorChanged` event promotes the signer. Each selected party also checks the roster
+against its own saved Ready list. The accepted roster is saved before C4 starts. A later conflicting
+roster is ignored; it cannot replace the accepted roster or fail the E3.
 
 Once a node can derive a valid roster from its durable Ready map, it starts the existing 10-minute
 active-aggregator budget for the DKG-roster phase. If the active aggregator does not publish a

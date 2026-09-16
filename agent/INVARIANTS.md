@@ -472,9 +472,10 @@ design citation alone does not establish current runtime behavior.
   party can launch aggregation effects or accept their results. — `flow-trace/04`; INDEX concern #42
 - The active aggregator proposes the canonical DKG roster only after it can derive `H` mutually
   ready dealers from signed readiness reports. `AggregatorChanged` supplies the active party ID,
-  and receivers reject roster signatures from every other party. The first valid roster is durable
-  and immutable; a later conflicting roster is ignored. Accepting it ends only the DKG-roster
-  failover phase. Public-key aggregation receives a new readiness-gated failover budget. —
+  and receivers accept a roster only from that party. A receiver can hold the first authenticated
+  roster from a standby until local failover promotes that party. The first accepted roster is
+  durable and immutable; a later conflicting roster is ignored. Accepting it ends only the
+  DKG-roster failover phase. Public-key aggregation receives a new readiness-gated failover budget. —
   `flow-trace/04`; INDEX concerns #42 and #52
 - DKG dealer identity binds the public proof statement, not randomized proof bytes. Replacing a
   same-E3 proof plan must invalidate every prior correlation ID before the replacement can accept

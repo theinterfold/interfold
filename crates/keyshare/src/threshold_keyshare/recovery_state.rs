@@ -10,7 +10,7 @@ use e3_events::{
     ShareVerificationComplete, ThresholdShareCreated, ThresholdSharePending, TypedEvent,
 };
 
-pub const THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION: u32 = 4;
+pub const THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION: u32 = 5;
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct ThresholdKeyshareRecoveryState {
@@ -28,6 +28,7 @@ pub struct ThresholdKeyshareRecoveryState {
     pub decryption_verification_complete: Option<TypedEvent<ShareVerificationComplete>>,
     pub dkg_ready: Option<DkgCoordination>,
     pub ready_by_party: BTreeMap<u64, DkgCoordination>,
+    pub pending_rosters: BTreeMap<u64, DkgCoordination>,
     pub dkg_roster: Option<DkgCoordination>,
     pub active_aggregator_party_id: Option<u64>,
     pub is_aggregator: bool,
@@ -52,6 +53,7 @@ impl Default for ThresholdKeyshareRecoveryState {
             decryption_verification_complete: None,
             dkg_ready: None,
             ready_by_party: BTreeMap::new(),
+            pending_rosters: BTreeMap::new(),
             dkg_roster: None,
             active_aggregator_party_id: None,
             is_aggregator: false,

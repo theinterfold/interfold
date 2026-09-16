@@ -263,7 +263,7 @@ async fn only_the_active_aggregator_proposes_a_ready_roster() -> Result<()> {
 }
 
 #[actix::test]
-async fn roster_from_non_active_party_is_ignored() -> Result<()> {
+async fn roster_from_future_aggregator_is_held_until_promotion() -> Result<()> {
     let (bus, _history) = test_bus();
     let e3_id = E3id::new("48", 1);
     let signers = [
@@ -293,7 +293,7 @@ async fn roster_from_non_active_party_is_ignored() -> Result<()> {
         legitimate_dealers,
         &signers[0],
     )?;
-    let forged_roster = DkgCoordination::sign(
+    let deferred_roster = DkgCoordination::sign(
         e3_id.clone(),
         Address::ZERO,
         2,
@@ -301,11 +301,28 @@ async fn roster_from_non_active_party_is_ignored() -> Result<()> {
         vec![
             DkgDealer {
                 party_id: 0,
-                contribution_hash: [9; 32],
+                contribution_hash: [0; 32],
             },
             DkgDealer {
                 party_id: 1,
-                contribution_hash: [9; 32],
+                contribution_hash: [1; 32],
+            },
+        ],
+        &signers[2],
+    )?;
+    let conflicting_roster = DkgCoordination::sign(
+        e3_id.clone(),
+        Address::ZERO,
+        2,
+        DkgCoordinationKind::Roster,
+        vec![
+            DkgDealer {
+                party_id: 0,
+                contribution_hash: [0; 32],
+            },
+            DkgDealer {
+                party_id: 2,
+                contribution_hash: [2; 32],
             },
         ],
         &signers[2],
@@ -352,9 +369,34 @@ async fn roster_from_non_active_party_is_ignored() -> Result<()> {
         dkg_timing_reader: Arc::new(|_| Box::pin(async { Ok((8_200, 7_200)) })),
     });
 
-    actor.record_dkg_coordination(forged_roster, test_ec(2))?;
+    actor.record_dkg_coordination(deferred_roster.clone(), test_ec(2))?;
 
-    assert!(actor.recovery.try_get()?.dkg_roster.is_none());
+    let recovery = actor.recovery.try_get()?;
+    assert!(recovery.dkg_roster.is_none());
+    assert_eq!(recovery.pending_rosters.get(&2), Some(&deferred_roster));
+
+    actor.record_dkg_coordination(conflicting_roster, test_ec(3))?;
+    assert_eq!(
+        actor.recovery.try_get()?.pending_rosters.get(&2),
+        Some(&deferred_roster)
+    );
+
+    actor.handle_aggregator_changed(
+        AggregatorChanged {
+            e3_id: e3_id.clone(),
+            active_party_id: Some(2),
+            is_aggregator: false,
+        },
+        test_ec(4),
+    )?;
+
+    let recovery = actor.recovery.try_get()?;
+    assert_eq!(recovery.dkg_roster, Some(deferred_roster));
+    assert!(recovery.pending_rosters.is_empty());
+    assert_eq!(
+        actor.state.try_get()?.honest_parties,
+        Some(BTreeSet::from([0, 1]))
+    );
     Ok(())
 }
 

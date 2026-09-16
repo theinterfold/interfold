@@ -133,6 +133,17 @@ impl ThresholdKeyshare {
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
+        if let Some(active_party_id) = change.active_party_id {
+            let pending = self
+                .recovery
+                .try_get()?
+                .pending_rosters
+                .get(&active_party_id)
+                .cloned();
+            if let Some(roster) = pending {
+                self.accept_dkg_roster(roster, ec.clone())?;
+            }
+        }
         if self.effects_enabled && self.is_aggregator {
             self.maybe_publish_roster_inputs_ready(ec.clone())?;
             self.propose_dkg_roster(ec)?;
@@ -192,15 +203,6 @@ impl ThresholdKeyshare {
                 })?;
             }
             DkgCoordinationKind::Roster => {
-                if Some(message.party_id) != self.active_aggregator_party_id {
-                    warn!(
-                        e3_id = %message.e3_id,
-                        proposer = message.party_id,
-                        active_party_id = ?self.active_aggregator_party_id,
-                        "Ignoring a DKG roster from a party that does not own aggregation"
-                    );
-                    return Ok(());
-                }
                 if state.expelled_parties.contains(&message.party_id)
                     || message.dealers.len() != committee_h
                     || message
@@ -210,18 +212,46 @@ impl ThresholdKeyshare {
                 {
                     return Ok(());
                 }
-                if let Some(existing) = recovery.dkg_roster {
-                    if existing.dealers != message.dealers {
+                if recovery.dkg_roster.is_some() {
+                    if recovery
+                        .dkg_roster
+                        .as_ref()
+                        .is_some_and(|existing| existing.dealers != message.dealers)
+                    {
                         warn!(
                             e3_id = %message.e3_id,
-                            accepted_proposer = existing.party_id,
+                            accepted_proposer = recovery.dkg_roster.as_ref().map(|value| value.party_id),
                             ignored_proposer = message.party_id,
                             "Ignoring a DKG roster after this node accepted a roster"
                         );
                     }
                     return Ok(());
                 }
-                self.accept_dkg_roster(message, ec)?;
+                self.recovery.try_mutate(&ec, |mut recovery| {
+                    recovery
+                        .pending_rosters
+                        .entry(message.party_id)
+                        .or_insert_with(|| message.clone());
+                    recovery.last_ec = Some(ec.clone());
+                    Ok(recovery)
+                })?;
+                if Some(message.party_id) != self.active_aggregator_party_id {
+                    warn!(
+                        e3_id = %message.e3_id,
+                        proposer = message.party_id,
+                        active_party_id = ?self.active_aggregator_party_id,
+                        "Holding a DKG roster until its proposer owns aggregation"
+                    );
+                    return Ok(());
+                }
+                let pending = self
+                    .recovery
+                    .try_get()?
+                    .pending_rosters
+                    .get(&message.party_id)
+                    .cloned()
+                    .ok_or_else(|| anyhow!("authenticated DKG roster was not persisted"))?;
+                self.accept_dkg_roster(pending, ec)?;
             }
         }
         Ok(())
@@ -361,6 +391,7 @@ impl ThresholdKeyshare {
         }
         self.recovery.try_mutate(&ec, |mut recovery| {
             recovery.dkg_roster = Some(roster.clone());
+            recovery.pending_rosters.clear();
             recovery.last_ec = Some(ec.clone());
             Ok(recovery)
         })?;
