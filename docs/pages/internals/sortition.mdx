@@ -103,16 +103,17 @@ cases, so there is no incentive to split.
 
 ## Committee Size and Buffer
 
-The sortition selects more nodes than strictly required by the threshold parameters. For a request
-with `threshold_m` (minimum signers) and `threshold_n` (nominal committee size), the total selection
-size is:
+The sortition selects more candidate nodes than the finalized committee needs. In the Rust runtime,
+the legacy field `threshold_m` is the polynomial threshold `T`, so decryption requires
+`threshold_m + 1` shares. The field `threshold_n` is the finalized committee size `N`. The local
+candidate-set size is:
 
 ```
 buffer = (threshold_n - threshold_m) + safety_factor
 total_selection_size = threshold_n + buffer
 ```
 
-Where `safety_factor` depends on the `m/n` ratio:
+Where `safety_factor` depends on the `T/N` ratio:
 
 | `threshold_m / threshold_n` | Safety factor | Rationale                                                                |
 | --------------------------- | ------------- | ------------------------------------------------------------------------ |
@@ -178,15 +179,16 @@ The **initial active aggregator** is the node with `party_id = 0` — the select
 with the lowest address. The active role can later move through the same canonical order. The active
 aggregator is responsible for:
 
-- Collecting and verifying ZK proofs from all other committee members
-- Aggregating public-key shares and publishing the committee proof
-- Aggregating decryption shares
+- Collecting signed DKG readiness reports and proposing one valid H-member dealer roster
+- Aggregating the accepted roster's public-key shares and publishing the committee proof
+- Aggregating valid decryption shares
 - Publishing the plaintext output and proof on-chain
 
-If the expected public-key or plaintext result is absent for 10 minutes, or if the active party is
-excluded, the next eligible node by `party_id` takes over. The timeout deadline and phase-local
-unresponsive set survive restart. Canonical phase progress clears the set, and the final eligible
-party remains active after all standby budgets expire.
+DKG roster selection, public-key aggregation, and plaintext aggregation use separate 10-minute
+failover phases. A phase starts only after its required inputs are durable. If the active party does
+not produce that phase's result, or if it is excluded, the next eligible node by `party_id` takes
+over. The deadline and phase-local unresponsive set survive restart. Canonical phase progress clears
+that phase's set, and the final eligible party remains active after all standby budgets expire.
 
 ---
 
@@ -204,11 +206,14 @@ if committee.contains(my_address) {
 }
 ```
 
-The score is deterministic for a given ticket, E3, and seed. Each node can use its own `active_jobs`
-count for voluntary load balancing. It does not reduce any other operator's candidate range.
+The score is deterministic for a given ticket, E3, and seed. Before the local node dispatches a
+winning ticket, it durably reserves one local workload slot. A concurrent request sees that reduced
+capacity. `CommitteeFinalized` confirms the reservation when the node is selected or releases it
+when the node is not selected. A terminal E3 event releases any remaining reservation.
 
-Solidity accepts tickets from the full snapshotted balance, so the on-chain candidate set remains
-authoritative. Operators can choose or ignore local workload limits.
+This reservation is local capacity control, not an on-chain ticket lock. Solidity still validates
+the full snapshotted ticket range, and one node's `active_jobs` count cannot reduce another
+operator's candidate range.
 
 ---
 

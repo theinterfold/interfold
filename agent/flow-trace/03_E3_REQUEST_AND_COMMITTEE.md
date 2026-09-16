@@ -278,7 +278,7 @@ InterfoldSolReader decodes IInterfold::E3Requested log
     ├─ Waits for CommitteeRequested if the delayed committee seed is not ready
     ├─ Loads the request timepoint and frozen ticket price from CommitteeRequested
     ├─ Uses the CommitteeRequested seed for ticket ranking
-    ├─ Calculates buffer = calculate_buffer_size(M, N)
+    ├─ Calculates buffer = calculate_buffer_size(T, N)
     │
     ├─ ScoreBackend.get_committee():
     │   │

@@ -10,11 +10,12 @@ Interfold.
 
 ## Parameter Strategy
 
-- **Thresholds**: Choose `threshold = [t, n]` so that `t` withstands your adversary model while `n`
-  matches the available Ciphernodes. Higher thresholds improve collusion resistance but increase
-  fees.
-- **Timing Windows**: Ensure `startWindow` leaves enough time for committee selection (a few blocks)
-  and `duration` matches the longest credible compute time plus buffer.
+- **Committee configuration**: Choose a supported committee enum. Each enum fixes total members `N`,
+  the mutually ready DKG roster `H`, and decryption threshold `T`. Do not supply arbitrary threshold
+  values.
+- **Timing windows**: Set `inputWindow[0]` after the worst-case VRF, ticket, and DKG setup time. Set
+  `inputWindow[1]` late enough for inputs and data-availability finalization. Include a transaction
+  buffer.
 - **Custom Params**: Use `customParams` in the E3 request to tag jurisdiction, use case, or feature
   toggles without redeploying contracts.
 

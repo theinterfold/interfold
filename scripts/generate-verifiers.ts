@@ -73,9 +73,9 @@ const LICENSE_HEADER = `// SPDX-License-Identifier: LGPL-3.0-only
  * `pnpm build:circuits --preset secure-8192 --committee small`, where `circuits/bin/` holds
  * secure artifacts that would generate different `.sol` bytes.
  *
- * If you need verifiers for a different preset (e.g. a production deploy on `secure-8192`),
- * rebuild that preset and committee locally and run the generator there. Non-canonical outputs
- * land under `honk/<preset>/<committee>/`, not over the canonical files.
+ * The repository commits all supported preset and committee pairs. Rebuild the selected pair and
+ * run the generator when its circuits change. Non-canonical outputs land under
+ * `honk/<preset>/<committee>/`, not over the canonical files.
  */
 const CANONICAL_PRESET = 'insecure-512'
 
@@ -642,8 +642,8 @@ class VerifierGenerator {
 
   /**
    * Ensure `circuits/bin/` was last populated by `build:circuits` for the same preset.
-   * Without this, a secure benchmark could leave secure VKs in bin while `--check` diffs
-   * against committed insecure-512 `.sol` files.
+   * Without this, a build for one preset could leave its VKs in bin while `--check` diffs
+   * against committed verifier files for another preset.
    */
   private assertCircuitsBinActivePreset(preset: string): void {
     const committee = this.targetCommittee()

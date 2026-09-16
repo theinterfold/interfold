@@ -65,16 +65,18 @@ Encryption (FHE) scheme, then generate and publish a shared public encryption ke
 During this phase, Data Providers — who may include individual users, applications, or institutions
 — encrypt their data to the CiCo's public key and publish commitments to those inputs onchain.
 
-The input window includes committee setup, voting, and the final availability period. Voting opens
-when the committee key is ready. CRISP stops new vote commitments three hours before the input
-window ends. This reserved period lets VectorX finalize votes that are already committed.
+Committee setup happens before the input window. CRISP names three fixed times: voting starts at
+`S`, new ballot commitments close at `V`, and Avail finalization ends at `A`. Interfold stores the
+input window as `[S, A]`. CRISP derives `V = A - availabilityFinalizationWindow` and accepts ballots
+only during `[S, V)`. An early key does not open voting before `S`.
 
 The mainnet launch settings allow up to one hour for VRF, 10 minutes for ticket submission, and six
-hours for DKG. CRISP then requires at least one hour for new vote commitments. Therefore, the
-protocol minimum mainnet input window is 11 hours 10 minutes. The DAO plugin can require a longer
-window. Interfold also reserves seven days for computation and six hours for decryption. With its
-30-day lifecycle cap, the longest mainnet input window is 22 days 18 hours. The contracts reject
-windows outside these bounds.
+hours for DKG. Therefore, the earliest valid `S` is 7 hours 10 minutes after the request, plus a
+mining buffer. CRISP requires at least one hour from `S` to `V` and reserves three hours from `V` to
+`A`. A one-hour vote uses a four-hour input window; the committee setup budget is separate.
+Interfold also reserves seven days for computation and six hours for decryption. The contracts
+reject a schedule that starts too early or does not leave the required voting and availability
+windows.
 
 1. **Data Encryption**: Data Providers encrypt their inputs using the CiCo's public key.
 2. **Input Validation**: Data Providers generate several Zero-Knowledge Proofs about their inputs to

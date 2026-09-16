@@ -136,9 +136,8 @@ else
     "${SCRIPT_DIR}/ensure_circuit_preset_built.sh" "${ENSURE_ARGS[@]}"
     echo "  [gas] Build artifacts ready."
 
-    # Align circuits/bin with PRESET_NAME, then verify preset artifacts.
-    # insecure: also diff committed Honk .sol (pinned to insecure-512).
-    # secure:   committed .sol stay insecure-only; gas replay deploys fresh verifiers from bin.
+    # Align circuits/bin with PRESET_NAME and COMMITTEE, then check the matching committed
+    # Honk verifiers against those artifacts.
     echo "  [gas] Verifying circuit preset '${PRESET_NAME}' (dist stamp + circuits/bin)..."
     if [ "$VERBOSE" = true ]; then
         echo "  [gas] [verbose] Running: pnpm generate:verifiers --check --no-compile --preset ${PRESET_NAME}"

@@ -171,8 +171,8 @@ ThresholdKeyshare receives AllEncryptionKeysCollected
 │   │  │     → pk_share is the public contribution               │
 │   │  │                                                         │
 │   │  │  2. Create Shamir Secret Shares of sk (sk_sss):        │
-│   │  │     ShareManager::create_shares(sk, M, N)               │
-│   │  │     → Splits sk into N shares, any M+1 can reconstruct │
+│   │  │     ShareManager::create_shares(sk, T, N)               │
+│   │  │     → Splits sk into N shares; T+1 reconstruct         │
 │   │  │     → One share per committee member                    │
 │   │  │                                                         │
 │   │  │  3. Generate smudging noise (e_sm_raw):                │
@@ -193,7 +193,7 @@ ThresholdKeyshare receives AllEncryptionKeysCollected
     │  │                                                         │
     │  │  Generate Shamir shares of Error Smudging Info (ESI):  │
     │  │  → Multiple sets, one per ciphertext                    │
-    │  │  → Each set: N shares, M+1 threshold to reconstruct    │
+    │  │  → Each set: N shares, T+1 threshold to reconstruct    │
     │  │                                                         │
     │  │  Output: esi_sss[num_ciphertexts][N]                   │
     │  └─────────────────────────────────────────────────────────┘
@@ -697,7 +697,7 @@ phase.
 │   │     → Uses PublicKeyShare::aggregate()
 │   │     → Produces the COLLECTIVE public key
 │   │     → Anyone can encrypt with this key
-│   │     → Only M+1 committee members can decrypt together
+│   │     → Only T+1 members of the accepted DKG roster can decrypt together
 │   │
 │   ├─ 2. Build C5 proof request (H canonical honest keyshares):
 │   │     proof_request.keyshare_bytes = [pk_share for each H party]
@@ -1151,7 +1151,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   ├─ On failure: SignedProofFailed → accusation pipeline
 │   └─ On pass: ProofVerificationPassed (cached)
 │
-├─ When M+1 shares collected (threshold met):
+├─ When T+1 shares are collected (threshold met):
 │   │
 │   ├─ State → Computing
 │   │
@@ -1161,7 +1161,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   │   │  │                                                     │
 │   │   │  │  Inputs:                                            │
 │   │   │  │    - ciphertext output                              │
-│   │   │  │    - M+1 decryption shares from different parties   │
+│   │   │  │    - T+1 decryption shares from different parties   │
 │   │   │  │    - party IDs                                      │
 │   │   │  │                                                     │
 │   │   │  │  Compute:                                           │
@@ -1191,7 +1191,7 @@ InterfoldSolReader decodes CiphertextOutputPublished event
 │   │   │     ZkRequest::DecryptedSharesAggregation {...}
 │   │   │   )
 │   │   │   → Circuit: DecryptedSharesAggregation (C7)
-│   │   │   → Proves plaintext was correctly reconstructed from M+1 shares
+│   │   │   → Proves plaintext was correctly reconstructed from T+1 shares
 │   │   ├─ ZkActor generates proof(s) via bb binary
 │   │   ├─ Signs each C7 proof (one per ciphertext index)
 │   │   └─ Publishes AggregationProofSigned {
@@ -1439,7 +1439,7 @@ Reconstruct:               Reconstruct:               Reconstruct:
 ═══════════════════════════════════════════════════════════════
 Each party now has dk_i (decryption key portion)
 No party knows the full secret key
-Any M+1 parties can collaboratively decrypt
+Any T+1 members of the accepted DKG roster can collaboratively decrypt
 
 ACTIVE AGGREGATOR collects PK_share₁ + PK_share₂ + PK_share₃
   → Produces aggregate_PK (public, published on-chain)
@@ -1472,9 +1472,9 @@ saved outcome.
 
 A crash can leave the public-key snapshot in `Collecting` while the durable C1 verification request
 has already entered the event log. Its replayed result can then arrive before historical keyshares
-restore `VerifyingC1`. The active aggregator holds one such result with the saved selected roster and
-applies it when the same roster's keyshares are ready. It discards the result if the roster changed,
-and it ignores duplicate C1 results after C1 completed.
+restore `VerifyingC1`. The active aggregator holds one such result with the saved selected roster
+and applies it when the same roster's keyshares are ready. It discards the result if the roster
+changed, and it ignores duplicate C1 results after C1 completed.
 
 A terminal E3 event also cancels that E3's compute jobs that have already reached the shared task
 pool but have not started. The cancellation key includes the local ciphernode address, so one node's

@@ -322,9 +322,9 @@ await tx.wait()
 
 1. **Committee Selection**
 
-The size and threshold of the Ciphernode Committee you select for your computation directly impacts
-both the cost and economic security of your E3. A higher threshold means more economic security (a
-higher cost to compromise the E3), but incurs a higher E3 fee.
+The committee enum that you select fixes `N`, `H`, and `T`. It affects the cost, liveness margin,
+and economic security of your E3. Larger supported committees require more coordination and proof
+work, so they have a higher fee. Applications cannot choose arbitrary threshold values.
 
 2. **Input Validation**
 

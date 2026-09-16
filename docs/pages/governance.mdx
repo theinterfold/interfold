@@ -265,10 +265,12 @@ This table is the reference for the live Interfold DAO configuration.
 | Foundation approval                       | Board review and approval required before implementation  |
 | Minimum voting power to vote              | No additional minimum beyond active voting power          |
 | Minimum voting power to create a proposal | 12K FOLD                                                  |
-| Proposal input window                     | 5 days                                                    |
-| Voting opens                              | When the ciphernode committee key is ready                |
-| New vote commitment cutoff                | 3 hours before the input window ends                      |
-| Guaranteed voting time                    | 4 days, 13 hours, and 50 minutes with the five-day window |
+| Ballot interval                           | 5 days from the fixed voting start                        |
+| Voting opens                              | At the scheduled start, after the worst-case key deadline |
+| New vote commitment cutoff                | At the scheduled voting end                               |
+| Avail finalization window                 | 3 hours after ballot commitments close                    |
+| Interfold input window                    | Voting start through Avail finalization                   |
+| Guaranteed voting time                    | 5 days                                                    |
 | Minimum participation / quorum            | 2%                                                        |
 | Approval threshold                        | >50%                                                      |
 | Execution delay                           | None                                                      |

@@ -106,6 +106,11 @@ event. Nodes then check whether they are eligible:
 - Registered and not banned
 - `isActive` (bond + ticket minimums satisfied)
 - No exit in progress
+- At least one unreserved local workload slot
+
+The runtime treats each available ticket as one local concurrent-work slot. A node with one ticket
+does not volunteer for a second E3 while its first slot is reserved or active. This is a local
+liveness rule; the contract still recognizes the full request-time ticket balance.
 
 ### 2. Score Calculation
 
@@ -132,9 +137,14 @@ Each submission emits `TicketSubmitted(e3Id, node, ticketId, score)`. The first 
 stores the seed that the registry derived from the verified VRF result. The submission deadline is
 the fulfillment time plus `sortitionSubmissionWindow`. A separate seed transaction is not needed.
 
-> The sortition algorithm actually selects `threshold_n + buffer` nodes, where the buffer provides
-> backup nodes in case of failures. The buffer size depends on the `threshold_m / threshold_n`
-> ratio:
+Before a winning ticket leaves the sortition actor, the node persists a provisional capacity
+reservation for that E3. This prevents two concurrent requests from using the same local slot. If
+the ticket transaction fails, the E3 becomes terminal, or the node is not in the finalized
+committee, the runtime releases the reservation.
+
+> The local sortition algorithm considers `threshold_n + buffer` candidate nodes. In these runtime
+> field names, `threshold_m` is the polynomial threshold `T`, `threshold_n` is the committee size
+> `N`, and decryption requires `T+1` shares. The buffer size depends on the `T/N` ratio:
 >
 > - Ratio ≥ 0.8 → buffer = `(n - m) + 3`
 > - Ratio ≥ 0.6 → buffer = `(n - m) + 2`
@@ -148,19 +158,26 @@ After the window closes and ≥ `threshold_n` tickets are present:
 2. If enough operators submitted, the registry emits
    `SortitionCommitteeFinalized(e3Id, committee, scores)`
 3. If the threshold isn't met, `CommitteeFormationFailed` is emitted and the E3 fails
-4. Selected nodes generate and publish key shares
-5. Aggregated public key is published via `publishCommittee`
+4. Each node reconciles its provisional reservation: selected nodes keep it, and unselected nodes
+   release it
+5. Selected nodes generate and publish key shares
+6. Aggregated public key is published via `publishCommittee`
+
+The reservation stays active until the E3 reaches a terminal stage. It is also reconstructed from
+durable state after a restart, so restarting a node does not make an in-flight slot appear free.
 
 ## Parameters
 
-| Parameter                   | Mainnet Launch Value | Description                                   |
-| --------------------------- | -------------------- | --------------------------------------------- |
-| `ticketPrice`               | 1,000 sUSDS shares   | Ticket collateral needed per ticket           |
-| `minTicketBalance`          | 1 ticket             | Minimum to be active                          |
-| `randomnessRequestTimeout`  | 3,600 seconds        | Maximum wait for a usable VRF response        |
-| `sortitionSubmissionWindow` | 600 seconds          | Time to submit after an accepted VRF response |
-| `threshold_m`               | 2                    | Minimum operators needed for duties           |
-| `threshold_n`               | 3                    | Total committee size                          |
+| Parameter                               | Mainnet Launch Value | Description                                   |
+| --------------------------------------- | -------------------- | --------------------------------------------- |
+| `ticketPrice`                           | 1,000 sUSDS shares   | Ticket collateral needed per ticket           |
+| `minTicketBalance`                      | 1 ticket             | Minimum to be active                          |
+| `randomnessRequestTimeout`              | 3,600 seconds        | Maximum wait for a usable VRF response        |
+| `sortitionSubmissionWindow`             | 600 seconds          | Time to submit after an accepted VRF response |
+| Minimum committee `[H,N]`               | `[2,3]`              | DKG roster and finalized committee sizes      |
+| Micro committee `[H,N]`                 | `[5,9]`              | DKG roster and finalized committee sizes      |
+| Small committee `[H,N]`                 | `[14,19]`            | DKG roster and finalized committee sizes      |
+| Runtime threshold `T` by committee enum | `1 / 4 / 9`          | Decryption requires `T+1` valid shares        |
 
 ## Monitoring
 

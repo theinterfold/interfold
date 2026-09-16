@@ -26,7 +26,7 @@ use std::collections::{hash_map::Entry, HashMap};
 /// - ratio < 0.6:  safety_margin = 1 (already fault-tolerant)
 ///
 /// # Parameters
-/// - `threshold_m`: Minimum nodes required for decryption
+/// - `threshold_m`: Polynomial threshold `T`; decryption requires `T + 1` shares
 /// - `threshold_n`: Requested committee size
 ///
 /// # Returns
@@ -53,7 +53,7 @@ pub fn calculate_buffer_size(threshold_m: usize, threshold_n: usize) -> usize {
         return 0;
     }
 
-    // Base buffer is the number of nodes that can fail without breaking threshold
+    // Preserve the legacy candidate-buffer formula based on N - T.
     let base_buffer = threshold_n.saturating_sub(threshold_m);
 
     // Calculate threshold ratio to determine safety margin

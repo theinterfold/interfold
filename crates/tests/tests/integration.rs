@@ -817,7 +817,7 @@ pub fn save_snapshot(file_name: &str, bytes: &[u8]) {
 /// # Arguments
 /// * `e3_id` - The E3 computation ID
 /// * `seed` - The shared seed for deterministic sortition
-/// * `threshold_m` - Minimum nodes required for decryption
+/// * `threshold_m` - Polynomial threshold `T`; decryption requires `T + 1` shares
 /// * `threshold_n` - Committee size
 /// * `registered_addrs` - List of node addresses eligible for selection
 /// * `collector_addr` - Address of the collector node (for validation)
