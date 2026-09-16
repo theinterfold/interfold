@@ -1091,6 +1091,13 @@ jobs:
       - name: Build circuits
         run: pnpm build:circuits
 
+      - name: Check generated circuit sources are committed
+        run: |
+          git diff --exit-code -- \
+            circuits/lib/src/configs \
+            packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol \
+            packages/interfold-contracts/scripts/utils.ts
+
       - name: Test circuit artifact validation
         run: pnpm test:circuit-tooling
 

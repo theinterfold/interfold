@@ -7,7 +7,7 @@
 use dialoguer::{theme::ColorfulTheme, FuzzySelect, Input};
 use e3_fhe_params::{BfvParamSet, BfvPreset};
 use evm_helpers::CRISPContract;
-use log::info;
+use log::{info, warn};
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -337,7 +337,13 @@ pub async fn initialize_crisp_round(
     let base = if avail_window == U256::ZERO {
         current_timestamp
     } else {
-        crisp_program.earliest_voting_start().await?.try_into()?
+        let (timestamp, native) = crisp_program
+            .earliest_voting_start_compatible(current_timestamp)
+            .await?;
+        if !native {
+            warn!("CRISPProgram has no earliestVotingStart(); derived the schedule from Interfold");
+        }
+        timestamp.try_into()?
     };
     let window_start = base
         .checked_add(CONFIG.voting_start_buffer_seconds)
@@ -388,7 +394,13 @@ pub async fn initialize_crisp_round(
     let base = if avail_window == U256::ZERO {
         current_timestamp
     } else {
-        crisp_program.earliest_voting_start().await?.try_into()?
+        let (timestamp, native) = crisp_program
+            .earliest_voting_start_compatible(current_timestamp)
+            .await?;
+        if !native {
+            warn!("CRISPProgram has no earliestVotingStart(); derived the schedule from Interfold");
+        }
+        timestamp.try_into()?
     };
     let window_start = base
         .checked_add(CONFIG.voting_start_buffer_seconds)

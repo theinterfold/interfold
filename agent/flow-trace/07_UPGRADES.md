@@ -58,6 +58,24 @@ Upgrade at least one configured bootstrap peer before the remaining operators. R
 on-chain active count can fill every configured committee and the new-version peers can discover
 each other.
 
+Treat the contracts, verifier routes, ciphernode protocol version, CRISP program, CRISP server, and
+DAO application addresses as one cutover. Do not run a mixed stack. Use this order:
+
+```text
+pause new requests and drain every E3 and committee
+  -> deploy immutable replacement routers and the new CRISP program
+  -> execute the protocol implementation, route, program, and required-version updates
+  -> run the route and verification-key validator against every enabled pair
+  -> restart the matching server and ciphernode release
+  -> update the server and DAO application addresses
+  -> verify server health and peer discovery
+  -> resume requests
+```
+
+On a testnet, a fresh protocol, CRISP, and DAO stack is an acceptable alternative to an in-place
+upgrade. It must still pass the same route and verification-key validation before it accepts an E3.
+The old and new stacks must use separate addresses so clients cannot silently combine them.
+
 The initial VRF upgrade follows this combined path because it introduces the controller and changes
 both `Interfold` and `BondingRegistry`.
 
@@ -91,6 +109,13 @@ activation validator and requires enough release-ready active operators for the 
 before it writes the checked DAO/Safe unpause transaction. On-chain active status is not a
 heartbeat, so the flag is an explicit operator confirmation that those processes are online and
 mutually reachable.
+
+The CRISP server probes `earliestVotingStart()` when it creates a round. During an ordered legacy
+cutover, a new server can derive the same lower bound from the live Interfold randomness, sortition,
+and DKG windows if the old CRISP program does not expose that selector. This fallback supports the
+short migration interval only. Deploy and register the new program, then update the server and DAO
+application address before requests resume. An old server cannot create valid rounds against the new
+program because it does not schedule the separate voting start required by that program.
 
 ## Failure and rollback
 

@@ -26,7 +26,7 @@ use e3_sdk::evm_helpers::contracts::{
     CommitteeSize, InterfoldContract, InterfoldRead, InterfoldWrite,
 };
 use evm_helpers::CRISPContract;
-use log::{error, info};
+use log::{error, info, warn};
 use serde::{Deserialize, Serialize};
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
@@ -569,10 +569,17 @@ pub async fn initialize_crisp_round(
     )
     .await?;
     let avail_window = crisp_program.availability_finalization_window().await?;
+    let current_timestamp = get_current_timestamp_rpc().await?;
     let base = if avail_window == U256::ZERO {
-        get_current_timestamp_rpc().await?
+        current_timestamp
     } else {
-        crisp_program.earliest_voting_start().await?.try_into()?
+        let (timestamp, native) = crisp_program
+            .earliest_voting_start_compatible(current_timestamp)
+            .await?;
+        if !native {
+            warn!("CRISPProgram has no earliestVotingStart(); derived the schedule from Interfold");
+        }
+        timestamp.try_into()?
     };
     let window_start = base
         .checked_add(CONFIG.voting_start_buffer_seconds)
