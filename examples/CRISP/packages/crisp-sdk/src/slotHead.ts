@@ -17,6 +17,12 @@
  * the guest can tell. `state/previous-ciphertext` makes it off chain, which is correct but is the
  * server's own word about the server's own bytes. This module makes it from the chain instead.
  *
+ * The bytes come from the server, because they are not on chain. Everything that judges them
+ * comes from an independent RPC client: the `InputCommitted` logs, which are the contract's own
+ * record of an accepted ballot. That split is what makes the check meaningful — a server that
+ * controls both the bytes and the evidence about them could simply omit an entry and its log
+ * together, and nothing would be left to notice.
+ *
  * What is checked, per entry, against the `InputCommitted` log the contract emitted:
  *
  * 1. `keccak256(bytes)` equals `encryptedVoteHash` — these are the published bytes, not a
@@ -34,22 +40,34 @@
  * ballot built on an earlier head would then be dropped from the tally.
  */
 
-import { keccak256, toEventSelector } from 'viem'
+import { keccak256 } from 'viem'
 
 import { getZkInputsGenerator } from './encoding'
-import { getIndexedLogs } from './api'
 import { getSlotEntries } from './state'
 
+import type { PublicClient } from 'viem'
 import type { OnChainInputRecord, ResolvedSlotHead, SlotEntry, SlotEntryRejection } from './types'
 
 /**
- * `InputCommitted`'s topic, derived from the signature rather than written out as a hash.
+ * `InputCommitted`, as an ABI event rather than a raw topic list.
  *
- * The event is the contract's record of an accepted ballot, and the field order here is what the
- * body of a log is decoded by. Deriving the selector keeps the two together: a change to the event
- * has to be made here, where the decoding is, instead of silently matching no logs.
+ * Declared as an event so viem encodes the topic filter and decodes the body. Naming the fields
+ * here is what keeps the two together: a raw topic list would have to be spelled out by hand, and
+ * the body would have to be sliced by word offset, which corrupts silently if the event changes.
  */
-const INPUT_COMMITTED_TOPIC = toEventSelector('InputCommitted(uint256,bytes32,address,bytes32,bytes32,uint40,uint40)')
+const INPUT_COMMITTED_EVENT = {
+  type: 'event',
+  name: 'InputCommitted',
+  inputs: [
+    { name: 'e3Id', type: 'uint256', indexed: true },
+    { name: 'inputId', type: 'bytes32', indexed: true },
+    { name: 'slotAddress', type: 'address', indexed: true },
+    { name: 'encryptedVoteCommitment', type: 'bytes32', indexed: false },
+    { name: 'encryptedVoteHash', type: 'bytes32', indexed: false },
+    { name: 'parentIndexPlusOne', type: 'uint40', indexed: false },
+    { name: 'index', type: 'uint40', indexed: false },
+  ],
+} as const
 
 /**
  * The commitment of a ciphertext, as a 32-byte hex string, or `undefined` when the bytes do not
@@ -164,70 +182,86 @@ export const resolveSlotHead = (entries: SlotEntry[], records: OnChainInputRecor
  * `e3Id` and `slotAddress` are both indexed, so this filters to one slot at the node rather than
  * fetching a round's inputs and discarding most of them.
  *
- * @param serverUrl - The base URL of the CRISP server, used for its log endpoint.
+ * **The logs are read through a client the caller supplies, not the CRISP server.** Reading them
+ * from the server would make the check that follows circular: the entries come from the same
+ * server, so a server that omits an entry *and* its log leaves the walk with no evidence the entry
+ * exists, and it answers with a superseded head as though the walk were complete. That is the one
+ * failure this module exists to catch, so it must not depend on the source it is checking.
+ *
+ * **Do not derive `fromBlock` from the round's public state.** `state/lite` reports a `start_block`
+ * that is `E3.request_block`, and that field holds a unix timestamp rather than a height
+ * (`crates/tests/tests/integration.rs` builds it from `SystemTime`). Its `snapshot_block` falls back
+ * to `request_block - 1`, so it is a timestamp too when no token snapshot was recorded. Either one
+ * passed here is rejected by the node as an invalid block range and no logs come back at all.
+ *
+ * @param client - A viem client pointed at an endpoint the caller trusts for log reads.
  * @param programAddress - The `CRISPProgram` contract.
  * @param e3Id - The round.
  * @param slotAddress - The slot.
- * @param fromBlock - Where to start scanning. Pass the contract's deployment block.
- * @returns One record per committed input of that slot, in the order the logs were returned.
+ * @param fromBlock - Where to start scanning. Defaults to `0`, which is always correct and may be
+ *                    slow on a long-lived chain; pass the contract's deployment block to narrow it.
+ *                    It must be a block number: a timestamp here is rejected by the node as an
+ *                    invalid block range, and nothing in the round's public state is a block number
+ *                    (see below).
+ * @returns One record per committed input of that slot.
  */
 export const getOnChainInputRecords = async (
-  serverUrl: string,
+  client: PublicClient,
   programAddress: string,
   e3Id: bigint,
   slotAddress: string,
-  fromBlock?: bigint,
+  fromBlock: bigint = 0n,
 ): Promise<OnChainInputRecord[]> => {
-  const logs = await getIndexedLogs(serverUrl, {
-    address: programAddress,
-    topics: [
-      INPUT_COMMITTED_TOPIC,
-      `0x${e3Id.toString(16).padStart(64, '0')}`,
-      // `inputId`, which is not being filtered on.
-      null,
-      `0x${slotAddress.toLowerCase().replace(/^0x/, '').padStart(64, '0')}`,
-    ],
+  const logs = await client.getLogs({
+    address: programAddress as `0x${string}`,
+    event: INPUT_COMMITTED_EVENT,
+    args: { e3Id, slotAddress: slotAddress as `0x${string}` },
     fromBlock,
   })
 
-  return logs.map((log) => {
-    // The four unindexed fields, each padded to a 32-byte word by the ABI encoding.
-    const body = log.data.replace(/^0x/, '')
-    const word = (position: number) => body.slice(position * 64, (position + 1) * 64)
-
-    return {
-      encryptedVoteCommitment: `0x${word(0)}` as `0x${string}`,
-      encryptedVoteHash: `0x${word(1)}` as `0x${string}`,
-      parentIndexPlusOne: Number(BigInt(`0x${word(2)}`)),
-      index: Number(BigInt(`0x${word(3)}`)),
-    }
-  })
+  return logs.map((log) => ({
+    encryptedVoteCommitment: log.args.encryptedVoteCommitment as `0x${string}`,
+    encryptedVoteHash: log.args.encryptedVoteHash as `0x${string}`,
+    parentIndexPlusOne: Number(log.args.parentIndexPlusOne),
+    index: Number(log.args.index),
+  }))
 }
 
 /**
  * Resolve the head of a slot from the chain, without trusting the CRISP server's own answer.
  *
  * Use in place of `getPreviousCiphertext` when a wrong parent must not be possible. The server
- * still supplies the bytes — they are not on chain — but every one of them is checked against what
- * `CRISPProgram` recorded, and the walk that picks the head is this client's, not the server's.
+ * still supplies the bytes — they are not on chain: `InputPublished` carries the Avail coordinates
+ * rather than the ciphertext — but every one of them is checked against what `CRISPProgram`
+ * recorded, and both the logs and the walk that picks the head are this client's.
  *
- * @param serverUrl - The base URL of the CRISP server.
+ * The two sources are deliberately different. Entries come from the server because only it holds
+ * the bytes; the `InputCommitted` logs come from `client` because they are what proves those bytes
+ * belong to this slot. Reading both from the server would let it omit an entry and its log
+ * together, leaving nothing to notice the gap.
+ *
+ * @param client - A viem client pointed at an endpoint the caller trusts for log reads.
+ * @param serverUrl - The base URL of the CRISP server, used only to fetch entry bytes.
  * @param programAddress - The `CRISPProgram` contract.
  * @param e3Id - The round.
  * @param slotAddress - The slot.
- * @param fromBlock - Where to start scanning for logs. Pass the contract's deployment block.
+ * @param fromBlock - Where to start scanning for logs. Defaults to `0`, which is always correct and
+ *                    may be slow on a long-lived chain; pass the contract's deployment block to
+ *                    narrow it. Never pass a timestamp — see the note on
+ *                    {@link getOnChainInputRecords}.
  * @returns The resolved head, whether the walk was complete, and every entry it did not take.
  */
 export const resolveSlotHeadOnChain = async (
+  client: PublicClient,
   serverUrl: string,
   programAddress: string,
   e3Id: bigint,
   slotAddress: string,
-  fromBlock?: bigint,
+  fromBlock: bigint = 0n,
 ): Promise<ResolvedSlotHead> => {
   const [entries, records] = await Promise.all([
     getSlotEntries(serverUrl, e3Id, slotAddress),
-    getOnChainInputRecords(serverUrl, programAddress, e3Id, slotAddress, fromBlock),
+    getOnChainInputRecords(client, programAddress, e3Id, slotAddress, fromBlock),
   ])
 
   return resolveSlotHead(entries, records)

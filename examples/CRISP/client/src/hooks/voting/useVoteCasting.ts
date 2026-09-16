@@ -7,7 +7,7 @@
 import { useState, useCallback, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useSignTypedData, usePublicClient, useChainId, useWalletClient } from 'wagmi'
-import type { Address } from 'viem'
+import type { Address, PublicClient } from 'viem'
 import { encodeSolidityProof, finishBallotProof, finishMaskProof, prepareBallot, resolveSlotHeadOnChain } from '@crisp-e3/sdk'
 import type { PrepareBallotInputs } from '@crisp-e3/sdk'
 import { ensureCircuits } from '@/utils/circuits'
@@ -84,22 +84,30 @@ const clearAvailabilityJob = (key: string): void => {
 /// check — the commitment is a Poseidon sponge over CRT limbs and the circuit never sees the
 /// serialization — so the entry that holds a slot can only be decided off chain.
 ///
-/// The server supplies the bytes, because they are not on chain: `InputPublished` carries the
-/// Avail coordinates, and the availability object is released once its job completes. Every one of
-/// those bytes is then checked against the commitment and content hash `CRISPProgram` recorded,
-/// and the walk that picks the head is this client's. A server that answers with a stale head, or
-/// with bytes it never received, can no longer send a voter to the wrong parent.
+/// The two sources differ on purpose. The server supplies the bytes, because they are not on
+/// chain: `InputPublished` carries the Avail coordinates, and the availability object is released
+/// once its job completes. The `InputCommitted` logs are read through `client`, so a server cannot
+/// hide an entry by omitting both it and its log. Every byte that comes back is checked against the
+/// commitment and content hash `CRISPProgram` recorded, and the walk that picks the head is this
+/// client's.
 ///
 /// Naming the wrong parent is not a rejected transaction. The proof verifies, the input is
 /// published, the gas is spent, and the Secure Process drops the entry when it walks the slot —
 /// so an unsettled head is refused here instead of being voted on.
+///
+/// The log scan starts at block 0 rather than at a height read from the round. `state/lite`'s
+/// `start_block` is `E3.request_block`, which holds a unix timestamp, and its `snapshot_block`
+/// falls back to `request_block - 1` — so neither is a height, and either one passed as `fromBlock`
+/// is rejected by the node as an invalid block range and returns no logs at all. Scanning from 0 is
+/// always correct; a deployment on a long-lived chain can pass its program's deployment block to
+/// narrow it.
 const getSlotHead = async (
+  client: PublicClient,
   e3Id: bigint,
   address: string,
   crispProgram: Address,
-  fromBlock: bigint,
 ): Promise<{ ciphertext: Uint8Array; index: number } | undefined> => {
-  const resolved = await resolveSlotHeadOnChain(INTERFOLD_API, crispProgram, e3Id, address, fromBlock)
+  const resolved = await resolveSlotHeadOnChain(client, INTERFOLD_API, crispProgram, e3Id, address)
 
   if (!resolved.complete) {
     const unsettled = resolved.rejected.filter((entry) => entry.reason === 'missing-bytes' || entry.reason === 'bytes-mismatch')
@@ -219,9 +227,9 @@ export const useVoteCasting = (customRoundState?: VoteStateLite | null, customVo
         const { crispProgram, paramSet } = await getCrispRoundConfig(publicClient, roundState.interfold_address as `0x${string}`, e3Id)
 
         // Read after the program address, because resolving the head needs it: the check is against
-        // what `CRISPProgram` published for each entry of the slot. Scanned from the round's start
-        // block, which is the earliest an input for this round can have been committed.
-        const head = await getSlotHead(e3Id, address, crispProgram, BigInt(roundState.start_block))
+        // what `CRISPProgram` published for each entry of the slot. The logs come from this client's
+        // own RPC, so the server cannot hide an entry by dropping it from its own index too.
+        const head = await getSlotHead(publicClient, e3Id, address, crispProgram)
 
         const ballotBase = {
           vote,

@@ -25,6 +25,7 @@ import {
 } from './api'
 import { getOnChainRoundData, getOnchainVotingPower, getPreviousCiphertext, getRoundDetails, getRoundTokenDetails } from './state'
 import { resolveSlotHeadOnChain } from './slotHead'
+import { getPublicClient } from './chain'
 import { finishBallotProof, finishMaskProof, prepareBallot } from './vote'
 
 import type {
@@ -117,7 +118,7 @@ export class CrispSDK {
    */
   async prepareBallot(
     request: PrepareBallotRequest,
-    verifyAgainstChain?: { programAddress: string; fromBlock?: bigint },
+    verifyAgainstChain?: { chainId: number; programAddress: string; fromBlock?: bigint },
   ): Promise<PreparedBallot> {
     const head = verifyAgainstChain
       ? await this.resolvedHeadOrThrow(verifyAgainstChain, request.e3Id, request.slotAddress)
@@ -139,11 +140,17 @@ export class CrispSDK {
    * with no error to show for it.
    */
   private async resolvedHeadOrThrow(
-    verifyAgainstChain: { programAddress: string; fromBlock?: bigint },
+    verifyAgainstChain: { chainId: number; programAddress: string; fromBlock?: bigint },
     e3Id: bigint,
     slotAddress: string,
   ): Promise<SlotHead | undefined> {
-    const resolved = await this.resolveSlotHead(verifyAgainstChain.programAddress, e3Id, slotAddress, verifyAgainstChain.fromBlock)
+    const resolved = await this.resolveSlotHead(
+      verifyAgainstChain.chainId,
+      verifyAgainstChain.programAddress,
+      e3Id,
+      slotAddress,
+      verifyAgainstChain.fromBlock,
+    )
 
     if (!resolved.complete) {
       const unsettled = resolved.rejected
@@ -395,23 +402,36 @@ export class CrispSDK {
    *
    * `getPreviousCiphertext` reports what this server decided, from the bytes this server holds.
    * This checks every entry of the slot against the commitment and content hash `CRISPProgram`
-   * published for it, and applies the Secure Process's own selection rule. The server still
-   * supplies the bytes, because they are not on chain, but it is no longer trusted to judge them.
+   * published for it, and applies the Secure Process's own selection rule.
    *
-   * Costs one extra request: the entries and the logs are fetched together. Only entries that
-   * extend the head are checked, so a slot flooded with masks costs the same as a short chain.
+   * The two sources differ on purpose. The server supplies the bytes, because they are not on
+   * chain. The `InputCommitted` logs — the contract's record of which entries exist — are read
+   * through {@link rpcUrl}, so a server cannot hide an entry by omitting both it and its log.
+   *
+   * Costs one RPC read plus one request to the server. Only entries that extend the head are
+   * checked, so a slot flooded with masks costs the same as a short chain.
    *
    * Check `complete` before using the head. When it is `false` an entry that could hold the slot
    * could not be judged, and a ballot built on the head returned would prove, publish, cost gas,
    * and then be excluded from the tally.
    *
+   * @param chainId - The chain the round lives on, used to build the log-reading client.
    * @param programAddress - The `CRISPProgram` contract
    * @param e3Id - The e3Id of the round
    * @param address - The address of the slot
-   * @param fromBlock - Where to start scanning logs. Pass the contract's deployment block.
+   * @param fromBlock - Where to start scanning logs. Defaults to `0`, which is always correct and
+   *                    may be slow on a long-lived chain; pass the contract's deployment block to
+   *                    narrow it. Never pass a timestamp: the round's `start_block` from
+   *                    `state/lite` is one, not a height.
    * @returns The resolved head, whether the walk was complete, and every entry it did not take
    */
-  async resolveSlotHead(programAddress: string, e3Id: bigint, address: string, fromBlock?: bigint): Promise<ResolvedSlotHead> {
-    return resolveSlotHeadOnChain(this.serverUrl, programAddress, e3Id, address, fromBlock)
+  async resolveSlotHead(
+    chainId: number,
+    programAddress: string,
+    e3Id: bigint,
+    address: string,
+    fromBlock?: bigint,
+  ): Promise<ResolvedSlotHead> {
+    return resolveSlotHeadOnChain(getPublicClient(chainId, this.rpcUrl), this.serverUrl, programAddress, e3Id, address, fromBlock)
   }
 }
