@@ -54,13 +54,15 @@ CiphernodeSelected event arrives at ThresholdKeyshare
 │   │     → These collectors start immediately so early peer keys/shares can
 │   │       be buffered while this node is still finishing earlier DKG phases
 │   │
-│   └─ Collector cutoffs use the frozen per-E3 window and absolute deadline:
-│         ├─ EncryptionKeyCollector: 10% of the window
-│         ├─ ThresholdShareCollector: 60% of the window
-│         └─ DecryptionKeySharedCollector: the on-chain DKG deadline
+│   └─ Collector schedules use the frozen per-E3 window and absolute deadline:
+│         ├─ EncryptionKeyCollector: hard cutoff at 10% of the window
+│         ├─ ThresholdShareCollector: soft cutoff at 75% of the window
+│         └─ DecryptionKeySharedCollector: hard cutoff at the on-chain DKG deadline
 │      Restart uses the remaining time, not a new full window. Optional
-│      per-collector env values can shorten a timeout but cannot extend it.
-│      A cutoff below the minimum still fails the E3.
+│      per-collector env values can advance a cutoff but cannot extend it.
+│      The threshold-share cutoff closes collection when at least H−1 external shares
+│      are ready. Below H−1, collection remains active until enough shares arrive or
+│      the on-chain DKG deadline expires.
 ```
 
 ### Step 2: C0 Proof Generation → EncryptionKeyCreated
@@ -359,7 +361,12 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 │   │   → Each published share contains this recipient's encrypted material
 │   └─ Forwards filtered share to ThresholdShareCollector
 │
-├─ On TIMEOUT (derived DKG-phase cutoff):
+├─ At the 75% soft cutoff:
+│   ├─ With at least H−1 external shares:
+│   │    send AllThresholdSharesCollected with the available shares
+│   └─ Below H−1: keep collecting; the next share that reaches H−1 closes collection
+│
+├─ At the canonical on-chain DKG deadline:
 │   ├─ With at least H−1 external shares:
 │   │    send AllThresholdSharesCollected with the available shares
 │   └─ Otherwise send ThresholdShareCollectionFailed to parent ThresholdKeyshare
@@ -374,7 +381,7 @@ ThresholdShareCollector collects this recipient's shares from the other N−1 pa
 │      │  }
 │      └─ ThresholdKeyshare actor stops
 │
-└─ When all N−1 external shares arrive before cutoff:
+└─ When all N−1 external shares arrive before the soft cutoff:
     ├─ Send AllThresholdSharesCollected to ThresholdKeyshare
     │
     └─ DISPATCH C2/C3 VERIFICATION:

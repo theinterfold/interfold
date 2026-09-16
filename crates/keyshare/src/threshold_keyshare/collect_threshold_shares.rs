@@ -281,4 +281,20 @@ mod tests {
         }
         assert!(!c.is_collecting());
     }
+
+    #[test]
+    fn cutoff_below_h_keeps_collecting_until_another_share_arrives() {
+        let mut c = collection();
+        assert!(c.complete_at_cutoff(1).is_none());
+        assert!(c.is_collecting());
+
+        c.receive(share(2), proofs());
+        match c.complete_at_cutoff(1).expect("one external share") {
+            ShareCollectOutcome::Completed { shares, .. } => {
+                assert_eq!(shares.len(), 1);
+                assert!(shares.contains_key(&2));
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+    }
 }

@@ -27,16 +27,15 @@ impl ThresholdKeyshare {
         .values()
         .h
         .saturating_sub(1);
-        let timeout = resolve_timeout(
-            DkgTimeoutPhase::ThresholdShareCollection,
-            state.dkg_deadline_unix_secs,
-            state.dkg_window_secs,
-        )?;
+        let schedule =
+            resolve_threshold_share_schedule(state.dkg_deadline_unix_secs, state.dkg_window_secs)?;
         info!(
             e3_id = %e3_id,
-            timeout = ?timeout.duration,
+            cutoff_delay = ?schedule.cutoff_delay,
+            deadline_delay = ?schedule.deadline_delay,
+            cutoff_reached = schedule.cutoff_reached,
             "{}",
-            timeout.description
+            schedule.description
         );
         let addr = self.decryption_key_collector.get_or_insert_with(|| {
             ThresholdShareCollector::setup(
@@ -45,7 +44,7 @@ impl ThresholdKeyshare {
                 own_party_id,
                 minimum_external,
                 e3_id,
-                timeout.duration,
+                schedule,
             )
         });
         Ok(addr.clone())

@@ -308,6 +308,10 @@ design citation alone does not establish current runtime behavior.
   The compute deadline starts at the later of key publication and the end of the input window.
   Request validation reserves the full worst-case randomness, sortition, DKG, compute, and
   decryption lifecycle. — `flow-trace/03`
+- **The threshold-share checkpoint is not a DKG deadline.** At 75% of the frozen DKG window, a
+  node may close collection when it has at least H−1 external shares. Below H−1, it must keep
+  collecting. Only the request-frozen on-chain DKG deadline may turn missing threshold shares into
+  `DKGTimeout`. Restart must preserve the remaining deadline. — `flow-trace/04`; INDEX concern #54
 - Known open issue: `gracePeriod` is stored/validated but never applied in any deadline check (dead
   code). — `Interfold.sol`; INDEX concern #3
 
