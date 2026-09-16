@@ -35,7 +35,9 @@ export {
   destroyBBApi,
 } from './vote'
 export { CrispSDK, SERVER_RPC } from './sdk'
+export type { VerifyAgainstChain } from './sdk'
 export { resolveSlotHead, resolveSlotHeadOnChain, getOnChainInputRecords } from './slotHead'
+export type { SlotHeadResolution } from './slotHead'
 
 export type {
   ChainHead,

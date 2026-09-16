@@ -18,12 +18,30 @@ use crate::server::{
 };
 use actix_web::{web, HttpRequest, HttpResponse, Responder};
 use alloy::primitives::Address;
-use log::{error, info};
+use log::{error, info, warn};
 
 use super::chain::{admit, too_many_requests};
 
 /// Upstream reads performed before a new aggregate-output job is admitted.
 const OUTPUT_CALLBACK_READ_COST: usize = 6;
+
+/// Cost charged for `/state/slot-entries`.
+///
+/// This route makes no upstream reads, so the cost is not upstream calls: it is charged for the
+/// repository read, which loads, clones, sorts and validates a whole round before filtering to one
+/// slot — so an empty slot costs the same as a full one — and for a body that expands each
+/// ciphertext into a decimal JSON array. Priced well above the typed chain routes because the
+/// caller is unauthenticated and nothing here identifies them, leaving the per-caller window as the
+/// only bound on how often that work can be triggered.
+const SLOT_ENTRIES_READ_COST: usize = 24;
+
+/// Largest total ciphertext payload one `/state/slot-entries` response may carry.
+///
+/// The response cannot be trimmed to fit: a client reads a short list as "this server has no bytes
+/// for that entry", which turns its slot-head walk incomplete rather than wrong — the entry is
+/// treated as unjudged and the voter is told to retry. Refusing states which bound was hit instead
+/// of returning a body whose size grows with the round.
+const SLOT_ENTRIES_MAX_BYTES: usize = 8 * 1024 * 1024;
 
 pub fn setup_routes(config: &mut web::ServiceConfig) {
     config.service(
@@ -153,9 +171,16 @@ async fn handle_get_previous_ciphertext(
 /// # Returns
 /// * A JSON response with every entry of the slot, which is empty when the slot has none.
 async fn handle_get_slot_entries(
+    http_request: HttpRequest,
     data: web::Json<SlotEntriesRequest>,
     store: web::Data<AppData>,
+    limiter: web::Data<ChainRateLimiter>,
 ) -> impl Responder {
+    // Charged before the repository read, because the read is the expense.
+    if let Err((caller, cost)) = admit(&http_request, &limiter, SLOT_ENTRIES_READ_COST) {
+        return too_many_requests(&caller, cost, "/state/slot-entries");
+    }
+
     let incoming = data.into_inner();
 
     let e3_id = match e3_id_to_u256(&incoming.round_id) {
@@ -173,12 +198,32 @@ async fn handle_get_slot_entries(
     };
 
     match store.e3(e3_key).get_slot_entries(address.into()).await {
-        Ok(entries) => HttpResponse::Ok().json(SlotEntriesResponse {
-            entries: entries
-                .into_iter()
-                .map(|(ciphertext, index)| SlotEntry { ciphertext, index })
-                .collect(),
-        }),
+        Ok(entries) => {
+            let total_bytes: usize = entries.iter().map(|(ciphertext, _)| ciphertext.len()).sum();
+
+            if total_bytes > SLOT_ENTRIES_MAX_BYTES {
+                warn!(
+                    "Refusing slot entries for {}: {} bytes over {} entries exceeds the {} byte bound",
+                    incoming.address,
+                    total_bytes,
+                    entries.len(),
+                    SLOT_ENTRIES_MAX_BYTES
+                );
+
+                return HttpResponse::PayloadTooLarge().json(JsonResponse {
+                    response: format!(
+                        "This slot holds {total_bytes} bytes of ciphertext, above the {SLOT_ENTRIES_MAX_BYTES} byte limit for one response"
+                    ),
+                });
+            }
+
+            HttpResponse::Ok().json(SlotEntriesResponse {
+                entries: entries
+                    .into_iter()
+                    .map(|(ciphertext, index)| SlotEntry { ciphertext, index })
+                    .collect(),
+            })
+        }
         Err(e) => {
             error!("Error getting slot entries: {:?}", e);
             HttpResponse::InternalServerError().body("Failed to get slot entries")

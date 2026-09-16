@@ -21,7 +21,18 @@ import { keccak256 } from 'viem'
 
 import { resolveSlotHead } from '../src/slotHead'
 import { getZkInputsGenerator } from '../src/encoding'
+import { setCircuits } from '../src/circuits'
+import { loadCircuits } from '../src/presets/insecure-512'
 import type { OnChainInputRecord, SlotEntry } from '../src/types'
+
+/**
+ * The preset these ballots are encrypted under.
+ *
+ * Passed explicitly rather than inferred from what is registered: the walk recomputes each entry's
+ * commitment, and a commitment is only comparable within a single preset, so resolving under a
+ * different one reports a different 32 bytes for every entry.
+ */
+const PRESET = 'insecure-512' as const
 
 /** A real BFV ciphertext, and the commitment the circuit constrains for it. */
 type Ballot = { ciphertext: Uint8Array; commitment: `0x${string}`; hash: `0x${string}` }
@@ -34,7 +45,9 @@ const hex = (bytes: Uint8Array): `0x${string}` =>
 describe('resolveSlotHead', () => {
   let ballots: Ballot[]
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    setCircuits(await loadCircuits())
+
     const generator = getZkInputsGenerator()
     const { publicKey } = generator.generateKeys()
     const degree = Number(generator.getBFVParams().degree)
@@ -63,8 +76,17 @@ describe('resolveSlotHead', () => {
 
   const entry = (index: number, ballot: Ballot): SlotEntry => ({ index, ciphertext: ballot.ciphertext })
 
+  /** The registered bundle must match the round's preset, or every entry is judged wrongly. */
+  it('refuses to resolve under a preset whose circuits are not loaded', () => {
+    const ballotsUnderTest = ballots
+
+    expect(() => resolveSlotHead([entry(0, ballotsUnderTest[0])], [record(0, ballotsUnderTest[0], 0)], 'secure-8192')).toThrow(
+      /secure-8192 circuits are not loaded/,
+    )
+  })
+
   it('reports no head for a slot with no entries', () => {
-    const resolved = resolveSlotHead([], [])
+    const resolved = resolveSlotHead([], [], PRESET)
 
     expect(resolved.head).toBeUndefined()
     expect(resolved.complete).toBe(true)
@@ -74,7 +96,7 @@ describe('resolveSlotHead', () => {
     const entries = [entry(0, ballots[0]), entry(1, ballots[1]), entry(2, ballots[2])]
     const records = [record(0, ballots[0], 0), record(1, ballots[1], 1), record(2, ballots[2], 2)]
 
-    const resolved = resolveSlotHead(entries, records)
+    const resolved = resolveSlotHead(entries, records, PRESET)
 
     expect(resolved.head?.index).toBe(2)
     expect(resolved.head?.ciphertext).toEqual(ballots[2].ciphertext)
@@ -98,7 +120,7 @@ describe('resolveSlotHead', () => {
       record(2, ballots[2], 2),
     ]
 
-    const resolved = resolveSlotHead(entries, records)
+    const resolved = resolveSlotHead(entries, records, PRESET)
 
     expect(resolved.head?.index).toBe(0)
     expect(resolved.complete).toBe(true)
@@ -124,7 +146,7 @@ describe('resolveSlotHead', () => {
       record(2, ballots[2], 1),
     ]
 
-    const resolved = resolveSlotHead(entries, records)
+    const resolved = resolveSlotHead(entries, records, PRESET)
 
     expect(resolved.head?.index).toBe(2)
     expect(resolved.complete).toBe(true)
@@ -140,7 +162,7 @@ describe('resolveSlotHead', () => {
     const entries = [entry(0, ballots[0]), entry(1, ballots[1]), entry(2, ballots[2])]
     const records = [record(0, ballots[0], 0), record(1, ballots[1], 1), record(2, ballots[2], 1)]
 
-    const resolved = resolveSlotHead(entries, records)
+    const resolved = resolveSlotHead(entries, records, PRESET)
 
     expect(resolved.head?.index).toBe(1)
     expect(resolved.rejected).toEqual([{ index: 2, reason: 'not-extending-head' }])
@@ -157,7 +179,7 @@ describe('resolveSlotHead', () => {
     const entries = [entry(0, ballots[0]), entry(1, ballots[3])]
     const records = [record(0, ballots[0], 0), record(1, ballots[1], 1)]
 
-    const resolved = resolveSlotHead(entries, records)
+    const resolved = resolveSlotHead(entries, records, PRESET)
 
     expect(resolved.head?.index).toBe(0)
     expect(resolved.complete).toBe(false)
@@ -175,7 +197,7 @@ describe('resolveSlotHead', () => {
     const entries = [entry(0, ballots[0])]
     const records = [record(0, ballots[0], 0), record(1, ballots[1], 1)]
 
-    const resolved = resolveSlotHead(entries, records)
+    const resolved = resolveSlotHead(entries, records, PRESET)
 
     expect(resolved.head?.index).toBe(0)
     expect(resolved.complete).toBe(false)
@@ -191,7 +213,7 @@ describe('resolveSlotHead', () => {
     const entries = [entry(0, ballots[0]), entry(1, ballots[1])]
     const records = [record(0, ballots[0], 0), record(1, ballots[1], 1), record(2, ballots[2], 1)]
 
-    const resolved = resolveSlotHead(entries, records)
+    const resolved = resolveSlotHead(entries, records, PRESET)
 
     expect(resolved.head?.index).toBe(1)
     expect(resolved.complete).toBe(true)
@@ -209,7 +231,7 @@ describe('resolveSlotHead', () => {
     const entries = [entry(0, ballots[0]), { index: 1, ciphertext: garbage }]
     const records = [record(0, ballots[0], 0), { ...record(1, ballots[1], 1), encryptedVoteHash: keccak256(garbage) }]
 
-    const resolved = resolveSlotHead(entries, records)
+    const resolved = resolveSlotHead(entries, records, PRESET)
 
     expect(resolved.head?.index).toBe(0)
     expect(resolved.rejected).toEqual([{ index: 1, reason: 'commitment-mismatch' }])
@@ -225,7 +247,7 @@ describe('resolveSlotHead', () => {
     const entries = [entry(0, ballots[0]), entry(1, ballots[1])]
     const records = [record(0, ballots[0], 0)]
 
-    const resolved = resolveSlotHead(entries, records)
+    const resolved = resolveSlotHead(entries, records, PRESET)
 
     expect(resolved.head?.index).toBe(0)
     expect(resolved.complete).toBe(true)
@@ -236,7 +258,7 @@ describe('resolveSlotHead', () => {
     const entries = [entry(2, ballots[2]), entry(0, ballots[0]), entry(1, ballots[1])]
     const records = [record(2, ballots[2], 2), record(0, ballots[0], 0), record(1, ballots[1], 1)]
 
-    const resolved = resolveSlotHead(entries, records)
+    const resolved = resolveSlotHead(entries, records, PRESET)
 
     expect(resolved.head?.index).toBe(2)
   })

@@ -42,11 +42,35 @@
 
 import { keccak256 } from 'viem'
 
+import { registeredPreset, type CircuitPreset } from './circuits'
 import { getZkInputsGenerator } from './encoding'
 import { getSlotEntries } from './state'
 
 import type { PublicClient } from 'viem'
 import type { OnChainInputRecord, ResolvedSlotHead, SlotEntry, SlotEntryRejection } from './types'
+
+/**
+ * What a chain-backed resolution needs beyond the round and the slot.
+ *
+ * Both fields are required rather than defaulted. Each default that was considered here produced a
+ * silent wrong answer instead of an error: `0` for the scan start made every request unbounded, and
+ * the SDK's own generator fell back to insecure-512 parameters when the round's circuits were not
+ * loaded, marking every entry unusable.
+ */
+export type SlotHeadResolution = {
+  /** The BFV preset the round's ciphertexts are encrypted under. */
+  preset: CircuitPreset
+  /** The block `CRISPProgram` was deployed at, where its logs begin. */
+  deploymentBlock: bigint
+}
+
+/**
+ * Blocks per `eth_getLogs` request.
+ *
+ * The real cap belongs to the provider and is not discoverable over the wire, so this is a width
+ * common hosted endpoints accept. The CRISP server's own log route windows at the same width.
+ */
+const LOG_WINDOW = 2_000n
 
 /**
  * `InputCommitted`, as an ABI event rather than a raw topic list.
@@ -77,9 +101,9 @@ const INPUT_COMMITTED_EVENT = {
  * an entry and carries on, so resolving a head must do the same. Throwing here would let one
  * poisoned entry stop a voter who has a perfectly good parent earlier in the chain.
  */
-const commitmentOf = (ciphertext: Uint8Array): `0x${string}` | undefined => {
+const commitmentOf = (generator: ZkInputsGenerator, ciphertext: Uint8Array): `0x${string}` | undefined => {
   try {
-    const commitment = getZkInputsGenerator().computeCtCommitment(ciphertext)
+    const commitment = generator.computeCtCommitment(ciphertext)
 
     return `0x${Array.from(commitment)
       .map((byte) => byte.toString(16).padStart(2, '0'))
@@ -87,6 +111,37 @@ const commitmentOf = (ciphertext: Uint8Array): `0x${string}` | undefined => {
   } catch {
     return undefined
   }
+}
+
+type ZkInputsGenerator = ReturnType<typeof getZkInputsGenerator>
+
+/**
+ * The generator that recomputes commitments for one preset, refusing to run under any other.
+ *
+ * A commitment is only comparable within a single preset. The sponge runs over CRT limbs whose
+ * count and width come from the BFV parameters, so a secure-8192 ciphertext hashed with insecure-512
+ * parameters does not fail — it returns 32 different bytes. Every entry then reads as
+ * `commitment-mismatch`, which is a verdict rather than a gap, so the walk takes no entry at all and
+ * still reports `complete: true`. The ballot is built with no parent and the Secure Process drops
+ * it, which is exactly the silent vote loss this module exists to prevent.
+ *
+ * That happens whenever the head is resolved before the round's circuits are loaded, because
+ * `getZkInputsGenerator()` falls back to insecure-512 defaults rather than failing. So the preset is
+ * required and must already be registered. Throwing is deliberate: this is a caller ordering bug,
+ * not a property of the round, and no retry will clear it.
+ */
+const commitmentGenerator = (preset: CircuitPreset): ZkInputsGenerator => {
+  const registered = registeredPreset()
+
+  if (registered !== preset) {
+    throw new Error(
+      `Cannot resolve a slot head for a ${preset} round: the ${preset} circuits are not loaded ` +
+        `(registered: ${registered ?? 'none'}). Load the round's circuits first — under the wrong ` +
+        `parameters every entry is judged a commitment mismatch and an occupied slot reads as empty.`,
+    )
+  }
+
+  return getZkInputsGenerator()
 }
 
 /** Compare two hex strings as values, so that case and any `0x` prefix do not decide equality. */
@@ -107,9 +162,14 @@ const sameHex = (left: string, right: string): boolean => left.toLowerCase().rep
  *
  * @param entries - The slot's entries with their bytes, in any order.
  * @param records - What the contract published for those entries, in any order.
+ * @param preset - The BFV preset the round's ciphertexts are encrypted under. Required, because a
+ *                 commitment recomputed under any other preset is 32 unrelated bytes and would mark
+ *                 every entry unusable. The matching circuits must already be registered.
  * @returns The entry that holds the slot, and every entry that was not taken with the reason.
+ * @throws When the registered circuit bundle is not for `preset`.
  */
-export const resolveSlotHead = (entries: SlotEntry[], records: OnChainInputRecord[]): ResolvedSlotHead => {
+export const resolveSlotHead = (entries: SlotEntry[], records: OnChainInputRecord[], preset: CircuitPreset): ResolvedSlotHead => {
+  const generator = commitmentGenerator(preset)
   const bytesByIndex = new Map(entries.map((entry) => [entry.index, entry.ciphertext]))
   // Index order, because that is the order the tree was built in and a chain is only ever extended
   // forwards. The chain is the authority on which entries exist; an entry the server returns that
@@ -154,7 +214,7 @@ export const resolveSlotHead = (entries: SlotEntry[], records: OnChainInputRecor
     // The published bytes do not reproduce the commitment the proof constrained. Unlike the two
     // cases above this is a verdict, not a gap: these are the bytes the round will be computed
     // over, and the Secure Process will drop this entry too.
-    const commitment = commitmentOf(ciphertext)
+    const commitment = commitmentOf(generator, ciphertext)
     if (!commitment || !sameHex(commitment, record.encryptedVoteCommitment)) {
       rejected.push({ index: record.index, reason: 'commitment-mismatch' })
       continue
@@ -198,11 +258,15 @@ export const resolveSlotHead = (entries: SlotEntry[], records: OnChainInputRecor
  * @param programAddress - The `CRISPProgram` contract.
  * @param e3Id - The round.
  * @param slotAddress - The slot.
- * @param fromBlock - Where to start scanning. Defaults to `0`, which is always correct and may be
- *                    slow on a long-lived chain; pass the contract's deployment block to narrow it.
- *                    It must be a block number: a timestamp here is rejected by the node as an
- *                    invalid block range, and nothing in the round's public state is a block number
- *                    (see below).
+ * @param deploymentBlock - The block `CRISPProgram` was deployed at. Required, and there is no safe
+ *                          default: the contract has no logs before it, so starting earlier only
+ *                          spends requests. It must be a block number, and everything the round's
+ *                          public state reports is a timestamp rather than a height (`state/lite`'s
+ *                          `start_block` is `E3.request_block`, which
+ *                          `crates/tests/tests/integration.rs` builds from `SystemTime`, and its
+ *                          `snapshot_block` falls back to `request_block - 1`) — either one passed
+ *                          here is rejected by the node as an invalid block range and no logs come
+ *                          back at all.
  * @returns One record per committed input of that slot.
  */
 export const getOnChainInputRecords = async (
@@ -210,21 +274,38 @@ export const getOnChainInputRecords = async (
   programAddress: string,
   e3Id: bigint,
   slotAddress: string,
-  fromBlock: bigint = 0n,
+  deploymentBlock: bigint,
 ): Promise<OnChainInputRecord[]> => {
-  const logs = await client.getLogs({
-    address: programAddress as `0x${string}`,
-    event: INPUT_COMMITTED_EVENT,
-    args: { e3Id, slotAddress: slotAddress as `0x${string}` },
-    fromBlock,
-  })
+  // Pinned before the first request, so the range cannot shift under the scan: a head that advances
+  // between windows would make the next range either overlap or skip.
+  const head = await client.getBlockNumber()
+  const records: OnChainInputRecord[] = []
 
-  return logs.map((log) => ({
-    encryptedVoteCommitment: log.args.encryptedVoteCommitment as `0x${string}`,
-    encryptedVoteHash: log.args.encryptedVoteHash as `0x${string}`,
-    parentIndexPlusOne: Number(log.args.parentIndexPlusOne),
-    index: Number(log.args.index),
-  }))
+  // Windowed, because the provider's `eth_getLogs` range cap is not discoverable over the wire and
+  // an unbounded request is refused outright by every hosted endpoint. The server's own route uses
+  // the same width for the same reason. A deployment block is what makes this affordable: the scan
+  // is bounded by how long the contract has existed, not by the age of the chain.
+  for (let start = deploymentBlock; start <= head; start += LOG_WINDOW) {
+    const windowEnd = start + LOG_WINDOW - 1n
+    const logs = await client.getLogs({
+      address: programAddress as `0x${string}`,
+      event: INPUT_COMMITTED_EVENT,
+      args: { e3Id, slotAddress: slotAddress as `0x${string}` },
+      fromBlock: start,
+      toBlock: windowEnd < head ? windowEnd : head,
+    })
+
+    for (const log of logs) {
+      records.push({
+        encryptedVoteCommitment: log.args.encryptedVoteCommitment as `0x${string}`,
+        encryptedVoteHash: log.args.encryptedVoteHash as `0x${string}`,
+        parentIndexPlusOne: Number(log.args.parentIndexPlusOne),
+        index: Number(log.args.index),
+      })
+    }
+  }
+
+  return records
 }
 
 /**
@@ -245,11 +326,12 @@ export const getOnChainInputRecords = async (
  * @param programAddress - The `CRISPProgram` contract.
  * @param e3Id - The round.
  * @param slotAddress - The slot.
- * @param fromBlock - Where to start scanning for logs. Defaults to `0`, which is always correct and
- *                    may be slow on a long-lived chain; pass the contract's deployment block to
- *                    narrow it. Never pass a timestamp — see the note on
- *                    {@link getOnChainInputRecords}.
+ * @param preset - The BFV preset the round's ciphertexts are encrypted under, and the preset whose
+ *                 circuits must already be registered.
+ * @param deploymentBlock - The block `CRISPProgram` was deployed at, and where the log scan starts.
  * @returns The resolved head, whether the walk was complete, and every entry it did not take.
+ * @throws When the registered circuits are not for `preset`, or when the round's circuits were never
+ *         loaded at all. Refusing beats resolving a head under the wrong parameters.
  */
 export const resolveSlotHeadOnChain = async (
   client: PublicClient,
@@ -257,12 +339,12 @@ export const resolveSlotHeadOnChain = async (
   programAddress: string,
   e3Id: bigint,
   slotAddress: string,
-  fromBlock: bigint = 0n,
+  { preset, deploymentBlock }: SlotHeadResolution,
 ): Promise<ResolvedSlotHead> => {
   const [entries, records] = await Promise.all([
     getSlotEntries(serverUrl, e3Id, slotAddress),
-    getOnChainInputRecords(client, programAddress, e3Id, slotAddress, fromBlock),
+    getOnChainInputRecords(client, programAddress, e3Id, slotAddress, deploymentBlock),
   ])
 
-  return resolveSlotHead(entries, records)
+  return resolveSlotHead(entries, records, preset)
 }

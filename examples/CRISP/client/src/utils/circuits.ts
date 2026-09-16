@@ -20,7 +20,15 @@ const LOADERS: Record<CircuitPreset, () => Promise<{ loadCircuits: () => Promise
 
 let pending: Partial<Record<CircuitPreset, Promise<void>>> = {}
 
-const presetForParamSet = (paramSet: number): CircuitPreset | null => {
+/**
+ * The preset a round's `paramSet` selects, or `null` when the round names one this client cannot
+ * prove with.
+ *
+ * Exported because the slot-head check needs the same answer: it recomputes ciphertext commitments,
+ * and those are only comparable within a single preset. It must be told which preset the round uses
+ * rather than reading whatever happens to be loaded at the time.
+ */
+export const presetForParamSet = (paramSet: number): CircuitPreset | null => {
   if (paramSet === 0) return 'insecure-512'
   if (paramSet === 1) return 'secure-8192'
   return null

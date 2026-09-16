@@ -8,8 +8,8 @@
  * `resolveSlotHeadOnChain` against a stub server and a stub client.
  *
  * The pure walk is covered in `slotHead.test.ts`. What is exercised here is everything between it
- * and the network: the log filter, the pairing of server bytes with chain records, and the fact
- * that the two come from different sources.
+ * and the network: the log filter, the windowed scan, the pairing of server bytes with chain
+ * records, and the fact that the two come from different sources.
  *
  * The server and the client are stubbed separately on purpose. They are different sources, and the
  * whole point of the split is that the server cannot answer for both — so a test that let one stub
@@ -21,6 +21,8 @@ import { keccak256, toEventSelector, encodeAbiParameters, parseAbiParameters, pa
 
 import { resolveSlotHeadOnChain } from '../src/slotHead'
 import { getZkInputsGenerator } from '../src/encoding'
+import { setCircuits } from '../src/circuits'
+import { loadCircuits } from '../src/presets/insecure-512'
 
 import type { PublicClient } from 'viem'
 
@@ -28,6 +30,16 @@ const SERVER = 'http://crisp.test'
 const PROGRAM = '0x00000000000000000000000000000000000000aa'
 const SLOT = '0x00000000000000000000000000000000000000bb'
 const E3_ID = 7n
+
+/** The preset the stubbed ballots are encrypted under. Passed explicitly to the resolver. */
+const PRESET = 'insecure-512' as const
+
+/** A deployment block and a head far enough apart that the scan needs more than one window. */
+const DEPLOYMENT_BLOCK = 1_000n
+const HEAD = 5_000n
+
+/** Blocks per request. Must match `LOG_WINDOW` in the module under test. */
+const LOG_WINDOW = 2_000n
 
 const INPUT_COMMITTED_TOPIC = toEventSelector('InputCommitted(uint256,bytes32,address,bytes32,bytes32,uint40,uint40)')
 
@@ -58,7 +70,8 @@ const log = (ballot: Ballot, index: number, parentIndexPlusOne: number, override
     parentIndexPlusOne,
     index,
   },
-  blockNumber: BigInt(100 + index),
+  // Inside the scanned range, so the window filter has something real to select on.
+  blockNumber: DEPLOYMENT_BLOCK + BigInt(index),
   transactionHash: null,
   logIndex: index,
   blockHash: null,
@@ -69,7 +82,9 @@ const log = (ballot: Ballot, index: number, parentIndexPlusOne: number, override
 describe('resolveSlotHeadOnChain', () => {
   let ballots: Ballot[]
 
-  beforeAll(() => {
+  beforeAll(async () => {
+    setCircuits(await loadCircuits())
+
     const generator = getZkInputsGenerator()
     const { publicKey } = generator.generateKeys()
     const degree = Number(generator.getBFVParams().degree)
@@ -92,14 +107,21 @@ describe('resolveSlotHeadOnChain', () => {
     vi.unstubAllGlobals()
   })
 
+  /** What the resolver needs beyond the round and the slot. */
+  const resolution = (deploymentBlock = DEPLOYMENT_BLOCK) => ({ preset: PRESET, deploymentBlock })
+
   /**
    * A server that serves the entries it was given, and a client that returns the logs.
    *
    * Separate stubs because they are separate sources: `entries` is what the server reports, `logs`
    * is what the chain reports, and a test can vary either one.
+   *
+   * The client's `getLogs` filters by the requested window, so a resolver that asked for the wrong
+   * range would come back empty rather than accidentally correct.
    */
   const stubSources = (entries: { ciphertext: Uint8Array; index: number }[], logs: unknown[]) => {
     const requests: { url: string; body: any }[] = []
+    const windows: { fromBlock: bigint; toBlock: bigint }[] = []
 
     vi.stubGlobal(
       'fetch',
@@ -120,9 +142,21 @@ describe('resolveSlotHeadOnChain', () => {
       }),
     )
 
-    const getLogs = vi.fn(async (_filter: unknown) => logs)
+    const getLogs = vi.fn(async (filter: any) => {
+      windows.push({ fromBlock: filter.fromBlock, toBlock: filter.toBlock })
 
-    return { requests, getLogs, client: { getLogs } as unknown as PublicClient }
+      return (logs as any[]).filter((entry) => entry.blockNumber >= filter.fromBlock && entry.blockNumber <= filter.toBlock)
+    })
+
+    const getBlockNumber = vi.fn(async () => HEAD)
+
+    return {
+      requests,
+      windows,
+      getLogs,
+      getBlockNumber,
+      client: { getLogs, getBlockNumber } as unknown as PublicClient,
+    }
   }
 
   it('resolves the head from the server bytes and the chain records', async () => {
@@ -134,7 +168,7 @@ describe('resolveSlotHeadOnChain', () => {
     ]
     const { client, getLogs } = stubSources(entries, [log(ballots[0], 0, 0), log(ballots[1], 2, 1)])
 
-    const resolved = await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT)
+    const resolved = await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT, resolution())
 
     expect(resolved.complete).toBe(true)
     expect(resolved.head?.index).toBe(2)
@@ -149,33 +183,59 @@ describe('resolveSlotHeadOnChain', () => {
   })
 
   /**
-   * The scan must always carry an explicit `fromBlock`.
+   * The scan must be windowed, and must start at the contract rather than at genesis.
    *
-   * An omitted `fromBlock` is not "from the beginning": the node reads it as the latest block, so
-   * every input lands outside the range, the walk sees an empty chain, and it reports a head of
-   * `undefined` as complete. A ballot built on that is published and dropped from the tally.
-   *
-   * This is the shape the e2e caught, from the other side: a `fromBlock` that was present but a
-   * timestamp rather than a height made the node reject the range outright. Both are the same
-   * mistake — a bound that is not a real height — so this asserts the value directly.
+   * This is the shape that fails on a deployed chain. Starting at `0` and running to the head is
+   * one request spanning the whole history, which every hosted provider refuses — Publicnode caps
+   * `eth_getLogs` at 50,000 blocks — so voting failed outright rather than slowly. The deployment
+   * block is also the only bound available: nothing in the round's public state is a height, and a
+   * timestamp there is rejected as an invalid block range.
    */
-  it('scans from block 0 when the caller gives no fromBlock', async () => {
-    const { client, getLogs } = stubSources([], [])
+  it('windows the scan from the deployment block to the head', async () => {
+    const { client, windows } = stubSources([], [])
 
-    await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT)
+    await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT, resolution())
 
-    const filter = getLogs.mock.calls[0][0] as any
-    expect(filter.fromBlock).toBe(0n)
-    expect(typeof filter.fromBlock).toBe('bigint')
+    // Contiguous from the deployment block to the head, with no gap and no overlap: a gap would
+    // silently drop an entry, and an overlap would re-read one.
+    expect(windows.length).toBeGreaterThan(1)
+    expect(windows[0].fromBlock).toBe(DEPLOYMENT_BLOCK)
+    expect(windows[windows.length - 1].toBlock).toBe(HEAD)
+
+    for (const [position, window] of windows.entries()) {
+      expect(window.toBlock - window.fromBlock + 1n).toBeLessThanOrEqual(LOG_WINDOW)
+
+      if (position > 0) {
+        expect(window.fromBlock).toBe(windows[position - 1].toBlock + 1n)
+      }
+    }
   })
 
-  /** A caller that knows the deployment block gets a tight scan instead. */
-  it('passes an explicit fromBlock through to the query', async () => {
+  /** Every request carries both bounds, so none of them can be read as "the latest block". */
+  it('never issues a request without both bounds', async () => {
     const { client, getLogs } = stubSources([], [])
 
-    await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT, 42n)
+    await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT, resolution())
 
-    expect((getLogs.mock.calls[0][0] as any).fromBlock).toBe(42n)
+    for (const [filter] of getLogs.mock.calls as any[]) {
+      expect(typeof filter.fromBlock).toBe('bigint')
+      expect(typeof filter.toBlock).toBe('bigint')
+      expect(filter.fromBlock).toBeGreaterThanOrEqual(DEPLOYMENT_BLOCK)
+      expect(filter.toBlock).toBeLessThanOrEqual(HEAD)
+    }
+  })
+
+  /** A window the server would refuse is never requested, so nothing depends on the provider's cap. */
+  it('does not ask the provider for a range it would reject', async () => {
+    const { client, getLogs } = stubSources([], [])
+
+    await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT, resolution())
+
+    for (const [filter] of getLogs.mock.calls as [{ fromBlock: bigint; toBlock: bigint }][]) {
+      const span = filter.toBlock - filter.fromBlock + 1n
+
+      expect(span).toBeLessThanOrEqual(LOG_WINDOW)
+    }
   })
 
   /**
@@ -198,7 +258,7 @@ describe('resolveSlotHeadOnChain', () => {
 
     const { client } = stubSources(serverEntries, chainLogs)
 
-    const resolved = await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT)
+    const resolved = await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT, resolution())
 
     expect(resolved.complete).toBe(false)
     expect(resolved.rejected).toEqual([{ index: 1, reason: 'missing-bytes' }])
@@ -215,7 +275,7 @@ describe('resolveSlotHeadOnChain', () => {
       [log(ballots[0], 0, 0), log(ballots[1], 1, 1)],
     )
 
-    const resolved = await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT)
+    const resolved = await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT, resolution())
 
     expect(resolved.complete).toBe(false)
     expect(resolved.head?.index).toBe(0)
@@ -225,7 +285,7 @@ describe('resolveSlotHeadOnChain', () => {
   it('reports no head for a slot the chain has no entries for', async () => {
     const { client } = stubSources([], [])
 
-    const resolved = await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT)
+    const resolved = await resolveSlotHeadOnChain(client, SERVER, PROGRAM, E3_ID, SLOT, resolution())
 
     expect(resolved.head).toBeUndefined()
     expect(resolved.complete).toBe(true)

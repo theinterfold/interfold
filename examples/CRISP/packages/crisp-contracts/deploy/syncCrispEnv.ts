@@ -47,6 +47,11 @@ function deploymentAddress(contractName: string, chain: string): string | undefi
   return readDeploymentArgs(contractName, chain)?.address
 }
 
+/** The block a contract was deployed at, or `undefined` when the deployment is not recorded. */
+function deploymentBlock(contractName: string, chain: string): number | undefined {
+  return readDeploymentArgs(contractName, chain)?.blockNumber
+}
+
 /** Writes localhost deployment addresses into server/.env and client/.env. */
 export function syncCrispEnvFromDeployments(chain: string): void {
   const interfoldAddress = deploymentAddress('Interfold', chain)
@@ -54,6 +59,7 @@ export function syncCrispEnvFromDeployments(chain: string): void {
   const programAddress = deploymentAddress('CRISPProgram', chain)
   const registryAddress = deploymentAddress('CiphernodeRegistryOwnable', chain)
   const votingTokenAddress = deploymentAddress('MockVotingToken', chain)
+  const programDeployBlock = deploymentBlock('CRISPProgram', chain)
 
   const missing: string[] = []
   if (!interfoldAddress) missing.push('Interfold')
@@ -94,10 +100,19 @@ export function syncCrispEnvFromDeployments(chain: string): void {
   }
 
   applyEnvUpdates(serverEnv, serverUpdates)
+  // The client scans `CRISPProgram`'s logs to resolve a slot head, and that scan cannot start at
+  // genesis — hosted providers refuse a range that wide, and nothing in a round's public state is a
+  // block height. The deployment record already knows the block, so it is written here rather than
+  // left for an operator to fill in by hand.
   applyEnvUpdates(clientEnv, {
     VITE_CRISP_TOKEN: votingTokenAddress!,
+    ...(programDeployBlock === undefined ? {} : { VITE_CRISP_PROGRAM_DEPLOY_BLOCK: String(programDeployBlock) }),
   })
 
   console.log(`Synced deployment addresses → ${path.relative(CRISP_ROOT, serverEnv)}`)
   console.log(`Synced VITE_CRISP_TOKEN → ${path.relative(CRISP_ROOT, clientEnv)}`)
+
+  if (programDeployBlock !== undefined) {
+    console.log(`Synced VITE_CRISP_PROGRAM_DEPLOY_BLOCK=${programDeployBlock} → ${path.relative(CRISP_ROOT, clientEnv)}`)
+  }
 }
