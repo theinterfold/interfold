@@ -624,7 +624,7 @@ EOF
 
 emit_circuit_row "C0" "/dkg/pk"
 emit_circuit_row "C1" "/threshold/pk_generation"
-emit_circuit_row "l-BFV PK generation row" "/threshold/lbfv_pk_generation"
+emit_circuit_row "l-BFV PK generation limb" "/threshold/lbfv_pk_generation_limb"
 emit_circuit_row "l-BFV PK aggregation row" "/threshold/lbfv_pk_aggregation"
 emit_circuit_row "RLK generation limb" "/threshold/rlk_generation_limb"
 emit_circuit_row "RLK aggregation row" "/threshold/rlk_aggregation"

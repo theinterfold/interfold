@@ -17,13 +17,14 @@ use e3_zk_helpers::circuits::threshold::lbfv_proof_domain::sample_lbfv_proof_dom
 use e3_zk_helpers::threshold::lbfv_pk_aggregation::{
     LbfvPkAggregationCircuit, LbfvPkAggregationCircuitData,
 };
-use e3_zk_helpers::threshold::pk_generation::{LbfvPkGenerationAdapter, LbfvPkGenerationCircuit};
+use e3_zk_helpers::threshold::pk_generation::LbfvPkGenerationAdapter;
 use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
 use e3_zk_helpers::threshold::rlk_generation::RlkGenerationAdapter;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::test_utils::load_vk_artifacts;
 use e3_zk_prover::{
-    prove_lbfv_generation_fold_step, prove_rlk_generation_row, Provable, ZkBackend, ZkProver,
+    prove_lbfv_generation_fold_step, prove_lbfv_pk_generation_row, prove_rlk_generation_row,
+    Provable, ZkBackend, ZkProver,
 };
 use fhe::bfv::{CommonRandomPolyVec, SecretKey};
 use fhe::trlbfv::{PublicKeyShare, RelinKeyShare};
@@ -124,28 +125,36 @@ async fn secure_generation_fold_kernel_proves_and_verifies() {
         )
         .expect("matching RLK row");
 
+    let pk_limb_vk = load_vk_artifacts(
+        &prover.circuits_dir(CircuitVariant::Recursive, ARTIFACTS_DIR),
+        CircuitName::LbfvPkGenerationLimb,
+    )
+    .expect("public-key limb VK");
+    let pk_limb_vk_hash: [u8; 32] = hex::decode(pk_limb_vk.key_hash.trim_start_matches("0x"))
+        .expect("public-key limb VK hash")
+        .try_into()
+        .expect("public-key limb VK hash length");
     let pk_proof = if let Some(cached) =
         load_cached_proof(CircuitName::LbfvPkGeneration, "lbfv_pk_generation")
     {
         cached
     } else {
-        let proof = LbfvPkGenerationCircuit
-            .prove_with_variant(
-                &prover,
-                &preset,
-                &pk_data,
-                "secure-v2-generation-fold",
-                CircuitVariant::Recursive,
-                ARTIFACTS_DIR,
-            )
-            .expect("PK generation proof");
+        let proof = prove_lbfv_pk_generation_row(
+            &prover,
+            preset,
+            &pk_data,
+            &pk_limb_vk_hash,
+            "secure-v2-generation-fold",
+            ARTIFACTS_DIR,
+        )
+        .expect("PK generation proof")
+        .terminal_proof;
         store_cached_proof(&proof, "lbfv_pk_generation");
         proof
     };
     print_measurement("lbfv_pk_generation", &pk_proof);
-    assert!(LbfvPkGenerationCircuit
-        .verify_with_variant(
-            &prover,
+    assert!(prover
+        .verify_proof_with_variant(
             &pk_proof,
             "secure-v2-generation-fold",
             0,
@@ -196,6 +205,7 @@ async fn secure_generation_fold_kernel_proves_and_verifies() {
         &rlk_terminal_proof,
         None,
         0,
+        &ArcBytes::from_bytes(&pk_limb_vk_hash),
         &ArcBytes::from_bytes(&limb_vk_hash),
         "secure-v2-generation-fold",
         ARTIFACTS_DIR,

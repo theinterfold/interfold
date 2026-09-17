@@ -612,7 +612,7 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     );
     equalValue(
       pkRoute[1],
-      isV2 ? 63 : 3 * expected.h + 24,
+      isV2 ? 64 : 3 * expected.h + 24,
       `PK route ${index} public input count`,
     );
     equalAddress(

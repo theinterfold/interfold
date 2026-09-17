@@ -12,10 +12,10 @@ use bb_proof_verification::{
 };
 
 pub global LBFV_ROWS: u32 = 5;
-pub global PK_GENERATION_PUBLIC_LEN: u32 = 6;
+pub global PK_GENERATION_PUBLIC_LEN: u32 = 7;
 pub global RLK_GENERATION_PUBLIC_LEN: u32 = 9;
 
-pub global GENERATION_FOLD_PREFIX_LEN: u32 = 8;
+pub global GENERATION_FOLD_PREFIX_LEN: u32 = 9;
 pub global GENERATION_FOLD_PUBLIC_LEN: u32 = GENERATION_FOLD_PREFIX_LEN + 5 + (3 * LBFV_ROWS);
 
 pub global ACC_PK_VK_IDX: u32 = 0;
@@ -25,7 +25,8 @@ pub global ACC_IS_FIRST_STEP_IDX: u32 = 3;
 pub global ACC_ROW_INDEX_IDX: u32 = 4;
 pub global ACC_EXPECTED_KERNEL_IDX: u32 = 5;
 pub global ACC_EXPECTED_FOLD_IDX: u32 = 6;
-pub global ACC_TRUSTED_LIMB_VK_IDX: u32 = 7;
+pub global ACC_TRUSTED_PK_LIMB_VK_IDX: u32 = 7;
+pub global ACC_TRUSTED_RLK_LIMB_VK_IDX: u32 = 8;
 
 pub global ACC_SESSION_HI_IDX: u32 = GENERATION_FOLD_PREFIX_LEN;
 pub global ACC_SESSION_LO_IDX: u32 = ACC_SESSION_HI_IDX + 1;
@@ -40,7 +41,8 @@ fn assert_generation_pair(
     pk_public: [Field; PK_GENERATION_PUBLIC_LEN],
     rlk_public: [Field; RLK_GENERATION_PUBLIC_LEN],
     row_index: u32,
-    trusted_limb_key_hash: Field,
+    trusted_pk_limb_key_hash: Field,
+    trusted_rlk_limb_key_hash: Field,
 ) {
     assert(row_index < LBFV_ROWS);
     assert(pk_public[0] == rlk_public[0]);
@@ -49,7 +51,8 @@ fn assert_generation_pair(
     assert(pk_public[3] == row_index as Field);
     assert(rlk_public[3] == row_index as Field);
     assert(pk_public[4] == rlk_public[4]);
-    assert(rlk_public[8] == trusted_limb_key_hash);
+    assert(pk_public[6] == trusted_pk_limb_key_hash);
+    assert(rlk_public[8] == trusted_rlk_limb_key_hash);
 }
 
 fn assert_accumulator_identity(
@@ -81,11 +84,18 @@ fn main(
     row_index: pub u32,
     expected_kernel_key_hash: pub Field,
     expected_fold_key_hash: pub Field,
-    trusted_limb_key_hash: pub Field,
+    trusted_pk_limb_key_hash: pub Field,
+    trusted_rlk_limb_key_hash: pub Field,
     ) -> pub (Field, Field, Field, Field, Field, [Field; LBFV_ROWS], [Field; LBFV_ROWS], [Field; LBFV_ROWS]) {
     assert(!is_first_step);
     assert(row_index > 0);
-    assert_generation_pair(pk_public, rlk_public, row_index, trusted_limb_key_hash);
+    assert_generation_pair(
+        pk_public,
+        rlk_public,
+        row_index,
+        trusted_pk_limb_key_hash,
+        trusted_rlk_limb_key_hash,
+    );
 
     verify_honk_proof(pk_vk, pk_proof, pk_public, pk_key_hash);
     verify_honk_proof(rlk_vk, rlk_proof, rlk_public, rlk_key_hash);
@@ -96,7 +106,8 @@ fn main(
     assert(acc_public[ACC_ROW_INDEX_IDX] + 1 == row_index as Field);
     assert(acc_public[ACC_EXPECTED_KERNEL_IDX] == expected_kernel_key_hash);
     assert(acc_public[ACC_EXPECTED_FOLD_IDX] == expected_fold_key_hash);
-    assert(acc_public[ACC_TRUSTED_LIMB_VK_IDX] == trusted_limb_key_hash);
+    assert(acc_public[ACC_TRUSTED_PK_LIMB_VK_IDX] == trusted_pk_limb_key_hash);
+    assert(acc_public[ACC_TRUSTED_RLK_LIMB_VK_IDX] == trusted_rlk_limb_key_hash);
     assert_accumulator_identity(acc_public, pk_public, rlk_public);
 
     if row_index == 1 {
@@ -137,15 +148,33 @@ fn main(
 
 #[test]
 fn test_generation_pair_accepts_matching_row() {
-    assert_generation_pair([1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 7, 8, 9, 10], 4, 10);
+    assert_generation_pair(
+        [1, 2, 3, 4, 5, 6, 11],
+        [1, 2, 3, 4, 5, 7, 8, 9, 10],
+        4,
+        11,
+        10,
+    );
 }
 
 #[test(should_fail)]
 fn test_generation_pair_rejects_mixed_session() {
-    assert_generation_pair([1, 2, 3, 4, 5, 6], [11, 2, 3, 4, 5, 7, 8, 9, 10], 4, 10);
+    assert_generation_pair(
+        [1, 2, 3, 4, 5, 6, 11],
+        [11, 2, 3, 4, 5, 7, 8, 9, 10],
+        4,
+        11,
+        10,
+    );
 }
 
 #[test(should_fail)]
 fn test_generation_pair_rejects_wrong_limb_key() {
-    assert_generation_pair([1, 2, 3, 4, 5, 6], [1, 2, 3, 4, 5, 7, 8, 9, 10], 4, 11);
+    assert_generation_pair(
+        [1, 2, 3, 4, 5, 6, 11],
+        [1, 2, 3, 4, 5, 7, 8, 9, 10],
+        4,
+        12,
+        10,
+    );
 }

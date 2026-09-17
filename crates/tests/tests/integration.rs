@@ -37,7 +37,10 @@ use e3_trbfv::{TrBFVRequest, TrBFVResponse};
 use e3_utils::utility_types::ArcBytes;
 use e3_utils::{colorize, rand_eth_addr, Color};
 use e3_zk_prover::test_utils::get_tempdir;
-use e3_zk_prover::{load_staged_rlk_generation_limb_vk_hash, VersionInfo, ZkBackend, ZkProver};
+use e3_zk_prover::{
+    load_staged_lbfv_pk_generation_limb_vk_hash, load_staged_rlk_generation_limb_vk_hash,
+    VersionInfo, ZkBackend, ZkProver,
+};
 use fhe::bfv::PublicKey;
 use fhe_traits::{DeserializeParametrized, Serialize};
 use num_bigint::BigUint;
@@ -415,12 +418,19 @@ async fn write_local_lbfv_checksum_manifest(
     preset_subdir: &str,
     committee_str: &str,
 ) -> Result<()> {
-    let relative_path = format!(
-        "{preset_subdir}/{committee_str}/recursive/threshold/rlk_generation_limb/rlk_generation_limb.vk_hash"
-    );
-    let hash_path = circuits_dir.join(&relative_path);
-    let hash_bytes = tokio::fs::read(&hash_path).await?;
-    let files = HashMap::from([(relative_path, format!("{:x}", Sha256::digest(hash_bytes)))]);
+    let relative_paths = [
+        format!(
+            "{preset_subdir}/{committee_str}/recursive/threshold/lbfv_pk_generation_limb/lbfv_pk_generation_limb.vk_hash"
+        ),
+        format!(
+            "{preset_subdir}/{committee_str}/recursive/threshold/rlk_generation_limb/rlk_generation_limb.vk_hash"
+        ),
+    ];
+    let mut files = HashMap::new();
+    for relative_path in relative_paths {
+        let hash_bytes = tokio::fs::read(circuits_dir.join(&relative_path)).await?;
+        files.insert(relative_path, format!("{:x}", Sha256::digest(hash_bytes)));
+    }
     let manifest = serde_json::json!({
         "algorithm": "sha256",
         "generated": "integration-test",
@@ -438,6 +448,7 @@ async fn validate_secure_v2_fixture(backend: &ZkBackend, committee: &str) -> Res
     let artifacts_dir = format!("secure-16384/{committee}");
     let required_circuits = [
         ("recursive/threshold", "lbfv_pk_generation"),
+        ("recursive/threshold", "lbfv_pk_generation_limb"),
         ("recursive/threshold", "rlk_generation"),
         ("recursive/threshold", "rlk_generation_limb"),
         ("recursive/threshold", "lbfv_pk_aggregation"),
@@ -479,6 +490,8 @@ async fn validate_secure_v2_fixture(backend: &ZkBackend, committee: &str) -> Res
     }
 
     let prover = ZkProver::new(backend);
+    load_staged_lbfv_pk_generation_limb_vk_hash(&prover, &artifacts_dir)
+        .context("validate the secure V2 public-key limb VK checksum")?;
     load_staged_rlk_generation_limb_vk_hash(&prover, &artifacts_dir)
         .context("validate the secure V2 RLK limb VK checksum")?;
     Ok(())
@@ -583,6 +596,8 @@ async fn setup_test_zk_backend(
             let threshold_pk_aggregation_target = circuit_target("threshold", "pk_aggregation");
             let threshold_lbfv_pk_generation_target =
                 circuit_target("threshold", "lbfv_pk_generation");
+            let threshold_lbfv_pk_generation_limb_target =
+                circuit_target("threshold", "lbfv_pk_generation_limb");
             let threshold_lbfv_pk_aggregation_target =
                 circuit_target("threshold", "lbfv_pk_aggregation");
             let threshold_rlk_generation_target = circuit_target("threshold", "rlk_generation");
@@ -818,6 +833,10 @@ async fn setup_test_zk_backend(
             if preset_subdir == "secure-16384" {
                 for (target, name) in [
                     (&threshold_lbfv_pk_generation_target, "lbfv_pk_generation"),
+                    (
+                        &threshold_lbfv_pk_generation_limb_target,
+                        "lbfv_pk_generation_limb",
+                    ),
                     (&threshold_rlk_generation_target, "rlk_generation"),
                     (&threshold_rlk_generation_limb_target, "rlk_generation_limb"),
                     (&threshold_lbfv_pk_aggregation_target, "lbfv_pk_aggregation"),

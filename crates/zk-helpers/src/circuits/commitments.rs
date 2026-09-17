@@ -60,6 +60,14 @@ const DS_PK_GENERATION: [u8; 64] = [
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
 
+/// String: "PK_GENERATION_LIMB_V1"
+const DS_PK_GENERATION_LIMB_V1: [u8; 64] = [
+    0x50, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49, 0x4f, 0x4e, 0x5f, 0x4c, 0x49,
+    0x4d, 0x42, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
 /// String: "SHARE_COMPUTATION"
 const DS_SHARE_COMPUTATION: [u8; 64] = [
     0x53, 0x48, 0x41, 0x52, 0x45, 0x5f, 0x43, 0x4f, 0x4d, 0x50, 0x55, 0x54, 0x41, 0x54, 0x49, 0x4f,
@@ -161,6 +169,14 @@ const DS_RECURSIVE_AGGREGATION: [u8; 64] = [
 const DS_CLG_PK_GENERATION: [u8; 64] = [
     0x43, 0x4c, 0x47, 0x5f, 0x50, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49, 0x4f,
     0x4e, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+];
+
+/// String: "CLG_PK_GENERATION_LIMB_V1"
+const DS_CLG_PK_GENERATION_LIMB_V1: [u8; 64] = [
+    0x43, 0x4c, 0x47, 0x5f, 0x50, 0x4b, 0x5f, 0x47, 0x45, 0x4e, 0x45, 0x52, 0x41, 0x54, 0x49, 0x4f,
+    0x4e, 0x5f, 0x4c, 0x49, 0x4d, 0x42, 0x5f, 0x56, 0x31, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
 ];
@@ -323,6 +339,42 @@ pub fn compute_threshold_pk_commitment(pk0: &CrtPolynomial, bit_pk: u32) -> BigI
     let commitment_field = compute_commitments(payload, DS_PK_GENERATION, io_pattern)[0];
     let commitment_bytes = commitment_field.into_bigint().to_bytes_le();
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &commitment_bytes)
+}
+
+/// Compute the row-bound commitment to the shared l-BFV public-key error polynomial.
+pub fn compute_lbfv_pk_limb_eek_commitment(
+    row_index: u32,
+    eek: &Polynomial,
+    bit_eek: u32,
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(0u64),
+        Field::from(row_index as u64),
+        Field::from(eek.coefficients().len() as u64),
+    ];
+    payload = flatten(payload, from_ref(eek), bit_eek);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_PK_GENERATION_LIMB_V1, io)[0])
+}
+
+/// Compute the row- and limb-bound commitment to one l-BFV public-key polynomial.
+pub fn compute_lbfv_pk_limb_commitment(
+    row_index: u32,
+    limb_index: u32,
+    pk0: &Polynomial,
+    bit_pk: u32,
+) -> BigInt {
+    let mut payload = vec![
+        Field::from(1u64),
+        Field::from(1u64),
+        Field::from(row_index as u64),
+        Field::from(limb_index as u64),
+        Field::from(pk0.coefficients().len() as u64),
+    ];
+    payload = flatten(payload, from_ref(pk0), bit_pk);
+    let io = [0x80000000 | payload.len() as u32, 1];
+    field_to_bigint(compute_commitments(payload, DS_PK_GENERATION_LIMB_V1, io)[0])
 }
 
 /// Compute the pk_commitment for a serialized `PublicKeyShare`, matching what the C1 circuit outputs.
@@ -1030,6 +1082,13 @@ pub fn compute_threshold_pk_challenge(payload: Vec<Field>) -> BigInt {
     BigInt::from_bytes_le(num_bigint::Sign::Plus, &challenge_bytes)
 }
 
+/// Compute the independent Fiat-Shamir challenge for one l-BFV public-key limb.
+pub fn compute_lbfv_pk_limb_challenge(payload: Vec<Field>) -> BigInt {
+    let input_size = payload.len() as u32;
+    let io_pattern = [0x80000000 | input_size, 1];
+    field_to_bigint(compute_commitments(payload, DS_CLG_PK_GENERATION_LIMB_V1, io_pattern)[0])
+}
+
 /// Compute the independent Fiat-Shamir challenge for one RLK row limb.
 pub fn compute_rlk_limb_challenge(payload: Vec<Field>) -> BigInt {
     let input_size = payload.len() as u32;
@@ -1327,7 +1386,7 @@ mod tests {
     ) -> Result<(), crate::CircuitsErrors> {
         let fixture = lbfv_share_fixture()?;
         let mut public_key_row_signals = fixture.public_key_row_signals.clone();
-        *public_key_row_signals[0].last_mut().unwrap() ^= 1;
+        public_key_row_signals[0][5 * FIELD_BYTE_LEN + 31] ^= 1;
         let pk_error = validate_fixture(
             &fixture,
             &fixture.public_key_share_bytes,
@@ -1462,6 +1521,31 @@ mod tests {
             compute_rlk_limb_e0_commitment(2, &polynomial, 4),
             compute_rlk_limb_e2_commitment(2, &polynomial, 4)
         );
+    }
+
+    #[test]
+    fn lbfv_pk_limb_commitments_bind_kind_row_and_limb() {
+        let polynomial = Polynomial::new(vec![1.into(), (-2).into()]);
+        let pk0 = compute_lbfv_pk_limb_commitment(2, 3, &polynomial, 4);
+
+        assert_ne!(pk0, compute_lbfv_pk_limb_commitment(2, 4, &polynomial, 4));
+        assert_ne!(pk0, compute_lbfv_pk_limb_commitment(1, 3, &polynomial, 4));
+        assert_ne!(pk0, compute_lbfv_pk_limb_eek_commitment(2, &polynomial, 4));
+    }
+
+    #[test]
+    fn lbfv_pk_limb_challenge_uses_an_independent_domain() {
+        let payload = vec![Field::from(1u64), Field::from(2u64)];
+        let input_size = payload.len() as u32;
+        let old_domain = field_to_bigint(
+            compute_commitments(
+                payload.clone(),
+                DS_CLG_PK_GENERATION,
+                [0x80000000 | input_size, 1],
+            )[0],
+        );
+
+        assert_ne!(compute_lbfv_pk_limb_challenge(payload), old_domain);
     }
 
     #[test]
