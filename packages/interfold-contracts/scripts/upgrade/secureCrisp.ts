@@ -1046,7 +1046,8 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     randomnessProviderOwnershipAcceptanceRequired:
       randomnessDeployment.randomnessProviderOwnershipAcceptanceRequired,
     registeredOperatorCount: registeredOperatorCount.toString(),
-    activeOperatorCount: activeOperatorCount.toString(),
+    preUpgradeActiveOperatorCount: activeOperatorCount.toString(),
+    nodeReleasePolicyUpdated: updateNodeReleasePolicy,
     registryRoot: registryRoot.toString(),
     nodeReleaseRegistry: deployment.nodeReleaseRegistry,
     nodeRelease,
@@ -1087,7 +1088,9 @@ Secure CRISP activation prepared
   Slashing manager:         ${plan.slashingManager}
   VRF provider:             ${plan.randomnessProvider}
   VRF subscription:         ${plan.randomness.subscriptionId} (reused)
-  operator snapshot:        ${plan.activeOperatorCount}/${plan.registeredOperatorCount}, root ${plan.registryRoot}
+  pre-upgrade active nodes: ${plan.preUpgradeActiveOperatorCount}/${plan.registeredOperatorCount}
+  release acknowledgement: ${plan.nodeReleasePolicyUpdated ? "required after activation" : "not required"}
+  registry root:            ${plan.registryRoot}
   PK verifier router:        ${plan.pkVerifier}
   decryption router:         ${plan.decryptionVerifier}
   CRISP program:             ${plan.crispProgram}

@@ -287,7 +287,9 @@ export interface SecureCrispUpgradePlan {
   randomness: RandomnessConfig;
   randomnessProviderOwnershipAcceptanceRequired: boolean;
   registeredOperatorCount: string;
-  activeOperatorCount: string;
+  preUpgradeActiveOperatorCount: string;
+  /** Whether activation raises the node-release policy and invalidates cached eligibility. */
+  nodeReleasePolicyUpdated: boolean;
   registryRoot: string;
   nodeReleaseRegistry: string;
   nodeRelease: {
