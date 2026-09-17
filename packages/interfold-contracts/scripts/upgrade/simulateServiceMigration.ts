@@ -208,7 +208,6 @@ export async function simulateServiceMigration(): Promise<void> {
       to: governanceCall.to,
       data: governanceCall.data,
       value: governanceCall.value,
-      gasLimit: 55_000_000,
     })
   ).wait();
 

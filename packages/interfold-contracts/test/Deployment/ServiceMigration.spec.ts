@@ -14,7 +14,7 @@ import { deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
 
 const { loadFixture } = networkHelpers;
 
-describe("Service dependency migration", function () {
+describe("Slashing-manager migration", function () {
   async function setup() {
     return deployInterfoldSystem({ setupOperators: 3 });
   }
@@ -24,6 +24,9 @@ describe("Service dependency migration", function () {
     const owner = await system.owner.getAddress();
     const previousManager = await system.slashingManager.getAddress();
     const reason = ethers.keccak256(ethers.solidityPacked(["uint256"], [0]));
+    const disabledReason = ethers.keccak256(
+      ethers.solidityPacked(["uint256"], [1]),
+    );
     const policy = {
       ticketPenalty: 1n,
       ciphernodeBondPenalty: 2n,
@@ -36,6 +39,10 @@ describe("Service dependency migration", function () {
       failureReason: 0,
     };
     await system.slashingManager.setSlashPolicy(reason, policy);
+    await system.slashingManager.setSlashPolicy(disabledReason, {
+      ...policy,
+      enabled: false,
+    });
 
     const config = {
       protocolOwner: owner,
@@ -57,8 +64,11 @@ describe("Service dependency migration", function () {
       replacement,
     );
 
-    expect(migration.migratedSlashPolicyReasons).to.deep.equal([reason]);
-    expect(migration.transactions).to.have.lengthOf(9);
+    expect(migration.migratedSlashPolicyReasons).to.deep.equal([
+      reason,
+      disabledReason,
+    ]);
+    expect(migration.transactions).to.have.lengthOf(10);
     const rootBefore = await system.ciphernodeRegistry.root();
     const registeredBefore =
       await system.bondingRegistry.numRegisteredOperators();
@@ -108,6 +118,13 @@ describe("Service dependency migration", function () {
       policy.ciphernodeBondPenalty,
     );
     expect(migratedPolicy.enabled).to.equal(true);
+    const migratedDisabledPolicy =
+      await replacementManager.getSlashPolicy(disabledReason);
+    expect(migratedDisabledPolicy.ticketPenalty).to.equal(policy.ticketPenalty);
+    expect(migratedDisabledPolicy.ciphernodeBondPenalty).to.equal(
+      policy.ciphernodeBondPenalty,
+    );
+    expect(migratedDisabledPolicy.enabled).to.equal(false);
   });
 
   it("accepts configured policy reasons without deployment addresses", function () {

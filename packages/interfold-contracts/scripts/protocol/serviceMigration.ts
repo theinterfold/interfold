@@ -3,14 +3,13 @@ import { ethers as ethersLib } from "ethers";
 
 import { ZERO } from "./constants";
 import { safeTx } from "./safe";
+import { PROOF_TYPES, slashReasonForProofType } from "./slashPolicies";
 import type {
   ProtocolConfigFile,
   ProtocolDeployment,
   SafeTransaction,
 } from "./types";
 import { deployedAddress } from "./values";
-
-const PROOF_TYPES = Array.from({ length: 11 }, (_, proofType) => proofType);
 
 export interface SlashingManagerDeployment {
   manager: string;
@@ -44,9 +43,7 @@ export async function deploySlashingManagerReplacement(
 }
 
 export function slashPolicyReasons(config: ProtocolConfigFile): string[] {
-  const reasons = PROOF_TYPES.map((proofType) =>
-    ethersLib.keccak256(ethersLib.solidityPacked(["uint256"], [proofType])),
-  );
+  const reasons = PROOF_TYPES.map(slashReasonForProofType);
   for (const reason of config.slashing.policyReasons ?? []) {
     if (!ethersLib.isHexString(reason, 32)) {
       throw new Error(`Invalid slash-policy reason: ${reason}`);
@@ -70,7 +67,9 @@ async function appendSlashPolicyTransactions(
   const migrated: string[] = [];
   for (const reason of slashPolicyReasons(config)) {
     const policy = await previous.getSlashPolicy(reason);
-    if (!policy.enabled) continue;
+    const configured =
+      policy.ticketPenalty !== 0n || policy.ciphernodeBondPenalty !== 0n;
+    if (!configured) continue;
     txs.push(
       safeTx(
         replacement.manager,

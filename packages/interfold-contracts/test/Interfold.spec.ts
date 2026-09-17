@@ -225,6 +225,21 @@ describe("Interfold", function () {
     });
   });
 
+  describe("dependency replacement", function () {
+    it("keeps refund-manager replacement on the empty-generation path", async function () {
+      const { interfold } = await loadFixture(setup);
+
+      await interfold.setRequestsPaused(true);
+
+      await expect(
+        interfold.setE3RefundManager(AddressTwo),
+      ).to.be.revertedWithCustomError(
+        interfold,
+        "DependencyGenerationNotDrained",
+      );
+    });
+  });
+
   describe("setParamSet()", function () {
     it("reverts if not called by owner", async function () {
       const { interfold, notTheOwner } = await loadFixture(setup);

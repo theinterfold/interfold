@@ -521,7 +521,6 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
         `slash policy ${reason} ${field}`,
       );
     }
-    equalValue(migratedPolicy.enabled, true, `slash policy ${reason} enabled`);
   }
   equalAddress(
     await randomnessProvider.requester(),

@@ -89,6 +89,7 @@ governance batch that:
 snapshot the operator counts and registry root
   -> upgrade Interfold, CiphernodeRegistry, BondingRegistry, and E3RefundManager in place
   -> deploy and wire a replacement SlashingManager
+  -> copy every configured slash policy, including policies that are currently disabled
   -> preserve the registered operators and revoke the drained old manager
   -> deploy a replacement VRF consumer against the existing funded subscription
   -> add the new consumer and switch the registry without replacing the subscription
@@ -111,12 +112,12 @@ largest configured committee size has acknowledged the new protocol and is onlin
 older CRISP-only builder on mainnet because it cannot install the protocol-side secure
 configuration.
 
-Registry and BondingRegistry replacement still requires an empty operator generation. A service
-rotation is different: when the same registry and bonding proxies remain in place, a replacement
-SlashingManager can preserve operators. The migration requires paused requests, no active E3, no
-unreleased or unresolved committee, no active slashing assignment, and no active ban. The registry
-accepts the manager only after Interfold, BondingRegistry, and the replacement manager all point to
-the same dependency graph.
+Registry, BondingRegistry, and refund-manager address replacement still requires an empty operator
+generation. A SlashingManager rotation is different: when the same registry and bonding proxies
+remain in place, the replacement can preserve operators. The migration requires paused requests, no
+active E3, no unreleased or unresolved committee, no active slashing assignment, and no active ban.
+The registry accepts the manager only after Interfold, BondingRegistry, and the replacement manager
+all point to the same dependency graph.
 
 After the nodes restart, run
 `upgrade:secure-crisp:resume -- --network mainnet --ciphernodes-restarted`. It reruns the complete

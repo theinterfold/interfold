@@ -205,9 +205,9 @@ library InterfoldLifecycle {
         ) revert IInterfold.DependencyGenerationNotDrained();
     }
 
-    /// @notice Requires no live work before a service dependency changes.
+    /// @notice Requires no live work before the slashing manager changes.
     /// @dev Registered operators can remain when the registry and bonding proxies stay in place.
-    function validateServiceReplacementDrained(
+    function validateSlashingManagerReplacementDrained(
         bool configurationActivated
     ) external view {
         if (!configurationActivated) return;

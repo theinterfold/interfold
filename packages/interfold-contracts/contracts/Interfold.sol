@@ -708,7 +708,7 @@ contract Interfold is
         IE3RefundManager _e3RefundManager
     ) public onlyOwner {
         require(address(_e3RefundManager) != address(0));
-        _requireServiceReplacementReady();
+        _requireGenerationReplacementReady(address(0));
         e3RefundManager = _e3RefundManager;
         emit E3RefundManagerSet(address(_e3RefundManager));
     }
@@ -719,7 +719,7 @@ contract Interfold is
         ISlashingManager _slashingManager
     ) external onlyOwner {
         require(address(_slashingManager) != address(0));
-        _requireServiceReplacementReady();
+        _requireSlashingManagerReplacementReady();
         slashingManager = _slashingManager;
         emit SlashingManagerSet(address(_slashingManager));
     }
@@ -1265,8 +1265,8 @@ contract Interfold is
         );
     }
 
-    function _requireServiceReplacementReady() private view {
-        InterfoldLifecycle.validateServiceReplacementDrained(
+    function _requireSlashingManagerReplacementReady() private view {
+        InterfoldLifecycle.validateSlashingManagerReplacementDrained(
             _dependencyConfigurationActivated
         );
     }
