@@ -134,24 +134,27 @@ async fn secure_generation_fold_kernel_proves_and_verifies() {
         .expect("public-key limb VK hash")
         .try_into()
         .expect("public-key limb VK hash length");
-    let pk_proof = if let Some(cached) =
-        load_cached_proof(CircuitName::LbfvPkGeneration, "lbfv_pk_generation")
-    {
-        cached
-    } else {
-        let proof = prove_lbfv_pk_generation_row(
-            &prover,
-            preset,
-            &pk_data,
-            &pk_limb_vk_hash,
-            "secure-v2-generation-fold",
-            ARTIFACTS_DIR,
-        )
-        .expect("PK generation proof")
-        .terminal_proof;
-        store_cached_proof(&proof, "lbfv_pk_generation");
-        proof
-    };
+    let pk_cache_label = format!(
+        "lbfv_pk_generation_terminal_v7_{}",
+        hex::encode(pk_limb_vk_hash)
+    );
+    let pk_proof =
+        if let Some(cached) = load_cached_proof(CircuitName::LbfvPkGeneration, &pk_cache_label) {
+            cached
+        } else {
+            let proof = prove_lbfv_pk_generation_row(
+                &prover,
+                preset,
+                &pk_data,
+                &pk_limb_vk_hash,
+                "secure-v2-generation-fold",
+                ARTIFACTS_DIR,
+            )
+            .expect("PK generation proof")
+            .terminal_proof;
+            store_cached_proof(&proof, &pk_cache_label);
+            proof
+        };
     print_measurement("lbfv_pk_generation", &pk_proof);
     assert!(prover
         .verify_proof_with_variant(
