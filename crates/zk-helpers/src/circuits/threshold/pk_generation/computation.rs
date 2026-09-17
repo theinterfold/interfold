@@ -265,6 +265,7 @@ impl Computation for Inputs {
             .collect();
         let n = threshold_params.degree() as u64;
         let cyclo = cyclotomic_polynomial(n);
+        let bounds = Bounds::compute(preset, &data.committee)?;
 
         // Perform the main computation logic
         let mut results: Vec<(usize, Polynomial, Polynomial, Polynomial)> = izip!(
@@ -321,6 +322,14 @@ impl Computation for Inputs {
                 .iter()
                 .all(|c| c == &BigInt::from(0)));
             assert_eq!(r.coefficients().len() as u64, n);
+            // The circuit range-checks r against a window derived from this bound, so a quotient
+            // that exceeds it makes a witness that no proof can satisfy. Fail here, where the
+            // cause is still visible, rather than at proving time.
+            let r_bound = &bounds.r_bounds[i];
+            assert!(
+                r.coefficients().iter().all(|c| c.magnitude() <= r_bound),
+                "C1 quotient exceeds r_bound for modulus {i}"
+            );
 
             (i, r, pk0_share.clone(), e_sm.clone())
         })
