@@ -27,3 +27,8 @@ crates/support/tests/Elf.sol
 
 # agent working files
 .hermes/
+
+# Local secrets. `crates/support/.env` holds the Boundless RPC URL, wallet key and Pinata JWT that
+# `boundless_prove_inner` reads from the environment. Committing one publishes a funded key.
+.env
+.env.local
