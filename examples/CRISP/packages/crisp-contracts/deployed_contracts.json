@@ -499,54 +499,43 @@
   },
   "mainnet": {
     "RiscZeroGroth16Verifier": {
-      "address": "0xB6AC0ef383dafd09b79Eadc96491CAE2AD61D331",
-      "blockNumber": 25998857
+      "address": "0x082263Bb53463Ca6c7082bDAFEd51EfA9509cde0",
+      "blockNumber": 25812195
     },
     "Risc0BfvCiphertextVerifier": {
-      "address": "0x80D217d3b2e16fF2ecc178cC75655C773895c549",
-      "blockNumber": 25998859,
+      "address": "0x40a18Fc27ac4a4d86fA70385c6814e453b6BFF2c",
+      "blockNumber": 25812196,
       "constructorArgs": {
-        "verifier": "0xB6AC0ef383dafd09b79Eadc96491CAE2AD61D331",
-        "imageId": "0x9d3e21fd7cc08e629cb467e5ca6bfc8e1a645b483bfd91b6b1648ced259110fc"
+        "verifier": "0x082263Bb53463Ca6c7082bDAFEd51EfA9509cde0",
+        "imageId": "0x7ed0ddeb0cafa64228b51399dff5ea00696c2617f28636b05bd67e6c1506eac3"
       }
     },
     "PoseidonT3": {
-      "address": "0x41e219d7dfeBA8DabE3F7F871633f15AD5FaDc50",
-      "blockNumber": 25998860
+      "address": "0x739C1A7e585B2d16daD97Be7Cf79511bD318B7fe",
+      "blockNumber": 25812198
     },
     "HonkVerifier": {
-      "address": "0xe359cE6DA6aD159600F65dF7bdd7a4e035Ef344E",
-      "blockNumber": 25998863
+      "address": "0x0FA7688B795f61956E7bB423820a0FdACAb9AC8C",
+      "blockNumber": 25812204
     },
     "OnchainHonkVerifier": {
-      "address": "0xccEC1b15De4d07ac8b5Df7E0d5d626954111955C",
-      "blockNumber": 25998866
-    },
-    "AvailVectorXDataAvailabilityVerifier": {
-      "address": "0xC038C7ba5717bDa886115e5d954085bce069069E",
-      "blockNumber": 25998867,
-      "constructorArgs": {
-        "bridge": "0x054fd961708d8e2b9c10a63f6157c74458889f0a",
-        "vectorx": "0x02993cdC11213985b9B13224f3aF289F03bf298d"
-      }
+      "address": "0x02eA2e73238fBA4df9dC608a7339B960291238b0",
+      "blockNumber": 25812208
     },
     "CRISPProgram": {
-      "address": "0x53FCdb21E73A461CfE6c64B19855204384B91BA3",
-      "blockNumber": 25998868,
+      "address": "0x847A22303639017bcDB7F7E49EEa4a4629c1169f",
+      "blockNumber": 25812209,
       "constructorArgs": {
         "initialOwner": "0x652a31c669f9AB37f6040f279139a75D04F2679e",
-        "verifierAddress": "0xB6AC0ef383dafd09b79Eadc96491CAE2AD61D331",
-        "honkVerifierAddress": "0xe359cE6DA6aD159600F65dF7bdd7a4e035Ef344E",
-        "onchainHonkVerifierAddress": "0xccEC1b15De4d07ac8b5Df7E0d5d626954111955C",
-        "dataAvailabilityVerifierAddress": "0xC038C7ba5717bDa886115e5d954085bce069069E",
-        "availabilityFinalizationWindow": 10800,
-        "inputAvailabilitySigner": "0x34655732dB9BBfA627021D18d786EfF7Bde211F7",
-        "imageId": "0x9d3e21fd7cc08e629cb467e5ca6bfc8e1a645b483bfd91b6b1648ced259110fc"
+        "verifierAddress": "0x082263Bb53463Ca6c7082bDAFEd51EfA9509cde0",
+        "honkVerifierAddress": "0x0FA7688B795f61956E7bB423820a0FdACAb9AC8C",
+        "onchainHonkVerifierAddress": "0x02eA2e73238fBA4df9dC608a7339B960291238b0",
+        "imageId": "0x7ed0ddeb0cafa64228b51399dff5ea00696c2617f28636b05bd67e6c1506eac3"
       }
     },
     "SelfRegistry": {
-      "address": "0xAE78040338c7Ed90D53bDdB5bBF3735e4bD29B03",
-      "blockNumber": 25998869
+      "address": "0x988104E6275359126bbDDDeE35159bd7d138A61C",
+      "blockNumber": 25812212
     }
   }
 }
