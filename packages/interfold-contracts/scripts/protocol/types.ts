@@ -55,6 +55,11 @@ export interface ProtocolConfigFile {
     proposerSafe: string;
     proposalMetadata?: string;
   };
+  /** Settings that apply only to an in-place protocol upgrade. */
+  upgrade?: {
+    /** Registered E3 programs that the upgrade closes to new requests. */
+    retireE3Programs?: string[];
+  };
   fold: string;
   /**
    * Optional escrow IVotes adapter. When set, only FOLD locked in that escrow carries voting
@@ -297,8 +302,8 @@ export interface SecureCrispUpgradePlan {
   decryptionVerifier: string;
   ciphertextVerifier: string;
   crispProgram: string;
-  /** Bootstrap mock closed to new requests by this activation, when present. */
-  retiredE3Program?: string;
+  /** E3 programs closed to new requests by this activation. */
+  retiredE3Programs: string[];
   dataAvailabilityVerifier: string;
   inputAvailabilitySigner: string;
   availBridge: string;

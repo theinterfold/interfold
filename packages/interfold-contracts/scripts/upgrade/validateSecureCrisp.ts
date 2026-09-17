@@ -665,20 +665,21 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
   if (!(await interfold.e3Programs(plan.crispProgram))) {
     throw new Error("CRISP program is not registered");
   }
-  const initialE3Program = deployment.initialE3Program;
-  if (initialE3Program.toLowerCase() !== plan.crispProgram.toLowerCase()) {
-    if (plan.retiredE3Program) {
-      equalAddress(
-        plan.retiredE3Program,
-        initialE3Program,
-        "retired initial E3 program",
+  for (const program of plan.retiredE3Programs) {
+    if (program.toLowerCase() === plan.crispProgram.toLowerCase()) {
+      throw new Error("Upgrade plan cannot retire the active CRISP program");
+    }
+    if (await interfold.e3Programs(program)) {
+      throw new Error(
+        `Retired E3 program still accepts new requests: ${program}`,
       );
     }
+  }
+  const initialE3Program = deployment.initialE3Program;
+  if (initialE3Program.toLowerCase() !== plan.crispProgram.toLowerCase()) {
     if (await interfold.e3Programs(initialE3Program)) {
       throw new Error("Initial E3 program still accepts new requests");
     }
-  } else if (plan.retiredE3Program) {
-    throw new Error("Upgrade plan cannot retire the active CRISP program");
   }
   equalAddress(
     String(

@@ -97,6 +97,7 @@ snapshot the operator counts and registry root
   -> install the secure minimum, micro, and small verifier routes
   -> install the PK, decryption, and ciphertext verifiers
   -> register and bind the CRISP program
+  -> close the bootstrap program and each configured incompatible E3 program to new requests
   -> raise the required node protocol version and invalidate old node eligibility
   -> keep requests paused
 ```
@@ -104,13 +105,13 @@ snapshot the operator counts and registry root
 Run `upgrade:secure-crisp:validate` after governance executes the batch. The validator checks the
 four proxy implementations, the complete slashing dependency graph, the preserved operator counts
 and registry root, the reused VRF subscription and its two consumers, every verifier route and VK
-anchor, the CRISP receipt-verifier binding, and the paused and drained state. The old VRF consumer
-stays authorized through validation and the first successful E3. Remove it in a later cleanup
-transaction. Publish a new SemVer ciphernode artifact from the same release source before governance
-executes the batch. Restart matching ciphernodes after execution, and resume only after at least the
-largest configured committee size has acknowledged the new protocol and is online. Do not use the
-older CRISP-only builder on mainnet because it cannot install the protocol-side secure
-configuration.
+anchor, the CRISP receipt-verifier binding, each retired E3 program, and the paused and drained
+state. The old VRF consumer stays authorized through validation and the first successful E3. Remove
+it in a later cleanup transaction. Publish a new SemVer ciphernode artifact from the same release
+source before governance executes the batch. Restart matching ciphernodes after execution, and
+resume only after at least the largest configured committee size has acknowledged the new protocol
+and is online. Do not use the older CRISP-only builder on mainnet because it cannot install the
+protocol-side secure configuration.
 
 Registry, BondingRegistry, and refund-manager address replacement still requires an empty operator
 generation. A SlashingManager rotation is different: when the same registry and bonding proxies
