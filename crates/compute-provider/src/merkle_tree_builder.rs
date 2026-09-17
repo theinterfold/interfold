@@ -17,6 +17,24 @@ use std::str::FromStr;
 use std::sync::Arc;
 use zk_kit_imt::imt::IMT;
 
+/// How the per-input ciphertext commitments are computed.
+///
+/// This chooses the schedule of one pure function over independent inputs. It does not change
+/// which inputs are consumed, the leaf order, or the root: [`Batching::Parallel`] and
+/// [`Batching::Sequential`] produce identical output for identical input, and the
+/// `batching_does_not_change_the_root` test holds them to it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Batching {
+    /// One input at a time, in order. What the zkVM guest uses.
+    #[default]
+    Sequential,
+    /// Chunks of `batch_size` inputs across a thread pool.
+    ///
+    /// For hosts with cores to spare. Needs the `parallel` feature; without it this falls back to
+    /// [`Batching::Sequential`] rather than failing, because the result is the same either way.
+    Parallel { batch_size: usize },
+}
+
 pub struct MerkleTreeBuilder {
     pub leaf_hashes: Vec<String>,
     pub arity: usize,
@@ -60,7 +78,30 @@ impl MerkleTreeBuilder {
         params: &Arc<BfvParameters>,
         policy: InputPolicy,
     ) -> Result<Vec<(Vec<u8>, u64)>, ComputeError> {
+        self.compute_leaf_hashes_batched(inputs, published, params, policy, Batching::Sequential)
+    }
+
+    /// As [`Self::compute_leaf_hashes`], choosing how the commitments are scheduled.
+    ///
+    /// Only the commitment recomputation is batched. The policy still sees every entry, in global
+    /// index order, in one call — so `select` keeps the whole-round view it needs to deduplicate a
+    /// slot chain or compare inputs against each other, and each leaf keeps its global position.
+    ///
+    /// This is the distinction the removed `start_parallel` missed. That version proved each chunk
+    /// as its own round and fed the chunk results into a final tally with a hardcoded index of
+    /// zero, so the leaves no longer bound an input to its position. Batching a pure per-input
+    /// function cannot do that: the inputs, their order, and the tree are unchanged.
+    pub fn compute_leaf_hashes_batched(
+        &mut self,
+        inputs: &FHEInputs,
+        published: &[PublishedData],
+        params: &Arc<BfvParameters>,
+        policy: InputPolicy,
+        batching: Batching,
+    ) -> Result<Vec<(Vec<u8>, u64)>, ComputeError> {
         let empty = PublishedData::default();
+
+        let recomputed = Self::recompute_commitments(&inputs.ciphertexts, params, batching);
 
         let entries: Vec<PublishedInput> = inputs
             .ciphertexts
@@ -73,11 +114,11 @@ impl MerkleTreeBuilder {
                     ciphertext,
                     commitment: entry.commitment.as_ref(),
                     metadata: &entry.metadata,
-                    // Recomputed here rather than by the policy: it is the one value that ties the
+                    // Recomputed above rather than by the policy: it is the one value that ties the
                     // published bytes back to what the E3 program proved, and it needs the BFV
                     // parameters. A ciphertext that does not deserialize yields `None`, which is an
                     // unusable input rather than a failure — the bytes are untrusted.
-                    recomputed: compute_ct_commitment_with_params(ciphertext, params).ok(),
+                    recomputed: recomputed[index],
                 }
             })
             .collect();
@@ -97,6 +138,62 @@ impl MerkleTreeBuilder {
                     ComputeError::MerkleTree(format!("selected index {index} is out of range"))
                 })
             })
+            .collect()
+    }
+
+    /// Recomputes every input's ciphertext commitment, in index order.
+    ///
+    /// The one expensive step per input, and pure: it reads the ciphertext bytes and the shared
+    /// parameters, and nothing else. That is what makes it safe to schedule freely.
+    #[cfg(feature = "parallel")]
+    fn recompute_commitments(
+        ciphertexts: &[(Vec<u8>, u64)],
+        params: &Arc<BfvParameters>,
+        batching: Batching,
+    ) -> Vec<Option<[u8; 32]>> {
+        use rayon::prelude::*;
+
+        let batch_size = match batching {
+            Batching::Sequential => 0,
+            Batching::Parallel { batch_size } => batch_size,
+        };
+
+        // A zero or one chunk is the sequential schedule. Taking that path explicitly keeps a
+        // misconfigured batch size from panicking inside `chunks`.
+        if batch_size <= 1 {
+            return ciphertexts
+                .iter()
+                .map(|(bytes, _)| compute_ct_commitment_with_params(bytes, params).ok())
+                .collect();
+        }
+
+        // `flat_map` over ordered chunks, not `par_iter` over inputs: rayon preserves the order of
+        // an indexed parallel iterator, so the output stays in index order, and chunking bounds how
+        // many of the large intermediate values are live at once.
+        ciphertexts
+            .par_chunks(batch_size)
+            .flat_map(|chunk| {
+                chunk
+                    .iter()
+                    .map(|(bytes, _)| compute_ct_commitment_with_params(bytes, params).ok())
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// The sequential schedule, used when the `parallel` feature is off.
+    ///
+    /// [`Batching::Parallel`] is accepted and ignored here. A caller that asks for batching without
+    /// the feature gets the same commitments, so failing would serve nothing.
+    #[cfg(not(feature = "parallel"))]
+    fn recompute_commitments(
+        ciphertexts: &[(Vec<u8>, u64)],
+        params: &Arc<BfvParameters>,
+        _batching: Batching,
+    ) -> Vec<Option<[u8; 32]>> {
+        ciphertexts
+            .iter()
+            .map(|(bytes, _)| compute_ct_commitment_with_params(bytes, params).ok())
             .collect()
     }
 

@@ -6,6 +6,7 @@
 
 use crate::ciphertext_output::ComputeProvider;
 use crate::compute_input::{ComputeError, ComputeInput, FHEInputs, PublishedData};
+use crate::merkle_tree_builder::Batching;
 use crate::policy::InputPolicy;
 use crate::FHEProcessor;
 
@@ -55,7 +56,25 @@ where
     /// reopen the same gap one layer down: the ciphertext returned here and the one the receipt
     /// describes would be selected by different rules, and nothing would compare them.
     pub fn start(&mut self, policy: InputPolicy) -> Result<(P::Output, Vec<u8>), ComputeError> {
-        let (_, ciphertext) = self.input.run(self.processor, policy)?;
+        self.start_batched(policy, Batching::Sequential)
+    }
+
+    /// As [`Self::start`], choosing how the per-input commitments are scheduled.
+    ///
+    /// Restores the batching that `ComputeManager` carried before it was removed, in the one place
+    /// where it is safe. The removed version chunked the *round*: each chunk was proved separately
+    /// and its result fed into a final tally with a hardcoded index, which left the leaves no
+    /// longer bound to input positions. Here the round is whole and only the commitment
+    /// recomputation is scheduled across threads, so the root is unchanged.
+    ///
+    /// Useful on a host proving a large round. It does nothing for the zkVM guest, which is single
+    /// threaded and takes this crate without the `parallel` feature.
+    pub fn start_batched(
+        &mut self,
+        policy: InputPolicy,
+        batching: Batching,
+    ) -> Result<(P::Output, Vec<u8>), ComputeError> {
+        let (_, ciphertext) = self.input.run_batched(self.processor, policy, batching)?;
 
         Ok((self.provider.prove(&self.input, policy), ciphertext))
     }
