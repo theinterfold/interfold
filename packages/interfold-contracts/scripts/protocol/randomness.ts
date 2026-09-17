@@ -50,6 +50,12 @@ function isUnavailablePendingRequestCount(error: unknown): boolean {
     data?: unknown;
     value?: unknown;
   };
+  if (
+    rpcError.code === 3 &&
+    (rpcError.data === undefined || rpcError.data === "0x")
+  ) {
+    return true;
+  }
   return (
     (rpcError.data === "0x" &&
       (rpcError.code === undefined ||
