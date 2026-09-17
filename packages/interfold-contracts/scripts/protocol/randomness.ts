@@ -31,15 +31,30 @@ const pendingRequestInterface = new ethersLib.Interface([
 async function readPendingRequestCount(
   provider: ethersLib.Provider,
   target: string,
-): Promise<bigint> {
+): Promise<bigint | undefined> {
   const result = await provider.call({
     to: target,
     data: pendingRequestInterface.encodeFunctionData("pendingRequestCount"),
   });
+  if (result === "0x") return undefined;
   return pendingRequestInterface.decodeFunctionResult(
     "pendingRequestCount",
     result,
   )[0] as bigint;
+}
+
+function isUnavailablePendingRequestCount(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const rpcError = error as {
+    code?: string;
+    data?: unknown;
+    value?: unknown;
+  };
+  return (
+    (rpcError.data === "0x" &&
+      (rpcError.code === undefined || rpcError.code === "CALL_EXCEPTION")) ||
+    (rpcError.code === "BAD_DATA" && rpcError.value === "0x")
+  );
 }
 
 /** Read the reservation count when the deployed provider exposes it. */
@@ -48,16 +63,24 @@ export async function readOptionalPendingRequestCount(
   target: string,
 ): Promise<bigint | undefined> {
   try {
-    return await readPendingRequestCount(provider, target);
+    const pending = await readPendingRequestCount(provider, target);
+    if (pending !== undefined) return pending;
   } catch (readError) {
     const code = await provider.getCode(target);
     if (code === "0x") throw readError;
     try {
       return await readPendingRequestCount(provider, target);
-    } catch {
-      return undefined;
+    } catch (retryError) {
+      if (isUnavailablePendingRequestCount(retryError)) return undefined;
+      throw retryError;
     }
   }
+
+  const code = await provider.getCode(target);
+  if (code === "0x") {
+    throw new Error(`randomness provider ${target} has no deployed code`);
+  }
+  return readPendingRequestCount(provider, target);
 }
 
 export function requireCiphernodeRestartAcknowledgement(

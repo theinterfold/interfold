@@ -439,6 +439,40 @@ describe("Protocol deployment", function () {
     ).to.equal(undefined);
   });
 
+  it("rejects a repeated pending-request RPC failure", async function () {
+    let calls = 0;
+    const provider = {
+      call: async () => {
+        calls += 1;
+        throw new Error(
+          calls === 1 ? "temporary RPC failure" : "RPC unavailable",
+        );
+      },
+      getCode: async () => "0x6000",
+    } as unknown as ethersLib.Provider;
+
+    await expect(
+      readOptionalPendingRequestCount(provider, ethersLib.ZeroAddress),
+    ).to.be.rejectedWith("RPC unavailable");
+    expect(calls).to.equal(2);
+  });
+
+  it("rejects a malformed pending-request response", async function () {
+    let calls = 0;
+    const provider = {
+      call: async () => {
+        calls += 1;
+        return "0x1234";
+      },
+      getCode: async () => "0x6000",
+    } as unknown as ethersLib.Provider;
+
+    await expect(
+      readOptionalPendingRequestCount(provider, ethersLib.ZeroAddress),
+    ).to.be.rejected;
+    expect(calls).to.equal(2);
+  });
+
   it("rejects VRF timing that cannot satisfy protocol reservations", function () {
     const source = new URL(
       "../../deploy/protocol/mainnet-protocol.config.json",

@@ -202,10 +202,7 @@ export async function simulateServiceMigration(): Promise<void> {
     proposer,
     ethersLib.toBeHex(ethersLib.parseEther("100")),
   ]);
-  const forkUrl = process.env.RPC_URL;
-  if (!forkUrl) throw new Error("RPC_URL is required for the fork signer");
-  const forkProvider = new ethersLib.JsonRpcProvider(forkUrl);
-  const proposerSigner = await forkProvider.getSigner(proposer);
+  const proposerSigner = await ethers.getSigner(proposer);
   await (
     await proposerSigner.sendTransaction({
       to: governanceCall.to,
