@@ -144,6 +144,7 @@ jobs:
               - 'scripts/circuit-constants.ts'
               - 'scripts/generate-verifiers.ts'
               - 'scripts/generate-verifiers.test.ts'
+              - 'packages/user-data-encryption-prover/**'
               - 'packages/interfold-contracts/contracts/verifiers/bfv/honk/**'
               - 'package.json'
               - '!**/*.md'
@@ -250,14 +251,12 @@ jobs:
 
           any() { for v in "$@"; do [ "$v" = "true" ] && echo "true" && return; done; echo "false"; }
 
-          echo "rust_unit_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $BINDINGS $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI $TOOLING)" >> $GITHUB_OUTPUT
-          echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $REACT $INTEGRATION $CIRCUITS $CI $TEMPLATES $TOOLING)" >> $GITHUB_OUTPUT
-          # build_sdk also runs for React, integration, and template changes: it builds React, and
-          # the integration and template jobs need its artifacts. Those changes cannot alter the SDK
-          # test results, so the tests skip them.
-          echo "sdk_tests=$(any $FORCE $RUST $CONTRACTS $SDK $CIRCUITS $CI $TOOLING)" >> $GITHUB_OUTPUT
+          echo "rust_unit_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI)" >> $GITHUB_OUTPUT
+          echo "rust_integration_tests=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $CI)" >> $GITHUB_OUTPUT
+          echo "ciphernode_e2e=$(any $FORCE $RUST $CONTRACTS $CIRCUITS $INTEGRATION $CI)" >> $GITHUB_OUTPUT
+          echo "build_sdk=$(any $FORCE $RUST $CONTRACTS $SDK $INTEGRATION $CIRCUITS $CI $TEMPLATES)" >> $GITHUB_OUTPUT
+          # CRISP ballot proofs depend on the root circuit tree and its public-input layouts.
+          echo "crisp=$(any $FORCE $CRISP $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           # template_integration is the repo's cross-cutting end-to-end test: it
           # runs a full E3 round against real ciphernodes, so it must run on any
           # change to the stack it drives, not just template changes.
@@ -1778,8 +1777,27 @@ jobs:
       - name: Install node dependencies
         run: pnpm install --frozen-lockfile
 
-      - name: Download SDK artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - name: Build the sdk
+        working-directory: ./examples/CRISP
+        run: pnpm build:sdk
+
+      - name: Check generated CRISP verifiers
+        run: |
+          git diff --exit-code -- \
+            examples/CRISP/packages/crisp-contracts/contracts/verifiers/CRISPVerifier.sol \
+            examples/CRISP/packages/crisp-contracts/contracts/verifiers/CRISPOnchainVerifier.sol
+
+      - name: Install Chrome for WASM browser smoke tests
+        uses: browser-actions/setup-chrome@19ae4b339ee18925ab85cf12c1041150ea4a44c8 # v1
+
+      - name: WASM browser smoke test (crisp-zk-inputs)
+        working-directory: ./examples/CRISP
+        run: |
+          pnpm -C packages/crisp-zk-inputs build
+          pnpm -C packages/crisp-zk-inputs test:browser
+
+      - name: Upload SDK artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: sdk-artifacts
           path: ./

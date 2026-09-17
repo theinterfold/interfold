@@ -14,5 +14,6 @@ pub mod rlk_generation_limb;
 pub mod rlk_aggregation;
 pub mod user_data_encryption_ct0;
 pub mod user_data_encryption_ct1;
+pub mod user_data_encryption_chunk;
 pub mod share_decryption;
 pub mod decrypted_shares_aggregation;

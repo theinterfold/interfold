@@ -8,7 +8,7 @@ repository.workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-alloy = { workspace = true }
+alloy-primitives = { workspace = true }
 ark-bn254 = { workspace = true }
 clap = { workspace = true }
 ark-ff = { workspace = true }

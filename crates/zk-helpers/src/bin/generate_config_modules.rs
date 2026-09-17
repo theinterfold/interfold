@@ -273,6 +273,16 @@ fn render_threshold(preset: BfvPreset) -> Result<String> {
         _ => unreachable!("config generation requires a threshold preset"),
     };
 
+    // user_data_encryption chunking grid: not a cryptographic parameter, just how ct0/ct1's
+    // range-check + evaluation work is split across browser-sized circuits. N_CHUNKS=2 is the
+    // minimum that's still genuinely "chunking" (one fewer and it degenerates to the
+    // witness-group-split design) - it also means every grid's leaves combine directly into a
+    // root with no intermediate pair/quad level, minimizing total proving instances while every
+    // circuit still measures well under the 2M gate ceiling. r1is/p1is live in the same merged
+    // leaf, sliced at the same `chunk_idx`, so they share this count: their chunk width is simply
+    // twice the main one (`2 * CHUNK_SIZE`), derived in each circuit rather than configured.
+    let udec_n_chunks = 2u32;
+
     let header = format!(
         "{LICENSE}
 use crate::core::threshold::decrypted_shares_aggregation::Configs as DecryptedSharesAggregationConfigs;
@@ -281,6 +291,8 @@ use crate::core::threshold::pk_generation::Configs as PkGenerationConfigs;
 use crate::core::threshold::rlk_aggregation::Configs as RlkAggregationConfigs;
 use crate::core::threshold::rlk_generation::Configs as RlkGenerationConfigs;
 use crate::core::threshold::share_decryption::Configs as ShareDecryptionConfigs;
+use crate::core::threshold::user_data_encryption_chunk::Ct0ChunkConfigs as UserDataEncryptionCt0ChunkConfigs;
+use crate::core::threshold::user_data_encryption_chunk::Ct1ChunkConfigs as UserDataEncryptionCt1ChunkConfigs;
 use crate::core::threshold::user_data_encryption_ct0::Configs as UserDataEncryptionCt0Configs;
 use crate::core::threshold::user_data_encryption_ct1::Configs as UserDataEncryptionCt1Configs;
 use crate::math::polynomial::Polynomial;
@@ -505,6 +517,11 @@ pub global USER_DATA_ENCRYPTION_BIT_R1: u32 = {};
 pub global USER_DATA_ENCRYPTION_BIT_R2: u32 = {};
 pub global USER_DATA_ENCRYPTION_BIT_P1: u32 = {};
 pub global USER_DATA_ENCRYPTION_BIT_P2: u32 = {};
+// Bit width for `e0_quotients` (the CRT quotient in `e0 == e0is[i] + e0_quotients[i] * qis[i]`).
+// MUST be range-checked with USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS: the equation holds in
+// F_p, not Z, so an unconstrained quotient lets a prover pick any e0is (soundness gap, not a
+// tuning knob - see check_e0_crt_consistency's callers).
+pub global USER_DATA_ENCRYPTION_BIT_E0_QUOTIENT: u32 = {};
 
 pub global USER_DATA_ENCRYPTION_K0IS: [Field; L] = [{}];
 pub global USER_DATA_ENCRYPTION_PK_BOUNDS: [Field; L] = [{}];
@@ -517,7 +534,9 @@ pub global USER_DATA_ENCRYPTION_R1_LOW_BOUNDS: [Field; L] = [{}];
 pub global USER_DATA_ENCRYPTION_R1_UP_BOUNDS: [Field; L] = [{}];
 pub global USER_DATA_ENCRYPTION_R2_BOUNDS: [Field; L] = [{}];
 pub global USER_DATA_ENCRYPTION_P1_BOUNDS: [Field; L] = [{}];
-pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];",
+pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];
+// Per-limb bound on the honest e0_quotients[i] magnitude: (e0_bound + qi_bound) / qi + 1.
+pub global USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS: [Field; L] = [{}];",
             udec.bits.pk_bit,
             udec.bits.ct_bit,
             udec.bits.u_bit,
@@ -528,6 +547,7 @@ pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];",
             udec.bits.r2_bit,
             udec.bits.p1_bit,
             udec.bits.p2_bit,
+            udec.bits.e0_quotient_bit,
             join_display(&udec.k0is, ", "),
             join_biguint(&udec.bounds.pk_bounds),
             udec.bounds.e0_bound,
@@ -540,6 +560,7 @@ pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];",
             join_biguint(&udec.bounds.r2_bounds),
             join_biguint(&udec.bounds.p1_bounds),
             join_biguint(&udec.bounds.p2_bounds),
+            join_biguint(&udec.bounds.e0_quotient_bounds),
         ),
     );
 
@@ -555,6 +576,7 @@ pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];",
     USER_DATA_ENCRYPTION_R2_BOUNDS,
     USER_DATA_ENCRYPTION_K1_LOW_BOUND,
     USER_DATA_ENCRYPTION_K1_UP_BOUND,
+    USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS,
 );",
     );
 
@@ -567,6 +589,45 @@ pub global USER_DATA_ENCRYPTION_P2_BOUNDS: [Field; L] = [{}];",
     USER_DATA_ENCRYPTION_P1_BOUNDS,
     USER_DATA_ENCRYPTION_P2_BOUNDS,
 );",
+    );
+
+    let udec_chunking_section = section(
+        "user_data_encryption chunking (ct0/ct1 coefficient-level chunk grid)",
+        &format!(
+            "// Not a cryptographic parameter - see the comment at this constant's call site in
+// generate_config_modules.rs for the sizing rationale (N_CHUNKS=2 is the minimum that's
+// still genuinely \"chunking\").
+//
+// One count covers the whole merged grid: u, e0, k1, r2is (ct0) / u, e1, p2is (ct1) - everything
+// of length N - plus r1is/p1is, which the same chunk leaf slices at the same `chunk_idx`. r2is/p2is
+// (degree N-1) are padded to N and r1is/p1is (degree 2N-1) to 2N by one always-zero top
+// coefficient, so a circuit's r1/p1 chunk width is always exactly twice its main chunk width
+// (`2 * CHUNK_SIZE`) and is derived that way rather than from a second count.
+pub global USER_DATA_ENCRYPTION_N_CHUNKS: u32 = {};
+
+// Bounds the chunk leaves check against. Same values as the CT0/CT1 configs above - the chunk
+// structs are sized for one `CHUNK_SIZE` slice rather than a whole `Polynomial<N>`, and drop the
+// fields only the whole-witness circuits use (k0is, and qis on the ct1 side).
+pub global USER_DATA_ENCRYPTION_CT0_CHUNK_CONFIGS: UserDataEncryptionCt0ChunkConfigs<L> = UserDataEncryptionCt0ChunkConfigs::new(
+    QIS,
+    USER_DATA_ENCRYPTION_U_BOUND,
+    USER_DATA_ENCRYPTION_E0_BOUND,
+    USER_DATA_ENCRYPTION_K1_LOW_BOUND,
+    USER_DATA_ENCRYPTION_K1_UP_BOUND,
+    USER_DATA_ENCRYPTION_R1_LOW_BOUNDS,
+    USER_DATA_ENCRYPTION_R1_UP_BOUNDS,
+    USER_DATA_ENCRYPTION_R2_BOUNDS,
+    USER_DATA_ENCRYPTION_E0_QUOTIENT_BOUNDS,
+);
+
+pub global USER_DATA_ENCRYPTION_CT1_CHUNK_CONFIGS: UserDataEncryptionCt1ChunkConfigs<L> = UserDataEncryptionCt1ChunkConfigs::new(
+    USER_DATA_ENCRYPTION_U_BOUND,
+    USER_DATA_ENCRYPTION_E1_BOUND,
+    USER_DATA_ENCRYPTION_P1_BOUNDS,
+    USER_DATA_ENCRYPTION_P2_BOUNDS,
+);",
+            udec_n_chunks,
+        ),
     );
 
     let tsd_section = section(
@@ -613,7 +674,7 @@ pub global DECRYPTED_SHARES_AGGREGATION_CONFIGS: DecryptedSharesAggregationConfi
     );
 
     Ok(format!(
-        "{header}{pkgen_section}\n\n{rlk_section}\n\n{pkagg_section}\n\n{udec_section}\n\n{udec_ct0_section}\n\n{udec_ct1_section}\n\n{tsd_section}\n\n{dsa_section}\n"
+        "{header}{pkgen_section}\n\n{rlk_section}\n\n{pkagg_section}\n\n{udec_section}\n\n{udec_ct0_section}\n\n{udec_ct1_section}\n\n{udec_chunking_section}\n\n{tsd_section}\n\n{dsa_section}\n"
     ))
 }
 

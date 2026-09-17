@@ -7,6 +7,7 @@ description = "Canonical EVM domain hashes for protocol proofs"
 repository.workspace = true
 
 [dependencies]
-alloy = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-sol-types = { workspace = true }
 hex = { workspace = true }
 serde = { workspace = true }

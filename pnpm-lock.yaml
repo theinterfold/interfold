@@ -114,6 +114,294 @@ importers:
         specifier: 5.8.3
         version: 5.8.3
 
+  examples/CRISP:
+    devDependencies:
+      '@interfold/config':
+        specifier: ^0
+        version: 0.9.0(eslint@9.39.1(jiti@1.21.7))(tsup@8.5.0(@microsoft/api-extractor@7.58.12(@types/node@22.7.5))(@swc/core@1.15.46)(jiti@1.21.7)(postcss@8.5.25)(tsx@4.20.6)(typescript@5.8.3)(yaml@2.8.2))(typescript@5.8.3)
+      '@playwright/test':
+        specifier: 1.52.0
+        version: 1.52.0
+      '@synthetixio/synpress':
+        specifier: 4.1.1
+        version: 4.1.1(@depay/solana-web3.js@1.98.3)(@depay/web3-blockchains@9.8.13)(@microsoft/api-extractor@7.58.12(@types/node@22.7.5))(@playwright/test@1.52.0)(@swc/core@1.15.46)(bufferutil@4.1.0)(ethers@6.17.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(jiti@1.21.7)(playwright-core@1.52.0)(postcss@8.5.25)(tsx@4.20.6)(typescript@5.8.3)(utf-8-validate@5.0.10)(yaml@2.8.2)
+      '@synthetixio/synpress-cache':
+        specifier: 0.0.13
+        version: 0.0.13(@microsoft/api-extractor@7.58.12(@types/node@22.7.5))(@swc/core@1.15.46)(jiti@1.21.7)(playwright-core@1.52.0)(postcss@8.5.25)(tsx@4.20.6)(typescript@5.8.3)(yaml@2.8.2)
+      '@types/node':
+        specifier: 22.7.5
+        version: 22.7.5
+      concurrently:
+        specifier: ^9.1.2
+        version: 9.2.4
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
+      eslint:
+        specifier: ^9.39.1
+        version: 9.39.1(jiti@1.21.7)
+      ethers:
+        specifier: ^6.15.0
+        version: 6.17.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      playwright:
+        specifier: 1.52.0
+        version: 1.52.0
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
+      wait-on:
+        specifier: ^8.0.3
+        version: 8.0.5
+
+  examples/CRISP/client:
+    dependencies:
+      '@crisp-e3/sdk':
+        specifier: 0.20.1
+        version: link:../packages/crisp-sdk
+      '@emotion/babel-plugin':
+        specifier: ^11.11.0
+        version: 11.13.5
+      '@emotion/react':
+        specifier: ^11.11.4
+        version: 11.14.0(@types/react@18.3.31)(react@18.3.1)
+      '@phosphor-icons/react':
+        specifier: ^2.1.4
+        version: 2.1.10(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      '@svgr/rollup':
+        specifier: ^8.1.0
+        version: 8.1.0(rollup@4.62.3)(typescript@5.8.3)
+      '@tanstack/react-query':
+        specifier: ^5.74.3
+        version: 5.101.4(react@18.3.1)
+      axios:
+        specifier: 1.13.2
+        version: 1.13.2
+      connectkit:
+        specifier: ^1.9.0
+        version: 1.9.2(@babel/core@7.29.7)(@tanstack/react-query@5.101.4(react@18.3.1))(react-dom@18.3.1(react@18.3.1))(react-is@18.3.1)(react@18.3.1)(viem@2.38.6(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.4.3))(wagmi@2.19.5(@tanstack/query-core@5.101.4)(@tanstack/react-query@5.101.4(react@18.3.1))(@types/react@18.3.31)(bufferutil@4.1.0)(immer@10.0.2)(react@18.3.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(viem@2.38.6(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.4.3))(zod@4.4.3))
+      ethers:
+        specifier: ^6.12.0
+        version: 6.17.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      react:
+        specifier: ^18.2.0
+        version: 18.3.1
+      react-dom:
+        specifier: ^18.2.0
+        version: 18.3.1(react@18.3.1)
+      react-markdown:
+        specifier: ^9.0.1
+        version: 9.1.0(@types/react@18.3.31)(react@18.3.1)
+      react-router-dom:
+        specifier: ^6.22.3
+        version: 6.30.4(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      react-syntax-highlighter:
+        specifier: ^15.5.0
+        version: 15.6.6(react@18.3.1)
+      viem:
+        specifier: 2.38.6
+        version: 2.38.6(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.4.3)
+      vite-plugin-node-polyfills:
+        specifier: ^0.22.0
+        version: 0.22.0(rollup@4.62.3)(vite@5.4.21(@types/node@22.7.5))
+      vite-plugin-top-level-await:
+        specifier: ^1.4.1
+        version: 1.6.0(rollup@4.62.3)(vite@5.4.21(@types/node@22.7.5))
+      vite-tsconfig-paths:
+        specifier: ^4.3.2
+        version: 4.3.2(typescript@5.8.3)(vite@5.4.21(@types/node@22.7.5))
+      wagmi:
+        specifier: ^2.14.16
+        version: 2.19.5(@tanstack/query-core@5.101.4)(@tanstack/react-query@5.101.4(react@18.3.1))(@types/react@18.3.31)(bufferutil@4.1.0)(immer@10.0.2)(react@18.3.1)(typescript@5.8.3)(utf-8-validate@5.0.10)(viem@2.38.6(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.4.3))(zod@4.4.3)
+    devDependencies:
+      '@tailwindcss/typography':
+        specifier: ^0.5.12
+        version: 0.5.20(tailwindcss@3.4.19(tsx@4.20.6)(yaml@2.8.2))
+      '@types/react':
+        specifier: ^18.2.66
+        version: 18.3.31
+      '@types/react-dom':
+        specifier: ^18.2.22
+        version: 18.3.7(@types/react@18.3.31)
+      '@types/react-syntax-highlighter':
+        specifier: ^15.5.11
+        version: 15.5.13
+      '@vitejs/plugin-react':
+        specifier: ^4.2.1
+        version: 4.7.0(vite@5.4.21(@types/node@22.7.5))
+      add:
+        specifier: ^2.0.6
+        version: 2.0.9
+      autoprefixer:
+        specifier: ^10.4.19
+        version: 10.5.4(postcss@8.5.25)
+      gh-pages:
+        specifier: ^6.1.1
+        version: 6.3.0
+      prettier:
+        specifier: ^3.2.5
+        version: 3.6.2
+      prettier-plugin-tailwindcss:
+        specifier: ^0.5.13
+        version: 0.5.14(@trivago/prettier-plugin-sort-imports@4.3.0(prettier@3.6.2))(prettier@3.6.2)
+      tailwindcss:
+        specifier: ^3.4.2
+        version: 3.4.19(tsx@4.20.6)(yaml@2.8.2)
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
+      vite:
+        specifier: ^5.2.0
+        version: 5.4.21(@types/node@22.7.5)
+
+  examples/CRISP/packages/crisp-contracts:
+    dependencies:
+      '@excubiae/contracts':
+        specifier: ^0.4.0
+        version: 0.4.0
+      '@interfold/contracts':
+        specifier: workspace:*
+        version: link:../../../../packages/interfold-contracts
+      '@zk-kit/lazy-imt.sol':
+        specifier: 2.0.0-beta.12
+        version: 2.0.0-beta.12
+      poseidon-solidity:
+        specifier: ^0.0.5
+        version: 0.0.5
+      solady:
+        specifier: ^0.1.13
+        version: 0.1.26
+    devDependencies:
+      '@crisp-e3/sdk':
+        specifier: workspace:^
+        version: link:../crisp-sdk
+      '@crisp-e3/zk-inputs':
+        specifier: workspace:^
+        version: link:../crisp-zk-inputs
+      '@nomicfoundation/hardhat-ethers':
+        specifier: 4.0.3
+        version: 4.0.3(bufferutil@4.1.0)(hardhat@3.0.11(bufferutil@4.1.0)(utf-8-validate@5.0.10))(utf-8-validate@5.0.10)
+      '@nomicfoundation/hardhat-keystore':
+        specifier: 3.0.3
+        version: 3.0.3(hardhat@3.0.11(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+      '@nomicfoundation/hardhat-toolbox-mocha-ethers':
+        specifier: 3.0.0
+        version: 3.0.0(027a565f04fe5400edcbf4f04a247c65)
+      '@openzeppelin/contracts':
+        specifier: ^5.0.2
+        version: 5.3.0
+      '@typechain/ethers-v6':
+        specifier: ^0.5.0
+        version: 0.5.1(ethers@6.17.0(bufferutil@4.1.0)(utf-8-validate@5.0.10))(typechain@8.3.2(typescript@5.8.3))(typescript@5.8.3)
+      '@types/chai':
+        specifier: ^4.2.0
+        version: 4.3.20
+      '@types/mocha':
+        specifier: '>=9.1.0'
+        version: 10.0.10
+      '@types/node':
+        specifier: 22.7.5
+        version: 22.7.5
+      chai:
+        specifier: ^6.2.0
+        version: 6.2.2
+      dotenv:
+        specifier: ^16.4.5
+        version: 16.6.1
+      ethers:
+        specifier: ^6.15.0
+        version: 6.17.0(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      forge-std:
+        specifier: github:foundry-rs/forge-std#v1.9.4
+        version: https://codeload.github.com/foundry-rs/forge-std/tar.gz/1eea5bae12ae557d589f9f0f0edae2faa47cb262
+      hardhat:
+        specifier: 3.0.11
+        version: 3.0.11(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      hardhat-deploy:
+        specifier: ^0.12.4
+        version: 0.12.4(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      hardhat-gas-reporter:
+        specifier: ^1.0.8
+        version: 1.0.10(bufferutil@4.1.0)(hardhat@3.0.11(bufferutil@4.1.0)(utf-8-validate@5.0.10))(utf-8-validate@5.0.10)
+      solidity-coverage:
+        specifier: ^0.8.1
+        version: 0.8.17(hardhat@3.0.11(bufferutil@4.1.0)(utf-8-validate@5.0.10))
+      ts-node:
+        specifier: ^10.9.2
+        version: 10.9.2(@swc/core@1.15.46)(@swc/wasm@1.15.46)(@types/node@22.7.5)(typescript@5.8.3)
+      typechain:
+        specifier: ^8.3.0
+        version: 8.3.2(typescript@5.8.3)
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
+      viem:
+        specifier: 2.38.6
+        version: 2.38.6(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@3.25.76)
+
+  examples/CRISP/packages/crisp-sdk:
+    dependencies:
+      '@aztec/bb.js':
+        specifier: 5.1.0
+        version: 5.1.0
+      '@crisp-e3/zk-inputs':
+        specifier: workspace:*
+        version: link:../crisp-zk-inputs
+      '@noir-lang/noir_js':
+        specifier: 1.0.0-beta.26
+        version: 1.0.0-beta.26
+      '@zk-kit/lean-imt':
+        specifier: ^2.2.4
+        version: 2.2.5(bufferutil@4.1.0)(utf-8-validate@5.0.10)
+      poseidon-lite:
+        specifier: ^0.3.0
+        version: 0.3.0
+      viem:
+        specifier: 2.38.6
+        version: 2.38.6(bufferutil@4.1.0)(typescript@5.8.3)(utf-8-validate@5.0.10)(zod@4.4.3)
+    devDependencies:
+      '@interfold/user-data-encryption-prover':
+        specifier: workspace:*
+        version: link:../../../../packages/user-data-encryption-prover
+      '@types/chai':
+        specifier: ^5.2.2
+        version: 5.2.3
+      '@types/node':
+        specifier: 22.7.5
+        version: 22.7.5
+      chai:
+        specifier: ^6.2.0
+        version: 6.2.2
+      tsup:
+        specifier: 8.5.0
+        version: 8.5.0(@microsoft/api-extractor@7.58.12(@types/node@22.7.5))(@swc/core@1.15.46)(jiti@1.21.7)(postcss@8.5.25)(tsx@4.20.6)(typescript@5.8.3)(yaml@2.8.2)
+      typescript:
+        specifier: 5.8.3
+        version: 5.8.3
+      vite:
+        specifier: ^5.4.19
+        version: 5.4.21(@types/node@22.7.5)
+      vite-plugin-wasm:
+        specifier: ^3.2.2
+        version: 3.6.0(vite@5.4.21(@types/node@22.7.5))
+      vitest:
+        specifier: ^1.6.1
+        version: 1.6.1(@types/node@22.7.5)
+
+  examples/CRISP/packages/crisp-zk-inputs:
+    devDependencies:
+      execa:
+        specifier: ^8.0.1
+        version: 8.0.1
+      playwright:
+        specifier: 1.52.0
+        version: 1.52.0
+      replace-in-file:
+        specifier: ^7.2.0
+        version: 7.2.0
+      wasm-pack:
+        specifier: ^0.15.0
+        version: 0.15.0
+
   packages/interfold-config:
     dependencies:
       '@eslint/eslintrc':
@@ -464,6 +752,9 @@ importers:
       '@interfold/config':
         specifier: workspace:*
         version: link:../interfold-config
+      '@interfold/user-data-encryption-prover':
+        specifier: workspace:*
+        version: link:../user-data-encryption-prover
       concurrently:
         specifier: ^9.1.2
         version: 9.2.4
@@ -479,6 +770,15 @@ importers:
       vite-plugin-dts:
         specifier: ^4.5.3
         version: 4.5.4(@types/node@22.7.5)(rollup@4.62.3)(typescript@5.8.3)(vite@6.4.3(@types/node@22.7.5)(jiti@1.21.7)(tsx@4.20.6)(yaml@2.8.2))
+
+  packages/user-data-encryption-prover:
+    dependencies:
+      '@aztec/bb.js':
+        specifier: 5.1.0
+        version: 5.1.0
+      '@noir-lang/noir_js':
+        specifier: 1.0.0-beta.26
+        version: 1.0.0-beta.26
 
   templates/default:
     dependencies:

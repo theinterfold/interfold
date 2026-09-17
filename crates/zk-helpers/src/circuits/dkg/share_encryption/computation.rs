@@ -138,8 +138,9 @@ pub struct Inputs {
     pub r2is: CrtPolynomial,
     pub p1is: CrtPolynomial,
     pub p2is: CrtPolynomial,
-    pub e0is: CrtPolynomial,
-    pub e0_quotients: CrtPolynomial,
+    /// e0 is used directly (not per-modulus CRT limbs): e0_bound is identical to e1_bound at
+    /// every preset, nowhere near the CRT moduli, so no CRT decomposition is needed - same
+    /// treatment as e1.
     pub e0: Polynomial,
     pub e1: Polynomial,
     pub u: Polynomial,
@@ -401,26 +402,21 @@ impl Computation for Inputs {
         let mut ct1 = CrtPolynomial::from_fhe_polynomial(&ct[1]);
         let mut pk0 = CrtPolynomial::from_fhe_polynomial(&pk.c[0]);
         let mut pk1 = CrtPolynomial::from_fhe_polynomial(&pk.c[1]);
-        let mut e0_crt = CrtPolynomial::from_fhe_polynomial(e0);
 
         ct0.reverse();
         ct1.reverse();
         pk0.reverse();
         pk1.reverse();
-        e0_crt.reverse();
 
         ct0.center(moduli)?;
         ct1.center(moduli)?;
         pk0.center(moduli)?;
         pk1.center(moduli)?;
-        e0_crt.center(moduli)?;
 
-        crate::utils::verify_crt_shapes(
-            &[&ct0, &ct1, &pk0, &pk1, &e0_crt],
-            moduli.len(),
-            n as usize,
-        )
-        .map_err(|e| CircuitsErrors::Other(format!("C3 CRT shape mismatch: {e}")))?;
+        // e0 is never CRT-decomposed here (see the `e0is`/`e0_quotients` removal note below), so
+        // its shape isn't part of this check.
+        crate::utils::verify_crt_shapes(&[&ct0, &ct1, &pk0, &pk1], moduli.len(), n as usize)
+            .map_err(|e| CircuitsErrors::Other(format!("C3 CRT shape mismatch: {e}")))?;
 
         let canonical =
             crate::ciphernodes_committee::canonical_committee_for_circuit(&data.committee)
@@ -442,7 +438,6 @@ impl Computation for Inputs {
         let CrtPolynomial { limbs: ct1_limbs } = ct1;
         let CrtPolynomial { limbs: pk0_limbs } = pk0;
         let CrtPolynomial { limbs: pk1_limbs } = pk1;
-        let CrtPolynomial { limbs: e0_limbs } = e0_crt;
 
         let mut results: Vec<_> = izip!(
             ctx.moduli_operators(),
@@ -450,28 +445,23 @@ impl Computation for Inputs {
             ct1_limbs,
             pk0_limbs,
             pk1_limbs,
-            e0_limbs,
         )
         .enumerate()
         .par_bridge()
-        .map(|(i, (qi, ct0i, ct1i, pk0i, pk1i, e0i))| {
+        .map(|(i, (qi, ct0i, ct1i, pk0i, pk1i))| {
             let qi_bigint = BigInt::from(**qi);
-
-            let diff = e0_mod_q.sub(&e0i);
-            let qi_poly = Polynomial::constant(qi_bigint.clone());
-            let (e0_quotient, remainder) = diff.div(&qi_poly).expect("CRT requires exact division");
-
-            assert!(
-                remainder.is_zero(),
-                "e0 - e0i must be divisible by qi (CRT consistency)"
-            );
 
             let k0qi = BigInt::from(qi.inv(qi.neg(t)).unwrap());
             let ki = k1.scalar_mul(&k0qi);
 
+            // e0 is used directly here, not a per-modulus CRT limb: e0_bound is identical to
+            // e1_bound at every preset (both tiny, nowhere near qi), so e0 already fits in a
+            // single residue for every modulus - same treatment as e1 (see `ct1i_hat` below).
+            // There is no honest e0_quotient other than zero, so it was never a witness worth
+            // generating.
             let ct0i_hat = {
                 let pk0i_u_times = pk0i.mul(&u);
-                let e0_plus_ki = e0i.add(&ki);
+                let e0_plus_ki = e0_mod_q.add(&ki);
 
                 assert_eq!((pk0i_u_times.coefficients().len() as u64) - 1, 2 * (n - 1));
                 assert_eq!((e0_plus_ki.coefficients().len() as u64) - 1, n - 1);
@@ -494,19 +484,7 @@ impl Computation for Inputs {
 
             let (p1i, p2i) = decompose_residue(&ct1i, &ct1i_hat, &qi_bigint, &cyclo, n);
 
-            (
-                i,
-                r2i,
-                r1i,
-                ct0i,
-                ct1i,
-                pk0i,
-                pk1i,
-                p1i,
-                p2i,
-                e0i,
-                e0_quotient,
-            )
+            (i, r2i, r1i, ct0i, ct1i, pk0i, pk1i, p1i, p2i)
         })
         .collect();
 
@@ -520,10 +498,8 @@ impl Computation for Inputs {
         let mut r2is = Vec::with_capacity(results.len());
         let mut p1is = Vec::with_capacity(results.len());
         let mut p2is = Vec::with_capacity(results.len());
-        let mut e0is = Vec::with_capacity(results.len());
-        let mut e0_quotients = Vec::with_capacity(results.len());
 
-        for (_, r2i, r1i, ct0i, ct1i, pk0i, pk1i, p1i, p2i, e0i, e0_quotient) in results {
+        for (_, r2i, r1i, ct0i, ct1i, pk0i, pk1i, p1i, p2i) in results {
             pk0is.push(pk0i);
             pk1is.push(pk1i);
             ct0is.push(ct0i);
@@ -532,8 +508,6 @@ impl Computation for Inputs {
             r2is.push(r2i);
             p1is.push(p1i);
             p2is.push(p2i);
-            e0is.push(e0i);
-            e0_quotients.push(e0_quotient);
         }
 
         let pk0is = CrtPolynomial::new(pk0is);
@@ -544,8 +518,6 @@ impl Computation for Inputs {
         let r2is = CrtPolynomial::new(r2is);
         let p1is = CrtPolynomial::new(p1is);
         let p2is = CrtPolynomial::new(p2is);
-        let e0is = CrtPolynomial::new(e0is);
-        let e0_quotients = CrtPolynomial::new(e0_quotients);
 
         let pk_bit = compute_modulus_bit(&dkg_params);
         let msg_bit = compute_msg_bit(&dkg_params);
@@ -585,8 +557,6 @@ impl Computation for Inputs {
             r2is,
             p1is,
             p2is,
-            e0is,
-            e0_quotients,
             e0: e0_mod_q,
             e1,
             u,
@@ -604,8 +574,6 @@ impl Computation for Inputs {
         let ct1is = crt_polynomial_to_toml_json(&self.ct1is);
         let u = polynomial_to_toml_json(&self.u);
         let e0 = polynomial_to_toml_json(&self.e0);
-        let e0is = crt_polynomial_to_toml_json(&self.e0is);
-        let e0_quotients = crt_polynomial_to_toml_json(&self.e0_quotients);
         let e1 = polynomial_to_toml_json(&self.e1);
         let message = polynomial_to_toml_json(&self.message);
         let r1is = crt_polynomial_to_toml_json(&self.r1is);
@@ -622,8 +590,6 @@ impl Computation for Inputs {
             "ct1is": ct1is,
             "u": u,
             "e0": e0,
-            "e0is": e0is,
-            "e0_quotients": e0_quotients,
             "e1": e1,
             "message": message,
             "r1is": r1is,

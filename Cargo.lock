@@ -3717,7 +3717,8 @@ dependencies = [
 name = "e3-committee-hash"
 version = "0.20.0-dev.2"
 dependencies = [
- "alloy",
+ "alloy-primitives",
+ "alloy-sol-types",
  "hex",
  "serde",
 ]
@@ -4621,7 +4622,7 @@ dependencies = [
 name = "e3-zk-benchmarks"
 version = "0.20.0-dev.2"
 dependencies = [
- "alloy",
+ "alloy-primitives",
  "anyhow",
  "chrono",
  "clap",

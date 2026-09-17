@@ -12,7 +12,7 @@
 
 use crate::packing::flatten;
 use crate::utils::compute_safe;
-use alloy::primitives::B256;
+use alloy_primitives::B256;
 use ark_bn254::Fr as Field;
 use ark_ff::{BigInt as FieldInteger, BigInteger, PrimeField};
 use e3_fhe_params::{build_pair_for_preset, BfvPreset};

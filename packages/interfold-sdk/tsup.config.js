@@ -7,13 +7,28 @@
 import { defineConfig } from 'tsup'
 import { baseConfig } from '@interfold/config/tsup'
 
-const entry = ['src/index.ts', 'src/crypto/index.ts', 'src/contracts/index.ts', 'src/events/index.ts']
+const entry = [
+  'src/index.ts',
+  'src/crypto/index.ts',
+  'src/crypto/presets/insecure.ts',
+  'src/crypto/presets/secure-8192.ts',
+  'src/crypto/presets/secure-16384.ts',
+  'src/contracts/index.ts',
+  'src/events/index.ts',
+]
+const presetEntries = [
+  '@interfold/sdk/internal/presets/insecure',
+  '@interfold/sdk/internal/presets/secure-8192',
+  '@interfold/sdk/internal/presets/secure-16384',
+]
 
 export default defineConfig([
   {
     ...baseConfig,
     entry,
     include: ['./src/**/*.ts'],
+    external: presetEntries,
+    noExternal: ['@interfold/user-data-encryption-prover'],
     format: ['esm'],
     outExtension: () => ({
       js: '.js',
@@ -28,6 +43,8 @@ export default defineConfig([
     ...baseConfig,
     entry,
     include: ['./src/**/*.ts'],
+    external: presetEntries,
+    noExternal: ['@interfold/user-data-encryption-prover'],
     format: ['cjs'],
     // Avoid running DTS build twice for the same entries.
     dts: false,

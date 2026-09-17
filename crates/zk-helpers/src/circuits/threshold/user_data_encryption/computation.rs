@@ -83,6 +83,10 @@ pub struct Bits {
     pub r2_bit: u32,
     pub p1_bit: u32,
     pub p2_bit: u32,
+    /// Bit width for `e0_quotients` - the CRT quotient in `e0 == e0is[i] + e0_quotients[i] * qis[i]`.
+    /// This MUST be range-checked: the equation holds in F_p, not Z, so an unconstrained
+    /// quotient lets a prover pick any e0is (see the soundness note on `e0_quotient_bounds`).
+    pub e0_quotient_bit: u32,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -98,6 +102,11 @@ pub struct Bounds {
     pub r2_bounds: Vec<BigUint>,
     pub p1_bounds: Vec<BigUint>,
     pub p2_bounds: Vec<BigUint>,
+    /// Per-limb bound on the honest `e0_quotients[i]` magnitude: `(e0_bound + qi_bound) / qi + 1`.
+    /// Not a security parameter itself - it exists only to stop the CRT-consistency equation
+    /// from being satisfiable in F_p for an arbitrary e0is. See the `check_e0_crt_consistency`
+    /// callers: they must range-check `e0_quotients` to this bound, or the check is vacuous.
+    pub e0_quotient_bounds: Vec<BigUint>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -189,6 +198,12 @@ impl Computation for Bits {
             p2_bit = p2_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
         }
 
+        // For e0_quotient, use the maximum of all per-limb bounds
+        let mut e0_quotient_bit = 0;
+        for bound in &data.e0_quotient_bounds {
+            e0_quotient_bit = e0_quotient_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
+        }
+
         Ok(Bits {
             pk_bit,
             ct_bit,
@@ -200,6 +215,7 @@ impl Computation for Bits {
             r2_bit,
             p1_bit,
             p2_bit,
+            e0_quotient_bit,
         })
     }
 }
@@ -254,6 +270,9 @@ impl Computation for Bounds {
         let mut r2_bounds: Vec<BigInt> = Vec::new();
         let mut p1_bounds: Vec<BigInt> = Vec::new();
         let mut p2_bounds: Vec<BigInt> = Vec::new();
+        let mut e0_quotient_bounds: Vec<BigInt> = Vec::new();
+
+        let e0_bound_bigint = BigInt::from(e0_bound);
 
         for (i, qi) in ctx.moduli_operators().iter().enumerate() {
             let qi_bigint = BigInt::from(**qi);
@@ -283,6 +302,15 @@ impl Computation for Bounds {
                 ((&n * u_bound + BigInt::from(2)) * &qi_bound + e1_bound) / &qi_bigint;
             p1_bounds.push(p1_bound.clone());
             p2_bounds.push(qi_bound.clone());
+
+            // e0_quotients[i] = (e0 - e0is[i]) / qi. With e0 in [-e0_bound, e0_bound] and e0is[i]
+            // centered in [-qi_bound, qi_bound], the honest quotient magnitude is bounded by
+            // (e0_bound + qi_bound) / qi; +1 covers integer-division truncation. This bound MUST
+            // be enforced with a range check on e0_quotients, or check_e0_crt_consistency's
+            // equation (checked in F_p, not Z) is satisfiable for an arbitrary e0is.
+            let e0_quotient_bound: BigInt =
+                (&e0_bound_bigint + &qi_bound) / &qi_bigint + BigInt::from(1);
+            e0_quotient_bounds.push(e0_quotient_bound);
         }
 
         Ok(Bounds {
@@ -312,6 +340,10 @@ impl Computation for Bounds {
                 .map(|b| BigUint::from(b.to_u128().unwrap()))
                 .collect(),
             p2_bounds: p2_bounds
+                .iter()
+                .map(|b| BigUint::from(b.to_u128().unwrap()))
+                .collect(),
+            e0_quotient_bounds: e0_quotient_bounds
                 .iter()
                 .map(|b| BigUint::from(b.to_u128().unwrap()))
                 .collect(),
