@@ -178,14 +178,19 @@ library InterfoldLifecycle {
     }
 
     /// @notice Requires the current dependency generation to own no live state.
-    function validateGenerationDrained(
+    /// @dev A service-only migration can preserve operators when the registry
+    ///      and bonding proxies do not change.
+    /// @param operatorGenerationMode Zero requires an empty operator generation.
+    ///        A nonzero value preserves the current generation.
+    function validateDependencyReplacementDrained(
         bool configurationActivated,
         bool requestsPaused,
         uint256 activeE3Count,
         address registryAddress,
         address bondingAddress,
         address slashManagerAddress,
-        address replacementRegistryAddress
+        address replacementRegistryAddress,
+        uint256 operatorGenerationMode
     ) external view {
         if (replacementRegistryAddress != address(0)) {
             ICiphernodeRegistry replacementRegistry = ICiphernodeRegistry(
@@ -204,11 +209,12 @@ library InterfoldLifecycle {
         if (
             activeE3Count != 0 ||
             registry.unreleasedCommitteeCount() != 0 ||
-            registry.numCiphernodes() != 0 ||
             bonding.unresolvedCommitteeCount() != 0 ||
-            bonding.numRegisteredOperators() != 0 ||
             slashManager.activeE3Assignments() != 0 ||
-            slashManager.activeBanCount() != 0
+            slashManager.activeBanCount() != 0 ||
+            (operatorGenerationMode == 0 &&
+                (registry.numCiphernodes() != 0 ||
+                    bonding.numRegisteredOperators() != 0))
         ) revert IInterfold.DependencyGenerationNotDrained();
     }
 

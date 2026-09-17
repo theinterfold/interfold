@@ -19,7 +19,9 @@ import {
   assertValidatedVrfDeploymentMatchesPlan,
   assertVrfSubscription,
   assertVrfUpgradePlanMatchesDeployment,
+  readOptionalPendingRequestCount,
   requireCiphernodeRestartAcknowledgement,
+  requireExistingRandomnessConfig,
   requirePlannedRandomnessConfig,
 } from "../../scripts/protocol/randomness";
 import {
@@ -378,6 +380,63 @@ describe("Protocol deployment", function () {
         plan,
       ),
     ).to.throw("deployment Interfold implementation");
+  });
+
+  it("reuses the funded deployment subscription for a replacement provider", function () {
+    const config = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.config.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolConfigFile;
+    const deployment = JSON.parse(
+      fs.readFileSync(
+        new URL(
+          "../../deploy/protocol/mainnet-protocol.deployment.json",
+          import.meta.url,
+        ),
+        "utf8",
+      ),
+    ) as ProtocolDeployment;
+
+    expect(config.randomness!.subscriptionId).to.equal("0");
+    expect(requireExistingRandomnessConfig(config, deployment)).to.deep.equal(
+      deployment.randomness,
+    );
+    expect(() =>
+      requireExistingRandomnessConfig(
+        {
+          ...config,
+          randomness: { ...config.randomness!, requestTimeout: "7200" },
+        },
+        deployment,
+      ),
+    ).to.throw("config.randomness.requestTimeout");
+    expect(() =>
+      requireExistingRandomnessConfig(config, {
+        ...deployment,
+        randomness: undefined,
+      }),
+    ).to.throw("deployment randomness configuration is required");
+  });
+
+  it("accepts a legacy VRF provider without a reservation-count getter", async function () {
+    const [requester] = await ethers.getSigners();
+    const legacyProvider = await ethers.deployContract(
+      "MockRandomnessProvider",
+      [await requester.getAddress()],
+    );
+    await legacyProvider.waitForDeployment();
+
+    expect(
+      await readOptionalPendingRequestCount(
+        ethers.provider,
+        await legacyProvider.getAddress(),
+      ),
+    ).to.equal(undefined);
   });
 
   it("rejects VRF timing that cannot satisfy protocol reservations", function () {

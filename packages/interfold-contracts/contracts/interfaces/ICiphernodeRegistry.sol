@@ -382,6 +382,15 @@ interface ICiphernodeRegistry {
     /// @notice Registry dependencies cannot change while membership or committees remain.
     error RegistryGenerationNotDrained();
 
+    /// @notice A service dependency can change only while requests are paused.
+    error ServiceDependencyMigrationRequiresPause();
+
+    /// @notice A service dependency cannot change while protocol work remains.
+    error ServiceDependencyMigrationNotDrained();
+
+    /// @notice A replacement slashing manager is not compatible with this registry.
+    error IncompatibleSlashingManager(address candidate);
+
     /// @notice `publishCommittee` requires a non-zero PK commitment
     error PkCommitmentRequired();
 
