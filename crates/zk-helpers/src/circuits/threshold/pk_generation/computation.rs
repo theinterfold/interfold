@@ -76,8 +76,7 @@ pub struct Bits {
     pub eek_bit: u32,
     pub sk_bit: u32,
     pub e_sm_bit: u32,
-    pub r1_bit: u32,
-    pub r2_bit: u32,
+    pub r_bit: u32,
     pub pk_bit: u32,
 }
 
@@ -86,8 +85,7 @@ pub struct Bounds {
     pub eek_bound: BigUint,
     pub sk_bound: BigUint,
     pub e_sm_bound: BigUint,
-    pub r1_bounds: Vec<BigUint>,
-    pub r2_bounds: Vec<BigUint>,
+    pub r_bounds: Vec<BigUint>,
     pub pk_bound: BigUint,
 }
 
@@ -96,7 +94,7 @@ pub struct Inputs {
     pub eek: Polynomial,
     pub sk: Polynomial,
     pub e_sm: CrtPolynomial,
-    pub q_shorts: CrtPolynomial,
+    pub r: CrtPolynomial,
     pub pk0is: CrtPolynomial,
 }
 
@@ -141,24 +139,17 @@ impl Computation for Bits {
             build_pair_for_preset(preset).map_err(|e| CircuitsErrors::Other(e.to_string()))?;
         let pk_bit = crate::compute_modulus_bit(&threshold_params);
 
-        // For r1, use the maximum of all low and up bounds
-        let mut r1_bit = 0;
-        for bound in &data.r1_bounds {
-            r1_bit = r1_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
-        }
-
-        // For r2, use the maximum of all bounds
-        let mut r2_bit = 0;
-        for bound in &data.r2_bounds {
-            r2_bit = r2_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
+        // The quotient window covers every limb, so take the widest bound.
+        let mut r_bit = 0;
+        for bound in &data.r_bounds {
+            r_bit = r_bit.max(calculate_bit_width(BigInt::from(bound.clone())));
         }
 
         Ok(Bits {
             eek_bit,
             sk_bit,
             e_sm_bit,
-            r1_bit,
-            r2_bit,
+            r_bit,
             pk_bit,
         })
     }
@@ -208,8 +199,7 @@ impl Computation for Bounds {
 
         // Calculate bounds for each CRT basis
         let num_moduli = ctx.moduli().len();
-        let mut r2_bounds = vec![BigInt::from(0); num_moduli];
-        let mut r1_bounds = vec![BigInt::from(0); num_moduli];
+        let mut r_bounds = vec![BigInt::from(0); num_moduli];
         let mut moduli = Vec::new();
         let mut pk_bound_max = BigInt::from(0);
 
@@ -219,10 +209,8 @@ impl Computation for Bounds {
 
             moduli.push(**qi);
 
-            r2_bounds[i] = qi_bound.clone();
-
-            // Compute asymmetric range for r1 bounds per modulus
-            r1_bounds[i] = ((&n + 2u32) * &qi_bound + eek_bound) / &qi_bigint;
+            // Bound on the reduced modulus-switching quotient, per modulus.
+            r_bounds[i] = ((&n + 2u32) * &qi_bound + eek_bound) / &qi_bigint;
 
             // Track maximum pk bound across all moduli
             // We don't need to store them as we only need the maximum bound to compute the commitment bit width
@@ -235,11 +223,7 @@ impl Computation for Bounds {
             eek_bound: BigUint::from(eek_bound),
             sk_bound: BigUint::from(sk_bound as u128),
             e_sm_bound,
-            r1_bounds: r1_bounds
-                .iter()
-                .map(|b| BigUint::from(b.to_u128().unwrap()))
-                .collect(),
-            r2_bounds: r2_bounds
+            r_bounds: r_bounds
                 .iter()
                 .map(|b| BigUint::from(b.to_u128().unwrap()))
                 .collect(),
@@ -318,17 +302,17 @@ impl Computation for Inputs {
             // modulus-switching quotient. The circuit constrains only the range of what it gets,
             // which is why the reduction belongs here. The cyclotomic quotient is discarded.
             let (r1, _r2) = decompose_residue(&pk0_share, &pk0_share_hat, &qi, &cyclo, n);
-            let q_short = r1
+            let r = r1
                 .reduce_by_cyclotomic(&cyclo)
                 .expect("cyclotomic polynomial is non-zero and monic");
 
-            (i, q_short, pk0_share.clone(), e_sm.clone())
+            (i, r, pk0_share.clone(), e_sm.clone())
         })
         .collect();
 
         results.sort_by_key(|(i, _, _, _)| *i);
 
-        let mut q_shorts = CrtPolynomial::new(vec![]);
+        let mut r = CrtPolynomial::new(vec![]);
         let mut pk0_share = CrtPolynomial::new(vec![]);
         let mut e_sm = CrtPolynomial::new(vec![]);
 
@@ -340,8 +324,8 @@ impl Computation for Inputs {
         eek.reverse();
         eek.center(&moduli[0]);
 
-        for (_i, q_shorti, pk0_sharei, e_smi) in results {
-            q_shorts.add_limb(q_shorti);
+        for (_i, ri, pk0_sharei, e_smi) in results {
+            r.add_limb(ri);
             pk0_share.add_limb(pk0_sharei);
             e_sm.add_limb(e_smi);
         }
@@ -350,7 +334,7 @@ impl Computation for Inputs {
             eek,
             sk,
             e_sm,
-            q_shorts,
+            r,
             pk0is: pk0_share,
         })
     }
@@ -360,14 +344,14 @@ impl Computation for Inputs {
         let e = polynomial_to_toml_json(&self.eek);
         let sk = polynomial_to_toml_json(&self.sk);
         let e_sm = crt_polynomial_to_toml_json(&self.e_sm);
-        let q_shorts = crt_polynomial_to_toml_json(&self.q_shorts);
+        let r = crt_polynomial_to_toml_json(&self.r);
 
         let json = serde_json::json!({
             "pk0is": pk0is,
             "eek": e,
             "sk": sk,
             "e_sm": e_sm,
-            "q_shorts": q_shorts,
+            "r": r,
         });
 
         Ok(json)

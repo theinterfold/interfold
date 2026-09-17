@@ -7,7 +7,7 @@
 use lib::configs::default::dkg::{SHARE_COMPUTATION_CHUNK_SIZE, SHARE_COMPUTATION_N_CHUNKS};
 use lib::configs::default::threshold::{
     CRP, L, N, PK_GENERATION_BIT_E_SM, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_PK,
-    PK_GENERATION_BIT_R1, PK_GENERATION_BIT_SK, PK_GENERATION_CONFIGS,
+    PK_GENERATION_BIT_R, PK_GENERATION_BIT_SK, PK_GENERATION_CONFIGS,
 };
 use lib::core::threshold::pk_generation::PkGeneration;
 use lib::math::polynomial::Polynomial;
@@ -16,10 +16,10 @@ fn main(
     eek: Polynomial<N>,
     sk: Polynomial<N>,
     e_sm: [Polynomial<N>; L],
-    q_shorts: [Polynomial<N>; L],
+    r: [Polynomial<N>; L],
     pk0is: [Polynomial<N>; L],
 ) -> pub (Field, Field, Field) {
-    let pk_generation: PkGeneration<N, L, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_SK, PK_GENERATION_BIT_E_SM, PK_GENERATION_BIT_R1, PK_GENERATION_BIT_PK, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> =
-        PkGeneration::new(PK_GENERATION_CONFIGS, CRP, eek, sk, e_sm, q_shorts, pk0is);
+    let pk_generation: PkGeneration<N, L, PK_GENERATION_BIT_EEK, PK_GENERATION_BIT_SK, PK_GENERATION_BIT_E_SM, PK_GENERATION_BIT_R, PK_GENERATION_BIT_PK, SHARE_COMPUTATION_N_CHUNKS, SHARE_COMPUTATION_CHUNK_SIZE> =
+        PkGeneration::new(PK_GENERATION_CONFIGS, CRP, eek, sk, e_sm, r, pk0is);
     pk_generation.execute()
 }

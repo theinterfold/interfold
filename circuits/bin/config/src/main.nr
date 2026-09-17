@@ -40,7 +40,7 @@ use lib::configs::default::threshold::{
     Q_MOD_T_CENTERED as THRESHOLD_Q_MOD_T_CENTERED, Q_INVERSE_MOD_T as THRESHOLD_Q_INVERSE_MOD_T,
     // pk_generation bounds
     PK_GENERATION_EEK_BOUND, PK_GENERATION_SK_BOUND, PK_GENERATION_E_SM_BOUND,
-    PK_GENERATION_R1_BOUNDS, PK_GENERATION_R2_BOUNDS, PK_GENERATION_BIT_R1, PARAMS_SMUDGING_B_ENC,
+    PK_GENERATION_R_BOUNDS, PK_GENERATION_BIT_R, PARAMS_SMUDGING_B_ENC,
     // share_decryption bounds
     THRESHOLD_SHARE_DECRYPTION_R1_BOUNDS, THRESHOLD_SHARE_DECRYPTION_R2_BOUNDS,
     // user_data_encryption bounds
@@ -336,7 +336,7 @@ fn verify_threshold_bounds() {
 /// - Secret key sk (ternary, bound = 1)
 /// - Error eek (bound = 20)
 /// - Smudging noise e_sm (large bound for 80-bit statistical security)
-/// - Quotients r1, r2 for each CRT modulus
+/// - Reduced modulus-switching quotient r for each CRT modulus
 fn verify_pk_generation_bounds() {
     let n: u128 = THRESHOLD_N as u128;
     let eek: u128 = PK_GENERATION_EEK_BOUND as u128;
@@ -347,30 +347,24 @@ fn verify_pk_generation_bounds() {
     // eek_bound = 20
     assert(PK_GENERATION_EEK_BOUND == 20, "PK_GENERATION_EEK_BOUND should be 20");
 
-    // r2_bounds and r1_bounds for each modulus
+    // r_bounds for each modulus
     for i in 0..THRESHOLD_L {
         let qi: u128 = THRESHOLD_QIS[i] as u128;
         let qi_bound: u128 = (qi - 1) / 2;
 
-        // r2_bounds[i] = (q_i - 1) / 2
-        assert(PK_GENERATION_R2_BOUNDS[i] as u128 == qi_bound, "PK_GENERATION_R2_BOUNDS mismatch");
+        // r_bounds[i] = ((n + 2) * qi_bound + eek_bound) / q_i
+        let expected_r: u128 = ((n + 2) * qi_bound + eek) / qi;
+        assert(PK_GENERATION_R_BOUNDS[i] as u128 == expected_r, "PK_GENERATION_R_BOUNDS mismatch");
 
-        // r1_bounds[i] = ((n + 2) * qi_bound + eek_bound) / q_i
-        let expected_r1: u128 = ((n + 2) * qi_bound + eek) / qi;
-        assert(
-            PK_GENERATION_R1_BOUNDS[i] as u128 == expected_r1,
-            "PK_GENERATION_R1_BOUNDS mismatch",
-        );
-
-        // bit_r1 must be the exact bit width of r1_bounds[i]. C1's compact path derives its
+        // bit_r must be the exact bit width of r_bounds[i]. C1's compact path derives its
         // quotient window from it, so a width that drifts either way breaks that circuit: too
         // small and the window no longer holds the forced quotient, too large and it wastes a
         // range check on every coefficient.
-        // r1_bounds[i] < 2^bit_r1
-        PK_GENERATION_R1_BOUNDS[i].assert_max_bit_size::<PK_GENERATION_BIT_R1>();
-        // r1_bounds[i] >= 2^(bit_r1 - 1); a wider width would wrap this difference
-        (PK_GENERATION_R1_BOUNDS[i] - 2.pow_32((PK_GENERATION_BIT_R1 - 1) as Field))
-            .assert_max_bit_size::<PK_GENERATION_BIT_R1>();
+        // r_bounds[i] < 2^bit_r
+        PK_GENERATION_R_BOUNDS[i].assert_max_bit_size::<PK_GENERATION_BIT_R>();
+        // r_bounds[i] >= 2^(bit_r - 1); a wider width would wrap this difference
+        (PK_GENERATION_R_BOUNDS[i] - 2.pow_32((PK_GENERATION_BIT_R - 1) as Field))
+            .assert_max_bit_size::<PK_GENERATION_BIT_R>();
     }
 
     verify_e_sm_bound();

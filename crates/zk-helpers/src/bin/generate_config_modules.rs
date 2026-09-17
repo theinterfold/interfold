@@ -244,14 +244,12 @@ pub global PARAMS_SMUDGING_B_ENC: Field = {};
         &format!(
             "pub global PK_GENERATION_BIT_EEK: u32 = {};
 pub global PK_GENERATION_BIT_SK: u32 = {};
-pub global PK_GENERATION_BIT_R1: u32 = {};
-pub global PK_GENERATION_BIT_R2: u32 = {};
+pub global PK_GENERATION_BIT_R: u32 = {};
 pub global PK_GENERATION_BIT_PK: u32 = {};
 
 pub global PK_GENERATION_EEK_BOUND: Field = {};
 pub global PK_GENERATION_SK_BOUND: Field = {};
-pub global PK_GENERATION_R1_BOUNDS: [Field; L] = [{}];
-pub global PK_GENERATION_R2_BOUNDS: [Field; L] = [{}];
+pub global PK_GENERATION_R_BOUNDS: [Field; L] = [{}];
 
 pub global PK_GENERATION_B_ENC: Field = {};
 
@@ -260,18 +258,15 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
     PK_GENERATION_EEK_BOUND,
     PK_GENERATION_SK_BOUND,
     PK_GENERATION_E_SM_BOUND,
-    PK_GENERATION_R1_BOUNDS,
-    PK_GENERATION_R2_BOUNDS,
+    PK_GENERATION_R_BOUNDS,
 );",
             pkgen.bits.eek_bit,
             pkgen.bits.sk_bit,
-            pkgen.bits.r1_bit,
-            pkgen.bits.r2_bit,
+            pkgen.bits.r_bit,
             pkgen.bits.pk_bit,
             pkgen.bounds.eek_bound,
             pkgen.bounds.sk_bound,
-            join_biguint(&pkgen.bounds.r1_bounds),
-            join_biguint(&pkgen.bounds.r2_bounds),
+            join_biguint(&pkgen.bounds.r_bounds),
             b_enc,
         ),
     );

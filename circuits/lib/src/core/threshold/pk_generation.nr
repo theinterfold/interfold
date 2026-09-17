@@ -21,10 +21,9 @@ pub struct Configs<let N: u32, let L: u32> {
     pub sk_bound: Field,
     /// Bound for smudging noise polynomial (e_sm) coefficients
     pub e_sm_bound: Field,
-    /// Bounds for r1 polynomials (modulus switching quotients) for each CRT basis
-    pub r1_bounds: [Field; L],
-    /// Bounds for r2 polynomials (cyclotomic reduction quotients) for each CRT basis
-    pub r2_bounds: [Field; L],
+    /// Bounds for the reduced modulus-switching quotients (`r`), one per CRT basis. `BIT_R` is
+    /// the exact bit width of the largest, which is how the quotient window is derived.
+    pub r_bounds: [Field; L],
 }
 
 impl<let N: u32, let L: u32> Configs<N, L> {
@@ -33,10 +32,9 @@ impl<let N: u32, let L: u32> Configs<N, L> {
         eek_bound: Field,
         sk_bound: Field,
         e_sm_bound: Field,
-        r1_bounds: [Field; L],
-        r2_bounds: [Field; L],
+        r_bounds: [Field; L],
     ) -> Self {
-        Configs { qis, eek_bound, sk_bound, e_sm_bound, r1_bounds, r2_bounds }
+        Configs { qis, eek_bound, sk_bound, e_sm_bound, r_bounds }
     }
 }
 
@@ -45,7 +43,7 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 /// **Role:** Prove one party's TrBFV public-key contribution from hidden `sk`, `eek`, and `e_sm`
 /// (the `pk1` limb is the CRS `a`).
 ///
-/// **Verifies:** `pk0 = -(a*sk mod X^N+1) + eek + q*short` per modulus, at a Fiat-Shamir point, with
+/// **Verifies:** `pk0 = -(a*sk mod X^N+1) + eek + q*r` per modulus, at a Fiat-Shamir point, with
 /// every operand of that equation range-checked first. The bounds are what make the field identity
 /// imply the integer one: the field has no ordering, so a checked equation alone proves only a
 /// congruence modulo the native prime, and `q` is invertible there.
@@ -55,9 +53,9 @@ impl<let N: u32, let L: u32> Configs<N, L> {
 /// - `commit(pk_trbfv)` -> C5 (pk aggregation).
 /// - `commit(e_sm)` -> C2b (share computation).
 ///
-/// `BIT_PK` bounds each centered coefficient and `BIT_R1` sets the quotient window. Both come from
+/// `BIT_PK` bounds each centered coefficient and `BIT_R` sets the quotient window. Both come from
 /// the configuration, so the circuit covers every parameter set without per-preset constants.
-pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
+pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> {
     /// Cryptographic parameters including bounds, moduli, and constants.
     configs: Configs<N, L>,
 
@@ -77,24 +75,24 @@ pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u3
     /// Modulus-switching quotients (secret witnesses), one per modulus, already reduced modulo
     /// `X^N + 1` by the generator. The reduction is a witness derivation, so the circuit takes the
     /// reduced form and constrains only its range.
-    q_short: [Polynomial<N>; L],
+    r: [Polynomial<N>; L],
 
     /// Threshold public key first component per modulus (committed witness). The second component
     /// is `a[i]`.
     pk0: [Polynomial<N>; L],
 }
 
-impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R1: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> PkGeneration<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_R1, BIT_PK, N_CHUNKS, CHUNK_SIZE> {
+impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u32, let BIT_R: u32, let BIT_PK: u32, let N_CHUNKS: u32, let CHUNK_SIZE: u32> PkGeneration<N, L, BIT_EEK, BIT_SK, BIT_E_SM, BIT_R, BIT_PK, N_CHUNKS, CHUNK_SIZE> {
     pub fn new(
         configs: Configs<N, L>,
         a: [Polynomial<N>; L],
         eek: Polynomial<N>,
         sk: Polynomial<N>,
         e_sm: [Polynomial<N>; L],
-        q_short: [Polynomial<N>; L],
+        r: [Polynomial<N>; L],
         pk0: [Polynomial<N>; L],
     ) -> Self {
-        PkGeneration { configs, a, eek, sk, e_sm, q_short, pk0 }
+        PkGeneration { configs, a, eek, sk, e_sm, r, pk0 }
     }
 
     /// Executes the threshold public key generation circuit.
@@ -102,7 +100,7 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
     /// Returns `(commit(sk), commit(pk_trbfv), commit(e_sm))` as documented on the struct.
     pub fn execute(self) -> (Field, Field, Field) {
         // A ternary secret is the one parameter this circuit cannot read off the config. The
-        // generated `r1_bounds`, and so the quotient window below, are derived from a formula that
+        // generated `r_bounds`, and so the quotient window below, are derived from a formula that
         // assumes it; a wider secret would make that window too narrow to hold the quotient.
         assert(self.configs.sk_bound == 1);
 
@@ -113,10 +111,10 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         // Step 2: bound each modulus-switching quotient. The generator supplies it already reduced
         // modulo X^N + 1, and the circuit constrains no part of that derivation; only these bounds
         // make the values usable as integers.
-        let short_offset = 2.pow_32(BIT_R1 as Field);
+        let r_offset = 2.pow_32(BIT_R as Field);
         for l in 0..L {
             for j in 0..N {
-                (self.q_short[l].coefficients[j] + short_offset).assert_max_bit_size::<BIT_R1 + 1>();
+                (self.r[l].coefficients[j] + r_offset).assert_max_bit_size::<BIT_R + 1>();
             }
         }
 
@@ -155,11 +153,11 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         payload = append::<N, BIT_EEK + 1>(payload, self.eek, self.configs.eek_bound);
         for l in 0..L {
             payload = payload.push_back(self.configs.qis[l]);
-            payload = append::<N, BIT_R1 + 1>(payload, self.q_short[l], short_offset);
+            payload = append::<N, BIT_R + 1>(payload, self.r[l], r_offset);
         }
         let x = compute_threshold_pk_challenge(payload);
 
-        // Step 6: check pk0 = -(a*sk mod X^N+1) + eek + q*short per modulus. The kernel evaluates
+        // Step 6: check pk0 = -(a*sk mod X^N+1) + eek + q*r per modulus. The kernel evaluates
         // the reduced product by constrained recurrence, so no product hint is accepted.
         let k = kernel(self.sk, x);
         for l in 0..L {
@@ -167,7 +165,7 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
             for j in 0..N {
                 residual[j] = self.pk0[l].coefficients[j]
                     - self.eek.coefficients[j]
-                    - self.configs.qis[l] * self.q_short[l].coefficients[j];
+                    - self.configs.qis[l] * self.r[l].coefficients[j];
             }
             assert(
                 Polynomial::new(residual).eval(x) == -dot(self.a[l], k),
