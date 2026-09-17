@@ -15,14 +15,7 @@
 //! that congruence into an equality over the integers. `q_l` is invertible modulo the native prime,
 //! so an unbounded quotient makes the equation satisfiable for any left-hand side.
 
-use crate::math::helpers::compute_safe;
 use crate::math::polynomial::Polynomial;
-// INTERFOLD_MAX_SUITE_V1. The circuit identifier is also absorbed into each transcript.
-pub global DS: [u8; 64] = [
-    73, 78, 84, 69, 82, 70, 79, 76, 68, 95, 77, 65, 88, 95, 83, 85, 73, 84, 69, 95, 86, 49, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
-    0, 0, 0, 0, 0, 0, 0,
-];
 
 /// Constrains every coefficient to the canonical centered interval `[-(q-1)/2, (q-1)/2]`.
 ///
@@ -68,11 +61,6 @@ pub fn append<let N: u32, let W: u32>(
         inputs = inputs.push_back(acc);
     }
     inputs
-}
-
-/// Derives a checking point from a transcript that already binds every independent operand.
-pub fn challenge(inputs: [Field]) -> Field {
-    compute_safe(DS, inputs, [0x80000000 | inputs.len(), 1])[0]
 }
 
 /// Evaluates `X^(N-1-j) * u mod (X^N+1)` at `x`, for every `j`, by constrained recurrence.

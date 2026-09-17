@@ -400,6 +400,21 @@ pub fn compute_ciphertext_commitment<let N: u32, let L: u32, let BIT_CT: u32>(
 
 /// COMMITMENTS FOR CHALLENGES
 
+/// Starts the C1 challenge transcript.
+///
+/// `DS_CLG_PK_GENERATION` identifies the circuit, so the payload carries no circuit tag. `N` and
+/// `L` give the parameter-set shape, because the packed operands that the caller appends are
+/// carriers only: a different split of the same coefficients gives the same carrier sequence. Each
+/// shape compiles to its own verification key, so this is a second line rather than the only one.
+///
+/// The caller appends every remaining operand of the equation that the challenge point checks.
+pub fn threshold_pk_challenge_payload<let N: u32, let L: u32>(
+    sk_commitment: Field,
+    pk_commitment: Field,
+) -> [Field] {
+    [N as Field, L as Field, sk_commitment, pk_commitment].as_vector()
+}
+
 pub fn compute_threshold_pk_challenge(payload: [Field]) -> Field {
     compute_commitment(payload, DS_CLG_PK_GENERATION)
 }

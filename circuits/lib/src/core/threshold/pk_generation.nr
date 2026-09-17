@@ -6,10 +6,10 @@
 
 use crate::math::commitments::{
     compute_sc_esm_secret_root_from_polynomial, compute_sc_sk_secret_root_from_polynomial,
-    compute_threshold_pk_commitment,
+    compute_threshold_pk_challenge, compute_threshold_pk_commitment, threshold_pk_challenge_payload,
 };
 use crate::math::polynomial::Polynomial;
-use crate::math::secure_arithmetic::{append, centered, challenge, dot, fold_negacyclic, kernel};
+use crate::math::secure_arithmetic::{append, centered, dot, fold_negacyclic, kernel};
 
 /// Parameters for threshold public key generation (C1).
 pub struct Configs<let N: u32, let L: u32> {
@@ -149,22 +149,16 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
 
         // Step 5: bind every independent operand before drawing the checking point. pk0 and sk are
         // bound through their commitments; eek and the quotients are packed directly; the moduli
-        // and `a` are configuration constants.
-        let mut payload = [
-            101,
-            N as Field,
-            L as Field,
-            sk_commitment,
-            pk_commitment,
-            e_sm_commitment,
-        ]
-            .as_vector();
+        // and `a` are configuration constants. Smudging noise has no entry, because it is not an
+        // operand of the equation below; `e_sm_commitment` is a public output, which is what binds
+        // it.
+        let mut payload = threshold_pk_challenge_payload::<N, L>(sk_commitment, pk_commitment);
         payload = append::<N, BIT_EEK + 1>(payload, self.eek, self.configs.eek_bound);
         for l in 0..L {
             payload = payload.push_back(self.configs.qis[l]);
             payload = append::<N, BIT_R1 + 1>(payload, q_short[l], short_offset);
         }
-        let x = challenge(payload);
+        let x = compute_threshold_pk_challenge(payload);
 
         // Step 6: check pk0 = -(a*sk mod X^N+1) + eek + q*short per modulus. The kernel evaluates
         // the reduced product by constrained recurrence, so no product hint is accepted.
