@@ -11,22 +11,15 @@ import {
   SlashingManager__factory as SlashingManagerFactory,
 } from "../types";
 import type { ISlashingManager } from "../types/contracts/interfaces/ISlashingManager";
+import {
+  DECRYPTION_PROOF_TYPES,
+  DKG_PROOF_TYPES,
+  slashReasonForProofType,
+} from "./protocol/slashPolicies";
 import { getDeploymentChain, readDeploymentArgs } from "./utils";
-
-/** Proof types 0–7: DKG-stage proofs (C0–C4). */
-const DKG_PROOF_TYPES = [0, 1, 2, 3, 4, 5, 6, 7] as const;
-/** Proof types 8–10: aggregation / decryption (C5–C7). */
-const DECRYPTION_PROOF_TYPES = [8, 9, 10] as const;
 
 /** `IInterfold.FailureReason.InsufficientCommitteeMembers` */
 const FAILURE_REASON_INSUFFICIENT_COMMITTEE_MEMBERS = 2;
-
-function slashReasonForProofType(
-  ethers: typeof EthersTypes,
-  proofType: number,
-): string {
-  return ethers.keccak256(ethers.solidityPacked(["uint256"], [proofType]));
-}
 
 function localAttestationSlashPolicy(
   ethers: typeof EthersTypes,
@@ -75,7 +68,7 @@ export async function configureLocalSlashingPolicies(
   );
 
   for (const proofType of DKG_PROOF_TYPES) {
-    const reason = slashReasonForProofType(ethers, proofType);
+    const reason = slashReasonForProofType(proofType);
     const tx = await contract.setSlashPolicy(
       reason,
       localAttestationSlashPolicy(
@@ -88,7 +81,7 @@ export async function configureLocalSlashingPolicies(
   }
 
   for (const proofType of DECRYPTION_PROOF_TYPES) {
-    const reason = slashReasonForProofType(ethers, proofType);
+    const reason = slashReasonForProofType(proofType);
     const tx = await contract.setSlashPolicy(
       reason,
       localAttestationSlashPolicy(

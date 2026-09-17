@@ -242,11 +242,14 @@ design citation alone does not establish current runtime behavior.
   and registry-pointer setters enforce the relationship; equality is invalid because ticket
   submission includes the deadline. — `BondingRegistry.sol`; `CiphernodeRegistryOwnable.sol`;
   `flow-trace/02`, `03`
-- **One coherent dependency generation:** each request validates and snapshots the complete
-  Interfold, registry, bonding, slashing, refund, treasury, and policy graph. Governance must pause
-  requests and drain all E3s, committees, operators, bans, and slash routes before it replaces any
-  graph member. Old and new generations never serve requests at the same time. — `flow-trace/03`,
-  `05`
+- **One coherent dependency graph:** each request validates and snapshots the complete Interfold,
+  registry, bonding, slashing, refund, treasury, and policy graph. Governance must pause requests
+  and drain all E3s, committees, bans, and slash routes before it replaces a graph member. Replacing
+  the registry, bonding registry, or refund manager also requires an empty operator generation. A
+  SlashingManager-only rotation can preserve operators when the registry and bonding proxies stay in
+  place, the replacement advertises the supported API, and one atomic transaction commits the
+  complete graph before it revokes the old manager. Old and new graphs never serve requests at the
+  same time. — `flow-trace/03`, `05`, `07`
 - **Candidate and member collateral remains slashable:** committee requests assign their
   request-time registry in `BondingRegistry`. A top-N ticket submission locks its candidate, and a
   better ticket releases the displaced candidate. Finalization retains each winner's obligation.

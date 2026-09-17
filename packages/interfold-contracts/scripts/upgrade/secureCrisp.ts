@@ -28,12 +28,23 @@ import {
   requiresNodeReleasePolicyUpdate,
 } from "../protocol/nodeRelease";
 import {
+  assertVrfSubscription,
+  buildRandomnessTransactions,
+  deployRandomnessProvider,
+  readOptionalPendingRequestCount,
+  requireExistingRandomnessConfig,
+} from "../protocol/randomness";
+import {
   aragonAdminSafeBatch,
   aragonAdminSafeTransactions,
   governanceBatch,
   proposeSafeBatch,
   safeTx,
 } from "../protocol/safe";
+import {
+  buildSlashingManagerMigrationTransactions,
+  deploySlashingManagerReplacement,
+} from "../protocol/serviceMigration";
 import type {
   ProtocolConfigFile,
   ProtocolDeployment,
@@ -218,6 +229,8 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
   const { ethers } = await connect();
   const config = loadConfig();
   const deployment = readJson<ProtocolDeployment>(deploymentPath(config));
+  const randomness = requireExistingRandomnessConfig(config, deployment);
+  const effectiveConfig: ProtocolConfigFile = { ...config, randomness };
   const network = await ethers.provider.getNetwork();
   const chainId = Number(network.chainId);
   if (
@@ -251,6 +264,26 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     ),
     requireContract(
       ethers.provider,
+      deployment.bondingRegistryProxy,
+      "BondingRegistry proxy",
+    ),
+    requireContract(
+      ethers.provider,
+      deployment.e3RefundManager,
+      "E3RefundManager proxy",
+    ),
+    requireContract(
+      ethers.provider,
+      deployment.slashingManager,
+      "SlashingManager",
+    ),
+    requireContract(
+      ethers.provider,
+      deployment.randomnessProvider,
+      "Chainlink VRF provider",
+    ),
+    requireContract(
+      ethers.provider,
       deployment.nodeReleaseRegistry,
       "NodeReleaseRegistry",
     ),
@@ -277,6 +310,18 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
       config.protocolOwner,
       "CiphernodeRegistry",
     ),
+    requireProxyAdminOwner(
+      ethers,
+      deployment.bondingRegistryProxyAdmin,
+      config.protocolOwner,
+      "BondingRegistry",
+    ),
+    requireProxyAdminOwner(
+      ethers,
+      deployment.e3RefundManagerProxyAdmin,
+      config.protocolOwner,
+      "E3RefundManager",
+    ),
   ]);
 
   const interfold = await ethers.getContractAt(
@@ -286,6 +331,14 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
   const registry = await ethers.getContractAt(
     "CiphernodeRegistryOwnable",
     deployment.ciphernodeRegistry,
+  );
+  const bonding = await ethers.getContractAt(
+    "BondingRegistry",
+    deployment.bondingRegistryProxy,
+  );
+  const previousSlashingManager = await ethers.getContractAt(
+    "SlashingManager",
+    deployment.slashingManager,
   );
   const releases = await ethers.getContractAt(
     "NodeReleaseRegistry",
@@ -302,12 +355,154 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
   if ((await registry.unreleasedCommitteeCount()) !== 0n) {
     throw new Error("CiphernodeRegistry still has unreleased committees");
   }
+  if ((await bonding.unresolvedCommitteeCount()) !== 0n) {
+    throw new Error("BondingRegistry still has unresolved committees");
+  }
+  if (
+    (await previousSlashingManager.activeE3Assignments()) !== 0n ||
+    (await previousSlashingManager.activeBanCount()) !== 0n
+  ) {
+    throw new Error("SlashingManager still owns live protocol state");
+  }
+  const pendingRandomnessRequests = await readOptionalPendingRequestCount(
+    ethers.provider,
+    deployment.randomnessProvider,
+  );
+  if (
+    pendingRandomnessRequests !== undefined &&
+    pendingRandomnessRequests !== 0n
+  ) {
+    throw new Error("Chainlink VRF provider still has pending requests");
+  }
+  const [registeredOperatorCount, activeOperatorCount, registryRoot] =
+    await Promise.all([
+      bonding.numRegisteredOperators(),
+      bonding.numActiveOperators(),
+      registry.root(),
+    ]);
+  if ((await registry.numCiphernodes()) !== registeredOperatorCount) {
+    throw new Error("Registry and bonding operator counts do not match");
+  }
   const interfoldOwner = await interfold.owner();
   if (interfoldOwner.toLowerCase() !== config.protocolOwner.toLowerCase()) {
     throw new Error(
       `Interfold owner mismatch: expected ${config.protocolOwner}, got ${interfoldOwner}`,
     );
   }
+  const refundManager = await ethers.getContractAt(
+    "E3RefundManager",
+    deployment.e3RefundManager,
+  );
+  const dependencyBindings = [
+    [
+      "deployment protocol owner",
+      deployment.protocolOwner,
+      config.protocolOwner,
+    ],
+    [
+      "configured BondingRegistry",
+      deployment.bondingRegistryProxy,
+      config.bondingRegistryProxy,
+    ],
+    [
+      "configured BondingRegistry ProxyAdmin",
+      deployment.bondingRegistryProxyAdmin,
+      config.bondingRegistryProxyAdmin,
+    ],
+    [
+      "Interfold registry",
+      await interfold.ciphernodeRegistry(),
+      deployment.ciphernodeRegistry,
+    ],
+    [
+      "Interfold bonding registry",
+      await interfold.bondingRegistry(),
+      deployment.bondingRegistryProxy,
+    ],
+    [
+      "Interfold slashing manager",
+      await interfold.slashingManager(),
+      deployment.slashingManager,
+    ],
+    [
+      "Interfold refund manager",
+      await interfold.e3RefundManager(),
+      deployment.e3RefundManager,
+    ],
+    ["registry Interfold", await registry.interfold(), deployment.interfold],
+    [
+      "registry bonding registry",
+      await registry.bondingRegistry(),
+      deployment.bondingRegistryProxy,
+    ],
+    [
+      "registry slashing manager",
+      await registry.slashingManager(),
+      deployment.slashingManager,
+    ],
+    [
+      "registry randomness provider",
+      await registry.randomnessProvider(),
+      deployment.randomnessProvider,
+    ],
+    ["bonding registry owner", await bonding.owner(), config.protocolOwner],
+    [
+      "bonding registry",
+      await bonding.registry(),
+      deployment.ciphernodeRegistry,
+    ],
+    [
+      "bonding slashing manager",
+      await bonding.slashingManager(),
+      deployment.slashingManager,
+    ],
+    ["refund manager owner", await refundManager.owner(), config.protocolOwner],
+    [
+      "refund manager Interfold",
+      await refundManager.interfold(),
+      deployment.interfold,
+    ],
+    [
+      "refund manager bonding registry",
+      await refundManager.bondingRegistry(),
+      deployment.bondingRegistryProxy,
+    ],
+    [
+      "slashing manager admin",
+      await previousSlashingManager.defaultAdmin(),
+      config.protocolOwner,
+    ],
+    [
+      "slashing manager Interfold",
+      await previousSlashingManager.interfold(),
+      deployment.interfold,
+    ],
+    [
+      "slashing manager registry",
+      await previousSlashingManager.ciphernodeRegistry(),
+      deployment.ciphernodeRegistry,
+    ],
+    [
+      "slashing manager bonding registry",
+      await previousSlashingManager.bondingRegistry(),
+      deployment.bondingRegistryProxy,
+    ],
+    [
+      "slashing manager refund manager",
+      await previousSlashingManager.e3RefundManager(),
+      deployment.e3RefundManager,
+    ],
+  ] as const;
+  for (const [label, actual, expected] of dependencyBindings) {
+    if (String(actual).toLowerCase() !== expected.toLowerCase()) {
+      throw new Error(`${label} mismatch: expected ${expected}, got ${actual}`);
+    }
+  }
+  await assertVrfSubscription(
+    ethers,
+    effectiveConfig,
+    deployment.randomnessProvider,
+  );
   const releaseBindings = [
     [
       "Interfold node release registry",
@@ -369,6 +564,30 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
   ) {
     throw new Error(
       `CiphernodeRegistry deployment record is stale: recorded ${deployment.ciphernodeRegistryImplementation}, live ${liveRegistryImplementation}`,
+    );
+  }
+  const liveBondingImplementation = await proxyImplementation(
+    ethers,
+    deployment.bondingRegistryProxy,
+  );
+  if (
+    liveBondingImplementation.toLowerCase() !==
+    deployment.bondingRegistryImplementation.toLowerCase()
+  ) {
+    throw new Error(
+      `BondingRegistry deployment record is stale: recorded ${deployment.bondingRegistryImplementation}, live ${liveBondingImplementation}`,
+    );
+  }
+  const liveRefundImplementation = await proxyImplementation(
+    ethers,
+    deployment.e3RefundManager,
+  );
+  if (
+    liveRefundImplementation.toLowerCase() !==
+    deployment.e3RefundManagerImplementation.toLowerCase()
+  ) {
+    throw new Error(
+      `E3RefundManager deployment record is stale: recorded ${deployment.e3RefundManagerImplementation}, live ${liveRefundImplementation}`,
     );
   }
 
@@ -557,11 +776,45 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     "interfold",
     deployment,
   );
+  const bondingUpgrade = await deployUpgradeImplementation(
+    ethers,
+    operator,
+    "bondingRegistry",
+    deployment,
+  );
+  const refundUpgrade = await deployUpgradeImplementation(
+    ethers,
+    operator,
+    "e3RefundManager",
+    deployment,
+  );
+  const slashingDeployment = await deploySlashingManagerReplacement(
+    ethers,
+    effectiveConfig,
+  );
+  const randomnessDeployment = await deployRandomnessProvider(
+    ethers,
+    operator,
+    effectiveConfig,
+    deployment.ciphernodeRegistry,
+  );
   if (!registryUpgrade.sortitionLibrary) {
     throw new Error("Registry sortition library was not deployed");
   }
   if (!interfoldUpgrade.lifecycleLibrary || !interfoldUpgrade.pricingLibrary) {
     throw new Error("Interfold libraries were not deployed");
+  }
+  if (
+    !bondingUpgrade.assetLibrary ||
+    !bondingUpgrade.eligibilityLibrary ||
+    !bondingUpgrade.slashingLibrary ||
+    !bondingUpgrade.registrationLibrary ||
+    !bondingUpgrade.ownershipLibrary
+  ) {
+    throw new Error("BondingRegistry libraries were not deployed");
+  }
+  if (!refundUpgrade.refundClaimLibrary) {
+    throw new Error("E3RefundManager library was not deployed");
   }
   const verifierDeployment = await deployBfvVerifierRoutes(
     ethers,
@@ -570,7 +823,7 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     verifierConfigs,
   );
 
-  const txs: SafeTransaction[] = [
+  const txs = [
     upgradeTransaction(
       deployment.ciphernodeRegistryProxyAdmin,
       deployment.ciphernodeRegistry,
@@ -581,7 +834,33 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
       deployment.interfold,
       interfoldUpgrade.implementation,
     ),
+    upgradeTransaction(
+      deployment.bondingRegistryProxyAdmin,
+      deployment.bondingRegistryProxy,
+      bondingUpgrade.implementation,
+    ),
+    upgradeTransaction(
+      deployment.e3RefundManagerProxyAdmin,
+      deployment.e3RefundManager,
+      refundUpgrade.implementation,
+    ),
   ];
+  const slashingMigration = await buildSlashingManagerMigrationTransactions(
+    ethers,
+    effectiveConfig,
+    deployment,
+    slashingDeployment,
+  );
+  txs.push(
+    ...slashingMigration.transactions,
+    ...buildRandomnessTransactions(
+      effectiveConfig,
+      randomnessDeployment.randomnessProvider,
+      deployment.ciphernodeRegistry,
+      registry.interface,
+      randomnessDeployment.randomnessProviderOwnershipAcceptanceRequired,
+    ),
+  );
   if (currentParams === "0x") {
     txs.push(
       safeTx(
@@ -697,9 +976,9 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
 
   const rawBatchFile = batchPath(config);
   const batch = governanceBatch(config, txs);
-  batch.meta.name = `${config.name} secure CRISP activation`;
+  batch.meta.name = `${config.name} protocol v4 and secure CRISP activation`;
   batch.meta.description =
-    "Install secure BFV routes, bind CRISP, retire the incompatible initial E3 program, and require the matching ciphernode protocol while requests remain paused.";
+    "Upgrade the complete protocol dependency graph, rotate the VRF consumer on the existing subscription, install secure BFV routes, bind CRISP, and require the matching ciphernode protocol while requests remain paused.";
   writeJson(rawBatchFile, batch);
 
   let safeBuilderFile: string | undefined;
@@ -709,7 +988,7 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
       name: `${config.name}.secure-crisp.upgrade`,
     });
     const safeBatch = aragonAdminSafeBatch(config, txs);
-    safeBatch.meta.name = `${config.name} secure CRISP activation`;
+    safeBatch.meta.name = `${config.name} protocol v4 and secure CRISP activation`;
     writeJson(safeBuilderFile, safeBatch);
   }
 
@@ -727,6 +1006,30 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     registryProxyAdmin: deployment.ciphernodeRegistryProxyAdmin,
     registryImplementation: registryUpgrade.implementation,
     sortitionLibrary: registryUpgrade.sortitionLibrary,
+    bondingProxy: deployment.bondingRegistryProxy,
+    bondingProxyAdmin: deployment.bondingRegistryProxyAdmin,
+    bondingImplementation: bondingUpgrade.implementation,
+    bondingAssetLibrary: bondingUpgrade.assetLibrary,
+    bondingEligibilityLibrary: bondingUpgrade.eligibilityLibrary,
+    bondingSlashingLibrary: bondingUpgrade.slashingLibrary,
+    bondingRegistrationLibrary: bondingUpgrade.registrationLibrary,
+    bondingOwnershipLibrary: bondingUpgrade.ownershipLibrary,
+    refundManagerProxy: deployment.e3RefundManager,
+    refundManagerProxyAdmin: deployment.e3RefundManagerProxyAdmin,
+    refundManagerImplementation: refundUpgrade.implementation,
+    refundClaimLibrary: refundUpgrade.refundClaimLibrary,
+    previousSlashingManager: deployment.slashingManager,
+    slashingManager: slashingDeployment.manager,
+    slashingEvidenceLibrary: slashingDeployment.evidenceLibrary,
+    migratedSlashPolicyReasons: slashingMigration.migratedSlashPolicyReasons,
+    previousRandomnessProvider: deployment.randomnessProvider,
+    randomnessProvider: randomnessDeployment.randomnessProvider,
+    randomness,
+    randomnessProviderOwnershipAcceptanceRequired:
+      randomnessDeployment.randomnessProviderOwnershipAcceptanceRequired,
+    registeredOperatorCount: registeredOperatorCount.toString(),
+    activeOperatorCount: activeOperatorCount.toString(),
+    registryRoot: registryRoot.toString(),
     nodeReleaseRegistry: deployment.nodeReleaseRegistry,
     nodeRelease,
     cryptoConfigId: PRODUCTION_BFV_CONFIG.configId,
@@ -761,6 +1064,12 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
 Secure CRISP activation prepared
   Interfold implementation: ${plan.interfoldImplementation}
   Registry implementation:  ${plan.registryImplementation}
+  Bonding implementation:   ${plan.bondingImplementation}
+  Refund implementation:    ${plan.refundManagerImplementation}
+  Slashing manager:         ${plan.slashingManager}
+  VRF provider:             ${plan.randomnessProvider}
+  VRF subscription:         ${plan.randomness.subscriptionId} (reused)
+  operator snapshot:        ${plan.activeOperatorCount}/${plan.registeredOperatorCount}, root ${plan.registryRoot}
   PK verifier router:        ${plan.pkVerifier}
   decryption router:         ${plan.decryptionVerifier}
   CRISP program:             ${plan.crispProgram}

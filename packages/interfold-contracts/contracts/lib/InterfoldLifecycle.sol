@@ -177,14 +177,9 @@ library InterfoldLifecycle {
         ) revert IInterfold.DependencyConfigurationMismatch();
     }
 
-    /// @notice Requires the current dependency generation to own no live state.
-    function validateGenerationDrained(
+    /// @notice Requires the current and replacement operator generations to be empty.
+    function validateGenerationReplacementDrained(
         bool configurationActivated,
-        bool requestsPaused,
-        uint256 activeE3Count,
-        address registryAddress,
-        address bondingAddress,
-        address slashManagerAddress,
         address replacementRegistryAddress
     ) external view {
         if (replacementRegistryAddress != address(0)) {
@@ -197,16 +192,64 @@ library InterfoldLifecycle {
             ) revert IInterfold.DependencyGenerationNotDrained();
         }
         if (!configurationActivated) return;
-        if (!requestsPaused) revert IInterfold.RequestsPaused();
-        ICiphernodeRegistry registry = ICiphernodeRegistry(registryAddress);
-        IBondingRegistry bonding = IBondingRegistry(bondingAddress);
-        ISlashingManager slashManager = ISlashingManager(slashManagerAddress);
+        (
+            IInterfold controller,
+            ICiphernodeRegistry registry,
+            IBondingRegistry bonding,
+            ISlashingManager slashManager
+        ) = _currentDependencies();
+        _validateNoLiveWork(controller, registry, bonding, slashManager);
         if (
-            activeE3Count != 0 ||
-            registry.unreleasedCommitteeCount() != 0 ||
             registry.numCiphernodes() != 0 ||
+            bonding.numRegisteredOperators() != 0
+        ) revert IInterfold.DependencyGenerationNotDrained();
+    }
+
+    /// @notice Requires no live work before the slashing manager changes.
+    /// @dev Registered operators can remain when the registry and bonding proxies stay in place.
+    function validateSlashingManagerReplacementDrained(
+        bool configurationActivated
+    ) external view {
+        if (!configurationActivated) return;
+        (
+            IInterfold controller,
+            ICiphernodeRegistry registry,
+            IBondingRegistry bonding,
+            ISlashingManager slashManager
+        ) = _currentDependencies();
+        _validateNoLiveWork(controller, registry, bonding, slashManager);
+    }
+
+    function _currentDependencies()
+        private
+        view
+        returns (
+            IInterfold controller,
+            ICiphernodeRegistry registry,
+            IBondingRegistry bonding,
+            ISlashingManager slashManager
+        )
+    {
+        controller = IInterfold(address(this));
+        IProtocolDependencyView dependencyView = IProtocolDependencyView(
+            address(this)
+        );
+        registry = ICiphernodeRegistry(dependencyView.ciphernodeRegistry());
+        bonding = IBondingRegistry(dependencyView.bondingRegistry());
+        slashManager = ISlashingManager(dependencyView.slashingManager());
+    }
+
+    function _validateNoLiveWork(
+        IInterfold controller,
+        ICiphernodeRegistry registry,
+        IBondingRegistry bonding,
+        ISlashingManager slashManager
+    ) private view {
+        if (!controller.requestsPaused()) revert IInterfold.RequestsPaused();
+        if (
+            controller.activeE3Count() != 0 ||
+            registry.unreleasedCommitteeCount() != 0 ||
             bonding.unresolvedCommitteeCount() != 0 ||
-            bonding.numRegisteredOperators() != 0 ||
             slashManager.activeE3Assignments() != 0 ||
             slashManager.activeBanCount() != 0
         ) revert IInterfold.DependencyGenerationNotDrained();

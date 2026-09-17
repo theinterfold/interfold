@@ -89,7 +89,11 @@ export interface ProtocolConfigFile {
    */
   bondedResyncOwners?: string[];
   registry: { sortitionSubmissionWindow: string };
-  slashing: { initialDelay: string };
+  slashing: {
+    initialDelay: string;
+    /** Additional slash-policy reason hashes that an upgrade must copy. */
+    policyReasons?: string[];
+  };
   interfold: {
     maxDuration: string;
     markFailedGracePeriod: string;
@@ -199,6 +203,8 @@ export interface ProtocolDeployment {
   e3RefundManager: string;
   e3RefundManagerImplementation: string;
   e3RefundManagerProxyAdmin: string;
+  /** Linked RefundClaimLib used by the recorded refund-manager implementation. */
+  refundClaimLib?: string;
   safeTransactions: string;
   governanceSafeBuilder?: string;
   safeProposal?: SafeProposal;
@@ -255,6 +261,29 @@ export interface SecureCrispUpgradePlan {
   registryProxyAdmin: string;
   registryImplementation: string;
   sortitionLibrary: string;
+  bondingProxy: string;
+  bondingProxyAdmin: string;
+  bondingImplementation: string;
+  bondingAssetLibrary: string;
+  bondingEligibilityLibrary: string;
+  bondingSlashingLibrary: string;
+  bondingRegistrationLibrary: string;
+  bondingOwnershipLibrary: string;
+  refundManagerProxy: string;
+  refundManagerProxyAdmin: string;
+  refundManagerImplementation: string;
+  refundClaimLibrary: string;
+  previousSlashingManager: string;
+  slashingManager: string;
+  slashingEvidenceLibrary: string;
+  migratedSlashPolicyReasons: string[];
+  previousRandomnessProvider: string;
+  randomnessProvider: string;
+  randomness: RandomnessConfig;
+  randomnessProviderOwnershipAcceptanceRequired: boolean;
+  registeredOperatorCount: string;
+  activeOperatorCount: string;
+  registryRoot: string;
   nodeReleaseRegistry: string;
   nodeRelease: {
     version: string;
@@ -319,6 +348,7 @@ export interface ProtocolContracts {
   e3RefundManager: string;
   e3RefundManagerImplementation: string;
   e3RefundManagerProxyAdmin: string;
+  refundClaimLib?: string;
   bondingRegistryImplementation: string;
   bondingAssetLib: string;
   bondingEligibilityLib: string;
