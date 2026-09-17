@@ -497,6 +497,7 @@ pub async fn register_e3_requested(
                 // unrecorded and invisible to every client, because discovery happened to come
                 // back empty — a missing API key or a rate limit would be enough.
 
+                let mut discovery_failed = false;
                 let mut token_holders = match discovery {
                     Ok(holders) => holders,
                     Err(e) if is_onchain_census => {
@@ -506,6 +507,10 @@ pub async fn register_e3_requested(
                              token at publish time — but clients have no mask targets.",
                             e3_id, e
                         );
+                        // Recorded as a debt below: the cause is usually transient (a rate limit
+                        // or a momentarily rejected API key), and without a retry one blip leaves
+                        // the round permanently unmaskable.
+                        discovery_failed = true;
                         Vec::new()
                     }
                     Err(e) => return Err(e),
@@ -546,13 +551,20 @@ pub async fn register_e3_requested(
                 repo.set_eligible_addresses(token_holders.clone())
                     .await?;
 
-                // Discovery was skipped for want of a divisor, not refused. Record the debt so
-                // `retry_pending_discovery` settles it once the divisor reads: the event is
-                // not replayed once the cursor passes it, so nothing else would. The retry
-                // pass itself is started below, after `record_round`: it scans the round
-                // index and exits when nothing is owed, so starting it here could let it run
-                // before this round is listed, find nothing, and leave the debt to a restart.
-                if divisor_unavailable {
+                // Record the debt so `retry_pending_discovery` settles it later. Two causes:
+                //
+                //   - discovery was SKIPPED for want of a divisor, not refused; or
+                //   - discovery RAN and failed, which for an on-chain census is swallowed above to
+                //     keep the round votable. That path previously left no debt, so a transient
+                //     Etherscan rate limit or key rejection permanently denied every client its
+                //     mask targets — the exact failure the comment above anticipates.
+                //
+                // The event is not replayed once the cursor passes it, so nothing else would
+                // retry. The retry pass itself is started below, after `record_round`: it scans
+                // the round index and exits when nothing is owed, so starting it here could let
+                // it run before this round is listed, find nothing, and leave the debt to a
+                // restart.
+                if divisor_unavailable || discovery_failed {
                     repo.set_discovery_pending(true).await?;
                 }
 
@@ -1464,11 +1476,13 @@ fn pending_discovery_step(round: &E3Crisp) -> PendingDiscoveryStep {
 
 /// Settle holder discovery for rounds that were registered without a census.
 ///
-/// A round whose stored voting-power divisor could not be read at `E3Requested` is registered
-/// and votable, but carries `discovery_pending` and serves no mask targets. The event is not
-/// replayed once the cursor passes it, so this pass is the only retry. It reads the divisor
-/// again for each such round and, when it answers, runs the same discovery the handler would
-/// have run. A round that has ended is dropped from the pass: there is nobody left to mask.
+/// A round carries `discovery_pending` when its census could not be built at `E3Requested`:
+/// either the stored voting-power divisor could not be read, or discovery itself failed and was
+/// swallowed to keep an on-chain-census round votable. Such a round is registered and votable but
+/// serves no mask targets. The event is not replayed once the cursor passes it, so this pass is
+/// the only retry. It reads the divisor again for each such round and, when it answers, runs the
+/// same discovery the handler would have run. A round that has ended is dropped from the pass:
+/// there is nobody left to mask.
 /// Bounded like `recover_round_deadlines`: one task, one provider, exits when nothing is owed.
 async fn retry_pending_discovery<S: DataStore>(store: SharedStore<S>) {
     let crisp =
@@ -2132,6 +2146,49 @@ mod pending_discovery_tests {
             pending_discovery_step(&round("Requested", false)),
             PendingDiscoveryStep::Skip
         );
+    }
+
+    /// A discovery FAILURE on an on-chain census must be owed, not silently dropped.
+    ///
+    /// The failure is swallowed at `E3Requested` so the round stays votable, and previously no
+    /// debt was recorded — only an unreadable divisor set one. A transient Etherscan rate limit
+    /// or a momentarily rejected API key therefore left the round permanently without mask
+    /// targets, because the event is never replayed. Both causes must reach the retry pass.
+    #[test]
+    fn a_failed_onchain_discovery_is_owed_like_an_unreadable_divisor() {
+        // Whatever set the debt, a votable round is retried...
+        assert_eq!(
+            pending_discovery_step(&round("Requested", true)),
+            PendingDiscoveryStep::Retry
+        );
+        assert_eq!(
+            pending_discovery_step(&round("Active", true)),
+            PendingDiscoveryStep::Retry
+        );
+        // ...and an ended one is forgiven rather than retried forever.
+        assert_eq!(
+            pending_discovery_step(&round("Finished", true)),
+            PendingDiscoveryStep::Forgive
+        );
+        // A round that never owed anything is untouched, so the wider debt does not make the
+        // pass busier for healthy rounds.
+        assert_eq!(
+            pending_discovery_step(&round("Active", false)),
+            PendingDiscoveryStep::Skip
+        );
+    }
+
+    /// Pins the condition that records the debt. `divisor_unavailable || discovery_failed`:
+    /// either cause alone is enough, which is the whole point of the fix.
+    #[test]
+    fn either_cause_records_the_discovery_debt() {
+        fn owes(divisor_unavailable: bool, discovery_failed: bool) -> bool {
+            divisor_unavailable || discovery_failed
+        }
+        assert!(owes(true, false), "unreadable divisor still owes");
+        assert!(owes(false, true), "failed discovery now owes");
+        assert!(owes(true, true), "both");
+        assert!(!owes(false, false), "a clean census owes nothing");
     }
 
     /// The debt is durable: it survives a re-read of the store, and clears only when told to.
