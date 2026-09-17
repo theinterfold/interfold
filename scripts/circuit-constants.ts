@@ -90,7 +90,7 @@ export interface CommitteeParams {
 export const COMMITTEE_PARAMS: Record<CircuitCommittee, CommitteeParams> = {
   [CIRCUIT_COMMITTEES.MINIMUM]: { n: 3, t: 1, h: 2 },
   [CIRCUIT_COMMITTEES.MICRO]: { n: 9, t: 4, h: 5 },
-  [CIRCUIT_COMMITTEES.SMALL]: { n: 19, t: 9, h: 10 },
+  [CIRCUIT_COMMITTEES.SMALL]: { n: 19, t: 9, h: 14 },
 }
 
 /**

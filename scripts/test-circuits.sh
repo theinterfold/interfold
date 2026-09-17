@@ -1,7 +1,41 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd circuits/lib
-nargo test
+REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+ACTIVE_COMMITTEE="$REPO_ROOT/circuits/lib/src/configs/committee/active.nr"
+ACTIVE_PRESET="$REPO_ROOT/circuits/lib/src/configs/default/mod.nr"
+BACKUP_DIR=$(mktemp -d)
+
+restore_active_config() {
+  cp "$BACKUP_DIR/active.nr" "$ACTIVE_COMMITTEE"
+  cp "$BACKUP_DIR/default.nr" "$ACTIVE_PRESET"
+  rm -rf "$BACKUP_DIR"
+}
+
+cp "$ACTIVE_COMMITTEE" "$BACKUP_DIR/active.nr"
+cp "$ACTIVE_PRESET" "$BACKUP_DIR/default.nr"
+trap restore_active_config EXIT
+
+(cd "$REPO_ROOT/circuits/lib" && nargo test)
+
+for committee in minimum micro small; do
+  sed -E \
+    -e "s/committee: (minimum|micro|small)/committee: $committee/g" \
+    -e "s/committee::(minimum|micro|small)/committee::$committee/g" \
+    "$BACKUP_DIR/active.nr" > "$ACTIVE_COMMITTEE"
+
+  for preset in insecure secure; do
+    preset_name="${preset}-512"
+    if [[ "$preset" == "secure" ]]; then
+      preset_name="secure-8192"
+    fi
+    sed -E \
+      -e "s/preset: (insecure-512|secure-8192)/preset: $preset_name/g" \
+      -e "s/super::(insecure|secure)::/super::$preset::/g" \
+      "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
+    echo "Testing DKG aggregation for $preset_name/$committee"
+    (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/dkg_aggregator" && nargo test)
+  done
+done
 
 echo "Noir circuits tested successfully"

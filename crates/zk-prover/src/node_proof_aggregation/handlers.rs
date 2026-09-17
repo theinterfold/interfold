@@ -32,6 +32,22 @@ impl Handler<InterfoldEvent> for NodeProofAggregator {
             InterfoldEventData::ComputeRequestError(data) => {
                 self.handle_compute_request_error(TypedEvent::new(data, ec));
             }
+            InterfoldEventData::EffectsEnabled(_) => self.resume_recovered(),
+            InterfoldEventData::E3RequestComplete(data) => {
+                self.clear_recovery(&data.e3_id, &ec);
+            }
+            InterfoldEventData::E3Failed(data) => {
+                self.clear_recovery(&data.e3_id, &ec);
+            }
+            InterfoldEventData::E3StageChanged(E3StageChanged {
+                e3_id,
+                new_stage:
+                    E3Stage::KeyPublished
+                    | E3Stage::CiphertextReady
+                    | E3Stage::Complete
+                    | E3Stage::Failed,
+                ..
+            }) => self.clear_recovery(&e3_id, &ec),
             _ => {}
         }
     }

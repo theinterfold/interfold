@@ -22,10 +22,33 @@ impl ThresholdKeyshare {
             return Ok(());
         }
 
+        let deadline = state
+            .dkg_deadline_unix_secs
+            .ok_or_else(|| anyhow!("canonical DKG deadline is unavailable"))?;
+        if deadline <= crate::domain::timeout_policy::now_unix_secs() {
+            warn!(
+                e3_id = %state.e3_id,
+                "Ignoring late DKG startup after the canonical deadline"
+            );
+            return Ok(());
+        }
+
         info!("CiphernodeSelected received.");
-        // Ensure the collectors are created
-        let _ = self.ensure_collector(address.clone());
-        let _ = self.ensure_encryption_key_collector(address.clone());
+        if let Err(error) = resolve_timeout(
+            DkgTimeoutPhase::EncryptionKeyCollection,
+            state.dkg_deadline_unix_secs,
+            state.dkg_window_secs,
+        ) {
+            warn!(
+                e3_id = %state.e3_id,
+                %error,
+                "Cannot start DKG after the encryption-key collection cutoff"
+            );
+            return Ok(());
+        }
+
+        self.ensure_encryption_key_collector(address.clone())?;
+        self.ensure_collector(address.clone())?;
 
         let BfvKeypairMaterial {
             sk_bfv: sk_bfv_encrypted,
@@ -101,10 +124,14 @@ impl ThresholdKeyshare {
             ))
         })?;
 
-        self.handle_gen_pk_share_and_sk_sss_requested(TypedEvent::new(
-            GenPkShareAndSkSss(current.ciphernode_selected),
-            ec,
-        ))?;
+        if let Some(response) = self.pending.gen_pk_response.take() {
+            self.handle_gen_pk_share_and_sk_sss_response(response)?;
+        } else {
+            self.handle_gen_pk_share_and_sk_sss_requested(TypedEvent::new(
+                GenPkShareAndSkSss(current.ciphernode_selected),
+                ec,
+            ))?;
+        }
 
         Ok(())
     }
@@ -157,9 +184,8 @@ impl ThresholdKeyshare {
         &mut self,
         res: TypedEvent<ComputeResponse>,
     ) -> Result<()> {
-        let (res, ec) = res.into_components();
-
         let state = self.state.try_get()?;
+        let ec = res.get_ctx().clone();
         match &state.state {
             KeyshareState::GeneratingThresholdShare(data)
                 if data.pk_share.is_none()
@@ -186,9 +212,25 @@ impl ThresholdKeyshare {
                 return Ok(());
             }
             KeyshareState::Init | KeyshareState::CollectingEncryptionKeys(_) => {
-                bail!("GenPkShareAndSkSss response received before GeneratingThresholdShare state");
+                if self.effects_enabled {
+                    bail!(
+                        "GenPkShareAndSkSss response received before GeneratingThresholdShare state"
+                    );
+                }
+                Self::buffer_replayed_compute_response(
+                    &mut self.pending.gen_pk_response,
+                    res,
+                    "GenPkShareAndSkSss",
+                )?;
+                info!(
+                    e3_id = %state.e3_id,
+                    "Holding replayed GenPkShareAndSkSss response until encryption keys recover"
+                );
+                return Ok(());
             }
         }
+
+        let (res, ec) = res.into_components();
 
         let output: GenPkShareAndSkSssResponse = res
             .try_into()
@@ -224,18 +266,22 @@ impl ThresholdKeyshare {
 
         let lbfv_result = self.start_lbfv_generation(lbfv_secret_key, ec.clone());
 
-        // Fire gen_esi_sss with the e_sm_raw
-        let current_state: GeneratingThresholdShareData = self.state.try_get()?.try_into()?;
-        if let Some(ciphernode_selected) = current_state.ciphernode_selected {
-            self.handle_gen_esi_sss_requested(TypedEvent::new(
-                GenEsiSss {
-                    ciphernode_selected,
-                    e_sm_raw: current_state
-                        .e_sm_raw
-                        .expect("e_sm_raw should be set at this point"),
-                },
-                ec.clone(),
-            ))?;
+        if let Some(response) = self.pending.gen_esi_response.take() {
+            self.handle_gen_esi_sss_response(response)?;
+        } else {
+            // Fire gen_esi_sss with the e_sm_raw
+            let current_state: GeneratingThresholdShareData = self.state.try_get()?.try_into()?;
+            if let Some(ciphernode_selected) = current_state.ciphernode_selected {
+                self.handle_gen_esi_sss_requested(TypedEvent::new(
+                    GenEsiSss {
+                        ciphernode_selected,
+                        e_sm_raw: current_state
+                            .e_sm_raw
+                            .expect("e_sm_raw should be set at this point"),
+                    },
+                    ec.clone(),
+                ))?;
+            }
         }
 
         if let Err(error) = lbfv_result {

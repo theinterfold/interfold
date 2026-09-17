@@ -27,7 +27,7 @@ output — every step backed by ZK proofs verified on-chain.
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
 | E3           | Encrypted Execution Environment — one confidential computation instance (`e3Id`)                                                |
 | Ciphernode   | Node operator running keyshare/DKG/decryption actors in a committee                                                             |
-| Committee    | Ciphernodes serving an E3. Sizes `(N, T, H)`: `minimum` (3,1,2), `micro` (9,4,5), `small` (19,9,10)                             |
+| Committee    | Ciphernodes serving an E3. Sizes `(N, T, H)`: `minimum` (3,1,2), `micro` (9,4,5), `small` (19,9,14)                             |
 | DKG          | Distributed key generation — joint threshold public key, no party holds the full secret                                         |
 | BFV / TrBFV  | Brakerski–Fan–Vercauteren FHE scheme / its threshold (publicly verifiable) variant                                              |
 | Preset       | BFV parameter set: `insecure` (dev/CI default), `secure-8192`, or `secure-16384`                                                |

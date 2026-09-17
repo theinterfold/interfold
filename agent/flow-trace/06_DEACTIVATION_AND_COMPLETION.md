@@ -241,7 +241,7 @@ interfold start → running node
     ├─ Persists Shutdown and waits for acknowledged EventBus fanout
     ├─ Flushes the sequencer and event-store pipeline
     ├─ Drains open snapshot batches in event order, flushes the backing store, and closes it
-    ├─ Enforces a 30-second deadline and exits unsuccessfully on failure
+    ├─ Enforces a 60-second deadline and exits unsuccessfully on failure
     └─ Flushes the optional operational JSON log collector
 
 On restart:
@@ -250,6 +250,10 @@ On restart:
 │   → truncates only a CRC/length-invalid suffix after the final indexed record
 │   → restores complete CRC-valid, decodable frames whose tail index write was lost
 │   → rejects indexed corruption, decode failure, gaps, and offset mismatches
+├─ Event-clock restore before actors start:
+│   → each EventStore records its greatest durable HLC timestamp during index reconciliation
+│   → the builder seeds the HLC from the maximum across every event store
+│   → the first event from this boot is strictly later than the complete durable log
 ├─ Builder recovery before actors start:
 │   1. Check the storage schema and reconcile the request-router admission checkpoint
 │      → The checkpoint is stored at the canonical root key, not below a router-local namespace
@@ -277,6 +281,8 @@ On restart:
 │        directly from snapshots. Startup does not append synthetic recovery events.
 │      → FHE hydration maps legacy parameter bytes that omit `error1_variance` back to the exact
 │        known threshold preset before it deserializes the common random polynomial.
+│      → Replayed `AggregatorChanged` events restore the selector's last announced party. The
+│        post-replay reconciliation emits a change only when the durable failover state differs.
 ├─ Sync module replays:
 │   → Arm the current NetReady listener before the network transport can publish readiness
 │   4. Replay EventStore events since the snapshot cut (effects still disabled)
@@ -302,6 +308,8 @@ On restart:
 │   8. Enable effects (writers may submit only after this point)
 │      → Gate cancels work for terminal E3s and releases only the newest
 │        pending request for each in-flight semantic compute operation
+│      → Gate mirrors a completed response or error to regenerated correlation IDs
+│      → NodeProofAggregator restores persisted inner proofs and resumes incomplete folds
 │      → Durable sortition, committee-finalizer, and slash-writer work is re-armed
 │   9. SyncEffect restores each derived local selection inside its hydrated E3 context
 │      → No new CiphernodeSelected event is persisted
@@ -315,6 +323,12 @@ The shutdown barrier proves that the persisted `Shutdown` event reached its curr
 event pipeline flushed, open snapshot batches drained, and the backing store flushed within the
 deadline. Detached work that is not owned by those barriers can still be cancelled by process exit;
 operators must continue to follow the production shutdown precautions.
+
+`NODE_SHUTDOWN_DEADLINE` is 60 seconds: the 30-second EventBus fanout limit plus 30 seconds for the
+event and store flushes. The swarm daemon waits 65 seconds before it sends `SIGKILL`, and the Docker
+configurations use the same 65-second grace. The `nodes up` launcher uses a detached child process
+and confirms that its control socket becomes ready; dropping the launcher process must not stop the
+daemon it just started.
 
 The three long-lived libp2p `NetEvent` broadcast consumers (`NetEventTranslator`,
 `DocumentPublisher`, and `NetSyncManager`) treat Tokio's `Lagged(n)` receive result as a recoverable
@@ -334,13 +348,27 @@ temporary runs, then compacted and merged with bounded file-descriptor fan-in. R
 concurrent EventBus listener acceptance for each event. A listener that is unavailable or cannot
 accept within the timeout fails recovery instead of being silently skipped. Snapshot routing still
 contains asynchronous edges, so this does not claim that every downstream actor is synchronously
-durable at each replay step.
+durable at each replay step. A page can stop at its byte limit before it reaches its event-count
+limit. Replay therefore continues until the EventStore returns an empty page, not until it returns a
+short page.
 
 `interfold node validate` detects a recoverable uncommitted event-log tail without changing it. With
 the node stopped, `interfold node validate --repair` applies the same boundary-checked tail recovery
-as startup and refuses to remove indexed records. Runtime EventStore query failures are returned to
-the correlated caller rather than panicking the actor; committed corruption remains a
-startup/integrity failure.
+as startup and refuses to remove indexed records. Recovery adds missing index entries for complete,
+CRC-valid records and truncates only an incomplete physical suffix. It also removes the exact
+two-byte, index-free segment shape left when a process stops during rollover. Runtime EventStore
+query failures are returned to the correlated caller rather than panicking the actor; committed
+corruption remains a startup/integrity failure.
+
+Large local events use content-addressed blob files beside the commit log. The log stores a small
+versioned reference only after the blob is synced. Open, replay, and tail recovery verify the blob
+length and hash before decoding it. The 32 MiB inline and network event limits stay in place. An
+EventStore append or flush failure stops the actor and signals the node supervisor. Startup and the
+CLI then exit with a nonzero status instead of leaving a dead storage actor inside an online
+process. The EventStore syncs each appended log record before it indexes or broadcasts the event. It
+caches the active segment and index handles. Each append still syncs both files, while the directory
+is synced only for the first append and after segment rollover. The current storage schema marker is
+version 6; older node databases must be reset for this release, not silently decoded.
 
 For DAppNode installations, package v0.2.3 is the mandatory bridge from the shipped v0.1.8 state. It
 atomically moves the legacy `.enclave` custom-config root to `.interfold`, preserves the encrypted
@@ -453,11 +481,13 @@ newly-created plaintext path.
 
 `ShareVerificationActor` gates C1/C6 proof verification behind `CommitmentConsistencyCheckRequested`
 / `CommitmentConsistencyCheckComplete`. The per-E3 `CommitmentConsistencyChecker` is therefore
-restart-critical even though it has no durable state of its own: after context hydration,
-`CommitmentConsistencyCheckerExtension` recreates it from the recovered `E3Meta` so restarted active
-aggregators can complete C6 verification. Without this recipient, the restarted node can collect
-honest decryption shares and then wait forever for a consistency-check response that no actor is
-subscribed to publish.
+restart-critical. It stores its verified-proof cache and accepted DKG roster in a per-E3 repository,
+using the causal event's snapshot batch for each mutation. After context hydration,
+`CommitmentConsistencyCheckerExtension` restores that state and recreates the actor from the
+recovered `E3Meta`. Without the recipient, a restarted node can collect honest decryption shares and
+then wait forever for a consistency-check response. Without the restored cache, it can also compare
+recovered proofs with an empty or partial pre-crash history. `E3RequestComplete` clears the checker
+snapshot in the same event batch before the request context is discarded.
 
 The global `ShareVerificationActor` also requires the finalized committee's ordered party-slot map
 for signer ownership checks. It is seeded from `Repositories::finalized_committees` during builder
@@ -480,6 +510,17 @@ plaintext standbys persist the same validated inputs as the active aggregator. A
 on the active party, with new process-local correlation IDs. It re-publishes determined outputs
 idempotently. Startup fails closed if an active phase requires a recovery record that is missing or
 has an unsupported schema version.
+
+The threshold-keyshare recovery root stores only the length and Keccak-256 digest of each large DKG
+work plan or dealer payload. The immutable payloads use separate per-E3 keys. Hydration verifies
+each length and digest before it resumes DKG. A node removes the work plan after its node-fold proof
+completes, removes dealer payloads after it stores the C4 proof intent and decryption key, and
+removes all remaining payloads when the E3 becomes terminal. The small root is updated before a
+payload is retired, so an interrupted cleanup cannot leave a durable reference to missing data.
+
+The node-fold recovery index owns its per-E3 proof and metadata records. At startup, entries for E3s
+that are no longer active are tombstoned before the index entry is removed. A node that was offline
+when an E3 became terminal therefore does not retain unreachable inner proofs.
 
 Sortition and committee finalization have separate versioned recovery records. Sortition stores the
 seed, typed request, and any expulsion or exclusion that arrived before its prerequisites. The

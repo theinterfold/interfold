@@ -137,6 +137,23 @@ impl EncryptionKeyCollection {
         Some(self.todo.iter().copied().collect())
     }
 
+    /// Close the collection with the available keys when the circuit can
+    /// still witness H contributors and this node has its own key.
+    pub fn complete_at_cutoff(
+        &mut self,
+        minimum_keys: usize,
+        own_party_id: PartyId,
+    ) -> Option<Vec<Arc<EncryptionKey>>> {
+        if !self.is_collecting()
+            || self.keys.len() < minimum_keys
+            || !self.keys.contains_key(&own_party_id)
+        {
+            return None;
+        }
+        self.phase = CollectionPhase::Finished;
+        Some(self.sorted_keys())
+    }
+
     fn finish_if_done(&mut self) -> CollectOutcome {
         if self.todo.is_empty() {
             info!(e3_id = %self.e3_id, "All encryption keys collected!");
@@ -241,5 +258,27 @@ mod tests {
         assert_eq!(missing, vec![1, 2]);
         assert!(!c.is_collecting());
         assert!(c.timeout().is_none(), "second timeout is a no-op");
+    }
+
+    #[test]
+    fn cutoff_keeps_only_available_keys_in_party_order() {
+        let mut c = collection();
+        c.receive(key(2));
+        c.receive(key(1));
+        assert!(c.complete_at_cutoff(2, 0).is_none());
+        let keys = c.complete_at_cutoff(2, 1).expect("own key and H keys");
+        assert_eq!(
+            keys.iter().map(|key| key.party_id).collect::<Vec<_>>(),
+            vec![1, 2]
+        );
+        assert!(!c.is_collecting());
+    }
+
+    #[test]
+    fn cutoff_fails_below_h() {
+        let mut c = collection();
+        c.receive(key(0));
+        assert!(c.complete_at_cutoff(2, 0).is_none());
+        assert!(c.is_collecting());
     }
 }

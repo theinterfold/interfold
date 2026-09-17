@@ -5,7 +5,187 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::domain::event_conversion::ReceivableDocument;
+use crate::events::GossipPublishFailure;
 use crate::net_interface_handle::NetEventSubscriber;
+use e3_events::{
+    DecryptionKeyShared, E3StageChanged, EventConstructorWithTimestamp, EventSource, Proof,
+    ProofPayload, ProofType, SignedProofPayload, Unsequenced,
+};
+
+fn decryption_publication(e3_id: E3id) -> Result<PublishDocumentRequested> {
+    let proof_type = ProofType::C4aSkShareDecryption;
+    let proof = SignedProofPayload {
+        payload: ProofPayload {
+            e3_id: e3_id.clone(),
+            proof_type,
+            proof: Proof::new(
+                proof_type.circuit_names()[0],
+                ArcBytes::from_bytes(&[1]),
+                ArcBytes::from_bytes(&[2]),
+            ),
+        },
+        signature: ArcBytes::from_bytes(&[3; 65]),
+    };
+    let value = ReceivableDocument::DecryptionKeyShared(DecryptionKeyShared {
+        e3_id: e3_id.clone(),
+        party_id: 0,
+        node: "test-node".to_string(),
+        signed_sk_decryption_proof: proof,
+        signed_e_sm_decryption_proofs: vec![],
+        external: false,
+    })
+    .to_bytes()?;
+    Ok(PublishDocumentRequested {
+        meta: DocumentMeta::new(
+            e3_id,
+            DocumentKind::TrBFV,
+            vec![],
+            Some(Utc::now() + chrono::Duration::hours(1)),
+        ),
+        value: ArcBytes::from_bytes(&value),
+    })
+}
+
+#[actix::test]
+async fn canonical_dkg_end_suppresses_late_publication() -> Result<()> {
+    let (_guard, _bus, _net_cmd_tx, mut commands, _net_events, _, _, _, publisher) = setup_test()?;
+    let e3_id = E3id::new("closed", 1);
+    let stage = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        E3StageChanged {
+            e3_id: e3_id.clone(),
+            previous_stage: E3Stage::CommitteeFinalized,
+            new_stage: E3Stage::KeyPublished,
+        }
+        .into(),
+        None,
+        1,
+        None,
+        EventSource::Evm,
+    )
+    .into_sequenced(1);
+    publisher.send(stage).await?;
+
+    let late = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        PublishDocumentRequested {
+            meta: DocumentMeta::new(
+                e3_id,
+                DocumentKind::TrBFV,
+                vec![],
+                Some(Utc::now() + chrono::Duration::hours(1)),
+            ),
+            value: ArcBytes::from_bytes(b"late document"),
+        }
+        .into(),
+        None,
+        2,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(2);
+    publisher.send(late).await?;
+
+    assert!(timeout(Duration::from_millis(200), commands.recv())
+        .await
+        .is_err());
+    Ok(())
+}
+
+#[actix::test]
+async fn late_c4_document_is_rejected_after_key_published() -> Result<()> {
+    let (_guard, _bus, _net_cmd_tx, mut commands, _net_events, _, _, _, publisher) = setup_test()?;
+    let e3_id = E3id::new("decrypt", 1);
+    let stage = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        E3StageChanged {
+            e3_id: e3_id.clone(),
+            previous_stage: E3Stage::CommitteeFinalized,
+            new_stage: E3Stage::KeyPublished,
+        }
+        .into(),
+        None,
+        1,
+        None,
+        EventSource::Evm,
+    )
+    .into_sequenced(1);
+    publisher.send(stage).await?;
+
+    let publication = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        decryption_publication(e3_id)?.into(),
+        None,
+        2,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(2);
+    publisher.send(publication).await?;
+
+    assert!(timeout(Duration::from_millis(200), commands.recv())
+        .await
+        .is_err());
+    Ok(())
+}
+
+#[actix::test]
+async fn key_publication_cancels_an_inflight_dkg_announcement() -> Result<()> {
+    let (_guard, _bus, _net_cmd_tx, mut commands, net_events, _, _, _, publisher) = setup_test()?;
+    let e3_id = E3id::new("inflight", 1);
+    let value = ArcBytes::from_bytes(b"dkg document");
+    let publication = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        PublishDocumentRequested {
+            meta: DocumentMeta::new(
+                e3_id.clone(),
+                DocumentKind::TrBFV,
+                vec![],
+                Some(Utc::now() + chrono::Duration::hours(1)),
+            ),
+            value,
+        }
+        .into(),
+        None,
+        1,
+        None,
+        EventSource::Local,
+    )
+    .into_sequenced(1);
+    publisher.send(publication).await?;
+    let Some(NetCommand::DhtPutRecord {
+        correlation_id,
+        key,
+        ..
+    }) = timeout(Duration::from_secs(1), commands.recv()).await?
+    else {
+        bail!("expected DHT put");
+    };
+
+    let stage = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+        E3StageChanged {
+            e3_id,
+            previous_stage: E3Stage::CommitteeFinalized,
+            new_stage: E3Stage::KeyPublished,
+        }
+        .into(),
+        None,
+        2,
+        None,
+        EventSource::Evm,
+    )
+    .into_sequenced(2);
+    publisher.send(stage).await?;
+    net_events.send(NetEvent::DhtPutRecordSucceeded {
+        correlation_id,
+        key: key.clone(),
+    })?;
+
+    assert!(matches!(
+        timeout(Duration::from_secs(1), commands.recv()).await?,
+        Some(NetCommand::DhtRemoveRecords { keys }) if keys.contains(&key)
+    ));
+    assert!(timeout(Duration::from_millis(200), commands.recv())
+        .await
+        .is_err());
+    Ok(())
+}
 
 #[actix::test]
 async fn test_publishes_document() -> Result<()> {
@@ -49,7 +229,7 @@ async fn test_publishes_document() -> Result<()> {
         topic,
         correlation_id,
         data: GossipData::DocumentPublishedNotification(notification),
-        ..
+        delivery_id: Some(_),
     }) = timeout(Duration::from_secs(1), net_cmd_rx.recv())
         .await
         .expect("did not receive GossipPublish")
@@ -77,6 +257,47 @@ async fn test_publishes_document() -> Result<()> {
         "Expiry was not set"
     );
 
+    Ok(())
+}
+
+#[actix::test]
+async fn unavailable_gossip_peer_does_not_lose_the_publication() -> Result<()> {
+    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, _, _, _) = setup_test()?;
+    let value = ArcBytes::from_bytes(b"retryable document");
+    let key = ContentHash::from_content(&value);
+    bus.publish_without_context(PublishDocumentRequested {
+        meta: DocumentMeta::new(
+            E3id::new("retry", 1),
+            DocumentKind::TrBFV,
+            vec![],
+            Some(Utc::now() + chrono::Duration::hours(1)),
+        ),
+        value,
+    })?;
+
+    let Some(NetCommand::DhtPutRecord { correlation_id, .. }) =
+        timeout(Duration::from_secs(1), commands.recv()).await?
+    else {
+        bail!("expected DHT put");
+    };
+    net_events.send(NetEvent::DhtPutRecordSucceeded {
+        correlation_id,
+        key: key.clone(),
+    })?;
+    let Some(NetCommand::GossipPublish { correlation_id, .. }) =
+        timeout(Duration::from_secs(1), commands.recv()).await?
+    else {
+        bail!("expected gossip announcement");
+    };
+    net_events.send(NetEvent::GossipPublishError {
+        correlation_id,
+        error: Arc::new(GossipPublishFailure::NoPeersSubscribed),
+    })?;
+
+    assert!(matches!(
+        timeout(Duration::from_secs(20), commands.recv()).await?,
+        Some(NetCommand::DhtPutRecord { key: next_key, .. }) if next_key == key
+    ));
     Ok(())
 }
 

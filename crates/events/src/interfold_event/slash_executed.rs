@@ -45,7 +45,7 @@ impl Display for SlashExecuted {
 ///
 /// Read from the CiphernodeRegistry contract logs after slashing triggers expulsion.
 /// The `CommitteeExpulsionHandler` uses this to update the local committee view
-/// and check viability (whether remaining active members >= threshold M).
+/// and check viability (whether remaining active members >= threshold H).
 #[derive(Message, Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[rtype(result = "()")]
 pub struct CommitteeMemberExpelled {

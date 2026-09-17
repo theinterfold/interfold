@@ -83,11 +83,13 @@ impl PkGenerationCircuitData {
 mod tests {
     use crate::{
         computation::Computation,
-        threshold::pk_generation::{Inputs, PkGenerationCircuitData},
+        threshold::pk_generation::{Bounds, Inputs, PkGenerationCircuitData},
         CiphernodesCommitteeSize,
     };
 
     use e3_fhe_params::BfvPreset;
+    use num_bigint::BigInt;
+    use num_traits::Signed;
 
     #[test]
     fn test_generate_sample() {
@@ -96,10 +98,47 @@ mod tests {
             PkGenerationCircuitData::generate_sample(BfvPreset::InsecureThreshold512, committee)
                 .unwrap();
         let inputs = Inputs::compute(BfvPreset::InsecureThreshold512, &sample).unwrap();
+        let bounds = Bounds::compute(BfvPreset::InsecureThreshold512, &sample.committee).unwrap();
 
         assert_eq!(inputs.pk0is.limbs.len(), 2);
         assert_eq!(inputs.e_sm.limbs.len(), 2);
         assert_eq!(inputs.r1is.limbs.len(), 2);
         assert_eq!(inputs.r2is.limbs.len(), 2);
+        for coefficient in inputs.eek.coefficients() {
+            assert!(
+                coefficient.abs() <= BigInt::from(bounds.eek_bound.clone()),
+                "key-generation error exceeds the C1 bound"
+            );
+        }
+        for coefficient in inputs.sk.coefficients() {
+            assert!(
+                coefficient.abs() <= BigInt::from(bounds.sk_bound.clone()),
+                "secret key exceeds the C1 bound"
+            );
+        }
+        for limb in &inputs.e_sm.limbs {
+            for coefficient in limb.coefficients() {
+                assert!(
+                    coefficient.abs() <= BigInt::from(bounds.e_sm_bound.clone()),
+                    "smudging error exceeds the C1 bound"
+                );
+            }
+        }
+        for (limb, bound) in inputs.r1is.limbs.iter().zip(&bounds.r1_bounds) {
+            for coefficient in limb.coefficients() {
+                assert!(
+                    coefficient.abs() <= BigInt::from(bound.clone()),
+                    "first quotient exceeds the C1 bound"
+                );
+            }
+        }
+        for (limb, bound) in inputs.r2is.limbs.iter().zip(&bounds.r2_bounds) {
+            for coefficient in limb.coefficients() {
+                assert!(
+                    coefficient.abs() <= BigInt::from(bound.clone()),
+                    "second quotient exceeds the C1 bound"
+                );
+            }
+        }
     }
 }

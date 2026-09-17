@@ -113,6 +113,15 @@ pnpm check:committee                             # verify active.nr, utils.ts, p
 and
 [`circuits/benchmarks/README.md`](https://github.com/theinterfold/interfold/blob/main/circuits/benchmarks/README.md).
 
+| Committee | N   | T   | H   |
+| --------- | --- | --- | --- |
+| Minimum   | 3   | 1   | 2   |
+| Micro     | 9   | 4   | 5   |
+| Small     | 19  | 9   | 14  |
+
+The generated circuit artifacts and Solidity verifiers are specific to both choices. Changing H
+requires rebuilding every affected circuit and verifier; it is not a runtime-only setting.
+
 Generate per-circuit witness/config artifacts with `zk_cli` (must pass matching `--committee`):
 
 ```bash

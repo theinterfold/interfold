@@ -9,8 +9,10 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  type ActiveBfvConfig,
+  type BfvCommittee,
   BFV_DKG_H,
-  BFV_THRESHOLD_T,
+  TESTNET_BFV_CONFIGS,
   bfvDecCiphertextCommitmentIndex,
   bfvDecCommitteeHashIndices,
   bfvDecDomainIndices,
@@ -25,6 +27,7 @@ import {
 } from "./utils";
 
 const CANONICAL_BFV_PRESET = "insecure";
+const CANONICAL_BFV_COMMITTEE: BfvCommittee = "minimum";
 const COMMITTED_HONK_DIR = path.join(
   getRepoRoot(),
   "packages/interfold-contracts/contracts/verifiers/bfv/honk",
@@ -78,18 +81,131 @@ function readBenchmarkPreset(foldedArtifact?: unknown): string {
   }
 }
 
-/**
- * Committed Honk `.sol` files embed the insecure aggregator VK. Secure benchmark
- * proofs need verifiers generated from the active circuits/bin preset.
- */
-function ensureHonkVerifierContractDir(preset: string): string {
-  if (preset === CANONICAL_BFV_PRESET) {
-    return COMMITTED_HONK_DIR;
+function committeeFromFoldedArtifact(
+  artifact: unknown,
+): BfvCommittee | undefined {
+  if (!artifact || typeof artifact !== "object") return undefined;
+
+  const doc = artifact as Record<string, unknown>;
+  const benchmarkConfig =
+    doc.benchmark_config && typeof doc.benchmark_config === "object"
+      ? (doc.benchmark_config as Record<string, unknown>)
+      : undefined;
+  const named = doc.committee ?? benchmarkConfig?.committee;
+  if (typeof named === "string" && named.trim().length > 0) {
+    const committee = named.trim();
+    const match = TESTNET_BFV_CONFIGS.find(
+      (config) => config.committee === committee,
+    );
+    if (!match) {
+      throw new Error(`Unknown benchmark committee: ${committee}`);
+    }
+    return match.committee;
   }
-  const benchDir = path.join(COMMITTED_HONK_DIR, ".benchmark", preset);
+
+  const h = benchmarkConfig?.committee_h;
+  const n = benchmarkConfig?.committee_n;
+  const t = benchmarkConfig?.committee_t;
+  if ([h, n, t].every((value) => typeof value === "number")) {
+    const match = TESTNET_BFV_CONFIGS.find(
+      (config) => config.h === h && config.n === n && config.t === t,
+    );
+    if (!match) {
+      throw new Error(
+        `Benchmark committee parameters do not match a supported committee: H=${h}, N=${n}, T=${t}`,
+      );
+    }
+    return match.committee;
+  }
+
+  return undefined;
+}
+
+/** Prefer committee metadata in folded JSON, then the environment or active build. */
+function readBenchmarkCommittee(foldedArtifact?: unknown): BfvCommittee {
+  const fromArtifact = committeeFromFoldedArtifact(foldedArtifact);
+  if (fromArtifact) return fromArtifact;
+
+  const fromEnv = process.env.BENCHMARK_COMMITTEE?.trim();
+  if (fromEnv) {
+    const match = TESTNET_BFV_CONFIGS.find(
+      (config) => config.committee === fromEnv,
+    );
+    if (!match) throw new Error(`Unknown BENCHMARK_COMMITTEE: ${fromEnv}`);
+    return match.committee;
+  }
+
+  const activePath = path.join(
+    getRepoRoot(),
+    "circuits/bin/.active-preset.json",
+  );
+  if (fs.existsSync(activePath)) {
+    try {
+      const active = JSON.parse(fs.readFileSync(activePath, "utf8")) as {
+        committee?: string;
+      };
+      if (active.committee) {
+        const match = TESTNET_BFV_CONFIGS.find(
+          (config) => config.committee === active.committee,
+        );
+        if (!match) {
+          throw new Error(`Unknown active committee: ${active.committee}`);
+        }
+        return match.committee;
+      }
+    } catch (error) {
+      if (error instanceof SyntaxError) return CANONICAL_BFV_COMMITTEE;
+      throw error;
+    }
+  }
+  return CANONICAL_BFV_COMMITTEE;
+}
+
+function resolveBenchmarkConfig(foldedArtifact?: unknown): ActiveBfvConfig {
+  const preset = readBenchmarkPreset(foldedArtifact);
+  const committee = readBenchmarkCommittee(foldedArtifact);
+  const config = TESTNET_BFV_CONFIGS.find(
+    (candidate) =>
+      candidate.preset === preset && candidate.committee === committee,
+  );
+  if (!config) {
+    throw new Error(
+      `Unsupported benchmark configuration: ${preset}/${committee}`,
+    );
+  }
+  return config;
+}
+
+/**
+ * Resolve the verifier directory for one preset and committee pair.
+ * Generate an isolated copy only when the committed pair is unavailable.
+ */
+function ensureHonkVerifierContractDir(config: ActiveBfvConfig): string {
+  const isCanonical =
+    config.preset === CANONICAL_BFV_PRESET &&
+    config.committee === CANONICAL_BFV_COMMITTEE;
+  const committedDir = isCanonical
+    ? COMMITTED_HONK_DIR
+    : path.join(COMMITTED_HONK_DIR, config.preset, config.committee);
+  const verifierNames = [
+    "DkgAggregatorVerifier.sol",
+    "DecryptionAggregatorVerifier.sol",
+  ];
+  if (
+    verifierNames.every((name) => fs.existsSync(path.join(committedDir, name)))
+  ) {
+    return committedDir;
+  }
+
+  const benchDir = path.join(
+    COMMITTED_HONK_DIR,
+    ".benchmark",
+    config.preset,
+    config.committee,
+  );
   fs.mkdirSync(benchDir, { recursive: true });
   console.log(
-    `[benchmarkGasFromRaw] Generating ${preset} Honk verifiers into ${benchDir}...`,
+    `[benchmarkGasFromRaw] Generating ${config.preset}/${config.committee} Honk verifiers into ${benchDir}...`,
   );
   execFileSync(
     "pnpm",
@@ -100,7 +216,9 @@ function ensureHonkVerifierContractDir(preset: string): string {
       "--no-compile",
       "--write",
       "--preset",
-      preset,
+      config.preset,
+      "--committee",
+      config.committee,
       "--output-dir",
       benchDir,
     ],
@@ -168,7 +286,6 @@ function findRawJson(rawDir: string, fragment: string): any {
 }
 
 const MIN_VK_HASH_PUBLIC_INPUTS = 2;
-const DKG_COMMITTEE_HASH_IDX = bfvDkgCommitteeHashIndices(BFV_DKG_H);
 const DEC_COMMITTEE_HASH_IDX = bfvDecCommitteeHashIndices();
 const DEC_DOMAIN_IDX = bfvDecDomainIndices();
 
@@ -305,11 +422,14 @@ async function main() {
     MIN_VK_HASH_PUBLIC_INPUTS,
   );
 
+  const benchmarkConfig = resolveBenchmarkConfig(foldedDoc);
   const expectedNodesFoldKeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths().nodesFold,
+    getBfvPkSubCircuitVkHashPaths(benchmarkConfig).nodesFold,
+    benchmarkConfig,
   );
   const expectedC5KeyHash = readVkRecursiveHash(
-    getBfvPkSubCircuitVkHashPaths().c5,
+    getBfvPkSubCircuitVkHashPaths(benchmarkConfig).c5,
+    benchmarkConfig,
   );
   const expectedSkC2ChunkKeyHash = readVkRecursiveHash(
     getBfvPkSubCircuitVkHashPaths().skC2Chunk,
@@ -321,10 +441,12 @@ async function main() {
     readVkRecursiveHash(filePath),
   );
   const expectedC6FoldKeyHash = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths().c6Fold,
+    getBfvDecryptionSubCircuitVkHashPaths(benchmarkConfig).c6Fold,
+    benchmarkConfig,
   );
   const expectedC7KeyHash = readVkRecursiveHash(
-    getBfvDecryptionSubCircuitVkHashPaths().c7,
+    getBfvDecryptionSubCircuitVkHashPaths(benchmarkConfig).c7,
+    benchmarkConfig,
   );
 
   if (
@@ -351,11 +473,13 @@ async function main() {
 
   const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 
-  const benchmarkPreset = readBenchmarkPreset(foldedDoc);
-  const honkDir = ensureHonkVerifierContractDir(benchmarkPreset);
-  if (benchmarkPreset !== CANONICAL_BFV_PRESET) {
+  const honkDir = ensureHonkVerifierContractDir(benchmarkConfig);
+  if (
+    benchmarkConfig.preset !== CANONICAL_BFV_PRESET ||
+    benchmarkConfig.committee !== CANONICAL_BFV_COMMITTEE
+  ) {
     console.log(
-      `[benchmarkGasFromRaw] Using preset ${benchmarkPreset} Honk verifiers (not committed insecure .sol).`,
+      `[benchmarkGasFromRaw] Using ${benchmarkConfig.preset}/${benchmarkConfig.committee} Honk verifiers for this benchmark.`,
     );
   }
 
@@ -379,7 +503,7 @@ async function main() {
     expectedSkC2ChunkKeyHash,
     expectedESmC2ChunkKeyHash,
     expectedVkBinding,
-    BFV_DKG_H,
+    benchmarkConfig.h,
   );
   await bfvPk.waitForDeployment();
 
@@ -390,12 +514,13 @@ async function main() {
   requirePublicInputLen(
     "dkg_aggregator committee_hash",
     dkgPublicInputs,
-    DKG_COMMITTEE_HASH_IDX.lo + 1,
+    bfvDkgCommitteeHashIndices(benchmarkConfig.h).lo + 1,
   );
   const pkCommitment = dkgPublicInputs[dkgPublicInputs.length - 1];
+  const dkgCommitteeHashIndices = bfvDkgCommitteeHashIndices(benchmarkConfig.h);
   const dkgCommitteeHash = committeeHashFromLimbs(
-    dkgPublicInputs[DKG_COMMITTEE_HASH_IDX.hi],
-    dkgPublicInputs[DKG_COMMITTEE_HASH_IDX.lo],
+    dkgPublicInputs[dkgCommitteeHashIndices.hi],
+    dkgPublicInputs[dkgCommitteeHashIndices.lo],
   );
   const dkgOk = await bfvPk.verify.staticCall(
     benchmarkE3Id,
@@ -431,15 +556,15 @@ async function main() {
     await registry.getAddress(),
     expectedC6FoldKeyHash,
     expectedC7KeyHash,
-    BFV_THRESHOLD_T,
+    benchmarkConfig.t,
   );
   await bfvDec.waitForDeployment();
 
-  const partyOffsets = bfvDecPartyColOffsets(BFV_THRESHOLD_T);
+  const partyOffsets = bfvDecPartyColOffsets(benchmarkConfig.t);
   const registryPartyIds: bigint[] = [];
   const skCommits: string[] = [];
   const esmCommits: string[] = [];
-  for (let i = 0; i < BFV_THRESHOLD_T + 1; i++) {
+  for (let i = 0; i < benchmarkConfig.t + 1; i++) {
     registryPartyIds.push(
       BigInt(decPublicInputs[partyOffsets.partyId + i]) - 1n,
     );
@@ -501,7 +626,8 @@ async function main() {
       dec: Number(decGas),
     },
     source: "benchmark_raw_artifacts",
-    bfv_preset: benchmarkPreset,
+    bfv_preset: benchmarkConfig.preset,
+    bfv_committee: benchmarkConfig.committee,
   };
   fs.writeFileSync(outputPath, JSON.stringify(output, null, 2));
 }

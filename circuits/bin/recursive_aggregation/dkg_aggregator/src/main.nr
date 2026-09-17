@@ -11,9 +11,8 @@
 //!
 //! Committee sizing: `committee_members` covers the **full registered committee** of size
 //! `N_PARTIES`, matching `topNodes` on-chain. The H folded `party_ids` are indices into that
-//! full committee (today `H == N_PARTIES`; after future honest-set selection `H` may be smaller
-//! than `N_PARTIES`). `committee_members` must be supplied in the same order as on-chain
-//! `topNodes`; the hash equality is what pins that order.
+//! full committee. `H` may be smaller than `N_PARTIES`. Supply `committee_members` in the same
+//! order as on-chain `topNodes`; the hash equality pins that order.
 
 use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
 use lib::configs::default::dkg::L_THRESHOLD;
@@ -164,13 +163,9 @@ fn main(
         );
     }
 
-    for i in 0..H {
-        let id = party_ids[i] as u32;
-        assert(id < N_PARTIES);
-    }
-    for i in 1..H {
-        assert((party_ids[i - 1] as u32) < (party_ids[i] as u32));
-    }
+    // Canonical, strictly increasing party ids: range-checks `party_ids[i] < N_PARTIES`,
+    // enforces strict ordering, and pins field-canonical form.
+    assert_canonical_party_ids(party_ids);
 
     verify_honk_proof_non_zk(
         nodes_fold_vk,
@@ -191,8 +186,46 @@ fn main(
         );
     }
 
-    // Cross-node C0 to C3: each row's c3_pk[party_ids[j]] (recipient pk used in party i's C3
-    // encryption for honest recipient j) must equal that recipient row's own c0_pk.
+    assert_selected_c0_c3_links(nodes_fold_public, party_ids);
+    assert_selected_c2_c4_links(nodes_fold_public, party_ids);
+
+    // Cross-circuit C5 to `node_fold`: C5 row `i` matches that node's `c1_pk` public field.
+    for i in 0..H {
+        assert(
+            c5_public[i]
+                == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+                    + i * NODE_FOLD_PUBLIC_LEN
+                    + NF_C1_PK_IDX],
+        );
+    }
+
+    let vk_hashes = [nodes_fold_key_hash, c5_key_hash].as_vector();
+    let key_hash = compute_vk_hash(vk_hashes);
+
+    let mut sk_agg_commits: [Field; H] = [0; H];
+    let mut esm_agg_commits: [Field; H] = [0; H];
+    for i in 0..H {
+        sk_agg_commits[i] = nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+            + i * NODE_FOLD_PUBLIC_LEN
+            + NF_SK_AGG_IDX];
+        esm_agg_commits[i] = nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
+            + i * NODE_FOLD_PUBLIC_LEN
+            + NF_ESM_AGG_IDX];
+    }
+    let aggregated_pk_commit = c5_public[H];
+
+    (
+        key_hash, nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2A_CHUNK_HASH_IDX],
+        nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2B_CHUNK_HASH_IDX], sk_agg_commits,
+        esm_agg_commits, aggregated_pk_commit,
+    )
+}
+
+fn assert_selected_c0_c3_links(
+    nodes_fold_public: [Field; NODES_FOLD_PUBLIC_LEN],
+    party_ids: [Field; H],
+) {
+    // C3 recipient slots use full-committee party IDs, not folded row positions.
     for i in 0..H {
         for j in 0..H {
             let recipient_id = party_ids[j] as u32;
@@ -207,8 +240,24 @@ fn main(
             );
         }
     }
+}
 
-    // Cross-party C2 to C4 (first chain).
+fn assert_canonical_party_ids(party_ids: [Field; H]) {
+    for i in 0..H {
+        let id = party_ids[i] as u32;
+        assert(party_ids[i] == id as Field);
+        assert(id < N_PARTIES);
+        if i > 0 {
+            assert((party_ids[i - 1] as u32) < id);
+        }
+    }
+}
+
+fn assert_selected_c2_c4_links(
+    nodes_fold_public: [Field; NODES_FOLD_PUBLIC_LEN],
+    party_ids: [Field; H],
+) {
+    // C2 recipient slots use full-committee party IDs. C4 sender slots use folded row positions.
     for i in 0..H {
         for j in 0..H {
             let recipient_id = party_ids[j] as u32;
@@ -249,35 +298,91 @@ fn main(
             }
         }
     }
+}
 
-    // Cross-circuit C5 to `node_fold`: C5 row `i` matches that node's `c1_pk` public field.
-    for i in 0..H {
-        assert(
-            c5_public[i]
-                == nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-                    + i * NODE_FOLD_PUBLIC_LEN
-                    + NF_C1_PK_IDX],
-        );
+#[test]
+fn test_non_prefix_c0_c3_links() {
+    let (nodes_fold_public, party_ids) = non_prefix_fixture();
+    assert_selected_c0_c3_links(nodes_fold_public, party_ids);
+}
+
+#[test]
+fn test_non_prefix_party_ids_are_canonical() {
+    let (_, party_ids) = non_prefix_fixture();
+    assert_canonical_party_ids(party_ids);
+}
+
+#[test(should_fail)]
+fn test_duplicate_party_ids_are_rejected() {
+    let (_, mut party_ids) = non_prefix_fixture();
+    party_ids[H - 1] = party_ids[H - 2];
+    assert_canonical_party_ids(party_ids);
+}
+
+#[test(should_fail)]
+fn test_out_of_range_party_id_is_rejected() {
+    let (_, mut party_ids) = non_prefix_fixture();
+    party_ids[H - 1] = N_PARTIES as Field;
+    assert_canonical_party_ids(party_ids);
+}
+
+#[test]
+fn test_non_prefix_c2_c4_links() {
+    let (nodes_fold_public, party_ids) = non_prefix_fixture();
+    assert_selected_c2_c4_links(nodes_fold_public, party_ids);
+}
+
+#[test(should_fail)]
+fn test_non_prefix_c0_c3_rejects_wrong_recipient() {
+    let (mut nodes_fold_public, party_ids) = non_prefix_fixture();
+    let recipient_id = party_ids[H - 1] as u32;
+    nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C3_PK_BASE_IDX + recipient_id] = 0;
+    assert_selected_c0_c3_links(nodes_fold_public, party_ids);
+}
+
+#[test(should_fail)]
+fn test_non_prefix_c2_c4_rejects_wrong_recipient() {
+    let (mut nodes_fold_public, party_ids) = non_prefix_fixture();
+    let recipient_id = party_ids[H - 1] as u32;
+    nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2A_BASE_IDX + recipient_id * L_THRESHOLD] =
+        0;
+    assert_selected_c2_c4_links(nodes_fold_public, party_ids);
+}
+
+fn non_prefix_fixture() -> ([Field; NODES_FOLD_PUBLIC_LEN], [Field; H]) {
+    assert(H < N_PARTIES);
+    let mut party_ids: [Field; H] = [0; H];
+    for row in 0..H {
+        party_ids[row] = row as Field;
+    }
+    party_ids[H - 1] = (N_PARTIES - 1) as Field;
+
+    let mut nodes_fold_public: [Field; NODES_FOLD_PUBLIC_LEN] = [0; NODES_FOLD_PUBLIC_LEN];
+    for row in 0..H {
+        let base = NODES_FOLD_PARAM_PUBLIC_LEN + row * NODE_FOLD_PUBLIC_LEN;
+        nodes_fold_public[base + NF_PARTY_ID_IDX] = party_ids[row];
+        nodes_fold_public[base + NF_C0_PK_IDX] = 100 + party_ids[row];
     }
 
-    let vk_hashes = [nodes_fold_key_hash, c5_key_hash].as_vector();
-    let key_hash = compute_vk_hash(vk_hashes);
+    for sender_row in 0..H {
+        let sender_base = NODES_FOLD_PARAM_PUBLIC_LEN + sender_row * NODE_FOLD_PUBLIC_LEN;
+        for recipient_row in 0..H {
+            let recipient_id = party_ids[recipient_row] as u32;
+            let recipient_base = NODES_FOLD_PARAM_PUBLIC_LEN + recipient_row * NODE_FOLD_PUBLIC_LEN;
+            nodes_fold_public[sender_base + NF_C3_PK_BASE_IDX + recipient_id] =
+                nodes_fold_public[recipient_base + NF_C0_PK_IDX];
 
-    let mut sk_agg_commits: [Field; H] = [0; H];
-    let mut esm_agg_commits: [Field; H] = [0; H];
-    for i in 0..H {
-        sk_agg_commits[i] = nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-            + i * NODE_FOLD_PUBLIC_LEN
-            + NF_SK_AGG_IDX];
-        esm_agg_commits[i] = nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN
-            + i * NODE_FOLD_PUBLIC_LEN
-            + NF_ESM_AGG_IDX];
+            for l in 0..L_THRESHOLD {
+                let c2_slot = recipient_id * L_THRESHOLD + l;
+                let c4_slot = sender_row * L_THRESHOLD + l;
+                let value = (1000 + sender_row * N_PARTIES * L_THRESHOLD + c2_slot) as Field;
+                nodes_fold_public[sender_base + NF_C2A_BASE_IDX + c2_slot] = value;
+                nodes_fold_public[recipient_base + NF_C4A_BASE_IDX + c4_slot] = value;
+                nodes_fold_public[sender_base + NF_C2B_BASE_IDX + c2_slot] = value + 1000;
+                nodes_fold_public[recipient_base + NF_C4B_BASE_IDX + c4_slot] = value + 1000;
+            }
+        }
     }
-    let aggregated_pk_commit = c5_public[H];
 
-    (
-        key_hash, nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2A_CHUNK_HASH_IDX],
-        nodes_fold_public[NODES_FOLD_PARAM_PUBLIC_LEN + NF_C2B_CHUNK_HASH_IDX], sk_agg_commits,
-        esm_agg_commits, aggregated_pk_commit,
-    )
+    (nodes_fold_public, party_ids)
 }

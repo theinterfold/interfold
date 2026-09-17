@@ -19,6 +19,11 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
             InterfoldEventData::KeyshareCreated(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::CommitmentRosterSelected(data) => {
+                trap(EType::PublickeyAggregation, &self.bus.with_ec(&ec), || {
+                    self.accept_dkg_roster(data, ec)
+                });
+            }
             InterfoldEventData::ShareVerificationComplete(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
@@ -104,19 +109,8 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                     if was_collecting && self.aggregation_inputs_ready() {
                         self.publish_inputs_ready(ec.clone())?;
                     }
-                    if was_collecting && self.can_run_aggregation_effects() && !self.is_lbfv() {
-                        if let Some(PublicKeyAggregatorState::VerifyingC1 {
-                            submission_order,
-                            c1_proofs,
-                            ..
-                        }) = self.state.get()
-                        {
-                            self.dispatch_c1_verification(
-                                &submission_order,
-                                &c1_proofs,
-                                ec.clone(),
-                            )?;
-                        }
+                    if was_collecting && self.can_run_aggregation_effects() {
+                        self.continue_c1_verification(ec.clone())?;
                     }
                     if self.is_lbfv() {
                         self.persist_lbfv_exclusion(node_addr, ec.clone(), ctx);
@@ -152,19 +146,8 @@ impl Handler<InterfoldEvent> for PublicKeyAggregator {
                     if was_collecting && self.aggregation_inputs_ready() {
                         self.publish_inputs_ready(ec.clone())?;
                     }
-                    if was_collecting && self.can_run_aggregation_effects() && !self.is_lbfv() {
-                        if let Some(PublicKeyAggregatorState::VerifyingC1 {
-                            submission_order,
-                            c1_proofs,
-                            ..
-                        }) = self.state.get()
-                        {
-                            self.dispatch_c1_verification(
-                                &submission_order,
-                                &c1_proofs,
-                                ec.clone(),
-                            )?;
-                        }
+                    if was_collecting && self.can_run_aggregation_effects() {
+                        self.continue_c1_verification(ec.clone())?;
                     }
                     if self.is_lbfv() {
                         self.persist_lbfv_exclusion(node_addr, ec.clone(), ctx);
@@ -243,15 +226,8 @@ impl Handler<TypedEvent<KeyshareCreated>> for PublicKeyAggregator {
 
             // If we just transitioned to VerifyingC1, dispatch verification
             // using c1_proofs stored in the new state.
-            if became_ready && self.can_run_aggregation_effects() && !self.is_lbfv() {
-                if let Some(PublicKeyAggregatorState::VerifyingC1 {
-                    submission_order,
-                    c1_proofs,
-                    ..
-                }) = self.state.get()
-                {
-                    self.dispatch_c1_verification(&submission_order, &c1_proofs, ec.clone())?;
-                }
+            if became_ready && self.can_run_aggregation_effects() {
+                self.continue_c1_verification(ec.clone())?;
             }
 
             if self.is_lbfv() {
@@ -351,9 +327,9 @@ impl Handler<TypedEvent<DKGRecursiveAggregationComplete>> for PublicKeyAggregato
         msg: TypedEvent<DKGRecursiveAggregationComplete>,
         _ctx: &mut Self::Context,
     ) -> Self::Result {
-        if !self.can_run_aggregation_effects() {
-            return;
-        }
+        // Standbys need the same durable fold inputs as the active aggregator. If the active
+        // node disappears, the promoted node must not wait for proofs that were published once
+        // and will not be emitted again.
         trap(
             EType::PublickeyAggregation,
             &self.bus.with_ec(msg.get_ctx()),

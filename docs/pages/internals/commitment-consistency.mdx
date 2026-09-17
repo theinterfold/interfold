@@ -126,7 +126,7 @@ sender (who computed shares in C2) and the recipient/aggregator (who decrypted s
 [party_{N-1}_mod_{L-1}]
 ```
 
-**C4 public signals** (H honest parties, L moduli):
+**C4 public signals** (the accepted H-dealer roster, L moduli):
 
 ```
 [expected_commitments[0][0]] ... [expected_commitments[0][L-1]]
@@ -137,15 +137,22 @@ sender (who computed shares in C2) and the recipient/aggregator (who decrypted s
 
 ### Check Logic
 
-Given C2 sender `X` (party_id) and C4 recipient `R` (party_id):
+Given C2 sender `X` (original committee `party_id`) and C4 recipient `R` (original committee
+`party_id`):
 
 1. **From C2_X**: Extract L commitments at slot R → `source_values[R*L .. (R+1)*L]` — these are the
    L commitments that sender X computed for recipient R
-2. **From C4_R**: Extract row at position X → `target_signals[X*L*32 .. (X+1)*L*32]` — these are the
-   L commitments that recipient R expects from sender X
-3. **Compare**: All L values must match exactly
+2. **Map X into the roster**: Find sender X's position `k` in the accepted H-member roster. C4 is
+   H-wide and follows roster order; it is not indexed by the original committee ID
+3. **From C4_R**: Extract row `k` → `target_signals[k*L*32 .. (k+1)*L*32]` — these are the L
+   commitments that recipient R expects from sender X
+4. **Compare**: All L values must match exactly
 
 If any modulus commitment differs, sender X is accused.
+
+The checker persists the accepted roster with its proof cache. It waits until every selected C4
+target is present before it treats a missing C2→C4 match as a violation. This avoids confusing a
+late selected proof with a mismatched commitment.
 
 ## Deduplication
 

@@ -43,18 +43,22 @@ own share of the work and takes part in **PVDKG** (publicly verifiable DKG), pro
 alongside messages so that deviating parties can be identified and excluded without exposing other
 nodes’ secrets.
 
-Write **A** for the **authorised** committee for that E3—initially all **N** members, then shrinking
-as proofs fail and bad actors drop out of the active path. When DKG finishes, the network publishes
-a **threshold public key** that serves as the reference for everyone who will encrypt inputs. The
-numeric threshold **T** (how many partial decryptions you need later) is fixed at **program** level;
-this page does not pin a single formula, because deployments can tune it.
+Three values define the committee shape. **N** is the finalized on-chain committee size, **H** is
+the number of mutually ready dealer contributions that form the DKG key, and decryption requires
+**T+1** valid shares. The active aggregator proposes one canonical, ascending H-member roster **S**
+after the early proofs are verified. When DKG finishes, the network publishes a **threshold public
+key** built from exactly those H contributions.
+
+The supported `(N, T, H)` configurations are Minimum `(3, 1, 2)`, Micro `(9, 4, 5)`, and Small
+`(19, 9, 14)`. Small can omit five dealers before roster selection and can lose four of its 14
+selected decryption participants later while still reaching `T+1=10` shares.
 
 From there the story is easier to tell in order. Users encrypt under the threshold key. A **compute
 provider** evaluates the FHE program on those ciphertexts; in practice that step usually ships with
 its own **correct execution** story (for example attested FHE inside a zkVM), separate from the Noir
-circuits that handle keys and decryptions. When the job is done, at least **T+1** honest members of
-**A** publish **partial decryptions**, and an **aggregator** combines them into plaintext
-**without** ever reassembling the full secret key in one place.
+circuits that handle keys and decryptions. When the job is done, at least **T+1** members recorded
+by the accepted DKG publish **partial decryptions**, and an **aggregator** combines them into
+plaintext **without** ever reassembling the full secret key in one place.
 
 ### How the product phases line up
 
@@ -68,11 +72,12 @@ decrypts after homomorphic evaluation.
   shares, and sends those shares encrypted under each peer’s **individual** BFV public key—because
   shares must not travel in the clear. Parallel **smudging noise** material follows the same
   pattern, since decryption later relies on noise that is also shared and proved. Proofs accompany
-  generation, share computation, encryption, and the local decrypt-and-aggregate step; as they fail
-  or succeed, the set **A** updates so that only honest nodes remain on the critical path.
+  generation, share computation, encryption, and the local decrypt-and-aggregate step. After at
+  least H mutually ready dealer contributions exist, the active aggregator proposes the fixed roster
+  `S` that all later DKG proofs use.
 
-- **P2 — Public key aggregation** is deliberately short: someone acting as aggregator sums the
-  surviving public key shares into the single **threshold public key**. Circuit
+- **P2 — Public key aggregation** is deliberately short: the active aggregator sums the H selected
+  public key shares into the single **threshold public key**. Circuit
   [**C5**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_aggregation)
   checks that this sum matches what earlier proofs committed to.
 
@@ -85,8 +90,8 @@ decrypts after homomorphic evaluation.
   implement a **GRECO**-style proof pattern: show that the ciphertext is a valid BFV encryption
   without revealing the message or the randomness.
 
-- **P4 — Threshold decryption** closes the loop after homomorphic evaluation. Ciphernodes in **A**
-  produce partial decryptions; circuits
+- **P4 — Threshold decryption** closes the loop after homomorphic evaluation. Ciphernodes anchored
+  by the accepted DKG produce partial decryptions; circuits
   [**C6**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/share_decryption)
   and
   [**C7**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/decrypted_shares_aggregation)
@@ -129,10 +134,14 @@ sequenceDiagram
     participant BC as Blockchain
 
     Note over CMT,AGG: P1 — Distributed Key Generation
-    loop Each authorised node
+    loop Each participating node before roster selection
         CMT->>CMT: Individual sk/pk + proof (C0)
         CMT->>CMT: Contribution + smudging + proofs (C1, C2)
         CMT->>CMT: Encrypt and exchange shares + proofs (C3)
+    end
+    CMT-->>AGG: Signed readiness reports
+    AGG-->>CMT: Accepted H-dealer roster
+    loop Each accepted roster member
         CMT->>CMT: Decrypt shares + proofs (C4)
     end
 
@@ -173,8 +182,9 @@ Taken together, the design is aiming for a few properties that reinforce each ot
 security** means decrypting user data should require at least **T+1** cooperating honest shares for
 the chosen **T**. **Public verifiability** means observers can validate each proof without
 participating in the protocol. **Homomorphic evaluation** is what lets ciphertexts leave P3 and
-enter the FHE engine before P4. **Robustness** means bad behaviour should show up as failing proofs,
-so the protocol can update **A** and the economic layer can apply penalties when appropriate.
+enter the FHE engine before P4. **Robustness** means the DKG can select H mutually ready dealers
+without waiting for all N members. Invalid proofs remain attributable, but a local omission timeout
+alone is not evidence that permits slashing.
 
 ### Commitments and why polynomials do not land on-chain whole
 
@@ -211,19 +221,20 @@ network rather than on verifiable mathematics.
 The aggregation design addresses both problems. Only **two recursive proofs** are posted on-chain
 per E3 session:
 
-1. **DKG recursive proof**: the aggregator recursively verifies every node's C0–C4 fold chain
-   together with **C5**, which aggregates the public key. Verified on-chain by
+1. **DKG recursive proof**: the aggregator recursively verifies exactly H accepted-roster C0–C4 fold
+   chains together with **C5**, which aggregates the same H public-key contributions. It also binds
+   the proof to the full N-member committee hash. The proof is verified on-chain by
    [`BfvPkVerifier`](https://github.com/theinterfold/interfold/blob/main/packages/interfold-contracts/contracts/verifiers/bfv/BfvPkVerifier.sol)
    at `publishCommittee`.
-2. **Decryption recursive proof**: the aggregator recursively verifies **C6** proofs from at least
+2. **Decryption recursive proof**: the aggregator recursively verifies **C6** proofs from exactly
    **T+1** parties together with **C7**, which reconstructs the plaintext. Verified on-chain by
    [`BfvDecryptionVerifier`](https://github.com/theinterfold/interfold/blob/main/packages/interfold-contracts/contracts/verifiers/bfv/BfvDecryptionVerifier.sol)
    at `publishPlaintextOutput`.
 
-Individual nodes do not post their inner proofs on-chain. Each node folds its own C0–C4 chain into a
-`NodeDkgFold` proof, **signs** the surfaced commitments, and relays the signed fold output to the
-aggregator via P2P gossip. The aggregator then assembles the recursive DKG proof from all honest
-nodes' fold outputs and submits it together with a **fold-attestation bundle**.
+Individual nodes do not post their inner proofs on-chain. Each selected node folds its own C0–C4
+chain into a `NodeDkgFold` proof, **signs** the surfaced commitments, and relays the signed fold
+output to the aggregator via P2P gossip. The aggregator then assembles the recursive DKG proof from
+the H roster members' fold outputs and submits it together with a **fold-attestation bundle**.
 
 #### Per-node attestations and topNodes binding
 
@@ -250,11 +261,11 @@ then enforces four properties per attestation:
    member for this E3 (`isCommitteeMemberActive(e3Id, node)`).
 3. **Commitments match the DKG proof**: the signed `skAggCommit` and `esmAggCommit` must equal the
    `partyId`'s slot in the DKG aggregator proof's public inputs.
-4. **Honest-set cardinality**: the bundle must contain exactly one attestation per honest party in
-   the proof, with `partyId` strictly ascending (no duplicates, no partial subsets).
+4. **Roster cardinality**: the bundle must contain exactly one attestation per selected party in the
+   H-row proof, with `partyId` strictly ascending (no duplicates, no partial subsets).
 
 This closes the per-operator attribution gap: the aggregator cannot present a valid DKG proof
-without also producing one signed attestation per honest party, each bound to the operator
+without also producing one signed attestation per selected party, each bound to the operator
 registered at the corresponding `topNodes` slot, and slot-shuffling between operators is
 structurally prevented. The recovered `partyIds`, `skAggCommits`, and `esmAggCommits` are persisted
 as on-chain anchors (`dkgPartyIds`, `dkgSkAggCommits`, `dkgEsmAggCommits`) so future decryption
@@ -266,7 +277,7 @@ When a node misbehaves, the off-chain accusation quorum protocol produces a
 [`SlashingManager.proposeSlash`](https://github.com/theinterfold/interfold/blob/main/packages/interfold-contracts/contracts/slashing/SlashingManager.sol)
 call. The on-chain check enforces, in `_verifyAttestationEvidence`:
 
-1. **Voter quorum and signatures**: ≥ `M` committee-member voters (sorted ascending, accused
+1. **Voter quorum and signatures**: ≥ `H` committee-member voters (sorted ascending, accused
    excluded), each signing the canonical EIP-712 typed-data hash over
    `AccusationVote(uint256 e3Id, bytes32 accusationId, address voter, bytes32 dataHash, uint256 issuedAt, uint256 deadline)`.
    `chainId` and `verifyingContract = address(SlashingManager)` live in the EIP-712 domain, not the
@@ -410,10 +421,11 @@ low-degree Shamir-style codewords pass (the exact **PARITY_MATRIX** is preset an
 ```
 
 [**C3**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/share_encryption)
-(`dkg/share_encryption`) then encrypts each share under the recipient’s individual key; in a fully
-connected committee the proof count scales like **|A| × (|A| − 1)** per track. At a Fiat–Shamir
-challenge point, the BFV encryption algebra it checks matches the usual two-leg ciphertext (per
-limb), schematically:
+(`dkg/share_encryption`) then encrypts each share under the recipient’s individual key. The witness
+has N recipient slots, so the maximum proof count scales like **N × (N − 1)** per track and modulus.
+When a recipient's C0 key is missing at the cutoff, the sender fills that proof slot with a
+non-delivered placeholder encrypted under its own C0 key. At a Fiat–Shamir challenge point, the BFV
+encryption algebra it checks matches the usual two-leg ciphertext (per limb), schematically:
 
 ```math
 \begin{aligned}
@@ -427,8 +439,9 @@ evaluation is reused for every **ℓ** in the **ct1** leg, matching the witness 
 
 Finally,
 [**C4**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/dkg/share_decryption)
-(`dkg/share_decryption`) runs after local decryption: it proves the opened values match **C2**’s
-commitments, aggregates per modulus, and forwards commitments toward threshold decryption
+(`dkg/share_decryption`) runs after the network accepts one H-member roster: it proves the opened
+values from that roster match **C2**'s commitments, aggregates per modulus, and forwards commitments
+toward threshold decryption
 ([**C6**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/share_decryption)).
 Because the threshold secret is the sum of contributions, each node combines the decrypted shares
 into per-limb aggregates that line up with that design:
@@ -437,14 +450,21 @@ into per-limb aggregates that line up with that design:
 \mathrm{agg}[\ell][i] = \sum_{h \in \mathcal{H}} \mathsf{share}[h][\ell][i] \pmod{q_\ell}
 ```
 
+Here, `\mathcal{H}` is the accepted H-member roster, not every member of the original N-member
+committee. Nodes publish signed readiness lists after C2/C3 verification. The active aggregator
+chooses an ascending H-member subset that every selected member reports as ready, and peers validate
+that roster before C4. The existing aggregator failover moves this coordination role to the next
+eligible party if needed. The roster is fixed when C4 starts; this release recovers restarted roster
+members but does not replace a member that disappears permanently after acceptance.
+
 ### P2 — Public key aggregation
 
 [**C5**](https://github.com/theinterfold/interfold/tree/main/circuits/bin/threshold/pk_aggregation)
-(`threshold/pk_aggregation`) is the bridge from many committed contributions to one threshold public
-key: it re-checks each contribution against **C1**, then aggregates. The **first** leg is summed
-across honest parties; the **second** leg is the same CRS polynomial **a** for every party, so
-**pk1_agg** is **not** a sum—it must equal each party’s **pk1** (see `verify_pk_for_basis` vs
-`verify_pk1` in `pk_aggregation.nr`):
+(`threshold/pk_aggregation`) is the bridge from H committed contributions to one threshold public
+key: it re-checks each selected contribution against **C1**, then aggregates. The **first** leg is
+summed across the accepted roster; the **second** leg is the same CRS polynomial **a** for every
+party, so **pk1_agg** is **not** a sum—it must equal each party’s **pk1** (see `verify_pk_for_basis`
+vs `verify_pk1` in `pk_aggregation.nr`):
 
 ```math
 \begin{aligned}

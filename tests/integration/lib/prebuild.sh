@@ -10,7 +10,7 @@ VERSIONS_JSON="${ROOT_DIR}/crates/zk-prover/versions.json"
 echo ""
 echo "PREBUILDING BINARIES..."
 echo ""
-(cd "$ROOT_DIR/crates" && cargo build --bin fake_encrypt --bin pack_e3_params)
+(cd "$ROOT_DIR/crates" && E3_ZK_PROVER_SKIP_FIXTURE_BUILD=1 cargo build --bin fake_encrypt --bin pack_e3_params)
 echo ""
 echo "FINISHED PREBUILDING BINARIES"
 echo ""
@@ -26,7 +26,19 @@ rm -rf "${INTEGRATION_NOIR}/circuits"
 mkdir -p "${INTEGRATION_NOIR}/circuits" "${INTEGRATION_NOIR}/bin"
 
 if [[ "${FULL_PROOF_AGGREGATION:-false}" == "true" ]]; then
-  (cd "$ROOT_DIR" && pnpm build:circuits --preset insecure -o "${INTEGRATION_NOIR}/circuits")
+  # Full-proof tests consume the same source-bound matrix that release verification uses.
+  (cd "$ROOT_DIR" && pnpm store:circuits pull)
+  (cd "$ROOT_DIR" && pnpm store:circuits verify-release)
+  (cd "$ROOT_DIR" && pnpm build:circuits \
+    --preset insecure \
+    --committee minimum \
+    --hydrate-bin-only \
+    --no-clean-targets)
+  for preset in insecure secure-8192; do
+    mkdir -p "${INTEGRATION_NOIR}/circuits/${preset}"
+    cp -R "${ROOT_DIR}/dist/circuits/${preset}/minimum" \
+      "${INTEGRATION_NOIR}/circuits/${preset}/"
+  done
   # `--check`: verify the committed Honk Solidity verifiers in
   # packages/interfold-contracts/contracts/verifiers/bfv/honk/ match the
   # freshly-built circuits' recursive VKs. Fails loudly on drift instead of
@@ -58,7 +70,7 @@ jq -n \
 cp "$(command -v bb)" "${INTEGRATION_NOIR}/bin/bb"
 chmod +x "${INTEGRATION_NOIR}/bin/bb"
 
-echo "Staged circuits under ${INTEGRATION_NOIR}/circuits/insecure"
+echo "Staged source-aligned integration circuits under ${INTEGRATION_NOIR}/circuits"
 echo "Pinned noir version.json (bb=${REQUIRED_BB}, circuits=${REQUIRED_CIRCUITS})"
 echo ""
 echo "FINISHED BUILDING SOURCE-ALIGNED ZK CIRCUITS"

@@ -50,11 +50,12 @@
 //! ## Precise check
 //!
 //! Given:
-//! - `src_party_id` = C2 sender's 0-based committee index (= X)
-//! - `tgt_party_id` = C4 recipient's 0-based committee index (= R)
+//! - `src_party_id` = C2 sender's row in the selected H-party roster (= X)
+//! - `tgt_party_id` = C4 recipient's index in the full N-party committee (= R)
 //!
 //! The L commitments from C2 at slot R (`source_values[R*L .. (R+1)*L]`)
-//! must exactly match C4's row X (`expected_commitments[X][0..L]`).
+//! must exactly match C4's selected row X (`expected_commitments[X][0..L]`).
+//! The caller maps the sender's full-committee ID to this row.
 //! This verifies all L moduli, not just one.
 //!
 //! ## Scope
@@ -191,8 +192,8 @@ fn extract_share_commitments(
 /// - `source_values`: C2 commitments after the explicit prefix and before the
 ///   trailing batch VK hash
 /// - `target_public_signals`: C4_R's public signals
-/// - `src_party_id`: C2 sender X (0-based committee index)
-/// - `tgt_party_id`: C4 recipient R (0-based committee index)
+/// - `src_party_id`: C2 sender's row X in the selected H-party roster
+/// - `tgt_party_id`: C4 recipient R in the full N-party committee
 /// - `l`: number of CRT moduli
 ///
 /// Extracts `source_values[R*L .. (R+1)*L]` and checks it equals

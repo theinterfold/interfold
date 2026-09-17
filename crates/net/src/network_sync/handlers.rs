@@ -3,11 +3,15 @@
 //! Actix routing for local replay, remote sync requests, and readiness signals.
 
 use super::*;
+use e3_events::E3Stage;
 
 impl Actor for NetSyncManager {
     type Context = actix::Context<Self>;
     fn started(&mut self, ctx: &mut Self::Context) {
-        ctx.set_mailbox_capacity(MAILBOX_LIMIT)
+        ctx.set_mailbox_capacity(MAILBOX_LIMIT);
+        ctx.run_interval(DKG_COORDINATION_REANNOUNCE_INTERVAL, |this, _| {
+            this.reannounce_dkg_coordination();
+        });
     }
 }
 
@@ -15,14 +19,38 @@ impl Actor for NetSyncManager {
 impl Handler<InterfoldEvent> for NetSyncManager {
     type Result = ();
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
+        let original = msg.clone();
         let (msg, ec) = msg.into_components();
-        // We are making a sync request of another node
-        if let InterfoldEventData::HistoricalNetSyncStart(data) = msg {
-            // Capture the snapshot-cursor map so we can bound the post-restart re-broadcast of our
-            // own forwardable artifacts to the in-flight window (H3/H11).
-            self.rebroadcast_since = Some(data.since.clone().into_iter().collect());
-            self.maybe_rebroadcast_own_artifacts(ctx);
-            ctx.notify(TypedEvent::new(data, ec))
+        match msg {
+            // We are making a sync request of another node.
+            InterfoldEventData::HistoricalNetSyncStart(data) => {
+                // Capture the snapshot-cursor map so we can bound the post-restart re-broadcast of
+                // our own forwardable artifacts to the in-flight window (H3/H11).
+                self.rebroadcast_since = Some(data.since.clone().into_iter().collect());
+                self.maybe_rebroadcast_own_artifacts(ctx);
+                ctx.notify(TypedEvent::new(data, ec));
+            }
+            InterfoldEventData::DkgCoordination(data) => {
+                self.remember_dkg_coordination(original, &data);
+            }
+            InterfoldEventData::E3StageChanged(data) => {
+                if matches!(
+                    data.new_stage,
+                    E3Stage::KeyPublished
+                        | E3Stage::CiphertextReady
+                        | E3Stage::Complete
+                        | E3Stage::Failed
+                ) {
+                    self.forget_dkg_coordination(&data.e3_id);
+                }
+            }
+            InterfoldEventData::E3Failed(data) => {
+                self.forget_dkg_coordination(&data.e3_id);
+            }
+            InterfoldEventData::E3RequestComplete(data) => {
+                self.forget_dkg_coordination(&data.e3_id);
+            }
+            _ => {}
         }
     }
 }
@@ -137,7 +165,8 @@ impl Handler<IncomingRequest> for NetSyncManager {
                 .insert(id, PendingSyncRequest { peer, responder });
             let storage_query =
                 EventStoreQueryBy::<TsAgg>::new(id, query, ctx.address().recipient())
-                    .with_limit(scan_limit as u64);
+                    .with_limit(scan_limit as u64)
+                    .with_max_bytes(MAX_SYNC_SCAN_BYTES);
             if let Err(error) = self.eventstore.try_send(storage_query) {
                 if let Some(pending) = self.requests.remove(&id) {
                     pending.responder.respond(ProtocolResponse::Error(

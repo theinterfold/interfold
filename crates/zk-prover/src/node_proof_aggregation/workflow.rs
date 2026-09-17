@@ -18,8 +18,10 @@ use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_events::{
     CorrelationId, EventContext, NodeDkgFoldRequest, Proof, Sequenced, ShareEncryptionProofRequest,
 };
+use serde::{Deserialize, Serialize};
 
 /// Metadata from `ThresholdSharePending` for slot indices and sizing.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub(crate) struct NodeDkgFoldMeta {
     pub(crate) party_id: u64,
     pub(crate) total_expected: usize,

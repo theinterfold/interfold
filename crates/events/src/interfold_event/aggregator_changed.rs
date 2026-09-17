@@ -13,6 +13,8 @@ use std::fmt::{self, Display};
 #[rtype(result = "()")]
 pub struct AggregatorChanged {
     pub e3_id: E3id,
+    /// Party that currently owns aggregation for this E3 phase.
+    pub active_party_id: Option<u64>,
     pub is_aggregator: bool,
 }
 
@@ -20,8 +22,8 @@ impl Display for AggregatorChanged {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "AggregatorChanged {{ e3_id: {}, is_aggregator: {} }}",
-            self.e3_id, self.is_aggregator
+            "AggregatorChanged {{ e3_id: {}, active_party_id: {:?}, is_aggregator: {} }}",
+            self.e3_id, self.active_party_id, self.is_aggregator
         )
     }
 }

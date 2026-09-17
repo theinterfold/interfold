@@ -19,6 +19,7 @@ mod ciphernode_selected;
 mod ciphertext_output_published;
 mod ciphertext_output_reference_published;
 mod commitment_consistency;
+mod commitment_roster_selected;
 mod committee_activation_changed;
 mod committee_finalize_requested;
 mod committee_finalized;
@@ -35,6 +36,7 @@ mod decryption_share_proof_signed;
 mod decryption_share_proofs;
 mod decryptionshare_created;
 mod die;
+mod dkg_coordination;
 mod dkg_fold_attestation;
 mod dkg_fold_attestation_context_established;
 mod dkg_inner_proof_ready;
@@ -104,6 +106,7 @@ pub use ciphernode_selected::*;
 pub use ciphertext_output_published::*;
 pub use ciphertext_output_reference_published::*;
 pub use commitment_consistency::*;
+pub use commitment_roster_selected::*;
 pub use committee_activation_changed::*;
 pub use committee_finalize_requested::*;
 pub use committee_finalized::*;
@@ -120,6 +123,7 @@ pub use decryption_share_proof_signed::*;
 pub use decryption_share_proofs::*;
 pub use decryptionshare_created::*;
 pub use die::*;
+pub use dkg_coordination::*;
 pub use dkg_fold_attestation::*;
 pub use dkg_fold_attestation_context_established::*;
 pub use dkg_inner_proof_ready::*;
@@ -188,8 +192,8 @@ use std::{
     hash::Hash,
 };
 
-/// Commit-log records may be larger than the network's 10 MiB transport frame, but never exceed
-/// the 32 MiB durable record cap configured by `e3-data`.
+/// Maximum size for an inline event record or a network-decoded event.
+/// Larger local events use the private blob path in `e3-data`.
 pub const MAX_ENCODED_EVENT_BYTES: u64 = 32 * 1024 * 1024;
 
 /// Macro to generate EventType enum and implement From traits
@@ -370,6 +374,8 @@ pub enum InterfoldEventData {
     LbfvKeyShareDocumentFetchRequested(LbfvKeyShareDocumentFetchRequested),
     LbfvKeyShareDocumentFetchFailed(LbfvKeyShareDocumentFetchFailed),
     LbfvPublicKeyAggregated(LbfvPublicKeyAggregated),
+    DkgCoordination(DkgCoordination),
+    CommitmentRosterSelected(CommitmentRosterSelected),
 }
 
 impl InterfoldEventData {
@@ -512,6 +518,21 @@ mod serialization_tests {
     use super::*;
 
     #[test]
+    fn document_events_use_their_e3_chain_aggregate() {
+        let meta = DocumentMeta::new(E3id::new("7", 1), DocumentKind::TrBFV, vec![], None);
+        let value = e3_utils::ArcBytes::from_bytes(b"document");
+        let publish = InterfoldEventData::PublishDocumentRequested(PublishDocumentRequested {
+            meta: meta.clone(),
+            value: value.clone(),
+        });
+        let received = InterfoldEventData::DocumentReceived(DocumentReceived { meta, value });
+        let expected = AggregateId::from_chain_id(Some(1));
+
+        assert_eq!(publish.get_aggregate_id(), expected);
+        assert_eq!(received.get_aggregate_id(), expected);
+    }
+
+    #[test]
     fn event_decode_rejects_trailing_bytes() {
         let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
             TestEvent::new("bounded", 1).into(),
@@ -633,6 +654,8 @@ impl InterfoldEventData {
             InterfoldEventData::KeyshareCreated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::E3Requested(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::E3RequestComplete(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::PublishDocumentRequested(ref data) => Some(data.meta.e3_id.clone()),
+            InterfoldEventData::DocumentReceived(ref data) => Some(data.meta.e3_id.clone()),
             InterfoldEventData::PublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::LbfvPublicKeyAggregated(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CiphertextOutputPublished(ref data) => Some(data.e3_id.clone()),
@@ -677,6 +700,8 @@ impl InterfoldEventData {
                 Some(data.e3_id.clone())
             }
             InterfoldEventData::DKGInnerProofReady(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::DkgCoordination(ref data) => Some(data.e3_id.clone()),
+            InterfoldEventData::CommitmentRosterSelected(ref data) => Some(data.e3_id.clone()),
             InterfoldEventData::CommitmentConsistencyCheckRequested(ref data) => {
                 Some(data.e3_id.clone())
             }
@@ -836,7 +861,9 @@ impl_event_types!(
     LbfvKeyShareManifestPublished,
     LbfvKeyShareDocumentFetchRequested,
     LbfvKeyShareDocumentFetchFailed,
-    LbfvPublicKeyAggregated
+    LbfvPublicKeyAggregated,
+    DkgCoordination,
+    CommitmentRosterSelected
 );
 
 impl TryFrom<&InterfoldEvent<Sequenced>> for InterfoldError {

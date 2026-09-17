@@ -636,7 +636,7 @@ export const deployInterfold = async (
       }
     }
 
-    if (!shouldHaveZKVerification && mockCiphertextVerifierAddress) {
+    if (mockCiphertextVerifierAddress) {
       const deployedCiphertextVerifier =
         await interfold.getCiphertextVerifier(encryptionSchemeId);
       if (deployedCiphertextVerifier === mockCiphertextVerifierAddress) {

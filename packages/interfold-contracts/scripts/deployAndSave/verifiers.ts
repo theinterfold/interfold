@@ -23,24 +23,35 @@ const normalizeArtifactFqn = (fqn: string): string =>
     .replace(/^project\//, "")
     .replace(/^npm\/@interfold\/contracts@[^/]+\//, "@interfold/contracts/");
 
+export const selectCanonicalVerifierFqn = (
+  fqns: Iterable<string>,
+  contractName: string,
+): string => {
+  const canonicalSuffix = `${BFV_HONK_VERIFIER_DIR}/${contractName}.sol:${contractName}`;
+  const candidates = Array.from(fqns)
+    .filter((fqn) => !fqn.includes("/.benchmark/"))
+    .map(normalizeArtifactFqn)
+    .filter(
+      (fqn) => fqn === canonicalSuffix || fqn.endsWith(`/${canonicalSuffix}`),
+    );
+
+  if (candidates.length !== 1) {
+    throw new Error(
+      `Expected one canonical artifact for ${contractName} in ${BFV_HONK_VERIFIER_DIR}, found ${candidates.length}.`,
+    );
+  }
+
+  return candidates[0];
+};
+
 const getContractFqn = async (
   hre: HardhatRuntimeEnvironment,
   contractName: string,
-): Promise<string> => {
-  const candidates = Array.from(
+): Promise<string> =>
+  selectCanonicalVerifierFqn(
     await hre.artifacts.getAllFullyQualifiedNames(),
-  ).filter(
-    (fqn) =>
-      fqn.endsWith(`/${contractName}.sol:${contractName}`) &&
-      !fqn.includes("/.benchmark/"),
+    contractName,
   );
-  if (candidates.length !== 1) {
-    throw new Error(
-      `Expected one generated artifact for ${contractName}, found ${candidates.length}.`,
-    );
-  }
-  return normalizeArtifactFqn(candidates[0]);
-};
 
 const getLibraryLinkFqn = async (
   hre: HardhatRuntimeEnvironment,

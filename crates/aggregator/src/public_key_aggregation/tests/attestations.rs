@@ -7,6 +7,128 @@
 use super::*;
 
 #[actix::test]
+async fn c1_result_waits_for_replayed_inputs() -> Result<()> {
+    use fhe::bfv::SecretKey;
+    use fhe::mbfv::PublicKeyShare;
+    use fhe_traits::Serialize;
+
+    let (bus, rng, _seed, params, crp, _errors, _history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let e3_id = E3id::new("42", 1);
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let committee = CiphernodesCommitteeSize::Minimum.values();
+    let mut share_rng = rand::rng();
+    let mut submission_order = Vec::with_capacity(committee.h);
+    let mut keyshares = OrderedSet::new();
+    let mut c1_proofs = Vec::with_capacity(committee.h);
+    let mut nodes = OrderedSet::new();
+    let canonical_party_nodes = (0..committee.n as u64)
+        .map(|party_id| (party_id, format!("0x{:040x}", party_id + 1)))
+        .collect::<HashMap<_, _>>();
+
+    for party_id in 0..committee.h as u64 {
+        let node = canonical_party_nodes[&party_id].clone();
+        let secret_key = SecretKey::random(&fhe.params, &mut share_rng);
+        let public_key_share = PublicKeyShare::new(&secret_key, fhe.crp.clone(), &mut share_rng)?;
+        let keyshare = ArcBytes::from_bytes(&public_key_share.to_bytes());
+        let commitment = e3_zk_helpers::compute_pk_commitment_from_keyshare_bytes(
+            &keyshare,
+            &fhe.params,
+            &fhe.crp,
+        )?;
+        keyshares.insert(keyshare.clone());
+        nodes.insert(node.clone());
+        submission_order.push((party_id, node, keyshare));
+        c1_proofs.push(Some(c1_proof_with_pk_commitment(&e3_id, commitment)));
+    }
+
+    let state = PublicKeyAggregatorState::Collecting {
+        threshold_n: committee.n,
+        threshold_m: committee.threshold,
+        circuit_committee_n: committee.n,
+        circuit_committee_h: committee.h,
+        keyshares,
+        c1_proofs,
+        seed: Seed([0; 32]),
+        nodes,
+        submission_order,
+        canonical_party_nodes,
+    };
+    let mut aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe,
+            bus,
+            e3_id: e3_id.clone(),
+            params_preset: BfvPreset::InsecureThreshold512,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            initial_is_aggregator: true,
+            effects_enabled: true,
+        },
+        test_state(state),
+    );
+    aggregator
+        .recovery
+        .try_mutate_without_context(|mut recovery| {
+            recovery.selected_roster = Some(BTreeSet::from([0, 1]));
+            Ok(recovery)
+        })?;
+    let verification = ShareVerificationComplete {
+        e3_id: e3_id.clone(),
+        kind: VerificationKind::PkGenerationProofs,
+        dishonest_parties: BTreeSet::new(),
+    };
+
+    aggregator.handle_c1_verification_complete(TypedEvent::new(
+        verification.clone(),
+        test_ctx(verification),
+    ))?;
+    assert!(aggregator.early_c1_verification.is_some());
+    assert!(matches!(
+        aggregator.state.get(),
+        Some(PublicKeyAggregatorState::Collecting { .. })
+    ));
+
+    aggregator.accept_dkg_roster(
+        CommitmentRosterSelected {
+            e3_id,
+            party_ids: vec![0, 1],
+        },
+        test_ctx(EffectsEnabled::new()),
+    )?;
+
+    assert!(aggregator.early_c1_verification.is_none());
+    assert!(matches!(
+        aggregator.state.get(),
+        Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn replayed_c1_result_is_ignored_after_c1() -> Result<()> {
+    let state = generating_c5_state(CorrelationId::new());
+    let (mut aggregator, _history, e3_id) = build_public_key_aggregator(state).await?;
+    let verification = ShareVerificationComplete {
+        e3_id,
+        kind: VerificationKind::PkGenerationProofs,
+        dishonest_parties: BTreeSet::new(),
+    };
+
+    aggregator.handle_c1_verification_complete(TypedEvent::new(
+        verification.clone(),
+        test_ctx(verification),
+    ))?;
+
+    assert!(matches!(
+        aggregator.state.get(),
+        Some(PublicKeyAggregatorState::GeneratingC5Proof { .. })
+    ));
+    Ok(())
+}
+
+#[actix::test]
 async fn late_c5_proof_is_ignored_after_completion() -> Result<()> {
     let (mut aggregator, _history, e3_id) = build_public_key_aggregator(complete_state()).await?;
     let signed_proof = SignedProofPayload {

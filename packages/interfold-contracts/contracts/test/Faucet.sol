@@ -6,17 +6,22 @@
 pragma solidity >=0.8.27;
 
 import { IERC20 } from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {
+    IERC20Metadata
+} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Metadata.sol";
 
 contract Faucet {
     IERC20 public fold;
     IERC20 public feeToken;
 
-    uint256 public constant AMOUNT_FOLD = 200e18;
-    uint256 public constant AMOUNT_FEE_TOKEN = 200e6;
+    uint256 public immutable AMOUNT_FOLD;
+    uint256 public immutable AMOUNT_FEE_TOKEN;
 
     constructor(address _fold, address _feeToken) payable {
         fold = IERC20(_fold);
         feeToken = IERC20(_feeToken);
+        AMOUNT_FOLD = 200 * 10 ** IERC20Metadata(_fold).decimals();
+        AMOUNT_FEE_TOKEN = 200 * 10 ** IERC20Metadata(_feeToken).decimals();
     }
 
     function faucet() external {

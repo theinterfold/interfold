@@ -26,6 +26,32 @@ impl PublicKeyAggregator {
         node: Address,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
+        let selected = self.recovery.try_get()?.selected_roster;
+        let selected_member_expelled = self
+            .state
+            .get()
+            .and_then(|state| state.party_id_for_node(node))
+            .is_some_and(|party_id| {
+                selected
+                    .as_ref()
+                    .is_some_and(|selected| selected.contains(&party_id))
+            });
+        if selected_member_expelled {
+            warn!(
+                e3_id = %self.e3_id,
+                %node,
+                "A selected DKG roster member was expelled; the fixed H-row proof cannot continue"
+            );
+            self.bus.publish(
+                E3Failed {
+                    e3_id: self.e3_id.clone(),
+                    failed_at_stage: E3Stage::CommitteeFinalized,
+                    reason: FailureReason::InsufficientCommitteeMembers,
+                },
+                ec.clone(),
+            )?;
+            return Ok(());
+        }
         self.state.try_mutate(ec, |state| {
             PublicKeyAggregation::handle_member_expelled(state, node)
         })

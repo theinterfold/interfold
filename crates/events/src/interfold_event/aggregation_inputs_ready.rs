@@ -10,11 +10,13 @@ use std::fmt::{self, Display};
 pub enum AggregationPhase {
     PublicKey,
     Plaintext,
+    DkgRoster,
 }
 
 impl Display for AggregationPhase {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::DkgRoster => write!(f, "DKG roster"),
             Self::PublicKey => write!(f, "public-key"),
             Self::Plaintext => write!(f, "plaintext"),
         }
@@ -39,5 +41,26 @@ impl Display for AggregationInputsReady {
             "AggregationInputsReady {{ e3_id: {}, phase: {} }}",
             self.e3_id, self.phase
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::AggregationPhase;
+
+    #[test]
+    fn new_phase_does_not_renumber_persisted_variants() {
+        assert_eq!(
+            bincode::serialize(&AggregationPhase::PublicKey).unwrap(),
+            0_u32.to_le_bytes()
+        );
+        assert_eq!(
+            bincode::serialize(&AggregationPhase::Plaintext).unwrap(),
+            1_u32.to_le_bytes()
+        );
+        assert_eq!(
+            bincode::serialize(&AggregationPhase::DkgRoster).unwrap(),
+            2_u32.to_le_bytes()
+        );
     }
 }

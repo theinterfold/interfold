@@ -50,7 +50,16 @@ async fn dial_multiaddr(
 
     for attempt in 1..=INITIAL_DIAL_ATTEMPTS {
         match attempt_connection(cmd_tx, event_tx, &multiaddr).await {
-            Ok(()) => return Ok(()),
+            Ok(peer_id) => {
+                cmd_tx
+                    .send(NetCommand::ConfiguredPeerAdmitted {
+                        address: multiaddr,
+                        peer_id,
+                    })
+                    .await
+                    .map_err(|error| InitialDialError::Retryable(error.into()))?;
+                return Ok(());
+            }
             Err(RetryError::Failure(error)) => {
                 return Err(InitialDialError::Permanent(error));
             }
@@ -90,7 +99,17 @@ async fn retry_multiaddr_in_background(
     loop {
         sleep(BOOTSTRAP_RETRY_INTERVAL).await;
         match attempt_connection(&cmd_tx, &event_tx, &multiaddr).await {
-            Ok(()) => {
+            Ok(peer_id) => {
+                if cmd_tx
+                    .send(NetCommand::ConfiguredPeerAdmitted {
+                        address: multiaddr.clone(),
+                        peer_id,
+                    })
+                    .await
+                    .is_err()
+                {
+                    return;
+                }
                 info!(%multiaddr, "Connected to a bootstrap peer after a background retry");
                 return;
             }
@@ -171,7 +190,7 @@ async fn attempt_connection(
     cmd_tx: &mpsc::Sender<NetCommand>,
     event_tx: &NetEventSender,
     multiaddr: &Multiaddr,
-) -> Result<(), RetryError> {
+) -> Result<libp2p::PeerId, RetryError> {
     let mut event_rx = event_tx.subscribe();
     let opts: DialOpts = multiaddr.clone().into();
     let dial_connection = opts.connection_id();
@@ -192,16 +211,16 @@ async fn attempt_connection(
 async fn wait_for_connection(
     event_rx: &mut broadcast::Receiver<NetEvent>,
     dial_connection: ConnectionId,
-) -> Result<(), RetryError> {
+) -> Result<libp2p::PeerId, RetryError> {
     loop {
         // Create a timeout future that can be reset
         select! {
             result = event_rx.recv() => {
                 match result.map_err(to_retry)? {
-                    NetEvent::ConnectionEstablished { connection_id } => {
+                    NetEvent::ConfiguredDialAdmitted { connection_id, peer_id } => {
                         if connection_id == dial_connection {
                             trace!("Connection Established");
-                            return Ok(());
+                            return Ok(peer_id);
                         }
                     }
                     NetEvent::PeerRejected {

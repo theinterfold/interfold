@@ -28,8 +28,9 @@ use tracing::{error, info, warn};
 /// the honest-party count `H` used by `SlashingManager` as its vote quorum.
 ///
 /// `E3Meta.threshold_m` intentionally carries `T` for circuit selection, while
-/// the on-chain committee request and slashing contract use `H = T + 1`. Keep
-/// both values separate so accusation voting agrees with Solidity without
+/// the on-chain committee request and slashing contract use the configured
+/// honest-party count `H`. Keep both values separate because `H` can exceed
+/// `T + 1` and accusation voting must still agree with Solidity without
 /// breaking ZK re-verification artifact resolution.
 fn accusation_vote_quorum(threshold_t: usize, committee_n: usize) -> Result<usize> {
     Ok(
@@ -241,7 +242,7 @@ mod tests {
 
     #[test]
     fn accusation_quorum_matches_canonical_on_chain_committee_thresholds() {
-        for (threshold_t, committee_n, expected_h) in [(1, 3, 2), (4, 9, 5), (9, 19, 10)] {
+        for (threshold_t, committee_n, expected_h) in [(1, 3, 2), (4, 9, 5), (9, 19, 14)] {
             assert_eq!(
                 accusation_vote_quorum(threshold_t, committee_n).unwrap(),
                 expected_h

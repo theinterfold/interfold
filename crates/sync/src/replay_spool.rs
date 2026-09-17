@@ -25,8 +25,9 @@ use tracing::info;
 use crate::{ReplayDecision, SyncPlanner};
 
 const REPLAY_QUERY_PAGE_SIZE: usize = 1_024;
+const REPLAY_QUERY_PAGE_BYTES: usize = 256 * 1024 * 1024;
 const REPLAY_MERGE_FAN_IN: usize = 32;
-const MAX_SPOOLED_EVENT_BYTES: usize = 64 * 1024 * 1024;
+const MAX_SPOOLED_EVENT_BYTES: usize = e3_data::MAX_BLOB_BYTES + 1024;
 const REPLAY_PROGRESS_INTERVAL: usize = 10_000;
 
 fn first_replay_sequence(snapshot_cursor: u64) -> u64 {
@@ -93,8 +94,28 @@ impl ReplaySpool {
 
     async fn load_ranges(
         eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
-        mut ranges: Vec<(AggregateId, u64, Option<u64>)>,
+        ranges: Vec<(AggregateId, u64, Option<u64>)>,
     ) -> Result<Self> {
+        Self::load_ranges_with_page_limits(
+            eventstore,
+            ranges,
+            REPLAY_QUERY_PAGE_SIZE,
+            REPLAY_QUERY_PAGE_BYTES,
+        )
+        .await
+    }
+
+    async fn load_ranges_with_page_limits(
+        eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
+        mut ranges: Vec<(AggregateId, u64, Option<u64>)>,
+        page_size: usize,
+        page_bytes: usize,
+    ) -> Result<Self> {
+        anyhow::ensure!(page_size > 0, "replay page size must be greater than zero");
+        anyhow::ensure!(
+            page_bytes > 0,
+            "replay page byte budget must be greater than zero"
+        );
         ranges.sort_by_key(|(aggregate_id, _, _)| *aggregate_id);
 
         let mut runs = Vec::new();
@@ -115,7 +136,8 @@ impl ReplaySpool {
                     break;
                 }
 
-                let mut page = query_page(eventstore, aggregate_id, cursor).await?;
+                let mut page =
+                    query_page(eventstore, aggregate_id, cursor, page_size, page_bytes).await?;
                 if page.is_empty() {
                     if let Some(end) = end_cursor {
                         bail!(
@@ -127,12 +149,12 @@ impl ReplaySpool {
                     }
                     break;
                 }
-                if page.len() > REPLAY_QUERY_PAGE_SIZE {
+                if page.len() > page_size {
                     bail!(
                         "EventStore returned {} replay events for aggregate {}, exceeding page limit {}",
                         page.len(),
                         aggregate_id,
-                        REPLAY_QUERY_PAGE_SIZE
+                        page_size
                     );
                 }
 
@@ -158,7 +180,6 @@ impl ReplaySpool {
                         .context("EventStore replay sequence overflow")?;
                 }
 
-                let page_was_full = page.len() == REPLAY_QUERY_PAGE_SIZE;
                 if let Some(end) = end_cursor {
                     page.retain(|event| event.seq() <= end);
                 }
@@ -180,17 +201,8 @@ impl ReplaySpool {
                 if end_cursor.is_some_and(|end| cursor > end) {
                     break;
                 }
-                if !page_was_full {
-                    if let Some(end) = end_cursor {
-                        bail!(
-                            "EventStore ended at sequence {} for aggregate {}, before required sequence {}",
-                            cursor.saturating_sub(1),
-                            aggregate_id,
-                            end
-                        );
-                    }
-                    break;
-                }
+                // A byte-bounded query can return fewer than `page_size` events even when more
+                // history exists. Only an empty query proves that this aggregate is exhausted.
             }
             if aggregate_has_events {
                 runs.push(aggregate_run);
@@ -251,6 +263,8 @@ async fn query_page(
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
     aggregate_id: AggregateId,
     cursor: u64,
+    page_size: usize,
+    page_bytes: usize,
 ) -> Result<Vec<InterfoldEvent>> {
     let (addr, rx) = actix_toolbox::oneshot::<EventStoreQueryResponse>();
     eventstore
@@ -260,7 +274,8 @@ async fn query_page(
                 std::collections::HashMap::from([(aggregate_id, cursor)]),
                 addr,
             )
-            .with_limit(REPLAY_QUERY_PAGE_SIZE as u64),
+            .with_limit(page_size as u64)
+            .with_max_bytes(page_bytes as u64),
         )
         .await
         .context("EventStore router stopped during paged replay")?;
@@ -360,11 +375,15 @@ fn read_event(reader: &mut impl Read) -> Result<Option<InterfoldEvent>> {
             MAX_SPOOLED_EVENT_BYTES
         );
     }
-    let mut bytes = vec![0u8; len];
+    let mut bytes = Vec::new();
+    bytes
+        .try_reserve_exact(len)
+        .context("cannot reserve memory for replay spool event")?;
+    bytes.resize(len, 0);
     reader
         .read_exact(&mut bytes)
         .context("truncated replay spool event")?;
-    bincode::deserialize(&bytes)
+    e3_utils::deserialize_bounded(&bytes, MAX_SPOOLED_EVENT_BYTES as u64)
         .context("failed to decode replay spool event")
         .map(Some)
 }
@@ -451,6 +470,21 @@ mod tests {
         assert_eq!(first_replay_sequence(7), 7);
     }
 
+    #[test]
+    fn replay_spool_round_trips_event_above_old_limit() -> Result<()> {
+        let message = "x".repeat(64 * 1024 * 1024);
+        let event = InterfoldEvent::<e3_events::Unsequenced>::test_event(&message)
+            .seq(1)
+            .build();
+        let mut file = NamedTempFile::new()?;
+        write_event(file.as_file_mut(), &event)?;
+        let mut reader = BufReader::new(file.reopen()?);
+        let restored = read_event(&mut reader)?.context("missing replay event")?;
+        assert!(restored == event);
+        assert!(read_event(&mut reader)?.is_none());
+        Ok(())
+    }
+
     #[actix::test]
     async fn load_pages_a_fresh_log_larger_than_one_query() -> Result<()> {
         let system = EventSystem::new().with_fresh_bus();
@@ -470,6 +504,29 @@ mod tests {
 
         assert_eq!(spool.total_events(), count);
         assert_eq!(spool.runs.len(), 1);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn load_continues_after_a_byte_limited_short_page() -> Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let bus = system.handle()?.enable("replay-spool-byte-paging");
+        let message = "x".repeat(8 * 1024);
+        for index in 0..4 {
+            bus.publish_without_context(TestEvent::new(&message, index))?;
+        }
+        bus.flush_event_pipeline().await?;
+
+        let eventstore = system.eventstore_reader()?.seq();
+        let spool = ReplaySpool::load_ranges_with_page_limits(
+            &eventstore,
+            vec![(AggregateId::new(0), 1, None)],
+            REPLAY_QUERY_PAGE_SIZE,
+            12 * 1024,
+        )
+        .await?;
+
+        assert_eq!(spool.total_events(), 4);
         Ok(())
     }
 

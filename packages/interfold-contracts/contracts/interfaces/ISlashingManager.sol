@@ -212,7 +212,7 @@ interface ISlashingManager {
     /// @notice Thrown when the chainId in the signed proof payload does not match the current chain
     error ChainIdMismatch();
 
-    /// @notice Thrown when the number of attestation votes is below the committee threshold M
+    /// @notice Thrown when the number of attestation votes is below the committee threshold H
     error InsufficientAttestations();
 
     /// @notice Thrown when the attestation voters array contains duplicate addresses (must be sorted ascending)
@@ -656,7 +656,7 @@ interface ISlashingManager {
      *      where accusationId preserves the legacy four-field hash for instance zero and appends
      *      proofInstance for other instances.
      *      Verifications performed:
-     *        1. Number of votes >= committee threshold M
+     *        1. Number of votes >= committee threshold H
      *        2. Voters are sorted ascending (prevents duplicates)
      *        3. Each voter is a committee member for this E3
      *        4. Each vote signature recovers to the declared voter

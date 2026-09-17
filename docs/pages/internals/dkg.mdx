@@ -9,9 +9,9 @@ description:
 
 After [sortition](./sortition) selects a committee, the selected ciphernodes run a Publicly
 Verifiable Distributed Key Generation (PVDKG) protocol to produce a **threshold public key** that
-users encrypt to. No single party ever holds the full secret key, instead, each node holds a Shamir
-share, and any `T+1` of `N` committee members can collaboratively decrypt (where `T` is the
-threshold parameter, configurable per E3 program).
+users encrypt to. No single party ever holds the full secret key. Instead, the DKG selects an
+`H`-member dealer roster from the `N`-member committee. Each selected member holds a Shamir share,
+and any `T+1` members of that roster can collaboratively decrypt.
 
 Every step of the protocol is accompanied by a zero-knowledge proof. These proofs let nodes verify
 each other's work without trusting anyone, and allow on-chain contracts to verify correctness
@@ -37,7 +37,21 @@ full cryptographic specification, see the
 | **Smudging noise contribution** | A ciphernode's contribution to the collective smudging noise (prevents information leakage during decryption) |
 | **Smudging noise share**        | A ciphernode's _Shamir_ share of the smudging noise                                                           |
 | **Partial decryption**          | A ciphernode's share over a decrypted value, computed before the rounding step                                |
-| **Authorised set (A)**          | The set of ciphernodes allowed to participate; starts as all N and shrinks as malicious nodes are detected    |
+| **Committee size (N)**          | The number of ciphernodes finalized on-chain for the E3                                                       |
+| **Decryption threshold (T)**    | The maximum polynomial degree; decryption requires `T+1` valid shares                                         |
+| **DKG roster size (H)**         | The exact number of mutually ready dealers whose contributions form the threshold key                         |
+| **Accepted roster (S)**         | The canonical, ascending `H`-party dealer list proposed by the active aggregator and used by C4 and C5        |
+
+The supported committee configurations are:
+
+| Committee | N   | T   | H   | DKG omissions before roster selection | Decryption omissions after DKG |
+| --------- | --- | --- | --- | ------------------------------------- | ------------------------------ |
+| Minimum   | 3   | 1   | 2   | 1                                     | 0                              |
+| Micro     | 9   | 4   | 5   | 4                                     | 0                              |
+| Small     | 19  | 9   | 14  | 5                                     | 4                              |
+
+The DKG omission count is `N-H`. The decryption omission count is `H-(T+1)`. These numbers describe
+the circuit shape and liveness budget. They do not prove that an omitted node was dishonest.
 
 ---
 
@@ -53,30 +67,33 @@ full cryptographic specification, see the
 | **C3b** | `ShareEncryption` (e_sm)     | P1 DKG | BFV encryption of smudging noise share uses correct share (C2) and correct recipient pk (C0) | Per sender → per recipient |
 | **C4a** | `DkgShareDecryption` (sk)    | P1 DKG | Decrypted shares match C2 commitments; aggregated into local secret key share                | Each node → all peers      |
 | **C4b** | `DkgShareDecryption` (e_sm)  | P1 DKG | Decrypted shares match C2 commitments; aggregated into local smudging noise share            | Each node → all peers      |
-| **C5**  | `PkAggregation`              | P2 Agg | Sum of all pk shares (verified against C1 commitments) equals published threshold public key | Aggregator → on-chain      |
+| **C5**  | `PkAggregation`              | P2 Agg | Sum of the accepted H pk shares equals the published threshold public key                    | Aggregator → on-chain      |
 | **C6**  | `ThresholdShareDecryption`   | P4 Dec | Partial decryption uses correct secret key share and smudging noise share from C4            | Each node → aggregator     |
 | **C7**  | `DecryptedSharesAggregation` | P4 Dec | Lagrange interpolation + CRT reconstruction + decoding is correct                            | Aggregator → on-chain      |
 
 ### Proof Count Per E3
 
-For a committee of **N** nodes with **L** CRT moduli:
+For a committee of **N** nodes, an accepted roster of **H** nodes, and **L** CRT moduli:
 
-| Circuit | Count per node      | Total across committee |
-| ------- | ------------------- | ---------------------- |
-| C0      | 1                   | N                      |
-| C1      | 1                   | N                      |
-| C2a     | 1                   | N                      |
-| C2b     | 1                   | N                      |
-| C3a     | (N-1) × L           | N × (N-1) × L          |
-| C3b     | (N-1) × L × ESI     | N × (N-1) × L × ESI    |
-| C4a     | 1                   | N                      |
-| C4b     | 1                   | N                      |
-| C5      | 1 (aggregator only) | 1                      |
-| C6      | 1                   | N                      |
-| C7      | 1 (aggregator only) | 1                      |
+| Circuit | Count per node      | Total across committee          |
+| ------- | ------------------- | ------------------------------- |
+| C0      | 1                   | Up to N                         |
+| C1      | 1                   | Up to N                         |
+| C2a     | 1                   | Up to N                         |
+| C2b     | 1                   | Up to N                         |
+| C3a     | (N-1) × L           | Up to N × (N-1) × L             |
+| C3b     | (N-1) × L × ESI     | Up to N × (N-1) × L × ESI       |
+| C4a     | 1                   | H consumed; up to N generated   |
+| C4b     | 1                   | H consumed; up to N generated   |
+| C5      | 1 (aggregator only) | 1                               |
+| C6      | 1                   | Up to H generated; T+1 consumed |
+| C7      | 1 (aggregator only) | 1                               |
 
-C3 is by far the most proof-intensive circuit. With N=3 and L=3 (secure params), each node generates
-6 C3a proofs alone. This is why proof generation runs on a multithread pool.
+C3 is by far the most proof-intensive circuit. Its witness remains N-wide even when some C0 keys are
+missing. A participating dealer therefore proves every non-own recipient slot. Missing recipients
+get non-delivered placeholder ciphertexts encrypted under the sender's own C0 key. This keeps the
+circuit shape fixed without exposing a share or waiting indefinitely for all N keys. Proof
+generation runs on a multithread pool because this work scales quadratically with N.
 
 ---
 
@@ -103,15 +120,18 @@ Each ciphernode runs a `ThresholdKeyshare` actor that progresses through a stric
 Init
   │  CiphernodeSelected arrives
   ▼
-CollectingEncryptionKeys     ← Generate individual BFV keypair; commit with C0; wait for all N peers
-  │  All N keys collected
+CollectingEncryptionKeys     ← Generate individual BFV keypair; commit with C0;
+  │                            accept all N early or at least H at the C0 cutoff
   ▼
 GeneratingThresholdShare     ← Generate secret key contribution + public key share (C1);
   │                            Shamir-split and verify shares (C2); encrypt shares (C3)
-  │  All N shares collected
+  │                            verify at least H mutually available dealer contributions
+  ▼
+WaitingForRoster             ← Active aggregator proposes one ascending H-dealer roster;
+  │                            peers validate and persist the same roster
   ▼
 AggregatingDecryptionKey     ← Decrypt received shares; verify against C2 commitments (C4);
-  │                            aggregate into local secret key share and smudging noise share
+  │                            aggregate the accepted H contributions into local shares
   │  C4 proofs verified
   ▼
 ReadyForDecryption           ← Waiting for ciphertext output from the FHE computation
@@ -127,8 +147,10 @@ Completed
 ```
 
 Each transition requires both a cryptographic operation and successful ZK proof
-generation/verification. If any step times out, the node can be expelled from the committee and the
-authorised set **A** is updated.
+generation/verification. Before roster acceptance, the protocol can omit unavailable dealers when at
+least H mutually ready dealers remain. After roster acceptance, the roster is fixed. A selected node
+can restart and recover its work, but a permanently unavailable selected node is not replaced in
+this release and can cause the E3 to fail.
 
 ---
 
@@ -147,10 +169,11 @@ CiphernodeSelected event arrives at ThresholdKeyshare
   ├─ Publish EncryptionKeyPending { e3_id, party_id, pk_bfv }
   │   → ZK proof actor picks this up and generates C0
   │
-  └─ Create collectors:
-      ├─ EncryptionKeyCollector (waits for N parties, 60s timeout)
-      └─ ThresholdShareCollector (waits for N parties, 120s timeout)
+  └─ Create collectors from the E3's frozen DKG deadline:
+      ├─ EncryptionKeyCollector (all N early, or at least H at 10% of the DKG window)
+      └─ ThresholdShareCollector (all N-1 early, or a snapshot at 75% when at least H-1 exist)
           → Start immediately so early-arriving peer data is buffered
+          → The 75% checkpoint is soft; collection continues until the on-chain DKG deadline
 ```
 
 **C0** takes the individual public key components (`pk_0`, `pk_1` — polynomial arrays over L CRT
@@ -161,7 +184,8 @@ individual public key for later verification.
 
 ### Threshold Share Generation (C1)
 
-Once all N individual public keys are collected, each node generates its threshold contribution.
+The node starts contribution generation when it has all N individual public keys or when the C0
+cutoff leaves at least H keys, including its own.
 
 Each ciphernode generates its secret key contribution, the corresponding public key share, and its
 smudging noise contribution. **C1** proves that the public key share was correctly derived from the
@@ -213,31 +237,50 @@ Together these checks guarantee that the correct share is encrypted under the co
 key — without exposing the share in plaintext. The BFV encryption equations are verified via
 Schwartz-Zippel at a Fiat-Shamir challenge point (same technique as C1).
 
-C3 produces no new commitments — its role is purely to verify correct encryption. It has the highest
-proof count: `|A| × (|A| - 1)` proof instances per variant (C3a and C3b).
+C3 produces no new commitments — its role is purely to verify correct encryption. A participating
+dealer builds all `N-1` non-own slots. If a recipient's C0 key was missing at the cutoff, the dealer
+encrypts that slot under its own C0 key only to complete the fixed witness and does not deliver the
+placeholder. The maximum proof count is `N × (N-1)` instances per modulus and per variant.
 
 ### Proof Publication
 
-All proofs for a node are generated in parallel on a multithread pool. Only when **all** proofs
-complete does the node broadcast its `ThresholdShareCreated` message containing:
+All proofs for a node are generated in parallel on a multithread pool. Only when the complete proof
+plan finishes does the node publish recipient-scoped `ThresholdShareCreated` messages. Each message
+contains:
 
 - The public key share (from C1)
 - Encrypted Shamir shares (from C3)
-- All signed proofs (C1, C2a, C2b, C3a[], C3b[])
+- The signed C1 and C2 proofs, plus the C3 proofs for that recipient
 
-This atomic publication prevents partial data from reaching peers. Any party whose proofs fail
-verification is excluded from the authorised set **A**.
+This atomic publication prevents partial data from reaching peers. Each node verifies the dealer
+bundles it received and publishes a signed readiness list after at least H contributions pass.
+
+### Readiness and Roster Selection
+
+The active aggregator collects signed readiness lists and proposes one ascending H-dealer roster
+`S`. The roster is valid only when each member's readiness list contains the complete selected set.
+Every receiver also requires its own verified list to contain `S`. This rule prevents a roster from
+including a dealer whose shares are not mutually available to its selected peers.
+
+The aggregator role is the existing lowest-eligible-`party_id` role. If it does not propose a roster
+within its 10-minute phase budget, the next eligible party takes over and reuses the saved readiness
+state. Roster selection, public-key aggregation, and plaintext aggregation have separate failover
+budgets that begin only after their inputs are durable.
+
+This coordination is not a Byzantine agreement protocol. A malicious aggregator can delay progress
+until failover, but it cannot publish two accepted keys: the H-row recursive proof enforces one
+internally consistent roster, and `publishCommittee` accepts only one result on-chain.
 
 ### Share Decryption and Aggregation (C4)
 
-Each node decrypts the encrypted shares it received from all other authorised parties using its
-individual BFV secret key. C4 then:
+Each selected node decrypts the shares addressed to it by the H dealers in `S`, using its individual
+BFV secret key. C4 then:
 
 1. **Verifies commitment consistency**: each decrypted share is hashed and compared against the
    commitment the sender published in C2. Since commitments are binding, producing a different share
    with the same commitment is computationally infeasible
-2. **Aggregates**: sums all verified shares coefficient-wise per CRT modulus:
-   `agg[ℓ][i] = Σ_{a ∈ A} share[a][ℓ][i] (mod q_ℓ)`. This reflects the threshold key construction
+2. **Aggregates**: sums the H selected shares coefficient-wise per CRT modulus:
+   `agg[ℓ][i] = Σ_{s ∈ S} share[s][ℓ][i] (mod q_ℓ)`. This reflects the threshold key construction
    directly — the secret key corresponding to the threshold public key equals the sum of all secret
    key contributions (`sk = Σ sk_i`), so after aggregation each node holds a Shamir share of this
    sum
@@ -251,17 +294,19 @@ After C4, each node holds:
 - Its **secret key share** (`agg_sk`) — a Shamir share of the threshold secret key
 - Its **smudging noise share** (`agg_e_sm`) — a Shamir share of the smudging noise
 
-These are the only long-lived secrets from the DKG. Each variant (C4a and C4b) runs once per
-ciphernode in **A**.
+These are the only long-lived secrets from the DKG. A node outside `S` can compute C4 only when it
+received every selected share, but the final DKG aggregate consumes exactly H fold rows in roster
+order.
 
 ---
 
 ## P2: Public Key Aggregation (C5)
 
-The aggregator (the elected node for this E3) collects all public key shares from C1 and sums them:
+The active aggregator collects the H public key shares selected by the accepted roster and sums
+them:
 
 ```
-pk_threshold = Σ pk_share_i   for i ∈ A
+pk_threshold = Σ pk_share_i   for i ∈ S
 ```
 
 Before performing the aggregation, C5 confirms that each public key share matches its commitment
@@ -290,8 +335,8 @@ output, along with a proof of correct execution, is published on-chain.
 ## P4: Threshold Decryption (C6, C7)
 
 After the homomorphic computation completes, the encrypted output must be decrypted. No single party
-can do this alone — each authorised ciphernode independently computes a **partial decryption** from
-its secret key share and smudging noise share.
+can do this alone. Members recorded by `publishCommittee` independently compute **partial
+decryptions** from their secret key and smudging-noise shares.
 
 ### C6 — Partial Decryption
 
@@ -363,16 +408,17 @@ otherwise.
 
 ### NodeDkgFold and fold attestations
 
-After completing C0–C4 locally, each ciphernode folds its proofs into a single `NodeDkgFold` proof
-that surfaces three values: `sk_agg_commit`, `esm_agg_commit`, and the node's `party_id`. The node
-then signs an EIP-712-style digest over `(chainId, e3Id, partyId, skAggCommit, esmAggCommit)` with
-its operator key and gossips the signed fold output to peers via `DKGRecursiveAggregationComplete`.
+After completing C0–C4 locally, each selected roster member folds its proofs into a single
+`NodeDkgFold` proof that surfaces three values: `sk_agg_commit`, `esm_agg_commit`, and the node's
+`party_id`. The node then signs an EIP-712-style digest over
+`(chainId, e3Id, partyId, skAggCommit, esmAggCommit)` with its operator key and gossips the signed
+fold output to peers via `DKGRecursiveAggregationComplete`.
 
-In proof-aggregation mode, the aggregator collects all honest parties' fold outputs and:
+In proof-aggregation mode, the aggregator collects exactly H accepted-roster fold outputs and:
 
 1. Recursively verifies each `NodeDkgFold` inside the DKG aggregator proof (so an aggregator cannot
    fabricate a node's fold without the recursive proof failing).
-2. Assembles a **DKG fold-attestation bundle**: one signed attestation per honest party plus a
+2. Assembles a **DKG fold-attestation bundle**: one signed attestation per selected party plus a
    `(partyId → node address)` binding table.
 
 The DKG aggregator proof surfaces, as public outputs, the array of `party_ids`, `sk_agg_commits[]`,
@@ -397,11 +443,11 @@ the registry runs two checks in order:
    binding), requires `isCommitteeMemberActive(e3Id, node)`, recovers the signer via `ecrecover` on
    the canonical EIP-712 typed-data digest (with `chainId` and this verifier address in the domain
    separator), requires `signer == node`, and checks that the signed `skAggCommit` / `esmAggCommit`
-   match the DKG proof's surfaced commitments at that party's slot. The honest-set cardinality must
-   equal the honest-party count derived from the proof's public-input shape (`(len - 6) / 3`). The
-   slot binding prevents an aggregator from reassigning a node's signed attestation to a different
-   slot — even an actively cooperating signer cannot be "moved" between partyIds because the
-   registry's own slot mapping is checked structurally.
+   match the DKG proof's surfaced commitments at that party's slot. The attestation cardinality must
+   equal the H-row count derived from the proof's public-input shape (`(len - 6) / 3`). The slot
+   binding prevents an aggregator from reassigning a node's signed attestation to a different slot —
+   even an actively cooperating signer cannot be "moved" between partyIds because the registry's own
+   slot mapping is checked structurally.
 
 Only if both succeed does the registry store the per-party anchors:
 
@@ -464,14 +510,18 @@ VKs of `recursive_aggregation/dkg_aggregator` and `recursive_aggregation/decrypt
 they must stay in lockstep with the circuits' recursive VKs — a verifier whose baked-in VK doesn't
 match the circuit will silently reject every proof.
 
-**Preset is pinned.** The committed `.sol` files correspond to exactly one BFV preset:
-**`insecure`** (the dev / CI / benchmark default). The recursive VKs are preset-dependent —
-different BFV parameter sets compile to different VKs and therefore different `.sol` bytes — so "the
-committed verifier" is only well-defined for one preset. `pnpm generate:verifiers` refuses to run
-(in both `--check` and `--write` modes) unless `dist/circuits/insecure/.build-stamp.json` exists
-and reports that preset. If `pnpm build:circuits --preset secure-8192` was the last build, the
-generator surfaces this loudly with a fix recipe instead of silently producing wrong VK bytes.
-Production deploys on a non-canonical preset must regenerate locally for that deploy.
+**Preset and committee are pinned.** The recursive VKs depend on the BFV preset and the committee's
+`(H, T)` values. The repository therefore commits a distinct verifier pair for each supported
+combination of `insecure`, `secure-8192`, or `secure-16384` with Minimum, Micro, or Small
+(`secure-16384` supports Minimum only). The root verifier
+files are the canonical `insecure` and Minimum pair. The other pairs are under
+`honk/<preset>/<committee>/`.
+
+`pnpm generate:verifiers` refuses to run unless the matching
+`dist/circuits/<preset>/<committee>/.build-stamp.json` exists and `circuits/bin/.active-preset.json`
+identifies the same pair. This check prevents the generator from silently using VKs from a different
+preset or committee. A deployment must use the verifier directory that matches its configured
+parameter set and committee size. Production deploys on a non-canonical preset must regenerate locally for that deploy.
 
 The repo enforces sync with two modes of `pnpm generate:verifiers`:
 
@@ -480,20 +530,20 @@ The repo enforces sync with two modes of `pnpm generate:verifiers`:
   Regenerates each verifier in memory, runs the same `prettier-plugin-solidity` formatting the
   committed files use, and diffs against the committed `.sol`. Any drift fails the run with a clear
   fix recipe instead of silently rewriting committed contracts mid-test.
-- **`--write`** (the default for manual invocation) — overwrites the committed files. Run this when
-  you intentionally bump the canonical-preset circuits or the Noir/bb toolchain, then commit the
-  diff.
+- **`--write`** (the default for manual invocation) — overwrites the committed files for the
+  selected preset and committee. Run this when you intentionally change the circuits, committee
+  parameters, or Noir/bb toolchain, then commit the diff.
 
 The version pinning lives in `crates/zk-prover/versions.json` (consumed by `interfold noir setup`
-and by the integration test prebuild). If `--check` fails after a clean
-`pnpm build:circuits --preset insecure`, your local toolchain is out of sync with that pin. See
+and by the integration test prebuild). If `--check` fails after a clean build of the selected pair,
+your local toolchain or committed verifier is out of sync with that pair. See
 [`scripts/README.md`](https://github.com/theinterfold/interfold/blob/main/scripts/README.md#verifier-generator)
 for the full contract.
 
 ### Decryption recursive proof
 
 The decryption recursive proof (`BfvDecryptionVerifier`) follows the same shape: a recursive Honk
-proof aggregates **C6** from at least **T+1** parties plus **C7**, carries a domain over the chain,
+proof aggregates **C6** from exactly **T+1** parties plus **C7**, carries a domain over the chain,
 deployment, E3, committee, ciphertext, and committee-key context, and surfaces the party IDs plus
 `ciphertextCommitment`, `expected_sk_commits[]`, and `expected_esm_commits[]` per party. The wrapper
 receives `e3Id` separately so it can compare those surfaced commitments against the anchors stored
@@ -510,7 +560,7 @@ decodes as
 `(uint256 proofType, address[] voters, bytes32[] dataHashes, bytes evidence, uint256 issuedAt, uint256 deadline, bytes[] signatures)`.
 `_verifyAttestationEvidence` enforces:
 
-- ≥ `M` voters, sorted ascending, accused excluded, each producing a canonical EIP-712 typed-data
+- ≥ `H` voters, sorted ascending, accused excluded, each producing a canonical EIP-712 typed-data
   signature over
   `AccusationVote(uint256 e3Id, bytes32 accusationId, address voter, bytes32 dataHash, uint256 issuedAt, uint256 deadline)`.
   `chainId` and `verifyingContract = address(SlashingManager)` live in the EIP-712 domain — see
@@ -550,7 +600,7 @@ then use `commitAccusationVoteValidity(uint256)` within two days. Two notable va
 
 - **Shorter window**: tighter freshness — useful if stolen-signature replay becomes a concern, at
   the cost of giving on-chain submitters less slack to land the `proposeSlash` transaction after
-  off-chain quorum reaches `M`.
+  off-chain quorum reaches `H`.
 - **Zero**: disables new attestation-based slash proposals. Nodes do not create new votes, and the
   slashing manager rejects proposals even when they contain signatures from an older nonzero window.
   Restore a nonzero value to resume this path.

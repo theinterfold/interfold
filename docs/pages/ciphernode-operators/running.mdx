@@ -188,31 +188,33 @@ interfold nodes down        # Stop all nodes
 
 ### CLI Commands Reference
 
-| Command                          | Description                                         |
-| -------------------------------- | --------------------------------------------------- |
-| `interfold start`                | Start the node in foreground                        |
-| `interfold start -v`             | Start with INFO logging (`-vv`=DEBUG, `-vvv`=TRACE) |
-| `interfold nodes up`             | Start all configured nodes                          |
-| `interfold nodes up --detach`    | Start all nodes in background                       |
-| `interfold nodes up --exclude x` | Start all nodes except `x`                          |
-| `interfold nodes down`           | Stop all nodes                                      |
-| `interfold nodes ps`             | List running nodes and their status                 |
-| `interfold nodes start <name>`   | Start an individual node                            |
-| `interfold nodes stop <name>`    | Stop an individual node                             |
-| `interfold nodes status <name>`  | Check specific node status                          |
-| `interfold nodes restart <name>` | Restart a specific node                             |
-| `interfold nodes purge`          | Purge all local ciphernode data                     |
-| `interfold ciphernode status`    | Show on-chain registration status                   |
-| `interfold config check`         | Compare configured addresses against the manifest   |
-| `interfold net get-peer-id`      | Show your libp2p peer ID                            |
-| `interfold wallet get`           | Show your wallet address                            |
-| `interfold rev`                  | Show the git SHA the CLI was built from             |
-| `interfold purge-all`            | Wipe all local data (use with caution)              |
-| `interfold print-env`            | Print contract addresses as env vars                |
-| `interfold print-env --vite`     | Print env vars with `VITE_` prefix                  |
-| `interfold print-env --chain x`  | Print env vars for chain `x`                        |
-| `interfold noir status`          | Check ZK prover status                              |
-| `interfold noir setup`           | Install/update ZK prover components                 |
+| Command                            | Description                                         |
+| ---------------------------------- | --------------------------------------------------- |
+| `interfold start`                  | Start the node in foreground                        |
+| `interfold start -v`               | Start with INFO logging (`-vv`=DEBUG, `-vvv`=TRACE) |
+| `interfold nodes up`               | Start all configured nodes                          |
+| `interfold nodes up --detach`      | Start all nodes in background                       |
+| `interfold nodes up --exclude x`   | Start all nodes except `x`                          |
+| `interfold nodes down`             | Stop all nodes                                      |
+| `interfold nodes ps`               | List running nodes and their status                 |
+| `interfold nodes start <name>`     | Start an individual node                            |
+| `interfold nodes stop <name>`      | Stop an individual node                             |
+| `interfold nodes status <name>`    | Check specific node status                          |
+| `interfold nodes restart <name>`   | Restart a specific node                             |
+| `interfold nodes purge`            | Purge all local ciphernode data                     |
+| `interfold node validate`          | Check stopped-node state without changing it        |
+| `interfold node validate --repair` | Repair only a provably uncommitted log tail         |
+| `interfold ciphernode status`      | Show on-chain registration status                   |
+| `interfold config check`           | Compare configured addresses against the manifest   |
+| `interfold net get-peer-id`        | Show your libp2p peer ID                            |
+| `interfold wallet get`             | Show your wallet address                            |
+| `interfold rev`                    | Show the git SHA the CLI was built from             |
+| `interfold purge-all`              | Wipe all local data (use with caution)              |
+| `interfold print-env`              | Print contract addresses as env vars                |
+| `interfold print-env --vite`       | Print env vars with `VITE_` prefix                  |
+| `interfold print-env --chain x`    | Print env vars for chain `x`                        |
+| `interfold noir status`            | Check ZK prover status                              |
+| `interfold noir setup`             | Install/update ZK prover components                 |
 
 ---
 
@@ -346,6 +348,28 @@ docker run --rm \
 
 Do not start the node when validation reports `FAIL`; preserve a copy of the volume before repair,
 restore, or controlled resynchronization.
+
+If validation reports only a recoverable uncommitted event-log tail, keep the node stopped and run
+the same command with `--repair`. This repair can re-index complete uncommitted frames or truncate a
+torn physical suffix. It never removes an indexed record and cannot repair committed corruption or
+an unsupported storage schema.
+
+### Persistent Event Data
+
+The node's append-only event log is its durable source of truth. Events below the 32 MiB framed
+commit-log limit stay inline. Larger local events, including proof work plans, are stored as
+content-addressed files in an `event-blobs-v1` directory inside the event-log directory. Each blob
+is limited to 512 MiB. The node checks its recorded length and SHA-256 hash whenever it opens the
+log.
+
+Startup removes only orphan blob files that have no committed event-log reference. A blob referenced
+by protocol history remains part of the node's durable state after an E3 completes. Back up the full
+data volume, including `event-blobs-v1`, and monitor disk growth. Do not delete individual blob
+files to reclaim space; that makes the referenced event history unreadable.
+
+An unrecoverable event-log write or flush failure stops the node so its supervisor can restart it.
+Treat repeated storage failures as an infrastructure incident. Stop the node, preserve the volume,
+and run the offline validator before another restart.
 
 ### View Logs
 

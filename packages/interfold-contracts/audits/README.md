@@ -4,6 +4,7 @@
 | ---------- | ------- | ---------------------------- | ------------------------------------------------------------------------------------------------ |
 | 2026-07-02 | Zenith  | FOLD token                   | [20260702_audit_token_zenith.pdf](./20260702_audit_token_zenith.pdf)                             |
 | 2026-08-17 | Zenith  | Protocol contracts (6 files) | [20260714-Interfold - Zenith Audit Report.pdf](<./20260714-Interfold - Zenith Audit Report.pdf>) |
+| 2026-09-08 | Zenith  | Protocol update (14 files)   | [20260908_audit_protocol_zenith.pdf](./20260908_audit_protocol_zenith.pdf)                       |
 
 ## What the 2026-08-17 protocol audit covered
 

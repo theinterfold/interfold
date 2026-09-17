@@ -14,8 +14,8 @@ use std::time::Instant;
 
 use crate::report::MultithreadReport;
 use crate::report::TrackDuration;
-use crate::TaskPool;
 use crate::TaskTimeouts;
+use crate::{TaskPool, TaskPoolError};
 use actix::prelude::*;
 use actix::{Actor, Handler};
 use alloy::primitives::keccak256;
@@ -119,6 +119,7 @@ pub struct Multithread {
     rng: SharedRng,
     cipher: Arc<Cipher>,
     task_pool: TaskPool,
+    task_scope: String,
     report: Option<Addr<MultithreadReport>>,
     zk_prover: Option<Arc<ZkProver>>,
 }
@@ -129,6 +130,7 @@ impl Multithread {
         rng: SharedRng,
         cipher: Arc<Cipher>,
         task_pool: TaskPool,
+        task_scope: String,
         report: Option<Addr<MultithreadReport>>,
     ) -> Self {
         Self {
@@ -136,6 +138,7 @@ impl Multithread {
             rng,
             cipher,
             task_pool,
+            task_scope,
             report,
             zk_prover: None,
         }
@@ -161,11 +164,21 @@ impl Multithread {
         rng: SharedRng,
         cipher: Arc<Cipher>,
         task_pool: TaskPool,
+        task_scope: String,
         report: Option<Addr<MultithreadReport>>,
         lifecycle_stages: HashMap<E3id, E3Stage>,
     ) -> Addr<Self> {
-        let addr = Self::new(bus.clone(), rng.clone(), cipher.clone(), task_pool, report).start();
+        let addr = Self::new(
+            bus.clone(),
+            rng.clone(),
+            cipher.clone(),
+            task_pool,
+            task_scope,
+            report,
+        )
+        .start();
 
+        Self::subscribe_to_lifecycle(bus, &addr);
         ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
         info!("Multithread actor waiting behind the replay-safe effect gate.");
 
@@ -177,14 +190,31 @@ impl Multithread {
         rng: SharedRng,
         cipher: Arc<Cipher>,
         task_pool: TaskPool,
+        task_scope: String,
         report: Option<Addr<MultithreadReport>>,
         zk_backend: &ZkBackend,
         lifecycle_stages: HashMap<E3id, E3Stage>,
     ) -> Addr<Self> {
         let zk_prover = Arc::new(ZkProver::new(zk_backend));
-        let actor = Self::new(bus.clone(), rng.clone(), cipher.clone(), task_pool, report)
-            .with_zk_prover(zk_prover);
+        let actor = Self::new(
+            bus.clone(),
+            rng.clone(),
+            cipher.clone(),
+            task_pool,
+            task_scope,
+            report,
+        )
+        .with_zk_prover(zk_prover);
         let addr = actor.start();
+        Self::subscribe_to_lifecycle(bus, &addr);
+
+        ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
+        info!("Multithread actor with ZK waiting behind the replay-safe effect gate.");
+
+        addr
+    }
+
+    fn subscribe_to_lifecycle(bus: &BusHandle, addr: &Addr<Self>) {
         bus.subscribe_all(
             &[
                 EventType::E3Failed,
@@ -193,15 +223,31 @@ impl Multithread {
             ],
             addr.clone().into(),
         );
-
-        ComputeEffectGate::attach(bus, addr.clone().recipient(), lifecycle_stages);
-        info!("Multithread actor with ZK waiting behind the replay-safe effect gate.");
-
-        addr
     }
 
     pub fn create_taskpool(threads: usize, max_tasks: usize) -> TaskPool {
         TaskPool::new(threads, max_tasks)
+    }
+
+    fn task_group(&self, e3_id: &E3id) -> String {
+        task_group(&self.task_scope, e3_id)
+    }
+}
+
+fn task_group(scope: &str, e3_id: &E3id) -> String {
+    format!("{scope}:{e3_id}")
+}
+
+#[cfg(test)]
+mod task_group_tests {
+    use super::*;
+
+    #[test]
+    fn shared_pool_groups_are_isolated_by_node() {
+        let e3_id = E3id::new("round", 1);
+
+        assert_ne!(task_group("node-a", &e3_id), task_group("node-b", &e3_id));
+        assert_eq!(task_group("node-a", &e3_id), task_group("node-a", &e3_id));
     }
 }
 
@@ -216,8 +262,20 @@ impl Handler<InterfoldEvent> for Multithread {
     type Result = ();
     fn handle(&mut self, msg: InterfoldEvent, ctx: &mut Self::Context) -> Self::Result {
         let (data, ec) = msg.into_components();
-        if let InterfoldEventData::ComputeRequest(data) = data {
-            ctx.notify(TypedEvent::new(data, ec))
+        match data {
+            InterfoldEventData::ComputeRequest(data) => ctx.notify(TypedEvent::new(data, ec)),
+            InterfoldEventData::E3Failed(data) => {
+                self.task_pool.cancel_group(&self.task_group(&data.e3_id))
+            }
+            InterfoldEventData::E3RequestComplete(data) => {
+                self.task_pool.cancel_group(&self.task_group(&data.e3_id))
+            }
+            InterfoldEventData::E3StageChanged(data)
+                if matches!(data.new_stage, E3Stage::Complete | E3Stage::Failed) =>
+            {
+                self.task_pool.cancel_group(&self.task_group(&data.e3_id))
+            }
+            _ => {}
         }
     }
 }
@@ -231,10 +289,13 @@ impl Handler<TypedEvent<ComputeRequest>> for Multithread {
         let pool = self.task_pool.clone();
         let report = self.report.clone();
         let zk_prover = self.zk_prover.clone();
+        let task_scope = self.task_scope.clone();
         trap_fut(
             EType::Computation,
             &self.bus.clone(),
-            handle_compute_request_event(msg, bus, cipher, rng, pool, report, zk_prover),
+            handle_compute_request_event(
+                msg, bus, cipher, rng, pool, task_scope, report, zk_prover,
+            ),
         )
     }
 }
@@ -245,6 +306,7 @@ async fn handle_compute_request_event(
     cipher: Arc<Cipher>,
     rng: SharedRng,
     pool: TaskPool,
+    task_scope: String,
     report: Option<Addr<MultithreadReport>>,
     zk_prover: Option<Arc<ZkProver>>,
 ) -> anyhow::Result<()> {
@@ -254,14 +316,22 @@ async fn handle_compute_request_event(
     let request_snapshot = msg.clone();
 
     let report_for_worker = report.clone();
+    let task_group = task_group(&task_scope, &msg.e3_id);
     let pool_result = pool
-        .spawn(job_name, TaskTimeouts::default(), move || {
+        .spawn_in_group(task_group, job_name, TaskTimeouts::default(), move || {
             handle_compute_request(rng, cipher, zk_prover, msg, report_for_worker)
         })
         .await;
 
     let (result, duration) = match pool_result {
         Ok(v) => v,
+        Err(TaskPoolError::Cancelled(group)) => {
+            info!(
+                task_group = group,
+                "Dropped compute request for a terminal E3"
+            );
+            return Ok(());
+        }
         Err(pool_err) => {
             error!(
                 "Task pool error for compute request '{}': {pool_err}",
@@ -1928,14 +1998,20 @@ fn handle_dkg_share_decryption_proof(
     let secret_key = deserialize_secret_key(&sk_bytes, &dkg_params)
         .map_err(|e| make_zk_error(&request, format!("sk_bfv deserialize: {}", e)))?;
 
-    // External slots = (H - 1), each carrying L ciphertexts.
+    // Selected parties omit a ciphertext only for their own share.
     let h = req.num_honest_parties;
     let l = req.num_moduli;
-    if req.own_plaintext_idx >= h {
+    if req.own_plaintext_idx.is_some() != req.own_share_raw.is_some() {
+        return Err(make_zk_error(
+            &request,
+            "own_plaintext_idx and own_share_raw must both be present or absent".to_string(),
+        ));
+    }
+    if req.own_plaintext_idx.is_some_and(|idx| idx >= h) {
         return Err(make_zk_error(
             &request,
             format!(
-                "own_plaintext_idx {} out of range (num_honest_parties={})",
+                "own_plaintext_idx {:?} out of range (num_honest_parties={})",
                 req.own_plaintext_idx, h
             ),
         ));
@@ -1949,22 +2025,22 @@ fn handle_dkg_share_decryption_proof(
             ),
         ));
     }
-    let expected_external_cts = h.saturating_sub(1) * l;
+    let num_external = h - usize::from(req.own_plaintext_idx.is_some());
+    let expected_external_cts = num_external * l;
     if req.honest_ciphertexts_raw.len() != expected_external_cts {
         return Err(make_zk_error(
             &request,
             format!(
-                "Expected {} external ciphertexts ((H-1)={} * L={}), got {}",
+                "Expected {} external ciphertexts ({} parties * L={}), got {}",
                 expected_external_cts,
-                h.saturating_sub(1),
+                num_external,
                 l,
                 req.honest_ciphertexts_raw.len()
             ),
         ));
     }
 
-    // Deserialize external ciphertexts → [(H-1)][L]
-    let num_external = h.saturating_sub(1);
+    // Deserialize external ciphertexts in selected-party order.
     let mut external_ciphertexts: Vec<Vec<Ciphertext>> = Vec::with_capacity(num_external);
     for ext_idx in 0..num_external {
         let mut party_cts = Vec::with_capacity(l);
@@ -1981,11 +2057,11 @@ fn handle_dkg_share_decryption_proof(
         external_ciphertexts.push(party_cts);
     }
 
-    // Splice None at `own_plaintext_idx` so the H-sized vector matches ascending honest party_id order.
+    // Use a plaintext slot only when the prover is one of the selected dealers.
     let mut honest_ciphertexts: Vec<Option<Vec<Ciphertext>>> = Vec::with_capacity(h);
     let mut external_iter = external_ciphertexts.into_iter();
     for slot in 0..h {
-        if slot == req.own_plaintext_idx {
+        if Some(slot) == req.own_plaintext_idx {
             honest_ciphertexts.push(None);
         } else {
             honest_ciphertexts.push(Some(
@@ -1996,23 +2072,26 @@ fn handle_dkg_share_decryption_proof(
         }
     }
 
-    // Own-plaintext share rows: bincode `Vec<Vec<u64>>` shape [L][N].
-    let own_share_bytes = req
-        .own_share_raw
-        .access_raw(cipher)
-        .map_err(|e| make_zk_error(&request, format!("own_share decrypt: {}", e)))?;
-    let own_plaintext_share: Vec<Vec<u64>> = bincode::deserialize(&own_share_bytes)
-        .map_err(|e| make_zk_error(&request, format!("own_share deserialize: {}", e)))?;
-    if own_plaintext_share.len() != l {
-        return Err(make_zk_error(
-            &request,
-            format!(
-                "own_plaintext_share has {} moduli, expected {}",
-                own_plaintext_share.len(),
-                l
-            ),
-        ));
-    }
+    let own_plaintext_share: Vec<Vec<u64>> = if let Some(raw) = req.own_share_raw.as_ref() {
+        let own_share_bytes = raw
+            .access_raw(cipher)
+            .map_err(|e| make_zk_error(&request, format!("own_share decrypt: {}", e)))?;
+        let share: Vec<Vec<u64>> = bincode::deserialize(&own_share_bytes)
+            .map_err(|e| make_zk_error(&request, format!("own_share deserialize: {}", e)))?;
+        if share.len() != l {
+            return Err(make_zk_error(
+                &request,
+                format!(
+                    "own_plaintext_share has {} moduli, expected {}",
+                    share.len(),
+                    l
+                ),
+            ));
+        }
+        share
+    } else {
+        Vec::new()
+    };
     let n = dkg_params.degree();
     for (row_idx, row) in own_plaintext_share.iter().enumerate() {
         if row.len() != n {

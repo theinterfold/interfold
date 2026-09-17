@@ -70,7 +70,6 @@ const config: HardhatUserConfig = {
       chainType: 'l1',
       mining: {
         auto: true,
-        interval: 1000,
       },
     },
     localhost: {

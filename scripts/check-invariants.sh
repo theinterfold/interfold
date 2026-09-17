@@ -21,6 +21,8 @@
 #      must be present in the dependency-cache stage of crates/Dockerfile.
 #   5. l-BFV protocol version sync — the Rust release manifest and Solidity V2
 #      verifier must use the same protocol version in the proof-session domain.
+#   6. production Compose shutdown grace — every ciphernode service must give the
+#      node more than 60 seconds to finish its durability barrier.
 #
 # Exit 0 when all hold, 1 otherwise.
 
@@ -108,7 +110,35 @@ else
   fi
 fi
 
+# --- 6. production Compose shutdown grace ----------------------------------------
+check_compose_shutdown_grace() {
+  local compose_file=$1
+  local service_count
+  local grace_count
+  service_count=$(awk '
+    /^services:/ { in_services=1; next }
+    in_services && /^[^ ]/ { exit }
+    in_services && /^  [[:alnum:]_-]+:/ { count++ }
+    END { print count+0 }
+  ' "$compose_file")
+  grace_count=$(grep -cE '^    stop_grace_period: [0-9]+s$' "$compose_file" || true)
+  if ((service_count == 0 || grace_count != service_count)); then
+    echo "check-invariants: FAILED — every service in $compose_file must declare stop_grace_period"
+    fail=1
+    return
+  fi
+  while IFS= read -r grace_secs; do
+    if ((grace_secs <= 60)); then
+      echo "check-invariants: FAILED — $compose_file stop_grace_period must exceed 60 seconds"
+      fail=1
+    fi
+  done < <(sed -nE 's/^    stop_grace_period: ([0-9]+)s$/\1/p' "$compose_file")
+}
+
+check_compose_shutdown_grace dappnode/docker-compose.yml
+check_compose_shutdown_grace deploy/docker-compose.yml
+
 if ((fail == 0)); then
-  echo "✓ check:invariants: do_send=$count (≤ $DO_SEND_BASELINE), skip-proof feature contained, runtime guard present, ciphernode Docker workspace complete, l-BFV protocol version=$release_protocol_version"
+  echo "✓ check:invariants: do_send=$count (≤ $DO_SEND_BASELINE), skip-proof feature contained, runtime guard present, ciphernode Docker workspace complete, l-BFV protocol version=$release_protocol_version, shutdown grace verified"
 fi
 exit "$fail"

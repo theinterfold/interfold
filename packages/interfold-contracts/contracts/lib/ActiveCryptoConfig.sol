@@ -45,7 +45,7 @@ library ActiveCryptoConfig {
 
     uint8 internal constant SMALL_COMMITTEE_SIZE = 2;
     uint32 internal constant SMALL_T = 9;
-    uint32 internal constant SMALL_H = 10;
+    uint32 internal constant SMALL_H = 14;
     uint32 internal constant SMALL_N = 19;
 
     // Production default. The public MAX_COMMITTEE_SIZE constant reads N.

@@ -838,7 +838,7 @@ contract SlashingManager is
         }
     }
 
-    /// @dev Verifies Lane A attestation evidence: decodes, checks quorum (>= M), verifies
+    /// @dev Verifies Lane A attestation evidence: decodes, checks quorum (>= H), verifies
     ///      each EIP-712 `AccusationVote` signature, confirms voters are active committee
     ///      members, enforces the shared issue time and deadline, and rejects equivocation
     ///      (all `dataHash` values must match and bind to `keccak256(evidence)`).

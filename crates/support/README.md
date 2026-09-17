@@ -174,6 +174,24 @@ This uploads the compiled guest ELF to Pinata IPFS and caches the resulting URL 
 `./target/.program_url`. Copy this URL into your `interfold.config.yaml` as
 `program.risc0.boundless.program_url` to avoid re-uploading the program at runtime.
 
+The host sends raw bincode input by default. For a deployed guest that expects the older RISC Zero
+byte-vector format, set `BOUNDLESS_INPUT_ENCODING=risc0-serde` before `interfold program start`.
+This setting requires `program_url` and applies only to Boundless. The embedded guest keeps raw
+bincode input. Verify that the external guest image ID matches both deployed verifiers before use.
+An encoding change does not change the guest image ID or the journal format.
+
+To test an external guest without submitting a proof request, set `RISC0_TEST_GUEST` to its binary
+path and `RISC0_TEST_INPUT` to a raw bincode `ComputeGuestInput` file. Set `RISC0_TEST_IMAGE_ID` to
+the expected image ID without `0x`, and select `BOUNDLESS_INPUT_ENCODING`. Then run:
+
+```sh
+cargo test --manifest-path crates/support/Cargo.toml -p e3-support-host --lib \
+  configured_guest_matches_host_journal --locked -- --ignored --nocapture
+```
+
+Run this command from the repository root. It checks the image ID and compares every guest journal
+field with the host computation. It does not generate a proof or submit a transaction.
+
 ### Step 4: Deploy Interfold Contracts + Start Ciphernodes
 
 ```bash

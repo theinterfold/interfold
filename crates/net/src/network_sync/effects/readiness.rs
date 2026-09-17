@@ -51,6 +51,10 @@ impl NetSyncManager {
         let addr = Self::new(bus, tx, rx, eventstore, topic, network).start();
 
         bus.subscribe(EventType::HistoricalNetSyncStart, addr.clone().recipient());
+        bus.subscribe(EventType::DkgCoordination, addr.clone().recipient());
+        bus.subscribe(EventType::E3StageChanged, addr.clone().recipient());
+        bus.subscribe(EventType::E3Failed, addr.clone().recipient());
+        bus.subscribe(EventType::E3RequestComplete, addr.clone().recipient());
 
         // Forward from NetEvent
         tokio::spawn({

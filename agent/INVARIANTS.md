@@ -321,6 +321,10 @@ design citation alone does not establish current runtime behavior.
   21,600 seconds. The local runtime and deployment defaults are 21,600 seconds. The `insecure` and
   `secure-8192` parameter sets still accept a 7,200-second configured window. —
   `InterfoldLifecycle.validateRequest`; `flow-trace/03`
+- **The threshold-share checkpoint is not a DKG deadline.** At 75% of the frozen DKG window, a node
+  may close collection when it has at least H−1 external shares. Below H−1, it must keep collecting.
+  Only the request-frozen on-chain DKG deadline may turn missing threshold shares into `DKGTimeout`.
+  Restart must preserve the remaining deadline. — `flow-trace/04`; INDEX concern #54
 - Known open issue: `gracePeriod` is stored/validated but never applied in any deadline check (dead
   code). — `Interfold.sol`; INDEX concern #3
 
@@ -410,10 +414,11 @@ design citation alone does not establish current runtime behavior.
   an application callback can slash a member and record a terminal failure through `onE3Failed`,
   outside the publication reentrancy guard. A failed recheck reverts the complete transaction. —
   `flow-trace/04`, `05`; INDEX concerns Z-32, ZEN2-04, ZEN2-26
-- Accusation quorum: `agree_count >= threshold_m`; voters must be active committee members; all
-  votes agree. Lane A is **attestation-based** (ECDSA per voter), not on-chain ZK re-verification.
-  Vote digest / EIP-712 type hashes must match the Solidity constants exactly (Rust ↔ Solidity). —
-  `flow-trace/05`; `SlashingManager.sol`
+- Accusation quorum: `agree_count >= H`; the implementation derives `H` from the committee enum
+  because the legacy E3 field `threshold_m` carries circuit threshold `T`. Voters must be active
+  committee members, and all votes must agree. Lane A is **attestation-based** (ECDSA per voter),
+  not on-chain ZK re-verification. Vote digest / EIP-712 type hashes must match the Solidity
+  constants exactly (Rust ↔ Solidity). — `flow-trace/05`; `SlashingManager.sol`
 - Staggered slash submission: agreeing voters ranked by ascending address, rank N waits `N × skew`
   (default 30 s); restarts must not reset the fallback delay. — `flow-trace/05`
 - **Deferred-slash collateral gate:** every manager atomically records proposal locks in
@@ -442,7 +447,7 @@ design citation alone does not establish current runtime behavior.
   configuration constants with `pnpm build:circuits sync-config --preset <name> --committee <name>`;
   switch and build circuits only with `pnpm build:circuits --committee <name>`. Both paths are
   enforced by `scripts/check-committee.sh`.
-- Canonical sizes: `minimum` (3,1,2) · `micro` (9,4,5) · `small` (19,9,10) — must mirror `mod.nr`
+- Canonical sizes: `minimum` (3,1,2) · `micro` (9,4,5) · `small` (19,9,14) — must mirror `mod.nr`
   and `CiphernodesCommitteeSize::values()`. — `scripts/circuit-constants.ts`
 - Wrapper Solidity verifiers (`BfvPkVerifier`, `BfvDecryptionVerifier`) have an `(H, T)`-specific
   public-input layout and must be redeployed on committee change.
@@ -478,10 +483,13 @@ design citation alone does not establish current runtime behavior.
   serialization form one compatibility unit. A change to one value requires a new constants version
   and regenerated circuit artifacts. — `crates/fhe-params/src/lbfv.rs`;
   `generate_config_modules.rs`; `flow-trace/04`
+- The pair source hash ignores generated C1/C2 bound values and includes the Rust sources that
+  generate them. Switching the active committee must not change another pair's source hash.
 
 ### DKG / threshold structure
 
-- SK splits into N shares; any **M+1** reconstruct/decrypt. — `flow-trace/04`
+- SK splits into N shares; exactly **T+1** shares feed the recursive decryption proof. —
+  `flow-trace/04`
 - Runtime `party_id` derives from the finalized committee normalized by ascending address and is
   zero-indexed. Circuit-side Shamir coordinates are `party_id + 1` and must be strictly increasing.
   The active aggregator is the lowest eligible runtime `party_id` after exclusions and the current
@@ -489,6 +497,16 @@ design citation alone does not establish current runtime behavior.
 - Every committee member persists validated aggregation inputs. Failover starts only after
   `AggregationInputsReady` confirms that the phase can resume from durable state. Only the active
   party can launch aggregation effects or accept their results. — `flow-trace/04`; INDEX concern #42
+- The active aggregator proposes the canonical DKG roster only after it can derive `H` mutually
+  ready dealers from signed readiness reports. `AggregatorChanged` supplies the active party ID, and
+  receivers accept a roster only from that party. A receiver can hold the first authenticated roster
+  from a standby until local failover promotes that party. The first accepted roster is durable and
+  immutable; a later conflicting roster is ignored. Accepting it ends only the DKG-roster failover
+  phase. Public-key aggregation receives a new readiness-gated failover budget. — `flow-trace/04`;
+  INDEX concerns #42 and #52
+- DKG dealer identity binds the public proof statement, not randomized proof bytes. Replacing a
+  same-E3 proof plan must invalidate every prior correlation ID before the replacement can accept
+  responses. — `flow-trace/04`
 - DKG aggregation receives **exactly H** canonical honest NodeFold proofs (unique in-range party
   IDs) and **exactly N** ordered committee addresses; every preset has `H < N` — never assert
   `H == N`. A mixed Some/None NodeFold set is terminal DKG failure. — `ARCHITECTURE.md`;
@@ -497,6 +515,15 @@ design citation alone does not establish current runtime behavior.
   dispatch. If a candidate fails, persist its invalid status before selecting and dispatching the
   next exact-H ready set. Only the sealed accepted set is immutable. Persisted V1 sidecars can
   contain H through N candidates; new V1 transitions must contain exactly H. — `flow-trace/04`
+- The `dkg_aggregator` circuit requires strictly ascending, in-range H-party IDs. The on-chain
+  fold-attestation verifier repeats that check, so both proof consumers use the same roster order. —
+  `flow-trace/04`
+- In the DKG aggregator, C3 key slots and C2 share slots use the selected recipient's full-committee
+  `party_id`. C4 expected-commitment slots use the sender's position in the H-row fold. These
+  indices differ when the selected H-subset skips a committee member. — `flow-trace/04`
+- A recipient outside the selected H dealers builds C4 from all H encrypted dealer shares. It must
+  not replace a selected dealer share with its own plaintext share. A selected recipient uses its
+  plaintext share only at its own row. — `flow-trace/04`
 - Proof multiplicity: C2a/C2b singleton per recipient; C3a/C3b follow configured Shamir
   multiplicities. Witness dimensions come from the **active preset**, never incidental vector sizes.
   — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
@@ -758,6 +785,13 @@ design citation alone does not establish current runtime behavior.
 - The append-only event log is the durable source of truth; snapshots and the timestamp index are
   derived optimizations. Replay-from-checkpoint and snapshot-hydration at the same logical point
   must produce equivalent state and pending intents. — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
+- Before startup enables the event bus, its HLC must be greater than the greatest timestamp in all
+  durable event logs. A snapshot timestamp alone is not a sufficient clock floor because the log can
+  contain a newer post-snapshot suffix. — INDEX concern #56
+- Event-log flush synchronizes the active segment, index, and log directory before live dispatch.
+  Startup verifies every committed blob reference before it removes unreferenced blob files. Replay
+  and index reconciliation are bounded by both event count and decoded bytes; one valid event may
+  exceed the page budget so the cursor can still advance. — `CRATES_ARCHITECTURE.md`
 - `E3LifecycleCoordinator` is a projection — rebuildable, never a source of truth, never emits
   protocol events. — `ARCHITECTURE.md`; `flow-trace/06`
 - EventStore duplicate rule: same HLC timestamp + stable event ID + **equal payload** is an
@@ -791,6 +825,32 @@ design citation alone does not establish current runtime behavior.
   deadlines, and undispatched external effects are durable unless a stronger authority can
   deterministically recreate them. An actor-local cache is not durable just because the actor
   outlives the process. — `ARCHITECTURE.md`; `CRATES_ARCHITECTURE.md`
+- `NodeProofAggregator` persists ordered DKG inner proofs and fold metadata before it accepts them.
+  It persists a completed fold before publication. Restart must restore inputs or the completed
+  output and resume only after `EffectsEnabled`. `KeyPublished` and terminal E3 events release the
+  saved node-fold data. — `flow-trace/04`; `flow-trace/06`
+- Replayed randomized DKG outputs must be reused exactly. If a TrBFV response arrives before a
+  rebuilt collector restores its prerequisite state, hold the response until that state is ready; do
+  not dispatch a replacement computation that would produce different shares and proofs. —
+  `flow-trace/04`; INDEX concern #57
+- A replayed C1 verification result can arrive before replayed keyshares restore `VerifyingC1`. Hold
+  at most one result, bind it to the saved selected roster, and apply it when those inputs are
+  ready. Never apply it to a replacement roster. A result received after C1 is complete is an
+  idempotent duplicate. — `flow-trace/04`; INDEX concern #58
+- On restart in `ReadyForDecryption`, rebuild the C4 collector from the saved roster and replay
+  saved peer C4 shares. A restored C4 proof job cannot advance DKG if its peer-share collector is
+  absent. After collection is complete, a duplicate C4 share must not start another collector. Saved
+  C0 and C4 inputs must keep the first message from each party, as the live collectors do. —
+  `flow-trace/04`
+- `CommitmentConsistencyChecker` persists its complete verified-proof cache and accepted DKG roster
+  in the same snapshot batch as each event that changes them. Hydration restores this state before
+  recovered proof work resumes. A restarted checker must not evaluate C2, C3, C4, or aggregate
+  proofs against an empty or partial pre-crash history. Successful E3 teardown clears the durable
+  checker state in the completion event's snapshot batch. — `flow-trace/04`; `flow-trace/06`
+- A graceful-shutdown deadline must be longer than the EventBus fanout timeout, and every external
+  supervisor must wait longer than the node deadline before it sends `SIGKILL`. A process that must
+  outlive its CLI launcher must use the detached spawn path; dropping an owning child handle stops
+  that child. — `flow-trace/06`
 - A fatal threshold-keyshare collector timeout commits `KeyshareState::Failed` before it publishes
   `E3Failed`. The persisted failure stage and reason are immutable. After hydration,
   `EffectsEnabled` redrives the saved failure and does not resume the earlier DKG phase. —
@@ -833,8 +893,13 @@ design citation alone does not establish current runtime behavior.
   the injected clock and deterministically re-arm or fire overdue. — `ARCHITECTURE.md`
 - Effects stay disabled until durable replay completes and both historical sources merge in HLC
   order. Startup fences `EffectsEnabled` → `SyncEffect` → canonical history → `SyncEnded` in that
-  order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. —
+  order. `ComputeEffectGate` buffers and deduplicates until `EffectsEnabled`. It mirrors the same
+  response or error to each regenerated correlation ID for one semantic request. —
   `CRATES_ARCHITECTURE.md`
+- A terminal E3 cancels its local node-scoped compute-task group. Work already executing may finish,
+  but queued proof jobs from that E3 must not consume task-pool capacity ahead of a later active E3.
+  One node's local failure must not cancel another node's work when tests or embeddings share a task
+  pool. — `flow-trace/04`
 - Sortition delays, committee-finalization timers, and slash submissions persist their semantic
   inputs before effects run. Restart re-arms them only after `EffectsEnabled`; an additive migration
   may backfill a missing versioned record but must not replace an existing one. — INDEX concern #46
@@ -844,6 +909,12 @@ design citation alone does not establish current runtime behavior.
   router's `on_event` path must not do synchronous store reads. — `flow-trace/06`
 - A well-formed `E3Requested` with an unsupported committee-size/preset enum is a benign skip (emit
   `Processed` so ordering advances); ABI-decode failures still fail closed. — INDEX concern #13
+- A randomness fulfillment reader must retry a failed registry read once with a new provider for the
+  same chain. It must retain the new provider after a successful reconnect and reject the log if the
+  retry still cannot verify the accepted request. — `flow-trace/03`
+- A chain gateway that fails closed after startup must make the node exit unsuccessfully after a
+  durability shutdown. A running node must not report healthy after chain ingestion stops. —
+  `flow-trace/03`; `flow-trace/06`
 
 ### Schema evolution
 

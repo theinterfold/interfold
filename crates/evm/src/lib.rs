@@ -15,6 +15,7 @@
 mod actors;
 mod adapters;
 mod contracts;
+mod dkg_timing;
 mod domain;
 mod messages;
 mod node_release;
@@ -27,6 +28,7 @@ pub mod helpers;
 pub use domain::error_decoder;
 
 pub use actors::*;
+pub use dkg_timing::{read_canonical_dkg_timing, CanonicalDkgTiming};
 pub use domain::encode_attestation_evidence;
 pub use helpers::*;
 pub use messages::*;

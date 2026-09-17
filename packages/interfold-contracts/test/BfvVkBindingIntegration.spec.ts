@@ -125,7 +125,13 @@ const resolveFoldedArtifacts = (): FoldedArtifacts | null => {
   if (fromBenchmark !== null && hasExpectedFoldedLayout(fromBenchmark)) {
     return fromBenchmark;
   }
-  return readFoldedArtifactsFromFile(COMMITTED_FOLDED_ARTIFACTS_FIXTURE);
+  const committed = readFoldedArtifactsFromFile(
+    COMMITTED_FOLDED_ARTIFACTS_FIXTURE,
+  );
+  if (committed !== null) {
+    return committed;
+  }
+  return fromBenchmark;
 };
 
 const loadFoldedArtifacts = (): FoldedArtifacts | null =>

@@ -226,6 +226,9 @@ jobs:
       - name: Checking code format rust
         run: pnpm rust:lint
 
+      - name: Check repository invariants
+        run: pnpm check:invariants
+
       - name: Compile contracts for ABI catalog tests
         run: pnpm evm:build
 
@@ -293,14 +296,34 @@ jobs:
           E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
         run: 'cargo test --test integration -- --nocapture'
 
+      - name: Run offline DKG integration test with full proofs
+        timeout-minutes: 20
+        env:
+          BENCHMARK_MODE: insecure
+          BENCHMARK_OFFLINE_AFTER_C0_PARTY_ID: '1'
+          BENCHMARK_DKG_WINDOW_SECS: '1200'
+          E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
+          E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '180'
+          E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
+        run: 'cargo test -p e3-tests --test integration test_trbfv_actor -- --exact --nocapture'
+
+      - name: Run full-proof DKG integration with standby node
+        timeout-minutes: 20
+        env:
+          BENCHMARK_MODE: insecure
+          BENCHMARK_DKG_WINDOW_SECS: '1200'
+          E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS: '60'
+          E3_THRESHOLD_SHARE_COLLECTION_TIMEOUT_SECS: '120'
+          E3_CUSTOM_BB: ${{ github.workspace }}/.ci-noir/bin/bb
+        run: 'cargo test -p e3-tests --test integration test_trbfv_actor -- --exact --nocapture'
+
   zk_prover_integration:
-    needs: [detect_changes]
+    needs: [detect_changes, integration_prebuild]
     if: needs.detect_changes.outputs.zk_prover_integration == 'true'
-    timeout-minutes: 30
+    timeout-minutes: 60
     runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'zk_prover_integration') || 'ubuntu-latest' }}
+      group: enclave-ci
+      labels: [enclave-ci-runner]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
 
@@ -328,21 +351,19 @@ jobs:
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
 
+      - name: Download source-aligned ZK fixtures
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: integration-noir-artifacts
+          path: .ci-noir/
+
       - name: Prepare source-aligned circuit archive
         run: |
-          SOURCE_HASH=$(pnpm tsx scripts/build-circuits.ts hash)
-          git fetch origin circuit-artifacts
-          ARTIFACT_SOURCE_HASH=$(git show origin/circuit-artifacts:SOURCE_HASH)
-          if [ "$ARTIFACT_SOURCE_HASH" != "$SOURCE_HASH" ]; then
-            echo "::error::Circuit artifacts do not match this source tree."
-            exit 1
-          fi
+          test -f .ci-noir/circuits/insecure-512/minimum/default/dkg/pk/pk.json
+          test -f .ci-noir/circuits/secure-8192/minimum/default/dkg/pk/pk.json
           mkdir -p "$RUNNER_TEMP/circuit-release"
-          git archive \
-            --format=tar.gz \
-            --prefix=circuits/ \
-            --output="$RUNNER_TEMP/circuit-release/circuits-candidate.tar.gz" \
-            origin/circuit-artifacts
+          tar -czf "$RUNNER_TEMP/circuit-release/circuits-candidate.tar.gz" \
+            -C .ci-noir circuits
 
       - name: Cache Barretenberg binary
         uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
@@ -541,11 +562,10 @@ jobs:
   integration_prebuild:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.integration_prebuild == 'true'
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on:
-      ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
-      github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
-      'integration_prebuild') || 'ubuntu-latest' }}
+      group: enclave-ci
+      labels: [enclave-ci-runner]
     steps:
       - name: 'Check out the repo'
         uses: 'actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10' # v6
@@ -595,7 +615,9 @@ jobs:
       - name: 'Install the dependencies'
         run: 'pnpm install --frozen-lockfile'
 
-      - name: 'Run prebuild'
+      - name: 'Run full-proof prebuild'
+        env:
+          CIPHERNODE_SKIP_PROOF_AGGREGATION: 'false'
         run: 'pnpm test:integration prebuild'
 
       - name: 'Verify build artifacts exist'
@@ -1013,7 +1035,7 @@ jobs:
   build_circuits:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.build_circuits == 'true'
-    timeout-minutes: 30
+    timeout-minutes: 45
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16', github.run_id, github.run_attempt,
@@ -1075,6 +1097,13 @@ jobs:
       - name: Build circuits
         run: pnpm build:circuits
 
+      - name: Check generated circuit sources are committed
+        run: |
+          git diff --exit-code -- \
+            circuits/lib/src/configs \
+            packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol \
+            packages/interfold-contracts/scripts/utils.ts
+
       - name: Test circuit artifact validation
         run: pnpm test:circuit-tooling
 
@@ -1090,6 +1119,7 @@ jobs:
       - name: Check generated verifiers are in sync
         run: pnpm generate:verifiers --preset insecure --committee minimum --check --no-compile
 
+      # Release workflows also verify the promoted six-pair circuit matrix.
       - name: Pull the complete circuit matrix
         run: pnpm store:circuits pull
 

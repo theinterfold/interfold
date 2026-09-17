@@ -4,22 +4,19 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use std::time::Duration;
-
 use crate::{
     cli::{Cli, RemoteCli},
     owo,
 };
-use anyhow::Result;
+use anyhow::{bail, Context, Result};
 use e3_ciphernode_builder::CiphernodeHandle;
 use e3_config::AppConfig;
 use e3_console::Console;
 use e3_daemon_server::start_daemon_server;
+use e3_events::NODE_SHUTDOWN_DEADLINE;
 use e3_utils::{colorize, Color};
 use tokio::signal::unix::{signal, SignalKind};
 use tracing::{error, info, instrument};
-
-const SHUTDOWN_DEADLINE: Duration = Duration::from_secs(30);
 
 #[instrument(skip_all)]
 pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
@@ -95,10 +92,41 @@ pub async fn execute(mut config: AppConfig, peers: Vec<String>) -> Result<()> {
         node.peer_id
     );
 
-    shutdown.await;
-    graceful_shutdown(Some(node)).await?;
+    let mut persistence_health = node.persistence_health();
+    let gateway_failure = node.gateway_failure();
+    tokio::pin!(gateway_failure);
+    tokio::select! {
+        _ = &mut shutdown => graceful_shutdown(Some(node)).await?,
+        failure = &mut gateway_failure => {
+            error!(%failure, "Ciphernode stopped after a chain gateway failure");
+            graceful_shutdown(Some(node)).await?;
+            bail!("fatal chain gateway failure: {failure}");
+        }
+        failure = wait_for_persistence_failure(&mut persistence_health) => {
+            let failure = failure?;
+            error!(%failure, "Ciphernode stopped after a fatal event storage failure");
+            if let Some(logs) = e3_logger::LogCollector::global() {
+                logs.flush();
+            }
+            bail!("fatal event storage failure: {failure}");
+        }
+    }
 
     Ok(())
+}
+
+async fn wait_for_persistence_failure(
+    health: &mut tokio::sync::watch::Receiver<Option<String>>,
+) -> Result<String> {
+    loop {
+        if let Some(failure) = health.borrow_and_update().clone() {
+            return Ok(failure);
+        }
+        health
+            .changed()
+            .await
+            .context("event storage health monitor stopped")?;
+    }
 }
 
 /// Launch a socket server to read RemoteCli commands
@@ -150,7 +178,7 @@ pub async fn graceful_shutdown(node: Option<CiphernodeHandle>) -> Result<()> {
     info!("initiating graceful shutdown...");
 
     let result = match node {
-        Some(node) => node.shutdown(SHUTDOWN_DEADLINE).await,
+        Some(node) => node.shutdown(NODE_SHUTDOWN_DEADLINE).await,
         None => Ok(()),
     };
 
@@ -167,5 +195,21 @@ pub async fn graceful_shutdown(node: Option<CiphernodeHandle>) -> Result<()> {
             error!(%error, "Graceful shutdown failed; process will exit unsuccessfully");
             Err(error)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn persistence_failure_is_reported_after_publish() -> Result<()> {
+        let (signal, mut health) = tokio::sync::watch::channel(None);
+        signal.send_replace(Some("append failed".to_string()));
+        assert_eq!(
+            wait_for_persistence_failure(&mut health).await?,
+            "append failed"
+        );
+        Ok(())
     }
 }

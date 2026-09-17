@@ -147,15 +147,14 @@ impl ProofRequestActor {
 
         // Publish ThresholdShareCreated with proofs attached for each recipient
         let share = &pending.full_share;
-        let num_parties = share.num_parties();
-
         info!(
-            "Publishing ThresholdShareCreated for E3 {} to {} parties",
-            e3_id, num_parties
+            "Publishing ThresholdShareCreated for E3 {} to {} parties with C0 keys",
+            e3_id,
+            pending.recipient_party_ids.len().saturating_sub(1)
         );
 
-        for (positional_idx, &real_party_id) in pending.recipient_party_ids.iter().enumerate() {
-            match share.extract_for_party(positional_idx) {
+        for &real_party_id in &pending.recipient_party_ids {
+            match share.extract_for_party(real_party_id as usize) {
                 Some(party_share) => {
                     let proof_key = real_party_id as usize;
                     let c3a_proofs = signed_c3a_map.get(&proof_key).cloned().unwrap_or_default();
@@ -175,23 +174,22 @@ impl ProofRequestActor {
                         ec.clone(),
                     ) {
                         error!(
-                            "Failed to publish ThresholdShareCreated for party {} (idx {}): {err}",
-                            real_party_id, positional_idx
+                            "Failed to publish ThresholdShareCreated for party {}: {err}",
+                            real_party_id
                         );
                     }
                 }
                 None if real_party_id == party_id => {
                     // Own slot is sparse (no self-encryption); nothing to publish.
                     trace!(
-                        "Skipping ThresholdShareCreated for own slot (party {} idx {})",
-                        real_party_id,
-                        positional_idx
+                        "Skipping ThresholdShareCreated for own slot (party {})",
+                        real_party_id
                     );
                 }
                 None => {
                     error!(
-                        "Missing encrypted share for recipient party {} (idx {}) from sender party {}; ThresholdShareCreated will not be published for that recipient",
-                        real_party_id, positional_idx, party_id
+                        "Missing encrypted share for recipient party {} from sender party {}; ThresholdShareCreated will not be published for that recipient",
+                        real_party_id, party_id
                     );
                 }
             }

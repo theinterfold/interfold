@@ -56,6 +56,7 @@ impl EventTranslationService {
         matches!(
             event.get_data(),
             InterfoldEventData::DecryptionshareCreated(_)
+                | InterfoldEventData::DkgCoordination(_)
                 | InterfoldEventData::DKGRecursiveAggregationComplete(_)
                 | InterfoldEventData::KeyshareCreated(_)
                 | InterfoldEventData::PublicKeyAggregated(_)
@@ -146,9 +147,10 @@ mod tests {
     };
     use e3_committee_hash::{hash_lbfv_proof_session, LbfvProofDomainContext};
     use e3_events::{
-        E3id, EventConstructorWithTimestamp, EventSource, KeyshareCreated,
-        LbfvKeyShareDocumentContextV1, LbfvKeyShareManifest, LbfvKeyShareManifestPublished,
-        LbfvKeyShareManifestV1, PlaintextAggregated, SignedLbfvKeyShareManifest, TestEvent,
+        DkgCoordination, DkgCoordinationKind, DkgDealer, E3id, EventConstructorWithTimestamp,
+        EventSource, KeyshareCreated, LbfvKeyShareDocumentContextV1, LbfvKeyShareManifest,
+        LbfvKeyShareManifestPublished, LbfvKeyShareManifestV1, PlaintextAggregated,
+        SignedLbfvKeyShareManifest, TestEvent,
     };
     use e3_utils::ArcBytes;
 
@@ -282,6 +284,34 @@ mod tests {
         let decoded = svc.prepare_inbound(data).unwrap();
 
         assert_eq!(decoded.get_data(), expected.get_data());
+    }
+
+    #[test]
+    fn dkg_roster_round_trips_through_gossip() {
+        let roster = DkgCoordination {
+            e3_id: E3id::new("1", 1),
+            interfold_address: Default::default(),
+            party_id: 1,
+            kind: DkgCoordinationKind::Roster,
+            dealers: vec![DkgDealer {
+                party_id: 1,
+                contribution_hash: [7; 32],
+            }],
+            signature: ArcBytes::from_bytes(&[1, 2, 3]),
+        };
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            roster.into(),
+            None,
+            42,
+            None,
+            EventSource::Local,
+        )
+        .into_sequenced(1);
+        let mut outbound = EventTranslationService::new("topic");
+        let (_, gossip) = outbound.prepare_outbound(event.clone()).unwrap().unwrap();
+        let mut inbound = EventTranslationService::new("topic");
+        let decoded = inbound.prepare_inbound(gossip).unwrap();
+        assert_eq!(decoded.get_data(), event.get_data());
     }
 
     #[test]

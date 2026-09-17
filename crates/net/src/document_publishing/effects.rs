@@ -48,21 +48,20 @@ pub async fn handle_publish_document_requested(
 pub async fn handle_document_published_notification(
     net_cmds: mpsc::Sender<NetCommand>,
     net_events: NetEventSubscriber,
-    bus: BusHandle,
     ids: HashMap<E3id, PartyId>,
     event: DocumentPublishedNotification,
-) -> Result<()> {
+) -> Result<Option<DocumentReceived>> {
     if matches!(event.meta.kind, e3_events::DocumentKind::LbfvKeyShare) {
         debug!(
             e3_id = %event.meta.e3_id,
             "Ignoring generic l-BFV DHT document notification"
         );
-        return Ok(());
+        return Ok(None);
     }
 
     let Some(party_id) = DocumentPublishingService::interest_in(&ids, &event) else {
         debug!("Node not interested in id {}", event.meta.e3_id);
-        return Ok(());
+        return Ok(None);
     };
 
     debug!(
@@ -82,18 +81,10 @@ pub async fn handle_document_published_notification(
     // interested in can inject a content-addressed document for a different E3 or party route.
     EventConversionService::validate_received(&event.meta, &value)?;
 
-    debug!("Sending received event...");
-    bus.publish_from_remote(
-        DocumentReceived {
-            meta: event.meta,
-            value,
-        },
-        event.ts,
-        None,
-        EventSource::Net,
-    )?;
-
-    Ok(())
+    Ok(Some(DocumentReceived {
+        meta: event.meta,
+        value,
+    }))
 }
 
 /// Fetch one l-BFV document by its manifest-bound identity.
@@ -229,11 +220,11 @@ async fn broadcast_document_published_notification(
     call_and_await_response(
         net_cmds,
         net_events,
-        NetCommand::GossipPublish {
-            topic: topic.into(),
-            correlation_id: id,
-            data: GossipData::DocumentPublishedNotification(payload),
-        },
+        NetCommand::gossip_republish(
+            topic.into(),
+            GossipData::DocumentPublishedNotification(payload),
+            id,
+        ),
         |event| match event {
             NetEvent::GossipPublished { .. } => Some(Ok(())),
             NetEvent::GossipPublishError { error, .. } => {

@@ -13,7 +13,7 @@ use std::fmt::{self, Display};
 /// The outcome of an accusation quorum vote.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AccusationOutcome {
-    /// >= M nodes agree the proof is bad → slash the accused.
+    /// At least H nodes agree that the proof is invalid, so the accused can be slashed.
     AccusedFaulted,
     /// data_hashes differ between voters → accused sent different data to different nodes.
     Equivocation,

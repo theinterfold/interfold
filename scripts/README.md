@@ -212,7 +212,7 @@ Three sizes are supported, mirroring `e3_zk_helpers::CiphernodesCommitteeSize`:
 | ------------------- | ----------- | ------------- | ---------- |
 | `minimum` (default) | 3           | 1             | 2          |
 | `micro`             | 9           | 4             | 5          |
-| `small`             | 19          | 9             | 10         |
+| `small`             | 19          | 9             | 14         |
 
 All `(preset, committee)` pairs work because the Reed-Solomon parity matrices in
 `circuits/lib/src/configs/committee/<name>/parity_{insecure,secure_8192,secure_16384}.nr` are

@@ -18,14 +18,15 @@ use e3_data::{Persistable, Repositories};
 use e3_events::DkgFoldAttestationContext;
 use e3_events::{
     prelude::*, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
-    ComputeRequest, ComputeRequestError, ComputeResponse, ComputeResponseKind, CorrelationId,
-    DKGRecursiveAggregationComplete, Die, DkgAggregationRequest, E3Failed, E3Stage, E3id,
-    EventContext, FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
-    LbfvKeyShareDocumentFetchFailed, LbfvKeyShareDocumentReceived, LbfvKeyShareManifestPublished,
-    LbfvPublicKeyAggregated, NodesFoldStepRequest, OrderedSet, PkAggregationProofPending,
-    PkAggregationProofRequest, PkAggregationProofSigned, Proof, ProofType, PublicKeyAggregated,
-    Sequenced, ShareVerificationComplete, ShareVerificationDispatched, SignedProofFailed,
-    SignedProofPayload, TypedEvent, VerificationKind, ZkRequest, ZkResponse,
+    CommitmentRosterSelected, ComputeRequest, ComputeRequestError, ComputeResponse,
+    ComputeResponseKind, CorrelationId, DKGRecursiveAggregationComplete, Die,
+    DkgAggregationRequest, E3Failed, E3Stage, E3id, EventContext, FailureReason, InterfoldEvent,
+    InterfoldEventData, KeyshareCreated, LbfvKeyShareDocumentFetchFailed,
+    LbfvKeyShareDocumentReceived, LbfvKeyShareManifestPublished, LbfvPublicKeyAggregated,
+    NodesFoldStepRequest, OrderedSet, PkAggregationProofPending, PkAggregationProofRequest,
+    PkAggregationProofSigned, Proof, ProofType, PublicKeyAggregated, Sequenced,
+    ShareVerificationComplete, ShareVerificationDispatched, SignedProofFailed, SignedProofPayload,
+    TypedEvent, VerificationKind, ZkRequest, ZkResponse,
 };
 use e3_events::{trap, EType};
 use e3_fhe::{Fhe, GetAggregatePublicKey};
@@ -34,6 +35,7 @@ use e3_utils::NotifySync;
 use e3_utils::{ArcBytes, MAILBOX_LIMIT};
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::{
+    collections::BTreeSet,
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
@@ -78,6 +80,8 @@ pub struct PublicKeyAggregator {
     effects_enabled: bool,
     lbfv_retry_clock: Arc<dyn LbfvRetryClock>,
     lbfv_retry_timer: Option<SpawnHandle>,
+    /// C1 verification can finish during restart before replayed keyshares restore VerifyingC1.
+    early_c1_verification: Option<(BTreeSet<u64>, TypedEvent<ShareVerificationComplete>)>,
     /// DKG recursive aggregation events received before entering GeneratingC5Proof.
     early_dkg_proofs: Vec<TypedEvent<DKGRecursiveAggregationComplete>>,
     /// Secure-16384 row aggregation sidecar. The repository is the recovery source.
@@ -140,6 +144,7 @@ impl PublicKeyAggregator {
             effects_enabled: params.effects_enabled,
             lbfv_retry_clock,
             lbfv_retry_timer: None,
+            early_c1_verification: None,
             early_dkg_proofs: Vec::new(),
             lbfv_aggregation: params.lbfv_aggregation,
             lbfv_publication: params.lbfv_publication,

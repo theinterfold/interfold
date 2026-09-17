@@ -11,7 +11,7 @@ use crate::{
 };
 use alloy::{
     eips::{BlockId, BlockNumberOrTag},
-    primitives::{keccak256, Address, Bytes, B256, U256},
+    primitives::{keccak256, Bytes, B256, U256},
     providers::{Provider, ProviderBuilder},
     signers::{local::PrivateKeySigner, SignerSync},
     sol,
@@ -78,18 +78,9 @@ fn duration_u64(value: U256, name: &str) -> anyhow::Result<u64> {
         .map_err(|_| anyhow::anyhow!("{name} does not fit in u64"))
 }
 
-fn minimum_input_duration(
-    randomness_window: u64,
-    sortition_window: u64,
-    dkg_window: u64,
-    voting_window: u64,
-    finalization_window: u64,
-) -> anyhow::Result<u64> {
-    randomness_window
-        .checked_add(sortition_window)
-        .and_then(|value| value.checked_add(dkg_window))
-        .and_then(|value| value.checked_add(voting_window))
-        .and_then(|value| value.checked_add(finalization_window))
+fn minimum_input_duration(voting_window: u64, finalization_window: u64) -> anyhow::Result<u64> {
+    voting_window
+        .checked_add(finalization_window)
         .ok_or_else(|| anyhow::anyhow!("required CRISP input duration overflows u64"))
 }
 
@@ -564,7 +555,6 @@ pub struct AvailabilityService {
     private_key: String,
     interfold_address: String,
     e3_program_address: String,
-    ciphernode_registry_address: String,
     input_duration_seconds: u64,
     proof_lead_seconds: u64,
     max_pending_bytes: u64,
@@ -628,7 +618,6 @@ impl AvailabilityService {
             private_key: config.private_key.clone(),
             interfold_address: config.interfold_address.clone(),
             e3_program_address: config.e3_program_address.clone(),
-            ciphernode_registry_address: config.ciphernode_registry_address.clone(),
             input_duration_seconds: config.e3_duration,
             proof_lead_seconds: config.avail_proof_lead_seconds.unwrap_or(10_800),
             max_pending_bytes: config.data_availability_max_pending_bytes,
@@ -637,7 +626,7 @@ impl AvailabilityService {
         Ok(service)
     }
 
-    /// Check local timing against the current registry, Interfold, and CRISP contract values.
+    /// Check the post-key input duration against the current CRISP contract values.
     pub async fn validate_onchain_configuration(&self) -> anyhow::Result<()> {
         if !matches!(&*self.backend, Backend::Avail { .. }) {
             return Ok(());
@@ -662,36 +651,15 @@ impl AvailabilityService {
             self.proof_lead_seconds
         );
 
-        let registry: Address = self
-            .ciphernode_registry_address
-            .parse()
-            .map_err(|error| anyhow::anyhow!("invalid ciphernode registry address: {error}"))?;
-        let (randomness, sortition) = contract
-            .committee_setup_windows(registry)
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let interfold =
-            InterfoldContractFactory::create_read(&self.http_rpc_url, &self.interfold_address)
-                .await
-                .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let timeouts = interfold
-            .get_timeout_config()
-            .await
-            .map_err(|error| anyhow::anyhow!(error.to_string()))?;
         let voting = contract
             .minimum_voting_duration()
             .await
             .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-        let required = minimum_input_duration(
-            duration_u64(randomness, "randomness request timeout")?,
-            duration_u64(sortition, "sortition submission window")?,
-            duration_u64(timeouts.dkgWindow, "DKG window")?,
-            duration_u64(voting, "minimum voting duration")?,
-            onchain,
-        )?;
+        let required =
+            minimum_input_duration(duration_u64(voting, "minimum voting duration")?, onchain)?;
         anyhow::ensure!(
             self.input_duration_seconds >= required,
-            "E3_DURATION ({}) is shorter than the current on-chain committee, voting, and availability windows ({required})",
+            "E3_DURATION ({}) is shorter than the current on-chain voting and availability windows ({required})",
             self.input_duration_seconds
         );
         Ok(())
@@ -2492,6 +2460,7 @@ impl AvailabilityService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloy::primitives::Address;
 
     fn test_service(max_pending_bytes: u64) -> AvailabilityService {
         let db = sled::Config::new().temporary(true).open().unwrap();
@@ -2508,7 +2477,6 @@ mod tests {
             private_key: String::new(),
             interfold_address: String::new(),
             e3_program_address: String::new(),
-            ciphernode_registry_address: String::new(),
             input_duration_seconds: 0,
             proof_lead_seconds: 0,
             max_pending_bytes,
@@ -2654,12 +2622,9 @@ mod tests {
     }
 
     #[test]
-    fn input_duration_adds_current_onchain_windows() {
-        assert_eq!(
-            minimum_input_duration(1_200, 300, 3_600, 3_600, 10_800).unwrap(),
-            19_500
-        );
-        assert!(minimum_input_duration(u64::MAX, 1, 0, 0, 0).is_err());
+    fn input_duration_adds_voting_and_availability_windows() {
+        assert_eq!(minimum_input_duration(3_600, 10_800).unwrap(), 14_400);
+        assert!(minimum_input_duration(u64::MAX, 1).is_err());
     }
 
     #[test]

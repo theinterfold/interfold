@@ -79,8 +79,8 @@ INPUT_WINDOW_START=$((CURRENT_TIMESTAMP + 20))
 # The committee cannot publish its key after the input window closes
 # (`validateCommitteePublication`), and a real DKG on a CI runner takes well over a
 # minute, so the window has to outlast it rather than the other way round. The suite does
-# not wait this out in wall-clock time: `advance_evm_time_past` jumps the chain once the
-# input is in. Override with INTEGRATION_INPUT_WINDOW_SECONDS.
+# not wait this out in wall-clock time: `advance_evm_time_past` jumps the chain after DKG,
+# before ciphertext publication. Override with INTEGRATION_INPUT_WINDOW_SECONDS.
 INPUT_WINDOW_END=$((CURRENT_TIMESTAMP + ${INTEGRATION_INPUT_WINDOW_SECONDS:-600}))
 
 REQUEST_OUTPUT=$(pnpm committee:new \
@@ -114,6 +114,9 @@ if [[ "$FULL_PROOF_AGGREGATION" == "true" ]]; then
   $SCRIPT_DIR/lib/fake_encrypt.sh --input "$SCRIPT_DIR/output/pubkey.bin" --output "$SCRIPT_DIR/output/output.bin" --commitment-output "$SCRIPT_DIR/output/ciphertext_commitment.bin" --plaintext "$PLAINTEXT" --params "$ENCODED_PARAMS"
   waiton "$SCRIPT_DIR/output/output.bin"
 
+  # Interfold accepts the ciphertext only after the input window closes.
+  advance_evm_time_past "$INPUT_WINDOW_END"
+
   heading "Publish E3 input (forwards to publishCiphertextOutput; nodes run decryption with ZK proofs)"
   pnpm e3-program:publishInput \
     --network localhost \
@@ -121,9 +124,6 @@ if [[ "$FULL_PROOF_AGGREGATION" == "true" ]]; then
     --data-file "$SCRIPT_DIR/output/output.bin" \
     --ciphertext-commitment-file "$SCRIPT_DIR/output/ciphertext_commitment.bin" \
     --mock-data-availability-directory "$MOCK_DATA_AVAILABILITY_DIRECTORY"
-
-  # The input is in; close the window so the round can move to decryption.
-  advance_evm_time_past "$INPUT_WINDOW_END"
 
   heading "Wait for on-chain plaintext (BFV decryption verifier)"
   wait_for_plaintext_output "$E3_ID" "$SCRIPT_DIR/output/plaintext.txt" "$INTEGRATION_DKG_TIMEOUT"

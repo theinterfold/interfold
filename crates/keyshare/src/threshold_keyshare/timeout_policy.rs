@@ -10,7 +10,7 @@ pub(crate) const DKG_WINDOW_ENV: &str = "E3_DKG_WINDOW_SECS";
 pub(crate) const DEFAULT_DKG_WINDOW_SECS: u64 = 21_600;
 
 const ENCRYPTION_KEY_CUTOFF_BPS: u64 = 1000;
-const THRESHOLD_SHARE_CUTOFF_BPS: u64 = 6000;
+const THRESHOLD_SHARE_CUTOFF_BPS: u64 = 7500;
 const DECRYPTION_KEY_SHARED_CUTOFF_BPS: u64 = 10000;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -57,6 +57,14 @@ pub(crate) struct DerivedTimeout {
     pub description: String,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct ThresholdShareSchedule {
+    pub cutoff_delay: Duration,
+    pub deadline_delay: Duration,
+    pub cutoff_reached: bool,
+    pub description: String,
+}
+
 pub(crate) fn now_unix_secs() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -66,67 +74,115 @@ pub(crate) fn now_unix_secs() -> u64 {
 
 pub(crate) fn resolve_timeout(
     phase: DkgTimeoutPhase,
-    dkg_started_at_unix_secs: Option<u64>,
-) -> DerivedTimeout {
+    dkg_deadline_unix_secs: Option<u64>,
+    dkg_window_secs: Option<u64>,
+) -> anyhow::Result<DerivedTimeout> {
     let collector_override = parse_env_secs(phase.override_env());
-    let dkg_window_secs = parse_env_secs(DKG_WINDOW_ENV).unwrap_or(DEFAULT_DKG_WINDOW_SECS);
+    let deadline = dkg_deadline_unix_secs
+        .ok_or_else(|| anyhow::anyhow!("canonical DKG deadline is unavailable"))?;
+    let window =
+        dkg_window_secs.ok_or_else(|| anyhow::anyhow!("frozen DKG window is unavailable"))?;
 
-    resolve_timeout_from_inputs(
-        phase,
+    resolve_timeout_from_inputs(phase, collector_override, deadline, window, now_unix_secs())
+}
+
+pub(crate) fn resolve_threshold_share_schedule(
+    dkg_deadline_unix_secs: Option<u64>,
+    dkg_window_secs: Option<u64>,
+) -> anyhow::Result<ThresholdShareSchedule> {
+    let collector_override =
+        parse_env_secs(DkgTimeoutPhase::ThresholdShareCollection.override_env());
+    let deadline = dkg_deadline_unix_secs
+        .ok_or_else(|| anyhow::anyhow!("canonical DKG deadline is unavailable"))?;
+    let window =
+        dkg_window_secs.ok_or_else(|| anyhow::anyhow!("frozen DKG window is unavailable"))?;
+
+    resolve_threshold_share_schedule_from_inputs(
         collector_override,
-        dkg_window_secs,
-        dkg_started_at_unix_secs,
+        deadline,
+        window,
         now_unix_secs(),
     )
+}
+
+pub(crate) fn resolve_threshold_share_schedule_from_inputs(
+    collector_override_secs: Option<u64>,
+    dkg_deadline_unix_secs: u64,
+    dkg_window_secs: u64,
+    now_unix_secs: u64,
+) -> anyhow::Result<ThresholdShareSchedule> {
+    anyhow::ensure!(
+        dkg_deadline_unix_secs > 0 && dkg_window_secs > 0,
+        "canonical DKG timing is invalid"
+    );
+    anyhow::ensure!(
+        now_unix_secs < dkg_deadline_unix_secs,
+        "canonical DKG deadline {} has passed at {}",
+        dkg_deadline_unix_secs,
+        now_unix_secs
+    );
+
+    let phase = DkgTimeoutPhase::ThresholdShareCollection;
+    let cutoff = phase_cutoff_unix_secs(dkg_deadline_unix_secs, dkg_window_secs, phase);
+    let cutoff_reached = now_unix_secs >= cutoff;
+    let canonical_cutoff_delay = cutoff.saturating_sub(now_unix_secs);
+    let cutoff_delay_secs = collector_override_secs
+        .map(|override_secs| override_secs.min(canonical_cutoff_delay))
+        .unwrap_or(canonical_cutoff_delay);
+
+    Ok(ThresholdShareSchedule {
+        cutoff_delay: Duration::from_secs(cutoff_delay_secs),
+        deadline_delay: Duration::from_secs(
+            dkg_deadline_unix_secs.saturating_sub(now_unix_secs),
+        ),
+        cutoff_reached,
+        description: format!(
+            "threshold-share soft cutoff {} ({}% of frozen {}s DKG window) and canonical deadline {}; optional {} can only advance the soft cutoff",
+            cutoff,
+            phase.cutoff_bps() / 100,
+            dkg_window_secs,
+            dkg_deadline_unix_secs,
+            phase.override_env(),
+        ),
+    })
 }
 
 pub(crate) fn resolve_timeout_from_inputs(
     phase: DkgTimeoutPhase,
     collector_override_secs: Option<u64>,
+    dkg_deadline_unix_secs: u64,
     dkg_window_secs: u64,
-    dkg_started_at_unix_secs: Option<u64>,
     now_unix_secs: u64,
-) -> DerivedTimeout {
-    if let Some(override_secs) = collector_override_secs {
-        return DerivedTimeout {
-            duration: Duration::from_secs(override_secs),
-            description: format!(
-                "{} timeout override from {}={}s",
-                phase.label(),
-                phase.override_env(),
-                override_secs
-            ),
-        };
-    }
+) -> anyhow::Result<DerivedTimeout> {
+    anyhow::ensure!(
+        dkg_deadline_unix_secs > 0 && dkg_window_secs > 0,
+        "canonical DKG timing is invalid"
+    );
+    let cutoff = phase_cutoff_unix_secs(dkg_deadline_unix_secs, dkg_window_secs, phase);
+    anyhow::ensure!(
+        now_unix_secs < cutoff,
+        "{} cutoff {} has passed at {}",
+        phase.label(),
+        cutoff,
+        now_unix_secs
+    );
+    let remaining_secs = cutoff.saturating_sub(now_unix_secs);
+    let duration_secs = collector_override_secs
+        .map(|override_secs| override_secs.min(remaining_secs))
+        .unwrap_or(remaining_secs);
 
-    let cutoff_secs = phase_cutoff_secs(dkg_window_secs, phase.cutoff_bps());
-    let remaining_secs = match dkg_started_at_unix_secs {
-        Some(started_at) => cutoff_secs.saturating_sub(now_unix_secs.saturating_sub(started_at)),
-        None => cutoff_secs,
-    };
-
-    let description = match dkg_started_at_unix_secs {
-        Some(started_at) => format!(
-            "{} timeout derived from {}={}s, DKG start {}, cutoff {}% of DKG window",
+    Ok(DerivedTimeout {
+        duration: Duration::from_secs(duration_secs),
+        description: format!(
+            "{} cutoff {} ({}% of frozen {}s DKG window, canonical deadline {}); optional {} can only shorten it",
             phase.label(),
-            DKG_WINDOW_ENV,
+            cutoff,
+            phase.cutoff_bps() / 100,
             dkg_window_secs,
-            started_at,
-            phase.cutoff_bps() / 100
+            dkg_deadline_unix_secs,
+            phase.override_env(),
         ),
-        None => format!(
-            "{} timeout derived from {}={}s with missing DKG start, using full cutoff budget of {}%",
-            phase.label(),
-            DKG_WINDOW_ENV,
-            dkg_window_secs,
-            phase.cutoff_bps() / 100
-        ),
-    };
-
-    DerivedTimeout {
-        duration: Duration::from_secs(remaining_secs),
-        description,
-    }
+    })
 }
 
 fn parse_env_secs(name: &str) -> Option<u64> {
@@ -142,6 +198,17 @@ fn phase_cutoff_secs(dkg_window_secs: u64, cutoff_bps: u64) -> u64 {
     secs.max(1)
 }
 
+pub(crate) fn phase_cutoff_unix_secs(
+    dkg_deadline_unix_secs: u64,
+    dkg_window_secs: u64,
+    phase: DkgTimeoutPhase,
+) -> u64 {
+    let start = dkg_deadline_unix_secs.saturating_sub(dkg_window_secs);
+    start
+        .saturating_add(phase_cutoff_secs(dkg_window_secs, phase.cutoff_bps()))
+        .min(dkg_deadline_unix_secs)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -151,13 +218,14 @@ mod tests {
         let timeout = resolve_timeout_from_inputs(
             DkgTimeoutPhase::EncryptionKeyCollection,
             None,
+            8_200,
             7200,
-            Some(1_000),
             1_600,
-        );
+        )
+        .unwrap();
 
         assert_eq!(timeout.duration, Duration::from_secs(120));
-        assert!(timeout.description.contains(DKG_WINDOW_ENV));
+        assert!(timeout.description.contains("canonical deadline"));
     }
 
     #[test]
@@ -165,28 +233,110 @@ mod tests {
         let timeout = resolve_timeout_from_inputs(
             DkgTimeoutPhase::ThresholdShareCollection,
             None,
+            8_200,
             7200,
-            Some(1_000),
             2_000,
-        );
+        )
+        .unwrap();
 
-        assert_eq!(timeout.duration, Duration::from_secs(3320));
+        assert_eq!(timeout.duration, Duration::from_secs(4_400));
     }
 
     #[test]
-    fn collector_override_wins_over_dkg_window() {
+    fn threshold_share_schedule_keeps_the_canonical_deadline() {
+        let schedule =
+            resolve_threshold_share_schedule_from_inputs(None, 8_200, 7_200, 2_000).unwrap();
+
+        assert_eq!(schedule.cutoff_delay, Duration::from_secs(4_400));
+        assert_eq!(schedule.deadline_delay, Duration::from_secs(6_200));
+        assert!(!schedule.cutoff_reached);
+        assert!(schedule.description.contains("soft cutoff"));
+    }
+
+    #[test]
+    fn threshold_share_schedule_recovers_after_the_soft_cutoff() {
+        let schedule =
+            resolve_threshold_share_schedule_from_inputs(None, 8_200, 7_200, 6_500).unwrap();
+
+        assert_eq!(schedule.cutoff_delay, Duration::ZERO);
+        assert_eq!(schedule.deadline_delay, Duration::from_secs(1_700));
+        assert!(schedule.cutoff_reached);
+    }
+
+    #[test]
+    fn threshold_share_override_does_not_shorten_the_hard_deadline() {
+        let schedule =
+            resolve_threshold_share_schedule_from_inputs(Some(45), 8_200, 7_200, 2_000).unwrap();
+
+        assert_eq!(schedule.cutoff_delay, Duration::from_secs(45));
+        assert_eq!(schedule.deadline_delay, Duration::from_secs(6_200));
+    }
+
+    #[test]
+    fn threshold_share_schedule_rejects_the_canonical_deadline() {
+        let error =
+            resolve_threshold_share_schedule_from_inputs(None, 8_200, 7_200, 8_200).unwrap_err();
+
+        assert!(error.to_string().contains("canonical DKG deadline"));
+    }
+
+    #[test]
+    fn collector_override_can_only_shorten_canonical_budget() {
         let timeout = resolve_timeout_from_inputs(
             DkgTimeoutPhase::DecryptionKeySharedCollection,
             Some(45),
+            8_200,
             7200,
-            Some(1_000),
             8_000,
-        );
+        )
+        .unwrap();
 
         assert_eq!(timeout.duration, Duration::from_secs(45));
         assert!(timeout
             .description
             .contains(DkgTimeoutPhase::DecryptionKeySharedCollection.override_env()));
+
+        let past = resolve_timeout_from_inputs(
+            DkgTimeoutPhase::DecryptionKeySharedCollection,
+            Some(45),
+            8_200,
+            7200,
+            8_300,
+        )
+        .unwrap_err();
+        assert!(past.to_string().contains("cutoff 8200 has passed"));
+    }
+
+    #[test]
+    fn each_e3_keeps_its_frozen_deadline_across_restart() {
+        let short = resolve_timeout_from_inputs(
+            DkgTimeoutPhase::ThresholdShareCollection,
+            None,
+            4_600,
+            3_600,
+            2_000,
+        )
+        .unwrap();
+        let long = resolve_timeout_from_inputs(
+            DkgTimeoutPhase::ThresholdShareCollection,
+            None,
+            8_200,
+            7_200,
+            2_000,
+        )
+        .unwrap();
+        let restarted_short = resolve_timeout_from_inputs(
+            DkgTimeoutPhase::ThresholdShareCollection,
+            None,
+            4_600,
+            3_600,
+            2_600,
+        )
+        .unwrap();
+
+        assert_eq!(short.duration, Duration::from_secs(1_700));
+        assert_eq!(long.duration, Duration::from_secs(4_400));
+        assert_eq!(restarted_short.duration, Duration::from_secs(1_100));
     }
 
     #[test]

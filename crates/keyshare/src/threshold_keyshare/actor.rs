@@ -5,24 +5,27 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use actix::prelude::*;
-use alloy::{primitives::Address, signers::local::PrivateKeySigner};
+use alloy::primitives::Address;
+use alloy::signers::local::PrivateKeySigner;
 use anyhow::{anyhow, bail, Context, Result};
 use e3_crypto::{Cipher, SensitiveBytes};
 use e3_data::Persistable;
 use e3_events::{
-    prelude::*, trap, BusHandle, CiphernodeSelected, CiphertextOutputPublished,
+    prelude::*, trap, AggregationInputsReady, AggregationPhase, AggregatorChanged, BusHandle,
+    CiphernodeSelected, CiphertextOutputPublished, CommitmentRosterSelected,
     CommitteeMemberExcluded, CommitteeMemberExpelled, ComputeRequest, ComputeRequestError,
     ComputeRequestKind, ComputeResponse, ComputeResponseKind, CorrelationId, DecryptionKeyShared,
-    DecryptionShareProofSigned, DecryptionShareProofsPending, Die, DkgProofSigned,
-    DkgShareDecryptionProofRequest, E3Failed, E3RequestComplete, E3Stage, EType, EncryptionKey,
-    EncryptionKeyCollectionFailed, EncryptionKeyCreated, EncryptionKeyPending, EventContext,
-    FailureReason, InterfoldEvent, InterfoldEventData, KeyshareCreated,
-    LbfvKeyShareDocumentCreated, LbfvKeyShareManifestPublished, PartyProofsToVerify,
-    PartyShareDecryptionProofsToVerify, PkGenerationProofSigned, ProofPayload, ProofType,
-    Sequenced, ShareDecryptionProofPending, ShareVerificationComplete, ShareVerificationDispatched,
-    SignedLbfvKeyShareManifest, SignedProofPayload, ThresholdShare, ThresholdShareCollectionFailed,
-    ThresholdShareCreated, ThresholdShareDecryptionProofRequest, ThresholdSharePending, TypedEvent,
-    VerificationKind, ZkRequest, ZkResponse,
+    DecryptionShareProofSigned, DecryptionShareProofsPending, Die, DkgCoordination,
+    DkgCoordinationKind, DkgDealer, DkgProofSigned, DkgShareDecryptionProofRequest, E3Failed,
+    E3RequestComplete, E3Stage, E3id, EType, EncryptionKey, EncryptionKeyCollectionFailed,
+    EncryptionKeyCreated, EncryptionKeyPending, EventContext, FailureReason, InterfoldEvent,
+    InterfoldEventData, KeyshareCreated, LbfvKeyShareDocumentCreated,
+    LbfvKeyShareManifestPublished, PartyProofsToVerify, PartyShareDecryptionProofsToVerify,
+    PkGenerationProofSigned, ProofPayload, ProofType, Sequenced, ShareDecryptionProofPending,
+    ShareVerificationComplete, ShareVerificationDispatched, SignedLbfvKeyShareManifest,
+    SignedProofPayload, ThresholdShare, ThresholdShareCollectionFailed, ThresholdShareCreated,
+    ThresholdShareDecryptionProofRequest, ThresholdSharePending, TypedEvent, VerificationKind,
+    ZkRequest, ZkResponse,
 };
 use e3_fhe_params::create_deterministic_crp_from_default_seed;
 use e3_fhe_params::BfvPreset;
@@ -44,6 +47,8 @@ use e3_zk_helpers::CiphernodesCommitteeSize;
 use fhe_traits::Serialize;
 use std::{
     collections::{BTreeSet, HashMap, HashSet},
+    future::Future,
+    pin::Pin,
     sync::Arc,
 };
 use tracing::{error, info, trace, warn};
@@ -58,20 +63,25 @@ use crate::actors::encryption_key_collector::{
 use crate::actors::threshold_share_collector::{
     ExpelPartyFromShareCollection, ThresholdShareCollector,
 };
-use crate::domain::timeout_policy::{resolve_timeout, DkgTimeoutPhase};
+use crate::domain::timeout_policy::{
+    resolve_threshold_share_schedule, resolve_timeout, DkgTimeoutPhase,
+};
 use crate::domain::{
-    build_decryption_key_plan, build_shares_generated_plan, generate_bfv_keypair,
-    AggregatingDecryptionKey, BfvKeypairMaterial, CollectingEncryptionKeysData, Decrypting,
-    DecryptionKeyPlan, GeneratingDecryptionProof, GeneratingThresholdShareData, KeyshareState,
-    LbfvGenerationStateV1, ProofRequestData, ReadyForDecryption, ReceivedShareProofs,
-    ThresholdKeyshareState,
+    build_decryption_key_plan, build_shares_generated_plan, dealer_identity, generate_bfv_keypair,
+    select_ready_roster, AggregatingDecryptionKey, BfvKeypairMaterial,
+    CollectingEncryptionKeysData, Decrypting, DecryptionKeyPlan, GeneratingDecryptionProof,
+    GeneratingThresholdShareData, KeyshareState, LbfvGenerationStateV1, ProofRequestData,
+    ReadyForDecryption, ReceivedShareProofs, ThresholdKeyshareState,
 };
 
 #[path = "recovery_state.rs"]
 mod recovery_state;
 pub use recovery_state::{
-    ThresholdKeyshareRecoveryState, THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
+    RecoveryPayloadRef, ThresholdKeyshareRecoveryState, THRESHOLD_KEYSHARE_RECOVERY_SCHEMA_VERSION,
 };
+#[path = "recovery_payloads.rs"]
+mod recovery_payloads;
+pub use recovery_payloads::ThresholdKeyshareRecoveryPayloads;
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 #[rtype(result = "()")]
@@ -127,12 +137,22 @@ pub struct ThresholdKeyshareParams {
     pub interfold_address: Address,
     pub recovery: Persistable<ThresholdKeyshareRecoveryState>,
     pub lbfv_generation: Persistable<LbfvGenerationStateV1>,
+    pub recovery_payloads: ThresholdKeyshareRecoveryPayloads,
+    pub dkg_timing_reader: DkgTimingReader,
     pub signer: PrivateKeySigner,
+    pub effects_enabled: bool,
 }
+
+pub type DkgTimingFuture = Pin<Box<dyn Future<Output = Result<(u64, u64)>> + Send>>;
+pub type DkgTimingReader = Arc<dyn Fn(E3id) -> DkgTimingFuture + Send + Sync>;
 
 /// Process-local bridge data rebuilt from the versioned keyshare recovery record.
 #[derive(Default)]
 struct PendingKeyshareWork {
+    /// Replayed key-generation output waiting for encryption-key recovery.
+    gen_pk_response: Option<TypedEvent<ComputeResponse>>,
+    /// Replayed ESI output waiting for key-generation recovery.
+    gen_esi_response: Option<TypedEvent<ComputeResponse>>,
     /// Shares awaiting the C2/C3 verification result.
     shares: Vec<Arc<ThresholdShare>>,
     /// C4 requests awaiting the threshold-decryption-key result.
@@ -156,19 +176,44 @@ pub struct ThresholdKeyshare {
     decryption_key_shared_collector: Option<Addr<DecryptionKeySharedCollector>>,
     state: Persistable<ThresholdKeyshareState>,
     recovery: Persistable<ThresholdKeyshareRecoveryState>,
+    recovery_payloads: ThresholdKeyshareRecoveryPayloads,
     share_enc_preset: BfvPreset,
     interfold_address: Address,
     lbfv_generation: Persistable<LbfvGenerationStateV1>,
+    dkg_timing_reader: DkgTimingReader,
     signer: PrivateKeySigner,
+    active_aggregator_party_id: Option<u64>,
+    is_aggregator: bool,
+    effects_enabled: bool,
+    roster_inputs_ready: bool,
+    roster_proposal_pending: bool,
+    selection_timing_pending: bool,
     pending: PendingKeyshareWork,
 }
 
 impl ThresholdKeyshare {
+    fn buffer_replayed_compute_response(
+        slot: &mut Option<TypedEvent<ComputeResponse>>,
+        response: TypedEvent<ComputeResponse>,
+        operation: &str,
+    ) -> Result<()> {
+        if let Some(existing) = slot.as_ref() {
+            anyhow::ensure!(
+                existing.response == response.response && existing.e3_id == response.e3_id,
+                "conflicting replayed {operation} responses"
+            );
+        } else {
+            *slot = Some(response);
+        }
+        Ok(())
+    }
+
     pub fn new(params: ThresholdKeyshareParams) -> Self {
         let recovered = params.recovery.get().unwrap_or_default();
         let own_party_id = params.state.get().map(|state| state.party_id);
-        let pending_shares = recovered
-            .threshold_shares
+        let pending_shares = params
+            .recovery_payloads
+            .shares()
             .values()
             .filter(|event| Some(event.share.party_id) != own_party_id)
             .map(|event| event.share.clone())
@@ -192,10 +237,18 @@ impl ThresholdKeyshare {
             decryption_key_shared_collector: None,
             state: params.state,
             recovery: params.recovery,
+            recovery_payloads: params.recovery_payloads,
             share_enc_preset: params.share_enc_preset,
             interfold_address: params.interfold_address,
             lbfv_generation: params.lbfv_generation,
+            dkg_timing_reader: params.dkg_timing_reader,
             signer: params.signer,
+            active_aggregator_party_id: recovered.active_aggregator_party_id,
+            is_aggregator: recovered.is_aggregator,
+            effects_enabled: params.effects_enabled,
+            roster_inputs_ready: false,
+            roster_proposal_pending: false,
+            selection_timing_pending: false,
             pending: PendingKeyshareWork {
                 shares: pending_shares,
                 share_decryption_data,

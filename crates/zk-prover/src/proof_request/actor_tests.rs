@@ -7,13 +7,17 @@
 use super::*;
 use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
+use e3_crypto::SensitiveBytes;
 use e3_events::{
-    ComputeRequestErrorKind, EncryptionKey, Event, HistoryCollector, TakeEvents, Unsequenced,
-    ZkError,
+    CircuitName, ComputeRequestErrorKind, EncryptionKey, Event, HistoryCollector,
+    PkGenerationProofRequest, ShareComputationProofRequest, TakeEvents, ThresholdShare,
+    ThresholdSharePending, Unsequenced, ZkError,
 };
+use e3_fhe_params::BfvPreset;
 use e3_test_helpers::get_common_setup;
-use e3_trbfv::{TrBFVError, TrBFVFailure};
+use e3_trbfv::{shares::BfvEncryptedShares, TrBFVError, TrBFVFailure};
 use e3_utils::utility_types::ArcBytes;
+use e3_zk_helpers::{computation::DkgInputType, CiphernodesCommitteeSize};
 
 fn test_ctx(data: impl Into<InterfoldEventData>) -> EventContext<Sequenced> {
     EventContext::<Unsequenced>::from(data.into()).sequence(0)
@@ -154,5 +158,88 @@ async fn c0_trbfv_compute_error_also_emits_e3_failed() -> Result<()> {
         "a failed computation must clear its pending entry"
     );
 
+    Ok(())
+}
+
+fn threshold_share_pending(e3_id: E3id, marker: u8) -> ThresholdSharePending {
+    let sensitive = || SensitiveBytes::from_encrypted(&[]);
+    let share_request = || ShareComputationProofRequest {
+        secret_raw: sensitive(),
+        secret_sss_raw: sensitive(),
+        dkg_input_type: DkgInputType::SecretKey,
+        params_preset: BfvPreset::InsecureThreshold512,
+        committee_size: CiphernodesCommitteeSize::Minimum,
+    };
+
+    ThresholdSharePending {
+        e3_id,
+        full_share: Arc::new(ThresholdShare {
+            party_id: 0,
+            pk_share: ArcBytes::from_bytes(&[marker]),
+            sk_sss: BfvEncryptedShares::default(),
+            esi_sss: vec![],
+        }),
+        proof_request: PkGenerationProofRequest {
+            pk0_share: ArcBytes::from_bytes(&[marker]),
+            sk: sensitive(),
+            eek: sensitive(),
+            e_sm: sensitive(),
+            params_preset: BfvPreset::InsecureThreshold512,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+        },
+        sk_share_computation_request: share_request(),
+        e_sm_share_computation_request: share_request(),
+        sk_share_encryption_requests: vec![],
+        e_sm_share_encryption_requests: vec![],
+        recipient_party_ids: vec![0],
+    }
+}
+
+#[actix::test]
+async fn replayed_threshold_work_invalidates_old_correlations() -> Result<()> {
+    let (bus, _rng, _seed, _params, _crp, _errors, _history) = get_common_setup(None)?;
+    let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), false);
+    let e3_id = E3id::new("duplicate-threshold", 1);
+    let ec = test_ctx(E3Failed {
+        e3_id: e3_id.clone(),
+        failed_at_stage: E3Stage::CommitteeFinalized,
+        reason: FailureReason::DKGInvalidShares,
+    });
+
+    actor.handle_threshold_share_pending(TypedEvent::new(
+        threshold_share_pending(e3_id.clone(), 0x11),
+        ec.clone(),
+    ));
+    let first_correlations = actor
+        .threshold_correlation
+        .keys()
+        .copied()
+        .collect::<Vec<_>>();
+    assert_eq!(first_correlations.len(), 3);
+
+    actor.handle_threshold_share_pending(TypedEvent::new(
+        threshold_share_pending(e3_id.clone(), 0x22),
+        ec.clone(),
+    ));
+
+    assert_eq!(actor.threshold_correlation.len(), 3);
+    assert!(first_correlations
+        .iter()
+        .all(|correlation| !actor.threshold_correlation.contains_key(correlation)));
+    assert_eq!(
+        &actor.pending_threshold[&e3_id].full_share.pk_share,
+        &ArcBytes::from_bytes(&[0x22])
+    );
+
+    actor.handle_threshold_proof_response(
+        &first_correlations[0],
+        Proof::new(
+            CircuitName::PkAggregation,
+            ArcBytes::from_bytes(&[1]),
+            ArcBytes::from_bytes(&[2]),
+        ),
+        &ec,
+    );
+    assert_eq!(actor.pending_threshold[&e3_id].total_received(), 0);
     Ok(())
 }

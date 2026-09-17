@@ -13,7 +13,6 @@ use chrono::{serde::ts_seconds, DateTime, Duration, Utc};
 use e3_utils::ArcBytes;
 pub use filter::Filter;
 use serde::{Deserialize, Serialize};
-use tracing::warn;
 
 use crate::E3id;
 
@@ -80,7 +79,6 @@ pub struct PublishDocumentRequested {
 
 impl PublishDocumentRequested {
     pub fn new(meta: DocumentMeta, value: ArcBytes) -> Self {
-        warn!("Publishing document that is {}", value.size());
         Self { meta, value }
     }
 }
