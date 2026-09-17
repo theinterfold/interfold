@@ -46,13 +46,15 @@ async function readPendingRequestCount(
 function isUnavailablePendingRequestCount(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false;
   const rpcError = error as {
-    code?: string;
+    code?: string | number;
     data?: unknown;
     value?: unknown;
   };
   return (
     (rpcError.data === "0x" &&
-      (rpcError.code === undefined || rpcError.code === "CALL_EXCEPTION")) ||
+      (rpcError.code === undefined ||
+        rpcError.code === "CALL_EXCEPTION" ||
+        rpcError.code === 3)) ||
     (rpcError.code === "BAD_DATA" && rpcError.value === "0x")
   );
 }

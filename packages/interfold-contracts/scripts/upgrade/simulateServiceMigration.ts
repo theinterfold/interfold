@@ -197,12 +197,15 @@ export async function simulateServiceMigration(): Promise<void> {
   ];
   const [governanceCall] = aragonAdminSafeTransactions(config, actions);
   const proposer = config.governance.proposerSafe;
-  await ethers.provider.send("anvil_impersonateAccount", [proposer]);
-  await ethers.provider.send("anvil_setBalance", [
+  const forkProvider = new ethersLib.JsonRpcProvider(
+    process.env.RPC_URL ?? "http://localhost:8545",
+  );
+  await forkProvider.send("anvil_impersonateAccount", [proposer]);
+  await forkProvider.send("anvil_setBalance", [
     proposer,
     ethersLib.toBeHex(ethersLib.parseEther("100")),
   ]);
-  const proposerSigner = await ethers.getSigner(proposer);
+  const proposerSigner = await forkProvider.getSigner(proposer);
   await (
     await proposerSigner.sendTransaction({
       to: governanceCall.to,
@@ -210,6 +213,7 @@ export async function simulateServiceMigration(): Promise<void> {
       value: governanceCall.value,
     })
   ).wait();
+  forkProvider.destroy();
 
   equal(
     await proxyImplementation(ethers, deployment.ciphernodeRegistry),

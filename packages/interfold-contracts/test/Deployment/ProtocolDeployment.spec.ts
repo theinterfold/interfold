@@ -439,6 +439,22 @@ describe("Protocol deployment", function () {
     ).to.equal(undefined);
   });
 
+  it("accepts the numeric RPC error for a missing legacy getter", async function () {
+    let calls = 0;
+    const provider = {
+      call: async () => {
+        calls += 1;
+        throw { code: 3, data: "0x" };
+      },
+      getCode: async () => "0x6000",
+    } as unknown as ethersLib.Provider;
+
+    expect(
+      await readOptionalPendingRequestCount(provider, ethersLib.ZeroAddress),
+    ).to.equal(undefined);
+    expect(calls).to.equal(2);
+  });
+
   it("rejects a repeated pending-request RPC failure", async function () {
     let calls = 0;
     const provider = {
