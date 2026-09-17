@@ -96,7 +96,7 @@ pub struct Inputs {
     pub eek: Polynomial,
     pub sk: Polynomial,
     pub e_sm: CrtPolynomial,
-    pub r1is: CrtPolynomial,
+    pub q_shorts: CrtPolynomial,
     pub pk0is: CrtPolynomial,
 }
 
@@ -314,17 +314,21 @@ impl Computation for Inputs {
 
             assert_eq!((pk0_share_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            // C1 reduces modulo X^N + 1 in-circuit, so only the modulus-switching quotient
-            // is a witness. The cyclotomic quotient is discarded.
+            // C1 checks the public key equation in Z[X]/(X^N+1), so it takes the reduced
+            // modulus-switching quotient. The circuit constrains only the range of what it gets,
+            // which is why the reduction belongs here. The cyclotomic quotient is discarded.
             let (r1, _r2) = decompose_residue(&pk0_share, &pk0_share_hat, &qi, &cyclo, n);
+            let q_short = r1
+                .reduce_by_cyclotomic(&cyclo)
+                .expect("cyclotomic polynomial is non-zero and monic");
 
-            (i, r1, pk0_share.clone(), e_sm.clone())
+            (i, q_short, pk0_share.clone(), e_sm.clone())
         })
         .collect();
 
         results.sort_by_key(|(i, _, _, _)| *i);
 
-        let mut r1 = CrtPolynomial::new(vec![]);
+        let mut q_shorts = CrtPolynomial::new(vec![]);
         let mut pk0_share = CrtPolynomial::new(vec![]);
         let mut e_sm = CrtPolynomial::new(vec![]);
 
@@ -336,8 +340,8 @@ impl Computation for Inputs {
         eek.reverse();
         eek.center(&moduli[0]);
 
-        for (_i, r1i, pk0_sharei, e_smi) in results {
-            r1.add_limb(r1i);
+        for (_i, q_shorti, pk0_sharei, e_smi) in results {
+            q_shorts.add_limb(q_shorti);
             pk0_share.add_limb(pk0_sharei);
             e_sm.add_limb(e_smi);
         }
@@ -346,7 +350,7 @@ impl Computation for Inputs {
             eek,
             sk,
             e_sm,
-            r1is: r1,
+            q_shorts,
             pk0is: pk0_share,
         })
     }
@@ -356,14 +360,14 @@ impl Computation for Inputs {
         let e = polynomial_to_toml_json(&self.eek);
         let sk = polynomial_to_toml_json(&self.sk);
         let e_sm = crt_polynomial_to_toml_json(&self.e_sm);
-        let r1is = crt_polynomial_to_toml_json(&self.r1is);
+        let q_shorts = crt_polynomial_to_toml_json(&self.q_shorts);
 
         let json = serde_json::json!({
             "pk0is": pk0is,
             "eek": e,
             "sk": sk,
             "e_sm": e_sm,
-            "r1is": r1is,
+            "q_shorts": q_shorts,
         });
 
         Ok(json)

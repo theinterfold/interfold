@@ -9,7 +9,7 @@ use crate::math::commitments::{
     compute_threshold_pk_challenge, compute_threshold_pk_commitment, threshold_pk_challenge_payload,
 };
 use crate::math::polynomial::Polynomial;
-use crate::math::secure_arithmetic::{append, centered, dot, fold_negacyclic, kernel};
+use crate::math::secure_arithmetic::{append, centered, dot, kernel};
 
 /// Parameters for threshold public key generation (C1).
 pub struct Configs<let N: u32, let L: u32> {
@@ -74,9 +74,10 @@ pub struct PkGeneration<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u3
     /// Smudging noise polynomial (secret witness), one limb per modulus.
     e_sm: [Polynomial<N>; L],
 
-    /// Modulus-switching quotients (secret witnesses), one per modulus, degree `2N-2`. Reduced to
-    /// length `N` inside the circuit; only the reduction is constrained.
-    r1: [Polynomial<2 * N - 1>; L],
+    /// Modulus-switching quotients (secret witnesses), one per modulus, already reduced modulo
+    /// `X^N + 1` by the generator. The reduction is a witness derivation, so the circuit takes the
+    /// reduced form and constrains only its range.
+    q_short: [Polynomial<N>; L],
 
     /// Threshold public key first component per modulus (committed witness). The second component
     /// is `a[i]`.
@@ -90,10 +91,10 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         eek: Polynomial<N>,
         sk: Polynomial<N>,
         e_sm: [Polynomial<N>; L],
-        r1: [Polynomial<2 * N - 1>; L],
+        q_short: [Polynomial<N>; L],
         pk0: [Polynomial<N>; L],
     ) -> Self {
-        PkGeneration { configs, a, eek, sk, e_sm, r1, pk0 }
+        PkGeneration { configs, a, eek, sk, e_sm, q_short, pk0 }
     }
 
     /// Executes the threshold public key generation circuit.
@@ -109,15 +110,13 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         self.sk.range_check_2bounds::<BIT_SK>(self.configs.sk_bound, self.configs.sk_bound);
         self.eek.range_check_2bounds::<BIT_EEK>(self.configs.eek_bound, self.configs.eek_bound);
 
-        // Step 2: reduce each modulus-switching quotient modulo X^N + 1, then bound the result.
-        // The reduction itself is a witness derivation over the native field and may wrap; only
-        // these bounds make the reduced values usable as integers.
+        // Step 2: bound each modulus-switching quotient. The generator supplies it already reduced
+        // modulo X^N + 1, and the circuit constrains no part of that derivation; only these bounds
+        // make the values usable as integers.
         let short_offset = 2.pow_32(BIT_R1 as Field);
-        let mut q_short = [Polynomial::new([0; N]); L];
         for l in 0..L {
-            q_short[l] = fold_negacyclic(self.r1[l]);
             for j in 0..N {
-                (q_short[l].coefficients[j] + short_offset).assert_max_bit_size::<BIT_R1 + 1>();
+                (self.q_short[l].coefficients[j] + short_offset).assert_max_bit_size::<BIT_R1 + 1>();
             }
         }
 
@@ -156,7 +155,7 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
         payload = append::<N, BIT_EEK + 1>(payload, self.eek, self.configs.eek_bound);
         for l in 0..L {
             payload = payload.push_back(self.configs.qis[l]);
-            payload = append::<N, BIT_R1 + 1>(payload, q_short[l], short_offset);
+            payload = append::<N, BIT_R1 + 1>(payload, self.q_short[l], short_offset);
         }
         let x = compute_threshold_pk_challenge(payload);
 
@@ -168,7 +167,7 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
             for j in 0..N {
                 residual[j] = self.pk0[l].coefficients[j]
                     - self.eek.coefficients[j]
-                    - self.configs.qis[l] * q_short[l].coefficients[j];
+                    - self.configs.qis[l] * self.q_short[l].coefficients[j];
             }
             assert(
                 Polynomial::new(residual).eval(x) == -dot(self.a[l], k),

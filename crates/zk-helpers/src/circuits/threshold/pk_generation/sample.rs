@@ -99,7 +99,11 @@ mod tests {
 
         assert_eq!(inputs.pk0is.limbs.len(), 2);
         assert_eq!(inputs.e_sm.limbs.len(), 2);
-        assert_eq!(inputs.r1is.limbs.len(), 2);
-        assert_eq!(inputs.r2is.limbs.len(), 2);
+        assert_eq!(inputs.q_shorts.limbs.len(), 2);
+        // The circuit takes the quotient already reduced modulo X^N + 1, so each limb must hold
+        // exactly N coefficients. A shape regression here is otherwise silent until proving.
+        for limb in &inputs.q_shorts.limbs {
+            assert_eq!(limb.coefficients().len(), 512);
+        }
     }
 }
