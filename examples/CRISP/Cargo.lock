@@ -2938,6 +2938,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "e3-committee-hash"
+version = "0.14.0"
+dependencies = [
+ "alloy-primitives",
+ "alloy-sol-types",
+ "hex",
+ "serde",
+]
+
+[[package]]
 name = "e3-compute-provider"
 version = "0.14.0"
 dependencies = [
@@ -3146,10 +3156,12 @@ dependencies = [
 name = "e3-zk-helpers"
 version = "0.14.0"
 dependencies = [
+ "alloy-primitives",
  "anyhow",
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
  "clap",
+ "e3-committee-hash",
  "e3-fhe-params",
  "e3-parity-matrix",
  "e3-polynomial",

@@ -145,6 +145,23 @@ test('rejects a stamp-valid pair with a missing verification-key artifact', () =
   }
 })
 
+test('rejects every missing user-data encryption child artifact', () => {
+  const childMarkers = requiredArtifactMarkers('insecure', 'minimum').filter((artifact) =>
+    /recursive\/threshold\/ct[01]_(?:chunk|eval|pk_ct)/.test(artifact),
+  )
+  assert.equal(childMarkers.length, 16 * 3)
+
+  for (const marker of childMarkers) {
+    const dir = makeCompleteMatrix()
+    try {
+      unlinkSync(join(dir, marker))
+      assert.throws(() => validateReleaseArtifacts(dir, sourceHash), /Incomplete circuit artifacts/)
+    } finally {
+      rmSync(dir, { recursive: true, force: true })
+    }
+  }
+})
+
 test('requires l-BFV row artifacts only for secure-16384', () => {
   const secureMarkers = requiredArtifactMarkers('secure-16384', 'minimum').filter((artifact) => REQUIRED_LBFV_MARKERS.includes(artifact))
   assert.deepEqual(secureMarkers.sort(), REQUIRED_LBFV_MARKERS.toSorted())

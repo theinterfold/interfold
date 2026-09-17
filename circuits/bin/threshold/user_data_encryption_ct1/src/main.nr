@@ -4,31 +4,75 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use lib::configs::default::threshold::{
-    L, N, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_E1, USER_DATA_ENCRYPTION_BIT_P1,
-    USER_DATA_ENCRYPTION_BIT_P2, USER_DATA_ENCRYPTION_BIT_PK, USER_DATA_ENCRYPTION_BIT_U,
-    USER_DATA_ENCRYPTION_CT1_CONFIGS,
+//! Top-level ct1 (P3), mirroring ct0's split. Proving ct1 in a single circuit does not fit the
+//! browser's ~2M gate ceiling at N=16384, L=5, so its work is split by coefficient-level chunking
+//! into one merged grid - `u`/`e1`/`p2is`/`p1is` together, 2 chunks - each chunk range-checked
+//! independently and combined directly into a root (N_CHUNKS=2 needs no intermediate pair level):
+//! `ct1_chunk_main` (leaves, 2 instances) -> `ct1_chunk_main_root` (verifies both leaves
+//! directly) + separate `ct1_pk_ct_commit` (commits `pk1is` and `ct1is` together) ->
+//! `ct1_chunk_gamma` (verifies `ct1_chunk_main_root` and `ct1_pk_ct_commit`, derives gamma).
+//! Round B (`ct1_eval_chunk_*`) mirrors this shape to evaluate every chunk at gamma and sum the
+//! partial evaluations, converging on `ct1_eval_chunk_identity` (the actual Schwartz-Zippel
+//! identity check).
+//!
+//! This circuit verifies both final proofs and checks every commitment and batching coefficient
+//! they produced agree. It also folds every key hash below it into the VK manifest and outputs
+//! the manifest first - see `user_data_encryption_ct0` for why.
+//!
+//! Outputs: `vk_manifest`, `pk1_commitment`, `ct1_commitment`, `u_root`.
+
+use bb_proof_verification::{UltraHonkProof, UltraHonkVerificationKey, verify_honk_proof_non_zk};
+use lib::configs::default::threshold::L;
+use lib::core::threshold::user_data_encryption_chunk::{
+    compute_ude_vk_manifest, UDE_ROUND_CHILD_KEY_HASHES,
 };
-use lib::core::threshold::user_data_encryption_ct1::UserDataEncryptionCt1;
-use lib::math::polynomial::Polynomial;
+
+// Both rounds share one output layout: 3 key hashes (root, leaf, pk/ct), `pk1`, `ct1`, `u`, `e1`,
+// `p2`, `p1`, `gamma`, then the L batching coefficients.
+global ROUND_LEN: u32 = 10 + L;
+global PK1: u32 = 3;
+global CT1: u32 = 4;
+global U: u32 = 5;
+global E1: u32 = 6;
+global P2: u32 = 7;
+global P1: u32 = 8;
+global GAMMA: u32 = 9;
+global BATCHING: u32 = 10;
 
 fn main(
-    pk1is: [Polynomial<N>; L],
-    ct1is: [Polynomial<N>; L],
-    u: Polynomial<N>,
-    e1: Polynomial<N>,
-    p1is: [Polynomial<(2 * N) - 1>; L],
-    p2is: [Polynomial<N - 1>; L],
-) -> pub (Field, Field, Field) {
-    let circuit: UserDataEncryptionCt1<N, L, USER_DATA_ENCRYPTION_BIT_PK, USER_DATA_ENCRYPTION_BIT_CT, USER_DATA_ENCRYPTION_BIT_U, USER_DATA_ENCRYPTION_BIT_E1, USER_DATA_ENCRYPTION_BIT_P1, USER_DATA_ENCRYPTION_BIT_P2> = UserDataEncryptionCt1::new(
-        USER_DATA_ENCRYPTION_CT1_CONFIGS,
-        pk1is,
-        ct1is,
-        u,
-        e1,
-        p1is,
-        p2is,
-    );
+    a_vk: UltraHonkVerificationKey,
+    a_key_hash: Field,
+    a_proof: UltraHonkProof,
+    a_public_inputs: [Field; ROUND_LEN],
+    b_vk: UltraHonkVerificationKey,
+    b_key_hash: Field,
+    b_proof: UltraHonkProof,
+    b_public_inputs: [Field; ROUND_LEN],
+) -> pub (Field, Field, Field, Field) {
+    verify_honk_proof_non_zk(a_vk, a_proof, a_public_inputs, a_key_hash);
+    verify_honk_proof_non_zk(b_vk, b_proof, b_public_inputs, b_key_hash);
 
-    circuit.execute()
+    let a = a_public_inputs;
+    let b = b_public_inputs;
+
+    assert(a[PK1] == b[PK1], "pk1_commitment mismatch between rounds");
+    assert(a[CT1] == b[CT1], "ct1_commitment mismatch between rounds");
+    assert(a[U] == b[U], "u root mismatch between rounds");
+    assert(a[E1] == b[E1], "e1 root mismatch between rounds");
+    assert(a[P2] == b[P2], "p2 root mismatch between rounds");
+    assert(a[P1] == b[P1], "p1 root mismatch between rounds");
+    assert(a[GAMMA] == b[GAMMA], "gamma mismatch between rounds");
+    for i in 0..L {
+        assert(a[BATCHING + i] == b[BATCHING + i], "batching-coefficient mismatch between rounds");
+    }
+
+    let mut a_children: [Field; UDE_ROUND_CHILD_KEY_HASHES] = [0; UDE_ROUND_CHILD_KEY_HASHES];
+    let mut b_children: [Field; UDE_ROUND_CHILD_KEY_HASHES] = [0; UDE_ROUND_CHILD_KEY_HASHES];
+    for i in 0..UDE_ROUND_CHILD_KEY_HASHES {
+        a_children[i] = a[i];
+        b_children[i] = b[i];
+    }
+    let vk_manifest = compute_ude_vk_manifest(a_key_hash, a_children, b_key_hash, b_children);
+
+    (vk_manifest, a[PK1], a[CT1], a[U])
 }

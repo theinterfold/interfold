@@ -12,7 +12,7 @@
 
 use crate::packing::flatten;
 use crate::utils::compute_safe;
-use alloy::primitives::B256;
+use alloy_primitives::B256;
 use ark_bn254::Fr as Field;
 use ark_ff::BigInteger;
 use ark_ff::PrimeField;

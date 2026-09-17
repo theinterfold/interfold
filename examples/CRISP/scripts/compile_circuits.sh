@@ -2,15 +2,16 @@
 
 set -euo pipefail
 
-# Script runs from examples/CRISP. Interfold circuits are at ../../circuits.
-INTERFOLD_CIRCUITS="../../circuits"
-CRISP_CIRCUITS="circuits"
+CRISP="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO="$(cd "$CRISP/../.." && pwd)"
+INTERFOLD_CIRCUITS="$REPO/circuits"
+CRISP_CIRCUITS="$CRISP/circuits"
 
 # The generated verifiers are NOT preset-specific. They are written from the fold circuit's
 # verification key, and the fold circuit takes the inner key as an input and checks its hash against
-# either preset's constant, so its own structure carries no BFV degree. Compiling the supported presets
+# a supported preset constant. Thus, its own structure carries no BFV degree. Compiling all presets
 # produces byte-identical verifiers; one directory is correct.
-VERIFIER_DIR="packages/crisp-contracts/contracts/verifiers"
+VERIFIER_DIR="$CRISP/packages/crisp-contracts/contracts/verifiers"
 mkdir -p "$VERIFIER_DIR"
 
 # Two ballot stacks share the same user_data_encryption dependencies and differ only in how a
@@ -25,31 +26,39 @@ STACKS=(
     "crisp_onchain:fold_onchain:crisp_onchain_fold:CRISPOnchainVerifier.sol"
 )
 
-echo "Compiling interfold user_data_encryption circuits (dependencies)..."
+echo "Compiling the Interfold user-data encryption proof tree..."
 
-echo "Compiling user_data_encryption_ct0..."
-if ! (cd "$INTERFOLD_CIRCUITS/bin/threshold/user_data_encryption_ct0" && nargo compile); then
-    echo "Error: user_data_encryption_ct0 compilation failed"
-    exit 1
-fi
+# A circuit that receives raw private coefficients must use the ZK recursive target. Other tree
+# circuits receive only proofs and public inputs, so they can use the smaller non-ZK target.
+UDE_ZK_CIRCUITS=(
+    ct0_chunk_main ct0_pk_ct_commit ct0_eval_chunk_main ct0_eval_pk_ct
+    user_data_encryption_ct0
+    ct1_chunk_main ct1_pk_ct_commit ct1_eval_chunk_main ct1_eval_pk_ct
+)
+UDE_NON_ZK_CIRCUITS=(
+    ct0_chunk_main_root ct0_chunk_gamma ct0_eval_chunk_main_root ct0_eval_chunk_identity
+    ct1_chunk_main_root ct1_chunk_gamma ct1_eval_chunk_main_root ct1_eval_chunk_identity
+    user_data_encryption_ct1 user_data_encryption
+)
 
-echo "Compiling user_data_encryption_ct1..."
-if ! (cd "$INTERFOLD_CIRCUITS/bin/threshold/user_data_encryption_ct1" && nargo compile); then
-    echo "Error: user_data_encryption_ct1 compilation failed"
-    exit 1
-fi
+for name in "${UDE_ZK_CIRCUITS[@]}" "${UDE_NON_ZK_CIRCUITS[@]}"; do
+    if ! (cd "$INTERFOLD_CIRCUITS/bin/threshold" && nargo compile --package "$name"); then
+        echo "Error: ${name} compilation failed"
+        exit 1
+    fi
+done
 
-echo "Compiling user_data_encryption..."
-if ! (cd "$INTERFOLD_CIRCUITS/bin/threshold/user_data_encryption" && nargo compile); then
-    echo "Error: user_data_encryption compilation failed"
-    exit 1
-fi
-
-# Inner recursive proofs use noir-recursive-no-zk; fold's compute_vk_hash chain reads
-# `{name}.vk_recursive_hash` in each package target/ (same layout as interfold `scripts/build-circuits.ts`).
 THRESHOLD_TARGET="${INTERFOLD_CIRCUITS}/bin/threshold/target"
-echo "Writing noir-recursive-no-zk VKs (user_data_encryption)..."
-for name in user_data_encryption_ct0 user_data_encryption_ct1 user_data_encryption; do
+echo "Writing recursive VKs for the user-data encryption proof tree..."
+for name in "${UDE_ZK_CIRCUITS[@]}"; do
+    if ! bb write_vk -b "${THRESHOLD_TARGET}/${name}.json" -o "${THRESHOLD_TARGET}" -t noir-recursive; then
+        echo "Error: bb write_vk (noir-recursive) failed for ${name}"
+        exit 1
+    fi
+    mv "${THRESHOLD_TARGET}/vk" "${THRESHOLD_TARGET}/${name}.vk_noir"
+    mv "${THRESHOLD_TARGET}/vk_hash" "${THRESHOLD_TARGET}/${name}.vk_noir_hash"
+done
+for name in "${UDE_NON_ZK_CIRCUITS[@]}"; do
     if ! bb write_vk -b "${THRESHOLD_TARGET}/${name}.json" -o "${THRESHOLD_TARGET}" -t noir-recursive-no-zk; then
         echo "Error: bb write_vk (noir-recursive-no-zk) failed for ${name}"
         exit 1

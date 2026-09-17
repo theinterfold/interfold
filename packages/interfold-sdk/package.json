@@ -23,6 +23,18 @@
       "types": "./dist/events/index.d.ts",
       "import": "./dist/events/index.js",
       "require": "./dist/events/index.cjs"
+    },
+    "./internal/presets/insecure": {
+      "types": "./dist/crypto/presets/insecure.d.ts",
+      "import": "./dist/crypto/presets/insecure.js"
+    },
+    "./internal/presets/secure-8192": {
+      "types": "./dist/crypto/presets/secure-8192.d.ts",
+      "import": "./dist/crypto/presets/secure-8192.js"
+    },
+    "./internal/presets/secure-16384": {
+      "types": "./dist/crypto/presets/secure-16384.d.ts",
+      "import": "./dist/crypto/presets/secure-16384.js"
     }
   },
   "main": "./dist/index.cjs",
@@ -52,6 +64,7 @@
   },
   "devDependencies": {
     "@interfold/config": "workspace:*",
+    "@interfold/user-data-encryption-prover": "workspace:*",
     "concurrently": "^9.1.2",
     "tsup": "^8.5.0",
     "typescript": "5.8.3",

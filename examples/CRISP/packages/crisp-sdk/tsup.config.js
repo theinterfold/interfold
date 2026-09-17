@@ -54,6 +54,7 @@ for (const preset of PRESETS) {
 export default defineConfig({
   entry,
   include: ['src/**/*.ts'],
+  noExternal: ['@interfold/user-data-encryption-prover'],
   splitting: false,
   sourcemap: true,
   clean: true,

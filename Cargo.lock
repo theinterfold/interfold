@@ -3800,7 +3800,8 @@ dependencies = [
 name = "e3-committee-hash"
 version = "0.14.0"
 dependencies = [
- "alloy",
+ "alloy-primitives",
+ "alloy-sol-types",
  "hex",
  "serde",
 ]
@@ -4624,7 +4625,7 @@ dependencies = [
 name = "e3-zk-helpers"
 version = "0.14.0"
 dependencies = [
- "alloy",
+ "alloy-primitives",
  "anyhow",
  "ark-bn254 0.5.0",
  "ark-ff 0.5.0",
