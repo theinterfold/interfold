@@ -12,7 +12,7 @@
 use crate::calculate_bit_width;
 use crate::ciphernodes_committee::CiphernodesCommittee;
 use crate::crt_polynomial_to_toml_json;
-use crate::math::{cyclotomic_polynomial, decompose_residue};
+use crate::math::cyclotomic_polynomial;
 use crate::polynomial_to_toml_json;
 use crate::threshold::pk_generation::circuit::PkGenerationCircuit;
 use crate::threshold::pk_generation::circuit::PkGenerationCircuitData;
@@ -209,8 +209,12 @@ impl Computation for Bounds {
 
             moduli.push(**qi);
 
-            // Bound on the reduced modulus-switching quotient, per modulus.
-            r_bounds[i] = ((&n + 2u32) * &qi_bound + eek_bound) / &qi_bigint;
+            // Bound on the reduced modulus-switching quotient, per modulus. C1 checks
+            // pk0 = -(a*sk mod X^N+1) + eek + q*r, so r = (pk0 + (a*sk mod X^N+1) - eek) / q and
+            // |r| <= ((N + 1) * (q - 1) / 2 + eek_bound) / q: one (q - 1) / 2 for the centered pk0,
+            // N of them for the reduced product, whose every coefficient is a signed sum of exactly
+            // N products of a ternary secret with a centered `a`.
+            r_bounds[i] = ((&n + 1u32) * &qi_bound + eek_bound) / &qi_bigint;
 
             // Track maximum pk bound across all moduli
             // We don't need to store them as we only need the maximum bound to compute the commitment bit width
@@ -298,13 +302,25 @@ impl Computation for Inputs {
 
             assert_eq!((pk0_share_hat.coefficients().len() as u64) - 1, 2 * (n - 1));
 
-            // C1 checks the public key equation in Z[X]/(X^N+1), so it takes the reduced
-            // modulus-switching quotient. The circuit constrains only the range of what it gets,
-            // which is why the reduction belongs here. The cyclotomic quotient is discarded.
-            let (r1, _r2) = decompose_residue(&pk0_share, &pk0_share_hat, &qi, &cyclo, n);
-            let r = r1
+            // C1 checks the public key equation in Z[X]/(X^N+1), so reduce first and read the
+            // quotient off the reduced difference. Reducing the degree-2N-2 residue instead would
+            // route through a cyclotomic quotient that no longer reaches the circuit; both give
+            // the same r, because reducing pk0 - pk0_hat = q*r1 + r2*(X^N+1) modulo X^N + 1 kills
+            // the second term and folds the first.
+            let pk0_share_tilde = pk0_share_hat
                 .reduce_by_cyclotomic(&cyclo)
                 .expect("cyclotomic polynomial is non-zero and monic");
+            // Exact division: `div` rejects a coefficient that q does not divide, which is what
+            // proves pk0_share is the centered residue of pk0_share_hat modulo q.
+            let (r, remainder) = pk0_share
+                .sub(&pk0_share_tilde)
+                .div(&Polynomial::new(vec![qi.clone()]))
+                .expect("pk0 - pk0_hat mod X^N+1 is divisible by q");
+            assert!(remainder
+                .coefficients()
+                .iter()
+                .all(|c| c == &BigInt::from(0)));
+            assert_eq!(r.coefficients().len() as u64, n);
 
             (i, r, pk0_share.clone(), e_sm.clone())
         })

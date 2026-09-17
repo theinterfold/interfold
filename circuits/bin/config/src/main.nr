@@ -352,8 +352,10 @@ fn verify_pk_generation_bounds() {
         let qi: u128 = THRESHOLD_QIS[i] as u128;
         let qi_bound: u128 = (qi - 1) / 2;
 
-        // r_bounds[i] = ((n + 2) * qi_bound + eek_bound) / q_i
-        let expected_r: u128 = ((n + 2) * qi_bound + eek) / qi;
+        // r_bounds[i] = ((n + 1) * qi_bound + eek_bound) / q_i, the bound on the reduced
+        // modulus-switching quotient: one qi_bound for the centered pk0, and n of them for
+        // `a * sk mod X^N + 1`, whose every coefficient is a signed sum of exactly n products.
+        let expected_r: u128 = ((n + 1) * qi_bound + eek) / qi;
         assert(PK_GENERATION_R_BOUNDS[i] as u128 == expected_r, "PK_GENERATION_R_BOUNDS mismatch");
 
         // bit_r must be the exact bit width of r_bounds[i]. C1's compact path derives its
