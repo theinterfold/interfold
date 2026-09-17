@@ -57,9 +57,6 @@ contract Interfold is
     ///         operator margin cannot be configured to make requests unaffordable.
     uint16 public constant MAX_MARGIN_BPS = 5_000;
 
-    uint256 private constant REQUIRE_EMPTY_OPERATOR_GENERATION = 0;
-    uint256 private constant PRESERVE_OPERATOR_GENERATION = 1;
-
     ////////////////////////////////////////////////////////////
     //                                                        //
     //                 Storage Variables                      //
@@ -274,7 +271,7 @@ contract Interfold is
 
         registerE3Program(initialE3Program);
 
-        if (_owner != msg.sender) _transferOwnership(_owner);
+        if (_owner != owner()) _transferOwnership(_owner);
     }
 
     /// @notice Disabled. Reverts unconditionally to prevent permanent
@@ -552,10 +549,7 @@ contract Interfold is
                 _ciphernodeRegistry != ciphernodeRegistry,
             InvalidCiphernodeRegistry(_ciphernodeRegistry)
         );
-        _requireDependencyReplacementReady(
-            address(_ciphernodeRegistry),
-            REQUIRE_EMPTY_OPERATOR_GENERATION
-        );
+        _requireGenerationReplacementReady(address(_ciphernodeRegistry));
         ciphernodeRegistry = _ciphernodeRegistry;
         emit CiphernodeRegistrySet(address(_ciphernodeRegistry));
     }
@@ -569,10 +563,7 @@ contract Interfold is
                 _bondingRegistry != bondingRegistry,
             InvalidBondingRegistry(_bondingRegistry)
         );
-        _requireDependencyReplacementReady(
-            address(0),
-            REQUIRE_EMPTY_OPERATOR_GENERATION
-        );
+        _requireGenerationReplacementReady(address(0));
         bondingRegistry = _bondingRegistry;
         emit BondingRegistrySet(address(_bondingRegistry));
     }
@@ -717,10 +708,7 @@ contract Interfold is
         IE3RefundManager _e3RefundManager
     ) public onlyOwner {
         require(address(_e3RefundManager) != address(0));
-        _requireDependencyReplacementReady(
-            address(0),
-            PRESERVE_OPERATOR_GENERATION
-        );
+        _requireServiceReplacementReady();
         e3RefundManager = _e3RefundManager;
         emit E3RefundManagerSet(address(_e3RefundManager));
     }
@@ -731,10 +719,7 @@ contract Interfold is
         ISlashingManager _slashingManager
     ) external onlyOwner {
         require(address(_slashingManager) != address(0));
-        _requireDependencyReplacementReady(
-            address(0),
-            PRESERVE_OPERATOR_GENERATION
-        );
+        _requireServiceReplacementReady();
         slashingManager = _slashingManager;
         emit SlashingManagerSet(address(_slashingManager));
     }
@@ -1271,19 +1256,18 @@ contract Interfold is
         );
     }
 
-    function _requireDependencyReplacementReady(
-        address replacementRegistry,
-        uint256 operatorGenerationMode
+    function _requireGenerationReplacementReady(
+        address replacementRegistry
     ) private view {
-        InterfoldLifecycle.validateDependencyReplacementDrained(
+        InterfoldLifecycle.validateGenerationReplacementDrained(
             _dependencyConfigurationActivated,
-            requestsPaused,
-            activeE3Count,
-            address(ciphernodeRegistry),
-            address(bondingRegistry),
-            address(slashingManager),
-            replacementRegistry,
-            operatorGenerationMode
+            replacementRegistry
+        );
+    }
+
+    function _requireServiceReplacementReady() private view {
+        InterfoldLifecycle.validateServiceReplacementDrained(
+            _dependencyConfigurationActivated
         );
     }
 
