@@ -8,6 +8,7 @@ pub mod pk_generation;
 pub mod pk_aggregation;
 pub mod lbfv_pk_generation;
 pub mod lbfv_pk_aggregation;
+pub mod lbfv_party_secrets;
 pub mod lbfv_proof_domain;
 pub mod rlk_generation;
 pub mod rlk_generation_limb;

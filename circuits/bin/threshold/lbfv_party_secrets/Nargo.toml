@@ -1,0 +1,7 @@
+[package]
+name = "lbfv_party_secrets"
+type = "bin"
+authors = ["Gnosis Guild / Interfold"]
+
+[dependencies]
+lib = { path = "../../../lib" }

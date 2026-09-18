@@ -95,7 +95,6 @@ pub struct LbfvPkGenerationInputs {
     pub eek: Polynomial,
     pub sk: Polynomial,
     pub r1is: CrtPolynomial,
-    pub r2is: CrtPolynomial,
     pub pk0is: CrtPolynomial,
 }
 
@@ -110,7 +109,6 @@ pub struct LbfvPkGenerationLimbInputs {
     pub eek: Polynomial,
     pub sk: Polynomial,
     pub r1: Polynomial,
-    pub r2: Polynomial,
     pub pk0: Polynomial,
 }
 
@@ -160,7 +158,6 @@ impl Computation for LbfvPkGenerationLimbInputs {
             "eek": polynomial_to_toml_json(&self.eek),
             "sk": polynomial_to_toml_json(&self.sk),
             "r1": polynomial_to_toml_json(&self.r1),
-            "r2": polynomial_to_toml_json(&self.r2),
             "pk0": polynomial_to_toml_json(&self.pk0),
         }))
     }
@@ -187,7 +184,6 @@ impl Computation for LbfvPkGenerationInputs {
             "eek": polynomial_to_toml_json(&self.eek),
             "sk": polynomial_to_toml_json(&self.sk),
             "r1is": crt_polynomial_to_toml_json(&self.r1is),
-            "r2is": crt_polynomial_to_toml_json(&self.r2is),
             "pk0is": crt_polynomial_to_toml_json(&self.pk0is),
         }))
     }
@@ -222,7 +218,6 @@ fn compute_inputs(
 
     let cyclotomic = cyclotomic_polynomial(n as u64);
     let mut r1is = Vec::with_capacity(l);
-    let mut r2is = Vec::with_capacity(l);
     for (index, modulus) in params.moduli().iter().enumerate() {
         let modulus = BigInt::from(*modulus);
         let expected = data.a.limb(index).neg().mul(&data.sk).add(&data.eek);
@@ -236,7 +231,9 @@ fn compute_inputs(
                 "l-BFV public-key residue mismatch at CRT limb {index}"
             )));
         }
-        let (r1, r2) = decompose_residue(
+        // The limb circuit reduces modulo X^N + 1 in-circuit via `fold_negacyclic`, so only the
+        // modulus-switching quotient is a witness. The cyclotomic quotient is discarded.
+        let (r1, _r2) = decompose_residue(
             data.pk0_share.limb(index),
             &expected,
             &modulus,
@@ -244,7 +241,6 @@ fn compute_inputs(
             n as u64,
         );
         r1is.push(r1);
-        r2is.push(r2);
     }
 
     Ok(LbfvPkGenerationInputs {
@@ -255,7 +251,6 @@ fn compute_inputs(
         eek: data.eek.clone(),
         sk: data.sk.clone(),
         r1is: CrtPolynomial::new(r1is),
-        r2is: CrtPolynomial::new(r2is),
         pk0is: data.pk0_share.clone(),
     })
 }
@@ -273,9 +268,6 @@ pub fn derive_lbfv_pk_generation_limb_inputs(
     validate_crt_shape(&inputs.r1is, limb_count, 2 * params.degree() - 1).map_err(|error| {
         CircuitsErrors::Other(format!("invalid l-BFV public-key r1 shape: {error}"))
     })?;
-    validate_crt_shape(&inputs.r2is, limb_count, params.degree() - 1).map_err(|error| {
-        CircuitsErrors::Other(format!("invalid l-BFV public-key r2 shape: {error}"))
-    })?;
 
     Ok((0..limb_count)
         .map(|limb_index| LbfvPkGenerationLimbInputs {
@@ -287,7 +279,6 @@ pub fn derive_lbfv_pk_generation_limb_inputs(
             eek: inputs.eek.clone(),
             sk: inputs.sk.clone(),
             r1: inputs.r1is.limb(limb_index).clone(),
-            r2: inputs.r2is.limb(limb_index).clone(),
             pk0: inputs.pk0is.limb(limb_index).clone(),
         })
         .collect())
@@ -616,7 +607,7 @@ mod tests {
                 assert_eq!(&expected, data.pk0_share.limb(index));
 
                 let expected_hat = data.a.limb(index).neg().mul(&data.sk).add(&data.eek);
-                let (expected_r1, expected_r2) = decompose_residue(
+                let (expected_r1, _expected_r2) = decompose_residue(
                     data.pk0_share.limb(index),
                     &expected_hat,
                     &BigInt::from(*qi),
@@ -624,7 +615,6 @@ mod tests {
                     params.degree() as u64,
                 );
                 assert_eq!(&expected_r1, inputs.r1is.limb(index));
-                assert_eq!(&expected_r2, inputs.r2is.limb(index));
             }
         }
 
@@ -720,17 +710,11 @@ mod tests {
         let inputs = compute_inputs(&params, &adapter, &data)?;
 
         assert!(inputs.r1is.limbs.iter().all(Polynomial::is_zero));
-        assert!(inputs.r2is.limbs.iter().all(Polynomial::is_zero));
         assert!(inputs
             .r1is
             .limbs
             .iter()
             .all(|polynomial| polynomial.degree() == 2 * (degree - 1)));
-        assert!(inputs
-            .r2is
-            .limbs
-            .iter()
-            .all(|polynomial| polynomial.degree() == degree - 2));
         Ok(())
     }
 }
