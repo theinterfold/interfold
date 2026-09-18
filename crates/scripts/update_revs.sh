@@ -3,7 +3,7 @@
 # This script updates all cargo imports from our git monorepo.
 # Some of the time we create user facing (mainly) cargo projects that need to depend on a specific branch or git revision to stay in sync.
 # This script will go through the monorepo and update the rev key of any imports extracted as a cargo dependency.
-GITHUB_REPO_URL="https://github.com/gnosisguild/interfold"
+GITHUB_REPO_URL="https://github.com/theinterfold/interfold"
 EXCLUDE_PATHS=(
     "*/.interfold/caches/*"
     "*/target/*"

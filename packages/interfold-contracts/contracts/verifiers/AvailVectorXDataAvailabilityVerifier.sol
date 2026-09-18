@@ -29,6 +29,7 @@ contract AvailVectorXDataAvailabilityVerifier is IDataAvailabilityVerifier {
     IVectorx public immutable vectorx;
 
     error InvalidBridge();
+    error ZeroContentHash();
     error InvalidVectorX();
     error ContentHashMismatch(bytes32 expected, bytes32 actual);
     error InvalidAvailabilityProof();
@@ -54,6 +55,11 @@ contract AvailVectorXDataAvailabilityVerifier is IDataAvailabilityVerifier {
         // trust root of an already deployed CRISP program.
         if (address(bridge.vectorx()) != address(vectorx))
             revert InvalidVectorX();
+
+        // Avail pads the submitted-data Merkle tree with zero leaves. A padding leaf has a
+        // valid Merkle path, thus a zero expected content hash would accept data that no party
+        // published. Reject it before the leaf comparison.
+        if (expectedContentHash == bytes32(0)) revert ZeroContentHash();
 
         IAvailBridge.MerkleProofInput memory input = abi.decode(
             proof,

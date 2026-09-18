@@ -143,6 +143,8 @@ pub struct E3Summary {
     pub e3_id: String,
     pub chain_id: u64,
     pub status: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub canonical_stage: Option<E3Stage>,
     pub current_phase: E3Phase,
     pub event_count: usize,
     pub error_count: usize,
@@ -163,6 +165,10 @@ pub struct E3Trace {
     pub reward_allocations: Vec<RewardAllocationView>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub failure: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub local_failure: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chain_failure: Option<Value>,
     pub events: Vec<EventView>,
 }
 
@@ -191,6 +197,7 @@ pub struct ProtocolOverview {
     pub e3_active: usize,
     pub e3_completed: usize,
     pub e3_failed: usize,
+    pub e3_degraded: usize,
     pub events_observed: usize,
 }
 
@@ -224,6 +231,9 @@ struct E3State {
     rewards: Vec<RewardView>,
     reward_allocations: Vec<RewardAllocationView>,
     failure: Option<Value>,
+    local_failure: Option<Value>,
+    chain_failure: Option<Value>,
+    canonical_stage: Option<E3Stage>,
     failed_phase: Option<E3Phase>,
     first_seen_us: u64,
     last_seen_us: u64,
@@ -303,6 +313,10 @@ impl TelemetryProjection {
             e3_failed: summaries
                 .iter()
                 .filter(|summary| summary.status == "failed")
+                .count(),
+            e3_degraded: summaries
+                .iter()
+                .filter(|summary| summary.status == "degraded")
                 .count(),
             events_observed: self.events.len(),
         }
@@ -413,7 +427,7 @@ impl TelemetryProjection {
         });
         state.first_seen_us = state.first_seen_us.min(view.timestamp_us);
         state.last_seen_us = state.last_seen_us.max(view.timestamp_us);
-        if state.status != "failed" {
+        if state.status != "failed" && state.status != "degraded" {
             if let Some(phase) = view.phase {
                 state.current_phase = Some(
                     state
@@ -442,12 +456,19 @@ impl TelemetryProjection {
                     .insert(normalize_address(&event.node.to_string()));
             }
             InterfoldEventData::E3Failed(event) => {
-                state.status = "failed".to_owned();
+                let chain_failure = view.source == "evm";
+                state.status = if chain_failure { "failed" } else { "degraded" }.to_owned();
                 state.failed_phase = view.phase;
-                state.failure = Some(json!({
+                let failure = json!({
                     "failed_at_stage": event.failed_at_stage,
                     "reason": event.reason,
-                }));
+                });
+                if chain_failure {
+                    state.chain_failure = Some(failure.clone());
+                } else {
+                    state.local_failure = Some(failure.clone());
+                }
+                state.failure = Some(failure);
             }
             InterfoldEventData::CommitteeFormationFailed(event) => {
                 state.status = "failed".to_owned();
@@ -458,20 +479,26 @@ impl TelemetryProjection {
                     "threshold_required": event.threshold_required,
                 }));
             }
-            InterfoldEventData::E3RequestComplete(_)
-            | InterfoldEventData::PlaintextOutputPublished(_) => {
-                state.status = "complete".to_owned();
-            }
-            InterfoldEventData::E3StageChanged(event) => match event.new_stage {
-                E3Stage::Complete => state.status = "complete".to_owned(),
-                E3Stage::Failed => {
-                    let failed_phase = stage_phase(&event.previous_stage);
-                    state.status = "failed".to_owned();
-                    state.failed_phase = Some(failed_phase);
-                    state.current_phase = Some(failed_phase);
+            InterfoldEventData::E3StageChanged(event) if view.source == "evm" => {
+                state.canonical_stage = Some(event.new_stage.clone());
+                match event.new_stage {
+                    E3Stage::Complete => state.status = "complete".to_owned(),
+                    E3Stage::Failed => {
+                        let failed_phase = stage_phase(&event.previous_stage);
+                        state.status = "failed".to_owned();
+                        state.failed_phase = Some(failed_phase);
+                        state.current_phase = Some(failed_phase);
+                        state.chain_failure.get_or_insert_with(|| {
+                            json!({
+                                "failed_at_stage": event.previous_stage,
+                                "reason": null,
+                            })
+                        });
+                        state.failure = state.chain_failure.clone();
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
             InterfoldEventData::RewardsDistributed(event) => {
                 state.reward_allocations = event
                     .nodes
@@ -743,6 +770,7 @@ fn summary(state: &E3State) -> E3Summary {
         e3_id: state.e3_id.clone(),
         chain_id: state.chain_id,
         status: state.status.clone(),
+        canonical_stage: state.canonical_stage.clone(),
         current_phase: state.current_phase.unwrap_or(E3Phase::Request),
         event_count: state.events.len(),
         error_count: state
@@ -773,10 +801,14 @@ fn trace(state: &E3State) -> E3Trace {
                 .collect();
             let source_count =
                 |source: &str| events.iter().filter(|event| event.source == source).count();
-            let phase_state = if state.status == "failed" {
+            let phase_state = if state.status == "failed" || state.status == "degraded" {
                 let failed_phase = state.failed_phase.unwrap_or(current);
                 if phase == failed_phase {
-                    "failed"
+                    if state.status == "degraded" {
+                        "stalled"
+                    } else {
+                        "failed"
+                    }
                 } else if phase < failed_phase {
                     "complete"
                 } else {
@@ -828,6 +860,8 @@ fn trace(state: &E3State) -> E3Trace {
         rewards: state.rewards.clone(),
         reward_allocations: state.reward_allocations.clone(),
         failure: state.failure.clone(),
+        local_failure: state.local_failure.clone(),
+        chain_failure: state.chain_failure.clone(),
         events: state.events.clone(),
     }
 }
@@ -883,8 +917,8 @@ fn mark_claimed_rewards<'a>(
 mod tests {
     use super::*;
     use e3_events::{
-        EventConstructorWithTimestamp, RewardClaimed, RewardCredited, RewardsDistributed,
-        Unsequenced,
+        E3Failed, E3RequestComplete, E3StageChanged, EventConstructorWithTimestamp, FailureReason,
+        RewardClaimed, RewardCredited, RewardsDistributed, Unsequenced,
     };
 
     #[test]
@@ -916,6 +950,71 @@ mod tests {
         assert_eq!(trace.phases[0].state, "complete");
         assert_eq!(trace.phases[1].state, "failed");
         assert_eq!(trace.phases[2].state, "pending");
+    }
+
+    #[test]
+    fn local_failure_and_cleanup_do_not_claim_chain_settlement() {
+        let e3_id = e3_events::E3id::new("9", 31337);
+        let mut projection = TelemetryProjection::new("0x0000000000000000000000000000000000000001");
+        projection.apply(replay_event(
+            E3StageChanged {
+                e3_id: e3_id.clone(),
+                previous_stage: E3Stage::Requested,
+                new_stage: E3Stage::CommitteeFinalized,
+            }
+            .into(),
+            1,
+            10,
+        ));
+        for (sequence, data) in [
+            E3Failed {
+                e3_id: e3_id.clone(),
+                failed_at_stage: E3Stage::CommitteeFinalized,
+                reason: FailureReason::DKGTimeout,
+            }
+            .into(),
+            E3RequestComplete {
+                e3_id: e3_id.clone(),
+            }
+            .into(),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            projection.apply(
+                InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                    data,
+                    None,
+                    20 + sequence as u128,
+                    None,
+                    EventSource::Local,
+                )
+                .into_sequenced(sequence as u64 + 2),
+            );
+        }
+
+        let summary = &projection.summaries()[0];
+        assert_eq!(summary.status, "degraded");
+        assert_eq!(summary.canonical_stage, Some(E3Stage::CommitteeFinalized));
+        assert_eq!(projection.overview().e3_degraded, 1);
+        let trace = projection.trace(&e3_id.to_string()).unwrap();
+        assert!(trace.local_failure.is_some());
+        assert!(trace.chain_failure.is_none());
+
+        projection.apply(replay_event(
+            E3StageChanged {
+                e3_id: e3_id.clone(),
+                previous_stage: E3Stage::CommitteeFinalized,
+                new_stage: E3Stage::Failed,
+            }
+            .into(),
+            4,
+            30,
+        ));
+        let trace = projection.trace(&e3_id.to_string()).unwrap();
+        assert_eq!(trace.summary.status, "failed");
+        assert!(trace.local_failure.is_some());
+        assert!(trace.chain_failure.is_some());
     }
 
     #[test]

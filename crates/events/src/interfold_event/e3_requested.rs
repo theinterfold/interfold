@@ -16,7 +16,7 @@ use std::fmt::{self, Display};
 pub struct E3Requested {
     /// The E3 round ID
     pub e3_id: E3id,
-    /// The minimum number of shares required to decrypt a ciphertext
+    /// The polynomial threshold `T`; decryption requires `T + 1` shares.
     pub threshold_m: usize,
     /// The total committee size for the round
     pub threshold_n: usize,

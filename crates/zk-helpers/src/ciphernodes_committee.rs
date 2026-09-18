@@ -54,7 +54,7 @@ impl CiphernodesCommitteeSize {
         match (n, h) {
             (3, 2) => Ok(Self::Minimum),
             (9, 5) => Ok(Self::Micro),
-            (19, 10) => Ok(Self::Small),
+            (19, 14) => Ok(Self::Small),
             _ => bail!("Unknown committee size for (n={n}, h={h})"),
         }
     }
@@ -84,7 +84,7 @@ impl CiphernodesCommitteeSize {
             },
             CiphernodesCommitteeSize::Small => CiphernodesCommittee {
                 n: 19,
-                h: 10,
+                h: 14,
                 threshold: 9,
             },
         }

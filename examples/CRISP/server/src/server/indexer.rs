@@ -229,6 +229,16 @@ async fn discover_holders(
     })
 }
 
+fn order_token_holders(holders: &mut [TokenHolder]) {
+    holders.sort_unstable_by(|left, right| {
+        left.address
+            .to_ascii_lowercase()
+            .cmp(&right.address.to_ascii_lowercase())
+            .then_with(|| left.balance.cmp(&right.balance))
+            .then_with(|| left.address.cmp(&right.address))
+    });
+}
+
 /// What `E3Requested` does with a round once the divisor sources have answered.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RegistrationPlan {
@@ -487,7 +497,7 @@ pub async fn register_e3_requested(
                 // unrecorded and invisible to every client, because discovery happened to come
                 // back empty — a missing API key or a rate limit would be enough.
 
-                let token_holders = match discovery {
+                let mut token_holders = match discovery {
                     Ok(holders) => holders,
                     Err(e) if is_onchain_census => {
                         warn!(
@@ -517,6 +527,10 @@ pub async fn register_e3_requested(
                         e3_id, token_address
                     );
                 }
+
+                // The Merkle root must not depend on HashMap iteration order or RPC log order.
+                // A retry must produce the same root from the same snapshot.
+                order_token_holders(&mut token_holders);
 
                 // save the e3 details
                 repo.initialize_round(
@@ -1900,6 +1914,37 @@ pub async fn start_indexer(
     crisp_indexer.listen().await?;
     info!("CRISP: Indexer listen loop has finished!");
     Ok(())
+}
+
+#[cfg(test)]
+mod census_order_tests {
+    use super::order_token_holders;
+    use crate::server::{models::TokenHolder, token_holders::hashes::compute_token_holder_hashes};
+
+    #[test]
+    fn the_same_voters_produce_the_same_leaf_order_after_replay() {
+        let mut first = vec![
+            TokenHolder {
+                address: "0x0000000000000000000000000000000000000002".to_string(),
+                balance: "1".to_string(),
+            },
+            TokenHolder {
+                address: "0x0000000000000000000000000000000000000001".to_string(),
+                balance: "1".to_string(),
+            },
+        ];
+        let mut replay = first.clone();
+        replay.reverse();
+
+        order_token_holders(&mut first);
+        order_token_holders(&mut replay);
+
+        assert_eq!(first, replay);
+        assert_eq!(
+            compute_token_holder_hashes(&first).unwrap(),
+            compute_token_holder_hashes(&replay).unwrap()
+        );
+    }
 }
 
 #[cfg(test)]

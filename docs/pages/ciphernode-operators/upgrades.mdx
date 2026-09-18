@@ -59,6 +59,31 @@ Keep the node stopped, pull the exact versioned image, run the offline validatio
 startup log includes `Ciphernode release is accepted`. If the release is below the required value,
 leave the node stopped and contact the protocol team.
 
+### Persistent-state compatibility
+
+The current protocol-v4 binary uses storage schema 6. It accepts only an exact schema match because
+the event log and actor snapshots contain protocol-bearing binary data. It rejects both older state
+and state written by a newer binary instead of guessing that the layouts are compatible.
+
+The protocol-v4 rollout has no automatic migration from earlier pre-release state. Before that
+cutover, governance must pause requests and drain active work. Operators must then:
+
+1. Stop the node and preserve a backup of its data volume.
+2. Back up the node identity, wallet credentials, configuration, and encryption password separately.
+3. Follow the release plan to clear only the incompatible protocol state and perform a controlled
+   resync.
+4. Run `interfold node validate` with the new binary before starting normal service.
+
+Do not delete identity or signing credentials as part of a state reset. Do not reuse an old state
+volume after the binary reports a schema mismatch unless a later release provides an explicit
+migration.
+
+`interfold node validate` is read-only by default. `interfold node validate --repair` can repair
+only a provably uncommitted event-log tail, such as complete frames whose final index write was
+interrupted. It does not repair an indexed corrupt record, an offset mismatch, or an unsupported
+schema. Preserve the stopped volume and use a verified backup or controlled resync for those
+failures.
+
 Release acknowledgement prevents accidental use of stale software. It is not remote attestation of
 the executable. Interfold still relies on threshold cryptography, proof verification, committee
 checks, and slashing to handle malicious operators.

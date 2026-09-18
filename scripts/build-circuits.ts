@@ -5,9 +5,21 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-import { execSync } from 'child_process'
+import { execFileSync, execSync } from 'child_process'
 import { createHash } from 'crypto'
-import { appendFileSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'fs'
+import {
+  appendFileSync,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from 'fs'
+import { tmpdir } from 'os'
 import { basename, join, resolve } from 'path'
 import { AbiCoder, id, keccak256 } from 'ethers'
 import { BFV_PARAMS } from '../packages/interfold-contracts/scripts/protocol/constants'
@@ -552,9 +564,17 @@ library ActiveCryptoConfig {
     const circuits = this.discoverCircuits()
     let copied = 0
 
+    // A Nargo workspace writes every member artifact to the workspace-level
+    // target directory. Remove targets from the previous preset before
+    // hydration so the active stamp cannot describe a mixed artifact tree.
+    this.cleanTargetDirs(circuits)
+
     for (const circuit of circuits) {
       const packageName = this.getPackageName(circuit.path)
-      const targetDir = join(circuit.path, 'target')
+      const groupDir = join(this.circuitsDir, circuit.group)
+      const groupManifest = join(groupDir, 'Nargo.toml')
+      const targetDir =
+        existsSync(groupManifest) && this.isWorkspaceOnly(groupManifest) ? join(groupDir, 'target') : join(circuit.path, 'target')
       mkdirSync(targetDir, { recursive: true })
 
       const copyPair = (from: string, to: string) => {
@@ -659,8 +679,70 @@ library ActiveCryptoConfig {
     if (committee) {
       this.setNoirCommittee(committee)
       this.regenerateParityMatrices(committee)
+      this.syncCommitteeBounds(preset, committee)
       this.patchUtilsTs(preset, committee)
       this.writeActiveCryptoConfig(preset, committee)
+    }
+  }
+
+  private syncCommitteeBounds(preset: CircuitPreset, committee: CircuitCommittee): void {
+    const tier = PRESET_NOIR_CONFIG[preset]
+    const configDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', tier)
+    const temporaryDir = mkdtempSync(join(tmpdir(), 'interfold-noir-config-'))
+    const sources = [
+      { circuit: 'pk-generation', file: 'threshold.nr', prefix: 'PK_GENERATION_' },
+      { circuit: 'share-computation', file: 'dkg.nr', prefix: 'SHARE_COMPUTATION_' },
+    ]
+
+    try {
+      for (const source of sources) {
+        const outputDir = join(temporaryDir, source.circuit)
+        mkdirSync(outputDir)
+        execFileSync(
+          'cargo',
+          [
+            'run',
+            '--quiet',
+            '-p',
+            'e3-zk-helpers',
+            '--bin',
+            'zk_cli',
+            '--',
+            '--circuit',
+            source.circuit,
+            '--preset',
+            tier,
+            '--committee',
+            committee,
+            '--output',
+            outputDir,
+          ],
+          { cwd: this.rootDir, stdio: 'pipe' },
+        )
+      }
+
+      for (const source of sources) {
+        const targetPath = join(configDir, source.file)
+        const generated = readFileSync(join(temporaryDir, source.circuit, 'configs.nr'), 'utf8')
+        const original = readFileSync(targetPath, 'utf8')
+        let updated = original
+        let count = 0
+        for (const match of generated.matchAll(/^pub global ([A-Z0-9_]+):[^;]*;/gm)) {
+          const name = match[1]
+          if (!name.startsWith(source.prefix)) continue
+          const declaration = new RegExp(`^pub global ${name}:[^;]*;`, 'm')
+          if (!declaration.test(updated)) {
+            throw new Error(`Missing ${name} in ${targetPath}`)
+          }
+          updated = updated.replace(declaration, match[0])
+          count++
+        }
+        if (count === 0) throw new Error(`No ${source.prefix} constants generated for ${preset}/${committee}`)
+        if (updated !== original) writeFileSync(targetPath, updated)
+      }
+      console.log(`   📋 Regenerated C1/C2 bounds for ${preset}/${committee}`)
+    } finally {
+      rmSync(temporaryDir, { recursive: true, force: true })
     }
   }
 
@@ -687,12 +769,12 @@ library ActiveCryptoConfig {
         return result
       }
 
-      const sourceHash = this.computeSourceHash(preset, committee)
-      result.sourceHash = sourceHash
-
       if (modNrPath) {
         this.syncPresetAndCommittee(modNrPath, preset, committee)
       }
+
+      const sourceHash = this.computeSourceHash(preset, committee)
+      result.sourceHash = sourceHash
 
       if (this.options.hydrateBinOnly) {
         if (!this.isDistPresetUpToDate(preset, committee, sourceHash)) {
@@ -1158,11 +1240,10 @@ library ActiveCryptoConfig {
       hash.update(`preset:${preset}\n`)
       const tier = PRESET_NOIR_CONFIG[preset]
       hash.update(`noir_config:${tier}\n`)
-      // Hash the contents of the preset's Noir config, not just its name: the baked crypto
-      // constants (e.g. PK_GENERATION_E_SM_BOUND) live here and must invalidate --skip-if-built
-      // when they change. Otherwise a bound update silently reuses a stale compiled circuit.
+      // The build generates C1/C2 bounds for each committee. Ignore their current values so a
+      // different active committee does not make this pair's build stamp stale.
       const tierConfigDir = join(this.rootDir, 'circuits', 'lib', 'src', 'configs', tier)
-      if (existsSync(tierConfigDir)) this.hashDir(tierConfigDir, hash)
+      if (existsSync(tierConfigDir)) this.hashDir(tierConfigDir, hash, '', true)
     }
     const selectedCommittee = committee ?? (this.options.committee === 'all' ? undefined : this.options.committee)
     if (selectedCommittee) {
@@ -1172,13 +1253,37 @@ library ActiveCryptoConfig {
     }
     const circuits = this.discoverCircuits().sort((a, b) => `${a.group}/${a.name}`.localeCompare(`${b.group}/${b.name}`))
     for (const c of circuits) this.hashDir(c.path, hash)
+    // These sources generate the ignored bounds and parity matrices.
+    for (const sourceDir of [
+      'crates/zk-helpers/src',
+      'crates/fhe-params/src',
+      'crates/fhe/src',
+      'crates/polynomial/src',
+      'crates/parity-matrix/src',
+      'crates/safe/src',
+    ]) {
+      const path = join(this.rootDir, sourceDir)
+      if (existsSync(path)) this.hashDir(path, hash)
+    }
+    for (const sourceFile of [
+      'scripts/build-circuits.ts',
+      'scripts/circuit-constants.ts',
+      'packages/interfold-contracts/scripts/protocol/constants.ts',
+      'Cargo.lock',
+    ]) {
+      const path = join(this.rootDir, sourceFile)
+      if (existsSync(path)) {
+        hash.update(sourceFile)
+        hash.update(readFileSync(path))
+      }
+    }
     return hash.digest('hex').substring(0, 16)
   }
 
   /** Generated at bench time; must not invalidate `--skip-if-built` between ensure passes. */
   private static readonly SKIP_SOURCE_HASH_ENTRIES = new Set(['target', 'Prover.toml', 'Witness.toml'])
 
-  private hashDir(dirPath: string, hash: ReturnType<typeof createHash>, relativePath = ''): void {
+  private hashDir(dirPath: string, hash: ReturnType<typeof createHash>, relativePath = '', normalizeBounds = false): void {
     for (const entry of readdirSync(dirPath).sort()) {
       if (entry.startsWith('.') || NoirCircuitBuilder.SKIP_SOURCE_HASH_ENTRIES.has(entry)) continue
       const fullPath = join(dirPath, entry)
@@ -1186,10 +1291,18 @@ library ActiveCryptoConfig {
       const stat = statSync(fullPath)
       if (stat.isDirectory()) {
         hash.update(entryRelativePath + '/')
-        this.hashDir(fullPath, hash, entryRelativePath)
+        this.hashDir(fullPath, hash, entryRelativePath, normalizeBounds)
       } else if (stat.isFile()) {
         hash.update(entryRelativePath)
-        hash.update(readFileSync(fullPath))
+        let source = readFileSync(fullPath)
+        if (normalizeBounds && (entryRelativePath === 'dkg.nr' || entryRelativePath === 'threshold.nr')) {
+          source = Buffer.from(
+            source
+              .toString()
+              .replace(/^pub global ((?:PK_GENERATION|SHARE_COMPUTATION)_[A-Z0-9_]+):[^;]*;/gm, 'pub global $1:<generated>;'),
+          )
+        }
+        hash.update(source)
       }
     }
   }

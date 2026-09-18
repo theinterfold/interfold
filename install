@@ -2,20 +2,22 @@
 
 set -e
 
-GITHUB_REPO="gnosisguild/interfold"
+GITHUB_REPO="theinterfold/interfold"
 BINARY_NAME="interfoldup"
 INSTALL_DIR="$HOME/.local/bin"
+# Release tag to install. Empty selects the latest release.
+REQUESTED_VERSION="${INTERFOLDUP_VERSION:-}"
 
 log_info() {
-    echo "$1"
+    echo "$1" >&2
 }
 
 log_success() {
-    echo "$1"
+    echo "$1" >&2
 }
 
 log_warning() {
-    echo "$1"
+    echo "$1" >&2
 }
 
 log_error() {
@@ -84,11 +86,25 @@ download_file() {
     fi
 }
 
+release_api_url() {
+    if [ -n "$REQUESTED_VERSION" ]; then
+        local tag="$REQUESTED_VERSION"
+        case "$tag" in
+            v*) ;;
+            *) tag="v${tag}" ;;
+        esac
+        echo "https://api.github.com/repos/${GITHUB_REPO}/releases/tags/${tag}"
+    else
+        echo "https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+    fi
+}
+
 get_latest_release() {
-    local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+    local api_url
+    api_url=$(release_api_url)
     local temp_file=$(mktemp)
 
-    log_info "Fetching latest release information..."
+    log_info "Fetching release information..."
     
     if ! download_file "$api_url" "$temp_file"; then
         log_error "Failed to fetch release information from GitHub API"
@@ -109,7 +125,8 @@ get_latest_release() {
 
 get_download_url() {
     local platform="$1"
-    local api_url="https://api.github.com/repos/${GITHUB_REPO}/releases/latest"
+    local api_url
+    api_url=$(release_api_url)
     local temp_file=$(mktemp)
 
     if ! download_file "$api_url" "$temp_file"; then
@@ -132,14 +149,59 @@ get_download_url() {
     echo "$download_url"
 }
 
+usage() {
+    cat <<EOF
+Usage: install [--version TAG]
+
+Options:
+  --version TAG   Release tag of interfoldup to install, for example v0.13.0.
+                  Default: the latest release. Also settable with the
+                  INTERFOLDUP_VERSION environment variable.
+  -h, --help      Show this message.
+EOF
+}
+
+parse_args() {
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            --version)
+                if [ -z "${2:-}" ]; then
+                    log_error "--version needs a release tag, for example v0.13.0"
+                    exit 1
+                fi
+                REQUESTED_VERSION="$2"
+                shift 2
+                ;;
+            --version=*)
+                REQUESTED_VERSION="${1#--version=}"
+                if [ -z "$REQUESTED_VERSION" ]; then
+                    log_error "--version needs a release tag, for example v0.13.0"
+                    exit 1
+                fi
+                shift
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                log_error "Unknown option: $1"
+                usage >&2
+                exit 1
+                ;;
+        esac
+    done
+}
+
 main() {
     log_info "Interfold Installer"
+    parse_args "$@"
     local platform
     platform=$(detect_platform)
     log_info "Detected platform: $platform"
     local version
     version=$(get_latest_release)
-    log_info "Latest version: $version"
+    log_info "Version: $version"
     local download_url
     download_url=$(get_download_url "$platform")
     log_info "Download URL: $download_url"
@@ -194,6 +256,7 @@ main() {
     echo "You can now use $BINARY_NAME to install the Interfold CLI:"
     echo ""
     echo "  $BINARY_NAME install    # Install the latest interfold CLI"
+    echo "  $BINARY_NAME install --version v0.13.0  # Install a specific release"
     echo "  $BINARY_NAME update     # Update to the latest version"
     echo "  $BINARY_NAME uninstall  # Remove the interfold CLI"
     echo "  $BINARY_NAME --help     # Show help"

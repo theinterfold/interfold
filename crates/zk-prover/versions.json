@@ -1,6 +1,6 @@
 {
   "required_bb_version": "5.1.0",
-  "required_circuits_version": "0.14.0",
+  "required_circuits_version": "0.15.0",
   "bb_download_url": "https://github.com/AztecProtocol/aztec-packages/releases/download/v{version}/barretenberg-{arch}-{os}.tar.gz",
   "bb_checksums": {
     "amd64-linux": "016fa165a5c1b860386b9afa6ef49bf09bcd14246315d7c05cdeddd88349edaf",
@@ -8,5 +8,5 @@
     "arm64-linux": "cdb7cb6d6f6aefd51b9d1e29e368a7e61335c82ce0102b31dd42d1028bb82873",
     "arm64-darwin": "60a238d9d29e85afb9acd4cee87849e81b3be7165a3f967fcaf944050fbd3093"
   },
-  "circuits_download_url": "https://github.com/gnosisguild/interfold/releases/download/v{version}/circuits-{version}.tar.gz"
+  "circuits_download_url": "https://github.com/theinterfold/interfold/releases/download/v{version}/circuits-{version}.tar.gz"
 }

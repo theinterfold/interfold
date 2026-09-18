@@ -280,12 +280,59 @@ describe('CRISP input availability flow', function () {
     // default of 100 predates ZEN2-02 and would leave a late receipt no budget to finalize.
     await (await mockInterfold.setComputeWindow(86_400)).wait()
     const now = await latestTimestamp()
-    // setInputWindow mines one block, then request mines the block at this timestamp.
     const requestAt = now + 2
-    await (await mockInterfold.setInputWindow(requestAt, requestAt + 40_200)).wait()
+    const start = requestAt + 25_800
+    const end = start + 3_600 + PRODUCTION_FINALIZATION_WINDOW
+    await (await mockInterfold.setInputWindow(start, end)).wait()
 
+    await setNextTimestamp(requestAt)
     await (await mockInterfold.request(await program.getAddress())).wait()
     expect(await mockInterfold.nextE3Id()).to.equal(1)
+    expect(await program.inputCommitmentDeadline(0)).to.equal(start + 3_600)
+  })
+
+  it('rejects a fixed voting start before the full committee timeout budget', async function () {
+    const mockInterfold = await deployMockInterfold()
+    const mockHonk = (await deployContract('MockHonkVerifier')) as unknown as HonkVerifier
+    const program = await deployCRISPProgram({
+      mockInterfold,
+      honkVerifier: mockHonk,
+      onchainHonkVerifier: mockHonk,
+      availabilityFinalizationWindow: PRODUCTION_FINALIZATION_WINDOW,
+    })
+    await (await mockInterfold.setCommitteeSetupWindows(3_600, 600, 21_600)).wait()
+    await (await mockInterfold.setComputeWindow(86_400)).wait()
+    const now = await latestTimestamp()
+    expect(await program.earliestVotingStart()).to.equal(now + 25_800)
+    const requestAt = now + 2
+    const start = requestAt + 25_799
+    await (await mockInterfold.setInputWindow(start, start + 3_600 + PRODUCTION_FINALIZATION_WINDOW)).wait()
+
+    await setNextTimestamp(requestAt)
+    await expect(mockInterfold.request(await program.getAddress()))
+      .to.be.revertedWithCustomError(program, 'VotingStartsBeforeKeyDeadline')
+      .withArgs(0, requestAt + 25_800, start)
+  })
+
+  it('does not open voting when the committee key arrives before the fixed start', async function () {
+    const mockInterfold = await deployMockInterfold()
+    const mockHonk = (await deployContract('MockHonkVerifier')) as unknown as HonkVerifier
+    const program = await deployCRISPProgram({
+      mockInterfold,
+      honkVerifier: mockHonk,
+      onchainHonkVerifier: mockHonk,
+      availabilityFinalizationWindow: FINALIZATION_WINDOW,
+    })
+    const start = (await latestTimestamp()) + 30
+    await (await mockInterfold.setInputWindow(start, start + 3_600 + FINALIZATION_WINDOW)).wait()
+    await (await mockInterfold.request(await program.getAddress())).wait()
+    await (await mockInterfold.setCommitteePublicKey(ethers.id('early-key'))).wait()
+
+    await setNextTimestamp(start - 1)
+    await expect(program.publishInput(0, '0x')).to.be.revertedWithCustomError(program, 'E3NotAcceptingInputs')
+
+    await setNextTimestamp(start)
+    await expect(program.publishInput(0, '0x')).to.be.revertedWithCustomError(program, 'EmptyInputData')
   })
 
   it('ZEN2-02: rejects a compute window that leaves no budget for a late receipt', async function () {

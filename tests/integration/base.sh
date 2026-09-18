@@ -108,7 +108,8 @@ if [[ "$FULL_PROOF_AGGREGATION" == "true" ]]; then
   $SCRIPT_DIR/lib/fake_encrypt.sh --input "$SCRIPT_DIR/output/pubkey.bin" --output "$SCRIPT_DIR/output/output.bin" --commitment-output "$SCRIPT_DIR/output/ciphertext_commitment.bin" --plaintext "$PLAINTEXT" --params "$ENCODED_PARAMS"
   waiton "$SCRIPT_DIR/output/output.bin"
 
-  advance_evm_timestamp "$INPUT_WINDOW_END"
+  # Interfold accepts the ciphertext only after the input window closes.
+  advance_evm_time_past "$INPUT_WINDOW_END"
   heading "Publish E3 input (forwards to publishCiphertextOutput; nodes run decryption with ZK proofs)"
   pnpm e3-program:publishInput \
     --network localhost \
@@ -126,7 +127,8 @@ else
   heading "Mock publish input e3-id"
   pnpm e3-program:publishInput --network localhost --e3-id "$E3_ID" --data 0x12345678
 
-  advance_evm_timestamp "$INPUT_WINDOW_END"
+  # The input is in; close the window so the round can move to decryption.
+  advance_evm_time_past "$INPUT_WINDOW_END"
 
   waiton "$SCRIPT_DIR/output/output.bin"
 

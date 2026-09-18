@@ -23,6 +23,12 @@ use eyre::Result;
 use std::sync::Arc;
 
 sol! {
+    struct E3TimeoutConfig {
+        uint256 dkgWindow;
+        uint256 computeWindow;
+        uint256 decryptionWindow;
+    }
+
     #[derive(Debug)]
     #[sol(rpc)]
     contract CRISPProgram {
@@ -70,6 +76,8 @@ sol! {
         function inputAvailabilitySigner() external view returns (address);
         function INPUT_AVAILABILITY_ATTESTATION_TTL() external view returns (uint64);
         function availabilityFinalizationWindow() external view returns (uint256);
+        function earliestVotingStart() external view returns (uint256);
+        function interfold() external view returns (address);
         function MIN_VOTING_DURATION() external view returns (uint256);
         function pendingInputCount(uint256 e3Id) external view returns (uint40);
         function inputCommitmentDeadline(uint256 e3Id) external view returns (uint256);
@@ -92,6 +100,12 @@ sol! {
     contract CiphernodeRegistryTiming {
         function randomnessRequestTimeout() external view returns (uint256);
         function sortitionSubmissionWindow() external view returns (uint256);
+    }
+
+    #[sol(rpc)]
+    contract InterfoldTiming {
+        function ciphernodeRegistry() external view returns (address);
+        function getTimeoutConfig() external view returns (E3TimeoutConfig memory);
     }
 }
 
@@ -170,6 +184,21 @@ pub type CRISPWriteProvider = FillProvider<
     RootProvider<Ethereum>,
     Ethereum,
 >;
+
+fn derive_earliest_voting_start(
+    current_timestamp: u64,
+    randomness_window: U256,
+    sortition_window: U256,
+    dkg_window: U256,
+) -> Result<U256> {
+    let setup_window = randomness_window
+        .checked_add(sortition_window)
+        .and_then(|value| value.checked_add(dkg_window))
+        .ok_or_else(|| eyre::eyre!("committee setup window overflow"))?;
+    U256::from(current_timestamp)
+        .checked_add(setup_window)
+        .ok_or_else(|| eyre::eyre!("earliest voting start overflow"))
+}
 
 /// CRISP contract instance for interacting with CRISPProgram
 #[derive(Clone)]
@@ -422,6 +451,49 @@ impl CRISPContract<CRISPWriteProvider> {
         Ok(contract.availabilityFinalizationWindow().call().await?)
     }
 
+    /// Read the earliest voting start from the CRISP program's current committee timeouts.
+    pub async fn earliest_voting_start(&self) -> Result<U256> {
+        let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
+        Ok(contract.earliestVotingStart().call().await?)
+    }
+
+    /// Read the program's scheduling helper, with a compatibility path for an older CRISPProgram
+    /// that predates `earliestVotingStart()`. The fallback derives the same value from the live
+    /// Interfold and registry configuration. The boolean is `true` when the program supplied the
+    /// value directly and `false` when the compatibility path was used.
+    pub async fn earliest_voting_start_compatible(
+        &self,
+        current_timestamp: u64,
+    ) -> Result<(U256, bool)> {
+        match self.earliest_voting_start().await {
+            Ok(timestamp) => Ok((timestamp, true)),
+            Err(selector_error) => {
+                let program = CRISPProgram::new(self.contract_address, self.provider.as_ref());
+                let interfold_address =
+                    program.interfold().call().await.map_err(|fallback_error| {
+                        eyre::eyre!(
+                        "earliestVotingStart() failed ({selector_error}); compatibility lookup of \
+                         CRISPProgram.interfold() also failed: {fallback_error}"
+                    )
+                    })?;
+                let interfold = InterfoldTiming::new(interfold_address, self.provider.as_ref());
+                let registry_address = interfold.ciphernodeRegistry().call().await?;
+                let timeouts = interfold.getTimeoutConfig().call().await?;
+                let registry =
+                    CiphernodeRegistryTiming::new(registry_address, self.provider.as_ref());
+                let randomness = registry.randomnessRequestTimeout().call().await?;
+                let sortition = registry.sortitionSubmissionWindow().call().await?;
+                let timestamp = derive_earliest_voting_start(
+                    current_timestamp,
+                    randomness,
+                    sortition,
+                    timeouts.dkgWindow,
+                )?;
+                Ok((timestamp, false))
+            }
+        }
+    }
+
     pub async fn minimum_voting_duration(&self) -> Result<U256> {
         let contract = CRISPProgram::new(self.contract_address, self.provider.as_ref());
         Ok(contract.MIN_VOTING_DURATION().call().await?)
@@ -618,5 +690,29 @@ impl CRISPContractFactory {
         contract_address: &str,
     ) -> Result<CRISPContract<CRISPReadProvider>> {
         CRISPContract::new_read_only(http_rpc_url, contract_address).await
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compatibility_schedule_includes_every_committee_setup_window() {
+        assert_eq!(
+            derive_earliest_voting_start(
+                1_000,
+                U256::from(1_200),
+                U256::from(300),
+                U256::from(10_800),
+            )
+            .unwrap(),
+            U256::from(13_300),
+        );
+    }
+
+    #[test]
+    fn compatibility_schedule_rejects_overflow() {
+        assert!(derive_earliest_voting_start(1, U256::MAX, U256::ZERO, U256::ZERO).is_err());
     }
 }

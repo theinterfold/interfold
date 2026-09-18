@@ -58,6 +58,24 @@ Upgrade at least one configured bootstrap peer before the remaining operators. R
 on-chain active count can fill every configured committee and the new-version peers can discover
 each other.
 
+Treat the contracts, verifier routes, ciphernode protocol version, CRISP program, CRISP server, and
+DAO application addresses as one cutover. Do not run a mixed stack. Use this order:
+
+```text
+pause new requests and drain every E3 and committee
+  -> deploy immutable replacement routers and the new CRISP program
+  -> execute the protocol implementation, route, program, and required-version updates
+  -> run the route and verification-key validator against every enabled pair
+  -> restart the matching server and ciphernode release
+  -> update the server and DAO application addresses
+  -> verify server health and peer discovery
+  -> resume requests
+```
+
+On a testnet, a fresh protocol, CRISP, and DAO stack is an acceptable alternative to an in-place
+upgrade. It must still pass the same route and verification-key validation before it accepts an E3.
+The old and new stacks must use separate addresses so clients cannot silently combine them.
+
 The initial VRF upgrade follows this combined path because it introduces the controller and changes
 both `Interfold` and `BondingRegistry`.
 
@@ -68,7 +86,13 @@ requests paused and all E3s and committees drained, `upgrade:secure-crisp` prepa
 governance batch that:
 
 ```text
-upgrade Interfold to the secure chain-aware crypto configuration
+snapshot the operator counts and registry root
+  -> upgrade Interfold, CiphernodeRegistry, BondingRegistry, and E3RefundManager in place
+  -> deploy and wire a replacement SlashingManager
+  -> copy every configured slash policy, including policies that are currently disabled
+  -> preserve the registered operators and revoke the drained old manager
+  -> deploy a replacement VRF consumer against the existing funded subscription
+  -> add the new consumer and switch the registry without replacing the subscription
   -> register the secure BFV parameter set and all committee thresholds
   -> install the secure minimum, micro, and small verifier routes
   -> install the PK, decryption, and ciphertext verifiers
@@ -78,12 +102,22 @@ upgrade Interfold to the secure chain-aware crypto configuration
 ```
 
 Run `upgrade:secure-crisp:validate` after governance executes the batch. The validator checks the
-implementation, every verifier route and VK anchor, the CRISP receipt-verifier binding, and the
-paused and drained state. Publish a new SemVer ciphernode artifact from the same release source
-before governance executes the batch. Restart matching ciphernodes after execution, and resume only
-after at least the largest configured committee size has acknowledged the new protocol and is
-online. Do not use the older CRISP-only builder on mainnet because it cannot install the
-protocol-side secure configuration.
+four proxy implementations, the complete slashing dependency graph, the preserved operator counts
+and registry root, the reused VRF subscription and its two consumers, every verifier route and VK
+anchor, the CRISP receipt-verifier binding, and the paused and drained state. The old VRF consumer
+stays authorized through validation and the first successful E3. Remove it in a later cleanup
+transaction. Publish a new SemVer ciphernode artifact from the same release source before governance
+executes the batch. Restart matching ciphernodes after execution, and resume only after at least the
+largest configured committee size has acknowledged the new protocol and is online. Do not use the
+older CRISP-only builder on mainnet because it cannot install the protocol-side secure
+configuration.
+
+Registry, BondingRegistry, and refund-manager address replacement still requires an empty operator
+generation. A SlashingManager rotation is different: when the same registry and bonding proxies
+remain in place, the replacement can preserve operators. The migration requires paused requests, no
+active E3, no unreleased or unresolved committee, no active slashing assignment, and no active ban.
+The registry accepts the manager only after Interfold, BondingRegistry, and the replacement manager
+all point to the same dependency graph.
 
 After the nodes restart, run
 `upgrade:secure-crisp:resume -- --network mainnet --ciphernodes-restarted`. It reruns the complete
@@ -91,6 +125,13 @@ activation validator and requires enough release-ready active operators for the 
 before it writes the checked DAO/Safe unpause transaction. On-chain active status is not a
 heartbeat, so the flag is an explicit operator confirmation that those processes are online and
 mutually reachable.
+
+The CRISP server probes `earliestVotingStart()` when it creates a round. During an ordered legacy
+cutover, a new server can derive the same lower bound from the live Interfold randomness, sortition,
+and DKG windows if the old CRISP program does not expose that selector. This fallback supports the
+short migration interval only. Deploy and register the new program, then update the server and DAO
+application address before requests resume. An old server cannot create valid rounds against the new
+program because it does not schedule the separate voting start required by that program.
 
 ## Failure and rollback
 
@@ -105,5 +146,7 @@ prevents accidental mixed deployments. Threshold cryptography and on-chain verif
 controls against a malicious operator.
 
 The on-chain active count is also not a heartbeat. Before resuming, operations must confirm that the
-release-ready processes are online and can reach the upgraded bootstrap and one another. A stuck E3
-or unreleased committee delays a mandatory cutover until normal failure finalization drains it.
+release-ready processes are online and can reach the upgraded bootstrap and one another. Check both
+the admitted connection count and the protocol-topic subscriber count on every node. A transport
+connection without the matching gossip subscription is not ready for committee work. A stuck E3 or
+unreleased committee delays a mandatory cutover until normal failure finalization drains it.

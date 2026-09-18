@@ -232,6 +232,8 @@ RandomnessProviderSolReader decodes RandomnessFulfilled
 │  → A successful `ready = false` result proves that the response is unusable
 │  → If historical state is unavailable, current state is accepted only when `ready = true`
 │  → Registry verification is bounded to 15 seconds
+│  → After a read failure, rebuilds the read provider and retries once on the same chain
+│  → Keeps the replacement provider for later fulfillment logs
 │  → An RPC failure, timeout, or unverifiable result rejects the log so restart replay can retry it
 │  → The reader does not poll or silently discard uncertain fulfillment state
 │  → Sortition starts only after the Registry accepts the response
@@ -240,6 +242,11 @@ RandomnessProviderSolReader decodes RandomnessFulfilled
 │  → seed = keccak256(randomWord, chainId, registry, e3Id, requestId)
 ├─ Reads the frozen threshold, request timepoint, ticket price, and submission deadline
 └─ Publishes the existing durable CommitteeRequested event for the sortition actors
+
+If an EVM chain gateway rejects a log after startup, it reports the fatal state to the node run
+loop. The node completes its durability shutdown barrier and exits unsuccessfully so its supervisor
+can restart it and replay the missing chain history. It must not remain healthy while chain
+ingestion has stopped.
 
 InterfoldSolReader decodes IInterfold::E3Requested log
 │
@@ -271,7 +278,7 @@ InterfoldSolReader decodes IInterfold::E3Requested log
     ├─ Waits for CommitteeRequested if the delayed committee seed is not ready
     ├─ Loads the request timepoint and frozen ticket price from CommitteeRequested
     ├─ Uses the CommitteeRequested seed for ticket ranking
-    ├─ Calculates buffer = calculate_buffer_size(M, N)
+    ├─ Calculates buffer = calculate_buffer_size(T, N)
     │
     ├─ ScoreBackend.get_committee():
     │   │
@@ -293,16 +300,20 @@ InterfoldSolReader decodes IInterfold::E3Requested log
     │   └─ Select top N nodes (lowest scores win)
     │       → Returns committee list with party indices
     │
+    ├─ If THIS node is in the buffered winner set:
+    │   ├─ Check only this node's voluntary active-job limit
+    │   ├─ Treat an existing reservation for this E3 as capacity during replay
+    │   ├─ If capacity remains:
+    │   │   ├─ Persist one provisional active-job reservation for this E3
+    │   │   ├─ ticket_id = Some(TicketId::Score(best_ticket_number))
+    │   │   └─ party_index = Some(index_in_committee)
+    │   └─ If capacity is exhausted: ticket_id = None
+    │
+    ├─ If NOT selected: ticket_id = None
+    │
     └─ Sends WithSortitionTicket<E3Requested> to CiphernodeSelector
-        │
-        ├─ If THIS node is in the selected committee:
-        │   ├─ Check only this node's voluntary active-job limit
-        │   ├─ If capacity remains:
-        │   │   ticket_id = Some(TicketId::Score(best_ticket_number))
-        │   │   party_index = Some(index_in_committee)
-        │   └─ If capacity is exhausted: ticket_id = None
-        │
-        └─ If NOT selected: ticket_id = None
+        → The reservation exists before the ticket can leave this actor
+        → A concurrent request sees the reduced local capacity
 ```
 
 ### 2b. CiphernodeSelector Processing
@@ -517,6 +528,9 @@ CiphernodeRegistrySolReader decodes SortitionCommitteeFinalized
 │   }
 │
 ├─ Sortition actor:
+│   ├─ Reconciles the provisional reservation with the finalized N-node committee
+│   │   → A selected node keeps its existing reservation without a second increment
+│   │   → A node outside the final committee releases its provisional reservation
 │   └─ Stores finalized committee as a `Committee` struct in persistent map
 │       → Provides O(1) address→party_id lookup for later expulsion handling
 │       → `CommitteeFinalized` is normalized into ascending address order before storage
@@ -580,7 +594,9 @@ A ready committee must finalize at or before its absolute DKG deadline.
    `requestBlock - 1`. The ticket price is frozen in the request transaction. Rust and Solidity
    consume those same values, so later activation, collateral, or price changes cannot alter the
    candidate set. All nodes compute the same buffered winner set. A selected node can decline its
-   own submission when its local active-job capacity is exhausted.
+   own submission when its local active-job capacity is exhausted. Before ticket dispatch, the node
+   persists a provisional reservation. Committee finalization confirms or releases that reservation.
+   Terminal failure or completion releases every remaining reservation.
 
 3. **Runtime committee order**: both the on-chain registry and Rust runtime normalize the finalized
    committee into ascending address order before deriving `party_id`. This keeps party IDs,
@@ -650,12 +666,12 @@ Fresh deployment and upgrade validation check the subscription owner, consumer, 
 gas lane, and selected payment balance. The balance must meet the configured
 `minimumSubscriptionBalance`, in wei for native payment or juels for LINK, before requests resume.
 The provider reads the same selected balance before every request and reverts an underfunded request
-before the E3 is accepted. The floor is an admission check, not a reservation for concurrent draws,
-so production uses a dedicated subscription with balance monitoring. Upgrade preparation also checks
-the live exit delay against the planned response timeout and submission window before it deploys any
-implementation. The upgrade plan snapshots the effective subscription and provider settings.
-Validation records that snapshot, and resume rejects stale implementations, provider settings, fees,
-or deployment records.
+before the E3 is accepted. The provider reserves `minimumSubscriptionBalance` for each pending draw
+(see below), and production still uses a dedicated subscription with balance monitoring. Upgrade
+preparation also checks the live exit delay against the planned response timeout and submission
+window before it deploys any implementation. The upgrade plan snapshots the effective subscription
+and provider settings. Validation records that snapshot, and resume rejects stale implementations,
+provider settings, fees, or deployment records.
 
 Each E3 freezes its provider, provider request ID, response deadline, and submission window. Rust
 waits for `RandomnessFulfilled`, then asks the Registry for the accepted seed and frozen request
@@ -670,10 +686,23 @@ it starts after the E3 has failed or completed.
 If no usable response arrives, no party can re-request or replace the random word. After the frozen
 response deadline, the requester can cancel the E3 or any caller can finalize its timeout. Both
 paths classify it as `CommitteeFormationTimeout`, release committee obligations, and return all
-service fee escrow to the requester. The flat randomness fee stays charged. The timeout also clears
-the active provider. New E3 requests then revert until governance pauses requests, investigates the
-failure, and restores a provider. A late callback stays recorded in the request-bound provider but
-cannot restart the E3.
+service fee escrow to the requester. The flat randomness fee stays charged. The timeout also sets an
+advisory `degraded` flag and emits `RandomnessCircuitBreakerTripped`. New E3 requests continue to
+use the same provider. Governance reads `randomnessDegraded()`, investigates the failure, and
+re-points the provider with `setRandomnessProvider`, which clears the flag. A late callback stays
+recorded in the request-bound provider but cannot restart the E3.
+
+The breaker is advisory because it was registry-global (Zenith `ZEN2-07`). Any party can reach the
+expiry path through the `finalizeCommittee` timeout, through `markE3Failed`, and through the
+requester's `cancelE3`. If it cleared the provider, one prepared long-lived round could stop every
+later request until governance paused requests and every committee released.
+
+`ChainlinkVrfRandomnessProvider` also reserves subscription balance for each unfulfilled draw. It
+counts pending requests and requires
+`availableBalance >= minimumSubscriptionBalance * (pending + 1)`. Without that reservation, many
+requests in one block pass the same balance check, and the underfunded draws respond after the
+frozen one-hour deadline. The owner calls `releaseAbandonedRequest(requestId)` to release the
+reservation of a draw that never responds.
 
 The Registry reader acknowledges `RandomnessCircuitBreakerTripped` as a control-plane event. The SDK
 also exposes this event and the request-bound provider's `RandomnessFulfilled` event. Consumers use

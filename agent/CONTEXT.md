@@ -13,6 +13,10 @@ jointly generate a threshold BFV key (DKG), compute over encrypted inputs, and t
 output — every step backed by ZK proofs verified on-chain.
 
 - Docs: https://docs.theinterfold.com · License: LGPL-3.0-only
+- Canonical repository: `theinterfold/interfold`. Release assets, the `install` script, the
+  `interfoldup` installer, the zk-prover circuit download, and the `init` templates all resolve
+  against this repository. The `gnosisguild/interfold` name is the former location. Keep the
+  separate `gnosisguild` repositories (`fhe.rs`, `risc0-ethereum`, `CRISP`) as they are.
 - Interfold workspace crates and core `@interfold/*` packages share one release version. CRISP is
   versioned and released separately.
 - Reference app: **CRISP** (`examples/CRISP`, excluded from the workspace)
@@ -23,7 +27,7 @@ output — every step backed by ZK proofs verified on-chain.
 | ------------ | ------------------------------------------------------------------------------------------------------------------------------- |
 | E3           | Encrypted Execution Environment — one confidential computation instance (`e3Id`)                                                |
 | Ciphernode   | Node operator running keyshare/DKG/decryption actors in a committee                                                             |
-| Committee    | Ciphernodes serving an E3. Sizes `(N, T, H)`: `minimum` (3,1,2), `micro` (9,4,5), `small` (19,9,10)                             |
+| Committee    | Ciphernodes serving an E3. Sizes `(N, T, H)`: `minimum` (3,1,2), `micro` (9,4,5), `small` (19,9,14)                             |
 | DKG          | Distributed key generation — joint threshold public key, no party holds the full secret                                         |
 | BFV / TrBFV  | Brakerski–Fan–Vercauteren FHE scheme / its threshold (publicly verifiable) variant                                              |
 | Preset       | BFV parameter set: `insecure-512` (dev/CI default) or `secure-8192`                                                             |

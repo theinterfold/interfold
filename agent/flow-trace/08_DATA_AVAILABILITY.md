@@ -85,8 +85,8 @@ transiently failed callback five times.
 ## Intake ciphertext validation
 
 The ballot proof binds the ciphertext commitment, the ballot digest, and the slot and parent
-context. It does not bind `encryptedVoteHash`. The hash check at intake compares the submitted
-bytes with a hash that the same caller supplied, so it proves only internal consistency.
+context. It does not bind `encryptedVoteHash`. The hash check at intake compares the submitted bytes
+with a hash that the same caller supplied, so it proves only internal consistency.
 
 Before it issues an availability attestation or spends funds, the server therefore also checks the
 bytes against the commitment the proof binds:
@@ -99,18 +99,18 @@ bytes against the commitment the proof binds:
    `compute_ct_commitment_with_params`.
 5. Refuse the input when the recomputed commitment is different from `encryptedVoteCommitment`.
 
-Step 4 keeps the two-component restriction of that function. The commitment covers `c[0]` and
-`c[1]` only, so a padded ciphertext would share one commitment with its two-component prefix while
+Step 4 keeps the two-component restriction of that function. The commitment covers `c[0]` and `c[1]`
+only, so a padded ciphertext would share one commitment with its two-component prefix while
 threshold decryption rejects it.
 
 Votes, updates, and masks get identical validation. The three operations prove one relation and use
 one request format, and a special case for masks would make them different on chain.
 
-Without this check, a caller could copy a publicly visible valid proof tuple, attach different
-bytes with their matching Keccak hash, and get a different job identifier, input identifier, and
-tree leaf without a new ballot proof. Each such submission made the honest service pay for Avail
-publication, Ethereum finalization, storage, and a worker slot for a ciphertext that the Secure
-Process always excludes from ballot-head selection.
+Without this check, a caller could copy a publicly visible valid proof tuple, attach different bytes
+with their matching Keccak hash, and get a different job identifier, input identifier, and tree leaf
+without a new ballot proof. Each such submission made the honest service pay for Avail publication,
+Ethereum finalization, storage, and a worker slot for a ciphertext that the Secure Process always
+excludes from ballot-head selection.
 
 Deserialization and the commitment are real processor work at a public endpoint, so a semaphore
 bounds the validations that run at the same time, and each one runs on a blocking thread.
@@ -129,21 +129,20 @@ The production timeout maxima before a committee key can exist are:
 | Ticket submission | 10 minutes |  1 hour 10 minutes |
 | DKG               |    6 hours | 7 hours 10 minutes |
 
-CRISP reserves the final 3 hours of the input window for VectorX. It also guarantees at least 1 hour
-in which a voter can create a new proof after a worst-case committee setup:
+Committee setup ends before the fixed input-window start. For a request mined at `R`, the earliest
+voting start is:
 
 ```text
-1h VRF + 10m sortition + 6h DKG + 1h voting + 3h finalization = 40,200 seconds
+S = R + 1h VRF + 10m sortition + 6h DKG = R + 25,800 seconds
 ```
 
-With those production defaults, `E3_DURATION` must be at least 40,200 seconds. A short rehearsal can
-use 43,200 seconds (12 hours), which leaves 1 hour 50 minutes for new commitments after the
-worst-case key publication. The Interfold DAO launch configuration uses five days. That leaves 4
-days 13 hours 50 minutes for new commitments under the same worst case. The server does not
-hard-code these totals. At startup, it reads the registry's randomness and sortition windows,
-Interfold's DKG window, and CRISP's voting and finalization windows. It refuses to start when
-`E3_DURATION` is shorter than their current sum. Test deployments with shorter on-chain windows can
-therefore use a correspondingly shorter round.
+CRISP then reserves the final 3 hours of the input window for VectorX and guarantees at least 1 hour
+for ballot commitments. `E3_DURATION` starts at `S`, so its minimum is 14,400 seconds, not the sum
+of setup and input processing. A 43,200-second duration provides 9 hours for ballot commitments and
+3 hours for finalization. The Interfold DAO launch configuration uses a five-day ballot interval and
+ends the input window three hours later. The server does not hard-code these totals. At startup, it
+reads CRISP's voting and finalization windows and refuses to start when `E3_DURATION` is shorter
+than their current sum. Test deployments with a zero finalization window can use shorter rounds.
 
 The three-hour tail is an operating target, not a promise from VectorX. Avail documents a 20-second
 block time and says VectorX bridges one range every 360 blocks. One complete range is therefore
@@ -154,20 +153,31 @@ inclusive compute deadline. No new input is admitted during that recovery period
 - [Avail block and finalization timing](https://docs.availproject.org/docs/da/build/turbo-da)
 - [VectorX 360-block range](https://docs.availproject.org/docs/da/build/vectorx)
 
-The CRISP request paths currently start the input window 20 or 60 seconds after they read the chain
-time. The exact timestamps therefore shift by that small start buffer. The table below uses `T0` as
-the input-window start. The contract calculates from the actual request timestamp and actual input
-window, so it does not rely on this approximation.
+The fixed CRISP schedule names three dates: voting starts at `S`, new ballots close at `V`, and
+Avail finalization ends at `A`. The plugin stores `S` and `V` on the proposal. It requests
+Interfold's input window as `[S, A]`, where `A = V + availabilityFinalizationWindow`.
+`CRISPProgram.inputCommitmentDeadline` therefore returns `V`. A key published early does not open
+voting before `S`; a key that misses its deadline does not move the vote to a later date.
 
-For a 12-hour input window starting at `T0`:
+For a request mined at `R`, the earliest allowed `S` is
+`R + randomnessRequestTimeout + sortitionSubmissionWindow + dkgWindow`. The program validates that
+bound against the E3's request-time timeout snapshot. The app shows the current bound and suggests a
+ten-minute buffer for the create transaction to be mined. For the current mainnet timing example,
+the setup budget is 25,800 seconds (1 hour VRF, 10 minutes sortition, 6 hours DKG). Direct CRISP
+server and CLI requests also read the program's earliest start in Avail mode. Their `E3_DURATION`
+remains the full input-window duration from `S` through `A`; startup requires it to cover the
+on-chain minimum voting window plus the Avail finalization window. Local mock requests retain their
+shorter start buffer.
 
-| Boundary                                                      |        Timestamp |
-| ------------------------------------------------------------- | ---------------: |
-| Worst-case key publication                                    |   `T0 + 25,800s` |
-| Last instant before commitment cutoff                         | `< T0 + 32,400s` |
-| Input window ends                                             |   `T0 + 43,200s` |
-| Compute deadline                                              |  `T0 + 648,000s` |
-| Latest decryption deadline after a last-second compute output |  `T0 + 669,600s` |
+For a one-hour vote beginning at that earliest `S` and a three-hour Avail window:
+
+| Boundary                                                      |                                        Timestamp |
+| ------------------------------------------------------------- | -----------------------------------------------: |
+| Worst-case key publication and earliest voting start          |                                    `R + 25,800s` |
+| Last instant before the ballot commitment cutoff              |                                   `< S + 3,600s` |
+| Avail finalization and Interfold input window end             |                                    `S + 14,400s` |
+| Compute deadline                                              |                    `S + 14,400s + computeWindow` |
+| Latest decryption deadline after a last-second compute output | `S + 14,400s + computeWindow + decryptionWindow` |
 
 This is below Interfold's 30-day maximum lifecycle reservation.
 
@@ -224,10 +234,10 @@ transaction:
   submission paths. Where the service relays the commitment itself (every non-mainnet chain), the
   receipt does not promote the job: the job stays in `AwaitingCommitment` with the relayed
   transaction hash, the attestation renews on the same schedule as a wallet-submitted one, and a
-  relayed transaction that is absent from finalized state and from the chain head is relayed
-  again (`commitment_step`). The status endpoint reports a relayed provisional job as
-  `pending_availability`, not `ready_for_commitment`, so a client does not sign a second
-  commitment with its wallet.
+  relayed transaction that is absent from finalized state and from the chain head is relayed again
+  (`commitment_step`). The status endpoint reports a relayed provisional job as
+  `pending_availability`, not `ready_for_commitment`, so a client does not sign a second commitment
+  with its wallet.
 - A publication transaction moves to `AwaitingFinality`, not directly to success. That state keeps
   the Ethereum payload, the Avail coordinates, the compute proof or staged envelope, and the local
   object. When finalized state contains the publication, the job retires. When the publication is
@@ -249,10 +259,10 @@ when the service observes it later. If the finalized state contains no commitmen
 releases the ciphertext and lets the voter stage the original proof again for a fresh promise.
 
 The old four-hour CRISP duration was unsafe. In the worst case, the input commitment cutoff arrived
-before the committee key existed. Both the server and `CRISPProgram.validate` now refuse an unsafe
-window. The contract derives the latest key time from the request's frozen DKG timeout and the
-request-time Registry VRF and sortition windows. It also accounts for a deliberately delayed input
-start, so calling the contract without the CRISP server cannot bypass the rule.
+before the committee key existed. With a nonzero Avail window, `CRISPProgram.validate` now rejects a
+scheduled voting start before the worst-case key deadline and requires at least one hour before the
+ballot cutoff. It also requires a compute window long enough for a late Avail receipt. These checks
+run in the request transaction, before the requester pays the fee.
 
 ## Restart and failure behavior
 
@@ -329,12 +339,11 @@ rules:
   order from the order they reserved, and a positional release would return the reservation of a
   request that admitted durable work. An admitted request keeps its reservation until the original
   60-second window expires. The reservation is committed in the same synchronous step that writes
-  the durable job, under the storage lock, and not after the awaits that follow admission: a
-  client that closes its connection during those awaits cancels the handler, and a commit placed
-  after the await would never run, releasing quota for a job the background worker still holds.
-  When the store reports an error after its transaction may have applied (a failed flush), the
-  reservation is judged by the record: a live record keeps it, a missing or still-failed record
-  returns it.
+  the durable job, under the storage lock, and not after the awaits that follow admission: a client
+  that closes its connection during those awaits cancels the handler, and a commit placed after the
+  await would never run, releasing quota for a job the background worker still holds. When the store
+  reports an error after its transaction may have applied (a failed flush), the reservation is
+  judged by the record: a live record keeps it, a missing or still-failed record returns it.
 - A repeat of a statement that already has a non-failed job is answered before the funding window is
   touched. Such a replay creates no job, signs no attestation, and pays for no publication. Charging
   it would let one caller consume the allowance that new votes need, and near the commitment cutoff
@@ -347,8 +356,8 @@ rules:
 VectorX provides the final correctness and availability proof. The server signature is an earlier
 liveness promise: it proves that the configured service received and durably stored the exact
 ciphertext before Ethereum reserves the leaf. The service signs only after the bytes reproduce the
-commitment their ballot proof binds, so an honest signer no longer funds publication of a
-ciphertext that the Secure Process must exclude.
+commitment their ballot proof binds, so an honest signer no longer funds publication of a ciphertext
+that the Secure Process must exclude.
 
 If the availability signer is compromised, it can sign a hash without retaining the bytes. The
 resulting pending input can stop the round until the compute timeout. It cannot make Ethereum accept
@@ -362,7 +371,8 @@ Production therefore needs:
 - a separate funded Avail account and registered App ID;
 - monitored Ethereum, Avail, and bridge API endpoints;
 - alerts for pending jobs, signer balance, Avail balance, and the commitment/finalization deadlines;
-- `E3_DURATION=43200` and `AVAIL_PROOF_LEAD_SECONDS=10800`.
+- `E3_DURATION=43200` for a nine-hour ballot interval plus the finalization tail, and
+  `AVAIL_PROOF_LEAD_SECONDS=10800`.
 
 No fallback changes the data source after its hash is known. Adding such a fallback would require a
 new, explicitly bound proof path and a separate review.

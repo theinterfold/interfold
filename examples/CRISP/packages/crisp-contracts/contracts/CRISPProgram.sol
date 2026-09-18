@@ -243,6 +243,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   error InputCommitmentDeadlinePassed(uint256 e3Id, uint256 deadline);
   error InputWindowTooShort(uint256 e3Id, uint256 duration, uint256 required);
   error VotingWindowTooShort(uint256 e3Id, uint256 votingStartsAt, uint256 commitmentDeadline, uint256 required);
+  error VotingStartsBeforeKeyDeadline(uint256 e3Id, uint256 earliestStart, uint256 actualStart);
   /// @notice The compute window leaves no budget for a late availability receipt.
   /// @dev ZEN2-02: a receipt that arrives after the compute deadline can never finalize, and the
   /// round cannot conclude while its input stays pending.
@@ -253,6 +254,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   error InvalidComputeContext();
   error InvalidDataAvailabilityVerifier();
   error DataAvailabilityHashMismatch(bytes32 expected, bytes32 actual);
+  error ZeroEncryptedVoteHash();
 
   // Events
   event InterfoldBound(address indexed interfold);
@@ -489,8 +491,17 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     if (address(interfold.getE3(e3Id).e3Program) != address(this)) revert E3NotAssignedToProgram(e3Id);
   }
 
-  /// @notice Refuse a round that can close before a worst-case committee leaves one hour to vote,
-  /// or that leaves no budget for a late availability receipt.
+  /// @notice Return the earliest voting start under the current committee timeouts.
+  /// @dev The E3 request snapshots these settings. Callers should add time for their transaction
+  /// to be mined when they choose a fixed start date.
+  function earliestVotingStart() external view returns (uint256) {
+    IInterfold.E3TimeoutConfig memory timeouts = interfold.getTimeoutConfig();
+    ICiphernodeRegistry registry = IInterfoldRegistryView(address(interfold)).ciphernodeRegistry();
+    return block.timestamp + registry.randomnessRequestTimeout() + registry.sortitionSubmissionWindow() + timeouts.dkgWindow;
+  }
+
+  /// @notice Refuse a round that starts before the worst-case key deadline, ends before one hour
+  /// of voting, or leaves no budget for a late availability receipt.
   /// @dev Interfold stores the E3 and its timeout snapshot before calling {validate}. Read those
   /// exact values instead of duplicating deployment-time settings. A zero finalization window is
   /// the synchronous local mock and keeps its short test rounds.
@@ -501,7 +512,10 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     IInterfold.E3TimeoutConfig memory timeouts = interfold.getE3TimeoutConfig(e3Id);
     ICiphernodeRegistry registry = IInterfoldRegistryView(address(interfold)).ciphernodeRegistry();
     uint256 latestKeyAt = e3.requestBlock + registry.randomnessRequestTimeout() + registry.sortitionSubmissionWindow() + timeouts.dkgWindow;
-    uint256 votingStartsAt = e3.inputWindow[0] > latestKeyAt ? e3.inputWindow[0] : latestKeyAt;
+    if (e3.inputWindow[0] < latestKeyAt) {
+      revert VotingStartsBeforeKeyDeadline(e3Id, latestKeyAt, e3.inputWindow[0]);
+    }
+    uint256 votingStartsAt = e3.inputWindow[0];
     uint256 duration = e3.inputWindow[1] - e3.inputWindow[0];
     if (duration <= availabilityFinalizationWindow) {
       revert InputWindowTooShort(e3Id, duration, availabilityFinalizationWindow + 1);
@@ -643,7 +657,6 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     if (block.timestamp >= availabilityAttestationExpiresAt) {
       revert InputAvailabilityAttestationExpired(availabilityAttestationExpiresAt);
     }
-
     _verifyInputProof(e3Id, e3, noirProof, slotAddress, encryptedVoteCommitment, encryptedVoteHash, parentIndexPlusOne);
 
     bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
@@ -775,6 +788,11 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     bytes32 encryptedVoteHash,
     uint40 parentIndexPlusOne
   ) internal view {
+    // A zero content hash matches an Avail padding leaf. Refuse it on every proof path so that
+    // no committed input can later finalize against data that no party published, and so that
+    // `validateInputProof` cannot accept a statement that `publishInput` rejects.
+    if (encryptedVoteHash == bytes32(0)) revert ZeroEncryptedVoteHash();
+
     uint256 leaf = inputLeaf(encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);
     if (e3Data[e3Id].appendedLeaf[leaf]) revert InputAlreadyPublished(leaf);
     bytes32 id = inputId(e3Id, encryptedVoteHash, encryptedVoteCommitment, slotAddress, parentIndexPlusOne);

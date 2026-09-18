@@ -70,7 +70,6 @@ const config: HardhatUserConfig = {
       chainType: 'l1',
       mining: {
         auto: true,
-        interval: 1000,
       },
     },
     localhost: {
@@ -135,6 +134,7 @@ const config: HardhatUserConfig = {
       '@interfold/contracts/contracts/lib/BondingOwnershipLib.sol',
       '@interfold/contracts/contracts/lib/RegistrySortitionLib.sol',
       '@interfold/contracts/contracts/lib/SlashingEvidenceLib.sol',
+      '@interfold/contracts/contracts/lib/RefundClaimLib.sol',
       '@interfold/contracts/contracts/registry/CiphernodeRegistryOwnable.sol',
       '@interfold/contracts/contracts/registry/BondingRegistry.sol',
       '@interfold/contracts/contracts/registry/BondedCheckpoints.sol',

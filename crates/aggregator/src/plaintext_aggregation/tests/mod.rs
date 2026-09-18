@@ -269,5 +269,24 @@ async fn standby_persists_and_resumes_plaintext_work() -> Result<()> {
     Ok(())
 }
 
+#[actix::test]
+async fn decryption_share_after_collection_closed_is_ignored() -> Result<()> {
+    let (mut aggregator, _history, e3_id) =
+        build_plaintext_aggregator(verifying_c6_state(), false).await?;
+
+    aggregator.add_share(
+        0,
+        vec![ArcBytes::from_bytes(&[7])],
+        vec![dummy_signed_c6_proof(&e3_id)],
+        &test_ctx(EffectsEnabled::new()),
+    )?;
+
+    assert!(matches!(
+        aggregator.state.get(),
+        Some(ThresholdPlaintextAggregatorState::VerifyingC6(_))
+    ));
+    Ok(())
+}
+
 mod completion;
 mod failures;

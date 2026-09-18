@@ -392,17 +392,17 @@ The Interfold follows [Semantic Versioning](https://semver.org/):
 Use stable versions only:
 
 ```bash
-interfoldup install              # Latest stable
-interfoldup install v1.0.0       # Specific stable version
+interfoldup install                     # Latest release
+interfoldup install --version v1.0.0    # Specific stable version
 ```
 
 #### For Testing (Testnet)
 
-You can use pre-release versions:
+You can use pre-release versions. Name the tag, because `install` without `--version` always selects
+the latest release:
 
 ```bash
-interfoldup install --pre-release # Latest pre-release
-interfoldup install v1.0.0-beta.1 # Specific pre-release
+interfoldup install --version v1.0.0-beta.1 # Specific pre-release
 ```
 
 #### For Development
@@ -410,7 +410,7 @@ interfoldup install v1.0.0-beta.1 # Specific pre-release
 Build from source:
 
 ```bash
-git clone https://github.com/gnosisguild/interfold.git
+git clone https://github.com/theinterfold/interfold.git
 cd interfold
 cargo build --release
 ```
@@ -428,10 +428,10 @@ cargo build --release
 
 ```bash
 # Latest stable release (recommended for production)
-curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/stable/install | bash
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/stable/install | bash
 
 # Latest development version (may be unstable)
-curl -fsSL https://raw.githubusercontent.com/gnosisguild/interfold/main/install | bash
+curl -fsSL https://raw.githubusercontent.com/theinterfold/interfold/main/install | bash
 ```
 
 ## 📋 Release Checklist
@@ -490,7 +490,7 @@ If a release has issues:
 
 ## 📊 Version History
 
-Check our [Releases page](https://github.com/gnosisguild/interfold/releases) for full version
+Check our [Releases page](https://github.com/theinterfold/interfold/releases) for full version
 history and changelogs.
 
 ## Security and Liability
@@ -502,8 +502,8 @@ FITNESS FOR A PARTICULAR PURPOSE.
 
 This repo created under the [LGPL-3.0+ license](LICENSE.md).
 
-[gha]: https://github.com/gnosisguild/interfold/actions
-[gha-badge]: https://github.com/gnosisguild/interfold/actions/workflows/ci.yml/badge.svg
+[gha]: https://github.com/theinterfold/interfold/actions
+[gha-badge]: https://github.com/theinterfold/interfold/actions/workflows/ci.yml/badge.svg
 [hardhat]: https://hardhat.org/
 [hardhat-badge]: https://img.shields.io/badge/Built%20with-Hardhat-FFDB1C.svg
 [license]: https://opensource.org/license/lgpl-3-0

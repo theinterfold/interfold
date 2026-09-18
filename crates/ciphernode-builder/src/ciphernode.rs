@@ -8,6 +8,7 @@ use actix::Addr;
 use anyhow::{Context, Result};
 use e3_data::{DataStore, InMemStore, StoreAddr};
 use e3_events::{BusHandle, HistoryCollector, InterfoldEvent};
+use e3_evm::GatewayFailureReceiver;
 use e3_net::{NetChannelBridge, NetworkStatus};
 use libp2p::PeerId;
 use std::{future::Future, time::Duration};
@@ -68,6 +69,8 @@ pub struct CiphernodeHandle {
     pub network_status: NetworkStatus,
     pub eventstore: EventStoreReader,
     pub aggregate_ids: Vec<usize>,
+    pub persistence_health: tokio::sync::watch::Receiver<Option<String>>,
+    pub gateway_failures: Vec<GatewayFailureReceiver>,
 }
 
 impl PartialEq for CiphernodeHandle {
@@ -101,6 +104,32 @@ impl CiphernodeHandle {
 
     pub fn eventstore(&self) -> EventStoreReader {
         self.eventstore.clone()
+    }
+
+    pub fn persistence_health(&self) -> tokio::sync::watch::Receiver<Option<String>> {
+        self.persistence_health.clone()
+    }
+
+    /// Resolve when a chain gateway fails closed after startup.
+    pub fn gateway_failure(&self) -> impl Future<Output = String> + Send + 'static {
+        let mut receivers = self.gateway_failures.clone();
+        async move {
+            if receivers.is_empty() {
+                return std::future::pending().await;
+            }
+
+            let waits = receivers.iter_mut().map(|receiver| {
+                Box::pin(async move {
+                    match receiver.wait_for(|reason| reason.is_some()).await {
+                        Ok(reason) => reason
+                            .clone()
+                            .unwrap_or_else(|| "EVM chain gateway failed closed".to_owned()),
+                        Err(_) => "EVM chain gateway stopped without reporting a reason".to_owned(),
+                    }
+                })
+            });
+            futures::future::select_all(waits).await.0
+        }
     }
 
     pub fn aggregate_ids(&self) -> &[usize] {

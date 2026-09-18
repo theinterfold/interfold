@@ -5,8 +5,8 @@ description: 'Overview of ciphernode operations, contracts, and lifecycle'
 
 # Ciphernode Operators
 
-Ciphernode operators run the software that forms the Interfold network’s distributed threshold layer.
-Ciphernodes participate in threshold cryptography for Encrypted Execution Environments (E3s),
+Ciphernode operators run the software that forms the Interfold network’s distributed threshold
+layer. Ciphernodes participate in threshold cryptography for Encrypted Execution Environments (E3s),
 helping ensure that no single operator controls key generation or output decryption.
 
 > **Run a ciphernode:** Prefer a browser-based setup? The Interfold dashboard provides a
@@ -180,14 +180,14 @@ stateDiagram-v2
 
 ### State Descriptions
 
-| State           | Description                                                                        |
-| --------------- | ---------------------------------------------------------------------------------- |
-| **Unbonded**    | No ciphernode bond deposited; cannot register                                      |
-| **Bonded**      | FOLD bonded but not yet registered in the registry                                 |
-| **Registered**  | In the registry but lacking minimum ticket balance                                 |
+| State           | Description                                                                            |
+| --------------- | -------------------------------------------------------------------------------------- |
+| **Unbonded**    | No ciphernode bond deposited; cannot register                                          |
+| **Bonded**      | FOLD bonded but not yet registered in the registry                                     |
+| **Registered**  | In the registry but lacking minimum ticket balance                                     |
 | **Active**      | Registered and meeting the on-chain requirements for committee selection via sortition |
-| **Inactive**    | Registered but below minimum requirements (tickets or ciphernode bond)             |
-| **ExitPending** | Deregistration requested; waiting for exit delay before claiming or re-registering |
+| **Inactive**    | Registered but below minimum requirements (tickets or ciphernode bond)                 |
+| **ExitPending** | Deregistration requested; waiting for exit delay before claiming or re-registering     |
 
 ## Requirements
 

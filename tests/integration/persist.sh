@@ -107,7 +107,8 @@ $SCRIPT_DIR/lib/fake_encrypt.sh --input "$SCRIPT_DIR/output/pubkey.bin" --output
 heading "Mock publish input e3-id"
 pnpm e3-program:publishInput --network localhost --e3-id "$E3_ID" --data 0x12345678
 
-advance_evm_timestamp "$INPUT_WINDOW_END"
+# The input is in; close the window so the round can move to decryption.
+advance_evm_time_past "$INPUT_WINDOW_END"
 
 waiton "$SCRIPT_DIR/output/output.bin"
 

@@ -44,10 +44,13 @@ interfoldup install
 
 # Install to /usr/local/bin (requires sudo)
 interfoldup install --system
+
+# Install a specific release
+interfoldup install --version v0.13.0
 ```
 
-Running `interfoldup install` will install the latest version of the Interfold CLI. See
-`interfoldup --help` for more options.
+Running `interfoldup install` will install the latest version of the Interfold CLI. Give `--version`
+a release tag to install that release instead. See `interfoldup --help` for more options.
 
 ### Update the Interfold CLI
 
@@ -57,6 +60,9 @@ interfoldup update
 
 # Update system-wide installation
 interfoldup update --system
+
+# Move to a specific release, forward or backward
+interfoldup update --version v0.13.0
 ```
 
 ### Uninstall

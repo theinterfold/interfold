@@ -236,8 +236,13 @@ async fn standby_persists_and_resumes_public_key_work() -> Result<()> {
             &ec,
         )?;
     }
-    aggregator.publish_inputs_ready(ec)?;
-
+    aggregator.accept_dkg_roster(
+        CommitmentRosterSelected {
+            e3_id: e3_id.clone(),
+            party_ids: vec![0, 1],
+        },
+        ec.clone(),
+    )?;
     assert!(matches!(
         aggregator.state.get(),
         Some(PublicKeyAggregatorState::VerifyingC1 { .. })
@@ -262,6 +267,144 @@ async fn standby_persists_and_resumes_public_key_work() -> Result<()> {
         InterfoldEventData::ShareVerificationDispatched(data)
             if data.e3_id == e3_id && data.kind == VerificationKind::PkGenerationProofs
     ));
+    Ok(())
+}
+
+#[actix::test]
+async fn collecting_aggregator_accepts_a_roster_replacement_before_c1() -> Result<()> {
+    let committee = CiphernodesCommitteeSize::Minimum.values();
+    let state = PublicKeyAggregatorState::init(
+        committee.n,
+        committee.threshold,
+        Seed([0; 32]),
+        (0..committee.n as u64)
+            .map(|party_id| (party_id, format!("0x{:040x}", party_id + 1)))
+            .collect(),
+    );
+    let (mut aggregator, _history, e3_id) = build_public_key_aggregator(state).await?;
+    let ec = test_ctx(EffectsEnabled::new());
+
+    aggregator.accept_dkg_roster(
+        CommitmentRosterSelected {
+            e3_id: e3_id.clone(),
+            party_ids: vec![1, 2],
+        },
+        ec.clone(),
+    )?;
+    aggregator.accept_dkg_roster(
+        CommitmentRosterSelected {
+            e3_id,
+            party_ids: vec![0, 1],
+        },
+        ec,
+    )?;
+
+    assert_eq!(
+        aggregator.recovery.try_get()?.selected_roster,
+        Some(BTreeSet::from([0, 1]))
+    );
+    assert!(matches!(
+        aggregator.state.get(),
+        Some(PublicKeyAggregatorState::Collecting { .. })
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn expelling_a_selected_roster_member_fails_the_dkg_immediately() -> Result<()> {
+    let selected_node = Address::repeat_byte(0x11);
+    let other_node = Address::repeat_byte(0x22);
+    let state = PublicKeyAggregatorState::init(
+        3,
+        1,
+        Seed([0; 32]),
+        HashMap::from([
+            (0, selected_node.to_string()),
+            (1, other_node.to_string()),
+            (2, Address::repeat_byte(0x33).to_string()),
+        ]),
+    );
+    let (mut aggregator, history, e3_id) = build_public_key_aggregator(state).await?;
+    aggregator
+        .recovery
+        .try_mutate_without_context(|mut recovery| {
+            recovery.selected_roster = Some(BTreeSet::from([0, 1]));
+            Ok(recovery)
+        })?;
+
+    aggregator.handle_member_expelled(selected_node, &test_ctx(EffectsEnabled::new()))?;
+
+    let event = next_event(&history).await?;
+    assert!(matches!(
+        event.into_data(),
+        InterfoldEventData::E3Failed(E3Failed {
+            e3_id: failed_e3,
+            failed_at_stage: E3Stage::CommitteeFinalized,
+            reason: FailureReason::InsufficientCommitteeMembers,
+        }) if failed_e3 == e3_id
+    ));
+    Ok(())
+}
+
+#[actix::test]
+async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
+    let (bus, rng, _seed, params, crp, _errors, _history) =
+        get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
+    let e3_id = E3id::new("42", 1);
+    let fhe = Arc::new(Fhe::new(params, crp, rng));
+    let party_id = 2;
+    let mut initial_state = generating_c5_state(CorrelationId::new());
+    let PublicKeyAggregatorState::GeneratingC5Proof {
+        party_nodes,
+        honest_party_ids,
+        ..
+    } = &mut initial_state
+    else {
+        unreachable!();
+    };
+    party_nodes.insert(party_id, Address::repeat_byte(0x22).to_string());
+    honest_party_ids.insert(party_id);
+
+    let state_store = InMemStore::new(false).start();
+    let state_repository = Repository::new(DataStore::from_in_mem(&state_store));
+    let state = state_repository.send(Some(initial_state));
+    let aggregator = PublicKeyAggregator::new(
+        PublicKeyAggregatorParams {
+            fhe,
+            bus,
+            e3_id: e3_id.clone(),
+            params_preset: BfvPreset::InsecureThreshold512,
+            committee_size: CiphernodesCommitteeSize::Minimum,
+            dkg_fold_attestation_context: None,
+            recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            initial_is_aggregator: false,
+            effects_enabled: true,
+        },
+        state,
+    )
+    .start();
+
+    let fold = DKGRecursiveAggregationComplete {
+        e3_id,
+        party_id,
+        aggregated_proof: None,
+        fold_attestation: None,
+    };
+    aggregator
+        .send(TypedEvent::new(fold.clone(), test_ctx(fold)))
+        .await?;
+
+    let persisted = state_repository
+        .read()
+        .await?
+        .expect("persisted public-key aggregator state");
+    let PublicKeyAggregatorState::GeneratingC5Proof {
+        dkg_node_proofs, ..
+    } = persisted
+    else {
+        panic!("expected GeneratingC5Proof state");
+    };
+    assert_eq!(dkg_node_proofs.get(&party_id), Some(&None));
     Ok(())
 }
 

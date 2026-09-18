@@ -178,6 +178,9 @@ Protocol-specific invariants must be named and tested. Important examples includ
 - runtime `party_id` is derived from the finalized committee normalized by ascending address;
 - the active aggregator is the lowest eligible `party_id` after on-chain exclusions and the current
   phase's durable unresponsive-party set;
+- after enough members publish signed DKG readiness, the active aggregator proposes a canonical
+  `H`-member contribution roster; the existing readiness-gated failover promotes the next eligible
+  party if roster publication stalls;
 - the DKG aggregation circuit receives exactly `H` canonical honest NodeFold proofs and exactly `N`
   ordered committee addresses;
 - C2a/C2b are singleton proofs, while C3a/C3b follow the configured recipient/row multiplicities;

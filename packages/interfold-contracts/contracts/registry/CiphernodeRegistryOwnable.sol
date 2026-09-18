@@ -836,10 +836,19 @@ contract CiphernodeRegistryOwnable is
     function setSlashingManager(
         ISlashingManager _slashingManager
     ) public onlyOwner {
-        require(address(_slashingManager) != address(0), ZeroAddress());
-        _requireGenerationDrained(address(slashingManager));
+        address candidate = address(_slashingManager);
+        require(candidate != address(0), ZeroAddress());
+        if (address(slashingManager) != address(0)) {
+            RegistrySortitionLib.validateSlashingManagerMigration(
+                address(_slashingManager),
+                address(slashingManager),
+                address(interfold),
+                address(bondingRegistry),
+                unreleasedCommitteeCount
+            );
+        }
         slashingManager = _slashingManager;
-        emit RegistrySlashingManagerSet(address(_slashingManager));
+        emit RegistrySlashingManagerSet(candidate);
     }
 
     /// @notice Disabled. Reverts unconditionally.
@@ -895,6 +904,11 @@ contract CiphernodeRegistryOwnable is
     /// @inheritdoc ICiphernodeRegistry
     function randomnessRequestTimeout() public view returns (uint256) {
         return RegistrySortitionLib.randomnessRequestTimeout();
+    }
+
+    /// @inheritdoc ICiphernodeRegistry
+    function randomnessDegraded() external view returns (bool) {
+        return RegistrySortitionLib.randomnessDegraded();
     }
 
     /// @inheritdoc ICiphernodeRegistry

@@ -205,20 +205,20 @@ impl ShareEncryptionProofRequest {
 pub struct DkgShareDecryptionProofRequest {
     /// BFV secret key used for decryption (witness — encrypted at rest).
     pub sk_bfv: SensitiveBytes,
-    /// BFV ciphertexts from the (H − 1) external honest parties, flattened
-    /// `[(H − 1) * L]` in ascending external-party_id order (own party skipped).
+    /// BFV ciphertexts from the selected external parties, flattened in
+    /// ascending party-id order. The count is `H - 1` when the sender is
+    /// selected and `H` otherwise.
     /// Layout: ext party 0 mod 0, ext party 0 mod 1, ..., ext party 1 mod 0, ...
     pub honest_ciphertexts_raw: Vec<ArcBytes>,
-    /// Total number of honest parties (H), counting the own slot.
+    /// Total number of selected parties (H).
     pub num_honest_parties: usize,
     /// Number of CRT moduli (L).
     pub num_moduli: usize,
-    /// Position of the own party within the H ascending-party_id ordering. The prover
-    /// splices `own_share_raw` into this slot when assembling C4 inputs.
-    pub own_plaintext_idx: usize,
-    /// Bincode-serialised `Vec<Vec<u64>>` of shape `[L][N]` — the own party's plaintext
-    /// share row per modulus (witness — encrypted at rest).
-    pub own_share_raw: SensitiveBytes,
+    /// Own party's row in the selected order, if the party contributed to the key.
+    pub own_plaintext_idx: Option<usize>,
+    /// Own plaintext share, present only when `own_plaintext_idx` is present.
+    /// The encrypted witness contains a bincode `Vec<Vec<u64>>` of shape `[L][N]`.
+    pub own_share_raw: Option<SensitiveBytes>,
     /// SecretKey or SmudgingNoise.
     pub dkg_input_type: DkgInputType,
     /// BFV preset for parameter resolution.

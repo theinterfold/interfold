@@ -53,7 +53,7 @@ import type { MockCiphernodeRegistry } from "../../types/contracts/test/MockCiph
 import type { MockCiphertextVerifier } from "../../types/contracts/test/MockCiphertextVerifier";
 import type { MockComputeProvider } from "../../types/contracts/test/MockComputeProvider";
 import type { MockDecryptionVerifier } from "../../types/contracts/test/MockDecryptionVerifier";
-import type { MockE3ProgramHarness } from "../../types/contracts/test/MockE3ProgramHarness";
+import type { MockE3ProgramHarness } from "../../types/contracts/test/MockE3ProgramHarness.sol/MockE3ProgramHarness";
 import type { MockPkVerifier } from "../../types/contracts/test/MockPkVerifier";
 import type { MockRandomnessProvider } from "../../types/contracts/test/MockRandomnessProvider";
 import type { MockCircuitVerifier } from "../../types/contracts/test/MockSlashingVerifier.sol/MockCircuitVerifier";
@@ -89,8 +89,8 @@ export interface TimeoutConfig {
 }
 
 /**
- * `[CommitteeSize enum value, [M, N]]` passed to `Interfold.setCommitteeThresholds`.
- * On-chain: `threshold[0]` = required honest roster H and `threshold[1]` =
+ * `[CommitteeSize enum value, [H, N]]` passed to `Interfold.setCommitteeThresholds`.
+ * On-chain: `threshold[0]` = required DKG roster size H and `threshold[1]` =
  * committee size N. Pricing resolves the circuit threshold T separately.
  */
 export type CommitteeThreshold = [number, [number, number]];
@@ -577,7 +577,7 @@ export async function deployInterfoldSystem(
     );
   }
 
-  // ── Committee thresholds ([M, N] per CommitteeSize) ─────────────────────
+  // ── Committee thresholds ([H, N] per CommitteeSize) ─────────────────────
   for (const [size, [m, n]] of committeeThresholds) {
     await interfold.setCommitteeThresholds(size, [m, n]);
   }

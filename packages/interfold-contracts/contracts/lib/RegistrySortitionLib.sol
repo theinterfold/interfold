@@ -11,6 +11,12 @@ import { ICiphernodeRegistry } from "../interfaces/ICiphernodeRegistry.sol";
 import { IInterfold } from "../interfaces/IInterfold.sol";
 import { IRandomnessProvider } from "../interfaces/IRandomnessProvider.sol";
 import { ISlashingManager } from "../interfaces/ISlashingManager.sol";
+import {
+    IProtocolDependencyView
+} from "../interfaces/IProtocolDependencyView.sol";
+import {
+    IERC165
+} from "@openzeppelin/contracts/utils/introspection/IERC165.sol";
 
 /// @notice Resolves entropy and updates candidate rankings for registry sortition.
 library RegistrySortitionLib {
@@ -22,6 +28,88 @@ library RegistrySortitionLib {
     uint256 private constant MAX_RANDOMNESS_REQUEST_TIMEOUT = 1 days;
     uint256 private constant MAX_COMMITTEE_PUBLIC_KEY_BYTES = 512 * 1024;
     uint256 private constant MAX_COMMITTEE_PUBLIC_KEY_CHUNK_BYTES = 90 * 1024;
+    uint256 private constant DEPENDENCY_PROBE_GAS = 100_000;
+
+    /// @notice Validates an operator-preserving slashing-manager migration.
+    /// @dev The registry and bonding contracts stay in place. Only service
+    ///      dependencies can change through this path.
+    function validateSlashingManagerMigration(
+        address candidateAddress,
+        address currentAddress,
+        address controllerAddress,
+        address bondingAddress,
+        uint256 unreleasedCommittees
+    ) external view {
+        ISlashingManager candidate = ISlashingManager(candidateAddress);
+        ISlashingManager current = ISlashingManager(currentAddress);
+        IInterfold controller = IInterfold(controllerAddress);
+        IBondingRegistry bonding = IBondingRegistry(bondingAddress);
+        if (
+            candidateAddress == currentAddress ||
+            candidateAddress.code.length == 0 ||
+            !_supportsSlashingManager(candidateAddress) ||
+            !_usesSlashingManagerApiV1(candidateAddress)
+        ) {
+            revert ICiphernodeRegistry.IncompatibleSlashingManager(
+                candidateAddress
+            );
+        }
+        if (!controller.requestsPaused()) {
+            revert ICiphernodeRegistry
+                .ServiceDependencyMigrationRequiresPause();
+        }
+        if (
+            controller.activeE3Count() != 0 ||
+            unreleasedCommittees != 0 ||
+            bonding.unresolvedCommitteeCount() != 0 ||
+            current.activeE3Assignments() != 0 ||
+            current.activeBanCount() != 0 ||
+            candidate.activeE3Assignments() != 0 ||
+            candidate.activeBanCount() != 0
+        ) {
+            revert ICiphernodeRegistry.ServiceDependencyMigrationNotDrained();
+        }
+        IProtocolDependencyView candidateView = IProtocolDependencyView(
+            candidateAddress
+        );
+        if (
+            candidateView.interfold() != controllerAddress ||
+            candidateView.bondingRegistry() != bondingAddress ||
+            candidateView.ciphernodeRegistry() != address(this) ||
+            candidateView.e3RefundManager() !=
+            IProtocolDependencyView(controllerAddress).e3RefundManager() ||
+            address(controller.slashingManager()) != candidateAddress ||
+            IProtocolDependencyView(bondingAddress).slashingManager() !=
+            candidateAddress
+        ) {
+            revert ICiphernodeRegistry.IncompatibleSlashingManager(
+                candidateAddress
+            );
+        }
+    }
+
+    function _supportsSlashingManager(
+        address candidate
+    ) private view returns (bool) {
+        (bool ok, bytes memory result) = candidate.staticcall{
+            gas: DEPENDENCY_PROBE_GAS
+        }(
+            abi.encodeCall(
+                IERC165.supportsInterface,
+                (type(ISlashingManager).interfaceId)
+            )
+        );
+        return ok && result.length == 32 && abi.decode(result, (uint256)) == 1;
+    }
+
+    function _usesSlashingManagerApiV1(
+        address candidate
+    ) private view returns (bool) {
+        (bool ok, bytes memory result) = candidate.staticcall{
+            gas: DEPENDENCY_PROBE_GAS
+        }(abi.encodeCall(ISlashingManager.SLASHING_MANAGER_API_VERSION, ()));
+        return ok && result.length == 32 && abi.decode(result, (uint256)) == 1;
+    }
 
     /// @notice Validates and emits one deterministic public-key chunk from registry storage.
     /// @dev This external library call runs with `delegatecall`, so the registry proxy remains
@@ -107,10 +195,12 @@ library RegistrySortitionLib {
     }
 
     /// @custom:storage-location erc7201:interfold.storage.RegistrySortitionRandomness
+    /// @dev `degraded` is appended at the end. Do not insert fields before it.
     struct RandomnessStorage {
         IRandomnessProvider provider;
         uint256 requestTimeout;
         mapping(uint256 e3Id => RandomnessRequest request) requests;
+        bool degraded;
     }
 
     function insertCandidate(
@@ -364,7 +454,7 @@ library RegistrySortitionLib {
         );
     }
 
-    /// @notice Marks a requested committee as failed and stops future requests if its response expired.
+    /// @notice Marks a requested committee as failed and reports an expired randomness response.
     /// @dev A timely response must never be discarded and replaced with a new draw.
     function failRequestedCommittee(
         ICiphernodeRegistry.Committee storage committee,
@@ -372,11 +462,17 @@ library RegistrySortitionLib {
     ) external {
         if (committee.stage != ICiphernodeRegistry.CommitteeStage.Requested)
             return;
-        _tripRandomnessCircuitBreaker(e3Id);
+        _flagRandomnessDegraded(e3Id);
         committee.stage = ICiphernodeRegistry.CommitteeStage.Failed;
     }
 
-    function _tripRandomnessCircuitBreaker(uint256 e3Id) private {
+    /// @notice Reports one expired randomness response without stopping new requests.
+    /// @dev The breaker is advisory. An expired response is reachable permissionlessly through
+    ///      the committee timeout path, through `markE3Failed`, and through `cancelE3`. If it
+    ///      cleared the registry-global provider, one prepared round could stop every later
+    ///      request until governance pauses requests and every committee releases. This
+    ///      function records the condition and lets governance re-point the provider.
+    function _flagRandomnessDegraded(uint256 e3Id) private {
         RandomnessStorage storage state = _randomnessStorage();
         RandomnessRequest storage request = state.requests[e3Id];
         if (
@@ -389,14 +485,12 @@ library RegistrySortitionLib {
         (bool ready, , ) = _providerState(request, e3Id);
         if (ready) return;
 
-        address failedProvider = address(state.provider);
-        state.provider = IRandomnessProvider(address(0));
+        if (!state.degraded) state.degraded = true;
         emit ICiphernodeRegistry.RandomnessCircuitBreakerTripped(
             e3Id,
             request.requestId,
-            failedProvider
+            address(state.provider)
         );
-        emit ICiphernodeRegistry.RandomnessProviderSet(address(0));
     }
 
     /// @notice Validates every precondition for releasing a committee's obligations.
@@ -462,7 +556,10 @@ library RegistrySortitionLib {
                 address(this),
                 actualRequester
             );
-        _randomnessStorage().provider = provider;
+        RandomnessStorage storage state = _randomnessStorage();
+        state.provider = provider;
+        // A new provider clears the advisory degraded flag.
+        if (state.degraded) state.degraded = false;
         emit ICiphernodeRegistry.RandomnessProviderSet(providerAddress);
     }
 
@@ -504,6 +601,11 @@ library RegistrySortitionLib {
 
     function randomnessRequestTimeout() external view returns (uint256) {
         return _randomnessStorage().requestTimeout;
+    }
+
+    /// @notice Tells whether one randomness response expired since the last provider change.
+    function randomnessDegraded() external view returns (bool) {
+        return _randomnessStorage().degraded;
     }
 
     function requestContext(

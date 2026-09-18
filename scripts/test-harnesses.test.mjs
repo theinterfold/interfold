@@ -249,7 +249,7 @@ for (const timeout of [1300, 3600]) {
   test(`integration input window covers the ${timeout}s DKG budget and advances without sleeping`, (t) => {
     const f = timing(
       t,
-      'set_integration_input_window; echo "$INPUT_WINDOW_START $INPUT_WINDOW_END"; advance_evm_timestamp "$INPUT_WINDOW_END"',
+      'set_integration_input_window; echo "$INPUT_WINDOW_START $INPUT_WINDOW_END"; advance_evm_time_past "$INPUT_WINDOW_END"',
       { INTEGRATION_DKG_TIMEOUT: String(timeout) },
     )
     assert.equal(f.result.status, 0, f.result.stderr)
@@ -257,9 +257,17 @@ for (const timeout of [1300, 3600]) {
     const requests = f.calls().map((c) => JSON.parse(c.args.at(-1)))
     const mine = requests.filter((c) => c.method === 'evm_mine')
     assert.equal(mine.length, 1)
-    assert.deepEqual(mine[0].params, [1060 + timeout + 300])
+    assert.deepEqual(mine[0].params, [1060 + timeout + 301])
   })
 }
+
+test('integration input window duration can be overridden', (t) => {
+  const f = timing(t, 'set_integration_input_window; echo "$INPUT_WINDOW_START $INPUT_WINDOW_END"', {
+    INTEGRATION_INPUT_WINDOW_SECONDS: '600',
+  })
+  assert.equal(f.result.status, 0, f.result.stderr)
+  assert.equal(f.result.stdout.trim(), '1060 1660')
+})
 
 test('chain time does not move backward or mine again at the same timestamp', (t) => {
   const f = timing(t, 'advance_evm_timestamp 999; advance_evm_timestamp 1000')
@@ -267,9 +275,15 @@ test('chain time does not move backward or mine again at the same timestamp', (t
   assert.ok(f.calls().every((c) => JSON.parse(c.args.at(-1)).method === 'eth_getBlockByNumber'))
 })
 
-for (const env of [{ RPC_ERROR: '1' }, { RPC_MINE_ERROR: '1' }, { RPC_TRANSPORT_FAIL: '1' }, { INTEGRATION_DKG_TIMEOUT: 'invalid' }]) {
+for (const env of [
+  { RPC_ERROR: '1' },
+  { RPC_MINE_ERROR: '1' },
+  { RPC_TRANSPORT_FAIL: '1' },
+  { INTEGRATION_DKG_TIMEOUT: 'invalid' },
+  { INTEGRATION_INPUT_WINDOW_SECONDS: 'invalid' },
+]) {
   test(`integration timing fails closed for ${Object.keys(env)[0]}`, (t) => {
-    const f = timing(t, 'set_integration_input_window; advance_evm_timestamp "$INPUT_WINDOW_END"', env)
+    const f = timing(t, 'set_integration_input_window; advance_evm_time_past "$INPUT_WINDOW_END"', env)
     assert.notEqual(f.result.status, 0, f.result.stderr)
     if (!env.RPC_MINE_ERROR) assert.ok(f.calls().every((c) => JSON.parse(c.args.at(-1)).method === 'eth_getBlockByNumber'))
   })

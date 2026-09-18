@@ -6,6 +6,7 @@
 
 mod commit_log_event_log;
 mod data_store;
+mod event_blob;
 mod in_mem;
 mod in_mem_event_log;
 mod in_mem_kv_store;
@@ -21,6 +22,7 @@ mod snapshot;
 
 pub use commit_log_event_log::*;
 pub use data_store::*;
+pub use event_blob::MAX_BLOB_BYTES;
 pub use in_mem::*;
 pub use in_mem_event_log::*;
 pub use in_mem_kv_store::*;

@@ -282,6 +282,8 @@ mod tests {
     use crate::ciphernodes_committee::CiphernodesCommitteeSize;
     use crate::computation::DkgInputType;
     use e3_fhe_params::BfvPreset;
+    use fhe::bfv::{Encoding, Plaintext, PublicKey};
+    use fhe_traits::{FheEncoder, FheEncrypter};
 
     #[test]
     fn test_bound_and_bits_computation_consistency() {
@@ -342,6 +344,38 @@ mod tests {
             inputs.decrypted_shares.len(),
             sample.honest_ciphertexts.len()
         );
+    }
+
+    #[test]
+    fn test_recipient_outside_dealer_set_decrypts_every_row() {
+        let committee = CiphernodesCommitteeSize::Small.values();
+        let preset = BfvPreset::InsecureThreshold512;
+        let mut sample =
+            ShareDecryptionCircuitData::generate_sample(preset, committee, DkgInputType::SecretKey)
+                .unwrap();
+        let expected = Inputs::compute(preset, &sample).unwrap();
+        let (_, dkg_params) = build_pair_for_preset(preset).unwrap();
+        let mut rng = rand::rng();
+        let public_key = PublicKey::new(&sample.secret_key, &mut rng);
+        let own_idx = sample
+            .honest_ciphertexts
+            .iter()
+            .position(Option::is_none)
+            .unwrap();
+        let encrypted_row = sample
+            .own_plaintext_share
+            .iter()
+            .map(|row| {
+                let plaintext = Plaintext::try_encode(row, Encoding::poly(), &dkg_params).unwrap();
+                public_key.try_encrypt(&plaintext, &mut rng).unwrap()
+            })
+            .collect();
+        sample.honest_ciphertexts[own_idx] = Some(encrypted_row);
+        sample.own_plaintext_share.clear();
+
+        let inputs = Inputs::compute(preset, &sample).unwrap();
+        assert_eq!(inputs.decrypted_shares, expected.decrypted_shares);
+        assert_eq!(inputs.expected_commitments, expected.expected_commitments);
     }
 
     /// Verify expected_commitments[i][j] matches direct commitment computation for each

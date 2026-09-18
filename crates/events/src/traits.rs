@@ -177,7 +177,7 @@ pub trait SequenceIndex: Unpin + 'static {
 pub trait EventLog: Unpin + 'static {
     /// Append an event to the log, returning its sequence number
     fn append(&mut self, event: &InterfoldEvent<Unsequenced>) -> Result<u64>;
-    /// Flush buffered log and index data before a clean process exit.
+    /// Sync the log before a stored event can be broadcast or on clean exit.
     ///
     /// In-memory and test implementations may use the default no-op. Durable
     /// implementations should override this and propagate I/O failures.
@@ -200,6 +200,29 @@ pub trait EventLog: Unpin + 'static {
         limit: usize,
     ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
         Ok(Box::new(self.read_from(from)?.take(limit)))
+    }
+    /// Read at most `limit` events without exceeding `max_bytes` of decoded event data.
+    ///
+    /// The first event is always returned so callers can advance past one valid event that is
+    /// larger than their page budget. The per-event storage limit remains the hard allocation
+    /// bound.
+    fn read_from_bounded_by_bytes(
+        &self,
+        from: u64,
+        limit: usize,
+        max_bytes: usize,
+    ) -> Result<Box<dyn Iterator<Item = (u64, InterfoldEvent<Unsequenced>)>>> {
+        let mut bytes = 0usize;
+        let mut events = Vec::new();
+        for (sequence, event) in self.read_from_bounded(from, limit)? {
+            let event_bytes = usize::try_from(bincode::serialized_size(&event)?)?;
+            if !events.is_empty() && bytes.saturating_add(event_bytes) > max_bytes {
+                break;
+            }
+            bytes = bytes.saturating_add(event_bytes);
+            events.push((sequence, event));
+        }
+        Ok(Box::new(events.into_iter()))
     }
     /// The 1-indexed sequence number of the last appended event, or `0` if the log is empty.
     fn head(&self) -> u64;

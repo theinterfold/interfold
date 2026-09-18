@@ -14,8 +14,8 @@ perform threshold homomorphic encryption operations. The flow involves:
 3. **E3 Request** - A computation request triggers sortition
 4. **Score Sortition** - Nodes are selected based on ticket balances
 5. **Committee Finalization** - Selected nodes form a committee
-6. **Keyshare Generation** - Committee nodes generate threshold keyshares
-7. **Public Key Aggregation** - Keyshares are aggregated into a public key
+6. **DKG Roster Selection** - Committee nodes prove contributions and select an H-dealer roster
+7. **Public Key Aggregation** - The accepted roster's keyshares are aggregated into a public key
 8. **Encryption & Decryption** - Data is encrypted and threshold-decrypted
 
 ## Complete System Flow
@@ -78,6 +78,7 @@ sequenceDiagram
     NodeStateManager-->>Sortition: NodeStateStore { nodes, ticketPrice }
     Sortition->>Sortition: Build sortition list from active nodes
     Sortition->>Sortition: Run score sortition algorithm
+    Sortition->>Sortition: Reserve capacity for this E3
     Sortition->>Sortition: Generate tickets for selected nodes
 
     loop For each selected node
@@ -95,6 +96,7 @@ sequenceDiagram
     Note over EventBus,Sortition: Phase 4: Committee Storage
 
     EventBus->>Sortition: CommitteeFinalized
+    Sortition->>Sortition: Reconcile the reservation with the final committee
     Sortition->>Sortition: Store committee in finalized_committees HashMap
     Sortition->>Sortition: Persist to disk
 
@@ -111,10 +113,13 @@ sequenceDiagram
     Note over EventBus,Keyshare: Phase 6: Keyshare Generation
 
     EventBus->>Keyshare: CiphernodeSelected
-    Keyshare->>Keyshare: fhe.generate_keyshare()
-    Keyshare->>Keyshare: Generate secret key (random)
-    Keyshare->>Keyshare: Generate public key share (sk + CRP)
-    Keyshare->>Keyshare: Persist secret key
+    Keyshare->>Keyshare: Generate and prove C0-C3 DKG material
+    Keyshare->>EventBus: Signed DKG readiness report
+    EventBus->>CiphernodeSelector: AggregationInputsReady(DkgRoster)
+    CiphernodeSelector->>CiphernodeSelector: Start readiness-gated failover budget
+    CiphernodeSelector->>Keyshare: Active aggregator party ID
+    Keyshare->>EventBus: Active aggregator proposes canonical H-dealer roster
+    Keyshare->>Keyshare: Selected roster members compute and prove C4
     Keyshare->>EventBus: KeyshareCreated(e3Id, node, pubkey, chainId)
 
     Note over EventBus,PublicKeyAggregator: Phase 7: Public Key Aggregation
@@ -126,7 +131,7 @@ sequenceDiagram
     PublicKeyAggregator->>PublicKeyAggregator: Verify node in committee
     PublicKeyAggregator->>PublicKeyAggregator: Active aggregator verifies and orders keyshares by partyId
 
-    alt Honest threshold reached on active aggregator
+    alt All H accepted-roster keyshares are durable
         PublicKeyAggregator->>PublicKeyAggregator: fhe.get_aggregate_public_key(keyshares)
         PublicKeyAggregator->>PublicKeyAggregator: Aggregate public key shares
         PublicKeyAggregator->>EventBus: PublicKeyAggregated (durable publication intent)
@@ -246,7 +251,7 @@ flowchart LR
 - **State Per Node**:
   - `ticket_balance`: Current ticket balance
   - `active`: Whether node is active (has min ticket balance)
-  - `active_jobs`: Local workload count for voluntary participation limits
+  - `active_jobs`: Local reserved or active workload count
 - **Persistence**: State survives node restarts
 - **Events**:
   - `CiphernodeAdded` / `CiphernodeRemoved`
@@ -254,9 +259,11 @@ flowchart LR
   - `OperatorActivationChanged`
   - `ConfigurationUpdated` (for ticketPrice)
 
-The active-job adjustment applies only when the current node decides whether to submit. Remote
-operators keep their full on-chain-valid ticket ranges in that decision. This local policy does not
-reserve collateral or reduce the range that Solidity accepts. On-chain candidates are authoritative.
+The active-job adjustment applies only when the current node decides whether to submit. The node
+persists a provisional reservation before ticket dispatch. `CommitteeFinalized` confirms the
+reservation or releases it when the node is not in the final committee. Terminal events release all
+remaining reservations. Remote operators keep their full on-chain-valid ticket ranges. This local
+policy does not reserve collateral or reduce the range that Solidity accepts.
 
 ### 4. Sortition Actor
 
@@ -270,7 +277,7 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
   - `GetNodeState`: Get current node state
 - **Event Handlers**:
   - `E3Requested`: Trigger sortition
-  - `CommitteeFinalized`: Store committee
+  - `CommitteeFinalized`: Reconcile capacity and store the committee
   - `TicketBalanceUpdated`, `OperatorActivationChanged`, etc.
 
 ### 5. Committee Query Pattern
@@ -303,13 +310,16 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
 
 - **Scheme**: BFV Threshold Homomorphic Encryption
 - **Parameters**:
-  - `threshold_m`: Minimum shares needed for decryption
+  - `threshold_m`: Polynomial threshold `T`; decryption needs `T + 1` shares
   - `threshold_n`: Total committee size
+- **DKG roster**: The committee enum fixes `H`; the active aggregator proposes one mutually ready
+  H-dealer roster before C4
 - **Common Random Polynomial (CRP)**: Shared randomness from E3 seed
 - **Keyshare Generation**:
   - Secret key: Random polynomial
   - Public key share: Secret key + CRP
-- **Aggregation**: Combining shares into single public key / plaintext
+- **Aggregation**: Combine the H selected public-key contributions; combine `T + 1` through H valid
+  decryption shares for plaintext
 
 ### 9. Party IDs
 
@@ -322,7 +332,9 @@ reserve collateral or reduce the range that Solidity accepts. On-chain candidate
 ### 10. Canonical Aggregation Order
 
 - Keyshares and decryption shares are deduplicated by party.
-- Cryptographic inputs use canonical ascending `party_id` order, not network arrival order.
+- DKG readiness reports select one accepted H-dealer roster in ascending `party_id` order.
+- Public-key proof inputs follow that saved roster, not network arrival order.
+- Decryption proof inputs use canonical ascending `party_id` order.
 - This keeps every promoted aggregator aligned with the finalized committee and proof inputs.
 
 ## Event Reference
@@ -388,7 +400,7 @@ The integration tests follow this pattern:
 ### Where?
 
 - Default: In-memory (for tests)
-- Production: RocksDB or other repository implementation
+- Production: Sled-backed repositories and append-only commit logs
 - Path: Configured via `RepositoriesFactory`
 
 ### Restart Behavior

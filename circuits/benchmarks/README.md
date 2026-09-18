@@ -36,7 +36,7 @@ test, gas-extraction script, and report will all pick it up automatically.
 | ------------------- | --- | --- | --- |
 | `minimum` (default) | 3   | 1   | 2   |
 | `micro`             | 9   | 4   | 5   |
-| `small`             | 19  | 9   | 10  |
+| `small`             | 19  | 9   | 14  |
 
 **Step-by-step** (from repository root):
 
@@ -218,23 +218,21 @@ EVM verifier `estimateGas` in `packages/interfold-contracts/scripts/benchmarkGas
 `extract_crisp_verify_gas.sh` (and `replay_folded_verify_gas.sh --build <preset>`) call
 `ensure_circuit_preset_built.sh`, which runs
 `pnpm build:circuits --skip-if-built --no-clean --no-clean-targets` by default. When
-`dist/circuits/<preset>/` is already built but `circuits/bin/` still reflects another preset (e.g.
-you ran insecure benchmarks after a secure build), the build script **hydrates** `circuits/bin` from
-`dist/` in seconds instead of recompiling (~50 minutes for `secure-8192`). You only pay the full
-compile once per preset until circuit sources change. Then
-`pnpm generate:verifiers --check --no-compile --preset <preset>` verifies that
-`dist/circuits/<preset>/` is built and `circuits/bin/.active-preset.json` matches the benchmark mode
-(`insecure-512` for `--mode insecure`, `secure-8192` for `--mode secure`). For **insecure** runs it
-also diffs the committed Honk Solidity verifiers (`DkgAggregatorVerifier.sol`,
-`DecryptionAggregatorVerifier.sol`) against the current insecure VKs. For **secure** runs it skips
-that `.sol` diff (committed verifiers stay pinned to `insecure-512` for production deploy); gas
-replay deploys fresh aggregator verifiers from `circuits/bin` at runtime. If you see preset mismatch
-or insecure drift errors, follow the fix recipe printed by the script.
+`dist/circuits/<preset>/<committee>/` is already built but `circuits/bin/` still reflects another
+pair (for example, you ran insecure benchmarks after a secure build), the build script **hydrates**
+`circuits/bin` from `dist/` in seconds instead of recompiling (~50 minutes for `secure-8192`). You
+only pay the full compile once per pair until circuit sources change. Then
+`pnpm generate:verifiers --check --no-compile --preset <preset> --committee <committee>` verifies
+that `dist/circuits/<preset>/<committee>/` is built and `circuits/bin/.active-preset.json` matches
+the benchmark pair (`insecure-512` for `--mode insecure`, `secure-8192` for `--mode secure`). It
+also diffs the selected committed Honk Solidity verifiers (`DkgAggregatorVerifier.sol` and
+`DecryptionAggregatorVerifier.sol`) against the current VKs. Gas replay runs after that check. If
+you see a preset, committee, or verifier-drift error, follow the fix recipe printed by the script.
 
 - **`--force-build`** on extract/replay/ensure: full rebuild (same as a fresh `build:circuits`).
 - **`--skip-build`** on extract/replay: skip circuit build and Honk generation (only re-run
-  integration + gas replay). Fails fast unless `dist/circuits/<preset>/` and `circuits/bin` targets
-  are present for that preset (`check_circuit_preset_artifacts.sh`).
+  integration + gas replay). Fails fast unless `dist/circuits/<preset>/<committee>/` and
+  `circuits/bin` targets are present for that pair (`check_circuit_preset_artifacts.sh`).
 
 `run_benchmarks.sh` preflight uses the same `ensure` + `--skip-if-built`. When preset artifacts are
 ready, per-circuit `nargo compile` is skipped automatically (Stage 1 `ensure` skips too). Generated

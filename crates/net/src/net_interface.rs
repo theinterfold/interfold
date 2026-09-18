@@ -67,6 +67,9 @@ const DHT_MAX_TTL: Duration = Duration::from_secs(31 * 24 * 60 * 60);
 const DHT_MAX_PROVIDERS_PER_KEY: usize = 20;
 const MAX_CONSECUTIVE_DIAL_FAILURES: u32 = 3;
 const STALE_PEER_COOLDOWN: Duration = Duration::from_secs(30 * 60);
+const CONFIGURED_PEER_REDIAL_INTERVAL: Duration = Duration::from_secs(15);
+const GOSSIP_HEALTH_INTERVAL: Duration = Duration::from_secs(5);
+const GOSSIP_SUBSCRIPTION_GRACE: Duration = Duration::from_secs(30);
 pub(crate) const EVENT_CHANNEL_SIZE: usize = 1000;
 const CMD_CHANNEL_SIZE: usize = 1000;
 const LIBP2P_ESTABLISHED_PER_PEER_LIMIT_TEXT: &str = "established connections per peer";
@@ -82,6 +85,7 @@ struct PeerConnectionFailures {
     dial: PeerFailureTracker,
     identity_mismatch: PeerFailureTracker,
     quarantined_until: HashMap<libp2p::PeerId, Instant>,
+    identity_quarantined: HashSet<libp2p::PeerId>,
 }
 
 impl PeerConnectionFailures {
@@ -90,6 +94,7 @@ impl PeerConnectionFailures {
             dial: PeerFailureTracker::new(),
             identity_mismatch: PeerFailureTracker::new(),
             quarantined_until: HashMap::new(),
+            identity_quarantined: HashSet::new(),
         }
     }
 
@@ -97,6 +102,7 @@ impl PeerConnectionFailures {
         self.dial.reset(peer_id);
         self.identity_mismatch.reset(peer_id);
         self.quarantined_until.remove(peer_id);
+        self.identity_quarantined.remove(peer_id);
     }
 
     fn record_dial_failure(&mut self, peer_id: &libp2p::PeerId) -> Option<u32> {
@@ -111,6 +117,19 @@ impl PeerConnectionFailures {
         self.dial.reset(peer_id);
         self.quarantined_until
             .insert(*peer_id, Instant::now() + STALE_PEER_COOLDOWN);
+    }
+
+    fn quarantine_identity(&mut self, peer_id: &libp2p::PeerId) {
+        self.quarantine(peer_id);
+        self.identity_quarantined.insert(*peer_id);
+    }
+
+    fn is_identity_quarantined(&mut self, peer_id: &libp2p::PeerId) -> bool {
+        if !self.is_quarantined(peer_id) {
+            self.identity_quarantined.remove(peer_id);
+            return false;
+        }
+        self.identity_quarantined.contains(peer_id)
     }
 
     fn is_quarantined(&mut self, peer_id: &libp2p::PeerId) -> bool {
@@ -129,6 +148,33 @@ impl PeerConnectionFailures {
         let now = Instant::now();
         self.quarantined_until.retain(|_, until| *until > now);
         self.quarantined_until.keys().copied().collect()
+    }
+}
+
+#[derive(Default)]
+struct GossipSubscriptionHealth {
+    missing_since: HashMap<libp2p::PeerId, Instant>,
+}
+
+impl GossipSubscriptionHealth {
+    fn stale_peers(
+        &mut self,
+        connected: &HashSet<libp2p::PeerId>,
+        subscribed: &HashSet<libp2p::PeerId>,
+        now: Instant,
+    ) -> Vec<libp2p::PeerId> {
+        self.missing_since
+            .retain(|peer, _| connected.contains(peer) && !subscribed.contains(peer));
+        for peer in connected.difference(subscribed) {
+            self.missing_since.entry(*peer).or_insert(now);
+        }
+        self.missing_since
+            .iter()
+            .filter_map(|(peer, since)| {
+                (now.saturating_duration_since(*since) >= GOSSIP_SUBSCRIPTION_GRACE)
+                    .then_some(*peer)
+            })
+            .collect()
     }
 }
 
@@ -165,6 +211,58 @@ fn strip_peer_id(mut addr: Multiaddr) -> Multiaddr {
         addr.pop();
     }
     addr
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ConfiguredPeer {
+    peer_id: Option<libp2p::PeerId>,
+    address: Multiaddr,
+    identity_pinned: bool,
+}
+
+impl ConfiguredPeer {
+    fn from_address(address: Multiaddr) -> Self {
+        let peer_id = match address.iter().last() {
+            Some(Protocol::P2p(peer_id)) => Some(peer_id),
+            _ => None,
+        };
+        Self {
+            peer_id,
+            address: strip_peer_id(address),
+            identity_pinned: peer_id.is_some(),
+        }
+    }
+
+    fn matches_endpoint(&self, peer_id: &libp2p::PeerId, address: &Multiaddr) -> bool {
+        self.peer_id == Some(*peer_id)
+            && (self.address == *address
+                || matches!(self.address.iter().next(), Some(Protocol::Dnsaddr(_))))
+    }
+}
+
+/// Update an unpinned bootstrap identity after a key rotation.
+///
+/// Return `false` when the configuration explicitly pins the old identity. The
+/// caller must then reject the replacement instead of trusting the endpoint.
+fn rebind_configured_peer(
+    configured: &mut [ConfiguredPeer],
+    expected: &libp2p::PeerId,
+    obtained: libp2p::PeerId,
+    address: &Multiaddr,
+) -> bool {
+    let matching = configured
+        .iter()
+        .filter(|peer| peer.matches_endpoint(expected, address));
+    if matching.clone().any(|peer| peer.identity_pinned) {
+        return false;
+    }
+    for configured_peer in configured
+        .iter_mut()
+        .filter(|peer| peer.matches_endpoint(expected, address))
+    {
+        configured_peer.peer_id = Some(obtained);
+    }
+    true
 }
 
 fn is_unspecified_addr(addr: &Multiaddr) -> bool {
@@ -295,6 +393,21 @@ impl Libp2pNetInterface {
         let mut dht_records_by_peer: HashMap<libp2p::PeerId, HashSet<Vec<u8>>> = HashMap::new();
         let mut admission_tick = tokio::time::interval(Duration::from_secs(5));
         admission_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        let mut configured_peer_tick = tokio::time::interval(CONFIGURED_PEER_REDIAL_INTERVAL);
+        configured_peer_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        configured_peer_tick.tick().await;
+        let mut gossip_health_tick = tokio::time::interval(GOSSIP_HEALTH_INTERVAL);
+        gossip_health_tick.set_missed_tick_behavior(MissedTickBehavior::Delay);
+        gossip_health_tick.tick().await;
+        let mut gossip_health = GossipSubscriptionHealth::default();
+        let mut configured_peers: Vec<_> = self
+            .peers
+            .iter()
+            .filter_map(|address| {
+                let address: Multiaddr = address.parse().ok()?;
+                Some(ConfiguredPeer::from_address(address))
+            })
+            .collect();
         // Limit repeated backpressure warnings.
         let mut last_backpressure_warn = Instant::now();
 
@@ -366,6 +479,23 @@ impl Libp2pNetInterface {
                         }
                     }
                 }
+                _ = configured_peer_tick.tick() => {
+                    redial_disconnected_configured_peers(
+                        &mut self.swarm,
+                        &configured_peers,
+                        &mut peer_failures,
+                        &peer_admission,
+                    );
+                }
+                _ = gossip_health_tick.tick() => {
+                    reconcile_gossip_subscriptions(
+                        &mut self.swarm,
+                        &peer_admission,
+                        &self.topic,
+                        &self.status,
+                        &mut gossip_health,
+                    );
+                }
                 // Process commands
                 Some(command) = cmd_rx.recv() => {
                     if let NetCommand::Shutdown = command {
@@ -373,6 +503,19 @@ impl Libp2pNetInterface {
                             error!("Error processing NetCommand: {e}");
                         }
                         break;
+                    }
+
+                    if let NetCommand::ConfiguredPeerAdmitted { address, peer_id } = command {
+                        let address = strip_peer_id(address);
+                        for configured_peer in &mut configured_peers {
+                            if configured_peer.address == address
+                                && (!configured_peer.identity_pinned
+                                    || configured_peer.peer_id == Some(peer_id))
+                            {
+                                configured_peer.peer_id = Some(peer_id);
+                            }
+                        }
+                        continue;
                     }
 
                     if let Err(e) = process_swarm_command(
@@ -395,6 +538,7 @@ impl Libp2pNetInterface {
                         &mut correlator,
                         &mut peer_failures,
                         &mut peer_admission,
+                        &mut configured_peers,
                         &mut dht_records_by_peer,
                         &self.network,
                         &self.status,
@@ -417,6 +561,77 @@ impl Libp2pNetInterface {
 
         info!("Event loop exited");
         Ok(())
+    }
+}
+
+fn reconcile_gossip_subscriptions(
+    swarm: &mut Swarm<NodeBehaviour>,
+    admission: &PeerAdmission,
+    topic: &gossipsub::IdentTopic,
+    status: &NetworkStatus,
+    health: &mut GossipSubscriptionHealth,
+) {
+    let topic_hash = topic.hash();
+    let subscribed: HashSet<_> = swarm
+        .behaviour()
+        .gossipsub
+        .all_peers()
+        .filter(|(peer, topics)| admission.is_admitted(peer) && topics.contains(&&topic_hash))
+        .map(|(peer, _)| *peer)
+        .collect();
+    status.gossip_peers(subscribed.len());
+
+    let connected: HashSet<_> = swarm
+        .connected_peers()
+        .filter(|peer| admission.is_admitted(peer))
+        .copied()
+        .collect();
+    for peer in health.stale_peers(&connected, &subscribed, Instant::now()) {
+        warn!(
+            %peer,
+            grace_seconds = GOSSIP_SUBSCRIPTION_GRACE.as_secs(),
+            "Replacing peer connections that did not establish the gossip subscription"
+        );
+        if swarm.disconnect_peer_id(peer).is_ok() {
+            health.missing_since.remove(&peer);
+        }
+    }
+}
+
+fn redial_disconnected_configured_peers(
+    swarm: &mut Swarm<NodeBehaviour>,
+    configured: &[ConfiguredPeer],
+    failures: &mut PeerConnectionFailures,
+    admission: &PeerAdmission,
+) {
+    for configured_peer in configured {
+        let Some(peer_id) = configured_peer.peer_id else {
+            continue;
+        };
+        if peer_id == *swarm.local_peer_id()
+            || swarm.is_connected(&peer_id)
+            || failures.is_identity_quarantined(&peer_id)
+            || admission.is_rejected(&peer_id)
+        {
+            continue;
+        }
+        let options = DialOpts::peer_id(peer_id)
+            .addresses(vec![configured_peer.address.clone()])
+            .build();
+        match swarm.dial(options) {
+            Ok(()) => debug!(
+                %peer_id,
+                address = %configured_peer.address,
+                "Redialing a disconnected configured peer"
+            ),
+            Err(DialError::DialPeerConditionFalse(_)) => {}
+            Err(error) => debug!(
+                %peer_id,
+                address = %configured_peer.address,
+                %error,
+                "Configured peer redial skipped"
+            ),
+        }
     }
 }
 
@@ -516,6 +731,7 @@ async fn process_swarm_event(
     correlator: &mut Correlator,
     peer_failures: &mut PeerConnectionFailures,
     peer_admission: &mut PeerAdmission,
+    configured_peers: &mut [ConfiguredPeer],
     dht_records_by_peer: &mut HashMap<libp2p::PeerId, HashSet<Vec<u8>>>,
     network: &NetworkPolicy,
     status: &NetworkStatus,
@@ -552,6 +768,10 @@ async fn process_swarm_event(
                         .add_address(&peer_id, remote_addr);
                 }
                 event_tx.send(NetEvent::ConnectionEstablished { connection_id })?;
+                event_tx.send(NetEvent::ConfiguredDialAdmitted {
+                    connection_id,
+                    peer_id,
+                })?;
             } else if let Err(kind) = peer_admission.stage(
                 peer_id,
                 PeerAdmission::pending(
@@ -584,18 +804,14 @@ async fn process_swarm_event(
                     ref address,
                 } = error
                 {
-                    // The node at this address has a new PeerId (e.g. restarted with new keys).
-                    // Remove the stale entry and add the new one so we don't loop.
-                    // Other routing tables can advertise the stale identity again. Quarantine
-                    // prevents reinsertion, and concurrent failures remain debug events.
                     let remote_addr = address.clone();
                     let mismatch_count =
                         peer_failures.identity_mismatch.record_failure(failed_peer);
-                    peer_failures.quarantine(failed_peer);
+                    peer_failures.quarantine_identity(failed_peer);
                     if mismatch_count == 1 {
                         info!(
                             "Peer ID mismatch at {remote_addr}: expected {failed_peer}, got {obtained} — \
-                             replacing stale routing entry"
+                             removing the stale routing entry"
                         );
                     } else {
                         debug!(
@@ -606,22 +822,30 @@ async fn process_swarm_event(
                     let local_peer = *swarm.local_peer_id();
                     swarm.behaviour_mut().kademlia.remove_peer(failed_peer);
                     if obtained != local_peer {
-                        // Strip the stale /p2p/<old-id> suffix, otherwise dials to the
-                        // new peer via this address fail with WrongPeerId forever.
                         let corrected_addr = strip_peer_id(remote_addr.clone());
+                        let can_rebind = rebind_configured_peer(
+                            configured_peers,
+                            failed_peer,
+                            obtained,
+                            &corrected_addr,
+                        );
 
-                        // Redial the node under its actual identity — a direct dial
-                        // doesn't propagate the address, so no loopback filtering is
-                        // needed. The default dial condition (DisconnectedAndNotDialing)
-                        // makes this a no-op while we are already connected or
-                        // connecting to the real peer, so repeated mismatches cause no
-                        // churn — while a dropped connection is re-attempted on any
-                        // later mismatch (recovery is not one-shot).
-                        let opts = DialOpts::peer_id(obtained)
-                            .addresses(vec![corrected_addr])
-                            .build();
-                        if let Err(e) = swarm.dial(opts) {
-                            debug!("Redial of {obtained} after peer ID replacement skipped: {e}");
+                        if can_rebind {
+                            let opts = DialOpts::peer_id(obtained)
+                                .addresses(vec![corrected_addr])
+                                .build();
+                            if let Err(e) = swarm.dial(opts) {
+                                debug!(
+                                    "Redial of {obtained} after peer ID replacement skipped: {e}"
+                                );
+                            }
+                        } else {
+                            warn!(
+                                %remote_addr,
+                                expected = %failed_peer,
+                                %obtained,
+                                "Rejected a configured peer whose pinned identity changed"
+                            );
                         }
                     }
                 } else {
@@ -1083,6 +1307,10 @@ async fn process_swarm_event(
                 event_tx.send(NetEvent::ConnectionEstablished {
                     connection_id: pending.connection_id,
                 })?;
+                event_tx.send(NetEvent::ConfiguredDialAdmitted {
+                    connection_id: pending.connection_id,
+                    peer_id,
+                })?;
             }
         }
 
@@ -1146,8 +1374,17 @@ async fn process_swarm_command(
             data,
             topic,
             correlation_id,
+            delivery_id,
         } => {
-            handle_gossip_publish(swarm, event_tx, network, data, topic, correlation_id)?;
+            handle_gossip_publish(
+                swarm,
+                event_tx,
+                network,
+                data,
+                topic,
+                correlation_id,
+                delivery_id,
+            )?;
             Ok(())
         }
         NetCommand::Dial(env) => {
@@ -1207,8 +1444,8 @@ async fn process_swarm_command(
             handle_response(swarm, responder)?;
             Ok(())
         }
-        NetCommand::Shutdown => {
-            unreachable!("shutdown command must be handled in Libp2pNetInterface::start")
+        NetCommand::Shutdown | NetCommand::ConfiguredPeerAdmitted { .. } => {
+            unreachable!("control commands must be handled in Libp2pNetInterface::start")
         }
     }
 }
@@ -1220,13 +1457,14 @@ fn handle_gossip_publish(
     data: GossipData,
     topic: String,
     correlation_id: CorrelationId,
+    delivery_id: Option<[u8; 16]>,
 ) -> Result<()> {
     let bytes = match (|| -> Result<Vec<u8>> {
         anyhow::ensure!(
             topic == network.protocols().gossip_topic(),
             "refusing to publish on an unconfigured gossip topic"
         );
-        encode_gossip(&data, network)
+        encode_gossip(&data, network, delivery_id)
     })() {
         Ok(bytes) => bytes,
         Err(error) => {
@@ -1502,7 +1740,58 @@ mod tests {
     use libp2p::kad::{Record, RecordKey};
     use libp2p::swarm::{ConnectionDenied, ConnectionId, ListenError, NetworkBehaviour};
     use libp2p::{Multiaddr, PeerId};
+    use std::collections::HashSet;
     use std::time::{Duration, Instant};
+
+    #[test]
+    fn missing_gossip_subscription_becomes_stale_after_grace_period() {
+        let peer = PeerId::random();
+        let connected = HashSet::from([peer]);
+        let subscribed = HashSet::new();
+        let started = Instant::now();
+        let mut health = super::GossipSubscriptionHealth::default();
+
+        assert!(health
+            .stale_peers(&connected, &subscribed, started)
+            .is_empty());
+        assert!(health
+            .stale_peers(
+                &connected,
+                &subscribed,
+                started + super::GOSSIP_SUBSCRIPTION_GRACE - Duration::from_millis(1),
+            )
+            .is_empty());
+        assert_eq!(
+            health.stale_peers(
+                &connected,
+                &subscribed,
+                started + super::GOSSIP_SUBSCRIPTION_GRACE,
+            ),
+            vec![peer]
+        );
+    }
+
+    #[test]
+    fn gossip_subscription_clears_missing_peer_state() {
+        let peer = PeerId::random();
+        let connected = HashSet::from([peer]);
+        let started = Instant::now();
+        let mut health = super::GossipSubscriptionHealth::default();
+
+        assert!(health
+            .stale_peers(&connected, &HashSet::new(), started)
+            .is_empty());
+        assert!(health
+            .stale_peers(&connected, &HashSet::from([peer]), started)
+            .is_empty());
+        assert!(health
+            .stale_peers(
+                &connected,
+                &HashSet::new(),
+                started + super::GOSSIP_SUBSCRIPTION_GRACE,
+            )
+            .is_empty());
+    }
 
     #[test]
     fn quarantined_peer_is_restored_after_a_successful_admission() {
@@ -1533,6 +1822,23 @@ mod tests {
     }
 
     #[test]
+    fn configured_peer_redial_distinguishes_unavailable_from_wrong_identity() {
+        let unavailable = PeerId::random();
+        let wrong_identity = PeerId::random();
+        let mut failures = super::PeerConnectionFailures::new();
+
+        failures.quarantine(&unavailable);
+        failures.quarantine_identity(&wrong_identity);
+
+        assert!(failures.is_quarantined(&unavailable));
+        assert!(!failures.is_identity_quarantined(&unavailable));
+        assert!(failures.is_identity_quarantined(&wrong_identity));
+
+        failures.connection_succeeded(&wrong_identity);
+        assert!(!failures.is_identity_quarantined(&wrong_identity));
+    }
+
+    #[test]
     fn strip_peer_id_removes_trailing_p2p_component() {
         let peer = PeerId::random();
         let addr: libp2p::Multiaddr = format!("/ip4/172.20.0.1/udp/9091/quic-v1/p2p/{peer}")
@@ -1547,6 +1853,67 @@ mod tests {
         );
         // Idempotent on addresses without a /p2p/ suffix
         assert_eq!(super::strip_peer_id(stripped.clone()), stripped);
+    }
+
+    #[test]
+    fn explicit_configured_peer_identity_cannot_rebind() {
+        let expected = PeerId::random();
+        let obtained = PeerId::random();
+        let address: Multiaddr = format!("/ip4/172.20.0.1/udp/9091/quic-v1/p2p/{expected}")
+            .parse()
+            .unwrap();
+        let corrected = super::strip_peer_id(address.clone());
+        let mut configured = vec![super::ConfiguredPeer::from_address(address)];
+
+        assert!(!super::rebind_configured_peer(
+            &mut configured,
+            &expected,
+            obtained,
+            &corrected,
+        ));
+        assert_eq!(configured[0].peer_id, Some(expected));
+    }
+
+    #[test]
+    fn discovered_configured_peer_identity_can_rebind() {
+        let expected = PeerId::random();
+        let obtained = PeerId::random();
+        let address: Multiaddr = "/ip4/172.20.0.1/udp/9091/quic-v1".parse().unwrap();
+        let mut configured = vec![super::ConfiguredPeer::from_address(address.clone())];
+        configured[0].peer_id = Some(expected);
+
+        assert!(super::rebind_configured_peer(
+            &mut configured,
+            &expected,
+            obtained,
+            &address,
+        ));
+        assert_eq!(configured[0].peer_id, Some(obtained));
+    }
+
+    #[test]
+    fn pinned_identity_blocks_rebinding_every_matching_entry() {
+        let expected = PeerId::random();
+        let obtained = PeerId::random();
+        let pinned: Multiaddr = format!("/ip4/172.20.0.1/udp/9091/quic-v1/p2p/{expected}")
+            .parse()
+            .unwrap();
+        let endpoint = super::strip_peer_id(pinned.clone());
+        let mut configured = vec![
+            super::ConfiguredPeer::from_address(endpoint.clone()),
+            super::ConfiguredPeer::from_address(pinned),
+        ];
+        configured[0].peer_id = Some(expected);
+
+        assert!(!super::rebind_configured_peer(
+            &mut configured,
+            &expected,
+            obtained,
+            &endpoint,
+        ));
+        assert!(configured
+            .iter()
+            .all(|configured_peer| configured_peer.peer_id == Some(expected)));
     }
 
     #[test]

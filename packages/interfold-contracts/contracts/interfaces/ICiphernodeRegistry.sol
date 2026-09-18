@@ -205,8 +205,8 @@ interface ICiphernodeRegistry {
     /// @notice This event MUST be emitted when committee viability changes after an expulsion.
     /// @param e3Id ID of the E3.
     /// @param activeCount Current number of active committee members.
-    /// @param thresholdM The minimum threshold (M) required.
-    /// @param viable Whether the committee is still viable (activeCount >= M).
+    /// @param thresholdM The committee viability threshold H. The ABI name is retained for compatibility.
+    /// @param viable Whether the committee is still viable (activeCount >= H).
     event CommitteeViabilityUpdated(
         uint256 indexed e3Id,
         uint256 activeCount,
@@ -266,7 +266,9 @@ interface ICiphernodeRegistry {
     /// @notice Emitted when the randomness provider changes.
     event RandomnessProviderSet(address indexed randomnessProvider);
 
-    /// @notice Emitted when an expired response disables future randomness requests.
+    /// @notice Emitted when a randomness response expires without a usable result.
+    /// @dev The signal is advisory. New requests continue to use the same provider until
+    ///      governance re-points it with `setRandomnessProvider`.
     event RandomnessCircuitBreakerTripped(
         uint256 indexed e3Id,
         uint256 indexed requestId,
@@ -379,6 +381,15 @@ interface ICiphernodeRegistry {
 
     /// @notice Registry dependencies cannot change while membership or committees remain.
     error RegistryGenerationNotDrained();
+
+    /// @notice A service dependency can change only while requests are paused.
+    error ServiceDependencyMigrationRequiresPause();
+
+    /// @notice A service dependency cannot change while protocol work remains.
+    error ServiceDependencyMigrationNotDrained();
+
+    /// @notice A replacement slashing manager is not compatible with this registry.
+    error IncompatibleSlashingManager(address candidate);
 
     /// @notice `publishCommittee` requires a non-zero PK commitment
     error PkCommitmentRequired();
@@ -656,6 +667,10 @@ interface ICiphernodeRegistry {
     /// @notice Returns the maximum time allowed for a randomness response.
     function randomnessRequestTimeout() external view returns (uint256);
 
+    /// @notice Tells whether one randomness response expired since the last provider change.
+    /// @dev Advisory only. Governance uses it to decide a provider change.
+    function randomnessDegraded() external view returns (bool);
+
     /// @notice Returns the duration that the exit delay must exceed.
     /// @dev Includes the current randomness and submission windows and the
     ///      remaining time for the latest frozen committee deadline.
@@ -751,7 +766,7 @@ interface ICiphernodeRegistry {
     /// @param node Address of the committee member to expel
     /// @param reason Hash of the slash reason
     /// @return activeCount Number of active committee members after expulsion
-    /// @return thresholdM The minimum threshold (M) required for viability
+    /// @return thresholdM The committee viability threshold H. The ABI name is retained for compatibility.
     function expelCommitteeMember(
         uint256 e3Id,
         address node,
@@ -804,8 +819,8 @@ interface ICiphernodeRegistry {
     /// @notice Consolidated committee viability check — avoids two separate view calls.
     /// @param e3Id ID of the E3 computation
     /// @return activeCount Current number of active (non-expelled) committee members
-    /// @return thresholdM Minimum required members (M in M-of-N)
-    /// @return thresholdN Total desired committee size (N in M-of-N)
+    /// @return thresholdM Committee viability threshold H; the ABI name is retained for compatibility
+    /// @return thresholdN Finalized committee size N
     /// @return viable True when activeCount >= thresholdM
     function getCommitteeViability(
         uint256 e3Id

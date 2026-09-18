@@ -170,12 +170,13 @@ pub fn get_common_setup(
 
 /// Simulate libp2p by taking output net commands and converting them to net events sending them to
 /// the other nodes
-pub async fn simulate_libp2p_net(nodes: &[CiphernodeHandle]) {
+pub(crate) async fn simulate_libp2p_net(nodes: &[CiphernodeHandle]) -> Libp2pMock {
     let mock = Libp2pMock::new();
     for node in nodes.iter() {
         let interface = node.channel_bridge().unwrap();
         mock.add_node(node.peer_id, interface).await;
     }
+    mock
 }
 
 /// Creates test eth addresses

@@ -144,10 +144,18 @@ impl NetEventTranslator {
         ctx: &mut Context<Self>,
     ) {
         let correlation_id = CorrelationId::new();
-        let command = NetCommand::GossipPublish {
-            topic: self.service.topic().to_owned(),
-            data: data.clone(),
-            correlation_id,
+        let command = if attempt == 1 {
+            NetCommand::gossip_publish(
+                self.service.topic().to_owned(),
+                data.clone(),
+                correlation_id,
+            )
+        } else {
+            NetCommand::gossip_republish(
+                self.service.topic().to_owned(),
+                data.clone(),
+                correlation_id,
+            )
         };
         self.pending.insert(
             correlation_id,

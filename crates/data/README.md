@@ -1,10 +1,10 @@
-# On Persistence patterns
+# Persistence Patterns
 
 _The way persistence is managed within this codebase has a few elements to it. So here is the story
 as to how this works and why it has been done like this_
 
 Persistence within an Actor Model tends to be based around the idea that actors need to be able to
-have their state persistable and hydratable upon restart. This enables in an ideal scenario any
+have their state persistable and hydratable upon restart. In an ideal scenario, this enables any
 actor to be able to just crash on error and restart as required.
 
 We started persistence by creating an Actor that wraps the database which is good practice within an
@@ -22,7 +22,7 @@ graph LR
 
 ## DataStore
 
-Next we needed a way to polymorphically pick between a real database and an in memory database for
+Next we needed a way to polymorphically pick between a real database and an in-memory database for
 testing - to do this we utilize Actix's `Recipient<Message>` trait which means we can accept any
 actor that is happy to receive an `Insert` or a `Get` message. This means we can create a Key Value
 Store struct and pass in either a `SledStore` or an `InMemStore` Actor to the `DataStore` actor to
@@ -72,7 +72,7 @@ data in the DataStore was effectively untyped.
 To solve this it made sense to create a typed `Repository<T>` interface to encapsulate saving of
 data from within an actor or routine and in theory the repository could use whatever underlying
 mechanism requires to save the data. This could even be a SQL DB or the filesystem if required.
-Whatever it's type T the Repository knows how to save it.
+Whatever its type `T`, the repository knows how to save it.
 
 The tradeoff is we get a slightly deeper stack but each layer adds a responsibility to the data
 saving stack:
@@ -102,7 +102,7 @@ saved but actors need to be restartable and be able to be hydrated and we needed
 accomplish this. To do this in typical Rust fashion we created a set of traits:
 
 - [`Snapshot`](https://github.com/theinterfold/interfold/blob/main/crates/data/src/snapshot.rs) for
-  defining how an object can create a snapshot of it's state
+  defining how an object can create a snapshot of its state
 - [`Checkpoint`](https://github.com/theinterfold/interfold/blob/main/crates/data/src/snapshot.rs)
   for defining how to save that snapshot to a repository
 - [`FromSnapshot`](https://github.com/theinterfold/interfold/blob/main/crates/data/src/snapshot.rs)
@@ -110,19 +110,19 @@ accomplish this. To do this in typical Rust fashion we created a set of traits:
   [`FromSnapshotWithParams`](https://github.com/theinterfold/interfold/blob/main/crates/data/src/snapshot.rs)
   for defining how an object could be reconstituted from a snapshot
 
-This worked well especially for objects who's persistable state needs to be derived from a subset of
+This worked well, especially for objects whose persistable state must be derived from a subset of
 the saved state however there are a couple of problems:
 
-- `self.checkpoint()` needs to be called everytime you want to save the state
-- Using these traits is very verbose and repeditive - especially for situations where the state was
-  just a field on the actor which it often is.
+- `self.checkpoint()` must be called every time you want to save the state
+- Using these traits is very verbose and repetitive, especially when the state is just a field on
+  the actor which it often is.
 - These traits mean you need to mix some persistence API within your business logic API unless you
   create a separate struct just for persistence.
 
 ## Enter Persistable
 
-Persistable is a struct that connects a repository and some in memory state and ensures that every
-time the in memory state is mutated that the state is saved to the repository.
+Persistable is a struct that connects a repository and in-memory state. It saves the state to the
+repository after each in-memory mutation.
 
 This has several benefits:
 
@@ -135,10 +135,10 @@ This has several benefits:
 
 ```rust
 
-// Some how we get a repository for a type
+// Get a repository for a type.
 let repo:Repository<Vec<String>> = get_repo();
 
-// We can use the load to create a persistable object from the contents of the persistance layer that the repository encapsulates
+// Load a persistable object from the repository.
 let persistable:Persistable<Vec<String>> = repo.load().await?;
 
 // If we add a name to the list the list is automatically synced to the database
@@ -155,7 +155,7 @@ if persistable.try_get()?.len() > 0 {
     println!("Repo has names!")
 }
 
-// We an clear the object which will clear the repo
+// Clear the object and its repository.
 persistable.clear();
 
 assert_eq!(persistable.get(), None);
@@ -171,5 +171,25 @@ struct MyActor {
 
 We have also extracted the key calculation mechanism to a
 [`StoreKeys`](https://github.com/theinterfold/interfold/blob/main/crates/events/src/store_keys.rs)
-struct. This is used in various places when creating repsitory factories for example
+struct. This is used in various places when creating repository factories, for example
 [here](https://github.com/theinterfold/interfold/blob/main/crates/aggregator/src/repo.rs)
+
+## Durable Event Logs and Large Events
+
+The append-only event log is the durable source of truth for actor replay. The Sled repositories
+hold indexes and snapshots, but they do not replace committed event history. Startup reconciles the
+timestamp index from the log and fails closed when an indexed record is corrupt.
+
+A commit-log frame is limited to 32 MiB. Events that do not fit inline are stored as
+content-addressed files in `event-blobs-v1` beside the event log. The log stores a versioned
+reference with the blob's SHA-256 digest and length. A single blob is limited to 512 MiB. Opening,
+replaying, or repairing the log verifies each referenced blob before decoding it.
+
+Startup removes only blob files that no committed record references. It does not remove referenced
+proof work after an E3 completes. Back up the event log and `event-blobs-v1` together, and monitor
+their combined growth.
+
+The CLI command `interfold node validate` checks stopped-node state without changing it. Add
+`--repair` only for a reported uncommitted physical tail. Repair can restore complete unindexed
+frames or truncate a torn suffix. It cannot remove an indexed record or migrate an unsupported
+schema.

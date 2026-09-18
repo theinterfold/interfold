@@ -4,24 +4,6 @@
 
 use super::*;
 
-impl Handler<TypedEvent<CommitteePublished>> for Sortition {
-    type Result = ();
-
-    fn handle(
-        &mut self,
-        msg: TypedEvent<CommitteePublished>,
-        _: &mut Self::Context,
-    ) -> Self::Result {
-        let (msg, ec) = msg.into_components();
-        trap(EType::Sortition, &self.bus.with_ec(&ec), || {
-            self.node_state.try_mutate(&ec, |mut state_map| {
-                NodeRegistry::record_committee_published(&mut state_map, &msg.e3_id, &msg.nodes);
-                Ok(state_map)
-            })
-        })
-    }
-}
-
 impl Handler<GetCommitteeMembersRequest> for Sortition {
     type Result = ();
 
@@ -137,6 +119,7 @@ impl Handler<TypedEvent<E3RequestComplete>> for Sortition {
         _ctx: &mut Self::Context,
     ) -> Self::Result {
         trap(EType::Sortition, &self.bus.with_ec(msg.get_ctx()), || {
+            self.decrement_jobs_for_e3(&msg.e3_id, "E3RequestComplete", msg.get_ctx().clone())?;
             self.finalized_committees
                 .try_mutate(msg.get_ctx(), |mut committees| {
                     FinalizedCommitteeRetention::remove(&mut committees, &msg.e3_id);

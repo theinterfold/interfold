@@ -5,13 +5,14 @@
 use super::*;
 use e3_events::{EventContext, PublicKeyAggregated, Sequenced};
 
-pub const PUBLIC_KEY_AGGREGATOR_RECOVERY_SCHEMA_VERSION: u32 = 1;
+pub const PUBLIC_KEY_AGGREGATOR_RECOVERY_SCHEMA_VERSION: u32 = 2;
 
 /// Restart-only data that is not part of the public-key protocol state machine.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct PublicKeyAggregatorRecoveryState {
     pub schema_version: u32,
     pub pending_publication: Option<PublicKeyAggregated>,
+    pub selected_roster: Option<BTreeSet<u64>>,
     pub last_ec: Option<EventContext<Sequenced>>,
 }
 
@@ -20,6 +21,7 @@ impl Default for PublicKeyAggregatorRecoveryState {
         Self {
             schema_version: PUBLIC_KEY_AGGREGATOR_RECOVERY_SCHEMA_VERSION,
             pending_publication: None,
+            selected_roster: None,
             last_ec: None,
         }
     }
@@ -110,6 +112,35 @@ pub enum PublicKeyAggregatorState {
 }
 
 impl PublicKeyAggregatorState {
+    pub fn party_id_for_node(&self, node: Address) -> Option<u64> {
+        let find = |nodes: &HashMap<u64, String>| {
+            nodes.iter().find_map(|(party_id, candidate)| {
+                candidate
+                    .parse::<Address>()
+                    .is_ok_and(|candidate| candidate == node)
+                    .then_some(*party_id)
+            })
+        };
+        match self {
+            Self::Collecting {
+                canonical_party_nodes,
+                ..
+            }
+            | Self::VerifyingC1 {
+                canonical_party_nodes,
+                ..
+            } => find(canonical_party_nodes),
+            Self::GeneratingC5Proof { party_nodes, .. } => find(party_nodes),
+            Self::Complete {
+                committee_addresses,
+                ..
+            } => committee_addresses
+                .iter()
+                .position(|candidate| *candidate == node)
+                .map(|party_id| party_id as u64),
+        }
+    }
+
     /// Ordered `topNodes` when the committee set is known (post–committee formation).
     pub fn committee_nodes(&self) -> Option<&OrderedSet<String>> {
         match self {

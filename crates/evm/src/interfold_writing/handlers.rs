@@ -130,7 +130,7 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<InterfoldEvent>
                 }
             }
             InterfoldEventData::E3StageChanged(data) => {
-                if self.provider.chain_id() == data.e3_id.chain_id() {
+                if source == EventSource::Evm && self.provider.chain_id() == data.e3_id.chain_id() {
                     ctx.notify(data);
                 }
             }
@@ -226,9 +226,9 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3RequestComplete>
 
     fn handle(&mut self, msg: E3RequestComplete, ctx: &mut Self::Context) -> Self::Result {
         self.active_aggregators.remove(&msg.e3_id);
-        self.committee_party_ids.remove(&msg.e3_id);
-        self.request_registries.remove(&msg.e3_id);
-        self.clear_failure_watch(&msg.e3_id, ctx);
+        // Local work can stop before the contract reaches a terminal stage.
+        // Keep the chain deadline watch until E3StageChanged confirms settlement.
+        self.try_start_failure_watch(&msg.e3_id, ctx);
     }
 }
 
@@ -374,7 +374,11 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<E3StageChanged>
                     .insert(e3_id.clone(), msg.new_stage.clone());
                 self.try_start_failure_watch(&e3_id, ctx);
             }
-            _ => self.clear_failure_watch(&e3_id, ctx),
+            _ => {
+                self.clear_failure_watch(&e3_id, ctx);
+                self.request_registries.remove(&e3_id);
+                self.committee_party_ids.remove(&e3_id);
+            }
         }
 
         if msg.new_stage == E3Stage::Failed {
@@ -407,18 +411,26 @@ impl<P: Provider + WalletProvider + Clone + 'static> Handler<ProcessFailedE3>
             .into_actor(self)
             .map(|(e3_id, result), actor, ctx| {
                 let terminal = match &result {
-                    Ok(_) => true,
+                    Ok(FailureSettlementOutcome::Submitted(_)
+                    | FailureSettlementOutcome::Completed) => true,
+                    Ok(FailureSettlementOutcome::Pending) => false,
                     Err(error) => failure_settlement_error_is_terminal(error),
                 };
                 actor.failure_settlements.finish(&e3_id, terminal);
 
                 match result {
-                    Ok(receipt) => {
+                    Ok(FailureSettlementOutcome::Submitted(receipt)) => {
                         info!(
                             tx = %receipt.transaction_hash,
                             e3_id = %e3_id,
                             "Called processE3Failure"
                         );
+                    }
+                    Ok(FailureSettlementOutcome::Completed) => {
+                        info!(e3_id = %e3_id, "E3 completed on-chain; no failure settlement needed");
+                    }
+                    Ok(FailureSettlementOutcome::Pending) => {
+                        ctx.notify_later(ProcessFailedE3 { e3_id }, FAILURE_RETRY_DELAY);
                     }
                     Err(_) if terminal => {
                         info!(e3_id = %e3_id, "Failure settlement was already processed");

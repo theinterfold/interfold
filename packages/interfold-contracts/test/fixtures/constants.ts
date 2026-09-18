@@ -105,7 +105,7 @@ export const LARGE_TIMEOUT_CONFIG = {
 export const COMMITTEE_SIZE_MINIMUM = 0;
 /** N=9, T=4. */
 export const COMMITTEE_SIZE_MICRO = 1;
-/** N=19, T=9. */
+/** N=19, T=9, H=14. */
 export const COMMITTEE_SIZE_SMALL = 2;
 
 /**
@@ -120,7 +120,7 @@ export const COMMITTEE_THRESHOLDS_DEFAULT: ReadonlyArray<
 /**
  * Production `setCommitteeThresholds` values from `scripts/deployInterfold.ts`:
  * `[H, N]` (minimum honest roster, committee size). On-chain `threshold[0]`
- * is registry viability **M** (`activeCount >= M`); production sets M = H.
+ * is the registry viability threshold H (`activeCount >= H`).
  *
  * Pass via `deployInterfoldSystem({ committeeThresholds: [...] })` when a
  * spec exercises post-expulsion viability with production semantics.
@@ -130,7 +130,7 @@ export const COMMITTEE_THRESHOLDS_ONCHAIN: ReadonlyArray<
 > = [
   [COMMITTEE_SIZE_MINIMUM, [2, 3]],
   [COMMITTEE_SIZE_MICRO, [5, 9]],
-  [COMMITTEE_SIZE_SMALL, [10, 19]],
+  [COMMITTEE_SIZE_SMALL, [14, 19]],
 ];
 
 /** Single-size fixture used by sortition / pricing smoke tests. */

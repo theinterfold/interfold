@@ -57,6 +57,12 @@ You should see output similar to:
 [2025-12-16 13:41:37] [commands.rs:118] - E3 request sent. TxHash: 0xe7998b9748e3526f6ca992c9bb498beabe4f387b02240a23d0f42a2386d3c305
 ```
 
+For an Avail-backed round, the CLI reads `CRISPProgram.earliestVotingStart()` and schedules a fixed
+voting start after the worst-case VRF, ticket, and DKG windows. It adds
+`VOTING_START_BUFFER_SECONDS` for transaction mining. Publishing the committee key early does not
+open the vote early. `E3_DURATION` begins at the scheduled start and includes the voting period plus
+the Avail finalization tail.
+
 ### Set Up MetaMask
 
 Whether you used `pnpm dev:up` or the manual flow, you will interact with the Hardhat chain running
