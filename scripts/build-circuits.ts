@@ -43,6 +43,7 @@ const CIRCUIT_VERSION_LABEL = 'interfold-bfv-v2'
 
 const SECURE_16384_ONLY_THRESHOLD_CIRCUITS = new Set([
   'lbfv_pk_generation',
+  'lbfv_pk_generation_limb',
   'lbfv_pk_aggregation',
   'rlk_generation',
   'rlk_generation_limb',
@@ -937,7 +938,7 @@ library ActiveCryptoConfig {
             '--circuit',
             source.circuit,
             '--preset',
-            tier,
+            preset,
             '--committee',
             committee,
             '--output',

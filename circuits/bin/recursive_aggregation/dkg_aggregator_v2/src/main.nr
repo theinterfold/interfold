@@ -89,7 +89,7 @@ pub global VK_C4: u32 = 13;
 pub global VK_C3_FOLD_KERNEL: u32 = 14;
 pub global VK_NODES_FOLD_KERNEL: u32 = 15;
 
-pub global V2_VK_BINDING_LEN: u32 = 12;
+pub global V2_VK_BINDING_LEN: u32 = 13;
 pub global V2_VK_NODE_FOLD: u32 = 0;
 pub global V2_VK_NODES_FOLD: u32 = 1;
 pub global V2_VK_NODES_FOLD_KERNEL: u32 = 2;
@@ -102,6 +102,7 @@ pub global V2_VK_AGGREGATION_FOLD: u32 = 8;
 pub global V2_VK_AGGREGATION_FOLD_KERNEL: u32 = 9;
 pub global V2_VK_PK_AGGREGATION: u32 = 10;
 pub global V2_VK_RLK_AGGREGATION: u32 = 11;
+pub global V2_VK_PK_GENERATION_LIMB: u32 = 12;
 
 pub global ACCEPTED_SET_PREIMAGE_LEN: u32 = 36 + (4 * H);
 
@@ -263,6 +264,7 @@ fn main(
         v2_vk_binding[V2_VK_PK_GENERATION],
         v2_vk_binding[V2_VK_RLK_GENERATION],
         v2_vk_binding[V2_VK_RLK_GENERATION_LIMB],
+        v2_vk_binding[V2_VK_PK_GENERATION_LIMB],
     ]
         .as_vector());
 

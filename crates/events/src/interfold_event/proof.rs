@@ -5,10 +5,11 @@ use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::{
     CircuitInputLayout, CircuitOutputLayout, DKG_SHARE_DECRYPTION_OUTPUTS,
     LBFV_PK_AGGREGATION_INPUTS, LBFV_PK_AGGREGATION_OUTPUTS, LBFV_PK_GENERATION_INPUTS,
-    LBFV_PK_GENERATION_OUTPUTS, PK_AGGREGATION_OUTPUTS, PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS,
-    RLK_AGGREGATION_INPUTS, RLK_AGGREGATION_OUTPUTS, RLK_GENERATION_INPUTS,
-    RLK_GENERATION_LIMB_INPUTS, RLK_GENERATION_LIMB_OUTPUTS, RLK_GENERATION_OUTPUTS,
-    SHARE_ENCRYPTION_INPUTS, SHARE_ENCRYPTION_OUTPUTS, THRESHOLD_SHARE_DECRYPTION_INPUTS,
+    LBFV_PK_GENERATION_LIMB_INPUTS, LBFV_PK_GENERATION_LIMB_OUTPUTS, LBFV_PK_GENERATION_OUTPUTS,
+    PK_AGGREGATION_OUTPUTS, PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS, RLK_AGGREGATION_INPUTS,
+    RLK_AGGREGATION_OUTPUTS, RLK_GENERATION_INPUTS, RLK_GENERATION_LIMB_INPUTS,
+    RLK_GENERATION_LIMB_OUTPUTS, RLK_GENERATION_OUTPUTS, SHARE_ENCRYPTION_INPUTS,
+    SHARE_ENCRYPTION_OUTPUTS, THRESHOLD_SHARE_DECRYPTION_INPUTS,
     THRESHOLD_SHARE_DECRYPTION_OUTPUTS,
 };
 use serde::{Deserialize, Serialize};
@@ -194,6 +195,8 @@ pub enum CircuitName {
     LbfvAggregationFoldKernel = 38,
     /// Secure-16384 DKG aggregator with l-BFV commitments.
     DkgAggregatorV2 = 39,
+    /// One CRT limb of one l-BFV public-key row.
+    LbfvPkGenerationLimb = 40,
 }
 
 impl CircuitName {
@@ -239,6 +242,7 @@ impl CircuitName {
             CircuitName::LbfvAggregationFold => "lbfv_aggregation_fold",
             CircuitName::LbfvAggregationFoldKernel => "lbfv_aggregation_fold_kernel",
             CircuitName::DkgAggregatorV2 => "dkg_aggregator_v2",
+            CircuitName::LbfvPkGenerationLimb => "lbfv_pk_generation_limb",
         }
     }
 
@@ -258,6 +262,7 @@ impl CircuitName {
             CircuitName::RlkGeneration
             | CircuitName::RlkAggregation
             | CircuitName::LbfvPkGeneration
+            | CircuitName::LbfvPkGenerationLimb
             | CircuitName::LbfvPkAggregation
             | CircuitName::RlkGenerationLimb => "threshold",
             CircuitName::C3Fold
@@ -304,6 +309,9 @@ impl CircuitName {
             },
             CircuitName::LbfvPkGeneration => CircuitOutputLayout::Fixed {
                 fields: LBFV_PK_GENERATION_OUTPUTS,
+            },
+            CircuitName::LbfvPkGenerationLimb => CircuitOutputLayout::Fixed {
+                fields: LBFV_PK_GENERATION_LIMB_OUTPUTS,
             },
             CircuitName::LbfvPkAggregation => CircuitOutputLayout::Fixed {
                 fields: LBFV_PK_AGGREGATION_OUTPUTS,
@@ -368,6 +376,9 @@ impl CircuitName {
         match self {
             CircuitName::LbfvPkGeneration => CircuitInputLayout::Fixed {
                 fields: LBFV_PK_GENERATION_INPUTS,
+            },
+            CircuitName::LbfvPkGenerationLimb => CircuitInputLayout::Fixed {
+                fields: LBFV_PK_GENERATION_LIMB_INPUTS,
             },
             CircuitName::LbfvPkAggregation => CircuitInputLayout::Fixed {
                 fields: LBFV_PK_AGGREGATION_INPUTS,
@@ -446,6 +457,7 @@ mod tests {
         (CircuitName::LbfvAggregationFold, 37, [37, 0, 0, 0]),
         (CircuitName::LbfvAggregationFoldKernel, 38, [38, 0, 0, 0]),
         (CircuitName::DkgAggregatorV2, 39, [39, 0, 0, 0]),
+        (CircuitName::LbfvPkGenerationLimb, 40, [40, 0, 0, 0]),
     ];
 
     fn make_proof(circuit: CircuitName, signals: &[u8]) -> Proof {
@@ -670,10 +682,11 @@ mod tests {
 
     #[test]
     fn lbfv_pk_generation_layout_tracks_row_and_commitments() {
-        let mut signals = vec![0u8; 192];
+        let mut signals = vec![0u8; 224];
         signals[127] = 2;
         signals[128..160].copy_from_slice(&[0x11; 32]);
         signals[160..192].copy_from_slice(&[0x22; 32]);
+        signals[192..224].copy_from_slice(&[0x33; 32]);
         let proof = make_proof(CircuitName::LbfvPkGeneration, &signals);
 
         assert_eq!(proof.extract_input("row_index").unwrap()[31], 2);
@@ -684,6 +697,33 @@ mod tests {
         assert_eq!(
             &*proof.extract_output("pk_commitment").unwrap(),
             &[0x22; 32]
+        );
+        assert_eq!(&*proof.extract_output("limb_vk_hash").unwrap(), &[0x33; 32]);
+    }
+
+    #[test]
+    fn lbfv_pk_generation_limb_layout_tracks_identity_and_commitments() {
+        let mut signals = vec![0u8; 256];
+        signals[127] = 2;
+        signals[159] = 4;
+        signals[160..192].copy_from_slice(&[0x11; 32]);
+        signals[192..224].copy_from_slice(&[0x22; 32]);
+        signals[224..256].copy_from_slice(&[0x33; 32]);
+        let proof = make_proof(CircuitName::LbfvPkGenerationLimb, &signals);
+
+        assert_eq!(proof.extract_input("row_index").unwrap()[31], 2);
+        assert_eq!(proof.extract_input("limb_index").unwrap()[31], 4);
+        assert_eq!(
+            &*proof.extract_output("sk_commitment").unwrap(),
+            &[0x11; 32]
+        );
+        assert_eq!(
+            &*proof.extract_output("eek_commitment").unwrap(),
+            &[0x22; 32]
+        );
+        assert_eq!(
+            &*proof.extract_output("pk_limb_commitment").unwrap(),
+            &[0x33; 32]
         );
     }
 

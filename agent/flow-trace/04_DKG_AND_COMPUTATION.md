@@ -502,8 +502,10 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │                                      the commitment stored at ciphertext publication. Keccak(raw output) remains separate.
 │   │   │
 │   │   ├─ NOTE: Production C1 still proves one summation-only public-key share per party. The
-│   │   │   separate `lbfv_pk_generation` circuit proves one fixed l-BFV public-key row and exposes
-│   │   │   `row_index`, `sk_commitment`, and `pk_commitment`. The `lbfv_pk_aggregation` circuit
+│   │   │   `lbfv_pk_generation_limb` circuit proves one CRT limb of one fixed public-key row. The
+│   │   │   `lbfv_pk_generation` terminal verifies all `L` limb proofs in canonical order. It
+│   │   │   reconstructs the unchanged whole-row PK commitment and exposes the PK leaf VK hash.
+│   │   │   The `lbfv_pk_aggregation` circuit
 │   │   │   aggregates exactly `H` generation-bound rows against the selected fixed CRS row. Both
 │   │   │   aggregation circuits bind the proof session, aggregator party, accepted-party-set hash,
 │   │   │   and row. The legacy C5 ABI remains unchanged. Remote contribution collection verifies
@@ -514,9 +516,10 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │   public-statement tail. `CircuitName::RlkGeneration`, `CircuitName::RlkAggregation`, and
 │   │   │   `CircuitName::LbfvPkGeneration` use appended discriminants 27, 28, and 29.
 │   │   │   `CircuitName::LbfvPkAggregation` and `CircuitName::RlkGenerationLimb` use appended
-│   │   │   discriminants 30 and 31. The externally signed row proof families use append-only
-│   │   │   `ProofType` discriminants 11 through 14. The limb proof remains a local temporary and
-│   │   │   has no `ProofType`. Append-only TrBFV compute variants generate local public-key and RLK
+│   │   │   discriminants 30 and 31. `CircuitName::LbfvPkGenerationLimb` uses appended discriminant
+│   │   │   40. The externally signed row proof families use append-only `ProofType` discriminants
+│   │   │   11 through 14. Both limb proof families remain local and have no `ProofType`.
+│   │   │   Append-only TrBFV compute variants generate local public-key and RLK
 │   │   │   shares from the C1 secret contribution. The response encrypts the RLK witness at rest.
 │   │   │   Append-only `ZkRequest` handlers build and prove each row. Each handler recomputes the
 │   │   │   stable operation ID from the session, party role, family, row, canonical accepted set,
@@ -528,7 +531,7 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │   uses the versioned dispatch context as the authoritative session. Aggregation requires
 │   │   │   exactly `H` unique ascending parties, one accepted-set hash for both families, and PK,
 │   │   │   RLK D0, and RLK D2 input commitments that match accepted generation results. Before
-│   │   │   generic ZK verification, each terminal RLK proof's limb VK hash must match the
+│   │   │   generic ZK verification, each terminal PK or RLK proof's limb VK hash must match its
 │   │   │   checksum-verified staged artifact. Versioned DHT transport stores each party's public-key
 │   │   │   contribution and RLK contribution in separate `LbfvKeyShareDocument` records. The PK
 │   │   │   document carries C1 and five signed PK row proofs. The RLK document carries five signed
@@ -553,7 +556,8 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │   fetch requests. The pure document boundary decodes the exact V1 PK and RLK share bytes. It
 │   │   │   accepts `LbfvAcceptedPartyCommitments` only when all five ordered PK, D0, and D2
 │   │   │   commitments match the fixed-shape row statements.
-│   │   │   `lbfv_generation_fold` verifies five ordered PK/RLK pairs. `node_fold_v2` verifies a
+│   │   │   `lbfv_generation_fold` verifies five ordered PK/RLK pairs and binds both leaf VK hashes.
+│   │   │   `node_fold_v2` verifies a
 │   │   │   legacy `NodeFold` proof, C1, and the terminal generation fold. It links each l-BFV SK
 │   │   │   commitment to C1 and returns the legacy node statement as a prefix. `nodes_fold_v2`
 │   │   │   folds exactly H parties in ascending order. `lbfv_aggregation_fold` verifies five
@@ -567,14 +571,14 @@ ShareVerificationActor receives ShareVerificationDispatched(kind=ShareProofs)
 │   │   │   and operational RLK storage are wired. The active aggregator persists and redrives a
 │   │   │   secure-16384 `LbfvPublicKeyAggregated` publication intent. The registry writer adapts the
 │   │   │   local intent to the existing public-key submission gate and passes the V2 proof and
-│   │   │   attestation bundle to `publishCommittee`. A real
-│   │   │   `secure-16384/minimum` test proves and verifies five recursive limbs and one row
-│   │   │   finalizer. It checks the four terminal domain/identity inputs and five outputs, and
-│   │   │   rejects a terminal proof made with the wrong leaf VK. The test took 1,393.44
-│   │   │   seconds and 16,788,504,576 bytes maximum RSS. The prior equation-wide circuit did not
-│   │   │   complete compilation after more than 31 minutes. Sequential circuit compilation measured
-│   │   │   512.58 seconds and 26,388,774,912 bytes maximum RSS for the limb, then 57.36 seconds and
-│   │   │   8,039,219,200 bytes maximum RSS for the terminal.
+│   │   │   attestation bundle to `publishCommittee`. Secure-16384 tests prove and verify five
+│   │   │   recursive limbs and one row finalizer for each generation family. The PK test checks four
+│   │   │   identity fields and three outputs. The RLK test checks four identity fields and five
+│   │   │   outputs. Both finalizers bind the checksum-verified leaf VK hash. The measured RLK
+│   │   │   test took 1,393.44 seconds and 16,788,504,576 bytes maximum RSS. The prior equation-wide
+│   │   │   RLK circuit did not complete compilation after more than 31 minutes. Sequential RLK
+│   │   │   compilation measured 512.58 seconds and 26,388,774,912 bytes maximum RSS for the limb.
+│   │   │   The RLK terminal used 57.36 seconds and 8,039,219,200 bytes maximum RSS.
 │   │   │
 │   │   ├─ On mismatch: publishes CommitmentConsistencyViolation
 │   │   │   → AccusationManager initiates accusation quorum (see Part 5)
@@ -1010,7 +1014,7 @@ only that failure. It does not resume row, fold, final V2 proof, or publication 
         │  │           public-input count, and both VK anchors   │
         │  │         • legacy: `BfvPkVerifier`                    │
         │  │         • secure-16384/minimum: `BfvPkVerifierV2`   │
-        │  │         • V2 requires exactly 63 public inputs      │
+        │  │         • V2 requires exactly 64 public inputs      │
         │  │         • V2 checks both independent VK manifests  │
         │  │         • V2 checks session, accepted set, registry,│
         │  │           committee, and aggregate PK commitment    │

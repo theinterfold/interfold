@@ -49,6 +49,11 @@ pub use circuits::dkg::share_computation::{
     prove_chunked_share_computation, prove_chunked_share_computation_with_chunk_size,
     ChunkedShareComputationProofs, DEFAULT_C2_CHUNK_SIZE,
 };
+pub use circuits::threshold::lbfv_pk_generation::{
+    finalize_lbfv_pk_generation_row, load_staged_lbfv_pk_generation_limb_vk_hash,
+    prove_lbfv_pk_generation_row, validate_lbfv_pk_generation_terminal_proof,
+    LbfvPkGenerationRowProof,
+};
 pub use circuits::threshold::rlk_generation::{
     finalize_rlk_generation_row, load_staged_rlk_generation_limb_vk_hash, prove_rlk_generation_row,
     validate_rlk_generation_terminal_proof, RlkGenerationRowProof,

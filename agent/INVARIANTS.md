@@ -205,7 +205,7 @@ design citation alone does not establish current runtime behavior.
   configuration ID without changing the parameter hash or committee matrix.
   `N <= numActiveOperators` at `requestCommittee`. — `flow-trace/03`
 - A BFV PK verifier router must contain one concrete route for each supported parameter-set and
-  committee pair. The `secure-16384/minimum` pair must use `BfvPkVerifierV2`, its 63-field public
+  committee pair. The `secure-16384/minimum` pair must use `BfvPkVerifierV2`, its 64-field public
   statement, and its `DkgAggregatorV2` and `NodesFoldV2` anchors. Before dispatch, the router reads
   the E3 parameter set through its immutable registry and requires a route with the same parameter
   set, public-input length, and VK anchors. The router must not also expose the legacy verifier for
@@ -668,12 +668,12 @@ design citation alone does not establish current runtime behavior.
   proof, C1, and the terminal generation fold. It links the l-BFV SK commitment to C1 and preserves
   the legacy node statement as a prefix. `dkg_aggregator_v2` preserves the legacy DKG statement as a
   prefix and appends the l-BFV statement. Its V2 VK manifest binds the generation and aggregation
-  folds, both kernels, both row circuits, the RLK limb circuit, `node_fold_v2`, and both
+  folds, both kernels, both row circuits, both limb circuits, `node_fold_v2`, and both
   `nodes_fold_v2` circuits. Legacy recursive circuits and ABIs remain unchanged. The V2 DKG circuit
   recomputes the accepted-set hash from its canonical party IDs. It binds the outer `NodeFoldV2` and
   `NodesFoldV2` VK slots separately from the embedded legacy `NodeFold` anchor. A `NodeFoldV2` proof
   has four verifier-prefix fields and 85 returned fields. Its 89-field statement takes the session
-  limbs from generation-fold fields 8 and 9. `DkgAggregatorV2` binds the legacy and V2 recursive VK
+  limbs from generation-fold fields 9 and 10. `DkgAggregatorV2` binds the legacy and V2 recursive VK
   manifests independently. It must not require corresponding legacy and V2 VK hashes to be equal.
 - **l-BFV proof identity and retries:** the proof session is Keccak-derived from the complete E3,
   deployment, crypto-configuration, committee, constants-version, and level domain. The accepted
@@ -696,8 +696,13 @@ design citation alone does not establish current runtime behavior.
   for the proof session. Aggregation requires exactly `H` unique ascending parties, and every public
   expected-commitment array must match the accepted PK, RLK D0, and RLK D2 generation commitments.
   PK and RLK aggregation rows use the same accepted-set hash. Before heavy verification, the
-  verifier rejects a missing or incompatible context, a mixed identity, or a terminal RLK proof
-  whose public limb VK hash differs from the checksum-verified staged artifact.
+  verifier rejects a missing or incompatible context, a mixed identity, or a terminal generation
+  proof whose public limb VK hash differs from the checksum-verified staged artifact.
+- **l-BFV generation rows use limb proofs:** each PK or RLK terminal verifies exactly `L` recursive
+  limb proofs in canonical order. Every limb binds the proof session, party, row, limb index, shared
+  secret commitments, and its public polynomial commitments. The terminal reconstructs the unchanged
+  whole-row commitments and exposes the leaf VK hash. PK and RLK leaf VK hashes are separate trusted
+  inputs to the generation fold and separate entries in the V2 VK manifest.
 - **l-BFV recursive row folds are bounded:** each generation and aggregation kernel accepts row 0.
   Each fold accepts only the next row. `node_fold_v2` and `dkg_aggregator_v2` require terminal
   row 4. Therefore, each terminal fold contains exactly five ordered proof pairs. `nodes_fold_v2`

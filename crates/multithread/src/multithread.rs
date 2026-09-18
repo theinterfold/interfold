@@ -63,8 +63,8 @@ use e3_trbfv::helpers::try_poly_ntt_from_bytes;
 use e3_trbfv::helpers::try_poly_pb_from_bytes;
 use e3_trbfv::shares::SharedSecret;
 use e3_trbfv::{TrBFVError, TrBFVFailure, TrBFVRequest, TrBFVResponse};
-use e3_utils::SharedRng;
 use e3_utils::MAILBOX_LIMIT;
+use e3_utils::{ArcBytes, SharedRng};
 use e3_zk_helpers::circuits::dkg::pk::circuit::{PkCircuit, PkCircuitData};
 use e3_zk_helpers::circuits::dkg::share_computation::utils::compute_parity_matrix;
 use e3_zk_helpers::circuits::threshold::decrypted_shares_aggregation::circuit::{
@@ -74,7 +74,7 @@ use e3_zk_helpers::circuits::threshold::pk_generation::circuit::{
     PkGenerationCircuit, PkGenerationCircuitData,
 };
 use e3_zk_helpers::circuits::threshold::pk_generation::{
-    LbfvPkGenerationAdapter, LbfvPkGenerationCircuit, LbfvPkGenerationCircuitData,
+    LbfvPkGenerationAdapter, LbfvPkGenerationCircuitData,
 };
 use e3_zk_helpers::computation::DkgInputType;
 use e3_zk_helpers::dkg::share_computation::ShareComputationCircuitData;
@@ -91,11 +91,13 @@ use e3_zk_helpers::CiphernodesCommittee;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::DEFAULT_C2_CHUNK_SIZE;
 use e3_zk_prover::{
-    generate_nodes_fold_step, load_staged_rlk_generation_limb_vk_hash,
-    prove_chunked_share_computation, prove_decryption_aggregation_jobs, prove_dkg_aggregation,
-    prove_dkg_aggregation_v2, prove_lbfv_aggregation_fold_step, prove_lbfv_generation_fold_step,
-    prove_node_dkg_fold, prove_node_dkg_fold_v2, prove_nodes_fold_v2_step,
-    prove_rlk_generation_row, validate_c2_terminal_proof, validate_rlk_generation_terminal_proof,
+    generate_nodes_fold_step, load_staged_lbfv_pk_generation_limb_vk_hash,
+    load_staged_rlk_generation_limb_vk_hash, prove_chunked_share_computation,
+    prove_decryption_aggregation_jobs, prove_dkg_aggregation, prove_dkg_aggregation_v2,
+    prove_lbfv_aggregation_fold_step, prove_lbfv_generation_fold_step,
+    prove_lbfv_pk_generation_row, prove_node_dkg_fold, prove_node_dkg_fold_v2,
+    prove_nodes_fold_v2_step, prove_rlk_generation_row, validate_c2_terminal_proof,
+    validate_lbfv_pk_generation_terminal_proof, validate_rlk_generation_terminal_proof,
     C2TerminalAnchors, CircuitVariant, DecryptionAggregationJob, DkgAggregationInput,
     NodeDkgFoldInput, NodeDkgFoldProveResult, Provable, ZkBackend, ZkError, ZkProver,
 };
@@ -740,20 +742,23 @@ fn handle_lbfv_pk_generation_proof(
     let data = build_lbfv_pk_generation_data(cipher, &req, &request)?;
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
-    let proof = LbfvPkGenerationCircuit
-        .prove(
-            prover,
-            &req.params_preset,
-            &data,
-            &zk_bb_work_id(&request),
-            &artifacts_dir,
+    let limb_vk_hash = load_staged_lbfv_pk_generation_limb_vk_hash(prover, &artifacts_dir)
+        .map_err(|error| make_zk_error(&request, error.to_string()))?;
+    let proof = prove_lbfv_pk_generation_row(
+        prover,
+        req.params_preset,
+        &data,
+        &limb_vk_hash,
+        &zk_bb_work_id(&request),
+        &artifacts_dir,
+    )
+    .map(|row| row.terminal_proof)
+    .map_err(|error| {
+        ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(error.to_string())),
+            request.clone(),
         )
-        .map_err(|error| {
-            ComputeRequestError::new(
-                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(error.to_string())),
-                request.clone(),
-            )
-        })?;
+    })?;
     let row_index = validated_row_instance(
         e3_events::ProofType::LbfvPkGeneration,
         &proof,
@@ -1421,12 +1426,16 @@ fn handle_lbfv_generation_fold_proof(
     ensure_secure_lbfv_preset(req.params_preset, &request)?;
     let artifacts_dir =
         prover.resolve_artifacts_dir(req.params_preset, req.committee_size.as_str());
+    let trusted_pk_limb_key_hash =
+        load_staged_lbfv_pk_generation_limb_vk_hash(prover, &artifacts_dir)
+            .map_err(|error| make_zk_error(&request, error.to_string()))?;
     let proof = prove_lbfv_generation_fold_step(
         prover,
         &req.pk_proof,
         &req.rlk_proof,
         req.prior_accumulator.as_ref(),
         req.row_index,
+        &ArcBytes::from_bytes(&trusted_pk_limb_key_hash),
         &req.trusted_limb_key_hash,
         &zk_bb_work_id(&request),
         artifacts_dir.as_str(),
@@ -2234,6 +2243,24 @@ fn handle_verify_share_proofs(
                     ) {
                         info!(
                             "RLK terminal proof VK binding failed for party {sender}: {error}"
+                        );
+                        return PartyVerificationResult {
+                            sender_party_id: sender,
+                            all_verified: false,
+                            failed_signed_payload: Some(signed_proof.clone()),
+                            recovered_address: None,
+                        };
+                    }
+                }
+
+                if proof_type == e3_events::ProofType::LbfvPkGeneration {
+                    if let Err(error) = validate_lbfv_pk_generation_terminal_proof(
+                        prover,
+                        &signed_proof.payload.proof,
+                        &artifacts_dir,
+                    ) {
+                        info!(
+                            "l-BFV public-key terminal proof VK binding failed for party {sender}: {error}"
                         );
                         return PartyVerificationResult {
                             sender_party_id: sender,

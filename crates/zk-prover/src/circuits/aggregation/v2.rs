@@ -24,14 +24,14 @@ use std::collections::HashSet;
 
 const LBFV_ROWS: usize = 5;
 const LEGACY_VK_BINDING_LEN: usize = 16;
-const V2_VK_BINDING_LEN: usize = 12;
+const V2_VK_BINDING_LEN: usize = 13;
 const SECURE_16384_MINIMUM_N: usize = 3;
 const SECURE_16384_MINIMUM_H: usize = 2;
 const SECURE_16384_MINIMUM_L: usize = 5;
 const C1_PUBLIC_FIELDS: usize = 3;
-const LBFV_PK_GENERATION_PUBLIC_FIELDS: usize = 6;
+const LBFV_PK_GENERATION_PUBLIC_FIELDS: usize = 7;
 const RLK_GENERATION_PUBLIC_FIELDS: usize = 9;
-const GENERATION_FOLD_PUBLIC_FIELDS: usize = 8 + 5 + (3 * LBFV_ROWS);
+const GENERATION_FOLD_PUBLIC_FIELDS: usize = 9 + 5 + (3 * LBFV_ROWS);
 const NODE_FOLD_PUBLIC_FIELDS: usize = 14
     + SECURE_16384_MINIMUM_N
     + (2 * (SECURE_16384_MINIMUM_N + SECURE_16384_MINIMUM_H) * SECURE_16384_MINIMUM_L);
@@ -131,7 +131,8 @@ struct GenerationFoldWitness {
     row_index: u32,
     expected_kernel_key_hash: String,
     expected_fold_key_hash: String,
-    trusted_limb_key_hash: String,
+    trusted_pk_limb_key_hash: String,
+    trusted_rlk_limb_key_hash: String,
 }
 
 fn generation_fold_witness(
@@ -140,7 +141,8 @@ fn generation_fold_witness(
     rlk_proof: &Proof,
     prior_accumulator: Option<&Proof>,
     row_index: u32,
-    trusted_limb_key_hash: &str,
+    trusted_pk_limb_key_hash: &str,
+    trusted_rlk_limb_key_hash: &str,
     artifacts_dir: &str,
 ) -> Result<(CircuitName, GenerationFoldWitness), ZkError> {
     if row_index >= LBFV_ROWS as u32 {
@@ -228,7 +230,7 @@ fn generation_fold_witness(
                 kernel_vk.clone(),
                 kernel_vk.key_hash.clone(),
                 zero_field_hex_strings(ACC_NONZK_PROOF_FIELDS)?,
-                zero_field_hex_strings(8 + 5 + (3 * LBFV_ROWS))?,
+                zero_field_hex_strings(GENERATION_FOLD_PUBLIC_FIELDS)?,
                 true,
             )
         };
@@ -252,7 +254,8 @@ fn generation_fold_witness(
             row_index,
             expected_kernel_key_hash: kernel_vk.key_hash,
             expected_fold_key_hash: fold_vk.key_hash,
-            trusted_limb_key_hash: trusted_limb_key_hash.to_owned(),
+            trusted_pk_limb_key_hash: trusted_pk_limb_key_hash.to_owned(),
+            trusted_rlk_limb_key_hash: trusted_rlk_limb_key_hash.to_owned(),
         },
     ))
 }
@@ -264,18 +267,23 @@ pub fn prove_lbfv_generation_fold_step(
     rlk_proof: &Proof,
     prior_accumulator: Option<&Proof>,
     row_index: u32,
-    trusted_limb_key_hash: &ArcBytes,
+    trusted_pk_limb_key_hash: &ArcBytes,
+    trusted_rlk_limb_key_hash: &ArcBytes,
     job_id: &str,
     artifacts_dir: &str,
 ) -> Result<Proof, ZkError> {
-    let trusted_limb_key_hash = one_field(trusted_limb_key_hash, "trusted limb VK hash")?;
+    let trusted_pk_limb_key_hash =
+        one_field(trusted_pk_limb_key_hash, "trusted public-key limb VK hash")?;
+    let trusted_rlk_limb_key_hash =
+        one_field(trusted_rlk_limb_key_hash, "trusted RLK limb VK hash")?;
     let (circuit, witness) = generation_fold_witness(
         prover,
         pk_proof,
         rlk_proof,
         prior_accumulator,
         row_index,
-        &trusted_limb_key_hash,
+        &trusted_pk_limb_key_hash,
+        &trusted_rlk_limb_key_hash,
         artifacts_dir,
     )?;
     prove_bin(prover, circuit, &witness, job_id, artifacts_dir)
@@ -761,12 +769,14 @@ fn v2_vk_binding(prover: &ZkProver, artifacts_dir: &str) -> Result<Vec<vk::VkArt
         CircuitName::LbfvAggregationFoldKernel,
         CircuitName::LbfvPkAggregation,
         CircuitName::RlkAggregation,
+        CircuitName::LbfvPkGenerationLimb,
     ];
     circuits
         .into_iter()
         .map(|circuit| {
             let variant = match circuit {
                 CircuitName::LbfvPkGeneration
+                | CircuitName::LbfvPkGenerationLimb
                 | CircuitName::RlkGeneration
                 | CircuitName::RlkGenerationLimb
                 | CircuitName::LbfvPkAggregation
@@ -930,7 +940,7 @@ mod tests {
         assert_eq!(NODE_FOLD_PUBLIC_FIELDS, 67);
         assert_eq!(NODE_FOLD_V2_PUBLIC_FIELDS, 89);
         assert_eq!(NODES_FOLD_V2_PUBLIC_FIELDS, 184);
-        assert_eq!(GENERATION_FOLD_PUBLIC_FIELDS, 28);
+        assert_eq!(GENERATION_FOLD_PUBLIC_FIELDS, 29);
         assert_eq!(AGGREGATION_FOLD_PUBLIC_FIELDS, 57);
         assert_eq!(C5_PUBLIC_FIELDS, 3);
     }

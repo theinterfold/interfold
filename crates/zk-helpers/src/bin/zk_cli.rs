@@ -49,8 +49,8 @@ use e3_zk_helpers::threshold::lbfv_pk_aggregation::{
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
 use e3_zk_helpers::threshold::pk_generation::{
-    LbfvPkGenerationCircuit, LbfvPkGenerationCircuitData, PkGenerationCircuit,
-    PkGenerationCircuitData,
+    LbfvPkGenerationCircuit, LbfvPkGenerationLimbCircuit, LbfvPkGenerationLimbCircuitData,
+    PkGenerationCircuit, PkGenerationCircuitData,
 };
 use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
 use e3_zk_helpers::threshold::rlk_generation::{
@@ -225,6 +225,7 @@ fn main() -> Result<()> {
     registry.register(Arc::new(UserDataEncryptionCircuit));
     registry.register(Arc::new(PkGenerationCircuit));
     registry.register(Arc::new(LbfvPkGenerationCircuit));
+    registry.register(Arc::new(LbfvPkGenerationLimbCircuit));
     registry.register(Arc::new(LbfvPkAggregationCircuit));
     registry.register(Arc::new(RlkGenerationCircuit));
     registry.register(Arc::new(RlkGenerationLimbCircuit));
@@ -395,13 +396,19 @@ fn main() -> Result<()> {
                 circuit.codegen(preset, &sample)?
             }
             name if name == <LbfvPkGenerationCircuit as Circuit>::NAME => {
-                let sample = LbfvPkGenerationCircuitData::generate_sample_for_row(
+                return Err(anyhow!(
+                    "circuit {name} requires verified limb proofs; zk-cli does not fabricate recursive inputs"
+                ));
+            }
+            name if name == <LbfvPkGenerationLimbCircuit as Circuit>::NAME => {
+                let sample = LbfvPkGenerationLimbCircuitData::generate_sample_for_row_and_limb(
                     preset,
                     committee,
                     args.row_index,
+                    args.limb_index,
                 )?;
 
-                let circuit = LbfvPkGenerationCircuit;
+                let circuit = LbfvPkGenerationLimbCircuit;
                 circuit.codegen(preset, &sample)?
             }
             name if name == <LbfvPkAggregationCircuit as Circuit>::NAME => {
