@@ -82,7 +82,12 @@ async fn reset_data(out: Console, config: &AppConfig, yes: bool) -> Result<()> {
     let outcome = e3_entrypoint::nodes::reset_data::execute(config).await?;
 
     log!(out, "Removed {}", outcome.db_file.display());
-    log!(out, "Removed {}", outcome.log_file.display());
+    for path in &outcome.log_paths {
+        log!(out, "Removed {}", path.display());
+    }
+    if outcome.log_paths.is_empty() {
+        log!(out, "No event-log files were present.");
+    }
     log!(out, "Identity backup: {}", outcome.backup_file.display());
     if outcome.identity_restored {
         log!(

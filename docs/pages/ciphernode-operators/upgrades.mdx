@@ -118,6 +118,33 @@ log, and the node halts with `On-disk state has no schema marker` instead of sta
 Use this command only when a release note instructs you to. It is not a general repair tool: a node
 that is a member of a live committee loses its keyshare and fails that E3.
 
+### Configuration changes this release requires
+
+The protocol-v4 binary retrieves proof-backed ciphertext outputs from a data-availability layer, so
+every enabled chain entry that configures the `interfold` contract also needs a `data_availability`
+block. A configuration written for an earlier release does not have one, and the node exits after
+accepting the release with:
+
+```text
+chain 'mainnet' has Interfold enabled but no data_availability reader;
+this protocol release must retrieve proof-backed ciphertext outputs
+```
+
+Add the block inside the chain entry:
+
+```yaml
+chains:
+  - name: mainnet
+    chain_id: 1
+    data_availability:
+      mode: avail
+      rpc_url: 'https://mainnet-rpc.avail.so/rpc'
+```
+
+Use `https://turing-rpc.avail.so/rpc` only for Sepolia. The `mock_http` mode exists for the test
+harness and must never be used on a live chain. Make this change while the node is stopped, so the
+reset and the configuration fix are both in place before the first start.
+
 `interfold node validate` is read-only by default. `interfold node validate --repair` can repair
 only a provably uncommitted event-log tail, such as complete frames whose final index write was
 interrupted. It does not repair an indexed corrupt record, an offset mismatch, or an unsupported

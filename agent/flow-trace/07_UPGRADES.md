@@ -148,8 +148,20 @@ cipher key file. Neither is a safe reset.
 
 `interfold node reset-data` is the supported path. It takes the same `ProcessFence` as `start`, so
 it refuses while a node runs, copies both secrets out as ciphertext without the password, backs them
-up at mode `0600`, removes the event log and the key/value store, then restores and reads them back
+up at mode `0600`, removes the event logs and the key/value store, then restores and reads them back
 to confirm.
+
+The event log is not one file. `EventSystem::persisted` passes `config.log_file()` through
+`enumerate_path`, which inserts a per-aggregate index before the extension, so the durable logs are
+`log.<aggregate>` rather than `log`. `AggregateId` is the chain id, with `0` reserved for events
+that carry no chain (`AggregateId::from_chain_id`: `None -> 0`), and `AggregateConfig::new` always
+inserts aggregate `0`. A mainnet node therefore holds `log.0` and `log.1`; a Sepolia node holds
+`log.0` and `log.11155111`.
+
+A reset that removes only `config.log_file()` deletes nothing, because that path is never written.
+The key/value store is cleared, the event log survives, and the next start halts with
+`no schema marker` — a worse state than before the reset, since the marker that made the old state
+coherent is gone. The reset enumerates the real paths and verifies afterwards that none survive.
 
 ```text
 raise SCHEMA_VERSION in a release
@@ -164,6 +176,10 @@ Both stores must be cleared together. The marker lives in the key/value store, s
 leaves an unmarked event log; `has_existing_state` is then true and the preflight halts with
 `no schema marker` instead of starting. `preflight.rs` treats the complete identity pair as the one
 exception that still counts as a fresh store, which is what the reset relies on.
+
+`ciphernode.jsonl` sits beside the logs in the same directory but is not durable state. It is the
+append-only operational log written by `LogCollector`, never read back, and a reset leaves it in
+place.
 
 A schema raise is an upgrade-window action. `assertUpgradeWindow` already requires paused requests,
 zero active E3s, and zero unreleased committees, so no in-flight round loses state to this. The
