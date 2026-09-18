@@ -1,6 +1,6 @@
 {
   "name": "@interfold/mcp",
-  "version": "0.15.1",
+  "version": "0.15.2",
   "description": "MCP server for Interfold documentation",
   "type": "module",
   "bin": {
