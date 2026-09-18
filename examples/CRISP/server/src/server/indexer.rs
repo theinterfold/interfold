@@ -564,9 +564,12 @@ pub async fn register_e3_requested(
                 // the round index and exits when nothing is owed, so starting it here could let
                 // it run before this round is listed, find nothing, and leave the debt to a
                 // restart.
-                if divisor_unavailable || discovery_failed {
-                    repo.set_discovery_pending(true).await?;
-                }
+                let retry_discovery = record_discovery_debt(
+                    &mut repo,
+                    divisor_unavailable,
+                    discovery_failed,
+                )
+                .await?;
 
                 // Poseidon hashes exist to build the census tree, and an on-chain census has no
                 // tree: `_eligibility` reads power from the token per input. The addresses are
@@ -589,7 +592,7 @@ pub async fn register_e3_requested(
 
                 // The round is listed, so the retry pass can find its debt. The startup pass
                 // covers a restart; this covers the debt taken while up.
-                if divisor_unavailable {
+                if retry_discovery {
                     tokio::spawn(retry_pending_discovery(store.clone()));
                 }
 
@@ -1474,6 +1477,19 @@ fn pending_discovery_step(round: &E3Crisp) -> PendingDiscoveryStep {
     }
 }
 
+/// Persist a missing census and report whether the live retry task must start.
+async fn record_discovery_debt<S: DataStore>(
+    repo: &mut CrispE3Repository<S>,
+    divisor_unavailable: bool,
+    discovery_failed: bool,
+) -> eyre::Result<bool> {
+    let retry_discovery = divisor_unavailable || discovery_failed;
+    if retry_discovery {
+        repo.set_discovery_pending(true).await?;
+    }
+    Ok(retry_discovery)
+}
+
 /// Settle holder discovery for rounds that were registered without a census.
 ///
 /// A round carries `discovery_pending` when its census could not be built at `E3Requested`:
@@ -2083,7 +2099,7 @@ mod custom_params_decoding_tests {
 /// neither one outside ONCHAIN mode.
 #[cfg(test)]
 mod pending_discovery_tests {
-    use super::{pending_discovery_step, PendingDiscoveryStep};
+    use super::{pending_discovery_step, record_discovery_debt, PendingDiscoveryStep};
     use crate::server::models::{CensusMode, CreditMode, CustomParams, E3Crisp, TokenHolder};
     use crate::server::repo::CrispE3Repository;
     use e3_sdk::indexer::{InMemoryStore, SharedStore};
@@ -2148,47 +2164,49 @@ mod pending_discovery_tests {
         );
     }
 
-    /// A discovery FAILURE on an on-chain census must be owed, not silently dropped.
-    ///
-    /// The failure is swallowed at `E3Requested` so the round stays votable, and previously no
-    /// debt was recorded — only an unreadable divisor set one. A transient Etherscan rate limit
-    /// or a momentarily rejected API key therefore left the round permanently without mask
-    /// targets, because the event is never replayed. Both causes must reach the retry pass.
-    #[test]
-    fn a_failed_onchain_discovery_is_owed_like_an_unreadable_divisor() {
-        // Whatever set the debt, a votable round is retried...
-        assert_eq!(
-            pending_discovery_step(&round("Requested", true)),
-            PendingDiscoveryStep::Retry
-        );
-        assert_eq!(
-            pending_discovery_step(&round("Active", true)),
-            PendingDiscoveryStep::Retry
-        );
-        // ...and an ended one is forgiven rather than retried forever.
-        assert_eq!(
-            pending_discovery_step(&round("Finished", true)),
-            PendingDiscoveryStep::Forgive
-        );
-        // A round that never owed anything is untouched, so the wider debt does not make the
-        // pass busier for healthy rounds.
-        assert_eq!(
-            pending_discovery_step(&round("Active", false)),
-            PendingDiscoveryStep::Skip
-        );
-    }
-
-    /// Pins the condition that records the debt. `divisor_unavailable || discovery_failed`:
-    /// either cause alone is enough, which is the whole point of the fix.
-    #[test]
-    fn either_cause_records_the_discovery_debt() {
-        fn owes(divisor_unavailable: bool, discovery_failed: bool) -> bool {
-            divisor_unavailable || discovery_failed
+    /// Both missing-census paths persist debt and request the live retry task.
+    #[tokio::test]
+    async fn both_missing_census_paths_record_and_start_a_retry() {
+        async fn initialized_repo(e3_id: &str) -> CrispE3Repository<InMemoryStore> {
+            let store = SharedStore::new(Arc::new(RwLock::new(InMemoryStore::new())));
+            let mut repo = CrispE3Repository::new(store, e3_id);
+            repo.initialize_round(
+                CustomParams {
+                    token_address: "0x0000000000000000000000000000000000000001".to_string(),
+                    balance_threshold: "1".to_string(),
+                    num_options: "2".to_string(),
+                    credit_mode: CreditMode::Constant,
+                    credits: Some("1".to_string()),
+                    census_mode: CensusMode::Onchain,
+                    voting_power_divisor: "0".to_string(),
+                },
+                "0x0000000000000000000000000000000000000002".into(),
+                100,
+                100,
+                1,
+            )
+            .await
+            .unwrap();
+            repo
         }
-        assert!(owes(true, false), "unreadable divisor still owes");
-        assert!(owes(false, true), "failed discovery now owes");
-        assert!(owes(true, true), "both");
-        assert!(!owes(false, false), "a clean census owes nothing");
+
+        for (e3_id, divisor_unavailable, discovery_failed) in
+            [("1", true, false), ("2", false, true), ("3", true, true)]
+        {
+            let mut repo = initialized_repo(e3_id).await;
+            assert!(
+                record_discovery_debt(&mut repo, divisor_unavailable, discovery_failed)
+                    .await
+                    .unwrap()
+            );
+            assert!(repo.get_crisp().await.unwrap().discovery_pending);
+        }
+
+        let mut healthy = initialized_repo("4").await;
+        assert!(!record_discovery_debt(&mut healthy, false, false)
+            .await
+            .unwrap());
+        assert!(!healthy.get_crisp().await.unwrap().discovery_pending);
     }
 
     /// The debt is durable: it survives a re-read of the store, and clears only when told to.
