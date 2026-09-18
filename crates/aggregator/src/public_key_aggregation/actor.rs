@@ -35,11 +35,21 @@ use e3_utils::NotifySync;
 use e3_utils::{ArcBytes, MAILBOX_LIMIT};
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeSet, HashMap},
     sync::Arc,
     time::{SystemTime, UNIX_EPOCH},
 };
 use tracing::{error, info, warn};
+
+/// When an l-BFV aggregation or fold-step request was published, and under which
+/// event context, so a correlation whose response never arrives can be cleared
+/// and the request published again. In-memory only: restart recovery clears
+/// in-flight correlations and re-dispatches, so no dispatch age must survive a
+/// restart.
+pub(in crate::actors::publickey_aggregator) struct AggregationDispatch {
+    pub(in crate::actors::publickey_aggregator) at: u64,
+    pub(in crate::actors::publickey_aggregator) ec: EventContext<Sequenced>,
+}
 
 // Public-key aggregation state machine + pure transition logic now live in
 // `crate::workflow::publickey_aggregation`; re-exported here to preserve the public path
@@ -88,6 +98,10 @@ pub struct PublicKeyAggregator {
     lbfv_aggregation: Option<Persistable<LbfvAggregationStateV1>>,
     /// Secure-16384 publication intent. The separate repository preserves the legacy recovery schema.
     lbfv_publication: Option<Persistable<LbfvPublicKeyPublicationStateV1>>,
+    /// Dispatch bookkeeping for l-BFV aggregation and fold-step requests.
+    lbfv_aggregation_dispatch_at: HashMap<CorrelationId, AggregationDispatch>,
+    /// Periodic redrive of l-BFV aggregation requests whose response was lost.
+    lbfv_aggregation_redrive_timer: Option<SpawnHandle>,
 }
 
 pub struct PublicKeyAggregatorParams {
@@ -148,6 +162,8 @@ impl PublicKeyAggregator {
             early_dkg_proofs: Vec::new(),
             lbfv_aggregation: params.lbfv_aggregation,
             lbfv_publication: params.lbfv_publication,
+            lbfv_aggregation_dispatch_at: HashMap::new(),
+            lbfv_aggregation_redrive_timer: None,
             local_party_id: params.local_party_id,
         }
     }

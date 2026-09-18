@@ -938,6 +938,17 @@ only that failure. It does not resume row, fold, final V2 proof, or publication 
 │   │     │   → secure-16384 dispatches DkgAggregationV2 with NodesFoldV2, C5, and the
 │   │     │     completed l-BFV aggregation fold
 │   │     │   → secure-16384 also requires the persisted operational RLK before dispatch
+│   │     │   → every V2 readiness probe first re-dispatches missing l-BFV row and
+│   │     │     fold requests, so a request the chain never published cannot stall
+│   │     │     publication (`aggregate_dkg_proofs.rs: try_dispatch_dkg_aggregation_v2`)
+│   │     │   → the compute effect gate evicts a forwarded entry without an outcome
+│   │     │     after 300 s, so a re-published retry runs again instead of parking
+│   │     │     behind a response the event bus dropped (`effect_gate.rs`)
+│   │     │   → a 60 s timer clears an l-BFV row or fold-step correlation older
+│   │     │     than 900 s (final aggregation: 1800 s) and publishes the request
+│   │     │     again; only timed-out correlations are cleared
+│   │     │     (`redrive_lbfv_aggregation.rs`); restart recovery keeps clearing
+│   │     │     all in-flight correlations and re-dispatching
 │   │     │   → `dkg_aggregator` uses each selected party ID for N-wide C3 and C2 recipient slots;
 │   │     │     H-wide C4 sender slots use the selected party's fold-row position
 │   │     │   → The circuit requires H distinct, ascending, in-range party IDs

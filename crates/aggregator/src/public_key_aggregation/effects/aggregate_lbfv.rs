@@ -105,6 +105,7 @@ impl PublicKeyAggregator {
                 ComputeRequest::zk(request, correlation, self.e3_id.clone()),
                 ec.clone(),
             )?;
+            self.note_lbfv_aggregation_dispatch(correlation, ec);
         }
         Ok(())
     }
@@ -282,6 +283,7 @@ impl PublicKeyAggregator {
             ),
             ec.clone(),
         )?;
+        self.note_lbfv_aggregation_dispatch(correlation, ec);
         Ok(())
     }
 

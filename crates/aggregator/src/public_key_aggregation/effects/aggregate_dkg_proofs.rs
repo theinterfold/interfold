@@ -234,6 +234,12 @@ impl PublicKeyAggregator {
     }
 
     fn try_dispatch_dkg_aggregation_v2(&mut self, ec: &EventContext<Sequenced>) -> Result<()> {
+        // The final aggregation requires the complete l-BFV row and fold
+        // chain. Re-check that chain on every V2 readiness probe so a request
+        // the chain never published cannot stall publication: the row and fold
+        // dispatchers ignore work that is already dispatched or complete.
+        self.try_dispatch_lbfv_aggregation_rows(ec)?;
+        self.try_dispatch_lbfv_aggregation_fold(ec)?;
         let Some(PublicKeyAggregatorState::GeneratingC5Proof {
             party_nodes,
             dkg_node_proofs,
@@ -315,6 +321,7 @@ impl PublicKeyAggregator {
             ),
             ec.clone(),
         )?;
+        self.note_lbfv_aggregation_dispatch(correlation, ec);
         Ok(())
     }
 

@@ -128,6 +128,9 @@ impl PublicKeyAggregator {
                 nodes_fold_step_correlation: Some(corr),
             })
         })?;
+        if self.is_lbfv() {
+            self.note_lbfv_aggregation_dispatch(corr, ec);
+        }
         Ok(())
     }
 
