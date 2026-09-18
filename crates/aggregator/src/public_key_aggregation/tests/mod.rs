@@ -553,6 +553,11 @@ async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
             committee_size: CiphernodesCommitteeSize::Minimum,
             dkg_fold_attestation_context: None,
             recovery: test_state(PublicKeyAggregatorRecoveryState::default()),
+            lbfv_collection: None,
+            repositories: Repositories::in_mem(),
+            local_party_id: 0,
+            lbfv_aggregation: None,
+            lbfv_publication: None,
             initial_is_aggregator: false,
             effects_enabled: true,
         },
@@ -586,6 +591,7 @@ async fn standby_retains_dkg_fold_for_failover() -> Result<()> {
 
 mod attestations;
 mod failures;
+mod redrive;
 
 #[actix::test]
 async fn secure_16384_never_dispatches_standalone_c1_verification() -> Result<()> {
@@ -812,6 +818,7 @@ async fn restart_validates_documents_durable_lbfv_bundles() -> Result<()> {
         .send(TypedEvent::new(
             AggregatorChanged {
                 e3_id: state.e3_id.clone(),
+                active_party_id: None,
                 is_aggregator: false,
             },
             ec,
@@ -1072,6 +1079,7 @@ async fn lbfv_expulsion_durably_invalidates_an_in_flight_dispatch() -> Result<()
         .send(TypedEvent::new(
             AggregatorChanged {
                 e3_id: collection.e3_id.clone(),
+                active_party_id: None,
                 is_aggregator: false,
             },
             ec,
@@ -1174,6 +1182,7 @@ async fn lbfv_stale_verification_completion_is_ignored() -> Result<()> {
         .send(TypedEvent::new(
             AggregatorChanged {
                 e3_id: collection.e3_id.clone(),
+                active_party_id: Some(0),
                 is_aggregator: true,
             },
             ec,
@@ -1277,6 +1286,7 @@ async fn sealed_sidecar_recovery_applies_the_exact_accepted_set() -> Result<()> 
         .send(TypedEvent::new(
             AggregatorChanged {
                 e3_id: collection.e3_id.clone(),
+                active_party_id: Some(0),
                 is_aggregator: true,
             },
             ec,
@@ -1358,6 +1368,7 @@ async fn concurrent_document_roles_do_not_overwrite_sidecar_updates() -> Result<
         .send(TypedEvent::new(
             AggregatorChanged {
                 e3_id: fixture.state.e3_id.clone(),
+                active_party_id: None,
                 is_aggregator: false,
             },
             ec,
