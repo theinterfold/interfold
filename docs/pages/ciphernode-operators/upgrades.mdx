@@ -70,13 +70,53 @@ cutover, governance must pause requests and drain active work. Operators must th
 
 1. Stop the node and preserve a backup of its data volume.
 2. Back up the node identity, wallet credentials, configuration, and encryption password separately.
-3. Follow the release plan to clear only the incompatible protocol state and perform a controlled
-   resync.
+3. Run `interfold node reset-data --name <node> --yes` to clear the incompatible protocol state and
+   perform a controlled resync.
 4. Run `interfold node validate` with the new binary before starting normal service.
 
 Do not delete identity or signing credentials as part of a state reset. Do not reuse an old state
 volume after the binary reports a schema mismatch unless a later release provides an explicit
 migration.
+
+### Clearing incompatible state
+
+The wallet key and the libp2p keypair are stored inside the same key/value store as the protocol
+state, so deleting the data directory by hand also destroys the operator identity that holds the
+bond. `interfold nodes purge` is worse: it also removes the configuration directory, which holds the
+encryption key file. Neither is the correct procedure.
+
+`interfold node reset-data` clears exactly the incompatible state and keeps the identity:
+
+```bash
+# 1. Stop the node first. The command takes the node's exclusive process fence
+#    and refuses while a node is running.
+pm2 stop <node>            # or: systemctl stop <unit>
+
+# 2. Clear the state. Both the event log and the key/value store are removed.
+interfold node reset-data --name <node> --yes
+
+# 3. Confirm the identity survived. This must print the same operator address
+#    as before the reset.
+interfold wallet get --name <node>
+
+# 4. Validate the fresh state with the new binary, then start the node.
+interfold node validate --name <node>
+```
+
+The command copies the operator key and the libp2p keypair out as ciphertext, writes them to a
+`0600` backup file next to the data directory, removes the state, then restores and reads them back
+to confirm they match. The encryption password is never required, so no key material is decrypted.
+The backup file remains after a successful reset; delete it once the node is running.
+
+The event log and the key/value store must be cleared together, which is why the command removes
+both. The schema marker lives in the key/value store, so clearing only that leaves an unmarked event
+log, and the node halts with `On-disk state has no schema marker` instead of starting.
+
+`--name` is required. Without it the CLI uses the default keyring rather than the node's, and
+`interfold wallet get` reports that no wallet has been set.
+
+Use this command only when a release note instructs you to. It is not a general repair tool: a node
+that is a member of a live committee loses its keyshare and fails that E3.
 
 `interfold node validate` is read-only by default. `interfold node validate --repair` can repair
 only a provably uncommitted event-log tail, such as complete frames whose final index write was
