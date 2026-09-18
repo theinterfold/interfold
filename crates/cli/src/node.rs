@@ -25,6 +25,23 @@ pub enum NodeCommands {
         #[arg(long)]
         repair: bool,
     },
+
+    /// Delete durable protocol state but keep the operator identity.
+    ///
+    /// Use this when a release raises the storage schema and the binary refuses
+    /// to load the existing data directory. The wallet key and libp2p keypair
+    /// live in the same store as that state, so removing the directory by hand
+    /// destroys the identity holding the bond. This command copies both out as
+    /// ciphertext, removes the event log and the key/value store, then writes
+    /// them back and reads them again to confirm.
+    ///
+    /// Takes the node's exclusive process fence, so it refuses while the node
+    /// is running. Stop the node first.
+    ResetData {
+        /// Confirm the deletion.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 pub async fn execute(out: Console, command: NodeCommands, config: &AppConfig) -> Result<()> {
@@ -41,6 +58,44 @@ pub async fn execute(out: Console, command: NodeCommands, config: &AppConfig) ->
                 bail!("node validation failed");
             }
         }
+        NodeCommands::ResetData { yes } => {
+            reset_data(out, config, yes).await?;
+        }
+    }
+    Ok(())
+}
+
+/// Clear durable state for one node, keeping the operator identity.
+async fn reset_data(out: Console, config: &AppConfig, yes: bool) -> Result<()> {
+    if !yes {
+        bail!(
+            "This deletes the durable state for node '{}' at {}. The operator key and libp2p \
+             identity are preserved and an encrypted backup is written first. Stop the node, \
+             then re-run with --yes.",
+            config.name(),
+            config.db_file().display()
+        );
+    }
+
+    // The fence is taken inside the entrypoint, which holds it across the whole
+    // delete-and-restore so a concurrent start cannot interleave.
+    let outcome = e3_entrypoint::nodes::reset_data::execute(config).await?;
+
+    log!(out, "Removed {}", outcome.db_file.display());
+    log!(out, "Removed {}", outcome.log_file.display());
+    log!(out, "Identity backup: {}", outcome.backup_file.display());
+    if outcome.identity_restored {
+        log!(
+            out,
+            "The operator key and libp2p identity were preserved. Verify with: interfold wallet get --name {}",
+            config.name()
+        );
+    } else {
+        log!(
+            out,
+            "No identity was present, so none was restored. Set one with: interfold wallet set --name {}",
+            config.name()
+        );
     }
     Ok(())
 }

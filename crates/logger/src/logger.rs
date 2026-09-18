@@ -91,7 +91,11 @@ fn severity(data: &InterfoldEventData) -> Severity {
         | E::CommitteeMemberExpelled(_)
         | E::AggregatorChanged(_) => Severity::Warn,
 
-        E::EvmLogObserved(event) if !event.known => Severity::Warn,
+        // An unnamed log is an observation, not a fault: the record is kept losslessly and no
+        // operator action follows from it. Routine admin traffic on a watched contract (a proxy
+        // upgrade, a governance call) would otherwise warn on every node, which teaches operators
+        // to ignore the level that is meant to mean "look at this".
+        E::EvmLogObserved(event) if !event.known => Severity::Info,
 
         E::E3Requested(_)
         | E::CommitteeRequested(_)
@@ -330,10 +334,41 @@ mod tests {
     use super::*;
     use alloy::primitives::{Address, Bytes};
     use e3_events::{
-        CircuitName, CommitmentConsistencyViolation, E3Failed, E3id, FailureReason, Proof,
-        ProofPayload, ProofType, ProofVerificationFailed, SignedProofFailed, SignedProofPayload,
+        CircuitName, CommitmentConsistencyViolation, E3Failed, E3id, EvmLogObserved, FailureReason,
+        Proof, ProofPayload, ProofType, ProofVerificationFailed, SignedProofFailed,
+        SignedProofPayload,
     };
     use e3_utils::utility_types::ArcBytes;
+
+    /// An unnamed EVM log is an observation, not a fault. Warning on it makes routine admin
+    /// traffic — a proxy upgrade, a governance call — look like an incident on every node, which
+    /// devalues the level for the events that do need attention.
+    #[test]
+    fn observed_evm_logs_never_warn() {
+        let observed = |known: bool| {
+            InterfoldEventData::EvmLogObserved(EvmLogObserved {
+                contract: "Interfold".to_owned(),
+                chain_id: 1,
+                e3_id: None,
+                event_name: if known { "Upgraded" } else { "UnknownEvmLog" }.to_owned(),
+                signature: known.then(|| "Upgraded(address)".to_owned()),
+                known,
+                topics: vec![
+                    "0xbc7cd75a20ee27fd9adebab32041f755214dbc6bffa90cc0225b39da2e5c2d3b".to_owned(),
+                ],
+                data: ArcBytes::from_bytes(&[]),
+            })
+        };
+
+        assert!(
+            matches!(severity(&observed(false)), Severity::Info),
+            "an unnamed log must not warn"
+        );
+        assert!(
+            matches!(severity(&observed(true)), Severity::Debug),
+            "a named log stays at debug"
+        );
+    }
 
     #[test]
     fn lifecycle_and_failure_stages_are_explicit() {

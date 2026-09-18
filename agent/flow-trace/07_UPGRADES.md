@@ -134,6 +134,42 @@ short migration interval only. Deploy and register the new program, then update 
 application address before requests resume. An old server cannot create valid rounds against the new
 program because it does not schedule the separate voting start required by that program.
 
+## Durable state across an incompatible release
+
+`SCHEMA_VERSION` (`crates/sync/src/sync/schema_version.rs`) is the durable format marker. The
+preflight admits only an exact match and refuses to guess in either direction: older on-disk state
+halts as an upgrade with no migration, newer state halts as a downgrade. A raised schema therefore
+makes every populated data directory unloadable until the operator clears it.
+
+The operator key and the libp2p keypair live in the same key/value store as that state, under
+`//eth_private_key` and `//libp2p/keypair`. Deleting the data directory destroys the identity that
+holds the bond, and `nodes purge` additionally removes the configuration directory holding the
+cipher key file. Neither is a safe reset.
+
+`interfold node reset-data` is the supported path. It takes the same `ProcessFence` as `start`, so
+it refuses while a node runs, copies both secrets out as ciphertext without the password, backs them
+up at mode `0600`, removes the event log and the key/value store, then restores and reads them back
+to confirm.
+
+```text
+raise SCHEMA_VERSION in a release
+  -> populated data directories halt at preflight
+  -> operator stops the node
+  -> node reset-data preserves identity and clears both state stores
+  -> preflight sees an identity-only store, stamps the current schema, and proceeds
+  -> node re-syncs from each contract deploy_block
+```
+
+Both stores must be cleared together. The marker lives in the key/value store, so clearing only that
+leaves an unmarked event log; `has_existing_state` is then true and the preflight halts with
+`no schema marker` instead of starting. `preflight.rs` treats the complete identity pair as the one
+exception that still counts as a fresh store, which is what the reset relies on.
+
+A schema raise is an upgrade-window action. `assertUpgradeWindow` already requires paused requests,
+zero active E3s, and zero unreleased committees, so no in-flight round loses state to this. The
+command is not a general repair tool: a node in a live committee that resets loses its keyshare and
+fails that E3.
+
 ## Failure and rollback
 
 The required counters never decrease. For a bad node-only release, pause, drain, build the previous
