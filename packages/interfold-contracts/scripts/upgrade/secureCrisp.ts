@@ -934,22 +934,40 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
       ),
     );
   }
-  let retiredE3Program: string | undefined;
   const initialE3Program = address(
     deployment.initialE3Program,
     "initial E3 program",
   );
-  if (initialE3Program.toLowerCase() !== crispProgram.toLowerCase()) {
-    if (await interfold.e3Programs(initialE3Program)) {
-      retiredE3Program = initialE3Program;
+  const configuredRetirements = (config.upgrade?.retireE3Programs ?? []).map(
+    (program, index) => address(program, `retired E3 program ${index}`),
+  );
+  const configuredRetirementSet = new Set(
+    configuredRetirements.map((program) => program.toLowerCase()),
+  );
+  if (configuredRetirementSet.has(crispProgram.toLowerCase())) {
+    throw new Error("The upgrade cannot retire the new CRISP program");
+  }
+  const retirementCandidates = new Map<string, string>();
+  for (const program of [initialE3Program, ...configuredRetirements]) {
+    if (program.toLowerCase() === crispProgram.toLowerCase()) {
+      continue;
+    }
+    retirementCandidates.set(program.toLowerCase(), program);
+  }
+  const retiredE3Programs: string[] = [];
+  for (const program of retirementCandidates.values()) {
+    if (await interfold.e3Programs(program)) {
+      retiredE3Programs.push(program);
       txs.push(
         safeTx(
           deployment.interfold,
           interfold.interface.encodeFunctionData("unregisterE3Program", [
-            initialE3Program,
+            program,
           ]),
         ),
       );
+    } else if (configuredRetirementSet.has(program.toLowerCase())) {
+      throw new Error(`Configured E3 program is not registered: ${program}`);
     }
   }
   if (normalizedBoundInterfold === ZERO.toLowerCase()) {
@@ -1028,7 +1046,8 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     randomnessProviderOwnershipAcceptanceRequired:
       randomnessDeployment.randomnessProviderOwnershipAcceptanceRequired,
     registeredOperatorCount: registeredOperatorCount.toString(),
-    activeOperatorCount: activeOperatorCount.toString(),
+    preUpgradeActiveOperatorCount: activeOperatorCount.toString(),
+    nodeReleasePolicyUpdated: updateNodeReleasePolicy,
     registryRoot: registryRoot.toString(),
     nodeReleaseRegistry: deployment.nodeReleaseRegistry,
     nodeRelease,
@@ -1038,7 +1057,7 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     decryptionVerifier: verifierDeployment.decryptionVerifier,
     ciphertextVerifier,
     crispProgram,
-    retiredE3Program,
+    retiredE3Programs,
     dataAvailabilityVerifier,
     inputAvailabilitySigner,
     availBridge: avail.bridge,
@@ -1069,11 +1088,13 @@ Secure CRISP activation prepared
   Slashing manager:         ${plan.slashingManager}
   VRF provider:             ${plan.randomnessProvider}
   VRF subscription:         ${plan.randomness.subscriptionId} (reused)
-  operator snapshot:        ${plan.activeOperatorCount}/${plan.registeredOperatorCount}, root ${plan.registryRoot}
+  pre-upgrade active nodes: ${plan.preUpgradeActiveOperatorCount}/${plan.registeredOperatorCount}
+  release acknowledgement: ${plan.nodeReleasePolicyUpdated ? "required after activation" : "not required"}
+  registry root:            ${plan.registryRoot}
   PK verifier router:        ${plan.pkVerifier}
   decryption router:         ${plan.decryptionVerifier}
   CRISP program:             ${plan.crispProgram}
-  retired initial program:   ${plan.retiredE3Program ?? "none"}
+  retired E3 programs:       ${plan.retiredE3Programs.join(", ") || "none"}
   DA verifier:               ${plan.dataAvailabilityVerifier}
   input availability signer: ${plan.inputAvailabilitySigner}
   required node release:     ${plan.nodeRelease.version} (protocol ${plan.nodeRelease.protocolVersion}, generation ${plan.nodeRelease.nodeGeneration})

@@ -65,8 +65,12 @@ async function requireAnvilMainnetFork(ethers: any): Promise<void> {
 }
 
 export async function simulateServiceMigration(): Promise<void> {
-  const { ethers } = await connect();
+  const connection = await connect();
+  const { ethers } = connection;
   await requireAnvilMainnetFork(ethers);
+  if (connection.networkConfig.type !== "http") {
+    throw new Error("This simulation requires an HTTP network");
+  }
   const config = loadConfig();
   if (!config.governance) {
     throw new Error("Aragon governance is required for this simulation");
@@ -197,19 +201,30 @@ export async function simulateServiceMigration(): Promise<void> {
   ];
   const [governanceCall] = aragonAdminSafeTransactions(config, actions);
   const proposer = config.governance.proposerSafe;
-  await ethers.provider.send("anvil_impersonateAccount", [proposer]);
-  await ethers.provider.send("anvil_setBalance", [
-    proposer,
-    ethersLib.toBeHex(ethersLib.parseEther("100")),
-  ]);
-  const proposerSigner = await ethers.getSigner(proposer);
-  await (
-    await proposerSigner.sendTransaction({
-      to: governanceCall.to,
-      data: governanceCall.data,
-      value: governanceCall.value,
-    })
-  ).wait();
+  const forkProvider = new ethersLib.JsonRpcProvider(
+    await connection.networkConfig.url.get(),
+  );
+  try {
+    await forkProvider.send("anvil_impersonateAccount", [proposer]);
+    await forkProvider.send("anvil_setBalance", [
+      proposer,
+      ethersLib.toBeHex(ethersLib.parseEther("100")),
+    ]);
+    const proposerSigner = await forkProvider.getSigner(proposer);
+    const receipt = await (
+      await proposerSigner.sendTransaction({
+        from: proposer,
+        to: governanceCall.to,
+        data: governanceCall.data,
+        value: governanceCall.value,
+      })
+    ).wait();
+    if (receipt?.status !== 1) {
+      throw new Error("The simulated governance transaction failed");
+    }
+  } finally {
+    forkProvider.destroy();
+  }
 
   equal(
     await proxyImplementation(ethers, deployment.ciphernodeRegistry),
