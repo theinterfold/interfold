@@ -60,7 +60,7 @@ mod tests {
     #[test]
     fn compares_each_generation_row_to_the_c1_secret_key_output() {
         let link = C1ToLbfvPkGenerationSkCommitmentLink;
-        let mut lbfv_rows = vec![vec![0u8; 6 * FIELD_BYTE_LEN]; 5];
+        let mut lbfv_rows = vec![vec![0u8; 7 * FIELD_BYTE_LEN]; 5];
         let mut c1 = vec![0u8; 3 * FIELD_BYTE_LEN];
         c1[31] = 7;
 

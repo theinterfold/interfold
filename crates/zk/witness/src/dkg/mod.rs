@@ -6,7 +6,7 @@
 
 mod decrypted_shares_aggregation;
 mod lbfv_pk_aggregation;
-mod lbfv_pk_generation;
+pub mod lbfv_pk_generation;
 mod pk_aggregation;
 mod pk_generation;
 mod rlk_aggregation;

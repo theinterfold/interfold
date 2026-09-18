@@ -10,7 +10,7 @@
     "threshold/user_data_encryption_ct1",
     "threshold/pk_generation",
     "threshold/pk_aggregation",
-    { "name": "threshold/lbfv_pk_generation", "presets": ["secure-16384"] },
+    { "name": "threshold/lbfv_pk_generation_limb", "presets": ["secure-16384"] },
     { "name": "threshold/lbfv_pk_aggregation", "presets": ["secure-16384"] },
     { "name": "threshold/rlk_generation_limb", "presets": ["secure-16384"] },
     { "name": "threshold/rlk_aggregation", "presets": ["secure-16384"] },

@@ -32,17 +32,16 @@ use e3_zk_helpers::threshold::lbfv_pk_aggregation::{
 };
 use e3_zk_helpers::threshold::lbfv_proof_domain::sample_lbfv_proof_domain;
 use e3_zk_helpers::threshold::pk_aggregation::{PkAggregationCircuit, PkAggregationCircuitData};
-use e3_zk_helpers::threshold::pk_generation::{
-    LbfvPkGenerationAdapter, LbfvPkGenerationCircuit, PkGenerationCircuit,
-};
+use e3_zk_helpers::threshold::pk_generation::{LbfvPkGenerationAdapter, PkGenerationCircuit};
 use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
 use e3_zk_helpers::threshold::rlk_generation::RlkGenerationAdapter;
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use e3_zk_prover::{
-    load_staged_rlk_generation_limb_vk_hash, prove_chunked_share_computation,
-    prove_dkg_aggregation_v2, prove_lbfv_aggregation_fold_step, prove_lbfv_generation_fold_step,
-    prove_node_dkg_fold, prove_node_dkg_fold_v2, prove_nodes_fold_v2_step,
-    prove_rlk_generation_row, NodeDkgFoldInput, Provable, ZkBackend, ZkProver,
+    load_staged_lbfv_pk_generation_limb_vk_hash, load_staged_rlk_generation_limb_vk_hash,
+    prove_chunked_share_computation, prove_dkg_aggregation_v2, prove_lbfv_aggregation_fold_step,
+    prove_lbfv_generation_fold_step, prove_lbfv_pk_generation_row, prove_node_dkg_fold,
+    prove_node_dkg_fold_v2, prove_nodes_fold_v2_step, prove_rlk_generation_row, NodeDkgFoldInput,
+    Provable, ZkBackend, ZkProver,
 };
 use fhe::bfv::{Ciphertext, CommonRandomPolyVec, PublicKey, SecretKey};
 use fhe::mbfv::{AggregateIter, PublicKeyShare as MbfvPublicKeyShare};
@@ -253,7 +252,9 @@ fn prove_generation_fold(
 ) -> Proof {
     let generation_adapter = LbfvPkGenerationAdapter::new(preset).expect("l-BFV PK adapter");
     let rlk_adapter = RlkGenerationAdapter::new(preset).expect("RLK adapter");
-    let limb_vk_hash = load_staged_rlk_generation_limb_vk_hash(prover, artifacts_dir)
+    let pk_limb_vk_hash = load_staged_lbfv_pk_generation_limb_vk_hash(prover, artifacts_dir)
+        .expect("staged public-key limb VK hash");
+    let rlk_limb_vk_hash = load_staged_rlk_generation_limb_vk_hash(prover, artifacts_dir)
         .expect("staged RLK limb VK hash");
 
     let mut accumulator = None;
@@ -269,16 +270,16 @@ fn prove_generation_fold(
                 lbfv_pk_share,
             )
             .expect("l-BFV PK row data");
-        let pk_proof = LbfvPkGenerationCircuit
-            .prove_with_variant(
-                prover,
-                &preset,
-                &pk_data,
-                &format!("{label}-pk-{row}"),
-                CircuitVariant::Recursive,
-                artifacts_dir,
-            )
-            .expect("l-BFV PK row proof");
+        let pk_proof = prove_lbfv_pk_generation_row(
+            prover,
+            preset,
+            &pk_data,
+            &pk_limb_vk_hash,
+            &format!("{label}-pk-{row}"),
+            artifacts_dir,
+        )
+        .expect("l-BFV PK row proof")
+        .terminal_proof;
 
         let rlk_data = rlk_adapter
             .row_data(
@@ -295,7 +296,7 @@ fn prove_generation_fold(
             prover,
             preset,
             &rlk_data,
-            &limb_vk_hash,
+            &rlk_limb_vk_hash,
             &format!("{label}-rlk-{row}"),
             artifacts_dir,
         )
@@ -307,7 +308,8 @@ fn prove_generation_fold(
             &rlk_proofs.terminal_proof,
             accumulator.as_ref(),
             row,
-            &ArcBytes::from_bytes(&limb_vk_hash),
+            &ArcBytes::from_bytes(&pk_limb_vk_hash),
+            &ArcBytes::from_bytes(&rlk_limb_vk_hash),
             &format!("{label}-fold-{row}"),
             artifacts_dir,
         )

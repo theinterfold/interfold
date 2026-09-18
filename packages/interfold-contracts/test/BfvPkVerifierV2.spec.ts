@@ -17,7 +17,7 @@ const ESM_C2_CHUNK_KEY_HASH = ethers.id("v2-esm-c2-chunk");
 const LEGACY_VK_BINDING = Array.from({ length: 16 }, (_, index) =>
   ethers.id(`v2-legacy-vk-${index}`),
 );
-const V2_VK_BINDING = Array.from({ length: 12 }, (_, index) =>
+const V2_VK_BINDING = Array.from({ length: 13 }, (_, index) =>
   ethers.id(`v2-vk-${index}`),
 );
 const SECURE_16384_CONFIG_ID =
@@ -93,7 +93,7 @@ function publicInputs(
   pkCommitment: string,
   protocolVersion = LBFV_PROTOCOL_VERSION,
 ): string[] {
-  const inputs = Array.from({ length: 63 }, () => ethers.ZeroHash);
+  const inputs = Array.from({ length: 64 }, () => ethers.ZeroHash);
   const hash = committeeHash(nodes);
   const [committeeHi, committeeLo] = limbs(hash);
   const [acceptedHi, acceptedLo] = limbs(acceptedSetHash(0, 2));

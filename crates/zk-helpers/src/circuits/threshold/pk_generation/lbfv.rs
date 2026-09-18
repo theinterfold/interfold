@@ -13,7 +13,7 @@ use crate::math::{
 use crate::threshold::lbfv_proof_domain::{
     lbfv_proof_session, sample_lbfv_proof_domain, validate_lbfv_generation_party_id,
 };
-use crate::utils::verify_crt_shapes;
+use crate::utils::{validate_crt_shape, verify_crt_shapes};
 use crate::{
     crt_polynomial_to_toml_json, polynomial_to_toml_json, Artifacts, CiphernodesCommittee, Circuit,
     CircuitCodegen, CircuitComputation, CircuitsErrors, CodegenToml, Computation,
@@ -27,12 +27,24 @@ use fhe_math::rq::Context;
 use num_bigint::BigInt;
 use std::sync::Arc;
 
-/// Row-level l-BFV public-key generation circuit.
+/// Recursive finalizer for one l-BFV public-key row.
 #[derive(Debug)]
 pub struct LbfvPkGenerationCircuit;
 
 impl Circuit for LbfvPkGenerationCircuit {
     const NAME: &'static str = "lbfv-pk-generation";
+    const PREFIX: &'static str = "LBFV_PK_GENERATION";
+    const SUPPORTED_PARAMETER: e3_fhe_params::ParameterType =
+        e3_fhe_params::ParameterType::THRESHOLD;
+    const DKG_INPUT_TYPE: Option<crate::computation::DkgInputType> = None;
+}
+
+/// CRT-limb l-BFV public-key generation circuit.
+#[derive(Debug)]
+pub struct LbfvPkGenerationLimbCircuit;
+
+impl Circuit for LbfvPkGenerationLimbCircuit {
+    const NAME: &'static str = "lbfv-pk-generation-limb";
     const PREFIX: &'static str = "LBFV_PK_GENERATION";
     const SUPPORTED_PARAMETER: e3_fhe_params::ParameterType =
         e3_fhe_params::ParameterType::THRESHOLD;
@@ -60,11 +72,17 @@ pub struct LbfvPkGenerationCircuitData {
     pub sk: Polynomial,
 }
 
-/// Computed values for one l-BFV public-key row proof.
-pub struct LbfvPkGenerationComputationOutput {
+/// Inputs for one CRT limb of one validated public-key row.
+pub struct LbfvPkGenerationLimbCircuitData {
+    pub row: LbfvPkGenerationCircuitData,
+    pub limb_index: u32,
+}
+
+/// Computed values for one l-BFV public-key limb proof.
+pub struct LbfvPkGenerationLimbComputationOutput {
     pub bounds: super::Bounds,
     pub bits: super::Bits,
-    pub inputs: LbfvPkGenerationInputs,
+    pub inputs: LbfvPkGenerationLimbInputs,
 }
 
 /// Prover inputs for one l-BFV public-key row.
@@ -81,21 +99,70 @@ pub struct LbfvPkGenerationInputs {
     pub pk0is: CrtPolynomial,
 }
 
-impl CircuitComputation for LbfvPkGenerationCircuit {
+/// Prover inputs for one CRT limb of one l-BFV public-key row.
+#[derive(serde::Serialize, serde::Deserialize)]
+pub struct LbfvPkGenerationLimbInputs {
+    pub session_id_hi: u128,
+    pub session_id_lo: u128,
+    pub party_id: u32,
+    pub row_index: u32,
+    pub limb_index: u32,
+    pub eek: Polynomial,
+    pub sk: Polynomial,
+    pub r1: Polynomial,
+    pub r2: Polynomial,
+    pub pk0: Polynomial,
+}
+
+impl CircuitComputation for LbfvPkGenerationLimbCircuit {
     type Preset = BfvPreset;
-    type Data = LbfvPkGenerationCircuitData;
-    type Output = LbfvPkGenerationComputationOutput;
+    type Data = LbfvPkGenerationLimbCircuitData;
+    type Output = LbfvPkGenerationLimbComputationOutput;
     type Error = CircuitsErrors;
 
     fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self::Output, Self::Error> {
-        let bounds = super::Bounds::compute(preset, &data.committee)?;
+        let bounds = super::Bounds::compute(preset, &data.row.committee)?;
         let bits = super::Bits::compute(preset, &bounds)?;
-        let inputs = LbfvPkGenerationInputs::compute(preset, data)?;
-        Ok(LbfvPkGenerationComputationOutput {
+        let inputs = LbfvPkGenerationLimbInputs::compute(preset, data)?;
+        Ok(LbfvPkGenerationLimbComputationOutput {
             bounds,
             bits,
             inputs,
         })
+    }
+}
+
+impl Computation for LbfvPkGenerationLimbInputs {
+    type Preset = BfvPreset;
+    type Data = LbfvPkGenerationLimbCircuitData;
+    type Error = CircuitsErrors;
+
+    fn compute(preset: Self::Preset, data: &Self::Data) -> Result<Self, Self::Error> {
+        let limbs = derive_lbfv_pk_generation_limb_inputs(preset, &data.row)?;
+        let limb_index = usize::try_from(data.limb_index).map_err(|_| {
+            CircuitsErrors::Other("l-BFV public-key limb index does not fit usize".to_string())
+        })?;
+        limbs.into_iter().nth(limb_index).ok_or_else(|| {
+            CircuitsErrors::Other(format!(
+                "l-BFV public-key limb index {} is out of range",
+                data.limb_index
+            ))
+        })
+    }
+
+    fn to_json(&self) -> serde_json::Result<serde_json::Value> {
+        Ok(serde_json::json!({
+            "session_id_hi": self.session_id_hi.to_string(),
+            "session_id_lo": self.session_id_lo.to_string(),
+            "party_id": self.party_id,
+            "row_index": self.row_index,
+            "limb_index": self.limb_index,
+            "eek": polynomial_to_toml_json(&self.eek),
+            "sk": polynomial_to_toml_json(&self.sk),
+            "r1": polynomial_to_toml_json(&self.r1),
+            "r2": polynomial_to_toml_json(&self.r2),
+            "pk0": polynomial_to_toml_json(&self.pk0),
+        }))
     }
 }
 
@@ -193,14 +260,47 @@ fn compute_inputs(
     })
 }
 
-impl CircuitCodegen for LbfvPkGenerationCircuit {
+/// Derive all CRT-limb inputs from one row in canonical limb order.
+pub fn derive_lbfv_pk_generation_limb_inputs(
+    preset: BfvPreset,
+    row: &LbfvPkGenerationCircuitData,
+) -> Result<Vec<LbfvPkGenerationLimbInputs>, CircuitsErrors> {
+    let (params, _) =
+        build_pair_for_preset(preset).map_err(|error| CircuitsErrors::Other(error.to_string()))?;
+    let adapter = LbfvPkGenerationAdapter::new(preset)?;
+    let inputs = compute_inputs(&params, &adapter, row)?;
+    let limb_count = params.moduli().len();
+    validate_crt_shape(&inputs.r1is, limb_count, 2 * params.degree() - 1).map_err(|error| {
+        CircuitsErrors::Other(format!("invalid l-BFV public-key r1 shape: {error}"))
+    })?;
+    validate_crt_shape(&inputs.r2is, limb_count, params.degree() - 1).map_err(|error| {
+        CircuitsErrors::Other(format!("invalid l-BFV public-key r2 shape: {error}"))
+    })?;
+
+    Ok((0..limb_count)
+        .map(|limb_index| LbfvPkGenerationLimbInputs {
+            session_id_hi: inputs.session_id_hi,
+            session_id_lo: inputs.session_id_lo,
+            party_id: inputs.party_id,
+            row_index: inputs.row_index,
+            limb_index: limb_index as u32,
+            eek: inputs.eek.clone(),
+            sk: inputs.sk.clone(),
+            r1: inputs.r1is.limb(limb_index).clone(),
+            r2: inputs.r2is.limb(limb_index).clone(),
+            pk0: inputs.pk0is.limb(limb_index).clone(),
+        })
+        .collect())
+}
+
+impl CircuitCodegen for LbfvPkGenerationLimbCircuit {
     type Preset = BfvPreset;
-    type Data = LbfvPkGenerationCircuitData;
+    type Data = LbfvPkGenerationLimbCircuitData;
     type Error = CircuitsErrors;
 
     fn codegen(&self, preset: Self::Preset, data: &Self::Data) -> Result<Artifacts, Self::Error> {
-        let inputs = LbfvPkGenerationInputs::compute(preset, data)?;
-        let configs = super::Configs::compute(preset, &data.committee)?;
+        let inputs = LbfvPkGenerationLimbInputs::compute(preset, data)?;
+        let configs = super::Configs::compute(preset, &data.row.committee)?;
         Ok(Artifacts {
             toml: generate_lbfv_pk_toml(inputs)?,
             configs: super::codegen::generate_configs(preset, &configs)?,
@@ -210,7 +310,7 @@ impl CircuitCodegen for LbfvPkGenerationCircuit {
 
 /// Serialize one l-BFV public-key row as `Prover.toml`.
 pub fn generate_lbfv_pk_toml(
-    inputs: LbfvPkGenerationInputs,
+    inputs: LbfvPkGenerationLimbInputs,
 ) -> Result<CodegenToml, CircuitsErrors> {
     Ok(toml::to_string(&inputs.to_json()?)?)
 }
@@ -429,6 +529,31 @@ impl LbfvPkGenerationCircuitData {
             &secret_key,
             &public_key,
         )
+    }
+}
+
+impl LbfvPkGenerationLimbCircuitData {
+    /// Generate row zero and limb zero for code generation and prover tests.
+    pub fn generate_sample(
+        preset: BfvPreset,
+        committee: CiphernodesCommittee,
+    ) -> Result<Self, CircuitsErrors> {
+        Self::generate_sample_for_row_and_limb(preset, committee, 0, 0)
+    }
+
+    /// Generate one valid public-key row limb for code generation and prover tests.
+    pub fn generate_sample_for_row_and_limb(
+        preset: BfvPreset,
+        committee: CiphernodesCommittee,
+        row_index: u32,
+        limb_index: u32,
+    ) -> Result<Self, CircuitsErrors> {
+        Ok(Self {
+            row: LbfvPkGenerationCircuitData::generate_sample_for_row(
+                preset, committee, row_index,
+            )?,
+            limb_index,
+        })
     }
 }
 

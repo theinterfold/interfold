@@ -84,6 +84,7 @@ fn lbfv_generation_bundle(
                 field(row),
                 field(21),
                 field(30 + row),
+                field(70),
             ],
         ));
     }

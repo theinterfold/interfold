@@ -19,13 +19,13 @@ contract BfvPkVerifierV2 is IPkVerifier {
     error InvalidRegistry(address registry);
     error InvalidVerificationKeyHash();
 
-    uint256 public constant V2_PUBLIC_INPUTS_LEN = 63;
+    uint256 public constant V2_PUBLIC_INPUTS_LEN = 64;
     uint256 public constant V2_H = 2;
     uint256 public constant V2_N = 3;
     uint256 public constant V2_PK_COMMITMENT_IDX = 29;
 
     uint256 private constant LEGACY_VK_BINDING_LEN = 16;
-    uint256 private constant V2_VK_BINDING_LEN = 12;
+    uint256 private constant V2_VK_BINDING_LEN = 13;
     uint256 private constant V2_SESSION_HI_IDX = 31;
     uint256 private constant V2_SESSION_LO_IDX = 32;
     uint256 private constant V2_AGGREGATOR_ID_IDX = 33;
@@ -64,7 +64,7 @@ contract BfvPkVerifierV2 is IPkVerifier {
     bytes32 public immutable expectedSkC2ChunkKeyHash;
     bytes32 public immutable expectedESmC2ChunkKeyHash;
     bytes32[16] public expectedLegacyVkBinding;
-    bytes32[12] public expectedV2VkBinding;
+    bytes32[13] public expectedV2VkBinding;
 
     constructor(
         address _circuitVerifier,
@@ -74,7 +74,7 @@ contract BfvPkVerifierV2 is IPkVerifier {
         bytes32 _expectedSkC2ChunkKeyHash,
         bytes32 _expectedESmC2ChunkKeyHash,
         bytes32[16] memory _expectedLegacyVkBinding,
-        bytes32[12] memory _expectedV2VkBinding
+        bytes32[13] memory _expectedV2VkBinding
     ) {
         if (_circuitVerifier.code.length == 0) {
             revert InvalidCircuitVerifier(_circuitVerifier);

@@ -81,6 +81,7 @@ const REQUIRED_VARIANT_CIRCUITS = [
 
 const REQUIRED_LBFV_VARIANT_CIRCUITS = [
   'lbfv_pk_generation',
+  'lbfv_pk_generation_limb',
   'lbfv_pk_aggregation',
   'rlk_generation',
   'rlk_generation_limb',

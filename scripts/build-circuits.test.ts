@@ -93,8 +93,8 @@ test('synchronizes and verifies nested l-BFV config modules', () => {
 
 test('requires complete l-BFV row artifacts only for secure-16384', () => {
   const root = '/artifacts'
-  assert.equal(requiredLbfvDistMarkers(root, CIRCUIT_PRESETS.SECURE_16384).length, 72)
-  assert.equal(requiredLbfvBinMarkers(root, CIRCUIT_PRESETS.SECURE_16384).length, 61)
+  assert.equal(requiredLbfvDistMarkers(root, CIRCUIT_PRESETS.SECURE_16384).length, 81)
+  assert.equal(requiredLbfvBinMarkers(root, CIRCUIT_PRESETS.SECURE_16384).length, 68)
   assert.deepEqual(requiredLbfvDistMarkers(root, CIRCUIT_PRESETS.SECURE_8192), [])
   assert.deepEqual(requiredLbfvBinMarkers(root, CIRCUIT_PRESETS.INSECURE_512), [])
 })
@@ -216,10 +216,14 @@ function hydrationFixture(): {
   const pairDir = join(outputDir, CIRCUIT_PRESETS.SECURE_16384, 'minimum')
 
   const secureCircuits = [
-    ...['lbfv_pk_generation', 'lbfv_pk_aggregation', 'rlk_generation', 'rlk_generation_limb', 'rlk_aggregation'].map((circuit) => [
-      CIRCUIT_GROUPS.THRESHOLD,
-      circuit,
-    ]),
+    ...[
+      'lbfv_pk_generation',
+      'lbfv_pk_generation_limb',
+      'lbfv_pk_aggregation',
+      'rlk_generation',
+      'rlk_generation_limb',
+      'rlk_aggregation',
+    ].map((circuit) => [CIRCUIT_GROUPS.THRESHOLD, circuit]),
     ...[
       'lbfv_generation_fold',
       'lbfv_generation_fold_kernel',
@@ -239,6 +243,16 @@ function hydrationFixture(): {
     mkdirSync(targetDir, { recursive: true })
     writeFileSync(join(targetDir, `${circuit}.obsolete`), 'stale')
   }
+  const thresholdMembers = [
+    'pk_aggregation',
+    ...secureCircuits.filter(([group]) => group === CIRCUIT_GROUPS.THRESHOLD).map(([, circuit]) => circuit),
+  ]
+  mkdirSync(join(bin, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation'), { recursive: true })
+  writeFileSync(join(bin, CIRCUIT_GROUPS.THRESHOLD, 'pk_aggregation', 'Nargo.toml'), '[package]\nname = "pk_aggregation"\ntype = "bin"\n')
+  writeFileSync(
+    join(bin, CIRCUIT_GROUPS.THRESHOLD, 'Nargo.toml'),
+    `[workspace]\nmembers = [${thresholdMembers.map((member) => `"${member}"`).join(', ')}]\n`,
+  )
 
   writeFiles([
     join(pairDir, 'default', CIRCUIT_GROUPS.DKG, 'pk', 'pk.json'),

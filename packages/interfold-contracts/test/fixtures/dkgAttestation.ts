@@ -59,7 +59,7 @@ export function encodeMockDkgV2ProofForAttestation(
     throw new Error("V2 attestation fixtures require two honest parties");
   }
   const publicInputs: string[] = Array.from(
-    { length: 63 },
+    { length: 64 },
     () => ethers.ZeroHash,
   );
   const toLimbs = (hash: string): [string, string] => {

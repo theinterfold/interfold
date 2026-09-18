@@ -54,8 +54,8 @@ get_zk_args() {
             echo "pk-generation"
             return
             ;;
-        threshold/lbfv_pk_generation)
-            echo "lbfv-pk-generation"
+        threshold/lbfv_pk_generation_limb)
+            echo "lbfv-pk-generation-limb"
             return
             ;;
         threshold/lbfv_pk_aggregation)

@@ -18,7 +18,7 @@ import { CommitteeHashLib } from "../lib/CommitteeHashLib.sol";
  * @notice Stateless verifier for DKG fold attestations at committee publication.
  */
 contract DkgFoldAttestationVerifier is IDkgFoldAttestationVerifier {
-    uint256 private constant V2_PUBLIC_INPUTS_LEN = 63;
+    uint256 private constant V2_PUBLIC_INPUTS_LEN = 64;
     uint256 private constant V2_H = 2;
     uint256 private constant V2_N = 3;
     uint256 private constant V2_PARTY_ID_START = 2;
