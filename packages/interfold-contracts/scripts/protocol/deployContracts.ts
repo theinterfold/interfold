@@ -131,8 +131,9 @@ export async function deployProtocolContracts(
   const refundClaimFactory = await ethers.getContractFactory("RefundClaimLib");
   const refundClaimLib = await refundClaimFactory.deploy();
   await refundClaimLib.waitForDeployment();
+  const refundClaimLibAddress = await deployedAddress(refundClaimLib);
   const refundFactory = await ethers.getContractFactory("E3RefundManager", {
-    libraries: { RefundClaimLib: await deployedAddress(refundClaimLib) },
+    libraries: { RefundClaimLib: refundClaimLibAddress },
   });
   const refundImpl = await refundFactory.deploy();
   await refundImpl.waitForDeployment();
@@ -256,6 +257,7 @@ export async function deployProtocolContracts(
       e3RefundManager: refundProxy.proxy,
       e3RefundManagerImplementation,
       e3RefundManagerProxyAdmin: refundProxy.proxyAdmin,
+      refundClaimLib: refundClaimLibAddress,
       bondingAssetLib,
       bondingEligibilityLib,
       bondingRegistryImplementation: await deployedAddress(bondingImpl),

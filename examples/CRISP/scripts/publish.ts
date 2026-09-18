@@ -54,6 +54,7 @@ type Channel = keyof typeof CHANNELS
 interface PublishOptions {
   skipGit?: boolean
   dryRun?: boolean
+  resume?: boolean
   tag?: string // npm dist-tag override; defaults to the channel's tag
   noVerify?: boolean
   channel?: Channel
@@ -348,6 +349,17 @@ class CRISPPublisher {
       try {
         const pkgPath = join(this.crispDir, pkg.path)
 
+        if (this.packageVersionExists(pkg.name)) {
+          if (!this.options.resume) {
+            throw new Error(
+              `${pkg.name}@${this.newVersion} is already published. Re-run with --resume only if this is the same release attempt.`,
+            )
+          }
+
+          console.log(`   ↷ ${pkg.name}@${this.newVersion} is already published; skipping`)
+          continue
+        }
+
         console.log(`   Publishing ${pkg.name}...`)
 
         execSync(`pnpm publish --access public --tag ${tag} --no-git-checks`, {
@@ -360,10 +372,21 @@ class CRISPPublisher {
         })
 
         console.log(`   ✓ ${pkg.name}@${this.newVersion} published successfully`)
+        await this.waitForRegistry(pkg.name)
       } catch (error) {
         console.error(`   ❌ Failed to publish ${pkg.name}`)
         throw error
       }
+    }
+  }
+
+  /** Whether npm already serves this exact package version. */
+  private packageVersionExists(packageName: string): boolean {
+    try {
+      execSync(`npm view ${packageName}@${this.newVersion} version`, { stdio: 'pipe' })
+      return true
+    } catch {
+      return false
     }
   }
 
@@ -521,19 +544,26 @@ class CRISPPublisher {
   /**
    * Wait for a freshly published version to be visible on the npm registry.
    */
-  private async waitForRegistry(packageName: string, attempts = 10): Promise<void> {
-    for (let attempt = 1; attempt <= attempts; attempt++) {
+  private async waitForRegistry(packageName: string, timeoutMs = 10 * 60 * 1000, pollIntervalMs = 5000): Promise<void> {
+    const startedAt = Date.now()
+    let attempt = 0
+
+    while (Date.now() - startedAt < timeoutMs) {
+      attempt += 1
+
       try {
         execSync(`npm view ${packageName}@${this.newVersion} version`, { stdio: 'pipe' })
         return
       } catch {
-        if (attempt === attempts) {
-          throw new Error(`${packageName}@${this.newVersion} is not available on the registry after ${attempts} attempts`)
+        const elapsedSeconds = Math.floor((Date.now() - startedAt) / 1000)
+        if (attempt === 1 || attempt % 6 === 0) {
+          console.log(`   … waiting for ${packageName}@${this.newVersion} on the registry (${elapsedSeconds}s elapsed)`)
         }
-        console.log(`   … waiting for ${packageName}@${this.newVersion} on the registry (${attempt}/${attempts})`)
-        await new Promise((resolve) => setTimeout(resolve, 3000))
+        await new Promise((resolve) => setTimeout(resolve, pollIntervalMs))
       }
     }
+
+    throw new Error(`${packageName}@${this.newVersion} is not available on the registry after ${Math.floor(timeoutMs / 1000)} seconds`)
   }
 
   /**
@@ -652,6 +682,8 @@ async function main() {
       options.skipGit = true
     } else if (arg === '--dry-run') {
       options.dryRun = true
+    } else if (arg === '--resume') {
+      options.resume = true
     } else if (arg === '--tag') {
       options.tag = args[++i]
     } else if (arg === '--channel') {
@@ -701,6 +733,7 @@ Options:
   --tag <name>        npm dist-tag override (default: the channel's tag)
   --skip-git          Skip all git operations (no commit)
   --dry-run           Show what would be done without making changes
+  --resume            Resume the same release attempt and skip versions already on npm
   --help, -h          Show this help message
 
 Channels:

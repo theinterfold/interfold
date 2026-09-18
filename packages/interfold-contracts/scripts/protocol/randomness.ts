@@ -24,6 +24,72 @@ export const vrfCoordinatorInterface = new ethersLib.Interface([
 export const vrfProviderInterface = new ethersLib.Interface([
   "function acceptOwnership()",
 ]);
+const pendingRequestInterface = new ethersLib.Interface([
+  "function pendingRequestCount() view returns (uint256)",
+]);
+
+async function readPendingRequestCount(
+  provider: ethersLib.Provider,
+  target: string,
+): Promise<bigint | undefined> {
+  const result = await provider.call({
+    to: target,
+    data: pendingRequestInterface.encodeFunctionData("pendingRequestCount"),
+  });
+  if (result === "0x") return undefined;
+  return pendingRequestInterface.decodeFunctionResult(
+    "pendingRequestCount",
+    result,
+  )[0] as bigint;
+}
+
+function isUnavailablePendingRequestCount(error: unknown): boolean {
+  if (typeof error !== "object" || error === null) return false;
+  const rpcError = error as {
+    code?: string | number;
+    data?: unknown;
+    value?: unknown;
+  };
+  if (
+    rpcError.code === 3 &&
+    (rpcError.data === undefined || rpcError.data === "0x")
+  ) {
+    return true;
+  }
+  return (
+    (rpcError.data === "0x" &&
+      (rpcError.code === undefined ||
+        rpcError.code === "CALL_EXCEPTION" ||
+        rpcError.code === 3)) ||
+    (rpcError.code === "BAD_DATA" && rpcError.value === "0x")
+  );
+}
+
+/** Read the reservation count when the deployed provider exposes it. */
+export async function readOptionalPendingRequestCount(
+  provider: ethersLib.Provider,
+  target: string,
+): Promise<bigint | undefined> {
+  try {
+    const pending = await readPendingRequestCount(provider, target);
+    if (pending !== undefined) return pending;
+  } catch (readError) {
+    const code = await provider.getCode(target);
+    if (code === "0x") throw readError;
+    try {
+      return await readPendingRequestCount(provider, target);
+    } catch (retryError) {
+      if (isUnavailablePendingRequestCount(retryError)) return undefined;
+      throw retryError;
+    }
+  }
+
+  const code = await provider.getCode(target);
+  if (code === "0x") {
+    throw new Error(`randomness provider ${target} has no deployed code`);
+  }
+  return readPendingRequestCount(provider, target);
+}
 
 export function requireCiphernodeRestartAcknowledgement(
   acknowledged: boolean,
@@ -121,6 +187,38 @@ export function requirePlannedRandomnessConfig(
     BigInt(plan.randomness.requestTimeout),
   );
   return plan.randomness;
+}
+
+/**
+ * Resolve the funded subscription for a replacement provider.
+ *
+ * A committed production config can keep subscription ID `0` as a deployment
+ * placeholder. In that case, use the validated subscription recorded by the
+ * existing deployment. All other settings must remain equal.
+ */
+export function requireExistingRandomnessConfig(
+  config: ProtocolConfigFile,
+  deployment: ProtocolDeployment,
+): RandomnessConfig {
+  if (!config.randomness) {
+    throw new Error("randomness configuration is required");
+  }
+  if (!deployment.randomness) {
+    throw new Error("deployment randomness configuration is required");
+  }
+  assertRandomnessConfigMatches(
+    "config.randomness",
+    config.randomness,
+    deployment.randomness,
+    true,
+  );
+  const configuredSubscription = BigInt(config.randomness.subscriptionId);
+  const resolved =
+    configuredSubscription === 0n ? deployment.randomness : config.randomness;
+  if (BigInt(resolved.subscriptionId) === 0n) {
+    throw new Error("funded randomness subscription ID is required");
+  }
+  return { ...resolved };
 }
 
 export function assertValidatedVrfDeploymentMatchesPlan(

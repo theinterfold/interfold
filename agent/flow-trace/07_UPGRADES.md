@@ -86,22 +86,39 @@ requests paused and all E3s and committees drained, `upgrade:secure-crisp` prepa
 governance batch that:
 
 ```text
-upgrade Interfold to the secure chain-aware crypto configuration
+snapshot the operator counts and registry root
+  -> upgrade Interfold, CiphernodeRegistry, BondingRegistry, and E3RefundManager in place
+  -> deploy and wire a replacement SlashingManager
+  -> copy every configured slash policy, including policies that are currently disabled
+  -> preserve the registered operators and revoke the drained old manager
+  -> deploy a replacement VRF consumer against the existing funded subscription
+  -> add the new consumer and switch the registry without replacing the subscription
   -> register the secure BFV parameter set and all committee thresholds
   -> install the secure minimum, micro, and small verifier routes
   -> install the PK, decryption, and ciphertext verifiers
   -> register and bind the CRISP program
+  -> close the bootstrap program and each configured incompatible E3 program to new requests
   -> raise the required node protocol version and invalidate old node eligibility
   -> keep requests paused
 ```
 
 Run `upgrade:secure-crisp:validate` after governance executes the batch. The validator checks the
-implementation, every verifier route and VK anchor, the CRISP receipt-verifier binding, and the
-paused and drained state. Publish a new SemVer ciphernode artifact from the same release source
-before governance executes the batch. Restart matching ciphernodes after execution, and resume only
-after at least the largest configured committee size has acknowledged the new protocol and is
-online. Do not use the older CRISP-only builder on mainnet because it cannot install the
+four proxy implementations, the complete slashing dependency graph, the preserved operator counts
+and registry root, the reused VRF subscription and its two consumers, every verifier route and VK
+anchor, the CRISP receipt-verifier binding, each retired E3 program, and the paused and drained
+state. The old VRF consumer stays authorized through validation and the first successful E3. Remove
+it in a later cleanup transaction. Publish a new SemVer ciphernode artifact from the same release
+source before governance executes the batch. Restart matching ciphernodes after execution, and
+resume only after at least the largest configured committee size has acknowledged the new protocol
+and is online. Do not use the older CRISP-only builder on mainnet because it cannot install the
 protocol-side secure configuration.
+
+Registry, BondingRegistry, and refund-manager address replacement still requires an empty operator
+generation. A SlashingManager rotation is different: when the same registry and bonding proxies
+remain in place, the replacement can preserve operators. The migration requires paused requests, no
+active E3, no unreleased or unresolved committee, no active slashing assignment, and no active ban.
+The registry accepts the manager only after Interfold, BondingRegistry, and the replacement manager
+all point to the same dependency graph.
 
 After the nodes restart, run
 `upgrade:secure-crisp:resume -- --network mainnet --ciphernodes-restarted`. It reruns the complete
