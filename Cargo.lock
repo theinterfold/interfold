@@ -4052,6 +4052,7 @@ dependencies = [
  "actix",
  "alloy",
  "alloy-dyn-abi",
+ "alloy-json-rpc",
  "alloy-primitives",
  "anyhow",
  "async-trait",

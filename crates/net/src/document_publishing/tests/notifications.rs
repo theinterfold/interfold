@@ -258,7 +258,7 @@ async fn terminal_stage_cancels_an_inflight_document_fetch() -> Result<()> {
         threshold_n: 3,
         ..CiphernodeSelected::default()
     })?;
-    publisher.do_send(DocumentPublishedNotification {
+    let notification = DocumentPublishedNotification {
         key: key.clone(),
         meta: DocumentMeta::new(
             e3_id.clone(),
@@ -267,6 +267,10 @@ async fn terminal_stage_cancels_an_inflight_document_fetch() -> Result<()> {
             Some(Utc::now() + chrono::Duration::hours(1)),
         ),
         ts: 100,
+    };
+    let fetch = tokio::spawn({
+        let publisher = publisher.clone();
+        async move { publisher.send(notification).await }
     });
     let Some(NetCommand::DhtGetRecord { correlation_id, .. }) =
         timeout(Duration::from_secs(1), commands.recv()).await?
@@ -293,6 +297,10 @@ async fn terminal_stage_cancels_an_inflight_document_fetch() -> Result<()> {
         correlation_id,
         value,
     })?;
+    let mailbox_result = timeout(Duration::from_secs(1), fetch)
+        .await
+        .map_err(|_| anyhow::anyhow!("document fetch did not stop before the deadline"))??;
+    mailbox_result?;
     publisher.send(PublisherBarrier).await?;
 
     let events = history.send(GetEvents::new()).await?;
