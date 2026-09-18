@@ -915,6 +915,11 @@ deadlines, recovery flow, and remaining trust.
 
 ### Ciphertext Output Publication
 
+The separate `feat/risc0-crisp-optimizations` branch preserves an isolated RISC Zero implementation
+under `examples/CRISP/prover/`. It uses the production input and journal layouts with checked
+power-basis decoding and direct coefficient packing. Its optional FHE patch applies only to that
+workspace. It does not change the deployed image ID or either mandatory verifier call.
+
 The support host sends raw bincode input by default. `BOUNDLESS_INPUT_ENCODING=risc0-serde` selects
 the older byte-vector wrapper for an external Boundless guest and requires `PROGRAM_URL`. The
 embedded guest always receives raw bincode. This compatibility setting does not change the guest or

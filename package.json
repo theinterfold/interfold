@@ -13,6 +13,7 @@
     "url": "https://github.com/theinterfold/interfold"
   },
   "scripts": {
+    "crisp:risc0": "bash scripts/run-crisp-risc0.sh",
     "bump:versions": "tsx scripts/bump-versions.ts",
     "release:tag": "node scripts/release.mjs tag",
     "test:release": "node --test scripts/release.test.mjs",

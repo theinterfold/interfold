@@ -1,0 +1,11 @@
+[package]
+name = "crisp-risc0-optimized-methods"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[package.metadata.risc0]
+methods = ["guest", "reference-guest"]
+
+[build-dependencies]
+risc0-build = "=3.0.3"

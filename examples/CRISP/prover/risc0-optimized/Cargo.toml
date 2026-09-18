@@ -1,0 +1,28 @@
+[workspace]
+members = ["host", "methods"]
+exclude = ["methods/guest", "methods/reference-guest"]
+resolver = "3"
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "LGPL-3.0-only"
+
+[profile.release]
+debug = 1
+
+[workspace.dependencies]
+risc0-zkvm = { version = "=3.0.3", default-features = false, features = ["client"] }
+anyhow = "=1.0.98"
+serde_json = "=1.0.145"
+sha2 = "=0.10.9"
+hex = "=0.4.3"
+
+[patch."https://github.com/gnosisguild/fhe.rs"]
+fhe = { path = "../../../../target/crisp-prover/fhe/crates/fhe" }
+fhe-math = { path = "../../../../target/crisp-prover/fhe/crates/fhe-math" }
+fhe-traits = { path = "../../../../target/crisp-prover/fhe/crates/fhe-traits" }
+fhe-util = { path = "../../../../target/crisp-prover/fhe/crates/fhe-util" }
+
+[patch."https://github.com/theinterfold/interfold"]
+e3-compute-provider = { path = "../../../../crates/compute-provider" }

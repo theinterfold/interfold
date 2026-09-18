@@ -1,0 +1,20 @@
+[package]
+name = "crisp-risc0-optimized"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "crisp-risc0-optimized"
+path = "../../risc0-baseline/host/src/main.rs"
+
+[dependencies]
+crisp-risc0-baseline-methods = { package = "crisp-risc0-optimized-methods", path = "../methods" }
+risc0-zkvm.workspace = true
+anyhow.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+hex.workspace = true
+e3-support-types = { path = "../../../../../crates/support/types" }
+bincode = "=1.3.3"
+alloy-sol-type-parser = "=1.4.1"

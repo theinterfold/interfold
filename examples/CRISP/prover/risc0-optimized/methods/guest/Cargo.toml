@@ -1,0 +1,38 @@
+[package]
+name = "crisp-risc0-optimized-guest"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.91"
+license = "LGPL-3.0-only"
+
+[workspace]
+resolver = "3"
+
+[package.metadata.risc0]
+rustc-flags = ["--cfg", "crisp_fhe_optimized"]
+
+[dependencies]
+e3-support-types = { path = "../../../../../../crates/support/types" }
+e3-compute-provider = { path = "../../../../../../crates/compute-provider" }
+fhe = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
+fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
+sha2 = "=0.10.9"
+sha3 = "=0.10.8"
+bincode = "=1.3.3"
+risc0-zkvm = { version = "=3.0.3", default-features = false, features = ["std"] }
+alloy-sol-type-parser = "=1.4.1"
+
+[patch."https://github.com/gnosisguild/fhe.rs"]
+fhe = { path = "../../../../../../target/crisp-prover/fhe/crates/fhe" }
+fhe-math = { path = "../../../../../../target/crisp-prover/fhe/crates/fhe-math" }
+fhe-traits = { path = "../../../../../../target/crisp-prover/fhe/crates/fhe-traits" }
+fhe-util = { path = "../../../../../../target/crisp-prover/fhe/crates/fhe-util" }
+
+[patch."https://github.com/theinterfold/interfold"]
+e3-compute-provider = { path = "../../../../../../crates/compute-provider" }
+
+[profile.release]
+lto = "thin"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(crisp_fhe_optimized)', 'cfg(crisp_fhe_reference)'] }

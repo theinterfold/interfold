@@ -1,0 +1,2 @@
+# Unified diff context lines can contain a single space.
+examples/CRISP/prover/patches/fhe-lazy-multiplication.patch -whitespace

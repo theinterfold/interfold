@@ -1,0 +1,403 @@
+diff --git a/crates/fhe-math/Cargo.toml b/crates/fhe-math/Cargo.toml
+index 54d9cf8..671d5be 100644
+--- a/crates/fhe-math/Cargo.toml
++++ b/crates/fhe-math/Cargo.toml
+@@ -1,4 +1,5 @@
+ [package]
++workspace = "../.."
+ name = "fhe-math"
+ description = "Mathematical utilities for the fhe.rs library"
+ authors.workspace = true
+diff --git a/crates/fhe-math/src/rq/convert.rs b/crates/fhe-math/src/rq/convert.rs
+index bf94490..af20a2a 100644
+--- a/crates/fhe-math/src/rq/convert.rs
++++ b/crates/fhe-math/src/rq/convert.rs
+@@ -11,6 +11,7 @@ use crate::{
+ use itertools::{Itertools, izip};
+ use ndarray::{Array2, ArrayView, Axis};
+ use num_bigint::BigUint;
++use prost::Message;
+ use std::sync::Arc;
+ use zeroize::{Zeroize, Zeroizing};
+ 
+@@ -106,6 +107,33 @@ impl TryConvertFrom<&Rq> for Poly<PowerBasis> {
+     }
+ }
+ 
++impl Poly<Ntt> {
++    /// Reads canonical power-basis coefficients from an NTT-tagged serialization.
++    /// Returns `None` when the caller must use the standard decoder.
++    pub fn power_basis_from_bytes_if_canonical(
++        bytes: &[u8],
++        ctx: &Arc<Context>,
++    ) -> Result<Option<Poly<PowerBasis>>> {
++        let value: Rq = Message::decode(bytes).map_err(|e| Error::Serialization(e.to_string()))?;
++        if value.degree as usize != ctx.degree {
++            return Ok(None);
++        }
++        let (representation, coefficients, variable_time) = parse_proto(&value, ctx, false)?;
++        if representation != Representation::Ntt
++            || coefficients.len() != ctx.moduli.len() * ctx.degree
++        {
++            return Ok(None);
++        }
++        // The standard NTT round trip can reduce noncanonical coefficients. Keep that path.
++        for (row, modulus) in coefficients.chunks_exact(ctx.degree).zip(ctx.moduli.iter()) {
++            if row.iter().any(|coefficient| coefficient >= modulus) {
++                return Ok(None);
++            }
++        }
++        Poly::<PowerBasis>::try_convert_from(coefficients, ctx, variable_time).map(Some)
++    }
++}
++
+ impl TryConvertFrom<&Rq> for Poly<Ntt> {
+     fn try_convert_from(value: &Rq, ctx: &Arc<Context>, variable_time: bool) -> Result<Self> {
+         let (representation_from_proto, coefficients, variable_time) =
+diff --git a/crates/fhe-math/src/rq/serialize.rs b/crates/fhe-math/src/rq/serialize.rs
+index 45f1460..9f13560 100644
+--- a/crates/fhe-math/src/rq/serialize.rs
++++ b/crates/fhe-math/src/rq/serialize.rs
+@@ -43,6 +43,58 @@ mod tests {
+         4611686018309947393,
+     ];
+ 
++    #[test]
++    fn direct_power_basis_decode_matches_the_ntt_round_trip() -> Result<(), Box<dyn Error>> {
++        for degree in [16, 512, 8192] {
++            let ctx = Context::new_arc(Q, degree)?;
++            let values: Vec<u64> = Q
++                .iter()
++                .flat_map(|q| {
++                    (0..degree).map(move |i| match i % 4 {
++                        0 => 0,
++                        1 => 1,
++                        2 => q / 2,
++                        _ => q - 1,
++                    })
++                })
++                .collect();
++            let power = Poly::<PowerBasis>::try_convert_from(values, &ctx, false)?;
++            let ntt = power.clone().into_ntt();
++            let bytes = ntt.to_bytes();
++            let direct = Poly::<Ntt>::power_basis_from_bytes_if_canonical(&bytes, &ctx)?.unwrap();
++            let standard = Poly::<Ntt>::from_bytes(&bytes, &ctx)?.to_power_basis();
++            assert_eq!(direct, standard);
++            assert_eq!(direct, power);
++        }
++        Ok(())
++    }
++
++    #[test]
++    fn direct_power_basis_decode_requires_canonical_coefficients() -> Result<(), Box<dyn Error>> {
++        let ctx = Context::new_arc(&Q[..1], 16)?;
++        let poly = Poly::<Ntt>::zero(&ctx);
++        let mut proto = Rq::decode(poly.to_bytes().as_slice())?;
++        proto.coefficients = crate::zq::Modulus::new(Q[0])?.serialize_vec(&vec![Q[0]; 16]);
++        assert!(
++            Poly::<Ntt>::power_basis_from_bytes_if_canonical(&proto.encode_to_vec(), &ctx)?
++                .is_none()
++        );
++        proto = Rq::decode(poly.to_bytes().as_slice())?;
++        proto.degree = 8;
++        assert!(
++            Poly::<Ntt>::power_basis_from_bytes_if_canonical(&proto.encode_to_vec(), &ctx)?
++                .is_none()
++        );
++        proto = Rq::decode(poly.to_bytes().as_slice())?;
++        proto.representation = RepresentationProto::Powerbasis as i32;
++        assert!(
++            Poly::<Ntt>::power_basis_from_bytes_if_canonical(&proto.encode_to_vec(), &ctx)?
++                .is_none()
++        );
++        assert!(Poly::<Ntt>::power_basis_from_bytes_if_canonical(&[255], &ctx).is_err());
++        Ok(())
++    }
++
+     #[test]
+     fn serialize() -> Result<(), Box<dyn Error>> {
+         let mut rng = rng();
+diff --git a/crates/fhe-traits/Cargo.toml b/crates/fhe-traits/Cargo.toml
+index dba63aa..a1cec02 100644
+--- a/crates/fhe-traits/Cargo.toml
++++ b/crates/fhe-traits/Cargo.toml
+@@ -1,4 +1,5 @@
+ [package]
++workspace = "../.."
+ name = "fhe-traits"
+ description = "Traits for the fhe.rs library"
+ authors.workspace = true
+diff --git a/crates/fhe-util/Cargo.toml b/crates/fhe-util/Cargo.toml
+index 72a16dc..a8b1949 100644
+--- a/crates/fhe-util/Cargo.toml
++++ b/crates/fhe-util/Cargo.toml
+@@ -1,4 +1,5 @@
+ [package]
++workspace = "../.."
+ name = "fhe-util"
+ description = "Utilities for the fhe.rs library"
+ authors.workspace = true
+diff --git a/crates/fhe/Cargo.toml b/crates/fhe/Cargo.toml
+index a11bd83..b0400d1 100644
+--- a/crates/fhe/Cargo.toml
++++ b/crates/fhe/Cargo.toml
+@@ -1,4 +1,5 @@
+ [package]
++workspace = "../.."
+ name = "fhe"
+ description = "Fully Homomorphic Encryption in Rust"
+ authors.workspace = true
+diff --git a/crates/fhe/src/bfv/ciphertext.rs b/crates/fhe/src/bfv/ciphertext.rs
+index 01d4211..c0fbd57 100644
+--- a/crates/fhe/src/bfv/ciphertext.rs
++++ b/crates/fhe/src/bfv/ciphertext.rs
+@@ -3,7 +3,7 @@
+ use crate::bfv::{parameters::BfvParameters, traits::TryConvertFrom};
+ use crate::proto::bfv::Ciphertext as CiphertextProto;
+ use crate::{Error, Result, SerializationError};
+-use fhe_math::rq::{Ntt, Poly};
++use fhe_math::rq::{Ntt, Poly, PowerBasis};
+ use fhe_traits::{
+     DeserializeParametrized, DeserializeWithContext, FheCiphertext, FheParametrized, Serialize,
+ };
+@@ -44,6 +44,33 @@ impl DerefMut for Ciphertext {
+ }
+ 
+ impl Ciphertext {
++    /// Reads two canonical level-zero components without an NTT round trip.
++    /// Returns `None` for encodings that require the standard decoder.
++    pub fn power_basis_from_bytes_if_canonical(
++        bytes: &[u8],
++        par: &Arc<BfvParameters>,
++    ) -> Result<Option<Vec<Poly<PowerBasis>>>> {
++        let value: CiphertextProto = Message::decode(bytes).map_err(|_| {
++            Error::SerializationError(SerializationError::ProtobufError {
++                message: "Ciphertext decode".into(),
++            })
++        })?;
++        if value.level != 0 || !value.seed.is_empty() || value.c.len() != 2 {
++            return Ok(None);
++        }
++        let context = par.context_at_level(0)?;
++        let mut components = Vec::with_capacity(2);
++        for bytes in value.c {
++            let Some(component) =
++                Poly::<Ntt>::power_basis_from_bytes_if_canonical(&bytes, context)?
++            else {
++                return Ok(None);
++            };
++            components.push(component);
++        }
++        Ok(Some(components))
++    }
++
+     /// Create a ciphertext from a vector of polynomials.
+     /// A ciphertext must contain at least two polynomials, and all polynomials
+     /// must be in Ntt representation and with the same context.
+diff --git a/crates/fhe/src/bfv/context/chain.rs b/crates/fhe/src/bfv/context/chain.rs
+index a07a642..b1a701f 100644
+--- a/crates/fhe/src/bfv/context/chain.rs
++++ b/crates/fhe/src/bfv/context/chain.rs
+@@ -5,7 +5,10 @@ use fhe_math::{
+     rq::{Context, scaler::Scaler},
+ };
+ 
+-use crate::bfv::{context::CipherPlainContext, parameters::MultiplicationParameters};
++use crate::bfv::{
++    context::CipherPlainContext,
++    parameters::{MultiplicationParameters, MultiplicationParametersSource},
++};
+ 
+ /// A context in the modulus switching chain
+ #[derive(Debug, Clone)]
+@@ -29,6 +32,7 @@ pub struct ContextLevel {
+     /// Parameters required for ciphertext-ciphertext multiplication at this
+     /// level
+     pub(crate) mul_params: OnceLock<MultiplicationParameters>,
++    pub(crate) mul_params_source: OnceLock<Arc<MultiplicationParametersSource>>,
+ }
+ 
+ impl PartialEq for ContextLevel {
+@@ -43,6 +47,7 @@ impl PartialEq for ContextLevel {
+             down_scaler: _,
+             up_scaler: _,
+             mul_params: _,
++            mul_params_source: _,
+         } = self;
+         let Self {
+             poly_context: other_poly_context,
+@@ -54,6 +59,7 @@ impl PartialEq for ContextLevel {
+             down_scaler: _,
+             up_scaler: _,
+             mul_params: _,
++            mul_params_source: _,
+         } = other;
+ 
+         // OnceCell fields are lazily computed caching fields, not part of equality.
+@@ -84,6 +90,7 @@ impl ContextLevel {
+             down_scaler: OnceLock::new(),
+             up_scaler: OnceLock::new(),
+             mul_params: OnceLock::new(),
++            mul_params_source: OnceLock::new(),
+         }
+     }
+ 
+@@ -134,9 +141,13 @@ impl ContextLevel {
+     /// Access multiplication parameters for this level
+     #[expect(clippy::expect_used, reason = "bounds are validated before use")]
+     pub(crate) fn mul_params(&self) -> &MultiplicationParameters {
+-        self.mul_params
+-            .get()
+-            .expect("multiplication parameters not set")
++        self.mul_params.get_or_init(|| {
++            self.mul_params_source
++                .get()
++                .expect("multiplication parameter source not set")
++                .build(self)
++                .expect("cannot construct multiplication parameters")
++        })
+     }
+ }
+ 
+diff --git a/crates/fhe/src/bfv/parameters.rs b/crates/fhe/src/bfv/parameters.rs
+index 9b2e770..edad6bc 100644
+--- a/crates/fhe/src/bfv/parameters.rs
++++ b/crates/fhe/src/bfv/parameters.rs
+@@ -16,7 +16,7 @@ use num_traits::{PrimInt as _, ToPrimitive};
+ use prost::Message;
+ use std::collections::HashMap;
+ use std::fmt::Debug;
+-use std::sync::Arc;
++use std::sync::{Arc, OnceLock};
+ 
+ /// Enum to support both small (u64) and large (BigUint) plaintext moduli.
+ #[derive(Debug, PartialEq, Eq, Clone)]
+@@ -689,33 +689,17 @@ impl BfvParametersBuilder {
+         }
+         let context_chain = nodes.first().unwrap().clone();
+ 
+-        // Create n+1 moduli of 62 bits for multiplication.
+-        let mut extended_basis = Vec::with_capacity(moduli.len() + 1);
+-        let mut upper_bound = 1 << 62;
+-        while extended_basis.len() != moduli.len() + 1 {
+-            upper_bound = generate_prime(62, 2 * self.degree as u64, upper_bound).unwrap();
+-            if !extended_basis.contains(&upper_bound) && !moduli.contains(&upper_bound) {
+-                extended_basis.push(upper_bound)
+-            }
+-        }
+-
+-        // Compute multiplication parameters for each level
+-        for (i, node) in nodes.iter().enumerate() {
+-            // For the first multiplication, we want to extend to a context that
+-            // is ~60 bits larger.
+-            let modulus_size = moduli_sizes[..moduli_sizes.len() - i].iter().sum::<usize>();
+-            let n_moduli = (modulus_size + 60).div_ceil(62);
+-            let mut mul_1_moduli = vec![];
+-            mul_1_moduli.append(&mut moduli[..moduli_sizes.len() - i].to_vec());
+-            mul_1_moduli.append(&mut extended_basis[..n_moduli].to_vec());
+-            let mul_1_ctx = Context::new_arc(&mul_1_moduli, self.degree)?;
+-            let mp = MultiplicationParameters::new(
+-                &node.poly_context,
+-                &mul_1_ctx,
+-                ScalingFactor::one(),
+-                ScalingFactor::new(plaintext_big, node.poly_context.modulus()),
+-            )?;
+-            node.mul_params.set(mp).unwrap();
++        // Addition does not need the extended multiplication basis or its NTT tables.
++        let mul_params_source = Arc::new(MultiplicationParametersSource {
++            moduli: moduli.clone(),
++            plaintext: plaintext_big.clone(),
++            degree: self.degree,
++            extended_basis: OnceLock::new(),
++        });
++        for node in &nodes {
++            node.mul_params_source
++                .set(mul_params_source.clone())
++                .unwrap();
+         }
+ 
+         // We use the same code as SEAL
+@@ -799,6 +783,46 @@ impl Deserialize for BfvParameters {
+     type Error = Error;
+ }
+ 
++/// Immutable inputs used to construct multiplication tables on first use.
++#[derive(Debug)]
++pub(crate) struct MultiplicationParametersSource {
++    moduli: Vec<u64>,
++    plaintext: BigUint,
++    degree: usize,
++    extended_basis: OnceLock<Vec<u64>>,
++}
++
++impl MultiplicationParametersSource {
++    pub(crate) fn build(&self, node: &ContextLevel) -> Result<MultiplicationParameters> {
++        let extended_basis = self.extended_basis.get_or_init(|| {
++            let mut basis = Vec::with_capacity(self.moduli.len() + 1);
++            let mut upper_bound = 1 << 62;
++            while basis.len() != self.moduli.len() + 1 {
++                upper_bound = generate_prime(62, 2 * self.degree as u64, upper_bound).unwrap();
++                if !basis.contains(&upper_bound) && !self.moduli.contains(&upper_bound) {
++                    basis.push(upper_bound);
++                }
++            }
++            basis
++        });
++        let level_moduli = node.poly_context.moduli();
++        let modulus_size = level_moduli
++            .iter()
++            .map(|m| 64 - m.leading_zeros() as usize)
++            .sum::<usize>();
++        let n_moduli = (modulus_size + 60).div_ceil(62);
++        let mut mul_moduli = level_moduli.to_vec();
++        mul_moduli.extend_from_slice(&extended_basis[..n_moduli]);
++        let mul_context = Context::new_arc(&mul_moduli, self.degree)?;
++        MultiplicationParameters::new(
++            &node.poly_context,
++            &mul_context,
++            ScalingFactor::one(),
++            ScalingFactor::new(&self.plaintext, node.poly_context.modulus()),
++        )
++    }
++}
++
+ /// Multiplication parameters
+ #[derive(Debug, Clone, PartialEq, Eq, Default)]
+ pub(crate) struct MultiplicationParameters {
+@@ -833,6 +857,36 @@ mod tests {
+     use prost::Message;
+     use std::error::Error;
+ 
++    #[test]
++    fn multiplication_tables_are_lazy_and_do_not_change_serialization() {
++        let params = BfvParametersBuilder::new()
++            .set_degree(16)
++            .set_plaintext_modulus(1153)
++            .set_moduli_sizes(&[50, 50])
++            .build()
++            .unwrap();
++        let bytes = params.to_bytes();
++        let head = params.context_chain();
++        for node in head.iter_chain() {
++            assert!(node.mul_params.get().is_none());
++            assert!(
++                node.mul_params_source
++                    .get()
++                    .unwrap()
++                    .extended_basis
++                    .get()
++                    .is_none()
++            );
++        }
++        let first = head.mul_params() as *const _;
++        assert_eq!(first, head.mul_params() as *const _);
++        assert!(head.next.get().unwrap().mul_params.get().is_none());
++        assert_eq!(params.to_bytes(), bytes);
++        assert_eq!(params, BfvParameters::try_deserialize(&bytes).unwrap());
++        let source = head.mul_params_source.get().unwrap();
++        assert_eq!(head.mul_params(), &source.build(&head).unwrap());
++    }
++
+     #[test]
+     fn default() {
+         let params = BfvParameters::default_arc(1, 16);
