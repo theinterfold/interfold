@@ -21,20 +21,11 @@ pub struct Configs<let N: u32, let L: u32> {
     pub sk_bound: Field,
     /// Bound for smudging noise polynomial (e_sm) coefficients
     pub e_sm_bound: Field,
-    /// Bounds for the reduced modulus-switching quotients (`r`), one per CRT basis. `BIT_R` is
-    /// the exact bit width of the largest, which is how the quotient window is derived.
-    pub r_bounds: [Field; L],
 }
 
 impl<let N: u32, let L: u32> Configs<N, L> {
-    pub fn new(
-        qis: [Field; L],
-        eek_bound: Field,
-        sk_bound: Field,
-        e_sm_bound: Field,
-        r_bounds: [Field; L],
-    ) -> Self {
-        Configs { qis, eek_bound, sk_bound, e_sm_bound, r_bounds }
+    pub fn new(qis: [Field; L], eek_bound: Field, sk_bound: Field, e_sm_bound: Field) -> Self {
+        Configs { qis, eek_bound, sk_bound, e_sm_bound }
     }
 }
 
@@ -100,8 +91,9 @@ impl<let N: u32, let L: u32, let BIT_EEK: u32, let BIT_SK: u32, let BIT_E_SM: u3
     /// Returns `(commit(sk), commit(pk_trbfv), commit(e_sm))` as documented on the struct.
     pub fn execute(self) -> (Field, Field, Field) {
         // A ternary secret is the one parameter this circuit cannot read off the config. The
-        // generated `r_bounds`, and so the quotient window below, are derived from a formula that
-        // assumes it; a wider secret would make that window too narrow to hold the quotient.
+        // generated quotient bound, and so `BIT_R` and the window below, are derived from a
+        // formula that assumes it; a wider secret would make that window too narrow to hold the
+        // quotient.
         assert(self.configs.sk_bound == 1);
 
         // Step 1: bound the small secrets to their configured distributions.

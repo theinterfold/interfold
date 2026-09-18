@@ -258,7 +258,6 @@ pub global PK_GENERATION_CONFIGS: PkGenerationConfigs<N, L> = PkGenerationConfig
     PK_GENERATION_EEK_BOUND,
     PK_GENERATION_SK_BOUND,
     PK_GENERATION_E_SM_BOUND,
-    PK_GENERATION_R_BOUNDS,
 );",
             pkgen.bits.eek_bit,
             pkgen.bits.sk_bit,
