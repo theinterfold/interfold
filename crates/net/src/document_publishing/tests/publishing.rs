@@ -266,7 +266,8 @@ async fn test_publishes_document() -> Result<()> {
 
 #[actix::test]
 async fn unavailable_gossip_peer_does_not_lose_the_publication() -> Result<()> {
-    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, _, _, _) = setup_test()?;
+    tokio::time::pause();
+    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, _, _, publisher) = setup_test()?;
     let value = ArcBytes::from_bytes(b"retryable document");
     let key = ContentHash::from_content(&value);
     bus.publish_without_context(PublishDocumentRequested {
@@ -297,9 +298,11 @@ async fn unavailable_gossip_peer_does_not_lose_the_publication() -> Result<()> {
         correlation_id,
         error: Arc::new(GossipPublishFailure::NoPeersSubscribed),
     })?;
+    publisher.send(PublisherBarrier).await?;
+    tokio::time::advance(RETRY_INTERVAL).await;
 
     assert!(matches!(
-        timeout(Duration::from_secs(20), commands.recv()).await?,
+        timeout(Duration::from_secs(1), commands.recv()).await?,
         Some(NetCommand::DhtPutRecord { key: next_key, .. }) if next_key == key
     ));
     Ok(())
