@@ -1,6 +1,6 @@
 ---
 name: invariant-reviewer
-description: Reviews a diff against agent/INVARIANTS.md and the relevant flow-trace docs. Use before pushing any change to contracts, circuits, or core crates, or when asked to "check invariants".
+description: Reviews a diff against agent/invariants/ and the relevant flow-trace docs. Use before pushing any change to contracts, circuits, or core crates, or when asked to "check invariants".
 tools: Read, Grep, Glob, Bash
 ---
 

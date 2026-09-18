@@ -17,8 +17,8 @@ prompt names a specific change or area, scope to that.
    edits, preserve the step-by-step `File:` trace format, no wholesale rewrites. Update
    `00_INDEX.md` only for file add/remove/rename, end-to-end summary changes, contract-map changes,
    or "Verified Bugs & Protocol Concerns" table updates (mark fixed bugs, add new ones).
-4. Also check whether the change invalidates a statement in `agent/INVARIANTS.md`,
-   `agent/CONTEXT.md` (commands, terminology, versions), `agent/ARCHITECTURE.md`, or
-   `agent/CRATES_ARCHITECTURE.md` — update those too if so.
+4. Also check whether the change invalidates a statement in `agent/invariants/`, `agent/CONTEXT.md`
+   (commands, terminology, versions), `agent/ARCHITECTURE.md`, or `agent/CRATES_ARCHITECTURE.md` —
+   update those too if so.
 5. Finish by running `pnpm check:docs` to confirm the doc-sync gate passes, and summarize which docs
    changed and why in one line each.
