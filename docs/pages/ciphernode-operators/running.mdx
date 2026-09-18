@@ -109,6 +109,9 @@ chains:
   - name: mainnet
     rpc_url: 'wss://eth-mainnet.g.alchemy.com/v2/YOUR_KEY'
     chain_id: 1
+    data_availability:
+      mode: avail
+      rpc_url: 'https://mainnet-rpc.avail.so/rpc'
     contracts:
       interfold:
         address: '0x28cF63B459e6218C69EA97ea7D90541cf648c715'
@@ -130,6 +133,9 @@ chains:
     enabled: false
     rpc_url: 'wss://ethereum-sepolia-rpc.publicnode.com'
     chain_id: 11155111
+    data_availability:
+      mode: avail
+      rpc_url: 'https://turing-rpc.avail.so/rpc'
     contracts:
       interfold:
         address: '0x3E856E24c7a95d0e04d387f847DA6FA9f6F6c20C'
