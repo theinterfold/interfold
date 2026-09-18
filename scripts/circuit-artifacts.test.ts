@@ -9,7 +9,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, unlinkSync, writeFileSync
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import test from 'node:test'
-import { NoirCircuitBuilder } from './build-circuits'
+import { NoirCircuitBuilder, normalizeCargoLockForCircuitHash } from './build-circuits'
 import { RELEASE_REQUIRED_PAIRS, requiredArtifactMarkers, validateArtifactSet, validateReleaseArtifacts } from './circuit-artifacts'
 
 function sourceHash(preset: string, committee: string): string {
@@ -30,6 +30,17 @@ function makeCompleteMatrix(): string {
   }
   return dir
 }
+
+test('circuit hash ignores workspace package version bumps', () => {
+  const before = Buffer.from(
+    `[version]\n3\n\n[[package]]\nname = "e3-example"\nversion = "0.14.0"\n\n[[package]]\nname = "external"\nversion = "1.0.0"\nsource = "registry+https://github.com/rust-lang/crates.io-index"\n`,
+  )
+  const workspaceBump = Buffer.from(before.toString().replace('version = "0.14.0"', 'version = "0.15.0"'))
+  const dependencyBump = Buffer.from(before.toString().replace('version = "1.0.0"', 'version = "1.0.1"'))
+
+  assert.deepEqual(normalizeCargoLockForCircuitHash(workspaceBump), normalizeCargoLockForCircuitHash(before))
+  assert.notDeepEqual(normalizeCargoLockForCircuitHash(dependencyBump), normalizeCargoLockForCircuitHash(before))
+})
 
 test('pair source hash ignores generated bounds but tracks other Noir config', () => {
   const dir = mkdtempSync(join(tmpdir(), 'interfold-circuit-hash-'))

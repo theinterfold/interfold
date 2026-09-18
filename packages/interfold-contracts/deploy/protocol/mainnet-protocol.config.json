@@ -7,6 +7,9 @@
     "proposerSafe": "0x8B43b2852fc5031D01DDfCDF702973D93A2FF593",
     "proposalMetadata": "0x"
   },
+  "upgrade": {
+    "retireE3Programs": ["0x847A22303639017bcDB7F7E49EEa4a4629c1169f"]
+  },
   "fold": "0xE172e9B6cfBeeB5593bDcE3f077356FDb33af904",
   "escrowVotesAdapter": "0x8f141B4D294d39e7D1530916A3eD65B3970C6FEc",
   "bondingRegistryProxy": "0x0ec90465095C21830BEcED07e032809A2Bd2915F",
