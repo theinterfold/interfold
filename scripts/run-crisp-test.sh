@@ -1,20 +1,33 @@
 #!/usr/bin/env bash
 
-echo "This helper script will clean your repository and run end-to-end tests for CRISP."
-echo "WARNING: This will reset your current workspace. Ensure all changes are committed before proceeding."
-echo "Press any key to continue or Ctrl+C to cancel..."
+set -euo pipefail
 
-read
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SOURCE_STATUS=$(git -C "$REPO_ROOT" status --porcelain)
+if [[ -n "$SOURCE_STATUS" ]]; then
+  echo "The isolated CRISP test runs HEAD. Commit pending changes or use a clean checkout." >&2
+  exit 1
+fi
+E3_CUSTOM_BB="${E3_CUSTOM_BB:-$(command -v bb)}"
+export E3_CUSTOM_BB
+TEST_ROOT=$(mktemp -d "${TMPDIR:-/tmp}/interfold-crisp-e2e.XXXXXX")
+WORKTREE_DIR="$TEST_ROOT/source"
+export CARGO_INSTALL_ROOT="$TEST_ROOT/cli"
+export PATH="$CARGO_INSTALL_ROOT/bin:$PATH"
 
-# Use the locally installed bb
-export E3_CUSTOM_BB=$(which bb)
+cleanup() {
+  local status=$?
+  if (( status != 0 )); then
+    echo "CRISP test failed. Retained checkout and build files: $TEST_ROOT" >&2
+    return "$status"
+  fi
+  git -C "$REPO_ROOT" worktree remove --force "$WORKTREE_DIR"
+  rm -rf "$TEST_ROOT"
+}
+trap cleanup EXIT
 
-echo "Resetting installed interfold"
-rm -rf ~/.cargo/bin/interfold
-
-rm -rf * && \
-  git reset --hard HEAD && \
-  git submodule update --init --recursive && \
-  cd examples/CRISP && \
-  pnpm dev:setup && \
-  pnpm test:e2e "$@"
+git -C "$REPO_ROOT" worktree add --detach "$WORKTREE_DIR" HEAD
+git -C "$WORKTREE_DIR" submodule update --init --recursive
+cd "$WORKTREE_DIR/examples/CRISP"
+pnpm dev:setup
+pnpm test:e2e "$@"

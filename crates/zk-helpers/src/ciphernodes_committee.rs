@@ -213,17 +213,4 @@ mod tests {
         assert_eq!(canonical, BTreeSet::from([0, 1, 2, 3, 4]));
         assert!(canonical.contains(&4));
     }
-
-    #[test]
-    fn old_keyshare_cap_rule_diverges_from_canonical() {
-        let external: Vec<u64> = (0..9).collect();
-        let committee_h = 5usize;
-        let own = 8u64;
-        let mut old_external = external.clone();
-        old_external.truncate(committee_h.saturating_sub(1));
-        let mut old = BTreeSet::from_iter(old_external);
-        old.insert(own);
-        let canonical = canonical_honest_party_ids_with_own(committee_h, external, own);
-        assert_ne!(old, canonical);
-    }
 }

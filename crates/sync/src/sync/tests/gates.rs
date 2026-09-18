@@ -42,92 +42,6 @@ async fn startup_history_is_fenced_between_effects_and_live_mode() -> anyhow::Re
     Ok(())
 }
 
-/// Verify that `run_once::<EffectsEnabled>` correctly gates event subscriptions.
-///
-/// Simulates the sync flow:
-/// 1. An event is published BEFORE EffectsEnabled (should be dropped — nobody listening)
-/// 2. EffectsEnabled is published (triggers subscription)
-/// 3. The same event is published AFTER EffectsEnabled (should be received)
-///
-/// This is the pattern used by Sortition (E3Requested), CommitteeFinalizer
-/// (CommitteeRequested), Multithread (ComputeRequest), and the sol writers.
-#[actix::test]
-async fn effects_enabled_gates_event_subscriptions() -> anyhow::Result<()> {
-    use std::sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    };
-
-    let system = EventSystem::new().with_fresh_bus();
-    let bus = system.handle()?.enable("test-effects-gating");
-
-    let receive_count = Arc::new(AtomicU32::new(0));
-
-    // Set up a gated subscription: only subscribe to TestEvent after EffectsEnabled
-    let counter = receive_count.clone();
-    let runner = e3_events::run_once::<EffectsEnabled>({
-        let bus = bus.clone();
-        move |_| {
-            // Create a simple actor that counts received TestEvents
-            use actix::{Actor, Context, Handler};
-
-            struct Counter(Arc<AtomicU32>);
-            impl Actor for Counter {
-                type Context = Context<Self>;
-            }
-            impl Handler<InterfoldEvent> for Counter {
-                type Result = ();
-                fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
-                    if matches!(msg.get_data(), InterfoldEventData::TestEvent(_)) {
-                        self.0.fetch_add(1, Ordering::SeqCst);
-                    }
-                }
-            }
-
-            let addr = Counter(counter).start();
-            bus.subscribe(EventType::TestEvent, addr.recipient());
-            Ok(())
-        }
-    });
-    bus.subscribe(EventType::EffectsEnabled, runner.recipient());
-
-    // 1. Publish a TestEvent BEFORE EffectsEnabled — should NOT be received
-    bus.event_bus().try_send(
-        InterfoldEvent::<Unsequenced>::test_event("before-effects")
-            .id(1)
-            .seq(1)
-            .build(),
-    )?;
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert_eq!(
-        receive_count.load(Ordering::SeqCst),
-        0,
-        "Event before EffectsEnabled should not be received"
-    );
-
-    // 2. Publish EffectsEnabled — triggers the subscription
-    bus.publish_without_context(EffectsEnabled::new())?;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-
-    // 3. Publish a TestEvent AFTER EffectsEnabled — should be received
-    bus.event_bus().try_send(
-        InterfoldEvent::<Unsequenced>::test_event("after-effects")
-            .id(2)
-            .seq(2)
-            .build(),
-    )?;
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert_eq!(
-        receive_count.load(Ordering::SeqCst),
-        1,
-        "Event after EffectsEnabled should be received exactly once"
-    );
-
-    Ok(())
-}
-
 /// Verify that ungated (immediate) subscriptions receive events both
 /// before and after EffectsEnabled.
 ///
@@ -137,92 +51,104 @@ async fn effects_enabled_gates_event_subscriptions() -> anyhow::Result<()> {
 /// must work during EventStore replay (before EffectsEnabled).
 #[actix::test]
 async fn immediate_subscriptions_receive_before_effects_enabled() -> anyhow::Result<()> {
-    use std::sync::{
-        atomic::{AtomicU32, Ordering},
-        Arc,
-    };
+    use actix::{Actor, Context, Handler};
+    use e3_events::EventBusBarrier;
+    use tokio::sync::{mpsc, oneshot};
+    use tokio::time::{timeout, Duration};
 
     let system = EventSystem::new().with_fresh_bus();
     let bus = system.handle()?.enable("test-immediate-sub");
+    let (deliveries, mut received) = mpsc::unbounded_channel();
 
-    let immediate_count = Arc::new(AtomicU32::new(0));
-    let gated_count = Arc::new(AtomicU32::new(0));
-
-    // Helper actor that counts TestEvents
-    use actix::{Actor, Context, Handler};
-
-    struct Counter(Arc<AtomicU32>);
-    impl Actor for Counter {
+    struct Recorder {
+        name: &'static str,
+        deliveries: mpsc::UnboundedSender<&'static str>,
+    }
+    impl Actor for Recorder {
         type Context = Context<Self>;
     }
-    impl Handler<InterfoldEvent> for Counter {
+    impl Handler<InterfoldEvent> for Recorder {
         type Result = ();
         fn handle(&mut self, msg: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
             if matches!(msg.get_data(), InterfoldEventData::TestEvent(_)) {
-                self.0.fetch_add(1, Ordering::SeqCst);
+                self.deliveries.send(self.name).unwrap();
             }
         }
     }
 
     // Immediate subscription — receives all events, including before EffectsEnabled
-    let immediate_actor = Counter(immediate_count.clone()).start();
+    let immediate_actor = Recorder {
+        name: "immediate",
+        deliveries: deliveries.clone(),
+    }
+    .start();
     bus.subscribe(EventType::TestEvent, immediate_actor.recipient());
 
     // Gated subscription — only receives after EffectsEnabled
-    let gated_counter = gated_count.clone();
+    let (subscription_ready, ready) = oneshot::channel();
     let runner = e3_events::run_once::<EffectsEnabled>({
         let bus = bus.clone();
+        let deliveries = deliveries.clone();
         move |_| {
-            let addr = Counter(gated_counter).start();
+            let addr = Recorder {
+                name: "gated",
+                deliveries,
+            }
+            .start();
             bus.subscribe(EventType::TestEvent, addr.recipient());
+            subscription_ready
+                .send(())
+                .map_err(|_| anyhow::anyhow!("test dropped the subscription acknowledgement"))?;
             Ok(())
         }
     });
     bus.subscribe(EventType::EffectsEnabled, runner.recipient());
+    bus.event_bus().send(EventBusBarrier).await?;
 
-    // 1. Publish event BEFORE EffectsEnabled
     bus.event_bus().try_send(
         InterfoldEvent::<Unsequenced>::test_event("during-replay")
             .id(1)
             .seq(1)
             .build(),
     )?;
-
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    bus.event_bus().send(EventBusBarrier).await?;
     assert_eq!(
-        immediate_count.load(Ordering::SeqCst),
-        1,
-        "Immediate subscription should receive events before EffectsEnabled"
+        timeout(Duration::from_secs(1), received.recv())
+            .await?
+            .expect("recorder stopped before the replay event"),
+        "immediate"
     );
-    assert_eq!(
-        gated_count.load(Ordering::SeqCst),
-        0,
-        "Gated subscription should NOT receive events before EffectsEnabled"
-    );
+    assert!(matches!(
+        received.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
 
-    // 2. Publish EffectsEnabled
     bus.publish_without_context(EffectsEnabled::new())?;
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    timeout(Duration::from_secs(1), ready).await??;
+    bus.event_bus().send(EventBusBarrier).await?;
 
-    // 3. Publish event AFTER EffectsEnabled
     bus.event_bus().try_send(
         InterfoldEvent::<Unsequenced>::test_event("after-effects")
             .id(2)
             .seq(2)
             .build(),
     )?;
+    bus.event_bus().send(EventBusBarrier).await?;
 
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    assert_eq!(
-        immediate_count.load(Ordering::SeqCst),
-        2,
-        "Immediate subscription should receive events after EffectsEnabled too"
-    );
-    assert_eq!(
-        gated_count.load(Ordering::SeqCst),
-        1,
-        "Gated subscription should receive events after EffectsEnabled"
-    );
+    let mut after = vec![
+        timeout(Duration::from_secs(1), received.recv())
+            .await?
+            .expect("recorder stopped before the live event"),
+        timeout(Duration::from_secs(1), received.recv())
+            .await?
+            .expect("recorder stopped before both live deliveries"),
+    ];
+    after.sort_unstable();
+    assert_eq!(after, ["gated", "immediate"]);
+    assert!(matches!(
+        received.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
 
     Ok(())
 }

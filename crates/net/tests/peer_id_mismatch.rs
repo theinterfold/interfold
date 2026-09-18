@@ -11,9 +11,9 @@
 
 use std::time::Duration;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use e3_net::events::{NetCommand, NetEvent};
-use e3_net::{Libp2pKeypair, Libp2pNetInterface, NetInterface, NetworkPolicy};
+use e3_net::{Libp2pKeypair, Libp2pNetInterface, NetInterface, NetInterfaceHandle, NetworkPolicy};
 use libp2p::swarm::DialError;
 use tokio::time::{sleep, timeout};
 
@@ -29,6 +29,19 @@ fn is_wrong_peer_id(event: &NetEvent) -> bool {
         NetEvent::OutgoingConnectionError { error, .. }
             if matches!(error.as_ref(), DialError::WrongPeerId { .. })
     )
+}
+
+async fn wait_for_listener(handle: &NetInterfaceHandle) -> Result<()> {
+    timeout(Duration::from_secs(15), async {
+        loop {
+            if !handle.status().snapshot().listen_addresses.is_empty() {
+                return;
+            }
+            sleep(Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .context("network interface did not bind its listener before the deadline")
 }
 
 #[tokio::test]
@@ -48,10 +61,8 @@ async fn configured_peer_id_mismatch_is_rejected() -> Result<()> {
         NetworkPolicy::local_unrestricted(),
     )?;
     let handle_b = node_b.handle();
-    tokio::spawn(async move { node_b.start().await });
-
-    // Give B a moment to bind its QUIC listener.
-    sleep(Duration::from_millis(500)).await;
+    let task_b = tokio::spawn(async move { node_b.start().await });
+    wait_for_listener(&handle_b).await?;
 
     // Node A: dials B's address pinned to a STALE peer ID (B's pre-restart
     // identity), exactly like a stale routing/config entry.
@@ -65,34 +76,29 @@ async fn configured_peer_id_mismatch_is_rejected() -> Result<()> {
     )?;
     let handle_a = node_a.handle();
     let mut rx_a = handle_a.rx();
-    tokio::spawn(async move { node_a.start().await });
+    let task_a = tokio::spawn(async move { node_a.start().await });
 
     // The dial must fail with WrongPeerId. A must not connect to B under the
     // unexpected identity.
-    let mut mismatches = 0usize;
-    let mut connected = false;
-    let _ = timeout(Duration::from_secs(10), async {
+    timeout(Duration::from_secs(10), async {
         loop {
             let event = rx_a.recv().await?;
             if is_wrong_peer_id(&event) {
-                mismatches += 1;
+                return anyhow::Ok(());
             }
             if matches!(event, NetEvent::ConnectionEstablished { .. }) {
-                connected = true;
+                anyhow::bail!("A connected to B under the unexpected identity");
             }
         }
-        #[allow(unreachable_code)]
-        anyhow::Ok(())
     })
-    .await;
+    .await
+    .context("pinned address did not report an identity mismatch")??;
 
-    assert!(!connected, "A must reject B's unexpected identity");
-    assert_eq!(
-        mismatches, 1,
-        "the pinned address should produce one terminal identity mismatch"
-    );
+    assert!(handle_a.status().snapshot().connected_peers.is_empty());
 
     handle_a.tx().send(NetCommand::Shutdown).await?;
     handle_b.tx().send(NetCommand::Shutdown).await?;
+    task_a.await??;
+    task_b.await??;
     Ok(())
 }

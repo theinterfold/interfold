@@ -132,6 +132,7 @@ alloy-primitives = { version = "=1.4.1", default-features = false, features = [
   "serde",
   "std",
 ] }
+alloy-json-rpc = "=1.0.41"
 alloy-sol-types = "=1.4.1"
 alloy-dyn-abi = "=1.4.1"
 avail-rust-client = "=0.5.1"
@@ -206,6 +207,7 @@ tracing = "=0.1.41"
 tracing-opentelemetry = "=0.30.0"
 tracing-subscriber = { version = "=0.3.20", features = ["env-filter", "time"] }
 tracing-test = { version = "=0.2.5", features = ["no-env-filter"] }
+tower = "=0.5.3"
 url = "=2.5.4"
 vfs = { git = "https://github.com/ryardley/rust-vfs.git", features = ["async-vfs"] }
 libc = "=0.2.180"

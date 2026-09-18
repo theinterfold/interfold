@@ -18,7 +18,7 @@ use e3_net::{
 };
 use e3_utils::ArcBytes;
 use libp2p::{gossipsub::MessageId, kad::GetRecordError, PeerId};
-use tokio::sync::{broadcast, RwLock};
+use tokio::sync::{broadcast, Notify, RwLock};
 use tracing::{error, warn};
 
 #[derive(Debug, Clone)]
@@ -26,6 +26,8 @@ pub struct Libp2pMock {
     store: Arc<RwLock<HashMap<ContentHash, ArcBytes>>>,
     state: Arc<RwLock<MockState>>,
     next_generation: Arc<AtomicU64>,
+    processed_commands: Arc<AtomicU64>,
+    command_processed: Arc<Notify>,
 }
 
 #[derive(Debug, Default)]
@@ -48,6 +50,8 @@ impl Libp2pMock {
             store: Arc::new(RwLock::new(HashMap::new())),
             state: Arc::new(RwLock::new(MockState::default())),
             next_generation: Arc::new(AtomicU64::new(1)),
+            processed_commands: Arc::new(AtomicU64::new(0)),
+            command_processed: Arc::new(Notify::new()),
         }
     }
 
@@ -98,6 +102,8 @@ impl Libp2pMock {
         }
         let store = self.store.clone();
         let state = self.state.clone();
+        let processed_commands = self.processed_commands.clone();
+        let command_processed = self.command_processed.clone();
         let self_peer_id = peer_id;
 
         tokio::spawn(async move {
@@ -113,11 +119,15 @@ impl Libp2pMock {
 
                 let state_snapshot = state.read().await;
                 if state_snapshot.generations.get(&self_peer_id) != Some(&generation) {
+                    processed_commands.fetch_add(1, Ordering::Release);
+                    command_processed.notify_waiters();
                     break;
                 }
                 let active = state_snapshot.nodes.contains_key(&self_peer_id);
                 drop(state_snapshot);
                 if !active {
+                    processed_commands.fetch_add(1, Ordering::Release);
+                    command_processed.notify_waiters();
                     continue;
                 }
 
@@ -198,8 +208,10 @@ impl Libp2pMock {
                             s.remove(&key);
                         }
                     }
-                    _ => continue,
+                    _ => {}
                 }
+                processed_commands.fetch_add(1, Ordering::Release);
+                command_processed.notify_waiters();
             }
         });
     }
@@ -241,6 +253,20 @@ mod tests {
     use e3_net::events::GossipData;
     use std::time::Duration;
 
+    async fn wait_for_command_processing(mock: &Libp2pMock, observed: u64) {
+        tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                let notified = mock.command_processed.notified();
+                if mock.processed_commands.load(Ordering::Acquire) > observed {
+                    return;
+                }
+                notified.await;
+            }
+        })
+        .await
+        .expect("mock network did not process the command");
+    }
+
     #[tokio::test]
     async fn disconnected_node_cannot_publish_dht_records() {
         let mock = Libp2pMock::new();
@@ -250,6 +276,7 @@ mod tests {
 
         let offline_key = ContentHash::from_content(b"offline");
         mock.disconnect_node(peer_id).await;
+        let observed = mock.processed_commands.load(Ordering::Acquire);
         bridge
             .cmd_tx()
             .send(NetCommand::DhtPutRecord {
@@ -259,7 +286,7 @@ mod tests {
                 key: offline_key.clone(),
             })
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        wait_for_command_processing(&mock, observed).await;
         assert!(!mock.store.read().await.contains_key(&offline_key));
 
         let online_key = ContentHash::from_content(b"online");
@@ -301,6 +328,7 @@ mod tests {
         let mut received = receiver.event_rx();
 
         mock.disconnect_node(sender_id).await;
+        let observed = mock.processed_commands.load(Ordering::Acquire);
         sender
             .cmd_tx()
             .send(NetCommand::gossip_publish(
@@ -309,15 +337,11 @@ mod tests {
                 CorrelationId::new(),
             ))
             .unwrap();
-        assert!(tokio::time::timeout(Duration::from_millis(50), async {
-            loop {
-                if let Ok(NetEvent::GossipData(_)) = received.recv().await {
-                    break;
-                }
-            }
-        })
-        .await
-        .is_err());
+        wait_for_command_processing(&mock, observed).await;
+        assert!(matches!(
+            received.try_recv(),
+            Err(broadcast::error::TryRecvError::Empty)
+        ));
 
         mock.reconnect_node(sender_id, sender.clone()).await;
         sender
@@ -389,6 +413,7 @@ mod tests {
         assert!(matches!(recovered, GossipData::GossipBytes(bytes) if bytes == [7]));
 
         let stale_key = ContentHash::from_content(b"stale");
+        let observed = mock.processed_commands.load(Ordering::Acquire);
         old_receiver
             .cmd_tx()
             .send(NetCommand::DhtPutRecord {
@@ -398,7 +423,7 @@ mod tests {
                 key: stale_key.clone(),
             })
             .unwrap();
-        tokio::time::sleep(Duration::from_millis(20)).await;
+        wait_for_command_processing(&mock, observed).await;
         assert!(!mock.store.read().await.contains_key(&stale_key));
     }
 }

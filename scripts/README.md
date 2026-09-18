@@ -2,6 +2,22 @@
 
 This directory contains utility scripts for the Interfold project.
 
+## Test harnesses
+
+`pnpm test:harnesses` checks runner results and prerequisite failures with local command stand-ins.
+`pnpm test:dappnode` runs the credential and healthcheck regressions. It requires Node.js, `jq`, and
+`envsubst`. CI installs these prerequisites and runs the DAppNode suite on every pull request.
+
+`bash scripts/run-crisp-test.sh` tests committed `HEAD` in a temporary Git worktree. It rejects
+pending source changes and installs the test CLI only in that temporary directory. It does not reset
+the caller's checkout or replace the installed CLI. A successful run removes the temporary files. A
+failed run retains them and prints their path for inspection. The CRISP services still use local
+ports, so run this workflow on an isolated test machine.
+
+The sale rehearsal (`scripts/cca-demo.sh`) remains a funded Sepolia workflow. Runner regressions
+check its configuration branches and compilation failure with command stand-ins. They never deploy
+contracts, place bids, or propose Safe transactions.
+
 ## Version Bumper
 
 `bump-versions.ts` - Bumps the versions of all packages and crates in the project.

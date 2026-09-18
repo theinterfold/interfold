@@ -74,13 +74,12 @@ mod tests {
     const ARC_KEY: TypedKey<Arc<String>> = TypedKey::new("arc_value");
 
     #[test]
-    fn test_basic_insert_and_get() {
+    fn same_name_with_the_wrong_type_is_not_returned() {
         let mut map = HetrogenousMap::new();
-        map.insert(STRING_KEY, "hello".to_string());
         map.insert(INT_KEY, 42);
 
-        assert_eq!(map.get(STRING_KEY), Some(&"hello".to_string()));
-        assert_eq!(map.get(INT_KEY), Some(&42));
+        let wrong_type = TypedKey::<String>::new("int_value");
+        assert_eq!(map.get(wrong_type), None);
     }
 
     #[test]

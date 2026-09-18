@@ -5,6 +5,47 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use super::*;
+use crate::replay_spool::ReplaySpool;
+use actix::{Actor, Handler, ResponseFuture};
+use e3_events::{EventContextSeq, Subscribe};
+use std::{
+    collections::HashMap,
+    future::{poll_fn, Future},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    task::Poll,
+    time::Duration,
+};
+use tokio::sync::oneshot;
+
+async fn load_replay_fixture(events: Vec<InterfoldEvent>) -> anyhow::Result<ReplaySpool> {
+    let cursors: HashMap<_, _> = events
+        .iter()
+        .map(|event| (event.aggregate_id(), 0))
+        .collect();
+    let config = cursors.keys().map(|id| (*id, Duration::ZERO)).collect();
+    // Keep fixture ingestion separate from the destination's clock, deduplication, and history.
+    let source = EventSystem::new()
+        .with_fresh_bus()
+        .with_aggregate_config(e3_events::AggregateConfig::new(config));
+    let source_bus = source.handle()?.enable("replay-fixture-source");
+    for event in &events {
+        source_bus
+            .naked_dispatch_async(event.clone_unsequenced())
+            .await?;
+    }
+    source_bus.flush_event_pipeline().await?;
+
+    let spool = ReplaySpool::load(&source.eventstore_reader()?.seq(), cursors).await?;
+    assert_eq!(
+        spool.total_events(),
+        events.len(),
+        "Load every fixture event from EventStore"
+    );
+    Ok(spool)
+}
 
 #[actix::test]
 async fn router_checkpoint_advances_without_losing_state() -> anyhow::Result<()> {
@@ -76,43 +117,52 @@ async fn infrastructure_events_are_filtered_during_replay() -> anyhow::Result<()
     let events: Vec<InterfoldEvent> = vec![
         InterfoldEvent::<Unsequenced>::test_event("before")
             .id(1)
+            .ts(1)
             .seq(1)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("sync")
             .data(SyncEnded::new())
+            .ts(2)
             .seq(2)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("fx")
             .data(EffectsEnabled::new())
+            .ts(3)
             .seq(3)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("evm")
             .data(make_historical_evm_sync_start())
+            .ts(4)
             .seq(4)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("net-start")
             .data(HistoricalNetSyncStart::new(BTreeMap::new()))
+            .ts(5)
             .seq(5)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("net-complete")
             .data(HistoricalNetSyncEventsReceived::new(Vec::new()))
+            .ts(6)
             .seq(6)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("sync-effect")
             .data(SyncEffect::new())
+            .ts(7)
             .seq(7)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("net-ready")
             .data(NetReady::new())
+            .ts(8)
             .seq(8)
             .build(),
         InterfoldEvent::<Unsequenced>::test_event("after")
             .id(2)
+            .ts(9)
             .seq(9)
             .build(),
     ];
 
-    let replayed = replay_eventstore_events(&bus, events).await?;
+    let replayed = load_replay_fixture(events).await?.replay(&bus).await?;
     assert_eq!(replayed, 2);
 
     let received = history.send(TakeEvents::new(2)).await?;
@@ -157,7 +207,10 @@ async fn empty_net_sync_completes_after_restart() -> anyhow::Result<()> {
         .build();
     let stale_event_id = stale_completion.id();
 
-    let replayed = replay_eventstore_events(&bus, vec![stale_completion]).await?;
+    let replayed = load_replay_fixture(vec![stale_completion])
+        .await?
+        .replay(&bus)
+        .await?;
     assert_eq!(replayed, 0);
 
     let completion = bus.wait_for(EventType::HistoricalNetSyncEventsReceived);
@@ -332,12 +385,13 @@ async fn replay_backlog_larger_than_event_bus_mailbox_is_delivered() -> anyhow::
         .map(|i| {
             InterfoldEvent::<Unsequenced>::test_event("replay")
                 .id(i as u64 + 1)
+                .ts(i as u128 + 1)
                 .seq(i as u64 + 1)
                 .build()
         })
         .collect();
 
-    let replayed = replay_eventstore_events(&bus, events).await?;
+    let replayed = load_replay_fixture(events).await?.replay(&bus).await?;
     assert_eq!(replayed, count);
 
     let received = history.send(TakeEvents::new(count)).await?;
@@ -372,7 +426,7 @@ async fn replay_restores_global_timestamp_order_across_aggregates() -> anyhow::R
             .build(),
     ];
 
-    replay_eventstore_events(&bus, events).await?;
+    load_replay_fixture(events).await?.replay(&bus).await?;
 
     let received = history.send(TakeEvents::new(3)).await?;
     let timestamps = received
@@ -397,8 +451,114 @@ async fn replay_seeds_clock_from_post_snapshot_log_history() -> anyhow::Result<(
         .seq(1)
         .build()];
 
-    replay_eventstore_events(&bus, events).await?;
+    load_replay_fixture(events).await?.replay(&bus).await?;
 
     assert!(HlcTimestamp::from(bus.ts()?) > durable);
+    Ok(())
+}
+
+#[actix::test]
+async fn replay_preserves_aggregate_sequence_when_timestamps_regress() -> anyhow::Result<()> {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("test-sequence-first-replay");
+    let history = bus.history();
+    let events = [(1, 1, 200), (2, 1, 100), (3, 2, 150), (4, 2, 200)]
+        .into_iter()
+        .map(|(id, aggregate, timestamp)| {
+            InterfoldEvent::<Unsequenced>::test_event("sequence first")
+                .id(id)
+                .aggregate_id(aggregate)
+                .ts(timestamp)
+                .seq(if id == 2 || id == 4 { 2 } else { 1 })
+                .build()
+        })
+        .collect();
+
+    assert_eq!(load_replay_fixture(events).await?.replay(&bus).await?, 4);
+    let received = history.send(TakeEvents::new(4)).await?;
+    assert!(!received.timed_out);
+    let actual = received
+        .events
+        .iter()
+        .map(|event| (event.aggregate_id(), event.seq(), event.ts()))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        actual,
+        vec![
+            (AggregateId::new(2), 1, 150),
+            (AggregateId::new(1), 1, 200),
+            (AggregateId::new(1), 2, 100),
+            (AggregateId::new(2), 2, 200),
+        ]
+    );
+    Ok(())
+}
+
+struct GatedReplaySubscriber {
+    started: Option<oneshot::Sender<()>>,
+    release: Option<oneshot::Receiver<()>>,
+    completed: Arc<AtomicBool>,
+}
+
+impl Actor for GatedReplaySubscriber {
+    type Context = actix::Context<Self>;
+}
+
+impl Handler<InterfoldEvent> for GatedReplaySubscriber {
+    type Result = ResponseFuture<()>;
+
+    fn handle(&mut self, _: InterfoldEvent, _: &mut Self::Context) -> Self::Result {
+        let started = self.started.take().expect("one replay event");
+        let release = self.release.take().expect("one replay event");
+        let completed = Arc::clone(&self.completed);
+        Box::pin(async move {
+            started.send(()).expect("replay test is waiting");
+            release.await.expect("replay test releases the subscriber");
+            completed.store(true, Ordering::SeqCst);
+        })
+    }
+}
+
+#[actix::test]
+async fn replay_waits_for_the_final_subscriber() -> anyhow::Result<()> {
+    let system = EventSystem::new().with_fresh_bus();
+    let bus = system.handle()?.enable("test-replay-acknowledgement");
+    let (started_tx, started_rx) = oneshot::channel();
+    let (release_tx, release_rx) = oneshot::channel();
+    let completed = Arc::new(AtomicBool::new(false));
+    let subscriber = GatedReplaySubscriber {
+        started: Some(started_tx),
+        release: Some(release_rx),
+        completed: Arc::clone(&completed),
+    }
+    .start();
+    bus.event_bus()
+        .send(Subscribe::new(EventType::TestEvent, subscriber.recipient()))
+        .await?;
+
+    let event = InterfoldEvent::<Unsequenced>::test_event("final replay event")
+        .seq(1)
+        .build();
+    let spool = load_replay_fixture(vec![event]).await?;
+    let mut replay = Box::pin(spool.replay(&bus));
+    tokio::time::timeout(Duration::from_secs(5), async {
+        tokio::select! {
+            biased;
+            result = &mut replay => panic!("Replay completed before its subscriber: {result:?}"),
+            started = started_rx => started.expect("subscriber must start"),
+        }
+        assert!(
+            poll_fn(|cx| Poll::Ready(replay.as_mut().poll(cx).is_pending())).await,
+            "Replay must remain pending while its final subscriber is blocked"
+        );
+        release_tx.send(()).expect("subscriber is waiting");
+        assert_eq!(replay.await?, 1);
+        assert!(
+            completed.load(Ordering::SeqCst),
+            "The final subscriber must finish before replay returns"
+        );
+        Ok::<_, anyhow::Error>(())
+    })
+    .await??;
     Ok(())
 }

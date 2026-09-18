@@ -134,14 +134,18 @@ fn a_poisoned_entry_does_not_freeze_the_slot() {
     );
 }
 
-/// A mask cannot reach back past a re-vote to restore the ballot it replaced.
+/// The first usable sibling keeps the slot, so a stale sibling cannot restore an older ballot.
 ///
 /// The attack this rules out: a voter casts A, re-votes B, and a third party then masks the
 /// *original* entry rather than the re-vote. A mask adds zero, so its plaintext is whatever its
 /// parent held — taking it would put A back in the slot and erase B. No signature is needed to
 /// publish a mask, so anyone could do it to anyone.
+///
+/// The same sequence also represents a mask landing before a re-vote that was built against the
+/// old parent. Entry labels are private circuit inputs, so selection can only apply one ordering
+/// rule: the earlier usable sibling wins and the later sibling must be retried against that head.
 #[test]
-fn a_mask_cannot_reach_back_past_a_re_vote() {
+fn the_first_usable_sibling_keeps_the_slot() {
     // vote A at 0, re-vote B at 1, then a mask naming 0 instead of 1.
     assert_eq!(
         select(&[good(1, None), good(1, Some(0)), good(1, Some(0))]),
@@ -178,27 +182,6 @@ fn an_entry_naming_another_slots_parent_is_dropped() {
         select(&[good(1, None), good(2, Some(0))]),
         vec![0],
         "slot 2 cannot extend slot 1's entry"
-    );
-}
-
-/// The same rule seen from the other side: whichever sibling lands first keeps the slot.
-///
-/// Reverse the order of the previous test and the mask is the one that wins, so a re-vote built
-/// before it landed is dropped and has to be published again against the new head.
-///
-/// That asymmetry is deliberate, not an oversight. A stale parent is indistinguishable from a
-/// sibling built a moment earlier: both name an entry that is no longer the head, and only the
-/// circuit knows whether an entry replaces the slot or adds to it — which is exactly what
-/// `is_mask_vote` keeps private. Favouring the earlier sibling costs a dropped re-vote, which the
-/// voter can see and retry. Favouring the later one would let a mask on a superseded ciphertext
-/// restore it over a vote, which is a silent tally corruption nobody can detect or undo.
-#[test]
-fn whichever_sibling_lands_first_keeps_the_slot() {
-    // vote A at 0, a mask naming 0 at 1, then a re-vote that also names 0.
-    assert_eq!(
-        select(&[good(1, None), good(1, Some(0)), good(1, Some(0))]),
-        vec![1],
-        "the mask got there first, so the re-vote behind it is dropped"
     );
 }
 

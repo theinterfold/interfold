@@ -10,7 +10,6 @@
 //     `requestBlock - 1`, so operators cannot top up tickets after
 //     `requestCommittee` to inflate their selection weight.
 import { expect } from "chai";
-import type { Signer } from "ethers";
 
 import {
   ACTIVE_CRYPTO_CONFIG_ID,
@@ -25,46 +24,6 @@ const { loadFixture, time, mine } = networkHelpers;
 const inputWindowDuration = 300;
 const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 let firstE3Id: bigint;
-
-// Local helper — allows ticketAmount = 0 (the snapshot-eligibility test
-// registers a latecomer with zero tickets, which the shared fixture
-// helper does not support).
-async function fundOperator(
-  operator: Signer,
-  bondOwner: Signer,
-  bondingRegistry: any,
-  ciphernodeBondToken: any,
-  feeToken: any,
-  ticketToken: any,
-  registry: any,
-  ticketAmount: bigint,
-) {
-  const operatorAddress = await operator.getAddress();
-  const bondOwnerAddress = await bondOwner.getAddress();
-  await ciphernodeBondToken.mint(
-    bondOwnerAddress,
-    ethers.parseEther("10000"),
-    ethers.encodeBytes32String("Test allocation"),
-  );
-  await feeToken.mint(bondOwnerAddress, ethers.parseUnits("1000000", 6));
-  await bondingRegistry.connect(operator).setBondOwner(bondOwnerAddress);
-  await ciphernodeBondToken
-    .connect(bondOwner)
-    .approve(await bondingRegistry.getAddress(), ethers.parseEther("2000"));
-  await bondingRegistry
-    .connect(bondOwner)
-    .bondCiphernodeFor(operatorAddress, ethers.parseEther("1000"));
-  await bondingRegistry.connect(bondOwner).registerOperatorFor(operatorAddress);
-  if (ticketAmount > 0n) {
-    await feeToken
-      .connect(bondOwner)
-      .approve(await ticketToken.getAddress(), ticketAmount);
-    await bondingRegistry
-      .connect(bondOwner)
-      .addTicketBalanceFor(operatorAddress, ticketAmount);
-  }
-  await registry.addCiphernode(operatorAddress);
-}
 
 async function deployStack() {
   const sys = await deployInterfoldSystem({
@@ -84,6 +43,9 @@ async function deployStack() {
     usdcToken: feeToken,
     mocks: { e3Program, decryptionVerifier },
   } = sys;
+  if (!op1 || !op2 || !op3) {
+    throw new Error("The sortition fixture requires three operators.");
+  }
   const [, , , , , treasury, other] = await ethers.getSigners();
   const treasuryAddress = await treasury.getAddress();
   const interfoldAddress = await interfold.getAddress();
@@ -298,64 +260,62 @@ describe("Sortition & E3 lifecycle", function () {
 
   describe("snapshot-based ticket eligibility", function () {
     it("operator cannot inflate ticket weight after request via post-request deposits", async function () {
-      // Set the operator's snapshot ticket balance to zero, request a
-      // committee, then top them up to a passing balance. The
-      // `_validateNodeEligibility` snapshot at `requestBlock - 1` must
-      // still see zero and reject submission.
       const ctx = await loadFixture(deployStack);
       const {
+        owner,
+        op1,
         ciphernodeRegistry,
         bondingRegistry,
         ticketToken,
         feeToken,
-        ciphernodeBondToken,
         makeRequest,
       } = ctx;
-
-      const allSigners = await ethers.getSigners();
-      const latecomer = allSigners[allSigners.length - 1];
-      const latecomerAddress = await latecomer.getAddress();
-
-      // Register the latecomer with ZERO tickets (still bonded + registered)
-      // so they appear in the ciphernode set but have no snapshot weight.
-      await fundOperator(
-        latecomer,
-        ctx.owner,
-        bondingRegistry,
-        ciphernodeBondToken,
-        feeToken,
-        ticketToken,
-        ciphernodeRegistry,
-        0n,
-      );
-      await mine(1);
+      const operatorAddress = await op1.getAddress();
 
       const tx = await makeRequest();
       await tx.wait();
       const e3Id = firstE3Id;
-      const { requestBlock } =
+      const { requestBlock, ticketPrice } =
         await ciphernodeRegistry.getSortitionRequest(e3Id);
-
-      // Now the latecomer adds tickets *after* requestBlock — the snapshot
-      // at requestBlock - 1 should still be zero.
-      const ticketAmount = ethers.parseUnits("100", 6);
-      await feeToken
-        .connect(ctx.owner)
-        .approve(await ticketToken.getAddress(), ticketAmount);
-      await bondingRegistry
-        .connect(ctx.owner)
-        .addTicketBalanceFor(latecomerAddress, ticketAmount);
-
-      // Confirm snapshot returns zero at requestBlock - 1.
       const snapshot = await ticketToken.getPastVotes(
-        latecomerAddress,
+        operatorAddress,
         requestBlock - 1n,
       );
-      expect(snapshot).to.equal(0n);
+      const snapshotMaximum = snapshot / ticketPrice;
+      const [activeAtRequest] = await bondingRegistry.eligibilityAt(
+        operatorAddress,
+        requestBlock - 1n,
+      );
+      expect(activeAtRequest).to.equal(true);
+      expect(snapshotMaximum).to.be.greaterThan(0);
+
+      const ticketAmount = ticketPrice * 2n;
+      await feeToken
+        .connect(owner)
+        .approve(await ticketToken.getAddress(), ticketAmount);
+      await bondingRegistry
+        .connect(owner)
+        .addTicketBalanceFor(operatorAddress, ticketAmount);
+
+      expect(await bondingRegistry.isActive(operatorAddress)).to.equal(true);
+      expect(
+        await ciphernodeRegistry.isCiphernodeEligible(operatorAddress),
+      ).to.equal(true);
+      expect(
+        await ticketToken.getVotes(operatorAddress),
+      ).to.be.greaterThanOrEqual((snapshotMaximum + 1n) * ticketPrice);
+      expect(
+        await ticketToken.getPastVotes(operatorAddress, requestBlock - 1n),
+      ).to.equal(snapshot);
 
       await expect(
-        ciphernodeRegistry.connect(latecomer).submitTicket(e3Id, 1),
-      ).to.be.revertedWithCustomError(ciphernodeRegistry, "NodeNotEligible");
+        ciphernodeRegistry
+          .connect(op1)
+          .submitTicket(e3Id, snapshotMaximum + 1n),
+      ).to.be.revertedWithCustomError(
+        ciphernodeRegistry,
+        "InvalidTicketNumber",
+      );
     });
   });
 });

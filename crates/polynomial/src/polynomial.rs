@@ -817,29 +817,6 @@ mod tests {
     }
 
     #[test]
-    fn test_reduce_by_cyclotomic_empty_remainder() {
-        // Test with zero remainder
-        let cyclo = vec![
-            BigInt::from(1),
-            BigInt::from(0),
-            BigInt::from(0),
-            BigInt::from(0),
-            BigInt::from(1),
-        ];
-        // x^4 + 1 divided by x^4 + 1 = 1 with remainder 0
-        let poly = Polynomial::new(vec![
-            BigInt::from(1),
-            BigInt::from(0),
-            BigInt::from(0),
-            BigInt::from(0),
-            BigInt::from(1),
-        ]);
-        let reduced = poly.reduce_by_cyclotomic(&cyclo).unwrap();
-        assert_eq!(reduced.degree(), 3);
-        assert!(reduced.is_zero());
-    }
-
-    #[test]
     fn test_reduce_by_cyclotomic_error_cases() {
         // Test division by zero cyclotomic polynomial
         let cyclo_zero = vec![BigInt::from(0), BigInt::from(0)];

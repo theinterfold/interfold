@@ -360,12 +360,10 @@ cargo run --bin e3-support-app
 ## Testing
 
 ```bash
-# Test the HTTP endpoint with a fixture payload
-./curl_test.sh
+cargo test --manifest-path host/Cargo.toml
 ```
 
-`fixtures/payload.json` is out of date and the request fails to deserialize. Use the Step 7 body
-until the fixture is refreshed.
+See `host/README.md` for the external guest fixture needed by the ignored compatibility test.
 
 NOTE: This is outside of the main workspace because it needs to be run within its own context in
 order to isolate risc0.

@@ -145,7 +145,7 @@ impl AccusationVoting {
         }
     }
 
-    pub(super) fn sign_vote_digest(
+    pub(crate) fn sign_vote_digest(
         &self,
         vote: &AccusationVote,
     ) -> Result<Vec<u8>, alloy::signers::Error> {
@@ -209,7 +209,7 @@ impl AccusationVoting {
         keccak256(&buf).into()
     }
 
-    pub(super) fn verify_vote_signature(&self, vote: &AccusationVote) -> bool {
+    pub(crate) fn verify_vote_signature(&self, vote: &AccusationVote) -> bool {
         let digest = Self::vote_digest(vote, self.slashing_manager);
         let sig =
             match alloy::primitives::Signature::try_from(vote.signature.extract_bytes().as_ref()) {

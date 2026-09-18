@@ -52,14 +52,38 @@ describe("Protocol deployment", function () {
     );
   });
 
-  it("updates the node release policy only when the release advances", function () {
-    const release = { protocolVersion: 3, nodeGeneration: 1 };
+  it("requires every node-release dimension to stay monotonic", function () {
+    expect(
+      requiresNodeReleasePolicyUpdate(
+        { protocolVersion: 3, nodeGeneration: 2 },
+        3n,
+        1n,
+      ),
+    ).to.equal(true);
+    expect(
+      requiresNodeReleasePolicyUpdate(
+        { protocolVersion: 3, nodeGeneration: 2 },
+        3n,
+        2n,
+      ),
+    ).to.equal(false);
+    expect(
+      requiresNodeReleasePolicyUpdate(
+        { protocolVersion: 4, nodeGeneration: 3 },
+        3n,
+        2n,
+      ),
+    ).to.equal(true);
 
-    expect(requiresNodeReleasePolicyUpdate(release, 2n, 1n)).to.equal(true);
-    expect(requiresNodeReleasePolicyUpdate(release, 3n, 1n)).to.equal(false);
-    expect(() => requiresNodeReleasePolicyUpdate(release, 4n, 1n)).to.throw(
-      "cannot move backwards",
-    );
+    for (const release of [
+      { protocolVersion: 3, nodeGeneration: 1 },
+      { protocolVersion: 4, nodeGeneration: 1 },
+      { protocolVersion: 2, nodeGeneration: 3 },
+    ]) {
+      expect(() => requiresNodeReleasePolicyUpdate(release, 3n, 2n)).to.throw(
+        "cannot move backwards",
+      );
+    }
   });
 
   it("allows a named Sepolia rehearsal without weakening production capacity", function () {
@@ -919,32 +943,64 @@ describe("Protocol deployment", function () {
       result.contracts.randomnessProvider,
     );
     expect(await randomnessProvider.minimumSubscriptionBalance()).to.equal(1);
-    const randomnessCalls = [
-      [
-        result.contracts.randomnessProvider,
-        randomnessProvider.interface.getFunction("acceptOwnership")!.selector,
-      ],
-      [
-        await coordinator.getAddress(),
-        coordinator.interface.getFunction("addConsumer")!.selector,
-      ],
-      [
-        result.contracts.ciphernodeRegistry,
-        registry.interface.getFunction("setRandomnessRequestTimeout")!.selector,
-      ],
-      [
-        result.contracts.ciphernodeRegistry,
-        registry.interface.getFunction("setRandomnessProvider")!.selector,
-      ],
-    ] as const;
-    for (const [target, selector] of randomnessCalls) {
-      expect(
-        txs.filter(
-          (tx) =>
+    const findCall = (target: string, selector: string) =>
+      txs
+        .map((tx, index) => ({ tx, index }))
+        .filter(
+          ({ tx }) =>
             tx.to.toLowerCase() === target.toLowerCase() &&
             tx.data.startsWith(selector),
-        ),
-      ).to.have.lengthOf(1);
-    }
+        );
+    const acceptOwnership = findCall(
+      result.contracts.randomnessProvider,
+      randomnessProvider.interface.getFunction("acceptOwnership")!.selector,
+    );
+    const addConsumer = findCall(
+      await coordinator.getAddress(),
+      coordinator.interface.getFunction("addConsumer")!.selector,
+    );
+    const setTimeout = findCall(
+      result.contracts.ciphernodeRegistry,
+      registry.interface.getFunction("setRandomnessRequestTimeout")!.selector,
+    );
+    const setProvider = findCall(
+      result.contracts.ciphernodeRegistry,
+      registry.interface.getFunction("setRandomnessProvider")!.selector,
+    );
+
+    const onlyCall = <T>(calls: T[]): T => {
+      expect(calls).to.have.lengthOf(1);
+      return calls[0]!;
+    };
+    const acceptOwnershipCall = onlyCall(acceptOwnership);
+    const addConsumerCall = onlyCall(addConsumer);
+    const setTimeoutCall = onlyCall(setTimeout);
+    const setProviderCall = onlyCall(setProvider);
+    const acceptArgs = randomnessProvider.interface.decodeFunctionData(
+      "acceptOwnership",
+      acceptOwnershipCall.tx.data,
+    );
+    const consumerArgs = coordinator.interface.decodeFunctionData(
+      "addConsumer",
+      addConsumerCall.tx.data,
+    );
+    const timeoutArgs = registry.interface.decodeFunctionData(
+      "setRandomnessRequestTimeout",
+      setTimeoutCall.tx.data,
+    );
+    const providerArgs = registry.interface.decodeFunctionData(
+      "setRandomnessProvider",
+      setProviderCall.tx.data,
+    );
+    expect(acceptArgs).to.have.lengthOf(0);
+    expect(consumerArgs.subId).to.equal(subscriptionId);
+    expect(consumerArgs.consumer).to.equal(result.contracts.randomnessProvider);
+    expect(timeoutArgs.timeout).to.equal(
+      BigInt(config.randomness.requestTimeout),
+    );
+    expect(providerArgs.provider).to.equal(result.contracts.randomnessProvider);
+    expect(acceptOwnershipCall.index).to.be.lessThan(addConsumerCall.index);
+    expect(addConsumerCall.index).to.be.lessThan(setTimeoutCall.index);
+    expect(setTimeoutCall.index).to.be.lessThan(setProviderCall.index);
   });
 });

@@ -4,6 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
+import type { BigNumberish } from "ethers";
 
 import {
   ACTIVE_CRYPTO_CONFIG_ID,
@@ -65,6 +66,50 @@ describe("E3 Pricing", function () {
   const inputWindowDuration = 300;
   const abiCoder = ethers.AbiCoder.defaultAbiCoder();
 
+  function expectedQuote(
+    pricing: ReturnType<typeof toPlainConfig>,
+    timeout: {
+      dkgWindow: bigint;
+      computeWindow: bigint;
+      decryptionWindow: bigint;
+    },
+    sortitionWindow: bigint,
+    request: { inputWindow: readonly [BigNumberish, BigNumberish] },
+    requestTime: bigint,
+  ): bigint {
+    const n = 3n;
+    const h = 2n;
+    const inputStart = BigInt(request.inputWindow[0]);
+    const inputEnd = BigInt(request.inputWindow[1]);
+    const inputLength = inputEnd - inputStart;
+    const weightedPreCompute =
+      (sortitionWindow + inputLength) * 10_000n +
+      timeout.dkgWindow * BigInt(pricing.dkgUtilizationBps);
+    const reservedThroughInputEnd = (inputEnd - requestTime) * 10_000n;
+    const duration =
+      (maxBigInt(weightedPreCompute, reservedThroughInputEnd) +
+        timeout.computeWindow * BigInt(pricing.computeUtilizationBps) +
+        timeout.decryptionWindow * BigInt(pricing.decryptUtilizationBps)) /
+      10_000n;
+    const proofsPerNode = 14n + 4n * (n - 1n);
+    let baseFee = BigInt(pricing.keyGenFixedPerNode) * n;
+    baseFee += BigInt(pricing.keyGenPerEncryptionProof) * n * proofsPerNode;
+    baseFee += (BigInt(pricing.coordinationPerPair) * n * (n - 1n)) / 2n;
+    baseFee += BigInt(pricing.verificationPerProof) * n * proofsPerNode;
+    baseFee += BigInt(pricing.availabilityPerNodePerSec) * n * duration;
+    baseFee += BigInt(pricing.decryptionPerNode) * h;
+    baseFee += (BigInt(pricing.coordinationPerPair) * h * (h - 1n)) / 2n;
+    baseFee += BigInt(pricing.publicationBase);
+    return (
+      (baseFee * (10_000n + BigInt(pricing.marginBps))) / 10_000n +
+      BigInt(pricing.randomnessFlatFee)
+    );
+  }
+
+  function maxBigInt(left: bigint, right: bigint): bigint {
+    return left > right ? left : right;
+  }
+
   const setup = async () => {
     // Pricing.spec.ts historically used signers[5] as the treasury.
     const signers = await ethers.getSigners();
@@ -100,14 +145,6 @@ describe("E3 Pricing", function () {
   // ──────────────────────────────────────────────────────────────────────────
 
   describe("getE3Quote()", function () {
-    it("returns a fee based on BaseCosts, committee size, and duration", async function () {
-      const { interfold, request } = await loadFixture(setup);
-
-      const fee = await interfold.getE3Quote(request);
-      // Fee must be > 0 with default baseCosts
-      expect(fee).to.be.gt(0);
-    });
-
     it("computes fee correctly using the parametric formula", async function () {
       const { interfold, request, ciphernodeRegistryContract } =
         await loadFixture(setup);
@@ -246,15 +283,25 @@ describe("E3 Pricing", function () {
     });
 
     it("updates config and emits event", async function () {
-      const { interfold } = await loadFixture(setup);
+      const { interfold, request, ciphernodeRegistryContract } =
+        await loadFixture(setup);
       const newConfig = {
-        ...defaultPricingConfig,
-        keyGenFixedPerNode: 100000n,
-        keyGenPerEncryptionProof: 50000n,
-        coordinationPerPair: 10000n,
-        availabilityPerNodePerSec: 40n,
-        decryptionPerNode: 300000n,
-        publicationBase: 1000000n,
+        keyGenFixedPerNode: 101_003n,
+        keyGenPerEncryptionProof: 50_107n,
+        coordinationPerPair: 10_109n,
+        availabilityPerNodePerSec: 61n,
+        decryptionPerNode: 300_149n,
+        publicationBase: 1_000_151n,
+        verificationPerProof: 5_157n,
+        protocolTreasury: ADDRESS_ONE,
+        marginBps: 1_103n,
+        protocolShareBps: 103n,
+        dkgUtilizationBps: 2_603n,
+        computeUtilizationBps: 4_907n,
+        decryptUtilizationBps: 2_509n,
+        minCommitteeSize: 3n,
+        minThreshold: 2n,
+        randomnessFlatFee: 1_000_163n,
       };
 
       await expect(setPricingConfig(interfold, newConfig)).to.emit(
@@ -262,13 +309,16 @@ describe("E3 Pricing", function () {
         "FeeAssetConfigUpdated",
       );
 
-      const stored = await interfold.getPricingConfig();
-      expect(stored.keyGenFixedPerNode).to.equal(100000n);
-      expect(stored.keyGenPerEncryptionProof).to.equal(50000n);
-      expect(stored.coordinationPerPair).to.equal(10000n);
-      expect(stored.availabilityPerNodePerSec).to.equal(40n);
-      expect(stored.decryptionPerNode).to.equal(300000n);
-      expect(stored.publicationBase).to.equal(1000000n);
+      const stored = toPlainConfig(await interfold.getPricingConfig());
+      expect(stored).to.deep.equal(newConfig);
+
+      const timeout = await interfold.getTimeoutConfig();
+      const sortitionWindow =
+        await ciphernodeRegistryContract.sortitionSubmissionWindow();
+      const requestTime = BigInt(await time.latest());
+      expect(await interfold.getE3Quote(request)).to.equal(
+        expectedQuote(stored, timeout, sortitionWindow, request, requestTime),
+      );
     });
 
     it("updates the token scale and raw-unit prices together", async function () {

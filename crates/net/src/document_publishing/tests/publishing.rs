@@ -85,9 +85,10 @@ async fn canonical_dkg_end_suppresses_late_publication() -> Result<()> {
     .into_sequenced(2);
     publisher.send(late).await?;
 
-    assert!(timeout(Duration::from_millis(200), commands.recv())
-        .await
-        .is_err());
+    assert!(matches!(
+        commands.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
     Ok(())
 }
 
@@ -120,9 +121,10 @@ async fn late_c4_document_is_rejected_after_key_published() -> Result<()> {
     .into_sequenced(2);
     publisher.send(publication).await?;
 
-    assert!(timeout(Duration::from_millis(200), commands.recv())
-        .await
-        .is_err());
+    assert!(matches!(
+        commands.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
     Ok(())
 }
 
@@ -181,9 +183,11 @@ async fn key_publication_cancels_an_inflight_dkg_announcement() -> Result<()> {
         timeout(Duration::from_secs(1), commands.recv()).await?,
         Some(NetCommand::DhtRemoveRecords { keys }) if keys.contains(&key)
     ));
-    assert!(timeout(Duration::from_millis(200), commands.recv())
-        .await
-        .is_err());
+    publisher.send(PublisherBarrier).await?;
+    assert!(matches!(
+        commands.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
     Ok(())
 }
 
@@ -262,7 +266,8 @@ async fn test_publishes_document() -> Result<()> {
 
 #[actix::test]
 async fn unavailable_gossip_peer_does_not_lose_the_publication() -> Result<()> {
-    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, _, _, _) = setup_test()?;
+    tokio::time::pause();
+    let (_guard, bus, _net_cmd_tx, mut commands, net_events, _, _, _, publisher) = setup_test()?;
     let value = ArcBytes::from_bytes(b"retryable document");
     let key = ContentHash::from_content(&value);
     bus.publish_without_context(PublishDocumentRequested {
@@ -293,9 +298,11 @@ async fn unavailable_gossip_peer_does_not_lose_the_publication() -> Result<()> {
         correlation_id,
         error: Arc::new(GossipPublishFailure::NoPeersSubscribed),
     })?;
+    publisher.send(PublisherBarrier).await?;
+    tokio::time::advance(RETRY_INTERVAL).await;
 
     assert!(matches!(
-        timeout(Duration::from_secs(20), commands.recv()).await?,
+        timeout(Duration::from_secs(1), commands.recv()).await?,
         Some(NetCommand::DhtPutRecord { key: next_key, .. }) if next_key == key
     ));
     Ok(())
