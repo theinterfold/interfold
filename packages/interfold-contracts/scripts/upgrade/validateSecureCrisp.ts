@@ -8,7 +8,7 @@ import {
   CRISP_MIN_VOTING_DURATION_SECONDS,
   availVectorXForChain,
 } from "../dataAvailability";
-import { connect } from "../protocol/cli";
+import { connect, hasFlag } from "../protocol/cli";
 import { BFV_PARAMS, ZERO } from "../protocol/constants";
 import {
   deploymentPath,
@@ -365,11 +365,20 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     BigInt(plan.registeredOperatorCount),
     "registered bonding operators",
   );
-  equalValue(
-    await bonding.numActiveOperators(),
-    BigInt(plan.activeOperatorCount),
-    "active bonding operators",
-  );
+  const activeOperatorCount = await bonding.numActiveOperators();
+  if (plan.nodeReleasePolicyUpdated) {
+    if (activeOperatorCount > BigInt(plan.registeredOperatorCount)) {
+      throw new Error(
+        `Active bonding operators exceed registrations: ${activeOperatorCount} > ${plan.registeredOperatorCount}`,
+      );
+    }
+  } else {
+    equalValue(
+      activeOperatorCount,
+      BigInt(plan.preUpgradeActiveOperatorCount),
+      "active bonding operators",
+    );
+  }
   equalValue(await registry.root(), BigInt(plan.registryRoot), "registry root");
   for (const [label, actual, expected] of [
     [
@@ -665,20 +674,21 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
   if (!(await interfold.e3Programs(plan.crispProgram))) {
     throw new Error("CRISP program is not registered");
   }
-  const initialE3Program = deployment.initialE3Program;
-  if (initialE3Program.toLowerCase() !== plan.crispProgram.toLowerCase()) {
-    if (plan.retiredE3Program) {
-      equalAddress(
-        plan.retiredE3Program,
-        initialE3Program,
-        "retired initial E3 program",
+  for (const program of plan.retiredE3Programs) {
+    if (program.toLowerCase() === plan.crispProgram.toLowerCase()) {
+      throw new Error("Upgrade plan cannot retire the active CRISP program");
+    }
+    if (await interfold.e3Programs(program)) {
+      throw new Error(
+        `Retired E3 program still accepts new requests: ${program}`,
       );
     }
+  }
+  const initialE3Program = deployment.initialE3Program;
+  if (initialE3Program.toLowerCase() !== plan.crispProgram.toLowerCase()) {
     if (await interfold.e3Programs(initialE3Program)) {
       throw new Error("Initial E3 program still accepts new requests");
     }
-  } else if (plan.retiredE3Program) {
-    throw new Error("Upgrade plan cannot retire the active CRISP program");
   }
   equalAddress(
     String(
@@ -954,12 +964,17 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
   deployment.dkgVerifierRelationsLib = first.dkgVerifierRelationsLib;
   deployment.decryptionVerifierRelationsLib =
     first.decryptionVerifierRelationsLib;
-  writeJson(deploymentFile, deployment);
+  if (!hasFlag("check-only")) {
+    writeJson(deploymentFile, deployment);
+  }
 
   console.log(`
 Secure CRISP activation validated
   crypto config:       ${PRODUCTION_BFV_CONFIG.configId}
-  operators preserved: ${plan.activeOperatorCount}/${plan.registeredOperatorCount}
+  operators registered: ${plan.registeredOperatorCount}
+  active before upgrade: ${plan.preUpgradeActiveOperatorCount}
+  active now:            ${activeOperatorCount}
+  release acknowledgement: ${plan.nodeReleasePolicyUpdated ? "required before requests resume" : "not required"}
   registry root:       ${plan.registryRoot}
   slashing manager:    ${plan.slashingManager}
   VRF provider:        ${plan.randomnessProvider}
