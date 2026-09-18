@@ -115,7 +115,10 @@ async fn restrict_permissions(_path: &Path) -> Result<()> {
 async fn event_log_paths(log_file: &Path) -> Result<Vec<PathBuf>> {
     let mut paths = Vec::new();
     // The un-enumerated path is included for older layouts that wrote to it directly.
-    if fs::try_exists(log_file).await.unwrap_or(false) {
+    if fs::try_exists(log_file)
+        .await
+        .with_context(|| format!("failed to inspect {}", log_file.display()))?
+    {
         paths.push(log_file.to_path_buf());
     }
 
@@ -126,11 +129,22 @@ async fn event_log_paths(log_file: &Path) -> Result<Vec<PathBuf>> {
         return Ok(paths);
     };
 
+    // A missing parent means the node never wrote state, which is not an error. Any other failure
+    // is: treating an unreadable directory as empty would delete nothing, report success, and
+    // leave the event log beside a cleared key/value store — the exact state this command exists
+    // to avoid.
     let mut dir = match fs::read_dir(parent).await {
         Ok(dir) => dir,
-        Err(_) => return Ok(paths),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(paths),
+        Err(error) => {
+            return Err(error).with_context(|| format!("failed to read {}", parent.display()));
+        }
     };
-    while let Some(entry) = dir.next_entry().await? {
+    while let Some(entry) = dir
+        .next_entry()
+        .await
+        .with_context(|| format!("failed to read an entry in {}", parent.display()))?
+    {
         let name = entry.file_name();
         let Some(name) = name.to_str() else { continue };
         if matches_enumeration_of(file_name, name) {
@@ -144,8 +158,10 @@ async fn event_log_paths(log_file: &Path) -> Result<Vec<PathBuf>> {
 /// Whether `candidate` is `base` with an index inserted the way `enumerate_path` inserts one.
 ///
 /// Splits `base` at the same position `enumerate_path` splits it, then requires the candidate to
-/// be `<stem>.<digits><extension>` exactly. A sibling such as `log-backup`, `logs.txt`, `log.old`
-/// or `log.2.bak` therefore never matches.
+/// be `<stem>.<index><extension>`, where `<index>` is exactly how `usize` renders itself. A
+/// sibling such as `log-backup`, `logs.txt`, `log.old` or `log.2.bak` therefore never matches, and
+/// neither does a padded form such as `log.00`: `enumerate_path` formats a `usize`, which never
+/// emits a leading zero, so a padded name is some other file and must not be removed.
 fn matches_enumeration_of(base: &str, candidate: &str) -> bool {
     let (stem, extension) = match base.rfind('.') {
         Some(dot) => base.split_at(dot),
@@ -160,7 +176,11 @@ fn matches_enumeration_of(base: &str, candidate: &str) -> bool {
     let Some(index) = rest.strip_suffix(extension) else {
         return false;
     };
-    !index.is_empty() && index.chars().all(|c| c.is_ascii_digit())
+    // Round-trip through the same type `enumerate_path` formats, so the accepted set is exactly
+    // the set it can produce. This also rejects an index too large to be a real aggregate.
+    index
+        .parse::<usize>()
+        .is_ok_and(|parsed| parsed.to_string() == index)
 }
 
 async fn remove_if_present(path: &Path) -> Result<()> {
@@ -377,10 +397,13 @@ mod tests {
             ("log", "log.2.bak"),    // index plus a foreign extension
             ("log", "log."),         // empty index
             ("log", "log.1x"),       // not all digits
+            ("log", "log.00"),       // padded: `usize` never formats a leading zero
+            ("log", "log.007"),      // padded
             ("log", "prefix-log.1"), // different stem
             ("events.log", "events.log"),
-            ("events.log", "events.log.0"), // index appended, not inserted
-            ("events.log", "events.0.txt"), // wrong extension
+            ("events.log", "events.01.log"), // padded
+            ("events.log", "events.log.0"),  // index appended, not inserted
+            ("events.log", "events.0.txt"),  // wrong extension
             ("events.log", "events.old.log"),
         ] {
             assert!(
@@ -447,6 +470,40 @@ mod tests {
             .await
             .expect("collect paths");
         assert!(found.is_empty(), "expected no paths, got {found:?}");
+    }
+
+    /// An unreadable data directory must fail, not read as empty. Reporting "no logs" here would
+    /// let the reset clear the key/value store, skip the event log, and exit 0 — leaving the node
+    /// in the unmarked state the command exists to prevent.
+    ///
+    /// The directory is listable but not readable (`--x`), so `try_exists` on the log path
+    /// succeeds and the failure lands on `read_dir`. A `0o000` directory would fail at
+    /// `try_exists` instead and never exercise the enumeration path.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn fails_when_the_data_directory_cannot_be_read() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = tmp.path().join("data");
+        std::fs::create_dir(&dir).expect("create dir");
+        std::fs::create_dir(dir.join("log.0")).expect("create log");
+
+        // Execute without read: paths inside can be resolved, but the directory cannot be listed.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o111))
+            .expect("drop read permission");
+
+        let result = event_log_paths(&dir.join("log")).await;
+
+        // Restore before asserting so the tempdir can always clean itself up.
+        std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o755))
+            .expect("restore permissions");
+
+        let error = result.expect_err("an unlistable directory must not read as empty");
+        assert!(
+            error.to_string().contains("failed to read"),
+            "error should name the failed directory read, got: {error}"
+        );
     }
 
     /// The decisive check: let the production event system create the layout, then require the
