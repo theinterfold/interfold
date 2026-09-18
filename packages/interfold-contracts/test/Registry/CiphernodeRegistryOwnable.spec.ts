@@ -727,16 +727,11 @@ describe("CiphernodeRegistryOwnable", function () {
     it("keeps each E3 on its request-time fold verifier after rotation", async function () {
       const {
         owner,
-        notTheOwner,
         registry,
         interfold,
-        bondingRegistry,
-        ciphernodeBondToken,
-        ticketToken,
         usdcToken,
         mockE3Program,
         mockDecryptionVerifier,
-        nodeReleaseRegistry,
       } = await loadFixture(setup);
       const oldVerifier = await registry.dkgFoldAttestationVerifier();
 
