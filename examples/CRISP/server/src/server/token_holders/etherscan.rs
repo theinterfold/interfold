@@ -1580,6 +1580,10 @@ mod tests {
 
         let credited = EtherscanClient::assign_constant_balance(voters, U256::from(1));
         assert_eq!(credited.len(), 1);
+        assert_eq!(
+            credited[0].address,
+            "0x0000000000000000000000000000000000000001"
+        );
         assert_eq!(credited[0].balance, "1");
     }
 

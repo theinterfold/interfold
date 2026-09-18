@@ -99,6 +99,18 @@ mod tests {
         result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
     }
 
+    fn terminate_and_reap(pid: u32) {
+        // SAFETY: each test passes the PID of a child process that it started.
+        unsafe {
+            assert_eq!(libc::kill(pid as libc::pid_t, libc::SIGKILL), 0);
+            let mut status = 0;
+            assert_eq!(
+                libc::waitpid(pid as libc::pid_t, &mut status, 0),
+                pid as i32
+            );
+        }
+    }
+
     #[tokio::test]
     async fn dropping_the_last_child_handle_does_not_orphan_the_process() {
         let child = spawn_process("sh", vec!["-c".into(), "exec sleep 30".into()])
@@ -120,23 +132,51 @@ mod tests {
 
     #[tokio::test]
     async fn detached_process_survives_dropping_the_handle() {
-        let child = spawn_detached_process("sh", vec!["-c".into(), "exec sleep 30".into()])
-            .await
-            .unwrap();
+        let directory = tempfile::tempdir().unwrap();
+        let ready = directory.path().join("ready");
+        let proceed = directory.path().join("proceed");
+        let survived = directory.path().join("survived");
+        let child = spawn_detached_process(
+            "sh",
+            vec![
+                "-c".into(),
+                concat!(
+                    "printf ready > \"$1\"; ",
+                    "while [ ! -e \"$2\" ]; do sleep 0.01; done; ",
+                    "printf survived > \"$3\"; exec sleep 30"
+                )
+                .into(),
+                "detached-process-test".into(),
+                ready.to_string_lossy().into_owned(),
+                proceed.to_string_lossy().into_owned(),
+                survived.to_string_lossy().into_owned(),
+            ],
+        )
+        .await
+        .unwrap();
         let pid = child.id().unwrap();
 
-        drop(child);
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        assert!(process_exists(pid));
-
-        // SAFETY: the test owns this short-lived child process and reaps it immediately.
-        unsafe {
-            assert_eq!(libc::kill(pid as libc::pid_t, libc::SIGKILL), 0);
-            let mut status = 0;
-            assert_eq!(
-                libc::waitpid(pid as libc::pid_t, &mut status, 0),
-                pid as i32
-            );
+        let ready_result = tokio::time::timeout(Duration::from_secs(5), async {
+            while !ready.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+        if ready_result.is_err() {
+            terminate_and_reap(pid);
         }
+        ready_result.expect("detached child should signal that it is ready");
+
+        drop(child);
+        std::fs::write(&proceed, b"continue").unwrap();
+        let survived_result = tokio::time::timeout(Duration::from_secs(5), async {
+            while !survived.exists() {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await;
+
+        terminate_and_reap(pid);
+        survived_result.expect("detached child should continue after its handle is dropped");
     }
 }

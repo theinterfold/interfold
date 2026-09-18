@@ -8,6 +8,7 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-env-changed=FORCE_BUILD");
     println!("cargo:rerun-if-env-changed=E3_ZK_PROVER_SKIP_FIXTURE_BUILD");
+    println!("cargo:rerun-if-env-changed=E3_ZK_PROVER_FIXTURE_CARGO_TARGET_DIR");
     println!("cargo:rerun-if-changed=versions.json");
 
     if std::env::var("E3_ZK_PROVER_SKIP_FIXTURE_BUILD").as_deref() == Ok("1") {

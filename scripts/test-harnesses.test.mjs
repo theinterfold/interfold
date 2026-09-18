@@ -18,6 +18,50 @@ test('circuit tooling CI includes root package and lockfile changes', () => {
   for (const path of ['package.json', 'pnpm-lock.yaml']) assert.ok(paths.includes(path), `${path} must trigger circuit checks.`)
 })
 
+test('zk-prover fixture build preserves the lockfile and isolates nested Cargo', (t) => {
+  const f = fixture(t, 'crates/zk-prover/scripts/build_fixtures.sh')
+  const outerTarget = join(f.directory, 'outer-cargo-target')
+  const fixtureTarget = join(outerTarget, 'e3-zk-prover-fixtures')
+
+  f.write('fake-bin/git', `process.stdout.write(${JSON.stringify(`${f.directory}\n`)});`)
+  f.write(
+    'fake-bin/pnpm',
+    `
+const fs = require('node:fs');
+fs.appendFileSync(process.env.HARNESS_LOG, JSON.stringify({
+  args: process.argv.slice(2),
+  cargoTarget: process.env.CARGO_TARGET_DIR,
+}) + '\\n');
+`,
+  )
+  f.write(
+    'fake-bin/nargo',
+    `
+const fs = require('node:fs');
+fs.mkdirSync('target', { recursive: true });
+fs.writeFileSync('target/dummy.json', '{"file_map":{}}');
+`,
+  )
+  f.write('fake-bin/bb', 'process.exit(0);')
+  f.write(
+    'fake-bin/jq',
+    `
+let input = '';
+process.stdin.setEncoding('utf8');
+process.stdin.on('data', (chunk) => { input += chunk; });
+process.stdin.on('end', () => process.stdout.write(input));
+`,
+  )
+  mkdirSync(join(f.directory, 'crates/zk-prover/tests/fixtures/dummy'), { recursive: true })
+
+  const result = f.run([], { CARGO_TARGET_DIR: outerTarget })
+  assert.equal(result.status, 0, result.stderr)
+  assert.deepEqual(f.calls(), [
+    { args: ['install', '--frozen-lockfile'], cargoTarget: outerTarget },
+    { args: ['build:circuits'], cargoTarget: fixtureTarget },
+  ])
+})
+
 function fixture(t, script) {
   const directory = realpathSync(mkdtempSync(join(tmpdir(), 'interfold-harness-test-')))
   t.after(() => rmSync(directory, { recursive: true, force: true }))

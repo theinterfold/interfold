@@ -17,6 +17,15 @@
 
 Contract audit reports are kept in [`audits/`](./audits/).
 
+## Validation
+
+Run `pnpm validate:upgrade` after changing an upgradeable contract. The command
+compares the compiled storage layouts with the recorded layouts and fails on an
+incompatible change.
+
+The contracts do not currently accept third-party contract-account signatures.
+Add EIP-1271 coverage when a contract introduces that input boundary.
+
 ### Key Interfaces
 
 | Interface          | Description                                                                   |

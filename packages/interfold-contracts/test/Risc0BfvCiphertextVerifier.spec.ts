@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 import { expect } from "chai";
 
-import { ethers } from "./fixtures";
+import { ethers, networkHelpers } from "./fixtures";
 
 describe("Risc0BfvCiphertextVerifier", function () {
   const imageId = `0x${"44".repeat(32)}`;
@@ -33,7 +33,7 @@ describe("Risc0BfvCiphertextVerifier", function () {
     ).to.be.revertedWithCustomError(factory, "InvalidVerifier");
   });
 
-  it("verifies the exact E3 domain emitted by the compute guest", async function () {
+  it("forwards the exact seal, image ID, and wrapper-encoded E3 domain", async function () {
     const [publisher] = await ethers.getSigners();
     const risc0 = await ethers.deployContract("MockRisc0ComputeVerifier");
     const verifier = await ethers.deployContract("Risc0BfvCiphertextVerifier", [
@@ -42,6 +42,7 @@ describe("Risc0BfvCiphertextVerifier", function () {
     ]);
     const chainId = (await ethers.provider.getNetwork()).chainId;
     const e3Id = 7;
+    const seal = "0x1234";
     const journal = ethers.concat(
       [
         ethers.zeroPadValue(ethers.toBeHex(chainId), 32),
@@ -55,10 +56,10 @@ describe("Risc0BfvCiphertextVerifier", function () {
         inputRoot,
       ].map(encodeVec32),
     );
-    await risc0.setExpectedJournalDigest(ethers.sha256(journal));
+    await risc0.setExpectedCall(seal, imageId, ethers.sha256(journal));
     const proof = ethers.AbiCoder.defaultAbiCoder().encode(
       ["bytes", "bytes32", "bytes32"],
-      ["0x1234", paramsHash, inputRoot],
+      [seal, paramsHash, inputRoot],
     );
 
     expect(
@@ -94,5 +95,88 @@ describe("Risc0BfvCiphertextVerifier", function () {
         proof,
       ),
     ).to.be.revertedWithCustomError(risc0, "UnexpectedJournalDigest");
+
+    const wrongSealProof = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["bytes", "bytes32", "bytes32"],
+      ["0x1235", paramsHash, inputRoot],
+    );
+    await expect(
+      verifier.verify(
+        e3Id,
+        schemeId,
+        paramsHash,
+        committeePublicKey,
+        ciphertextHash,
+        ciphertextCommitment,
+        wrongSealProof,
+      ),
+    ).to.be.revertedWithCustomError(risc0, "UnexpectedSealHash");
+
+    const wrongImageVerifier = await ethers.deployContract(
+      "Risc0BfvCiphertextVerifier",
+      [await risc0.getAddress(), `0x${"45".repeat(32)}`],
+    );
+    await expect(
+      wrongImageVerifier.verify(
+        e3Id,
+        schemeId,
+        paramsHash,
+        committeePublicKey,
+        ciphertextHash,
+        ciphertextCommitment,
+        proof,
+      ),
+    ).to.be.revertedWithCustomError(risc0, "UnexpectedImageId");
+  });
+
+  it("accepts the pinned Rust compute-journal interoperability vector", async function () {
+    const publisherAddress = "0x1111111111111111111111111111111111111111";
+    const seal = "0x11223344";
+    const vectorSchemeId = `0x${"22".repeat(32)}`;
+    const vectorCommitteeKey = `0x${"33".repeat(32)}`;
+    const vectorCiphertextHash = ethers.hexlify(
+      Uint8Array.from({ length: 32 }, (_, index) => index),
+    );
+    const vectorCiphertextCommitment = ethers.hexlify(
+      Uint8Array.from({ length: 32 }, (_, index) => index + 32),
+    );
+    const vectorParamsHash =
+      "0xc5d2460186f7233c927e7db2dcc703c0e500b653ca82273b7bfad8045d85a470";
+    const vectorInputRoot =
+      "0x2134e76ac5d21aab186c2be1dd8f84ee880a1e46eaf712f9d371b6df22191f3e";
+    const vectorJournalDigest =
+      "0x4403934eb9404372d77f23454aeb4bb7f21bbe856c5c51fc3243f5e05cc2c702";
+
+    expect((await ethers.provider.getNetwork()).chainId).to.equal(31_337n);
+    await networkHelpers.setBalance(publisherAddress, ethers.parseEther("1"));
+    await networkHelpers.impersonateAccount(publisherAddress);
+    const publisher = await ethers.getSigner(publisherAddress);
+    const risc0 = await ethers.deployContract("MockRisc0ComputeVerifier");
+    const verifier = await ethers.deployContract("Risc0BfvCiphertextVerifier", [
+      await risc0.getAddress(),
+      imageId,
+    ]);
+    const publisherVerifier = await ethers.getContractAt(
+      "Risc0BfvCiphertextVerifier",
+      await verifier.getAddress(),
+      publisher,
+    );
+    await risc0.setExpectedCall(seal, imageId, vectorJournalDigest);
+    const proof = ethers.AbiCoder.defaultAbiCoder().encode(
+      ["bytes", "bytes32", "bytes32"],
+      [seal, vectorParamsHash, vectorInputRoot],
+    );
+
+    expect(
+      await publisherVerifier.verify.staticCall(
+        7,
+        vectorSchemeId,
+        vectorParamsHash,
+        vectorCommitteeKey,
+        vectorCiphertextHash,
+        vectorCiphertextCommitment,
+        proof,
+      ),
+    ).to.equal(true);
   });
 });

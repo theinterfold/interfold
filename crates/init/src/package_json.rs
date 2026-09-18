@@ -38,17 +38,6 @@ pub async fn get_version_from_package_json(file_path: &PathBuf) -> Result<String
         .ok_or_else(|| anyhow::anyhow!("version field not found or not a string"))
 }
 
-#[allow(dead_code)]
-fn validate_dependency_type(dep_type: &str) -> Result<()> {
-    match dep_type {
-        "dependencies" | "devDependencies" | "peerDependencies" => Ok(()),
-        _ => Err(anyhow::anyhow!(
-            "Invalid dependency type '{}'. Must be one of: dependencies, devDependencies, peerDependencies",
-            dep_type
-        )),
-    }
-}
-
 pub async fn add_package_to_json(
     file_path: &PathBuf,
     package_name: &str,
@@ -78,10 +67,34 @@ pub async fn add_package_to_json(
     Ok(())
 }
 
-#[test]
-fn test_validate_dependency_type() {
-    assert!(validate_dependency_type("dependencies").is_ok());
-    assert!(validate_dependency_type("devDependencies").is_ok());
-    assert!(validate_dependency_type("peerDependencies").is_ok());
-    assert!(validate_dependency_type("invalidType").is_err());
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn add_package_writes_each_dependency_section() {
+        let directory = tempfile::tempdir().unwrap();
+        let package_json = directory.path().join("package.json");
+        fs::write(&package_json, "{}\n").await.unwrap();
+
+        for (dependency_type, package, version) in [
+            (DependencyType::Dependencies, "runtime-package", "1.0.0"),
+            (
+                DependencyType::DevDependencies,
+                "development-package",
+                "2.0.0",
+            ),
+            (DependencyType::PeerDependencies, "peer-package", "3.0.0"),
+        ] {
+            add_package_to_json(&package_json, package, version, dependency_type)
+                .await
+                .unwrap();
+        }
+
+        let saved: Value =
+            serde_json::from_str(&fs::read_to_string(&package_json).await.unwrap()).unwrap();
+        assert_eq!(saved["dependencies"]["runtime-package"], "1.0.0");
+        assert_eq!(saved["devDependencies"]["development-package"], "2.0.0");
+        assert_eq!(saved["peerDependencies"]["peer-package"], "3.0.0");
+    }
 }

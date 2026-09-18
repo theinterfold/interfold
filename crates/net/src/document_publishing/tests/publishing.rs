@@ -85,9 +85,10 @@ async fn canonical_dkg_end_suppresses_late_publication() -> Result<()> {
     .into_sequenced(2);
     publisher.send(late).await?;
 
-    assert!(timeout(Duration::from_millis(200), commands.recv())
-        .await
-        .is_err());
+    assert!(matches!(
+        commands.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
     Ok(())
 }
 
@@ -120,9 +121,10 @@ async fn late_c4_document_is_rejected_after_key_published() -> Result<()> {
     .into_sequenced(2);
     publisher.send(publication).await?;
 
-    assert!(timeout(Duration::from_millis(200), commands.recv())
-        .await
-        .is_err());
+    assert!(matches!(
+        commands.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
     Ok(())
 }
 
@@ -181,9 +183,11 @@ async fn key_publication_cancels_an_inflight_dkg_announcement() -> Result<()> {
         timeout(Duration::from_secs(1), commands.recv()).await?,
         Some(NetCommand::DhtRemoveRecords { keys }) if keys.contains(&key)
     ));
-    assert!(timeout(Duration::from_millis(200), commands.recv())
-        .await
-        .is_err());
+    publisher.send(PublisherBarrier).await?;
+    assert!(matches!(
+        commands.try_recv(),
+        Err(mpsc::error::TryRecvError::Empty)
+    ));
     Ok(())
 }
 

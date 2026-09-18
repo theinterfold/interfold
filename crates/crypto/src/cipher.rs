@@ -226,27 +226,17 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn test_binary_data() -> Result<()> {
+    async fn test_binary_and_unicode_data() -> Result<()> {
         let cipher = Cipher::from_password("test_password").await?;
 
-        let data = vec![0xFF, 0x00, 0xAA, 0x55, 0x12, 0xED];
-
-        let encrypted = cipher.encrypt_data(&mut data.clone()).unwrap();
-        let decrypted = cipher.decrypt_data(&encrypted).unwrap();
-
-        assert_eq!(data, decrypted);
-        Ok(())
-    }
-
-    #[tokio::test]
-    async fn test_unicode_data() -> Result<()> {
-        let cipher = Cipher::from_password("test_password").await?;
-        let data = "Hello 🌍 привет 世界".as_bytes().to_vec();
-
-        let encrypted = cipher.encrypt_data(&mut data.clone()).unwrap();
-        let decrypted = cipher.decrypt_data(&encrypted).unwrap();
-
-        assert_eq!(data, decrypted);
+        for data in [
+            vec![0xFF, 0x00, 0xAA, 0x55, 0x12, 0xED],
+            "Hello 🌍 привет 世界".as_bytes().to_vec(),
+        ] {
+            let encrypted = cipher.encrypt_data(&mut data.clone()).unwrap();
+            let decrypted = cipher.decrypt_data(&encrypted).unwrap();
+            assert_eq!(data, decrypted);
+        }
         Ok(())
     }
 

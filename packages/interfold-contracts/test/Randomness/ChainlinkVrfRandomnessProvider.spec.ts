@@ -68,28 +68,54 @@ describe("ChainlinkVrfRandomnessProvider", function () {
     };
   }
 
-  it("records the response for the matching subscription request", async function () {
+  it("binds reverse-order responses to their request and E3", async function () {
     const { coordinator, provider, requesterSigner } = await setup();
-    const e3Id = 42n;
-    const randomWord = 123456789n;
+    const firstE3Id = 42n;
+    const secondE3Id = 73n;
+    const firstWord = 123456789n;
+    const secondWord = 987654321n;
 
-    await expect(provider.connect(requesterSigner).requestRandomness(e3Id))
+    await expect(provider.connect(requesterSigner).requestRandomness(firstE3Id))
       .to.emit(provider, "RandomnessRequested")
-      .withArgs(1, e3Id);
-    const fulfillment = await coordinator.fulfillRandomWordsWithOverride(
+      .withArgs(1, firstE3Id);
+    await expect(
+      provider.connect(requesterSigner).requestRandomness(secondE3Id),
+    )
+      .to.emit(provider, "RandomnessRequested")
+      .withArgs(2, secondE3Id);
+
+    const secondFulfillment = await coordinator.fulfillRandomWordsWithOverride(
+      2,
+      await provider.getAddress(),
+      [secondWord],
+    );
+    const secondReceipt = await secondFulfillment.wait();
+    if (!secondReceipt) throw new Error("second fulfillment receipt missing");
+    const firstFulfillment = await coordinator.fulfillRandomWordsWithOverride(
       1,
       await provider.getAddress(),
-      [randomWord],
+      [firstWord],
     );
-    const fulfillmentReceipt = await fulfillment.wait();
-    if (!fulfillmentReceipt) throw new Error("fulfillment receipt missing");
+    const firstReceipt = await firstFulfillment.wait();
+    if (!firstReceipt) throw new Error("first fulfillment receipt missing");
 
-    const [fulfilled, storedWord, fulfilledAt, fulfilledBlock] =
-      await provider.getRandomness(1);
-    expect(fulfilled).to.equal(true);
-    expect(storedWord).to.equal(randomWord);
-    expect(fulfilledAt).to.be.greaterThan(0);
-    expect(fulfilledBlock).to.equal(BigInt(fulfillmentReceipt.blockNumber));
+    expect(await provider.requestIdByE3Id(firstE3Id)).to.equal(1n);
+    expect(await provider.requestIdByE3Id(secondE3Id)).to.equal(2n);
+    expect(await provider.e3IdByRequestId(1)).to.equal(firstE3Id);
+    expect(await provider.e3IdByRequestId(2)).to.equal(secondE3Id);
+
+    for (const [requestId, word, receipt] of [
+      [1n, firstWord, firstReceipt],
+      [2n, secondWord, secondReceipt],
+    ] as const) {
+      const [fulfilled, storedWord, fulfilledAt, fulfilledBlock] =
+        await provider.getRandomness(requestId);
+      const block = await ethers.provider.getBlock(receipt.blockNumber);
+      expect(fulfilled).to.equal(true);
+      expect(storedWord).to.equal(word);
+      expect(fulfilledAt).to.equal(BigInt(block!.timestamp));
+      expect(fulfilledBlock).to.equal(BigInt(receipt.blockNumber));
+    }
   });
 
   it("allows only the bound registry to request and never re-requests an E3", async function () {

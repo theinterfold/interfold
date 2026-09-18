@@ -504,7 +504,6 @@ where
 mod tests {
     use super::*;
     use anyhow::Result;
-    use std::time::Instant;
 
     #[test]
     fn it_works() {
@@ -550,56 +549,6 @@ mod tests {
         assert_eq!(Some(&999), deserialized[1].get(&"hello".to_string()));
         assert_eq!(Some(&100), deserialized[1].get(&"world".to_string()));
         Ok(())
-    }
-
-    #[test]
-    fn test_hamt_vs_hashmap_persistence_cost() {
-        const NUM_ENTRIES: usize = 100_000;
-        const NUM_UPDATES: usize = 1_000;
-
-        println!("\n=== HAMT vs HashMap: Cost of Persistence ===");
-
-        // Test HAMT with persistence
-        println!("Testing HAMT (persistent)...");
-        let hamt_start = Instant::now();
-        let mut hamt = Hamt::new();
-        for i in 0..NUM_ENTRIES {
-            hamt = hamt.insert(i, i);
-        }
-
-        let mut hamt_versions = Vec::new();
-        for i in 0..NUM_UPDATES {
-            let updated = hamt.insert(i, i * 2);
-            hamt_versions.push(updated);
-        }
-        let hamt_duration = hamt_start.elapsed();
-
-        // Test HashMap with cloning
-        println!("Testing HashMap (with cloning)...");
-        let hashmap_start = Instant::now();
-        let mut hashmap = HashMap::new();
-        for i in 0..NUM_ENTRIES {
-            hashmap.insert(i, i);
-        }
-
-        let mut hashmap_versions = Vec::new();
-        for i in 0..NUM_UPDATES {
-            let mut cloned = hashmap.clone();
-            cloned.insert(i, i * 2);
-            hashmap_versions.push(cloned);
-        }
-        let hashmap_duration = hashmap_start.elapsed();
-
-        println!("\nHAMT total time: {:?}", hamt_duration);
-        println!("HashMap total time: {:?}", hashmap_duration);
-        println!(
-            "HAMT is {:.2}x the cost",
-            hamt_duration.as_secs_f64() / hashmap_duration.as_secs_f64()
-        );
-
-        // Verify original map unchanged
-        assert_eq!(Some(&0), hamt.get(&0));
-        assert_eq!(Some(&0), hashmap.get(&0));
     }
 
     #[test]

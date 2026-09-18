@@ -11,10 +11,19 @@ import {
 import { IBfvPkVerifierRoute } from "../verifiers/bfv/BfvPkVerifierRouter.sol";
 
 contract MockBfvPkVerifierRoute is IBfvPkVerifierRoute {
+    error UnexpectedContext();
+
     uint256 public immutable override h;
     bytes32 public immutable override expectedNodesFoldKeyHash;
     bytes32 public immutable override expectedC5KeyHash;
     bool private immutable result;
+    bool private checkContext;
+    uint256 private expectedE3Id;
+    uint256 private expectedCommitteeRoot;
+    bytes32 private expectedSortedNodesHash;
+    bytes32 private expectedPkCommitment;
+    bytes32 private expectedCommitteeHash;
+    bytes32 private expectedProofHash;
 
     constructor(
         uint256 _h,
@@ -28,23 +37,58 @@ contract MockBfvPkVerifierRoute is IBfvPkVerifierRoute {
         result = _result;
     }
 
+    function setExpectedContext(
+        uint256 e3Id,
+        uint256 committeeRoot,
+        address[] calldata sortedNodes,
+        bytes32 pkCommitment,
+        bytes32 committeeHash,
+        bytes calldata proof
+    ) external {
+        expectedE3Id = e3Id;
+        expectedCommitteeRoot = committeeRoot;
+        expectedSortedNodesHash = keccak256(abi.encode(sortedNodes));
+        expectedPkCommitment = pkCommitment;
+        expectedCommitteeHash = committeeHash;
+        expectedProofHash = keccak256(proof);
+        checkContext = true;
+    }
+
     function verify(
-        uint256,
-        uint256,
-        address[] calldata,
-        bytes32,
-        bytes32,
-        bytes calldata
+        uint256 e3Id,
+        uint256 committeeRoot,
+        address[] calldata sortedNodes,
+        bytes32 pkCommitment,
+        bytes32 committeeHash,
+        bytes calldata proof
     ) external view override returns (bool success) {
+        if (
+            checkContext &&
+            (e3Id != expectedE3Id ||
+                committeeRoot != expectedCommitteeRoot ||
+                keccak256(abi.encode(sortedNodes)) != expectedSortedNodesHash ||
+                pkCommitment != expectedPkCommitment ||
+                committeeHash != expectedCommitteeHash ||
+                keccak256(proof) != expectedProofHash)
+        ) revert UnexpectedContext();
         success = result;
     }
 }
 
 contract MockBfvDecryptionVerifierRoute is IBfvDecryptionVerifierRoute {
+    error UnexpectedContext();
+
     uint256 public immutable override threshold;
     bytes32 public immutable override expectedC6FoldKeyHash;
     bytes32 public immutable override expectedC7KeyHash;
     bool private immutable result;
+    bool private checkContext;
+    uint256 private expectedE3Id;
+    bytes32 private expectedDecryptionDomain;
+    bytes32 private expectedPlaintextOutputHash;
+    bytes32 private expectedCommitteeHash;
+    bytes32 private expectedCiphertextCommitment;
+    bytes32 private expectedProofHash;
 
     constructor(
         uint256 _threshold,
@@ -58,14 +102,40 @@ contract MockBfvDecryptionVerifierRoute is IBfvDecryptionVerifierRoute {
         result = _result;
     }
 
+    function setExpectedContext(
+        uint256 e3Id,
+        bytes32 decryptionDomain,
+        bytes32 plaintextOutputHash,
+        bytes32 committeeHash,
+        bytes32 ciphertextCommitment,
+        bytes calldata proof
+    ) external {
+        expectedE3Id = e3Id;
+        expectedDecryptionDomain = decryptionDomain;
+        expectedPlaintextOutputHash = plaintextOutputHash;
+        expectedCommitteeHash = committeeHash;
+        expectedCiphertextCommitment = ciphertextCommitment;
+        expectedProofHash = keccak256(proof);
+        checkContext = true;
+    }
+
     function verify(
-        uint256,
-        bytes32,
-        bytes32,
-        bytes32,
-        bytes32,
-        bytes calldata
+        uint256 e3Id,
+        bytes32 decryptionDomain,
+        bytes32 plaintextOutputHash,
+        bytes32 committeeHash,
+        bytes32 ciphertextCommitment,
+        bytes calldata proof
     ) external view override returns (bool success) {
+        if (
+            checkContext &&
+            (e3Id != expectedE3Id ||
+                decryptionDomain != expectedDecryptionDomain ||
+                plaintextOutputHash != expectedPlaintextOutputHash ||
+                committeeHash != expectedCommitteeHash ||
+                ciphertextCommitment != expectedCiphertextCommitment ||
+                keccak256(proof) != expectedProofHash)
+        ) revert UnexpectedContext();
         success = result;
     }
 }

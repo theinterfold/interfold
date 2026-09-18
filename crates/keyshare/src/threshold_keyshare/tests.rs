@@ -1320,7 +1320,6 @@ async fn duplicate_c4_after_collection_does_not_start_another_collector() -> Res
     })
     .start();
     actor.send(duplicate).await?;
-    actix::clock::sleep(std::time::Duration::from_millis(25)).await;
     let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
     assert!(events.is_empty(), "duplicate C4 restarted collection");
     Ok(())

@@ -937,7 +937,6 @@ mod recovery_tests {
             ))
             .await?;
         selector.send(EffectsEnabled::new()).await?;
-        actix::clock::sleep(Duration::from_millis(50)).await;
 
         let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
         assert!(

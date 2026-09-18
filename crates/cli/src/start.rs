@@ -205,11 +205,18 @@ mod tests {
     #[tokio::test]
     async fn persistence_failure_is_reported_after_publish() -> Result<()> {
         let (signal, mut health) = tokio::sync::watch::channel(None);
+        let failure = wait_for_persistence_failure(&mut health);
+        tokio::pin!(failure);
+        std::future::poll_fn(|context| {
+            use std::future::Future;
+
+            assert!(failure.as_mut().poll(context).is_pending());
+            std::task::Poll::Ready(())
+        })
+        .await;
+
         signal.send_replace(Some("append failed".to_string()));
-        assert_eq!(
-            wait_for_persistence_failure(&mut health).await?,
-            "append failed"
-        );
+        assert_eq!(failure.await?, "append failed");
         Ok(())
     }
 }

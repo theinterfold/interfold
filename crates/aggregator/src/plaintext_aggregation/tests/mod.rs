@@ -271,7 +271,7 @@ async fn standby_persists_and_resumes_plaintext_work() -> Result<()> {
 
 #[actix::test]
 async fn decryption_share_after_collection_closed_is_ignored() -> Result<()> {
-    let (mut aggregator, _history, e3_id) =
+    let (mut aggregator, history, e3_id) =
         build_plaintext_aggregator(verifying_c6_state(), false).await?;
 
     aggregator.add_share(
@@ -285,6 +285,8 @@ async fn decryption_share_after_collection_closed_is_ignored() -> Result<()> {
         aggregator.state.get(),
         Some(ThresholdPlaintextAggregatorState::VerifyingC6(_))
     ));
+    let events = history.send(GetEvents::<InterfoldEvent>::new()).await?;
+    assert!(events.is_empty(), "late share must not emit side effects");
     Ok(())
 }
 

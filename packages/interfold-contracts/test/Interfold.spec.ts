@@ -477,6 +477,25 @@ describe("Interfold", function () {
         .withArgs(address);
       expect(await interfold.e3Programs(address)).to.be.false;
     });
+    it("requires the program and data-availability interfaces independently", async function () {
+      const { interfold } = await loadFixture(setup);
+
+      for (const [program, availability] of [
+        [true, false],
+        [false, true],
+      ] as const) {
+        const candidate = await ethers.deployContract(
+          "MockE3ProgramInterfaceProbe",
+          [program, availability],
+        );
+        const address = await candidate.getAddress();
+
+        await expect(interfold.registerE3Program(address))
+          .to.be.revertedWithCustomError(interfold, "E3ProgramInterfaceMissing")
+          .withArgs(address);
+        expect(await interfold.e3Programs(address)).to.equal(false);
+      }
+    });
     it("registers E3 Program correctly", async function () {
       const { interfold } = await loadFixture(setup);
       const e3Program = await deployUnregisteredE3Program();
@@ -1082,17 +1101,19 @@ describe("Interfold", function () {
         mocks,
       } = await loadFixture(setup);
       const e3Id = firstE3Id;
+      const committeePublicKey = "0xcafe";
 
       await makeRequest(interfold, usdcToken, {
         ...request,
         inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
       });
 
-      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
-        operator1,
-        operator2,
-        operator3,
-      ]);
+      await setupAndPublishCommittee(
+        ciphernodeRegistryContract,
+        e3Id,
+        committeePublicKey,
+        [operator1, operator2, operator3],
+      );
       await mine(2, { interval: inputWindowDuration });
       await mocks.e3Program.setExpectedCiphertextCommitment(
         e3Id,
@@ -1107,6 +1128,15 @@ describe("Interfold", function () {
           proof,
         ),
       ).to.be.revertedWithCustomError(interfold, "InvalidOutput");
+      await mocks.ciphertextVerifier.setExpectedContext(
+        e3Id,
+        encryptionSchemeId,
+        ethers.keccak256(BFV_PARAMS_DEFAULT),
+        ethers.keccak256(committeePublicKey),
+        ethers.keccak256(data),
+        ciphertextCommitment,
+        proof,
+      );
       await publishAvailableCiphertextOutput(
         interfold,
         e3Id,
@@ -1119,39 +1149,6 @@ describe("Interfold", function () {
       expect(e3.ciphertextCommitment).to.equal(ciphertextCommitment);
     });
 
-    it("accepts a valid output reference", async function () {
-      const {
-        interfold,
-        request,
-        usdcToken,
-        ciphernodeRegistryContract,
-        operator1,
-        operator2,
-        operator3,
-      } = await loadFixture(setup);
-      const e3Id = firstE3Id;
-
-      await makeRequest(interfold, usdcToken, {
-        ...request,
-        inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
-      });
-
-      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
-        operator1,
-        operator2,
-        operator3,
-      ]);
-      await mine(2, { interval: inputWindowDuration });
-      await expect(
-        publishAvailableCiphertextOutput(
-          interfold,
-          e3Id,
-          data,
-          ciphertextCommitment,
-          proof,
-        ),
-      ).to.emit(interfold, "CiphertextOutputReferencePublished");
-    });
     it("emits the verified ciphertext reference", async function () {
       const {
         interfold,
@@ -1426,19 +1423,23 @@ describe("Interfold", function () {
         operator1,
         operator2,
         operator3,
+        mocks,
       } = await loadFixture(setup);
       const e3Id = firstE3Id;
+      const committeePublicKey = "0xcafe";
+      const plaintextOutput = "0xbeef";
 
       await makeRequest(interfold, usdcToken, {
         ...request,
         inputWindow: [(await time.latest()) + 20, (await time.latest()) + 100],
       });
 
-      await setupAndPublishCommittee(ciphernodeRegistryContract, e3Id, data, [
-        operator1,
-        operator2,
-        operator3,
-      ]);
+      await setupAndPublishCommittee(
+        ciphernodeRegistryContract,
+        e3Id,
+        committeePublicKey,
+        [operator1, operator2, operator3],
+      );
       await mine(2, { interval: inputWindowDuration });
       await publishAvailableCiphertextOutput(
         interfold,
@@ -1447,10 +1448,33 @@ describe("Interfold", function () {
         ciphertextCommitment,
         proof,
       );
-      expect(await interfold.publishPlaintextOutput(e3Id, data, proof));
+      const committeeHash =
+        await ciphernodeRegistryContract.getCommitteeHash(e3Id);
+      const decryptionDomain = ethers.keccak256(
+        abiCoder.encode(
+          ["uint256", "address", "uint256", "bytes32", "bytes32", "bytes32"],
+          [
+            (await ethers.provider.getNetwork()).chainId,
+            await interfold.getAddress(),
+            e3Id,
+            committeeHash,
+            ethers.keccak256(data),
+            ethers.keccak256(committeePublicKey),
+          ],
+        ),
+      );
+      await mocks.decryptionVerifier.setExpectedContext(
+        e3Id,
+        decryptionDomain,
+        ethers.keccak256(plaintextOutput),
+        committeeHash,
+        ciphertextCommitment,
+        proof,
+      );
+      await interfold.publishPlaintextOutput(e3Id, plaintextOutput, proof);
 
       const e3 = await interfold.getE3(e3Id);
-      expect(e3.plaintextOutput).to.equal(data);
+      expect(e3.plaintextOutput).to.equal(plaintextOutput);
     });
     it("returns true if output is published successfully", async function () {
       const {

@@ -105,9 +105,14 @@ describe("PredicateValidationHook", function () {
     await hook.connect(safe).setAuction(await auction.getAddress());
 
     const bidderAddress = await bidder.getAddress();
+    const attesterAddress = await attester.getAddress();
+    const expiration = 4_102_444_321n;
+    const signature = "0x12345678";
     const hookData = encodeAttestation({
       uuid: "cca-bid-1",
-      attester: await attester.getAddress(),
+      expiration,
+      attester: attesterAddress,
+      signature,
     });
 
     await expect(
@@ -145,6 +150,13 @@ describe("PredicateValidationHook", function () {
     expect(statement.msgValue).to.equal(0n);
     expect(statement.encodedSigAndArgs).to.equal("0x");
     expect(statement.policy).to.equal(POLICY_ID);
+    expect(statement.expiration).to.equal(expiration);
+
+    const attestation = await registry.lastAttestation();
+    expect(attestation.uuid).to.equal("cca-bid-1");
+    expect(attestation.expiration).to.equal(expiration);
+    expect(attestation.attester).to.equal(attesterAddress);
+    expect(attestation.signature).to.equal(signature);
   });
 
   it("can allow delegated owners when explicitly configured", async function () {

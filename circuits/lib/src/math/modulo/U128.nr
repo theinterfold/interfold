@@ -473,14 +473,6 @@ fn test_reduce_mod_function() {
 }
 
 #[test]
-fn test_field_properties_additive_identity() {
-    let a = 42;
-    let m = ModU128::new(100);
-    // a + 0 = a
-    assert(m.add(a, 0) == a);
-}
-
-#[test]
 fn test_field_properties_multiplicative_identity() {
     let a = 42;
     let m = ModU128::new(100);

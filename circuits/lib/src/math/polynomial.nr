@@ -225,18 +225,6 @@ impl<let N: u32> Polynomial<N> {
 }
 
 #[test]
-fn test_polynomial_eval() {
-    let coeffs = [1, 2, 3]; // represents 1x^2 + 2x + 3
-    let poly = Polynomial::new(coeffs);
-
-    let x = 2; // evaluate at x = 2
-    let result = poly.eval(x);
-
-    // (1 * 2^2) + (2 * 2) + 3 = 4 + 4 + 3 = 11
-    assert(result == 11);
-}
-
-#[test]
 fn test_polynomial_eval_zero() {
     let coeffs = [1, -2, 1]; // x^2 - 2x + 1 = (x-1)^2
     let poly = Polynomial::new(coeffs);
@@ -343,18 +331,6 @@ fn test_eval_mod_simple() {
 }
 
 #[test]
-fn test_eval_mod_degree_2() {
-    // p(x) = x^2 + 2x + 3 at x=5od 7
-    // Using Horner's method: ((1)*5 + 2)*5 + 3 = (5+2)*5 + 3 = 7*5 + 3 = 35 + 3 = 38
-    // 38 mod 7 = 3 (since 38 = 5*7 + 3)
-    let q = ModU128::new(7);
-
-    let poly = Polynomial::new([1, 2, 3]);
-    let result = poly.eval_mod(5, q);
-    assert(result == 3);
-}
-
-#[test]
 fn test_eval_mod() {
     // Test 1: Simple polynomial x^2 + 2x + 3 at x=5od 7
     // Expected: (25 + 10 + 3) mod 7 = 38 mod 7 = 3
@@ -431,25 +407,4 @@ fn test_eval_vs_eval_mod() {
     // They should be equal: (1)*2 + 2)*2 + 3 = (2+2)*2 + 3 = 4*2 + 3 = 11
     assert(result_normal == 11);
     assert(result_mod == 11);
-}
-
-#[test]
-fn test_eval_mod_step_by_step() {
-    // p(x) = x + 1 at x=5od 7
-    // Step by step: acc = 1, then acc = 1*5 + 1 = 6
-    let poly = Polynomial::new([1, 1]);
-
-    // Manually compute
-    let mut acc = 1; // coefficients[0]
-    acc = acc * 5 + 1; // = 6
-    assert(acc == 6);
-
-    // Now with reduce_mod
-    let m = ModU128::new(7);
-    let reduced = m.reduce_mod(acc);
-    assert(reduced == 6);
-
-    // Now test the actual function
-    let result = poly.eval_mod(5, m);
-    assert(result == 6);
 }

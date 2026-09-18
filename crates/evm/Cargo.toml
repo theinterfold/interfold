@@ -37,6 +37,7 @@ zeroize = { workspace = true }
 
 [dev-dependencies]
 alloy-dyn-abi = { workspace = true }
+alloy-json-rpc = { workspace = true }
 bincode = { workspace = true }
 e3-ciphernode-builder = { workspace = true }
 e3-entrypoint = { workspace = true }
@@ -46,3 +47,4 @@ e3-test-helpers = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }
+tower = { workspace = true }

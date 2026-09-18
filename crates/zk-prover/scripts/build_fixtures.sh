@@ -31,7 +31,14 @@ if (( ${#missing_artifacts[@]} > 0 )); then
         exit 0
     fi
     echo "Building circuits (missing: ${missing_artifacts[*]})..."
-    pnpm install && pnpm build:circuits
+    pnpm install --frozen-lockfile
+
+    # The circuit build runs Cargo to generate committee constants. This script can run from a
+    # Cargo build script, so use a separate target directory to avoid waiting on the parent
+    # Cargo process's target lock.
+    outer_cargo_target="${CARGO_TARGET_DIR:-$(pwd)/target}"
+    fixture_cargo_target="${E3_ZK_PROVER_FIXTURE_CARGO_TARGET_DIR:-${outer_cargo_target%/}/e3-zk-prover-fixtures}"
+    CARGO_TARGET_DIR="$fixture_cargo_target" pnpm build:circuits
 fi
 
 # Keep the integration-test fixture in sync with the current Noir serialization format.
