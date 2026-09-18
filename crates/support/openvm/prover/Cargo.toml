@@ -1,0 +1,21 @@
+[package]
+name = "interfold-openvm-prover"
+version = "0.1.0"
+edition = "2021"
+license = "LGPL-3.0-only"
+
+[workspace]
+resolver = "3"
+
+[features]
+cuda = ["openvm-sdk/cuda"]
+
+[dependencies]
+openvm-sdk = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", default-features = false, features = ["parallel", "evm-verify"] }
+openvm-sdk-config = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+openvm-circuit = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2" }
+sha2 = "=0.10.9"
+eyre = "0.6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+hex = "0.4"

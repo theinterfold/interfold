@@ -3,6 +3,9 @@ name = "e3-user-program"
 version = { workspace = true }
 edition = { workspace = true }
 
+[features]
+openvm-hashes = ["e3-compute-provider/openvm-hashes", "dep:openvm-sha2"]
+
 [dependencies]
 fhe = { workspace = true }
 fhe-traits = { workspace = true }
@@ -10,6 +13,7 @@ e3-compute-provider = { workspace = true }
 sha2 = "=0.10.9"
 sha3 = "=0.10.8"
 e3-fhe-params = { workspace = true }
+openvm-sha2 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", optional = true }
 
 [dev-dependencies]
 hex = "=0.4.3"

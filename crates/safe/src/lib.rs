@@ -24,6 +24,8 @@
 use ark_bn254::Fr;
 use ark_ff::Zero;
 use sha3::{Digest, Keccak256};
+#[cfg(all(crisp_openvm, not(feature = "openvm")))]
+compile_error!("The OpenVM build requires the e3-safe/openvm feature");
 #[cfg(not(all(target_os = "zkvm", target_arch = "riscv32")))]
 use taceo_poseidon2::bn254::t4::permutation as poseidon2_permutation;
 
@@ -99,6 +101,8 @@ impl<const L: usize> SafeSponge<L> {
     /// # Returns
     /// A new `SafeSponge` instance with initialized state
     pub fn start(io_pattern: [u32; L], domain_separator: [u8; 64]) -> SafeSponge<L> {
+        #[cfg(all(feature = "phase-trace", target_os = "zkvm"))]
+        openvm::io::println(format!("phase:safe:{io_pattern:?}:start"));
         // Compute tag from IO pattern and domain separator (spec 2.3).
         let tag = compute_tag(io_pattern, domain_separator);
 
@@ -230,6 +234,8 @@ impl<const L: usize> SafeSponge<L> {
         self.absorb_pos = 0;
         self.squeeze_pos = 0;
         self.io_count = 0;
+        #[cfg(all(feature = "phase-trace", target_os = "zkvm"))]
+        openvm::io::println("phase:safe:end");
     }
 
     /// Permute the state using Poseidon2 (following spec 2.4).

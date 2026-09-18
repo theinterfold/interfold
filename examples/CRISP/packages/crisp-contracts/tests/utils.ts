@@ -7,7 +7,7 @@
 import { network } from 'hardhat'
 import type { HardhatEthers } from '@nomicfoundation/hardhat-ethers/types'
 import { zeroHash } from 'viem'
-import { CRISPProgram, HonkVerifier, MockInterfold, MockRISC0Verifier, PoseidonT3 } from '../types'
+import { CRISPProgram, HonkVerifier, MockInterfold, MockComputeReceiptVerifier, PoseidonT3 } from '../types'
 import { verifierNames } from '../scripts/verifiers'
 
 // Non-zero address used in the tests.
@@ -140,10 +140,10 @@ export async function deployMockInterfold() {
   return contract as unknown as MockInterfold
 }
 
-export async function deployMockRISC0Verifier() {
-  const contract = await deployContract('MockRISC0Verifier')
+export async function deployMockComputeReceiptVerifier() {
+  const contract = await deployContract('MockComputeReceiptVerifier')
 
-  return contract as unknown as MockRISC0Verifier
+  return contract as unknown as MockComputeReceiptVerifier
 }
 
 /**
@@ -200,7 +200,7 @@ export async function deployCRISPProgram(
     honkVerifier?: HonkVerifier
     onchainHonkVerifier?: HonkVerifier
     poseidonT3?: PoseidonT3
-    risc0Verifier?: MockRISC0Verifier
+    computeVerifier?: MockComputeReceiptVerifier
     bindInterfold?: boolean
     availabilityFinalizationWindow?: number
     inputAvailabilitySigner?: string
@@ -213,7 +213,7 @@ export async function deployCRISPProgram(
   // must pass the real one.
   const onchainHonkVerifier = contracts.onchainHonkVerifier || honkVerifier
   const mockInterfold = contracts.mockInterfold || (await deployMockInterfold())
-  const risc0Verifier = contracts.risc0Verifier ? await contracts.risc0Verifier.getAddress() : nonZeroAddress
+  const computeVerifier = contracts.computeVerifier ? await contracts.computeVerifier.getAddress() : nonZeroAddress
   const dataAvailabilityVerifier = await deployContract('MockCrispDataAvailabilityVerifier')
 
   const programFactory = await ethers.getContractFactory('CRISPProgram', {
@@ -225,7 +225,7 @@ export async function deployCRISPProgram(
 
   const program = await programFactory.deploy(
     await owner.getAddress(),
-    risc0Verifier,
+    computeVerifier,
     await honkVerifier.getAddress(),
     await onchainHonkVerifier.getAddress(),
     await dataAvailabilityVerifier.getAddress(),

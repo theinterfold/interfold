@@ -5,13 +5,13 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 pragma solidity >=0.8.27;
 
-import { IRiscZeroVerifier } from "risc0/IRiscZeroVerifier.sol";
+import { IOpenVmReceiptVerifier } from "@interfold/contracts/contracts/interfaces/IOpenVmReceiptVerifier.sol";
 import { Ownable } from "@openzeppelin/contracts/access/Ownable.sol";
 import { IE3Program } from "@interfold/contracts/contracts/interfaces/IE3Program.sol";
 import { IInterfold } from "@interfold/contracts/contracts/interfaces/IInterfold.sol";
 import { ICiphernodeRegistry } from "@interfold/contracts/contracts/interfaces/ICiphernodeRegistry.sol";
 import { E3 } from "@interfold/contracts/contracts/interfaces/IE3.sol";
-import { Risc0ComputeProof } from "@interfold/contracts/contracts/lib/Risc0ComputeProof.sol";
+import { OpenVmComputeProof } from "@interfold/contracts/contracts/lib/OpenVmComputeProof.sol";
 import { LazyIMTData, InternalLazyIMT } from "@zk-kit/lazy-imt.sol/InternalLazyIMT.sol";
 import { SNARK_SCALAR_FIELD } from "@zk-kit/lazy-imt.sol/Constants.sol";
 import { EIP712 } from "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
@@ -151,7 +151,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   uint8 constant MAX_DERIVABLE_DECIMALS = 78;
   // State variables
   IInterfold public interfold;
-  IRiscZeroVerifier public risc0Verifier;
+  IOpenVmReceiptVerifier public openVmVerifier;
   bytes32 public imageId;
   /// @notice Verifies ballots for the census modes that prove membership of a Merkle tree.
   IHonkVerifier private immutable honkVerifier;
@@ -191,7 +191,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   error InterfoldAlreadyBound();
   error InterfoldNotContract();
   error ProgramNotRegistered();
-  error Risc0VerifierAddressZero();
+  error OpenVmVerifierAddressZero();
   error InvalidHonkVerifier();
   error EmptyInputData();
   error InvalidNoirProof();
@@ -287,12 +287,12 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
   /// @notice Initialize the contract without an Interfold controller.
   /// @dev The owner binds the controller after Interfold registers this program.
   /// @param _initialOwner The account that can configure and bind this program.
-  /// @param _risc0Verifier The RISC Zero verifier address
+  /// @param _openVmVerifier The OpenVM receipt verifier address
   /// @param _honkVerifier The honk verifier address
   /// @param _imageId The image ID for the guest program
   constructor(
     address _initialOwner,
-    IRiscZeroVerifier _risc0Verifier,
+    IOpenVmReceiptVerifier _openVmVerifier,
     IHonkVerifier _honkVerifier,
     IHonkVerifier _onchainHonkVerifier,
     IDataAvailabilityVerifier _dataAvailabilityVerifier,
@@ -300,12 +300,12 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     address _inputAvailabilitySigner,
     bytes32 _imageId
   ) Ownable(_initialOwner) EIP712("CRISP", "1") {
-    if (address(_risc0Verifier) == address(0)) revert Risc0VerifierAddressZero();
+    if (address(_openVmVerifier) == address(0)) revert OpenVmVerifierAddressZero();
     if (address(_honkVerifier) == address(0)) revert InvalidHonkVerifier();
     if (address(_onchainHonkVerifier) == address(0)) revert InvalidHonkVerifier();
     if (address(_dataAvailabilityVerifier).code.length == 0) revert InvalidDataAvailabilityVerifier();
 
-    risc0Verifier = _risc0Verifier;
+    openVmVerifier = _openVmVerifier;
     honkVerifier = _honkVerifier;
     onchainHonkVerifier = _onchainHonkVerifier;
     dataAvailabilityVerifier = _dataAvailabilityVerifier;
@@ -365,12 +365,12 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     imageId = _imageId;
   }
 
-  /// @notice Set the RISC Zero verifier.
+  /// @notice Set the OpenVM receipt verifier.
   /// @dev Carries the same in-flight risk as `setImageId`. Change it only between rounds.
-  /// @param _risc0Verifier The new RISC Zero verifier address
-  function setRisc0Verifier(IRiscZeroVerifier _risc0Verifier) external onlyOwner {
-    if (address(_risc0Verifier) == address(0)) revert Risc0VerifierAddressZero();
-    risc0Verifier = _risc0Verifier;
+  /// @param _openVmVerifier The new OpenVM receipt verifier address
+  function setOpenVmVerifier(IOpenVmReceiptVerifier _openVmVerifier) external onlyOwner {
+    if (address(_openVmVerifier) == address(0)) revert OpenVmVerifierAddressZero();
+    openVmVerifier = _openVmVerifier;
   }
 
   /// @notice Get the params hash for an E3 program
@@ -998,10 +998,10 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
     E3 memory e3 = interfold.getE3(e3Id);
     bytes32 paramsHash = getParamsHash(e3Id);
     bytes32 inputRoot = bytes32(e3Data[e3Id].votes._root());
-    Risc0ComputeProof.Proof memory computeProof = Risc0ComputeProof.decode(proof);
+    OpenVmComputeProof.Proof memory computeProof = OpenVmComputeProof.decode(proof);
     if (computeProof.paramsHash != paramsHash || computeProof.inputRoot != inputRoot) revert InvalidComputeContext();
 
-    bytes memory journal = Risc0ComputeProof.journal(
+    bytes memory journal = OpenVmComputeProof.journal(
       bytes32(block.chainid),
       bytes32(uint256(uint160(address(interfold)))),
       bytes32(e3Id),
@@ -1013,7 +1013,7 @@ contract CRISPProgram is IE3Program, IE3ProgramDataAvailability, IERC165, Ownabl
       inputRoot
     );
 
-    risc0Verifier.verify(computeProof.seal, imageId, sha256(journal));
+    openVmVerifier.verify(computeProof.seal, imageId, sha256(journal));
     return true;
   }
 

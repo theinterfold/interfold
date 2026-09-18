@@ -40,7 +40,7 @@
     "governance:builder": "hardhat run deploy/create-governance-builder.ts",
     "test": "hardhat test mocha",
     "check:test-legs": "node scripts/check-test-legs.mjs",
-    "test:unit": "pnpm check:test-legs && hardhat test mocha tests/census-mode.test.ts tests/crisp.journal.test.ts tests/input-availability-flow.test.ts tests/input-leaf.test.ts tests/interfold-binding.test.ts tests/self-registry.test.ts tests/tally.decoding.test.ts",
+    "test:unit": "pnpm check:test-legs && hardhat test mocha tests/census-mode.test.ts tests/crisp.journal.test.ts tests/input-availability-flow.test.ts tests/input-leaf.test.ts tests/interfold-binding.test.ts tests/openvm-proof.test.ts tests/openvm-receipt.test.ts tests/self-registry.test.ts tests/tally.decoding.test.ts",
     "test:input-tree": "hardhat test mocha tests/input-tree-e2e.test.ts",
     "test:input-tree:poisoning": "hardhat test mocha --grep \"accepts an input whose bytes|lets an honest mask follow\" -- tests/input-tree-e2e.test.ts",
     "test:input-tree:canonical": "hardhat test mocha --grep \"^(?!.*(?:accepts an input whose bytes|lets an honest mask follow))\" -- tests/input-tree-e2e.test.ts",

@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use e3_config::ProgramConfig;
 
 use crate::{
-    program_dev::ProgramSupportDev, program_risc0::ProgramSupportRisc0, traits::ProgramSupportApi,
+    program_dev::ProgramSupportDev, program_openvm::ProgramSupportOpenVm, traits::ProgramSupportApi,
 };
 
 fn get_mode(config: ProgramConfig, mode: Option<bool>) -> bool {
@@ -21,7 +21,7 @@ fn get_mode(config: ProgramConfig, mode: Option<bool>) -> bool {
 
 pub enum ProgramSupport {
     Dev(ProgramSupportDev),
-    Risc0(ProgramSupportRisc0),
+    OpenVm(ProgramSupportOpenVm),
 }
 
 impl ProgramSupport {
@@ -29,7 +29,7 @@ impl ProgramSupport {
         if get_mode(config.clone(), mode) {
             ProgramSupport::Dev(ProgramSupportDev(config))
         } else {
-            ProgramSupport::Risc0(ProgramSupportRisc0(config))
+            ProgramSupport::OpenVm(ProgramSupportOpenVm(config))
         }
     }
 }
@@ -39,20 +39,20 @@ impl ProgramSupportApi for ProgramSupport {
     async fn compile(&self) -> Result<()> {
         match self {
             ProgramSupport::Dev(s) => s.compile().await,
-            ProgramSupport::Risc0(s) => s.compile().await,
+            ProgramSupport::OpenVm(s) => s.compile().await,
         }
     }
     async fn start(&self) -> Result<()> {
         match self {
             ProgramSupport::Dev(s) => s.start().await,
-            ProgramSupport::Risc0(s) => s.start().await,
+            ProgramSupport::OpenVm(s) => s.start().await,
         }
     }
 
     async fn upload(&self) -> Result<()> {
         match self {
             ProgramSupport::Dev(s) => s.upload().await,
-            ProgramSupport::Risc0(s) => s.upload().await,
+            ProgramSupport::OpenVm(s) => s.upload().await,
         }
     }
 }

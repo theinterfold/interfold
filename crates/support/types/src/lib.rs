@@ -79,6 +79,28 @@ pub struct ComputeJournal {
 }
 
 impl ComputeJournal {
+    /// Encode the nine journal fields as Solidity ABI words.
+    pub fn abi_bytes(&self) -> std::result::Result<Vec<u8>, String> {
+        let fields = [
+            &self.chain_id,
+            &self.verifying_contract,
+            &self.e3_id,
+            &self.encryption_scheme_id,
+            &self.committee_public_key_hash,
+            &self.ciphertext_hash,
+            &self.ciphertext_commitment,
+            &self.params_hash,
+            &self.merkle_root,
+        ];
+        if fields.iter().any(|field| field.len() != 32) {
+            return Err("Each journal field must contain 32 bytes".into());
+        }
+        Ok(fields
+            .into_iter()
+            .flat_map(|field| field.iter().copied())
+            .collect())
+    }
+
     pub fn new(domain: ComputeDomain, result: ComputeResult) -> std::result::Result<Self, String> {
         for (name, value) in [
             ("ciphertext hash", &result.ciphertext_hash),

@@ -6,7 +6,7 @@
 
 mod program;
 mod program_dev;
-mod program_risc0;
+mod program_openvm;
 mod traits;
 mod utils;
 
@@ -26,7 +26,7 @@ pub async fn program_start(program_config: ProgramConfig, is_dev: Option<bool>) 
     ProgramSupport::new(program_config, is_dev).start().await
 }
 
-/// Upload the compiled program to Pinata IPFS
+/// Run the selected backend upload command, if it supports uploads.
 pub async fn program_upload(program_config: ProgramConfig, is_dev: Option<bool>) -> Result<()> {
     ProgramSupport::new(program_config, is_dev).upload().await
 }

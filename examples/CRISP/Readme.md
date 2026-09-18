@@ -144,58 +144,20 @@ program:
   dev: true # Uses fake zkVM proofs (fast for development)
 ```
 
-### Boundless Configuration
+### OpenVM configuration
 
-For production-grade zero-knowledge proofs with [Boundless](https://docs.boundless.network/), update
-`interfold.config.yaml`:
+The real-proof compute service now uses OpenVM. Follow the
+[OpenVM build and migration guide](../../crates/support/openvm/README.md) to build the guest and
+worker, derive the application identity, and configure proving artifacts.
 
-```yaml
-program:
-  dev: false # Disable dev mode to use real proofs
-  risc0:
-    risc0_dev_mode: 0 # 0 = production (Boundless), 1 = dev mode
-    boundless:
-      rpc_url: 'https://sepolia.infura.io/v3/YOUR_KEY' # RPC endpoint
-      private_key: 'YOUR_PRIVATE_KEY' # Wallet with funds for proving
-      pinata_jwt: 'YOUR_PINATA_JWT' # Required for uploading programs to IPFS
-      # The gateway must allow full, unauthenticated downloads by Boundless provers.
-      ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
-      program_url: 'https://your-gateway.mypinata.cloud/ipfs/YOUR_CID' # Pre-uploaded program URL
-      onchain: true # true = onchain requests, false = offchain
-```
+Set `program.dev: false` and supply deployment-local `program.openvm.repository`,
+`program.openvm.prover_bin`, and `program.openvm.prover_config` paths. Do not put account keys,
+proving artifacts, or machine-specific values in the shared configuration.
 
-> **_Note:_** For production proving with Boundless, you need:
->
-> - An RPC endpoint (e.g., Infura, Alchemy) with funds
-> - A private key with sufficient ETH/tokens for proof generation
-> - A Pinata JWT for uploading programs to IPFS (get one at [pinata.cloud](https://pinata.cloud))
-> - Pre-uploaded program URL to avoid uploading the ~40MB program at runtime
-
-#### Uploading Your Program to IPFS
-
-When you make changes to the guest program in `program/`, you need to upload it to IPFS to get a
-program URL:
-
-1. First, configure your Pinata JWT in `interfold.config.yaml` (as shown above)
-
-2. Build and upload your program:
-
-   ```bash
-   # This compiles the guest program and uploads it to IPFS via Pinata
-   interfold program upload
-   ```
-
-3. The command will output an IPFS hash like `QmXxx...`. Update your `interfold.config.yaml` with
-   the full URL:
-
-   ```yaml
-   ipfs_gateway_url: 'https://your-gateway.mypinata.cloud'
-   program_url: 'https://your-gateway.mypinata.cloud/ipfs/QmXxx...'
-   ```
-
-> **_Important:_** Every time you modify the guest program code in `program/`, you must rebuild and
-> re-upload it to IPFS, then update the `program_url` in your configuration. This ensures Boundless
-> uses your latest program version.
+A new OpenVM deployment requires matching receipt and ciphertext-duty verifiers. Existing RISC Zero
+deployments do not become compatible by changing the service configuration. Drain active rounds and
+use a separate reviewed migration before changing a live verifier route. The old Boundless upload
+and auction settings are not used by this backend.
 
 ### Encrypted-object data availability
 

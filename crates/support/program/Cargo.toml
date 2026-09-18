@@ -3,6 +3,12 @@ name = "e3-user-program"
 version = "0.1.0"
 edition = "2024"
 
+[lib]
+path = "../../../examples/CRISP/program/src/lib.rs"
+
+[features]
+openvm-hashes = ["dep:openvm-sha2", "dep:openvm-keccak256", "e3-compute-provider/openvm-hashes"]
+
 [dependencies]
 fhe = { workspace = true }
 fhe-traits = { workspace = true }
@@ -10,3 +16,6 @@ e3-compute-provider = { workspace = true }
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
 sha2 = { workspace = true }
 sha3 = { workspace = true }
+
+openvm-sha2 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", optional = true }
+openvm-keccak256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", optional = true }

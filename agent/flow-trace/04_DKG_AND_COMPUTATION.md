@@ -915,21 +915,22 @@ deadlines, recovery flow, and remaining trust.
 
 ### Ciphertext Output Publication
 
-The support host sends raw bincode input by default. `BOUNDLESS_INPUT_ENCODING=risc0-serde` selects
-the older byte-vector wrapper for an external Boundless guest and requires `PROGRAM_URL`. The
-embedded guest always receives raw bincode. This compatibility setting does not change the guest or
-its image ID. The selected external guest must match the deployed verifiers and produce the same
-journal as the host for the round inputs.
+The support host sends raw bincode input to the OpenVM guest. The native host and guest use the
+same CRISP policy source. The guest commits nine 32-byte ABI words in this order: chain ID,
+Interfold address, full uint256 E3 ID, encryption scheme ID, committee public-key hash, output hash,
+SAFE commitment, parameter hash, and input root. It reveals SHA-256 of these 288 bytes.
 
-The RISC Zero guest commits nine 32-byte fields in this order: chain ID, Interfold address, E3 ID,
-encryption scheme ID, committee public key, output hash, SAFE commitment, parameter hash, and input
-root. RISC Zero serializes these fields as a 1,188-byte journal. The support app returns the seal,
-parameter hash, and input root in one ABI-encoded proof.
+The support worker generates an application proof, recursive aggregate, and Halo2 EVM proof.
+It checks the configured executable and VM commitments and verifies the EVM proof against the
+native journal before it returns a seal. The app returns the seal, parameter hash, and input root
+in one ABI-encoded proof. Missing configuration or a failed proof cannot select a fake-proof mode.
+See `crates/support/openvm/README.md` for the build and deployment boundary. Existing RISC Zero
+deployment records are not migrated by this source change.
 
 The request-time scheme verifier reconstructs the protocol fields from on-chain state. The E3
 program reconstructs the application fields from its state. Both contracts verify the same receipt.
 An application verifier cannot create a decryption duty unless the scheme verifier also accepts it.
-The RISC Zero wrapper accepts only a receipt-verifier address that contains deployed code. An EOA
+The OpenVM wrapper accepts only a receipt-verifier address that contains deployed code. An EOA
 cannot satisfy the verifier's void-return call with empty return data. The input root uses the
 smallest binary Poseidon tree that can hold the submitted SAFE ciphertext commitments, with a
 minimum depth of one. The compute provider and E3 program must use this same leaf value, order, zero
@@ -940,7 +941,7 @@ The guest derives the input root from the ciphertexts it processed. `ComputeInpu
 ciphertexts before it builds the tree (`crates/compute-provider/src/compute_input.rs`). The leaves
 are therefore a function of the processed set, not a separate prover-supplied value.
 
-This binding matters because nothing else supplies it. `Risc0BfvCiphertextVerifier` takes the input
+This binding matters because nothing else supplies it. `OpenVmBfvCiphertextVerifier` takes the input
 root from the proof envelope and never constrains it, so the only check on the root is the
 comparison an E3 program performs against its own on-chain root (`CRISPProgram.verify`,
 `MyProgram.verify`). If the guest accepted the leaves as an independent input, that comparison would
@@ -1569,13 +1570,15 @@ commitment and every input is computed over — and matches the starter template
 `MyProgram.publishInput` inserts the commitment directly. Every E3 program exports `policy()` beside
 `fhe_processor`, so the guest and the dev runner need not know which program they are running.
 
-The published support image embeds the CRISP guest from `crates/support/program`. The reference app
-keeps the same guest in `examples/CRISP/program`. A CRISP policy change must update both copies and
-regenerate `crates/support/contracts/ImageID.sol` before the support image is published.
+The support program manifest points to the canonical CRISP source in `examples/CRISP/program`.
+A policy change requires a new OpenVM executable, derived application commitments, and matching
+receipt-verifier deployment. Do not reuse a legacy RISC Zero image ID or an aggregation key for
+another VM configuration.
 
-`interfold program start` sends each configured Boundless offer parameter through the project
-support launcher to the container. The container maps these values to the environment variables that
-build the on-chain offer. An omitted parameter uses the host's built-in default.
+`interfold program start` uses `program.openvm` to locate the repository, worker executable, and
+worker configuration. The HTTP service validates this configuration before it accepts work.
+Proving artifacts and machine-specific paths stay outside Git. Explicit development mode remains
+separate from the real-proof service.
 
 `PublishedData` carries what the program published per input: the stored commitment, and opaque
 `metadata` the crate never interprets. CRISP puts its 20-byte slot address and the 5-byte parent

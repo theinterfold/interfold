@@ -15,3 +15,6 @@ fhe-traits.workspace = true
 rand.workspace = true
 thiserror = { workspace = true }
 e3-polynomial = { workspace = true }
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(crisp_fhe_optimized)'] }

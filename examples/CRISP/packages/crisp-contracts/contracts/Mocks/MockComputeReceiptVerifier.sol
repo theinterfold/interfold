@@ -5,9 +5,9 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 pragma solidity ^0.8.27;
 
-import { IRiscZeroVerifier, Receipt } from "risc0/IRiscZeroVerifier.sol";
+import { IOpenVmReceiptVerifier } from "@interfold/contracts/contracts/interfaces/IOpenVmReceiptVerifier.sol";
 
-contract MockRISC0Verifier is IRiscZeroVerifier {
+contract MockComputeReceiptVerifier is IOpenVmReceiptVerifier {
   bytes32 public expectedJournalDigest;
 
   error UnexpectedJournalDigest(bytes32 actual, bytes32 expected);
@@ -21,6 +21,4 @@ contract MockRISC0Verifier is IRiscZeroVerifier {
       revert UnexpectedJournalDigest(journalDigest, expectedJournalDigest);
     }
   }
-
-  function verifyIntegrity(Receipt calldata receipt) external view override {}
 }

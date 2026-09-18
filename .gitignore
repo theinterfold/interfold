@@ -25,5 +25,11 @@ crates/support/tests/Elf.sol
 .vercel
 .vercel-env-backups/
 
+# Deployment-local OpenVM settings and generated proving artifacts.
+openvm-prover.local.json
+*.vmexe
+*.proof
+*.proof.json
+
 # agent working files
 .hermes/

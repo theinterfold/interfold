@@ -1066,3 +1066,12 @@ starts Registry readers only on Ethereum mainnet, Sepolia, and local development
 Extension points should be narrow concrete boundaries with an active consumer: repository factories,
 network interfaces, ZK backends, sortition backends, clocks, and task pools. New one-method traits
 are not introduced solely to create layers.
+
+### OpenVM compute support
+
+The isolated `crates/support` workspace serves CRISP compute requests. Its native host calls the
+separate `crates/support/openvm/prover` worker and accepts only a verified OpenVM EVM receipt.
+The guest and host share the canonical CRISP policy source. The normal `e3-support-scripts`
+backend uses `program.openvm`; it no longer selects RISC Zero or Boundless.
+The worker validates the executable, VM identity, aggregation key, verifier artifact, and journal.
+Jobs remain in memory; this service does not provide durable admission or restart recovery.

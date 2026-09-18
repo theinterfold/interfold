@@ -15,7 +15,8 @@ for arg in "$@"; do
 done
 
 # Build with any additional arguments
-docker build -t "$PKG:$GIT_SHA" "${BUILD_ARGS[@]}" .
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../../.." && pwd)"
+docker build -t "$PKG:$GIT_SHA" -f "$ROOT/crates/support/Dockerfile" "${BUILD_ARGS[@]}" "$ROOT"
 
 # Push if --push was specified
 if [ "$PUSH" = true ]; then

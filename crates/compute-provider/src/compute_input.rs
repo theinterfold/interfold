@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::ciphertext_output::ComputeResult;
+use crate::hashing::keccak256;
 use crate::merkle_tree_builder::MerkleTreeBuilder;
 use crate::policy::InputPolicy;
 #[cfg(test)]
@@ -12,7 +13,6 @@ use e3_bfv_client::client::compute_ct_commitment;
 use e3_bfv_client::client::compute_ct_commitment_with_params;
 use e3_fhe_params::decode_bfv_params_arc;
 use fhe::bfv::BfvParameters;
-use sha3::{Digest, Keccak256};
 use std::sync::Arc;
 
 pub type FHEProcessor = for<'a> fn(&FHEProcessorInput<'a>) -> Vec<u8>;
@@ -112,8 +112,22 @@ impl ComputeInput {
         fhe_processor: FHEProcessor,
         policy: InputPolicy,
     ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
+        self.run_observed(fhe_processor, policy, |_, _| {})
+    }
+
+    /// Reports phase boundaries without exposing or changing the computed values.
+    /// The observer receives `true` at the start and `false` at the end of each phase.
+    /// A failed phase does not emit an end event.
+    pub fn run_observed(
+        &self,
+        fhe_processor: FHEProcessor,
+        policy: InputPolicy,
+        mut observe: impl FnMut(&'static str, bool),
+    ) -> Result<(ComputeResult, Vec<u8>), ComputeError> {
+        observe("params", true);
         let params = decode_bfv_params_arc(&self.fhe_inputs.params)
             .map_err(|e| ComputeError::DecodeParams(e.to_string()))?;
+        observe("params", false);
 
         if !self.published.is_empty() && self.published.len() != self.fhe_inputs.ciphertexts.len() {
             return Err(ComputeError::MerkleTree(format!(
@@ -123,28 +137,40 @@ impl ComputeInput {
             )));
         }
 
+        observe("input_commitments_and_selection", true);
         let mut tree_builder = MerkleTreeBuilder::new(self.fhe_inputs.ciphertexts.len());
         let selected =
             tree_builder.compute_leaf_hashes(&self.fhe_inputs, &self.published, &params, policy)?;
+        observe("input_commitments_and_selection", false);
+        observe("input_tree", true);
         let merkle_root = tree_builder
             .build_tree()
             .map_err(|e| ComputeError::MerkleTree(e.to_string()))?
             .root()
             .ok_or_else(|| ComputeError::MerkleTree("the tree has no root".into()))?;
+        observe("input_tree", false);
 
         // The processor sees only what the policy selected. Both the root above and this set are
         // functions of values the root binds, so any prover over the same published inputs reaches
         // the same result.
+        observe("fhe_processor", true);
         let processed_ciphertext = (fhe_processor)(&FHEProcessorInput {
             ciphertexts: &selected,
             params: &params,
         });
-        let processed_hash = Keccak256::digest(&processed_ciphertext).to_vec();
+        observe("fhe_processor", false);
+        observe("output_hash", true);
+        let processed_hash = keccak256(&processed_ciphertext).to_vec();
+        observe("output_hash", false);
+        observe("output_commitment", true);
         let ciphertext_commitment =
             compute_ct_commitment_with_params(&processed_ciphertext, &params)
                 .map_err(|e| ComputeError::OutputCommitment(e.to_string()))?
                 .to_vec();
-        let params_hash = Keccak256::digest(&self.fhe_inputs.params).to_vec();
+        observe("output_commitment", false);
+        observe("params_hash", true);
+        let params_hash = keccak256(&self.fhe_inputs.params).to_vec();
+        observe("params_hash", false);
 
         Ok((
             ComputeResult {
@@ -168,6 +194,7 @@ mod tests {
     use fhe_traits::{FheEncoder, FheEncrypter, Serialize as FheSerialize};
     use rand::SeedableRng;
     use rand_chacha::ChaCha8Rng;
+    use sha3::{Digest, Keccak256};
     fn sum_processor(inputs: &FHEProcessorInput<'_>) -> Vec<u8> {
         let mut sum = Ciphertext::zero(inputs.params);
         for (bytes, _) in inputs.ciphertexts {

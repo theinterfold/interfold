@@ -12,22 +12,11 @@ import {
   storeDeploymentArgs,
 } from '@interfold/contracts/scripts'
 import { Interfold__factory as InterfoldFactory } from '@interfold/contracts/types'
-import { readFileSync } from 'fs'
 
 import hre from 'hardhat'
 
 import { CRISPProgram__factory as CRISPProgramFactory } from '../types'
 import { verifierNames } from '../scripts/verifiers'
-
-// The production guest lives in crates/support. Read the Image ID generated from that exact
-// guest instead of the example project's cached copy, which can lag behind a guest change.
-const imageIdContent = readFileSync(new URL('../../../../../crates/support/contracts/ImageID.sol', import.meta.url), 'utf-8')
-const match = imageIdContent.match(/bytes32 public constant PROGRAM_ID = bytes32\((0x[a-fA-F0-9]+)\)/)
-const IMAGE_ID = match ? match[1] : null
-
-if (!IMAGE_ID) {
-  throw new Error('IMAGE_ID not found')
-}
 
 export interface CRISPDeploymentResult {
   governanceComplete: boolean
@@ -74,10 +63,12 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
         })()
 
   const verifier = await deployVerifier(useMocks, ethers)
+  const receiptVerifier = await ethers.getContractAt('OpenVmReceiptVerifier', verifier)
+  const IMAGE_ID = await receiptVerifier.imageId()
 
   const encryptionSchemeId = ethers.keccak256(ethers.toUtf8Bytes('fhe.rs:BFV'))
 
-  const ciphertextVerifier = await ethers.deployContract('Risc0BfvCiphertextVerifier', [verifier, IMAGE_ID])
+  const ciphertextVerifier = await ethers.deployContract('OpenVmBfvCiphertextVerifier', [verifier, IMAGE_ID])
   await ciphertextVerifier.waitForDeployment()
   const ciphertextVerifierAddress = await ciphertextVerifier.getAddress()
   storeDeploymentArgs(
@@ -86,7 +77,7 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
       blockNumber: await ethers.provider.getBlockNumber(),
       constructorArgs: { verifier, imageId: IMAGE_ID },
     },
-    'Risc0BfvCiphertextVerifier',
+    'OpenVmBfvCiphertextVerifier',
     chain,
   )
   let poseidonT3Address = readDeploymentArgs('PoseidonT3', chain)?.address
@@ -298,8 +289,8 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
       Deployments:
       ----------------------------------------------------------------------
       Interfold: ${interfoldAddress ?? '(bind during protocol governance wiring)'}
-      Risc0Verifier: ${verifier}
-      Risc0BfvCiphertextVerifier: ${ciphertextVerifierAddress}
+      OpenVmVerifier: ${verifier}
+      OpenVmBfvCiphertextVerifier: ${ciphertextVerifierAddress}
       HonkVerifier: ${honkVerifierAddress}
       OnchainHonkVerifier: ${onchainHonkVerifierAddress}
       DataAvailabilityVerifier: ${dataAvailabilityVerifierAddress}
@@ -311,54 +302,37 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
   return { governanceComplete }
 }
 
-/**
- * Deploys the verifier contract
- * @param useMockVerifier - whether to use a mock verifier
- * @returns The address of the verifier
- */
-export const deployVerifier = async (useMockVerifier: boolean, connectedEthers?: any): Promise<string> => {
+/** Deploy the receipt binding for an explicitly configured OpenVM Halo2 verifier. */
+export const deployVerifier = async (_useMockVerifier: boolean, connectedEthers?: any): Promise<string> => {
   const ethers = connectedEthers ?? (await hre.network.connect()).ethers
   const chain = getDeploymentChain(hre)
-
-  if (!useMockVerifier) {
-    const existingVerifier = readDeploymentArgs('RiscZeroGroth16Verifier', chain)
-    if (existingVerifier?.address && (await ethers.provider.getCode(existingVerifier.address)) !== '0x') {
-      console.log('RiscZeroGroth16Verifier already deployed at:', existingVerifier.address)
-      return existingVerifier.address
-    }
-    const verifierFactory = await ethers.getContractFactory('RiscZeroGroth16Verifier')
-    const verifier = await verifierFactory.deploy()
-    await verifier.waitForDeployment()
-    const address = await verifier.getAddress()
-
-    storeDeploymentArgs(
-      {
-        address,
-        blockNumber: await ethers.provider.getBlockNumber(),
-      },
-      'RiscZeroGroth16Verifier',
-      chain,
-    )
-    return address
+  const required = (name: string) => {
+    const value = process.env[name]
+    if (!value) throw new Error(`Set ${name}; OpenVM has no default or mock compute verifier`)
+    return value
   }
-  // Check if mock verifier already deployed
-  const existingMockVerifier = readDeploymentArgs('MockRISC0Verifier', chain)
-  if (existingMockVerifier?.address && (await ethers.provider.getCode(existingMockVerifier.address)) !== '0x') {
-    console.log('MockRISC0Verifier already deployed at:', existingMockVerifier.address)
-    return existingMockVerifier.address
+  const halo2Verifier = ethers.getAddress(required('OPENVM_HALO2_VERIFIER'))
+  const expectedCodeHash = required('OPENVM_HALO2_RUNTIME_CODE_HASH')
+  const code = await ethers.provider.getCode(halo2Verifier)
+  if (code === '0x' || ethers.keccak256(code).toLowerCase() !== expectedCodeHash.toLowerCase()) {
+    throw new Error('The OpenVM verifier runtime code does not match the configured hash')
   }
-  const mockVerifierFactory = await ethers.getContractFactory('MockRISC0Verifier')
-  const mockVerifier = await mockVerifierFactory.deploy()
-  await mockVerifier.waitForDeployment()
-  const mockVerifierAddress = await mockVerifier.getAddress()
+  const appExeCommit = required('OPENVM_APP_EXE_COMMIT')
+  const appVmCommit = required('OPENVM_APP_VM_COMMIT')
+  for (const commitment of [appExeCommit, appVmCommit]) {
+    if (!/^0x[0-9a-fA-F]{64}$/.test(commitment)) throw new Error('OpenVM commitments must contain 32 bytes')
+  }
+  const verifier = await ethers.deployContract('OpenVmReceiptVerifier', [halo2Verifier, appExeCommit, appVmCommit])
+  await verifier.waitForDeployment()
+  const address = await verifier.getAddress()
   storeDeploymentArgs(
     {
-      address: mockVerifierAddress,
+      address,
       blockNumber: await ethers.provider.getBlockNumber(),
+      constructorArgs: { verifier: halo2Verifier, appExeCommit, appVmCommit },
     },
-    'MockRISC0Verifier',
+    'OpenVmReceiptVerifier',
     chain,
   )
-
-  return mockVerifierAddress
+  return address
 }

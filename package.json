@@ -75,6 +75,7 @@
     "config:release": "cd packages/interfold-config && pnpm release",
     "react:release": "cd packages/interfold-react && pnpm release",
     "npm:release": "pnpm build && pnpm config:release && pnpm evm:release && pnpm wasm:release && pnpm sdk:release && pnpm react:release && pnpm mcp:release",
+    "openvm": "bash scripts/run-openvm.sh",
     "support:build": "cd crates/support && ./scripts/build.sh",
     "build": "pnpm compile",
     "fixtures:build": "cd crates/evm-helpers && ./scripts/build_fixtures.sh && cd ../indexer && ./scripts/build_fixtures.sh",

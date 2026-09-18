@@ -239,6 +239,26 @@ pub fn compute_ct_commitment_with_params(
 ) -> Result<[u8; 32]> {
     use e3_zk_helpers::circuits::threshold::user_data_encryption::utils::compute_ciphertext_commitment;
 
+    #[cfg(crisp_fhe_optimized)]
+    if let Some(components) = Ciphertext::power_basis_from_bytes_if_canonical(ct, params)? {
+        use e3_zk_helpers::{commitments, utils::compute_modulus_bit};
+        if let Some(commitment) = commitments::compute_ciphertext_commitment_from_power_basis(
+            &components[0],
+            &components[1],
+            params.moduli(),
+            compute_modulus_bit(params),
+        ) {
+            let bytes = commitment.to_bytes_be().1;
+            anyhow::ensure!(
+                bytes.len() <= 32,
+                "The ciphertext commitment exceeds 32 bytes"
+            );
+            let mut result = [0; 32];
+            result[32 - bytes.len()..].copy_from_slice(&bytes);
+            return Ok(result);
+        }
+    }
+
     let ct = Ciphertext::from_bytes(ct, params)
         .map_err(|e| anyhow!("Error deserializing ciphertext: {}", e))?;
 

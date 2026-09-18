@@ -1,8 +1,8 @@
 [workspace]
 resolver = "3"
 msrv = "1.91.1"
-members = ["app", "host", "methods", "types"]
-exclude = ["methods/guest"]
+members = ["app", "host", "types", "program"]
+exclude = ["methods", "methods/guest", "openvm/guest", "openvm/prover"]
 
 [workspace.package]
 version = "0.1.0"
@@ -13,9 +13,8 @@ e3-support-app = { path = "./app" }
 e3-support-host = { path = "./host" }
 e3-user-program = { path = "./program" }
 e3-support-types = { path = "./types" }
-e3-fhe-params = { git = "https://github.com/theinterfold/interfold", rev = "5668f4c9ee0992aeb05b320eaa3b998a6c32e525" }
+e3-fhe-params = { path = "../fhe-params" }
 
-methods = { path = "./methods" }
 alloy-primitives = { version = "1.3", default-features = false, features = [
     "rlp",
     "serde",
@@ -31,44 +30,18 @@ env_logger = "=0.11.8"
 hex = { version = "=0.4.3" }
 log = { version = "=0.4.27" }
 reqwest = { version = "=0.12.22", features = ["json"] }
-risc0-build = { version = "=3.0.3", features = ["docker"] }
-risc0-build-ethereum = { git = "https://github.com/risc0/risc0-ethereum", tag = "v3.0.0" }
-risc0-ethereum-contracts = { git = "https://github.com/risc0/risc0-ethereum", tag = "v3.0.0" }
-risc0-zkvm = { version = "=3.0.3" }
-risc0-zkp = { version = "=3.0.2", default-features = false }
 serde = { version = "1.0", features = ["derive", "std"] }
 serde_json = "=1.0.145"
 sha2 = "=0.10.9"
 sha3 = "=0.10.8"
-# The Interfold revision must match for all Interfold dependencies in this workspace.
-#
-# The Interfold crates below are pinned by revision rather than by path because this workspace is
-# excluded from the root workspace on purpose (see the root Cargo.toml): a client must be able to
-# build crates/support on its own, and the RISC Zero Docker build context root is crates/support,
-# so anything outside that directory is unreachable from the guest build.
-#
-# The pin therefore decides which compute-provider code the guest runs, and moving it changes the
-# image ID. Bump it only together with a reproducible rebuild of
-# crates/support/contracts/ImageID.sol and a complete provenance manifest.
-#
-# Why this revision: 5668f4c9 contains the compute-input binding, secure-parameter fixes,
-# shared-parameter path, and accelerated SAFE commitment path that the guest must run.
-#
-# It replaces c2097da6, the scope commit of the 2026-08-17 Zenith protocol audit. Sitting at the
-# audited baseline read as the conservative choice and was not: the audit covered six Solidity
-# files and no Rust at all, so crates/compute-provider and the guest were outside its scope, and
-# outside the mitigation review at c64bcfb8 as well. See packages/interfold-contracts/audits/README.md.
-# Holding the old audit pin bought reproducibility rather than assurance while excluding real fixes
-# to the code the guest runs. The revision remains content-addressed even though a permanent main
-# commit retains it; a movable branch or tag is not an acceptable guest dependency.
+# Build this workspace from the repository root to include the guest source dependencies.
 fhe = { package = "fhe", git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
 fhe-traits = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
 fhe-util = { git = "https://github.com/gnosisguild/fhe.rs", tag = "v0.2.2" }
-e3-compute-provider = { git = "https://github.com/theinterfold/interfold", rev = "5668f4c9ee0992aeb05b320eaa3b998a6c32e525" }
+e3-compute-provider = { path = "../compute-provider" }
 tokio = { version = "=1.46.1", features = ["full"] }
 rand = { version = "=0.9.2" }
 tracing-subscriber = { version = "=0.3.20", features = ["env-filter"] }
-boundless-market = { version = "=1.1.0" }
 url = { version = "=2.5.4" }
 dotenvy = { version = "=0.15.7" }
 

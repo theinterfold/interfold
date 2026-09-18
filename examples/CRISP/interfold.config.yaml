@@ -85,22 +85,8 @@ chains:
         deploy_block: 11534982
 program:
   dev: true
-  # risc0:
-  #   risc0_dev_mode: 0 # 0 = production (Boundless), 1 = dev mode (fake proofs)
-  #   boundless:
-  #     rpc_url: "https://sepolia.infura.io/v3/YOUR_KEY"
-  #     private_key: "PRIVATE_KEY" # Use env vars for secrets
-  #     pinata_jwt: "PINATA_JWT" # For uploading programs
-  #     ipfs_gateway_url: "https://gateway.pinata.cloud" # Public full-download gateway for programs and inputs
-  #     program_url: "https://gateway.pinata.cloud/ipfs/QmdSmZPD9ArQYY754pbvji9bfiqAmG1rmoLci1fN9vMPdF" # Guest for ImageID.sol
-  #     onchain: true # true = onchain requests, false = offchain
-  #     Optional — custom auction parameters (defaults shown):
-  #     min_price_eth: 0.00005
-  #     max_price_eth: 0.004
-  #     timeout_secs: 28800
-  #     lock_timeout_secs: 14400
-  #     ramp_up_secs: 7200
-  #     lock_collateral_zkc: 100.0
+  # Real proofs use program.openvm. Set dev to false and configure repository, prover_bin,
+  # and prover_config as deployment-local absolute paths. See crates/support/openvm/README.md.
   # Default profile: multithread uses (logical CPUs - 1) Rayon workers and the same concurrent job
   # limit. Reserve threads with `multithread_reserve_threads` (default 1 for Actix / libp2p).
   # Example override on a 16-core host:

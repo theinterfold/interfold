@@ -6,6 +6,9 @@ license.workspace = true
 description = "E3 - Interfold Copmute Provider"
 repository.workspace = true
 
+[features]
+openvm-hashes = ["dep:openvm-keccak256"]
+
 [dependencies]
 serde = { workspace = true, features = ["derive", "std"] }
 lean-imt = "=0.1.2"
@@ -22,6 +25,7 @@ e3-bfv-client = { workspace = true }
 fhe = { workspace = true }
 e3-fhe-params = { workspace = true, features = ["abi-encoding"] }
 thiserror = { workspace = true }
+openvm-keccak256 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", optional = true }
 
 [dev-dependencies]
 fhe = { workspace = true }

@@ -6,15 +6,26 @@ license.workspace = true
 description = "E3 - Interfold SAFE"
 repository.workspace = true
 
+[features]
+openvm = ["dep:openvm", "dep:openvm-algebra-guest", "dep:serde", "dep:num-bigint"]
+phase-trace = ["openvm"]
+
 [dependencies]
 sha3 = "0.10.8"
 ark-ff = { workspace = true }
 ark-bn254 = { workspace = true }
 taceo-poseidon2 = { version = "0.2", features = ["bn254", "t4"] }
 hex = { workspace = true }
+openvm-algebra-guest = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", optional = true }
+openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", optional = true }
+serde = { workspace = true, optional = true }
+num-bigint = { version = "=0.4.6", optional = true }
 
-[target.'cfg(all(target_os = "zkvm", target_arch = "riscv32"))'.dependencies]
+[target.'cfg(all(target_os = "zkvm", target_arch = "riscv32", not(crisp_openvm)))'.dependencies]
 risc0-bigint2 = "=1.4.7"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(crisp_openvm)'] }
 
 [dev-dependencies]
 rand = { workspace = true }

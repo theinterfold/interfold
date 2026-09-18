@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Program execution configuration (RISC Zero / Boundless).
+//! Program execution configuration. OpenVM replaces the legacy RISC Zero backend.
 //!
 //! Extracted from [`AppConfig`] — these types configure external program
 //! execution, not the ciphernode itself.
@@ -73,13 +73,26 @@ impl Default for Risc0Config {
     }
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct OpenVmConfig {
+    pub repository: std::path::PathBuf,
+    pub prover_bin: std::path::PathBuf,
+    pub prover_config: std::path::PathBuf,
+}
+
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ProgramConfig {
+    openvm: Option<OpenVmConfig>,
     risc0: Option<Risc0Config>,
     dev: Option<bool>,
 }
 
 impl ProgramConfig {
+    pub fn openvm(&self) -> Option<&OpenVmConfig> {
+        self.openvm.as_ref()
+    }
+
     pub fn risc0(&self) -> Option<&Risc0Config> {
         self.risc0.as_ref()
     }
