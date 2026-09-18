@@ -126,6 +126,37 @@ require_preset_artifacts() {
     fi
 }
 
+CRISP_SDK_DIR="${REPO_ROOT}/examples/CRISP/packages/crisp-sdk"
+CRISP_STAGED_PRESET_JSON="${REPO_ROOT}/examples/CRISP/circuits/dist/insecure/preset.json"
+CRISP_SDK_BUNDLE="${CRISP_SDK_DIR}/dist/presets/insecure.js"
+CRISP_STALE_NOTE=""
+
+# The CRISP test proves with the built @crisp-e3/sdk bundle but verifies against the
+# committed verifier, so a bundle built from older circuits proves fine and then dies
+# on chain with SumcheckFailed. Gate the test on freshness instead of paying for that.
+if ! node "${REPO_ROOT}/examples/CRISP/scripts/check-staged-preset.mjs" insecure; then
+    if [ "$SKIP_BUILD" = true ]; then
+        CRISP_STALE_NOTE="insecure CRISP artifacts are stale or missing; Pi_user gas will be null. Rebuild with: pnpm --filter @crisp-e3/sdk build:testing"
+    elif ! ( cd "$REPO_ROOT" && pnpm --filter @crisp-e3/sdk build:presets ); then
+        CRISP_STALE_NOTE="insecure CRISP artifact rebuild failed; Pi_user gas will be null."
+    fi
+fi
+if [ -z "$CRISP_STALE_NOTE" ] && [ "$SKIP_BUILD" = true ]; then
+    if [ ! -s "$CRISP_SDK_BUNDLE" ]; then
+        CRISP_STALE_NOTE="@crisp-e3/sdk insecure bundle is missing; Pi_user gas will be null. Rebuild with: pnpm --filter @crisp-e3/sdk build:testing"
+    elif [ "$CRISP_SDK_BUNDLE" -ot "$CRISP_STAGED_PRESET_JSON" ]; then
+        CRISP_STALE_NOTE="@crisp-e3/sdk insecure bundle predates the staged artifacts; Pi_user gas will be null. Rebuild with: pnpm --filter @crisp-e3/sdk build:testing"
+    fi
+fi
+if [ -z "$CRISP_STALE_NOTE" ] && [ "$SKIP_BUILD" != true ]; then
+    # Cheap (~1 min, no proving): close the staged-artifacts-to-bundle gap so the test
+    # can never prove with a bundle older than what was just checked.
+    echo "  [gas] Refreshing @crisp-e3/sdk insecure bundle from staged artifacts..."
+    if ! ( cd "$CRISP_SDK_DIR" && CRISP_PRESET=insecure pnpm exec tsup ); then
+        CRISP_STALE_NOTE="@crisp-e3/sdk bundle refresh failed; Pi_user gas will be null."
+    fi
+fi
+
 if [ "$SKIP_BUILD" = true ]; then
     echo "  [gas] Skipping circuit build and Honk verifier generation (--skip-build)."
     require_preset_artifacts
@@ -160,6 +191,10 @@ else
 fi
 
 set +e
+if [ -n "$CRISP_STALE_NOTE" ]; then
+    echo "  [gas] Skipping CRISP verifier test: ${CRISP_STALE_NOTE}"
+    CRISP_TEST_EXIT_CODE=2
+else
 echo "  [gas] Running CRISP verifier test for Pi_user gas..."
 (
   cd "$CRISP_CONTRACTS_DIR" && \
@@ -167,6 +202,7 @@ echo "  [gas] Running CRISP verifier test for Pi_user gas..."
 ) 2>&1 | tee "$TMP_LOG_CRISP"
 CRISP_TEST_EXIT_CODE=${PIPESTATUS[0]}
 echo "  [gas] CRISP test completed (exit=${CRISP_TEST_EXIT_CODE})."
+fi
 require_preset_artifacts
 CIPHERNODE_SKIP_PROOF_AGGREGATION=false
 echo "  [gas] Running integration test (test_trbfv_actor); proof_aggregation=true, multithread_jobs=${BENCHMARK_MULTITHREAD_JOBS:-1}, profile=release..."
