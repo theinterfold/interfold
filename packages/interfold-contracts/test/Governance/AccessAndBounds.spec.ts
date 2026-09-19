@@ -8,7 +8,7 @@
 // SortitionCommitteeFinalized event rename, and append-only parameter sets.
 import { expect } from "chai";
 
-import { BFV_PARAMS_DEFAULT, deployInterfoldSystem, ethers } from "../fixtures";
+import { BFV_PARAMS_DEFAULT, deployInterfoldSystem, ethers, networkHelpers } from "../fixtures";
 
 async function deployAll() {
   const sys = await deployInterfoldSystem({
@@ -31,7 +31,7 @@ async function deployAll() {
 describe("Governance — access control, bounds & events", function () {
   describe("Ownable2Step + renounceOwnership disabled", function () {
     it("Interfold: transferOwnership is two-step", async function () {
-      const { interfold, other, ownerAddress } = await deployAll();
+      const { interfold, other, ownerAddress } = await networkHelpers.loadFixture(deployAll);
       const otherAddress = await other.getAddress();
       await interfold.transferOwnership(otherAddress);
       expect(await interfold.owner()).to.equal(ownerAddress);
@@ -41,7 +41,7 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("CiphernodeRegistry: transferOwnership is two-step", async function () {
-      const { ciphernodeRegistry, other, ownerAddress } = await deployAll();
+      const { ciphernodeRegistry, other, ownerAddress } = await networkHelpers.loadFixture(deployAll);
       const otherAddress = await other.getAddress();
       await ciphernodeRegistry.transferOwnership(otherAddress);
       expect(await ciphernodeRegistry.owner()).to.equal(ownerAddress);
@@ -51,7 +51,7 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("BondingRegistry: transferOwnership is two-step", async function () {
-      const { bondingRegistry, other, ownerAddress } = await deployAll();
+      const { bondingRegistry, other, ownerAddress } = await networkHelpers.loadFixture(deployAll);
       const otherAddress = await other.getAddress();
       await bondingRegistry.transferOwnership(otherAddress);
       expect(await bondingRegistry.owner()).to.equal(ownerAddress);
@@ -61,7 +61,7 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("E3RefundManager: transferOwnership is two-step", async function () {
-      const { e3RefundManager, other, ownerAddress } = await deployAll();
+      const { e3RefundManager, other, ownerAddress } = await networkHelpers.loadFixture(deployAll);
       const otherAddress = await other.getAddress();
       await e3RefundManager.transferOwnership(otherAddress);
       expect(await e3RefundManager.owner()).to.equal(ownerAddress);
@@ -71,7 +71,7 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("InterfoldToken: renounceOwnership reverts", async function () {
-      const { ciphernodeBondToken } = await deployAll();
+      const { ciphernodeBondToken } = await networkHelpers.loadFixture(deployAll);
       await expect(
         ciphernodeBondToken.renounceOwnership(),
       ).to.be.revertedWithCustomError(
@@ -81,14 +81,14 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("InterfoldTicketToken: renounceOwnership reverts", async function () {
-      const { ticketToken } = await deployAll();
+      const { ticketToken } = await networkHelpers.loadFixture(deployAll);
       await expect(
         ticketToken.renounceOwnership(),
       ).to.be.revertedWithCustomError(ticketToken, "RenounceOwnershipDisabled");
     });
 
     it("Interfold: renounceOwnership reverts", async function () {
-      const { interfold } = await deployAll();
+      const { interfold } = await networkHelpers.loadFixture(deployAll);
       await expect(interfold.renounceOwnership()).to.be.revertedWithCustomError(
         interfold,
         "RenounceOwnershipDisabled",
@@ -96,7 +96,7 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("CiphernodeRegistry: renounceOwnership reverts", async function () {
-      const { ciphernodeRegistry } = await deployAll();
+      const { ciphernodeRegistry } = await networkHelpers.loadFixture(deployAll);
       await expect(
         ciphernodeRegistry.renounceOwnership(),
       ).to.be.revertedWithCustomError(
@@ -106,7 +106,7 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("BondingRegistry: renounceOwnership reverts", async function () {
-      const { bondingRegistry } = await deployAll();
+      const { bondingRegistry } = await networkHelpers.loadFixture(deployAll);
       await expect(
         bondingRegistry.renounceOwnership(),
       ).to.be.revertedWithCustomError(
@@ -116,7 +116,7 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("E3RefundManager: renounceOwnership reverts", async function () {
-      const { e3RefundManager } = await deployAll();
+      const { e3RefundManager } = await networkHelpers.loadFixture(deployAll);
       await expect(
         e3RefundManager.renounceOwnership(),
       ).to.be.revertedWithCustomError(
@@ -128,7 +128,7 @@ describe("Governance — access control, bounds & events", function () {
 
   describe("Interfold bounds exposed", function () {
     it("setMaxDuration reverts above MAX_DURATION_CAP", async function () {
-      const { interfold } = await deployAll();
+      const { interfold } = await networkHelpers.loadFixture(deployAll);
       const cap = await interfold.MAX_DURATION_CAP();
       await expect(
         interfold.setMaxDuration(cap + 1n),
@@ -136,7 +136,7 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("exposes MAX_TIMEOUT_WINDOW / MAX_COMMITTEE_SIZE / MAX_*_BPS", async function () {
-      const { interfold } = await deployAll();
+      const { interfold } = await networkHelpers.loadFixture(deployAll);
       expect(await interfold.MAX_DURATION_CAP()).to.equal(
         365n * 24n * 60n * 60n,
       );
@@ -151,7 +151,7 @@ describe("Governance — access control, bounds & events", function () {
 
   describe("registry & bonding bounds", function () {
     it("setSortitionSubmissionWindow reverts when out of bounds", async function () {
-      const { ciphernodeRegistry } = await deployAll();
+      const { ciphernodeRegistry } = await networkHelpers.loadFixture(deployAll);
       await expect(
         ciphernodeRegistry.setSortitionSubmissionWindow(0),
       ).to.be.revertedWithCustomError(
@@ -168,7 +168,7 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("BondingRegistry.setExitDelay reverts when out of bounds", async function () {
-      const { bondingRegistry } = await deployAll();
+      const { bondingRegistry } = await networkHelpers.loadFixture(deployAll);
       const min = await bondingRegistry.MIN_EXIT_DELAY();
       await expect(
         bondingRegistry.setExitDelay(min - 1n),
@@ -180,7 +180,7 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("keeps exit delay longer than the sortition window", async function () {
-      const { bondingRegistry, ciphernodeRegistry } = await deployAll();
+      const { bondingRegistry, ciphernodeRegistry } = await networkHelpers.loadFixture(deployAll);
       const minimumExitDelay = await bondingRegistry.MIN_EXIT_DELAY();
       const randomnessTimeout =
         await ciphernodeRegistry.randomnessRequestTimeout();
@@ -208,12 +208,12 @@ describe("Governance — access control, bounds & events", function () {
 
   describe("bps and appeal-window caps exposed", function () {
     it("E3RefundManager exposes MAX_PROTOCOL_BPS", async function () {
-      const { e3RefundManager } = await deployAll();
+      const { e3RefundManager } = await networkHelpers.loadFixture(deployAll);
       expect(await e3RefundManager.MAX_PROTOCOL_BPS()).to.equal(5_000n);
     });
 
     it("SlashingManager exposes MAX_APPEAL_WINDOW", async function () {
-      const { slashingManager } = await deployAll();
+      const { slashingManager } = await networkHelpers.loadFixture(deployAll);
       expect(await slashingManager.MAX_APPEAL_WINDOW()).to.equal(
         30n * 24n * 60n * 60n,
       );
@@ -222,7 +222,7 @@ describe("Governance — access control, bounds & events", function () {
 
   describe("BondingRegistry distributor cap", function () {
     it("reverts after MAX_AUTHORIZED_DISTRIBUTORS, succeeds after revoke", async function () {
-      const { bondingRegistry } = await deployAll();
+      const { bondingRegistry } = await networkHelpers.loadFixture(deployAll);
       const cap = await bondingRegistry.MAX_AUTHORIZED_DISTRIBUTORS();
       const distributors: string[] = [];
       for (let i = 0; i < Number(cap); i++) {
@@ -244,7 +244,7 @@ describe("Governance — access control, bounds & events", function () {
 
   describe("PkVerifierSet event", function () {
     it("emits PkVerifierSet when setPkVerifier is called", async function () {
-      const { interfold, mocks } = await deployAll();
+      const { interfold, mocks } = await networkHelpers.loadFixture(deployAll);
       const schemeId = ethers.id("pk-verifier-event");
       const verifier = await mocks.pkVerifier.getAddress();
       await expect(interfold.setPkVerifier(schemeId, verifier))
@@ -253,7 +253,7 @@ describe("Governance — access control, bounds & events", function () {
     });
 
     it("rejects verifiers compiled for another committee", async function () {
-      const { interfold, ciphernodeRegistry } = await deployAll();
+      const { interfold, ciphernodeRegistry } = await networkHelpers.loadFixture(deployAll);
       const circuitVerifier = await ethers.deployContract(
         "MockCircuitVerifier",
       );
@@ -295,7 +295,7 @@ describe("Governance — access control, bounds & events", function () {
 
   describe("SlashingManager setter events", function () {
     it("emits BondingRegistryUpdated", async function () {
-      const { slashingManager } = await deployAll();
+      const { slashingManager } = await networkHelpers.loadFixture(deployAll);
       const target = ethers.Wallet.createRandom().address;
       await expect(slashingManager.setBondingRegistry(target)).to.emit(
         slashingManager,
@@ -306,7 +306,7 @@ describe("Governance — access control, bounds & events", function () {
 
   describe("SortitionCommitteeFinalized event rename", function () {
     it("ABI exposes SortitionCommitteeFinalized but not CommitteeFinalized", async function () {
-      const { ciphernodeRegistry } = await deployAll();
+      const { ciphernodeRegistry } = await networkHelpers.loadFixture(deployAll);
       expect(
         ciphernodeRegistry.interface.getEvent("SortitionCommitteeFinalized"),
       ).to.not.equal(null);
@@ -320,7 +320,7 @@ describe("Governance — access control, bounds & events", function () {
 
   describe("active parameter set", function () {
     it("is append-only", async function () {
-      const { interfold } = await deployAll();
+      const { interfold } = await networkHelpers.loadFixture(deployAll);
       await expect(interfold.setParamSet(0, BFV_PARAMS_DEFAULT))
         .to.be.revertedWithCustomError(interfold, "ParamSetAlreadyRegistered")
         .withArgs(0);

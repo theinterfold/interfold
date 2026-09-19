@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 import { expect, describe, it } from 'vitest'
+import { bytesToHex } from 'viem'
 import { extractSignatureComponents, generateMerkleProof, generateMerkleTree, hashLeaf } from '../src/utils'
 import { SLOT_ADDRESS } from './constants'
 import { generateTestLeaves } from './helpers'
@@ -21,11 +22,9 @@ describe('Utils', () => {
   })
 
   describe('generateMerkleTree', () => {
-    it('Should generate a merkle tree', () => {
-      const leaves = generateTestLeaves([{ address: SLOT_ADDRESS, balance: 100n }])
-      const tree = generateMerkleTree(leaves)
-
-      expect(tree.root).toBeDefined()
+    it('matches the known root for an odd number of leaves', () => {
+      const tree = generateMerkleTree([1n, 2n, 3n])
+      expect(tree.root).toBe(13816780880028945690020260331303642730075999758909899334839547418969502592169n)
     })
   })
 
@@ -47,6 +46,7 @@ describe('Utils', () => {
       }
 
       expect(tree.verifyProof(unpaddedProof)).toBe(true)
+      expect(tree.verifyProof({ ...unpaddedProof, leaf: hashLeaf(address, balance + 1n) })).toBe(false)
     })
 
     it('Should return path indices in least-significant-bit-first order', () => {
@@ -81,10 +81,10 @@ describe('Utils', () => {
     it('Should extract signature components correctly', async () => {
       const { messageHash, publicKeyX, publicKeyY, signature: extractedSignature } = await extractSignatureComponents(MASK_SIGNATURE)
 
-      expect(messageHash).toBeInstanceOf(Uint8Array)
-      expect(publicKeyX).toBeInstanceOf(Uint8Array)
-      expect(publicKeyY).toBeInstanceOf(Uint8Array)
-      expect(extractedSignature).toBeInstanceOf(Uint8Array)
+      expect(bytesToHex(messageHash)).toBe('0x136f9726bf0927af0b8be9fd5b24fe25ee8047f7940e9efc359d7caf154110fd')
+      expect(bytesToHex(publicKeyX)).toBe('0x803f440eb94e8a18831bb33268d20363b8c6e632fe425de5a9b16e6caa2d6bf6')
+      expect(bytesToHex(publicKeyY)).toBe('0x7d8572b3029dbc17a0021271fee5faf58f1367104b96df09d923892984acf77e')
+      expect(bytesToHex(extractedSignature)).toBe(MASK_SIGNATURE.slice(0, 130))
     })
   })
 })
