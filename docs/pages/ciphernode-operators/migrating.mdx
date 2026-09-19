@@ -44,9 +44,24 @@ Keep the old server's data until the new one is verified and running.
 
 ### 1. Stop the old node
 
+Stop the node with whatever supervises it: a service manager, a process manager, a container
+runtime, or the terminal it runs in. What matters is that the process exits, which releases its
+exclusive lock on the data directory.
+
 ```bash
-pm2 stop <node>            # or: systemctl stop <unit>
+# examples; use whatever runs your node
+systemctl stop <unit>
+pm2 stop <node>
+docker stop <container>
 ```
+
+Confirm the process is gone before copying:
+
+```bash
+interfold node validate --name <node>
+```
+
+The command takes the same lock the node holds, so it fails while a node still runs.
 
 The key/value store is not safe to copy while a node writes to it. A copy taken from a running node
 can open successfully and still be inconsistent.
@@ -101,9 +116,8 @@ with what you recorded.
 
 ### 6. Start the new node, then decommission the old one
 
-```bash
-pm2 start <node>
-```
+Start the node the same way you run it elsewhere. Interfold does not require a particular service
+manager.
 
 Update the peer list on any node that reaches this one by address. The peer id is unchanged, but a
 new IP or port needs a new multiaddr.

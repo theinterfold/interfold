@@ -88,9 +88,8 @@ encryption key file. Neither is the correct procedure.
 `interfold node reset-data` clears exactly the incompatible state and keeps the identity:
 
 ```bash
-# 1. Stop the node first. The command takes the node's exclusive process fence
-#    and refuses while a node is running.
-pm2 stop <node>            # or: systemctl stop <unit>
+# 1. Stop the node first, with whatever supervises it. The command takes the
+#    node's exclusive process fence and refuses while a node is running.
 
 # 2. Clear the state. Both the event log and the key/value store are removed.
 interfold node reset-data --name <node> --yes
