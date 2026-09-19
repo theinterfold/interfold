@@ -8,6 +8,9 @@
   "upgrades": {
     "title": "Ciphernode Upgrades"
   },
+  "migrating": {
+    "title": "Migrating a Ciphernode"
+  },
   "registration": {
     "title": "Registration & Bonding"
   },
