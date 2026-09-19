@@ -3,7 +3,7 @@
   "instructions": ["AGENTS.md"],
   "agent": {
     "invariant-reviewer": {
-      "description": "Reviews a diff against agent/INVARIANTS.md and the relevant flow-trace docs. Use before pushing any change to contracts, circuits, or core crates.",
+      "description": "Reviews a diff against agent/invariants/ and the relevant flow-trace docs. Use before pushing any change to contracts, circuits, or core crates.",
       "mode": "subagent",
       "prompt": "{file:agent/prompts/invariant-reviewer.md}",
       "permission": {
