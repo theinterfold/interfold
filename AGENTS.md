@@ -8,7 +8,8 @@ Read before starting any task, in this order:
 
 1. `agent/RULES.md` — mandatory working rules (always)
 2. `agent/CONTEXT.md` — what Interfold is: terminology, monorepo map, commands, conventions
-3. `agent/INVARIANTS.md` — protocol, crypto, runtime, and build invariants you must not break
+3. `agent/invariants/00_INDEX.md` — protocol, crypto, runtime, and build invariants you must not
+   break; its routing table names the scoped section file(s) to read for the paths you touch
 4. `.agents/skills/asd-ste100/SKILL.md` — before writing or reviewing comments, docs, error text,
    requirements, PR prose, or other natural-language technical content
 5. Area-specific, when relevant:

@@ -14,15 +14,21 @@ you report findings.
    untracked files that belong to the requested change. If the invoking prompt supplies a specific
    diff or file list, use that instead.
 2. Read `agent/invariants/00_INDEX.md` — meta-invariants, open issues, and the routing table.
-3. Map each changed file to its harness docs, and load **only** the invariant sections the routing
-   table names for the paths in this diff:
+3. Map each changed file to its harness docs, and load the invariant sections the routing table
+   names for the paths in this diff. A path can match more than one row; load every section the
+   matching rows name, and nothing else:
    - `packages/interfold-contracts/contracts/` → the flow-trace file covering that contract area
      (see the table in `agent/RULES.md`) + `agent/invariants/01_PROTOCOL_ONCHAIN.md`
+   - `packages/interfold-contracts/{scripts,tasks}/` → `agent/invariants/01_PROTOCOL_ONCHAIN.md` +
+     `agent/invariants/04_BUILD_CONFIG.md`
    - `circuits/` → `agent/invariants/02_CRYPTO_CIRCUITS.md` +
      `agent/flow-trace/04_DKG_AND_COMPUTATION.md`
-   - `crates/` → `agent/invariants/03_ACTOR_RUNTIME.md` + `agent/ARCHITECTURE.md` (layering,
-     durability, ordering rules) and `agent/CRATES_ARCHITECTURE.md` §Subsystem contracts
+   - `crates/{zk-prover,zk-helpers,trbfv,fhe-params}/` → `agent/invariants/02_CRYPTO_CIRCUITS.md`
+   - `crates/` (all other crates) → `agent/invariants/03_ACTOR_RUNTIME.md` + `agent/ARCHITECTURE.md`
+     (layering, durability, ordering rules) and `agent/CRATES_ARCHITECTURE.md` §Subsystem contracts
    - build scripts / committee or preset files → `agent/invariants/04_BUILD_CONFIG.md`
+   - committee-sync sources (listed under the routing table in `00_INDEX.md`) →
+     `agent/invariants/02_CRYPTO_CIRCUITS.md` §Committee config sync, in addition to their own row
 4. For every invariant whose subject matter the diff touches, verify the change preserves it by
    reading the actual post-change code — not just the diff hunks. Pay special attention to the
    meta-invariant: committee ordering, threshold meaning, proof multiplicity, hashing, signatures,

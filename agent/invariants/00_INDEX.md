@@ -18,7 +18,8 @@ design citation alone does not establish current runtime behavior.
 
 ## How to read this directory
 
-Read this index, then **only** the section file that covers the code you touch. The sections are
+Read this index, then **only** the section files that cover the code you touch. A changed path can
+match more than one row; read every section the matching rows name. The sections are otherwise
 independent: a contracts change does not need the circuit invariants, and a crate change does not
 need the token invariants.
 
@@ -30,6 +31,15 @@ need the token invariants.
 | `crates/{zk-prover,zk-helpers,trbfv,fhe-params}/` | `02_CRYPTO_CIRCUITS.md`                         | ~230  |
 | `crates/` (actors, events, persistence, net, evm) | `03_ACTOR_RUNTIME.md`                           | ~160  |
 | build scripts, committee or preset files          | `04_BUILD_CONFIG.md`                            | ~60   |
+| committee-sync sources (list below)               | `02_CRYPTO_CIRCUITS.md` §Committee config sync  | ~25   |
+
+Committee-sync sources are the files `scripts/check-committee.sh` compares. Some sit under paths
+that route elsewhere, so they need the crypto section in addition to their own row:
+`packages/interfold-contracts/scripts/protocol/constants.ts`,
+`packages/interfold-contracts/scripts/utils.ts`,
+`packages/interfold-contracts/contracts/lib/ActiveCryptoConfig.sol`,
+`packages/interfold-contracts/tasks/interfold.ts`, `packages/interfold-sdk/src/utils.ts`,
+`crates/evm-helpers/src/contracts.rs`, and `scripts/circuit-constants.ts`.
 
 Read the whole directory only when the change spans layers (contracts ↔ Rust ↔ circuits) or when
 you are asked for a full invariant audit.
