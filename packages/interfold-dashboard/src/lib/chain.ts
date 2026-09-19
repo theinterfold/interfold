@@ -104,9 +104,7 @@ const NETWORKS: Record<string, NetworkProfile> = {
     explorer: 'https://etherscan.io',
     interfold: '0x28cF63B459e6218C69EA97ea7D90541cf648c715',
     ciphernodeRegistry: '0xC927A5B2d8F68697bC28C0670df05178c93df2d7',
-    // CRISP is not deployed on mainnet yet; MockE3Program fills the slot so the
-    // poll views resolve until a real CRISP deployment replaces it via env.
-    crispProgram: '0x4976E5E47852eFCe6851d35B95A1A2E19456F3D7',
+    crispProgram: '0x53FCdb21E73A461CfE6c64B19855204384B91BA3',
     bondingRegistry: '0x0ec90465095C21830BEcED07e032809A2Bd2915F',
     // No faucet on mainnet.
     faucet: '',

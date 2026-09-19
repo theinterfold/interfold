@@ -68,9 +68,9 @@ Only `VITE_BONDING_REGISTRY_ADDRESS` is configured. The ciphernode bond token, t
 ticket underlying, bond size, ticket price, minimum tickets, and exit delay are all read back from
 the registry, so the guide follows the deployment instead of a hardcoded token list.
 
-CRISP question text + option labels are off-chain (the program doesn't store them); the mapping
-lives in `src/lib/pollMeta.ts`. Unknown E3 ids get a generic "Encrypted poll #N" header with numeric
-option labels.
+CRISP question text + option labels are off-chain (the program does not store them). The mapping
+lives in `src/lib/pollMeta.ts`. Unknown E3 IDs get a generic header that contains the compact E3 ID.
+They use numeric option labels.
 
 ### Configuration
 
