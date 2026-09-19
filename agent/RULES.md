@@ -6,16 +6,16 @@ file rather than duplicating its content.
 
 ## Harness map
 
-| File                     | Read when                                                                                            |
-| ------------------------ | ---------------------------------------------------------------------------------------------------- |
-| `RULES.md` (this file)   | Always, before any task                                                                              |
-| `CONTEXT.md`             | You need project overview, terminology, monorepo map, commands, or conventions                       |
-| `INVARIANTS.md`          | Before changing contracts, circuits, actor runtime, or build config — things that must not break     |
-| `ARCHITECTURE.md`        | Rust contribution rules (target design, layering, durability, testing)                               |
-| `CRATES_ARCHITECTURE.md` | The implemented Rust runtime, persistence, and protocol topology                                     |
-| `flow-trace/00_INDEX.md` | Protocol behavior questions; known bugs & concerns                                                   |
-| `prompts/`               | Canonical bodies for reusable agents/commands — tool wrappers in `.claude/`, `.opencode/` point here |
-| `.agents/skills/`        | Portable task skills; load `asd-ste100` before writing or reviewing technical prose                  |
+| File                     | Read when                                                                                                    |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------ |
+| `RULES.md` (this file)   | Always, before any task                                                                                      |
+| `CONTEXT.md`             | You need project overview, terminology, monorepo map, commands, or conventions                               |
+| `invariants/00_INDEX.md` | Before changing contracts, circuits, actor runtime, or build config — then only the section it routes you to |
+| `ARCHITECTURE.md`        | Rust contribution rules (target design, layering, durability, testing)                                       |
+| `CRATES_ARCHITECTURE.md` | The implemented Rust runtime, persistence, and protocol topology                                             |
+| `flow-trace/00_INDEX.md` | Protocol behavior questions; known bugs & concerns                                                           |
+| `prompts/`               | Canonical bodies for reusable agents/commands — tool wrappers in `.claude/`, `.opencode/` point here         |
+| `.agents/skills/`        | Portable task skills; load `asd-ste100` before writing or reviewing technical prose                          |
 
 Maintenance rule: these docs are part of the codebase. When a change invalidates a statement in any
 of them (a command, an invariant, a crate's role), update the doc **in the same PR** — surgical
@@ -30,14 +30,17 @@ message carries `[skip-doc-sync]`.
 - Commits: Conventional Commits, types `feat`/`fix`/`chore` only, description ≤ 72 chars, `!` for
   breaking changes.
 - Never hand-edit generated files (committee/preset files, parity matrices, verifier contracts,
-  `.active-preset.json`, `deployments/manifest.json`) — see `INVARIANTS.md` §Build / config sync.
+  `.active-preset.json`, `deployments/manifest.json`) — see `invariants/04_BUILD_CONFIG.md`.
 - Every new `.rs`/`.sol`/`.ts` file needs the SPDX `LGPL-3.0-only` header.
 - Before writing or reviewing natural-language technical content, load
   `.agents/skills/asd-ste100/SKILL.md`. Apply it to code comments, doc comments, documentation,
   requirements, procedures, help text, error text, release notes, and PR prose. Preserve protected
   code and exact interface literals.
 - Before assuming current behavior is correct, check the "Verified Bugs & Protocol Concerns" table
-  in `flow-trace/00_INDEX.md` and the open-issues list in `INVARIANTS.md`.
+  in `flow-trace/00_INDEX.md` and the open-issues list in `invariants/00_INDEX.md`.
+- Invariant review is one sequential pass. Do not spawn a subagent per invariant or per section
+  unless the user explicitly asks for a per-invariant or per-section audit. —
+  `invariants/00_INDEX.md` §Review budget
 
 ## Verification ladder
 

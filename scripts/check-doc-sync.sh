@@ -28,7 +28,7 @@ fi
 # Paths whose changes are expected to be reflected in agent/ docs. Mirrors the
 # "When to update" table in agent/RULES.md and the flow-trace area mapping.
 WATCHED_REGEX='^(packages/interfold-contracts/(contracts|scripts|tasks)/|circuits/(lib|bin)/|crates/(aggregator|bfv-client|ciphernode-builder|cli|committee-hash|compute-provider|config|crypto|daemon-server|data|entrypoint|events|evm|evm-helpers|fhe|fhe-params|fs|indexer|keyshare|multithread|net|parity-matrix|polynomial|program-server|request|safe|slashing|sortition|sync|trbfv|zk-helpers|zk-prover)/src/)'
-DOCS_REGEX='^agent/(RULES|CONTEXT|INVARIANTS|ARCHITECTURE|CRATES_ARCHITECTURE)\.md$|^agent/flow-trace/'
+DOCS_REGEX='^agent/(RULES|CONTEXT|ARCHITECTURE|CRATES_ARCHITECTURE)\.md$|^agent/invariants/|^agent/flow-trace/'
 
 base_ref="${DOC_SYNC_BASE_REF:-origin/main}"
 base="$(git merge-base "$base_ref" HEAD 2>/dev/null || true)"
@@ -188,7 +188,7 @@ while IFS= read -r path; do
   echo "  - $path"
 done <<<"$unskipped_watched"
 echo
-echo "agent/RULES.md requires harness docs (flow-trace, INVARIANTS.md, architecture docs)"
+echo "agent/RULES.md requires harness docs (flow-trace, agent/invariants/, architecture docs)"
 echo "to be updated in the same PR as the change they describe. Either:"
 echo
 echo "  1. update the relevant agent/ doc (start from agent/flow-trace/00_INDEX.md), or"
