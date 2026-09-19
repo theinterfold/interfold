@@ -55,6 +55,7 @@ import {
   address,
   encodeBfvParams,
   loadConfig,
+  pricingConfig,
   requireContract,
 } from "../protocol/values";
 import {
@@ -70,6 +71,7 @@ import { expectedCrispImageId } from "./secureCrispArtifacts";
 
 const BFV_SCHEME_ID = ethersLib.id("fhe.rs:BFV");
 const SECURE_PARAM_SET = 1;
+type NormalizedPricingConfig = ReturnType<typeof pricingConfig>;
 const crispInterface = new ethersLib.Interface([
   "function bindInterfold(address interfold)",
   "function interfold() view returns (address)",
@@ -196,6 +198,48 @@ export function upgradeTransaction(
       "0x",
     ]),
   );
+}
+
+function pricingConfigWithMinimumCommitteeSize(
+  live: NormalizedPricingConfig,
+  minimumCommitteeSize: bigint,
+): NormalizedPricingConfig {
+  return {
+    keyGenFixedPerNode: live.keyGenFixedPerNode,
+    keyGenPerEncryptionProof: live.keyGenPerEncryptionProof,
+    coordinationPerPair: live.coordinationPerPair,
+    availabilityPerNodePerSec: live.availabilityPerNodePerSec,
+    decryptionPerNode: live.decryptionPerNode,
+    publicationBase: live.publicationBase,
+    verificationPerProof: live.verificationPerProof,
+    protocolTreasury: live.protocolTreasury,
+    marginBps: live.marginBps,
+    protocolShareBps: live.protocolShareBps,
+    dkgUtilizationBps: live.dkgUtilizationBps,
+    computeUtilizationBps: live.computeUtilizationBps,
+    decryptUtilizationBps: live.decryptUtilizationBps,
+    minCommitteeSize: minimumCommitteeSize,
+    minThreshold: live.minThreshold,
+    randomnessFlatFee: live.randomnessFlatFee,
+  };
+}
+
+function requirePricingPolicyMatchesLiveState(
+  live: NormalizedPricingConfig,
+  configured: NormalizedPricingConfig,
+): void {
+  for (const field of Object.keys(configured) as Array<
+    keyof NormalizedPricingConfig
+  >) {
+    if (field === "minCommitteeSize") continue;
+    const expected = configured[field];
+    const actual = live[field];
+    if (String(actual).toLowerCase() !== String(expected).toLowerCase()) {
+      throw new Error(
+        `Live pricing ${field} differs from the upgrade configuration: expected ${expected}, got ${actual}`,
+      );
+    }
+  }
 }
 
 async function requireProxyAdminOwner(
@@ -328,6 +372,24 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     "Interfold",
     deployment.interfold,
   );
+  const [liveFeeToken, liveFeeTokenDecimals, livePricing] = await Promise.all([
+    interfold.feeToken(),
+    interfold.feeTokenDecimals(),
+    interfold.getPricingConfig(),
+  ]);
+  if (liveFeeToken.toLowerCase() !== config.feeToken.toLowerCase()) {
+    throw new Error(
+      `Live fee token differs from the upgrade configuration: expected ${config.feeToken}, got ${liveFeeToken}`,
+    );
+  }
+  if (liveFeeTokenDecimals !== BigInt(config.feeTokenDecimals)) {
+    throw new Error(
+      `Live fee-token decimals differ from the upgrade configuration: expected ${config.feeTokenDecimals}, got ${liveFeeTokenDecimals}`,
+    );
+  }
+  const configuredPricing = pricingConfig(config.interfold.pricing);
+  requirePricingPolicyMatchesLiveState(livePricing, configuredPricing);
+  const minimumCommitteeSize = configuredPricing.minCommitteeSize;
   const registry = await ethers.getContractAt(
     "CiphernodeRegistryOwnable",
     deployment.ciphernodeRegistry,
@@ -893,6 +955,23 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
       );
     }
   }
+  if (livePricing.minCommitteeSize !== minimumCommitteeSize) {
+    txs.push(
+      safeTx(
+        deployment.interfold,
+        interfold.interface.encodeFunctionData("setFeeAssetConfig", [
+          {
+            token: liveFeeToken,
+            expectedDecimals: liveFeeTokenDecimals,
+            pricing: pricingConfigWithMinimumCommitteeSize(
+              livePricing,
+              minimumCommitteeSize,
+            ),
+          },
+        ]),
+      ),
+    );
+  }
   txs.push(
     safeTx(
       deployment.interfold,
@@ -1053,6 +1132,7 @@ export async function prepareSecureCrispUpgrade(): Promise<void> {
     nodeRelease,
     cryptoConfigId: PRODUCTION_BFV_CONFIG.configId,
     paramSet: SECURE_PARAM_SET,
+    minimumCommitteeSize: minimumCommitteeSize.toString(),
     pkVerifier: verifierDeployment.pkVerifier,
     decryptionVerifier: verifierDeployment.decryptionVerifier,
     ciphertextVerifier,

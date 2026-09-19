@@ -74,7 +74,9 @@ Requester calls: Interfold.request({
 │   │  reciprocal dependency graph with matching operator membership
 │   ├─ Validate the requested crypto configuration against the chain matrix.
 │   │    The caller selects (paramSet, committeeSize); the target chain must support that pair.
-│   │    Mainnet supports secure-8192 with minimum, micro, and small committees.
+│   │    Mainnet has secure-8192 routes for minimum, micro, and small committees.
+│   │    The launch pricing policy sets `minCommitteeSize = 19`, so only Small can be
+│   │    requested. Minimum and Micro remain configured for a later governance change.
 │   │    Sepolia and local chains support insecure-512 and secure-8192 with all committee sizes.
 │   │    A different parameter hash, committee shape, or verifier H/T is rejected.
 │   │    CI derives and compares the full BFV tuple across deployment code, Rust, and Noir.

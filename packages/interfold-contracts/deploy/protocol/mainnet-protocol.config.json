@@ -70,7 +70,7 @@
       "dkgUtilizationBps": "3000",
       "computeUtilizationBps": "4000",
       "decryptUtilizationBps": "3000",
-      "minCommitteeSize": "3",
+      "minCommitteeSize": "19",
       "minThreshold": "2"
     },
     "committeeThresholds": [

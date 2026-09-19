@@ -300,6 +300,8 @@ export interface SecureCrispUpgradePlan {
   };
   cryptoConfigId: string;
   paramSet: number;
+  /** Minimum committee member count accepted for new E3 requests after activation. */
+  minimumCommitteeSize: string;
   pkVerifier: string;
   decryptionVerifier: string;
   ciphertextVerifier: string;
