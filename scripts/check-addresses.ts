@@ -83,6 +83,7 @@ const ALLOWED: Record<string, string> = {
   // An E3 program belongs to its application, not to the protocol. See the
   // comment on `CONTRACT_KEYS` in packages/interfold-contracts/scripts/genManifest.ts.
   '0x8654f380760c46857188097fa0ad0bf995603124': 'CRISPProgram, sepolia',
+  '0x53fcdb21e73a461cfe6c64b19855204384b91ba3': 'CRISPProgram, mainnet',
 
   // TODO: record these in deployed_contracts.json so the manifest can publish
   // them. Until then no check can tell a correct value here from a stale one.
