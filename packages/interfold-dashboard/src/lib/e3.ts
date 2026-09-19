@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 // On-chain E3 fetchers — read events + view functions and assemble dashboard records.
 
-import { CONTRACTS, DEPLOY_BLOCK, E3Stage, TIMEOUTS, ciphernodeRegistryAbi, interfoldAbi, publicClient } from './chain'
+import { CONTRACTS, DEPLOY_BLOCK, E3Stage, FailureReason, TIMEOUTS, ciphernodeRegistryAbi, interfoldAbi, publicClient } from './chain'
 
 // Helper: pull a single named event ABI item out of the typechain bundle.
 function eventAbi(abi: readonly any[], name: string): any {
@@ -21,6 +21,8 @@ const INTERFOLD_REWARDS_DISTRIBUTED = eventAbi(interfoldAbi as any, 'RewardsDist
 // each lifecycle transition (the registry's CommitteePublished event signature
 // has drifted from this package's ABI on the live deployment, so we don't use it).
 const INTERFOLD_E3_STAGE_CHANGED = eventAbi(interfoldAbi as any, 'E3StageChanged')
+const INTERFOLD_E3_FAILED = eventAbi(interfoldAbi as any, 'E3Failed')
+const INTERFOLD_E3_FAILURE_RECLASSIFIED = eventAbi(interfoldAbi as any, 'E3FailureReclassified')
 const REGISTRY_COMMITTEE_REQUESTED = eventAbi(ciphernodeRegistryAbi as any, 'CommitteeRequested')
 const REGISTRY_COMMITTEE_FINALIZED = eventAbi(ciphernodeRegistryAbi as any, 'SortitionCommitteeFinalized')
 
@@ -104,6 +106,66 @@ export function solidityStageToUiIdx(stage: number, inputWindow: [bigint, bigint
       return 6
     case E3Stage.Failed:
       return 6 // distinct visual state handled separately
+    default:
+      return 0
+  }
+}
+
+const FAILURE_REASON_LABELS: Readonly<Record<number, string>> = {
+  [FailureReason.None]: 'Unknown failure',
+  [FailureReason.CommitteeFormationTimeout]: 'Committee formation timed out',
+  [FailureReason.InsufficientCommitteeMembers]: 'Insufficient committee members',
+  [FailureReason.DKGTimeout]: 'DKG timed out',
+  [FailureReason.DKGInvalidShares]: 'DKG contained invalid shares',
+  [FailureReason.NoInputsReceived]: 'No inputs received',
+  [FailureReason.ComputeTimeout]: 'Computation timed out',
+  [FailureReason.ComputeProviderExpired]: 'Compute provider expired',
+  [FailureReason.ComputeProviderFailed]: 'Compute provider failed',
+  [FailureReason.RequesterCancelled]: 'Requester cancelled',
+  [FailureReason.DecryptionTimeout]: 'Decryption timed out',
+  [FailureReason.DecryptionInvalidShares]: 'Invalid decryption shares',
+  [FailureReason.VerificationFailed]: 'Verification failed',
+}
+
+export function failureReasonLabel(reason: number): string {
+  return FAILURE_REASON_LABELS[reason] ?? `Unknown failure (${reason})`
+}
+
+// Map a terminal failure to the UI phase that did not complete. The contract
+// keeps committee selection in Requested and records the more precise reason.
+export function failureReasonToUiIdx(reason: number, failedAtStage?: number): number {
+  switch (reason) {
+    case FailureReason.CommitteeFormationTimeout:
+    case FailureReason.InsufficientCommitteeMembers:
+      return 1
+    case FailureReason.DKGTimeout:
+    case FailureReason.DKGInvalidShares:
+      return 2
+    case FailureReason.NoInputsReceived:
+      return 3
+    case FailureReason.ComputeTimeout:
+    case FailureReason.ComputeProviderExpired:
+    case FailureReason.ComputeProviderFailed:
+      return 4
+    case FailureReason.DecryptionTimeout:
+    case FailureReason.DecryptionInvalidShares:
+    case FailureReason.VerificationFailed:
+      return 5
+    case FailureReason.RequesterCancelled:
+      return 0
+    default:
+      break
+  }
+
+  switch (failedAtStage) {
+    case E3Stage.Requested:
+      return 1
+    case E3Stage.CommitteeFinalized:
+      return 2
+    case E3Stage.KeyPublished:
+      return 4
+    case E3Stage.CiphertextReady:
+      return 5
     default:
       return 0
   }
@@ -194,6 +256,18 @@ export type E3FullDetails = E3Summary & {
   // total paid out to the committee (only known once RewardsDistributed fires).
   feeEscrowed: bigint
   committeeReward?: bigint
+  failureReason: number
+  failedAtStage?: number
+  failureTxHash?: `0x${string}`
+  failureAt?: number
+  failureBlock?: bigint
+  failureReclassifications: Array<{
+    previousReason: number
+    reason: number
+    blockNumber: bigint
+    txHash: `0x${string}`
+    timestamp?: number
+  }>
 }
 
 // Resolve unix timestamps for a (small, bounded) set of block numbers, deduped.
@@ -317,7 +391,7 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
   const head = toBlock ?? (await fetchLatestBlock())
 
   // 1. Pull live E3 struct + stage + currently-escrowed fee.
-  const [e3, stage, feeEscrowed] = await Promise.all([
+  const [e3, stage, feeEscrowed, failureReason] = await Promise.all([
     (publicClient.readContract as any)({
       address: CONTRACTS.Interfold,
       abi: interfoldAbi,
@@ -336,6 +410,12 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
       functionName: 'e3Payments',
       args: [e3Id],
     }).catch(() => 0n) as Promise<bigint>,
+    (publicClient.readContract as any)({
+      address: CONTRACTS.Interfold,
+      abi: interfoldAbi,
+      functionName: 'getFailureReason',
+      args: [e3Id],
+    }).catch(() => FailureReason.None) as Promise<number>,
   ])
 
   // CRISP round configuration. Only CRISP E3s expose it, and an uninitialised round
@@ -375,7 +455,7 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
   // 3. Committee data: requested (threshold/seed) + finalized (members) from the
   // registry; the key-publish moment from the Interfold E3StageChanged → KeyPublished
   // transition (the registry's CommitteePublished event has drifted from our ABI).
-  const [requestedEvents, finalizedEvents, stageChanges] = await Promise.all([
+  const [requestedEvents, finalizedEvents, stageChanges, failureEvents, failureReclassifications] = await Promise.all([
     getLogsChunked<any>(
       {
         address: CONTRACTS.CiphernodeRegistry,
@@ -403,12 +483,35 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
       fromBlock,
       head,
     ),
+    stage === E3Stage.Failed
+      ? getLogsChunked<any>(
+          {
+            address: CONTRACTS.Interfold,
+            event: INTERFOLD_E3_FAILED,
+            args: { e3Id },
+          } as any,
+          fromBlock,
+          head,
+        )
+      : Promise.resolve([] as any[]),
+    stage === E3Stage.Failed
+      ? getLogsChunked<any>(
+          {
+            address: CONTRACTS.Interfold,
+            event: INTERFOLD_E3_FAILURE_RECLASSIFIED,
+            args: { e3Id },
+          } as any,
+          fromBlock,
+          head,
+        )
+      : Promise.resolve([] as any[]),
   ])
 
   const reqLog = requestedEvents[0]
   const finLog = finalizedEvents[0]
   // The key was published when the E3 transitioned into KeyPublished.
   const pubLog = stageChanges.find((l: any) => Number(l.args.newStage) === E3Stage.KeyPublished)
+  const failureLog = failureEvents.at(-1)
 
   const threshold: [number, number] = reqLog ? [Number(reqLog.args.threshold[0]), Number(reqLog.args.threshold[1])] : [0, 0]
   const members: `0x${string}`[] = (finLog?.args?.committee ?? []) as `0x${string}`[]
@@ -461,9 +564,14 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
   const shownBallots = inputs.slice(0, 6)
   if (inputs.length > 6) shownBallots.push(inputs[inputs.length - 1])
   const ts = await blockTimestamps(
-    [finLog?.blockNumber, pubLog?.blockNumber, resultLog?.blockNumber, ...shownBallots.map((l: any) => l.blockNumber)].filter(
-      (b): b is bigint => typeof b === 'bigint',
-    ),
+    [
+      finLog?.blockNumber,
+      pubLog?.blockNumber,
+      resultLog?.blockNumber,
+      failureLog?.blockNumber,
+      ...failureReclassifications.map((l: any) => l.blockNumber),
+      ...shownBallots.map((l: any) => l.blockNumber),
+    ].filter((b): b is bigint => typeof b === 'bigint'),
   )
   const at = (bn?: bigint) => (bn != null ? ts.get(bn.toString()) : undefined)
   // `e3.requestBlock` already IS a Unix timestamp on this contract version (the
@@ -510,6 +618,18 @@ export async function fetchE3Details(e3Id: bigint, toBlock?: bigint): Promise<E3
     resultBlock: resultLog?.blockNumber,
     feeEscrowed,
     committeeReward,
+    failureReason: Number(failureReason),
+    failedAtStage: failureLog ? Number(failureLog.args.failedAtStage) : undefined,
+    failureTxHash: failureLog?.transactionHash,
+    failureAt: at(failureLog?.blockNumber),
+    failureBlock: failureLog?.blockNumber,
+    failureReclassifications: failureReclassifications.map((l: any) => ({
+      previousReason: Number(l.args.previousReason),
+      reason: Number(l.args.reason),
+      blockNumber: l.blockNumber,
+      txHash: l.transactionHash,
+      timestamp: at(l.blockNumber),
+    })),
   }
 }
 

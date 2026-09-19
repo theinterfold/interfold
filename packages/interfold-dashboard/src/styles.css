@@ -320,6 +320,14 @@ button {
   color: var(--paper-2);
   border-color: var(--ink);
 }
+.stage-badge--failed {
+  color: #8a1f1f;
+  background: #fff1f0;
+  border-color: #f2c5c1;
+}
+.stage-badge--failed .stage-badge__dot {
+  background: #b42318;
+}
 
 .poll-card__question {
   font-family: var(--serif);
@@ -1478,6 +1486,10 @@ button {
   gap: 32px;
   flex-wrap: wrap;
 }
+.insp-head__row > :first-child {
+  flex: 1 1 520px;
+  min-width: 0;
+}
 .insp-head__breadcrumb {
   display: flex;
   align-items: center;
@@ -1493,6 +1505,10 @@ button {
 .insp-head__breadcrumb > * {
   white-space: nowrap;
 }
+.insp-head__id {
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
 .insp-head__crumb-sep {
   color: var(--ink-4);
   opacity: 0.6;
@@ -1507,6 +1523,7 @@ button {
   text-wrap: balance;
   color: var(--ink);
   max-width: 720px;
+  overflow-wrap: anywhere;
 }
 .insp-head__meta {
   display: flex;
@@ -1551,6 +1568,8 @@ button {
   font-size: 14px;
   color: var(--ink);
   cursor: pointer;
+  width: 100%;
+  max-width: 100%;
 }
 .insp-select:hover {
   border-color: var(--ink-4);
@@ -1610,6 +1629,10 @@ button {
   background: var(--accent-deep);
   box-shadow: 0 0 0 3px color-mix(in oklab, var(--accent-soft) 80%, transparent);
 }
+.istrip__node--failed .istrip__dot {
+  background: #b42318;
+  box-shadow: 0 0 0 3px #fff1f0;
+}
 .istrip__node--todo .istrip__dot {
   background: transparent;
   border: 1.5px dashed var(--rule);
@@ -1625,6 +1648,10 @@ button {
 }
 .istrip__node--active .istrip__label {
   color: var(--ink);
+  font-weight: 540;
+}
+.istrip__node--failed .istrip__label {
+  color: #8a1f1f;
   font-weight: 540;
 }
 .istrip__node--todo .istrip__label {
@@ -1747,6 +1774,42 @@ button {
   background: var(--paper);
   color: var(--ink-3);
   border: 1px solid var(--rule);
+}
+.isection__status--failed {
+  color: #8a1f1f;
+  background: #fff1f0;
+  border: 1px solid #f2c5c1;
+}
+.insp-failure {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 16px 18px;
+  color: #8a1f1f;
+  background: #fff7f6;
+  border: 1px solid #f2c5c1;
+  border-radius: var(--radius-sm);
+}
+.insp-failure > div {
+  min-width: 0;
+}
+.insp-failure__label {
+  margin-bottom: 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+.insp-failure__reason {
+  font-size: 16px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+.insp-failure__meta {
+  margin-top: 3px;
+  color: #74413d;
+  font-size: 12px;
 }
 .isection__body {
   padding: 4px 28px 26px;

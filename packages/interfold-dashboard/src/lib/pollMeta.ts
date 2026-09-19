@@ -26,7 +26,7 @@ export function pollMetaFor(e3Id: bigint): PollMeta {
   const m = META[e3Id.toString()]
   if (m) return m
   return {
-    question: `Encrypted poll #${e3Id.toString()}`,
+    question: `Encrypted poll ${compactE3Id(e3Id)}`,
     context: "On-chain encrypted execution. Ballots are sealed on each voter's device; only the aggregate result is decrypted.",
     options: [
       { id: '0', label: 'Option 0' },
@@ -39,6 +39,12 @@ export function pollMetaFor(e3Id: bigint): PollMeta {
 
 export function formatE3Id(id: bigint): string {
   return `E3-${id.toString().padStart(4, '0')}`
+}
+
+export function compactE3Id(id: bigint): string {
+  const value = id.toString().padStart(4, '0')
+  if (value.length <= 18) return `E3-${value}`
+  return `E3-${value.slice(0, 8)}…${value.slice(-6)}`
 }
 
 export function shortAddr(addr: string): string {
