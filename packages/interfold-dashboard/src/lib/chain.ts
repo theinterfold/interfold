@@ -34,6 +34,24 @@ export enum E3Stage {
   Failed = 6,
 }
 
+// Failure reasons mirror the Solidity `IInterfold.FailureReason` enum.
+// Keep this list in the same order as the contract ABI.
+export enum FailureReason {
+  None = 0,
+  CommitteeFormationTimeout = 1,
+  InsufficientCommitteeMembers = 2,
+  DKGTimeout = 3,
+  DKGInvalidShares = 4,
+  NoInputsReceived = 5,
+  ComputeTimeout = 6,
+  ComputeProviderExpired = 7,
+  ComputeProviderFailed = 8,
+  RequesterCancelled = 9,
+  DecryptionTimeout = 10,
+  DecryptionInvalidShares = 11,
+  VerificationFailed = 12,
+}
+
 // Per-network deployment profile. `VITE_NETWORK` selects one; every value in it
 // can then be overridden individually via the VITE_* variables below, so the
 // dashboard can point at a custom deployment without code changes.
