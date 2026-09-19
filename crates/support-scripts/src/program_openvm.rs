@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::{traits::ProgramSupportApi, utils::run_bash_script_with_env};
-use anyhow::{bail, ensure, Context, Result};
+use anyhow::{ensure, Context, Result};
 use async_trait::async_trait;
 use e3_config::ProgramConfig;
 
@@ -13,10 +13,9 @@ pub struct ProgramSupportOpenVm(pub ProgramConfig);
 
 impl ProgramSupportOpenVm {
     async fn run(&self, action: &str) -> Result<()> {
-        let config = self
-            .0
-            .openvm()
-            .context("Set program.openvm; the compute backend no longer uses program.risc0")?;
+        let config = self.0.openvm().context(
+            "Set program.openvm with the repository, prover_bin, and prover_config paths",
+        )?;
         ensure!(
             config.repository.is_absolute(),
             "program.openvm.repository must be an absolute path"
@@ -48,8 +47,5 @@ impl ProgramSupportApi for ProgramSupportOpenVm {
     }
     async fn start(&self) -> Result<()> {
         self.run("service-start").await
-    }
-    async fn upload(&self) -> Result<()> {
-        bail!("OpenVM uses local proving artifacts. Configure the artifacts before starting the compute service")
     }
 }

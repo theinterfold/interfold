@@ -125,10 +125,10 @@ impl ComputeProvider for MyProvider {
 `prove` receives the policy rather than choosing one. A prover that picked its own would select a
 different input set from the one `start` returned the ciphertext for.
 
-The repository's RISC Zero and Boundless providers live in `e3-support-host`. That crate is in a
-separate workspace, so the dependency above does not pull it in. Inside an Interfold checkout, its
-`run_risc0_compute` and `run_compute` entry points wrap the two backends, and
-`crates/support/host/src/lib.rs` is the reference implementation to read.
+The OpenVM host lives in `e3-support-host`, in a separate workspace. Its `run_compute` function
+derives the native ciphertext and journal, then calls a separate OpenVM worker. The worker must
+return a verified EVM receipt. Read `crates/support/host/src/lib.rs` and
+`crates/support/openvm/README.md` for the implementation and configuration.
 
 ## Configuration
 

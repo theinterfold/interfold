@@ -9,7 +9,7 @@ uses three different transports:
   already on Ethereum.
 - Voter ciphertexts are published to Avail. Ethereum accepts their references only after VectorX
   proves that the exact bytes were included.
-- The aggregate ciphertext uses the same Avail and VectorX receipt, after RISC Zero proves the
+- The aggregate ciphertext uses the same Avail and VectorX receipt, after OpenVM proves the
   computation.
 
 Consumers assemble a complete public-key candidate and check its content hash. They decode the key
@@ -73,7 +73,7 @@ bytes from Avail, and verify their hash.
 hash without an accepted VectorX receipt can therefore never enter the final computation.
 
 The aggregate callback uses the same two-proof order. Before the server spends Avail funds, it calls
-`CRISPProgram.verify` as an Ethereum read with the output hash, SAFE commitment, and RISC Zero
+`CRISPProgram.verify` as an Ethereum read with the output hash, SAFE commitment, and OpenVM
 proof. Only an output that passes that exact on-chain verifier becomes a durable Avail job. The job
 ID excludes the proof seal, so another valid seal for the same output is an idempotent retry instead
 of a second paid publication. The job ID also uses the canonical decimal E3 identifier, so an alias
@@ -192,7 +192,7 @@ The boundaries are intentional:
 - The final 3-hour tail accepts no new proof commitments.
 - `finalizeInput` normally completes in that tail. A delayed receipt can recover while the E3 is
   still `KeyPublished` and `timestamp <= computeDeadline`.
-- RISC Zero does not start at the input-window end while any input is pending.
+- OpenVM does not start at the input-window end while any input is pending.
 - A late `InputPublished` event wakes computation after all pending inputs reach zero.
 - The aggregate job starts only when more than 3 hours remain before the compute deadline.
 - Interfold accepts the aggregate output only after the input window ends and no later than the
@@ -200,7 +200,7 @@ The boundaries are intentional:
 
 Late input finalization is best-effort recovery, not a new seven-day availability promise. The
 contract can accept a receipt through `computeDeadline`, but the E3 can complete only if enough of
-the compute window remains to produce the RISC Zero proof, publish the aggregate ciphertext to
+the compute window remains to produce the OpenVM proof, publish the aggregate ciphertext to
 Avail, wait for its VectorX proof, and submit the output on Ethereum. The server therefore refuses
 to start an aggregate Avail job unless more than three hours remain. Operators must alert well
 before that cutoff instead of treating `computeDeadline` as a useful finalization target.
@@ -315,7 +315,7 @@ run in the request transaction, before the requester pays the fee.
   replacement costs one bridge request and no second publication. A job record written before the
   coordinates were kept decodes with no coordinates, keeps its candidate proof, and needs operator
   recovery.
-- The server verifies an aggregate RISC Zero proof before it creates an Avail output job. An
+- The server verifies an aggregate OpenVM proof before it creates an Avail output job. An
   arbitrary caller of the output webhook cannot spend the Avail account on an invalid output.
 - The compute server retries a transient callback five times, but this callback is not a durable
   outbox. If that process exits after it receives a proof but before CRISP accepts the callback,
@@ -447,19 +447,20 @@ provider, or on a later adapter, keeps working.
 
 ## Fast-machine acceptance gates
 
-The normal unit and contract suites do not reproduce the production RISC Zero image. Before this
-branch can deploy, use the durable Interfold revision pinned in both support manifests and run the
-pinned Docker build. The generated `ImageID.sol` must be reviewed and then used by both the BFV
-ciphertext verifier and CRISP program deployment. A native build is not an acceptable substitute.
+The normal unit and contract suites do not reproduce the deployed OpenVM guest. Before deployment,
+build the guest and worker from the pinned source and validate their application commitments with
+the worker's `check` command. Deploy a checked Halo2 artifact and bind both verification gates to
+the same receipt identity. Follow `crates/support/openvm/README.md` and the provenance procedure.
+A native computation does not replace this proof check.
 
-After the image is rebuilt, run the full local CRISP Playwright flow and one Sepolia round with real
+After the guest is rebuilt, run the full local CRISP Playwright flow and one Sepolia round with real
 Avail Turing and VectorX. Observe this complete event order:
 
 ```text
 InputCommitted
   -> Avail finalized
   -> InputPublished
-  -> RISC Zero completed
+  -> OpenVM completed
   -> aggregate Avail finalized
   -> CiphertextOutputReferencePublished
   -> plaintext completion

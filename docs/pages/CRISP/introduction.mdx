@@ -36,7 +36,7 @@ a modern structure with clear separation of concerns:
 CRISP/
 ├── client/                  # React frontend application (Vite + @crisp-e3/sdk)
 ├── server/                  # Rust coordination server & CLI
-├── program/                 # FHE program for encrypted computation + RISC Zero verification
+├── program/                 # FHE policy proved with OpenVM
 ├── packages/
 │   ├── crisp-contracts/     # CRISP program contract + Hardhat deployment scripts
 │   └── crisp-sdk/           # TypeScript helpers to generate a ZK proof
@@ -78,12 +78,12 @@ The server's key responsibilities include:
 ### FHE Program
 
 The [FHE program](https://github.com/theinterfold/interfold/tree/main/examples/CRISP/program) is a
-Rust guest program that runs inside the RISC Zero zkVM to perform homomorphic addition on encrypted
+Rust policy that runs inside the OpenVM guest to perform homomorphic aggregation on encrypted
 votes (BFV ciphertexts). It computes the encrypted tally without decrypting individual votes,
 ensuring voter privacy throughout the process.
 
 The program decodes BFV parameters and ciphertexts, then sums all encrypted votes homomorphically to
-produce a single encrypted ciphertext containing the total. RISC Zero generates zero-knowledge
+produce a single encrypted ciphertext containing the total. OpenVM generates zero-knowledge
 proofs that verify the computation was executed correctly, enabling trustless verification of the
 tally results.
 
@@ -149,7 +149,7 @@ stored in the Merkle tree with slot addresses mapping to vote indices, allowing 
 maintaining uniqueness.
 
 After the voting period ends and FHE computation completes, the `verify()` function validates the
-RISC Zero proof attesting to the correctness of the homomorphic tally computation, verifying it
+OpenVM proof attesting to the correctness of the homomorphic tally computation, verifying it
 corresponds to the correct input Merkle root, parameters hash, and ciphertext output. Once verified,
 `decodeTally()` decodes the encrypted results into readable yes and no vote counts.
 

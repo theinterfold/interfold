@@ -931,7 +931,7 @@ impl AvailabilityService {
         e3_data_availability::validate_object_bytes(&ciphertext)?;
         let hash = keccak256(&ciphertext);
         // The output statement is the E3, exact ciphertext hash, and ciphertext commitment. The
-        // RISC Zero seal proves that statement but is not its identity: another valid seal must be
+        // OpenVM seal proves that statement but is not its identity: another valid seal must be
         // an idempotent retry, not another paid Avail publication.
         let id = self.job_id(b"output", e3_id, hash, &ciphertext_commitment)?;
         if let Some(job) = self.load(&id)? {

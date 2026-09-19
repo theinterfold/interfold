@@ -91,16 +91,10 @@ You can monitor the entire process through the various terminal outputs:
 - Computation starting when the voting period ends
 - Results being computed and published
 
-**Example server output:**
-
-```sh
-[2024-10-22 11:59:12] [handlers.rs:95] - Vote Count: 1
-[2024-10-22 11:59:12] [handlers.rs:101] - Starting computation for E3: 0
-Prove function execution time: 2 minutes and 37 seconds
-[2024-10-22 12:01:49] [handlers.rs:109] - Computation completed for E3: 0
-[2024-10-22 12:01:49] [handlers.rs:110] - RISC0 Output: Risc0Output { result: ComputeResult } ...
-[2024-10-22 12:01:49] [handlers.rs:111] - Publishing ciphertext...
-```
+The program service logs the OpenVM worker's application, aggregation, and EVM proof stages. A
+successful worker exit is followed by callback delivery. Confirm the ciphertext publication
+transaction and the E3's `CiphertextReady` stage; a worker timing line alone does not establish
+on-chain acceptance.
 
 **Ciphernode logs will show:**
 
@@ -132,7 +126,7 @@ The CRISP voting process involves several key steps:
 
 1. **Initialization**: A new E3 round is created on the blockchain
 2. **Vote Submission**: Users submit encrypted votes through the web interface
-3. **Computation**: After the voting period, RISC Zero computes the results using FHE
+3. **Computation**: After input finalization, OpenVM proves the Secure Process over the encrypted inputs
 4. **Decryption**: Ciphernodes collaboratively decrypt the results
 5. **Publication**: Final results are published to the blockchain and displayed
 

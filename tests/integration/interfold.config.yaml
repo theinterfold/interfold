@@ -26,23 +26,8 @@ chains:
         deploy_block: 6
 
 program:
+  # These integration scenarios use an explicitly unproved development program.
   dev: true
-  # risc0:
-  #   risc0_dev_mode: 0 # 0 = production (Boundless), 1 = dev mode (fake proofs)
-  #   boundless:
-  #     rpc_url: "https://sepolia.infura.io/v3/YOUR_KEY"
-  #     private_key: "PRIVATE_KEY" # Use env vars for secrets
-  #     pinata_jwt: "PINATA_JWT" # For uploading programs
-  #     ipfs_gateway_url: "https://your-gateway.mypinata.cloud" # Public full-download gateway for programs and inputs
-  #     program_url: "https://your-gateway.mypinata.cloud/ipfs/QmNMRAB7DW43JSmENfzGmD96G6sqaeBBNfTVrrq5WQae3D" # Pre-uploaded program
-  #     onchain: true # true = onchain requests, false = offchain
-  #     Optional — custom auction parameters (defaults shown):
-  #     min_price_eth: 0.00005
-  #     max_price_eth: 0.004
-  #     timeout_secs: 28800
-  #     lock_timeout_secs: 14400
-  #     ramp_up_secs: 7200
-  #     lock_collateral_zkc: 100.0
   # Default profile: multithread uses (logical CPUs - 1) Rayon workers and the same concurrent job
   # limit. Reserve threads with `multithread_reserve_threads` (default 1 for Actix / libp2p).
   # Example override on a 16-core host:

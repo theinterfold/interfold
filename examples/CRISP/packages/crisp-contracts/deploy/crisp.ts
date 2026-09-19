@@ -7,6 +7,7 @@
 import {
   AVAIL_FINALIZATION_WINDOW_SECONDS,
   AVAIL_VECTORX,
+  deployOpenVmReceiptVerifier,
   getDeploymentChain,
   readDeploymentArgs,
   storeDeploymentArgs,
@@ -306,24 +307,12 @@ export const deployCRISPContracts = async (): Promise<CRISPDeploymentResult> => 
 export const deployVerifier = async (_useMockVerifier: boolean, connectedEthers?: any): Promise<string> => {
   const ethers = connectedEthers ?? (await hre.network.connect()).ethers
   const chain = getDeploymentChain(hre)
-  const required = (name: string) => {
-    const value = process.env[name]
-    if (!value) throw new Error(`Set ${name}; OpenVM has no default or mock compute verifier`)
-    return value
-  }
-  const halo2Verifier = ethers.getAddress(required('OPENVM_HALO2_VERIFIER'))
-  const expectedCodeHash = required('OPENVM_HALO2_RUNTIME_CODE_HASH')
-  const code = await ethers.provider.getCode(halo2Verifier)
-  if (code === '0x' || ethers.keccak256(code).toLowerCase() !== expectedCodeHash.toLowerCase()) {
-    throw new Error('The OpenVM verifier runtime code does not match the configured hash')
-  }
-  const appExeCommit = required('OPENVM_APP_EXE_COMMIT')
-  const appVmCommit = required('OPENVM_APP_VM_COMMIT')
-  for (const commitment of [appExeCommit, appVmCommit]) {
-    if (!/^0x[0-9a-fA-F]{64}$/.test(commitment)) throw new Error('OpenVM commitments must contain 32 bytes')
-  }
-  const verifier = await ethers.deployContract('OpenVmReceiptVerifier', [halo2Verifier, appExeCommit, appVmCommit])
-  await verifier.waitForDeployment()
+  const { receipt: verifier, halo2Verifier, halo2RuntimeCodeHash, appExeCommit, appVmCommit } = await deployOpenVmReceiptVerifier(ethers)
+  storeDeploymentArgs(
+    { address: halo2Verifier, blockNumber: await ethers.provider.getBlockNumber(), bytecodeHash: halo2RuntimeCodeHash },
+    'OpenVmHalo2Verifier',
+    chain,
+  )
   const address = await verifier.getAddress()
   storeDeploymentArgs(
     {

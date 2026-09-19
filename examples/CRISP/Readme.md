@@ -17,7 +17,7 @@ root structure.
 CRISP/
 ├── client/                  # React frontend application (Vite + @crisp-e3/sdk)
 ├── server/                  # Rust coordination server & CLI
-├── program/                 # FHE program for encrypted computation + RISC Zero verification
+├── program/                 # FHE policy proved with OpenVM
 ├── packages/
 │   ├── crisp-contracts/     # CRISP program contract + Hardhat deployment scripts
 │   └── crisp-sdk/           # TypeScript helpers to generate a ZK proof
@@ -49,20 +49,22 @@ Before getting started, ensure you have installed:
   - `nargo`: `noirup -v v1.0.0-beta.26` (`NOIR_TOOLCHAIN` in `.github/workflows/ci.yml`)
   - `bb`: version and per-platform checksums live in `crates/zk-prover/versions.json`
 
-[RiscZero](https://dev.risczero.com/api/zkvm/install) is **not** required for local development.
-`scripts/dev_program.sh` starts the program server with `--dev true`, so `pnpm dev:up` runs without
-a proving backend no matter what `program.dev` says in `interfold.config.yaml`. Real proving runs
-inside a container image that already ships RiscZero, so what that path needs locally is **Docker**,
-not a RiscZero install.
+The program server uses OpenVM by default. Before startup, build the guest and worker, prepare the
+keys, and configure `program.openvm` in `interfold.config.yaml`. Follow
+[`crates/support/openvm/README.md`](../../crates/support/openvm/README.md). The CUDA worker needs a
+compatible Linux GPU environment; the native HTTP service has no CUDA dependency.
+
+Deployment also requires `OPENVM_APP_EXE_COMMIT`, `OPENVM_APP_VM_COMMIT`, and either
+`OPENVM_VERIFIER_ARTIFACT` with `OPENVM_VERIFIER_SHA256`, or `OPENVM_HALO2_VERIFIER` with
+`OPENVM_HALO2_RUNTIME_CODE_HASH`. These values must describe the worker's actual artifacts. The
+CRISP deployment never selects a mock compute verifier.
 
 ## Quick Start
 
 The simplest way to run CRISP is:
 
 ```bash
-# From the repository root — the CRISP contracts depend on the risc0-ethereum submodule
-git submodule update --init --recursive
-
+# From the repository root
 cd examples/CRISP
 
 # Optional: choose local profile (copied to crisp.dev.env on first setup)
@@ -75,10 +77,6 @@ pnpm dev:setup
 # Start all services (Hardhat, contracts, ciphernodes, program server, coordination server, and UI)
 pnpm dev:up
 ```
-
-> **_Note:_** Without the submodule step, `pnpm dev:setup` fails while compiling contracts with
-> `HHE902 ... lib/risc0-ethereum/contracts/src/groth16/RiscZeroGroth16Verifier.sol doesn't exist`.
-> CI does not hit this because its checkout uses `submodules: recursive`.
 
 The program server accepts caller-supplied HTTP(S) callback URLs. It is a development-only test
 service, does not authenticate callers or allowlist callback destinations, and must stay isolated
@@ -234,7 +232,7 @@ total bytes held by unfinished jobs. These controls bound abandoned signed input
 data that Ethereum already accepted. After Avail and Ethereum accept an object, the service removes
 its staging copy because Avail is then the recovery source.
 
-The aggregate ciphertext follows the Avail and VectorX path after its RISC Zero proof is ready.
+The aggregate ciphertext follows the Avail and VectorX path after its OpenVM proof is ready.
 
 Each accepted Ethereum reference contains `keccak256(exact bytes)`. The CRISP server and ciphernodes
 re-hash retrieved bytes before they use them. An App ID helps indexing, but it is not a security

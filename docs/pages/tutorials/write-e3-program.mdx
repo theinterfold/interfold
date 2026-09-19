@@ -13,7 +13,7 @@ program fits together. By the end, you'll understand the contract interface, FHE
 verification flow well enough to build your own.
 
 > **What you'll learn:** How the three `IE3Program` entry points fit together, what the FHE
-> computation looks like inside a RISC Zero guest, and how the final proof is verified on-chain.
+> computation looks like inside an OpenVM guest, and how the final proof is verified on-chain.
 >
 > **Prerequisites:** Familiarity with Solidity and a basic understanding of
 > [what an E3 is](/what-is-e3).
@@ -165,7 +165,8 @@ checks), and signature verification. Simpler programs may only need the encrypti
 ## Step 3: The FHE Computation
 
 After the input window closes, the compute provider runs the E3 program over the collected encrypted
-inputs. For CRISP, this is a RISC Zero guest that sums all encrypted votes homomorphically:
+inputs. OpenVM proves CRISP's Secure Process, which validates the input commitments, applies the
+slot and parent policy, and aggregates the selected ciphertexts. The addition primitive is:
 
 ```rust
 pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
@@ -189,16 +190,17 @@ This is the core of what makes FHE powerful: the compute provider processes encr
 ever seeing the plaintext. The `+=` operator performs homomorphic addition — when the ciphernode
 committee later decrypts the sum, the result is the sum of all the original votes.
 
-The RISC Zero guest generates a ZK proof that this computation was performed correctly. In
-development, set `RISC0_DEV_MODE=1` to skip real proof generation, and ensure that the contracts
-were deployed using full mock mode, otherwise a real proof will be needed.
+The OpenVM worker produces an application proof, recursively aggregates it, and generates the
+Halo2 EVM proof. Configure the guest, keys, and worker as described in
+[Compute Provider](/compute-provider). The full guest proves the input policy and domain-bound
+journal, not only the addition primitive above. CRISP deployment requires a real compute verifier.
 
 ---
 
 ## Step 4: verify — Confirm the Result
 
 After the compute provider publishes its result, the Interfold contract calls `verify` on your
-program. CRISP's implementation checks the RISC Zero proof:
+program. CRISP's implementation checks the OpenVM proof:
 
 ```solidity
 function verify(
@@ -214,12 +216,12 @@ function verify(
   // The Secure Process derives this root from the ciphertexts it processed, and the proof envelope
   // carries that derived value. Compare it against the root this program accumulated on chain: the
   // protocol verifier does not, so this is the only check that the result covers your inputs.
-  Risc0ComputeProof.Proof memory computeProof = Risc0ComputeProof.decode(proof);
+  OpenVmComputeProof.Proof memory computeProof = OpenVmComputeProof.decode(proof);
   if (computeProof.paramsHash != paramsHash || computeProof.inputRoot != inputRoot)
     revert InvalidComputeContext();
 
-  // Rebuild the exact RISC Zero journal from on-chain state.
-  bytes memory journal = Risc0ComputeProof.journal(
+  // Rebuild the OpenVM journal from the expected round context.
+  bytes memory journal = OpenVmComputeProof.journal(
     bytes32(block.chainid),
     bytes32(uint256(uint160(address(interfold)))),
     bytes32(e3Id),
@@ -231,14 +233,14 @@ function verify(
     inputRoot
   );
 
-  risc0Verifier.verify(computeProof.seal, imageId, sha256(journal));
+  openVmVerifier.verify(computeProof.seal, imageId, sha256(journal));
   return true;
 }
 ```
 
-The guest commits nine values as 32-byte Rust vectors. RISC Zero serializes each vector into 132
-bytes, so the journal is 1,188 bytes. `Risc0ComputeProof.journal` builds that layout, and
-`Risc0ComputeProof.FIELD_COUNT` holds the field count, so a program never hardcodes the length.
+The journal contains nine consecutive 32-byte ABI words: 288 bytes in total.
+`OpenVmComputeProof.journal` builds that layout. The guest reveals its SHA-256 digest, and the
+receipt adapter binds that digest to the configured application and VM commitments.
 
 Eight of the nine fields come from on-chain state, which is why a front-runner cannot replace the
 commitment while reusing a valid proof. The ninth, `inputRoot`, arrives inside the proof envelope.
@@ -269,7 +271,7 @@ sequenceDiagram
     E->>P: publishInput(e3Id, data)
     Note over P: verify Noir proof,<br/>insert into Merkle tree
     Note over CP: input window closes
-    CP->>CP: fhe_processor()<br/>homomorphic sum + RISC Zero proof
+    CP->>CP: Secure Process<br/>input policy, homomorphic sum, OpenVM proof
     CP->>E: publishCiphertextOutput
     E->>P: verify(e3Id, ctHash, proof)
     C->>E: threshold-decrypt result

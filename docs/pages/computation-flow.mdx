@@ -15,9 +15,8 @@ server, Compute Providers, or other network participants.
    [Writing the Secure Process](/write-secure-program). The Interfold currently ships first-party
    support for the BFV scheme via [fhe.rs](https://github.com/gnosisguild/fhe.rs) and the SAFE
    library.
-2. **Choose a Compute Provider**: Your program must align with the execution backend (e.g.,
-   [RISC Zero](https://www.risczero.com/) for [CRISP](/CRISP/introduction) or a custom FHE
-   coprocessor).
+2. **Configure the Compute Provider**: The guest, worker, and verifier must implement the same
+   program policy. [CRISP](/CRISP/introduction) uses [OpenVM](/compute-provider).
 3. **Assemble request parameters**:
    - `committeeSize`: the committee size enum (`Minimum`, `Micro`, or `Small`)
    - `inputWindow`: a two-element array `[start, end]` defining when inputs open and close

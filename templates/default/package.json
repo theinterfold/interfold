@@ -17,7 +17,7 @@
     "dev:frontend": "./scripts/dev_frontend.sh",
     "dev:program": "./scripts/dev_program.sh",
     "dev:server": "./scripts/dev_server.sh",
-    "predev:all": "[ ! -f './.interfold/generated/contracts/ImageID.sol' ] && interfold program compile || true",
+    "predev:all": "interfold program compile",
     "test": "hardhat test",
     "test:server": "vitest run ./server/runner.test.ts",
     "test:integration": "pnpm test:server && ./scripts/test_integration.sh"
@@ -46,7 +46,6 @@
     "@nomicfoundation/hardhat-verify": "3.0.5",
     "@openzeppelin/contracts": "5.3.0",
     "@openzeppelin/contracts-upgradeable": "5.0.2",
-    "@risc0/ethereum": "file:lib/risc0-ethereum",
     "@types/chai": "^4.2.0",
     "@types/express": "^5.0.2",
     "@types/mocha": ">=9.1.0",

@@ -1,122 +1,84 @@
 ---
 title: 'Compute Provider Setup'
-description: 'Choose and configure a compute provider (RISC Zero, SP1, Jolt) for your E3 program'
+description: 'Configure the OpenVM program server for verifiable ciphertext computation'
 ---
 
-# Compute Provider (CP)
+# Compute provider setup
 
-Compute Providers form the modular compute layer of the Interfold protocol, allowing you to choose
-the optimal balance of trust, cost, and scalability for your application. CPs are responsible for
-running your E3 Program's Secure Process and reporting results back to your E3 Program's smart
-contract.
+The program server runs an E3 program's Secure Process and proves its execution with OpenVM. The
+CRISP server sends the indexed encrypted inputs to this service when the input window closes. The
+service returns the aggregate ciphertext, its SAFE commitment, and the compute proof by HTTP
+callback. CRISP publishes the output after data-availability verification.
 
-### Choosing a Compute Provider
+The current backend is OpenVM. The worker proves locally on the configured machine. No
+proving-market wallet or program upload is required.
 
-CPs fall into two broad categories:
+## Build the worker and guest
 
-1. **Verifiable:** Secured by cryptographic guarantees, produce outputs that are provable onchain.
-2. **Oracle-Based:** Secured by trusted attestations, consensus mechanisms, and/or economic games.
+Use the Rust version in `rust-toolchain.toml` and the OpenVM CLI and guest toolchain for the
+repository's pinned SDK version. CUDA workers also need compatible GPU drivers and runtime
+libraries.
 
-Select a CP that suits your needs. Options include:
-
-**Verifiable**
-
-- [RISC Zero zkVM](https://www.risczero.com/)
-- [Succinct SP1](https://docs.succinct.xyz/) (coming soon)
-- [Jolt](https://jolt.a16zcrypto.com/) (coming soon)
-
-**Oracle-based systems**
-
-- zkTLS VMs (coming soon)
-- Committee-based oracles (coming soon)
-- Game theory-based oracles (coming soon)
-
-**Custom**
-
-- You can also implement your own custom CP. From Interfold's perspective, it simply requires a
-  contract that conforms to `IComputeProvider`.
-
-**Factors to consider:**
-
-- **Verifiability**: Consider whether or not your use case requires cryptographic guarantees of
-  correct execution.
-- **Cost**: Verifiable CPs will incur higher compute overhead, which may translate to increased
-  costs for your users.
-- **Performance**: Verifiable systems will often be less performant compared to oracle-based CPs.
-- **Language Support**: Choose a CP that supports the programming languages you're comfortable with.
-
-The Interfold provides a
-[Compute Provider package](https://github.com/theinterfold/interfold/tree/main/crates/compute-provider)
-to simplify the integration, letting you focus on computation logic. More details can be found in
-the [Writing the Secure Process](./write-secure-program.mdx) guide.
-
-### Setup
-
-In this guide, we'll go over setting up [RISC Zero](https://www.risczero.com/) with
-[Boundless](https://docs.boundless.network/) as the CP.
-
-Boundless provides a [Foundry template](https://github.com/boundless-xyz/boundless-foundry-template)
-that can be used to run the Secure Process and create a ZK proof using RISC Zero's zkVM. The
-template includes a basic program that can be used to get started with the smart contract code to
-verify the proof.
-
-Follow the instructions in the
-[Boundless Foundry template](https://github.com/boundless-xyz/boundless-foundry-template) to set up
-RISC Zero with Boundless.
-
-Ensure the following tools are installed:
-
-- [Rust](https://www.rust-lang.org/tools/install)
-- [Foundry](https://book.getfoundry.sh/getting-started/installation/)
+From the repository root:
 
 ```sh
-# Install Rust
-curl https://sh.rustup.rs -sSf | sh
-# Install Foundry
-curl -L https://foundry.paradigm.xyz | bash
+pnpm openvm setup-fhe
+pnpm openvm guest build
+pnpm openvm guest keygen --app-only
+pnpm openvm prover-build --features cuda
+pnpm openvm service-build --release
 ```
 
-Next, you will use `rzup` to install `cargo-risczero`.
+The detailed artifact preparation and worker configuration are in
+[`crates/support/openvm/README.md`](https://github.com/theinterfold/interfold/blob/main/crates/support/openvm/README.md).
+Keep deployment paths, proving keys, inputs, and proofs outside committed source.
 
-To install `rzup`, run the following command and follow the instructions:
+The reference guest implements CRISP's policy. A different program must use matching host and guest
+builds for its own `fhe_processor` and `policy`.
+
+## Start the program server
+
+Set deployment-local absolute paths:
+
+```yaml
+program:
+  dev: false
+  openvm:
+    repository: ${OPENVM_REPOSITORY}
+    prover_bin: ${OPENVM_PROVER_BIN}
+    prover_config: ${OPENVM_PROVER_CONFIG}
+```
 
 ```sh
-curl -L https://risczero.com/install | bash
+interfold program compile
+interfold program start
 ```
 
-Next, install the RISC Zero toolchain by running `rzup`:
+The service validates the configured executable, keys, application commitments, and verifier
+artifact before it accepts work. Missing configuration fails startup. `program.dev: true` explicitly
+selects an unproved test runner. It cannot pass a real OpenVM verifier.
 
-```sh
-rzup
-```
+Configure CRISP's `PROGRAM_SERVER_URL` to reach the program server. Configure `INTERFOLD_SERVER_URL`
+so the program server can reach CRISP's callback endpoint. The service defaults to loopback
+port 13151. CRISP defaults to port 4000. Set `OPENVM_BIND_ADDR` and `CRISP_BIND_ADDR` when separate
+listeners are needed.
 
-You can verify the installation was successful by running:
+Jobs are in memory, with one active computation per service process by default. Protect admission
+and callback access. Reconcile interrupted jobs after a restart. The service does not provide a
+durable job queue.
 
-```sh
-cargo risczero --version
-```
+## On-chain verification
 
-Now you're ready to develop and deploy applications using RISC Zero with Boundless as your CP.
+Deploy the checked OpenVM Halo2 verifier and its `OpenVmReceiptVerifier` adapter. Configure the
+executable and VM commitments from the prepared application identity. Use that receipt adapter and
+identity in both `OpenVmBfvCiphertextVerifier` and the E3 program.
 
-### Boundless Configuration
+CRISP's deployment requires `OPENVM_APP_EXE_COMMIT` and `OPENVM_APP_VM_COMMIT`. Supply either
+`OPENVM_VERIFIER_ARTIFACT` with `OPENVM_VERIFIER_SHA256`, or `OPENVM_HALO2_VERIFIER` with
+`OPENVM_HALO2_RUNTIME_CODE_HASH`. There are no default deployment values or mock compute-verifier
+fallback.
 
-Boundless is a decentralized proving marketplace for RISC Zero programs. Instead of running proofs
-locally, you can submit them to Boundless for faster, distributed proving.
-
-To use Boundless:
-
-1. Get access to an RPC endpoint (e.g., Infura, Alchemy) with funds
-2. Obtain a private key with sufficient ETH/tokens for proof generation
-3. (Optional) Get a Pinata JWT from [pinata.cloud](https://pinata.cloud) for uploading programs to
-   IPFS
-4. Configure your `interfold.config.yaml` as shown in the
-   [CRISP setup guide](/CRISP/setup#boundless-configuration)
-
-For more details, see the [Boundless documentation](https://docs.boundless.network/).
-
-## Verifying a Deployment
-
-Choosing a verifiable CP gives you a proof that a particular guest ran. It does not, by itself, tell
-you that the guest corresponds to the source you are reading. For the procedure that ties a source
-commit to the image ID a deployed verifier accepts, see
-[Verifying the Compute Provider](/verifying-the-compute-provider).
+The protocol verifies the domain and output. The application also verifies its stored parameter hash
+and input root. Both checks are mandatory. See
+[Verifying the Compute Provider](/verifying-the-compute-provider) for the source-to-deployment
+checks.

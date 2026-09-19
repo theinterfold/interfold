@@ -1,95 +1,92 @@
 ---
 title: 'Verifying the Compute Provider'
-description: 'Reproduce the RISC Zero guest image ID and check it against the deployed verifier'
+description: 'Check the OpenVM guest identity, verifier artifact, and deployed receipt bindings'
 ---
 
-# Verifying the Compute Provider
+# Verifying the compute provider
 
-A RISC Zero proof tells you **which guest ran**. It does not tell you **which source produced that
-guest**. This page closes that gap: it is the procedure for going from a source commit to the image
-ID a deployed `Risc0BfvCiphertextVerifier` accepts, and for checking that the two agree.
+An OpenVM proof identifies an executable and a VM configuration. It does not identify the source
+checkout that produced them. Verification therefore needs both build evidence and deployment checks.
 
-Read this if you are auditing an E3, operating a ciphernode, or deciding whether to trust a
-deployment you did not build.
+## Build evidence
 
-## What the chain already gives you
+1. Select a clean source commit and its checked-in lockfiles.
+2. Follow the OpenVM build instructions in `crates/support/openvm/README.md`.
+3. Generate the application key and executable.
+4. Run the worker's `prepare` command to derive the aggregation key and application commitments.
+5. Compare an independent rebuild with the expected commitments.
+6. Record the proving artifacts, verifier artifact, and toolchain versions.
 
-Three properties hold without any work on your part:
+The native host and guest must use the same processor and input policy. The guest derives the
+ciphertext, SAFE commitment, parameter hash, and input root. It must not accept those values as
+unverified output claims.
 
-1. **The verifier is frozen per E3.** Interfold snapshots the ciphertext verifier for an E3's
-   encryption scheme at request time. A later `setCiphertextVerifier` does not affect an E3 already
-   in flight.
-2. **The image ID is immutable.** `Risc0BfvCiphertextVerifier.imageId` is set in the constructor and
-   is `public`. Read it from the deployed contract; nobody can change it.
-3. **The journal is rebuilt from chain state.** The verifier reconstructs eight of the nine journal
-   fields — chain ID, calling program, E3 ID, scheme ID, committee public key, output hash, SAFE
-   commitment, parameter hash — from values the compute provider does not control.
+Run `interfold-openvm-prover check <config.json>` before service startup. This command checks the
+executable identity, VM identity, aggregation-key compatibility, and verifier artifact checksum. It
+does not certify that the source is audited or that the build is reproducible.
 
-The ninth field, the input root, comes from the proof envelope. The protocol verifier does not
-constrain it. **The E3 program must compare it against its own on-chain input root**, and both
-shipped programs do. See [Writing the Secure Process](/write-secure-program).
+## Deployment checks
 
-What none of this tells you is whether `imageId` corresponds to the source you are reading. That is
-what the rest of this page is for.
+The receipt identity is:
 
-## The procedure
+`keccak256(abi.encode(keccak256("INTERFOLD_OPENVM_RECEIPT_V1"), halo2Verifier, appExeCommit, appVmCommit))`
 
-### 1. Read the deployed value
+Check all three contracts:
 
-```bash
-cast call <verifier-address> "imageId()(bytes32)" --rpc-url <rpc>
+- The generated Halo2 verifier must have the runtime code produced by the checked artifact.
+- `OpenVmReceiptVerifier` must contain the prepared executable and VM commitments.
+- `OpenVmBfvCiphertextVerifier` must reference that receipt verifier and its identity.
+
+CRISP's `openVmVerifier()` and `imageId()` must also match. The protocol wrapper's immutable
+identity does not make application-owner changes harmless: inconsistent application settings can
+prevent an active round from completing.
+
+Interfold snapshots the protocol verifier when it accepts an E3 request. Drain active rounds before
+a live verifier migration. A proxy upgrade remains a separate governance risk.
+
+## Provenance manifest
+
+From the clean source checkout, run:
+
+```sh
+pnpm provenance:manifest --config <worker-config.json> --prover <worker-binary> \
+  --rpc <rpc-url> --verifier <OpenVmBfvCiphertextVerifier-address> --out <new-manifest.json>
 ```
 
-Compare it against `crates/support/contracts/ImageID.sol` in the released source. They must be
-identical. If they are not, the deployment does not correspond to this source — stop and find out
-why.
+The command records source and artifact digests, application commitments, worker validation, and the
+deployed verifier bindings. It compares the deployed Halo2 runtime with a read-only simulation of
+the checked artifact's creation bytecode. It does not submit a transaction.
 
-Note that this compares the deployed value against a **committed** one. Nothing in the repository
-reproduces the image ID from the guest source any more, so a match here shows the deployment agrees
-with what was committed, not that what was committed is what the source builds.
+Missing or failed checks produce `complete: false` and an `unresolved` list. A complete record is
+not evidence of an independent source rebuild. The manifest states
+`sourceReproductionChecked: false`; retain that separate build evidence with the release.
 
-Also read `risc0Verifier()` and confirm the underlying RISC Zero verifier is the one you expect for
-that chain.
+File SHA-256 digests are integrity checks. They are not application commitments or receipt
+identities. Do not substitute one for another.
 
-### 2. Generate the manifest
+## Journal and proof checks
 
-```bash
-pnpm provenance:manifest --rpc <rpc> --verifier <verifier-address> --out manifest.json
-```
+The guest reveals SHA-256 of nine consecutive ABI words:
 
-The manifest records source commit, lockfile digests, pinned revisions, RISC Zero version, builder
-image tag and digest, guest ELF SHA-256, image ID, the deployed verifier address and runtime code
-digest, the underlying RISC Zero verifier, and the on-chain `imageId()`.
+1. Chain ID
+2. Interfold address
+3. Full uint256 E3 ID
+4. Encryption scheme ID
+5. Committee public-key commitment
+6. Ciphertext hash
+7. SAFE ciphertext commitment
+8. Parameter hash
+9. Input root
 
-It prints `"complete": false` and lists what is missing when any field could not be resolved. **A
-release manifest must be complete.** An incomplete manifest is a record of an unfinished
-verification, not a passing result.
+The protocol reconstructs the domain and output fields. The application independently compares the
+parameter hash and input root with its stored values. Both verification calls must pass.
 
-## One correctness point
+Use `pnpm openvm proof-test` to verify a supplied real receipt and reject changed proof data,
+journal fields, and application commitments. Use `pnpm openvm service-e2e` to test the HTTP
+dispatch, callback, and automatic ciphertext publication on an isolated local chain.
 
-**The SHA-256 of the published ELF is not the image ID.**
+A test must state which dependencies are mocked. A real compute proof alone does not demonstrate
+distributed key generation, ballot proofs, external data availability, or threshold-decryption
+proofs.
 
-SHA-256 checks that a binary arrived intact. The RISC Zero image ID is computed from the _loaded
-memory image_, not from the file bytes. Two artifacts can share an image ID and differ in SHA-256,
-and a matching SHA-256 does not by itself establish that a proof will verify.
-
-The manifest records both, for different purposes: the SHA-256 for transport integrity, the image ID
-for proof acceptance. Never substitute one for the other.
-
-## What this does not cover
-
-- **Governance of the proxy.** The Safe owns Interfold's `ProxyAdmin`. The per-E3 verifier snapshot
-  protects an E3 in flight from a `setCiphertextVerifier` call, but it is not protection against a
-  proxy upgrade. That is a governance property, not a build property.
-- **Application-level image IDs.** An E3 program may store its own image ID and verifier — CRISP has
-  `setImageId` and `setRisc0Verifier`, both `onlyOwner`. Because the protocol wrapper stays pinned,
-  changing those cannot replace a computation the protocol already accepted, but it can make an E3
-  in flight fail. Verify the E3 program's values separately from the protocol verifier's.
-- **The ciphernode image.** Reproducible builds for the ciphernode container are a separate concern.
-
-## Related
-
-- [Writing the Secure Process](/write-secure-program) — why the Secure Process derives its input
-  root rather than receiving it
-- [Compute Provider Setup](/compute-provider) — choosing a provider
-- `agent/INVARIANTS.md`, "Build / config sync" — the rules the gates enforce
+The compute implementation and OpenVM verifier integration remain unaudited.

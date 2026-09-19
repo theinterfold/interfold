@@ -8,7 +8,6 @@ EXCLUDE_PATHS=(
     "*/.interfold/caches/*"
     "*/target/*"
     "*/node_modules/*"
-    "*/risc0-ethereum/*"
 )
 
 # Build exclude arguments

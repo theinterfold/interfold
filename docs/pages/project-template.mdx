@@ -14,13 +14,12 @@ playground for building and testing E3 programs without copying the entire monor
 ```
 my-first-e3/
 ├── contracts/          # Hardhat workspace with Interfold adapters + your E3 program contracts
-├── program/            # RISC Zero guest code
+├── program/            # Application FHE policy
 ├── server/             # TypeScript coordination server
 ├── client/             # React + Vite frontend wired to @interfold/sdk
 ├── deploy/             # Deployment scripts
 ├── scripts/            # Helper scripts (start dev stack, ciphernodes, etc.)
 ├── tests/              # Integration + contract tests
-├── lib/                # Git submodules (risc0-ethereum)
 ├── interfold.config.yaml # Node + chain config consumed by the CLI
 ├── package.json        # Dev orchestrator scripts
 └── .interfold/           # cached CLI state (ignored by Git)
@@ -32,9 +31,9 @@ Each workspace shares the same `pnpm` root so dependencies stay in sync.
 
 | Script                  | Purpose                                                                                                                     |
 | ----------------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm dev:all`          | Spins up Hardhat, deploys contracts, launches the RISC Zero program server, coordination server, frontend, and ciphernodes. |
+| `pnpm dev:all`          | Starts the local chain, contracts, OpenVM program service, coordination server, frontend, and ciphernodes. |
 | `pnpm dev:evm`          | Runs `hardhat node` on `http://localhost:8545`.                                                                             |
-| `pnpm dev:program`      | Starts the RISC Zero guest runner. Pass `--dev` to skip real proving.                                                       |
+| `pnpm dev:program`      | Starts the configured OpenVM service. Explicit `program.dev` selects an unproved test runner. |
 | `pnpm dev:server`       | Boots the TypeScript coordination server with hot reload.                                                                   |
 | `pnpm dev:frontend`     | Launches the Vite client on `http://localhost:3000`.                                                                        |
 | `pnpm dev:ciphernodes`  | Calls the Interfold CLI to launch the nodes defined in `interfold.config.yaml`.                                             |
@@ -42,8 +41,13 @@ Each workspace shares the same `pnpm` root so dependencies stay in sync.
 | `pnpm test`             | Runs Hardhat tests.                                                                                                         |
 | `pnpm test:integration` | Executes the end-to-end flow in `tests/`.                                                                                   |
 
-Before `dev:all` runs, the `predev:all` hook calls `interfold program compile` so the latest zkVM
-image is ready; skip this by exporting `SKIP_PROGRAM_COMPILE=1`.
+Before `dev:all` runs, the `predev:all` hook calls `interfold program compile` to build the native
+service. Configure `program.openvm` first. Build the guest and prepare matching proving artifacts
+separately. Deployment requires explicit application commitments and a checked Halo2 verifier.
+
+The template's integration script explicitly selects an unproved runner and a local mock receipt
+verifier. Normal startup does not select that mode. The reference CRISP guest cannot prove a
+different template policy.
 
 ## Environment files
 
@@ -89,8 +93,8 @@ entrypoint.
 
 ## Common tweaks
 
-- **Alternate compute providers**: edit `server/src/providers` to switch between RISC Zero dev-mode
-  vs real proving, or wire in a custom prover.
+- **Compute policy**: build an OpenVM guest for the policy in `program/` and deploy its matching
+  verifier bindings. Changing a native function alone does not change the proved program.
 - **Program parameters**: `server/src/config/e3.ts` defines the default thresholds and time windows
   used when calling `sdk.requestE3`. Adjust them to match your chain's latency.
 - **Frontend UI**: `client/src/components/ResultCard.tsx` renders decrypted outputs—extend it with

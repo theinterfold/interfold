@@ -103,7 +103,7 @@ jobs:
       - name: Build & push e3-support release image
         uses: docker/build-push-action@v5
         with:
-          context: ./crates/support
+          context: .
           file: ${{ env.SUPPORT_DOCKERFILE_PATH }}
           push: true
           tags: |

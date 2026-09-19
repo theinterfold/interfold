@@ -1,140 +1,79 @@
 ---
-title: 'Writing Secure Process'
-description:
-  'Define the FHE computation logic for your E3 program — BFV homomorphic operations, RISC Zero
-  guest, and the Compute Provider package'
+title: 'Writing the Secure Process'
+description: 'Define the FHE processor, input policy, and OpenVM proof statement'
 ---
 
-# Secure Process
+# Writing the Secure Process
 
-The Secure Process defines the core computation for your E3 Program. It runs within your selected
-Compute Provider's environment, ultimately producing a ciphertext output that is decrypted by your
-Ciphernode Committee. To facilitate this, Interfold provides a
-[Compute Provider package](https://github.com/theinterfold/interfold/tree/main/crates/compute-provider)
-to simplify writing the Secure Process with any Compute Provider.
+The Secure Process computes over encrypted inputs and derives the proof statement. The native host
+and OpenVM guest use the same `fhe_processor` and `policy` functions.
 
-### Using the Compute Provider Package
+`ComputeInput` contains BFV parameters, indexed ciphertext bytes, and the corresponding
+`PublishedData` entries. Each entry carries the published commitment and program-specific metadata.
+The input policy reconstructs the input leaves and selects the inputs that contribute to the result.
 
-To simplify integration with the Interfold, use the provided Compute Provider package.
+The guest must derive the input root from those inputs. An independently supplied leaf list could
+match the contract while the computation uses different ciphertexts.
 
-**Benefits:**
+The application must compare the proof's input root with its own on-chain root.
+`OpenVmBfvCiphertextVerifier` verifies the proof envelope but does not know the application's
+input-tree policy.
 
-- **Handles Merkle tree construction**: Recreates the input Merkle tree inside the compute
-  environment, from the ciphertexts the Secure Process consumed.
-- **Simplifies proof generation**: Manages proof creation for computation verification.
-- **Abstracts complexity**: Allows you to focus on your computation logic.
+## Processor
 
-> **The first point is a security property, not a convenience.** `ComputeInput` carries only
-> `fhe_inputs`, and `ComputeInput::process` derives the leaves from those ciphertexts. It must stay
-> that way. If the leaves ever arrive as a separate value, they can disagree with the ciphertexts
-> that produced the result, and the input-root comparison your E3 program performs becomes
-> meaningless — a prover could replay the genuine on-chain leaves while computing over inputs that
-> were never submitted. Publishing a result is unpermissioned and one-shot, so that is not a
-> hypothetical failure of a trusted party.
->
-> The matching obligation on the contract side is that **your E3 program must compare the proof's
-> input root against its own on-chain root**. `Risc0BfvCiphertextVerifier` takes the root from the
-> proof envelope and does not constrain it. See
-> [Verifying the Compute Provider](/verifying-the-compute-provider).
-
-**Implementation:**
-
-- Import the Compute Provider package into your project.
-- Use its functions to handle tasks such as input processing and proof generation.
-
-**Example:**
+A BFV addition processor uses the decoded parameters supplied by `FHEProcessorInput`:
 
 ```rust
-use e3_compute_provider::{ComputeInput, ComputeManager, ComputeProvider, ComputeResult, FHEInputs};
-
-// Implement ComputeProvider trait for your chosen provider
-pub struct Risc0Provider;
-
-impl ComputeProvider for Risc0Provider {
-    type Output = Risc0Output;
-
-    fn prove(&self, input: &ComputeInput) -> Self::Output {
-        // Implement proof generation using RISC Zero with Boundless / SP1 or any other provider
-        // See https://docs.boundless.network/ for production proving
-        // ...
-    }
-}
-```
-
-### Writing the Secure Process
-
-Your Secure Process defines the core computation logic and runs inside the Compute Provider's
-environment. Below are the key steps to implement it effectively:
-
-**Steps:**
-
-1. **Define the Computation**: Specify the exact computation your E3 program needs to perform.
-2. **Implement the Logic**: Write the Secure Process using the Compute Provider's supported language
-   (e.g., Rust for RISC Zero).
-3. **Handle Program Inputs**: Ensure the program can process encrypted data correctly.
-4. **Focus on Computation**: Use the Compute Provider package to handle additional tasks like Merkle
-   tree verification and proof generation, so you can focus on your computation logic.
-
-**Example (Rust with RISC Zero + Boundless):**
-
-```rust
-use e3_fhe_params::decode_bfv_params_arc;
-use e3_compute_provider::FHEInputs;
+use e3_compute_provider::FHEProcessorInput;
 use fhe::bfv::Ciphertext;
 use fhe_traits::{DeserializeParametrized, Serialize};
 
-/// Your secure computation function
-pub fn fhe_processor(fhe_inputs: &FHEInputs) -> Vec<u8> {
-    // Decode the FHE parameters
-    let params = decode_bfv_params_arc(&fhe_inputs.params).unwrap();
-
-    // Initialize sum
-    let mut sum = Ciphertext::zero(&params);
-
-    // Sum all ciphertexts
-    for ciphertext_bytes in &fhe_inputs.ciphertexts {
-        let ciphertext = Ciphertext::from_bytes(&ciphertext_bytes.0, &params).unwrap();
+pub fn fhe_processor(input: &FHEProcessorInput<'_>) -> Vec<u8> {
+    let mut sum = Ciphertext::zero(input.params);
+    for (bytes, _) in input.ciphertexts {
+        let ciphertext = Ciphertext::from_bytes(bytes, input.params).unwrap();
         sum += &ciphertext;
     }
-
-    // Serialize the result
     sum.to_bytes()
 }
 ```
 
-### Running the Secure Process
+The processor must use the selected inputs, not a second input collection. The program's `policy()`
+function returns the matching `InputPolicy`.
 
-To run the Secure Process, use the Compute Provider `ComputeManager` to execute the program. It
-expects:
+CRISP's policy binds the ciphertext hash, SAFE commitment, slot, and parent index into each leaf. It
+selects the current valid chain head for each slot. It does not simply count every submitted
+ciphertext. See `examples/CRISP/program/src/lib.rs` for the canonical implementation.
 
-- The `ComputeProvider` implementation
-- The `FHEInputs` struct that consists of the FHE parameters and the ciphertexts to use. Each
-  ciphertext is a tuple of `(bytes, index)` where `index` is the position in the input set.
-- The Secure Process function `fhe_processor`
-- The [`InputPolicy`](https://github.com/theinterfold/interfold/tree/main/crates/compute-provider)
-  your E3 program exports, which decides the leaf layout and which inputs are computed over.
+## Guest and host
 
-The `FHEInputs` struct is defined as:
+The reference OpenVM guest uses:
 
 ```rust
-pub struct FHEInputs {
-    pub ciphertexts: Vec<(Vec<u8>, u64)>,  // (ciphertext_bytes, index)
-    pub params: Vec<u8>,                    // serialized BFV parameters
-}
+let (result, _) = input.input.run(
+    e3_user_program::fhe_processor,
+    e3_user_program::policy(),
+).expect("Ciphertext aggregation failed");
 ```
 
-```rs
-// Run the secure process inside the Compute Provider
-pub fn run_compute(params: FHEInputs) -> Result<(Risc0Output, Vec<u8>)> {
-    // Use the previously implemented Risc0Provider
-    let risc0_provider = Risc0Provider;
+The guest builds a `ComputeJournal` from the request domain and derived result. It reveals SHA-256
+of the nine ABI words. The worker verifies that the proved digest matches the native host's expected
+journal before returning a seal.
 
-    // Create the ComputeManager with the provider, params, and the secure process function
-    let mut provider = ComputeManager::new(risc0_provider, params, fhe_processor);
+`crates/support/host/src/lib.rs` is the native implementation.
+`crates/support/openvm/guest/src/main.rs` is the guest entry point. The reference support workspace
+builds CRISP's program. A custom application must build both paths against its own program source
+and deploy the resulting identity.
 
-    // Execute the program and get the output
-    let output: (Risc0Output, Vec<u8>) = provider.start();
+## Tests
 
-    Ok(output)
-}
-```
+Test the processor and policy independently before proving. Include reordered inputs, missing
+metadata, invalid commitments, parent-chain changes, and parameter mismatches. Compare native and
+guest results for the same fixture.
+
+A real proof test must verify the receipt and reject changed journal fields, application identities,
+and proof data. A live service test must also exercise HTTP dispatch, callback delivery, and
+automatic ciphertext publication. Neither test implies that unrelated dependencies were real.
+
+See [Compute Provider Setup](/compute-provider) and
+[Verifying the Compute Provider](/verifying-the-compute-provider).

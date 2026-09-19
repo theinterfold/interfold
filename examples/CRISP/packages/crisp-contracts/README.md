@@ -31,7 +31,7 @@ Local deploy is driven by **`../../crisp.dev.env`** (see
 ### CRISP-only deploy (Interfold already deployed)
 
 ```bash
-pnpm deploy:contracts          # production RISC0 verifier
+pnpm deploy:contracts          # configured OpenVM verifier
 pnpm deploy:contracts:full     # also deploy Interfold stack (no ZK unless ENABLE_ZK_VERIFICATION=true)
 ```
 
@@ -45,8 +45,8 @@ It exposes three main functions:
   (`Interfold.request`).
 - `verify` - that is called when the ciphertext output is published on Interfold
   (`Interfold.publishCiphertextOutput`). This function ensures that the ciphertext output is valid.
-  CRISP uses Risc0 as the compute provider for running the FHE program, thus the proof will be a
-  Risc0 proof.
+  CRISP uses OpenVM to prove the FHE program. The receipt adapter checks the application identity,
+  journal digest, and Halo2 proof. CRISP also checks its stored parameter hash and input root.
 - `publishInput` - accepts the compact proof commitment for an input. A voter or relay calls it
   after the CRISP availability service has durably stored the ciphertext and signed the input ID
   with a 10-minute expiry. The function checks the stage, commitment cutoff, signed expiry, voter

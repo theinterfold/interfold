@@ -119,7 +119,7 @@ export interface ProtocolConfigFile {
     pkVerifier?: string;
     dkgFoldAttestationVerifier?: string;
     /**
-     * The protocol ciphertext verifier for the BFV scheme, e.g. `Risc0BfvCiphertextVerifier`.
+     * The protocol ciphertext verifier for the BFV scheme, such as `OpenVmBfvCiphertextVerifier`.
      *
      * This is the contract that checks the compute receipt before an E3 reaches
      * `CiphertextReady`. Its `imageId` is immutable, so replacing it is a redeployment, not a

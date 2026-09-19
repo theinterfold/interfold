@@ -1,85 +1,47 @@
-# CRISP Program
+# CRISP program
 
-The program module runs the FHE computation at the heart of CRISP: it aggregates encrypted votes,
-produces a Risc0 ZK proof of correct execution, and submits the result back to the on-chain CRISP
-contract via the coordination server.
+The program implements CRISP's FHE processor and input policy. The OpenVM guest proves their
+execution. The native host uses the same source to derive the ciphertext and expected journal.
 
-## Architecture
+CRISP does not sum every published entry. Its input policy validates commitments and follows each
+slot's parent chain. Only the current valid head contributes to the encrypted tally. Every published
+entry remains bound into the reconstructed input root.
 
-```mermaid
-graph TD
-  subgraph frontend["FRONTEND"]
-    client
-  end
-  subgraph ec2_1["BACKEND"]
-    server["server"] --> db
-    db[(DB)]
+The proof binds the chain, Interfold address, full E3 ID, encryption scheme, committee key
+commitment, ciphertext hash, SAFE commitment, parameter hash, and input root.
 
-    server --HTTP--> program
-  end
-  subgraph thirdparty["3rd PARTY"]
-    boundless
-  end
-  client --"HTTP"--> server
-  program ---> boundless
+## Live compute flow
 
-  boundless["boundless (risc0)"]
+The CRISP server sends the indexed inputs to the program server after the input deadline. The OpenVM
+worker returns a verified proof. The program server delivers the ciphertext, commitment, and proof
+envelope by HTTP callback.
 
-  server --"publishInput()"--> evm
-  subgraph evm["EVM"]
-    esol1["Interfold Contracts"]
-    csol1["CRISP Contracts"]
-  end
-  server -. "WebSocket listener" .-> evm
-```
+CRISP validates the callback, obtains the output's availability receipt, and publishes the output
+reference. Both the protocol and application verifier must pass before the E3 reaches
+`CiphertextReady`. Threshold decryption follows separately.
 
-## What it computes
+## Build and run
 
-CRISP uses BFV fully homomorphic encryption to tally votes without revealing individual inputs:
+Follow [the OpenVM instructions](../../../crates/support/openvm/README.md). Configure
+`program.openvm` with the repository, worker, and worker-configuration paths.
 
-1. The server collects BFV-encrypted vote ciphertexts from participants.
-2. The program homomorphically adds all ciphertexts together to produce an encrypted tally.
-3. A Risc0 guest program proves the aggregation was performed correctly.
-4. The proof and ciphertext output are submitted on-chain; the Interfold ciphernode committee then
-   threshold-decrypts the result.
+From `examples/CRISP`, run:
 
-## E3 Program Entry Points
-
-The CRISP Solidity contract implements the three `IE3Program` entry points. Interfold calls two of
-them. Data providers call `publishInput` on the program directly.
-
-| Function        | Called by            | When called                    | What it does                                                                             |
-| --------------- | -------------------- | ------------------------------ | ---------------------------------------------------------------------------------------- |
-| `validate`      | Interfold            | On E3 request                  | Validates request parameters, including the input window                                 |
-| `publishInput`  | Voter or relay       | Before the commitment cutoff   | Verifies the Noir proof and availability-service signature, then reserves the input leaf |
-| `finalizeInput` | Availability service | After VectorX proves inclusion | Verifies availability of the committed ciphertext hash                                   |
-| `verify`        | Interfold            | On output publication          | Verifies the Risc0 proof and that the ciphertext output is correct                       |
-
-## Proof Generation
-
-Proof generation is delegated to [Boundless](https://boundless.network) (a Risc0 proving service):
-
-- **Development / local:** The program can run the Risc0 guest directly (no Boundless needed).
-- **Production:** Set the `BOUNDLESS_RPC_URL` and `BOUNDLESS_PRIVATE_KEY` environment variables to
-  submit jobs to the Boundless network. See [Boundless configuration](../Readme.md#configuration) in
-  the CRISP root README.
-
-## Environment Variables
-
-| Variable                | Required   | Description                                                   |
-| ----------------------- | ---------- | ------------------------------------------------------------- |
-| `RISC0_DEV_MODE`        | Dev only   | Set to `1` to skip real proof generation (fast local testing) |
-| `BOUNDLESS_RPC_URL`     | Production | RPC endpoint for Boundless proof submission                   |
-| `BOUNDLESS_PRIVATE_KEY` | Production | Private key for paying Boundless proving fees                 |
-| `PINATA_JWT`            | Production | JWT for uploading the compiled guest binary to IPFS           |
-| `PROGRAM_URL`           | Production | IPFS URL of the uploaded guest binary                         |
-
-## Running locally
-
-```bash
-# From the CRISP root
+```sh
 pnpm dev:program
 ```
 
-This starts the program HTTP server (default port 3001). The coordination server calls it when a new
-E3 computation request arrives.
+The program server defaults to port 13151. The script uses the configured OpenVM backend. It does
+not force unproved execution.
+
+## Fresh test inputs
+
+From the repository root:
+
+```sh
+pnpm openvm fixture <vote-count> <new-output-directory>
+```
+
+The fixture generator creates fresh secure-8192 test ballots and checks the native aggregate and
+tally. It does not produce ballot, DKG, or threshold-decryption proofs. Keep its output under
+`target/` or outside the repository.

@@ -18,7 +18,6 @@ Before getting started, ensure you have installed:
 
 - [Rust](https://rust-lang.org/tools/install/)
 - [Foundry](https://getfoundry.sh)
-- [RISC Zero](https://dev.risczero.com/api/zkvm/install)
 - [Node.js](https://nodejs.org/en/download)
 - [pnpm](https://pnpm.io)
 - [MetaMask](https://metamask.io)
@@ -27,19 +26,19 @@ Before getting started, ensure you have installed:
 
 ## Quick Start
 
-The simplest way to run CRISP is:
+First configure the OpenVM worker and verifier as described below. Then, from `examples/CRISP`:
 
 ```bash
 # Install dependencies and build everything
 pnpm dev:setup
 
-# Start all services (Hardhat, contracts, ciphernodes, program server, coordination server, and UI)
+# Start all services (Anvil, contracts, ciphernodes, program server, coordination server, and UI)
 pnpm dev:up
 ```
 
 `dev:up` runs `scripts/dev.sh`, which:
 
-1. Starts the Hardhat node in `packages/crisp-contracts`
+1. Starts Anvil with chain ID 31337
 2. Deploys all contracts (Interfold, CRISPProgram, verifiers, registries) via
    `scripts/crisp_deploy.sh`
 3. Watches the configured local randomness provider and fulfills each request in a later block. This
@@ -75,12 +74,12 @@ which are also saved in `packages/crisp-contracts/deployed_contracts.json`.
 Once everything is running, you can:
 
 1. Navigate `http://localhost:3000` for the client interface
-2. Add the Hardhat private key to your wallet:
+2. Add the public development key to your test wallet:
    `0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80`
 3. Press `Connect Wallet` button and complete the association with your MetaMask account
-4. Switch to `Hardhat` local network (this will be handled automatically by the app. You just need
-   to press on the connected account on the frontend and select the network. Then, complete the
-   configuration on MetaMask pop-up).
+4. Switch to the local network with chain ID 31337 (this will be handled automatically by the app.
+   You just need to press on the connected account on the frontend and select the network. Then,
+   complete the configuration on MetaMask pop-up).
 5. Open a new terminal, run `pnpm cli` and start a new E3 Round.
 6. Refresh and interact with the round following the Client interface.
 
@@ -88,63 +87,41 @@ Once everything is running, you can:
 
 ### Ciphernode Configuration
 
-The `interfold.config.yaml` file in the CRISP root directory configures the ciphernode network. By
-default, it runs in development mode with fake proofs for fast local development:
+The `interfold.config.yaml` file configures the ciphernode network and the program service. The
+program service requires real OpenVM proofs by default:
 
 ```yaml
 program:
-  dev: true # Uses fake zkVM proofs (fast for development)
+  dev: false
+  openvm:
+    repository: /absolute/path/to/interfold
+    prover_bin: /absolute/path/to/interfold-openvm-prover
+    prover_config: /absolute/path/to/deployment/prover.json
 ```
 
-### Boundless Configuration
+### OpenVM Configuration
 
-For production-grade zero-knowledge proofs with [Boundless](https://docs.boundless.network/), update
-`interfold.config.yaml`:
+Build the pinned guest and prover, then generate the application identity and aggregation key. The
+repository's `crates/support/openvm/README.md` describes the artifact and CUDA requirements.
+`interfold program compile` builds the native support service; it does not generate guest keys.
 
-```yaml
-program:
-  dev: false # Disable dev mode to use real proofs
-  risc0:
-    risc0_dev_mode: 0 # 0 = production (Boundless), 1 = dev mode
-    boundless:
-      rpc_url: 'https://sepolia.infura.io/v3/YOUR_KEY' # RPC endpoint
-      private_key: 'YOUR_PRIVATE_KEY' # Wallet with funds for proving
-      pinata_jwt: 'YOUR_PINATA_JWT' # Required for uploading programs to IPFS
-      program_url: 'https://gateway.pinata.cloud/ipfs/YOUR_CID' # Pre-uploaded program URL
-      onchain: true # true = onchain requests, false = offchain
-```
+Before contract deployment, export `OPENVM_APP_EXE_COMMIT` and `OPENVM_APP_VM_COMMIT` from the
+prepared identity. Select one verifier source:
 
-> **_Note:_** For production proving with Boundless, you need:
->
-> - An RPC endpoint (e.g., Infura, Alchemy) with funds
-> - A private key with sufficient ETH/tokens for proof generation
-> - A Pinata JWT for uploading programs to IPFS (get one at [pinata.cloud](https://pinata.cloud))
-> - Pre-uploaded program URL to avoid uploading the ~40MB program at runtime
+- `OPENVM_VERIFIER_ARTIFACT` and `OPENVM_VERIFIER_SHA256`: deploy the checksummed bytecode artifact.
+- `OPENVM_HALO2_VERIFIER` and `OPENVM_HALO2_RUNTIME_CODE_HASH`: check an existing verifier's code.
 
-#### Uploading Your Program to IPFS
+The deployment installs `OpenVmReceiptVerifier` and the protocol's `OpenVmBfvCiphertextVerifier`.
+Missing or inconsistent settings stop deployment. Other local test mocks do not disable compute
+verification.
 
-When you make changes to the guest program in `program/`, you need to upload it to IPFS to get a
-program URL:
+Changing the guest requires new matching artifacts and verifier bindings. Keep keys and
+machine-specific paths outside version control. Existing rounds retain their request-time verifier;
+drain them before a live migration. The historical activation scripts do not migrate to OpenVM.
 
-1. First, configure your Pinata JWT in `interfold.config.yaml` (as shown above)
-
-2. Build and upload your program:
-
-   ```bash
-   # This compiles the guest program and uploads it to IPFS via Pinata
-   interfold program upload
-   ```
-
-3. The command will output an IPFS hash like `QmXxx...`. Update your `interfold.config.yaml` with
-   the full URL:
-
-   ```yaml
-   program_url: 'https://gateway.pinata.cloud/ipfs/QmXxx...'
-   ```
-
-> **_Important:_** Every time you modify the guest program code in `program/`, you must rebuild and
-> re-upload it to IPFS, then update the `program_url` in your configuration. This ensures Boundless
-> uses your latest program version.
+The service accepts HTTP compute jobs and callback URLs without authentication. Keep it on an
+isolated network or behind authenticated admission control. Its queue is in memory; operators must
+reconcile interrupted jobs and failed callbacks. See [Compute Provider](/compute-provider).
 
 ### Environment Variables
 
@@ -157,10 +134,10 @@ addresses after deployment.
 While `pnpm dev:up` runs everything together, you can also run components separately:
 
 ```bash
-# Start only the Hardhat node
-cd packages/crisp-contracts && pnpm hardhat node
+# Start only the local EVM node
+anvil --host 127.0.0.1 --chain-id 31337 --block-time 1
 
-# Start only the ciphernodes (requires Hardhat running)
+# Start only the ciphernodes (requires Anvil running)
 ./scripts/dev_cipher.sh
 
 # Start only the program server (requires ciphernodes)

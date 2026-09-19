@@ -803,22 +803,21 @@ design citation alone does not establish current runtime behavior.
 - **Generated verifiers must match the built VKs** — pre-push checks the canonical pair. CI hydrates
   and compares every supported preset and committee pair. A drift means a deployed verifier accepts
   a different circuit from the tree.
-- **`Elf.sol` is never committed.** `crates/support/methods/build.rs` writes it with a machine-local
-  guest ELF path, so it is generated per checkout and `.gitignore`d.
+- **Deployment-local OpenVM artifacts are never committed.** Keep executable files, proving keys,
+  proofs, inputs, worker configurations, and benchmark reports under `target/` or outside source.
 - **A release publishes a complete provenance manifest** — `pnpm provenance:manifest`. It ties
-  source commit, lockfile digests, pinned revisions, RISC Zero version, builder image tag **and
-  digest** (the builder tag is mutable and `RISC0_DOCKER_CONTAINER_TAG` overrides it), guest ELF
-  SHA-256, image ID, and the deployed verifier to one record. The generator reports
+  source commit, lockfile and artifact digests, OpenVM application commitments, worker identity
+  validation, and the deployed protocol, receipt, and Halo2 verifiers to one record. The generator reports
   `complete: false` with the unresolved fields rather than emitting a partial record that reads as
-  verified. The ELF SHA-256 is **not** the image ID: SHA-256 checks binary integrity, the image ID
-  is computed from the loaded memory image. Procedure:
+  verified. An artifact SHA-256 is **not** an application commitment or receipt identity.
+  A complete record does not establish source reproducibility; retain independent rebuild evidence. Procedure:
   `docs/pages/verifying-the-compute-provider.mdx`.
 - Upgradeable-contract storage baselines are committed and CI-gated (missing baselines, compiler
   drift, layout incompatibility, bad gap consumption all fail); baseline creation is an explicit
   maintainer command. — INDEX concern #27
 - Contracts CI fails a release if `Interfold` / aggregator-verifier runtime bytecode is within 256
   bytes of the EIP-170 limit. — INDEX concern #22
-- BFV circuit-verifier and RISC Zero receipt-verifier constructors require deployed verifier
+- BFV circuit-verifier and OpenVM receipt-verifier constructors require deployed verifier
   contracts. BFV circuit wrappers also require nonzero recursive VK hashes. — INDEX concerns #21,
   Z-15
 - CLI secrets are passed over **stdin only** — never argv or environment; private keys are never

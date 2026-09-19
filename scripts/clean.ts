@@ -38,7 +38,6 @@ class Cleaner {
 
   private setupSkips(): void {
     // Always skip the following folders.
-    this.skipPatterns.push('**/risc0-ethereum/**')
     this.skipPatterns.push('packages/interfold-contracts/artifacts/contracts/**/*.json')
   }
 

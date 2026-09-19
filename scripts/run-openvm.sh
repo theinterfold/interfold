@@ -6,6 +6,17 @@ command="${1:-}"
 shift || true
 case "$command" in
   setup-fhe) exec node "$ROOT/scripts/setup-openvm-fhe.mjs" "$@" ;;
+  cli-build)
+    exec cargo build --locked --release --manifest-path "$ROOT/Cargo.toml" -p e3-cli --bin interfold "$@"
+    ;;
+  fixture)
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target/openvm/crisp-server}"
+    exec cargo run --locked --release --manifest-path "$ROOT/examples/CRISP/Cargo.toml" -p e3-user-program --example openvm_fixture -- "$@"
+    ;;
+  crisp-server-build|crisp-server-test)
+    export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target/openvm/crisp-server}"
+    exec cargo "${command#crisp-server-}" --locked --manifest-path "$ROOT/examples/CRISP/Cargo.toml" -p crisp "$@"
+    ;;
   service-build|service-test|service-check)
     export CARGO_TARGET_DIR="${CARGO_TARGET_DIR:-$ROOT/target/openvm/service}"
     exec cargo "${command#service-}" --locked --manifest-path "$ROOT/crates/support/Cargo.toml" "$@"
@@ -37,5 +48,8 @@ case "$command" in
   proof-test)
     OPENVM_REQUIRE_PROOF_TEST=1 exec pnpm --filter @crisp-e3/contracts test --network default tests/openvm-proof.test.ts "$@"
     ;;
-  *) echo 'Usage: pnpm openvm setup-fhe|service-build|service-test|service-check|service-start|prover-build|prover-test|prover-check|prover|guest|contract-test|proof-test [arguments]' >&2; exit 2 ;;
+  service-e2e)
+    OPENVM_E2E_ENABLED=1 exec pnpm --filter @crisp-e3/contracts test --network localhost tests/openvm-service.test.ts "$@"
+    ;;
+  *) echo 'Usage: pnpm openvm setup-fhe|cli-build|fixture|crisp-server-build|crisp-server-test|service-build|service-test|service-check|service-start|prover-build|prover-test|prover-check|prover|guest|contract-test|proof-test|service-e2e [arguments]' >&2; exit 2 ;;
 esac

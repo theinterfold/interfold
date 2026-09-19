@@ -33,7 +33,7 @@ Interfold.
 
 - **Determinism**: Reconstruct the on-chain Merkle root inside the Secure Process, then assert
   equality prior to any heavy computation.
-- **Proof hooks**: When using RISC Zero or other verifiable CPs, keep witness blobs small and
+- **Proof hooks**: When using OpenVM, keep witness blobs small and
   reserve `computeProviderParams` for runtime toggles (precision, chunk size, etc.).
 - **Failover**: Decide how your app reacts if `CiphertextOutputPublished` never arrives—e.g., allow
   a guardian actor to cancel the round and refund deposits. See the

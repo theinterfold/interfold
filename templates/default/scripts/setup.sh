@@ -15,10 +15,8 @@ pnpm install --frozen-lockfile
 echo "Installing Cargo dependencies..."
 cargo build
 
-echo "Compiling guest program..."
-if [[ ! -f './.interfold/generated/contracts/ImageID.sol' ]]; then
-  interfold program compile
-fi
+echo "Compiling the configured program service..."
+interfold program compile
 
 build_interfold_circuits_at_setup
 

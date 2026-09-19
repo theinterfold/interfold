@@ -1,12 +1,12 @@
 [workspace]
 resolver = "3"
-msrv = "1.91.1"
 members = ["app", "host", "types", "program"]
-exclude = ["methods", "methods/guest", "openvm/guest", "openvm/prover"]
+exclude = ["openvm/guest", "openvm/prover"]
 
 [workspace.package]
 version = "0.1.0"
 edition = "2021"
+rust-version = "1.91.1"
 
 [workspace.dependencies]
 e3-support-app = { path = "./app" }

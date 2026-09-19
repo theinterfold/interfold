@@ -1075,3 +1075,15 @@ The guest and host share the canonical CRISP policy source. The normal `e3-suppo
 backend uses `program.openvm`; it no longer selects RISC Zero or Boundless.
 The worker validates the executable, VM identity, aggregation key, verifier artifact, and journal.
 Jobs remain in memory; this service does not provide durable admission or restart recovery.
+`interfold program compile` builds the native service. Guest compilation and key preparation are
+separate steps. The CLI has no program-upload or container-shell command. `e3-init` does not install
+an external verifier submodule or copy the old container controls. `program.dev` is an explicit,
+unproved runner; normal startup requires the OpenVM configuration.
+
+CRISP's encrypted-input and result-callback routes accept at most 4 MiB of JSON, to contain the
+largest supported DA object after hexadecimal encoding. This limit is scoped to those routes;
+read routes retain their smaller default limit. `CRISP_BIND_ADDR` selects the HTTP listener and
+defaults to `0.0.0.0:4000`.
+The server starts a multithread Tokio runtime. Input validation and large round-record updates must
+not prevent the RPC transports from receiving WebSocket heartbeats. Actix HTTP workers retain their
+own runtimes; the server does not use Actix actors or `actix_web::rt::spawn`.

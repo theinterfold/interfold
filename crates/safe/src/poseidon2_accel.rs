@@ -175,17 +175,7 @@ impl FastField {
         self.add(self)
     }
 
-    #[cfg(all(target_os = "zkvm", target_arch = "riscv32", not(feature = "openvm")))]
-    fn multiply(self, rhs: Self) -> Self {
-        let mut output = [0u32; 8];
-        risc0_bigint2::field::modmul_256(&self.0, &rhs.0, &MODULUS, &mut output);
-        Self(output)
-    }
-
-    #[cfg(all(
-        not(all(target_os = "zkvm", target_arch = "riscv32")),
-        not(feature = "openvm")
-    ))]
+    #[cfg(not(feature = "openvm"))]
     fn multiply(self, rhs: Self) -> Self {
         Self::from_ark(self.into_ark() * rhs.into_ark())
     }

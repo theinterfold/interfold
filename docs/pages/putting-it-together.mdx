@@ -1,214 +1,69 @@
 ---
 title: 'Putting It All Together'
+description: 'Connect an E3 application to the OpenVM compute service'
 ---
 
-## Putting It All Together: A Complete Example
+# Putting it all together
 
-To solidify your understanding, let's walk through an example of building and deploying an E3
-Program using RISC Zero.
+CRISP is the reference application for the OpenVM compute path. The application server coordinates
+the round. The program server generates the proof. Ciphernodes perform key generation and threshold
+decryption.
 
-### Step 1: Set Up Development Environment
+## Prepare the program
 
-- **Install Required Tools**:
-  - Rust and Cargo
-  - Node.js and pnpm
-  - Foundry and Anvil for Ethereum development
-  - RISC Zero toolchain
+1. Implement the FHE processor and input policy.
+2. Use the same program source in the native host and guest.
+3. Build the OpenVM guest, worker, and proving artifacts.
+4. Derive the executable and VM commitments with the worker's `prepare` command.
+5. Validate the worker configuration with `check`.
 
-### Step 2: Write the Secure Process
+See [Writing the Secure Process](/write-secure-program) and
+[Compute Provider Setup](/compute-provider). The CRISP reference guest cannot prove a different
+application's input policy without a rebuild.
 
-- Implement the computation logic in Rust.
-- Use the Compute Provider package for handling inputs and Merkle tree verification.
+## Deploy the verifier path
 
-**Secure Process (Rust):**
+1. Deploy the checked Halo2 verifier artifact, or select an existing verifier with the expected
+   runtime hash.
+2. Deploy the receipt adapter with the prepared executable and VM commitments.
+3. Deploy the BFV ciphertext verifier with that adapter and receipt identity.
+4. Configure the E3 program with the same adapter and identity.
+5. Register the E3 program and set the protocol's ciphertext-verifier route.
 
-```rust
-// src/main.rs
+Deployment settings must be explicit. There is no default verifier address or application identity.
+Drain active rounds before a live migration because each round retains its request-time verifier.
 
-#![no_main]
-#![no_std]
+## Connect the services
 
-use e3_compute_provider::FHEInputs;
-use fhe::bfv::{BfvParameters, Ciphertext};
-use fhe_traits::{Deserialize, Serialize};
-use std::sync::Arc;
+Set `program.openvm` in the Interfold configuration and run `interfold program start`. Set the
+application server's program-service URL and externally reachable callback URL. Restrict service
+admission and callback destinations to the deployment's intended network.
 
-risc0_zkvm_guest::entry!(main);
+For CRISP, these settings are `PROGRAM_SERVER_URL` and `INTERFOLD_SERVER_URL`.
 
-pub fn main() {
-    // Receive encrypted inputs
-    let fhe_inputs: FHEInputs = env::read();
+## Run the round
 
-    // Call your computation function
-    let result = fhe_processor(&fhe_inputs);
+The application requests an E3 with the current request structure and quoted fee. The committee
+publishes its proof-backed public-key commitment and retrievable key bytes. Participants submit
+encrypted inputs through the application.
 
-    // Commit the result
-    env::commit(&result);
-}
-```
+After the input deadline, CRISP waits for the indexed inputs and confirmed availability. It sends
+those inputs and the full E3 domain to the program server. The OpenVM worker proves the computation,
+recursively aggregates it, creates the EVM proof, and verifies the proof before returning it.
 
-### Step 3: Implement Compute Provider
+The HTTP callback contains the ciphertext, SAFE commitment, and compute-proof envelope. CRISP
+validates the proof, publishes the ciphertext to the availability layer, and submits the output
+reference. The protocol and application both verify the compute proof.
 
-- Implement the `ComputeProvider` trait for RISC Zero.
-- Handle proof generation and interaction with the zkVM.
+The committee then performs threshold decryption. A verified plaintext publication completes the E3
+and settles its fee ledger.
 
-**Compute Provider Implementation:**
+## Verify the scope
 
-```rust
-pub struct Risc0Provider;
+Use the real-proof test to check the receipt and its negative cases. Use the live service test to
+check the request, callback, and automatic publication. Record any mocked randomness, DKG, ballot,
+availability, or decryption dependencies separately. Do not describe a mocked dependency as
+proof-backed.
 
-impl ComputeProvider for Risc0Provider {
-    type Output = Risc0Output;
-
-    fn prove(&self, input: &ComputeInput) -> Self::Output {
-        // Set up the execution environment
-        let env = ExecutorEnv::builder()
-            .write(input)
-            .unwrap()
-            .build()
-            .unwrap();
-
-        // Generate the proof
-        let receipt = default_prover()
-            .prove_with_ctx(
-                env,
-                &VerifierContext::default(),
-                VOTING_ELF,
-                &ProverOpts::groth16(),
-            )
-            .unwrap()
-            .receipt;
-
-        // Extract and return the output
-        Risc0Output {
-            result: receipt.journal.decode().unwrap(),
-            bytes: receipt.journal.bytes.clone(),
-            seal: groth16::encode(receipt.inner.groth16().unwrap().seal.clone()).unwrap(),
-        }
-    }
-}
-```
-
-### Step 4: Write the E3 Program Contract
-
-- Define your E3 Program contract, integrating with the RISC Zero verifier.
-
-**E3 Program Contract (Solidity):**
-
-```solidity
-// SPDX-License-Identifier: LGPL-3.0-only
-//
-// This file is provided WITHOUT ANY WARRANTY;
-// without even the implied warranty of MERCHANTABILITY
-// or FITNESS FOR A PARTICULAR PURPOSE.
-pragma solidity >=0.8.28;
-
-import {IInterfold, IE3Program} from "@interfold/contracts/interfaces/IInterfold.sol";
-import {IRiscZeroVerifier} from "risc0/IRiscZeroVerifier.sol";
-
-contract MyE3Program is IE3Program {
-    bytes32 public constant IMAGE_ID = /* Your Image ID */;
-    bytes32 public constant ENCRYPTION_SCHEME_ID = /* Your Encryption Scheme ID */;
-
-    IRiscZeroVerifier public verifier;
-    IInterfold public interfold;
-
-    constructor(
-        IInterfold _interfold,
-        IRiscZeroVerifier _verifier
-    ) {
-        interfold = _interfold;
-        verifier = _verifier;
-    }
-
-    // Implement validate and verify functions as shown earlier
-}
-```
-
-### Step 5: Deploy Contracts
-
-- Deploy the Interfold contracts to your desired network.
-- Deploy your E3 Program contract and register it with the Interfold contract.
-
-### Step 6: Run Ciphernodes
-
-- Start Ciphernodes and ensure they are registered with the Interfold contract.
-
-### Step 7: Submit a Computation Request
-
-- Use your application or a script to submit a computation request to the Interfold contract.
-
-**Example (JavaScript):**
-
-```javascript
-// First approve the fee token
-await FeeTokenContract.approve(InterfoldContract.address, computationFee)
-
-// Then request the E3
-await InterfoldContract.request(
-  0, // CommitteeSize.Minimum
-  [inputWindowStart, inputWindowEnd],
-  e3ProgramAddress,
-  0, // paramSet (0 = insecure dev, 1 = secure production)
-  computeProviderParams,
-  '0x', // customParams
-)
-```
-
-### Step 8: Submit Encrypted Inputs
-
-- Data Providers encrypt their inputs and submit them along with ZKPs.
-
-### Step 9: Execute Computation and Verify Proof
-
-- The Compute Provider executes the Secure Process.
-- The E3 Program contract verifies the computation proof on-chain.
-
-### Step 10: Ciphernodes Decrypt Result
-
-- Ciphernodes submit decryption shares.
-- The Decryption Verifier contract verifies the correctness of the decryption.
-
-### Step 11: Retrieve Final Result
-
-- Listen for the `PlaintextOutputPublished` event.
-- Retrieve the plaintext result from the Interfold contract.
-
----
-
-## Conclusion
-
-By following this guide, you should now have a solid understanding of the Interfold and how to build
-your own E3 Programs. The Interfold provides a framework for privacy-preserving computations over
-encrypted data, enabling a new class of decentralized applications.
-
-**Key Takeaways:**
-
-- The Interfold distributes trust and ensures data remains encrypted throughout computation.
-- The modular architecture allows for flexibility in choosing Compute Providers and designing
-  computations.
-- The provided Compute Provider package simplifies integration and handles complex tasks like Merkle
-  tree verification.
-
----
-
-## Additional Resources
-
-- **Interfold GitHub Repository**:
-  [https://github.com/theinterfold/interfold](https://github.com/theinterfold/interfold)
-- **CRISP GitHub Repository**:
-  [https://github.com/theinterfold/interfold](https://github.com/theinterfold/interfold/tree/main/examples/CRISP)
-- **Interfold Quick Start**: [Quick Start](/quick-start)
-- **RISC Zero Documentation**: [https://www.risczero.com](https://www.risczero.com)
-- **Compute Provider Package**: Check the Interfold repository for the Compute Provider package and
-  examples.
-- **FHE Libraries**: Explore libraries like `fhe.rs` for Rust to handle homomorphic encryption.
-- **Zero-Knowledge Proof Libraries**: Use libraries like `risc0-zkvm` for proof generation and
-  verification.
-
----
-
-**Happy Building!**
-
-If you have any questions or need further assistance, feel free to reach out to
-[Gnosis Guild](https://gnosisguild.org), the initial development team building the Interfold.
+See [Verifying the Compute Provider](/verifying-the-compute-provider) for build and deployment
+evidence.

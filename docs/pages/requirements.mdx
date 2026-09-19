@@ -78,20 +78,18 @@ because slow I/O can cause missed protocol windows.
 
 ## Compute Provider Requirements
 
-Running a compute provider (e.g., RISC Zero with Boundless) requires additional resources beyond the
-ciphernode baseline.
+The OpenVM worker needs resources separate from the ciphernode baseline. The native HTTP service
+starts the worker as a separate process. It does not send work to a proving market.
 
-### RISC Zero / Boundless
+CUDA proving requires a compatible NVIDIA GPU, driver, CUDA toolkit, and a worker built for that GPU
+architecture. Set `segment_memory_bytes` below the memory available to the worker. Provision host
+RAM and SSD space for the application and aggregation keys, Halo2 key, KZG parameters, and temporary
+proof files. Measure the largest supported round on the actual deployment hardware before setting
+the compute deadline. There is no validated universal minimum for every round size.
 
-| Component | Specification                   |
-| --------- | ------------------------------- |
-| **CPU**   | 16+ cores (more is better)      |
-| **RAM**   | 64 GB+                          |
-| **Disk**  | 200 GB+ SSD                     |
-| **GPU**   | Not required (CPU proving only) |
-
-For production proving, Boundless offloads proof generation to a decentralized market. Local
-resources are only needed for development and testing.
+See [Compute Provider](/compute-provider) and `crates/support/openvm/README.md` for the pinned
+toolchain and artifact preparation. CPU workers are supported, but GPU timing does not establish
+their capacity.
 
 ## Development Environment
 

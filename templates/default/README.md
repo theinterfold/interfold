@@ -11,7 +11,6 @@ Before getting started, ensure you have installed:
 
 - [Rust](https://rust-lang.org/tools/install/)
 - [NodeJS](https://nodejs.org/en/download)
-- [RiscZero](https://dev.risczero.com/api/zkvm/install)
 - [pnpm](https://pnpm.io)
 - [Metamask](https://metamask.io)
 
@@ -22,26 +21,16 @@ As system requirements:
 
 ## Quick Start
 
-### (optional) Install RISC Zero Toolchain
+### Configure OpenVM
 
-Next, install `rzup` for the `cargo-risczero` toolchain.
+The program server uses OpenVM. Build a guest for your program policy, prepare its proving keys,
+and configure `program.openvm` in `interfold.config.yaml`. See the repository's
+[`crates/support/openvm/README.md`](../../crates/support/openvm/README.md) for worker setup and
+verifier deployment. The reference CRISP guest cannot prove an unrelated template policy.
 
-```sh
-# Install rzup
-curl -L https://risczero.com/install | bash
-
-# Install RISC Zero toolchain
-rzup install cargo-risczero
-```
-
-Verify the installation was successful by running:
-
-```sh
-cargo risczero --version
-```
-
-At this point, you should have all the tools required to develop and deploy an application with
-[RISC Zero](https://www.risczero.com).
+Contract deployment requires both application commitments and either a checksummed Halo2 verifier
+artifact or an existing verifier address with its expected runtime code hash. Missing settings stop
+deployment; they do not select a mock verifier.
 
 ### Install Metamask
 
@@ -96,21 +85,24 @@ This creates a complete E3 project with:
 
 ### Compile your E3 Program
 
-First, compile your E3 program to build the Risc0 zkvm image:
+Build the configured native program service:
 
 ```bash
 interfold program compile
 ```
 
-This builds the Risc0 zkvm image that will be deployed on the blockchain and used for verification
-of the final proof.
+This command does not rebuild the guest or its keys. Rebuild and deploy those artifacts separately
+when the proved program changes.
 
-If you want to avoid the proof or you have trouble with Risc0 zkvm installation, you can run it in
-dev mode (no proof).
+For an explicitly unproved local test, start the development runner:
 
 ```bash
 interfold program start --dev true
 ```
+
+The template's integration-test script also sets `TEMPLATE_UNPROVED_TEST=1`. Only chain ID 31337
+accepts that deployment setting. This test uses a mock receipt verifier and is not evidence of a
+valid OpenVM proof. Normal startup does not set either flag.
 
 ### Start the Development Environment
 

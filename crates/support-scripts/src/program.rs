@@ -48,11 +48,29 @@ impl ProgramSupportApi for ProgramSupport {
             ProgramSupport::OpenVm(s) => s.start().await,
         }
     }
+}
 
-    async fn upload(&self) -> Result<()> {
-        match self {
-            ProgramSupport::Dev(s) => s.upload().await,
-            ProgramSupport::OpenVm(s) => s.upload().await,
-        }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn default_backend_is_openvm() {
+        assert!(matches!(
+            ProgramSupport::new(ProgramConfig::default(), None),
+            ProgramSupport::OpenVm(_)
+        ));
+    }
+
+    #[test]
+    fn unproved_execution_requires_an_explicit_flag() {
+        assert!(matches!(
+            ProgramSupport::new(ProgramConfig::default(), Some(true)),
+            ProgramSupport::Dev(_)
+        ));
+        assert!(matches!(
+            ProgramSupport::new(ProgramConfig::default(), Some(false)),
+            ProgramSupport::OpenVm(_)
+        ));
     }
 }

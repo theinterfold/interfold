@@ -720,7 +720,7 @@ async fn wait_for_indexed_inputs<S: DataStore>(
 
         // Equality is required. Fewer entries means that an accepted input is missing. More
         // entries means that the local index contains data the contract did not accept. Either
-        // case would make the RISC Zero input root differ from the contract's root.
+        // case would make the OpenVM input root differ from the contract's root.
         if indexed == published {
             return Ok(IndexedInputs::Complete(snapshot));
         }
@@ -929,7 +929,7 @@ async fn handle_e3_input_deadline_expiration(
         .await?;
     if pending != 0 {
         // The input root already includes these reserved leaves, but Ethereum has not verified
-        // their Avail receipts. Starting RISC Zero now would waste the proof: CRISPProgram.verify
+        // their Avail receipts. Starting OpenVM now would waste the proof: CRISPProgram.verify
         // refuses every output until this reaches zero. InputPublished recovery wakes this handler
         // again as each delayed VectorX proof lands.
         return Err(eyre::eyre!(

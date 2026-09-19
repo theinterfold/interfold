@@ -10,6 +10,7 @@ mod database;
 mod indexer;
 mod log_repo;
 mod models;
+mod payloads;
 mod program_server_request;
 mod rate_limit;
 mod read_cache;
@@ -32,7 +33,9 @@ use tokio::sync::RwLock;
 use crate::config::CONFIG;
 use crate::logger::init_logger;
 
-#[actix_web::main]
+// Keep RPC transports responsive while an indexer task validates encrypted inputs or serializes
+// a large round record. A single-thread runtime can miss WebSocket heartbeats during that work.
+#[tokio::main]
 pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     init_logger();
 
@@ -96,7 +99,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     });
 
-    let bind_addr = "0.0.0.0:4000";
+    let bind_addr = std::env::var("CRISP_BIND_ADDR").unwrap_or_else(|_| "0.0.0.0:4000".to_owned());
     let db_clone = db.clone();
     let availability_clone = availability.clone();
     // Built once, outside the factory closure: the closure runs per worker, and a per-worker
@@ -124,7 +127,7 @@ pub async fn start() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
             .app_data(chain_rate_limiter.clone())
             .configure(routes::setup_routes)
     })
-    .bind(bind_addr)?;
+    .bind(&bind_addr)?;
 
     println!("'crisp-server' listening on http://{}", bind_addr);
 

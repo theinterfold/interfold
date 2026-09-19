@@ -16,6 +16,7 @@ e3-fhe-params = { workspace = true }
 openvm-sha2 = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", optional = true }
 
 [dev-dependencies]
+anyhow.workspace = true
 hex = "=0.4.3"
 num-bigint = "=0.4.6"
 serde_json = "=1.0.145"

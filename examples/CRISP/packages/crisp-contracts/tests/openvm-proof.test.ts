@@ -8,6 +8,7 @@ import { expect } from 'chai'
 import { createHash } from 'node:crypto'
 import { readFileSync } from 'node:fs'
 import { network } from 'hardhat'
+import { deployOpenVmReceiptVerifier } from '../../../../../packages/interfold-contracts/scripts/openVm'
 
 const names = ['OPENVM_TEST_IDENTITY', 'OPENVM_TEST_JOURNAL', 'OPENVM_TEST_VERIFIER', 'OPENVM_TEST_VERIFIER_SHA256'] as const
 const enabled = names.every((name) => process.env[name]) && Boolean(process.env.OPENVM_TEST_PROOF || process.env.OPENVM_TEST_SEAL)
@@ -20,7 +21,6 @@ if (process.env.OPENVM_REQUIRE_PROOF_TEST === '1' && !enabled) {
     const connection = await network.connect()
     expect(connection.networkConfig.type).to.equal('edr-simulated')
     const { ethers } = connection
-    const [owner] = await ethers.getSigners()
     const json = (name: (typeof names)[number]) => JSON.parse(readFileSync(process.env[name]!, 'utf8'))
     const identity = json('OPENVM_TEST_IDENTITY')
     const commits = identity.app_commit ?? identity
@@ -45,17 +45,12 @@ if (process.env.OPENVM_REQUIRE_PROOF_TEST === '1' && !enabled) {
       expect(proof.user_public_values).to.equal(ethers.sha256(journal))
       data = ethers.concat([proof.proof_data.accumulator, proof.proof_data.proof])
     }
-    const halo2 = await new ethers.ContractFactory(
-      ['function verify(bytes,bytes,bytes32,bytes32) view'],
-      `0x${JSON.parse(artifact.toString()).bytecode}`,
-      owner,
-    ).deploy()
-    await halo2.waitForDeployment()
-    const receipt = await ethers.deployContract('OpenVmReceiptVerifier', [
-      await halo2.getAddress(),
-      commits.app_exe_commit,
-      commits.app_vm_commit,
-    ])
+    const { receipt, halo2Verifier } = await deployOpenVmReceiptVerifier(ethers, {
+      OPENVM_VERIFIER_ARTIFACT: process.env.OPENVM_TEST_VERIFIER,
+      OPENVM_VERIFIER_SHA256: process.env.OPENVM_TEST_VERIFIER_SHA256,
+      OPENVM_APP_EXE_COMMIT: commits.app_exe_commit,
+      OPENVM_APP_VM_COMMIT: commits.app_vm_commit,
+    })
     const seal = (values = words, bytes = data) => abi.encode(['uint8', 'bytes', 'bytes32[9]'], [1, bytes, values])
     const digest = (values = words) => ethers.sha256(abi.encode(['bytes32[9]'], [values]))
     const imageId = await receipt.imageId()
@@ -79,11 +74,7 @@ if (process.env.OPENVM_REQUIRE_PROOF_TEST === '1' && !enabled) {
     await expect(receipt.verify(seal(words, ethers.hexlify(changed)), imageId, digest())).to.revert(ethers)
     for (const field of ['app_exe_commit', 'app_vm_commit'] as const) {
       const other = { ...commits, [field]: ethers.zeroPadValue(ethers.toBeHex(BigInt(commits[field]) ^ 1n), 32) }
-      const wrong = await ethers.deployContract('OpenVmReceiptVerifier', [
-        await halo2.getAddress(),
-        other.app_exe_commit,
-        other.app_vm_commit,
-      ])
+      const wrong = await ethers.deployContract('OpenVmReceiptVerifier', [halo2Verifier, other.app_exe_commit, other.app_vm_commit])
       await expect(wrong.verify(seal(), await wrong.imageId(), digest())).to.revert(ethers)
     }
   })

@@ -1580,6 +1580,26 @@ worker configuration. The HTTP service validates this configuration before it ac
 Proving artifacts and machine-specific paths stay outside Git. Explicit development mode remains
 separate from the real-proof service.
 
+File: `examples/CRISP/packages/crisp-contracts/tests/openvm-service.test.ts`
+
+The opt-in local service test submits freshly encrypted secure-8192 ballots through CRISP HTTP.
+The indexer dispatches them to the running program service after the input deadline. The OpenVM
+callback drives normal ciphertext publication; both the application and protocol verify the real
+receipt. The test checks a changed-proof rejection, then finishes the lifecycle with an explicit
+threshold-decryption mock and checks settlement and the indexed tally. Its randomness, DKG proofs,
+ballot proofs/census, and DA are also mocked. It does not establish a fully proved distributed
+round. Generated reports, inputs, and proofs are not checked in.
+
+File: `examples/CRISP/server/src/server/payloads.rs`
+
+`/voting/broadcast` and `/state/add-result` use a bounded 4 MiB JSON limit. Other routes retain their
+default limit. The callback still verifies the compute proof before it creates an availability
+job; increasing the payload limit does not bypass proof or commitment checks.
+
+The CRISP server uses a multithread Tokio runtime so WebSocket transport tasks can progress while
+the indexer validates inputs and updates large round records. A missing input still blocks proof
+dispatch; the service must not produce a tally over only the indexed subset.
+
 `PublishedData` carries what the program published per input: the stored commitment, and opaque
 `metadata` the crate never interprets. CRISP puts its 20-byte slot address and the 5-byte parent
 index there, laid out as `abi.encodePacked(address, uint40)`.

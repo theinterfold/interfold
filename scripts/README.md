@@ -487,22 +487,24 @@ Generated verifiers are automatically:
 
 ## Guest provenance
 
-Two commands cover the RISC Zero compute guest. The full reviewer-facing procedure is
+The provenance command records the OpenVM compute guest. The full reviewer-facing procedure is
 `docs/pages/verifying-the-compute-provider.mdx`.
 
 ### `generate-provenance-manifest.ts`
 
-Emits the release record: source commit, lockfile digests, pinned revisions, RISC Zero version,
-builder image tag and digest, guest ELF SHA-256, image ID, and — with an RPC — the deployed verifier
-address, its runtime code digest, the underlying RISC Zero verifier, and the on-chain `imageId()`.
+Records the source commit, lockfile digests, guest configuration, optimization patch, proving
+artifacts, KZG parameters, and application commitments. With `--prover`, it checks the worker's
+configured identity. With an RPC, it checks the protocol-to-receipt binding, application commitments,
+and deployed Halo2 runtime against the checked artifact. These RPC checks do not send transactions.
 
 ```bash
 pnpm provenance:manifest
-pnpm provenance:manifest --rpc <url> --verifier <address> --out manifest.json
+pnpm provenance:manifest --config <worker.json> --prover <worker-binary> --rpc <url> --verifier <protocol-verifier-address> --out manifest.json
 ```
 
 It prints `"complete": false` and lists unresolved fields when anything is missing. A release
 manifest must be complete.
 
-Note: the SHA-256 of the ELF is **not** the image ID. SHA-256 checks binary integrity; the image ID
-is computed from the loaded memory image. Both are recorded, for different purposes.
+Artifact hashes check file integrity. Application commitments bind the OpenVM executable and VM
+configuration. The receipt identity also binds the deployed Halo2 verifier address. These are
+different checks. A complete manifest does not establish source reproducibility or audit coverage.

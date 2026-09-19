@@ -8,7 +8,7 @@ Protocol, which handles E3 (Encrypted Execution Environment) rounds and voting p
 - Create and manage voting rounds (E3 rounds)
 - Secure vote casting using FHE
 - Real-time blockchain event handling and processing
-- RISC Zero compute provider for proof generation
+- OpenVM program-service integration and verified HTTP callbacks
 - CLI for manual interaction
 
 ## Prerequisites

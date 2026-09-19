@@ -4,7 +4,7 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-//! Runs the CRISP Secure Process natively, outside the RISC Zero zkVM.
+//! Runs the CRISP Secure Process natively, outside the OpenVM guest.
 //!
 //! The guest is one line — `input.input.process(fhe_processor, crisp())` — so calling that here
 //! exercises the same code the zkVM runs, with the real CRISP processor and the real CRISP policy.

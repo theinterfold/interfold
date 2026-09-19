@@ -147,8 +147,8 @@ async fn process_computation_background(
 
 /// Whether callbacks to addresses only reachable from inside the deployment are permitted.
 ///
-/// Off by default. Local development legitimately posts to a host on the same machine, so there has
-/// to be a way in, but it must be a deliberate one rather than the default.
+/// Off by default for private networks and internal hostnames. Loopback callbacks are permitted
+/// separately so an isolated local CRISP server can receive results.
 fn allow_private_callbacks() -> bool {
     matches!(
         std::env::var("ALLOW_PRIVATE_CALLBACKS")
@@ -233,7 +233,7 @@ fn validate_callback_url(raw: &str) -> ActixResult<()> {
 
     if internal {
         return Err(actix_web::error::ErrorBadRequest(
-            "callback_url must not point at a private, loopback or link-local address; \
+            "callback_url must not point at a private or link-local address; \
              set ALLOW_PRIVATE_CALLBACKS=1 to permit it for local development",
         ));
     }
@@ -245,7 +245,7 @@ fn validate_callback_url(raw: &str) -> ActixResult<()> {
 ///
 /// Proving is the most expensive thing this process does, and the handler previously spawned one
 /// detached task per request with nothing bounding them: a caller could open as many as they liked
-/// and exhaust CPU, memory, blocking workers and Boundless submissions together. One at a time by
+/// and exhaust CPU, memory, and GPU workers together. One at a time by
 /// default, because a single proof already saturates the machine.
 fn max_concurrent_computations() -> usize {
     std::env::var("MAX_CONCURRENT_COMPUTATIONS")

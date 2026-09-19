@@ -21,9 +21,6 @@ openvm = { git = "https://github.com/openvm-org/openvm.git", tag = "v2.0.2", opt
 serde = { workspace = true, optional = true }
 num-bigint = { version = "=0.4.6", optional = true }
 
-[target.'cfg(all(target_os = "zkvm", target_arch = "riscv32", not(crisp_openvm)))'.dependencies]
-risc0-bigint2 = "=1.4.7"
-
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(crisp_openvm)'] }
 

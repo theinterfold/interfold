@@ -97,6 +97,8 @@ export type CommitteeThreshold = [number, [number, number]];
 
 /** Options accepted by {@link deployInterfoldSystem}. All optional. */
 export interface DeployInterfoldSystemOptions {
+  /** Isolate deployments when a fixture uses a persistent local HTTP node. */
+  deploymentId?: string;
   /** Override the sortition submission window (seconds). */
   submissionWindow?: number;
   /** Override `Interfold.maxDuration` (seconds). */
@@ -230,6 +232,11 @@ export interface InterfoldSystem {
 export async function deployInterfoldSystem(
   opts: DeployInterfoldSystemOptions = {},
 ): Promise<InterfoldSystem> {
+  const deploy: typeof ignition.deploy = (module, options) =>
+    ignition.deploy(module, {
+      ...options,
+      ...(opts.deploymentId ? { deploymentId: opts.deploymentId } : {}),
+    });
   const submissionWindow = opts.submissionWindow ?? SORTITION_SUBMISSION_WINDOW;
   const maxDuration = opts.maxDuration ?? THIRTY_DAYS;
   const timeoutConfig = opts.timeoutConfig ?? DEFAULT_TIMEOUT_CONFIG;
@@ -271,7 +278,7 @@ export async function deployInterfoldSystem(
     // ABI-compatible with MockUSDC for the operations the fixture/spec needs.
     usdcToken = blacklistToken as unknown as MockUSDC;
   } else {
-    const { mockUSDC } = await ignition.deploy(MockStableTokenModule, {
+    const { mockUSDC } = await deploy(MockStableTokenModule, {
       parameters: { MockUSDC: { initialSupply: 10_000_000 } },
     });
     usdcToken = MockUSDCFactory.connect(await mockUSDC.getAddress(), owner);
@@ -280,25 +287,22 @@ export async function deployInterfoldSystem(
   // Deferred: InterfoldToken is deployed after BondingRegistry so the
   // immutable BONDING_REGISTRY reference can be set. See below.
 
-  const { interfoldTicketToken } = await ignition.deploy(
-    InterfoldTicketTokenModule,
-    {
-      parameters: {
-        InterfoldTicketToken: {
-          baseToken: await usdcToken.getAddress(),
-          registry: ADDRESS_ONE,
-          owner: ownerAddress,
-        },
+  const { interfoldTicketToken } = await deploy(InterfoldTicketTokenModule, {
+    parameters: {
+      InterfoldTicketToken: {
+        baseToken: await usdcToken.getAddress(),
+        registry: ADDRESS_ONE,
+        owner: ownerAddress,
       },
     },
-  );
+  });
   const ticketToken = InterfoldTicketTokenFactory.connect(
     await interfoldTicketToken.getAddress(),
     owner,
   );
 
   // ── Registry & Slashing ───────────────────────────────────────────────────
-  const { slashingManager: _slashingManager } = await ignition.deploy(
+  const { slashingManager: _slashingManager } = await deploy(
     SlashingManagerModule,
     { parameters: { SlashingManager: { admin: ownerAddress } } },
   );
@@ -307,17 +311,14 @@ export async function deployInterfoldSystem(
     owner,
   );
 
-  const { cipherNodeRegistry } = await ignition.deploy(
-    CiphernodeRegistryModule,
-    {
-      parameters: {
-        CiphernodeRegistry: {
-          owner: ownerAddress,
-          submissionWindow,
-        },
+  const { cipherNodeRegistry } = await deploy(CiphernodeRegistryModule, {
+    parameters: {
+      CiphernodeRegistry: {
+        owner: ownerAddress,
+        submissionWindow,
       },
     },
-  );
+  });
   const ciphernodeRegistryAddress = await cipherNodeRegistry.getAddress();
   const ciphernodeRegistry = CiphernodeRegistryOwnableFactory.connect(
     ciphernodeRegistryAddress,
@@ -330,7 +331,7 @@ export async function deployInterfoldSystem(
   let mockCiphernodeRegistry: MockCiphernodeRegistry | undefined;
   let effectiveRegistryAddress = ciphernodeRegistryAddress;
   if (opts.useMockCiphernodeRegistry) {
-    const { mockCiphernodeRegistry: _mockReg } = await ignition.deploy(
+    const { mockCiphernodeRegistry: _mockReg } = await deploy(
       MockCiphernodeRegistryModule,
     );
     const mockRegAddress = await _mockReg.getAddress();
@@ -342,7 +343,7 @@ export async function deployInterfoldSystem(
   }
 
   // ── BondingRegistry (deployed before token; uses ADDRESS_ONE placeholder) ──
-  const { bondingRegistry: _bondingRegistry } = await ignition.deploy(
+  const { bondingRegistry: _bondingRegistry } = await deploy(
     BondingRegistryModule,
     {
       parameters: {
@@ -376,7 +377,7 @@ export async function deployInterfoldSystem(
   const claimSource = ownerAddress; // owner as placeholder claim source
   const lockSunsetDelay = 4n * 365n * 24n * 60n * 60n + 30n * 24n * 60n * 60n;
   const noMoreLocks = ccaEnd + 45n * 24n * 60n * 60n + lockSunsetDelay;
-  const { interfoldToken } = await ignition.deploy(InterfoldTokenModule, {
+  const { interfoldToken } = await deploy(InterfoldTokenModule, {
     parameters: {
       InterfoldToken: {
         owner: ownerAddress,
@@ -404,8 +405,7 @@ export async function deployInterfoldSystem(
   });
 
   // Deploy the default program before Interfold so initialization can validate it.
-  const { mockE3Program: _mockE3Program } =
-    await ignition.deploy(MockE3ProgramModule);
+  const { mockE3Program: _mockE3Program } = await deploy(MockE3ProgramModule);
   const e3Program = MockE3ProgramFactory.connect(
     await _mockE3Program.getAddress(),
     owner,
@@ -418,7 +418,7 @@ export async function deployInterfoldSystem(
     interfold: _interfold,
     interfoldLifecycle: _interfoldLifecycle,
     interfoldPricing: _interfoldPricing,
-  } = await ignition.deploy(InterfoldModule, {
+  } = await deploy(InterfoldModule, {
     parameters: {
       Interfold: {
         owner: ownerAddress,
@@ -440,7 +440,7 @@ export async function deployInterfoldSystem(
   const interfoldPricing = await _interfoldPricing.getAddress();
   await e3Program.setInterfold(interfoldAddress);
 
-  const { e3RefundManager: _e3RefundManager } = await ignition.deploy(
+  const { e3RefundManager: _e3RefundManager } = await deploy(
     E3RefundManagerModule,
     {
       parameters: {
@@ -510,28 +510,30 @@ export async function deployInterfoldSystem(
   }
 
   // ── Mocks ─────────────────────────────────────────────────────────────────
-  const { mockComputeProvider: _mockComputeProvider } = await ignition.deploy(
+  const { mockComputeProvider: _mockComputeProvider } = await deploy(
     mockComputeProviderModule,
   );
   const mockComputeProvider =
     _mockComputeProvider as unknown as MockComputeProvider;
 
-  const { mockDecryptionVerifier: _mockDecryptionVerifier } =
-    await ignition.deploy(MockDecryptionVerifierModule);
+  const { mockDecryptionVerifier: _mockDecryptionVerifier } = await deploy(
+    MockDecryptionVerifierModule,
+  );
   const decryptionVerifier = MockDecryptionVerifierFactory.connect(
     await _mockDecryptionVerifier.getAddress(),
     owner,
   );
 
-  const { mockCiphertextVerifier: _mockCiphertextVerifier } =
-    await ignition.deploy(MockCiphertextVerifierModule);
+  const { mockCiphertextVerifier: _mockCiphertextVerifier } = await deploy(
+    MockCiphertextVerifierModule,
+  );
   const ciphertextVerifier = MockCiphertextVerifierFactory.connect(
     await _mockCiphertextVerifier.getAddress(),
     owner,
   );
 
   const { mockPkVerifier: _mockPkVerifier } =
-    await ignition.deploy(MockPkVerifierModule);
+    await deploy(MockPkVerifierModule);
   const pkVerifier = MockPkVerifierFactory.connect(
     await _mockPkVerifier.getAddress(),
     owner,
@@ -539,7 +541,7 @@ export async function deployInterfoldSystem(
 
   let circuitVerifier: MockCircuitVerifier | undefined;
   if (opts.deployCircuitVerifier) {
-    const { mockCircuitVerifier: _mockCircuitVerifier } = await ignition.deploy(
+    const { mockCircuitVerifier: _mockCircuitVerifier } = await deploy(
       MockCircuitVerifierModule,
     );
     circuitVerifier = MockCircuitVerifierFactory.connect(

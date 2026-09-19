@@ -104,36 +104,6 @@ pub async fn commit(path: impl AsRef<Path>, message: &str, verbose: bool) -> Res
     Ok(())
 }
 
-pub async fn add_submodule(
-    repo_path: impl AsRef<Path>,
-    submodule_url: &str,
-    submodule_path: &str,
-    verbose: bool,
-) -> Result<()> {
-    let repo_path = repo_path.as_ref();
-
-    let mut args = vec!["submodule", "add", submodule_url, submodule_path];
-    if !verbose {
-        args.insert(2, "--quiet");
-    }
-
-    Command::new("git")
-        .args(&args)
-        .current_dir(repo_path)
-        .output()
-        .await
-        .with_context(|| {
-            format!(
-                "Failed to add git submodule '{}' at '{}' in directory: {}",
-                submodule_url,
-                submodule_path,
-                repo_path.display()
-            )
-        })?;
-
-    Ok(())
-}
-
 pub async fn get_commit_hash(path: impl AsRef<Path>) -> Result<String> {
     let path = path.as_ref();
 

@@ -84,8 +84,8 @@ chains:
         address: "0x6e281411C055BEEbD74bDFcB9aB095aa98907F85"
         deploy_block: 11534982
 program:
-  dev: true
-  # Real proofs use program.openvm. Set dev to false and configure repository, prover_bin,
+  dev: false
+  # Real proofs use program.openvm. Configure repository, prover_bin,
   # and prover_config as deployment-local absolute paths. See crates/support/openvm/README.md.
   # Default profile: multithread uses (logical CPUs - 1) Rayon workers and the same concurrent job
   # limit. Reserve threads with `multithread_reserve_threads` (default 1 for Actix / libp2p).

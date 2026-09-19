@@ -20,8 +20,7 @@ node_modules
 
 /target
 
-# Ignore risc0 files
-tests/Elf.sol
+.interfold/generated/
 
 /deployments
 

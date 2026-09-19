@@ -26,7 +26,11 @@ pub fn setup_routes(config: &mut web::ServiceConfig) {
     );
     config.service(
         web::scope("/voting")
-            .route("/broadcast", web::post().to(broadcast_encrypted_vote))
+            .service(
+                web::resource("/broadcast")
+                    .app_data(crate::server::payloads::encrypted_json())
+                    .route(web::post().to(broadcast_encrypted_vote)),
+            )
             .route(
                 "/availability/{job_id}",
                 web::get().to(get_availability_status),

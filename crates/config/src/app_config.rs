@@ -582,7 +582,7 @@ pub fn combine_unique<T: Eq + std::hash::Hash + Clone + Ord>(a: &[T], b: &[T]) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::program_config::Risc0Config;
+    use crate::program_config::OpenVmConfig;
     use crate::rpc::RpcAuth;
     use figment::Jail;
 
@@ -612,8 +612,10 @@ node:
   quic_port: 1234
 
 program:
-  risc0:
-    risc0_dev_mode: 0
+  openvm:
+    repository: "/deployment/source"
+    prover_bin: "/deployment/bin/interfold-openvm-prover"
+    prover_config: "/deployment/prover.json"
 
 nodes:
   ag:
@@ -644,10 +646,11 @@ nodes:
             );
             assert_eq!(config.quic_port(), 1234);
             assert_eq!(
-                config.program().risc0(),
-                Some(&Risc0Config {
-                    risc0_dev_mode: 0,
-                    boundless: None,
+                config.program().openvm(),
+                Some(&OpenVmConfig {
+                    repository: PathBuf::from("/deployment/source"),
+                    prover_bin: PathBuf::from("/deployment/bin/interfold-openvm-prover"),
+                    prover_config: PathBuf::from("/deployment/prover.json"),
                 })
             );
             assert!(config.peers().is_empty());

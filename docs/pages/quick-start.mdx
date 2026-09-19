@@ -40,14 +40,17 @@ This creates a complete E3 project with:
 
 ## 2. Compile Your E3 Program
 
-First, compile your E3 program to build the Risc0 zkvm image:
+Configure `program.openvm` with the repository, worker executable, and deployment-local prover
+configuration. Prepare a guest and keys for your program policy as described in
+[Compute Provider](/compute-provider), then build the native service:
 
 ```bash
 interfold program compile
 ```
 
-This builds the Risc0 zkvm image that will be deployed on the blockchain and used for verification
-of the final proof.
+This command does not generate guest keys. Contract deployment also needs the application
+commitments and the checksummed Halo2 verifier artifact or a checked existing verifier address.
+The CRISP guest is specific to CRISP; a template policy needs its own guest and deployment.
 
 ## 3. Start the Development Environment
 

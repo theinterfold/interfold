@@ -216,7 +216,7 @@ The public inputs include:
 The large encrypted vote is not a Noir public input and is not placed in this Ethereum transaction.
 `publishInput()` commits its Keccak hash together with `sum_ct_commitment` and the slot metadata.
 `finalizeInput()` later accepts only a VectorX proof that the same hash was published to Avail. The
-RISC Zero tally program retrieves those bytes and recomputes both the Keccak hash and the BFV
+OpenVM tally program consumes those bytes and recomputes both the Keccak hash and the BFV
 commitment before it includes the vote.
 
 ---

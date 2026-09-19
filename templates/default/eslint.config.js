@@ -9,8 +9,6 @@ import config from '@interfold/config/eslint.config.js'
 
 export default defineConfig([
   globalIgnores([
-    // Github submodules.
-    'lib/risc0-ethereum',
     // Build and cache directories.
     '**/node_modules/**',
     '**/dist/**',

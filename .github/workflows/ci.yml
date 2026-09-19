@@ -157,7 +157,8 @@ jobs:
           echo "templates=$(any $FORCE $TEMPLATES $RUST $CONTRACTS $CIRCUITS $SDK $CI)" >> $GITHUB_OUTPUT
           echo "zk=$(any $FORCE $RUST $CIRCUITS $CI)" >> $GITHUB_OUTPUT
           echo "contracts=$(any $FORCE $CONTRACTS $CI)" >> $GITHUB_OUTPUT
-          echo "docker_support=$(any $FORCE $DOCKER $CI)" >> $GITHUB_OUTPUT
+          # The OpenVM service compiles repository-local Rust and CRISP program sources.
+          echo "docker_support=$(any $FORCE $DOCKER $RUST $CRISP $CI)" >> $GITHUB_OUTPUT
           # The rust jobs already compile the workspace, so the image build only
           # needs to run when the Dockerfiles or their build context change.
           echo "docker_ciphernode=$(any $FORCE $DOCKER $CI)" >> $GITHUB_OUTPUT
@@ -375,16 +376,15 @@ jobs:
           curl --fail --silent --head --retry 10 --retry-connrefused --retry-delay 1 "$E3_TEST_CIRCUITS_DOWNLOAD_URL" >/dev/null
           cargo test -p e3-zk-prover --features integration-tests --test integration_tests -- --nocapture
 
-  # Guards the RISC Zero guest artifact. The on-chain imageId is immutable, so a guest change
-  # that leaves ImageID.sol untouched ships a verifier that no longer matches this tree.
-  build_e3_support_risc0:
+  # Build the native OpenVM HTTP service. Proving artifacts are deployment-specific.
+  build_e3_support_openvm:
     needs: [detect_changes]
     if: needs.detect_changes.outputs.docker_support == 'true'
     timeout-minutes: 30
     runs-on:
       ${{ github.repository == 'theinterfold/interfold' && github.event_name != 'pull_request' && (github.ref == 'refs/heads/main' ||
       github.ref == 'refs/heads/dev') && format('runs-on={0}-{1}-{2}/runner=4cpu-linux-x64/ram=16/spot=false', github.run_id,
-      github.run_attempt, 'build_e3_support_risc0') || 'ubuntu-latest' }}
+      github.run_attempt, 'build_e3_support_openvm') || 'ubuntu-latest' }}
     permissions:
       contents: read
       packages: write
@@ -415,7 +415,7 @@ jobs:
       - name: Build image
         uses: docker/build-push-action@ca052bb54ab0790a636c9b5f226502c73d547a25 # v5
         with:
-          context: ./crates/support
+          context: .
           file: ${{ env.SUPPORT_DOCKERFILE_PATH }}
           push: ${{ github.ref == 'refs/heads/main' }}
           tags: ${{ steps.tags.outputs.tags }}
@@ -1276,8 +1276,6 @@ jobs:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           submodules: recursive
-      - name: Test support image resolution
-        run: bash crates/support-scripts/tests/container.sh
       - name: Cache Rust dependencies
         uses: ./.github/actions/cache-dependencies
         with:
@@ -1289,6 +1287,8 @@ jobs:
           toolchain: ${{ env.RUST_TOOLCHAIN }}
       - name: Install protoc
         run: sudo apt-get update -y && sudo apt-get install -y protobuf-compiler
+      - name: Test program backend selection
+        run: cargo test --locked -p e3-support-scripts
       - name: Build support scripts
         run: cd templates/default && cargo build --locked --bin e3-support-scripts-dev
       - name: Verify build artifacts
@@ -1549,8 +1549,6 @@ jobs:
         run: |
           cd templates/default
           pnpm compile
-          chmod 755 .interfold/generated/contracts tests
-          chmod 644 .interfold/generated/contracts/ImageID.sol
           pnpm test:integration
 
   test_interfold_init:
