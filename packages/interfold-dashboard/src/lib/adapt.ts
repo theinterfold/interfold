@@ -8,9 +8,9 @@
 import { formatUnits, keccak256, numberToHex, toHex } from 'viem'
 import type { HistoryEntry, Poll } from '../data'
 import type { E3FullDetails, E3Summary } from './e3'
-import { decodeCrispTally, isE3Active } from './e3'
+import { decodeCrispTally, failureReasonLabel, failureReasonToUiIdx, isE3Active } from './e3'
 import { E3Stage, FEE_TOKEN, NETWORK_NAME } from './chain'
-import { formatE3Id, isCrispProgram, pollMetaFor, programName, shortHash } from './pollMeta'
+import { compactE3Id, formatE3Id, isCrispProgram, pollMetaFor, programName, shortHash } from './pollMeta'
 
 // Fee token symbol/decimals come from the selected network's deployment profile.
 function fmtFee(v: bigint | undefined): string {
@@ -80,6 +80,7 @@ function historyResult(s: E3Summary, detail: E3FullDetails | undefined, meta: Re
 export function adaptInspectorE3List(list: E3Summary[]) {
   return list.map((s) => ({
     id: formatE3Id(s.id),
+    displayId: compactE3Id(s.id),
     label: isCrispProgram(s.e3Program) ? pollMetaFor(s.id).question.slice(0, 64) : programName(s.e3Program),
   }))
 }
@@ -97,6 +98,7 @@ export type InspectorEvent = {
 
 export type InspectorDetail = {
   id: string
+  displayId: string
   program: string
   programAddr: string
   requestedBy: string
@@ -106,6 +108,7 @@ export type InspectorDetail = {
 
   requestedBlock: number | null
   currentStage: number
+  terminalState: 'active' | 'complete' | 'failed'
   summary: string
   committee: { size: number; threshold: number; selectionSeed: string; drawnAt: string }
   fees: {
@@ -135,6 +138,12 @@ export type InspectorDetail = {
   // inputs), so without this flag the compute/decryption sections look "in progress"
   // when in fact nothing is happening.
   noBallots: boolean
+  failure?: {
+    reason: string
+    failedAt: string
+    failedAtStage: number
+    txHash?: string
+  }
   events: InspectorEvent[]
 }
 
@@ -158,11 +167,15 @@ export function adaptInspectorDetail(detail: E3FullDetails | null): InspectorDet
   const rosterThreshold = detail.committeeThreshold[0] || 0
   const sharesRequired = detail.committeeDecryptionThreshold != null ? detail.committeeDecryptionThreshold + 1 : 0
   const committeeSize = detail.committeeThreshold[1] || detail.committeeMembers.length
+  const failed = detail.stage === E3Stage.Failed
+  const failedAtStage = failed ? failureReasonToUiIdx(detail.failureReason, detail.failedAtStage) : detail.uiStageIdx
+  const currentStage = failed ? failedAtStage : detail.uiStageIdx
   // Past the input window with zero ballots — see `noBallots` on InspectorDetail.
-  const noBallots = detail.inputsTracked && detail.ballotCount === 0 && detail.uiStageIdx >= 4
+  const noBallots = !failed && detail.inputsTracked && detail.ballotCount === 0 && detail.uiStageIdx >= 4
 
   return {
     id: formatE3Id(detail.id),
+    displayId: compactE3Id(detail.id),
     program: programName(detail.e3Program),
     programAddr: detail.e3Program,
     requestedBy: detail.requester,
@@ -170,8 +183,9 @@ export function adaptInspectorDetail(detail: E3FullDetails | null): InspectorDet
     requestedTx: detail.requestTxHash,
     requestedAt: detail.requestedAt ? fmtUtcFromUnix(detail.requestedAt) : '—',
     requestedBlock: detail.requestEventBlock != null ? Number(detail.requestEventBlock) : null,
-    currentStage: detail.uiStageIdx,
-    summary: isCrisp ? meta.question : `Encrypted execution ${formatE3Id(detail.id)}`,
+    currentStage,
+    terminalState: failed ? 'failed' : detail.stage === E3Stage.Complete ? 'complete' : 'active',
+    summary: isCrisp ? meta.question : `Encrypted execution ${compactE3Id(detail.id)}`,
 
     committee: {
       size: committeeSize,
@@ -203,16 +217,18 @@ export function adaptInspectorDetail(detail: E3FullDetails | null): InspectorDet
     },
 
     compute: {
-      status: noBallots ? 'idle' : detail.uiStageIdx >= 4 ? 'active' : 'pending',
+      status: failed ? 'failed' : noBallots ? 'idle' : currentStage >= 4 ? 'active' : 'pending',
       note: noBallots
         ? 'The input window closed without any ballots being submitted. There is nothing to compute over.'
-        : detail.uiStageIdx < 4
-          ? 'Compute begins automatically when the input window closes.'
-          : "The program's FHE computation runs over the encrypted inputs, without decrypting any individual input.",
+        : failed && failedAtStage <= 4
+          ? `The E3 stopped before computation completed: ${failureReasonLabel(detail.failureReason)}.`
+          : currentStage < 4
+            ? 'Compute begins automatically when the input window closes.'
+            : "The program's FHE computation runs over the encrypted inputs, without decrypting any individual input.",
     },
 
     decryption: {
-      status: detail.uiStageIdx >= 5 ? 'active' : 'pending',
+      status: failed ? 'failed' : currentStage >= 5 ? 'active' : 'pending',
       note:
         sharesRequired > 0
           ? `A threshold of ${sharesRequired} of ${committeeSize} committee members must each publish a partial decryption to recover the result.`
@@ -222,14 +238,24 @@ export function adaptInspectorDetail(detail: E3FullDetails | null): InspectorDet
     },
 
     publication: {
-      status: detail.resultTxHash ? 'complete' : 'pending',
+      status: failed ? 'failed' : detail.resultTxHash ? 'complete' : 'pending',
       note: detail.resultTxHash
         ? 'The result has been published on-chain. Individual ballots remain encrypted.'
-        : 'Final result will be written on-chain. Individual ballots remain encrypted.',
+        : failed
+          ? 'No result was published because the E3 failed.'
+          : 'Final result will be written on-chain. Individual ballots remain encrypted.',
       resultTx: detail.resultTxHash,
     },
 
     noBallots,
+    failure: failed
+      ? {
+          reason: failureReasonLabel(detail.failureReason),
+          failedAt: detail.failureAt ? fmtUtcFromUnix(detail.failureAt) : '—',
+          failedAtStage,
+          txHash: detail.failureTxHash,
+        }
+      : undefined,
     events: buildEventLog(detail),
   }
 }
@@ -298,6 +324,26 @@ function buildEventLog(d: E3FullDetails): InspectorEvent[] {
       txHash: d.resultTxHash,
     })
   }
+  if (d.failureTxHash) {
+    evs.push({
+      t: d.failureAt ? fmtClock(d.failureAt) : '—',
+      block: d.failureBlock != null ? Number(d.failureBlock) : '—',
+      name: 'E3Failed',
+      stage: 'Failed',
+      tx: shortHash(d.failureTxHash),
+      txHash: d.failureTxHash,
+    })
+  }
+  d.failureReclassifications.forEach((failure) => {
+    evs.push({
+      t: failure.timestamp ? fmtClock(failure.timestamp) : '—',
+      block: Number(failure.blockNumber),
+      name: 'E3FailureReclassified',
+      stage: 'Failed',
+      tx: shortHash(failure.txHash),
+      txHash: failure.txHash,
+    })
+  })
   return evs
 }
 

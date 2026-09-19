@@ -12,10 +12,14 @@ import { explorerAddress, explorerTx } from './lib/links'
 import type { InspectorDetail } from './lib/adapt'
 import Loader from './Loader'
 
-export type InspectorE3List = Array<{ id: string; label: string }>
+export type InspectorE3List = Array<{ id: string; displayId: string; label: string }>
 
-function Mono({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <span className={`mono ${className}`}>{children}</span>
+function Mono({ children, className = '', ...props }: React.HTMLAttributes<HTMLSpanElement>) {
+  return (
+    <span className={`mono ${className}`} {...props}>
+      {children}
+    </span>
+  )
 }
 
 function short(hex: string): string {
@@ -38,13 +42,21 @@ function ExplorerLink({ value, href }: { value: string; href: string }) {
 const TxLink = ({ hash }: { hash: string }) => <ExplorerLink value={hash} href={explorerTx(hash)} />
 const AddrLink = ({ address }: { address: string }) => <ExplorerLink value={address} href={explorerAddress(address)} />
 
-function InspStatusBadge({ stageIdx, label }: { stageIdx: number; label?: string }) {
+function InspStatusBadge({
+  stageIdx,
+  terminalState,
+  label,
+}: {
+  stageIdx: number
+  terminalState: InspectorDetail['terminalState']
+  label?: string
+}) {
   const s = STAGES[stageIdx]
-  const variant = stageIdx >= 6 ? 'published' : stageIdx === 3 ? 'open' : 'working'
+  const variant = terminalState === 'failed' ? 'failed' : stageIdx >= 6 ? 'published' : stageIdx === 3 ? 'open' : 'working'
   return (
     <span className={`stage-badge stage-badge--${variant}`}>
       <span className='stage-badge__dot' />
-      <span>{label ?? s.label}</span>
+      <span>{label ?? (terminalState === 'failed' ? 'Failed' : s.label)}</span>
     </span>
   )
 }
@@ -89,7 +101,7 @@ function SectionCard({
   )
 }
 
-function InspectorStageStrip({ stages, currentStageIdx }: { stages: typeof STAGES; currentStageIdx: number }) {
+function InspectorStageStrip({ stages, currentStageIdx, failed }: { stages: typeof STAGES; currentStageIdx: number; failed: boolean }) {
   const wrapRef = useRef<HTMLDivElement | null>(null)
   const [overflow, setOverflow] = useState(false)
   useEffect(() => {
@@ -115,7 +127,7 @@ function InspectorStageStrip({ stages, currentStageIdx }: { stages: typeof STAGE
       <div className='istrip' role='list'>
         {stages.map((s, i) => {
           const isLast = i === stages.length - 1
-          const state = i < currentStageIdx ? 'done' : i === currentStageIdx ? (isLast ? 'done' : 'active') : 'todo'
+          const state = i < currentStageIdx ? 'done' : i === currentStageIdx ? (failed ? 'failed' : isLast ? 'done' : 'active') : 'todo'
           return (
             <React.Fragment key={s.id}>
               <div role='listitem' className={`istrip__node istrip__node--${state}`}>
@@ -240,6 +252,11 @@ export default function Inspector({
   // nothing was ever submitted, so post-input sections aren't actually "in progress".
   const lastStage = STAGES.length - 1
   const stageStatus = (targetStage: number) => {
+    if (e3.terminalState === 'failed') {
+      if (targetStage < e3.currentStage) return { kind: 'done', label: 'Done' }
+      if (targetStage === e3.currentStage) return { kind: 'failed', label: 'Failed' }
+      return { kind: 'pending', label: 'Not reached' }
+    }
     if (e3.noBallots && targetStage >= 4) {
       return targetStage === 4 ? { kind: 'pending', label: 'No ballots' } : { kind: 'pending', label: 'Skipped' }
     }
@@ -274,7 +291,9 @@ export default function Inspector({
               <span className='insp-head__crumb-sep'>/</span>
               <span>E3 inspector</span>
               <span className='insp-head__crumb-sep'>/</span>
-              <Mono>{e3.id}</Mono>
+              <Mono className='insp-head__id' title={e3.id}>
+                {e3.displayId}
+              </Mono>
             </div>
             <h1 className='insp-head__title'>{e3.summary}</h1>
             <div className='insp-head__meta'>
@@ -292,20 +311,37 @@ export default function Inspector({
             <select id='e3-select' className='insp-select' value={selectedId} onChange={(e) => setSelectedId(e.target.value)}>
               {list.map((e) => (
                 <option key={e.id} value={e.id}>
-                  {e.id} · {e.label}
+                  {e.displayId} · {e.label}
                 </option>
               ))}
             </select>
           </div>
         </div>
 
-        <InspectorStageStrip stages={STAGES} currentStageIdx={e3.currentStage} />
+        {e3.failure && (
+          <div className='insp-failure' role='status'>
+            <div>
+              <div className='insp-failure__label'>E3 failed</div>
+              <div className='insp-failure__reason'>{e3.failure.reason}</div>
+              <div className='insp-failure__meta'>
+                Stopped during {STAGES[e3.failure.failedAtStage]?.label ?? 'the protocol lifecycle'} · {e3.failure.failedAt}
+              </div>
+            </div>
+            {e3.failure.txHash && <TxLink hash={e3.failure.txHash} />}
+          </div>
+        )}
+
+        <InspectorStageStrip stages={STAGES} currentStageIdx={e3.currentStage} failed={e3.terminalState === 'failed'} />
 
         <div className='insp-stats'>
           <div className='insp-stat'>
             <div className='insp-stat__label'>Status</div>
             <div className='insp-stat__value'>
-              <InspStatusBadge stageIdx={e3.currentStage} label={e3.noBallots ? 'Complete · no ballots' : undefined} />
+              <InspStatusBadge
+                stageIdx={e3.currentStage}
+                terminalState={e3.terminalState}
+                label={e3.noBallots ? 'Complete · no ballots' : undefined}
+              />
             </div>
           </div>
           <div className='insp-stat'>
