@@ -639,6 +639,17 @@ export async function validateSecureCrispUpgrade(): Promise<void> {
     encodeBfvParams(BFV_PARAMS.secure8192),
     "secure BFV parameter set",
   );
+  equalValue(
+    plan.minimumCommitteeSize,
+    config.interfold.pricing.minCommitteeSize,
+    "prepared minimum committee size",
+  );
+  const livePricing = await interfold.getPricingConfig();
+  equalValue(
+    livePricing.minCommitteeSize,
+    plan.minimumCommitteeSize,
+    "minimum request committee size",
+  );
   for (const threshold of config.interfold.committeeThresholds) {
     const size = BigInt(threshold.size);
     const actual = await Promise.all([
