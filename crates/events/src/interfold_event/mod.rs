@@ -536,6 +536,36 @@ mod serialization_tests {
 
         assert!(InterfoldEvent::<Unsequenced>::from_bytes(&bytes).is_err());
     }
+
+    #[test]
+    fn evm_delivery_identity_distinguishes_equal_facts_by_log_occurrence() {
+        let data: InterfoldEventData = TestEvent::new("same fact", 1).into();
+        let first = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            data.clone(),
+            None,
+            1,
+            Some(100),
+            EventSource::Evm,
+        );
+        let second = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            data.clone(),
+            None,
+            2,
+            Some(100),
+            EventSource::Evm,
+        );
+        let replay = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            data,
+            None,
+            1,
+            Some(100),
+            EventSource::Evm,
+        );
+
+        assert_eq!(first.event_id(), second.event_id());
+        assert_ne!(first.delivery_id(), second.delivery_id());
+        assert_eq!(first.delivery_id(), replay.delivery_id());
+    }
 }
 
 #[cfg(feature = "test-helpers")]
@@ -576,6 +606,17 @@ impl<S: SeqState> Event for InterfoldEvent<S> {
 
     fn event_id(&self) -> Self::Id {
         self.ctx.id()
+    }
+
+    fn delivery_id(&self) -> Self::Id {
+        match self.source() {
+            // Existing persisted EVM events use a payload-derived EventId. Include the block and
+            // deterministic log timestamp (which carries the log index) in local delivery
+            // identity. Equal facts from distinct chain-log occurrences are both applied, while
+            // replay of the same occurrence at the snapshot boundary stays idempotent.
+            EventSource::Evm => EventId::hash((self.ctx.id(), self.ctx.block(), self.ctx.ts())),
+            EventSource::Local | EventSource::Net => self.ctx.id(),
+        }
     }
 
     fn event_type(&self) -> String {

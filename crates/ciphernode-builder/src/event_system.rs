@@ -16,8 +16,8 @@ use e3_data::{
 use e3_events::{hlc::Hlc, hlc_factory::HlcFactory};
 use e3_events::{
     AggregateConfig, BusHandle, Disabled, Enabled, EventBus, EventBusConfig, EventStore,
-    EventStoreClockFloor, EventStoreRouter, EventSubscriber, EventType, InsertBatch,
-    InterfoldEvent, Sequencer, SnapshotBuffer, StoreEventRequested, UpdateDestination,
+    EventStoreClockFloor, EventStoreRouter, InsertBatch, InterfoldEvent, Sequencer, SnapshotBuffer,
+    StoreEventRequested, UpdateDestination,
 };
 use e3_utils::enumerate_path;
 use once_cell::sync::OnceCell;
@@ -240,6 +240,7 @@ impl EventSystem {
                             router.clone().recipient(),
                             router.recipient(),
                         )
+                        .with_pre_fanout(self.buffer()?.recipient())
                     }
                     EventStoreAddrs::Persisted(addrs) => {
                         let router = EventStoreRouter::new(addrs).start();
@@ -248,6 +249,7 @@ impl EventSystem {
                             router.clone().recipient(),
                             router.recipient(),
                         )
+                        .with_pre_fanout(self.buffer()?.recipient())
                     }
                 };
                 Ok(sequencer.start())
@@ -422,9 +424,6 @@ impl EventSystem {
         self.handle
             .get_or_try_init(|| {
                 let handle = BusHandle::new(self.eventbus(), self.sequencer()?, HlcFactory::new());
-                // Buffer subscribes to all events first
-                // This is important so as to open up a batch for each sequence
-                handle.subscribe(EventType::All, self.buffer()?.recipient());
                 Ok(handle)
             })
             .cloned()

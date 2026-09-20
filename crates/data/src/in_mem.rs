@@ -10,7 +10,9 @@ use crate::{
 };
 use actix::{Actor, ActorContext, Handler, Message};
 use anyhow::Result;
-use e3_events::{Flush, Get, Insert, InsertBatch, InsertBatchIfAbsent, InsertSync, Remove};
+use e3_events::{
+    Flush, Get, Insert, InsertBatch, InsertBatchIfAbsent, InsertSync, Remove, StoreKeys,
+};
 use e3_utils::MAILBOX_LIMIT;
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash)]
@@ -50,26 +52,48 @@ impl InMemStore {
             store: InMemKvStore::from_dump(&db, capture)?,
         })
     }
+
+    fn apply_batch(&mut self, batch: &InsertBatch) -> Result<bool> {
+        if let Some(revision) = batch.snapshot_revision()? {
+            let cursor_key = StoreKeys::aggregate_seq(revision.aggregate_id()).into_bytes();
+            if let Some(raw_cursor) = self.store.get(&cursor_key) {
+                let bytes: [u8; 8] = raw_cursor.as_slice().try_into().map_err(|_| {
+                    anyhow::anyhow!(
+                        "stored snapshot cursor has invalid length {}",
+                        raw_cursor.len()
+                    )
+                })?;
+                if u64::from_le_bytes(bytes) > revision.seq() {
+                    return Ok(false);
+                }
+            }
+        }
+
+        for command in batch.commands() {
+            self.store.insert(
+                command.key().to_owned(),
+                command.value().to_owned(),
+                Some(DataOp::Insert(command.clone())),
+            );
+        }
+        Ok(true)
+    }
 }
 
 impl Handler<Insert> for InMemStore {
     type Result = ();
     fn handle(&mut self, event: Insert, _: &mut Self::Context) {
-        let key = event.key().to_vec();
-        let value = event.value().to_vec();
-        self.store.insert(key, value, Some(DataOp::Insert(event)));
+        if let Err(error) = self.apply_batch(&InsertBatch::new(vec![event])) {
+            tracing::error!(%error, "Could not apply in-memory snapshot write");
+        }
     }
 }
 
 impl Handler<InsertBatch> for InMemStore {
     type Result = Result<()>;
     fn handle(&mut self, msg: InsertBatch, _: &mut Self::Context) -> Self::Result {
-        for cmd in msg.commands() {
-            self.store.insert(
-                cmd.key().to_owned(),
-                cmd.value().to_owned(),
-                Some(DataOp::Insert(cmd.clone())),
-            );
+        if !self.apply_batch(&msg)? {
+            tracing::warn!("Ignored a stale in-memory snapshot batch");
         }
         Ok(())
     }

@@ -8,15 +8,20 @@ use crate::{
     events::{FlushEventStores, SequencerBarrier, StoreEventRequested, StoreEventResponse},
     EventBus, InterfoldEvent, Sequenced, Unsequenced,
 };
-use actix::{Actor, Addr, AsyncContext, Handler, Recipient, ResponseFuture};
+use actix::{
+    Actor, ActorContext, ActorFutureExt, Addr, AsyncContext, Handler, Recipient, ResponseFuture,
+    WrapFuture,
+};
 use anyhow::{Context, Result};
 use e3_utils::MAILBOX_LIMIT;
+use tracing::error;
 
 /// Component to sequence the storage of events
 pub struct Sequencer {
     bus: Addr<EventBus<InterfoldEvent<Sequenced>>>,
     eventstore: Recipient<StoreEventRequested>,
     eventstore_flush: Option<Recipient<FlushEventStores>>,
+    pre_fanout: Option<Recipient<InterfoldEvent<Sequenced>>>,
 }
 
 impl Sequencer {
@@ -28,6 +33,7 @@ impl Sequencer {
             bus: bus.clone(),
             eventstore: eventstore.into(),
             eventstore_flush: None,
+            pre_fanout: None,
         }
     }
 
@@ -40,12 +46,17 @@ impl Sequencer {
             bus: bus.clone(),
             eventstore: eventstore.into(),
             eventstore_flush: Some(eventstore_flush.into()),
+            pre_fanout: None,
         }
     }
 
-    fn handle_store_event_response(&self, msg: StoreEventResponse) {
-        let event = msg.into_event();
-        self.bus.do_send(event);
+    /// Deliver each durable sequence to infrastructure before domain-event deduplication.
+    pub fn with_pre_fanout(
+        mut self,
+        recipient: impl Into<Recipient<InterfoldEvent<Sequenced>>>,
+    ) -> Self {
+        self.pre_fanout = Some(recipient.into());
+        self
     }
 }
 
@@ -70,8 +81,31 @@ impl Handler<InterfoldEvent<Unsequenced>> for Sequencer {
 
 impl Handler<StoreEventResponse> for Sequencer {
     type Result = ();
-    fn handle(&mut self, msg: StoreEventResponse, _: &mut Self::Context) -> Self::Result {
-        self.handle_store_event_response(msg);
+    fn handle(&mut self, msg: StoreEventResponse, ctx: &mut Self::Context) -> Self::Result {
+        let event = msg.into_event();
+        let pre_fanout = self.pre_fanout.clone();
+        let bus = self.bus.clone();
+
+        // The snapshot batch must exist before stateful subscribers can enqueue writes for this
+        // event. It also must observe sequences that domain deduplication intentionally suppresses.
+        ctx.wait(
+            async move {
+                if let Some(pre_fanout) = pre_fanout {
+                    pre_fanout.send(event.clone()).await.context(
+                        "pre-fanout subscriber stopped before accepting a durable event",
+                    )?;
+                }
+                Ok::<_, anyhow::Error>(event)
+            }
+            .into_actor(self)
+            .map(move |result, _, ctx| match result {
+                Ok(event) => bus.do_send(event),
+                Err(error) => {
+                    error!(%error, "Stopping the sequencer after pre-fanout delivery failed");
+                    ctx.stop();
+                }
+            }),
+        );
     }
 }
 
@@ -100,8 +134,42 @@ impl Handler<SequencerBarrier> for Sequencer {
 
 #[cfg(test)]
 mod tests {
+    use actix::{Actor, Handler, Message};
     use e3_ciphernode_builder::EventSystem;
-    use e3_events::{EventPublisher, GetEvents, InterfoldEvent, TakeEvents, TestEvent};
+    use e3_events::{
+        EventPublisher, EventSource, FlushPendingSnapshots, GetEvents, InsertBatch, InterfoldEvent,
+        TakeEvents, TestEvent, UpdateDestination,
+    };
+
+    #[derive(Default)]
+    struct SnapshotCollector(Vec<InsertBatch>);
+
+    impl Actor for SnapshotCollector {
+        type Context = actix::Context<Self>;
+    }
+
+    impl Handler<InsertBatch> for SnapshotCollector {
+        type Result = anyhow::Result<()>;
+
+        fn handle(&mut self, batch: InsertBatch, _: &mut Self::Context) -> Self::Result {
+            if !batch.commands().is_empty() {
+                self.0.push(batch);
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Message)]
+    #[rtype(result = "Vec<InsertBatch>")]
+    struct TakeSnapshots;
+
+    impl Handler<TakeSnapshots> for SnapshotCollector {
+        type Result = Vec<InsertBatch>;
+
+        fn handle(&mut self, _: TakeSnapshots, _: &mut Self::Context) -> Self::Result {
+            std::mem::take(&mut self.0)
+        }
+    }
 
     #[actix::test]
     async fn it_adds_seqence_numbers_to_events() -> anyhow::Result<()> {
@@ -166,6 +234,41 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
 
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn equal_evm_facts_reach_domain_and_snapshot_paths() -> anyhow::Result<()> {
+        let system = EventSystem::new().with_fresh_bus();
+        let snapshots = SnapshotCollector::default().start();
+        let buffer = system.buffer()?;
+        buffer
+            .send(UpdateDestination::new(snapshots.clone().recipient()))
+            .await?;
+        let bus = system.handle()?.enable("same-evm-fact");
+        let history = bus.history();
+
+        let fact = TestEvent::new("same fact", 1);
+        bus.publish_from_remote(fact.clone(), 1_000_000, Some(100), EventSource::Evm)?;
+        bus.publish_from_remote(fact, 2_000_000, Some(101), EventSource::Evm)?;
+        bus.flush_event_pipeline().await?;
+        buffer.send(FlushPendingSnapshots).await??;
+
+        let delivered = history.send(GetEvents::new()).await?;
+        assert_eq!(
+            delivered.len(),
+            2,
+            "both chain occurrences must be delivered"
+        );
+
+        let snapshot_batches = snapshots.send(TakeSnapshots).await?;
+        let revisions = snapshot_batches
+            .iter()
+            .map(InsertBatch::snapshot_revision)
+            .collect::<anyhow::Result<Vec<_>>>()?;
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(revisions[0].expect("first revision").seq(), 1);
+        assert_eq!(revisions[1].expect("second revision").seq(), 2);
         Ok(())
     }
 }

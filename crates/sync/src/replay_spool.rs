@@ -10,7 +10,7 @@ use actix::Recipient;
 use anyhow::{bail, Context, Result};
 use e3_events::{
     AggregateId, BusHandle, CorrelationId, EventBusBarrier, EventBusFanout, EventContextAccessors,
-    EventContextSeq, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent, SeqAgg,
+    EventContextSeq, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent, SeqAgg, Sequenced,
 };
 use e3_utils::actix::channel as actix_toolbox;
 use std::{
@@ -233,7 +233,11 @@ impl ReplaySpool {
         Ok(total_events)
     }
 
-    pub(crate) async fn replay(self, bus: &BusHandle) -> Result<usize> {
+    pub(crate) async fn replay(
+        self,
+        bus: &BusHandle,
+        pre_fanout: &Recipient<InterfoldEvent<Sequenced>>,
+    ) -> Result<usize> {
         if let Some(max_timestamp) = self.max_timestamp {
             bus.seed_clock(max_timestamp)?;
         }
@@ -245,6 +249,13 @@ impl ReplaySpool {
             if SyncPlanner::classify_replay(&event) == ReplayDecision::SkipInfrastructure {
                 continue;
             }
+            // Live events reach this infrastructure path from the sequencer before domain
+            // deduplication. Replay bypasses the sequencer, so it must make the same delivery
+            // explicitly before stateful subscribers can enqueue snapshot writes.
+            pre_fanout
+                .send(event.clone())
+                .await
+                .context("pre-fanout subscriber stopped during EventStore replay")?;
             bus.event_bus().send(EventBusFanout(event)).await??;
             replayed += 1;
             if replayed.is_multiple_of(REPLAY_PROGRESS_INTERVAL) {
@@ -461,8 +472,41 @@ impl RunMerger {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use actix::{Actor, Handler, Message};
     use e3_ciphernode_builder::EventSystem;
-    use e3_events::{EventPublisher, TestEvent};
+    use e3_events::{
+        EventPublisher, FlushPendingSnapshots, InsertBatch, TestEvent, UpdateDestination,
+    };
+
+    #[derive(Default)]
+    struct SnapshotCollector(Vec<InsertBatch>);
+
+    impl Actor for SnapshotCollector {
+        type Context = actix::Context<Self>;
+    }
+
+    impl Handler<InsertBatch> for SnapshotCollector {
+        type Result = Result<()>;
+
+        fn handle(&mut self, batch: InsertBatch, _: &mut Self::Context) -> Self::Result {
+            if !batch.commands().is_empty() {
+                self.0.push(batch);
+            }
+            Ok(())
+        }
+    }
+
+    #[derive(Message)]
+    #[rtype(result = "Vec<InsertBatch>")]
+    struct TakeSnapshots;
+
+    impl Handler<TakeSnapshots> for SnapshotCollector {
+        type Result = Vec<InsertBatch>;
+
+        fn handle(&mut self, _: TakeSnapshots, _: &mut Self::Context) -> Self::Result {
+            std::mem::take(&mut self.0)
+        }
+    }
 
     #[test]
     fn fresh_snapshot_cursor_starts_at_first_one_based_log_sequence() {
@@ -592,6 +636,76 @@ mod tests {
                 (AggregateId::new(1), 2, 100),
                 (AggregateId::new(2), 2, 200),
             ]
+        );
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn replay_opens_snapshot_batches_before_domain_fanout() -> Result<()> {
+        let aggregate_id = AggregateId::new(1);
+        let config = e3_events::AggregateConfig::new(std::collections::HashMap::from([(
+            aggregate_id,
+            std::time::Duration::ZERO,
+        )]));
+        let source = EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(config.clone());
+        let source_bus = source.handle()?.enable("replay-snapshot-source");
+        let chain_id = aggregate_id
+            .to_chain_id()
+            .context("test aggregate must map to a chain")?;
+        for (id, message) in [(1, "first"), (2, "second")] {
+            source_bus
+                .naked_dispatch_async(
+                    InterfoldEvent::<e3_events::Unsequenced>::test_event(message)
+                        .id(id)
+                        .aggregate_id(chain_id)
+                        .ts(u128::from(id))
+                        .build(),
+                )
+                .await?;
+        }
+        source_bus.flush_event_pipeline().await?;
+
+        let target = EventSystem::new()
+            .with_fresh_bus()
+            .with_aggregate_config(config);
+        let snapshots = SnapshotCollector::default().start();
+        let buffer = target.buffer()?;
+        buffer
+            .send(UpdateDestination::new(snapshots.clone().recipient()))
+            .await?;
+        let target_bus = target.handle()?.enable("replay-snapshot-target");
+        let spool = ReplaySpool::load(
+            &source.eventstore_reader()?.seq(),
+            std::collections::HashMap::from([(aggregate_id, 0)]),
+        )
+        .await?;
+
+        let replayed = spool
+            .replay(&target_bus, &buffer.clone().recipient())
+            .await?;
+        buffer.send(FlushPendingSnapshots).await??;
+
+        let revisions = snapshots
+            .send(TakeSnapshots)
+            .await?
+            .iter()
+            .map(InsertBatch::snapshot_revision)
+            .collect::<Result<Vec<_>>>()?;
+        assert_eq!(replayed, 2);
+        assert_eq!(revisions.len(), 2);
+        assert_eq!(
+            revisions[0]
+                .context("first replay revision is missing")?
+                .seq(),
+            1
+        );
+        assert_eq!(
+            revisions[1]
+                .context("second replay revision is missing")?
+                .seq(),
+            2
         );
         Ok(())
     }

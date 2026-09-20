@@ -763,6 +763,7 @@ impl CiphernodeBuilder {
             .iter()
             .map(EvmChainGatewayHandle::failure_receiver)
             .collect();
+        let snapshot_pre_fanout = event_system.buffer()?.recipient();
         let mut persistence_health = event_system.failure_receiver();
         tokio::select! {
             result = async { tokio::try_join!(
@@ -772,6 +773,7 @@ impl CiphernodeBuilder {
                     &repositories,
                     &aggregate_config,
                     &seq_eventstore,
+                    &snapshot_pre_fanout,
                     net_ready,
                 ),
                 wait_for_evm_gateways(evm_gateways),
@@ -1626,6 +1628,7 @@ mod tests {
             },
             finalization_ms,
             chain_id: Some(1),
+            ingestion_confirmations: Some(0),
             data_availability: None,
         }
     }

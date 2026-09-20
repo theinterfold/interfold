@@ -172,12 +172,12 @@ impl<E: Event> EventBus<E> {
 
     fn track(&mut self, event: &E) {
         if self.config.deduplicate {
-            self.ids.insert(event.event_id());
+            self.ids.insert(event.delivery_id());
         }
     }
 
     fn is_duplicate(&self, event: &E) -> bool {
-        self.config.deduplicate && self.ids.contains(&event.event_id())
+        self.config.deduplicate && self.ids.contains(&event.delivery_id())
     }
 
     fn live_listeners_for(&mut self, event_type: &str) -> Vec<Recipient<E>> {
@@ -633,6 +633,7 @@ mod tests {
     #[rtype(result = "()")]
     struct CollidingEvent {
         id: CollidingId,
+        delivery_id: CollidingId,
         data: TestData,
         event_type: &'static str,
     }
@@ -641,6 +642,16 @@ mod tests {
         fn new(id: u64) -> Self {
             Self {
                 id: CollidingId(id),
+                delivery_id: CollidingId(id),
+                data: TestData,
+                event_type: "CollidingEvent",
+            }
+        }
+
+        fn with_delivery_id(id: u64, delivery_id: u64) -> Self {
+            Self {
+                id: CollidingId(id),
+                delivery_id: CollidingId(delivery_id),
                 data: TestData,
                 event_type: "CollidingEvent",
             }
@@ -649,6 +660,7 @@ mod tests {
         fn shutdown(id: u64) -> Self {
             Self {
                 id: CollidingId(id),
+                delivery_id: CollidingId(id),
                 data: TestData,
                 event_type: EventType::Shutdown.as_str(),
             }
@@ -667,6 +679,10 @@ mod tests {
 
         fn event_id(&self) -> Self::Id {
             self.id.clone()
+        }
+
+        fn delivery_id(&self) -> Self::Id {
+            self.delivery_id.clone()
         }
 
         fn event_type(&self) -> String {
@@ -736,6 +752,25 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![1, 2]
         );
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn equal_logical_ids_with_distinct_delivery_ids_are_both_delivered() -> anyhow::Result<()>
+    {
+        let bus = EventBus::with_dedup_capacity(EventBusConfig::default(), 4).start();
+        let history = EventBus::history(&bus);
+
+        bus.send(CollidingEvent::with_delivery_id(1, 100)).await?;
+        bus.send(CollidingEvent::with_delivery_id(1, 101)).await?;
+
+        let received = history.send(TakeEvents::new(2)).await?;
+        assert!(!received.timed_out);
+        assert_eq!(received.events.len(), 2);
+        assert!(received
+            .events
+            .iter()
+            .all(|event| event.id == CollidingId(1)));
         Ok(())
     }
 

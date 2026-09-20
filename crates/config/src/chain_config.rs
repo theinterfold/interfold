@@ -42,6 +42,12 @@ pub struct ChainConfig {
     pub contracts: ContractAddresses,
     pub finalization_ms: Option<u64>,
     pub chain_id: Option<u64>,
+    /// Confirmations required before the node applies EVM logs.
+    ///
+    /// Production-safe ingestion is the default even when `rpc_url` points at a local proxy.
+    /// Set this to zero only for a single-process development chain such as Anvil.
+    #[serde(default)]
+    pub ingestion_confirmations: Option<u64>,
     #[serde(default)]
     pub data_availability: Option<DataAvailabilityConfig>,
 }
@@ -52,13 +58,11 @@ impl ChainConfig {
             .map_err(|e| anyhow!("Failed to parse RPC URL for chain {}: {}", self.name, e))?)
     }
 
-    /// Return the fixed ingestion depth for this RPC class.
+    /// Return the configured ingestion depth or the production-safe default.
     pub fn ingestion_confirmations(&self) -> Result<u64> {
-        Ok(if self.rpc_url()?.is_local() {
-            0
-        } else {
-            PUBLIC_RPC_CONFIRMATIONS
-        })
+        Ok(self
+            .ingestion_confirmations
+            .unwrap_or(PUBLIC_RPC_CONFIRMATIONS))
     }
 }
 
@@ -125,6 +129,7 @@ mod tests {
             },
             finalization_ms: None,
             chain_id: Some(1),
+            ingestion_confirmations: None,
             data_availability: None,
         }
     }
@@ -136,8 +141,16 @@ mod tests {
     }
 
     #[test]
-    fn local_chain_can_read_the_head() {
+    fn local_proxy_does_not_disable_confirmations() {
         let config = EvmEventConfigChain::try_from(&chain("ws://127.0.0.1:8545")).unwrap();
+        assert_eq!(config.confirmations(), PUBLIC_RPC_CONFIRMATIONS);
+    }
+
+    #[test]
+    fn development_chain_can_explicitly_read_the_head() {
+        let mut chain = chain("ws://127.0.0.1:8545");
+        chain.ingestion_confirmations = Some(0);
+        let config = EvmEventConfigChain::try_from(&chain).unwrap();
         assert_eq!(config.confirmations(), 0);
     }
 }

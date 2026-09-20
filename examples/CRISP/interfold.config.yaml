@@ -4,6 +4,7 @@ chains:
   - name: localhost
     enabled: true
     rpc_url: ws://localhost:8545
+    ingestion_confirmations: 0
     data_availability:
       mode: mock_http
       rpc_url: http://127.0.0.1:4000/availability

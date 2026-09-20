@@ -24,6 +24,13 @@ pub trait Event:
     /// Payload for the Event
     type Data: WithAggregateId;
     fn event_id(&self) -> Self::Id;
+    /// Return the identity used to suppress duplicate delivery on the local event bus.
+    ///
+    /// This can be more specific than the logical event ID. For example, two distinct chain
+    /// occurrences can carry the same decoded payload and therefore share a logical ID.
+    fn delivery_id(&self) -> Self::Id {
+        self.event_id()
+    }
     fn event_type(&self) -> String;
     fn get_data(&self) -> &Self::Data;
     fn into_data(self) -> Self::Data;
