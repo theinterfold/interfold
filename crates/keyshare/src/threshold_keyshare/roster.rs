@@ -148,28 +148,28 @@ mod tests {
         let c2a_first = signed_c2(
             &e3_id,
             ProofType::C2aSkShareComputation,
-            CircuitName::SkShareComputation,
+            CircuitName::SkC2ChunkFinalize,
             &[1],
             &[10],
         );
         let c2a_second = signed_c2(
             &e3_id,
             ProofType::C2aSkShareComputation,
-            CircuitName::SkShareComputation,
+            CircuitName::SkC2ChunkFinalize,
             &[2],
             &[10],
         );
         let c2b_first = signed_c2(
             &e3_id,
             ProofType::C2bESmShareComputation,
-            CircuitName::ESmShareComputation,
+            CircuitName::ESmC2ChunkFinalize,
             &[3],
             &[20],
         );
         let c2b_second = signed_c2(
             &e3_id,
             ProofType::C2bESmShareComputation,
-            CircuitName::ESmShareComputation,
+            CircuitName::ESmC2ChunkFinalize,
             &[4],
             &[20],
         );
@@ -187,21 +187,21 @@ mod tests {
         let c2a = signed_c2(
             &e3_id,
             ProofType::C2aSkShareComputation,
-            CircuitName::SkShareComputation,
+            CircuitName::SkC2ChunkFinalize,
             &[1],
             &[10],
         );
         let c2a_changed = signed_c2(
             &e3_id,
             ProofType::C2aSkShareComputation,
-            CircuitName::SkShareComputation,
+            CircuitName::SkC2ChunkFinalize,
             &[1],
             &[11],
         );
         let c2b = signed_c2(
             &e3_id,
             ProofType::C2bESmShareComputation,
-            CircuitName::ESmShareComputation,
+            CircuitName::ESmC2ChunkFinalize,
             &[2],
             &[20],
         );

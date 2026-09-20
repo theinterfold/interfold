@@ -13,31 +13,18 @@ import { IPkVerifier } from "../../interfaces/IPkVerifier.sol";
 import { ActiveCryptoConfig } from "../../lib/ActiveCryptoConfig.sol";
 import { CommitteeHashLib } from "../../lib/CommitteeHashLib.sol";
 
-/// @notice Verifies the secure-16384 V2 DKG aggregator proof.
+/// @notice Verifies a V2 l-BFV DKG aggregator proof.
 contract BfvPkVerifierV2 is IPkVerifier {
     error InvalidCircuitVerifier(address verifier);
     error InvalidRegistry(address registry);
+    error InvalidParamSet(uint8 paramSet);
     error InvalidVerificationKeyHash();
 
-    uint256 public constant V2_PUBLIC_INPUTS_LEN = 64;
-    uint256 public constant V2_H = 2;
-    uint256 public constant V2_N = 3;
-    uint256 public constant V2_PK_COMMITMENT_IDX = 29;
+    uint256 private constant V2_PUBLIC_INPUTS_FIXED_LEN = 43;
 
     uint256 private constant LEGACY_VK_BINDING_LEN = 16;
     uint256 private constant V2_VK_BINDING_LEN = 13;
-    uint256 private constant V2_SESSION_HI_IDX = 31;
-    uint256 private constant V2_SESSION_LO_IDX = 32;
-    uint256 private constant V2_AGGREGATOR_ID_IDX = 33;
-    uint256 private constant V2_ACCEPTED_SET_HI_IDX = 34;
-    uint256 private constant V2_ACCEPTED_SET_LO_IDX = 35;
     uint256 private constant V2_PARTY_ID_START = 2;
-    uint256 private constant V2_COMMITTEE_HASH_HI_IDX = 4;
-    uint256 private constant V2_COMMITTEE_HASH_LO_IDX = 5;
-    uint256 private constant V2_LEGACY_VK_BINDING_START = 6;
-    uint256 private constant V2_SK_C2_CHUNK_IDX = 23;
-    uint256 private constant V2_ESM_C2_CHUNK_IDX = 24;
-    uint256 private constant V2_VK_BINDING_START = 51;
 
     uint256 private constant LBFV_PROOF_DOMAIN_VERSION = 1;
     uint256 public constant LBFV_PROTOCOL_VERSION = 4;
@@ -47,8 +34,17 @@ contract BfvPkVerifierV2 is IPkVerifier {
     bytes32 private constant LBFV_ACCEPTED_SET_LABEL_HASH =
         keccak256("interfold.lbfv.accepted-party-set:v1");
 
-    /// @notice Honest-party count compiled into the V2 minimum circuit.
+    /// @notice Honest-party count compiled into the V2 circuit.
     uint256 public immutable override h;
+
+    /// @notice Total committee count compiled into the V2 circuit.
+    uint256 public immutable committeeN;
+
+    /// @notice Parameter-set identifier accepted by this route.
+    uint8 public immutable expectedParamSet;
+
+    /// @notice Number of l-BFV rows compiled into this route.
+    uint256 public immutable lbfvRows;
 
     /// @notice Public-input count accepted by the generated Honk verifier.
     uint256 public immutable expectedPublicInputsLen;
@@ -56,7 +52,7 @@ contract BfvPkVerifierV2 is IPkVerifier {
     /// @notice Registry used to resolve request-time root and Interfold context.
     ICiphernodeRegistry public immutable ciphernodeRegistry;
 
-    /// @notice Generated secure-16384 V2 Honk verifier.
+    /// @notice Generated V2 Honk verifier.
     ICircuitVerifier public immutable circuitVerifier;
 
     bytes32 public immutable expectedNodesFoldKeyHash;
@@ -69,6 +65,9 @@ contract BfvPkVerifierV2 is IPkVerifier {
     constructor(
         address _circuitVerifier,
         address _ciphernodeRegistry,
+        uint8 _paramSet,
+        uint256 _committeeH,
+        uint256 _committeeN,
         bytes32 _expectedNodesFoldKeyHash,
         bytes32 _expectedC5KeyHash,
         bytes32 _expectedSkC2ChunkKeyHash,
@@ -81,6 +80,12 @@ contract BfvPkVerifierV2 is IPkVerifier {
         }
         if (_ciphernodeRegistry.code.length == 0) {
             revert InvalidRegistry(_ciphernodeRegistry);
+        }
+        if (_paramSet > ActiveCryptoConfig.SECURE_16384_PARAM_SET) {
+            revert InvalidParamSet(_paramSet);
+        }
+        if (_committeeH == 0 || _committeeN == 0 || _committeeH > _committeeN) {
+            revert InvalidParamSet(_paramSet);
         }
         if (
             _expectedNodesFoldKeyHash == bytes32(0) ||
@@ -102,8 +107,13 @@ contract BfvPkVerifierV2 is IPkVerifier {
             expectedV2VkBinding[i] = _expectedV2VkBinding[i];
         }
 
-        h = V2_H;
-        expectedPublicInputsLen = V2_PUBLIC_INPUTS_LEN;
+        h = _committeeH;
+        committeeN = _committeeN;
+        expectedParamSet = _paramSet;
+        lbfvRows =
+            _paramSet == ActiveCryptoConfig.SECURE_16384_PARAM_SET ? 5 : 3;
+        expectedPublicInputsLen =
+            V2_PUBLIC_INPUTS_FIXED_LEN + (3 * h) + (3 * lbfvRows);
         ciphernodeRegistry = ICiphernodeRegistry(_ciphernodeRegistry);
         circuitVerifier = ICircuitVerifier(_circuitVerifier);
         expectedNodesFoldKeyHash = _expectedNodesFoldKeyHash;
@@ -129,7 +139,7 @@ contract BfvPkVerifierV2 is IPkVerifier {
         if (publicInputs.length != expectedPublicInputsLen) {
             revert InvalidPublicInputsLength();
         }
-        if (sortedNodes.length != V2_N) {
+        if (sortedNodes.length != committeeN) {
             revert DomainBindingMismatch();
         }
         if (
@@ -144,7 +154,7 @@ contract BfvPkVerifierV2 is IPkVerifier {
         _checkCommitteeHash(publicInputs, committeeHash);
         _checkAcceptedPartySet(publicInputs);
 
-        if (publicInputs[V2_PK_COMMITMENT_IDX] != pkCommitment) {
+        if (publicInputs[23 + (3 * h)] != pkCommitment) {
             revert PkCommitmentMismatch();
         }
         _checkSession(e3Id, committeeHash, publicInputs);
@@ -162,36 +172,40 @@ contract BfvPkVerifierV2 is IPkVerifier {
         if (publicInputs[1] != expectedC5KeyHash) {
             revert VkHashMismatch();
         }
-        if (publicInputs[V2_SK_C2_CHUNK_IDX] != expectedSkC2ChunkKeyHash) {
+        if (publicInputs[21 + h] != expectedSkC2ChunkKeyHash) {
             revert VkHashMismatch();
         }
-        if (publicInputs[V2_ESM_C2_CHUNK_IDX] != expectedESmC2ChunkKeyHash) {
+        if (publicInputs[22 + h] != expectedESmC2ChunkKeyHash) {
             revert VkHashMismatch();
         }
         for (uint256 i = 0; i < LEGACY_VK_BINDING_LEN; ++i) {
             if (
-                publicInputs[V2_LEGACY_VK_BINDING_START + i] !=
-                expectedLegacyVkBinding[i]
+                publicInputs[4 + h + i] !=
+                    expectedLegacyVkBinding[i]
             ) {
                 revert VkHashMismatch();
             }
         }
+        uint256 v2VkBindingStart = 30 + (3 * h) + (3 * lbfvRows);
         for (uint256 i = 0; i < V2_VK_BINDING_LEN; ++i) {
             if (
-                publicInputs[V2_VK_BINDING_START + i] != expectedV2VkBinding[i]
+                publicInputs[v2VkBindingStart + i] != expectedV2VkBinding[i]
             ) {
                 revert VkHashMismatch();
             }
         }
     }
 
-    function _checkPartyIds(bytes32[] memory publicInputs) private pure {
-        uint256 first = uint256(publicInputs[V2_PARTY_ID_START]);
-        uint256 second = uint256(publicInputs[V2_PARTY_ID_START + 1]);
-        if (first >= V2_N || second >= V2_N || first >= second) {
-            revert DomainBindingMismatch();
+    function _checkPartyIds(bytes32[] memory publicInputs) private view {
+        uint256 previous;
+        for (uint256 i = 0; i < h; ++i) {
+            uint256 partyId = uint256(publicInputs[V2_PARTY_ID_START + i]);
+            if (partyId >= committeeN || (i > 0 && partyId <= previous)) {
+                revert DomainBindingMismatch();
+            }
+            previous = partyId;
         }
-        if (uint256(publicInputs[V2_AGGREGATOR_ID_IDX]) >= V2_N) {
+        if (uint256(publicInputs[27 + (3 * h)]) >= committeeN) {
             revert DomainBindingMismatch();
         }
     }
@@ -199,12 +213,12 @@ contract BfvPkVerifierV2 is IPkVerifier {
     function _checkCommitteeHash(
         bytes32[] memory publicInputs,
         bytes32 committeeHash
-    ) private pure {
+    ) private view {
         if (
-            publicInputs[V2_COMMITTEE_HASH_HI_IDX] !=
-            CommitteeHashLib.hi(committeeHash) ||
-            publicInputs[V2_COMMITTEE_HASH_LO_IDX] !=
-            CommitteeHashLib.lo(committeeHash)
+            publicInputs[2 + h] !=
+                CommitteeHashLib.hi(committeeHash) ||
+            publicInputs[3 + h] !=
+                CommitteeHashLib.lo(committeeHash)
         ) {
             revert DomainBindingMismatch();
         }
@@ -212,20 +226,29 @@ contract BfvPkVerifierV2 is IPkVerifier {
 
     function _checkAcceptedPartySet(
         bytes32[] memory publicInputs
-    ) private pure {
-        bytes32 acceptedSetHash = keccak256(
-            abi.encodePacked(
-                LBFV_ACCEPTED_SET_LABEL_HASH,
-                uint32(V2_H),
-                uint32(uint256(publicInputs[V2_PARTY_ID_START])),
-                uint32(uint256(publicInputs[V2_PARTY_ID_START + 1]))
-            )
+    ) private view {
+        bytes memory acceptedSetPreimage = abi.encodePacked(
+            LBFV_ACCEPTED_SET_LABEL_HASH,
+            uint32(h)
         );
+        for (uint256 i = 0; i < h; ++i) {
+            acceptedSetPreimage = bytes.concat(
+                acceptedSetPreimage,
+                abi.encodePacked(
+                    uint32(uint256(publicInputs[V2_PARTY_ID_START + i]))
+                )
+            );
+        }
+        bytes32 acceptedSetHash = keccak256(
+            acceptedSetPreimage
+        );
+        uint256 acceptedSetHiIdx = 28 + (3 * h);
+        uint256 acceptedSetLoIdx = 29 + (3 * h);
         if (
-            publicInputs[V2_ACCEPTED_SET_HI_IDX] !=
-            CommitteeHashLib.hi(acceptedSetHash) ||
-            publicInputs[V2_ACCEPTED_SET_LO_IDX] !=
-            CommitteeHashLib.lo(acceptedSetHash)
+            publicInputs[acceptedSetHiIdx] !=
+                CommitteeHashLib.hi(acceptedSetHash) ||
+            publicInputs[acceptedSetLoIdx] !=
+                CommitteeHashLib.lo(acceptedSetHash)
         ) {
             revert DomainBindingMismatch();
         }
@@ -238,7 +261,7 @@ contract BfvPkVerifierV2 is IPkVerifier {
     ) private view {
         IInterfold interfold = ciphernodeRegistry.interfold();
         E3 memory e3 = interfold.getE3(e3Id);
-        if (e3.paramSet != ActiveCryptoConfig.SECURE_16384_PARAM_SET) {
+        if (e3.paramSet != expectedParamSet) {
             revert DomainBindingMismatch();
         }
 
@@ -250,16 +273,18 @@ contract BfvPkVerifierV2 is IPkVerifier {
                 block.chainid,
                 address(interfold),
                 e3Id,
-                ActiveCryptoConfig.configIdForParamSet(e3.paramSet),
+                ActiveCryptoConfig.configIdForParamSet(expectedParamSet),
                 committeeHash,
                 LBFV_CONSTANTS_VERSION,
                 uint256(0),
                 uint256(0)
             )
         );
+        uint256 sessionHiIdx = 25 + (3 * h);
+        uint256 sessionLoIdx = 26 + (3 * h);
         if (
-            publicInputs[V2_SESSION_HI_IDX] != CommitteeHashLib.hi(sessionId) ||
-            publicInputs[V2_SESSION_LO_IDX] != CommitteeHashLib.lo(sessionId)
+            publicInputs[sessionHiIdx] != CommitteeHashLib.hi(sessionId) ||
+            publicInputs[sessionLoIdx] != CommitteeHashLib.lo(sessionId)
         ) {
             revert DomainBindingMismatch();
         }

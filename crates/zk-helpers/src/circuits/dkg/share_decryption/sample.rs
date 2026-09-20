@@ -10,13 +10,13 @@ use crate::circuits::dkg::share_decryption::circuit::ShareDecryptionCircuitData;
 use crate::computation::DkgInputType;
 use crate::CiphernodesCommittee;
 use crate::CircuitsErrors;
-use e3_fhe_params::build_pair_for_preset;
-use e3_fhe_params::BfvPreset;
+use e3_fhe_params::{build_pair_for_preset, generate_smudging_error, BfvPreset};
 use fhe::bfv::Ciphertext;
 use fhe::bfv::Encoding;
 use fhe::bfv::Plaintext;
 use fhe::bfv::{PublicKey, SecretKey};
-use fhe::trbfv::{ShareManager, TRBFV};
+use fhe::trbfv::ShareManager;
+use fhe_math::rq::Poly;
 use fhe_traits::FheEncoder;
 use fhe_traits::FheEncrypter;
 
@@ -39,9 +39,7 @@ impl ShareDecryptionCircuitData {
         let dkg_secret_key = SecretKey::random(&dkg_params, &mut rng);
         let dkg_public_key = PublicKey::new(&dkg_secret_key, &mut rng);
 
-        let trbfv = TRBFV::new(committee.n, committee.threshold, threshold_params.clone())
-            .map_err(|e| CircuitsErrors::Sample(format!("Failed to create TRBFV: {:?}", e)))?;
-        let mut share_manager =
+        let share_manager =
             ShareManager::new(committee.n, committee.threshold, threshold_params.clone()).map_err(
                 |e| CircuitsErrors::Sample(format!("Failed to create ShareManager: {:?}", e)),
             )?;
@@ -86,21 +84,36 @@ impl ShareDecryptionCircuitData {
                         sk_sss_u64[0].row(0).to_vec()
                     }
                     DkgInputType::SmudgingNoise => {
-                        let esi_coeffs = trbfv
-                            .generate_smudging_error(sd.z as usize, sd.mult_depth, lambda, &mut rng)
-                            .map_err(|e| {
+                        let esi_coeffs = generate_smudging_error(
+                            threshold_params.clone(),
+                            committee.n,
+                            sd.z as usize,
+                            sd.mult_depth,
+                            lambda,
+                            &mut rng,
+                        )
+                        .map_err(|e| {
+                            CircuitsErrors::Sample(format!(
+                                "Failed to generate smudging error: {:?}",
+                                e
+                            ))
+                        })
+                        .map_err(|e| {
+                            CircuitsErrors::Sample(format!(
+                                "Failed to generate smudging error: {:?}",
+                                e
+                            ))
+                        })?;
+                        let esi_poly = Poly::from_bigints(
+                            &esi_coeffs,
+                            threshold_params.context_at_level(0).map_err(|e| {
                                 CircuitsErrors::Sample(format!(
-                                    "Failed to generate smudging error: {:?}",
+                                    "Failed to get BFV context: {:?}",
                                     e
                                 ))
-                            })
-                            .map_err(|e| {
-                                CircuitsErrors::Sample(format!(
-                                    "Failed to generate smudging error: {:?}",
-                                    e
-                                ))
-                            })?;
-                        let esi_poly = share_manager.bigints_to_poly(&esi_coeffs).map_err(|e| {
+                            })?,
+                        )
+                        .map_err(|e| {
                             CircuitsErrors::Sample(format!(
                                 "Failed to convert error to poly: {:?}",
                                 e
@@ -155,7 +168,7 @@ impl ShareDecryptionCircuitData {
             own_plaintext_share,
             secret_key: dkg_secret_key,
             dkg_input_type,
-            chunk_size: 512,
+            chunk_size: dkg_params.degree().min(512) as u32,
             committee,
         })
     }

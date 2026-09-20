@@ -330,12 +330,10 @@ pub global PARAMS_SMUDGING_B_ENC: Field = {};
             .z,
         preset
             .lambda()
-            .map_err(|e| anyhow::anyhow!(e.to_string()))?
-            .value(),
+            .map_err(|e| anyhow::anyhow!(e.to_string()))?,
         1u128 << (preset
             .lambda()
             .map_err(|e| anyhow::anyhow!(e.to_string()))?
-            .value()
             + 1),
         preset
             .search_defaults()

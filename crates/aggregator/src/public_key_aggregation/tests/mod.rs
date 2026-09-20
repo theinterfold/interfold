@@ -286,8 +286,12 @@ async fn secure_16384_waits_for_operational_rlk_after_c5() -> Result<()> {
     {
         *c5_proof_pending = None;
     }
-    let aggregation =
-        LbfvAggregationStateV1::new(e3_id.clone(), fixture.state.proof_domain, vec![0, 1])?;
+    let aggregation = LbfvAggregationStateV1::new(
+        e3_id.clone(),
+        fixture.state.proof_domain,
+        vec![0, 1],
+        BfvPreset::SecureThreshold16384,
+    )?;
     let (bus, rng, _seed, params, crp, _errors, history) =
         get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;
     let mut aggregator = PublicKeyAggregator::new(
@@ -348,8 +352,12 @@ async fn secure_16384_restart_redrives_terminal_aggregation_failure() -> Result<
 
     let fixture = fixture();
     let e3_id = fixture.state.e3_id.clone();
-    let mut aggregation =
-        LbfvAggregationStateV1::new(e3_id.clone(), fixture.state.proof_domain, vec![0, 1])?;
+    let mut aggregation = LbfvAggregationStateV1::new(
+        e3_id.clone(),
+        fixture.state.proof_domain,
+        vec![0, 1],
+        BfvPreset::SecureThreshold16384,
+    )?;
     aggregation.fail("worker failed")?;
     let (bus, rng, _seed, params, crp, _errors, history) =
         get_common_setup(Some(BfvPreset::InsecureThreshold512.into()))?;

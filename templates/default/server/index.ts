@@ -42,7 +42,7 @@ async function createPrivateSDK(): Promise<InterfoldSDK> {
       feeToken: FEE_TOKEN_CONTRACT as `0x${string}`,
     },
     chain: hardhat,
-    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_128',
   })
 
   return sdkInstance

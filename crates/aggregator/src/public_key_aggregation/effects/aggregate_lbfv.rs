@@ -3,7 +3,7 @@
 //! Dispatch and correlate secure-16384 l-BFV row aggregation proofs.
 
 use super::super::*;
-use crate::{LbfvAggregationStateV1, LBFV_ROW_COUNT};
+use crate::LbfvAggregationStateV1;
 use e3_events::{
     ComputeRequest, LbfvAggregationFoldRequest, LbfvKeyShareDocument,
     LbfvPkAggregationProofRequest, RlkAggregationProofRequest, ZkRequest,
@@ -15,13 +15,28 @@ impl PublicKeyAggregator {
         &mut self,
         ec: &EventContext<Sequenced>,
     ) -> Result<()> {
-        if !self.is_lbfv() || !self.can_run_aggregation_effects() {
+        let is_lbfv = self.is_lbfv();
+        let can_run = self.can_run_aggregation_effects();
+        if !is_lbfv || !can_run {
+            info!(
+                e3_id = %self.e3_id,
+                is_lbfv,
+                can_run,
+                effects_enabled = self.effects_enabled,
+                is_aggregator = self.is_aggregator,
+                "l-BFV row aggregation is blocked by the actor role gate"
+            );
             return Ok(());
         }
         let Some(mut state) = self.lbfv_aggregation_state()? else {
+            info!(
+                e3_id = %self.e3_id,
+                "l-BFV row aggregation is waiting for its sidecar"
+            );
             return Ok(());
         };
         state.validate_loaded()?;
+        let row_count = state.row_count()?;
         if state.is_failed() {
             return Ok(());
         }
@@ -39,23 +54,30 @@ impl PublicKeyAggregator {
                 .iter()
                 .any(|party_id| !state.rlk_documents.contains_key(party_id))
         {
+            info!(
+                e3_id = %self.e3_id,
+                accepted_party_ids = ?state.accepted_party_ids,
+                public_key_documents = state.public_key_documents.len(),
+                rlk_documents = state.rlk_documents.len(),
+                "l-BFV row aggregation is waiting for accepted-party documents"
+            );
             return Ok(());
         }
 
         let party_ids = state.accepted_party_ids.clone();
         let public_key_shares = document_shares(
             &state,
-            |document| matches!(document, LbfvKeyShareDocument::PublicKeyV1(_)),
+            |document| document.role() == e3_events::LbfvKeyShareDocumentRole::PublicKey,
             "public-key",
         )?;
         let rlk_shares = document_shares(
             &state,
-            |document| matches!(document, LbfvKeyShareDocument::RelinearizationKeyV1(_)),
+            |document| document.role() == e3_events::LbfvKeyShareDocumentRole::RelinearizationKey,
             "relinearization-key",
         )?;
         let mut requests = Vec::new();
 
-        for row_index in 0..LBFV_ROW_COUNT as u32 {
+        for row_index in 0..row_count as u32 {
             if state.public_key_aggregation_proofs[row_index as usize].is_none()
                 && state.public_key_aggregation_correlations[row_index as usize].is_none()
             {
@@ -100,6 +122,11 @@ impl PublicKeyAggregator {
         }
 
         self.set_lbfv_aggregation(state, ec)?;
+        info!(
+            e3_id = %self.e3_id,
+            request_count = requests.len(),
+            "Dispatching l-BFV row aggregation requests"
+        );
         for (correlation, request) in requests {
             self.bus.publish(
                 ComputeRequest::zk(request, correlation, self.e3_id.clone()),
@@ -122,12 +149,13 @@ impl PublicKeyAggregator {
         if state.is_failed() {
             return Ok(());
         }
+        let row_count = state.row_count()?;
         match response {
             ZkResponse::LbfvPkAggregation(response) => {
                 let row = response.row_index;
                 let index = usize::try_from(row)?;
                 anyhow::ensure!(
-                    index < LBFV_ROW_COUNT,
+                    index < row_count,
                     "l-BFV PK aggregation row is out of range"
                 );
                 anyhow::ensure!(
@@ -150,7 +178,7 @@ impl PublicKeyAggregator {
                 let row = response.row_index;
                 let index = usize::try_from(row)?;
                 anyhow::ensure!(
-                    index < LBFV_ROW_COUNT,
+                    index < row_count,
                     "l-BFV RLK aggregation row is out of range"
                 );
                 anyhow::ensure!(
@@ -178,7 +206,7 @@ impl PublicKeyAggregator {
             }
             _ => return Ok(()),
         }
-        let fold_complete = state.aggregation_fold_completed_rows == LBFV_ROW_COUNT as u32;
+        let fold_complete = state.aggregation_fold_completed_rows == row_count as u32;
         self.set_lbfv_aggregation(state, ec)?;
         self.try_dispatch_lbfv_aggregation_fold(ec)?;
         if fold_complete {
@@ -200,8 +228,9 @@ impl PublicKeyAggregator {
         if state.is_failed() {
             return Ok(false);
         }
+        let row_count = state.row_count()?;
         let mut matched = false;
-        for row in 0..LBFV_ROW_COUNT as u32 {
+        for row in 0..row_count as u32 {
             let index = row as usize;
             if state.public_key_aggregation_correlations[index] == Some(correlation) {
                 state.clear_public_key_correlation(row, correlation)?;
@@ -249,10 +278,11 @@ impl PublicKeyAggregator {
             return Ok(());
         };
         state.validate_loaded()?;
+        let row_count = state.row_count()?;
         if state.is_failed() {
             return Ok(());
         }
-        if state.aggregation_fold_completed_rows == LBFV_ROW_COUNT as u32
+        if state.aggregation_fold_completed_rows == row_count as u32
             || state.aggregation_fold_correlation.is_some()
         {
             return Ok(());
@@ -298,6 +328,7 @@ impl PublicKeyAggregator {
             return Ok(());
         };
         state.validate_loaded()?;
+        let row_count = state.row_count()?;
         if state.is_failed() {
             return Ok(());
         }
@@ -305,18 +336,18 @@ impl PublicKeyAggregator {
             return Ok(());
         }
         anyhow::ensure!(
-            state.aggregation_fold_completed_rows == LBFV_ROW_COUNT as u32
+            state.aggregation_fold_completed_rows == row_count as u32
                 && state.aggregation_fold_proof.is_some(),
             "operational l-BFV RLK requires a completed aggregation fold"
         );
         let public_key_shares = document_shares(
             &state,
-            |document| matches!(document, LbfvKeyShareDocument::PublicKeyV1(_)),
+            |document| document.role() == e3_events::LbfvKeyShareDocumentRole::PublicKey,
             "public-key",
         )?;
         let rlk_shares = document_shares(
             &state,
-            |document| matches!(document, LbfvKeyShareDocument::RelinearizationKeyV1(_)),
+            |document| document.role() == e3_events::LbfvKeyShareDocumentRole::RelinearizationKey,
             "relinearization-key",
         )?;
         let operational_rlk = e3_trbfv::aggregate_lbfv::aggregate_lbfv_relinearization_key(
@@ -353,6 +384,8 @@ fn document_shares(
             Ok(match document {
                 LbfvKeyShareDocument::PublicKeyV1(document) => document.share.clone(),
                 LbfvKeyShareDocument::RelinearizationKeyV1(document) => document.share.clone(),
+                LbfvKeyShareDocument::PublicKeyV2(document) => document.share.clone(),
+                LbfvKeyShareDocument::RelinearizationKeyV2(document) => document.share.clone(),
             })
         })
         .collect()
@@ -370,7 +403,7 @@ fn expected_pk_operation_id(
         party_ids: state.accepted_party_ids.clone(),
         share_bytes: document_shares(
             state,
-            |document| matches!(document, LbfvKeyShareDocument::PublicKeyV1(_)),
+            |document| document.role() == e3_events::LbfvKeyShareDocumentRole::PublicKey,
             "public-key",
         )?,
         row_index,
@@ -392,7 +425,7 @@ fn expected_rlk_operation_id(
         party_ids: state.accepted_party_ids.clone(),
         share_bytes: document_shares(
             state,
-            |document| matches!(document, LbfvKeyShareDocument::RelinearizationKeyV1(_)),
+            |document| document.role() == e3_events::LbfvKeyShareDocumentRole::RelinearizationKey,
             "relinearization-key",
         )?,
         row_index,

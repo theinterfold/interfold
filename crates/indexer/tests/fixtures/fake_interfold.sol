@@ -15,7 +15,7 @@ contract FakeInterfold {
   mapping(uint8 => bytes) public paramSetRegistry;
 
   function e3CryptoConfigIds(uint256) external pure returns (bytes32) {
-    return 0x19921c8c12f93c3013be57d0859f4ddcdb4464ac856a0c62be1ad617fbbd2e7d;
+    return 0x7317c190ccb1dccfa505bf5b9b923e341905f6675c16f958e0a7d853795517a5;
   }
 
   // Emit InputPublished event with passed test data

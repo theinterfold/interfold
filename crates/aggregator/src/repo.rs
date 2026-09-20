@@ -263,17 +263,28 @@ impl LbfvContributionRepositoryFactory for Repositories {
 
         let validation = (|| {
             manifest.validate_documents(&public_key, &rlk)?;
-            let LbfvKeyShareDocument::PublicKeyV1(public_key) = &public_key else {
-                anyhow::bail!("l-BFV public-key artifact has the wrong role");
-            };
-            let LbfvKeyShareDocument::RelinearizationKeyV1(rlk) = &rlk else {
-                anyhow::bail!("l-BFV relinearization-key artifact has the wrong role");
+            ensure!(
+                public_key.role() == e3_events::LbfvKeyShareDocumentRole::PublicKey,
+                "l-BFV public-key artifact has the wrong role"
+            );
+            ensure!(
+                rlk.role() == e3_events::LbfvKeyShareDocumentRole::RelinearizationKey,
+                "l-BFV relinearization-key artifact has the wrong role"
+            );
+            let document_c1 = match &public_key {
+                LbfvKeyShareDocument::PublicKeyV1(document) => &document.signed_c1_proof,
+                LbfvKeyShareDocument::PublicKeyV2(document) => &document.signed_c1_proof,
+                _ => unreachable!("the public-key role was checked above"),
             };
             ensure!(
-                public_key.signed_c1_proof.payload == expected_c1.payload,
+                document_c1.payload == expected_c1.payload,
                 "l-BFV document C1 payload does not match KeyshareCreated"
             );
-            e3_zk_prover::validate_lbfv_key_share_document_commitments(preset, public_key, rlk)
+            e3_zk_prover::validate_lbfv_key_share_document_commitments_dynamic(
+                preset,
+                &public_key,
+                &rlk,
+            )
         })();
 
         let mut updated = state.clone();

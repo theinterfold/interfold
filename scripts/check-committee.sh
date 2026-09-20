@@ -211,7 +211,7 @@ check_bfv_preset() {
 
   rust_degree=$(grep -E '^[[:space:]]*pub const DEGREE: usize = [0-9]+;' <<< "$rust_block" | sed -E 's/.*= ([0-9]+);/\1/' | head -n1)
   rust_plaintext=$(grep -E 'PLAINTEXT_MODULUS: u64 = [0-9]+;' <<< "$rust_threshold" | sed -E 's/.*= ([0-9]+);/\1/')
-  rust_moduli=$(grep -oE '0x[0-9a-fA-F]+' <<< "$rust_threshold" | tr '[:upper:]' '[:lower:]' | paste -sd, -)
+  rust_moduli=$(grep -oE '0x[0-9a-fA-F_]+' <<< "$rust_threshold" | tr -d '_' | tr '[:upper:]' '[:lower:]' | paste -sd, -)
   rust_error=$(grep -E 'ERROR1_VARIANCE: &str = "[0-9]+";' <<< "$rust_threshold" | sed -E 's/.*"([0-9]+)".*/\1/')
 
   if [[ "$ts_degree" != "$rust_degree" || "$ts_plaintext" != "$rust_plaintext" || \
@@ -232,7 +232,7 @@ check_bfv_preset() {
   fi
 }
 
-check_bfv_preset insecure insecure512 insecure_512 insecure
+check_bfv_preset insecure insecure insecure insecure
 check_bfv_preset secure-8192 secure8192 secure_8192 secure_8192
 check_bfv_preset secure-16384 secure16384 secure_16384 secure_16384
 

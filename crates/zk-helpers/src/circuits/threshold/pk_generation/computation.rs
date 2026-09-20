@@ -19,13 +19,11 @@ use crate::threshold::pk_generation::circuit::PkGenerationCircuitData;
 use crate::threshold::pk_generation::utils::deterministic_crp_crt_polynomial;
 use crate::CircuitsErrors;
 use crate::{CircuitComputation, Computation};
-use e3_fhe_params::build_pair_for_preset;
 use e3_fhe_params::BfvPreset;
+use e3_fhe_params::{build_pair_for_preset, calculate_smudging_bound};
 use e3_polynomial::CrtPolynomial;
 use e3_polynomial::Polynomial;
 use fhe::bfv::SecretKey;
-use fhe::trbfv::SmudgingBoundCalculator;
-use fhe::trbfv::SmudgingBoundCalculatorConfig;
 use itertools::izip;
 use num_bigint::BigInt;
 use num_bigint::BigUint;
@@ -194,16 +192,14 @@ impl Computation for Bounds {
         let lambda = preset
             .lambda()
             .map_err(|e| CircuitsErrors::Other(e.to_string()))?;
-        let smudging_config = SmudgingBoundCalculatorConfig::new_multiplicative(
+        let e_sm_bound = calculate_smudging_bound(
             threshold_params.clone(),
             committee_n,
             sd.z as usize,
             sd.mult_depth,
             lambda,
         )
-        .map_err(|e| CircuitsErrors::Other(format!("Failed to create smudging config: {:?}", e)))?;
-        let smudging_calculator = SmudgingBoundCalculator::new(smudging_config);
-        let e_sm_bound = smudging_calculator.calculate_sm_bound().map_err(|e| {
+        .map_err(|e| {
             CircuitsErrors::Other(format!("Failed to calculate smudging bound: {:?}", e))
         })?;
 

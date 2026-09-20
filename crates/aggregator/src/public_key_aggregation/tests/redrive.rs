@@ -61,7 +61,12 @@ fn fold_row_zero_ready(
     proof_domain: e3_committee_hash::LbfvProofDomainContext,
     fold_correlation: Option<CorrelationId>,
 ) -> Result<LbfvAggregationStateV1> {
-    let mut aggregation = LbfvAggregationStateV1::new(e3_id.clone(), proof_domain, vec![0, 1])?;
+    let mut aggregation = LbfvAggregationStateV1::new(
+        e3_id.clone(),
+        proof_domain,
+        vec![0, 1],
+        BfvPreset::SecureThreshold16384,
+    )?;
     aggregation.record_public_key_proof(0, dummy_proof(CircuitName::PkAggregation))?;
     aggregation.record_rlk_proof(0, dummy_proof(CircuitName::PkAggregation))?;
     if let Some(correlation) = fold_correlation {

@@ -1004,7 +1004,6 @@ mod tests {
 
     #[test]
     fn adapter_rejects_presets_without_lbfv() {
-        assert!(RlkGenerationAdapter::new(BfvPreset::InsecureThreshold512).is_err());
         assert!(RlkGenerationAdapter::new(BfvPreset::SecureThreshold8192).is_err());
     }
 

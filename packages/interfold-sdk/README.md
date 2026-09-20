@@ -50,7 +50,7 @@ const sdk = new InterfoldSDK({
   },
   chain: sepolia,
   // Match the parameter set selected by the target E3.
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_128',
 })
 
 // Listen to events with the unified event system
@@ -68,7 +68,7 @@ const requestParams = {
   committeeSize: CommitteeSize.Minimum,
   inputWindow: [now, now + 300n] as const,
   e3Program: '0x...',
-  paramSet: 0, // Insecure512 for development
+  paramSet: 0, // Insecure128 for development
   computeProviderParams: '0x...',
   customParams: '0x...',
 }
@@ -96,7 +96,7 @@ const sdk = InterfoldSDK.create({
   chain: sepolia,
   privateKey: '0x...', // optional — omit for read-only
   // Match the parameter set selected by the target E3.
-  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+  thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_128',
 })
 ```
 
@@ -242,8 +242,8 @@ function MyComponent() {
       feeToken: '0x...',
     },
     autoConnect: true,
-    // 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
-    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+    // 'INSECURE_THRESHOLD_128' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+    thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_128',
   })
 
   useEffect(() => {
@@ -305,8 +305,8 @@ import {
   getThresholdBfvParamsSet,
 } from '@interfold/sdk'
 
-// 'INSECURE_THRESHOLD_512' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
-const presetName = 'INSECURE_THRESHOLD_512'
+// 'INSECURE_THRESHOLD_128' for local dev and Sepolia; 'SECURE_THRESHOLD_8192' for production
+const presetName = 'INSECURE_THRESHOLD_128'
 
 const publicKey = await generatePublicKey(presetName)
 const encrypted = await encryptNumber(42n, publicKey, presetName)
@@ -492,17 +492,17 @@ on-chain `paramSet` index registered in the Interfold contract:
 
 | Preset name                | On-chain `paramSet` index | Use case                                                                 |
 | -------------------------- | ------------------------- | ------------------------------------------------------------------------ |
-| `'INSECURE_THRESHOLD_512'` | `0`                       | Fast local or testnet work. This preset is not cryptographically secure. |
+| `'INSECURE_THRESHOLD_128'` | `0`                       | Fast local or testnet work. This preset is not cryptographically secure. |
 | `'SECURE_THRESHOLD_8192'`  | `1`                       | Production-equivalent work with degree 8192 and three ciphertext moduli. |
 
 | Network           | Supported presets                                        |
 | ----------------- | -------------------------------------------------------- |
-| Local development | `'INSECURE_THRESHOLD_512'` and `'SECURE_THRESHOLD_8192'` |
-| Sepolia testnet   | `'INSECURE_THRESHOLD_512'` and `'SECURE_THRESHOLD_8192'` |
+| Local development | `'INSECURE_THRESHOLD_128'` and `'SECURE_THRESHOLD_8192'` |
+| Sepolia testnet   | `'INSECURE_THRESHOLD_128'` and `'SECURE_THRESHOLD_8192'` |
 | Ethereum mainnet  | `'SECURE_THRESHOLD_8192'` only                           |
 
 Use the preset that the target E3 selects. This package includes proof artifacts only for
-`'INSECURE_THRESHOLD_512'`. For secure proof generation, use matching application artifacts such as
+`'INSECURE_THRESHOLD_128'`. For secure proof generation, use matching application artifacts such as
 the `@crisp-e3/sdk/secure-8192` entry point, or compile your own artifacts.
 
 ### Proving: embedded circuits or your own
@@ -510,7 +510,7 @@ the `@crisp-e3/sdk/secure-8192` entry point, or compile your own artifacts.
 `generateProof()`, `encryptNumberAndGenProof()`, and `encryptVectorAndGenProof()` run the
 user-data-encryption (UDE) circuits bundled in this package. Those artifacts are compiled with
 `--preset insecure --committee minimum` (`scripts/compile-circuits.sh`), so they only match
-`'INSECURE_THRESHOLD_512'` and a minimum-size committee. With `'SECURE_THRESHOLD_8192'`,
+`'INSECURE_THRESHOLD_128'` and a minimum-size committee. With `'SECURE_THRESHOLD_8192'`,
 `encryptNumberAndGenInputs()` returns N=8192 circuit inputs that the bundled N=512 circuits cannot
 execute.
 

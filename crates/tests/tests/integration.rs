@@ -242,6 +242,10 @@ fn uses_dist_preset_artifacts(preset_subdir: &str, committee_str: &str) -> bool 
         .exists()
 }
 
+fn uses_lbfv_artifacts(preset_subdir: &str) -> bool {
+    matches!(preset_subdir, "insecure" | "secure-16384")
+}
+
 /// Preset stamp path — under the new layout each `{preset}/{committee}` dir has its own stamp.
 fn resolve_preset_stamp_path(preset_subdir: &str, committee_str: &str) -> PathBuf {
     if uses_dist_preset_artifacts(preset_subdir, committee_str) {
@@ -444,8 +448,12 @@ async fn write_local_lbfv_checksum_manifest(
     Ok(())
 }
 
-async fn validate_secure_v2_fixture(backend: &ZkBackend, committee: &str) -> Result<()> {
-    let artifacts_dir = format!("secure-16384/{committee}");
+async fn validate_lbfv_v2_fixture(
+    backend: &ZkBackend,
+    preset_subdir: &str,
+    committee: &str,
+) -> Result<()> {
+    let artifacts_dir = format!("{preset_subdir}/{committee}");
     let required_circuits = [
         ("recursive/threshold", "lbfv_pk_generation"),
         ("recursive/threshold", "lbfv_pk_generation_limb"),
@@ -480,10 +488,10 @@ async fn validate_secure_v2_fixture(backend: &ZkBackend, committee: &str) -> Res
             let path = circuit_dir.join(format!("{circuit}.{extension}"));
             let metadata = tokio::fs::metadata(&path)
                 .await
-                .with_context(|| format!("secure V2 fixture is missing {}", path.display()))?;
+                .with_context(|| format!("l-BFV V2 fixture is missing {}", path.display()))?;
             anyhow::ensure!(
                 metadata.is_file() && metadata.len() > 0,
-                "secure V2 fixture artifact is empty: {}",
+                "l-BFV V2 fixture artifact is empty: {}",
                 path.display()
             );
         }
@@ -491,9 +499,9 @@ async fn validate_secure_v2_fixture(backend: &ZkBackend, committee: &str) -> Res
 
     let prover = ZkProver::new(backend);
     load_staged_lbfv_pk_generation_limb_vk_hash(&prover, &artifacts_dir)
-        .context("validate the secure V2 public-key limb VK checksum")?;
+        .context("validate the l-BFV V2 public-key limb VK checksum")?;
     load_staged_rlk_generation_limb_vk_hash(&prover, &artifacts_dir)
-        .context("validate the secure V2 RLK limb VK checksum")?;
+        .context("validate the l-BFV V2 RLK limb VK checksum")?;
     Ok(())
 }
 
@@ -571,8 +579,8 @@ async fn setup_test_zk_backend(
                 .ensure_installed()
                 .await
                 .context("download ZK circuits for integration tests")?;
-            if preset_subdir == "secure-16384" {
-                validate_secure_v2_fixture(&backend, committee_str).await?;
+            if uses_lbfv_artifacts(preset_subdir) {
+                validate_lbfv_v2_fixture(&backend, preset_subdir, committee_str).await?;
             }
             return Ok((backend, temp));
         } else {
@@ -830,7 +838,7 @@ async fn setup_test_zk_backend(
             )
             .await?;
 
-            if preset_subdir == "secure-16384" {
+            if uses_lbfv_artifacts(preset_subdir) {
                 for (target, name) in [
                     (&threshold_lbfv_pk_generation_target, "lbfv_pk_generation"),
                     (
@@ -999,7 +1007,7 @@ async fn setup_test_zk_backend(
             )
             .await?;
 
-            if preset_subdir == "secure-16384" {
+            if uses_lbfv_artifacts(preset_subdir) {
                 for (target, name) in [
                     (&lbfv_generation_fold_target, "lbfv_generation_fold"),
                     (
@@ -1059,7 +1067,7 @@ async fn setup_test_zk_backend(
             )
             .await?;
 
-            if preset_subdir == "secure-16384" {
+            if uses_lbfv_artifacts(preset_subdir) {
                 copy_circuit(
                     &dkg_aggregator_v2_target,
                     &ev.join("recursive_aggregation/dkg_aggregator_v2"),
@@ -1072,14 +1080,14 @@ async fn setup_test_zk_backend(
         }
 
         let checksums_path = circuits_dir.join("checksums.json");
-        if !checksums_path.exists() && preset_subdir == "secure-16384" {
+        if !checksums_path.exists() && uses_lbfv_artifacts(preset_subdir) {
             write_local_lbfv_checksum_manifest(&circuits_dir, preset_subdir, committee_str).await?;
         }
 
         let backend = ZkBackend::new(BBPath::Default(bb_binary), circuits_dir, work_dir);
 
-        if preset_subdir == "secure-16384" {
-            validate_secure_v2_fixture(&backend, committee_str).await?;
+        if uses_lbfv_artifacts(preset_subdir) {
+            validate_lbfv_v2_fixture(&backend, preset_subdir, committee_str).await?;
         }
 
         // `CiphernodeBuilder` calls `ensure_installed()`, which deletes `circuits_dir` and downloads
@@ -1103,8 +1111,13 @@ async fn setup_test_zk_backend(
             .ensure_installed()
             .await
             .expect("Failed to download and install ZK backend");
-        if preset_subdir == "secure-16384" {
-            validate_secure_v2_fixture(&backend, active_committee(preset_subdir).as_str()).await?;
+        if uses_lbfv_artifacts(preset_subdir) {
+            validate_lbfv_v2_fixture(
+                &backend,
+                preset_subdir,
+                active_committee(preset_subdir).as_str(),
+            )
+            .await?;
         }
         Ok((backend, temp))
     }
@@ -1429,17 +1442,29 @@ fn publickey_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Optio
             Some("KeyshareCreated")
         }
         InterfoldEventData::ShareVerificationDispatched(data)
-            if data.e3_id == *e3_id && data.kind == VerificationKind::PkGenerationProofs =>
+            if data.e3_id == *e3_id
+                && matches!(
+                    data.kind,
+                    VerificationKind::PkGenerationProofs | VerificationKind::LbfvGenerationProofs
+                ) =>
         {
             Some("ShareVerificationDispatched")
         }
         InterfoldEventData::CommitmentConsistencyCheckRequested(data)
-            if data.e3_id == *e3_id && data.kind == VerificationKind::PkGenerationProofs =>
+            if data.e3_id == *e3_id
+                && matches!(
+                    data.kind,
+                    VerificationKind::PkGenerationProofs | VerificationKind::LbfvGenerationProofs
+                ) =>
         {
             Some("CommitmentConsistencyCheckRequested")
         }
         InterfoldEventData::CommitmentConsistencyCheckComplete(data)
-            if data.e3_id == *e3_id && data.kind == VerificationKind::PkGenerationProofs =>
+            if data.e3_id == *e3_id
+                && matches!(
+                    data.kind,
+                    VerificationKind::PkGenerationProofs | VerificationKind::LbfvGenerationProofs
+                ) =>
         {
             Some("CommitmentConsistencyCheckComplete")
         }
@@ -1449,7 +1474,11 @@ fn publickey_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Optio
             Some("ProofVerificationPassed")
         }
         InterfoldEventData::ShareVerificationComplete(data)
-            if data.e3_id == *e3_id && data.kind == VerificationKind::PkGenerationProofs =>
+            if data.e3_id == *e3_id
+                && matches!(
+                    data.kind,
+                    VerificationKind::PkGenerationProofs | VerificationKind::LbfvGenerationProofs
+                ) =>
         {
             Some("ShareVerificationComplete")
         }
@@ -1464,6 +1493,9 @@ fn publickey_aggregator_marker(data: &InterfoldEventData, e3_id: &E3id) -> Optio
         }
         InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == *e3_id => {
             Some("PublicKeyAggregated")
+        }
+        InterfoldEventData::LbfvPublicKeyAggregated(data) if data.e3_id == *e3_id => {
+            Some("LbfvPublicKeyAggregated")
         }
         _ => None,
     }
@@ -1699,6 +1731,7 @@ async fn test_trbfv_actor() -> Result<()> {
 
     // Parameters selected by benchmark mode.
     let benchmark_params = select_benchmark_params();
+    let is_lbfv = e3_fhe_params::supports_lbfv(benchmark_params.bfv_preset);
     let _env_guard = EnvTimeoutVarsGuard::new();
     if let Some((enc, threshold, dec_shared)) = benchmark_params.collection_timeout_secs {
         std::env::set_var("E3_ENCRYPTION_KEY_COLLECTION_TIMEOUT_SECS", enc.to_string());
@@ -2318,29 +2351,59 @@ async fn test_trbfv_actor() -> Result<()> {
         "PkAggregationProofSigned",
     ]);
 
-    // Gossip can duplicate KeyshareCreated; wait until PublicKeyAggregated rather than a fixed take count.
-    let h = nodes
-        .take_history_until_last_event(
+    // The legacy publication is gossiped to the observer. The l-BFV publication intent remains
+    // local to the active aggregator and reaches the registry writer from that node.
+    let publication_event_name = if is_lbfv {
+        "LbfvPublicKeyAggregated"
+    } else {
+        "PublicKeyAggregated"
+    };
+    let publication_node_index = if is_lbfv { active_aggregator_index } else { 0 };
+    let h = if is_lbfv {
+        wait_for_history_match(
+            &nodes,
+            publication_node_index,
             0,
-            "PublicKeyAggregated",
-            Some(pubkey_flow_timeout),
-            Some(pubkey_flow_timeout),
+            publication_event_name,
+            pubkey_flow_timeout,
+            |data| {
+                matches!(
+                    data,
+                    InterfoldEventData::LbfvPublicKeyAggregated(event) if event.e3_id == e3_id
+                )
+            },
         )
         .await
-        .map_err(|e| anyhow::anyhow!("FAILURE on node 0 pubkey flow: {e}"))?;
+    } else {
+        nodes
+            .take_history_until_last_event(
+                publication_node_index,
+                publication_event_name,
+                Some(pubkey_flow_timeout),
+                Some(pubkey_flow_timeout),
+            )
+            .await
+    }
+    .map_err(|e| {
+        anyhow::anyhow!(
+            "FAILURE on node {publication_node_index} public-key flow while waiting for {publication_event_name}: {e}"
+        )
+    })?;
     let actual_types = h.event_types();
-    println!("node 0 >> {:?}", actual_types);
+    println!("node {publication_node_index} >> {:?}", actual_types);
 
-    assert_eq!(
-        actual_types.first().map(String::as_str),
-        Some("AggregatorChanged"),
-        "node 0: first event must be AggregatorChanged"
-    );
-    assert_eq!(
-        actual_types.last().map(String::as_str),
-        Some("PublicKeyAggregated"),
-        "node 0: last event must be PublicKeyAggregated"
-    );
+    if !is_lbfv {
+        assert_eq!(
+            actual_types.first().map(String::as_str),
+            Some("AggregatorChanged"),
+            "node 0: first event must be AggregatorChanged"
+        );
+        assert_eq!(
+            actual_types.last().map(String::as_str),
+            Some(publication_event_name),
+            "node 0: last event must be {publication_event_name}"
+        );
+    }
 
     let dkg_parties: HashSet<u64> = h
         .iter()
@@ -2356,28 +2419,61 @@ async fn test_trbfv_actor() -> Result<()> {
             _ => None,
         })
         .collect();
-    // Observer gossip can arrive after PublicKeyAggregated. The aggregator
-    // must still collect all H selected folds before it publishes the key.
+    // Observer gossip can arrive after legacy publication. The aggregator must still collect all H
+    // selected folds before it publishes either publication intent.
     assert!(
         dkg_parties.len() <= threshold_n && dkg_parties.iter().all(|p| (*p as usize) < threshold_n),
-        "node 0: observed an invalid DKG fold before PublicKeyAggregated: {dkg_parties:?}"
+        "publication history contains an invalid DKG fold before {publication_event_name}: {dkg_parties:?}"
     );
     assert!(
         ks_parties.len() <= threshold_n && ks_parties.iter().all(|p| (*p as usize) < threshold_n),
-        "node 0: observed an invalid keyshare before PublicKeyAggregated: {ks_parties:?}"
+        "publication history contains an invalid keyshare before {publication_event_name}: {ks_parties:?}"
     );
-    let pk_agg = h
-        .iter()
-        .rev()
-        .find_map(|e| match e.get_data() {
-            InterfoldEventData::PublicKeyAggregated(d) => Some(d),
-            _ => None,
-        })
-        .expect("PublicKeyAggregated in history");
+    let (
+        publication_nodes_len,
+        publication_committee_addresses,
+        publication_honest_committee_addresses,
+        pubkey_bytes,
+        dkg_aggregator_proof,
+        dkg_attestation_bundle,
+    ) = if is_lbfv {
+        let publication = h
+            .iter()
+            .rev()
+            .find_map(|event| match event.get_data() {
+                InterfoldEventData::LbfvPublicKeyAggregated(data) => Some(data),
+                _ => None,
+            })
+            .expect("LbfvPublicKeyAggregated in active aggregator history");
+        (
+            publication.nodes.len(),
+            publication.committee_addresses.clone(),
+            publication.honest_committee_addresses.clone(),
+            publication.pubkey.clone(),
+            Some(publication.dkg_aggregator_v2_proof.clone()),
+            publication.dkg_attestation_bundle.clone(),
+        )
+    } else {
+        let publication = h
+            .iter()
+            .rev()
+            .find_map(|event| match event.get_data() {
+                InterfoldEventData::PublicKeyAggregated(data) => Some(data),
+                _ => None,
+            })
+            .expect("PublicKeyAggregated in observer history");
+        (
+            publication.nodes.len(),
+            publication.committee_addresses.clone(),
+            publication.honest_committee_addresses.clone(),
+            publication.pubkey.clone(),
+            publication.dkg_aggregator_proof.clone(),
+            publication.dkg_attestation_bundle.clone(),
+        )
+    };
     assert_eq!(
-        pk_agg.nodes.len(),
-        committee_h,
-        "PublicKeyAggregated must list H={committee_h} honest nodes"
+        publication_nodes_len, committee_h,
+        "{publication_event_name} must list H={committee_h} honest nodes"
     );
 
     let active_aggregator_history = nodes.get_history(active_aggregator_index).await?;
@@ -2444,9 +2540,9 @@ async fn test_trbfv_actor() -> Result<()> {
     }
     let selected_addresses: Vec<Address> = accepted_rosters[0]
         .iter()
-        .map(|&party_id| pk_agg.committee_addresses[party_id as usize])
+        .map(|&party_id| publication_committee_addresses[party_id as usize])
         .collect();
-    assert_eq!(selected_addresses, pk_agg.honest_committee_addresses);
+    assert_eq!(selected_addresses, publication_honest_committee_addresses);
     let active_aggregator_pubkey_history_len = active_aggregator_history.len();
     let mut expected_active_aggregator_pubkey_events = vec![
         "CommitteeFinalized",
@@ -2454,7 +2550,7 @@ async fn test_trbfv_actor() -> Result<()> {
         "AggregatorChanged",
     ];
     expected_active_aggregator_pubkey_events.extend_from_slice(&active_aggregator_c1_c5);
-    expected_active_aggregator_pubkey_events.push("PublicKeyAggregated");
+    expected_active_aggregator_pubkey_events.push(publication_event_name);
 
     // The active aggregator is also a selected committee member, so its node history contains
     // local ThresholdKeyshare DKG work in addition to the public-key aggregation stage. Project
@@ -2492,8 +2588,8 @@ async fn test_trbfv_actor() -> Result<()> {
     );
     assert_eq!(
         active_aggregator_pubkey_events.last().copied(),
-        Some("PublicKeyAggregated"),
-        "Active aggregator: last event must be PublicKeyAggregated"
+        Some(publication_event_name),
+        "Active aggregator: last public-key event must be {publication_event_name}"
     );
 
     if let Some(secs) = history_wall_seconds_between(
@@ -2504,23 +2600,35 @@ async fn test_trbfv_actor() -> Result<()> {
                 InterfoldEventData::PkAggregationProofPending(data) if data.e3_id == e3_id
             )
         },
-        |d| matches!(d, InterfoldEventData::PublicKeyAggregated(data) if data.e3_id == e3_id),
+        |data| {
+            if is_lbfv {
+                matches!(
+                    data,
+                    InterfoldEventData::LbfvPublicKeyAggregated(event) if event.e3_id == e3_id
+                )
+            } else {
+                matches!(
+                    data,
+                    InterfoldEventData::PublicKeyAggregated(event) if event.e3_id == e3_id
+                )
+            }
+        },
     ) {
         report.push_wall(
-            "Aggregator P2: PkAggregation pending -> PublicKeyAggregated (wall)",
+            &format!("Aggregator P2: PkAggregation pending -> {publication_event_name} (wall)"),
             Duration::from_secs_f64(secs),
         );
     }
 
     report.push_wall(
-        "ThresholdShares -> PublicKeyAggregated",
+        &format!("ThresholdShares -> {publication_event_name}"),
         shares_to_pubkey_agg_timer.elapsed(),
     );
 
-    report.push((
-        "E3Request -> PublicKeyAggregated",
+    report.push_wall(
+        &format!("E3Request -> {publication_event_name}"),
         e3_requested_timer.elapsed(),
-    ));
+    );
     if let Some(requested_party_id) = (!restart_during_dkg)
         .then(|| std::env::var("BENCHMARK_RESTART_PARTY_ID").ok())
         .flatten()
@@ -2592,30 +2700,17 @@ async fn test_trbfv_actor() -> Result<()> {
     }
     let app_gen_timer = Instant::now();
 
-    // First we get the public key from the collector-visible gossip event.
+    // Use the public key from the publication event selected above.
     println!("Getting public key");
-    let Some(pubkey_event) = h.iter().rev().find_map(|event| match event.get_data() {
-        InterfoldEventData::PublicKeyAggregated(data) => Some(data.clone()),
-        _ => None,
-    }) else {
-        panic!(
-            "Was expecting collector history to contain PublicKeyAggregated, got: {:?}",
-            h.event_types()
-        );
-    };
-
-    let pubkey_bytes = pubkey_event.pubkey.clone();
-    let dkg_aggregator_proof = pubkey_event.dkg_aggregator_proof.clone();
     assert!(
         dkg_aggregator_proof.is_some(),
-        "PublicKeyAggregated must always carry a final DKG proof payload"
+        "{publication_event_name} must carry a final DKG proof payload"
     );
     assert!(
-        pubkey_event
-            .dkg_attestation_bundle
+        dkg_attestation_bundle
             .as_ref()
             .is_some_and(|bundle| !bundle.is_empty()),
-        "PublicKeyAggregated must always carry a non-empty DKG attestation payload"
+        "{publication_event_name} must carry a non-empty DKG attestation payload"
     );
 
     let pubkey = PublicKey::from_bytes(&pubkey_bytes, &params_raw)?;

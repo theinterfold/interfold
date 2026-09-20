@@ -191,7 +191,6 @@ pub enum ThresholdFailureKind {
     ShareCountMismatch,
     MalformedShares,
     NonInvertibleShares,
-    InsecureLambda,
     SmudgingBoundInfeasible,
     PartyCountExceedsModulus,
 }
@@ -225,9 +224,10 @@ impl ThresholdFailure {
             TE::InvalidThreshold { .. } => (K::InvalidThreshold, None),
             TE::ShareCountMismatch { .. } => (K::ShareCountMismatch, None),
             TE::NonInvertibleShares => (K::NonInvertibleShares, None),
-            TE::InsecureLambda { .. } => (K::InsecureLambda, None),
             TE::SmudgingBoundInfeasible { .. } => (K::SmudgingBoundInfeasible, None),
             TE::PartyCountExceedsModulus { .. } => (K::PartyCountExceedsModulus, None),
+            TE::InvalidShamirThreshold { .. } => (K::InvalidThreshold, None),
+            TE::EmptyBatchInversion => (K::NonInvertibleShares, None),
         };
         Self {
             kind,

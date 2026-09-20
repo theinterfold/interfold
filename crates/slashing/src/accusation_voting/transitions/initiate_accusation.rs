@@ -107,10 +107,7 @@ impl AccusationVoting {
             return Vec::new();
         }
 
-        if (!data.proof_type.is_multirow() && data.proof_instance != 0)
-            || (data.proof_type.is_multirow()
-                && data.proof_instance >= ProofType::LBFV_ROW_INSTANCES)
-        {
+        if !data.proof_type.is_multirow() && data.proof_instance != 0 {
             warn!("Ignoring commitment violation with an invalid proof instance");
             return Vec::new();
         }

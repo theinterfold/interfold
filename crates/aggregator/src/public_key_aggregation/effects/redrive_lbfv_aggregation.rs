@@ -23,7 +23,6 @@
 //! request produces the accepted response.
 
 use super::super::*;
-use crate::LBFV_ROW_COUNT;
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -100,6 +99,7 @@ impl PublicKeyAggregator {
         if aggregation.is_failed() {
             return Ok(());
         }
+        let row_count = aggregation.row_count()?;
         let now = self.lbfv_retry_clock.now_unix_secs();
         // Causal context for a correlation that was dispatched without
         // bookkeeping: prefer the sidecar's own last context, then the
@@ -134,7 +134,7 @@ impl PublicKeyAggregator {
                 }
             }
         };
-        for row in 0..LBFV_ROW_COUNT {
+        for row in 0..row_count {
             check(
                 aggregation.public_key_aggregation_correlations[row],
                 LBFV_ROW_CORRELATION_TIMEOUT_SECS,
@@ -172,7 +172,7 @@ impl PublicKeyAggregator {
         let mut cleared_sidecar = false;
         for (correlation, _) in &timed_out {
             let mut cleared = false;
-            for row in 0..LBFV_ROW_COUNT as u32 {
+            for row in 0..row_count as u32 {
                 if aggregation.public_key_aggregation_correlations[row as usize]
                     == Some(*correlation)
                 {

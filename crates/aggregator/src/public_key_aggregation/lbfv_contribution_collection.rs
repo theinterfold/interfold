@@ -20,10 +20,11 @@ use e3_events::{
     LbfvKeyShareDocumentFetchRequestedV1, LbfvKeyShareDocumentReceived, LbfvKeyShareDocumentRole,
     LbfvKeyShareManifest, SignedLbfvKeyShareManifest,
 };
+use e3_fhe_params::{lbfv_row_count, BfvPreset};
 use e3_zk_helpers::CiphernodesCommitteeSize;
 use serde::{Deserialize, Serialize};
 
-pub const LBFV_CONTRIBUTION_COLLECTION_SCHEMA_VERSION: u32 = 1;
+pub const LBFV_CONTRIBUTION_COLLECTION_SCHEMA_VERSION: u32 = 2;
 
 /// The collection phase for one E3 proof session.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -129,7 +130,7 @@ impl Default for LbfvPartyContributionStateV1 {
 }
 
 /// Version 1 collection sidecar for one l-BFV proof session.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LbfvContributionCollectionStateV1 {
     pub schema_version: u32,
     pub e3_id: E3id,
@@ -139,6 +140,120 @@ pub struct LbfvContributionCollectionStateV1 {
     pub committee_h: u32,
     pub parties: BTreeMap<u32, LbfvPartyContributionStateV1>,
     pub verification: LbfvContributionVerificationStateV1,
+    pub params_preset: BfvPreset,
+}
+
+impl Serialize for LbfvContributionCollectionStateV1 {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("LbfvContributionCollectionStateV1", 9)?;
+        state.serialize_field("schema_version", &self.schema_version)?;
+        state.serialize_field("e3_id", &self.e3_id)?;
+        state.serialize_field("proof_domain", &self.proof_domain)?;
+        state.serialize_field("proof_session_id", &self.proof_session_id)?;
+        state.serialize_field("committee", &self.committee)?;
+        state.serialize_field("committee_h", &self.committee_h)?;
+        state.serialize_field("parties", &self.parties)?;
+        state.serialize_field("verification", &self.verification)?;
+        state.serialize_field("params_preset", &Some(self.params_preset))?;
+        state.end()
+    }
+}
+
+impl<'de> Deserialize<'de> for LbfvContributionCollectionStateV1 {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct CollectionVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for CollectionVisitor {
+            type Value = LbfvContributionCollectionStateV1;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a versioned l-BFV contribution collection")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                use serde::de::Error;
+                let schema_version = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV collection schema version"))?;
+                if !matches!(
+                    schema_version,
+                    1 | LBFV_CONTRIBUTION_COLLECTION_SCHEMA_VERSION
+                ) {
+                    return Err(A::Error::custom(format!(
+                        "unsupported l-BFV contribution collection schema version {schema_version}"
+                    )));
+                }
+                let e3_id = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV collection E3 ID"))?;
+                let proof_domain = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV collection proof domain"))?;
+                let proof_session_id = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV collection session"))?;
+                let committee = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV collection committee"))?;
+                let committee_h = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV collection H"))?;
+                let parties = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV collection parties"))?;
+                let verification = sequence.next_element()?.ok_or_else(|| {
+                    A::Error::custom("missing l-BFV collection verification state")
+                })?;
+                let params_preset = if schema_version == 1 {
+                    BfvPreset::SecureThreshold16384
+                } else {
+                    sequence
+                        .next_element::<Option<BfvPreset>>()?
+                        .flatten()
+                        .ok_or_else(|| {
+                            A::Error::custom("missing l-BFV collection parameter preset")
+                        })?
+                };
+                Ok(LbfvContributionCollectionStateV1 {
+                    schema_version: LBFV_CONTRIBUTION_COLLECTION_SCHEMA_VERSION,
+                    e3_id,
+                    proof_domain,
+                    proof_session_id,
+                    committee,
+                    committee_h,
+                    parties,
+                    verification,
+                    params_preset,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "LbfvContributionCollectionStateV1",
+            &[
+                "schema_version",
+                "e3_id",
+                "proof_domain",
+                "proof_session_id",
+                "committee",
+                "committee_h",
+                "parties",
+                "verification",
+                "params_preset",
+            ],
+            CollectionVisitor,
+        )
+    }
 }
 
 /// Result of manifest admission.
@@ -175,6 +290,7 @@ impl LbfvContributionCollectionStateV1 {
         proof_domain: LbfvProofDomainContext,
         committee: Vec<Address>,
         committee_h: usize,
+        params_preset: BfvPreset,
     ) -> Result<Self> {
         let committee_h = u32::try_from(committee_h)
             .map_err(|_| anyhow!("l-BFV committee H does not fit the collection schema"))?;
@@ -194,6 +310,7 @@ impl LbfvContributionCollectionStateV1 {
             committee_h,
             parties,
             verification: LbfvContributionVerificationStateV1::Collecting,
+            params_preset,
         };
         state.validate_loaded()?;
         Ok(state)
@@ -206,6 +323,10 @@ impl LbfvContributionCollectionStateV1 {
             self.schema_version
         );
         self.validate_context()?;
+        ensure!(
+            lbfv_row_count(self.params_preset).is_some(),
+            "l-BFV collection uses a preset without l-BFV parameters"
+        );
         CiphernodesCommitteeSize::from_n_h(self.committee.len(), self.committee_h as usize)?;
         ensure!(
             validate_and_hash_finalized_committee(&self.committee, self.committee.len())
@@ -1058,6 +1179,21 @@ pub(crate) mod tests {
     use e3_utils::ArcBytes;
     use e3_zk_helpers::FIELD_BYTE_LEN;
 
+    const LEGACY_COLLECTION_STATE: &[u8] =
+        include_bytes!("fixtures/lbfv_contribution_collection_state_v1.bincode");
+
+    #[derive(Serialize)]
+    struct LegacyLbfvContributionCollectionStateV1 {
+        schema_version: u32,
+        e3_id: E3id,
+        proof_domain: LbfvProofDomainContext,
+        proof_session_id: B256,
+        committee: Vec<Address>,
+        committee_h: u32,
+        parties: BTreeMap<u32, LbfvPartyContributionStateV1>,
+        verification: LbfvContributionVerificationStateV1,
+    }
+
     pub(crate) struct Fixture {
         pub state: LbfvContributionCollectionStateV1,
         pub signers: Vec<PrivateKeySigner>,
@@ -1081,10 +1217,47 @@ pub(crate) mod tests {
             key_level: 0,
         };
         Fixture {
-            state: LbfvContributionCollectionStateV1::new(e3_id, proof_domain, committee, 2)
-                .unwrap(),
+            state: LbfvContributionCollectionStateV1::new(
+                e3_id,
+                proof_domain,
+                committee,
+                2,
+                BfvPreset::SecureThreshold16384,
+            )
+            .unwrap(),
             signers: signers.into(),
         }
+    }
+
+    fn legacy_state() -> LegacyLbfvContributionCollectionStateV1 {
+        let state = fixture().state;
+        LegacyLbfvContributionCollectionStateV1 {
+            schema_version: 1,
+            e3_id: state.e3_id,
+            proof_domain: state.proof_domain,
+            proof_session_id: state.proof_session_id,
+            committee: state.committee,
+            committee_h: state.committee_h,
+            parties: state.parties,
+            verification: state.verification,
+        }
+    }
+
+    #[test]
+    fn legacy_collection_fixture_migrates_to_schema_two() {
+        assert_eq!(
+            bincode::serialize(&legacy_state()).unwrap(),
+            LEGACY_COLLECTION_STATE
+        );
+
+        let restored: LbfvContributionCollectionStateV1 =
+            bincode::deserialize(LEGACY_COLLECTION_STATE).unwrap();
+        assert_eq!(
+            restored.schema_version,
+            LBFV_CONTRIBUTION_COLLECTION_SCHEMA_VERSION
+        );
+        assert_eq!(restored.params_preset, BfvPreset::SecureThreshold16384);
+        restored.validate_loaded().unwrap();
     }
 
     fn context(
@@ -1206,9 +1379,9 @@ pub(crate) mod tests {
             |domain: u8, row: usize| B256::repeat_byte(domain + (party_id as u8 * 16) + row as u8);
         LbfvAcceptedPartyCommitments {
             party_id,
-            pk_generation_commitments: std::array::from_fn(|row| commitment(1, row)),
-            rlk_d0_commitments: std::array::from_fn(|row| commitment(6, row)),
-            rlk_d2_commitments: std::array::from_fn(|row| commitment(11, row)),
+            pk_generation_commitments: (0..5).map(|row| commitment(1, row)).collect(),
+            rlk_d0_commitments: (0..5).map(|row| commitment(6, row)).collect(),
+            rlk_d2_commitments: (0..5).map(|row| commitment(11, row)).collect(),
         }
     }
 
@@ -1599,7 +1772,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn v1_schema_fixture_has_stable_hash() {
+    fn v2_schema_fixture_has_stable_hash() {
         let fixture = fixture();
         let mut state = fixture.state.clone();
         let (public_key, relinearization_key, manifest) = bundle(&fixture, 0);
@@ -1635,7 +1808,7 @@ pub(crate) mod tests {
         let encoded = bincode::serialize(&state).unwrap();
         assert_eq!(
             keccak256(&encoded),
-            "0xc7df1c415092cc5cf636dd47d4917c0df100b14ef5ed405116d63bba77f349b5"
+            "0x3df12da6ef7908e55089b39a29b54951932245b379155ea80f7f7eb9481d5c70"
                 .parse::<B256>()
                 .unwrap()
         );

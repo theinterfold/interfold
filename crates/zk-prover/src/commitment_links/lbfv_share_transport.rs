@@ -8,48 +8,84 @@
 
 use anyhow::{ensure, Result};
 use e3_events::{
-    LbfvAcceptedPartyCommitments, LbfvPublicKeyShareDocumentV1,
-    LbfvRelinearizationKeyShareDocumentV1, ProofIdentity, ProofType, SignedProofPayload,
+    LbfvAcceptedPartyCommitments, LbfvKeyShareDocument, ProofIdentity, ProofType,
+    SignedProofPayload,
 };
 use e3_fhe_params::BfvPreset;
 use e3_zk_helpers::validate_lbfv_serialized_share_commitments;
 
-/// Recompute all PK, RLK d0, and RLK d2 row commitments from two V1 documents.
+/// Recompute all PK, RLK d0, and RLK d2 row commitments from two documents.
 ///
 /// The caller must first validate both transport documents. This function does not validate
 /// signatures, verify proofs, or access the DHT.
 pub fn validate_lbfv_key_share_document_commitments(
     preset: BfvPreset,
-    public_key: &LbfvPublicKeyShareDocumentV1,
-    rlk: &LbfvRelinearizationKeyShareDocumentV1,
+    public_key: &e3_events::LbfvPublicKeyShareDocumentV1,
+    rlk: &e3_events::LbfvRelinearizationKeyShareDocumentV1,
 ) -> Result<LbfvAcceptedPartyCommitments> {
+    validate_lbfv_key_share_document_commitments_dynamic(
+        preset,
+        &LbfvKeyShareDocument::PublicKeyV1(public_key.clone()),
+        &LbfvKeyShareDocument::RelinearizationKeyV1(rlk.clone()),
+    )
+}
+
+/// Recompute commitments from either the legacy or dynamic transport shape.
+pub fn validate_lbfv_key_share_document_commitments_dynamic(
+    preset: BfvPreset,
+    public_key: &LbfvKeyShareDocument,
+    rlk: &LbfvKeyShareDocument,
+) -> Result<LbfvAcceptedPartyCommitments> {
+    let (public_key_context, public_key_share, public_key_proofs) = match public_key {
+        LbfvKeyShareDocument::PublicKeyV1(document) => (
+            &document.context,
+            &document.share,
+            document.signed_row_proofs.as_slice(),
+        ),
+        LbfvKeyShareDocument::PublicKeyV2(document) => (
+            &document.context,
+            &document.share,
+            document.signed_row_proofs.as_slice(),
+        ),
+        _ => anyhow::bail!("l-BFV commitment input has the wrong public-key role"),
+    };
+    let (rlk_context, rlk_share, rlk_proofs) = match rlk {
+        LbfvKeyShareDocument::RelinearizationKeyV1(document) => (
+            &document.context,
+            &document.share,
+            document.signed_row_proofs.as_slice(),
+        ),
+        LbfvKeyShareDocument::RelinearizationKeyV2(document) => (
+            &document.context,
+            &document.share,
+            document.signed_row_proofs.as_slice(),
+        ),
+        _ => anyhow::bail!("l-BFV commitment input has the wrong RLK role"),
+    };
     ensure!(
-        public_key.context == rlk.context,
+        public_key_context == rlk_context,
         "l-BFV PK and RLK document contexts do not match"
     );
     let public_key_row_signals =
-        ordered_row_signals(&public_key.signed_row_proofs, ProofType::LbfvPkGeneration)?;
-    let rlk_row_signals = ordered_row_signals(&rlk.signed_row_proofs, ProofType::RlkGeneration)?;
+        ordered_row_signals(public_key_proofs, ProofType::LbfvPkGeneration)?;
+    let rlk_row_signals = ordered_row_signals(rlk_proofs, ProofType::RlkGeneration)?;
     let commitments = validate_lbfv_serialized_share_commitments(
         preset,
-        &public_key.share,
-        &rlk.share,
+        public_key_share,
+        rlk_share,
         &public_key_row_signals,
         &rlk_row_signals,
     )?;
 
     Ok(LbfvAcceptedPartyCommitments {
-        party_id: public_key.context.party_id,
+        party_id: public_key.context().party_id,
         pk_generation_commitments: commitments.pk_generation_commitments,
         rlk_d0_commitments: commitments.rlk_d0_commitments,
         rlk_d2_commitments: commitments.rlk_d2_commitments,
     })
 }
 
-fn ordered_row_signals(
-    proofs: &[SignedProofPayload; ProofType::LBFV_ROW_INSTANCES as usize],
-    proof_type: ProofType,
-) -> Result<Vec<&[u8]>> {
+fn ordered_row_signals(proofs: &[SignedProofPayload], proof_type: ProofType) -> Result<Vec<&[u8]>> {
     proofs
         .iter()
         .enumerate()

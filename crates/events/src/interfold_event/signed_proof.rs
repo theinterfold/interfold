@@ -180,11 +180,6 @@ impl ProofType {
             "row_index public input does not fit u32"
         );
         let instance = u32::from_be_bytes(row[28..].try_into().expect("four-byte u32 suffix"));
-        ensure!(
-            instance < Self::LBFV_ROW_INSTANCES,
-            "row_index {instance} is outside 0..{}",
-            Self::LBFV_ROW_INSTANCES
-        );
         Ok(instance)
     }
 

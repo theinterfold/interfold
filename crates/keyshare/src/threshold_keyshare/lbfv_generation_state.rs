@@ -19,22 +19,21 @@ use e3_committee_hash::{
 use e3_events::{
     CiphernodeSelected, LbfvKeyShareDocument, LbfvKeyShareDocumentContextV1, LbfvKeyShareManifest,
     LbfvKeyShareManifestV1, LbfvPkGenerationProofRequest, LbfvPkGenerationProofResponse,
-    LbfvPublicKeyShareDocumentV1, LbfvRelinearizationKeyShareDocumentV1, ProofIdentity, ProofType,
+    LbfvPublicKeyShareDocumentV2, LbfvRelinearizationKeyShareDocumentV2, ProofIdentity, ProofType,
     RlkGenerationProofRequest, RlkGenerationProofResponse, SignedLbfvKeyShareManifest,
     SignedProofPayload, ZkRequest,
 };
-use e3_fhe_params::{BfvPreset, LBFV_CONSTANTS_VERSION};
+use e3_fhe_params::{lbfv_row_count, supports_lbfv, BfvPreset, LBFV_CONSTANTS_VERSION};
 use e3_trbfv::{
     gen_lbfv_key_shares::{GenLbfvKeySharesRequest, GenLbfvKeySharesResponse},
     lbfv_operation::LbfvOperationId,
 };
 
-pub const LBFV_GENERATION_SCHEMA_VERSION: u32 = 1;
+pub const LBFV_GENERATION_SCHEMA_VERSION: u32 = 2;
 const CIRCUIT_VERSION_LABEL: &[u8] = b"interfold-bfv-v2";
-const LBFV_ROW_COUNT: usize = ProofType::LBFV_ROW_INSTANCES as usize;
 
 /// Version 1 snapshot for one party's local l-BFV generation workflow.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct LbfvGenerationStateV1 {
     pub schema_version: u32,
     pub context: LbfvKeyShareDocumentContextV1,
@@ -48,6 +47,153 @@ pub struct LbfvGenerationStateV1 {
     pub relinearization_key_document: Option<LbfvKeyShareDocument>,
     pub signed_manifest: Option<SignedLbfvKeyShareManifest>,
     pub failure: Option<String>,
+    pub params_preset: BfvPreset,
+}
+
+impl serde::Serialize for LbfvGenerationStateV1 {
+    fn serialize<S>(&self, serializer: S) -> std::result::Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        use serde::ser::SerializeStruct;
+        let mut state = serializer.serialize_struct("LbfvGenerationStateV1", 13)?;
+        state.serialize_field("schema_version", &self.schema_version)?;
+        state.serialize_field("context", &self.context)?;
+        state.serialize_field("committee", &self.committee)?;
+        state.serialize_field("generation_request", &self.generation_request)?;
+        state.serialize_field("generation_response", &self.generation_response)?;
+        state.serialize_field("signed_c1_proof", &self.signed_c1_proof)?;
+        state.serialize_field("signed_pk_row_proofs", &self.signed_pk_row_proofs)?;
+        state.serialize_field("signed_rlk_row_proofs", &self.signed_rlk_row_proofs)?;
+        state.serialize_field("public_key_document", &self.public_key_document)?;
+        state.serialize_field(
+            "relinearization_key_document",
+            &self.relinearization_key_document,
+        )?;
+        state.serialize_field("signed_manifest", &self.signed_manifest)?;
+        state.serialize_field("failure", &self.failure)?;
+        state.serialize_field("params_preset", &self.params_preset)?;
+        state.end()
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for LbfvGenerationStateV1 {
+    fn deserialize<D>(deserializer: D) -> std::result::Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct StateVisitor;
+
+        impl<'de> serde::de::Visitor<'de> for StateVisitor {
+            type Value = LbfvGenerationStateV1;
+
+            fn expecting(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("a versioned l-BFV generation state")
+            }
+
+            fn visit_seq<A>(self, mut sequence: A) -> std::result::Result<Self::Value, A::Error>
+            where
+                A: serde::de::SeqAccess<'de>,
+            {
+                use serde::de::Error;
+                let schema_version: u32 = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV generation schema version"))?;
+                if !matches!(schema_version, 1 | LBFV_GENERATION_SCHEMA_VERSION) {
+                    return Err(A::Error::custom(format!(
+                        "unsupported l-BFV generation schema version {schema_version}"
+                    )));
+                }
+                let context = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV generation context"))?;
+                let committee = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV generation committee"))?;
+                let generation_request = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV generation request"))?;
+                let generation_response = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV generation response"))?;
+                let signed_c1_proof = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV C1 proof"))?;
+                let signed_pk_row_proofs = if schema_version == 1 {
+                    sequence
+                        .next_element::<BTreeMap<u32, SignedProofPayload>>()?
+                        .ok_or_else(|| A::Error::custom("missing legacy l-BFV PK proofs"))?
+                } else {
+                    sequence
+                        .next_element::<BTreeMap<u32, SignedProofPayload>>()?
+                        .ok_or_else(|| A::Error::custom("missing l-BFV PK proofs"))?
+                };
+                let signed_rlk_row_proofs = if schema_version == 1 {
+                    sequence
+                        .next_element::<BTreeMap<u32, SignedProofPayload>>()?
+                        .ok_or_else(|| A::Error::custom("missing legacy l-BFV RLK proofs"))?
+                } else {
+                    sequence
+                        .next_element::<BTreeMap<u32, SignedProofPayload>>()?
+                        .ok_or_else(|| A::Error::custom("missing l-BFV RLK proofs"))?
+                };
+                let public_key_document = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV public-key document"))?;
+                let relinearization_key_document = sequence.next_element()?.ok_or_else(|| {
+                    A::Error::custom("missing l-BFV relinearization-key document")
+                })?;
+                let signed_manifest = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV manifest"))?;
+                let failure = sequence
+                    .next_element()?
+                    .ok_or_else(|| A::Error::custom("missing l-BFV failure state"))?;
+                let params_preset = if schema_version == 1 {
+                    BfvPreset::SecureThreshold16384
+                } else {
+                    sequence
+                        .next_element()?
+                        .ok_or_else(|| A::Error::custom("missing l-BFV parameter preset"))?
+                };
+                Ok(LbfvGenerationStateV1 {
+                    schema_version: LBFV_GENERATION_SCHEMA_VERSION,
+                    context,
+                    committee,
+                    generation_request,
+                    generation_response,
+                    signed_c1_proof,
+                    signed_pk_row_proofs,
+                    signed_rlk_row_proofs,
+                    public_key_document,
+                    relinearization_key_document,
+                    signed_manifest,
+                    failure,
+                    params_preset,
+                })
+            }
+        }
+
+        deserializer.deserialize_struct(
+            "LbfvGenerationStateV1",
+            &[
+                "schema_version",
+                "context",
+                "committee",
+                "generation_request",
+                "generation_response",
+                "signed_c1_proof",
+                "signed_pk_row_proofs",
+                "signed_rlk_row_proofs",
+                "public_key_document",
+                "relinearization_key_document",
+                "signed_manifest",
+                "failure",
+                "params_preset",
+            ],
+            StateVisitor,
+        )
+    }
 }
 
 impl LbfvGenerationStateV1 {
@@ -58,8 +204,8 @@ impl LbfvGenerationStateV1 {
         protocol_version: u32,
     ) -> Result<Self> {
         ensure!(
-            selection.params_preset == BfvPreset::SecureThreshold16384,
-            "l-BFV generation state requires SecureThreshold16384"
+            supports_lbfv(selection.params_preset),
+            "l-BFV generation state requires a preset with l-BFV parameters"
         );
         let committee = selection
             .committee
@@ -70,14 +216,10 @@ impl LbfvGenerationStateV1 {
                     .with_context(|| format!("invalid finalized committee address {address}"))
             })
             .collect::<Result<Vec<_>>>()?;
-        let committee_size = e3_zk_helpers::CiphernodesCommitteeSize::from_threshold(
+        e3_zk_helpers::CiphernodesCommitteeSize::from_threshold(
             selection.threshold_m,
             selection.threshold_n,
         )?;
-        ensure!(
-            committee_size == e3_zk_helpers::CiphernodesCommitteeSize::Minimum,
-            "l-BFV generation supports only the minimum committee size for SecureThreshold16384"
-        );
         let finalized_committee_hash =
             validate_and_hash_finalized_committee(&committee, selection.threshold_n)
                 .map_err(anyhow::Error::msg)?;
@@ -132,6 +274,7 @@ impl LbfvGenerationStateV1 {
             relinearization_key_document: None,
             signed_manifest: None,
             failure: None,
+            params_preset: selection.params_preset,
         })
     }
 
@@ -142,6 +285,7 @@ impl LbfvGenerationStateV1 {
             self.schema_version
         );
         self.context.validate()?;
+        let row_count = self.row_count()?;
         self.committee_size()?;
         ensure!(
             validate_and_hash_finalized_committee(&self.committee, self.committee.len())
@@ -157,7 +301,8 @@ impl LbfvGenerationStateV1 {
             request.validate_operation_id()?;
             ensure!(
                 request.session_id == self.context.proof_session_id.0
-                    && request.party_id == self.context.party_id,
+                    && request.party_id == self.context.party_id
+                    && request.params_preset == self.params_preset,
                 "persisted l-BFV generation request does not match its context"
             );
         }
@@ -171,6 +316,16 @@ impl LbfvGenerationStateV1 {
                 .unwrap()
                 .verify_committee_signer(&self.committee)?;
         }
+        ensure!(
+            self.signed_pk_row_proofs
+                .keys()
+                .all(|row| (*row as usize) < row_count)
+                && self
+                    .signed_rlk_row_proofs
+                    .keys()
+                    .all(|row| (*row as usize) < row_count),
+            "persisted l-BFV proof row is outside the selected preset"
+        );
         Ok(())
     }
 
@@ -192,7 +347,8 @@ impl LbfvGenerationStateV1 {
         request.validate_operation_id()?;
         ensure!(
             request.session_id == self.context.proof_session_id.0
-                && request.party_id == self.context.party_id,
+                && request.party_id == self.context.party_id
+                && request.params_preset == self.params_preset,
             "l-BFV generation request does not match its durable context"
         );
         if let Some(existing) = &self.generation_request {
@@ -323,8 +479,9 @@ impl LbfvGenerationStateV1 {
         if self.generation_response.is_none() || self.is_ready() || self.failure.is_some() {
             return Vec::new();
         }
-        let mut identities = Vec::with_capacity(2 * LBFV_ROW_COUNT);
-        for row in 0..LBFV_ROW_COUNT as u32 {
+        let row_count = self.row_count().unwrap_or_default();
+        let mut identities = Vec::with_capacity(2 * row_count);
+        for row in 0..row_count as u32 {
             if !self.signed_pk_row_proofs.contains_key(&row) {
                 identities.push(ProofIdentity {
                     proof_type: ProofType::LbfvPkGeneration,
@@ -377,21 +534,22 @@ impl LbfvGenerationStateV1 {
         let (Some(response), Some(c1)) = (&self.generation_response, &self.signed_c1_proof) else {
             return Ok(None);
         };
-        if self.signed_pk_row_proofs.len() != LBFV_ROW_COUNT
-            || self.signed_rlk_row_proofs.len() != LBFV_ROW_COUNT
+        let row_count = self.row_count()?;
+        if self.signed_pk_row_proofs.len() != row_count
+            || self.signed_rlk_row_proofs.len() != row_count
         {
             return Ok(None);
         }
         let pk_rows = rows_from_map(&self.signed_pk_row_proofs)?;
         let rlk_rows = rows_from_map(&self.signed_rlk_row_proofs)?;
-        let public_key = LbfvKeyShareDocument::PublicKeyV1(LbfvPublicKeyShareDocumentV1 {
+        let public_key = LbfvKeyShareDocument::PublicKeyV2(LbfvPublicKeyShareDocumentV2 {
             context: self.context.clone(),
             share: response.public_key_share_bytes.clone(),
             signed_c1_proof: c1.clone(),
             signed_row_proofs: pk_rows,
         });
         let relinearization_key =
-            LbfvKeyShareDocument::RelinearizationKeyV1(LbfvRelinearizationKeyShareDocumentV1 {
+            LbfvKeyShareDocument::RelinearizationKeyV2(LbfvRelinearizationKeyShareDocumentV2 {
                 context: self.context.clone(),
                 share: response.rlk_share_bytes.clone(),
                 signed_row_proofs: rlk_rows,
@@ -501,6 +659,11 @@ impl LbfvGenerationStateV1 {
             self.committee.len(),
         )
     }
+
+    fn row_count(&self) -> Result<usize> {
+        lbfv_row_count(self.params_preset)
+            .ok_or_else(|| anyhow!("selected preset does not support l-BFV"))
+    }
 }
 
 fn insert_first(
@@ -524,19 +687,22 @@ fn insert_first(
     }
 }
 
-fn rows_from_map(
-    proofs: &BTreeMap<u32, SignedProofPayload>,
-) -> Result<[SignedProofPayload; LBFV_ROW_COUNT]> {
-    (0..LBFV_ROW_COUNT as u32)
+fn rows_from_map(proofs: &BTreeMap<u32, SignedProofPayload>) -> Result<Vec<SignedProofPayload>> {
+    proofs
+        .keys()
+        .next()
+        .copied()
+        .map(|_| ())
+        .ok_or_else(|| anyhow!("missing l-BFV row proofs"))?;
+    let row_count = proofs.len();
+    (0..row_count as u32)
         .map(|row| {
             proofs
                 .get(&row)
                 .cloned()
                 .ok_or_else(|| anyhow!("missing l-BFV row proof {row}"))
         })
-        .collect::<Result<Vec<_>>>()?
-        .try_into()
-        .map_err(|_| anyhow!("l-BFV row proof count does not match the transport schema"))
+        .collect()
 }
 
 #[cfg(test)]
@@ -549,6 +715,25 @@ mod tests {
     use e3_trbfv::gen_lbfv_key_shares::EncryptedRlkWitness;
     use e3_utils::ArcBytes;
     use e3_zk_helpers::FIELD_BYTE_LEN;
+
+    const LEGACY_GENERATION_STATE: &[u8] =
+        include_bytes!("fixtures/lbfv_generation_state_v1.bincode");
+
+    #[derive(serde::Serialize)]
+    struct LegacyLbfvGenerationStateV1 {
+        schema_version: u32,
+        context: LbfvKeyShareDocumentContextV1,
+        committee: Vec<Address>,
+        generation_request: Option<GenLbfvKeySharesRequest>,
+        generation_response: Option<GenLbfvKeySharesResponse>,
+        signed_c1_proof: Option<SignedProofPayload>,
+        signed_pk_row_proofs: BTreeMap<u32, SignedProofPayload>,
+        signed_rlk_row_proofs: BTreeMap<u32, SignedProofPayload>,
+        public_key_document: Option<LbfvKeyShareDocument>,
+        relinearization_key_document: Option<LbfvKeyShareDocument>,
+        signed_manifest: Option<SignedLbfvKeyShareManifest>,
+        failure: Option<String>,
+    }
 
     fn signer() -> PrivateKeySigner {
         "0xac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
@@ -579,6 +764,66 @@ mod tests {
             4,
         )
         .unwrap()
+    }
+
+    fn legacy_state() -> LegacyLbfvGenerationStateV1 {
+        let mut state = state();
+        let pk_proof = signed_proof(
+            &state,
+            ProofType::LbfvPkGeneration,
+            proof(&state, CircuitName::LbfvPkGeneration, 0),
+        );
+        let rlk_proof = signed_proof(
+            &state,
+            ProofType::RlkGeneration,
+            proof(&state, CircuitName::RlkGeneration, 0),
+        );
+        state.signed_pk_row_proofs.insert(0, pk_proof);
+        state.signed_rlk_row_proofs.insert(0, rlk_proof);
+        LegacyLbfvGenerationStateV1 {
+            schema_version: 1,
+            context: state.context,
+            committee: state.committee,
+            generation_request: state.generation_request,
+            generation_response: state.generation_response,
+            signed_c1_proof: state.signed_c1_proof,
+            signed_pk_row_proofs: state.signed_pk_row_proofs,
+            signed_rlk_row_proofs: state.signed_rlk_row_proofs,
+            public_key_document: state.public_key_document,
+            relinearization_key_document: state.relinearization_key_document,
+            signed_manifest: state.signed_manifest,
+            failure: state.failure,
+        }
+    }
+
+    #[test]
+    fn legacy_generation_fixture_migrates_to_schema_two() {
+        assert_eq!(
+            bincode::serialize(&legacy_state()).unwrap(),
+            LEGACY_GENERATION_STATE
+        );
+
+        let restored: LbfvGenerationStateV1 =
+            bincode::deserialize(LEGACY_GENERATION_STATE).unwrap();
+        assert_eq!(restored.schema_version, LBFV_GENERATION_SCHEMA_VERSION);
+        assert_eq!(restored.params_preset, BfvPreset::SecureThreshold16384);
+        assert_eq!(
+            restored
+                .signed_pk_row_proofs
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![0]
+        );
+        assert_eq!(
+            restored
+                .signed_rlk_row_proofs
+                .keys()
+                .copied()
+                .collect::<Vec<_>>(),
+            vec![0]
+        );
+        restored.validate_loaded().unwrap();
     }
 
     #[test]
@@ -625,16 +870,17 @@ mod tests {
     }
 
     fn generation_response(request: &GenLbfvKeySharesRequest) -> GenLbfvKeySharesResponse {
+        let row_count = lbfv_row_count(request.params_preset).unwrap();
         GenLbfvKeySharesResponse {
             operation_id: request.operation_id,
             public_key_share_bytes: ArcBytes::from_bytes(b"public-key-share"),
             rlk_share_bytes: ArcBytes::from_bytes(b"relinearization-key-share"),
             witness: EncryptedRlkWitness {
                 r_bytes: SensitiveBytes::from_encrypted(&[3]),
-                errors_d0_bytes: (0..LBFV_ROW_COUNT)
+                errors_d0_bytes: (0..row_count)
                     .map(|row| SensitiveBytes::from_encrypted(&[row as u8]))
                     .collect(),
-                errors_d2_bytes: (0..LBFV_ROW_COUNT)
+                errors_d2_bytes: (0..row_count)
                     .map(|row| SensitiveBytes::from_encrypted(&[row as u8 + 5]))
                     .collect(),
             },
@@ -687,14 +933,17 @@ mod tests {
         let response = generation_response(&request);
         assert!(state.record_generation_request(request).unwrap());
         assert!(state.record_generation_response(response.clone()).unwrap());
-        assert_eq!(state.pending_proof_identities().len(), 10);
+        assert_eq!(
+            state.pending_proof_identities().len(),
+            2 * lbfv_row_count(state.params_preset).unwrap()
+        );
 
         let c1 = proof(&state, CircuitName::PkGeneration, 0);
         let signed_c1 = signed_proof(&state, ProofType::C1PkGeneration, c1);
         state.record_c1_proof(signed_c1.clone()).unwrap();
         let mut late_pk_row = None;
         let mut late_rlk_row = None;
-        for row in 0..LBFV_ROW_COUNT as u32 {
+        for row in 0..lbfv_row_count(state.params_preset).unwrap() as u32 {
             let ZkRequest::LbfvPkGeneration(request) = state
                 .proof_request(ProofIdentity {
                     proof_type: ProofType::LbfvPkGeneration,
@@ -761,7 +1010,7 @@ mod tests {
         let encoded = bincode::serialize(&state).unwrap();
         assert_eq!(
             keccak256(&encoded),
-            "0x4c112cdce6ba06dddc846db18d92eebd11695a379b614982c7541bec6172a8d4"
+            "0xd31dfe1d044e43f244ee49e958b8c61968d43112902c9413f70acce7431ffefc"
                 .parse::<B256>()
                 .unwrap()
         );

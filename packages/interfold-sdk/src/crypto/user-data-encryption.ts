@@ -42,14 +42,14 @@ export interface CircuitInputs {
 }
 
 const PRESET_DEGREES: Record<ThresholdBfvParamsPresetName, number> = {
-  INSECURE_THRESHOLD_512: 512,
+  INSECURE_THRESHOLD_128: 128,
   SECURE_THRESHOLD_8192: 8192,
   SECURE_THRESHOLD_16384: 16384,
 }
 
 const loadProofBundle = async (presetName: ThresholdBfvParamsPresetName): Promise<UserDataEncryptionProofBundle> => {
   switch (presetName) {
-    case 'INSECURE_THRESHOLD_512':
+    case 'INSECURE_THRESHOLD_128':
       return (await import('@interfold/sdk/internal/presets/insecure')).insecureProofBundle
     case 'SECURE_THRESHOLD_8192':
       return (await import('@interfold/sdk/internal/presets/secure-8192')).secure8192ProofBundle

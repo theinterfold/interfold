@@ -203,10 +203,9 @@ struct Cli {
     /// When used with --toml: do not write configs.nr (e.g. for benchmarks where circuits use lib configs).
     #[arg(long, default_value = "false")]
     no_configs: bool,
-    /// C2 coefficient chunk size. Only 512 is supported; the compiled artifact
-    /// layout is pinned to a 512-coefficient chunk size.
-    #[arg(long, default_value_t = 512)]
-    chunk_size: usize,
+    /// C2 coefficient chunk size. Defaults to min(512, polynomial degree).
+    #[arg(long)]
+    chunk_size: Option<usize>,
     /// Row in the public l-BFV key-switching vectors.
     #[arg(long, default_value_t = 0)]
     row_index: u32,
@@ -284,12 +283,13 @@ fn main() -> Result<()> {
         ));
     }
 
-    // The compiled C2 artifact set is pinned to a 512-coefficient chunk layout.
-    // A different chunk size produces artifacts that cannot verify against the
-    // deployed circuits, so reject it here instead of writing invalid configs.
-    if args.chunk_size != 512 {
+    let chunk_size = args
+        .chunk_size
+        .unwrap_or_else(|| preset.metadata().degree.min(512));
+    if chunk_size == 0 || !preset.metadata().degree.is_multiple_of(chunk_size) {
         return Err(anyhow!(
-            "--chunk-size must be 512; the compiled C2 chunk layout is pinned to a 512-coefficient chunk size"
+            "--chunk-size must be a nonzero divisor of the polynomial degree {}",
+            preset.metadata().degree
         ));
     }
 
@@ -356,7 +356,7 @@ fn main() -> Result<()> {
                     committee,
                     dkg_input_type,
                 )?;
-                sample.chunk_size = args.chunk_size as u32;
+                sample.chunk_size = chunk_size as u32;
 
                 let circuit = ShareComputationCircuit;
                 let mut artifacts = circuit.codegen(preset, &sample)?;
@@ -378,7 +378,7 @@ fn main() -> Result<()> {
                     dkg_input_type,
                     sd.z,
                 )?;
-                sample.chunk_size = args.chunk_size as u32;
+                sample.chunk_size = chunk_size as u32;
 
                 let circuit = ShareEncryptionCircuit;
                 circuit.codegen(preset, &sample)?
@@ -453,7 +453,7 @@ fn main() -> Result<()> {
                     committee,
                     dkg_input_type,
                 )?;
-                sample.chunk_size = args.chunk_size as u32;
+                sample.chunk_size = chunk_size as u32;
 
                 let circuit = DkgShareDecryptionCircuit;
                 circuit.codegen(preset, &sample)?

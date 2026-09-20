@@ -65,7 +65,7 @@ export interface UseInterfoldSDKReturn {
  *       ciphernodeRegistry: '0x...',
  *       feeToken: '0x...',
  *     },
- *     thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_512',
+ *     thresholdBfvParamsPresetName: 'INSECURE_THRESHOLD_128',
  *   });
  *
  *   // Use the SDK...

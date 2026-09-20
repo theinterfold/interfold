@@ -12,13 +12,14 @@ use crate::{
 };
 use anyhow::Result;
 use e3_crypto::{Cipher, SensitiveBytes};
-use e3_fhe_params::LambdaConfig;
+use e3_fhe_params::{generate_smudging_error, LambdaConfig};
 use e3_utils::utility_types::ArcBytes;
 use fhe::{
     bfv::SecretKey,
     mbfv::{CommonRandomPoly, PublicKeyShare},
-    trbfv::{ShareManager, TRBFV},
+    trbfv::ShareManager,
 };
+use fhe_math::rq::{Poly, PowerBasis};
 use fhe_traits::Serialize as FheSerialize;
 use rand::{CryptoRng, RngCore};
 use serde::{Deserialize, Serialize};
@@ -135,19 +136,22 @@ pub fn gen_pk_share_and_sk_sss<R: RngCore + CryptoRng>(
     let pk_share = PublicKeyShare::deserialize(&pk0_share.to_bytes(), &params, crp.clone())?;
 
     // Generate smudging noise
-    let trbfv = TRBFV::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
-    let share_manager_for_esm =
-        ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
     let lambda = req.lambda.into_lambda()?;
-    let esi_coeffs =
-        trbfv.generate_smudging_error(req.num_ciphertexts, req.mult_depth, lambda, rng)?;
-    let e_sm_rns = share_manager_for_esm.bigints_to_poly(&esi_coeffs)?;
+    let esi_coeffs = generate_smudging_error(
+        params.clone(),
+        num_ciphernodes as usize,
+        req.num_ciphertexts,
+        req.mult_depth,
+        lambda,
+        rng,
+    )?;
+    let e_sm_rns = Poly::<PowerBasis>::from_bigints(&esi_coeffs, params.context_at_level(0)?)?;
     let e_sm_raw = ArcBytes::from_bytes(&e_sm_rns.deref().to_bytes());
 
     let pk0_share_raw = ArcBytes::from_bytes(&pk0_share.to_bytes());
     let eek_raw = ArcBytes::from_bytes(&eek.to_bytes());
 
-    let mut share_manager =
+    let share_manager =
         ShareManager::new(num_ciphernodes as usize, threshold as usize, params.clone())?;
 
     let sk_poly = share_manager.coeffs_to_poly_level0(sk_share.coeffs.clone().as_ref())?;

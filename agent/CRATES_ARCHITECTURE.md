@@ -647,7 +647,7 @@ encryption parameters:
 
 | Parameter pair | `L_THRESHOLD` | Recipient bundle                   |
 | -------------- | ------------: | ---------------------------------- |
-| Insecure 512   |             2 | C2a x 1, C2b x 1, C3a x 2, C3b x 2 |
+| Insecure 128   |             3 | C2a x 1, C2b x 1, C3a x 3, C3b x 3 |
 | Secure 8192    |             3 | C2a x 1, C2b x 1, C3a x 3, C3b x 3 |
 
 `ThresholdKeyshare` dispatches verification with the DKG/share-encryption preset. The shape

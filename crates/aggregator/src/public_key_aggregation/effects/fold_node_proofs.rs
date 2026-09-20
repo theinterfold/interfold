@@ -54,6 +54,7 @@ impl PublicKeyAggregator {
         let prior_accumulator = nodes_fold_accumulator.clone();
 
         let corr = CorrelationId::new();
+        let v2 = self.is_lbfv();
         let request = if self.is_lbfv() {
             ZkRequest::NodesFoldV2Step(NodesFoldV2StepRequest {
                 inner_proof: inner_proof.clone(),
@@ -81,8 +82,16 @@ impl PublicKeyAggregator {
         )?;
 
         info!(
-            "PublicKeyAggregator: dispatched NodesFoldStep slot={}/{} for E3 {}",
-            next_slot, total_slots, self.e3_id
+            "PublicKeyAggregator: dispatched {} slot={}/{} for E3 {} correlation={}",
+            if v2 {
+                "NodesFoldV2Step"
+            } else {
+                "NodesFoldStep"
+            },
+            next_slot,
+            total_slots,
+            self.e3_id,
+            corr
         );
 
         self.state.try_mutate(ec, |state| {

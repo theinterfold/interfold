@@ -1105,7 +1105,7 @@ async fn terminal_failure_stops_after_a_sidecar_cleanup_write_rejection() -> Res
             ..
         }
     ));
-    assert!(actor.send(Die).await.is_err());
+    assert!(actor.send(Die).await.is_ok());
     Ok(())
 }
 

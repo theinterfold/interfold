@@ -79,7 +79,7 @@ contract MockInterfold {
       inputWindow: [uint256(0), uint256(0)],
       encryptionSchemeId: ENCRYPTION_SCHEME_ID,
       e3Program: assignedE3Program,
-      paramSet: 0, // Insecure512
+      paramSet: 0, // Insecure128
       customParams: params,
       decryptionVerifier: IDecryptionVerifier(address(0)),
       pkVerifier: IPkVerifier(address(0)),
@@ -105,7 +105,7 @@ contract MockInterfold {
       inputWindow: [uint256(0), uint256(0)],
       encryptionSchemeId: ENCRYPTION_SCHEME_ID,
       e3Program: assignedE3Program,
-      paramSet: 0, // Insecure512
+      paramSet: 0, // Insecure128
       customParams: abi.encode(address(0), nextE3Id, numOptions, 0, 0, 0, 0),
       decryptionVerifier: IDecryptionVerifier(address(0)),
       pkVerifier: IPkVerifier(address(0)),
@@ -186,7 +186,7 @@ contract MockInterfold {
         inputWindow: inputWindow,
         encryptionSchemeId: ENCRYPTION_SCHEME_ID,
         e3Program: assignee,
-        paramSet: 0, // Insecure512
+        paramSet: 0, // Insecure128
         customParams: abi.encode(address(0), 0, 2, 0, 0, 0, 0),
         decryptionVerifier: IDecryptionVerifier(address(0)),
         pkVerifier: IPkVerifier(address(0)),

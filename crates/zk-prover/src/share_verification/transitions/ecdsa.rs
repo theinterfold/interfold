@@ -21,8 +21,9 @@ impl ShareVerifier {
     fn has_complete_row_family(
         signed_proofs: &[SignedProofPayload],
         expected_type: ProofType,
+        rows: usize,
     ) -> bool {
-        if signed_proofs.len() != ProofType::LBFV_ROW_INSTANCES as usize {
+        if signed_proofs.len() != rows {
             return false;
         }
         signed_proofs.iter().all(|signed| {
@@ -35,22 +36,29 @@ impl ShareVerifier {
         signed_proofs: &[SignedProofPayload],
         first: ProofType,
         second: ProofType,
+        rows: usize,
     ) -> bool {
-        let rows = ProofType::LBFV_ROW_INSTANCES as usize;
         signed_proofs.len() == 2 * rows
-            && Self::has_complete_row_family(&signed_proofs[..rows], first)
-            && Self::has_complete_row_family(&signed_proofs[rows..], second)
+            && Self::has_complete_row_family(&signed_proofs[..rows], first, rows)
+            && Self::has_complete_row_family(&signed_proofs[rows..], second, rows)
     }
 
-    fn has_complete_lbfv_generation_bundle(signed_proofs: &[SignedProofPayload]) -> bool {
-        let rows = ProofType::LBFV_ROW_INSTANCES as usize;
+    fn has_complete_lbfv_generation_bundle(
+        signed_proofs: &[SignedProofPayload],
+        rows: usize,
+    ) -> bool {
         signed_proofs.len() == 1 + (2 * rows)
             && Self::has_exact_legacy_c1_shape(&signed_proofs[0])
             && Self::has_complete_row_family(
                 &signed_proofs[1..1 + rows],
                 ProofType::LbfvPkGeneration,
+                rows,
             )
-            && Self::has_complete_row_family(&signed_proofs[1 + rows..], ProofType::RlkGeneration)
+            && Self::has_complete_row_family(
+                &signed_proofs[1 + rows..],
+                ProofType::RlkGeneration,
+                rows,
+            )
     }
 
     fn public_field<'a>(
@@ -124,7 +132,7 @@ impl ShareVerifier {
         ) {
             return lbfv_context.is_none();
         }
-        let Some(LbfvVerificationContext::V1(context)) = lbfv_context else {
+        let Some(LbfvVerificationContext::V2(context)) = lbfv_context else {
             return false;
         };
         let Ok(sender_party_id) = u32::try_from(sender_party_id) else {
@@ -138,7 +146,6 @@ impl ShareVerifier {
         {
             return false;
         }
-        let rows = ProofType::LBFV_ROW_INSTANCES as usize;
         let committee = committee_size.values();
         let committee_h = committee.h;
         let expected_session =
@@ -171,6 +178,10 @@ impl ShareVerifier {
                 let Some((c1, lbfv_proofs)) = signed_proofs.split_first() else {
                     return false;
                 };
+                if lbfv_proofs.len() % 2 != 0 {
+                    return false;
+                }
+                let rows = lbfv_proofs.len() / 2;
                 if lbfv_proofs.len() != 2 * rows {
                     return false;
                 }
@@ -206,6 +217,10 @@ impl ShareVerifier {
                 let Some(aggregation) = context.aggregation.as_ref() else {
                     return false;
                 };
+                if signed_proofs.len() % 2 != 0 {
+                    return false;
+                }
+                let rows = signed_proofs.len() / 2;
                 let accepted_party_ids = aggregation
                     .accepted_parties
                     .iter()
@@ -340,14 +355,17 @@ impl ShareVerifier {
                         signed.payload.proof_type == ProofType::C6ThresholdShareDecryption
                     })
             }
-            VerificationKind::LbfvGenerationProofs => {
-                Self::has_complete_lbfv_generation_bundle(signed_proofs)
-            }
-            VerificationKind::LbfvAggregationProofs => Self::has_complete_lbfv_bundle(
-                signed_proofs,
-                ProofType::LbfvPkAggregation,
-                ProofType::RlkAggregation,
-            ),
+            VerificationKind::LbfvGenerationProofs => e3_fhe_params::lbfv_row_count(params_preset)
+                .is_some_and(|rows| Self::has_complete_lbfv_generation_bundle(signed_proofs, rows)),
+            VerificationKind::LbfvAggregationProofs => e3_fhe_params::lbfv_row_count(params_preset)
+                .is_some_and(|rows| {
+                    Self::has_complete_lbfv_bundle(
+                        signed_proofs,
+                        ProofType::LbfvPkAggregation,
+                        ProofType::RlkAggregation,
+                        rows,
+                    )
+                }),
         }
     }
 

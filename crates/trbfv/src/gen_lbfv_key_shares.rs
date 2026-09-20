@@ -57,8 +57,9 @@ impl GenLbfvKeySharesRequest {
     /// Recompute and validate the operation identity from request semantics.
     pub fn validate_operation_id(&self) -> Result<()> {
         ensure!(
-            self.params_preset == BfvPreset::SecureThreshold16384,
-            "l-BFV key-share generation requires SecureThreshold16384"
+            lbfv_crs_seed(self.params_preset).is_some()
+                && lbfv_urs_seed(self.params_preset).is_some(),
+            "l-BFV key-share generation requires a preset with l-BFV constants"
         );
         ensure!(
             self.ciphertext_level == 0 && self.key_level == 0,

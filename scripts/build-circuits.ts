@@ -41,7 +41,7 @@ import {
 
 const CIRCUIT_VERSION_LABEL = 'interfold-bfv-v2'
 
-const SECURE_16384_ONLY_THRESHOLD_CIRCUITS = new Set([
+const LBFV_THRESHOLD_CIRCUITS = new Set([
   'lbfv_pk_generation',
   'lbfv_pk_generation_limb',
   'lbfv_pk_aggregation',
@@ -61,15 +61,17 @@ const SECURE_16384_ONLY_RECURSIVE_CIRCUITS = new Set([
   'dkg_aggregator_v2',
 ])
 
-const SECURE_16384_ONLY_CIRCUITS = new Set([...SECURE_16384_ONLY_THRESHOLD_CIRCUITS, ...SECURE_16384_ONLY_RECURSIVE_CIRCUITS])
+const ALL_LBFV_CIRCUITS = new Set([...LBFV_THRESHOLD_CIRCUITS, ...SECURE_16384_ONLY_RECURSIVE_CIRCUITS])
+
+const LBFV_THRESHOLD_ARTIFACT_CIRCUITS = [...LBFV_THRESHOLD_CIRCUITS].map((name) => ({
+  name,
+  group: CIRCUIT_GROUPS.THRESHOLD,
+  variants: [CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_VARIANTS.EVM, CIRCUIT_VARIANTS.RECURSIVE],
+  binExtensions: ['json', 'vk', 'vk_hash', 'vk_recursive', 'vk_recursive_hash', 'vk_noir', 'vk_noir_hash'],
+}))
 
 const SECURE_16384_ARTIFACT_CIRCUITS = [
-  ...[...SECURE_16384_ONLY_THRESHOLD_CIRCUITS].map((name) => ({
-    name,
-    group: CIRCUIT_GROUPS.THRESHOLD,
-    variants: [CIRCUIT_VARIANTS.DEFAULT, CIRCUIT_VARIANTS.EVM, CIRCUIT_VARIANTS.RECURSIVE],
-    binExtensions: ['json', 'vk', 'vk_hash', 'vk_recursive', 'vk_recursive_hash', 'vk_noir', 'vk_noir_hash'],
-  })),
+  ...LBFV_THRESHOLD_ARTIFACT_CIRCUITS,
   ...[...SECURE_16384_ONLY_RECURSIVE_CIRCUITS].map((name) => ({
     name,
     group: CIRCUIT_GROUPS.AGGREGATION,
@@ -120,15 +122,25 @@ function generatedConfigDrift(generatedDir: string, committedDir: string): strin
 }
 
 function requiredLbfvDistMarkers(dist: string, preset: string): string[] {
-  if (preset !== CIRCUIT_PRESETS.SECURE_16384) return []
-  return SECURE_16384_ARTIFACT_CIRCUITS.flatMap(({ name, group, variants }) =>
+  const circuits =
+    preset === CIRCUIT_PRESETS.INSECURE
+      ? SECURE_16384_ARTIFACT_CIRCUITS
+      : preset === CIRCUIT_PRESETS.SECURE_16384
+        ? SECURE_16384_ARTIFACT_CIRCUITS
+        : []
+  return circuits.flatMap(({ name, group, variants }) =>
     variants.flatMap((variant) => ['json', 'vk', 'vk_hash'].map((extension) => join(dist, variant, group, name, `${name}.${extension}`))),
   )
 }
 
 function requiredLbfvBinMarkers(bin: string, preset: string): string[] {
-  if (preset !== CIRCUIT_PRESETS.SECURE_16384) return []
-  return SECURE_16384_ARTIFACT_CIRCUITS.flatMap(({ name, group, binExtensions }) =>
+  const circuits =
+    preset === CIRCUIT_PRESETS.INSECURE
+      ? SECURE_16384_ARTIFACT_CIRCUITS
+      : preset === CIRCUIT_PRESETS.SECURE_16384
+        ? SECURE_16384_ARTIFACT_CIRCUITS
+        : []
+  return circuits.flatMap(({ name, group, binExtensions }) =>
     binExtensions.map((extension) => join(hydratedCircuitTargetDir(bin, group, name), `${name}.${extension}`)),
   )
 }
@@ -218,7 +230,7 @@ class NoirCircuitBuilder {
       outputDir: join(this.rootDir, 'dist', 'circuits'),
       clean: true,
       skipVk: false,
-      preset: CIRCUIT_PRESETS.INSECURE_512,
+      preset: CIRCUIT_PRESETS.INSECURE,
       committee: CIRCUIT_COMMITTEES.MINIMUM,
       ...options,
     }
@@ -373,9 +385,9 @@ class NoirCircuitBuilder {
 
   private bfvConfig(preset: CircuitPreset, committee: CircuitCommittee) {
     const { h, t, n } = COMMITTEE_PARAMS[committee]
-    const paramSet = preset === CIRCUIT_PRESETS.INSECURE_512 ? 0 : preset === CIRCUIT_PRESETS.SECURE_8192 ? 1 : 2
+    const paramSet = preset === CIRCUIT_PRESETS.INSECURE ? 0 : preset === CIRCUIT_PRESETS.SECURE_8192 ? 1 : 2
     const committeeSize = ALL_COMMITTEES.indexOf(committee)
-    const params = paramSet === 0 ? BFV_PARAMS.insecure512 : paramSet === 1 ? BFV_PARAMS.secure8192 : BFV_PARAMS.secure16384
+    const params = paramSet === 0 ? BFV_PARAMS.insecure : paramSet === 1 ? BFV_PARAMS.secure8192 : BFV_PARAMS.secure16384
     const encodedParams = AbiCoder.defaultAbiCoder().encode(
       ['tuple(uint256 degree,uint256 plaintext_modulus,uint256[] moduli,string error1_variance)'],
       [[params.degree, params.plaintextModulus, [...params.moduli], params.error1Variance]],
@@ -393,7 +405,7 @@ class NoirCircuitBuilder {
   private patchUtilsTs(preset: CircuitPreset, committee: CircuitCommittee): void {
     if (this.options.skipUtilsPatch) return
     const { h, t, n, paramSet, committeeSize } = this.bfvConfig(preset, committee)
-    const insecure = this.bfvConfig(CIRCUIT_PRESETS.INSECURE_512, CIRCUIT_COMMITTEES.MINIMUM)
+    const insecure = this.bfvConfig(CIRCUIT_PRESETS.INSECURE, CIRCUIT_COMMITTEES.MINIMUM)
     const secure = this.bfvConfig(CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_COMMITTEES.SMALL)
     const secure16384 = this.bfvConfig(CIRCUIT_PRESETS.SECURE_16384, CIRCUIT_COMMITTEES.MINIMUM)
     const path = join(this.rootDir, 'packages', 'interfold-contracts', 'scripts', 'utils.ts')
@@ -518,7 +530,7 @@ class NoirCircuitBuilder {
   }
 
   private configModuleName(preset: CircuitPreset): string {
-    return preset === CIRCUIT_PRESETS.INSECURE_512
+    return preset === CIRCUIT_PRESETS.INSECURE
       ? 'INSECURE_THRESHOLD_512'
       : preset === CIRCUIT_PRESETS.SECURE_8192
         ? 'SECURE_THRESHOLD_8192'
@@ -552,7 +564,7 @@ class NoirCircuitBuilder {
     const production = this.bfvConfig(CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_COMMITTEES.SMALL)
     const secureMinimum = this.bfvConfig(CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_COMMITTEES.MINIMUM)
     const secureMicro = this.bfvConfig(CIRCUIT_PRESETS.SECURE_8192, CIRCUIT_COMMITTEES.MICRO)
-    const testnet = this.bfvConfig(CIRCUIT_PRESETS.INSECURE_512, CIRCUIT_COMMITTEES.MINIMUM)
+    const testnet = this.bfvConfig(CIRCUIT_PRESETS.INSECURE, CIRCUIT_COMMITTEES.MINIMUM)
     const secure16384 = this.bfvConfig(CIRCUIT_PRESETS.SECURE_16384, CIRCUIT_COMMITTEES.MINIMUM)
     const path = join(this.rootDir, 'packages', 'interfold-contracts', 'contracts', 'lib', 'ActiveCryptoConfig.sol')
     const source = `// SPDX-License-Identifier: LGPL-3.0-only
@@ -1141,12 +1153,14 @@ library ActiveCryptoConfig {
   }
 
   private isCircuitEnabledForPreset(circuit: CircuitInfo, preset: CircuitPreset): boolean {
-    return preset === CIRCUIT_PRESETS.SECURE_16384 || !SECURE_16384_ONLY_CIRCUITS.has(circuit.name)
+    if (preset === CIRCUIT_PRESETS.SECURE_16384) return true
+    if (preset === CIRCUIT_PRESETS.INSECURE) return true
+    return !ALL_LBFV_CIRCUITS.has(circuit.name)
   }
 
   private circuitsForPreset(circuits: CircuitInfo[], preset: CircuitPreset): CircuitInfo[] {
-    if (preset !== CIRCUIT_PRESETS.SECURE_16384 && this.options.circuits?.some((circuit) => SECURE_16384_ONLY_CIRCUITS.has(circuit))) {
-      throw new Error(`l-BFV row circuits require preset ${CIRCUIT_PRESETS.SECURE_16384}`)
+    if (preset === CIRCUIT_PRESETS.SECURE_8192 && this.options.circuits?.some((circuit) => ALL_LBFV_CIRCUITS.has(circuit))) {
+      throw new Error(`l-BFV circuits require preset ${CIRCUIT_PRESETS.INSECURE} or ${CIRCUIT_PRESETS.SECURE_16384}`)
     }
     return circuits.filter((circuit) => this.isCircuitEnabledForPreset(circuit, preset))
   }
@@ -1696,7 +1710,7 @@ async function main() {
     if (options.preset === 'all' || options.committee === 'all') {
       throw new Error('sync-config requires one preset and one committee')
     }
-    builder.syncProtocolConfig(options.preset ?? CIRCUIT_PRESETS.INSECURE_512, options.committee ?? CIRCUIT_COMMITTEES.MINIMUM)
+    builder.syncProtocolConfig(options.preset ?? CIRCUIT_PRESETS.INSECURE, options.committee ?? CIRCUIT_COMMITTEES.MINIMUM)
   } else {
     const result = await builder.buildAll()
     builder.writeGitHubOutput(result)

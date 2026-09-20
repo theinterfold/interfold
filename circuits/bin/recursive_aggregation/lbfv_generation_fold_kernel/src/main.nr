@@ -10,7 +10,7 @@ use bb_proof_verification::{
     UltraHonkProof, UltraHonkVerificationKey, UltraHonkZKProof, verify_honk_proof,
 };
 
-pub global LBFV_ROWS: u32 = 5;
+pub use lib::configs::default::threshold::L as LBFV_ROWS;
 pub global PK_GENERATION_PUBLIC_LEN: u32 = 7;
 pub global RLK_GENERATION_PUBLIC_LEN: u32 = 9;
 pub global GENERATION_FOLD_PREFIX_LEN: u32 = 9;

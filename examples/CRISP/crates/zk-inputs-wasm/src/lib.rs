@@ -204,9 +204,9 @@ impl ZKInputsGenerator {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use e3_fhe_params::constants::insecure_512;
+    use e3_fhe_params::constants::insecure;
     use wasm_bindgen_test::*;
-    const DEFAULT_DEGREE: usize = insecure_512::DEGREE;
+    const DEFAULT_DEGREE: usize = insecure::DEGREE;
 
     wasm_bindgen_test_configure!(run_in_browser);
 
@@ -289,9 +289,9 @@ mod tests {
 
     #[wasm_bindgen_test]
     fn test_js_with_custom_params() {
-        let degree = insecure_512::DEGREE;
-        let plaintext_modulus = insecure_512::threshold::PLAINTEXT_MODULUS as i64;
-        let moduli = insecure_512::threshold::MODULI
+        let degree = insecure::DEGREE;
+        let plaintext_modulus = insecure::threshold::PLAINTEXT_MODULUS as i64;
+        let moduli = insecure::threshold::MODULI
             .iter()
             .map(|m| *m as i64)
             .collect();

@@ -7,7 +7,7 @@
 //! Derive an operational l-BFV relinearization key from accepted share bytes.
 
 use anyhow::{ensure, Result};
-use e3_fhe_params::{build_pair_for_preset, BfvPreset};
+use e3_fhe_params::{build_pair_for_preset, lbfv_crs_seed, lbfv_urs_seed, BfvPreset};
 use e3_utils::ArcBytes;
 use fhe::aggregate::AggregateIter;
 use fhe::trlbfv::{aggregate_relinearization_key, LBFVPublicKey, PublicKeyShare, RelinKeyShare};
@@ -23,8 +23,8 @@ pub fn aggregate_lbfv_relinearization_key(
     rlk_share_bytes: &[ArcBytes],
 ) -> Result<ArcBytes> {
     ensure!(
-        preset == BfvPreset::SecureThreshold16384,
-        "operational l-BFV RLK requires SecureThreshold16384"
+        lbfv_crs_seed(preset).is_some() && lbfv_urs_seed(preset).is_some(),
+        "operational l-BFV RLK requires a preset with l-BFV constants"
     );
     ensure!(
         !public_key_share_bytes.is_empty() && public_key_share_bytes.len() == rlk_share_bytes.len(),

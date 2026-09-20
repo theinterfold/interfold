@@ -84,7 +84,7 @@ impl E3Extension for ThresholdKeyshareExtension {
                 .err(EType::KeyGeneration, anyhow!(ERROR_KEYSHARE_META_MISSING));
             return;
         };
-        let lbfv_initial = if data.params_preset == e3_fhe_params::BfvPreset::SecureThreshold16384 {
+        let lbfv_initial = if e3_fhe_params::supports_lbfv(data.params_preset) {
             match crate::LbfvGenerationStateV1::from_selection(
                 data,
                 interfold_address,
@@ -209,10 +209,10 @@ impl E3Extension for ThresholdKeyshareExtension {
             .params_preset
             .dkg_counterpart()
             .unwrap_or(meta.params_preset);
-        if meta.params_preset == e3_fhe_params::BfvPreset::SecureThreshold16384 {
+        if e3_fhe_params::supports_lbfv(meta.params_preset) {
             let lbfv_state = lbfv_generation.get().ok_or_else(|| {
                 anyhow!(
-                    "secure-16384 threshold-keyshare for E3 {} has no l-BFV generation record",
+                    "l-BFV threshold-keyshare for E3 {} has no generation record",
                     snapshot.e3_id
                 )
             })?;

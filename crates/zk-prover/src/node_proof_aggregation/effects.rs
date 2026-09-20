@@ -12,6 +12,7 @@ impl NodeProofAggregator {
     ) {
         let (msg, _) = msg.into_components();
         let e3_id = msg.document.e3_id().clone();
+        let role = msg.document.role();
         let entry = self
             .generation_fold_rows
             .entry(e3_id.clone())
@@ -22,6 +23,13 @@ impl NodeProofAggregator {
             });
         match msg.document {
             LbfvKeyShareDocument::PublicKeyV1(document) => {
+                entry.pk_proofs = document
+                    .signed_row_proofs
+                    .into_iter()
+                    .map(|signed| signed.payload.proof)
+                    .collect();
+            }
+            LbfvKeyShareDocument::PublicKeyV2(document) => {
                 entry.pk_proofs = document
                     .signed_row_proofs
                     .into_iter()
@@ -42,7 +50,27 @@ impl NodeProofAggregator {
                     }
                 }
             }
+            LbfvKeyShareDocument::RelinearizationKeyV2(document) => {
+                entry.rlk_proofs = document
+                    .signed_row_proofs
+                    .into_iter()
+                    .map(|signed| signed.payload.proof)
+                    .collect();
+                if let Some(proof) = entry.rlk_proofs.first() {
+                    let signals: &[u8] = proof.public_signals.as_ref();
+                    if signals.len() >= 9 * 32 {
+                        entry.trusted_limb_key_hash =
+                            e3_utils::ArcBytes::from_bytes(&signals[8 * 32..9 * 32]);
+                    }
+                }
+            }
         }
+        info!(
+            "NodeProofAggregator: received l-BFV {role:?} document for E3 {e3_id} (pk_rows={}, rlk_rows={}, trusted_limb_hash={})",
+            entry.pk_proofs.len(),
+            entry.rlk_proofs.len(),
+            !entry.trusted_limb_key_hash.is_empty(),
+        );
         self.try_dispatch_node_dkg_fold(&e3_id);
     }
 
@@ -272,7 +300,7 @@ impl NodeProofAggregator {
             return;
         }
 
-        if state.meta.params_preset == e3_fhe_params::BfvPreset::SecureThreshold16384 {
+        if e3_fhe_params::supports_lbfv(state.meta.params_preset) {
             self.try_dispatch_v2_generation_fold(e3_id);
             return;
         }
@@ -338,13 +366,27 @@ impl NodeProofAggregator {
     }
 
     fn try_dispatch_v2_generation_fold(&mut self, e3_id: &E3id) {
+        let row_count = self
+            .states
+            .get(e3_id)
+            .and_then(|state| e3_fhe_params::lbfv_row_count(state.meta.params_preset))
+            .unwrap_or_default();
         let Some(rows) = self.generation_fold_rows.get(e3_id) else {
+            info!(
+                "NodeProofAggregator: waiting for l-BFV generation documents for E3 {e3_id} (expected {row_count} rows)"
+            );
             return;
         };
-        if rows.pk_proofs.len() != 5
-            || rows.rlk_proofs.len() != 5
+        if rows.pk_proofs.len() != row_count
+            || rows.rlk_proofs.len() != row_count
             || rows.trusted_limb_key_hash.is_empty()
         {
+            info!(
+                "NodeProofAggregator: l-BFV generation fold not ready for E3 {e3_id} (pk_rows={}, rlk_rows={}, expected_rows={row_count}, trusted_limb_hash={})",
+                rows.pk_proofs.len(),
+                rows.rlk_proofs.len(),
+                !rows.trusted_limb_key_hash.is_empty(),
+            );
             return;
         }
         let Some(state) = self.states.get_mut(e3_id) else {
@@ -357,7 +399,7 @@ impl NodeProofAggregator {
             .generation_fold_next_rows
             .entry(e3_id.clone())
             .or_insert(0);
-        if next_row >= 5 {
+        if next_row >= row_count as u32 {
             self.try_dispatch_v2_node_fold(e3_id);
             return;
         }
@@ -367,6 +409,9 @@ impl NodeProofAggregator {
         state.fold_correlation = Some(corr);
         self.fold_correlation.insert(corr, e3_id.clone());
         self.generation_fold_correlation.insert(corr, e3_id.clone());
+        info!(
+            "NodeProofAggregator: dispatched l-BFV generation fold row {next_row}/{row_count} for E3 {e3_id}"
+        );
         let request = LbfvGenerationFoldRequest {
             pk_proof: rows.pk_proofs[next_row as usize].clone(),
             rlk_proof: rows.rlk_proofs[next_row as usize].clone(),
@@ -407,6 +452,10 @@ impl NodeProofAggregator {
             .entry(e3_id.clone())
             .and_modify(|row| *row += 1)
             .or_insert(1);
+        info!(
+            "NodeProofAggregator: completed l-BFV generation fold row for E3 {e3_id}; next row={}",
+            self.generation_fold_next_rows[&e3_id]
+        );
         self.try_dispatch_node_dkg_fold(&e3_id);
     }
 
@@ -429,6 +478,7 @@ impl NodeProofAggregator {
         state.fold_correlation = Some(corr);
         self.fold_correlation.insert(corr, e3_id.clone());
         self.v2_legacy_correlation.insert(corr, e3_id.clone());
+        info!("NodeProofAggregator: dispatching l-BFV legacy node fold for E3 {e3_id}");
         if let Err(error) = self.bus.publish(
             ComputeRequest::zk(ZkRequest::NodeDkgFold(request), corr, e3_id.clone()),
             ec,
@@ -467,6 +517,7 @@ impl NodeProofAggregator {
         };
         state.fold_correlation = Some(corr);
         self.fold_correlation.insert(corr, e3_id.clone());
+        info!("NodeProofAggregator: dispatching l-BFV V2 node fold for E3 {e3_id}");
         if let Err(error) = self.bus.publish(
             ComputeRequest::zk(ZkRequest::NodeDkgFoldV2(request), corr, e3_id.clone()),
             ec,
@@ -490,6 +541,9 @@ impl NodeProofAggregator {
             if let Some(state) = self.states.get_mut(&e3_id) {
                 state.fold_correlation = None;
             }
+            info!(
+                "NodeProofAggregator: completed l-BFV legacy node fold for E3 {e3_id}; dispatching V2 fold"
+            );
             self.dispatch_v2_with_legacy_node_fold(&e3_id, proof);
             return;
         }

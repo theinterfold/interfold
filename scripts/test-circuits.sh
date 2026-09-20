@@ -24,14 +24,11 @@ for committee in minimum micro small; do
     -e "s/committee::(minimum|micro|small)/committee::$committee/g" \
     "$BACKUP_DIR/active.nr" > "$ACTIVE_COMMITTEE"
 
-  for preset in insecure secure; do
-    preset_name="${preset}-512"
-    if [[ "$preset" == "secure" ]]; then
-      preset_name="secure-8192"
-    fi
+  for preset in insecure secure_8192; do
+    preset_name="${preset//_/-}"
     sed -E \
-      -e "s/preset: (insecure-512|secure-8192)/preset: $preset_name/g" \
-      -e "s/super::(insecure|secure)::/super::$preset::/g" \
+      -e "s/preset: (insecure|secure-8192)/preset: $preset_name/g" \
+      -e "s/super::(insecure|secure_8192)::/super::$preset::/g" \
       "$BACKUP_DIR/default.nr" > "$ACTIVE_PRESET"
     echo "Testing DKG aggregation for $preset_name/$committee"
     (cd "$REPO_ROOT/circuits/bin/recursive_aggregation/dkg_aggregator" && nargo test)

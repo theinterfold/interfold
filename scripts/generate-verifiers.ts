@@ -101,7 +101,7 @@ function onChainVerifierCircuits(preset: CircuitPreset, committee: CircuitCommit
   if (!isPresetCommitteeSupported(preset, committee)) {
     throw new Error(`Unsupported preset/committee pair (${preset}, ${committee})`)
   }
-  return preset === CIRCUIT_PRESETS.SECURE_16384
+  return preset === CIRCUIT_PRESETS.INSECURE || preset === CIRCUIT_PRESETS.SECURE_16384
     ? [...BASE_ON_CHAIN_VERIFIER_CIRCUITS, 'dkg_aggregator_v2']
     : [...BASE_ON_CHAIN_VERIFIER_CIRCUITS]
 }
@@ -940,7 +940,7 @@ async function main() {
     prepareAllSupportedOutput(rootDir, options)
     const pairs = SUPPORTED_PRESET_COMMITTEE_PAIRS.filter(
       ({ preset, committee }) => preset !== CANONICAL_PRESET || committee !== CANONICAL_COMMITTEE,
-    ).concat([{ preset: CIRCUIT_PRESETS.INSECURE_512, committee: CANONICAL_COMMITTEE }])
+    ).concat([{ preset: CIRCUIT_PRESETS.INSECURE, committee: CANONICAL_COMMITTEE }])
     for (const { preset, committee } of pairs) {
       const generator = new VerifierGenerator(rootDir, {
         ...options,
