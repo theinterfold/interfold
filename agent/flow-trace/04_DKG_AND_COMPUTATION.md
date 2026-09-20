@@ -819,8 +819,8 @@ SignedLbfvKeyShareManifest arrives at every PublicKeyAggregator
 │  ├─ Require the document C1 payload to equal the submitted C1 payload
 │  ├─ Validate all five PK, RLK D0, and RLK D2 row commitments
 │  └─ Persist Ready or InvalidData
-├─ When the first H parties are Ready:
-│  ├─ Persist their ascending party IDs as the exact candidate set
+├─ After every member of the accepted H-party roster submits KeyshareCreated:
+│  ├─ Persist the Ready roster party IDs in ascending order as the exact candidate set
 │  └─ Publish AggregationInputsReady without waiting for unrelated submitted parties
 ├─ If fewer than H parties are Ready, fail only after every submitted party is settled
 │  └─ Settled = Ready, Equivocated, InvalidData, or Excluded

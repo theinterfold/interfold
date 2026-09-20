@@ -602,6 +602,12 @@ impl PublicKeyAggregator {
         ec: EventContext<Sequenced>,
         ctx: &mut Context<Self>,
     ) -> bool {
+        if !matches!(
+            self.state.get(),
+            Some(PublicKeyAggregatorState::VerifyingC1 { .. })
+        ) {
+            return false;
+        }
         let Some(submitted_party_ids) = self.submitted_lbfv_parties() else {
             return false;
         };
