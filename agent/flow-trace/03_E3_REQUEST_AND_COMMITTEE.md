@@ -211,8 +211,11 @@ configured provider's `RandomnessFulfilled` event from the chain:
 Chain ingestion waits for one confirmation by default, even when the configured URL points to a
 local RPC proxy. Only a single-process development chain explicitly sets
 `ingestion_confirmations: 0`. If an RPC log carries its block timestamp, the reader uses it without
-another provider request. Otherwise, it retries a temporarily missing block before it rejects the
-log and reconnects for canonical backfill.
+another provider request. Otherwise, it retries a temporarily missing block. During initial
+historical sync, an error that remains after the configured retries stops the EVM stream because the
+node cannot start from incomplete history. During live ingestion, a rejected zero-confirmation log
+or a failed confirmed-log backfill closes the current subscription and reconnects for canonical
+backfill.
 
 At startup, each ciphernode loads the saved request-time registry and verifier for every active E3.
 It gives this data to the proof actors and registry writers before event replay starts. Events after

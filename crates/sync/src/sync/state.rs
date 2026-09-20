@@ -5,7 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 use crate::SyncRepositoryFactory;
-use anyhow::{ensure, Result};
+use anyhow::{ensure, Context, Result};
 use e3_data::Repositories;
 use e3_events::{AggregateId, EvmEventConfig, EvmEventConfigChain};
 use std::collections::{BTreeMap, HashMap};
@@ -70,15 +70,28 @@ impl SnapshotMeta {
         Ok(Self { aggregate_state })
     }
 
-    /// Return an EvmEventConfig based on the SnapshotMeta
-    pub fn to_evm_config(&self) -> EvmEventConfig {
-        let map: BTreeMap<u64, EvmEventConfigChain> = self
-            .aggregate_state
-            .iter()
-            .map(|s| (s.aggregate_id.to_chain_id(), s.block))
-            .filter_map(|s| s.0.map(|chain| (chain, EvmEventConfigChain::new(s.1))))
-            .collect();
-        EvmEventConfig::from_config(map)
+    /// Return an EVM replay config with snapshot cursors and the configured confirmation policy.
+    pub fn to_evm_config(&self, configured: &EvmEventConfig) -> Result<EvmEventConfig> {
+        let mut map = BTreeMap::new();
+        for state in &self.aggregate_state {
+            let Some(chain_id) = state.aggregate_id.to_chain_id() else {
+                continue;
+            };
+            let confirmations = configured
+                .get(&chain_id)
+                .with_context(|| {
+                    format!(
+                        "snapshot aggregate {} has no configured EVM chain",
+                        state.aggregate_id
+                    )
+                })?
+                .confirmations();
+            map.insert(
+                chain_id,
+                EvmEventConfigChain::new(state.block).with_confirmations(confirmations),
+            );
+        }
+        Ok(EvmEventConfig::from_config(map))
     }
 
     pub fn to_net_config(&self) -> BTreeMap<AggregateId, u128> {
@@ -173,7 +186,11 @@ mod tests {
 
     #[test]
     fn to_evm_config_only_includes_aggregates_with_a_chain() {
-        let config = meta().to_evm_config();
+        let configured = EvmEventConfig::from_config(BTreeMap::from([
+            (1, EvmEventConfigChain::new(0).with_confirmations(1)),
+            (2, EvmEventConfigChain::new(0).with_confirmations(4)),
+        ]));
+        let config = meta().to_evm_config(&configured).unwrap();
         // aggregate 0 has no chain id and must be excluded.
         let chains = config.chains();
         assert!(chains.contains(&1));
@@ -181,6 +198,17 @@ mod tests {
         assert_eq!(chains.len(), 2);
         assert_eq!(config.deploy_block(1), Some(100));
         assert_eq!(config.deploy_block(2), Some(200));
+        assert_eq!(config.get(&1).unwrap().confirmations(), 1);
+        assert_eq!(config.get(&2).unwrap().confirmations(), 4);
+    }
+
+    #[test]
+    fn to_evm_config_rejects_a_snapshot_chain_without_policy() {
+        let error = meta()
+            .to_evm_config(&EvmEventConfig::new())
+            .expect_err("configured chains must cover every chain snapshot");
+
+        assert!(error.to_string().contains("has no configured EVM chain"));
     }
 
     #[test]

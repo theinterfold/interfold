@@ -8,20 +8,15 @@ use crate::{
     events::{FlushEventStores, SequencerBarrier, StoreEventRequested, StoreEventResponse},
     EventBus, InterfoldEvent, Sequenced, Unsequenced,
 };
-use actix::{
-    Actor, ActorContext, ActorFutureExt, Addr, AsyncContext, Handler, Recipient, ResponseFuture,
-    WrapFuture,
-};
+use actix::{Actor, Addr, AsyncContext, Handler, Recipient, ResponseFuture};
 use anyhow::{Context, Result};
 use e3_utils::MAILBOX_LIMIT;
-use tracing::error;
 
 /// Component to sequence the storage of events
 pub struct Sequencer {
     bus: Addr<EventBus<InterfoldEvent<Sequenced>>>,
     eventstore: Recipient<StoreEventRequested>,
     eventstore_flush: Option<Recipient<FlushEventStores>>,
-    pre_fanout: Option<Recipient<InterfoldEvent<Sequenced>>>,
 }
 
 impl Sequencer {
@@ -33,7 +28,6 @@ impl Sequencer {
             bus: bus.clone(),
             eventstore: eventstore.into(),
             eventstore_flush: None,
-            pre_fanout: None,
         }
     }
 
@@ -46,17 +40,7 @@ impl Sequencer {
             bus: bus.clone(),
             eventstore: eventstore.into(),
             eventstore_flush: Some(eventstore_flush.into()),
-            pre_fanout: None,
         }
-    }
-
-    /// Deliver each durable sequence to infrastructure before domain-event deduplication.
-    pub fn with_pre_fanout(
-        mut self,
-        recipient: impl Into<Recipient<InterfoldEvent<Sequenced>>>,
-    ) -> Self {
-        self.pre_fanout = Some(recipient.into());
-        self
     }
 }
 
@@ -81,31 +65,8 @@ impl Handler<InterfoldEvent<Unsequenced>> for Sequencer {
 
 impl Handler<StoreEventResponse> for Sequencer {
     type Result = ();
-    fn handle(&mut self, msg: StoreEventResponse, ctx: &mut Self::Context) -> Self::Result {
-        let event = msg.into_event();
-        let pre_fanout = self.pre_fanout.clone();
-        let bus = self.bus.clone();
-
-        // The snapshot batch must exist before stateful subscribers can enqueue writes for this
-        // event. It also must observe sequences that domain deduplication intentionally suppresses.
-        ctx.wait(
-            async move {
-                if let Some(pre_fanout) = pre_fanout {
-                    pre_fanout.send(event.clone()).await.context(
-                        "pre-fanout subscriber stopped before accepting a durable event",
-                    )?;
-                }
-                Ok::<_, anyhow::Error>(event)
-            }
-            .into_actor(self)
-            .map(move |result, _, ctx| match result {
-                Ok(event) => bus.do_send(event),
-                Err(error) => {
-                    error!(%error, "Stopping the sequencer after pre-fanout delivery failed");
-                    ctx.stop();
-                }
-            }),
-        );
+    fn handle(&mut self, msg: StoreEventResponse, _: &mut Self::Context) -> Self::Result {
+        self.bus.do_send(msg.into_event());
     }
 }
 

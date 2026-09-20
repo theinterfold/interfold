@@ -561,10 +561,15 @@ mod serialization_tests {
             Some(100),
             EventSource::Evm,
         );
+        let other_chain = InterfoldEvent {
+            payload: first.payload.clone(),
+            ctx: first.ctx.clone().with_aggregate(AggregateId::new(2)),
+        };
 
         assert_eq!(first.event_id(), second.event_id());
         assert_ne!(first.delivery_id(), second.delivery_id());
         assert_eq!(first.delivery_id(), replay.delivery_id());
+        assert_ne!(first.delivery_id(), other_chain.delivery_id());
     }
 }
 
@@ -610,11 +615,17 @@ impl<S: SeqState> Event for InterfoldEvent<S> {
 
     fn delivery_id(&self) -> Self::Id {
         match self.source() {
-            // Existing persisted EVM events use a payload-derived EventId. Include the block and
-            // deterministic log timestamp (which carries the log index) in local delivery
-            // identity. Equal facts from distinct chain-log occurrences are both applied, while
-            // replay of the same occurrence at the snapshot boundary stays idempotent.
-            EventSource::Evm => EventId::hash((self.ctx.id(), self.ctx.block(), self.ctx.ts())),
+            // Existing persisted EVM events use a payload-derived EventId. Include the chain,
+            // block, and deterministic log timestamp (which carries the log index) in local
+            // delivery identity. Equal facts from distinct chain-log occurrences are both
+            // applied, while replay of the same occurrence at the snapshot boundary stays
+            // idempotent.
+            EventSource::Evm => EventId::hash((
+                self.ctx.id(),
+                self.ctx.aggregate_id(),
+                self.ctx.block(),
+                self.ctx.ts(),
+            )),
             EventSource::Local | EventSource::Net => self.ctx.id(),
         }
     }

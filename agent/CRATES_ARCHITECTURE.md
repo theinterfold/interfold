@@ -264,8 +264,8 @@ flowchart LR
     StoreRouter --> Logs[(per-aggregate event logs)]
     Logs --> StoreAck[StoreEventResponse]
     StoreAck --> Seq
-    Seq -->|await durable-sequence admission| Snapshot[SnapshotBuffer]
     Seq --> Bus[EventBus]
+    Bus -->|await snapshot admission before deduplication| Snapshot[SnapshotBuffer]
 
     Bus --> Router[E3Router]
     Bus --> Sortition[Sortition and selector]
@@ -331,8 +331,8 @@ flowchart TD
         Publish[BusHandle publish] --> Sequencer[Sequencer assigns per-aggregate sequence]
         Sequencer -. do_send .-> EventStore[append event log and timestamp index]
         EventStore -. response do_send .-> Sequencer
-        Sequencer -->|await durable-sequence admission| SnapshotBuffer[aggregate snapshot buffer]
         Sequencer -. do_send .-> Dispatch[EventBus dispatch]
+        Dispatch -->|await snapshot admission before deduplication| SnapshotBuffer[aggregate snapshot buffer]
         Dispatch -->|await each live recipient| Subscribers[actor subscribers]
         SnapshotBuffer -. do_send .-> SnapshotRouter[BatchRouter and per-sequence Batch actors]
         SnapshotRouter --> Repositories[(Sled KV state)]
@@ -376,15 +376,16 @@ files. Startup verifies every committed reference, then removes only blob files 
 record references. Timestamp admission deduplicates by stable event ID plus payload, so the same
 logical event may return through historical network sync with a different transport source without
 colliding. A different payload at an already-indexed HLC timestamp remains an integrity failure.
-After append, the sequencer first waits for the snapshot buffer to accept every durable sequence.
-Only then does it send the event to the domain EventBus. EventBus deduplication uses a separate
-delivery identity: EVM occurrences include their block and deterministic log timestamp/index, while
-local and network facts retain their stable event ID. Equal EVM state facts from distinct log
-occurrences therefore both update projections, but a re-delivery of the same occurrence remains
-idempotent. Startup replay performs the same snapshot admission before domain fanout. The snapshot
-router closes every older open sequence when it observes a newer sequence; it does not require an
-exact predecessor. The Sled and in-memory stores atomically reject a contextual batch whose sequence
-is below the persisted aggregate cursor. These boundaries prevent a late batch from replacing newer
+After append, the sequencer sends the durable event to the EventBus. The EventBus waits for the
+snapshot buffer to accept the sequence before it applies domain deduplication or sends the event to
+domain subscribers. This boundary also covers startup replay and events received through source or
+forked buses. EventBus deduplication uses a separate delivery identity: EVM occurrences include
+their chain, block, and deterministic log timestamp/index, while local and network facts retain
+their stable event ID. Equal EVM state facts from distinct log occurrences therefore both update
+projections, but a re-delivery of the same occurrence remains idempotent. The snapshot router closes
+every older open sequence when it observes a newer sequence; it does not require an exact
+predecessor. The Sled and in-memory stores atomically reject a contextual batch whose sequence is
+below the persisted aggregate cursor. These boundaries prevent a late batch from replacing newer
 state while leaving a newer cursor in place. Historical peer-sync cursors contain only chain-bound
 aggregates allowed by the active network policy; local aggregate 0 is never requested from peers or
 added to recovery retries. Post-snapshot events are queried per aggregate in pages bounded by 1,024

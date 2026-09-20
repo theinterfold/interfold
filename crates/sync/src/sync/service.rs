@@ -312,7 +312,6 @@ pub async fn sync(
     repositories: &Repositories,
     aggregate_config: &AggregateConfig,
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
-    pre_fanout: &Recipient<InterfoldEvent<Sequenced>>,
 ) -> Result<()> {
     let net_ready = bus.wait_for(EventType::NetReady);
     sync_with_net_ready(
@@ -321,7 +320,6 @@ pub async fn sync(
         repositories,
         aggregate_config,
         eventstore,
-        pre_fanout,
         net_ready,
     )
     .await
@@ -337,7 +335,6 @@ pub async fn sync_with_net_ready<F>(
     repositories: &Repositories,
     aggregate_config: &AggregateConfig,
     eventstore: &Recipient<EventStoreQueryBy<SeqAgg>>,
-    pre_fanout: &Recipient<InterfoldEvent<Sequenced>>,
     net_ready: F,
 ) -> Result<()>
 where
@@ -366,7 +363,7 @@ where
     }
 
     // 2. Determine the evm blocks to read from based on the SnapshotMeta
-    let evm_config = snapshot.to_evm_config();
+    let evm_config = snapshot.to_evm_config(default_config)?;
     let snapshot_net_config = snapshot.to_net_config();
 
     // 3. Page post-snapshot EventStore history into temporary per-aggregate runs. Replay preserves
@@ -390,7 +387,7 @@ where
     //    signal that this boot publishes. These local infrastructure events use their stable event
     //    ID as their delivery identity. This is critical for SyncEnded: if EvmChainGateway never
     //    receives the current signal, it stays in BufferUntilLive and loses all live EVM events.
-    let replayed = replay_spool.replay(bus, pre_fanout).await?;
+    let replayed = replay_spool.replay(bus).await?;
     info!(replayed_events = replayed, "Events replayed.");
 
     // Loose ends after a crash:

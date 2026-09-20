@@ -115,7 +115,13 @@ where
 pub struct EventBus<E: Event> {
     config: EventBusConfig,
     ids: ExactDedup<E::Id>,
+    pre_fanout: Vec<PreFanout<E>>,
     listeners: HashMap<String, Vec<Recipient<E>>>,
+}
+
+struct PreFanout<E: Event> {
+    listener: Recipient<E>,
+    failure_signal: Option<tokio::sync::watch::Sender<Option<String>>>,
 }
 
 impl<E: Event> Actor for EventBus<E> {
@@ -133,6 +139,7 @@ impl<E: Event> EventBus<E> {
     fn with_dedup_capacity(config: EventBusConfig, dedup_capacity: usize) -> Self {
         EventBus {
             config,
+            pre_fanout: Vec::new(),
             listeners: HashMap::new(),
             ids: ExactDedup::new(dedup_capacity),
         }
@@ -195,6 +202,22 @@ impl<E: Event> EventBus<E> {
         listeners
     }
 
+    fn pre_fanout_recipients(&self) -> Vec<Recipient<E>> {
+        self.pre_fanout
+            .iter()
+            .map(|subscriber| subscriber.listener.clone())
+            .collect()
+    }
+
+    fn record_pre_fanout_failure(&self, error: &anyhow::Error) {
+        let reason = format!("EventBus pre-fanout failed: {error:#}");
+        for subscriber in &self.pre_fanout {
+            if let Some(signal) = &subscriber.failure_signal {
+                signal.send_replace(Some(reason.clone()));
+            }
+        }
+    }
+
     fn prepare_fanout(&mut self, event: &E) -> Option<(String, Vec<Recipient<E>>)> {
         if self.is_duplicate(event) {
             return None;
@@ -252,6 +275,7 @@ impl<E: Event> Default for EventBus<E> {
     fn default() -> Self {
         Self {
             config: EventBusConfig::default(),
+            pre_fanout: Vec::new(),
             listeners: HashMap::new(),
             ids: ExactDedup::new(DEFAULT_DEDUP_CAPACITY),
         }
@@ -262,25 +286,43 @@ impl<E: Event> Handler<E> for EventBus<E> {
     type Result = ();
 
     fn handle(&mut self, event: E, ctx: &mut Context<Self>) {
-        let Some((event_type, listeners)) = self.prepare_fanout(&event) else {
-            return;
-        };
+        let admission_label = format!("{} pre-fanout", event.event_type());
+        let pre_fanout = self.pre_fanout_recipients();
 
-        // `Recipient::do_send` bypasses mailbox capacity. During startup replay that turns a
-        // bounded EventBus into an unbounded multiplier: every replayed event is cloned into each
-        // subscriber even when its mailbox is full. Await subscriber capacity concurrently and
-        // pause this actor so at most one subsequent event can be queued while downstream actors
-        // catch up. A wedged subscriber is bounded by FANOUT_ACCEPT_TIMEOUT.
-        // This also makes EventBusBarrier an acknowledgement of completed fanout rather than mere
-        // enqueueing.
+        // Admit the event to infrastructure before deduplication and domain delivery. Snapshot
+        // admission must observe every durable sequence, including replay, source-bus, and
+        // forked-bus events that do not pass through this node's Sequencer.
         ctx.wait(
-            async move { fanout(event, event_type.clone(), listeners).await }
-                .into_actor(self)
-                .map(|result, _, _| {
-                    if let Err(error) = result {
-                        tracing::error!(%error, "EventBus fanout did not complete");
-                    }
-                }),
+            async move {
+                fanout(event.clone(), admission_label, pre_fanout)
+                    .await
+                    .map(|()| event)
+            }
+            .into_actor(self)
+            .map(|result, actor, _| match result {
+                Ok(event) => actor
+                    .prepare_fanout(&event)
+                    .map(|(event_type, listeners)| (event, event_type, listeners)),
+                Err(error) => {
+                    actor.record_pre_fanout_failure(&error);
+                    tracing::error!(%error, "EventBus pre-fanout did not complete");
+                    None
+                }
+            })
+            .then(|prepared, actor, _| {
+                async move {
+                    let Some((event, event_type, listeners)) = prepared else {
+                        return Ok(());
+                    };
+                    fanout(event, event_type, listeners).await
+                }
+                .into_actor(actor)
+            })
+            .map(|result, _, _| {
+                if let Err(error) = result {
+                    tracing::error!(%error, "EventBus fanout did not complete");
+                }
+            }),
         );
     }
 }
@@ -290,16 +332,34 @@ impl<E: Event> Handler<EventBusFanout<E>> for EventBus<E> {
 
     fn handle(&mut self, msg: EventBusFanout<E>, _: &mut Context<Self>) -> Self::Result {
         let event = msg.0;
-        let prepared = self.prepare_fanout(&event);
+        let admission_label = format!("{} pre-fanout", event.event_type());
+        let pre_fanout = self.pre_fanout_recipients();
         AtomicResponse::new(Box::pin(
             async move {
-                if let Some((event_type, listeners)) = prepared {
-                    fanout(event, event_type, listeners).await
-                } else {
-                    Ok(())
-                }
+                fanout(event.clone(), admission_label, pre_fanout)
+                    .await
+                    .map(|()| event)
             }
-            .into_actor(self),
+            .into_actor(self)
+            .map(|result, actor, _| {
+                if let Err(error) = &result {
+                    actor.record_pre_fanout_failure(error);
+                }
+                result.map(|event| {
+                    actor
+                        .prepare_fanout(&event)
+                        .map(|(event_type, listeners)| (event, event_type, listeners))
+                })
+            })
+            .then(|prepared, actor, _| {
+                async move {
+                    let Some((event, event_type, listeners)) = prepared? else {
+                        return Ok(());
+                    };
+                    fanout(event, event_type, listeners).await
+                }
+                .into_actor(actor)
+            }),
         ))
     }
 }
@@ -321,6 +381,14 @@ pub struct Subscribe<E: Event> {
     pub listener: Recipient<E>,
 }
 
+/// Register an infrastructure recipient that must accept each event before domain fanout.
+#[derive(Message)]
+#[rtype(result = "()")]
+pub struct SubscribePreFanout<E: Event> {
+    listener: Recipient<E>,
+    failure_signal: Option<tokio::sync::watch::Sender<Option<String>>>,
+}
+
 #[derive(Message)]
 #[rtype(result = "()")]
 pub struct Unsubscribe<E: Event> {
@@ -334,6 +402,23 @@ impl<E: Event> Subscribe<E> {
             event_type: event_type.into(),
             listener,
         }
+    }
+}
+
+impl<E: Event> SubscribePreFanout<E> {
+    pub fn new(listener: Recipient<E>) -> Self {
+        Self {
+            listener,
+            failure_signal: None,
+        }
+    }
+
+    pub fn with_failure_signal(
+        mut self,
+        signal: tokio::sync::watch::Sender<Option<String>>,
+    ) -> Self {
+        self.failure_signal = Some(signal);
+        self
     }
 }
 
@@ -354,6 +439,23 @@ impl<E: Event> Handler<Subscribe<E>> for EventBus<E> {
             .entry(msg.event_type)
             .or_default()
             .push(msg.listener);
+    }
+}
+
+impl<E: Event> Handler<SubscribePreFanout<E>> for EventBus<E> {
+    type Result = ();
+
+    fn handle(&mut self, msg: SubscribePreFanout<E>, _: &mut Context<Self>) {
+        if !self
+            .pre_fanout
+            .iter()
+            .any(|subscriber| subscriber.listener.eq(&msg.listener))
+        {
+            self.pre_fanout.push(PreFanout {
+                listener: msg.listener,
+                failure_signal: msg.failure_signal,
+            });
+        }
     }
 }
 
@@ -812,6 +914,60 @@ mod tests {
         let received = history.send(TakeEvents::new(2)).await?;
         assert!(!received.timed_out);
         assert_eq!(received.events.len(), 2);
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn pre_fanout_completes_before_domain_delivery() -> anyhow::Result<()> {
+        let bus = EventBus::with_dedup_capacity(EventBusConfig::default(), 2).start();
+        let gate = Arc::new(Notify::new());
+        let admitted = Arc::new(AtomicBool::new(false));
+        let pre_fanout = BlockingSubscriber {
+            gate: Arc::clone(&gate),
+            completed: Arc::clone(&admitted),
+        }
+        .start();
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let domain = NotifyingSubscriber(tx).start();
+
+        bus.send(SubscribePreFanout::new(pre_fanout.recipient()))
+            .await?;
+        bus.send(Subscribe::new("CollidingEvent", domain.recipient()))
+            .await?;
+        bus.send(CollidingEvent::new(9)).await?;
+
+        assert!(
+            tokio::time::timeout(Duration::from_millis(20), rx.recv())
+                .await
+                .is_err(),
+            "domain delivery completed before pre-fanout admission"
+        );
+
+        gate.notify_one();
+        let received = tokio::time::timeout(Duration::from_millis(100), rx.recv())
+            .await?
+            .expect("domain subscriber stopped");
+        assert_eq!(received, 9);
+        assert!(admitted.load(Ordering::SeqCst));
+        Ok(())
+    }
+
+    #[actix::test]
+    async fn pre_fanout_observes_events_suppressed_by_domain_deduplication() -> anyhow::Result<()> {
+        let bus = EventBus::with_dedup_capacity(EventBusConfig::default(), 2).start();
+        let (pre_tx, mut pre_rx) = mpsc::unbounded_channel();
+        let pre_fanout = NotifyingSubscriber(pre_tx).start();
+        let history = EventBus::history(&bus);
+
+        bus.send(SubscribePreFanout::new(pre_fanout.recipient()))
+            .await?;
+        bus.send(CollidingEvent::new(9)).await?;
+        bus.send(CollidingEvent::new(9)).await?;
+
+        assert_eq!(pre_rx.recv().await, Some(9));
+        assert_eq!(pre_rx.recv().await, Some(9));
+        let received = history.send(TakeEvents::new(1)).await?;
+        assert_eq!(received.events.len(), 1);
         Ok(())
     }
 

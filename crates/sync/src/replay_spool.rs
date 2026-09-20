@@ -10,7 +10,7 @@ use actix::Recipient;
 use anyhow::{bail, Context, Result};
 use e3_events::{
     AggregateId, BusHandle, CorrelationId, EventBusBarrier, EventBusFanout, EventContextAccessors,
-    EventContextSeq, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent, SeqAgg, Sequenced,
+    EventContextSeq, EventStoreQueryBy, EventStoreQueryResponse, InterfoldEvent, SeqAgg,
 };
 use e3_utils::actix::channel as actix_toolbox;
 use std::{
@@ -233,11 +233,7 @@ impl ReplaySpool {
         Ok(total_events)
     }
 
-    pub(crate) async fn replay(
-        self,
-        bus: &BusHandle,
-        pre_fanout: &Recipient<InterfoldEvent<Sequenced>>,
-    ) -> Result<usize> {
+    pub(crate) async fn replay(self, bus: &BusHandle) -> Result<usize> {
         if let Some(max_timestamp) = self.max_timestamp {
             bus.seed_clock(max_timestamp)?;
         }
@@ -249,13 +245,6 @@ impl ReplaySpool {
             if SyncPlanner::classify_replay(&event) == ReplayDecision::SkipInfrastructure {
                 continue;
             }
-            // Live events reach this infrastructure path from the sequencer before domain
-            // deduplication. Replay bypasses the sequencer, so it must make the same delivery
-            // explicitly before stateful subscribers can enqueue snapshot writes.
-            pre_fanout
-                .send(event.clone())
-                .await
-                .context("pre-fanout subscriber stopped during EventStore replay")?;
             bus.event_bus().send(EventBusFanout(event)).await??;
             replayed += 1;
             if replayed.is_multiple_of(REPLAY_PROGRESS_INTERVAL) {
@@ -682,9 +671,7 @@ mod tests {
         )
         .await?;
 
-        let replayed = spool
-            .replay(&target_bus, &buffer.clone().recipient())
-            .await?;
+        let replayed = spool.replay(&target_bus).await?;
         buffer.send(FlushPendingSnapshots).await??;
 
         let revisions = snapshots
