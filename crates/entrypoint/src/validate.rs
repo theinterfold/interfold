@@ -25,7 +25,10 @@
 //! 2. **Snapshot cursor consistency** — verifies the persisted per-aggregate
 //!    sequence cursor does not point past the last event actually present in the
 //!    log (which would indicate a snapshot that is ahead of a truncated log).
-//! 3. **Open-loop / loose-ends audit** — loads the persisted sortition state and
+//! 3. **Sortition projection consistency** — rebuilds the registered-node set from
+//!    source-of-truth events through each persisted snapshot cursor and compares it with the
+//!    persisted selection backend.
+//! 4. **Open-loop / loose-ends audit** — loads the persisted sortition state and
 //!    flags any committee that still holds an active-job slot **even though the
 //!    event log already contains a terminal event** for that E3. These are the
 //!    orphaned tickets that a crash mid-E3 can leave behind; they are the
@@ -39,7 +42,10 @@ use e3_events::{
     AggregateId, E3Stage, Event, EventContextAccessors, EventContextSeq, InterfoldEvent,
     InterfoldEventData,
 };
-use e3_sortition::{committee_key, NodeRegistry, NodeStateRepositoryFactory, NodeStateStore};
+use e3_sortition::{
+    committee_key, NodeRegistry, NodeStateRepositoryFactory, NodeStateStore, SortitionList,
+    SortitionRepositoryFactory,
+};
 use e3_sync::{
     decide_schema_version, has_schema_governed_kv_state, SchemaVersionDecision,
     SyncRepositoryFactory, SCHEMA_VERSION,
@@ -216,10 +222,12 @@ pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<Validatio
         persisted_schema,
         has_existing_state,
     ));
+    let mut snapshot_cursors = HashMap::new();
     for (agg, events) in &events_by_aggregate {
         let seqs: Vec<u64> = events.iter().map(|e| e.seq()).collect();
 
         let cursor = repositories.aggregate_seq(*agg).read().await?.unwrap_or(0);
+        snapshot_cursors.insert(*agg, cursor);
         report.push(check_cursor_consistency(*agg, cursor, &seqs));
     }
     report.push(CheckResult::pass(
@@ -230,10 +238,133 @@ pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<Validatio
         ),
     ));
 
-    // 3. Open-loop / loose-ends audit against the persisted sortition state.
+    // 3. A current cursor is not sufficient if a stale batch replaced one projection. Rebuild the
+    // registered-node set from the event log and compare it with the persisted backend.
+    report.push(
+        check_sortition_projection(&repositories, &events_by_aggregate, &snapshot_cursors).await?,
+    );
+
+    // 4. Open-loop / loose-ends audit against the persisted sortition state.
     report.push(check_open_loops(&repositories, &terminal_keys).await?);
 
     Ok(report)
+}
+
+async fn check_sortition_projection(
+    repositories: &Repositories,
+    events_by_aggregate: &[(AggregateId, Vec<InterfoldEvent>)],
+    snapshot_cursors: &HashMap<AggregateId, u64>,
+) -> Result<CheckResult> {
+    let expected = registered_nodes_from_events(events_by_aggregate, snapshot_cursors);
+    let backends = repositories.sortition().read().await?.unwrap_or_default();
+    let actual = backends
+        .iter()
+        .filter(|(chain_id, _)| **chain_id != u64::MAX)
+        .map(|(chain_id, backend)| {
+            (
+                *chain_id,
+                backend
+                    .nodes()
+                    .into_iter()
+                    .map(|address| address.to_ascii_lowercase())
+                    .collect::<HashSet<_>>(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    compare_sortition_projection(&expected, &actual)
+}
+
+fn registered_nodes_from_events(
+    events_by_aggregate: &[(AggregateId, Vec<InterfoldEvent>)],
+    snapshot_cursors: &HashMap<AggregateId, u64>,
+) -> HashMap<u64, HashSet<String>> {
+    let mut registered = HashMap::<u64, HashSet<String>>::new();
+    for (aggregate_id, events) in events_by_aggregate {
+        let cursor = snapshot_cursors.get(aggregate_id).copied().unwrap_or(0);
+        for event in events.iter().filter(|event| event.seq() <= cursor) {
+            match event.get_data() {
+                InterfoldEventData::CiphernodeAdded(data) => {
+                    registered
+                        .entry(data.chain_id)
+                        .or_default()
+                        .insert(data.address.to_ascii_lowercase());
+                }
+                InterfoldEventData::CiphernodeRemoved(data) => {
+                    registered
+                        .entry(data.chain_id)
+                        .or_default()
+                        .remove(&data.address.to_ascii_lowercase());
+                }
+                _ => {}
+            }
+        }
+    }
+    registered
+}
+
+fn compare_sortition_projection(
+    expected: &HashMap<u64, HashSet<String>>,
+    actual: &HashMap<u64, HashSet<String>>,
+) -> Result<CheckResult> {
+    let mut chain_ids = expected
+        .keys()
+        .chain(actual.keys())
+        .copied()
+        .collect::<Vec<_>>();
+    chain_ids.sort_unstable();
+    chain_ids.dedup();
+
+    let mut differences = Vec::new();
+    for chain_id in chain_ids {
+        let expected_nodes = expected.get(&chain_id).cloned().unwrap_or_default();
+        let actual_nodes = actual.get(&chain_id).cloned().unwrap_or_default();
+        if expected_nodes == actual_nodes {
+            continue;
+        }
+
+        let mut missing = expected_nodes
+            .difference(&actual_nodes)
+            .cloned()
+            .collect::<Vec<_>>();
+        let mut unexpected = actual_nodes
+            .difference(&expected_nodes)
+            .cloned()
+            .collect::<Vec<_>>();
+        missing.sort();
+        unexpected.sort();
+        differences.push(format!(
+            "chain {chain_id}: {} missing, {} unexpected (missing: {}; unexpected: {})",
+            missing.len(),
+            unexpected.len(),
+            display_addresses(&missing),
+            display_addresses(&unexpected)
+        ));
+    }
+
+    if differences.is_empty() {
+        return Ok(CheckResult::pass(
+            "sortition-projection",
+            "persisted registered-node sets match the event log through each snapshot cursor",
+        ));
+    }
+
+    Ok(CheckResult::fail(
+        "sortition-projection",
+        format!(
+            "persisted registered-node state disagrees with the event log: {}. Stop the node and \
+             perform a controlled rescan before relying on committee selection",
+            differences.join("; ")
+        ),
+    ))
+}
+
+fn display_addresses(addresses: &[String]) -> String {
+    if addresses.is_empty() {
+        "none".to_owned()
+    } else {
+        addresses.join(", ")
+    }
 }
 
 /// Verify that this binary can safely interpret the persisted schema. A missing
@@ -540,7 +671,10 @@ type SeqMap = BTreeMap<AggregateId, u64>;
 mod tests {
     use super::*;
     use commitlog::{CommitLog, LogOptions};
-    use e3_events::{EventConstructorWithTimestamp, EventLog, EventSource, TestEvent, Unsequenced};
+    use e3_events::{
+        CiphernodeAdded, EventConstructorWithTimestamp, EventLog, EventSource, TestEvent,
+        Unsequenced,
+    };
     use e3_sortition::OpenCommittee;
     use std::{fs::OpenOptions, io::Write};
     use tempfile::tempdir;
@@ -723,6 +857,60 @@ mod tests {
         let open_set = vec![open("1:5"), open("1:6")];
         let terminal = HashSet::new();
         assert!(find_orphaned_committees(&open_set, &terminal).is_empty());
+    }
+
+    #[test]
+    fn sortition_projection_accepts_matching_registered_nodes() {
+        let nodes = HashSet::from(["0xaaa".to_owned(), "0xbbb".to_owned()]);
+        let expected = HashMap::from([(1, nodes.clone())]);
+        let actual = HashMap::from([(1, nodes)]);
+
+        let result = compare_sortition_projection(&expected, &actual).unwrap();
+        assert_eq!(result.severity, Severity::Pass);
+    }
+
+    #[test]
+    fn sortition_projection_reports_nodes_missing_from_snapshot() {
+        let expected =
+            HashMap::from([(1, HashSet::from(["0xaaa".to_owned(), "0xbbb".to_owned()]))]);
+        let actual = HashMap::from([(1, HashSet::from(["0xaaa".to_owned()]))]);
+
+        let result = compare_sortition_projection(&expected, &actual).unwrap();
+        assert_eq!(result.severity, Severity::Fail);
+        assert!(result.detail.contains("1 missing"));
+        assert!(result.detail.contains("0xbbb"));
+    }
+
+    #[test]
+    fn sortition_projection_ignores_the_unapplied_event_log_tail() {
+        let added = |address: &str, seq: u64| {
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                CiphernodeAdded {
+                    address: address.to_owned(),
+                    index: usize::try_from(seq).unwrap(),
+                    num_nodes: usize::try_from(seq).unwrap(),
+                    chain_id: 1,
+                }
+                .into(),
+                None,
+                u128::from(seq),
+                Some(seq),
+                EventSource::Evm,
+            )
+            .into_sequenced(seq)
+        };
+        let events = vec![(
+            AggregateId::new(1),
+            vec![added("0xaaa", 1), added("0xbbb", 2)],
+        )];
+        let cursors = HashMap::from([(AggregateId::new(1), 1)]);
+
+        let projected = registered_nodes_from_events(&events, &cursors);
+
+        assert_eq!(
+            projected,
+            HashMap::from([(1, HashSet::from(["0xaaa".to_owned()]))])
+        );
     }
 
     #[test]

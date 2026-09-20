@@ -10,10 +10,13 @@ use alloy::rpc::types::{Filter, Log};
 use anyhow::{anyhow, Context as _};
 use async_trait::async_trait;
 use e3_events::CorrelationId;
+use std::time::Duration;
 use tracing::{debug, info, warn};
 
 const GET_LOGS_CHUNK_SIZE: u64 = 10_000;
 const GET_LOGS_MAX_RETRIES: u32 = 3;
+const BLOCK_TIMESTAMP_MAX_ATTEMPTS: u32 = 4;
+const BLOCK_TIMESTAMP_RETRY_BASE: Duration = Duration::from_millis(250);
 
 /// Trait abstracting provider methods needed for log fetching.
 /// Enables unit testing without a real EVM provider.
@@ -48,7 +51,9 @@ pub(crate) async fn process_log<L: LogProvider>(
     next: &EvmEventProcessor,
     timestamp_tracker: &mut TimestampTracker,
 ) -> Result<CorrelationId, anyhow::Error> {
-    let timestamp = timestamp_tracker.get(provider, log.block_number).await?;
+    let timestamp = timestamp_tracker
+        .get(provider, log.block_number, log.block_timestamp)
+        .await?;
     let evt = InterfoldEvmEvent::Log(EvmLog::new(log, chain_id, timestamp));
     let id = evt.get_id();
     debug!("Sending event({})", id);
@@ -243,8 +248,14 @@ impl TimestampTracker {
         &mut self,
         provider: &L,
         block_number: Option<u64>,
+        log_timestamp: Option<u64>,
     ) -> Result<u64, anyhow::Error> {
         let bn = block_number.context("provider log is missing its block number")?;
+
+        if let Some(timestamp) = log_timestamp {
+            self.current = Some((bn, timestamp));
+            return Ok(timestamp);
+        }
 
         if let Some((cached_bn, ts)) = self.current {
             if bn == cached_bn {
@@ -252,10 +263,31 @@ impl TimestampTracker {
             }
         }
 
-        let ts = provider.fetch_block_timestamp(bn).await?;
+        let mut last_error = None;
+        for attempt in 1..=BLOCK_TIMESTAMP_MAX_ATTEMPTS {
+            match provider.fetch_block_timestamp(bn).await {
+                Ok(timestamp) => {
+                    self.current = Some((bn, timestamp));
+                    return Ok(timestamp);
+                }
+                Err(error) => {
+                    warn!(
+                        block_number = bn,
+                        attempt,
+                        max_attempts = BLOCK_TIMESTAMP_MAX_ATTEMPTS,
+                        error = %error,
+                        "Could not resolve log block timestamp"
+                    );
+                    last_error = Some(error);
+                    if attempt < BLOCK_TIMESTAMP_MAX_ATTEMPTS {
+                        let multiplier = 1_u32 << (attempt - 1);
+                        tokio::time::sleep(BLOCK_TIMESTAMP_RETRY_BASE * multiplier).await;
+                    }
+                }
+            }
+        }
 
-        self.current = Some((bn, ts));
-        Ok(ts)
+        Err(last_error.expect("timestamp retry loop always runs at least once"))
     }
 }
 

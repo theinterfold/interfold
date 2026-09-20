@@ -4,9 +4,27 @@
 // without even the implied warranty of MERCHANTABILITY
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
-use crate::{EventContext, IntoKey, Sequenced};
+use crate::{
+    AggregateId, EventContext, EventContextAccessors, EventContextSeq, IntoKey, Sequenced,
+};
 use actix::Message;
-use anyhow::Result;
+use anyhow::{ensure, Result};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SnapshotRevision {
+    aggregate_id: AggregateId,
+    seq: u64,
+}
+
+impl SnapshotRevision {
+    pub fn aggregate_id(self) -> AggregateId {
+        self.aggregate_id
+    }
+
+    pub fn seq(self) -> u64 {
+        self.seq
+    }
+}
 
 #[derive(Message, Clone, Debug, PartialEq, Eq, Hash)]
 #[rtype(result = "()")]
@@ -60,6 +78,41 @@ impl InsertBatch {
 
     pub fn commands(&self) -> &Vec<Insert> {
         &self.0
+    }
+
+    /// Return the revision shared by every contextual write in this batch.
+    ///
+    /// Snapshot batches must never combine revisions or mix contextual and direct writes. Keeping
+    /// this check at the storage boundary prevents an older actor snapshot from replacing state
+    /// covered by a newer replay cursor.
+    pub fn snapshot_revision(&self) -> Result<Option<SnapshotRevision>> {
+        let mut revision = None;
+        let mut saw_direct = false;
+
+        for command in &self.0 {
+            let Some(ctx) = command.ctx() else {
+                saw_direct = true;
+                continue;
+            };
+            let candidate = SnapshotRevision {
+                aggregate_id: ctx.aggregate_id(),
+                seq: ctx.seq(),
+            };
+            if let Some(current) = revision {
+                ensure!(
+                    current == candidate,
+                    "snapshot batch combines aggregate/sequence revisions"
+                );
+            } else {
+                revision = Some(candidate);
+            }
+        }
+
+        ensure!(
+            revision.is_none() || !saw_direct,
+            "snapshot batch mixes contextual and direct writes"
+        );
+        Ok(revision)
     }
 }
 

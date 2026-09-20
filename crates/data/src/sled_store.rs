@@ -61,8 +61,10 @@ impl Handler<Insert> for SledStore {
 
     fn handle(&mut self, event: Insert, _: &mut Self::Context) -> Self::Result {
         if let Some(ref mut db) = &mut self.db {
-            if let Err(err) = db.insert(event) {
-                self.report_write_failure(&err);
+            match db.insert_batch(&InsertBatch::new(vec![event])) {
+                Ok(true) => {}
+                Ok(false) => tracing::warn!("Ignored a stale snapshot write"),
+                Err(error) => self.report_write_failure(&error),
             }
         }
     }
@@ -75,9 +77,15 @@ impl Handler<InsertBatch> for SledStore {
         let Some(ref mut db) = &mut self.db else {
             anyhow::bail!("SledStore is closed");
         };
-        if let Err(error) = db.insert_batch(event.commands()) {
-            self.report_write_failure(&error);
-            return Err(error);
+        match db.insert_batch(&event) {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!("Ignored a stale snapshot batch");
+            }
+            Err(error) => {
+                self.report_write_failure(&error);
+                return Err(error);
+            }
         }
         Ok(())
     }

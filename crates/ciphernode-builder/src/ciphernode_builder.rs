@@ -1626,6 +1626,7 @@ mod tests {
             },
             finalization_ms,
             chain_id: Some(1),
+            ingestion_confirmations: Some(0),
             data_availability: None,
         }
     }

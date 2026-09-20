@@ -157,6 +157,15 @@ chains:
         deploy_block: 11534982
 ```
 
+Use one coherent provider for the WebSocket subscription and its RPC requests. Do not place a
+round-robin pool of independently synchronized providers behind one local URL. A subscription can
+announce a block before another pool member can return that block or its logs.
+
+Chain ingestion waits for one confirmation by default. This default also applies when `rpc_url` uses
+`localhost` or `127.0.0.1`, because that URL can be a proxy to a live chain. Set
+`ingestion_confirmations: 0` only for a single-process development chain such as Anvil. Do not set
+it to zero for Mainnet or Sepolia.
+
 ### Check Your Addresses Are Current
 
 Contract addresses change when the protocol is redeployed, and a node pointed at an old address
