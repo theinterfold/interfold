@@ -42,6 +42,7 @@ import {
 const CIRCUIT_VERSION_LABEL = 'interfold-bfv-v2'
 
 const SECURE_16384_ONLY_THRESHOLD_CIRCUITS = new Set([
+  'lbfv_party_secrets',
   'lbfv_pk_generation',
   'lbfv_pk_generation_limb',
   'lbfv_pk_aggregation',

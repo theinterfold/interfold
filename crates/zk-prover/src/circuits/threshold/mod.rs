@@ -5,6 +5,7 @@
 // or FITNESS FOR A PARTICULAR PURPOSE.
 
 mod decrypted_shares_aggregation;
+mod lbfv_party_secrets;
 mod lbfv_pk_aggregation;
 pub mod lbfv_pk_generation;
 mod pk_aggregation;

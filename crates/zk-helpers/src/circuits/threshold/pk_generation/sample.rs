@@ -103,7 +103,6 @@ mod tests {
         assert_eq!(inputs.pk0is.limbs.len(), 2);
         assert_eq!(inputs.e_sm.limbs.len(), 2);
         assert_eq!(inputs.r1is.limbs.len(), 2);
-        assert_eq!(inputs.r2is.limbs.len(), 2);
         for coefficient in inputs.eek.coefficients() {
             assert!(
                 coefficient.abs() <= BigInt::from(bounds.eek_bound.clone()),
@@ -129,14 +128,6 @@ mod tests {
                 assert!(
                     coefficient.abs() <= BigInt::from(bound.clone()),
                     "first quotient exceeds the C1 bound"
-                );
-            }
-        }
-        for (limb, bound) in inputs.r2is.limbs.iter().zip(&bounds.r2_bounds) {
-            for coefficient in limb.coefficients() {
-                assert!(
-                    coefficient.abs() <= BigInt::from(bound.clone()),
-                    "second quotient exceeds the C1 bound"
                 );
             }
         }

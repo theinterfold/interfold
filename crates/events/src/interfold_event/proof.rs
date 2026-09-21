@@ -4,7 +4,8 @@ use derivative::Derivative;
 use e3_utils::utility_types::ArcBytes;
 use e3_zk_helpers::{
     CircuitInputLayout, CircuitOutputLayout, DKG_SHARE_DECRYPTION_OUTPUTS,
-    LBFV_PK_AGGREGATION_INPUTS, LBFV_PK_AGGREGATION_OUTPUTS, LBFV_PK_GENERATION_INPUTS,
+    LBFV_PARTY_SECRETS_INPUTS, LBFV_PARTY_SECRETS_OUTPUTS, LBFV_PK_AGGREGATION_INPUTS,
+    LBFV_PK_AGGREGATION_OUTPUTS, LBFV_PK_GENERATION_INPUTS,
     LBFV_PK_GENERATION_LIMB_INPUTS, LBFV_PK_GENERATION_LIMB_OUTPUTS, LBFV_PK_GENERATION_OUTPUTS,
     PK_AGGREGATION_OUTPUTS, PK_BFV_OUTPUTS, PK_GENERATION_OUTPUTS, RLK_AGGREGATION_INPUTS,
     RLK_AGGREGATION_OUTPUTS, RLK_GENERATION_INPUTS, RLK_GENERATION_LIMB_INPUTS,
@@ -197,6 +198,8 @@ pub enum CircuitName {
     DkgAggregatorV2 = 39,
     /// One CRT limb of one l-BFV public-key row.
     LbfvPkGenerationLimb = 40,
+    /// One party's l-BFV secrets: the secret key and its smudging noise.
+    LbfvPartySecrets = 41,
 }
 
 impl CircuitName {
@@ -243,6 +246,7 @@ impl CircuitName {
             CircuitName::LbfvAggregationFoldKernel => "lbfv_aggregation_fold_kernel",
             CircuitName::DkgAggregatorV2 => "dkg_aggregator_v2",
             CircuitName::LbfvPkGenerationLimb => "lbfv_pk_generation_limb",
+            CircuitName::LbfvPartySecrets => "lbfv_party_secrets",
         }
     }
 
@@ -263,6 +267,7 @@ impl CircuitName {
             | CircuitName::RlkAggregation
             | CircuitName::LbfvPkGeneration
             | CircuitName::LbfvPkGenerationLimb
+            | CircuitName::LbfvPartySecrets
             | CircuitName::LbfvPkAggregation
             | CircuitName::RlkGenerationLimb => "threshold",
             CircuitName::C3Fold
@@ -309,6 +314,9 @@ impl CircuitName {
             },
             CircuitName::LbfvPkGeneration => CircuitOutputLayout::Fixed {
                 fields: LBFV_PK_GENERATION_OUTPUTS,
+            },
+            CircuitName::LbfvPartySecrets => CircuitOutputLayout::Fixed {
+                fields: LBFV_PARTY_SECRETS_OUTPUTS,
             },
             CircuitName::LbfvPkGenerationLimb => CircuitOutputLayout::Fixed {
                 fields: LBFV_PK_GENERATION_LIMB_OUTPUTS,
@@ -379,6 +387,9 @@ impl CircuitName {
             },
             CircuitName::LbfvPkGenerationLimb => CircuitInputLayout::Fixed {
                 fields: LBFV_PK_GENERATION_LIMB_INPUTS,
+            },
+            CircuitName::LbfvPartySecrets => CircuitInputLayout::Fixed {
+                fields: LBFV_PARTY_SECRETS_INPUTS,
             },
             CircuitName::LbfvPkAggregation => CircuitInputLayout::Fixed {
                 fields: LBFV_PK_AGGREGATION_INPUTS,
@@ -458,6 +469,7 @@ mod tests {
         (CircuitName::LbfvAggregationFoldKernel, 38, [38, 0, 0, 0]),
         (CircuitName::DkgAggregatorV2, 39, [39, 0, 0, 0]),
         (CircuitName::LbfvPkGenerationLimb, 40, [40, 0, 0, 0]),
+        (CircuitName::LbfvPartySecrets, 41, [41, 0, 0, 0]),
     ];
 
     fn make_proof(circuit: CircuitName, signals: &[u8]) -> Proof {

@@ -127,6 +127,10 @@ pub const PK_BFV_OUTPUTS: &[OutputField] = &[f("pk_commitment")];
 pub const PK_GENERATION_OUTPUTS: &[OutputField] =
     &[f("sk_commitment"), f("pk_commitment"), f("e_sm_commitment")];
 
+/// One party's l-BFV secrets: the secret key and its smudging noise.
+pub const LBFV_PARTY_SECRETS_OUTPUTS: &[OutputField] =
+    &[f("sk_commitment"), f("e_sm_commitment")];
+
 /// l-BFV public-key generation for one gadget row.
 pub const LBFV_PK_GENERATION_OUTPUTS: &[OutputField] =
     &[f("sk_commitment"), f("pk_commitment"), f("limb_vk_hash")];
@@ -206,6 +210,13 @@ pub const LBFV_PK_GENERATION_INPUTS: &[OutputField] = &[
     f("session_id_lo"),
     f("party_id"),
     f("row_index"),
+];
+
+/// Public generation domain and party identity for a party-secrets proof.
+pub const LBFV_PARTY_SECRETS_INPUTS: &[OutputField] = &[
+    f("session_id_hi"),
+    f("session_id_lo"),
+    f("party_id"),
 ];
 
 /// Public generation domain, row, and CRT-limb identity for a public-key leaf proof.

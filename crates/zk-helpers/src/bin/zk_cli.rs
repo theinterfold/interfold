@@ -49,7 +49,8 @@ use e3_zk_helpers::threshold::lbfv_pk_aggregation::{
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuit;
 use e3_zk_helpers::threshold::pk_aggregation::PkAggregationCircuitData;
 use e3_zk_helpers::threshold::pk_generation::{
-    LbfvPkGenerationCircuit, LbfvPkGenerationLimbCircuit, LbfvPkGenerationLimbCircuitData,
+    LbfvPartySecretsCircuit, LbfvPartySecretsCircuitData, LbfvPkGenerationCircuit,
+    LbfvPkGenerationLimbCircuit, LbfvPkGenerationLimbCircuitData,
     PkGenerationCircuit, PkGenerationCircuitData,
 };
 use e3_zk_helpers::threshold::rlk_aggregation::{RlkAggregationCircuit, RlkAggregationCircuitData};
@@ -225,6 +226,7 @@ fn main() -> Result<()> {
     registry.register(Arc::new(UserDataEncryptionCircuit));
     registry.register(Arc::new(PkGenerationCircuit));
     registry.register(Arc::new(LbfvPkGenerationCircuit));
+    registry.register(Arc::new(LbfvPartySecretsCircuit));
     registry.register(Arc::new(LbfvPkGenerationLimbCircuit));
     registry.register(Arc::new(LbfvPkAggregationCircuit));
     registry.register(Arc::new(RlkGenerationCircuit));
@@ -399,6 +401,11 @@ fn main() -> Result<()> {
                 return Err(anyhow!(
                     "circuit {name} requires verified limb proofs; zk-cli does not fabricate recursive inputs"
                 ));
+            }
+            name if name == <LbfvPartySecretsCircuit as Circuit>::NAME => {
+                let sample = LbfvPartySecretsCircuitData::generate_sample(preset, committee)?;
+                let circuit = LbfvPartySecretsCircuit;
+                circuit.codegen(preset, &sample)?
             }
             name if name == <LbfvPkGenerationLimbCircuit as Circuit>::NAME => {
                 let sample = LbfvPkGenerationLimbCircuitData::generate_sample_for_row_and_limb(
