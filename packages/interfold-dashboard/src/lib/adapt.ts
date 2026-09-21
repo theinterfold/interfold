@@ -25,6 +25,7 @@ export function adaptPoll(s: E3Summary): Poll {
 
   return {
     id: formatE3Id(s.id),
+    displayId: compactE3Id(s.id),
     question: meta.question,
     context: meta.context,
     opened: openedTs > 0n ? fmtUtc(openedTs) : '—',
@@ -40,6 +41,7 @@ export function adaptHistoryEntries(list: E3Summary[], detailsCache: Map<string,
     const meta = pollMetaFor(s.id)
     return {
       id: formatE3Id(s.id),
+      displayId: compactE3Id(s.id),
       question: meta.question,
       closed: s.inputWindow[1] > 0n ? fmtDate(s.inputWindow[1]) : 'in progress',
       duration: s.inputWindow[1] > s.inputWindow[0] && s.inputWindow[0] > 0n ? fmtDuration(s.inputWindow[1] - s.inputWindow[0]) : '—',
