@@ -31,7 +31,7 @@ impl ThresholdPlaintextAggregator {
         &mut self,
         msg: TypedEvent<ComputeRequestError>,
     ) -> Result<()> {
-        let (msg, ec) = msg.into_components();
+        let (msg, _ec) = msg.into_components();
         if msg.request().e3_id != self.e3_id {
             return Ok(());
         }
@@ -66,7 +66,12 @@ impl ThresholdPlaintextAggregator {
             }
         }
 
-        self.fail_decryption_round(ec)
+        tracing::error!(
+            e3_id = %self.e3_id,
+            error = %msg,
+            "Plaintext aggregation failed locally; pending work is preserved for restart"
+        );
+        Ok(())
     }
 
     /// Publish the local `PlaintextAggregated` intent when C7 and decryption aggregation complete.

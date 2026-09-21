@@ -11,7 +11,7 @@ impl ProofRequestActor {
         proof: Proof,
         ec: &EventContext<Sequenced>,
     ) {
-        let Some(pending) = self.pending.remove(correlation_id) else {
+        let Some(pending) = self.pending.get(correlation_id).cloned() else {
             warn!(
                 "Ignoring orphaned or replayed PkBfv ComputeResponse with correlation_id {:?}",
                 correlation_id
@@ -41,11 +41,16 @@ impl ProofRequestActor {
                 key.signed_payload = Some(signed);
             }
             Err(err) => {
-                error!("Failed to sign C0 proof payload: {err} — proof will not be published");
-                self.fail_dkg_round(e3_id, ec, "C0 signing error");
+                error!(
+                    e3_id = %e3_id,
+                    error = %err,
+                    "Failed to sign the local C0 proof; pending work is preserved and invalid committee data was not reported"
+                );
                 return;
             }
         }
+
+        self.pending.remove(correlation_id);
 
         let local_party_id = key.party_id;
         if let Err(err) = self.bus.publish(

@@ -104,6 +104,8 @@ node:
   quic_port: 9091
   autonetkey: true
   autopassword: true
+  multithread_reserve_threads: 2
+  multithread_concurrent_jobs: 2
 
 chains:
   - name: mainnet
@@ -157,6 +159,18 @@ chains:
         deploy_block: 11534982
 ```
 
+The compute scheduler defaults to these `2/2` values. It can reduce concurrent jobs when the
+detected host or cgroup memory limit is too small. Each secure prover job has a 13 GiB admission
+budget, and the scheduler reserves 4 GiB for the node and host. The node refuses to start when the
+detected limit cannot cover the node reserve and one prover budget. Do not increase the job count
+unless the host has enough memory for all node processes.
+
+If local proof work fails because of memory or another worker error, the node retries it with
+backoff and uses Barretenberg low-memory mode after the first failure. A warning that says automatic
+recovery remains active is not a failed E3. The node stops those retries when it observes a terminal
+E3 event. A non-retryable local error is logged as an error and leaves the durable work available
+for repair and restart; it does not accuse another committee member.
+
 Use one coherent provider for the WebSocket subscription and its RPC requests. Do not place a
 round-robin pool of independently synchronized providers behind one local URL. A subscription can
 announce a block before another pool member can return that block or its logs.
@@ -203,33 +217,33 @@ interfold nodes down        # Stop all nodes
 
 ### CLI Commands Reference
 
-| Command                            | Description                                         |
-| ---------------------------------- | --------------------------------------------------- |
-| `interfold start`                  | Start the node in foreground                        |
-| `interfold start -v`               | Start with INFO logging (`-vv`=DEBUG, `-vvv`=TRACE) |
-| `interfold nodes up`               | Start all configured nodes                          |
-| `interfold nodes up --detach`      | Start all nodes in background                       |
-| `interfold nodes up --exclude x`   | Start all nodes except `x`                          |
-| `interfold nodes down`             | Stop all nodes                                      |
-| `interfold nodes ps`               | List running nodes and their status                 |
-| `interfold nodes start <name>`     | Start an individual node                            |
-| `interfold nodes stop <name>`      | Stop an individual node                             |
-| `interfold nodes status <name>`    | Check specific node status                          |
-| `interfold nodes restart <name>`   | Restart a specific node                             |
-| `interfold nodes purge`            | Purge all local ciphernode data                     |
-| `interfold node validate`          | Check stopped-node state without changing it        |
-| `interfold node validate --repair` | Repair only a provably uncommitted log tail         |
-| `interfold ciphernode status`      | Show on-chain registration status                   |
-| `interfold config check`           | Compare configured addresses against the manifest   |
-| `interfold net get-peer-id`        | Show your libp2p peer ID                            |
-| `interfold wallet get`             | Show your wallet address                            |
-| `interfold rev`                    | Show the git SHA the CLI was built from             |
-| `interfold purge-all`              | Wipe all local data (use with caution)              |
-| `interfold print-env`              | Print contract addresses as env vars                |
-| `interfold print-env --vite`       | Print env vars with `VITE_` prefix                  |
-| `interfold print-env --chain x`    | Print env vars for chain `x`                        |
-| `interfold noir status`            | Check ZK prover status                              |
-| `interfold noir setup`             | Install/update ZK prover components                 |
+| Command                            | Description                                          |
+| ---------------------------------- | ---------------------------------------------------- |
+| `interfold start`                  | Start the node in foreground                         |
+| `interfold start -v`               | Start with INFO logging (`-vv`=DEBUG, `-vvv`=TRACE)  |
+| `interfold nodes up`               | Start all configured nodes                           |
+| `interfold nodes up --detach`      | Start all nodes in background                        |
+| `interfold nodes up --exclude x`   | Start all nodes except `x`                           |
+| `interfold nodes down`             | Stop all nodes                                       |
+| `interfold nodes ps`               | List running nodes and their status                  |
+| `interfold nodes start <name>`     | Start an individual node                             |
+| `interfold nodes stop <name>`      | Stop an individual node                              |
+| `interfold nodes status <name>`    | Check specific node status                           |
+| `interfold nodes restart <name>`   | Restart a specific node                              |
+| `interfold nodes purge`            | Purge all local ciphernode data                      |
+| `interfold node validate`          | Check stopped-node state without changing it         |
+| `interfold node validate --repair` | Repair a safe log tail or stale sortition projection |
+| `interfold ciphernode status`      | Show on-chain registration status                    |
+| `interfold config check`           | Compare configured addresses against the manifest    |
+| `interfold net get-peer-id`        | Show your libp2p peer ID                             |
+| `interfold wallet get`             | Show your wallet address                             |
+| `interfold rev`                    | Show the git SHA the CLI was built from              |
+| `interfold purge-all`              | Wipe all local data (use with caution)               |
+| `interfold print-env`              | Print contract addresses as env vars                 |
+| `interfold print-env --vite`       | Print env vars with `VITE_` prefix                   |
+| `interfold print-env --chain x`    | Print env vars for chain `x`                         |
+| `interfold noir status`            | Check ZK prover status                               |
+| `interfold noir setup`             | Install/update ZK prover components                  |
 
 ---
 
@@ -364,10 +378,11 @@ docker run --rm \
 Do not start the node when validation reports `FAIL`; preserve a copy of the volume before repair,
 restore, or controlled resynchronization.
 
-If validation reports only a recoverable uncommitted event-log tail, keep the node stopped and run
-the same command with `--repair`. This repair can re-index complete uncommitted frames or truncate a
-torn physical suffix. It never removes an indexed record and cannot repair committed corruption or
-an unsupported storage schema.
+If validation reports only a recoverable uncommitted event-log tail, or a stale sortition projection
+while the event log, schema, and snapshot cursor checks all pass, keep the node stopped and run the
+same command with `--repair`. This repair can re-index complete uncommitted frames, truncate a torn
+physical suffix, or rebuild the derived sortition projection from intact events. It never removes an
+indexed event and cannot repair committed corruption or an unsupported storage schema.
 
 ### Persistent Event Data
 

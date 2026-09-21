@@ -230,6 +230,9 @@ impl Handler<InterfoldEvent> for ThresholdKeyshare {
             InterfoldEventData::ComputeResponse(data) => {
                 self.notify_sync(ctx, TypedEvent::new(data, ec))
             }
+            InterfoldEventData::ComputeRequestError(data) => {
+                self.notify_sync(ctx, TypedEvent::new(data, ec))
+            }
             InterfoldEventData::CommitteeMemberExpelled(data) => {
                 self.handle_committee_member_expelled(data, ec);
             }

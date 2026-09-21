@@ -91,6 +91,9 @@ every section.
   rebuilt collector restores its prerequisite state, hold the response until that state is ready; do
   not dispatch a replacement computation that would produce different shares and proofs. —
   `flow-trace/04`; INDEX concern #57
+- A live randomized TrBFV request can retry only before it publishes a successful response. A failed
+  attempt is not a durable protocol contribution. After success becomes durable, replay must reuse
+  that exact response and must not regenerate the contribution. — `flow-trace/04`; INDEX concern #57
 - A replayed C1 verification result can arrive before replayed keyshares restore `VerifyingC1`. Hold
   at most one result, bind it to the saved selected roster, and apply it when those inputs are
   ready. Never apply it to a replacement roster. A result received after C1 is complete is an
@@ -133,6 +136,10 @@ every section.
   but queued proof jobs from that E3 must not consume task-pool capacity ahead of a later active E3.
   One node's local failure must not cancel another node's work when tests or embeddings share a task
   pool. — `flow-trace/04`
+- A local prover, verifier, task-pool, or resource failure is not evidence of peer misbehavior.
+  Retry the exact ZK request, preserve its durable input, and let canonical E3 lifecycle facts end
+  recovery. Only a completed cryptographic check can classify a peer proof as invalid. —
+  `flow-trace/04`
 - Sortition delays, committee-finalization timers, and slash submissions persist their semantic
   inputs before effects run. Restart re-arms them only after `EffectsEnabled`; an additive migration
   may backfill a missing versioned record but must not replace an existing one. — INDEX concern #46

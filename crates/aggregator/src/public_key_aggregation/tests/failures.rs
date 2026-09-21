@@ -7,7 +7,7 @@
 use super::*;
 
 #[actix::test]
-async fn dkg_aggregation_compute_error_emits_e3_failed() -> Result<()> {
+async fn dkg_aggregation_compute_error_preserves_pending_work() -> Result<()> {
     let correlation_id = CorrelationId::new();
     let (mut aggregator, history, e3_id) =
         build_public_key_aggregator(generating_c5_state(correlation_id)).await?;
@@ -40,14 +40,11 @@ async fn dkg_aggregation_compute_error_emits_e3_failed() -> Result<()> {
         }),
     ))?;
 
-    let event = next_event(&history).await?;
-    assert!(matches!(
-        event.into_data(),
-        InterfoldEventData::E3Failed(data)
-            if data.e3_id == e3_id
-                && data.failed_at_stage == E3Stage::CommitteeFinalized
-                && data.reason == FailureReason::DKGInvalidShares
-    ));
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
 
     let Some(PublicKeyAggregatorState::GeneratingC5Proof {
         dkg_aggregation_correlation,
@@ -57,14 +54,14 @@ async fn dkg_aggregation_compute_error_emits_e3_failed() -> Result<()> {
     else {
         panic!("expected GeneratingC5Proof state");
     };
-    assert!(dkg_aggregation_correlation.is_none());
-    assert!(c5_proof_pending.is_none());
+    assert_eq!(dkg_aggregation_correlation, Some(correlation_id));
+    assert!(c5_proof_pending.is_some());
 
     Ok(())
 }
 
 #[actix::test]
-async fn mixed_dkg_proofs_emit_e3_failed() -> Result<()> {
+async fn mixed_test_modes_preserve_work_without_failing_the_round() -> Result<()> {
     let correlation_id = CorrelationId::new();
     let mut initial_state = generating_c5_state(correlation_id);
     let PublicKeyAggregatorState::GeneratingC5Proof {
@@ -90,14 +87,11 @@ async fn mixed_dkg_proofs_emit_e3_failed() -> Result<()> {
 
     aggregator.try_dispatch_dkg_aggregation(&ec)?;
 
-    let event = next_event(&history).await?;
-    assert!(matches!(
-        event.into_data(),
-        InterfoldEventData::E3Failed(data)
-            if data.e3_id == e3_id
-                && data.failed_at_stage == E3Stage::CommitteeFinalized
-                && data.reason == FailureReason::DKGInvalidShares
-    ));
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
 
     let Some(PublicKeyAggregatorState::GeneratingC5Proof {
         dkg_aggregation_correlation,
@@ -108,7 +102,7 @@ async fn mixed_dkg_proofs_emit_e3_failed() -> Result<()> {
         panic!("expected GeneratingC5Proof state");
     };
     assert!(dkg_aggregation_correlation.is_none());
-    assert!(c5_proof_pending.is_none());
+    assert!(c5_proof_pending.is_some());
 
     Ok(())
 }

@@ -60,62 +60,10 @@ impl PublicKeyAggregator {
         if some_count != 0 && some_count != honest_party_ids.len() {
             error!(
                 "PublicKeyAggregator: mixed Some/None DKG node proofs across honest parties \
-                 ({some_count} of {} present); failing E3 {}",
+                 ({some_count} of {} present); refusing local aggregation for E3 {}",
                 honest_party_ids.len(),
                 self.e3_id
             );
-            self.bus.publish(
-                E3Failed {
-                    e3_id: self.e3_id.clone(),
-                    failed_at_stage: E3Stage::CommitteeFinalized,
-                    reason: FailureReason::DKGInvalidShares,
-                },
-                ec.clone(),
-            )?;
-            self.state.try_mutate(ec, |state| {
-                let PublicKeyAggregatorState::GeneratingC5Proof {
-                    public_key,
-                    keyshare_bytes,
-                    nodes,
-                    party_nodes,
-                    dkg_node_proofs,
-                    dkg_fold_attestations,
-                    honest_party_ids,
-                    dishonest_parties,
-                    circuit_committee_n,
-                    circuit_committee_h,
-                    dkg_aggregation_correlation: _,
-                    dkg_aggregated_proof,
-                    c5_proof_pending: _,
-                    last_ec,
-                    nodes_fold_accumulator,
-                    nodes_fold_completed_slots,
-                    nodes_fold_step_correlation,
-                } = state
-                else {
-                    return Ok(state);
-                };
-
-                Ok(PublicKeyAggregatorState::GeneratingC5Proof {
-                    public_key,
-                    keyshare_bytes,
-                    nodes,
-                    party_nodes,
-                    dkg_node_proofs,
-                    dkg_fold_attestations,
-                    honest_party_ids,
-                    dishonest_parties,
-                    circuit_committee_n,
-                    circuit_committee_h,
-                    dkg_aggregation_correlation: None,
-                    dkg_aggregated_proof,
-                    c5_proof_pending: None,
-                    last_ec,
-                    nodes_fold_accumulator,
-                    nodes_fold_completed_slots,
-                    nodes_fold_step_correlation,
-                })
-            })?;
             return Ok(());
         }
 

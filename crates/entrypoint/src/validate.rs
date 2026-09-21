@@ -7,14 +7,14 @@
 //! Offline node-state validation.
 //!
 //! Backs the `interfold node validate` CLI command. It opens a node's persisted
-//! stores offline (no network or chain writes) and answers the
-//! operator question: *"Is my on-disk state intact, internally consistent, free
-//! of loose ends, and will this binary be able to load it after an upgrade?"*
+//! stores offline (no network or chain writes) and answers whether the on-disk state is intact,
+//! internally consistent, free of loose ends, and loadable by this binary after an upgrade.
 //!
 //! It never mutates protocol state, talks to the chain, or starts the node. By
-//! default it is fully non-destructive. The explicit `--repair` mode may only
-//! truncate a provably uncommitted physical event-log tail and rebuild index
-//! entries for complete CRC-valid tail records.
+//! default it is fully non-destructive. The explicit `--repair` mode may truncate a provably
+//! uncommitted physical event-log tail, rebuild index entries for complete CRC-valid tail records,
+//! and reconcile the derived sortition membership projection from an intact event log. It never
+//! deletes the event log or node identity.
 //!
 //! ## Checks performed
 //!
@@ -39,12 +39,12 @@ use anyhow::{bail, Context, Result};
 use e3_config::AppConfig;
 use e3_data::{CommitLogEventLog, EventLogOpenMode, Repositories};
 use e3_events::{
-    AggregateId, E3Stage, Event, EventContextAccessors, EventContextSeq, InterfoldEvent,
-    InterfoldEventData,
+    hlc::HlcTimestamp, AggregateId, E3Stage, Event, EventContextAccessors, EventContextSeq,
+    InterfoldEvent, InterfoldEventData,
 };
 use e3_sortition::{
-    committee_key, NodeRegistry, NodeStateRepositoryFactory, NodeStateStore, SortitionList,
-    SortitionRepositoryFactory,
+    committee_key, NodeRegistry, NodeStateRepositoryFactory, NodeStateStore, SortitionBackend,
+    SortitionList, SortitionRepositoryFactory,
 };
 use e3_sync::{
     decide_schema_version, has_schema_governed_kv_state, SchemaVersionDecision,
@@ -240,8 +240,16 @@ pub async fn validate_node(config: &AppConfig, repair: bool) -> Result<Validatio
 
     // 3. A current cursor is not sufficient if a stale batch replaced one projection. Rebuild the
     // registered-node set from the event log and compare it with the persisted backend.
+    let source_state_is_valid = !report.has_failure();
     report.push(
-        check_sortition_projection(&repositories, &events_by_aggregate, &snapshot_cursors).await?,
+        check_sortition_projection(
+            &repositories,
+            &events_by_aggregate,
+            &snapshot_cursors,
+            repair,
+            source_state_is_valid,
+        )
+        .await?,
     );
 
     // 4. Open-loop / loose-ends audit against the persisted sortition state.
@@ -254,10 +262,65 @@ async fn check_sortition_projection(
     repositories: &Repositories,
     events_by_aggregate: &[(AggregateId, Vec<InterfoldEvent>)],
     snapshot_cursors: &HashMap<AggregateId, u64>,
+    repair: bool,
+    source_state_is_valid: bool,
 ) -> Result<CheckResult> {
-    let expected = registered_nodes_from_events(events_by_aggregate, snapshot_cursors);
-    let backends = repositories.sortition().read().await?.unwrap_or_default();
-    let actual = backends
+    let expected_addresses =
+        registered_node_addresses_from_events(events_by_aggregate, snapshot_cursors);
+    let expected = registered_node_sets(&expected_addresses);
+    let sortition_repository = repositories.sortition();
+    let node_state_repository = repositories.node_state();
+    let mut backends = sortition_repository.read().await?.unwrap_or_default();
+    let mut node_states = node_state_repository.read().await?.unwrap_or_default();
+    let rebuilt_node_states =
+        registered_node_states_from_events(events_by_aggregate, snapshot_cursors);
+    let expected_node_states = node_state_node_sets(&rebuilt_node_states);
+    let comparison = compare_sortition_projection(
+        &expected,
+        &sortition_node_sets(&backends),
+        &expected_node_states,
+        &node_state_node_sets(&node_states),
+    )?;
+    if comparison.severity == Severity::Pass || !repair {
+        return Ok(comparison);
+    }
+    if !source_state_is_valid {
+        return Ok(CheckResult::fail(
+            "sortition-projection",
+            "the projection differs, but --repair was not applied because the event log, schema, \
+             or snapshot cursor failed an earlier check",
+        ));
+    }
+
+    reconcile_sortition_backends(&mut backends, &expected_addresses);
+    reconcile_node_state_membership(
+        &mut node_states,
+        &expected_node_states,
+        &rebuilt_node_states,
+    )?;
+    node_state_repository.write_sync(&node_states).await?;
+    sortition_repository.write_sync(&backends).await?;
+
+    let persisted_backends = sortition_repository.read().await?.unwrap_or_default();
+    let persisted_node_states = node_state_repository.read().await?.unwrap_or_default();
+    let verified = compare_sortition_projection(
+        &expected,
+        &sortition_node_sets(&persisted_backends),
+        &expected_node_states,
+        &node_state_node_sets(&persisted_node_states),
+    )?;
+    if verified.severity != Severity::Pass {
+        bail!("sortition projection did not match the event log after repair");
+    }
+
+    Ok(CheckResult::pass(
+        "sortition-projection",
+        "reconciled the derived selection and node-state membership projections from the intact event log; ticket history was reconstructed for missing members, and no event or identity data was deleted",
+    ))
+}
+
+fn sortition_node_sets(backends: &HashMap<u64, SortitionBackend>) -> HashMap<u64, HashSet<String>> {
+    backends
         .iter()
         .filter(|(chain_id, _)| **chain_id != u64::MAX)
         .map(|(chain_id, backend)| {
@@ -270,16 +333,162 @@ async fn check_sortition_projection(
                     .collect::<HashSet<_>>(),
             )
         })
-        .collect::<HashMap<_, _>>();
-
-    compare_sortition_projection(&expected, &actual)
+        .collect()
 }
 
+fn node_state_node_sets(
+    node_states: &HashMap<u64, NodeStateStore>,
+) -> HashMap<u64, HashSet<String>> {
+    node_states
+        .iter()
+        .map(|(chain_id, state)| {
+            (
+                *chain_id,
+                state
+                    .nodes
+                    .keys()
+                    .map(|address| address.to_ascii_lowercase())
+                    .collect::<HashSet<_>>(),
+            )
+        })
+        .collect()
+}
+
+fn reconcile_sortition_backends(
+    backends: &mut HashMap<u64, SortitionBackend>,
+    expected: &HashMap<u64, HashMap<String, String>>,
+) {
+    let default_backend = backends
+        .get(&u64::MAX)
+        .cloned()
+        .unwrap_or_else(SortitionBackend::score);
+    let mut chain_ids = expected
+        .keys()
+        .chain(backends.keys().filter(|chain_id| **chain_id != u64::MAX))
+        .copied()
+        .collect::<Vec<_>>();
+    chain_ids.sort_unstable();
+    chain_ids.dedup();
+
+    for chain_id in chain_ids {
+        let wanted = expected.get(&chain_id).cloned().unwrap_or_default();
+        let backend = backends
+            .entry(chain_id)
+            .or_insert_with(|| default_backend.clone());
+        let present = backend
+            .nodes()
+            .into_iter()
+            .map(|address| (address.to_ascii_lowercase(), address))
+            .collect::<HashMap<_, _>>();
+
+        for address in present
+            .keys()
+            .filter(|address| !wanted.contains_key(*address))
+        {
+            backend.remove(
+                present
+                    .get(address)
+                    .expect("address came from the same map")
+                    .clone(),
+            );
+        }
+        for (normalized, canonical) in &wanted {
+            if !present.contains_key(normalized) {
+                backend.add(canonical.clone());
+            }
+        }
+    }
+}
+
+fn reconcile_node_state_membership(
+    node_states: &mut HashMap<u64, NodeStateStore>,
+    expected: &HashMap<u64, HashSet<String>>,
+    rebuilt: &HashMap<u64, NodeStateStore>,
+) -> Result<()> {
+    let mut chain_ids = expected
+        .keys()
+        .chain(node_states.keys())
+        .copied()
+        .collect::<Vec<_>>();
+    chain_ids.sort_unstable();
+    chain_ids.dedup();
+
+    for chain_id in chain_ids {
+        let wanted = expected.get(&chain_id).cloned().unwrap_or_default();
+        let rebuilt_chain = rebuilt.get(&chain_id);
+        let chain_state = node_states.entry(chain_id).or_default();
+        if chain_state.ticket_price.is_zero() {
+            if let Some(rebuilt_chain) = rebuilt_chain {
+                chain_state.ticket_price = rebuilt_chain.ticket_price;
+            }
+        }
+
+        let present = chain_state
+            .nodes
+            .keys()
+            .map(|address| (address.to_ascii_lowercase(), address.clone()))
+            .collect::<HashMap<_, _>>();
+        for address in present.keys().filter(|address| !wanted.contains(*address)) {
+            if let Some(original) = present.get(address) {
+                chain_state.nodes.remove(original);
+            }
+        }
+
+        let rebuilt_nodes = rebuilt_chain
+            .map(|state| {
+                state
+                    .nodes
+                    .iter()
+                    .map(|(address, state)| (address.to_ascii_lowercase(), (address, state)))
+                    .collect::<HashMap<_, _>>()
+            })
+            .unwrap_or_default();
+        for address in wanted
+            .iter()
+            .filter(|address| !present.contains_key(*address))
+        {
+            let (canonical_address, rebuilt_state) =
+                rebuilt_nodes.get(address).with_context(|| {
+                    format!(
+                    "cannot reconstruct derived node state for chain {chain_id} member {address}"
+                )
+                })?;
+            let mut state = (*rebuilt_state).clone();
+            state.active_jobs = chain_state
+                .e3_committees
+                .values()
+                .filter(|members| {
+                    members
+                        .iter()
+                        .any(|member| member.eq_ignore_ascii_case(address))
+                })
+                .count()
+                .try_into()
+                .unwrap_or(u64::MAX);
+            chain_state
+                .nodes
+                .insert((*canonical_address).clone(), state);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
 fn registered_nodes_from_events(
     events_by_aggregate: &[(AggregateId, Vec<InterfoldEvent>)],
     snapshot_cursors: &HashMap<AggregateId, u64>,
 ) -> HashMap<u64, HashSet<String>> {
-    let mut registered = HashMap::<u64, HashSet<String>>::new();
+    registered_node_sets(&registered_node_addresses_from_events(
+        events_by_aggregate,
+        snapshot_cursors,
+    ))
+}
+
+fn registered_node_addresses_from_events(
+    events_by_aggregate: &[(AggregateId, Vec<InterfoldEvent>)],
+    snapshot_cursors: &HashMap<AggregateId, u64>,
+) -> HashMap<u64, HashMap<String, String>> {
+    let mut registered = HashMap::<u64, HashMap<String, String>>::new();
     for (aggregate_id, events) in events_by_aggregate {
         let cursor = snapshot_cursors.get(aggregate_id).copied().unwrap_or(0);
         for event in events.iter().filter(|event| event.seq() <= cursor) {
@@ -288,7 +497,7 @@ fn registered_nodes_from_events(
                     registered
                         .entry(data.chain_id)
                         .or_default()
-                        .insert(data.address.to_ascii_lowercase());
+                        .insert(data.address.to_ascii_lowercase(), data.address.clone());
                 }
                 InterfoldEventData::CiphernodeRemoved(data) => {
                     registered
@@ -303,10 +512,156 @@ fn registered_nodes_from_events(
     registered
 }
 
+fn registered_node_sets(
+    addresses: &HashMap<u64, HashMap<String, String>>,
+) -> HashMap<u64, HashSet<String>> {
+    addresses
+        .iter()
+        .map(|(chain_id, nodes)| (*chain_id, nodes.keys().cloned().collect()))
+        .collect()
+}
+
+fn registered_node_states_from_events(
+    events_by_aggregate: &[(AggregateId, Vec<InterfoldEvent>)],
+    snapshot_cursors: &HashMap<AggregateId, u64>,
+) -> HashMap<u64, NodeStateStore> {
+    let mut node_states = HashMap::<u64, NodeStateStore>::new();
+    for (aggregate_id, events) in events_by_aggregate {
+        let cursor = snapshot_cursors.get(aggregate_id).copied().unwrap_or(0);
+        for event in events.iter().filter(|event| event.seq() <= cursor) {
+            let timepoint = HlcTimestamp::wall_time(event.get_ctx().ts()) / 1_000_000;
+            match event.get_data() {
+                InterfoldEventData::CiphernodeAdded(data) => {
+                    NodeRegistry::add_node(&mut node_states, data.chain_id, data.address.clone())
+                }
+                InterfoldEventData::CiphernodeRemoved(data) => {
+                    NodeRegistry::remove_node(&mut node_states, data.chain_id, &data.address)
+                }
+                InterfoldEventData::TicketBalanceUpdated(data) => {
+                    NodeRegistry::set_ticket_balance(
+                        &mut node_states,
+                        data.chain_id,
+                        data.operator.clone(),
+                        data.new_balance,
+                        timepoint,
+                    );
+                }
+                InterfoldEventData::OperatorActivationChanged(data) => {
+                    NodeRegistry::set_operator_active(
+                        &mut node_states,
+                        data.chain_id,
+                        data.operator.clone(),
+                        data.active,
+                        timepoint,
+                    );
+                }
+                InterfoldEventData::ConfigurationUpdated(data)
+                    if matches!(
+                        data.parameter.as_str(),
+                        "ticketPrice"
+                            | "requiredCiphernodeBond"
+                            | "ciphernodeBondActiveBps"
+                            | "minTicketBalance"
+                    ) =>
+                {
+                    if data.parameter == "ticketPrice" {
+                        NodeRegistry::set_ticket_price(
+                            &mut node_states,
+                            data.chain_id,
+                            data.new_value,
+                        );
+                    }
+                    NodeRegistry::invalidate_operator_activity(
+                        &mut node_states,
+                        data.chain_id,
+                        timepoint,
+                    );
+                }
+                InterfoldEventData::CommitteeFinalized(data) => {
+                    NodeRegistry::reconcile_committee_jobs(
+                        &mut node_states,
+                        &data.e3_id,
+                        &data.committee,
+                        "validator event replay",
+                    );
+                }
+                InterfoldEventData::PlaintextOutputPublished(data) => {
+                    NodeRegistry::release_committee_jobs(
+                        &mut node_states,
+                        &data.e3_id,
+                        "validator event replay",
+                    );
+                }
+                InterfoldEventData::E3Failed(data) => {
+                    NodeRegistry::release_committee_jobs(
+                        &mut node_states,
+                        &data.e3_id,
+                        "validator event replay",
+                    );
+                }
+                InterfoldEventData::E3RequestComplete(data) => {
+                    NodeRegistry::release_committee_jobs(
+                        &mut node_states,
+                        &data.e3_id,
+                        "validator event replay",
+                    );
+                }
+                InterfoldEventData::E3StageChanged(data)
+                    if matches!(data.new_stage, E3Stage::Complete | E3Stage::Failed) =>
+                {
+                    NodeRegistry::release_committee_jobs(
+                        &mut node_states,
+                        &data.e3_id,
+                        "validator event replay",
+                    );
+                }
+                _ => {}
+            }
+        }
+    }
+    node_states
+}
+
 fn compare_sortition_projection(
+    expected_backend: &HashMap<u64, HashSet<String>>,
+    backend: &HashMap<u64, HashSet<String>>,
+    expected_node_state: &HashMap<u64, HashSet<String>>,
+    node_state: &HashMap<u64, HashSet<String>>,
+) -> Result<CheckResult> {
+    let backend_differences = projection_differences(expected_backend, backend);
+    let node_state_differences = projection_differences(expected_node_state, node_state);
+    if backend_differences.is_empty() && node_state_differences.is_empty() {
+        return Ok(CheckResult::pass(
+            "sortition-projection",
+            "persisted selection and node-state memberships match the event log through each snapshot cursor",
+        ));
+    }
+
+    let mut components = Vec::new();
+    if !backend_differences.is_empty() {
+        components.push(format!(
+            "selection backend: {}",
+            backend_differences.join("; ")
+        ));
+    }
+    if !node_state_differences.is_empty() {
+        components.push(format!("node state: {}", node_state_differences.join("; ")));
+    }
+
+    Ok(CheckResult::fail(
+        "sortition-projection",
+        format!(
+            "persisted registered-node state disagrees with the event log: {}. Stop the node and \
+             run `interfold node validate --repair` before relying on committee selection",
+            components.join(" | ")
+        ),
+    ))
+}
+
+fn projection_differences(
     expected: &HashMap<u64, HashSet<String>>,
     actual: &HashMap<u64, HashSet<String>>,
-) -> Result<CheckResult> {
+) -> Vec<String> {
     let mut chain_ids = expected
         .keys()
         .chain(actual.keys())
@@ -342,21 +697,7 @@ fn compare_sortition_projection(
         ));
     }
 
-    if differences.is_empty() {
-        return Ok(CheckResult::pass(
-            "sortition-projection",
-            "persisted registered-node sets match the event log through each snapshot cursor",
-        ));
-    }
-
-    Ok(CheckResult::fail(
-        "sortition-projection",
-        format!(
-            "persisted registered-node state disagrees with the event log: {}. Stop the node and \
-             perform a controlled rescan before relying on committee selection",
-            differences.join("; ")
-        ),
-    ))
+    differences
 }
 
 fn display_addresses(addresses: &[String]) -> String {
@@ -672,7 +1013,8 @@ mod tests {
     use super::*;
     use commitlog::{CommitLog, LogOptions};
     use e3_events::{
-        CiphernodeAdded, EventConstructorWithTimestamp, EventLog, EventSource, TestEvent,
+        CiphernodeAdded, CommitteeFinalized, E3RequestComplete, E3id,
+        EventConstructorWithTimestamp, EventLog, EventSource, TestEvent, TicketBalanceUpdated,
         Unsequenced,
     };
     use e3_sortition::OpenCommittee;
@@ -863,9 +1205,11 @@ mod tests {
     fn sortition_projection_accepts_matching_registered_nodes() {
         let nodes = HashSet::from(["0xaaa".to_owned(), "0xbbb".to_owned()]);
         let expected = HashMap::from([(1, nodes.clone())]);
-        let actual = HashMap::from([(1, nodes)]);
+        let backend = HashMap::from([(1, nodes.clone())]);
+        let node_state = HashMap::from([(1, nodes)]);
 
-        let result = compare_sortition_projection(&expected, &actual).unwrap();
+        let result =
+            compare_sortition_projection(&expected, &backend, &expected, &node_state).unwrap();
         assert_eq!(result.severity, Severity::Pass);
     }
 
@@ -873,12 +1217,116 @@ mod tests {
     fn sortition_projection_reports_nodes_missing_from_snapshot() {
         let expected =
             HashMap::from([(1, HashSet::from(["0xaaa".to_owned(), "0xbbb".to_owned()]))]);
-        let actual = HashMap::from([(1, HashSet::from(["0xaaa".to_owned()]))]);
+        let backend = HashMap::from([(1, HashSet::from(["0xaaa".to_owned()]))]);
+        let node_state = expected.clone();
 
-        let result = compare_sortition_projection(&expected, &actual).unwrap();
+        let result =
+            compare_sortition_projection(&expected, &backend, &expected, &node_state).unwrap();
         assert_eq!(result.severity, Severity::Fail);
+        assert!(result.detail.contains("selection backend"));
         assert!(result.detail.contains("1 missing"));
         assert!(result.detail.contains("0xbbb"));
+        assert!(result.detail.contains("interfold node validate --repair"));
+    }
+
+    #[test]
+    fn sortition_projection_reports_a_stale_node_state_separately() {
+        let expected =
+            HashMap::from([(1, HashSet::from(["0xaaa".to_owned(), "0xbbb".to_owned()]))]);
+        let backend = expected.clone();
+        let node_state = HashMap::from([(1, HashSet::from(["0xaaa".to_owned()]))]);
+
+        let result =
+            compare_sortition_projection(&expected, &backend, &expected, &node_state).unwrap();
+
+        assert_eq!(result.severity, Severity::Fail);
+        assert!(result.detail.contains("node state"));
+        assert!(result.detail.contains("0xbbb"));
+    }
+
+    #[test]
+    fn sortition_repair_reconciles_only_derived_membership() {
+        let kept = "0x1111111111111111111111111111111111111111".to_owned();
+        let added = "0x2222222222222222222222222222222222222222".to_owned();
+        let removed = "0x3333333333333333333333333333333333333333".to_owned();
+        let mut default_backend = SortitionBackend::score();
+        default_backend.add(kept.clone());
+        let mut chain_backend = SortitionBackend::score();
+        chain_backend.add(kept.clone());
+        chain_backend.add(removed);
+        let mut backends = HashMap::from([(u64::MAX, default_backend), (1, chain_backend)]);
+        let expected = HashMap::from([(
+            1,
+            HashMap::from([(kept.clone(), kept.clone()), (added.clone(), added.clone())]),
+        )]);
+
+        reconcile_sortition_backends(&mut backends, &expected);
+
+        assert_eq!(
+            sortition_node_sets(&backends).get(&1),
+            Some(&HashSet::from([kept.clone(), added]))
+        );
+        assert_eq!(
+            backends.get(&u64::MAX).expect("default backend").nodes(),
+            vec![kept]
+        );
+    }
+
+    #[test]
+    fn node_state_repair_restores_missing_history_and_preserves_existing_state() {
+        let kept = "0x1111111111111111111111111111111111111111".to_owned();
+        let added = "0x2222222222222222222222222222222222222222".to_owned();
+        let unexpected = "0x3333333333333333333333333333333333333333".to_owned();
+        let mut persisted = HashMap::<u64, NodeStateStore>::new();
+        NodeRegistry::set_ticket_balance(
+            &mut persisted,
+            1,
+            kept.clone(),
+            alloy::primitives::U256::from(50),
+            1,
+        );
+        NodeRegistry::add_node(&mut persisted, 1, unexpected.clone());
+        let kept_history = persisted[&1].nodes[&kept].ticket_balance_history.clone();
+        persisted
+            .get_mut(&1)
+            .expect("chain state")
+            .e3_committees
+            .insert("1:9".to_owned(), vec![added.clone()]);
+
+        let mut rebuilt = HashMap::<u64, NodeStateStore>::new();
+        NodeRegistry::set_ticket_price(&mut rebuilt, 1, alloy::primitives::U256::from(10));
+        NodeRegistry::add_node(&mut rebuilt, 1, kept.clone());
+        NodeRegistry::set_ticket_balance(
+            &mut rebuilt,
+            1,
+            added.clone(),
+            alloy::primitives::U256::from(20),
+            2,
+        );
+        NodeRegistry::set_operator_active(&mut rebuilt, 1, added.clone(), true, 3);
+        let expected = HashMap::from([(1, HashSet::from([kept.clone(), added.clone()]))]);
+
+        reconcile_node_state_membership(&mut persisted, &expected, &rebuilt).unwrap();
+
+        let chain = &persisted[&1];
+        assert_eq!(chain.nodes.len(), 2);
+        assert!(!chain.nodes.contains_key(&unexpected));
+        assert_eq!(chain.nodes[&kept].ticket_balance_history.len(), 1);
+        assert_eq!(
+            chain.nodes[&kept].ticket_balance_history[0].timepoint,
+            kept_history[0].timepoint
+        );
+        assert_eq!(
+            chain.nodes[&kept].ticket_balance_history[0].value, kept_history[0].value,
+            "existing member history must not be replaced"
+        );
+        assert_eq!(
+            chain.nodes[&added].ticket_balance,
+            alloy::primitives::U256::from(20)
+        );
+        assert!(chain.nodes[&added].active);
+        assert_eq!(chain.nodes[&added].active_jobs, 1);
+        assert_eq!(chain.ticket_price, alloy::primitives::U256::from(10));
     }
 
     #[test]
@@ -910,6 +1358,81 @@ mod tests {
         assert_eq!(
             projected,
             HashMap::from([(1, HashSet::from(["0xaaa".to_owned()]))])
+        );
+    }
+
+    #[test]
+    fn node_state_replay_includes_committee_members_and_terminal_release() {
+        let e3_id = E3id::new("9", 1);
+        let committee = vec!["0xaaa".to_owned(), "0xbbb".to_owned()];
+        let event = |data: InterfoldEventData, seq: u64| {
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                data,
+                None,
+                HlcTimestamp::new(seq * 1_000_000, 0, 1).to_u128(),
+                Some(seq),
+                EventSource::Local,
+            )
+            .into_sequenced(seq)
+        };
+        let events = vec![(
+            AggregateId::new(1),
+            vec![
+                event(
+                    CommitteeFinalized {
+                        e3_id: e3_id.clone(),
+                        committee: committee.clone(),
+                        scores: vec![],
+                        chain_id: 1,
+                    }
+                    .into(),
+                    1,
+                ),
+                event(E3RequestComplete { e3_id }.into(), 2),
+            ],
+        )];
+
+        let active =
+            registered_node_states_from_events(&events, &HashMap::from([(AggregateId::new(1), 1)]));
+        assert_eq!(
+            node_state_node_sets(&active)[&1],
+            committee.into_iter().collect()
+        );
+        assert!(active[&1].nodes.values().all(|node| node.active_jobs == 1));
+
+        let released =
+            registered_node_states_from_events(&events, &HashMap::from([(AggregateId::new(1), 2)]));
+        assert!(released[&1]
+            .nodes
+            .values()
+            .all(|node| node.active_jobs == 0));
+    }
+
+    #[test]
+    fn node_state_replay_converts_hlc_microseconds_to_seconds() {
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TicketBalanceUpdated {
+                operator: "0xaaa".to_owned(),
+                delta: alloy::primitives::I256::ZERO,
+                new_balance: alloy::primitives::U256::from(2),
+                reason: alloy::primitives::FixedBytes::ZERO,
+                chain_id: 1,
+            }
+            .into(),
+            None,
+            HlcTimestamp::new(1_234_000_000, 0, 1).to_u128(),
+            Some(1),
+            EventSource::Evm,
+        )
+        .into_sequenced(1);
+        let states = registered_node_states_from_events(
+            &[(AggregateId::new(1), vec![event])],
+            &HashMap::from([(AggregateId::new(1), 1)]),
+        );
+
+        assert_eq!(
+            states[&1].nodes["0xaaa"].ticket_balance_history[0].timepoint,
+            1_234
         );
     }
 

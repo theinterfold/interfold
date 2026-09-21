@@ -36,15 +36,19 @@ struct ForwardedRequest {
 /// preferred over its stale pre-crash copy.
 ///
 /// Deduplication spans the replay-to-live boundary. A later request with the
-/// same payload does not repeat the compute. The gate sends the result to each
-/// requester's correlation ID, including IDs created after restart. Terminal
-/// events clear the per-E3 keys.
+/// same payload does not repeat the compute. A successful response found during
+/// replay satisfies a regenerated request, while a replayed error leaves that
+/// request eligible for recovery. The gate sends the result to each requester's
+/// correlation ID, including IDs created after restart. Terminal events clear
+/// the per-E3 keys.
 pub(crate) struct ComputeEffectGate {
     target: Recipient<InterfoldEvent>,
     bus: Option<BusHandle>,
     enabled: bool,
     pending: HashMap<RequestKey, InterfoldEvent>,
     forwarded: HashMap<RequestKey, ForwardedRequest>,
+    request_keys_by_correlation: HashMap<CorrelationId, RequestKey>,
+    replayed_responses: HashMap<RequestKey, ComputeOutcome>,
     stages: HashMap<E3id, E3Stage>,
 }
 
@@ -56,6 +60,8 @@ impl ComputeEffectGate {
             enabled: false,
             pending: HashMap::new(),
             forwarded: HashMap::new(),
+            request_keys_by_correlation: HashMap::new(),
+            replayed_responses: HashMap::new(),
             stages: initial_stages,
         }
     }
@@ -175,6 +181,16 @@ impl ComputeEffectGate {
                 return false;
             };
             let correlation_id = request.correlation_id;
+            self.request_keys_by_correlation
+                .insert(correlation_id, key.clone());
+            if let Some(outcome) = self.replayed_responses.get(&key) {
+                self.publish_outcome(outcome, correlation_id, &event);
+                debug!(
+                    e3_id = %key.0,
+                    "reused a durable compute response instead of repeating completed work"
+                );
+                return false;
+            }
             match self.forwarded.get_mut(&key) {
                 Some(forwarded) if forwarded.correlation_id == correlation_id => {
                     debug!("dropping duplicate compute effect with the same correlation ID");
@@ -216,13 +232,31 @@ impl ComputeEffectGate {
             ),
             _ => return,
         };
-        let Some(forwarded) = self
-            .forwarded
-            .values_mut()
-            .find(|forwarded| forwarded.correlation_id == correlation_id)
-        else {
+        let key = self
+            .request_keys_by_correlation
+            .get(&correlation_id)
+            .cloned();
+        let forwarded_key = key.as_ref().filter(|key| {
+            self.forwarded
+                .get(*key)
+                .is_some_and(|forwarded| forwarded.correlation_id == correlation_id)
+        });
+        let Some(forwarded_key) = forwarded_key else {
+            // During EventStore replay, a successful response can arrive before effects are
+            // enabled. Keep it by semantic request so a freshly hydrated actor receives the same
+            // value under its new correlation ID. Do not cache errors: an old OOM or process
+            // failure must not suppress a fresh recovery attempt.
+            if matches!(outcome, ComputeOutcome::Response(_)) {
+                if let Some(key) = key {
+                    self.replayed_responses.insert(key, outcome);
+                }
+            }
             return;
         };
+        let forwarded = self
+            .forwarded
+            .get_mut(forwarded_key)
+            .expect("forwarded key was checked above");
         forwarded.outcome = Some(outcome.clone());
         let waiting = std::mem::take(&mut forwarded.waiting);
         for waiting_id in waiting {
@@ -289,6 +323,8 @@ impl ComputeEffectGate {
             return;
         };
         let key = (request.e3_id.clone(), request.request.clone());
+        self.request_keys_by_correlation
+            .insert(request.correlation_id, key.clone());
         match self.pending.entry(key) {
             std::collections::hash_map::Entry::Occupied(mut entry)
                 if event.ts() > entry.get().ts() =>
@@ -318,6 +354,10 @@ impl ComputeEffectGate {
             .retain(|(pending_id, _), _| pending_id != e3_id);
         self.forwarded
             .retain(|(forwarded_id, _), _| forwarded_id != e3_id);
+        self.replayed_responses
+            .retain(|(response_id, _), _| response_id != e3_id);
+        self.request_keys_by_correlation
+            .retain(|_, (request_id, _)| request_id != e3_id);
     }
 }
 
@@ -579,6 +619,70 @@ mod tests {
         assert!(recorder.send(Received).await.unwrap().is_empty());
 
         gate.send(effects_enabled()).await.unwrap();
+        assert_eq!(recorder.send(Received).await.unwrap(), vec![regenerated]);
+    }
+
+    #[actix::test]
+    async fn replayed_success_satisfies_regenerated_request_without_recomputing() {
+        let (bus, history) = test_bus();
+        let recorder = Recorder::default().start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new())
+            .with_bus(bus)
+            .start();
+        let durable = CorrelationId::new();
+        let regenerated = CorrelationId::new();
+
+        gate.send(compute(durable, 10)).await.unwrap();
+        gate.send(outcome_event(response(durable))).await.unwrap();
+        gate.send(compute(regenerated, 20)).await.unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+
+        assert!(recorder.send(Received).await.unwrap().is_empty());
+        assert!(matches!(
+            next_outcome(&history).await.into_data(),
+            InterfoldEventData::ComputeResponse(result)
+                if result.correlation_id == regenerated
+        ));
+    }
+
+    #[actix::test]
+    async fn replayed_success_survives_actor_redrive_interleaving() {
+        let (bus, history) = test_bus();
+        let recorder = Recorder::default().start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new())
+            .with_bus(bus)
+            .start();
+        let durable = CorrelationId::new();
+        let regenerated = CorrelationId::new();
+
+        // A hydrated actor can redrive work while historical events are still reaching other
+        // subscribers. The newer request must remain selected even if its historical request and
+        // successful response arrive afterward.
+        gate.send(compute(regenerated, 20)).await.unwrap();
+        gate.send(compute(durable, 10)).await.unwrap();
+        gate.send(outcome_event(response(durable))).await.unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+
+        assert!(recorder.send(Received).await.unwrap().is_empty());
+        assert!(matches!(
+            next_outcome(&history).await.into_data(),
+            InterfoldEventData::ComputeResponse(result)
+                if result.correlation_id == regenerated
+        ));
+    }
+
+    #[actix::test]
+    async fn replayed_failure_does_not_suppress_a_recovery_attempt() {
+        let recorder = Recorder::default().start();
+        let gate = ComputeEffectGate::new(recorder.clone().recipient(), HashMap::new()).start();
+        let failed = CorrelationId::new();
+        let regenerated = CorrelationId::new();
+
+        gate.send(compute(failed, 10)).await.unwrap();
+        gate.send(outcome_event(failure(failed))).await.unwrap();
+        gate.send(compute(regenerated, 20)).await.unwrap();
+        gate.send(effects_enabled()).await.unwrap();
+
         assert_eq!(recorder.send(Received).await.unwrap(), vec![regenerated]);
     }
 
