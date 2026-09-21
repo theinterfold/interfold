@@ -660,8 +660,8 @@ retry adds Barretenberg `--slow_low_memory`. The scheduler also retries local wo
 failures for `GenPkShareAndSkSss`, `GenEsiSss`, `CalculateDecryptionKey`, and
 `CalculateDecryptionShare`. Delays increase from 5 seconds to 15 seconds, 60 seconds, and five
 minutes. Five minutes is the maximum delay. Retries continue until success or task-group
-cancellation. A terminal event also interrupts an active retry delay. A node-scoped limiter emits
-at most one retry warning per minute. Other attempts use DEBUG logs.
+cancellation. A terminal event also interrupts an active retry delay. A node-scoped limiter emits at
+most one retry warning per minute. Other attempts use DEBUG logs.
 
 The prover removes each attempt directory after success or failure. Before a new process reuses a
 deterministic attempt path, it also removes files left by a hard process kill. It limits process
