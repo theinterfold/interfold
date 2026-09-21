@@ -161,7 +161,9 @@ chains:
 
 The compute scheduler defaults to these `2/2` values. It can reduce concurrent jobs when the
 detected host or cgroup memory limit is too small. Each secure prover job has a 13 GiB admission
-budget. Do not increase the job count unless the host has enough memory for all node processes.
+budget, and the scheduler reserves 4 GiB for the node and host. The node refuses to start when the
+detected limit cannot cover the node reserve and one prover budget. Do not increase the job count
+unless the host has enough memory for all node processes.
 
 Use one coherent provider for the WebSocket subscription and its RPC requests. Do not place a
 round-robin pool of independently synchronized providers behind one local URL. A subscription can

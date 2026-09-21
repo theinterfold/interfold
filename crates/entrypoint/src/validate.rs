@@ -529,7 +529,7 @@ fn registered_node_states_from_events(
     for (aggregate_id, events) in events_by_aggregate {
         let cursor = snapshot_cursors.get(aggregate_id).copied().unwrap_or(0);
         for event in events.iter().filter(|event| event.seq() <= cursor) {
-            let timepoint = HlcTimestamp::wall_time(event.get_ctx().ts()) / 1_000_000_000;
+            let timepoint = HlcTimestamp::wall_time(event.get_ctx().ts()) / 1_000_000;
             match event.get_data() {
                 InterfoldEventData::CiphernodeAdded(data) => {
                     NodeRegistry::add_node(&mut node_states, data.chain_id, data.address.clone())
@@ -575,6 +575,44 @@ fn registered_node_states_from_events(
                         &mut node_states,
                         data.chain_id,
                         timepoint,
+                    );
+                }
+                InterfoldEventData::CommitteeFinalized(data) => {
+                    NodeRegistry::reconcile_committee_jobs(
+                        &mut node_states,
+                        &data.e3_id,
+                        &data.committee,
+                        "validator event replay",
+                    );
+                }
+                InterfoldEventData::PlaintextOutputPublished(data) => {
+                    NodeRegistry::release_committee_jobs(
+                        &mut node_states,
+                        &data.e3_id,
+                        "validator event replay",
+                    );
+                }
+                InterfoldEventData::E3Failed(data) => {
+                    NodeRegistry::release_committee_jobs(
+                        &mut node_states,
+                        &data.e3_id,
+                        "validator event replay",
+                    );
+                }
+                InterfoldEventData::E3RequestComplete(data) => {
+                    NodeRegistry::release_committee_jobs(
+                        &mut node_states,
+                        &data.e3_id,
+                        "validator event replay",
+                    );
+                }
+                InterfoldEventData::E3StageChanged(data)
+                    if matches!(data.new_stage, E3Stage::Complete | E3Stage::Failed) =>
+                {
+                    NodeRegistry::release_committee_jobs(
+                        &mut node_states,
+                        &data.e3_id,
+                        "validator event replay",
                     );
                 }
                 _ => {}
@@ -975,7 +1013,8 @@ mod tests {
     use super::*;
     use commitlog::{CommitLog, LogOptions};
     use e3_events::{
-        CiphernodeAdded, EventConstructorWithTimestamp, EventLog, EventSource, TestEvent,
+        CiphernodeAdded, CommitteeFinalized, E3RequestComplete, E3id,
+        EventConstructorWithTimestamp, EventLog, EventSource, TestEvent, TicketBalanceUpdated,
         Unsequenced,
     };
     use e3_sortition::OpenCommittee;
@@ -1319,6 +1358,81 @@ mod tests {
         assert_eq!(
             projected,
             HashMap::from([(1, HashSet::from(["0xaaa".to_owned()]))])
+        );
+    }
+
+    #[test]
+    fn node_state_replay_includes_committee_members_and_terminal_release() {
+        let e3_id = E3id::new("9", 1);
+        let committee = vec!["0xaaa".to_owned(), "0xbbb".to_owned()];
+        let event = |data: InterfoldEventData, seq: u64| {
+            InterfoldEvent::<Unsequenced>::new_with_timestamp(
+                data,
+                None,
+                HlcTimestamp::new(seq * 1_000_000, 0, 1).to_u128(),
+                Some(seq),
+                EventSource::Local,
+            )
+            .into_sequenced(seq)
+        };
+        let events = vec![(
+            AggregateId::new(1),
+            vec![
+                event(
+                    CommitteeFinalized {
+                        e3_id: e3_id.clone(),
+                        committee: committee.clone(),
+                        scores: vec![],
+                        chain_id: 1,
+                    }
+                    .into(),
+                    1,
+                ),
+                event(E3RequestComplete { e3_id }.into(), 2),
+            ],
+        )];
+
+        let active =
+            registered_node_states_from_events(&events, &HashMap::from([(AggregateId::new(1), 1)]));
+        assert_eq!(
+            node_state_node_sets(&active)[&1],
+            committee.into_iter().collect()
+        );
+        assert!(active[&1].nodes.values().all(|node| node.active_jobs == 1));
+
+        let released =
+            registered_node_states_from_events(&events, &HashMap::from([(AggregateId::new(1), 2)]));
+        assert!(released[&1]
+            .nodes
+            .values()
+            .all(|node| node.active_jobs == 0));
+    }
+
+    #[test]
+    fn node_state_replay_converts_hlc_microseconds_to_seconds() {
+        let event = InterfoldEvent::<Unsequenced>::new_with_timestamp(
+            TicketBalanceUpdated {
+                operator: "0xaaa".to_owned(),
+                delta: alloy::primitives::I256::ZERO,
+                new_balance: alloy::primitives::U256::from(2),
+                reason: alloy::primitives::FixedBytes::ZERO,
+                chain_id: 1,
+            }
+            .into(),
+            None,
+            HlcTimestamp::new(1_234_000_000, 0, 1).to_u128(),
+            Some(1),
+            EventSource::Evm,
+        )
+        .into_sequenced(1);
+        let states = registered_node_states_from_events(
+            &[(AggregateId::new(1), vec![event])],
+            &HashMap::from([(AggregateId::new(1), 1)]),
+        );
+
+        assert_eq!(
+            states[&1].nodes["0xaaa"].ticket_balance_history[0].timepoint,
+            1_234
         );
     }
 

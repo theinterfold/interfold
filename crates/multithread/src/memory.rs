@@ -47,8 +47,7 @@ impl ComputeCapacity {
         let memory_jobs = memory_limit_bytes.map(memory_job_limit);
         let effective_jobs = requested_jobs
             .min(cpu_jobs)
-            .min(memory_jobs.unwrap_or(usize::MAX))
-            .max(1);
+            .min(memory_jobs.unwrap_or(usize::MAX));
 
         Self {
             requested_jobs,
@@ -62,9 +61,7 @@ impl ComputeCapacity {
 
 fn memory_job_limit(limit_bytes: u64) -> usize {
     let usable = limit_bytes.saturating_sub(NODE_MEMORY_RESERVE_BYTES);
-    usize::try_from(usable / PROVER_JOB_MEMORY_BYTES)
-        .unwrap_or(usize::MAX)
-        .max(1)
+    usize::try_from(usable / PROVER_JOB_MEMORY_BYTES).unwrap_or(usize::MAX)
 }
 
 /// Return the tighter of the host and cgroup memory limits.
@@ -147,8 +144,20 @@ mod tests {
     }
 
     #[test]
-    fn sixteen_gib_reduces_the_default_to_one_job() {
+    fn sixteen_gib_cannot_admit_a_prover_safely() {
         let capacity = ComputeCapacity::from_memory_limit(2, 30, Some(16 * GIB));
+
+        assert_eq!(capacity.memory_jobs, Some(0));
+        assert_eq!(capacity.effective_jobs, 0);
+    }
+
+    #[test]
+    fn reserve_plus_one_prover_admits_one_job() {
+        let capacity = ComputeCapacity::from_memory_limit(
+            2,
+            30,
+            Some(NODE_MEMORY_RESERVE_BYTES + PROVER_JOB_MEMORY_BYTES),
+        );
 
         assert_eq!(capacity.memory_jobs, Some(1));
         assert_eq!(capacity.effective_jobs, 1);

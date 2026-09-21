@@ -407,7 +407,7 @@ impl CiphernodeBuilder {
         let capacity =
             e3_multithread::ComputeCapacity::detect(concurrent_jobs.unwrap_or(2), max_threads);
         let jobs = capacity.effective_jobs;
-        let pool_threads = jobs;
+        let pool_threads = jobs.max(1);
         if jobs < capacity.requested_jobs {
             warn!(
                 requested_jobs = capacity.requested_jobs,
@@ -566,6 +566,10 @@ impl CiphernodeBuilder {
     }
 
     pub async fn build(mut self) -> anyhow::Result<CiphernodeHandle> {
+        ensure!(
+            self.multithread_concurrent_jobs != Some(0),
+            "the detected memory limit cannot safely run one prover job in addition to the node; increase the host or cgroup memory limit"
+        );
         ensure!(
             self.max_buffered_evm_events > 0,
             "max_buffered_evm_events must be greater than zero"

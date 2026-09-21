@@ -647,6 +647,8 @@ The production node defaults to two concurrent compute jobs and two reserved log
 limits that request by the available logical CPUs and the detected host or cgroup memory limit. The
 memory calculation reserves 4 GiB for the node and host. It budgets 13 GiB for each prover job. The
 122 GiB E3-977 incident showed a maximum killed `bb` resident set of approximately 10.9 GiB.
+Startup fails before joining protocol work when the detected limit cannot cover the node reserve and
+one prover budget.
 
 `TaskPool` applies one semaphore to ZK and TrBFV work. Each ZK request also belongs to a node-scoped
 E3 task group. A terminal E3 cancels queued work in that group. The cancellation does not affect a
@@ -663,6 +665,11 @@ deterministic attempt path, it also removes files left by a hard process kill. I
 output in an error report to 4 KiB for each stream. A verifier process failure returns an
 infrastructure error. A valid verifier process that rejects a proof returns `false`. This
 distinction prevents local memory or process failures from accusing a peer.
+
+The node-proof recovery projection retains each durable threshold proof by its canonical sequence.
+After a restart, `ProofRequestActor` signs and republishes a complete recovered share bundle, or
+dispatches only the missing sequences from a partial bundle. It does not recompute completed C1-C3
+proofs merely because their `ComputeResponse` events are older than the current snapshot cursor.
 
 Proof consumers retain their inputs and correlation IDs after a local worker error. EventStore
 replay and `ComputeEffectGate` can reissue the work after restart. Randomized TrBFV contributions do
