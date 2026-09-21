@@ -9,7 +9,7 @@ use alloy::signers::local::PrivateKeySigner;
 use anyhow::Result;
 use e3_crypto::SensitiveBytes;
 use e3_events::{
-    CircuitName, ComputeRequestErrorKind, EncryptionKey, Event, HistoryCollector,
+    CircuitName, ComputeRequestErrorKind, EncryptionKey, Event, GetEvents, HistoryCollector,
     PkGenerationProofRequest, ShareComputationProofRequest, TakeEvents, ThresholdShare,
     ThresholdSharePending, Unsequenced, ZkError,
 };
@@ -29,8 +29,17 @@ async fn next_event(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<
     Ok(result.events.pop().expect("expected one event"))
 }
 
+async fn assert_no_events(history: &Addr<HistoryCollector<InterfoldEvent>>) -> Result<()> {
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    Ok(())
+}
+
 #[actix::test]
-async fn c0_compute_error_emits_e3_failed() -> Result<()> {
+async fn c0_compute_error_preserves_pending_work_without_failing_the_round() -> Result<()> {
     let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
     let e3_id = E3id::new("44", 1);
@@ -64,15 +73,8 @@ async fn c0_compute_error_emits_e3_failed() -> Result<()> {
         }),
     ));
 
-    let event = next_event(&history).await?;
-    assert!(matches!(
-        event.into_data(),
-        InterfoldEventData::E3Failed(data)
-            if data.e3_id == e3_id
-                && data.failed_at_stage == E3Stage::CommitteeFinalized
-                && data.reason == FailureReason::DKGInvalidShares
-    ));
-    assert!(actor.pending.is_empty());
+    assert_no_events(&history).await?;
+    assert!(actor.pending.contains_key(&correlation_id));
 
     Ok(())
 }
@@ -105,11 +107,10 @@ async fn decryption_failure_helper_emits_e3_failed() -> Result<()> {
     Ok(())
 }
 
-/// A worker failure must fail the round whatever kind the worker reported. A `TrBFV` error was
-/// previously discarded before the correlation lookup, so the round waited for a proof that no
-/// longer had a pending computation.
+/// An incorrectly typed worker failure must still correlate to the pending request without being
+/// converted into evidence of invalid committee data.
 #[actix::test]
-async fn c0_trbfv_compute_error_also_emits_e3_failed() -> Result<()> {
+async fn c0_trbfv_compute_error_preserves_pending_work() -> Result<()> {
     let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
     let mut actor = ProofRequestActor::new(&bus, PrivateKeySigner::random(), true);
     let e3_id = E3id::new("46", 1);
@@ -145,18 +146,8 @@ async fn c0_trbfv_compute_error_also_emits_e3_failed() -> Result<()> {
         }),
     ));
 
-    let event = next_event(&history).await?;
-    assert!(matches!(
-        event.into_data(),
-        InterfoldEventData::E3Failed(data)
-            if data.e3_id == e3_id
-                && data.failed_at_stage == E3Stage::CommitteeFinalized
-                && data.reason == FailureReason::DKGInvalidShares
-    ));
-    assert!(
-        actor.pending.is_empty(),
-        "a failed computation must clear its pending entry"
-    );
+    assert_no_events(&history).await?;
+    assert!(actor.pending.contains_key(&correlation_id));
 
     Ok(())
 }

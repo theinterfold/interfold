@@ -138,8 +138,8 @@ mod tests {
     use alloy::primitives::Address;
     use anyhow::Result;
     use e3_events::{
-        CircuitName, ComputeRequestErrorKind, ComputeRequestKind, Event, HistoryCollector,
-        NodeDkgFoldRequest, TakeEvents, Unsequenced, ZkError,
+        CircuitName, ComputeRequestErrorKind, ComputeRequestKind, Event, GetEvents,
+        HistoryCollector, NodeDkgFoldRequest, TakeEvents, Unsequenced, ZkError,
     };
     use e3_test_helpers::get_common_setup;
     use e3_zk_helpers::CiphernodesCommitteeSize;
@@ -227,7 +227,7 @@ mod tests {
     }
 
     #[actix::test]
-    async fn node_dkg_fold_compute_error_emits_e3_failed() -> Result<()> {
+    async fn node_dkg_fold_compute_error_preserves_recovery_state() -> Result<()> {
         let (bus, _rng, _seed, _params, _crp, _errors, history) = get_common_setup(None)?;
         let mut aggregator =
             NodeProofAggregator::new(&bus, test_signer(), HashMap::new(), HashMap::new(), true);
@@ -298,16 +298,16 @@ mod tests {
             }),
         ));
 
-        let event = next_event(&history).await?;
-        assert!(matches!(
-            event.into_data(),
-            InterfoldEventData::E3Failed(data)
-                if data.e3_id == e3_id
-                    && data.failed_at_stage == E3Stage::CommitteeFinalized
-                    && data.reason == FailureReason::DKGInvalidShares
-        ));
-        assert!(!aggregator.states.contains_key(&e3_id));
-        assert!(aggregator.fold_correlation.is_empty());
+        actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+        assert!(history
+            .send(GetEvents::<InterfoldEvent>::new())
+            .await?
+            .is_empty());
+        assert!(aggregator.states.contains_key(&e3_id));
+        assert_eq!(
+            aggregator.fold_correlation.get(&correlation_id),
+            Some(&e3_id)
+        );
 
         Ok(())
     }

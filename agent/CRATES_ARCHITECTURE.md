@@ -641,6 +641,39 @@ C3b multiplicity would be `Z * L_THRESHOLD` per recipient. Supporting multiple E
 sets requires coordinated producer, validator, NodeFold, wire, and circuit work; the current
 validator must not silently infer that extension.
 
+## Compute scheduler and worker recovery
+
+The production node defaults to two concurrent compute jobs and two reserved logical CPUs. Startup
+limits that request by the available logical CPUs and the detected host or cgroup memory limit. The
+memory calculation reserves 4 GiB for the node and host. It budgets 13 GiB for each prover job. The
+122 GiB E3-977 incident showed a maximum killed `bb` resident set of approximately 10.9 GiB.
+
+`TaskPool` applies one semaphore to ZK and TrBFV work. Each ZK request also belongs to a node-scoped
+E3 task group. A terminal E3 cancels queued work in that group. The cancellation does not affect a
+different node that shares the process during tests or embedding.
+
+A `ProofGenerationFailed` result or a ZK task-pool failure retries the exact request. The first
+retry adds Barretenberg `--slow_low_memory`. Delays increase from 5 seconds to 15 seconds, 60
+seconds, and five minutes. Five minutes is the maximum delay. Retries continue until success or
+task-group cancellation. A node-scoped limiter emits at most one retry warning per minute. Other
+attempts use DEBUG logs.
+
+The prover removes each attempt directory after success or failure. Before a new process reuses a
+deterministic attempt path, it also removes files left by a hard process kill. It limits process
+output in an error report to 4 KiB for each stream. A verifier process failure returns an
+infrastructure error. A valid verifier process that rejects a proof returns `false`. This
+distinction prevents local memory or process failures from accusing a peer.
+
+Proof consumers retain their inputs and correlation IDs after a local worker error. EventStore
+replay and `ComputeEffectGate` can reissue the work after restart. Randomized TrBFV contributions do
+not use the ZK retry loop. Restart must reuse their durable responses exactly.
+
+During replay, `ComputeEffectGate` also indexes successful durable `ComputeResponse` events by the
+semantic request that produced them. If a hydrated actor regenerates the same request with a new
+correlation ID, the gate republishes the durable response under that ID instead of running the work
+again. It does not cache replayed `ComputeRequestError` events. An old OOM or process failure must
+therefore retry, while completed C1-C4 proof work and randomized TrBFV output are reused exactly.
+
 ## Replay-safe EVM result publication
 
 `InterfoldSolWriter` and `CiphernodeRegistrySolWriter` subscribe before EventStore replay. Locally
@@ -910,8 +943,9 @@ The whole barrier is time-bounded. Failure to drain or flush is returned to the 
 non-zero exit. On restart, the process fence prevents two local writers from sharing one database.
 Schema preflight rejects unsupported upgrades or downgrades. `interfold node validate` provides
 offline integrity and loose-end diagnostics without mutation by default.
-`interfold node validate --repair` is narrowly allowed to perform the same safe uncommitted-tail
-recovery used at normal startup; it never removes an indexed record.
+`interfold node validate --repair` can recover a safe uncommitted tail. It can also reconcile
+derived registered-node projections from an intact EventStore prefix. It never removes an indexed
+event or node identity.
 
 The implemented restart and operator-controlled recovery boundary is:
 
@@ -919,8 +953,8 @@ The implemented restart and operator-controlled recovery boundary is:
 flowchart TD
     Incident[unclean exit, corruption warning, or unsupported schema] --> Stop[stop the node and preserve its data]
     Stop --> Validate[run interfold node validate offline]
-    Validate --> Tail{recoverable uncommitted log tail?}
-    Tail -->|yes| Repair[run node validate --repair or start normally]
+    Validate --> Tail{recoverable tail or derived projection mismatch?}
+    Tail -->|yes| Repair[run node validate --repair]
     Repair --> Validate
     Tail -->|no| Decision{event log and schema usable?}
     Decision -->|yes| Restart[normal node start]
@@ -943,16 +977,17 @@ flowchart TD
 ```
 
 There is no rollback of indexed event records, backup/restore command, or dedicated full-resync
-command in the Rust crates. The only automatic repair truncates bytes after the last index boundary
-and restores complete CRC-valid/decodable frames whose index entries were lost; committed corruption
-still fails closed. Backup restore is an offline filesystem operation. A destructive reset removes
-the local event log—the node's source of truth—and can reconstruct only observations still available
-from configured EVM ranges and peers. One historical network startup attempt, including all
-aggregates and retries, is capped at 512 pages, 50,000 events, 128 MiB, and five minutes, with no
-operator override in the current implementation. Exceeding a budget or discovering unavailable
-history is therefore a startup blocker, not a signal to silently skip data. Unsupported schema state
-likewise requires a compatible binary, a verified backup, or an explicit reset; no automatic
-migration is implemented.
+command in the Rust crates. Tail repair truncates bytes after the last index boundary. It also
+restores complete CRC-valid and decodable frames whose index entries were lost. Projection repair
+rebuilds registered-node membership and missing member history from intact events through each
+snapshot cursor. Committed corruption still fails closed. Backup restore is an offline filesystem
+operation. A destructive reset removes the local event log—the node's source of truth—and can
+reconstruct only observations still available from configured EVM ranges and peers. One historical
+network startup attempt, including all aggregates and retries, is capped at 512 pages, 50,000
+events, 128 MiB, and five minutes, with no operator override in the current implementation.
+Exceeding a budget or discovering unavailable history is therefore a startup blocker, not a signal
+to silently skip data. Unsupported schema state likewise requires a compatible binary, a verified
+backup, or an explicit reset; no automatic migration is implemented.
 
 The multi-process SWARM supervisor has a separate child-process lifecycle:
 

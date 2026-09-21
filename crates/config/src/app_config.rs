@@ -62,8 +62,9 @@ pub struct NodeDefinition {
     /// Logical CPUs reserved for Actix, libp2p, and RPC (not used by the Rayon compute pool).
     #[serde(default = "default_multithread_reserve_threads")]
     pub multithread_reserve_threads: usize,
-    /// Max concurrent CPU-bound jobs (ZK proofs + TrBFV). When unset, defaults to all CPUs minus
-    /// `multithread_reserve_threads`. Override the default profile with env
+    /// Max concurrent CPU-bound jobs (ZK proofs + TrBFV). The default is two. The runtime can
+    /// reduce this value when the detected host or cgroup memory cannot safely support it.
+    /// Override the default profile with env
     /// `E3_NODE__MULTITHREAD_CONCURRENT_JOBS`, or a named profile with
     /// `E3_NODES__<NAME>__MULTITHREAD_CONCURRENT_JOBS`.
     pub multithread_concurrent_jobs: Option<usize>,
@@ -88,7 +89,11 @@ pub struct NodeDefinition {
 }
 
 fn default_multithread_reserve_threads() -> usize {
-    1
+    2
+}
+
+fn default_multithread_concurrent_jobs() -> Option<usize> {
+    Some(2)
 }
 
 fn default_startup_timeout_secs() -> u64 {
@@ -127,7 +132,7 @@ impl Default for NodeDefinition {
             autowallet: false,
             dashboard_port: None,
             multithread_reserve_threads: default_multithread_reserve_threads(),
-            multithread_concurrent_jobs: None,
+            multithread_concurrent_jobs: default_multithread_concurrent_jobs(),
             startup_timeout_secs: default_startup_timeout_secs(),
             max_buffered_evm_events: default_max_buffered_evm_events(),
             max_buffered_net_events: default_max_buffered_net_events(),
@@ -428,8 +433,8 @@ impl AppConfig {
         self.node_def().multithread_reserve_threads
     }
 
-    /// Optional cap on concurrent ZK / TrBFV pool jobs. When `None`, the node uses all CPUs minus
-    /// [`Self::multithread_reserve_threads`].
+    /// Requested concurrent ZK and TrBFV jobs. An omitted value uses two. Runtime CPU and memory
+    /// admission can reduce the effective value.
     pub fn multithread_concurrent_jobs(&self) -> Option<usize> {
         self.node_def().multithread_concurrent_jobs
     }
@@ -876,6 +881,20 @@ node:
         )?;
         assert_eq!(config.multithread_reserve_threads(), 2);
         assert_eq!(config.multithread_concurrent_jobs(), Some(4));
+        Ok(())
+    }
+
+    #[test]
+    fn test_multithread_defaults_are_two_jobs_and_two_reserved_threads() -> Result<()> {
+        let config = UnscopedAppConfig::default().into_scoped_with_defaults(
+            "_default",
+            &PathBuf::from("/default/data"),
+            &PathBuf::from("/default/config"),
+            &PathBuf::from("/my/cwd"),
+        )?;
+
+        assert_eq!(config.multithread_reserve_threads(), 2);
+        assert_eq!(config.multithread_concurrent_jobs(), Some(2));
         Ok(())
     }
 

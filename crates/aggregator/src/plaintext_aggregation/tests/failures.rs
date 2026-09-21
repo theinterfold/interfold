@@ -7,7 +7,7 @@
 use super::*;
 
 #[actix::test]
-async fn threshold_decryption_compute_error_emits_e3_failed() -> Result<()> {
+async fn threshold_decryption_compute_error_preserves_pending_work() -> Result<()> {
     let correlation_id = CorrelationId::new();
     let (mut aggregator, history, e3_id) =
         build_plaintext_aggregator(computing_state(), true).await?;
@@ -37,18 +37,15 @@ async fn threshold_decryption_compute_error_emits_e3_failed() -> Result<()> {
         }),
     ))?;
 
-    let event = next_event(&history).await?;
-    assert!(matches!(
-        event.into_data(),
-        InterfoldEventData::E3Failed(data)
-            if data.e3_id == e3_id
-                && data.failed_at_stage == E3Stage::CiphertextReady
-                && data.reason == FailureReason::DecryptionInvalidShares
-    ));
-    assert!(aggregator
-        .pending
-        .threshold_decryption_correlation
-        .is_none());
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    assert_eq!(
+        aggregator.pending.threshold_decryption_correlation,
+        Some(correlation_id)
+    );
 
     Ok(())
 }
@@ -84,7 +81,7 @@ async fn insufficient_honest_c6_shares_emit_e3_failed() -> Result<()> {
 }
 
 #[actix::test]
-async fn decryption_aggregation_compute_error_emits_e3_failed() -> Result<()> {
+async fn decryption_aggregation_compute_error_preserves_pending_work() -> Result<()> {
     let correlation_id = CorrelationId::new();
     let (mut aggregator, history, e3_id) =
         build_plaintext_aggregator(generating_c7_state(), true).await?;
@@ -124,19 +121,16 @@ async fn decryption_aggregation_compute_error_emits_e3_failed() -> Result<()> {
         }),
     ))?;
 
-    let event = next_event(&history).await?;
-    assert!(matches!(
-        event.into_data(),
-        InterfoldEventData::E3Failed(data)
-            if data.e3_id == e3_id
-                && data.failed_at_stage == E3Stage::CiphertextReady
-                && data.reason == FailureReason::DecryptionInvalidShares
-    ));
-    assert!(aggregator
-        .pending
-        .decryption_aggregation_correlation
-        .is_none());
-    assert!(aggregator.pending.c7_proofs_pending.is_none());
+    actix::clock::sleep(std::time::Duration::from_millis(20)).await;
+    assert!(history
+        .send(GetEvents::<InterfoldEvent>::new())
+        .await?
+        .is_empty());
+    assert_eq!(
+        aggregator.pending.decryption_aggregation_correlation,
+        Some(correlation_id)
+    );
+    assert!(aggregator.pending.c7_proofs_pending.is_some());
 
     Ok(())
 }

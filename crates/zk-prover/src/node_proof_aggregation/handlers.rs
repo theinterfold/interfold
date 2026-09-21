@@ -149,8 +149,8 @@ impl NodeProofAggregator {
     }
 
     pub(super) fn handle_compute_request_error(&mut self, msg: TypedEvent<ComputeRequestError>) {
-        let (msg, ec) = msg.into_components();
-        let Some(e3_id) = self.fold_correlation.remove(msg.correlation_id()) else {
+        let (msg, _ec) = msg.into_components();
+        let Some(e3_id) = self.fold_correlation.get(msg.correlation_id()) else {
             // Every compute-dispatching actor receives every error, so an unowned correlation
             // is another actor's failure, not a fault here.
             debug!(
@@ -161,29 +161,8 @@ impl NodeProofAggregator {
         };
 
         error!(
-            "NodeProofAggregator: NodeDkgFold failed for E3 {}: {msg} — aggregation aborted",
+            "NodeProofAggregator: NodeDkgFold failed locally for E3 {}: {msg}; pending work is preserved for restart",
             e3_id
         );
-        let state = self.states.remove(&e3_id);
-        warn!(
-            "NodeProofAggregator: E3 {} NodeDkgFold failed — publishing E3Failed",
-            e3_id
-        );
-
-        if let Some(_state) = state {
-            if let Err(err) = self.bus.publish(
-                E3Failed {
-                    e3_id: e3_id.clone(),
-                    failed_at_stage: E3Stage::CommitteeFinalized,
-                    reason: FailureReason::DKGInvalidShares,
-                },
-                ec,
-            ) {
-                error!(
-                    "NodeProofAggregator: failed to publish E3Failed for E3 {}: {err}",
-                    e3_id
-                );
-            }
-        }
     }
 }

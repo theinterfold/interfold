@@ -9,77 +9,59 @@ impl ProofRequestActor {
         &mut self,
         msg: TypedEvent<ComputeRequestError>,
     ) {
-        let (msg, ec) = msg.into_components();
+        let (msg, _ec) = msg.into_components();
 
         // Every actor that dispatches compute work receives every `ComputeRequestError`, so a
         // correlation that no map below owns belongs to a different actor. Match on the
         // correlation first and report the error kind through `Display`: a failure that this
-        // actor owns must fail its round, whether the worker reported a ZK or a TrBFV error.
-        if let Some(pending) = self.pending.remove(msg.correlation_id()) {
+        // actor owns is a local infrastructure failure. Keep the pending inputs so EventStore
+        // replay can safely retry them after a restart. A local prover failure is not evidence
+        // that the committee supplied invalid cryptographic data.
+        if let Some(pending) = self.pending.get(msg.correlation_id()) {
             error!(
-                "C0 proof request failed for E3 {}: {msg} — key will not be published without proof",
+                "C0 proof request failed locally for E3 {}: {msg}; pending work is preserved for restart",
                 pending.e3_id
             );
-            self.fail_dkg_round(pending.e3_id, &ec, "C0 proof request error");
             return;
         }
 
-        if let Some((e3_id, kind, _seq)) = self.threshold_correlation.remove(msg.correlation_id()) {
+        if let Some((e3_id, kind, _seq)) = self.threshold_correlation.get(msg.correlation_id()) {
             error!(
-                "DKG {:?} proof request failed for E3 {}: {msg} — threshold share will not be published without proof",
+                "DKG {:?} proof request failed locally for E3 {}: {msg}; pending work is preserved for restart",
                 kind, e3_id
             );
-            self.threshold_correlation
-                .retain(|_, (eid, _, _)| *eid != e3_id);
-            self.pending_threshold.remove(&e3_id);
-            self.fail_dkg_round(e3_id, &ec, "DKG threshold proof request error");
             return;
         }
 
-        if let Some((e3_id, kind, _seq)) = self.decryption_correlation.remove(msg.correlation_id())
-        {
+        if let Some((e3_id, kind, _seq)) = self.decryption_correlation.get(msg.correlation_id()) {
             error!(
-                "C4 {:?} proof request failed for E3 {}: {msg} — DecryptionKeyShared will not be published",
+                "C4 {:?} proof request failed locally for E3 {}: {msg}; pending work is preserved for restart",
                 kind, e3_id
             );
-            self.decryption_correlation
-                .retain(|_, (eid, _, _)| *eid != e3_id);
-            self.pending_decryption.remove(&e3_id);
-            self.fail_dkg_round(e3_id, &ec, "C4 proof request error");
             return;
         }
 
-        if let Some(e3_id) = self
-            .share_decryption_correlation
-            .remove(msg.correlation_id())
-        {
+        if let Some(e3_id) = self.share_decryption_correlation.get(msg.correlation_id()) {
             error!(
-                "C6 proof request failed for E3 {}: {msg} — DecryptionshareCreated will not be published",
+                "C6 proof request failed locally for E3 {}: {msg}; pending work is preserved for restart",
                 e3_id
             );
-            self.pending_share_decryption.remove(&e3_id);
-            self.fail_decryption_round(e3_id, &ec, "C6 proof request error");
             return;
         }
 
-        if let Some(e3_id) = self.pk_aggregation_correlation.remove(msg.correlation_id()) {
+        if let Some(e3_id) = self.pk_aggregation_correlation.get(msg.correlation_id()) {
             error!(
-                "C5 proof request failed for E3 {}: {msg} — PkAggregationProofSigned will not be published",
+                "C5 proof request failed locally for E3 {}: {msg}; pending work is preserved for restart",
                 e3_id
             );
-            self.pending_pk_aggregation.remove(&e3_id);
-
-            self.fail_dkg_round(e3_id, &ec, "C5 proof request error");
             return;
         }
 
-        if let Some(e3_id) = self.aggregation_correlation.remove(msg.correlation_id()) {
+        if let Some(e3_id) = self.aggregation_correlation.get(msg.correlation_id()) {
             error!(
-                "C7 proof request failed for E3 {}: {msg} — AggregationProofSigned will not be published",
+                "C7 proof request failed locally for E3 {}: {msg}; pending work is preserved for restart",
                 e3_id
             );
-            self.pending_aggregation.remove(&e3_id);
-            self.fail_decryption_round(e3_id, &ec, "C7 proof request error");
             return;
         }
 

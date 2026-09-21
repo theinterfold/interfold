@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 use std::thread;
 use std::time::Duration;
 use std::time::Instant;
@@ -85,7 +86,8 @@ use fhe_traits::{DeserializeParametrized, FheEncoder};
 use ndarray::Array2;
 use num_bigint::BigInt;
 use rand::Rng;
-use tracing::{error, info};
+use tokio::time::sleep;
+use tracing::{debug, error, info, warn};
 
 use crate::effect_gate::ComputeEffectGate;
 
@@ -98,6 +100,7 @@ pub struct Multithread {
     task_scope: String,
     report: Option<Addr<MultithreadReport>>,
     zk_prover: Option<Arc<ZkProver>>,
+    retry_logs: Arc<RetryLogLimiter>,
 }
 
 impl Multithread {
@@ -117,6 +120,7 @@ impl Multithread {
             task_scope,
             report,
             zk_prover: None,
+            retry_logs: Arc::new(RetryLogLimiter::default()),
         }
     }
 
@@ -225,6 +229,51 @@ mod task_group_tests {
         assert_ne!(task_group("node-a", &e3_id), task_group("node-b", &e3_id));
         assert_eq!(task_group("node-a", &e3_id), task_group("node-a", &e3_id));
     }
+
+    #[test]
+    fn prover_retry_schedule_is_bounded_and_backed_off() {
+        assert_eq!(compute_retry_delay(1), Some(Duration::from_secs(5)));
+        assert_eq!(compute_retry_delay(2), Some(Duration::from_secs(15)));
+        assert_eq!(compute_retry_delay(3), Some(Duration::from_secs(60)));
+        assert_eq!(compute_retry_delay(4), Some(Duration::from_secs(300)));
+        assert_eq!(compute_retry_delay(5), Some(Duration::from_secs(300)));
+        assert_eq!(compute_retry_delay(100), Some(Duration::from_secs(300)));
+    }
+
+    #[test]
+    fn only_worker_proof_failures_retry() {
+        let request = ComputeRequest::zk(
+            ZkRequest::PkBfv(PkBfvProofRequest::new(
+                e3_utils::ArcBytes::default(),
+                BfvPreset::InsecureThreshold512,
+                CiphernodesCommitteeSize::Minimum,
+            )),
+            e3_events::CorrelationId::new(),
+            E3id::new("retry", 1),
+        );
+        let retryable = ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed("oom".to_owned())),
+            request.clone(),
+        );
+        let invalid = ComputeRequestError::new(
+            ComputeRequestErrorKind::Zk(ZkEventError::InvalidParams("bad input".to_owned())),
+            request,
+        );
+
+        assert!(is_retryable_compute_error(&retryable));
+        assert!(!is_retryable_compute_error(&invalid));
+    }
+
+    #[test]
+    fn retry_warning_limiter_reports_suppressed_attempts_once_per_window() {
+        let limiter = RetryLogLimiter::new(Duration::from_secs(60));
+        let start = Instant::now();
+
+        assert_eq!(limiter.observe_at(start), Some(0));
+        assert_eq!(limiter.observe_at(start + Duration::from_secs(1)), None);
+        assert_eq!(limiter.observe_at(start + Duration::from_secs(2)), None);
+        assert_eq!(limiter.observe_at(start + Duration::from_secs(60)), Some(2));
+    }
 }
 
 impl Actor for Multithread {
@@ -266,11 +315,12 @@ impl Handler<TypedEvent<ComputeRequest>> for Multithread {
         let report = self.report.clone();
         let zk_prover = self.zk_prover.clone();
         let task_scope = self.task_scope.clone();
+        let retry_logs = self.retry_logs.clone();
         trap_fut(
             EType::Computation,
             &self.bus.clone(),
             handle_compute_request_event(
-                msg, bus, cipher, rng, pool, task_scope, report, zk_prover,
+                msg, bus, cipher, rng, pool, task_scope, report, zk_prover, retry_logs,
             ),
         )
     }
@@ -285,75 +335,261 @@ async fn handle_compute_request_event(
     task_scope: String,
     report: Option<Addr<MultithreadReport>>,
     zk_prover: Option<Arc<ZkProver>>,
+    retry_logs: Arc<RetryLogLimiter>,
 ) -> anyhow::Result<()> {
     let msg_string = msg.to_string();
     let job_name = msg_string.clone();
     let (msg, ctx) = msg.into_components();
     let request_snapshot = msg.clone();
-
-    let report_for_worker = report.clone();
     let task_group = task_group(&task_scope, &msg.e3_id);
-    let pool_result = pool
-        .spawn_in_group(task_group, job_name, TaskTimeouts::default(), move || {
-            handle_compute_request(rng, cipher, zk_prover, msg, report_for_worker)
-        })
-        .await;
 
-    let (result, duration) = match pool_result {
-        Ok(v) => v,
-        Err(TaskPoolError::Cancelled(group)) => {
-            info!(
-                task_group = group,
-                "Dropped compute request for a terminal E3"
-            );
-            return Ok(());
-        }
-        Err(pool_err) => {
-            error!(
-                "Task pool error for compute request '{}': {pool_err}",
-                msg_string
-            );
-            let error_kind = match &request_snapshot.request {
-                ComputeRequestKind::Zk(_) => ComputeRequestErrorKind::Zk(
-                    ZkEventError::ProofGenerationFailed(format!("Pool error: {pool_err}")),
-                ),
-                ComputeRequestKind::TrBFV(ref trbfv_req) => {
-                    let msg = format!("Pool error: {pool_err}");
-                    ComputeRequestErrorKind::TrBFV(match trbfv_req {
-                        TrBFVRequest::GenPkShareAndSkSss(_) => {
-                            TrBFVError::GenPkShareAndSkSss(msg.into())
-                        }
-                        TrBFVRequest::GenEsiSss(_) => TrBFVError::GenEsiSss(msg.into()),
-                        TrBFVRequest::CalculateDecryptionKey(_) => {
-                            TrBFVError::CalculateDecryptionKey(msg.into())
-                        }
-                        TrBFVRequest::CalculateDecryptionShare(_) => {
-                            TrBFVError::CalculateDecryptionShare(msg.into())
-                        }
-                        TrBFVRequest::CalculateThresholdDecryption(_) => {
-                            TrBFVError::CalculateThresholdDecryption(msg.into())
-                        }
-                    })
+    let is_zk = matches!(&request_snapshot.request, ComputeRequestKind::Zk(_));
+    let mut attempt = 1usize;
+    let mut total_duration = Duration::ZERO;
+
+    loop {
+        let prover_for_worker = if attempt > 1 {
+            zk_prover
+                .as_ref()
+                .map(|prover| Arc::new(prover.with_slow_low_memory()))
+        } else {
+            zk_prover.clone()
+        };
+        let request_for_worker = request_snapshot.clone();
+        let report_for_worker = report.clone();
+        let rng_for_worker = rng.clone();
+        let cipher_for_worker = cipher.clone();
+        let pool_result = pool
+            .spawn_in_group(
+                task_group.clone(),
+                job_name.clone(),
+                TaskTimeouts::default(),
+                move || {
+                    handle_compute_request(
+                        rng_for_worker,
+                        cipher_for_worker,
+                        prover_for_worker,
+                        request_for_worker,
+                        report_for_worker,
+                    )
+                },
+            )
+            .await;
+
+        let (result, duration) = match pool_result {
+            Ok(value) => value,
+            Err(TaskPoolError::Cancelled(group)) => {
+                info!(
+                    task_group = group,
+                    "Dropped compute request for a terminal E3"
+                );
+                return Ok(());
+            }
+            Err(pool_error) => {
+                if is_zk {
+                    let delay = compute_retry_delay(attempt)
+                        .expect("the ZK retry schedule always returns a capped delay");
+                    log_compute_retry(
+                        &retry_logs,
+                        &request_snapshot,
+                        attempt,
+                        delay,
+                        &format!("task pool error: {pool_error}"),
+                    );
+                    sleep(delay).await;
+                    attempt = attempt.saturating_add(1);
+                    continue;
                 }
-            };
-            bus.publish(ComputeRequestError::new(error_kind, request_snapshot), ctx)?;
-            return Ok(());
-        }
-    };
 
-    if let Some(report) = report {
-        report.do_send(TrackDuration::new(msg_string, duration))
-    };
+                error!(
+                    request = %msg_string,
+                    attempt,
+                    error = %pool_error,
+                    "Compute worker exhausted its recovery attempts"
+                );
+                let error_kind = pool_error_kind(&request_snapshot, &pool_error);
+                bus.publish(ComputeRequestError::new(error_kind, request_snapshot), ctx)?;
+                return Ok(());
+            }
+        };
+        total_duration += duration;
 
-    match result {
-        Ok(val) => bus.publish(val, ctx)?,
-        Err(e) => {
-            // Publish ComputeRequestError so ProofRequestActor can handle it
-            // and continue without proof if needed
-            bus.publish(e, ctx)?
+        match result {
+            Ok(value) => {
+                if attempt > 1 {
+                    info!(
+                        e3_id = %request_snapshot.e3_id,
+                        request = %msg_string,
+                        attempt,
+                        low_memory = true,
+                        "Compute request recovered after a worker failure"
+                    );
+                }
+                if let Some(report) = report.as_ref() {
+                    report.do_send(TrackDuration::new(msg_string, total_duration));
+                }
+                bus.publish(value, ctx)?;
+                return Ok(());
+            }
+            Err(compute_error) if is_retryable_compute_error(&compute_error) => {
+                let delay = compute_retry_delay(attempt)
+                    .expect("the ZK retry schedule always returns a capped delay");
+                log_compute_retry(
+                    &retry_logs,
+                    &request_snapshot,
+                    attempt,
+                    delay,
+                    &bounded_error(&compute_error),
+                );
+                sleep(delay).await;
+                attempt = attempt.saturating_add(1);
+                continue;
+            }
+            Err(compute_error) => {
+                bus.publish(compute_error, ctx)?;
+                return Ok(());
+            }
         }
-    };
-    Ok(())
+    }
+}
+
+const COMPUTE_RETRY_DELAYS_SECS: [u64; 4] = [5, 15, 60, 300];
+const COMPUTE_RETRY_LOG_INTERVAL: Duration = Duration::from_secs(60);
+
+fn compute_retry_delay(completed_attempt: usize) -> Option<Duration> {
+    COMPUTE_RETRY_DELAYS_SECS
+        .get(completed_attempt.saturating_sub(1))
+        .or_else(|| COMPUTE_RETRY_DELAYS_SECS.last())
+        .copied()
+        .map(Duration::from_secs)
+}
+
+#[derive(Debug)]
+struct RetryLogWindow {
+    last_warning: Option<Instant>,
+    suppressed: u64,
+}
+
+#[derive(Debug)]
+struct RetryLogLimiter {
+    interval: Duration,
+    window: Mutex<RetryLogWindow>,
+}
+
+impl RetryLogLimiter {
+    fn new(interval: Duration) -> Self {
+        Self {
+            interval,
+            window: Mutex::new(RetryLogWindow {
+                last_warning: None,
+                suppressed: 0,
+            }),
+        }
+    }
+
+    fn observe(&self) -> Option<u64> {
+        self.observe_at(Instant::now())
+    }
+
+    fn observe_at(&self, now: Instant) -> Option<u64> {
+        let mut window = self.window.lock().expect("retry log lock poisoned");
+        let can_warn = window
+            .last_warning
+            .is_none_or(|last| now.saturating_duration_since(last) >= self.interval);
+        if can_warn {
+            let suppressed = std::mem::take(&mut window.suppressed);
+            window.last_warning = Some(now);
+            Some(suppressed)
+        } else {
+            window.suppressed = window.suppressed.saturating_add(1);
+            None
+        }
+    }
+}
+
+impl Default for RetryLogLimiter {
+    fn default() -> Self {
+        Self::new(COMPUTE_RETRY_LOG_INTERVAL)
+    }
+}
+
+fn is_retryable_compute_error(error: &ComputeRequestError) -> bool {
+    matches!(
+        error.get_err(),
+        ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(_))
+    )
+}
+
+fn bounded_error(error: &ComputeRequestError) -> String {
+    const LIMIT: usize = 512;
+    let value = error.to_string();
+    if value.len() <= LIMIT {
+        return value;
+    }
+    let mut end = LIMIT;
+    while !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!("{}...", &value[..end])
+}
+
+fn log_compute_retry(
+    limiter: &RetryLogLimiter,
+    request: &ComputeRequest,
+    completed_attempt: usize,
+    delay: Duration,
+    reason: &str,
+) {
+    if let Some(suppressed_retries) = limiter.observe() {
+        warn!(
+            e3_id = %request.e3_id,
+            request = %request,
+            completed_attempt,
+            retry_in_secs = delay.as_secs(),
+            low_memory_next_attempt = true,
+            suppressed_retries,
+            error = %reason,
+            "Compute worker failed; automatic low-memory recovery remains active"
+        );
+    } else {
+        debug!(
+            e3_id = %request.e3_id,
+            request = %request,
+            completed_attempt,
+            retry_in_secs = delay.as_secs(),
+            error = %reason,
+            "Compute worker retry scheduled"
+        );
+    }
+}
+
+fn pool_error_kind(
+    request: &ComputeRequest,
+    pool_error: &TaskPoolError,
+) -> ComputeRequestErrorKind {
+    match &request.request {
+        ComputeRequestKind::Zk(_) => ComputeRequestErrorKind::Zk(
+            ZkEventError::ProofGenerationFailed(format!("Pool error: {pool_error}")),
+        ),
+        ComputeRequestKind::TrBFV(trbfv_request) => {
+            let message = format!("Pool error: {pool_error}");
+            ComputeRequestErrorKind::TrBFV(match trbfv_request {
+                TrBFVRequest::GenPkShareAndSkSss(_) => {
+                    TrBFVError::GenPkShareAndSkSss(message.into())
+                }
+                TrBFVRequest::GenEsiSss(_) => TrBFVError::GenEsiSss(message.into()),
+                TrBFVRequest::CalculateDecryptionKey(_) => {
+                    TrBFVError::CalculateDecryptionKey(message.into())
+                }
+                TrBFVRequest::CalculateDecryptionShare(_) => {
+                    TrBFVError::CalculateDecryptionShare(message.into())
+                }
+                TrBFVRequest::CalculateThresholdDecryption(_) => {
+                    TrBFVError::CalculateThresholdDecryption(message.into())
+                }
+            })
+        }
+    }
 }
 
 fn handle_pk_aggregation_proof(
@@ -579,11 +815,11 @@ fn timefunc<F>(
 where
     F: FnOnce() -> Result<ComputeResponse, ComputeRequestError>,
 {
-    info!("STARTING MULTITHREAD `{}({})`", name, id);
+    debug!("STARTING MULTITHREAD `{}({})`", name, id);
     let start = Instant::now();
     let out = func();
     let dur = start.elapsed();
-    info!("FINISHED MULTITHREAD `{}`({}) in {:?}", name, id, dur);
+    debug!("FINISHED MULTITHREAD `{}`({}) in {:?}", name, id, dur);
     (out, dur)
 }
 
@@ -715,7 +951,7 @@ fn handle_zk_request(
     let Some(prover) = zk_prover else {
         return (
             Err(ComputeRequestError::new(
-                ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(
+                ComputeRequestErrorKind::Zk(ZkEventError::InvalidParams(
                     "ZK prover not configured".to_string(),
                 )),
                 request,
@@ -1434,59 +1670,59 @@ fn handle_verify_share_proofs(
     // ECDSA validation (signature recovery, signer consistency, e3_id match)
     // is handled by ShareVerificationActor before dispatching to multithread.
     // This function performs ZK-only proof verification.
-    let party_results: Vec<PartyVerificationResult> = req
-        .party_proofs
-        .into_iter()
-        .map(|party| {
-            let sender = party.sender_party_id;
+    let mut party_results = Vec::with_capacity(req.party_proofs.len());
+    for party in req.party_proofs {
+        let sender = party.sender_party_id;
+        let mut party_result = PartyVerificationResult {
+            sender_party_id: sender,
+            all_verified: true,
+            failed_signed_payload: None,
+            recovered_address: None,
+        };
 
-            for signed_proof in &party.signed_proofs {
-                // 1. Validate CircuitName matches expected circuits for this ProofType
-                let expected_circuits = signed_proof.payload.proof_type.circuit_names();
-                if !expected_circuits.contains(&signed_proof.payload.proof.circuit) {
+        for signed_proof in &party.signed_proofs {
+            // 1. Validate CircuitName matches expected circuits for this ProofType.
+            let expected_circuits = signed_proof.payload.proof_type.circuit_names();
+            if !expected_circuits.contains(&signed_proof.payload.proof.circuit) {
+                info!(
+                    "Circuit name mismatch for party {} ({:?}): expected {:?}, got {:?}",
+                    sender,
+                    signed_proof.payload.proof_type,
+                    expected_circuits,
+                    signed_proof.payload.proof.circuit
+                );
+                party_result.all_verified = false;
+                party_result.failed_signed_payload = Some(signed_proof.clone());
+                break;
+            }
+
+            // 2. A cryptographically invalid proof returns `Ok(false)`. A verifier process
+            // failure is local infrastructure failure and must not accuse the proof sender.
+            let proof = &signed_proof.payload.proof;
+            match zk_verify_share_proof_bundle(prover, proof, &e3_id_str, sender, &artifacts_dir) {
+                Ok(true) => {}
+                Ok(false) => {
                     info!(
-                        "Circuit name mismatch for party {} ({:?}): expected {:?}, got {:?}",
-                        sender,
-                        signed_proof.payload.proof_type,
-                        expected_circuits,
-                        signed_proof.payload.proof.circuit
+                        "ZK proof verification failed for party {} ({:?})",
+                        sender, signed_proof.payload.proof_type
                     );
-                    return PartyVerificationResult {
-                        sender_party_id: sender,
-                        all_verified: false,
-                        failed_signed_payload: Some(signed_proof.clone()),
-                        recovered_address: None,
-                    };
+                    party_result.all_verified = false;
+                    party_result.failed_signed_payload = Some(signed_proof.clone());
+                    break;
                 }
-
-                // 2. ZK proof verification
-                let proof = &signed_proof.payload.proof;
-                let result =
-                    zk_verify_share_proof_bundle(prover, proof, &e3_id_str, sender, &artifacts_dir);
-                match result {
-                    Ok(true) => continue,
-                    Ok(false) | Err(_) => {
-                        info!(
-                            "ZK proof verification failed for party {} ({:?})",
-                            sender, signed_proof.payload.proof_type
-                        );
-                        return PartyVerificationResult {
-                            sender_party_id: sender,
-                            all_verified: false,
-                            failed_signed_payload: Some(signed_proof.clone()),
-                            recovered_address: None,
-                        };
-                    }
+                Err(error) => {
+                    return Err(ComputeRequestError::new(
+                        ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(format!(
+                            "proof verifier process failed for party {sender} ({:?}): {error}",
+                            signed_proof.payload.proof_type
+                        ))),
+                        request.clone(),
+                    ));
                 }
             }
-            PartyVerificationResult {
-                sender_party_id: sender,
-                all_verified: true,
-                failed_signed_payload: None,
-                recovered_address: None,
-            }
-        })
-        .collect();
+        }
+        party_results.push(party_result);
+    }
 
     Ok(ComputeResponse::zk(
         ZkResponse::VerifyShareProofs(VerifyShareProofsResponse { party_results }),
@@ -1507,73 +1743,69 @@ fn handle_verify_share_decryption_proofs(
     // ECDSA validation (signature recovery, signer consistency, e3_id match)
     // is handled by ShareVerificationActor before dispatching to multithread.
     // This function performs ZK-only proof verification.
-    let party_results: Vec<PartyVerificationResult> = req
-        .party_proofs
-        .into_iter()
-        .map(|party| {
-            let sender = party.sender_party_id;
+    let mut party_results = Vec::with_capacity(req.party_proofs.len());
+    for party in req.party_proofs {
+        let sender = party.sender_party_id;
 
-            // Guard: an empty esm_decryption_proofs vec would make this loop
-            // vacuously true.  Defence-in-depth: reject any party with zero ESM proofs.
-            if party.signed_e_sm_decryption_proofs.is_empty() {
-                return PartyVerificationResult {
-                    sender_party_id: sender,
-                    all_verified: false,
-                    failed_signed_payload: None,
-                    recovered_address: None,
-                };
-            }
-
-            // Flatten all signed proofs (SK + ESMs) and verify uniformly.
-            let all_signed: Vec<&e3_events::SignedProofPayload> =
-                std::iter::once(&party.signed_sk_decryption_proof)
-                    .chain(party.signed_e_sm_decryption_proofs.iter())
-                    .collect();
-
-            for signed_proof in &all_signed {
-                // 1. Validate CircuitName matches expected circuits for this ProofType
-                let expected_circuits = signed_proof.payload.proof_type.circuit_names();
-                if !expected_circuits.contains(&signed_proof.payload.proof.circuit) {
-                    info!(
-                        "C4 circuit mismatch for party {}: expected {:?}, got {:?}",
-                        sender, expected_circuits, signed_proof.payload.proof.circuit
-                    );
-                    return PartyVerificationResult {
-                        sender_party_id: sender,
-                        all_verified: false,
-                        failed_signed_payload: Some((*signed_proof).clone()),
-                        recovered_address: None,
-                    };
-                }
-
-                // 2. ZK proof verification
-                let proof = &signed_proof.payload.proof;
-                let result = prover.verify_proof(proof, &e3_id_str, sender, &artifacts_dir);
-                match result {
-                    Ok(true) => continue,
-                    Ok(false) | Err(_) => {
-                        info!(
-                            "C4 ZK proof verification failed for party {} ({:?})",
-                            sender, signed_proof.payload.proof_type
-                        );
-                        return PartyVerificationResult {
-                            sender_party_id: sender,
-                            all_verified: false,
-                            failed_signed_payload: Some((*signed_proof).clone()),
-                            recovered_address: None,
-                        };
-                    }
-                }
-            }
-
-            PartyVerificationResult {
+        // Guard: an empty ESM proof list would make verification vacuously true.
+        if party.signed_e_sm_decryption_proofs.is_empty() {
+            party_results.push(PartyVerificationResult {
                 sender_party_id: sender,
-                all_verified: true,
+                all_verified: false,
                 failed_signed_payload: None,
                 recovered_address: None,
+            });
+            continue;
+        }
+
+        let all_signed: Vec<&e3_events::SignedProofPayload> =
+            std::iter::once(&party.signed_sk_decryption_proof)
+                .chain(party.signed_e_sm_decryption_proofs.iter())
+                .collect();
+        let mut party_result = PartyVerificationResult {
+            sender_party_id: sender,
+            all_verified: true,
+            failed_signed_payload: None,
+            recovered_address: None,
+        };
+
+        for signed_proof in all_signed {
+            let expected_circuits = signed_proof.payload.proof_type.circuit_names();
+            if !expected_circuits.contains(&signed_proof.payload.proof.circuit) {
+                info!(
+                    "C4 circuit mismatch for party {}: expected {:?}, got {:?}",
+                    sender, expected_circuits, signed_proof.payload.proof.circuit
+                );
+                party_result.all_verified = false;
+                party_result.failed_signed_payload = Some(signed_proof.clone());
+                break;
             }
-        })
-        .collect();
+
+            let proof = &signed_proof.payload.proof;
+            match prover.verify_proof(proof, &e3_id_str, sender, &artifacts_dir) {
+                Ok(true) => {}
+                Ok(false) => {
+                    info!(
+                        "C4 ZK proof verification failed for party {} ({:?})",
+                        sender, signed_proof.payload.proof_type
+                    );
+                    party_result.all_verified = false;
+                    party_result.failed_signed_payload = Some(signed_proof.clone());
+                    break;
+                }
+                Err(error) => {
+                    return Err(ComputeRequestError::new(
+                        ComputeRequestErrorKind::Zk(ZkEventError::ProofGenerationFailed(format!(
+                            "C4 verifier process failed for party {sender} ({:?}): {error}",
+                            signed_proof.payload.proof_type
+                        ))),
+                        request.clone(),
+                    ));
+                }
+            }
+        }
+        party_results.push(party_result);
+    }
 
     Ok(ComputeResponse::zk(
         ZkResponse::VerifyShareDecryptionProofs(VerifyShareDecryptionProofsResponse {

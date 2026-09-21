@@ -21,7 +21,7 @@ pub enum NodeCommands {
     /// post-crash health check. Exits non-zero on failure. Without `--repair`,
     /// no files are changed.
     Validate {
-        /// Repair only a provably uncommitted torn/unindexed event-log tail
+        /// Repair a safe log tail or rebuild a stale derived sortition projection
         #[arg(long)]
         repair: bool,
     },

@@ -170,11 +170,15 @@ impl TaskPool {
                 }
             }
 
-            let heartbeat = Duration::from_secs(60);
+            // Long secure proofs are expected. Increase the interval after each heartbeat so one
+            // healthy job cannot emit one warning per minute for hours.
+            let mut heartbeat = Duration::from_secs(5 * 60);
+            let max_heartbeat = Duration::from_secs(30 * 60);
             loop {
                 sleep(heartbeat).await;
                 elapsed += heartbeat;
                 warn!("Job '{}' still running after {:?}", task_name, elapsed);
+                heartbeat = heartbeat.saturating_mul(2).min(max_heartbeat);
             }
         });
 
@@ -386,5 +390,23 @@ mod tests {
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn cancelling_a_group_skips_work_queued_inside_rayon() {
         assert_group_cancellation(2, true).await;
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn rayon_panic_returns_a_structured_pool_error() {
+        let pool = TaskPool::new(1, 1);
+
+        let result = pool
+            .spawn(
+                "panic-test".to_owned(),
+                TaskTimeouts::new(Vec::new()),
+                || -> u8 { panic!("planned panic") },
+            )
+            .await;
+
+        assert!(matches!(
+            result,
+            Err(TaskPoolError::Panic(message)) if message == "planned panic"
+        ));
     }
 }

@@ -133,6 +133,10 @@ every section.
   but queued proof jobs from that E3 must not consume task-pool capacity ahead of a later active E3.
   One node's local failure must not cancel another node's work when tests or embeddings share a task
   pool. — `flow-trace/04`
+- A local prover, verifier, task-pool, or resource failure is not evidence of peer misbehavior.
+  Retry the exact ZK request, preserve its durable input, and let canonical E3 lifecycle facts end
+  recovery. Only a completed cryptographic check can classify a peer proof as invalid. —
+  `flow-trace/04`
 - Sortition delays, committee-finalization timers, and slash submissions persist their semantic
   inputs before effects run. Restart re-arms them only after `EffectsEnabled`; an additive migration
   may backfill a missing versioned record but must not replace an existing one. — INDEX concern #46

@@ -132,12 +132,12 @@ impl AccusationVoting {
         let (msg, _ec) = msg.into_components();
 
         let correlation_id = msg.correlation_id();
-        let Some(reverif) = self.pending_reverifications.remove(correlation_id) else {
+        let Some(reverif) = self.pending_reverifications.get(correlation_id) else {
             return; // Not our correlation ID
         };
 
         error!(
-            "C3a/C3b ZK re-verification failed for {:?} — abstaining from vote",
+            "C3a/C3b ZK re-verification failed locally for {:?}; abstaining and preserving pending work for restart",
             reverif.proof_type
         );
         // Don't vote — effectively abstain
